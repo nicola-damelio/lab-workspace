@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea } from 'recharts';
 import {
   AMINO_ACID_DB,
@@ -14,7 +14,7 @@ import {
   getPentagon
 } from '../data/constants';
 
-// --- EDITOR DI TESTO RICCO (Rich Text) ---
+// --- EDITOR DI TESTO RICCO ---
 const RichTextEditor = ({ value, onChange }) => {
   const editorRef = useRef(null);
   const execCmd = (command, val = null) => {
@@ -122,18 +122,7 @@ const CustomYTick13C = ({ x, y, payload, isZoomed }) => {
   );
 };
 
-const getNMRColor = (entry) => {
-  if (entry.colorClass === 'cosy') return '#22c55e';
-  if (entry.colorClass === 'tocsyDirect') return '#1e3a8a';
-  if (entry.colorClass === 'tocsyRelay') return '#3b82f6';
-  if (entry.colorClass === 'noesyIntra') return '#ef4444';
-  if (entry.colorClass === 'noesyIntra4') return '#fca5a5';
-  if (entry.colorClass === 'noesySeq') return '#991b1b';
-  if (entry.colorClass === 'hsqc') return '#8b5cf6';
-  return typeof getNMRFillColor === 'function' ? getNMRFillColor(entry) : '#cbd5e1';
-};
-
-const NMRPointShape = ({ cx, cy, fill, payload }) => <circle cx={cx} cy={cy} r={payload.size || 5} fill={payload.type === 'Diagonale' ? fill : getNMRColor(payload)} opacity={0.8} />;
+const NMRPointShape = ({ cx, cy, fill, payload }) => <circle cx={cx} cy={cy} r={payload.size || 5} fill={payload.type === 'Diagonale' ? fill : getNMRFillColor(payload)} opacity={0.8} />;
 
 const NMRTooltip = ({ active, payload, diagonalColor }) => {
   if (active && payload && payload.length) {
@@ -156,7 +145,7 @@ const NMRTooltip = ({ active, payload, diagonalColor }) => {
     return (
       <div className="bg-white p-3 border border-slate-200 shadow-xl rounded text-sm z-50">
         <p className="font-bold text-slate-800">{data.label}</p>
-        <p className="font-semibold" style={{ color: data.type === 'Diagonale' ? diagonalColor : getNMRColor(data) }}>{data.type}</p>
+        <p className="font-semibold" style={{ color: data.type === 'Diagonale' ? diagonalColor : getNMRFillColor(data) }}>{data.type}</p>
         <p className="text-slate-500 text-xs mt-1"> F2: {Number(data.x).toFixed(2)} ppm <br/> F1: {Number(data.y).toFixed(2)} ppm </p>
       </div>
     );
@@ -164,7 +153,7 @@ const NMRTooltip = ({ active, payload, diagonalColor }) => {
   return null;
 };
 
-// --- STRUTTURA CHIMICA 2D (Invariata e ottimizzata) ---
+// --- STRUTTURA CHIMICA 2D ---
 const ChemicalStructure2D = ({ sequence, isExpanded, onToggleExpand }) => {
   if (!sequence || sequence.length === 0) return null;
   const elements = [];
@@ -352,7 +341,7 @@ const ChemicalStructure2D = ({ sequence, isExpanded, onToggleExpand }) => {
   );
 };
 
-// --- COMPONENTI GRAFICI ZOOMABILI (Ispirati dalla macro) ---
+// --- COMPONENTI GRAFICI ZOOMABILI ROBUSTI (Previene crash) ---
 const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel }) => {
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState(fullDomain);
@@ -515,7 +504,7 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader }) =>
   const shifts = activeTest.chemicalShifts || {};
   const images = activeTest.nmrSpectraImages || [];
   const showSim = activeTest.showSpectraSimulation || false;
-  const [tableMode, setTableMode] = useState(activeTest.tableMode || 'combined');
+  const [tableMode, setTableMode] = useState(activeTest.tableMode || 'backbone');
   const [expandedPanel, setExpandedPanel] = useState(null);
   
   const handleShiftChange = (resIdx, atom, val) => updateActiveTest({ chemicalShifts: { ...shifts, [`${resIdx}-${atom}`]: val } });
@@ -552,6 +541,7 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader }) =>
     let diag = [], ranges = [], ranges13C = [], cosy = [], tocsy = [], noesy = [], hsqc = [], d1H = [], d13C = [];
     const addPair = (arr, x, y, label, type, colorClass, size = 5) => { arr.push({ x, y, label, type, colorClass, size }); arr.push({ x: y, y: x, label, type, colorClass, size }); };
     
+    // 1. Generazione dati per i grafici degli intervalli teorici
     uniqueAminoAcidTypes.forEach((char, index) => {
       const aa = AMINO_ACID_DB[char];
       const typeIndex = Object.keys(AMINO_ACID_DB).indexOf(char);
@@ -571,6 +561,7 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader }) =>
       });
     });
 
+    // 2. Generazione dati per gli spettri simulati
     parsedSeq.forEach((res, index) => {
       Object.entries(res.shifts).forEach(([atom, ppm]) => {
         let peaks = [{ shift: ppm, intensity: 1 }]; let totalNeighbors = 0;
@@ -691,15 +682,16 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader }) =>
           </div>
         </div>
 
-        {/* 3. STRUTTURA CHIMICA E INTERVALLI GRAFICI */}
+        {/* 3. STRUTTURA CHIMICA E INTERVALLI TEORICI (Grafici + Numerici) */}
         {parsedSeq.length > 0 && (
           <>
             <ChemicalStructure2D sequence={parsedSeq} isExpanded={expandedPanel === 'formula'} onToggleExpand={() => setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')} />
             
             {uniqueAminoAcidTypes.length > 0 && (
               <div className="w-full grid grid-cols-1 gap-6 mt-2">
+                {/* Grafici Intervalli */}
                 <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4" style={{ height: `${Math.max(200, uniqueAminoAcidTypes.length * 85 + 60)}px`}}>
-                  <h4 className="text-sm font-bold text-slate-600 uppercase tracking-wider mb-4 ml-14">Plages Théoriques ¹H</h4>
+                  <h4 className="text-sm font-bold text-slate-600 uppercase tracking-wider mb-4 ml-14">Plages Théoriques ¹H (Grafico)</h4>
                   <ResponsiveContainer width="100%" height="100%">
                     <ScatterChart margin={{ top: 0, right: 30, bottom: 30, left: 50 }}>
                       <XAxis type="number" dataKey="x" domain={[0, 11]} reversed={true} hide={false} ticks={TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={false} />} axisLine={{ stroke: '#e2e8f0' }} />
@@ -714,7 +706,7 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader }) =>
                   </ResponsiveContainer>
                 </div>
                 <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4" style={{ height: `${Math.max(200, uniqueAminoAcidTypes.length * 85 + 60)}px`}}>
-                  <h4 className="text-sm font-bold text-slate-600 uppercase tracking-wider mb-4 ml-14">Plages Théoriques ¹³C</h4>
+                  <h4 className="text-sm font-bold text-slate-600 uppercase tracking-wider mb-4 ml-14">Plages Théoriques ¹³C (Grafico)</h4>
                   <ResponsiveContainer width="100%" height="100%">
                     <ScatterChart margin={{ top: 0, right: 30, bottom: 30, left: 50 }}>
                       <XAxis type="number" dataKey="x" domain={[10, 150]} reversed={true} hide={false} ticks={TICKS_13C} interval={0} tickLine={false} tick={<CustomXTick13C isZoomed={false} />} axisLine={{ stroke: '#e2e8f0' }} />
@@ -728,20 +720,62 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader }) =>
                     </ScatterChart>
                   </ResponsiveContainer>
                 </div>
+
+                {/* Tabella Numerica Valori Teorici (Per non perdere l'informazione numerica) */}
+                <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+                  <h4 className="text-md font-bold text-slate-700 mb-4 border-b pb-2">Valori Teorici Numerici di Riferimento</h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left">
+                      <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200">
+                        <tr>
+                          <th className="px-4 py-2 font-bold">Residuo</th>
+                          <th className="px-4 py-2 font-bold text-blue-700">Atomi ¹H</th>
+                          <th className="px-4 py-2 font-bold text-blue-700">Range ¹H (ppm)</th>
+                          <th className="px-4 py-2 font-bold text-purple-700">Atomi ¹³C</th>
+                          <th className="px-4 py-2 font-bold text-purple-700">Range ¹³C (ppm)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {uniqueAminoAcidTypes.map(char => {
+                          const aa = AMINO_ACID_DB[char];
+                          if (!aa) return null;
+                          const hAtoms = Object.keys(aa.ranges).filter(k => k.startsWith('H') || k.includes('H'));
+                          const cAtoms = hAtoms.map(k => getCarbonName(char, k)).filter(Boolean);
+                          return (
+                            <tr key={char} className="hover:bg-slate-50">
+                              <td className="px-4 py-2 font-bold text-slate-700">{aa.name} ({aa.code3})</td>
+                              <td className="px-4 py-2 text-blue-800 text-xs">{hAtoms.join(', ')}</td>
+                              <td className="px-4 py-2 font-mono text-xs text-slate-600">
+                                {hAtoms.map(k => `${k}: ${aa.ranges[k].min}-${aa.ranges[k].max}`).join('; ')}
+                              </td>
+                              <td className="px-4 py-2 text-purple-800 text-xs">{[...new Set(cAtoms)].join(', ')}</td>
+                              <td className="px-4 py-2 font-mono text-xs text-slate-600">
+                                {[...new Set(cAtoms)].map(cName => {
+                                  const cRange = getCarbonRange(char, cName);
+                                  return `${cName}: ${cRange.min}-${cRange.max}`;
+                                }).join('; ')}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
             )}
           </>
         )}
 
-        {/* 4. TABELLA DI ASSEGNAZIONE (Combinata o Separata) */}
+        {/* 4. TABELLA DI ASSEGNAZIONE */}
         <div className="flex-[2] bg-white p-6 rounded-xl shadow-sm border border-slate-200">
           <div className="flex flex-col sm:flex-row sm:justify-between items-start sm:items-center mb-6 border-b border-slate-100 pb-2 gap-4">
             <div className="flex flex-col sm:flex-row sm:items-center gap-4">
               <h3 className="text-lg font-black text-slate-800">Tabella Assegnazione</h3>
               {seq.length > 0 && (
                 <div className="flex bg-slate-100 p-1 rounded-lg">
-                  <button onClick={() => {setTableMode('combined'); updateActiveTest({tableMode: 'combined'});}} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableMode==='combined'?'bg-white text-blue-700 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>Nuclei Combinati</button>
-                  <button onClick={() => {setTableMode('separated'); updateActiveTest({tableMode: 'separated'});}} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableMode==='separated'?'bg-white text-blue-700 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>Separati per Nucleo</button>
+                  <button onClick={() => {setTableMode('backbone'); updateActiveTest({tableMode: 'backbone'});}} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableMode==='backbone'?'bg-white text-blue-700 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>Backbone</button>
+                  <button onClick={() => {setTableMode('all'); updateActiveTest({tableMode: 'all'});}} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableMode==='all'?'bg-white text-blue-700 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>Tutti gli Atomi</button>
                 </div>
               )}
             </div>
@@ -750,7 +784,7 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader }) =>
           
           {seq.length === 0 ? (
             <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">Inserisci una sequenza per generare la tabella.</div>
-          ) : tableMode === 'combined' ? (
+          ) : tableMode === 'backbone' ? (
             <div className="overflow-x-auto custom-scrollbar border border-slate-200 rounded-lg max-h-[500px]">
               <table className="w-full text-sm text-left">
                 <thead className="text-xs text-slate-500 uppercase bg-slate-100 sticky top-0 z-10 shadow-sm">
@@ -780,84 +814,51 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader }) =>
               </table>
             </div>
           ) : (
-            <div className="flex flex-col gap-8 max-h-[600px] overflow-y-auto custom-scrollbar pr-2">
-              {selNuc.includes('H') && (
-                <div>
-                  <h4 className="text-md font-bold text-blue-700 border-b-2 border-blue-100 inline-block pr-4 pb-1 mb-4">Assegnazione ¹H</h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                    {parsedSeq.map((res, resIdx) => (
-                      <div key={`1h-${resIdx}`} className="border border-slate-200 rounded-lg overflow-hidden shadow-sm h-fit">
-                        <div className="py-2 text-center font-bold text-sm" style={{ backgroundColor: `${res.color}15`, color: res.color, borderBottom: `1px solid ${res.color}30` }}>{res.name} ({res.id})</div>
-                        <table className="w-full text-sm text-left bg-white">
-                          <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200"><tr><th className="px-3 py-2 font-semibold">Atomo</th><th className="px-3 py-2 font-semibold text-center">Shift (ppm)</th></tr></thead>
-                          <tbody className="text-slate-700 divide-y divide-slate-100">
-                            {res.atoms.map(atom => (
-                              <tr key={atom} className="hover:bg-slate-50">
-                                <td className="px-3 py-1 font-medium">{atom}</td>
-                                <td className="px-3 py-1 text-center border-l border-slate-100 font-mono flex items-center justify-center gap-1">
-                                  <input type="text" value={shifts[`${resIdx}-${atom}`] || ''} onChange={e => handleShiftChange(resIdx, atom, e.target.value)} className="w-14 text-center border border-slate-300 rounded py-0.5 outline-none focus:border-blue-500 text-xs" placeholder="—" />
-                                  {showSim && res.shifts[atom] && <span className="text-[9px] font-bold text-blue-600">({res.shifts[atom].toFixed(2)})</span>}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    ))}
+            <div className="flex flex-col gap-6 max-h-[600px] overflow-y-auto custom-scrollbar pr-2">
+              <h4 className="text-md font-bold text-blue-700 border-b-2 border-blue-100 inline-block pr-4 pb-1">Assegnazione ¹H</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                {parsedSeq.map((res, resIdx) => (
+                  <div key={`1h-${resIdx}`} className="border border-slate-200 rounded-lg overflow-hidden shadow-sm h-fit">
+                    <div className="py-2 text-center font-bold text-sm" style={{ backgroundColor: `${res.color}15`, color: res.color, borderBottom: `1px solid ${res.color}30` }}>{res.name} ({res.id})</div>
+                    <table className="w-full text-sm text-left bg-white">
+                      <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200"><tr><th className="px-3 py-2 font-semibold">Atomo</th><th className="px-3 py-2 font-semibold text-center">Shift (ppm)</th></tr></thead>
+                      <tbody className="text-slate-700 divide-y divide-slate-100">
+                        {res.atoms.map(atom => (
+                          <tr key={atom} className="hover:bg-slate-50">
+                            <td className="px-3 py-1 font-medium">{atom}</td>
+                            <td className="px-3 py-1 text-center border-l border-slate-100 font-mono flex items-center justify-center gap-1">
+                              <input type="text" value={shifts[`${resIdx}-${atom}`] || ''} onChange={e => handleShiftChange(resIdx, atom, e.target.value)} className="w-14 text-center border border-slate-300 rounded py-0.5 outline-none focus:border-blue-500 text-xs" placeholder="—" />
+                              {showSim && res.shifts[atom] && <span className="text-[9px] font-bold text-blue-600">({res.shifts[atom].toFixed(2)})</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
-                </div>
-              )}
-              {selNuc.includes('N') && (
-                <div>
-                  <h4 className="text-md font-bold text-emerald-700 border-b-2 border-emerald-100 inline-block pr-4 pb-1 mb-4">Assegnazione ¹⁵N</h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                    {parsedSeq.map((res, resIdx) => (
-                      <div key={`15n-${resIdx}`} className="border border-slate-200 rounded-lg overflow-hidden shadow-sm h-fit">
-                        <div className="py-2 text-center font-bold text-sm" style={{ backgroundColor: `${res.color}15`, color: res.color, borderBottom: `1px solid ${res.color}30` }}>{res.name} ({res.id})</div>
-                        <table className="w-full text-sm text-left bg-white">
-                          <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200"><tr><th className="px-3 py-2 font-semibold">Atomo</th><th className="px-3 py-2 font-semibold text-center">Shift (ppm)</th></tr></thead>
-                          <tbody className="text-slate-700 divide-y divide-slate-100">
-                            {['N'].map(atom => (
-                              <tr key={atom} className="hover:bg-slate-50">
-                                <td className="px-3 py-1 font-medium">{atom}</td>
-                                <td className="px-3 py-1 text-center border-l border-slate-100 font-mono flex items-center justify-center gap-1">
-                                  <input type="text" value={shifts[`${resIdx}-${atom}`] || ''} onChange={e => handleShiftChange(resIdx, atom, e.target.value)} className="w-14 text-center border border-slate-300 rounded py-0.5 outline-none focus:border-emerald-500 text-xs" placeholder="—" />
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    ))}
+                ))}
+              </div>
+              <h4 className="text-md font-bold text-purple-700 border-b-2 border-purple-100 inline-block pr-4 pb-1 mt-4">Assegnazione ¹³C</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-4">
+                {parsedSeq.map((res, resIdx) => (
+                  <div key={`13c-${resIdx}`} className="border border-slate-200 rounded-lg overflow-hidden shadow-sm h-fit">
+                    <div className="py-2 text-center font-bold text-sm" style={{ backgroundColor: `${res.color}15`, color: res.color, borderBottom: `1px solid ${res.color}30` }}>{res.name} ({res.id})</div>
+                    <table className="w-full text-sm text-left bg-white">
+                      <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200"><tr><th className="px-3 py-2 font-semibold">Atomo</th><th className="px-3 py-2 font-semibold text-center">Shift (ppm)</th></tr></thead>
+                      <tbody className="text-slate-700 divide-y divide-slate-100">
+                        {Object.keys(res.uniqueCShifts || {}).map(cName => (
+                          <tr key={cName} className="hover:bg-slate-50">
+                            <td className="px-3 py-1 font-medium text-purple-800">{cName}</td>
+                            <td className="px-3 py-1 text-center border-l border-slate-100 font-mono flex items-center justify-center gap-1">
+                              <input type="text" value={shifts[`${resIdx}-${cName}`] || ''} onChange={e => handleShiftChange(resIdx, cName, e.target.value)} className="w-14 text-center border border-slate-300 rounded py-0.5 outline-none focus:border-purple-500 text-xs" placeholder="—" />
+                              {showSim && res.uniqueCShifts[cName] && <span className="text-[9px] font-bold text-purple-600">({res.uniqueCShifts[cName].toFixed(1)})</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
-                </div>
-              )}
-              {selNuc.includes('C') && (
-                <div>
-                  <h4 className="text-md font-bold text-purple-700 border-b-2 border-purple-100 inline-block pr-4 pb-1 mb-4">Assegnazione ¹³C</h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-4">
-                    {parsedSeq.map((res, resIdx) => (
-                      <div key={`13c-${resIdx}`} className="border border-slate-200 rounded-lg overflow-hidden shadow-sm h-fit">
-                        <div className="py-2 text-center font-bold text-sm" style={{ backgroundColor: `${res.color}15`, color: res.color, borderBottom: `1px solid ${res.color}30` }}>{res.name} ({res.id})</div>
-                        <table className="w-full text-sm text-left bg-white">
-                          <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200"><tr><th className="px-3 py-2 font-semibold">Atomo</th><th className="px-3 py-2 font-semibold text-center">Shift (ppm)</th></tr></thead>
-                          <tbody className="text-slate-700 divide-y divide-slate-100">
-                            {Object.keys(res.uniqueCShifts || {}).map(cName => (
-                              <tr key={cName} className="hover:bg-slate-50">
-                                <td className="px-3 py-1 font-medium text-purple-800">{cName}</td>
-                                <td className="px-3 py-1 text-center border-l border-slate-100 font-mono flex items-center justify-center gap-1">
-                                  <input type="text" value={shifts[`${resIdx}-${cName}`] || ''} onChange={e => handleShiftChange(resIdx, cName, e.target.value)} className="w-14 text-center border border-slate-300 rounded py-0.5 outline-none focus:border-purple-500 text-xs" placeholder="—" />
-                                  {showSim && res.uniqueCShifts[cName] && <span className="text-[9px] font-bold text-purple-600">({res.uniqueCShifts[cName].toFixed(1)})</span>}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -878,6 +879,7 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader }) =>
               images.map((imgSrc, idx) => (
                 <div key={idx} className="relative group bg-slate-50 p-2 rounded-lg border border-slate-200">
                   <a href={imgSrc} target="_blank" rel="noopener noreferrer">
+                    {/* FIX: Rimosso getDirectImageUrl che causava il crash (pagina bianca) */}
                     <img src={imgSrc} alt={`Spectrum ${idx+1}`} className="w-full h-auto object-contain rounded shadow-sm bg-white" 
                       onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="70"><rect width="100" height="70" fill="%23f8fafc"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-size="10" fill="%2394a3b8">Image Error / Click to Open</text></svg>'; }}
                     />
@@ -889,7 +891,7 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader }) =>
           </div>
         </div>
 
-        {/* 6. VISUALIZZAZIONE SIMULAZIONI SPETTRI (Zoomable) */}
+        {/* 6. VISUALIZZAZIONE SIMULAZIONI SPETTRI (Zoomable e Robusto) */}
         {showSim && parsedSeq.length > 0 && (
           <div className="flex flex-col gap-6 bg-slate-50 p-6 rounded-xl border border-slate-200 shadow-inner">
             <h3 className="text-lg font-black text-slate-800 border-b border-slate-200 pb-2">Spettri Simulati (Trascina per zoomare)</h3>
