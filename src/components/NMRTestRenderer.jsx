@@ -1,6 +1,10 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea } from 'recharts';
 
+// --- CLASSI DI UTILITA' PER IL FULLSCREEN REALE ---
+const FS_CLASSES = "fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col";
+const OVERLAY_CLASSES = "fixed top-0 left-0 w-screen h-screen bg-slate-900/50 backdrop-blur-sm z-[999990]";
+
 // --- 1. DATI E COSTANTI NMR INTEGRATI ---
 const AMINO_ACID_DB = {
     'A': { name: 'Alanine', code3: 'Ala', atoms: ['HN', 'Hα', 'Hβ'], ranges: { 'HN': {min: 7.8, max: 8.6}, 'Hα': {min: 4.0, max: 4.5}, 'Hβ': {min: 1.2, max: 1.5} }, cosy: [['HN','Hα'], ['Hα','Hβ']], spinSystems: [['HN', 'Hα', 'Hβ']] },
@@ -94,32 +98,32 @@ const getPentagon = (cx, cy, r, dir) => {
 };
 
 // --- 2. REUSABLE COLLAPSIBLE SECTION ---
-const CollapsibleSection = ({ title, icon, defaultOpen = true, children, headerExtra }) => {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
-  return (
-    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left"
-      >
-        <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-          {icon && <span className="text-xl">{icon}</span>}
-          {title}
-        </h3>
-        <div className="flex items-center gap-3">
-          {headerExtra && <div onClick={(e) => e.stopPropagation()}>{headerExtra}</div>}
-          <svg className={`w-5 h-5 text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
+export const CollapsibleSection = ({ title, icon, defaultOpen = true, children, headerExtra, className="" }) => {
+    const [isOpen, setIsOpen] = useState(defaultOpen);
+    return (
+        <div className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-6 ${className}`}>
+            <button
+                onClick={() => setIsOpen(!isOpen)}
+                className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left ${isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'}`}
+            >
+                <div className="flex items-center gap-2 overflow-hidden">
+                    {icon && <span className="text-xl shrink-0">{icon}</span>}
+                    <h3 className="text-lg font-bold text-slate-800 truncate">{title}</h3>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                    {headerExtra && <div onClick={(e) => e.stopPropagation()}>{headerExtra}</div>}
+                    <svg className={`w-5 h-5 text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                </div>
+            </button>
+            {isOpen && (
+                <div className="p-6">
+                    {children}
+                </div>
+            )}
         </div>
-      </button>
-      {isOpen && (
-        <div className="p-6 border-t border-slate-100">
-          {children}
-        </div>
-      )}
-    </div>
-  );
+    );
 };
 
 // --- 3. RICH TEXT EDITOR ---
@@ -195,7 +199,7 @@ const NMRTooltip = ({ active, payload, diagonalColor }) => {
   return null;
 };
 
-// --- 5. ROBUST ZOOMABLE PLOTS ---
+// --- 5. ROBUST ZOOMABLE PLOTS CON FULLSCREEN REALE ---
 const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel }) => {
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState(fullDomain);
@@ -203,24 +207,27 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
   const isZoomed = xDomain[0] !== fullDomain[0] || xDomain[1] !== fullDomain[1];
   const zoom = () => { if (refAreaLeft === refAreaRight || refAreaLeft === null) { setRefAreaLeft(null); setRefAreaRight(null); return; } setXDomain([Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)]); setRefAreaLeft(null); setRefAreaRight(null); };
   return (
-    <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? 'fixed inset-4 md:inset-10 z-[100] bg-white p-6 md:p-8 rounded-2xl shadow-2xl' : 'h-[400px]'}`}>
-      <div className="flex justify-between items-center mb-4 border-b pb-2">
-        <div className="flex items-center gap-4"><h4 className="font-bold text-slate-700">{title}</h4>{isZoomed && <button onClick={() => setXDomain(fullDomain)} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>}</div>
-        <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '✖' : '⛶'}</button>
+    <>
+      {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)}></div>}
+      <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'h-[400px]'}`}>
+        <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
+          <div className="flex items-center gap-4"><h4 className="font-bold text-slate-700">{title}</h4>{isZoomed && <button onClick={() => setXDomain(fullDomain)} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>}</div>
+          <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
+        </div>
+        <div className="flex-1 min-h-0 select-none relative">
+          <ResponsiveContainer width="100%" height="100%">
+            <ScatterChart margin={{ top: 10, right: 10, bottom: 40, left: 10 }} onMouseDown={(e) => { if (e?.activePayload?.[0]?.payload?.x !== undefined) setRefAreaLeft(e.activePayload[0].payload.x); }} onMouseMove={(e) => { if (refAreaLeft !== null && e?.activePayload?.[0]?.payload?.x !== undefined) setRefAreaRight(e.activePayload[0].payload.x); }} onMouseUp={zoom}>
+              <CartesianGrid strokeDasharray="3 3" vertical={true} horizontal={false} stroke="#f1f5f9" />
+              <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : ticks} interval={0} tickLine={false} tick={<TickComponent isZoomed={isZoomed} />} label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b' }} axisLine={{ stroke: '#cbd5e1' }} />
+              <YAxis type="number" dataKey="y" domain={[0, 4.5]} hide={true} />
+              <Tooltip cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} content={<NMRTooltip />} />
+              <Scatter data={data} shape={(props) => { const { cx, cy, yAxis, payload } = props; const y0 = yAxis.scale(0); return <line x1={cx} y1={y0} x2={cx} y2={cy} stroke={payload.color} strokeWidth={1.5} />; }} isAnimationActive={false} />
+              {refAreaLeft !== null && refAreaRight !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} strokeOpacity={0.3} fill="#cbd5e1" />}
+            </ScatterChart>
+          </ResponsiveContainer>
+        </div>
       </div>
-      <div className="flex-1 min-h-0 select-none">
-        <ResponsiveContainer width="100%" height="100%">
-          <ScatterChart margin={{ top: 10, right: 10, bottom: 40, left: 10 }} onMouseDown={(e) => { if (e?.activePayload?.[0]?.payload?.x !== undefined) setRefAreaLeft(e.activePayload[0].payload.x); }} onMouseMove={(e) => { if (refAreaLeft !== null && e?.activePayload?.[0]?.payload?.x !== undefined) setRefAreaRight(e.activePayload[0].payload.x); }} onMouseUp={zoom}>
-            <CartesianGrid strokeDasharray="3 3" vertical={true} horizontal={false} stroke="#f1f5f9" />
-            <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : ticks} interval={0} tickLine={false} tick={<TickComponent isZoomed={isZoomed} />} label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b' }} axisLine={{ stroke: '#cbd5e1' }} />
-            <YAxis type="number" dataKey="y" domain={[0, 4.5]} hide={true} />
-            <Tooltip cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} content={<NMRTooltip />} />
-            <Scatter data={data} shape={(props) => { const { cx, cy, yAxis, payload } = props; const y0 = yAxis.scale(0); return <line x1={cx} y1={y0} x2={cx} y2={cy} stroke={payload.color} strokeWidth={1.5} />; }} isAnimationActive={false} />
-            {refAreaLeft !== null && refAreaRight !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} strokeOpacity={0.3} fill="#cbd5e1" />}
-          </ScatterChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
+    </>
   );
 };
 
@@ -232,26 +239,29 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
   const isZoomed = xDomain[0] !== 0 || xDomain[1] !== 11 || yDomain[0] !== 0 || yDomain[1] !== 11;
   const zoom = () => { if (refAreaLeft === refAreaRight || refAreaLeft === null || refAreaTop === refAreaBottom || refAreaTop === null) { setRefAreaLeft(null); setRefAreaRight(null); setRefAreaTop(null); setRefAreaBottom(null); return; } setXDomain([Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)]); setYDomain([Math.min(refAreaTop, refAreaBottom), Math.max(refAreaTop, refAreaBottom)]); setRefAreaLeft(null); setRefAreaRight(null); setRefAreaTop(null); setRefAreaBottom(null); };
   return (
-    <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? 'fixed inset-4 md:inset-10 z-[100] bg-white p-6 md:p-8 rounded-2xl shadow-2xl' : 'h-[400px]'}`}>
-      <div className="flex justify-between items-center mb-4 border-b pb-2">
-        <div className="flex items-center gap-4"><h4 className="font-bold text-slate-700">{title}</h4>{isZoomed && <button onClick={() => { setXDomain([0, 11]); setYDomain([0, 11]); }} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>}</div>
-        <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '✖' : '⛶'}</button>
+    <>
+      {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)}></div>}
+      <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'h-[400px]'}`}>
+        <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
+          <div className="flex items-center gap-4"><h4 className="font-bold text-slate-700">{title}</h4>{isZoomed && <button onClick={() => { setXDomain([0, 11]); setYDomain([0, 11]); }} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>}</div>
+          <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
+        </div>
+        <div className="flex-1 min-h-0 select-none relative">
+          <ResponsiveContainer width="100%" height="100%">
+            <ScatterChart margin={{ top: 10, right: 10, bottom: 40, left: 40 }} onMouseDown={(e) => { if (e?.activePayload?.[0]?.payload) { setRefAreaLeft(e.activePayload[0].payload.x); setRefAreaTop(e.activePayload[0].payload.y); } }} onMouseMove={(e) => { if (refAreaLeft !== null && e?.activePayload?.[0]?.payload) { setRefAreaRight(e.activePayload[0].payload.x); setRefAreaBottom(e.activePayload[0].payload.y); } }} onMouseUp={zoom}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+              <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b' }} />
+              <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomYTick1H isZoomed={isZoomed} />} label={{ value: '¹H F1 (ppm)', angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b' }} />
+              <Tooltip content={<NMRTooltip diagonalColor={diagonalColor} />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
+              <Scatter name="Diagonale" data={[{x:0, y:0}, {x:11, y:11}]} line={{ stroke: '#cbd5e1', strokeWidth: 1 }} shape={() => null} legendType="none" isAnimationActive={false} />
+              <Scatter data={diagonalData} fill={diagonalColor} shape={<NMRPointShape />} isAnimationActive={false} />
+              <Scatter data={crossPeakData} shape={<NMRPointShape />} isAnimationActive={false} />
+              {refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} y1={refAreaTop} y2={refAreaBottom} strokeOpacity={0.3} fill="#cbd5e1" />}
+            </ScatterChart>
+          </ResponsiveContainer>
+        </div>
       </div>
-      <div className="flex-1 min-h-0 select-none">
-        <ResponsiveContainer width="100%" height="100%">
-          <ScatterChart margin={{ top: 10, right: 10, bottom: 40, left: 40 }} onMouseDown={(e) => { if (e?.activePayload?.[0]?.payload) { setRefAreaLeft(e.activePayload[0].payload.x); setRefAreaTop(e.activePayload[0].payload.y); } }} onMouseMove={(e) => { if (refAreaLeft !== null && e?.activePayload?.[0]?.payload) { setRefAreaRight(e.activePayload[0].payload.x); setRefAreaBottom(e.activePayload[0].payload.y); } }} onMouseUp={zoom}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-            <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b' }} />
-            <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomYTick1H isZoomed={isZoomed} />} label={{ value: '¹H F1 (ppm)', angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b' }} />
-            <Tooltip content={<NMRTooltip diagonalColor={diagonalColor} />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
-            <Scatter name="Diagonale" data={[{x:0, y:0}, {x:11, y:11}]} line={{ stroke: '#cbd5e1', strokeWidth: 1 }} shape={() => null} legendType="none" isAnimationActive={false} />
-            <Scatter data={diagonalData} fill={diagonalColor} shape={<NMRPointShape />} isAnimationActive={false} />
-            <Scatter data={crossPeakData} shape={<NMRPointShape />} isAnimationActive={false} />
-            {refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} y1={refAreaTop} y2={refAreaBottom} strokeOpacity={0.3} fill="#cbd5e1" />}
-          </ScatterChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
+    </>
   );
 };
 
@@ -263,28 +273,31 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
   const isZoomed = xDomain[0] !== 0 || xDomain[1] !== 11 || yDomain[0] !== 10 || yDomain[1] !== 150;
   const zoom = () => { if (refAreaLeft === refAreaRight || refAreaLeft === null || refAreaTop === refAreaBottom || refAreaTop === null) { setRefAreaLeft(null); setRefAreaRight(null); setRefAreaTop(null); setRefAreaBottom(null); return; } setXDomain([Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)]); setYDomain([Math.min(refAreaTop, refAreaBottom), Math.max(refAreaTop, refAreaBottom)]); setRefAreaLeft(null); setRefAreaRight(null); setRefAreaTop(null); setRefAreaBottom(null); };
   return (
-    <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col lg:col-span-2 ${isExpanded ? 'fixed inset-4 md:inset-10 z-[100] bg-white p-6 md:p-8 rounded-2xl shadow-2xl' : 'h-[400px]'}`}>
-      <div className="flex justify-between items-center mb-4 border-b pb-2">
-        <div className="flex items-center gap-4"><h4 className="font-bold text-slate-700">{title}</h4>{isZoomed && <button onClick={() => { setXDomain([0, 11]); setYDomain([10, 150]); }} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>}</div>
-        <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '✖' : '⛶'}</button>
+    <>
+      {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)}></div>}
+      <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'h-[400px] lg:col-span-2'}`}>
+        <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
+          <div className="flex items-center gap-4"><h4 className="font-bold text-slate-700">{title}</h4>{isZoomed && <button onClick={() => { setXDomain([0, 11]); setYDomain([10, 150]); }} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>}</div>
+          <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
+        </div>
+        <div className="flex-1 min-h-0 select-none relative">
+          <ResponsiveContainer width="100%" height="100%">
+            <ScatterChart margin={{ top: 10, right: 10, bottom: 40, left: 40 }} onMouseDown={(e) => { if (e?.activePayload?.[0]?.payload) { setRefAreaLeft(e.activePayload[0].payload.x); setRefAreaTop(e.activePayload[0].payload.y); } }} onMouseMove={(e) => { if (refAreaLeft !== null && e?.activePayload?.[0]?.payload) { setRefAreaRight(e.activePayload[0].payload.x); setRefAreaBottom(e.activePayload[0].payload.y); } }} onMouseUp={zoom}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+              <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b' }} />
+              <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_13C} interval={0} tickLine={false} tick={<CustomYTick13C isZoomed={isZoomed} />} label={{ value: '¹³C F1 (ppm)', angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b' }} />
+              <Tooltip content={<NMRTooltip diagonalColor="#8b5cf6" />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
+              <Scatter data={crossPeakData} shape={<NMRPointShape />} isAnimationActive={false} />
+              {refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} y1={refAreaTop} y2={refAreaBottom} strokeOpacity={0.3} fill="#cbd5e1" />}
+            </ScatterChart>
+          </ResponsiveContainer>
+        </div>
       </div>
-      <div className="flex-1 min-h-0 select-none">
-        <ResponsiveContainer width="100%" height="100%">
-          <ScatterChart margin={{ top: 10, right: 10, bottom: 40, left: 40 }} onMouseDown={(e) => { if (e?.activePayload?.[0]?.payload) { setRefAreaLeft(e.activePayload[0].payload.x); setRefAreaTop(e.activePayload[0].payload.y); } }} onMouseMove={(e) => { if (refAreaLeft !== null && e?.activePayload?.[0]?.payload) { setRefAreaRight(e.activePayload[0].payload.x); setRefAreaBottom(e.activePayload[0].payload.y); } }} onMouseUp={zoom}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-            <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b' }} />
-            <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_13C} interval={0} tickLine={false} tick={<CustomYTick13C isZoomed={isZoomed} />} label={{ value: '¹³C F1 (ppm)', angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b' }} />
-            <Tooltip content={<NMRTooltip diagonalColor="#8b5cf6" />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
-            <Scatter data={crossPeakData} shape={<NMRPointShape />} isAnimationActive={false} />
-            {refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} y1={refAreaTop} y2={refAreaBottom} strokeOpacity={0.3} fill="#cbd5e1" />}
-          </ScatterChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
+    </>
   );
 };
 
-// --- 6. 2D CHEMICAL STRUCTURE GENERATOR ---
+// --- 6. 2D CHEMICAL STRUCTURE GENERATOR CON FULLSCREEN ---
 const ChemicalStructure2D = ({ sequence, isExpanded, onToggleExpand }) => {
   if (!sequence || sequence.length === 0) return null;
   const elements = []; let minX = 0, maxX = 0, minY = 0, maxY = 0; let firstElement = true;
@@ -378,11 +391,11 @@ const ChemicalStructure2D = ({ sequence, isExpanded, onToggleExpand }) => {
 
   return (
       <>
-      {isExpanded && <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[90]" onClick={onToggleExpand}></div>}
-      <div className={isExpanded ? "fixed inset-4 md:inset-10 z-[100] bg-white p-4 md:p-6 rounded-2xl shadow-2xl flex flex-col items-center justify-center" : "flex flex-col bg-white p-4 rounded-xl shadow-sm w-full h-full items-center justify-center relative border border-slate-200"}>
-          <button onClick={onToggleExpand} className="absolute top-3 right-3 z-[110] flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 w-8 h-8 justify-center rounded-lg text-lg font-bold transition-all shadow-sm">{isExpanded ? "✖" : "⛶"}</button>
-          <div className="w-full flex-grow flex items-center justify-center overflow-hidden">
-              <svg viewBox={viewBox} className={`w-full h-auto font-sans ${isExpanded ? 'max-h-[80vh]' : 'max-h-[300px]'}`}>
+      {isExpanded && <div className={OVERLAY_CLASSES} onClick={onToggleExpand}></div>}
+      <div className={isExpanded ? FS_CLASSES + " p-4 md:p-6 items-center justify-center" : "flex flex-col bg-white p-4 rounded-xl shadow-sm w-full h-full items-center justify-center relative border border-slate-200"}>
+          <button onClick={onToggleExpand} className="absolute top-3 right-3 z-[110] flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 w-8 h-8 justify-center rounded-lg text-lg font-bold transition-all shadow-sm">{isExpanded ? "↙️" : "↗️"}</button>
+          <div className="w-full flex-grow flex items-center justify-center overflow-hidden min-h-0">
+              <svg viewBox={viewBox} className={`w-full h-auto font-sans ${isExpanded ? 'max-h-full' : 'max-h-[300px]'}`}>
                   {elements.filter(e => e.type === 'line').map((el, idx) => <line key={`l${idx}`} x1={el.x1} y1={el.y1} x2={el.x2} y2={el.y2} stroke={el.color} strokeWidth="1.8" />)}
                   {elements.filter(e => e.type === 'path').map((el, idx) => <path key={`pa${idx}`} d={el.d} fill="none" stroke={el.color} strokeWidth="1.8" />)}
                   {elements.filter(e => e.type === 'polygon').map((el, idx) => <polygon key={`po${idx}`} points={el.points} fill="white" stroke={el.color} strokeWidth="1.8" />)}
@@ -517,9 +530,9 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader }) =>
   const yTicksForRanges = useMemo(() => Array.from({length: uniqueAminoAcidTypes.length}, (_, i) => i), [uniqueAminoAcidTypes]);
 
   return (
-    <div className="flex flex-col h-full overflow-hidden bg-slate-50">
+    <div className="flex flex-col h-full overflow-hidden bg-slate-50 relative">
       {TestHeader}
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-6 flex flex-col gap-6">
+      <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
         
         {/* 1. EXPERIMENTAL CONDITIONS */}
         <CollapsibleSection title="Experimental Conditions" icon="🧪" defaultOpen={true}>
