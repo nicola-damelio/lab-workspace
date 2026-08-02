@@ -685,7 +685,7 @@ export default function App() {
                     <div className="w-full max-w-6xl bg-white p-8 rounded-xl shadow-2xl border border-slate-200">
                         <div className="flex justify-between items-center mb-8 border-b border-slate-100 pb-4">
                             <div>
-                                <h1 className="text-3xl font-black text-slate-800 tracking-tight">Enterprise Lab Workspace</h1>
+                                <h1 className="text-3xl font-black text-slate-800 tracking-tight">Lab Workspace</h1>
                                 <p className="text-slate-500 text-sm mt-1">Manage Datasets, Tests, and Protocols</p>
                             </div>
                             <div className="flex gap-3">
