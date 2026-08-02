@@ -101,7 +101,7 @@ const getPentagon = (cx, cy, r, dir) => {
 export const CollapsibleSection = ({ title, icon, defaultOpen = true, children, headerExtra, className="" }) => {
     const [isOpen, setIsOpen] = useState(defaultOpen);
     return (
-        <div className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-6 ${className}`}>
+        <div className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-6 break-inside-avoid ${className}`}>
             <button
                 onClick={() => setIsOpen(!isOpen)}
                 className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left ${isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'}`}
@@ -156,38 +156,43 @@ const RichTextEditor = ({ value, onChange }) => {
   );
 };
 
-// --- 4. CUSTOM TICKS & SHAPES RECHARTS ---
+// --- 4. CUSTOM TICKS & SHAPES RECHARTS (CON SAFETY CHECKS) ---
 const CustomXTick1H = ({ x, y, payload, isZoomed }) => {
   const numVal = Number(payload.value); const isInt = Number.isInteger(numVal); const isHalf = numVal % 0.5 === 0;
   const tickLength = isZoomed ? 5 : (isInt ? 8 : (isHalf ? 5 : 3));
-  return (<g transform={`translate(${x},${y})`}><line x1={0} y1={0} x2={0} y2={tickLength} stroke="#94a3b8" strokeWidth={1} />{(isZoomed || isInt) && <text x={0} y={tickLength + 12} textAnchor="middle" fill="#64748b" fontSize={isZoomed ? 10 : 12} fontWeight={isInt && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(2) : numVal}</text>}</g>);
+  return (<g transform={`translate(${x||0},${y||0})`}><line x1={0} y1={0} x2={0} y2={tickLength} stroke="#94a3b8" strokeWidth={1} />{(isZoomed || isInt) && <text x={0} y={tickLength + 12} textAnchor="middle" fill="#64748b" fontSize={isZoomed ? 10 : 12} fontWeight={isInt && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(2) : numVal}</text>}</g>);
 };
 const CustomYTick1H = ({ x, y, payload, isZoomed }) => {
   const numVal = Number(payload.value); const isInt = Number.isInteger(numVal); const isHalf = numVal % 0.5 === 0;
   const tickLength = isZoomed ? 5 : (isInt ? 8 : (isHalf ? 5 : 3));
-  return (<g transform={`translate(${x},${y})`}><line x1={0} y1={0} x2={-tickLength} y2={0} stroke="#94a3b8" strokeWidth={1} />{(isZoomed || isInt) && <text x={-(tickLength + 4)} y={0} dy={4} textAnchor="end" fill="#64748b" fontSize={isZoomed ? 10 : 12} fontWeight={isInt && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(2) : numVal}</text>}</g>);
+  return (<g transform={`translate(${x||0},${y||0})`}><line x1={0} y1={0} x2={-tickLength} y2={0} stroke="#94a3b8" strokeWidth={1} />{(isZoomed || isInt) && <text x={-(tickLength + 4)} y={0} dy={4} textAnchor="end" fill="#64748b" fontSize={isZoomed ? 10 : 12} fontWeight={isInt && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(2) : numVal}</text>}</g>);
 };
 const CustomXTick13C = ({ x, y, payload, isZoomed }) => {
   const numVal = Number(payload.value); const isTen = numVal % 10 === 0; const isFive = numVal % 5 === 0;
   const tickLength = isZoomed ? 5 : (isTen ? 8 : (isFive ? 6 : 4));
-  return (<g transform={`translate(${x},${y})`}><line x1={0} y1={0} x2={0} y2={tickLength} stroke="#94a3b8" strokeWidth={1} />{(isZoomed || isTen) && <text x={0} y={tickLength + 12} textAnchor="middle" fill="#64748b" fontSize={isZoomed ? 10 : 12} fontWeight={isTen && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(1) : numVal}</text>}</g>);
+  return (<g transform={`translate(${x||0},${y||0})`}><line x1={0} y1={0} x2={0} y2={tickLength} stroke="#94a3b8" strokeWidth={1} />{(isZoomed || isTen) && <text x={0} y={tickLength + 12} textAnchor="middle" fill="#64748b" fontSize={isZoomed ? 10 : 12} fontWeight={isTen && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(1) : numVal}</text>}</g>);
 };
 const CustomYTick13C = ({ x, y, payload, isZoomed }) => {
   const numVal = Number(payload.value); const isTen = numVal % 10 === 0; const isFive = numVal % 5 === 0;
   const tickLength = isZoomed ? 5 : (isTen ? 10 : (isFive ? 6 : 4));
-  return (<g transform={`translate(${x},${y})`}><line x1={0} y1={0} x2={-tickLength} y2={0} stroke="#94a3b8" strokeWidth={1} />{(isZoomed || isTen) && <text x={-(tickLength + 5)} y={0} dy={4} textAnchor="end" fill="#64748b" fontSize={isZoomed ? 10 : 12} fontWeight={isTen && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(1) : numVal}</text>}</g>);
+  return (<g transform={`translate(${x||0},${y||0})`}><line x1={0} y1={0} x2={-tickLength} y2={0} stroke="#94a3b8" strokeWidth={1} />{(isZoomed || isTen) && <text x={-(tickLength + 5)} y={0} dy={4} textAnchor="end" fill="#64748b" fontSize={isZoomed ? 10 : 12} fontWeight={isTen && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(1) : numVal}</text>}</g>);
 };
 
 const CustomRangeShape = (props) => { 
   const { cx, cy, payload, xAxis } = props; 
+  if (!xAxis || typeof xAxis.scale !== 'function' || payload.min === undefined || payload.max === undefined) return null;
   const xMin = xAxis.scale(payload.max); const xMax = xAxis.scale(payload.min); 
+  if (isNaN(xMin) || isNaN(xMax) || isNaN(cy)) return null;
   const width = Math.max(Math.abs(xMax - xMin), 4); const height = 14; const level = payload.level || 0;
   let textY = cy;
   if (level % 4 === 0) textY = cy + 18; else if (level % 4 === 1) textY = cy - 10; else if (level % 4 === 2) textY = cy + 32; else textY = cy - 24;
   return (<g><rect x={xMin} y={cy - height / 2} width={width} height={height} fill={payload.color} rx={4} opacity={0.5} stroke={payload.color} strokeWidth={1} /><text x={xMin + width / 2} y={textY} textAnchor="middle" fill="#334155" fontSize="13px" fontWeight="bold" pointerEvents="none"> {payload.atom} </text></g>); 
 };
 
-const NMRPointShape = ({ cx, cy, fill, payload }) => <circle cx={cx} cy={cy} r={payload.size || 5} fill={payload.type === 'Diagonale' ? fill : getNMRFillColor(payload)} opacity={0.8} />;
+const NMRPointShape = ({ cx, cy, fill, payload }) => {
+    if (isNaN(cx) || isNaN(cy)) return null;
+    return <circle cx={cx} cy={cy} r={payload.size || 5} fill={payload.type === 'Diagonale' ? fill : getNMRFillColor(payload)} opacity={0.8} />;
+};
 
 const NMRTooltip = ({ active, payload, diagonalColor }) => {
   if (active && payload && payload.length) {
@@ -209,7 +214,7 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
   return (
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)}></div>}
-      <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'h-[400px]'}`}>
+      <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'h-[400px] break-inside-avoid'}`}>
         <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
           <div className="flex items-center gap-4"><h4 className="font-bold text-slate-700">{title}</h4>{isZoomed && <button onClick={() => setXDomain(fullDomain)} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>}</div>
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
@@ -221,7 +226,13 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
               <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : ticks} interval={0} tickLine={false} tick={<TickComponent isZoomed={isZoomed} />} label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b' }} axisLine={{ stroke: '#cbd5e1' }} />
               <YAxis type="number" dataKey="y" domain={[0, 4.5]} hide={true} />
               <Tooltip cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} content={<NMRTooltip />} />
-              <Scatter data={data} shape={(props) => { const { cx, cy, yAxis, payload } = props; const y0 = yAxis.scale(0); return <line x1={cx} y1={y0} x2={cx} y2={cy} stroke={payload.color} strokeWidth={1.5} />; }} isAnimationActive={false} />
+              <Scatter data={data} shape={(props) => { 
+                  const { cx, cy, yAxis, payload } = props; 
+                  if (!yAxis || typeof yAxis.scale !== 'function' || isNaN(cx) || isNaN(cy)) return null;
+                  const y0 = yAxis.scale(0); 
+                  if (isNaN(y0)) return null;
+                  return <line x1={cx} y1={y0} x2={cx} y2={cy} stroke={payload.color} strokeWidth={1.5} />; 
+              }} isAnimationActive={false} />
               {refAreaLeft !== null && refAreaRight !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} strokeOpacity={0.3} fill="#cbd5e1" />}
             </ScatterChart>
           </ResponsiveContainer>
@@ -241,7 +252,7 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
   return (
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)}></div>}
-      <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'h-[400px]'}`}>
+      <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'h-[400px] break-inside-avoid'}`}>
         <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
           <div className="flex items-center gap-4"><h4 className="font-bold text-slate-700">{title}</h4>{isZoomed && <button onClick={() => { setXDomain([0, 11]); setYDomain([0, 11]); }} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>}</div>
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
@@ -253,7 +264,7 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
               <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b' }} />
               <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomYTick1H isZoomed={isZoomed} />} label={{ value: '¹H F1 (ppm)', angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b' }} />
               <Tooltip content={<NMRTooltip diagonalColor={diagonalColor} />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
-              <Scatter name="Diagonale" data={[{x:0, y:0}, {x:11, y:11}]} line={{ stroke: '#cbd5e1', strokeWidth: 1 }} shape={() => null} legendType="none" isAnimationActive={false} />
+              <Scatter name="Diagonale" data={[{x:0, y:0}, {x:11, y:11}]} line={{ stroke: '#cbd5e1', strokeWidth: 1 }} shape={<circle r={0} />} legendType="none" isAnimationActive={false} />
               <Scatter data={diagonalData} fill={diagonalColor} shape={<NMRPointShape />} isAnimationActive={false} />
               <Scatter data={crossPeakData} shape={<NMRPointShape />} isAnimationActive={false} />
               {refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} y1={refAreaTop} y2={refAreaBottom} strokeOpacity={0.3} fill="#cbd5e1" />}
@@ -275,7 +286,7 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
   return (
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)}></div>}
-      <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'h-[400px] lg:col-span-2'}`}>
+      <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'h-[400px] lg:col-span-2 break-inside-avoid'}`}>
         <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
           <div className="flex items-center gap-4"><h4 className="font-bold text-slate-700">{title}</h4>{isZoomed && <button onClick={() => { setXDomain([0, 11]); setYDomain([10, 150]); }} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>}</div>
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
@@ -392,7 +403,7 @@ const ChemicalStructure2D = ({ sequence, isExpanded, onToggleExpand }) => {
   return (
       <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={onToggleExpand}></div>}
-      <div className={isExpanded ? FS_CLASSES + " p-4 md:p-6 items-center justify-center" : "flex flex-col bg-white p-4 rounded-xl shadow-sm w-full h-full items-center justify-center relative border border-slate-200"}>
+      <div className={isExpanded ? FS_CLASSES + " p-4 md:p-6 items-center justify-center" : "flex flex-col bg-white p-4 rounded-xl shadow-sm w-full h-full items-center justify-center relative border border-slate-200 break-inside-avoid"}>
           <button onClick={onToggleExpand} className="absolute top-3 right-3 z-[110] flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 w-8 h-8 justify-center rounded-lg text-lg font-bold transition-all shadow-sm">{isExpanded ? "↙️" : "↗️"}</button>
           <div className="w-full flex-grow flex items-center justify-center overflow-hidden min-h-0">
               <svg viewBox={viewBox} className={`w-full h-auto font-sans ${isExpanded ? 'max-h-full' : 'max-h-[300px]'}`}>
@@ -534,16 +545,16 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader }) =>
       {TestHeader}
       <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
         
-        {/* 1. EXPERIMENTAL CONDITIONS */}
+        {/* 1. EXPERIMENTAL CONDITIONS E COMPOUND */}
         <CollapsibleSection title="Experimental Conditions" icon="🧪" defaultOpen={true}>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Compound</label><input type="text" value={activeTest.compound || ''} onChange={e => updateActiveTest({ compound: e.target.value })} className="w-full border border-blue-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500 bg-blue-50/30 font-bold text-blue-800" placeholder="e.g. Cmpd A" /></div>
             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Molecule Name</label><input type="text" value={activeTest.moleculeName || ''} onChange={e => updateActiveTest({ moleculeName: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500" placeholder="e.g. Ubiquitin" /></div>
             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Experiment Date</label><input type="date" value={activeTest.experimentDate || ''} onChange={e => updateActiveTest({ experimentDate: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500" /></div>
             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Concentration</label><input type="text" value={activeTest.concentration || ''} onChange={e => updateActiveTest({ concentration: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500" placeholder="e.g. 1 mM" /></div>
             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Solvent</label><input type="text" value={activeTest.solvent || ''} onChange={e => updateActiveTest({ solvent: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500" placeholder="e.g. 90% H2O / 10% D2O" /></div>
             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Salt Concentration</label><input type="text" value={activeTest.saltConcentration || ''} onChange={e => updateActiveTest({ saltConcentration: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500" placeholder="e.g. 50 mM NaCl" /></div>
             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Temperature</label><input type="text" value={activeTest.temperature || ''} onChange={e => updateActiveTest({ temperature: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500" placeholder="e.g. 298 K" /></div>
-            <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Other Molecule</label><input type="text" value={activeTest.otherMolecule || ''} onChange={e => updateActiveTest({ otherMolecule: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500" placeholder="e.g. Ligand X" /></div>
             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Ratio</label><input type="text" value={activeTest.ratio || ''} onChange={e => updateActiveTest({ ratio: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500" placeholder="e.g. 1:5" /></div>
           </div>
           <div><label className="block text-xs font-bold text-slate-500 uppercase mb-2">Experiment Comments</label><RichTextEditor value={activeTest.comments || ''} onChange={(html) => updateActiveTest({ comments: html })} /></div>
@@ -760,7 +771,7 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader }) =>
         )}
 
         {/* 8. LAB NOTEBOOK EXPORT */}
-        <CollapsibleSection title="Lab Notebook Export" icon="📓" defaultOpen={false}>
+        <CollapsibleSection title="Lab Notebook Export" icon="📓" defaultOpen={false} className="no-print">
           <div className="flex flex-col gap-4">
             <p className="text-sm text-slate-600">Seleziona i dati NMR da formattare e inviare alle note generali (visualizzate nel Lab Notebook).</p>
             <div className="flex flex-wrap gap-4 border border-slate-200 p-4 rounded-lg bg-white shadow-sm">
@@ -784,7 +795,7 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader }) =>
                 const cbTable = document.getElementById('nb-table')?.checked;
 
                 if (cbCond) {
-                  html += `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;"><b>Molecola:</b> ${activeTest.moleculeName || 'N/A'} | <b>Solvente:</b> ${activeTest.solvent || 'N/A'} | <b>Temp:</b> ${activeTest.temperature || 'N/A'} | <b>Conc:</b> ${activeTest.concentration || 'N/A'}</p>`;
+                  html += `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;"><b>Compound:</b> ${activeTest.compound || 'N/A'} | <b>Molecola:</b> ${activeTest.moleculeName || 'N/A'} | <b>Solvente:</b> ${activeTest.solvent || 'N/A'} | <b>Temp:</b> ${activeTest.temperature || 'N/A'} | <b>Conc:</b> ${activeTest.concentration || 'N/A'}</p>`;
                 }
                 if (cbSeq) {
                   html += `<p style="font-size: 12px; color: #475569; margin-bottom: 12px;"><b>Sequenza:</b> <span style="font-family: monospace; background: #e2e8f0; padding: 2px 4px; border-radius: 4px;">${activeTest.proteinSequence || 'N/A'}</span></p>`;
