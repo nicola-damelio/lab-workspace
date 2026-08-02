@@ -10,7 +10,7 @@ import {
     fit4PL, errBarPlugin 
 } from '../data/constants';
 
-// --- COMPONENTE AUSILIARIO PER L'INPUT DEGLI ERRORI (Mancante in precedenza) ---
+// --- COMPONENTE AUSILIARIO PER L'INPUT DEGLI ERRORI ---
 export const ErrInput = ({ label, value, sdRaw, isOverridden, onSave, onReset }) => {
     const [tempVal, setTempVal] = useState(value !== undefined ? value : '');
     useEffect(() => { setTempVal(value !== undefined ? value : ''); }, [value]);
@@ -109,24 +109,36 @@ export function RegionCharts({ regionName, regionData, config }) {
     }, [regionData, hiddenCmpds, fitIC50, eScale, chartCfg, fsPanel]);
 
     return (
-        <div className="pdf-page-region flex flex-col gap-4 bg-white border border-slate-200 p-6 rounded-xl shadow-sm mb-4">
+        <div className="pdf-page-region flex flex-col gap-4 bg-white border border-slate-200 p-6 rounded-xl shadow-sm mb-4 relative">
             <h3 className="text-xl font-black text-slate-800 border-b border-slate-100 pb-3">📍 Region: {regionName}</h3>
             <div className="flex flex-col lg:flex-row gap-6 pdf-row">
-                <div className={`pdf-chart-main flex flex-col ${isDrFs ? 'panel-fullscreen' : 'min-w-0'}`} style={!isDrFs ? {width:fitIC50?`${drWidth}%`:'100%',flexShrink:0} : {}}>
+                
+                {/* DOSE RESPONSE PLOT */}
+                {isDrFs && <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[90]" onClick={() => toggleFs(`dr_${regionName}`)}></div>}
+                <div className={`pdf-chart-main flex flex-col ${isDrFs ? 'fixed inset-4 md:inset-10 z-[100] bg-white p-6 rounded-2xl shadow-2xl' : 'min-w-0'}`} style={!isDrFs ? {width:fitIC50?`${drWidth}%`:'100%',flexShrink:0} : {}}>
                     <div className="flex justify-between items-start mb-4">
                         <h2 className="text-sm font-bold text-slate-600 uppercase tracking-widest">Dose-Response Plot</h2>
                         <button onClick={() => toggleFs(`dr_${regionName}`)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors">{isDrFs ? '↙️' : '↗️'}</button>
                     </div>
-                    <div className="pdf-chart-canvas-wrap flex-1" style={{minHeight: isDrFs?'auto':`${chartH}px`}}><canvas ref={drRef}></canvas></div>
-                </div>
-                {fitIC50 && (
-                    <div className={`pdf-chart-ic50 flex flex-col ${isIc50Fs ? 'panel-fullscreen' : 'flex-1 min-w-0'}`}>
-                        <div className="flex justify-between items-start mb-4">
-                            <h2 className="text-sm font-bold text-slate-600 uppercase tracking-widest">IC50 Comparison</h2>
-                            <button onClick={() => toggleFs(`ic50_${regionName}`)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors">{isIc50Fs ? '↙️' : '↗️'}</button>
-                        </div>
-                        <div className="pdf-chart-canvas-wrap flex-1" style={{minHeight: isIc50Fs?'auto':`${chartH}px`}}><canvas ref={ic50Ref}></canvas></div>
+                    <div className="pdf-chart-canvas-wrap flex-1 relative min-h-0" style={{minHeight: isDrFs?'0':`${chartH}px`}}>
+                        <canvas ref={drRef}></canvas>
                     </div>
+                </div>
+
+                {/* IC50 COMPARISON PLOT */}
+                {fitIC50 && (
+                    <>
+                        {isIc50Fs && <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[90]" onClick={() => toggleFs(`ic50_${regionName}`)}></div>}
+                        <div className={`pdf-chart-ic50 flex flex-col ${isIc50Fs ? 'fixed inset-4 md:inset-10 z-[100] bg-white p-6 rounded-2xl shadow-2xl' : 'flex-1 min-w-0'}`}>
+                            <div className="flex justify-between items-start mb-4">
+                                <h2 className="text-sm font-bold text-slate-600 uppercase tracking-widest">IC50 Comparison</h2>
+                                <button onClick={() => toggleFs(`ic50_${regionName}`)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors">{isIc50Fs ? '↙️' : '↗️'}</button>
+                            </div>
+                            <div className="pdf-chart-canvas-wrap flex-1 relative min-h-0" style={{minHeight: isIc50Fs?'0':`${chartH}px`}}>
+                                <canvas ref={ic50Ref}></canvas>
+                            </div>
+                        </div>
+                    </>
                 )}
             </div>
         </div>
@@ -388,7 +400,8 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
                 if (ir < minR) minR = ir; if (ir > maxR) maxR = ir;
                 if (ic < minC) minC = ic; if (ic > maxC) maxC = ic;
             }
-        }));
+        }
+        ));
         setSelStart({r: minR, c: minC}); setSelEnd({r: maxR, c: maxC}); setDragMode('none');
     };
     const onMouseDownFillHandle = (e) => { e.stopPropagation(); setDragMode('filling'); setFillEnd(selEnd); };
@@ -863,7 +876,7 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
             </div>
 
             <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6">
-                {/* COMMENTS & ATTACHMENTS (Ported from old.html exactly as requested) */}
+                {/* COMMENTS & ATTACHMENTS */}
                 <div className="flex flex-col lg:flex-row gap-6 bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
                     <div className="flex-1 flex flex-col h-full min-h-[160px]">
                         <label className="text-xs font-bold text-slate-600 mb-2">📝 Comments / Notes</label>
@@ -1028,7 +1041,10 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
 
                 {/* DATA GRID & MAP */}
                 <div className="flex flex-col xl:flex-row gap-6 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                    <div className={`bg-slate-50 rounded-xl border border-slate-200 p-4 xl:w-1/2 min-w-0 flex flex-col ${fsPanel === 'data' ? 'panel-fullscreen' : ''}`}>
+                    {/* OVERLAY SFONDO SCURO QUANDO LA GRIGLIA E' ESPANSA */}
+                    {fsPanel === 'data' && <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[90]" onClick={() => toggleFs('data')}></div>}
+                    
+                    <div className={`bg-slate-50 rounded-xl border border-slate-200 p-4 min-w-0 flex flex-col ${fsPanel === 'data' ? 'fixed inset-4 md:inset-10 z-[100] bg-white shadow-2xl' : 'xl:w-1/2'}`}>
                         <PanelHeader title={`Data Grid (${activePlateDim.rows}x${activePlateDim.cols})`} panelId="data" extra={
                             <div className="flex bg-slate-200 p-1 rounded-lg shadow-inner mr-4">
                                 <button onClick={()=>setTableView('od')} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableView==='od'?'bg-white text-blue-700 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>Raw OD</button>
@@ -1044,7 +1060,8 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
                             </span>
                             {activeSel && <span className="text-red-500 font-bold bg-red-50 px-1.5 py-0.5 rounded border border-red-100">Del/Backspace to Clear</span>}
                         </div>
-                        <div className={`border border-slate-300 rounded-lg bg-white select-none relative w-full overflow-x-auto shadow-sm ${fsPanel==='data'?'flex-1':''}`}>
+                        {/* Modificato overflow-x-auto con overflow-auto per consentire lo scrolling verticale a schermo intero */}
+                        <div className={`border border-slate-300 rounded-lg bg-white select-none relative w-full overflow-auto shadow-sm ${fsPanel==='data'?'flex-1':''}`}>
                             <table className="w-full border-collapse table-fixed min-w-[700px] relative z-10">
                                 <thead><tr>
                                     <th className="bg-slate-200 border border-slate-300 p-1 text-xs text-slate-600 w-8">R\C</th>
@@ -1143,7 +1160,10 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
                         </div>
                     </div>
                     
-                    <div className={`bg-slate-50 rounded-xl border border-slate-200 p-4 xl:w-1/2 min-w-0 flex flex-col ${fsPanel === 'map' ? 'panel-fullscreen' : ''}`}>
+                    {/* OVERLAY SFONDO SCURO QUANDO LA MAPPA E' ESPANSA */}
+                    {fsPanel === 'map' && <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[90]" onClick={() => toggleFs('map')}></div>}
+
+                    <div className={`bg-slate-50 rounded-xl border border-slate-200 p-4 min-w-0 flex flex-col ${fsPanel === 'map' ? 'fixed inset-4 md:inset-10 z-[100] bg-white shadow-2xl' : 'xl:w-1/2'}`}>
                         <PanelHeader title="Visual Plate Map" panelId="map" subtitle="Shows compound & exact concentration assigned." extra={
                             <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1 shadow-sm">
                                 <span className="text-[10px] text-slate-500 font-bold">A</span>
@@ -1151,13 +1171,13 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
                                 <span className="text-[12px] text-slate-500 font-bold">A</span>
                             </div>
                         }/>
-                        <div className={`bg-white p-4 rounded-xl border border-slate-200 flex flex-col justify-evenly gap-1 shadow-sm ${fsPanel==='map'?'flex-1':''}`}>
+                        <div className={`bg-white p-4 rounded-xl border border-slate-200 flex flex-col justify-evenly gap-1 shadow-sm overflow-auto ${fsPanel==='map'?'flex-1':''}`}>
                             <div className="flex w-full mb-1">
                                 <div className="w-4 lg:w-6"/>
                                 {COLS.map(c=><div key={c} className="flex-1 text-center text-[10px] lg:text-xs font-black text-slate-400">{c}</div>)}
                             </div>
                             {ROWS.map((rl,r)=>(
-                                <div key={rl} className={`flex items-center w-full ${fsPanel==='map' ? 'flex-1' : ''}`}>
+                                <div key={rl} className={`flex items-center w-full ${fsPanel==='map' ? 'flex-1 min-h-[30px]' : ''}`}>
                                     <div className="w-4 lg:w-6 text-[10px] lg:text-xs font-black text-slate-400 text-center">{rl}</div>
                                     {COLS.map((col,c)=>{
                                         const cfg = cellConfig[r][c];
@@ -1186,7 +1206,7 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
                                         const boxSh = shadows.length > 0 ? shadows.join(', ') : 'none';
                                         
                                         return (
-                                            <div key={col} className="flex-1 flex justify-center items-center relative py-1" style={{backgroundColor: hasCustomReg ? regColor + '1a' : 'transparent', boxShadow: boxSh }}>
+                                            <div key={col} className="flex-1 flex justify-center items-center relative py-1 h-full" style={{backgroundColor: hasCustomReg ? regColor + '1a' : 'transparent', boxShadow: boxSh }}>
                                                 <div className={`z-10 ${mapSizeClass} rounded-full border border-black/10 flex flex-col items-center justify-center shadow-sm overflow-hidden`} style={{backgroundColor:bg}}>
                                                     <span style={{fontSize: fSize1+'px'}} className={`font-bold leading-tight truncate max-w-full text-center px-0.5 ${tc}`}>{role||'–'}</span>
                                                     {role&&!['cells','pbs','medium'].includes(role.toLowerCase())&&(
