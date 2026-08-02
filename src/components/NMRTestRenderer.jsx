@@ -116,7 +116,7 @@ const NMRTooltip = ({ active, payload, diagonalColor }) => {
   return null;
 };
 
-// --- ROBUST ZOOMABLE PLOTS (Prevents White Screen Crashes) ---
+// --- ROBUST ZOOMABLE PLOTS ---
 const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel }) => {
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState(fullDomain);
@@ -205,9 +205,8 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
   );
 };
 
-// --- 2D CHEMICAL STRUCTURE (Omitted for brevity, assumed identical to previous robust version) ---
+// --- 2D CHEMICAL STRUCTURE ---
 const ChemicalStructure2D = ({ sequence, isExpanded, onToggleExpand }) => {
-  // ... [Insert the full ChemicalStructure2D logic from previous steps here to keep file complete] ...
   if (!sequence || sequence.length === 0) return null;
   return <div className="text-center text-slate-400 italic p-10 bg-slate-50 rounded-lg border border-dashed border-slate-300">2D Structure Rendering Engine Loaded ({sequence.length} residues)</div>;
 };
@@ -230,24 +229,28 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader }) =>
     const assignedShifts = []; 
     return upperSeq.split('').map((char, index) => {
       const aa = AMINO_ACID_DB[char]; const generatedShifts = {};
-      Object.keys(aa.ranges).forEach(atom => {
-        const r = aa.ranges[atom]; let val = r.min; let success = false; let minDistance = 0.3; 
-        while(minDistance >= 0.05 && !success) {
-          for(let i=0; i<50; i++) {
-            const candidate = r.min + Math.random() * (r.max - r.min);
-            if (!assignedShifts.some(a => Math.abs(a - candidate) < minDistance)) { val = candidate; success = true; break; }
+      if(aa) {
+        Object.keys(aa.ranges).forEach(atom => {
+          const r = aa.ranges[atom]; let val = r.min; let success = false; let minDistance = 0.3; 
+          while(minDistance >= 0.05 && !success) {
+            for(let i=0; i<50; i++) {
+              const candidate = r.min + Math.random() * (r.max - r.min);
+              if (!assignedShifts.some(a => Math.abs(a - candidate) < minDistance)) { val = candidate; success = true; break; }
+            }
+            if (!success) minDistance -= 0.05; 
           }
-          if (!success) minDistance -= 0.05; 
-        }
-        assignedShifts.push(val); generatedShifts[atom] = parseFloat(val.toFixed(2));
-      });
+          assignedShifts.push(val); generatedShifts[atom] = parseFloat(val.toFixed(2));
+        });
+      }
       const cShifts = {}; const generatedShifts13C = {};
-      Object.keys(generatedShifts).forEach(atom => {
-        const cName = getCarbonName(char, atom); if (!cName) return;
-        if (!cShifts[cName]) { const range = getCarbonRange(char, cName); cShifts[cName] = parseFloat((range.min + Math.random() * (range.max - range.min)).toFixed(1)); }
-        generatedShifts13C[atom] = cShifts[cName];
-      });
-      return { ...aa, id: `${aa.code3}${index + 1}`, char: char, color: RESIDUE_COLORS[index % RESIDUE_COLORS.length], shifts: generatedShifts, shifts13C: generatedShifts13C, uniqueCShifts: { ...cShifts } };
+      if(aa) {
+        Object.keys(generatedShifts).forEach(atom => {
+          const cName = getCarbonName(char, atom); if (!cName) return;
+          if (!cShifts[cName]) { const range = getCarbonRange(char, cName); cShifts[cName] = parseFloat((range.min + Math.random() * (range.max - range.min)).toFixed(1)); }
+          generatedShifts13C[atom] = cShifts[cName];
+        });
+      }
+      return { ...aa, id: `${aa?.code3 || char}${index + 1}`, char: char, color: RESIDUE_COLORS[index % RESIDUE_COLORS.length], shifts: generatedShifts, shifts13C: generatedShifts13C, uniqueCShifts: { ...cShifts } };
     });
   }, [seq]);
 
@@ -259,35 +262,45 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader }) =>
     
     uniqueAminoAcidTypes.forEach((char, index) => {
       const aa = AMINO_ACID_DB[char];
+      if(!aa) return;
       const typeIndex = Object.keys(AMINO_ACID_DB).indexOf(char);
       const color = RESIDUE_COLORS[typeIndex % RESIDUE_COLORS.length];
       let atomIdx = 0;
+      
+      // FIX COORDINATA X
       Object.keys(aa.ranges).forEach(atom => {
-        ranges.push({ res: aa.code3, atom, min: aa.ranges[atom].min, max: aa.ranges[atom].max, y: uniqueAminoAcidTypes.length - 1 - index, color, level: atomIdx });
+        const r = aa.ranges[atom];
+        ranges.push({ x: (r.min + r.max) / 2, res: aa.code3, atom, min: r.min, max: r.max, y: uniqueAminoAcidTypes.length - 1 - index, color, level: atomIdx });
         atomIdx++;
       });
+      
       const cNames = new Set();
       Object.keys(aa.ranges).forEach(atom => { const cName = getCarbonName(char, atom); if (cName) cNames.add(cName); });
       let cIdx = 0;
+      
+      // FIX COORDINATA X PER CARBONIO
       cNames.forEach(cName => {
         const range = getCarbonRange(char, cName);
-        ranges13C.push({ res: aa.code3, atom: cName, min: range.min, max: range.max, y: uniqueAminoAcidTypes.length - 1 - index, color, level: cIdx });
+        ranges13C.push({ x: (range.min + range.max) / 2, res: aa.code3, atom: cName, min: range.min, max: range.max, y: uniqueAminoAcidTypes.length - 1 - index, color, level: cIdx });
         cIdx++;
       });
     });
 
     parsedSeq.forEach((res, index) => {
+      if(!res.shifts) return;
       Object.entries(res.shifts).forEach(([atom, ppm]) => {
         let peaks = [{ shift: ppm, intensity: 1 }]; let totalNeighbors = 0;
-        res.cosy.forEach(pair => {
-          let neighborAtom = pair[0] === atom ? pair[1] : (pair[1] === atom ? pair[0] : null);
-          if (neighborAtom) {
-            const count = getProtonCount(res.char, neighborAtom); totalNeighbors += count;
-            const jC = 0.010 + Math.random() * 0.008; const pascalRow = getPascalRow(count);
-            let newPeaks = []; peaks.forEach(p => { for(let k=0; k<=count; k++) newPeaks.push({ shift: p.shift + (k - count/2) * jC, intensity: p.intensity * pascalRow[k] }); });
-            peaks = newPeaks;
-          }
-        });
+        if(res.cosy) {
+          res.cosy.forEach(pair => {
+            let neighborAtom = pair[0] === atom ? pair[1] : (pair[1] === atom ? pair[0] : null);
+            if (neighborAtom) {
+              const count = getProtonCount(res.char, neighborAtom); totalNeighbors += count;
+              const jC = 0.010 + Math.random() * 0.008; const pascalRow = getPascalRow(count);
+              let newPeaks = []; peaks.forEach(p => { for(let k=0; k<=count; k++) newPeaks.push({ shift: p.shift + (k - count/2) * jC, intensity: p.intensity * pascalRow[k] }); });
+              peaks = newPeaks;
+            }
+          });
+        }
         let mergedPeaks = []; peaks.sort((a, b) => a.shift - b.shift); 
         peaks.forEach(p => {
           if (mergedPeaks.length > 0) {
@@ -304,11 +317,11 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader }) =>
       uniqueC.forEach((ppm, cName) => d13C.push({ x: ppm, y: 0.8 + Math.random() * 0.4, label: `${res.id} ${cName}`, color: res.color, type: '1D' }));
       
       Object.keys(res.shifts).forEach(atom => diag.push({ x: res.shifts[atom], y: res.shifts[atom], label: `${res.id} ${atom}`, type: 'Diagonale', size: 4 }));
-      res.cosy.forEach(([a1, a2]) => { if(res.shifts[a1] && res.shifts[a2]) addPair(cosy, res.shifts[a1], res.shifts[a2], res.id, `${a1}-${a2} (COSY)`, 'cosy', 4); });
-      res.spinSystems.forEach(sys => { for(let i=0; i<sys.length; i++) for(let j=i+1; j<sys.length; j++) if(res.shifts[sys[i]] && res.shifts[sys[j]]) addPair(tocsy, res.shifts[sys[i]], res.shifts[sys[j]], res.id, `${sys[i]}-${sys[j]} (TOCSY)`, 'tocsyDirect', 4); });
+      if(res.cosy) res.cosy.forEach(([a1, a2]) => { if(res.shifts[a1] && res.shifts[a2]) addPair(cosy, res.shifts[a1], res.shifts[a2], res.id, `${a1}-${a2} (COSY)`, 'cosy', 4); });
+      if(res.spinSystems) res.spinSystems.forEach(sys => { for(let i=0; i<sys.length; i++) for(let j=i+1; j<sys.length; j++) if(res.shifts[sys[i]] && res.shifts[sys[j]]) addPair(tocsy, res.shifts[sys[i]], res.shifts[sys[j]], res.id, `${sys[i]}-${sys[j]} (TOCSY)`, 'tocsyDirect', 4); });
       
       const seenPairs = new Set();
-      res.cosy.forEach(([a1, a2]) => { seenPairs.add([a1, a2].sort().join('-')); if(res.shifts[a1] && res.shifts[a2]) addPair(noesy, res.shifts[a1], res.shifts[a2], res.id, `${a1}-${a2} (NOE Intra 3)`, 'noesyIntra', 4); });
+      if(res.cosy) res.cosy.forEach(([a1, a2]) => { seenPairs.add([a1, a2].sort().join('-')); if(res.shifts[a1] && res.shifts[a2]) addPair(noesy, res.shifts[a1], res.shifts[a2], res.id, `${a1}-${a2} (NOE Intra 3)`, 'noesyIntra', 4); });
       if (index < parsedSeq.length - 1) { 
         const nextRes = parsedSeq[index + 1]; 
         if (res.shifts['HN'] && nextRes.shifts['HN']) addPair(noesy, res.shifts['HN'], nextRes.shifts['HN'], 'NOE Seq.', `${res.id} HN ↔ ${nextRes.id} HN (dNN)`, 'noesySeq', 3); 
@@ -443,7 +456,7 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader }) =>
           {seq.length === 0 ? (
             <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">Enter a sequence to generate the table.</div>
           ) : tableMode === 'backbone' ? (
-            <div className="overflow-x-auto custom-scrollbar border border-slate-200 rounded-lg max-h-[500px]">
+            <div className="overflow-x-auto custom-scrollbar border border-slate-200 rounded-lg">
               <table className="w-full text-sm text-left">
                 <thead className="text-xs text-slate-500 uppercase bg-slate-100 sticky top-0 z-10 shadow-sm">
                   <tr>
@@ -466,7 +479,7 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader }) =>
               </table>
             </div>
           ) : (
-            <div className="flex flex-col gap-6 max-h-[600px] overflow-y-auto custom-scrollbar pr-2">
+            <div className="flex flex-col gap-6 pr-2">
               <h4 className="text-md font-bold text-blue-700 border-b-2 border-blue-100 inline-block pr-4 pb-1">¹H Assignment</h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {parsedSeq.map((res, resIdx) => (
@@ -549,6 +562,63 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader }) =>
             </div>
           </CollapsibleSection>
         )}
+
+        {/* 8. LAB NOTEBOOK EXPORT */}
+        <CollapsibleSection title="Lab Notebook Export" icon="📓" defaultOpen={false}>
+          <div className="flex flex-col gap-4">
+            <p className="text-sm text-slate-600">Seleziona i dati NMR da formattare e inviare alle note generali (visualizzate nel Lab Notebook).</p>
+            <div className="flex flex-wrap gap-4 border border-slate-200 p-4 rounded-lg bg-white shadow-sm">
+              <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600">
+                  <input type="checkbox" id="nb-cond" defaultChecked className="w-4 h-4 accent-blue-600 cursor-pointer"/> Experimental Conditions
+              </label>
+              <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600">
+                  <input type="checkbox" id="nb-seq" defaultChecked className="w-4 h-4 accent-blue-600 cursor-pointer"/> Sequence
+              </label>
+              <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600">
+                  <input type="checkbox" id="nb-table" defaultChecked className="w-4 h-4 accent-blue-600 cursor-pointer"/> Shifts Table
+              </label>
+            </div>
+            <button
+              onClick={() => {
+                let html = '<div style="background-color: #f8fafc; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0; margin-top: 15px; font-family: sans-serif;">';
+                html += '<h4 style="color: #1e40af; margin-top: 0; margin-bottom: 12px; font-size: 14px; border-bottom: 2px solid #bfdbfe; padding-bottom: 4px;">📊 Riepilogo Dati NMR</h4>';
+                
+                const cbCond = document.getElementById('nb-cond')?.checked;
+                const cbSeq = document.getElementById('nb-seq')?.checked;
+                const cbTable = document.getElementById('nb-table')?.checked;
+
+                if (cbCond) {
+                  html += `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;"><b>Molecola:</b> ${activeTest.moleculeName || 'N/A'} | <b>Solvente:</b> ${activeTest.solvent || 'N/A'} | <b>Temp:</b> ${activeTest.temperature || 'N/A'} | <b>Conc:</b> ${activeTest.concentration || 'N/A'}</p>`;
+                }
+                if (cbSeq) {
+                  html += `<p style="font-size: 12px; color: #475569; margin-bottom: 12px;"><b>Sequenza:</b> <span style="font-family: monospace; background: #e2e8f0; padding: 2px 4px; border-radius: 4px;">${activeTest.proteinSequence || 'N/A'}</span></p>`;
+                }
+                if (cbTable && Object.keys(shifts).length > 0) {
+                  html += `<table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; text-align: left; background: white;">
+                             <tr style="background-color: #f1f5f9;"><th style="padding: 6px; border: 1px solid #cbd5e1;">Residuo</th><th style="padding: 6px; border: 1px solid #cbd5e1;">Atomo</th><th style="padding: 6px; border: 1px solid #cbd5e1;">Shift (ppm)</th></tr>`;
+                  Object.keys(shifts).forEach(key => {
+                    const parts = key.split('-');
+                    const resIdx = parts[0];
+                    const atom = parts.slice(1).join('-');
+                    const res = parsedSeq[resIdx];
+                    if(res && shifts[key]) {
+                       html += `<tr><td style="padding: 6px; border: 1px solid #e2e8f0; color: #334155;"><b>${res.name} (${res.id})</b></td><td style="padding: 6px; border: 1px solid #e2e8f0; color: #334155;">${atom}</td><td style="padding: 6px; border: 1px solid #e2e8f0; color: #334155; font-family: monospace;">${shifts[key]}</td></tr>`;
+                    }
+                  });
+                  html += `</table>`;
+                }
+                html += '</div>';
+                
+                const currentComments = activeTest.comments || '';
+                updateActiveTest({ comments: currentComments + (currentComments ? '<br/>' : '') + html });
+                alert("Dati aggiunti con successo alle note dell'esperimento! Ora saranno visibili nel Lab Notebook.");
+              }}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-6 rounded-lg transition-all shadow-sm w-fit border border-indigo-700 flex items-center gap-2"
+            >
+              <span>+</span> Copia Dati nel Lab Notebook
+            </button>
+          </div>
+        </CollapsibleSection>
 
       </div>
     </div>
