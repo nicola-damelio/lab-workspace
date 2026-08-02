@@ -34,6 +34,10 @@ const RESIDUE_COLORS = ['#3b82f6', '#8b5cf6', '#d946ef', '#ec4899', '#f43f5e', '
 const TICKS_1H = Array.from({length: 111}, (_, i) => parseFloat((i / 10).toFixed(1)));
 const TICKS_13C = Array.from({length: 281}, (_, i) => parseFloat((10 + i * 0.5).toFixed(1)));
 
+// MARGINI COSTANTI per coerenza tra calcolo coordinate e rendering
+const CHART_MARGIN = { top: 20, right: 20, bottom: 45, left: 50 };
+const CHART_MARGIN_1D = { top: 10, right: 15, bottom: 45, left: 15 };
+
 const getNMRFillColor = (entry) => {
   if (entry.colorClass === 'cosy') return '#22c55e';
   if (entry.colorClass === 'tocsyDirect') return '#1e3a8a';
@@ -123,33 +127,130 @@ export const CollapsibleSection = ({ title, icon, defaultOpen = true, children, 
 
 // --- 3. RECHARTS CUSTOM SHAPES ---
 const CustomXTick1H = ({ x, y, payload, isZoomed }) => {
-  const numVal = Number(payload.value); const isInt = Number.isInteger(numVal); const isHalf = numVal % 0.5 === 0; const tickLength = isZoomed ? 5 : (isInt ? 8 : (isHalf ? 5 : 3));
-  return ( <g transform={`translate(${x||0},${y||0})`}> <line x1={0} y1={0} x2={0} y2={tickLength} stroke="#94a3b8" strokeWidth={1} />{(isZoomed || isInt) && <text x={0} y={tickLength + 12} textAnchor="middle" fill="#64748b" fontSize={isZoomed ? 10 : 12} fontWeight={isInt && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(2) : numVal}</text>} </g>);
+  const numVal = Number(payload.value); const isInt = Number.isInteger(numVal); const isHalf = numVal % 0.5 === 0;
+  const tickLength = isZoomed ? 5 : (isInt ? 8 : (isHalf ? 5 : 3));
+  return (
+    <g transform={`translate(${x||0},${y||0})`}>
+      <line x1={0} y1={0} x2={0} y2={tickLength} stroke="#94a3b8" strokeWidth={1} />
+      {(isZoomed || isInt) && <text x={0} y={tickLength + 12} textAnchor="middle" fill="#64748b" fontSize={isZoomed ? 10 : 11} fontWeight={isInt && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(2) : numVal}</text>}
+    </g>
+  );
 };
+
 const CustomYTick1H = ({ x, y, payload, isZoomed }) => {
-  const numVal = Number(payload.value); const isInt = Number.isInteger(numVal); const isHalf = numVal % 0.5 === 0; const tickLength = isZoomed ? 5 : (isInt ? 8 : (isHalf ? 5 : 3));
-  return ( <g transform={`translate(${x||0},${y||0})`}> <line x1={0} y1={0} x2={-tickLength} y2={0} stroke="#94a3b8" strokeWidth={1} />{(isZoomed || isInt) && <text x={-(tickLength + 4)} y={0} dy={4} textAnchor="end" fill="#64748b" fontSize={isZoomed ? 10 : 12} fontWeight={isInt && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(2) : numVal}</text>} </g>);
+  const numVal = Number(payload.value); const isInt = Number.isInteger(numVal); const isHalf = numVal % 0.5 === 0;
+  const tickLength = isZoomed ? 5 : (isInt ? 8 : (isHalf ? 5 : 3));
+  return (
+    <g transform={`translate(${x||0},${y||0})`}>
+      <line x1={0} y1={0} x2={-tickLength} y2={0} stroke="#94a3b8" strokeWidth={1} />
+      {(isZoomed || isInt) && <text x={-(tickLength + 4)} y={0} dy={4} textAnchor="end" fill="#64748b" fontSize={isZoomed ? 10 : 11} fontWeight={isInt && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(2) : numVal}</text>}
+    </g>
+  );
 };
+
 const CustomXTick13C = ({ x, y, payload, isZoomed }) => {
-  const numVal = Number(payload.value); const isTen = numVal % 10 === 0; const isFive = numVal % 5 === 0; const tickLength = isZoomed ? 5 : (isTen ? 8 : (isFive ? 6 : 4));
-  return ( <g transform={`translate(${x||0},${y||0})`}> <line x1={0} y1={0} x2={0} y2={tickLength} stroke="#94a3b8" strokeWidth={1} />{(isZoomed || isTen) && <text x={0} y={tickLength + 12} textAnchor="middle" fill="#64748b" fontSize={isZoomed ? 10 : 12} fontWeight={isTen && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(1) : numVal}</text>} </g>);
+  const numVal = Number(payload.value); const isTen = numVal % 10 === 0; const isFive = numVal % 5 === 0;
+  const tickLength = isZoomed ? 5 : (isTen ? 8 : (isFive ? 6 : 4));
+  return (
+    <g transform={`translate(${x||0},${y||0})`}>
+      <line x1={0} y1={0} x2={0} y2={tickLength} stroke="#94a3b8" strokeWidth={1} />
+      {(isZoomed || isTen) && <text x={0} y={tickLength + 12} textAnchor="middle" fill="#64748b" fontSize={isZoomed ? 10 : 11} fontWeight={isTen && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(1) : numVal}</text>}
+    </g>
+  );
 };
+
 const CustomYTick13C = ({ x, y, payload, isZoomed }) => {
-  const numVal = Number(payload.value); const isTen = numVal % 10 === 0; const isFive = numVal % 5 === 0; const tickLength = isZoomed ? 5 : (isTen ? 10 : (isFive ? 6 : 4));
-  return ( <g transform={`translate(${x||0},${y||0})`}> <line x1={0} y1={0} x2={-tickLength} y2={0} stroke="#94a3b8" strokeWidth={1} />{(isZoomed || isTen) && <text x={-(tickLength + 5)} y={0} dy={4} textAnchor="end" fill="#64748b" fontSize={isZoomed ? 10 : 12} fontWeight={isTen && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(1) : numVal}</text>} </g>);
+  const numVal = Number(payload.value); const isTen = numVal % 10 === 0; const isFive = numVal % 5 === 0;
+  const tickLength = isZoomed ? 5 : (isTen ? 10 : (isFive ? 6 : 4));
+  return (
+    <g transform={`translate(${x||0},${y||0})`}>
+      <line x1={0} y1={0} x2={-tickLength} y2={0} stroke="#94a3b8" strokeWidth={1} />
+      {(isZoomed || isTen) && <text x={-(tickLength + 5)} y={0} dy={4} textAnchor="end" fill="#64748b" fontSize={isZoomed ? 10 : 11} fontWeight={isTen && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(1) : numVal}</text>}
+    </g>
+  );
 };
 
 const NMRTooltip = ({ active, payload, diagonalColor }) => {
   if (active && payload && payload.length) {
     const data = payload[0].payload;
-    if (data.min !== undefined) return ( <div className="bg-white p-2 border border-slate-200 shadow-md rounded text-xs z-50"> <p className="font-bold text-slate-800">{data.res} - {data.atom}</p> <p className="text-slate-500">Theoretical Range: {data.min.toFixed(2)} - {data.max.toFixed(2)} ppm</p> </div>);
-    if (data.type === '1D') return ( <div className="bg-white p-2 border border-slate-200 shadow-md rounded text-xs z-50"> <p className="font-bold text-slate-800">{data.label}</p> <p className="text-slate-500">{data.x.toFixed(3)} ppm</p> {data.multiplet && <p className="text-slate-400 text-[10px]">Multiplicity: {data.multiplet}</p>} </div>);
-    return ( <div className="bg-white p-3 border border-slate-200 shadow-xl rounded text-sm z-50"> <p className="font-bold text-slate-800">{data.label}</p> <p className="font-semibold" style={{ color: data.type === 'Diagonale' ? diagonalColor : getNMRFillColor(data) }}>{data.type}</p> <p className="text-slate-500 text-xs mt-1"> F2: {Number(data.x).toFixed(2)} ppm <br/> F1: {Number(data.y).toFixed(2)} ppm </p> </div>);
+    if (data.min !== undefined) return (
+      <div className="bg-white p-2 border border-slate-200 shadow-md rounded text-xs z-50">
+        <p className="font-bold text-slate-800">{data.res} - {data.atom}</p>
+        <p className="text-slate-500">Theoretical Range: {data.min.toFixed(2)} - {data.max.toFixed(2)} ppm</p>
+      </div>
+    );
+    if (data.type === '1D') return (
+      <div className="bg-white p-2 border border-slate-200 shadow-md rounded text-xs z-50">
+        <p className="font-bold text-slate-800">{data.label}</p>
+        <p className="text-slate-500">{data.x.toFixed(3)} ppm</p>
+        {data.multiplet && <p className="text-slate-400 text-[10px]">Multiplicity: {data.multiplet}</p>}
+      </div>
+    );
+    return (
+      <div className="bg-white p-3 border border-slate-200 shadow-xl rounded text-sm z-50">
+        <p className="font-bold text-slate-800">{data.label}</p>
+        <p className="font-semibold" style={{ color: data.type === 'Diagonale' ? diagonalColor : getNMRFillColor(data) }}>{data.type}</p>
+        <p className="text-slate-500 text-xs mt-1">
+          F2: {Number(data.x).toFixed(2)} ppm<br/>
+          F1: {Number(data.y).toFixed(2)} ppm
+        </p>
+      </div>
+    );
   }
   return null;
 };
 
-// --- 4. ROBUST ZOOMABLE PLOTS WITH WINDOW-LEVEL EVENTS ---
+// --- 4. ROBUST ZOOMABLE PLOTS - CORRETTI CON COORDINATE ALLINEATE ---
+
+// Hook personalizzato per il calcolo corretto delle coordinate nel plot area
+const usePlotCoordinates = (chartRef, margin, xDomainFull, yDomainFull) => {
+  const getPlotCoords = (clientX, clientY) => {
+    if (!chartRef.current) return null;
+    const rect = chartRef.current.getBoundingClientRect();
+    
+    // Trovare l'area di plot effettiva dentro il container
+    // Recharts renderizza il grafico dentro il ResponsiveContainer
+    // L'area di plot inizia dopo i margini degli assi
+    const svgEl = chartRef.current.querySelector('svg');
+    if (!svgEl) return null;
+    
+    // Ottenere le dimensioni effettive del SVG
+    const svgRect = svgEl.getBoundingClientRect();
+    
+    // Calcolare offset del SVG rispetto al container
+    const svgOffsetX = svgRect.left - rect.left;
+    const svgOffsetY = svgRect.top - rect.top;
+    
+    // Coordinate relative al SVG
+    const relX = clientX - svgRect.left;
+    const relY = clientY - svgRect.top;
+    
+    // L'area di plot nel SVG inizia dopo il margine sinistro e superiore
+    // e finisce prima del margine destro e inferiore
+    const plotWidth = svgRect.width - margin.left - margin.right;
+    const plotHeight = svgRect.height - margin.top - margin.bottom;
+    
+    // Coordinate relative all'area di plot
+    const plotX = relX - margin.left;
+    const plotY = relY - margin.top;
+    
+    // Verificare se siamo dentro l'area di plot
+    if (plotX < 0 || plotX > plotWidth || plotY < 0 || plotY > plotHeight) return null;
+    
+    // Convertire in coordinate del dominio
+    const xRange = xDomainFull[1] - xDomainFull[0];
+    const yRange = yDomainFull[1] - yDomainFull[0];
+    
+    // Per assi reversed, il calcolo è diverso
+    const xVal = xDomainFull[0] + (plotX / plotWidth) * xRange;
+    const yVal = yDomainFull[0] + (plotY / plotHeight) * yRange;
+    
+    return { x: xVal, y: yVal };
+  };
+  
+  return getPlotCoords;
+};
+
 const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel }) => {
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState(fullDomain);
@@ -157,24 +258,31 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
   const [refAreaRight, setRefAreaRight] = useState(null);
   const chartRef = useRef(null);
   const isDragging = useRef(false);
-  
   const isZoomed = xDomain[0] !== fullDomain[0] || xDomain[1] !== fullDomain[1];
-  
+
+  const getXVal = (clientX) => {
+    if (!chartRef.current) return null;
+    const rect = chartRef.current.getBoundingClientRect();
+    const svgEl = chartRef.current.querySelector('.recharts-wrapper');
+    if (!svgEl) return null;
+    
+    const svgRect = svgEl.getBoundingClientRect();
+    const plotX = clientX - svgRect.left;
+    const plotWidth = svgRect.width;
+    
+    if (plotX < 0 || plotX > plotWidth) return null;
+    
+    // Asse X è reversed, quindi 0 è a destra e fullDomain[1] è a sinistra
+    const xVal = fullDomain[1] - (plotX / plotWidth) * (fullDomain[1] - fullDomain[0]);
+    return xVal;
+  };
+
   useEffect(() => {
     const handleMouseMove = (e) => {
-      if (!isDragging.current || !chartRef.current) return;
-      const chart = chartRef.current;
-      const rect = chart.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const width = rect.width;
-      const margin = { left: 10, right: 10 };
-      const plotWidth = width - margin.left - margin.right;
-      const xVal = fullDomain[0] + (x - margin.left) / plotWidth * (fullDomain[1] - fullDomain[0]);
-      if (xVal >= fullDomain[0] && xVal <= fullDomain[1]) {
-        setRefAreaRight(xVal);
-      }
+      if (!isDragging.current) return;
+      const xVal = getXVal(e.clientX);
+      if (xVal !== null) setRefAreaRight(xVal);
     };
-    
     const handleMouseUp = () => {
       if (!isDragging.current) return;
       isDragging.current = false;
@@ -184,26 +292,17 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
       setRefAreaLeft(null);
       setRefAreaRight(null);
     };
-    
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
-    
     return () => {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
   }, [refAreaLeft, refAreaRight, fullDomain]);
-  
+
   const handleMouseDown = (e) => {
-    if (!chartRef.current) return;
-    const chart = chartRef.current;
-    const rect = chart.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const width = rect.width;
-    const margin = { left: 10, right: 10 };
-    const plotWidth = width - margin.left - margin.right;
-    const xVal = fullDomain[0] + (x - margin.left) / plotWidth * (fullDomain[1] - fullDomain[0]);
-    if (xVal >= fullDomain[0] && xVal <= fullDomain[1]) {
+    const xVal = getXVal(e.clientX);
+    if (xVal !== null) {
       isDragging.current = true;
       setRefAreaLeft(xVal);
       setRefAreaRight(xVal);
@@ -215,12 +314,15 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)}></div>}
       <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'h-[400px] break-inside-avoid'}`}>
         <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
-          <div className="flex items-center gap-4"> <h4 className="font-bold text-slate-700">{title}</h4> {isZoomed && <button onClick={() => setXDomain(fullDomain)} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>} </div>
+          <div className="flex items-center gap-4">
+            <h4 className="font-bold text-slate-700">{title}</h4>
+            {isZoomed && <button onClick={() => setXDomain(fullDomain)} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>}
+          </div>
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
         </div>
         <div className="flex-1 min-h-0 select-none relative" ref={chartRef} onMouseDown={handleMouseDown}>
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} margin={{ top: 10, right: 10, bottom: 40, left: 10 }}>
+            <BarChart data={data} margin={CHART_MARGIN_1D}>
               <CartesianGrid strokeDasharray="3 3" vertical={true} horizontal={false} stroke="#f1f5f9" />
               <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : ticks} interval={0} tickLine={false} tick={<TickComponent isZoomed={isZoomed} />} label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b' }} axisLine={{ stroke: '#cbd5e1' }} />
               <YAxis type="number" dataKey="y" domain={[0, 'auto']} hide={true} />
@@ -249,29 +351,44 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
   const [refAreaBottom, setRefAreaBottom] = useState(null);
   const chartRef = useRef(null);
   const isDragging = useRef(false);
-  
   const isZoomed = xDomain[0] !== 0 || xDomain[1] !== 11 || yDomain[0] !== 0 || yDomain[1] !== 11;
-  
+
+  // Funzione corretta per ottenere coordinate dal plot area
+  const getPlotCoords = (clientX, clientY) => {
+    if (!chartRef.current) return null;
+    const containerRect = chartRef.current.getBoundingClientRect();
+    
+    // Trovare il wrapper interno di Recharts (l'area di plot effettiva)
+    const rechartsWrapper = chartRef.current.querySelector('.recharts-wrapper');
+    if (!rechartsWrapper) return null;
+    
+    const wrapperRect = rechartsWrapper.getBoundingClientRect();
+    
+    // Coordinate relative all'area di plot di Recharts
+    const plotX = clientX - wrapperRect.left;
+    const plotY = clientY - wrapperRect.top;
+    const plotWidth = wrapperRect.width;
+    const plotHeight = wrapperRect.height;
+    
+    // Verificare se siamo dentro l'area di plot
+    if (plotX < 0 || plotX > plotWidth || plotY < 0 || plotY > plotHeight) return null;
+    
+    // Entrambi gli assi sono reversed: 0 in alto/a destra, 11 in basso/a sinistra
+    const xVal = 11 - (plotX / plotWidth) * 11;
+    const yVal = 11 - (plotY / plotHeight) * 11;
+    
+    return { x: xVal, y: yVal };
+  };
+
   useEffect(() => {
     const handleMouseMove = (e) => {
-      if (!isDragging.current || !chartRef.current) return;
-      const chart = chartRef.current;
-      const rect = chart.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      const width = rect.width;
-      const height = rect.height;
-      const margin = { left: 40, right: 10, top: 10, bottom: 40 };
-      const plotWidth = width - margin.left - margin.right;
-      const plotHeight = height - margin.top - margin.bottom;
-      const xVal = 11 - (x - margin.left) / plotWidth * 11;
-      const yVal = 11 - (y - margin.top) / plotHeight * 11;
-      if (xVal >= 0 && xVal <= 11 && yVal >= 0 && yVal <= 11) {
-        setRefAreaRight(xVal);
-        setRefAreaBottom(yVal);
+      if (!isDragging.current) return;
+      const coords = getPlotCoords(e.clientX, e.clientY);
+      if (coords) {
+        setRefAreaRight(coords.x);
+        setRefAreaBottom(coords.y);
       }
     };
-    
     const handleMouseUp = () => {
       if (!isDragging.current) return;
       isDragging.current = false;
@@ -286,35 +403,22 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
       setRefAreaTop(null);
       setRefAreaBottom(null);
     };
-    
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
-    
     return () => {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
   }, [refAreaLeft, refAreaRight, refAreaTop, refAreaBottom]);
-  
+
   const handleMouseDown = (e) => {
-    if (!chartRef.current) return;
-    const chart = chartRef.current;
-    const rect = chart.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    const width = rect.width;
-    const height = rect.height;
-    const margin = { left: 40, right: 10, top: 10, bottom: 40 };
-    const plotWidth = width - margin.left - margin.right;
-    const plotHeight = height - margin.top - margin.bottom;
-    const xVal = 11 - (x - margin.left) / plotWidth * 11;
-    const yVal = 11 - (y - margin.top) / plotHeight * 11;
-    if (xVal >= 0 && xVal <= 11 && yVal >= 0 && yVal <= 11) {
+    const coords = getPlotCoords(e.clientX, e.clientY);
+    if (coords) {
       isDragging.current = true;
-      setRefAreaLeft(xVal);
-      setRefAreaTop(yVal);
-      setRefAreaRight(xVal);
-      setRefAreaBottom(yVal);
+      setRefAreaLeft(coords.x);
+      setRefAreaTop(coords.y);
+      setRefAreaRight(coords.x);
+      setRefAreaBottom(coords.y);
     }
   };
 
@@ -323,12 +427,15 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)}></div>}
       <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'h-[400px] break-inside-avoid'}`}>
         <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
-          <div className="flex items-center gap-4"> <h4 className="font-bold text-slate-700">{title}</h4> {isZoomed && <button onClick={() => { setXDomain([0, 11]); setYDomain([0, 11]); }} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>} </div>
+          <div className="flex items-center gap-4">
+            <h4 className="font-bold text-slate-700">{title}</h4>
+            {isZoomed && <button onClick={() => { setXDomain([0, 11]); setYDomain([0, 11]); }} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>}
+          </div>
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
         </div>
         <div className="flex-1 min-h-0 select-none relative" ref={chartRef} onMouseDown={handleMouseDown}>
           <ResponsiveContainer width="100%" height="100%">
-            <ScatterChart margin={{ top: 10, right: 10, bottom: 40, left: 40 }}>
+            <ScatterChart margin={CHART_MARGIN}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b' }} />
               <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomYTick1H isZoomed={isZoomed} />} label={{ value: '¹H F1 (ppm)', angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b' }} />
@@ -363,29 +470,38 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
   const [refAreaBottom, setRefAreaBottom] = useState(null);
   const chartRef = useRef(null);
   const isDragging = useRef(false);
-  
   const isZoomed = xDomain[0] !== 0 || xDomain[1] !== 11 || yDomain[0] !== 10 || yDomain[1] !== 150;
-  
+
+  const getPlotCoords = (clientX, clientY) => {
+    if (!chartRef.current) return null;
+    const rechartsWrapper = chartRef.current.querySelector('.recharts-wrapper');
+    if (!rechartsWrapper) return null;
+    
+    const wrapperRect = rechartsWrapper.getBoundingClientRect();
+    const plotX = clientX - wrapperRect.left;
+    const plotY = clientY - wrapperRect.top;
+    const plotWidth = wrapperRect.width;
+    const plotHeight = wrapperRect.height;
+    
+    if (plotX < 0 || plotX > plotWidth || plotY < 0 || plotY > plotHeight) return null;
+    
+    // X reversed: 0 a destra, 11 a sinistra
+    const xVal = 11 - (plotX / plotWidth) * 11;
+    // Y reversed: 10 in alto, 150 in basso
+    const yVal = 150 - (plotY / plotHeight) * (150 - 10);
+    
+    return { x: xVal, y: yVal };
+  };
+
   useEffect(() => {
     const handleMouseMove = (e) => {
-      if (!isDragging.current || !chartRef.current) return;
-      const chart = chartRef.current;
-      const rect = chart.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      const width = rect.width;
-      const height = rect.height;
-      const margin = { left: 40, right: 10, top: 10, bottom: 40 };
-      const plotWidth = width - margin.left - margin.right;
-      const plotHeight = height - margin.top - margin.bottom;
-      const xVal = 11 - (x - margin.left) / plotWidth * 11;
-      const yVal = 150 - (y - margin.top) / plotHeight * 140;
-      if (xVal >= 0 && xVal <= 11 && yVal >= 10 && yVal <= 150) {
-        setRefAreaRight(xVal);
-        setRefAreaBottom(yVal);
+      if (!isDragging.current) return;
+      const coords = getPlotCoords(e.clientX, e.clientY);
+      if (coords) {
+        setRefAreaRight(coords.x);
+        setRefAreaBottom(coords.y);
       }
     };
-    
     const handleMouseUp = () => {
       if (!isDragging.current) return;
       isDragging.current = false;
@@ -400,35 +516,22 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
       setRefAreaTop(null);
       setRefAreaBottom(null);
     };
-    
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
-    
     return () => {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
   }, [refAreaLeft, refAreaRight, refAreaTop, refAreaBottom]);
-  
+
   const handleMouseDown = (e) => {
-    if (!chartRef.current) return;
-    const chart = chartRef.current;
-    const rect = chart.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    const width = rect.width;
-    const height = rect.height;
-    const margin = { left: 40, right: 10, top: 10, bottom: 40 };
-    const plotWidth = width - margin.left - margin.right;
-    const plotHeight = height - margin.top - margin.bottom;
-    const xVal = 11 - (x - margin.left) / plotWidth * 11;
-    const yVal = 150 - (y - margin.top) / plotHeight * 140;
-    if (xVal >= 0 && xVal <= 11 && yVal >= 10 && yVal <= 150) {
+    const coords = getPlotCoords(e.clientX, e.clientY);
+    if (coords) {
       isDragging.current = true;
-      setRefAreaLeft(xVal);
-      setRefAreaTop(yVal);
-      setRefAreaRight(xVal);
-      setRefAreaBottom(yVal);
+      setRefAreaLeft(coords.x);
+      setRefAreaTop(coords.y);
+      setRefAreaRight(coords.x);
+      setRefAreaBottom(coords.y);
     }
   };
 
@@ -437,12 +540,15 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)}></div>}
       <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'h-[400px] lg:col-span-2 break-inside-avoid'}`}>
         <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
-          <div className="flex items-center gap-4"> <h4 className="font-bold text-slate-700">{title}</h4> {isZoomed && <button onClick={() => { setXDomain([0, 11]); setYDomain([10, 150]); }} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>} </div>
+          <div className="flex items-center gap-4">
+            <h4 className="font-bold text-slate-700">{title}</h4>
+            {isZoomed && <button onClick={() => { setXDomain([0, 11]); setYDomain([10, 150]); }} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>}
+          </div>
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
         </div>
         <div className="flex-1 min-h-0 select-none relative" ref={chartRef} onMouseDown={handleMouseDown}>
           <ResponsiveContainer width="100%" height="100%">
-            <ScatterChart margin={{ top: 10, right: 10, bottom: 40, left: 40 }}>
+            <ScatterChart margin={CHART_MARGIN}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b' }} />
               <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_13C} interval={0} tickLine={false} tick={<CustomYTick13C isZoomed={isZoomed} />} label={{ value: '¹³C F1 (ppm)', angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b' }} />
@@ -474,7 +580,6 @@ const ChemicalStructure2D = ({ sequence, isExpanded, onToggleExpand }) => {
   const addRingHeteroatom = (x, y, text, color) => { elements.push({ type: 'circle', x, y, r: 12, color: 'white', fill: 'white', strokeWidth: 0 }); elements.push({ type: 'text', x, y, text, color, fontSize: 12, align: 'middle' }); };
   const placeRadialLabel = (cx, cy, pt, text, color) => { const angle = Math.atan2(pt.y - cy, pt.x - cx); const dist = 18; const lx = pt.x + dist * Math.cos(angle); const ly = pt.y + dist * Math.sin(angle); let anchor = 'middle'; if (Math.abs(angle) < Math.PI/3) anchor = 'start'; else if (Math.abs(angle) > 2*Math.PI/3) anchor = 'end'; addText(lx, ly, text, color, 11, anchor); };
   const addPolygon = (pointsStr, color) => { const pts = pointsStr.split(' ').map(p => p.split(',').map(Number)); pts.forEach(([x, y]) => updateBounds(x, y)); elements.push({ type: 'polygon', points: pointsStr, color }); };
-  
   const dx = 45; const dy = 30; const S = 25;
   const coords = []; let cx = 100; let cy = 200; let slope = -1;
   for (let i = 0; i < sequence.length; i++) {
@@ -484,7 +589,6 @@ const ChemicalStructure2D = ({ sequence, isExpanded, onToggleExpand }) => {
     cx += dx; cy += slope * dy; const nextNX = cx; const nextNY = cy; slope *= -1;
     coords.push({ nX, nY, caX, caY, cX, cY, nextNX, nextNY, scDir, oDir, res: sequence[i] });
   }
-  
   coords.forEach((c, i) => {
     const color = c.res.color; const isFirst = i === 0; const isLast = i === sequence.length - 1; const char = c.res.char;
     if (!isFirst) addLine(coords[i-1].cX, coords[i-1].cY, c.nX, c.nY, coords[i-1].res.color);
@@ -499,10 +603,8 @@ const ChemicalStructure2D = ({ sequence, isExpanded, onToggleExpand }) => {
     elements.push({ type: 'circle', x: c.cX, y: c.cY, r: 13, color: color, fill: 'white' }); addText(c.cX, c.cY, "C", color, 13);
     addText(c.cX, c.cY + c.oDir * 35, "O", "red", 13);
     if (isLast) { elements.push({ type: 'circle', x: c.nextNX, y: c.nextNY, r: 13, color: color, fill: 'white' }); addText(c.nextNX, c.nextNY, "O⁻", "red", 13, 'middle'); }
-    
     const vNode = (lvl, text) => { if(lvl > 0) addLine(c.caX, c.caY + c.scDir * (lvl - 1) * S, c.caX, c.caY + c.scDir * lvl * S, color); addText(c.caX, c.caY + c.scDir * (lvl * S + (c.scDir === 1 ? 10 : -10)), text, color); };
     if (char !== 'G' && char !== 'P') { addLine(c.caX, c.caY, c.caX, c.caY + c.scDir * S, color); if (!['A','I','V','T','F','Y','W','H'].includes(char)) addText(c.caX, c.caY + c.scDir * S, "CH₂ (Hβ)", color); }
-    
     switch(char) {
       case 'A': addText(c.caX, c.caY + c.scDir * S, "CH₃ (Hβ)", color); break;
       case 'V': addText(c.caX, c.caY + c.scDir * S, "CH (Hβ)", color); addLine(c.caX, c.caY+c.scDir * S, c.caX-20, c.caY+c.scDir * 1.8 * S, color); addText(c.caX-20, c.caY+c.scDir * (1.8 * S + 10), 'CH₃ (Hγ1)', color); addLine(c.caX, c.caY+c.scDir * S, c.caX+20, c.caY+c.scDir * 1.8 * S, color); addText(c.caX+20, c.caY+c.scDir * (1.8 * S + 10), 'CH₃ (Hγ2)', color); break;
@@ -551,7 +653,6 @@ const ChemicalStructure2D = ({ sequence, isExpanded, onToggleExpand }) => {
     }
     const labelY = c.caY + (c.scDir > 0 ? 170 : -170); addText(c.caX, labelY, `${c.res.name} (${c.res.id})`, color, 14, 'middle');
   });
-  
   const pad = 15; const viewBox = `${minX - pad} ${minY - pad} ${maxX - minX + 2*pad} ${maxY - minY + 2*pad}`;
   return (
     <>
@@ -564,7 +665,12 @@ const ChemicalStructure2D = ({ sequence, isExpanded, onToggleExpand }) => {
             {elements.filter(e => e.type === 'path').map((el, idx) => <path key={`pa${idx}`} d={el.d} fill="none" stroke={el.color} strokeWidth="1.8" />)}
             {elements.filter(e => e.type === 'polygon').map((el, idx) => <polygon key={`po${idx}`} points={el.points} fill="white" stroke={el.color} strokeWidth="1.8" />)}
             {elements.filter(e => e.type === 'circle').map((el, idx) => <circle key={`c${idx}`} cx={el.x} cy={el.y} r={el.r} fill={el.fill || 'white'} stroke={el.color} strokeWidth={el.strokeWidth !== undefined ? el.strokeWidth : "1.5"} />)}
-            {elements.filter(e => e.type === 'text').map((el, idx) => (<g key={`t${idx}`}><text x={el.x} y={el.y} fill="white" stroke="white" strokeWidth="3" strokeLinejoin="round" fontSize={el.fontSize} textAnchor={el.align} dominantBaseline="middle" fontWeight="bold">{el.text}</text><text x={el.x} y={el.y} fill={el.color} fontSize={el.fontSize} textAnchor={el.align} dominantBaseline="middle" fontWeight="bold">{el.text}</text></g>))}
+            {elements.filter(e => e.type === 'text').map((el, idx) => (
+              <g key={`t${idx}`}>
+                <text x={el.x} y={el.y} fill="white" stroke="white" strokeWidth="3" strokeLinejoin="round" fontSize={el.fontSize} textAnchor={el.align} dominantBaseline="middle" fontWeight="bold">{el.text}</text>
+                <text x={el.x} y={el.y} fill={el.color} fontSize={el.fontSize} textAnchor={el.align} dominantBaseline="middle" fontWeight="bold">{el.text}</text>
+              </g>
+            ))}
           </svg>
         </div>
       </div>
@@ -621,7 +727,6 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
   const { diagonalData, referenceRangesData, referenceRangesData13C, cosyPeaks, tocsyPeaks, noesyPeaks, hsqcPeaks, data1H, data13C } = useMemo(() => {
     let diag = [], ranges = [], ranges13C = [], cosy = [], tocsy = [], noesy = [], hsqc = [], d1H = [], d13C = [];
     const addPair = (arr, x, y, label, type, colorClass, size = 5) => { arr.push({ x, y, label, type, colorClass, size }); arr.push({ x: y, y: x, label, type, colorClass, size }); };
-    
     uniqueAminoAcidTypes.forEach((char, index) => {
       const aa = AMINO_ACID_DB[char];
       if(!aa) return;
@@ -642,7 +747,6 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
         cIdx++;
       });
     });
-
     parsedSeq.forEach((res, index) => {
       if(!res.shifts) return;
       Object.entries(res.shifts).forEach(([atom, ppm]) => {
@@ -658,30 +762,28 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
             }
           });
         }
-        let mergedPeaks = []; peaks.sort((a, b) => a.shift - b.shift); 
+        let mergedPeaks = []; peaks.sort((a, b) => a.shift - b.shift);
         peaks.forEach(p => {
           if (mergedPeaks.length > 0) {
             let last = mergedPeaks[mergedPeaks.length - 1];
-            if (Math.abs(last.shift - p.shift) < 0.002) { last.shift = (last.shift * last.intensity + p.shift * p.intensity) / (last.intensity + p.intensity); last.intensity += p.intensity; } 
+            if (Math.abs(last.shift - p.shift) < 0.002) { last.shift = (last.shift * last.intensity + p.shift * p.intensity) / (last.intensity + p.intensity); last.intensity += p.intensity; }
             else mergedPeaks.push({...p});
           } else mergedPeaks.push({...p});
         });
-        const pCount = getProtonCount(res.char, atom); const maxIntensity = Math.max(...mergedPeaks.map(p => p.intensity)); const baseIntensity = (1.5 + Math.random() * 0.5) * pCount; 
+        const pCount = getProtonCount(res.char, atom); const maxIntensity = Math.max(...mergedPeaks.map(p => p.intensity)); const baseIntensity = (1.5 + Math.random() * 0.5) * pCount;
         let multStr = "m"; if (totalNeighbors === 0) multStr = "s"; else if (totalNeighbors === 1) multStr = "d"; else if (totalNeighbors === 2) multStr = mergedPeaks.length === 3 ? "t" : "dd"; else if (totalNeighbors === 3) multStr = mergedPeaks.length === 4 ? "q" : "m";
         mergedPeaks.forEach(p => d1H.push({ x: p.shift, y: (p.intensity / maxIntensity) * baseIntensity, label: `${res.id} ${atom}`, color: res.color, type: '1D', multiplet: multStr }));
       });
-      
       const uniqueC = new Map(); Object.entries(res.shifts13C || {}).forEach(([atom, ppm]) => { const cName = getCarbonName(res.char, atom); if (cName) uniqueC.set(cName, ppm); });
       uniqueC.forEach((ppm, cName) => d13C.push({ x: ppm, y: 0.8 + Math.random() * 0.4, label: `${res.id} ${cName}`, color: res.color, type: '1D' }));
       Object.keys(res.shifts).forEach(atom => diag.push({ x: res.shifts[atom], y: res.shifts[atom], label: `${res.id} ${atom}`, type: 'Diagonale', size: 4 }));
       if(res.cosy) res.cosy.forEach(([a1, a2]) => { if(res.shifts[a1] && res.shifts[a2]) addPair(cosy, res.shifts[a1], res.shifts[a2], res.id, `${a1}-${a2} (COSY)`, 'cosy', 4); });
       if(res.spinSystems) res.spinSystems.forEach(sys => { for(let i=0; i<sys.length; i++) for(let j=i+1; j<sys.length; j++) if(res.shifts[sys[i]] && res.shifts[sys[j]]) addPair(tocsy, res.shifts[sys[i]], res.shifts[sys[j]], res.id, `${sys[i]}-${sys[j]} (TOCSY)`, 'tocsyDirect', 4); });
-      
       const seenPairs = new Set();
       if(res.cosy) res.cosy.forEach(([a1, a2]) => { seenPairs.add([a1, a2].sort().join('-')); if(res.shifts[a1] && res.shifts[a2]) addPair(noesy, res.shifts[a1], res.shifts[a2], res.id, `${a1}-${a2} (NOE Intra 3)`, 'noesyIntra', 4); });
-      if (index < parsedSeq.length - 1) { 
-        const nextRes = parsedSeq[index + 1]; 
-        if (res.shifts['HN'] && nextRes.shifts['HN']) addPair(noesy, res.shifts['HN'], nextRes.shifts['HN'], 'NOE Seq.', `${res.id} HN ↔ ${nextRes.id} HN (dNN)`, 'noesySeq', 3); 
+      if (index < parsedSeq.length - 1) {
+        const nextRes = parsedSeq[index + 1];
+        if (res.shifts['HN'] && nextRes.shifts['HN']) addPair(noesy, res.shifts['HN'], nextRes.shifts['HN'], 'NOE Seq.', `${res.id} HN ↔ ${nextRes.id} HN (dNN)`, 'noesySeq', 3);
       }
       Object.keys(res.shifts13C || {}).forEach(atom => { if (res.shifts[atom] && res.shifts13C[atom]) hsqc.push({ x: res.shifts[atom], y: res.shifts13C[atom], label: `${res.id} ${atom}-${getCarbonName(res.char, atom)}`, type: 'HSQC', colorClass: 'hsqc', size: 4 }); });
     });
@@ -689,6 +791,9 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
   }, [parsedSeq, uniqueAminoAcidTypes]);
 
   const yTicksForRanges = useMemo(() => Array.from({length: uniqueAminoAcidTypes.length}, (_, i) => i), [uniqueAminoAcidTypes]);
+
+  // Altezza compatta per asse verticale: 28px per residuo + padding
+  const rangeChartHeight = Math.max(120, uniqueAminoAcidTypes.length * 28 + 50);
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-slate-50 relative">
@@ -705,26 +810,26 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
               <input type="text" value={activeTest.compound || ''} onChange={e => updateActiveTest({ compound: e.target.value, compounds: [e.target.value] })} className="w-full border border-blue-300 rounded-md p-2 text-sm outline-none focus:border-blue-500 font-bold text-blue-900" placeholder="e.g. Compound A" />
             </div>
             <div className="flex flex-col gap-1 col-span-1 md:col-span-2 lg:col-span-4 p-3 bg-indigo-50 border border-indigo-200 rounded-lg">
-              <label className="text-xs font-bold text-indigo-800 uppercase flex items-center justify-between mb-2"><span>📋 Linked Protocol</span></label>
+              <label className="text-xs font-bold text-indigo-800 uppercase flex items-center justify-between mb-2"> <span>📋 Linked Protocol</span> </label>
               <div className="flex flex-col sm:flex-row items-center gap-4">
                 <select value={linkedProtocolId} onChange={(e) => updateActiveTest({linkedProtocolId: e.target.value})} className="border border-indigo-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-indigo-500 flex-1 w-full cursor-pointer font-semibold text-indigo-900">
                   <option value="">-- No Protocol Linked --</option>
-                  {(datasetProtocols || []).map(p => (<option key={p.id} value={p.id}>{p.title} ({p.category})</option>))}
+                  {(datasetProtocols || []).map(p => ( <option key={p.id} value={p.id}>{p.title} ({p.category})</option> ))}
                 </select>
                 {linkedProtocolId && (
                   <button onClick={() => jumpToProtocol && jumpToProtocol(linkedProtocolId)} className="text-sm text-white font-bold bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg shadow-sm transition-colors flex items-center justify-center gap-2 w-full sm:w-auto">📖 Open Protocol</button>
                 )}
               </div>
             </div>
-            <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Experiment Date</label><input type="date" value={activeTest.experimentDate || ''} onChange={e => updateActiveTest({ experimentDate: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500" /></div>
-            <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Concentration</label><input type="text" value={activeTest.concentration || ''} onChange={e => updateActiveTest({ concentration: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500" placeholder="e.g. 1 mM" /></div>
-            <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Solvent</label><input type="text" value={activeTest.solvent || ''} onChange={e => updateActiveTest({ solvent: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500" placeholder="e.g. 90% H2O / 10% D2O" /></div>
-            <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Salt Concentration</label><input type="text" value={activeTest.saltConcentration || ''} onChange={e => updateActiveTest({ saltConcentration: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500" placeholder="e.g. 50 mM NaCl" /></div>
-            <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Temperature</label><input type="text" value={activeTest.temperature || ''} onChange={e => updateActiveTest({ temperature: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500" placeholder="e.g. 298 K" /></div>
-            <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Other Molecule</label><input type="text" value={activeTest.otherMolecule || ''} onChange={e => updateActiveTest({ otherMolecule: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500" placeholder="e.g. Ligand X" /></div>
-            <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Ratio</label><input type="text" value={activeTest.ratio || ''} onChange={e => updateActiveTest({ ratio: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500" placeholder="e.g. 1:5" /></div>
+            <div> <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Experiment Date</label> <input type="date" value={activeTest.experimentDate || ''} onChange={e => updateActiveTest({ experimentDate: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500" /> </div>
+            <div> <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Concentration</label> <input type="text" value={activeTest.concentration || ''} onChange={e => updateActiveTest({ concentration: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500" placeholder="e.g. 1 mM" /> </div>
+            <div> <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Solvent</label> <input type="text" value={activeTest.solvent || ''} onChange={e => updateActiveTest({ solvent: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500" placeholder="e.g. 90% H2O / 10% D2O" /> </div>
+            <div> <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Salt Concentration</label> <input type="text" value={activeTest.saltConcentration || ''} onChange={e => updateActiveTest({ saltConcentration: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500" placeholder="e.g. 50 mM NaCl" /> </div>
+            <div> <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Temperature</label> <input type="text" value={activeTest.temperature || ''} onChange={e => updateActiveTest({ temperature: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500" placeholder="e.g. 298 K" /> </div>
+            <div> <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Other Molecule</label> <input type="text" value={activeTest.otherMolecule || ''} onChange={e => updateActiveTest({ otherMolecule: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500" placeholder="e.g. Ligand X" /> </div>
+            <div> <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Ratio</label> <input type="text" value={activeTest.ratio || ''} onChange={e => updateActiveTest({ ratio: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500" placeholder="e.g. 1:5" /> </div>
           </div>
-          <div><label className="block text-xs font-bold text-slate-500 uppercase mb-2">Experiment Comments</label><RichTextEditor value={activeTest.comments || ''} onChange={(html) => updateActiveTest({ comments: html })} /></div>
+          <div> <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Experiment Comments</label> <RichTextEditor value={activeTest.comments || ''} onChange={(html) => updateActiveTest({ comments: html })} /> </div>
         </CollapsibleSection>
 
         {/* 2. SEQUENCE & CONFIGURATION */}
@@ -762,57 +867,62 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
           </CollapsibleSection>
         )}
 
-        {/* 4. THEORETICAL RANGES - COMPACT WITH REFERENCE AREAS */}
+        {/* 4. THEORETICAL RANGES - CORRETTO CON BARRE VISIBILI E ASSE COMPATTO */}
         {uniqueAminoAcidTypes.length > 0 && (
           <CollapsibleSection title="Theoretical Chemical Shift Ranges" icon="📊" defaultOpen={true}>
-            <div className="grid grid-cols-1 gap-6">
-              <div className="bg-slate-50 rounded-xl border border-slate-200 p-4" style={{ height: `${Math.max(150, uniqueAminoAcidTypes.length * 40 + 60)}px`}}>
-                <h4 className="text-sm font-bold text-slate-600 uppercase tracking-wider mb-4 ml-14">Theoretical ¹H Ranges</h4>
-                <ResponsiveContainer width="100%" height="100%">
-                  <ScatterChart margin={{ top: 0, right: 30, bottom: 30, left: 50 }}>
+            <div className="grid grid-cols-1 gap-4">
+              {/* ¹H Ranges */}
+              <div className="bg-slate-50 rounded-xl border border-slate-200 p-3" style={{ height: `${rangeChartHeight}px` }}>
+                <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2 ml-14">Theoretical ¹H Ranges</h4>
+                <ResponsiveContainer width="100%" height="calc(100% - 24px)">
+                  <ScatterChart margin={{ top: 5, right: 20, bottom: 25, left: 55 }}>
                     <XAxis type="number" dataKey="x" domain={[0, 11]} reversed={true} ticks={TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={false} />} axisLine={{ stroke: '#e2e8f0' }} />
-                    <YAxis type="number" dataKey="y" domain={[-0.5, uniqueAminoAcidTypes.length - 0.5]} axisLine={false} tickLine={false} width={60} ticks={yTicksForRanges} interval={0} tickFormatter={(val) => { const char = uniqueAminoAcidTypes[uniqueAminoAcidTypes.length - 1 - val]; return char ? AMINO_ACID_DB[char].code3 : ''; }} tick={{ fontSize: 14, fontWeight: 'bold', fill: '#64748b', dx: -5 }} />
+                    <YAxis type="number" dataKey="y" domain={[-0.5, uniqueAminoAcidTypes.length - 0.5]} axisLine={false} tickLine={false} width={55} ticks={yTicksForRanges} interval={0} tickFormatter={(val) => { const char = uniqueAminoAcidTypes[uniqueAminoAcidTypes.length - 1 - val]; return char ? AMINO_ACID_DB[char].code3 : ''; }} tick={{ fontSize: 11, fontWeight: 'bold', fill: '#64748b', dx: -5 }} />
                     <Tooltip content={<NMRTooltip />} cursor={false} />
                     {referenceRangesData.map((range, idx) => (
                       <ReferenceArea
                         key={idx}
                         x1={range.min}
                         x2={range.max}
-                        y1={range.y - 0.35}
-                        y2={range.y + 0.35}
+                        y1={range.y - 0.4}
+                        y2={range.y + 0.4}
                         fill={range.color}
-                        fillOpacity={0.5}
+                        fillOpacity={0.75}
                         stroke={range.color}
-                        strokeWidth={1}
+                        strokeWidth={1.5}
+                        strokeOpacity={0.9}
                       />
                     ))}
                   </ScatterChart>
                 </ResponsiveContainer>
               </div>
-              <div className="bg-slate-50 rounded-xl border border-slate-200 p-4" style={{ height: `${Math.max(150, uniqueAminoAcidTypes.length * 40 + 60)}px`}}>
-                <h4 className="text-sm font-bold text-slate-600 uppercase tracking-wider mb-4 ml-14">Theoretical ¹³C Ranges</h4>
-                <ResponsiveContainer width="100%" height="100%">
-                  <ScatterChart margin={{ top: 0, right: 30, bottom: 30, left: 50 }}>
+              {/* ¹³C Ranges */}
+              <div className="bg-slate-50 rounded-xl border border-slate-200 p-3" style={{ height: `${rangeChartHeight}px` }}>
+                <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2 ml-14">Theoretical ¹³C Ranges</h4>
+                <ResponsiveContainer width="100%" height="calc(100% - 24px)">
+                  <ScatterChart margin={{ top: 5, right: 20, bottom: 25, left: 55 }}>
                     <XAxis type="number" dataKey="x" domain={[10, 150]} reversed={true} ticks={TICKS_13C} interval={0} tickLine={false} tick={<CustomXTick13C isZoomed={false} />} axisLine={{ stroke: '#e2e8f0' }} />
-                    <YAxis type="number" dataKey="y" domain={[-0.5, uniqueAminoAcidTypes.length - 0.5]} axisLine={false} tickLine={false} width={60} ticks={yTicksForRanges} interval={0} tickFormatter={(val) => { const char = uniqueAminoAcidTypes[uniqueAminoAcidTypes.length - 1 - val]; return char ? AMINO_ACID_DB[char].code3 : ''; }} tick={{ fontSize: 14, fontWeight: 'bold', fill: '#64748b', dx: -5 }} />
+                    <YAxis type="number" dataKey="y" domain={[-0.5, uniqueAminoAcidTypes.length - 0.5]} axisLine={false} tickLine={false} width={55} ticks={yTicksForRanges} interval={0} tickFormatter={(val) => { const char = uniqueAminoAcidTypes[uniqueAminoAcidTypes.length - 1 - val]; return char ? AMINO_ACID_DB[char].code3 : ''; }} tick={{ fontSize: 11, fontWeight: 'bold', fill: '#64748b', dx: -5 }} />
                     <Tooltip content={<NMRTooltip />} cursor={false} />
                     {referenceRangesData13C.map((range, idx) => (
                       <ReferenceArea
                         key={idx}
                         x1={range.min}
                         x2={range.max}
-                        y1={range.y - 0.35}
-                        y2={range.y + 0.35}
+                        y1={range.y - 0.4}
+                        y2={range.y + 0.4}
                         fill={range.color}
-                        fillOpacity={0.5}
+                        fillOpacity={0.75}
                         stroke={range.color}
-                        strokeWidth={1}
+                        strokeWidth={1.5}
+                        strokeOpacity={0.9}
                       />
                     ))}
                   </ScatterChart>
                 </ResponsiveContainer>
               </div>
-              <div className="bg-white rounded-xl border border-slate-200 p-6">
+              {/* Tabella numerica */}
+              <div className="bg-white rounded-xl border border-slate-200 p-4">
                 <h4 className="text-md font-bold text-slate-700 mb-4 border-b pb-2">Numerical Reference Values</h4>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm text-left">
@@ -926,8 +1036,8 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
           )}
         </CollapsibleSection>
 
-        {/* 6. SPECTRA IMAGES */}
-        <CollapsibleSection title="Spectra Images" icon="🖼️" defaultOpen={false}>
+        {/* 6. SPECTRA IMAGES - CORRETTO: ANTEPRIMA DIRETTA SENZA CLICK */}
+        <CollapsibleSection title="Spectra Images" icon="🖼️" defaultOpen={true}>
           <div className="flex justify-between items-center mb-4">
             <p className="text-sm text-slate-500">Attach direct image links for your experimental spectra.</p>
             <button onClick={() => { const url = prompt("Paste direct image link (e.g. HSQC, NOESY):"); if(url && url.trim()) updateActiveTest({ nmrSpectraImages: [...images, url.trim()] }); }} className="bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 font-bold px-3 py-1.5 rounded transition-colors shadow-sm text-xs">+ Add Link</button>
@@ -937,11 +1047,26 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
               <div className="col-span-full text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">No spectra images attached.</div>
             ) : (
               images.map((imgSrc, idx) => (
-                <div key={idx} className="relative group bg-slate-50 p-2 rounded-lg border border-slate-200">
-                  <a href={imgSrc} target="_blank" rel="noopener noreferrer">
-                    <img src={imgSrc} alt={`Spectrum ${idx+1}`} className="w-full h-auto object-contain rounded shadow-sm bg-white max-h-[300px]" onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="70"><rect width="100" height="70" fill="%23f8fafc"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-size="10" fill="%2394a3b8">Image Error</text></svg>'; }} />
+                <div key={idx} className="relative group bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-slate-500">Spectrum {idx + 1}</span>
+                    <button onClick={() => updateActiveTest({ nmrSpectraImages: images.filter((_, i) => i !== idx) })} className="bg-red-50 hover:bg-red-100 text-red-500 hover:text-red-700 rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold transition-colors border border-red-200">&times;</button>
+                  </div>
+                  <div className="bg-slate-50 rounded-lg p-2 border border-slate-100">
+                    <img
+                      src={imgSrc}
+                      alt={`Spectrum ${idx+1}`}
+                      className="w-full h-auto object-contain rounded bg-white"
+                      style={{ minHeight: '150px', maxHeight: '400px' }}
+                      onError={(e) => {
+                        e.target.onerror = null;
+                        e.target.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200"><rect width="400" height="200" fill="%23f8fafc"/><text x="50%25" y="45%25" dominant-baseline="middle" text-anchor="middle" font-size="14" fill="%2394a3b8">⚠️ Image could not be loaded</text><text x="50%25" y="55%25" dominant-baseline="middle" text-anchor="middle" font-size="11" fill="%23cbd5e1">Check the URL is a direct image link</text></svg>';
+                      }}
+                    />
+                  </div>
+                  <a href={imgSrc} target="_blank" rel="noopener noreferrer" className="mt-2 text-xs text-blue-500 hover:text-blue-700 font-medium flex items-center gap-1">
+                    🔗 Open full size
                   </a>
-                  <button onClick={() => updateActiveTest({ nmrSpectraImages: images.filter((_, i) => i !== idx) })} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold shadow-md opacity-0 group-hover:opacity-100 transition-opacity">&times;</button>
                 </div>
               ))
             )}
@@ -961,7 +1086,7 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
           </CollapsibleSection>
         )}
 
-        {/* 8. LAB NOTEBOOK EXPORT - WITH IMAGES */}
+        {/* 8. LAB NOTEBOOK EXPORT */}
         <CollapsibleSection title="Lab Notebook Export" icon="📓" defaultOpen={false} className="no-print">
           <div className="flex flex-col gap-4">
             <p className="text-sm text-slate-600">Select the NMR data to format and append to the General Comments (which acts as the Lab Notebook entry).</p>
