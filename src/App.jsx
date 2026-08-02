@@ -6,6 +6,7 @@ import {
 } from './data/constants';
 import { NMRTestRenderer } from './components/NMRTestRenderer';
 import { PlateTestRenderer } from './components/PlateTestRenderer';
+import { CDTestRenderer } from './components/CDTestRenderer'; // <-- NUOVO IMPORT CD
 import { LabNotebook } from './components/LabNotebook';
 import { RichTextEditor } from './components/RichTextEditor';
 
@@ -16,10 +17,11 @@ const migrateLoadedDataset = (s) => {
         let safeComments = typeof p.comments === 'string' ? p.comments : '';
         safeComments = safeComments.replace(/<img[^>]+src="data:image\/[^;]+;base64,([^">]{500000,})"[^>]*>/gi, '<br/><span style="color:red; font-size:10px; font-weight:bold;">[Massive image removed]</span><br/>');
         let safeImages = Array.isArray(p.images) ? p.images.filter(img => typeof img === 'string' && !(img.startsWith('data:image/') && img.length > 500000)) : [];
+        
         let migratedType = p.type;
         if (!migratedType && p.plateType) migratedType = p.plateType === '9x9box' ? 'plate-9x9box' : 'plate-' + p.plateType;
         let migratedCategory = p.testCategory || (p.expTypes && p.expTypes.length > 0 ? p.expTypes[0] : 'Activity');
-        
+
         if (migratedType === 'nmr') {
             return {
                 moleculeName: '', experimentDate: '', concentration: '', solvent: '', saltConcentration: '', temperature: '', otherMolecule: '', ratio: '', tableMode: 'backbone', compound: '',
@@ -27,6 +29,16 @@ const migrateLoadedDataset = (s) => {
             };
         }
         
+        // <-- NUOVO: Migrazione per test CD
+        if (migratedType === 'cd') {
+            return {
+                compound: '', experimentDate: '', concentration: '', solvent: '', saltConcentration: '', temperature: '', buffer: '', pathLength: '1', otherMolecule: '', ratio: '',
+                wavelengthData: '', spectraColumns: [], structureComposition: { 'α-Helix': 30, 'β-Sheet': 20, 'Turn': 10, 'Random Coil': 40 },
+                chartCfg: { yMin: '', yMax: '', xMin: '190', xMax: '260', fontSize: 12, lineWidth: 2 },
+                ...p, type: 'cd', testCategory: migratedCategory, comments: safeComments, images: safeImages
+            };
+        }
+
         return { ...p, type: migratedType || 'plate-96', testCategory: migratedCategory, comments: safeComments, images: safeImages };
     });
 
@@ -41,7 +53,6 @@ const migrateLoadedDataset = (s) => {
         if (!legacyGroups[key]) legacyGroups[key] = { typeText, label, items: [] };
         legacyGroups[key].items.push(t);
     });
-    
     const newStorages = [];
     Object.values(legacyGroups).forEach((group, gi) => {
         const normType = /frigo|refriger/i.test(group.typeText) ? 'Refrigerator' : /clos|armad/i.test(group.typeText) ? 'Closet' : 'Freezer';
@@ -51,7 +62,6 @@ const migrateLoadedDataset = (s) => {
         newStorages.push({ id: stId, name: group.label || group.typeText || ('Imported Storage ' + (gi + 1)), type: normType, rows, cols, imageUrl: '' });
         group.items.forEach((t, idx) => { t.storageId = stId; t.storageIndex = idx; });
     });
-
     return { tests, storages: newStorages.length > 0 ? [...existingStorages, ...newStorages] : existingStorages };
 };
 
@@ -64,13 +74,12 @@ const FIREBASE_CONFIG = {
     messagingSenderId: "855790481107",
     appId: "1:855790481107:web:a566455d3f13a48a20ae26"
 };
-
 let app, auth, db, appId = 'lab-workspace-app';
 try {
-    if (!window.firebase.apps.length) { 
-        app = window.firebase.initializeApp(FIREBASE_CONFIG); 
-    } else { 
-        app = window.firebase.app(); 
+    if (!window.firebase.apps.length) {
+        app = window.firebase.initializeApp(FIREBASE_CONFIG);
+    } else {
+        app = window.firebase.app();
     }
     auth = window.firebase.auth();
     db = window.firebase.firestore();
@@ -81,17 +90,16 @@ try {
 export default function App() {
     const createEmptyTest = (id, num, customType = 'plate-96') => {
         const baseTest = {
-            id, name: `Test ${num}`, date: new Date().toISOString().split('T')[0], instanceName: '', 
+            id, name: `Test ${num}`, date: new Date().toISOString().split('T')[0], instanceName: '',
             testCategory: 'Activity', type: customType, storageType: '', storageLabel: '', storageIndex: null,
             comments: '', images: [], documents: [], plan: [], linkedProtocolId: '',
         };
-
+        
         if (customType.startsWith('plate')) {
             const dimKey = customType.split('-')[1];
             const dim = PLATES_DEF[dimKey] || PLATES_DEF['96'];
             const defGrid = Array(26).fill(null).map(()=>Array(26).fill(''));
             const defCell = Array(26).fill(null).map(()=>Array(26).fill(null).map(()=>({excluded:false, role:null, conc:null, region:'Primary', manualOverride:false})));
-            
             return {
                 ...baseTest, plateType: dimKey, grid: defGrid, boxRows: 9, boxCols: 9,
                 compounds: Array(dim.cols).fill(''), rowCompounds: Array(dim.rows).fill(''), cellConfig: defCell, 
@@ -105,6 +113,16 @@ export default function App() {
                 proteinSequence: '', selectedNuclei: ['H', 'C', 'N'], chemicalShifts: {}, nmrSpectraImages: [],
                 moleculeName: '', experimentDate: '', concentration: '', solvent: '', saltConcentration: '', temperature: '', otherMolecule: '', ratio: '', tableMode: 'backbone', compound: ''
             };
+        } 
+        // <-- NUOVO: Creazione test CD
+        else if (customType === 'cd') {
+            return {
+                ...baseTest,
+                compound: '', experimentDate: '', concentration: '', solvent: '', saltConcentration: '', temperature: '', buffer: '', pathLength: '1', otherMolecule: '', ratio: '',
+                wavelengthData: '', spectraColumns: [], 
+                structureComposition: { 'α-Helix': 30, 'β-Sheet': 20, 'Turn': 10, 'Random Coil': 40 },
+                chartCfg: { yMin: '', yMax: '', xMin: '190', xMax: '260', fontSize: 12, lineWidth: 2 }
+            };
         }
         return baseTest;
     };
@@ -113,33 +131,27 @@ export default function App() {
     const [isCloudReady, setIsCloudReady] = useState(false);
     const [saveStatus, setSaveStatus] = useState('idle');
     const [saveErrorMsg, setSaveErrorMsg] = useState('');
-    
     const [appView, setAppView] = useState('explorer'); 
     const [currentModule, setCurrentModule] = useState('dashboard');
-    
     const [datasetsList, setDatasetsList] = useState([]);
     const [currentDatasetId, setCurrentDatasetId] = useState(null);
-    
     const [dialog, setDialog] = useState(null);
     const [pendingLoad, setPendingLoad] = useState(null);
     const [appClipboard, setAppClipboard] = useState(null);
-    
     const [datasetTitle, setDatasetTitle] = useState('');
     const [datasetSubtitle, setDatasetSubtitle] = useState('');
     const [customCmpds, setCustomCmpds] = useState([]);
     const [customCellLines, setCustomCellLines] = useState([]);
     const [customConc, setCustomConc] = useState({});
     const [cmpColors, setCmpColors] = useState({});
-    
     const [storages, setStorages] = useState([]);
     const [activeStorageId, setActiveStorageId] = useState(null);
     const [storageModal, setStorageModal] = useState(null);
     const [moveModal, setMoveModal] = useState(null); 
-    
     const [testCategories, setTestCategories] = useState(["Activity", "Toxicity", "Microscopy", "Flow Cytometry", "Viability"]);
     const [protocolCategories, setProtocolCategories] = useState(["Preparation", "Measurement", "Analysis"]);
     const [datasetProtocols, setDatasetProtocols] = useState([]);
-
+    
     const historyRef = useRef([ [createEmptyTest('t1', 1, 'plate-96')] ]);
     const [historyIndex, setHistoryIndex] = useState(0);
     const [reactTests, setReactTests] = useState(historyRef.current[0]);
@@ -167,18 +179,13 @@ export default function App() {
 
     // --- FIREBASE AUTH & SYNC ---
     useEffect(() => {
-        if (!auth) {
-            setIsCloudReady(true);
-            return;
-        }
+        if (!auth) { setIsCloudReady(true); return; }
         const initAuth = async () => {
             try {
                 if (typeof window.__initial_auth_token !== 'undefined' && window.__initial_auth_token) {
                     try { await auth.signInWithCustomToken(window.__initial_auth_token); }
                     catch(err) { await auth.signInAnonymously(); }
-                } else { 
-                    await auth.signInAnonymously(); 
-                }
+                } else { await auth.signInAnonymously(); }
             } catch(e) { console.error("Auth error", e); setIsCloudReady(true); }
         };
         initAuth();
@@ -214,8 +221,8 @@ export default function App() {
     const latestDataRef = useRef(null);
     latestDataRef.current = { tests, datasetTitle, datasetSubtitle, customCmpds, customCellLines, customConc, cmpColors, testCategories, protocolCategories, datasetProtocols, storages };
     const getCompressedPayload = () => LZString.compressToUTF16(JSON.stringify(latestDataRef.current));
-
     const saveTimeoutRef = useRef(null);
+
     useEffect(() => {
         if (!isCloudReady || appView !== 'dataset' || !currentDatasetId) return;
         setSaveStatus('saving');
@@ -228,7 +235,6 @@ export default function App() {
                     testCount: tests.length, updatedAt: Date.now(),
                     payload: getCompressedPayload(), isCompressed: true
                 };
-                
                 if (db && user) {
                     const docRef = db.collection(`artifacts/${appId}/public/data/datasets`).doc(currentDatasetId);
                     await docRef.set(updatedPayload, { merge: true }).then(() => {
@@ -285,7 +291,6 @@ export default function App() {
                     loadedTests = s.tests || s.plates || [];
                     if (loadedTests.length === 0) { setDialog({ type: 'alert', title: 'Load Failed', message: 'No tests found in this file.' }); return; }
                 } else { setDialog({ type: 'alert', title: 'Load Failed', message: 'No dataset data found in this HTML file.' }); return; }
-                
                 const migrated = migrateLoadedDataset(s);
                 loadedTests = migrated.tests;
                 s.storages = migrated.storages; 
@@ -330,14 +335,11 @@ export default function App() {
         setDatasetTitle('New Dataset'); setDatasetSubtitle(''); setCustomCmpds([]); setCustomCellLines([]); setCustomConc({}); 
         setTestCategories(["Activity", "Toxicity", "Microscopy", "Flow Cytometry", "Viability"]);
         setProtocolCategories(["Preparation", "Measurement", "Analysis"]); setDatasetProtocols([]); setStorages([]); 
-        
         setCurrentDatasetId(newId); setAppView('dataset'); setCurrentModule('dashboard');
-
         const updatedPayload = {
             title: 'New Dataset', date: new Date().toISOString().split('T')[0], createdAt: Date.now(), updatedAt: Date.now(),
             payload: LZString.compressToUTF16(JSON.stringify({ tests: freshTests })), isCompressed: true
         };
-        
         if(db && user) { 
             await db.collection(`artifacts/${appId}/public/data/datasets`).doc(newId).set(updatedPayload); 
         } else {
@@ -346,7 +348,7 @@ export default function App() {
             setDatasetsList([...stored].sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
         }
     };
-    
+
     const handleBackToExplorer = async () => {
         if (currentDatasetId) {
             setSaveStatus('saving'); if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
@@ -376,26 +378,23 @@ export default function App() {
             const loadedTests = migrated.tests;
             if (loadedTests.length > 0) { setReactTests(loadedTests); historyRef.current = [loadedTests]; setHistoryIndex(0); setActiveTestId(loadedTests[0].id); } 
             else { const fresh = [createEmptyTest('t1', 1)]; setReactTests(fresh); historyRef.current = [fresh]; setHistoryIndex(0); setActiveTestId('t1'); }
-            
             setDatasetTitle(s.datasetTitle !== undefined ? s.datasetTitle : (s.reportTitle !== undefined ? s.reportTitle : (dset.title || 'Untitled')));
             setDatasetSubtitle(s.datasetSubtitle !== undefined ? s.datasetSubtitle : (s.reportSubtitle || ''));
             setCustomCmpds(s.customCmpds || []); setCustomCellLines(s.customCellLines || []); setCustomConc(s.customConc || {}); setCmpColors(s.cmpColors || {});
             setTestCategories(s.testCategories || ["Activity", "Toxicity", "Microscopy", "Flow Cytometry", "Viability"]);
             setProtocolCategories(s.protocolCategories || ["Preparation", "Measurement", "Analysis"]);
             setDatasetProtocols(s.datasetProtocols || []); setStorages(migrated.storages); 
-            
             setCurrentDatasetId(dset.id); setAppView('dataset'); setCurrentModule('dashboard');
         } catch(e) { setDialog({type: 'alert', title: 'Error', message: "Error reading dataset structure."}); }
     };
-    
+
     const deleteDataset = (e, id) => {
         e.stopPropagation();
         setDialog({
             type: 'confirm', title: 'Delete Dataset', message: 'Are you sure you want to delete this entire Dataset?',
             onConfirm: async () => {
-                if(db && user) { 
-                    await db.collection(`artifacts/${appId}/public/data/datasets`).doc(id).delete(); 
-                } else {
+                if(db && user) { await db.collection(`artifacts/${appId}/public/data/datasets`).doc(id).delete(); } 
+                else {
                     let stored = []; try { stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]'); } catch(e){}
                     stored = stored.filter(d => d.id !== id); localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
                     setDatasetsList(stored);
@@ -410,9 +409,8 @@ export default function App() {
             type: 'prompt', title: 'Rename Dataset', message: 'Enter a new title for this Dataset:', defaultValue: currentTitle,
             onConfirm: async (newTitle) => {
                 if (newTitle && newTitle.trim() !== currentTitle) {
-                    if (db && user) {
-                        await db.collection(`artifacts/${appId}/public/data/datasets`).doc(id).update({ title: newTitle.trim() });
-                    } else {
+                    if (db && user) { await db.collection(`artifacts/${appId}/public/data/datasets`).doc(id).update({ title: newTitle.trim() }); } 
+                    else {
                         let stored = []; try { stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]'); } catch(e){}
                         const idx = stored.findIndex(d => d.id === id);
                         if (idx >= 0) { stored[idx].title = newTitle.trim(); localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored)); setDatasetsList(stored); }
@@ -452,24 +450,23 @@ export default function App() {
 
     const [currentMonth, setCurrentMonth] = useState(() => { const d = new Date(); d.setDate(1); return d; });
     const [calFilterDate, setCalFilterDate] = useState(null);
-    
+
     const mergedPlan = useMemo(() => {
         const all = []; tests.forEach(t => { (t.plan || []).forEach(task => { all.push({ ...task, testName: t.name, testId: t.id }); }); });
         const sorted = all.sort((a, b) => a.date.localeCompare(b.date));
         if (calFilterDate) return sorted.filter(t => t.date === calFilterDate); return sorted;
     }, [tests, calFilterDate]);
-    
+
     const agendaGrouped = useMemo(() => {
         const sorted = [...mergedPlan].sort((a, b) => a.date.localeCompare(b.date));
         return sorted.reduce((acc, t) => { acc[t.date] = acc[t.date] || []; acc[t.date].push(t); return acc; }, {});
     }, [mergedPlan]);
-    
+
     const daysInMonth = (year, month) => new Date(year, month + 1, 0).getDate();
     const firstDayOfMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1).getDay();
     const startDayOffset = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
     const totalDays = daysInMonth(currentMonth.getFullYear(), currentMonth.getMonth());
     const monthName = currentMonth.toLocaleString('en-US', { month: 'long', year: 'numeric' });
-    
     const handlePrevMonth = () => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1));
     const handleNextMonth = () => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1));
 
@@ -495,17 +492,13 @@ export default function App() {
 
     const handleMoveBox = (boxId, targetStorageId, targetSlotIndex) => {
         setTests(prev => prev.map(t => {
-            if (t.id === boxId) {
-                return { ...t, storageId: targetStorageId, storageIndex: targetSlotIndex };
-            }
+            if (t.id === boxId) return { ...t, storageId: targetStorageId, storageIndex: targetSlotIndex };
             return t;
         }));
         setMoveModal(null);
     };
 
-    const handlePrint = () => {
-        window.print();
-    };
+    const handlePrint = () => { window.print(); };
 
     return (
         <div className="w-full relative flex flex-col h-screen overflow-hidden bg-slate-50">
@@ -515,23 +508,14 @@ export default function App() {
                     .no-print, nav, button, input[type="file"], .w-64 { display: none !important; }
                     .print-only { display: block !important; }
                     body, html, #root { 
-                        background: white !important; 
-                        height: auto !important; 
-                        min-height: 100% !important; 
-                        overflow: visible !important; 
-                        color: black !important;
+                        background: white !important; height: auto !important; min-height: 100% !important; 
+                        overflow: visible !important; color: black !important;
                     }
                     .h-screen, .max-h-screen, .flex-1, .overflow-y-auto, .overflow-hidden, .custom-scrollbar, .h-full, .min-h-0 { 
-                        height: auto !important; 
-                        max-height: none !important; 
-                        overflow: visible !important; 
-                        position: static !important;
+                        height: auto !important; max-height: none !important; overflow: visible !important; position: static !important;
                     }
                     .fixed, .absolute { position: static !important; }
-                    .shadow-sm, .shadow-md, .shadow-lg, .shadow-xl, .shadow-2xl { 
-                        box-shadow: none !important; 
-                        border: 1px solid #e2e8f0 !important; 
-                    }
+                    .shadow-sm, .shadow-md, .shadow-lg, .shadow-xl, .shadow-2xl { box-shadow: none !important; border: 1px solid #e2e8f0 !important; }
                 }
             `}</style>
 
@@ -574,12 +558,8 @@ export default function App() {
                         <h3 className="text-lg font-black text-slate-800 mb-2">Load Workspace Data</h3>
                         <p className="text-sm text-slate-500 mb-6">How would you like to load the data from this file?</p>
                         <div className="flex flex-col gap-3">
-                            <button onClick={() => confirmLoad('append')} className="bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-800 font-bold py-2 px-4 rounded-lg text-left transition-colors">
-                                ➕ Add to Current File
-                            </button>
-                            <button onClick={() => confirmLoad('replace')} className="bg-red-50 hover:bg-red-100 border border-red-200 text-red-800 font-bold py-2 px-4 rounded-lg text-left transition-colors">
-                                🔄 Substitute Data
-                            </button>
+                            <button onClick={() => confirmLoad('append')} className="bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-800 font-bold py-2 px-4 rounded-lg text-left transition-colors">➕ Add to Current File</button>
+                            <button onClick={() => confirmLoad('replace')} className="bg-red-50 hover:bg-red-100 border border-red-200 text-red-800 font-bold py-2 px-4 rounded-lg text-left transition-colors">🔄 Substitute Data</button>
                             <button onClick={() => setPendingLoad(null)} className="mt-2 text-slate-500 hover:text-slate-700 text-sm font-bold py-2 w-full transition-colors">Cancel</button>
                         </div>
                     </div>
@@ -627,9 +607,7 @@ export default function App() {
                 if (!box) return null;
                 const targetSt = storages.find(s => s.id === (moveModal.targetStorageId || moveModal.currentStorageId));
                 if (!targetSt) return null;
-                
                 const boxesInTarget = tests.filter(t => t.type === 'plate-9x9box' && t.storageId === targetSt.id && t.id !== box.id);
-
                 return (
                     <div className="fixed inset-0 bg-slate-900/50 z-[999999] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setMoveModal(null)}>
                         <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col border border-slate-200" onClick={e => e.stopPropagation()}>
@@ -651,7 +629,6 @@ export default function App() {
                                         {storages.map(s => <option key={s.id} value={s.id}>{s.name} ({s.type})</option>)}
                                     </select>
                                 </div>
-                                
                                 <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
                                     <p className="text-xs text-slate-500 mb-3">Click a slot to move the box. You can place it in an empty slot or stack it with existing boxes.</p>
                                     <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${targetSt.cols}, minmax(60px, 1fr))` }}>
@@ -679,7 +656,8 @@ export default function App() {
                     </div>
                 );
             })()}
-            
+
+            {/* ===== EXPLORER VIEW (Schermata di avvio) ===== */}
             {appView === 'explorer' && (
                 <div className="absolute inset-0 z-[100] flex flex-col items-center p-10 bg-slate-100 overflow-y-auto">
                     <div className="w-full max-w-6xl bg-white p-8 rounded-xl shadow-2xl border border-slate-200">
@@ -689,6 +667,23 @@ export default function App() {
                                 <p className="text-slate-500 text-sm mt-1">Manage Datasets, Tests, and Protocols</p>
                             </div>
                             <div className="flex gap-3">
+                                {/* <-- NUOVO: Pulsante "Lista dei File" spostato qui per ricaricare la lista */}
+                                <button onClick={() => {
+                                    if (db) {
+                                        const collRef = db.collection(`artifacts/${appId}/public/data/datasets`);
+                                        collRef.get().then(snap => {
+                                            const dsets = [];
+                                            snap.forEach(doc => { dsets.push({ id: doc.id, ...doc.data() }); });
+                                            dsets.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+                                            setDatasetsList(dsets);
+                                        });
+                                    } else {
+                                        const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
+                                        if (stored) setDatasetsList(JSON.parse(stored).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
+                                    }
+                                }} className="bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 font-bold py-2.5 px-4 rounded-lg shadow-sm transition-colors flex items-center gap-2">
+                                    📁 Lista dei File
+                                </button>
                                 <label className="bg-violet-100 hover:bg-violet-200 text-violet-800 font-bold py-2.5 px-6 rounded-lg shadow-sm transition-colors flex items-center gap-2 cursor-pointer">
                                     <span className="text-lg">📂</span> Apri File
                                     <input type="file" accept=".html" onChange={loadHTML} className="hidden"/>
@@ -698,7 +693,6 @@ export default function App() {
                                 </button>
                             </div>
                         </div>
-                        
                         {!isCloudReady ? (
                             <div className="text-center py-20 flex flex-col items-center gap-4">
                                 <div className="w-12 h-12 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin"></div>
@@ -718,7 +712,6 @@ export default function App() {
                                     if (group.cellLines) titleParts.push(group.cellLines);
                                     const groupTitle = group.isUnclassified ? (group.items[0].title || 'Untitled') : titleParts.join(' - ');
                                     const isExpanded = expandedGroups[group.key];
-                                    
                                     return (
                                         <div key={group.key} className="border border-slate-200 rounded-xl p-5 hover:shadow-lg hover:border-blue-300 transition-all bg-white flex flex-col h-full">
                                             <h3 className="font-bold text-lg text-slate-800 mb-2 leading-tight truncate" title={groupTitle}>{groupTitle}</h3>
@@ -756,8 +749,10 @@ export default function App() {
                 </div>
             )}
 
+            {/* ===== DATASET VIEW ===== */}
             {appView === 'dataset' && (
                 <div className="flex h-screen w-full overflow-hidden">
+                    {/* SIDEBAR (Rimosso il pulsante "Lista dei File Presenti", mantenuto solo il tasto ◀ per tornare indietro) */}
                     <div className="w-64 bg-white border-r border-slate-200 flex flex-col shadow-sm z-30 shrink-0 no-print">
                         <div className="p-4 border-b border-slate-200 flex items-center gap-2">
                             <button onClick={handleBackToExplorer} className="text-slate-400 hover:text-blue-600 transition-colors" title="Back to Workspace">◀</button>
@@ -766,7 +761,6 @@ export default function App() {
                                 <input value={datasetSubtitle} onChange={e=>setDatasetSubtitle(e.target.value)} className="w-full text-[10px] font-medium text-slate-500 bg-transparent border-none outline-none truncate focus:ring-1 focus:ring-blue-500 rounded px-1 mt-0.5" placeholder="Subtitle / Project info"/>
                             </div>
                         </div>
-
                         <div className="px-4 py-2 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center text-[10px] font-bold text-slate-500">
                             <span>Status:</span>
                             {saveStatus === 'saving' ? <span className="text-blue-500 animate-pulse">💾 Saving...</span> :
@@ -774,15 +768,7 @@ export default function App() {
                              saveStatus === 'error' ? <span className="text-red-600" title={saveErrorMsg}>❌ Error</span> :
                              <span className="text-slate-600">...</span>}
                         </div>
-
                         <nav className="flex-1 overflow-y-auto py-4 flex flex-col gap-1 px-2">
-                            <button 
-                                onClick={handleBackToExplorer}
-                                className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all text-left bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-bold shadow-sm mb-4"
-                            >
-                                <span className="text-lg w-5 text-center">📁</span>
-                                Lista dei File Presenti
-                            </button>
                             {[
                                 { id: 'dashboard', icon: '📊', label: 'Dataset Overview' },
                                 { id: 'agenda', icon: '🗓️', label: 'Agenda (Timeline)' },
@@ -801,7 +787,6 @@ export default function App() {
                                 </button>
                             ))}
                         </nav>
-                        
                         <div className="p-4 border-t border-slate-200 flex flex-col gap-2">
                             <div className="flex gap-2">
                                 <label className="flex-1 text-center bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-200 font-bold py-1.5 rounded text-xs cursor-pointer shadow-sm transition-colors">
@@ -817,6 +802,7 @@ export default function App() {
                         </div>
                     </div>
 
+                    {/* MAIN CONTENT */}
                     <div className="flex-1 flex flex-col bg-slate-50 h-full overflow-hidden relative">
                         {currentModule === 'dashboard' && (
                             <div className="p-8 h-full overflow-y-auto custom-scrollbar bg-slate-50">
@@ -1004,7 +990,6 @@ export default function App() {
                             const st = storages.find(s => s.id === activeStorageId);
                             if (!st) return <div className="p-6">Storage not found.</div>;
                             const boxesInStorage = tests.filter(t => t.type === 'plate-9x9box' && t.storageId === st.id);
-                            
                             const handleAddBox = (slotIndex) => {
                                 const id = 't' + Date.now();
                                 const newBox = createEmptyTest(id, tests.length + 1, 'plate-9x9box');
@@ -1013,7 +998,6 @@ export default function App() {
                                 setTests(prev => [...prev, newBox]);
                                 setActiveTestId(id); setCurrentModule('active-test');
                             };
-
                             return (
                                 <div className="p-6 h-full overflow-y-auto custom-scrollbar flex flex-col bg-slate-50">
                                     <div className="mb-6 flex flex-col md:flex-row justify-between items-start md:items-end gap-4 shrink-0">
@@ -1060,7 +1044,6 @@ export default function App() {
                                                                         <span className="text-2xl mb-1 drop-shadow-sm">📦</span>
                                                                         <span className="text-[10px] font-bold text-indigo-900 leading-tight w-full truncate">{box.name}</span>
                                                                         <span className="text-[9px] text-slate-500 truncate w-full">{box.instanceName || box.date}</span>
-                                                                        
                                                                         <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20 no-print">
                                                                             <button 
                                                                                 onClick={(e) => { e.stopPropagation(); setMoveModal({ boxId: box.id, currentStorageId: st.id, targetStorageId: st.id }); }} 
@@ -1096,25 +1079,23 @@ export default function App() {
                             );
                         })()}
 
+                        {/* TESTS (Aggiunto pulsante "+ CD Spectrum") */}
                         {currentModule === 'tests' && (() => {
                             const testSearch = expandedGroups['testSearch'] || '';
                             const testCatFilter = expandedGroups['testCatFilter'] || 'ALL';
                             const showCatMgr = expandedGroups['showTestCatMgr'] || false;
                             const newCatInput = expandedGroups['newTestCatInput'] || '';
-
                             const filteredTestsRaw = tests.filter(t => {
                                 if (t.type === 'plate-9x9box') return false;
                                 const matchesSearch = t.name.toLowerCase().includes(testSearch.toLowerCase()) || (t.instanceName || '').toLowerCase().includes(testSearch.toLowerCase());
                                 const matchesCat = testCatFilter === 'ALL' || t.testCategory === testCatFilter;
                                 return matchesSearch && matchesCat;
                             });
-
                             const filteredTests = [];
                             const seenTestNames = new Set();
                             filteredTestsRaw.forEach(t => {
                                 if (!seenTestNames.has(t.name)) { seenTestNames.add(t.name); filteredTests.push(t); }
                             });
-
                             return (
                                 <div className="p-6 h-full flex flex-col">
                                     <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-6 gap-4 border-b border-slate-200 pb-4">
@@ -1136,9 +1117,14 @@ export default function App() {
                                                 setTests(prev => [...prev, createEmptyTest(id, prev.length + 1, 'nmr')]);
                                                 setActiveTestId(id); setCurrentModule('active-test');
                                             }} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors">+ NMR Spectrum</button>
+                                            {/* <-- NUOVO: Pulsante per CD Spectrum */}
+                                            <button onClick={() => {
+                                                const id = 't' + Date.now();
+                                                setTests(prev => [...prev, createEmptyTest(id, prev.length + 1, 'cd')]);
+                                                setActiveTestId(id); setCurrentModule('active-test');
+                                            }} className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors">+ CD Spectrum</button>
                                         </div>
                                     </div>
-
                                     <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex flex-col gap-4 shrink-0 no-print">
                                         <div className="flex flex-col md:flex-row gap-4 items-center">
                                             <div className="flex-1 w-full relative">
@@ -1168,7 +1154,6 @@ export default function App() {
                                             </div>
                                         )}
                                     </div>
-
                                     <div className="flex-1 overflow-y-auto custom-scrollbar">
                                         {filteredTests.length === 0 ? (
                                             <div className="text-center py-10 text-slate-400 italic">No tests match your filters.</div>
@@ -1176,8 +1161,9 @@ export default function App() {
                                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                                                 {filteredTests.map(test => (
                                                     <div key={test.id} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:shadow-md hover:border-blue-400 cursor-pointer transition-all flex flex-col group relative" onClick={() => { setActiveTestId(test.id); setCurrentModule('active-test'); }}>
+                                                        {/* <-- NUOVO: Icona per test CD */}
                                                         <div className="absolute top-3 right-3 text-2xl opacity-80 group-hover:scale-110 transition-transform">
-                                                            {test.type === 'nmr' ? '📉' : test.type === 'plate-9x9box' ? '📦' : '🧫'}
+                                                            {test.type === 'nmr' ? '📉' : test.type === 'cd' ? '🌀' : test.type === 'plate-9x9box' ? '📦' : '🧫'}
                                                         </div>
                                                         <span className="text-[10px] font-black uppercase tracking-wider text-blue-600 bg-blue-50 px-2 py-0.5 rounded self-start mb-2 border border-blue-100">{test.testCategory || 'Uncategorized'}</span>
                                                         <h3 className="font-bold text-slate-800 text-lg truncate pr-8">{test.name}</h3>
@@ -1201,15 +1187,12 @@ export default function App() {
                             const showProtoCatMgr = expandedGroups['showProtoCatMgr'] || false;
                             const newProtoCatInput = expandedGroups['newProtoCatInput'] || '';
                             const activeProtoId = expandedGroups['activeProtoId'] || null;
-
                             const filteredProtocols = datasetProtocols.filter(p => {
                                 const matchesSearch = p.title.toLowerCase().includes(protoSearch.toLowerCase());
                                 const matchesCat = protoCatFilter === 'ALL' || p.category === protoCatFilter;
                                 return matchesSearch && matchesCat;
                             });
-
                             const activeProtocol = activeProtoId ? datasetProtocols.find(p => p.id === activeProtoId) : null;
-
                             if (activeProtocol) {
                                 return (
                                     <div className="p-6 h-full flex flex-col bg-white">
@@ -1222,7 +1205,6 @@ export default function App() {
                                                 {protocolCategories.map(c => <option key={c} value={c}>{c}</option>)}
                                             </select>
                                         </div>
-
                                         <div className="flex-1 flex flex-col lg:flex-row gap-6 overflow-hidden">
                                             <div className="flex-1 flex flex-col h-full min-h-[300px]">
                                                 <label className="text-xs font-bold text-slate-500 uppercase mb-2">Protocol Description & Steps</label>
@@ -1231,8 +1213,6 @@ export default function App() {
                                                     onChange={val => setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? {...p, content: val} : p))}
                                                     placeholder="Write the detailed protocol steps here. You can paste images directly..."
                                                 />
-                                                
-                                                {/* LINKED TESTS SECTION */}
                                                 <div className="mt-6 border-t border-slate-100 pt-4 no-print">
                                                     <h4 className="text-xs font-bold text-slate-500 uppercase mb-3">🧪 Tests Using This Protocol</h4>
                                                     <div className="flex flex-wrap gap-2">
@@ -1245,7 +1225,7 @@ export default function App() {
                                                                 onClick={() => { setActiveTestId(t.id); setCurrentModule('active-test'); }}
                                                                 className="text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 hover:bg-blue-100 px-3 py-1.5 rounded-lg shadow-sm transition-colors flex items-center gap-1"
                                                             >
-                                                                {t.type === 'nmr' ? '📉' : '🧫'} {t.name} {t.instanceName ? `(${t.instanceName})` : ''}
+                                                                {t.type === 'nmr' ? '📉' : t.type === 'cd' ? '🌀' : '🧫'} {t.name} {t.instanceName ? `(${t.instanceName})` : ''}
                                                             </button>
                                                         ))}
                                                     </div>
@@ -1302,7 +1282,6 @@ export default function App() {
                                     </div>
                                 );
                             }
-
                             return (
                                 <div className="p-6 h-full flex flex-col">
                                     <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-6 gap-4 border-b border-slate-200 pb-4">
@@ -1337,7 +1316,6 @@ export default function App() {
                                                 <button onClick={() => setExpandedGroups(p=>({...p, showProtoCatMgr: !showProtoCatMgr}))} className={`px-3 py-2 border rounded-lg text-sm font-bold transition-colors shadow-sm ${showProtoCatMgr ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100'}`} title="Manage Categories">⚙️</button>
                                             </div>
                                         </div>
-
                                         {showProtoCatMgr && (
                                             <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 flex flex-col gap-3">
                                                 <h4 className="text-xs font-bold text-slate-500 uppercase">Manage Protocol Categories</h4>
@@ -1360,7 +1338,6 @@ export default function App() {
                                             </div>
                                         )}
                                     </div>
-
                                     <div className="flex-1 overflow-y-auto custom-scrollbar">
                                         {filteredProtocols.length === 0 ? (
                                             <div className="text-center py-10 text-slate-400 italic">No protocols match your filters.</div>
@@ -1387,16 +1364,14 @@ export default function App() {
                             );
                         })()}
 
+                        {/* ACTIVE TEST (Aggiunto rendering per CDTestRenderer) */}
                         {currentModule === 'active-test' && (() => {
                             const activeTest = tests.find(t => t.id === activeTestId);
                             if (!activeTest) return <div className="p-6">Test not found.</div>;
-                            
                             const updateActiveTest = (updates) => { setTests(prev => prev.map(t => t.id === activeTestId ? { ...t, ...updates } : t)); };
                             const isBox = activeTest.type === 'plate-9x9box';
                             const siblingTests = isBox ? [] : tests.filter(t => t.name === activeTest.name && t.name.trim() !== '').sort((a,b) => (a.date||'').localeCompare(b.date||''));
-                            
-                            const jumpToProtocol = (id) => { setExpandedGroups(p => ({ ...p, activeProtoId: id })); setCurrentModule('protocols'); };
-
+                            const jumpToProtocolFn = (id) => { setExpandedGroups(p => ({ ...p, activeProtoId: id })); setCurrentModule('protocols'); };
                             const handleDuplicateInstance = () => {
                                 const id = 't' + Date.now();
                                 const newTest = JSON.parse(JSON.stringify(activeTest)); 
@@ -1407,7 +1382,6 @@ export default function App() {
                                 }
                                 setTests(prev => [...prev, newTest]); setActiveTestId(id);
                             };
-
                             const TestHeader = (
                                 <div className="flex flex-col shrink-0 z-20 no-print">
                                     <div className="bg-white border-b border-slate-200 px-6 py-4 flex flex-col md:flex-row justify-between items-start md:items-center shadow-sm gap-4">
@@ -1468,9 +1442,22 @@ export default function App() {
                             );
 
                             if (activeTest.type === 'nmr') {
-                                return <NMRTestRenderer activeTest={activeTest} updateActiveTest={updateActiveTest} TestHeader={TestHeader} datasetProtocols={datasetProtocols} jumpToProtocol={jumpToProtocol} />;
+                                return <NMRTestRenderer activeTest={activeTest} updateActiveTest={updateActiveTest} TestHeader={TestHeader} datasetProtocols={datasetProtocols} jumpToProtocol={jumpToProtocolFn} />;
                             }
                             
+                            // <-- NUOVO: Rendering per CD Test
+                            if (activeTest.type === 'cd') {
+                                return <CDTestRenderer 
+                                    activeTest={activeTest} 
+                                    updateActiveTest={updateActiveTest} 
+                                    appClipboard={appClipboard} 
+                                    setAppClipboard={setAppClipboard}
+                                    TestHeader={TestHeader} 
+                                    datasetProtocols={datasetProtocols} 
+                                    jumpToProtocol={jumpToProtocolFn} 
+                                />;
+                            }
+
                             if (activeTest.type === 'plate-9x9box') {
                                 const getVal = (key, def) => expandedGroups[key] !== undefined ? expandedGroups[key] : def;
                                 const setVal = (key, val) => setExpandedGroups(p => {
@@ -1484,22 +1471,16 @@ export default function App() {
                                 const boxRotation = getVal('boxRotation', 0);
                                 const selectedWells = getVal('selectedWells', []);
                                 const boxDragState = getVal('boxDragState', { active: false, startR: -1, startC: -1, currentR: -1, currentC: -1 });
-                                
                                 const getWellData = (r, c) => { try { const val = activeTest.grid[r]?.[c]; if (typeof val === 'string' && val.startsWith('{')) return JSON.parse(val); } catch(e) {} return { compound: (activeTest.grid[r]?.[c] || '') + '', solvent: '', concentration: '', volume: '', date: '', weight: '', description: '' }; };
                                 const updateWellData = (r, c, field, value) => { const current = getWellData(r, c); current[field] = value; const ng = activeTest.grid.map(row => [...row]); if(!ng[r]) ng[r] = []; ng[r][c] = JSON.stringify(current); updateActiveTest({ grid: ng }); };
                                 const toggleWellSelection = (r, c) => { const exists = selectedWells.find(w => w.r === r && w.c === c); setVal('selectedWells', exists ? selectedWells.filter(w => !(w.r === r && w.c === c)) : [...selectedWells, {r, c}]); };
-
                                 const printBoxLabel = () => {
                                     try {
                                         const printWin = window.open('', '_blank');
-                                        if (!printWin) {
-                                            alert('Popup blocked! Please allow popups for this site, then try again.');
-                                            return;
-                                        }
+                                        if (!printWin) { alert('Popup blocked!'); return; }
                                         const safe = (v) => (v === null || v === undefined) ? '' : String(v);
                                         const storageName = storages.find(s => s.id === activeTest.storageId)?.name || activeTest.storageLabel || 'Unassigned';
                                         const posLabel = activeTest.storageIndex !== null && activeTest.storageIndex !== undefined ? activeTest.storageIndex + 1 : 'N/A';
-
                                         let html = `<!DOCTYPE html><html><head><title>Label Print</title><style>
                                             @page { size: 12cm 12cm; margin: 0; }
                                             body { font-family: 'Inter', Arial, sans-serif; padding: 15px; font-size: 11px; color: #000; box-sizing: border-box; width: 12cm; height: 12cm; }
@@ -1511,7 +1492,6 @@ export default function App() {
                                         <h3>Storage: ${safe(storageName)} (Pos: ${posLabel})</h3>
                                         <p><strong>Box:</strong> ${safe(activeTest.name)}${activeTest.instanceName ? ' - ' + safe(activeTest.instanceName) : ''}</p>
                                         <table><tr><th>Pos</th><th>Compound</th><th>Solvent</th><th>Conc.</th><th>Vol.</th><th>Date</th><th>Wt(mg)</th><th>Notes</th></tr>`;
-
                                         const sortedWells = [...selectedWells].sort((a, b) => a.r === b.r ? a.c - b.c : a.r - b.r);
                                         sortedWells.forEach(({ r, c }) => {
                                             const d = getWellData(r, c);
@@ -1519,26 +1499,21 @@ export default function App() {
                                             const pos = `${rowLabel}${c + 1}`;
                                             html += `<tr><td>${pos}</td><td>${safe(d.compound)}</td><td>${safe(d.solvent)}</td><td>${safe(d.concentration)}</td><td>${safe(d.volume)}</td><td>${safe(d.date)}</td><td>${safe(d.weight)}</td><td>${safe(d.description)}</td></tr>`;
                                         });
-
                                         html += `</table></body></html>`;
                                         printWin.document.write(html);
                                         printWin.document.close();
                                         printWin.focus();
                                         setTimeout(() => { try { printWin.print(); } catch(e) {} }, 300);
-                                    } catch (err) {
-                                        alert('Print failed: ' + err.message);
-                                    }
+                                    } catch (err) { alert('Print failed: ' + err.message); }
                                 };
-
                                 return (
                                     <div className="flex flex-col h-full overflow-hidden">
                                         {TestHeader}
                                         <div className="flex-1 overflow-y-auto custom-scrollbar p-6" onMouseUp={() => { if(boxDragState.active) setVal('boxDragState', { active: false, startR: -1, startC: -1 }); }}>
                                             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col mb-6">
                                                 <label className="text-xs font-bold text-slate-600 mb-2">📝 Box Notes / General Comments</label>
-                                                <RichTextEditor value={activeTest.comments || ''} onChange={val => updateActiveTest({comments: val})} placeholder="Aggiungi qui note generali sulla box, ubicazione, o log delle modifiche..." />
+                                                <RichTextEditor value={activeTest.comments || ''} onChange={val => updateActiveTest({comments: val})} placeholder="Aggiungi qui note generali sulla box..." />
                                             </div>
-
                                             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap gap-4 items-center mb-6 no-print">
                                                 <div className="flex items-center gap-2">
                                                     <label className="text-xs font-bold text-slate-500 uppercase">Rows:</label>
@@ -1556,10 +1531,7 @@ export default function App() {
                                                     <label className="text-xs font-bold text-slate-500 uppercase">Rotate:</label>
                                                     <select value={boxRotation} onChange={e => setVal('boxRotation', parseInt(e.target.value))}
                                                         className="border border-slate-300 rounded px-2 py-1 text-sm outline-none focus:border-blue-500 bg-white">
-                                                        <option value="0">0°</option>
-                                                        <option value="90">90°</option>
-                                                        <option value="180">180°</option>
-                                                        <option value="270">270°</option>
+                                                        <option value="0">0°</option><option value="90">90°</option><option value="180">180°</option><option value="270">270°</option>
                                                     </select>
                                                 </div>
                                                 <div className="flex-1 flex items-center gap-2 min-w-[200px]">
@@ -1568,7 +1540,6 @@ export default function App() {
                                                         className="flex-1 border border-slate-300 rounded px-3 py-1 text-sm outline-none focus:border-blue-500" />
                                                 </div>
                                             </div>
-
                                             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 mb-6 overflow-x-auto text-center flex justify-center">
                                                 <div className="transition-transform duration-300 ease-in-out origin-center inline-block" style={{transform: `rotate(${boxRotation}deg)`}}>
                                                     <div className="grid gap-2 max-w-min mx-auto bg-slate-50 p-6 border border-slate-300 rounded-xl shadow-inner" style={{ gridTemplateColumns: `auto repeat(${activeTest.boxCols || 9}, minmax(55px, 1fr))` }}>
@@ -1612,7 +1583,6 @@ export default function App() {
                                                     </div>
                                                 </div>
                                             </div>
-
                                             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 no-print">
                                                 <div className="flex justify-between items-center mb-6 border-b border-slate-100 pb-2">
                                                     <div>
@@ -1625,7 +1595,7 @@ export default function App() {
                                                     </div>
                                                 </div>
                                                 {selectedWells.length === 0 ? (
-                                                    <div className="bg-slate-50 border border-dashed border-slate-300 rounded-xl p-10 text-center text-slate-400 font-bold">No slots selected. Interact with the grid above to start editing content.</div>
+                                                    <div className="bg-slate-50 border border-dashed border-slate-300 rounded-xl p-10 text-center text-slate-400 font-bold">No slots selected.</div>
                                                 ) : (
                                                     <div className="flex flex-col gap-3 max-h-[400px] overflow-y-auto custom-scrollbar pr-2">
                                                         {selectedWells.sort((a,b) => a.r === b.r ? a.c - b.c : a.r - b.r).map(({r, c}) => {
@@ -1652,7 +1622,6 @@ export default function App() {
                                     </div>
                                 );
                             }
-
                             if (activeTest.type.startsWith('plate-') && activeTest.type !== 'plate-9x9box') {
                                 return (
                                     <PlateTestRenderer 
@@ -1663,10 +1632,11 @@ export default function App() {
                                         cmpColors={cmpColors} setCmpColors={setCmpColors}
                                         allCmpds={[...new Set([...DEF_COMPOUNDS, ...customCmpds])]}
                                         jumpToTest={(id) => { setActiveTestId(id); setCurrentModule('active-test'); }} TestHeader={TestHeader}
-                                        datasetProtocols={datasetProtocols} jumpToProtocol={jumpToProtocol}
+                                        datasetProtocols={datasetProtocols} jumpToProtocol={jumpToProtocolFn}
                                     />
                                 );
                             }
+                            return <div className="p-6">Unknown test type.</div>;
                         })()}
 
                         {currentModule === 'notebook' && (() => {
@@ -1677,7 +1647,6 @@ export default function App() {
                                 const query = notebookSearch.toLowerCase();
                                 return JSON.stringify(t).toLowerCase().includes(query);
                             });
-                            
                             return (
                                 <div className="flex flex-col h-full w-full">
                                     <div className="bg-white p-4 border-b border-slate-200 shadow-sm flex items-center justify-between no-print shrink-0">
