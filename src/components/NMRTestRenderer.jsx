@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea } from 'recharts';
+import { RichTextEditor } from './RichTextEditor';
 
 // --- UTILITY CLASSES FOR FULLSCREEN ---
 const FS_CLASSES = "fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col";
@@ -102,49 +103,22 @@ export const CollapsibleSection = ({ title, icon, defaultOpen = true, children, 
     const [isOpen, setIsOpen] = useState(defaultOpen);
     return (
         <div className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-6 break-inside-avoid ${className}`}>
-            <button
-                onClick={() => setIsOpen(!isOpen)}
-                className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left ${isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'}`}
-            >
+            <button onClick={() => setIsOpen(!isOpen)} className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left ${isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'}`}>
                 <div className="flex items-center gap-2 overflow-hidden">
                     {icon && <span className="text-xl shrink-0">{icon}</span>}
                     <h3 className="text-lg font-bold text-slate-800 truncate">{title}</h3>
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
                     {headerExtra && <div onClick={(e) => e.stopPropagation()}>{headerExtra}</div>}
-                    <svg className={`w-5 h-5 text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
+                    <svg className={`w-5 h-5 text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
                 </div>
             </button>
-            {isOpen && (
-                <div className="p-6 border-t border-slate-100">
-                    {children}
-                </div>
-            )}
+            {isOpen && <div className="p-6">{children}</div>}
         </div>
     );
 };
 
-// --- 3. RICH TEXT EDITOR ---
-const RichTextEditor = ({ value, onChange }) => {
-  const editorRef = useRef(null);
-  const execCmd = (command, val = null) => { document.execCommand(command, false, val); if (editorRef.current) onChange(editorRef.current.innerHTML); };
-  return (
-    <div className="border border-slate-200 rounded-lg overflow-hidden bg-white">
-      <div className="bg-slate-50 p-2 border-b border-slate-200 flex flex-wrap gap-1 items-center">
-        <button type="button" onClick={() => execCmd('bold')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 font-bold">B</button>
-        <button type="button" onClick={() => execCmd('italic')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 italic">I</button>
-        <button type="button" onClick={() => execCmd('underline')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 underline">U</button>
-        <div className="w-px h-4 bg-slate-300 mx-1"></div>
-        <input type="color" onChange={(e) => execCmd('foreColor', e.target.value)} className="w-7 h-7 p-0 border-0 cursor-pointer rounded" title="Text Color" />
-      </div>
-      <div ref={editorRef} className="p-3 min-h-[120px] outline-none text-sm prose prose-sm max-w-none" contentEditable suppressContentEditableWarning onInput={(e) => onChange(e.currentTarget.innerHTML)} dangerouslySetInnerHTML={{ __html: value || '' }} />
-    </div>
-  );
-};
-
-// --- 4. CUSTOM TICKS & SHAPES RECHARTS ---
+// --- 3. CUSTOM TICKS E SHAPES PER RECHARTS (RISOLUZIONE DEI BUG 1D E RANGES) ---
 const CustomXTick1H = ({ x, y, payload, isZoomed }) => {
   const numVal = Number(payload.value); const isInt = Number.isInteger(numVal); const isHalf = numVal % 0.5 === 0; const tickLength = isZoomed ? 5 : (isInt ? 8 : (isHalf ? 5 : 3));
   return (<g transform={`translate(${x||0},${y||0})`}><line x1={0} y1={0} x2={0} y2={tickLength} stroke="#94a3b8" strokeWidth={1} />{(isZoomed || isInt) && <text x={0} y={tickLength + 12} textAnchor="middle" fill="#64748b" fontSize={isZoomed ? 10 : 12} fontWeight={isInt && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(2) : numVal}</text>}</g>);
@@ -162,17 +136,44 @@ const CustomYTick13C = ({ x, y, payload, isZoomed }) => {
   return (<g transform={`translate(${x||0},${y||0})`}><line x1={0} y1={0} x2={-tickLength} y2={0} stroke="#94a3b8" strokeWidth={1} />{(isZoomed || isTen) && <text x={-(tickLength + 5)} y={0} dy={4} textAnchor="end" fill="#64748b" fontSize={isZoomed ? 10 : 12} fontWeight={isTen && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(1) : numVal}</text>}</g>);
 };
 
+// FIX IMPORTANTE 1: I GRAFICI DEGLI INTERVALLI
 const CustomRangeShape = (props) => { 
   const { cy, payload, xAxis } = props; 
   if (!xAxis || typeof xAxis.scale !== 'function' || payload.min === undefined || payload.max === undefined) return null;
-  const xMin = xAxis.scale(payload.max); const xMax = xAxis.scale(payload.min); 
-  const width = Math.max(Math.abs(xMax - xMin), 4); const height = 14; const level = payload.level || 0;
+  // xAxis.scale(max) dà la coordinata x più a sinistra perché l'asse è rovesciato (reversed)
+  const xMin = xAxis.scale(payload.max); 
+  const xMax = xAxis.scale(payload.min); 
+  if (isNaN(xMin) || isNaN(xMax) || isNaN(cy)) return null;
+  
+  // Math.abs garantisce che la larghezza sia sempre positiva
+  const width = Math.max(Math.abs(xMax - xMin), 4); 
+  const height = 14; 
+  const level = payload.level || 0;
   let textY = cy;
   if (level % 4 === 0) textY = cy + 18; else if (level % 4 === 1) textY = cy - 10; else if (level % 4 === 2) textY = cy + 32; else textY = cy - 24;
-  return (<g><rect x={xMin} y={cy - height / 2} width={width} height={height} fill={payload.color} rx={4} opacity={0.5} stroke={payload.color} strokeWidth={1} /><text x={xMin + width / 2} y={textY} textAnchor="middle" fill="#334155" fontSize="13px" fontWeight="bold" pointerEvents="none"> {payload.atom} </text></g>); 
+  
+  // L'attributo x del rettangolo deve essere il valore più piccolo tra i due calcolati!
+  const rectX = Math.min(xMin, xMax);
+
+  return (
+    <g>
+      <rect x={rectX} y={cy - height / 2} width={width} height={height} fill={payload.color} rx={4} opacity={0.5} stroke={payload.color} strokeWidth={1} />
+      <text x={(xMin + xMax) / 2} y={textY} textAnchor="middle" fill="#334155" fontSize="13px" fontWeight="bold" pointerEvents="none"> {payload.atom} </text>
+    </g>
+  ); 
+};
+
+// FIX IMPORTANTE 2: LO SPETTRO 1D
+const OneDShape = (props) => { 
+    const { cx, cy, yAxis, payload } = props; 
+    if (!yAxis || typeof yAxis.scale !== 'function') return null;
+    const y0 = yAxis.scale(0); 
+    if (isNaN(cx) || isNaN(cy) || isNaN(y0)) return null;
+    return <line x1={cx} y1={y0} x2={cx} y2={cy} stroke={payload.color} strokeWidth={1.5} />; 
 };
 
 const NMRPointShape = ({ cx, cy, fill, payload }) => {
+    if (isNaN(cx) || isNaN(cy)) return null;
     return <circle cx={cx} cy={cy} r={payload.size || 5} fill={payload.type === 'Diagonale' ? fill : getNMRFillColor(payload)} opacity={0.8} />;
 };
 
@@ -186,7 +187,7 @@ const NMRTooltip = ({ active, payload, diagonalColor }) => {
   return null;
 };
 
-// --- 5. ROBUST ZOOMABLE PLOTS (CORRECTED EVENT MAPPING) ---
+// --- 4. ROBUST ZOOMABLE PLOTS (FIX 3: EVENT MAPPING CORRETTO) ---
 const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel }) => {
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState(fullDomain);
@@ -195,8 +196,20 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
   
   const zoom = () => { if (refAreaLeft === refAreaRight || refAreaLeft === null) { setRefAreaLeft(null); setRefAreaRight(null); return; } setXDomain([Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)]); setRefAreaLeft(null); setRefAreaRight(null); };
   
-  const handleMouseDown = (e) => { if (e) { const x = e.xValue !== undefined ? e.xValue : e.activePayload?.[0]?.payload.x; if (x !== undefined) setRefAreaLeft(x); } };
-  const handleMouseMove = (e) => { if (refAreaLeft !== null && e) { const x = e.xValue !== undefined ? e.xValue : e.activePayload?.[0]?.payload.x; if (x !== undefined) setRefAreaRight(x); } };
+  // Utilizziamo e.xValue che viene esposto da Recharts quando si clicca sull'area del grafico
+  const handleMouseDown = (e) => { 
+      if (!e) return;
+      let xVal = e.xValue;
+      if (xVal === undefined && e.activePayload && e.activePayload.length > 0) xVal = e.activePayload[0].payload.x;
+      if (xVal !== undefined) setRefAreaLeft(xVal); 
+  };
+  const handleMouseMove = (e) => { 
+      if (refAreaLeft !== null && e) { 
+          let xVal = e.xValue;
+          if (xVal === undefined && e.activePayload && e.activePayload.length > 0) xVal = e.activePayload[0].payload.x;
+          if (xVal !== undefined) setRefAreaRight(xVal); 
+      } 
+  };
 
   return (
     <>
@@ -213,12 +226,7 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
               <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : ticks} interval={0} tickLine={false} tick={<TickComponent isZoomed={isZoomed} />} label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b' }} axisLine={{ stroke: '#cbd5e1' }} />
               <YAxis type="number" dataKey="y" domain={[0, 4.5]} hide={true} />
               <Tooltip cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} content={<NMRTooltip />} />
-              <Scatter data={data} shape={(props) => { 
-                  const { cx, cy, yAxis, payload } = props; 
-                  if (!yAxis || typeof yAxis.scale !== 'function') return null;
-                  const y0 = yAxis.scale(0);
-                  return <line x1={cx} y1={y0} x2={cx} y2={cy} stroke={payload.color} strokeWidth={1.5} />; 
-              }} isAnimationActive={false} />
+              <Scatter data={data} shape={<OneDShape />} isAnimationActive={false} />
               {refAreaLeft !== null && refAreaRight !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} strokeOpacity={0.3} fill="#cbd5e1" />}
             </ScatterChart>
           </ResponsiveContainer>
@@ -237,8 +245,19 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
   
   const zoom = () => { if (refAreaLeft === refAreaRight || refAreaLeft === null || refAreaTop === refAreaBottom || refAreaTop === null) { setRefAreaLeft(null); setRefAreaRight(null); setRefAreaTop(null); setRefAreaBottom(null); return; } setXDomain([Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)]); setYDomain([Math.min(refAreaTop, refAreaBottom), Math.max(refAreaTop, refAreaBottom)]); setRefAreaLeft(null); setRefAreaRight(null); setRefAreaTop(null); setRefAreaBottom(null); };
 
-  const handleMouseDown = (e) => { if (e) { const x = e.xValue !== undefined ? e.xValue : e.activePayload?.[0]?.payload.x; const y = e.yValue !== undefined ? e.yValue : e.activePayload?.[0]?.payload.y; if (x !== undefined && y !== undefined) { setRefAreaLeft(x); setRefAreaTop(y); } } };
-  const handleMouseMove = (e) => { if (refAreaLeft !== null && e) { const x = e.xValue !== undefined ? e.xValue : e.activePayload?.[0]?.payload.x; const y = e.yValue !== undefined ? e.yValue : e.activePayload?.[0]?.payload.y; if (x !== undefined && y !== undefined) { setRefAreaRight(x); setRefAreaBottom(y); } } };
+  const handleMouseDown = (e) => { 
+      if (!e) return;
+      let xVal = e.xValue, yVal = e.yValue;
+      if (xVal === undefined && e.activePayload && e.activePayload.length > 0) { xVal = e.activePayload[0].payload.x; yVal = e.activePayload[0].payload.y; }
+      if (xVal !== undefined && yVal !== undefined) { setRefAreaLeft(xVal); setRefAreaTop(yVal); } 
+  };
+  const handleMouseMove = (e) => { 
+      if (refAreaLeft !== null && e) { 
+          let xVal = e.xValue, yVal = e.yValue;
+          if (xVal === undefined && e.activePayload && e.activePayload.length > 0) { xVal = e.activePayload[0].payload.x; yVal = e.activePayload[0].payload.y; }
+          if (xVal !== undefined && yVal !== undefined) { setRefAreaRight(xVal); setRefAreaBottom(yVal); }
+      } 
+  };
 
   return (
     <>
@@ -276,8 +295,19 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
   
   const zoom = () => { if (refAreaLeft === refAreaRight || refAreaLeft === null || refAreaTop === refAreaBottom || refAreaTop === null) { setRefAreaLeft(null); setRefAreaRight(null); setRefAreaTop(null); setRefAreaBottom(null); return; } setXDomain([Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)]); setYDomain([Math.min(refAreaTop, refAreaBottom), Math.max(refAreaTop, refAreaBottom)]); setRefAreaLeft(null); setRefAreaRight(null); setRefAreaTop(null); setRefAreaBottom(null); };
 
-  const handleMouseDown = (e) => { if (e) { const x = e.xValue !== undefined ? e.xValue : e.activePayload?.[0]?.payload.x; const y = e.yValue !== undefined ? e.yValue : e.activePayload?.[0]?.payload.y; if (x !== undefined && y !== undefined) { setRefAreaLeft(x); setRefAreaTop(y); } } };
-  const handleMouseMove = (e) => { if (refAreaLeft !== null && e) { const x = e.xValue !== undefined ? e.xValue : e.activePayload?.[0]?.payload.x; const y = e.yValue !== undefined ? e.yValue : e.activePayload?.[0]?.payload.y; if (x !== undefined && y !== undefined) { setRefAreaRight(x); setRefAreaBottom(y); } } };
+  const handleMouseDown = (e) => { 
+      if (!e) return;
+      let xVal = e.xValue, yVal = e.yValue;
+      if (xVal === undefined && e.activePayload && e.activePayload.length > 0) { xVal = e.activePayload[0].payload.x; yVal = e.activePayload[0].payload.y; }
+      if (xVal !== undefined && yVal !== undefined) { setRefAreaLeft(xVal); setRefAreaTop(yVal); } 
+  };
+  const handleMouseMove = (e) => { 
+      if (refAreaLeft !== null && e) { 
+          let xVal = e.xValue, yVal = e.yValue;
+          if (xVal === undefined && e.activePayload && e.activePayload.length > 0) { xVal = e.activePayload[0].payload.x; yVal = e.activePayload[0].payload.y; }
+          if (xVal !== undefined && yVal !== undefined) { setRefAreaRight(xVal); setRefAreaBottom(yVal); }
+      } 
+  };
 
   return (
     <>
@@ -304,7 +334,7 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
   );
 };
 
-// --- 6. 2D CHEMICAL STRUCTURE GENERATOR CON FULLSCREEN E SCORRIMENTO ---
+// --- 5. 2D CHEMICAL STRUCTURE CON SCORRIMENTO (FIX 4) ---
 const ChemicalStructure2D = ({ sequence, isExpanded, onToggleExpand }) => {
   if (!sequence || sequence.length === 0) return null;
   const elements = []; let minX = 0, maxX = 0, minY = 0, maxY = 0; let firstElement = true;
@@ -771,7 +801,7 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
 
         {/* 8. LAB NOTEBOOK EXPORT */}
         <CollapsibleSection title="Lab Notebook Export" icon="📓" defaultOpen={false} className="no-print">
-            {/* PROTOCOL LINKING (Aggiunto per consistenza col PlateReader) */}
+            {/* PROTOCOL LINKING */}
             <div className="mb-6 pb-4 border-b border-slate-100 flex items-center gap-4">
                 <span className="text-[11px] font-bold text-slate-600 w-32">📋 Link Protocol:</span>
                 <select 
