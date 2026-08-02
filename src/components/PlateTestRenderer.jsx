@@ -10,15 +10,15 @@ import {
     fit4PL, errBarPlugin 
 } from '../data/constants';
 
-// --- CLASSI DI UTILITA' PER IL FULLSCREEN REALE ---
+// --- UTILITY CLASSES FOR FULLSCREEN ---
 const FS_CLASSES = "fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col";
 const OVERLAY_CLASSES = "fixed top-0 left-0 w-screen h-screen bg-slate-900/50 backdrop-blur-sm z-[999990]";
 
-// --- COMPONENTE SEZIONE ESPANDIBILE (FISARMONICA) ---
+// --- COLLAPSIBLE SECTION COMPONENT ---
 export const CollapsibleSection = ({ title, icon, defaultOpen = true, children, headerExtra, className="" }) => {
     const [isOpen, setIsOpen] = useState(defaultOpen);
     return (
-        <div className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-6 ${className}`}>
+        <div className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-6 break-inside-avoid ${className}`}>
             <button
                 onClick={() => setIsOpen(!isOpen)}
                 className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left ${isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'}`}
@@ -43,7 +43,7 @@ export const CollapsibleSection = ({ title, icon, defaultOpen = true, children, 
     );
 };
 
-// --- COMPONENTE AUSILIARIO PER L'INPUT DEGLI ERRORI ---
+// --- ERROR INPUT COMPONENT ---
 export const ErrInput = ({ label, value, sdRaw, isOverridden, onSave, onReset }) => {
     const [tempVal, setTempVal] = useState(value !== undefined ? value : '');
     useEffect(() => { setTempVal(value !== undefined ? value : ''); }, [value]);
@@ -59,7 +59,7 @@ export const ErrInput = ({ label, value, sdRaw, isOverridden, onSave, onReset })
     );
 };
 
-// --- COMPONENTE REGION CHARTS ---
+// --- REGION CHARTS COMPONENT ---
 export function RegionCharts({ regionName, regionData, config }) {
     const { chartCfg, fitIC50, showExcl, eScale, fsPanel, chartH, drWidth, hiddenCmpds, cellConfig, setCellConfig, activePlateDim, toggleFs, unit } = config;
     const drRef = useRef(null); const ic50Ref = useRef(null);
@@ -144,8 +144,6 @@ export function RegionCharts({ regionName, regionData, config }) {
     return (
         <CollapsibleSection title={`Region: ${regionName}`} icon="📍" defaultOpen={true} className="pdf-page-region">
             <div className="flex flex-col lg:flex-row gap-6 pdf-row relative">
-                
-                {/* DOSE RESPONSE PLOT */}
                 {isDrFs && <div className={OVERLAY_CLASSES} onClick={() => toggleFs(`dr_${regionName}`)}></div>}
                 <div className={`pdf-chart-main flex flex-col ${isDrFs ? FS_CLASSES + ' p-6' : 'min-w-0'}`} style={!isDrFs ? {width:fitIC50?`${drWidth}%`:'100%',flexShrink:0} : {}}>
                     <div className="flex justify-between items-start mb-4">
@@ -157,7 +155,6 @@ export function RegionCharts({ regionName, regionData, config }) {
                     </div>
                 </div>
 
-                {/* IC50 COMPARISON PLOT */}
                 {fitIC50 && (
                     <>
                         {isIc50Fs && <div className={OVERLAY_CLASSES} onClick={() => toggleFs(`ic50_${regionName}`)}></div>}
@@ -178,7 +175,7 @@ export function RegionCharts({ regionName, regionData, config }) {
 }
 
 // --- MAIN PLATE TEST COMPONENT ---
-export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, setAppClipboard, customCmpds, setCustomCmpds, customConc, setCustomConc, cmpColors, setCmpColors, allCmpds, TestHeader }) => {
+export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, setAppClipboard, customCmpds, setCustomCmpds, customConc, setCustomConc, cmpColors, setCmpColors, allCmpds, TestHeader, datasetProtocols }) => {
     const updatePlate = (updates) => updateActiveTest(updates);
 
     const { plateType, grid, compounds, rowCompounds, cellConfig, ctrlType, ctrlODStr, bgType, bgManualStr, unit, manualErrors = {}, topConcStr, dilFactorStr, glbOffsetStr, errScaleStr, useFixedSD, fixedSDStr, showViab, fitIC50, showExcl, outlierThreshStr, chartCfg = { yMin:'',yMax:'',xMin:'',xMax:'', ptStyle:'circle',ptSize:5,fontSize:16,xPos:'bottom',yPos:'left', xAxisLabel:'', lineStyle:'solid', lineThickness:2 } } = activeTest;
@@ -187,6 +184,7 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
     const experimentPlan = activeTest.plan || [];
     const displayImages = activeTest.images || [];
     const documents = activeTest.documents || [];
+    const linkedProtocolId = activeTest.linkedProtocolId || '';
 
     const [tableView, setTableView] = useState('od');
     const [drWidth, setDrWidth] = useState(55);
@@ -228,115 +226,6 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
         minR: Math.min(selStart.r, selEnd.r), maxR: Math.max(selStart.r, selEnd.r),
         minC: Math.min(selStart.c, selEnd.c), maxC: Math.max(selStart.c, selEnd.c),
     } : null;
-
-    const exportXLS = () => {
-        try {
-            const wb = XLSX.utils.book_new();
-            const rawAoa = [['', ...COLS]];
-            ROWS.forEach((rl, r) => { rawAoa.push([rl, ...COLS.map((_, c) => { const v = grid[r][c]; return v === '' ? '' : Number(v); })]); });
-            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rawAoa), 'Raw OD');
-
-            const viabAoa = [['', ...COLS]];
-            ROWS.forEach((rl, r) => { viabAoa.push([rl, ...COLS.map((_, c) => {
-                const n = rawOD(r, c);
-                if (isNaN(n) || cellConfig[r][c].excluded) return '';
-                return Number(viability(n).toFixed(2));
-            })]); });
-            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(viabAoa), 'Viability %');
-
-            const mapAoa = [['', ...COLS]];
-            ROWS.forEach((rl, r) => { mapAoa.push([rl, ...COLS.map((_, c) => {
-                const role = getRole(r, c);
-                if (!role) return '';
-                const conc = concOf(r, c, role);
-                return conc > 0 ? `${role} @ ${formatConc(conc)} ${unit}` : role;
-            })]); });
-            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(mapAoa), 'Well Map');
-
-            const drAoa = [['Region', 'Compound', `Concentration (${unit})`, 'Log10(Conc)', 'Mean Viability (%)', 'SD', 'N']];
-            Object.entries(processedByRegion).forEach(([reg, comps]) => {
-                comps.forEach(cd => {
-                    cd.vPts.forEach(pt => { drAoa.push([ reg, cd.name, Number(pt.realX.toFixed(4)), Number(pt.x.toFixed(4)), Number(pt.y.toFixed(2)), Number(pt.sd.toFixed(4)), pt.pts ? pt.pts.length : 1 ]); });
-                });
-            });
-            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(drAoa), 'Dose-Response Data');
-
-            const summaryAoa = [['Region', 'Compound', `IC50 (${unit})`, 'Hill Slope', `SE (${unit})`]];
-            Object.entries(processedByRegion).forEach(([reg, comps]) => {
-                comps.forEach(cd => { if (cd.fit) summaryAoa.push([reg, cd.name, Number(cd.fit.ic50.toFixed(4)), Number(cd.fit.hill.toFixed(4)), Number(cd.fit.se.toFixed(4))]); });
-            });
-            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summaryAoa), 'IC50 Summary');
-
-            const fname = `${(activeTest.name || 'test').replace(/[^a-z0-9]+/gi, '_')}.xlsx`;
-            XLSX.writeFile(wb, fname);
-        } catch (e) { console.error(e); alert('Export Failed: ' + e.message); }
-    };
-
-    const exportPDF = async () => {
-        const el = document.getElementById('report-container-' + activeTest.id);
-        if (!el) return;
-        
-        const scrollParent = el.closest('.overflow-y-auto');
-        const originalOverflow = scrollParent ? scrollParent.style.overflow : '';
-        const originalHeight = scrollParent ? scrollParent.style.height : '';
-
-        const loader = document.getElementById('loader');
-        const loaderText = document.getElementById('loader-text');
-        if (loader) loader.style.display = 'flex';
-        if (loaderText) loaderText.innerText = 'Generating PDF...';
-
-        const fixedEls = document.querySelectorAll('.fixed, [style*="position: fixed"]');
-        fixedEls.forEach(el => el.style.display = 'none');
-
-        const noPrintEls = el.querySelectorAll('.no-print');
-        noPrintEls.forEach(e => e.style.display = 'none');
-
-        if (scrollParent) {
-            scrollParent.style.overflow = 'visible';
-            scrollParent.style.height = 'auto';
-        }
-
-        el.classList.add('pdf-mode');
-        window.scrollTo(0, 0);
-        await new Promise(r => setTimeout(r, 800));
-
-        try {
-            const canvas = await html2canvas(el, { 
-                scale: 2, useCORS: true, allowTaint: true, backgroundColor: '#f8fafc', 
-                logging: false, imageTimeout: 15000, removeContainer: true,
-                windowWidth: el.scrollWidth, windowHeight: el.scrollHeight
-            });
-            const imgData = canvas.toDataURL('image/jpeg', 0.92);
-            const pdf = new jsPDF('p', 'pt', 'a4');
-            const pageWidth = pdf.internal.pageSize.getWidth();
-            const pageHeight = pdf.internal.pageSize.getHeight();
-            const imgWidth = pageWidth;
-            const imgHeight = (canvas.height * imgWidth) / canvas.width;
-
-            let heightLeft = imgHeight; let position = 0;
-            pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-            heightLeft -= pageHeight;
-
-            while (heightLeft > 0) {
-                position = heightLeft - imgHeight;
-                pdf.addPage();
-                pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-                heightLeft -= pageHeight;
-            }
-            pdf.save(`Report_${(activeTest.name || 'test').replace(/[^a-z0-9]+/gi, '_')}.pdf`);
-        } catch (e) {
-            console.error(e); alert('Export Failed: ' + e.message);
-        } finally {
-            el.classList.remove('pdf-mode');
-            fixedEls.forEach(el => el.style.display = '');
-            noPrintEls.forEach(e => e.style.display = '');
-            if (scrollParent) {
-                scrollParent.style.overflow = originalOverflow;
-                scrollParent.style.height = originalHeight;
-            }
-            if (loader) loader.style.display = 'none';
-        }
-    };
 
     const currentSelectionBox = useMemo(() => {
         if (dragState.active) {
@@ -879,22 +768,6 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
     };
 
     const restoreAll = () => { const nc = cellConfig.map(row=>row.map(c=>({...c,excluded:false,manualOverride:false}))); updatePlate({ cellConfig: nc }); };
-    
-    const PanelHeader = ({ title, subtitle, panelId, extra }) => {
-        const isFs = fsPanel === panelId;
-        return (
-            <div className="flex justify-between items-start mb-2 gap-2">
-                <div className="min-w-0">
-                    <h2 className="text-sm lg:text-base font-bold text-slate-800 truncate">{title}</h2>
-                    {subtitle && <p className="text-[10px] text-slate-500 mt-0.5">{subtitle}</p>}
-                </div>
-                <div className="flex items-center shrink-0">
-                    {extra}
-                    <button onClick={() => toggleFs(panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-100 hover:bg-blue-100 rounded p-1 transition-colors">{isFs ? '↙️' : '↗️'}</button>
-                </div>
-            </div>
-        );
-    };
 
     return (
         <div id={`report-container-${activeTest.id}`} className="flex flex-col h-full overflow-hidden relative">
@@ -911,12 +784,33 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
                 <CollapsibleSection title="Comments & Attachments" icon="📝">
                     <div className="flex flex-col lg:flex-row gap-6">
                         <div className="flex-1 flex flex-col h-full min-h-[160px]">
-                            <label className="text-xs font-bold text-slate-600 mb-2">Commenti / Note</label>
+                            <label className="text-xs font-bold text-slate-600 mb-2">Comments / Notes</label>
                             <RichTextEditor
                                 value={metaComments}
                                 onChange={val => updatePlate({comments: val})}
                                 placeholder="Enter your experiment notes, protocol deviations, etc..."
                             />
+                            
+                            {/* PROTOCOL LINKING */}
+                            <div className="mt-4 pt-4 border-t border-slate-100 flex items-center gap-4">
+                                <span className="text-[11px] font-bold text-slate-600 w-32">📋 Link Protocol:</span>
+                                <select 
+                                    value={linkedProtocolId} 
+                                    onChange={(e) => updatePlate({linkedProtocolId: e.target.value})}
+                                    className="border border-slate-300 rounded-lg px-3 py-1.5 text-xs bg-slate-50 outline-none focus:border-blue-500 flex-1 cursor-pointer"
+                                >
+                                    <option value="">-- No Protocol Linked --</option>
+                                    {(datasetProtocols || []).map(p => (
+                                        <option key={p.id} value={p.id}>{p.title} ({p.category})</option>
+                                    ))}
+                                </select>
+                                {linkedProtocolId && (
+                                    <span className="text-xs text-blue-600 font-bold bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-200">
+                                        Linked ✔
+                                    </span>
+                                )}
+                            </div>
+
                             <div className="mt-4 pt-4 border-t border-slate-100">
                                 <h3 className="text-[11px] font-bold text-slate-600 mb-2 flex justify-between items-center">
                                     <span>📅 Schedule / Planning (This Item)</span>
@@ -1080,13 +974,19 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
                         {fsPanel === 'data' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('data')}></div>}
                         
                         <div className={`bg-slate-50 border border-slate-200 p-4 min-w-0 flex flex-col ${fsPanel === 'data' ? FS_CLASSES : 'rounded-xl xl:w-1/2'}`}>
-                            <PanelHeader title={`Data Grid (${activePlateDim.rows}x${activePlateDim.cols})`} panelId="data" extra={
-                                <div className="flex bg-slate-200 p-1 rounded-lg shadow-inner mr-4">
-                                    <button onClick={()=>setTableView('od')} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableView==='od'?'bg-white text-blue-700 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>Raw OD</button>
-                                    <button onClick={()=>setTableView('conc')} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableView==='conc'?'bg-white text-blue-700 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>Concentrations</button>
-                                    <button onClick={()=>setTableView('region')} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableView==='region'?'bg-white text-blue-700 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>Regions</button>
+                            <div className="flex justify-between items-start mb-2 gap-2">
+                                <div className="min-w-0">
+                                    <h2 className="text-sm lg:text-base font-bold text-slate-800 truncate">{`Data Grid (${activePlateDim.rows}x${activePlateDim.cols})`}</h2>
                                 </div>
-                            }/>
+                                <div className="flex items-center shrink-0">
+                                    <div className="flex bg-slate-200 p-1 rounded-lg shadow-inner mr-4">
+                                        <button onClick={()=>setTableView('od')} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableView==='od'?'bg-white text-blue-700 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>Raw OD</button>
+                                        <button onClick={()=>setTableView('conc')} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableView==='conc'?'bg-white text-blue-700 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>Concentrations</button>
+                                        <button onClick={()=>setTableView('region')} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableView==='region'?'bg-white text-blue-700 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>Regions</button>
+                                    </div>
+                                    <button onClick={() => toggleFs('data')} className="text-slate-400 hover:text-blue-600 bg-slate-100 hover:bg-blue-100 rounded p-1 transition-colors">{fsPanel === 'data' ? '↙️' : '↗️'}</button>
+                                </div>
+                            </div>
                             <div className="text-[10px] text-slate-500 mb-3 italic px-1 flex justify-between">
                                 <span>
                                     {tableView === 'od' && "Input raw ODs. Right-click to exclude points or override."}
@@ -1194,16 +1094,24 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
                             </div>
                         </div>
                         
+                        {/* OVERLAY SFONDO SCURO QUANDO LA MAPPA E' ESPANSA */}
                         {fsPanel === 'map' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('map')}></div>}
 
                         <div className={`bg-slate-50 border border-slate-200 p-4 min-w-0 flex flex-col ${fsPanel === 'map' ? FS_CLASSES : 'rounded-xl xl:w-1/2'}`}>
-                            <PanelHeader title="Visual Plate Map" panelId="map" subtitle="Shows compound & exact concentration assigned." extra={
-                                <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1 shadow-sm">
-                                    <span className="text-[10px] text-slate-500 font-bold">A</span>
-                                    <input type="range" min="4" max="24" value={mapFontSize} onChange={e=>setMapFontSize(Number(e.target.value))} className="w-16 accent-blue-600"/>
-                                    <span className="text-[12px] text-slate-500 font-bold">A</span>
+                            <div className="flex justify-between items-start mb-2 gap-2">
+                                <div className="min-w-0">
+                                    <h2 className="text-sm lg:text-base font-bold text-slate-800 truncate">Visual Plate Map</h2>
+                                    <p className="text-[10px] text-slate-500 mt-0.5">Shows compound & exact concentration assigned.</p>
                                 </div>
-                            }/>
+                                <div className="flex items-center shrink-0">
+                                    <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1 shadow-sm mr-4">
+                                        <span className="text-[10px] text-slate-500 font-bold">A</span>
+                                        <input type="range" min="4" max="24" value={mapFontSize} onChange={e=>setMapFontSize(Number(e.target.value))} className="w-16 accent-blue-600"/>
+                                        <span className="text-[12px] text-slate-500 font-bold">A</span>
+                                    </div>
+                                    <button onClick={() => toggleFs('map')} className="text-slate-400 hover:text-blue-600 bg-slate-100 hover:bg-blue-100 rounded p-1 transition-colors">{fsPanel === 'map' ? '↙️' : '↗️'}</button>
+                                </div>
+                            </div>
                             <div className={`bg-white p-4 rounded-xl border border-slate-200 flex flex-col justify-evenly gap-1 shadow-sm overflow-auto ${fsPanel==='map'?'flex-1':''}`}>
                                 <div className="flex w-full mb-1">
                                     <div className="w-4 lg:w-6"/>
@@ -1423,6 +1331,61 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
                 {Object.entries(processedByRegion).map(([reg, comps]) => (
                     <RegionCharts key={reg} regionName={reg} regionData={comps} config={{ chartCfg, fitIC50, showExcl, eScale, fsPanel, chartH, drWidth, hiddenCmpds, unit, cellConfig, setCellConfig: (cfg) => updatePlate({cellConfig: cfg}), activePlateDim, toggleFs }} />
                 ))}
+
+                {/* 6. LAB NOTEBOOK EXPORT */}
+                <CollapsibleSection title="Lab Notebook Export" icon="📓" defaultOpen={false} className="no-print">
+                    <div className="flex flex-col gap-4">
+                        <p className="text-sm text-slate-600">Select the data to format and append to the General Comments (which acts as the Lab Notebook entry).</p>
+                        <div className="flex flex-wrap gap-4 border border-slate-200 p-4 rounded-lg bg-white shadow-sm">
+                            <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600">
+                                <input type="checkbox" id="nb-cond" defaultChecked className="w-4 h-4 accent-blue-600 cursor-pointer"/> Experimental Conditions
+                            </label>
+                            <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600">
+                                <input type="checkbox" id="nb-map" defaultChecked className="w-4 h-4 accent-blue-600 cursor-pointer"/> Plate Map Summary
+                            </label>
+                            <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600">
+                                <input type="checkbox" id="nb-ic50" defaultChecked className="w-4 h-4 accent-blue-600 cursor-pointer"/> IC50 Results
+                            </label>
+                        </div>
+                        <button
+                            onClick={() => {
+                                let html = '<div style="background-color: #f8fafc; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0; margin-top: 15px; font-family: sans-serif;">';
+                                html += '<h4 style="color: #1e40af; margin-top: 0; margin-bottom: 12px; font-size: 14px; border-bottom: 2px solid #bfdbfe; padding-bottom: 4px;">📊 Plate Test Summary</h4>';
+                                
+                                const cbCond = document.getElementById('nb-cond')?.checked;
+                                const cbMap = document.getElementById('nb-map')?.checked;
+                                const cbIC50 = document.getElementById('nb-ic50')?.checked;
+
+                                if (cbCond) {
+                                    html += `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;"><b>Format:</b> ${activePlateDim.rows}x${activePlateDim.cols} | <b>Max Conc:</b> ${topConcStr} ${unit} | <b>Dil. Factor:</b> ${dilFactorStr} | <b>Ctrl OD:</b> ${ctrlODStr} | <b>Blank OD:</b> ${bgOD.toFixed(4)}</p>`;
+                                }
+                                if (cbMap && plotCmps.length > 0) {
+                                    html += `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;"><b>Compounds Tested:</b> ${plotCmps.join(', ')}</p>`;
+                                }
+                                if (cbIC50 && Object.keys(processedByRegion).length > 0) {
+                                    html += `<table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; text-align: left; background: white;">
+                                                <tr style="background-color: #f1f5f9;"><th style="padding: 6px; border: 1px solid #cbd5e1;">Region</th><th style="padding: 6px; border: 1px solid #cbd5e1;">Compound</th><th style="padding: 6px; border: 1px solid #cbd5e1;">IC50 (${unit})</th></tr>`;
+                                    Object.entries(processedByRegion).forEach(([reg, comps]) => {
+                                        comps.forEach(c => {
+                                            if(c.fit) {
+                                                html += `<tr><td style="padding: 6px; border: 1px solid #e2e8f0;">${reg}</td><td style="padding: 6px; border: 1px solid #e2e8f0;"><b>${c.name}</b></td><td style="padding: 6px; border: 1px solid #e2e8f0;">${c.fit.ic50.toFixed(3)} ± ${(c.fit.se * eScale).toFixed(3)}</td></tr>`;
+                                            }
+                                        });
+                                    });
+                                    html += `</table>`;
+                                }
+                                html += '</div>';
+                                
+                                const currentComments = activeTest.comments || '';
+                                updateActiveTest({ comments: currentComments + (currentComments ? '<br/>' : '') + html });
+                                alert("Data appended successfully to the notes! They will now be visible in the Lab Notebook.");
+                            }}
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-6 rounded-lg transition-all shadow-sm w-fit border border-indigo-700 flex items-center gap-2"
+                        >
+                            <span>+</span> Append Data to Lab Notebook
+                        </button>
+                    </div>
+                </CollapsibleSection>
             </div>
 
             {/* MODALS */}
