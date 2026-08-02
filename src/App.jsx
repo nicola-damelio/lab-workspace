@@ -9,7 +9,7 @@ import { PlateTestRenderer } from './components/PlateTestRenderer';
 import { LabNotebook } from './components/LabNotebook';
 import { RichTextEditor } from './components/RichTextEditor';
 
-// --- MIGRAZIONE LEGACY (V1 -> V2) con controlli di sicurezza ---
+// --- MIGRAZIONE LEGACY (V1 -> V2) ---
 const migrateLoadedDataset = (s) => {
     const rawTests = (s && (s.tests || s.plates)) || [];
     let tests = rawTests.map(p => {
@@ -47,7 +47,28 @@ const migrateLoadedDataset = (s) => {
     return { tests, storages: newStorages.length > 0 ? [...existingStorages, ...newStorages] : existingStorages };
 };
 
+// --- INIZIALIZZAZIONE FIREBASE CLOUD ---
+const FIREBASE_CONFIG = {
+    apiKey: "AQ.Ab8RN6I7-6yNsQyx8f39A4YT6Hp5jNWxz2JCxq2ZEwJ5Zhy1aQ",
+    authDomain: "cell-experiment-tracker.firebaseapp.com",
+    projectId: "cell-experiment-tracker",
+    storageBucket: "cell-experiment-tracker.firebasestorage.app",
+    messagingSenderId: "855790481107",
+    appId: "1:855790481107:web:a566455d3f13a48a20ae26"
+};
+
 let app, auth, db, appId = 'lab-workspace-app';
+try {
+    if (!window.firebase.apps.length) { 
+        app = window.firebase.initializeApp(FIREBASE_CONFIG); 
+    } else { 
+        app = window.firebase.app(); 
+    }
+    auth = window.firebase.auth();
+    db = window.firebase.firestore();
+} catch (e) {
+    console.error("Firebase init error. Falling back to local storage.", e);
+}
 
 export default function App() {
     const createEmptyTest = (id, num, customType = 'plate-96') => {
@@ -101,7 +122,7 @@ export default function App() {
     const [storages, setStorages] = useState([]);
     const [activeStorageId, setActiveStorageId] = useState(null);
     const [storageModal, setStorageModal] = useState(null);
-    const [moveModal, setMoveModal] = useState(null); // Stato per spostare le box
+    const [moveModal, setMoveModal] = useState(null); 
     
     const [testCategories, setTestCategories] = useState(["Activity", "Toxicity", "Microscopy", "Flow Cytometry", "Viability"]);
     const [protocolCategories, setProtocolCategories] = useState(["Preparation", "Measurement", "Analysis"]);
@@ -132,16 +153,43 @@ export default function App() {
     const handleUndo = () => { if (historyIndex > 0) { const newIdx = historyIndex - 1; setHistoryIndex(newIdx); setReactTests(historyRef.current[newIdx]); } };
     const handleRedo = () => { if (historyIndex < historyRef.current.length - 1) { const newIdx = historyIndex + 1; setHistoryIndex(newIdx); setReactTests(historyRef.current[newIdx]); } };
 
+    // --- FIREBASE AUTH & SYNC ---
     useEffect(() => {
-        const fallbackToLocal = () => {
+        if (!auth) return;
+        const initAuth = async () => {
+            try {
+                if (typeof window.__initial_auth_token !== 'undefined' && window.__initial_auth_token) {
+                    try { await auth.signInWithCustomToken(window.__initial_auth_token); }
+                    catch(err) { await auth.signInAnonymously(); }
+                } else { 
+                    await auth.signInAnonymously(); 
+                }
+            } catch(e) { console.error("Auth error", e); }
+        };
+        initAuth();
+        const unsubscribe = auth.onAuthStateChanged(setUser);
+        return () => unsubscribe();
+    }, []);
+
+    useEffect(() => {
+        if (db && user) {
+            const collRef = db.collection(`artifacts/${appId}/public/data/datasets`);
+            const unsubscribe = collRef.onSnapshot((snap) => {
+                const dsets = [];
+                snap.forEach(doc => { dsets.push({ id: doc.id, ...doc.data() }); });
+                dsets.sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+                setDatasetsList(dsets);
+                setIsCloudReady(true);
+            }, (err) => { console.error("Firestore sync error:", err); setIsCloudReady(true); });
+            return () => unsubscribe();
+        } else if (!db) {
             try {
                 const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
                 if (stored) setDatasetsList(JSON.parse(stored).sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
                 setIsCloudReady(true);
             } catch (e) { setIsCloudReady(true); }
-        };
-        fallbackToLocal();
-    }, []);
+        }
+    }, [user, db]);
 
     const latestDataRef = useRef(null);
     latestDataRef.current = { tests, datasetTitle, datasetSubtitle, customCmpds, customCellLines, customConc, cmpColors, testCategories, protocolCategories, datasetProtocols, storages };
@@ -160,14 +208,24 @@ export default function App() {
                     testCount: tests.length, updatedAt: Date.now(),
                     payload: getCompressedPayload(), isCompressed: true
                 };
-                let stored = [];
-                try { stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]'); } catch(e){}
-                const existingIdx = stored.findIndex(e => e.id === currentDatasetId);
-                const newDset = { id: currentDatasetId, ...updatedPayload };
-                if (existingIdx >= 0) stored[existingIdx] = { ...stored[existingIdx], ...newDset }; else stored.push(newDset);
-                localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
-                setDatasetsList([...stored].sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
-                setSaveStatus('saved');
+                
+                if (db && user) {
+                    const docRef = db.collection(`artifacts/${appId}/public/data/datasets`).doc(currentDatasetId);
+                    await docRef.set(updatedPayload, { merge: true }).then(() => {
+                        setSaveStatus('saved'); setSaveErrorMsg('');
+                    }).catch(err => {
+                        setSaveStatus('error'); setSaveErrorMsg(err.message);
+                    });
+                } else {
+                    let stored = [];
+                    try { stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]'); } catch(e){}
+                    const existingIdx = stored.findIndex(e => e.id === currentDatasetId);
+                    const newDset = { id: currentDatasetId, ...updatedPayload };
+                    if (existingIdx >= 0) stored[existingIdx] = { ...stored[existingIdx], ...newDset }; else stored.push(newDset);
+                    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
+                    setDatasetsList([...stored].sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
+                    setSaveStatus('saved');
+                }
             } catch(e) { setSaveStatus('error'); setSaveErrorMsg(e.message); }
         }, 1500);
     }, [tests, datasetTitle, datasetSubtitle, customCmpds, customCellLines, customConc, cmpColors, testCategories, protocolCategories, datasetProtocols, isCloudReady, appView, currentDatasetId, user]);
@@ -260,9 +318,13 @@ export default function App() {
             payload: LZString.compressToUTF16(JSON.stringify({ tests: freshTests })), isCompressed: true
         };
         
-        let stored = []; try { stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]'); } catch(e){}
-        stored.push({ id: newId, ...updatedPayload }); localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
-        setDatasetsList([...stored].sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
+        if(db && user) { 
+            await db.collection(`artifacts/${appId}/public/data/datasets`).doc(newId).set(updatedPayload); 
+        } else {
+            let stored = []; try { stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]'); } catch(e){}
+            stored.push({ id: newId, ...updatedPayload }); localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
+            setDatasetsList([...stored].sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
+        }
     };
     
     const handleBackToExplorer = async () => {
@@ -273,11 +335,15 @@ export default function App() {
                     title: datasetTitle || 'Untitled Dataset', subtitle: datasetSubtitle || '', date: tests[0]?.date || new Date().toISOString().split('T')[0],
                     testCount: tests.length, updatedAt: Date.now(), payload: getCompressedPayload(), isCompressed: true
                 };
-                let stored = []; try { stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]'); } catch(e){}
-                const existingIdx = stored.findIndex(e => e.id === currentDatasetId);
-                if (existingIdx >= 0) stored[existingIdx] = { ...stored[existingIdx], ...updatedPayload }; else stored.push({ id: currentDatasetId, ...updatedPayload });
-                localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
-                setDatasetsList([...stored].sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
+                if (db && user) {
+                    await db.collection(`artifacts/${appId}/public/data/datasets`).doc(currentDatasetId).set(updatedPayload, { merge: true });
+                } else {
+                    let stored = []; try { stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]'); } catch(e){}
+                    const existingIdx = stored.findIndex(e => e.id === currentDatasetId);
+                    if (existingIdx >= 0) stored[existingIdx] = { ...stored[existingIdx], ...updatedPayload }; else stored.push({ id: currentDatasetId, ...updatedPayload });
+                    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
+                    setDatasetsList([...stored].sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
+                }
             } catch(e) {}
         }
         setAppView('explorer');
@@ -307,9 +373,13 @@ export default function App() {
         setDialog({
             type: 'confirm', title: 'Delete Dataset', message: 'Are you sure you want to delete this entire Dataset?',
             onConfirm: async () => {
-                let stored = []; try { stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]'); } catch(e){}
-                stored = stored.filter(d => d.id !== id); localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
-                setDatasetsList(stored);
+                if(db && user) { 
+                    await db.collection(`artifacts/${appId}/public/data/datasets`).doc(id).delete(); 
+                } else {
+                    let stored = []; try { stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]'); } catch(e){}
+                    stored = stored.filter(d => d.id !== id); localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
+                    setDatasetsList(stored);
+                }
             }
         });
     };
@@ -320,9 +390,13 @@ export default function App() {
             type: 'prompt', title: 'Rename Dataset', message: 'Enter a new title for this Dataset:', defaultValue: currentTitle,
             onConfirm: async (newTitle) => {
                 if (newTitle && newTitle.trim() !== currentTitle) {
-                    let stored = []; try { stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]'); } catch(e){}
-                    const idx = stored.findIndex(d => d.id === id);
-                    if (idx >= 0) { stored[idx].title = newTitle.trim(); localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored)); setDatasetsList(stored); }
+                    if (db && user) {
+                        await db.collection(`artifacts/${appId}/public/data/datasets`).doc(id).update({ title: newTitle.trim() });
+                    } else {
+                        let stored = []; try { stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]'); } catch(e){}
+                        const idx = stored.findIndex(d => d.id === id);
+                        if (idx >= 0) { stored[idx].title = newTitle.trim(); localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored)); setDatasetsList(stored); }
+                    }
                 }
             }
         });
@@ -511,7 +585,6 @@ export default function App() {
                 </div>
             )}
 
-            {/* MODAL PER SPOSTAMENTO BOX */}
             {moveModal && (() => {
                 const box = tests.find(t => t.id === moveModal.boxId);
                 if (!box) return null;
@@ -647,9 +720,9 @@ export default function App() {
                         <div className="px-4 py-2 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center text-[10px] font-bold text-slate-500">
                             <span>Status:</span>
                             {saveStatus === 'saving' ? <span className="text-blue-500 animate-pulse">💾 Saving...</span> :
-                             saveStatus === 'saved' ? <span className="text-emerald-600">💾 Local</span> :
+                             saveStatus === 'saved' ? <span className="text-emerald-600">☁️ Cloud Sync</span> :
                              saveStatus === 'error' ? <span className="text-red-600" title={saveErrorMsg}>❌ Error</span> :
-                             <span className="text-emerald-600">💾 Local</span>}
+                             <span className="text-slate-600">...</span>}
                         </div>
 
                         <nav className="flex-1 overflow-y-auto py-4 flex flex-col gap-1 px-2">
@@ -688,8 +761,6 @@ export default function App() {
                     </div>
 
                     <div className="flex-1 flex flex-col bg-slate-50 h-full overflow-hidden relative">
-                        
-                        {/* DASHBOARD PROFESSIONALE */}
                         {currentModule === 'dashboard' && (
                             <div className="p-8 h-full overflow-y-auto custom-scrollbar bg-slate-50">
                                 <div className="max-w-6xl mx-auto">
@@ -702,8 +773,6 @@ export default function App() {
                                             🖨️ Print / Save PDF
                                         </button>
                                     </div>
-                                    
-                                    {/* Stats Row */}
                                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
                                         <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
                                             <div className="text-slate-500 text-xs font-bold uppercase tracking-wide">Total Tests</div>
@@ -722,8 +791,6 @@ export default function App() {
                                             <div className="text-3xl font-bold text-slate-800 mt-1">{mergedPlan.filter(t => t.date >= new Date().toISOString().split('T')[0]).length}</div>
                                         </div>
                                     </div>
-
-                                    {/* Modules Grid */}
                                     <h2 className="text-lg font-bold text-slate-700 mb-4">Quick Navigation</h2>
                                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                         {[
@@ -1160,7 +1227,37 @@ export default function App() {
                                             </button>
                                         </div>
                                     </div>
-                                    {/* ... resto del codice protocols invariato per brevità, funziona già ... */}
+                                    <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex flex-col gap-4 shrink-0 no-print">
+                                        <div className="flex flex-col md:flex-row gap-4 items-center">
+                                            <div className="flex-1 w-full relative">
+                                                <span className="absolute left-3 top-2.5 text-slate-400">🔍</span>
+                                                <input type="text" placeholder="Search protocols..." value={protoSearch} onChange={e => setExpandedGroups(p=>({...p, protoSearch: e.target.value}))} className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"/>
+                                            </div>
+                                            <div className="w-full md:w-64 flex gap-2">
+                                                <select value={protoCatFilter} onChange={e => setExpandedGroups(p=>({...p, protoCatFilter: e.target.value}))} className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:border-emerald-500 font-semibold text-slate-700 cursor-pointer">
+                                                    <option value="ALL">All Categories</option>
+                                                    {protocolCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                                                </select>
+                                                <button onClick={() => setExpandedGroups(p=>({...p, showProtoCatMgr: !showProtoCatMgr}))} className={`px-3 py-2 border rounded-lg text-sm font-bold transition-colors shadow-sm ${showProtoCatMgr ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100'}`} title="Manage Categories">⚙️</button>
+                                            </div>
+                                        </div>
+
+                                        {showProtoCatMgr && (
+                                            <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 flex flex-col gap-3">
+                                                <h4 className="text-xs font-bold text-slate-500 uppercase">Manage Protocol Categories</h4>
+                                                <div className="flex gap-2">
+                                                    <input type="text" placeholder="New category name..." value={newProtoCatInput} onChange={e => setExpandedGroups(p=>({...p, newProtoCatInput: e.target.value}))} className="flex-1 border border-slate-300 rounded px-3 py-1.5 text-sm outline-none focus:border-emerald-500"/>
+                                                    <button onClick={() => {
+                                                        const v = newProtoCatInput.trim();
+                                                        if(v && !protocolCategories.includes(v)) {
+                                                            setProtocolCategories([...protocolCategories, v]); setExpandedGroups(p=>({...p, newProtoCatInput: ''}));
+                                                        }
+                                                    }} className="bg-emerald-600 text-white font-bold px-4 py-1.5 rounded text-sm shadow-sm hover:bg-emerald-700 transition-colors">Add</button>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+
                                     <div className="flex-1 overflow-y-auto custom-scrollbar">
                                         {filteredProtocols.length === 0 ? (
                                             <div className="text-center py-10 text-slate-400 italic">No protocols match your filters.</div>
@@ -1411,13 +1508,13 @@ export default function App() {
                                                 </div>
                                             </div>
 
-                                            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                                            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 no-print">
                                                 <div className="flex justify-between items-center mb-6 border-b border-slate-100 pb-2">
                                                     <div>
                                                         <h4 className="text-lg font-black text-slate-800">Selected Slots ({selectedWells.length})</h4>
                                                         <p className="text-xs text-slate-500">Drag over the grid to select multiple, then edit bulk data below.</p>
                                                     </div>
-                                                    <div className="flex gap-3 no-print">
+                                                    <div className="flex gap-3">
                                                         <button onClick={() => setVal('selectedWells', [])} disabled={selectedWells.length === 0} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 font-bold border border-slate-300 rounded-lg disabled:opacity-50 transition-colors shadow-sm">Clear Selection</button>
                                                         <button onClick={printBoxLabel} disabled={selectedWells.length === 0} className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-sm disabled:opacity-50 flex items-center gap-2 transition-colors">🖨️ Print Label</button>
                                                     </div>
