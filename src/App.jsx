@@ -688,9 +688,15 @@ export default function App() {
                                 <h1 className="text-3xl font-black text-slate-800 tracking-tight">Enterprise Lab Workspace</h1>
                                 <p className="text-slate-500 text-sm mt-1">Manage Datasets, Tests, and Protocols</p>
                             </div>
-                            <button onClick={createNewDataset} disabled={!isCloudReady} className={`font-bold py-2.5 px-6 rounded-lg shadow-sm transition-colors flex items-center gap-2 ${isCloudReady ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-slate-300 text-slate-500 cursor-not-allowed'}`}>
-                                <span className="text-lg">+</span> New Dataset
-                            </button>
+                            <div className="flex gap-3">
+                                <label className="bg-violet-100 hover:bg-violet-200 text-violet-800 font-bold py-2.5 px-6 rounded-lg shadow-sm transition-colors flex items-center gap-2 cursor-pointer">
+                                    <span className="text-lg">📂</span> Apri File
+                                    <input type="file" accept=".html" onChange={loadHTML} className="hidden"/>
+                                </label>
+                                <button onClick={createNewDataset} disabled={!isCloudReady} className={`font-bold py-2.5 px-6 rounded-lg shadow-sm transition-colors flex items-center gap-2 ${isCloudReady ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-slate-300 text-slate-500 cursor-not-allowed'}`}>
+                                    <span className="text-lg">+</span> New Dataset
+                                </button>
+                            </div>
                         </div>
                         
                         {!isCloudReady ? (
@@ -770,6 +776,13 @@ export default function App() {
                         </div>
 
                         <nav className="flex-1 overflow-y-auto py-4 flex flex-col gap-1 px-2">
+                            <button 
+                                onClick={handleBackToExplorer}
+                                className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all text-left bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-bold shadow-sm mb-4"
+                            >
+                                <span className="text-lg w-5 text-center">📁</span>
+                                Lista dei File Presenti
+                            </button>
                             {[
                                 { id: 'dashboard', icon: '📊', label: 'Dataset Overview' },
                                 { id: 'agenda', icon: '🗓️', label: 'Agenda (Timeline)' },
@@ -1255,15 +1268,35 @@ export default function App() {
                                                         </div>
                                                     ))}
                                                 </div>
-                                                <button onClick={() => {
-                                                    const url = prompt("Paste external link (Drive, PDF, Image URL):");
-                                                    if(url && url.trim()) {
-                                                        const newLink = { id: Date.now().toString(), name: 'Linked Resource', url: url.trim() };
-                                                        setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? {...p, links: [...(p.links||[]), newLink]} : p));
-                                                    }
-                                                }} className="border-2 border-dashed border-blue-200 text-blue-600 bg-blue-50 hover:bg-blue-100 font-bold rounded-lg p-3 text-center transition-colors shadow-sm text-sm">
-                                                    + Add Resource Link
-                                                </button>
+                                                <div className="flex flex-col gap-2">
+                                                    <button onClick={() => {
+                                                        const url = prompt("Incolla link esterno (Drive, PDF, Image URL):");
+                                                        if(url && url.trim()) {
+                                                            const newLink = { id: Date.now().toString(), name: 'Risorsa Collegata', url: url.trim() };
+                                                            setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? {...p, links: [...(p.links||[]), newLink]} : p));
+                                                        }
+                                                    }} className="border-2 border-dashed border-blue-200 text-blue-600 bg-blue-50 hover:bg-blue-100 font-bold rounded-lg p-3 text-center transition-colors shadow-sm text-sm">
+                                                        + Aggiungi Link Esterno
+                                                    </button>
+                                                    <label className="border-2 border-dashed border-emerald-200 text-emerald-600 bg-emerald-50 hover:bg-emerald-100 font-bold rounded-lg p-3 text-center transition-colors shadow-sm text-sm cursor-pointer block">
+                                                        + Allega Files Multipli
+                                                        <input type="file" multiple onChange={(e) => {
+                                                            const files = Array.from(e.target.files);
+                                                            if (!files.length) return;
+                                                            const newLinksPromises = files.map(file => new Promise((resolve) => {
+                                                                const reader = new FileReader();
+                                                                reader.onload = (ev) => resolve({ id: Date.now().toString() + Math.random(), name: file.name, url: ev.target.result });
+                                                                reader.readAsDataURL(file);
+                                                            }));
+                                                            Promise.all(newLinksPromises).then(newLinks => {
+                                                                setDatasetProtocols(datasetProtocols.map(p => 
+                                                                    p.id === activeProtocol.id ? {...p, links: [...(p.links||[]), ...newLinks]} : p
+                                                                ));
+                                                            });
+                                                            e.target.value = '';
+                                                        }} className="hidden"/>
+                                                    </label>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -1636,9 +1669,32 @@ export default function App() {
                             }
                         })()}
 
-                        {currentModule === 'notebook' && (
-                            <LabNotebook tests={tests} allCellLines={[...new Set([...DEF_CELL_LINES, ...customCellLines])]} testCategories={testCategories} jumpToTest={(id) => { setActiveTestId(id); setCurrentModule('active-test'); }} customConc={customConc} cmpColors={cmpColors} allCmpds={[...new Set([...DEF_COMPOUNDS, ...customCmpds])]} />
-                        )}
+                        {currentModule === 'notebook' && (() => {
+                            const getVal = (key, def) => expandedGroups[key] !== undefined ? expandedGroups[key] : def;
+                            const notebookSearch = getVal('notebookSearch', '');
+                            const filteredTests = tests.filter(t => {
+                                if(!notebookSearch) return true;
+                                const query = notebookSearch.toLowerCase();
+                                return JSON.stringify(t).toLowerCase().includes(query);
+                            });
+                            
+                            return (
+                                <div className="flex flex-col h-full w-full">
+                                    <div className="bg-white p-4 border-b border-slate-200 shadow-sm flex items-center justify-between no-print shrink-0">
+                                        <div className="flex-1 max-w-md relative">
+                                            <span className="absolute left-3 top-2.5 text-slate-400">🔍</span>
+                                            <input type="text" placeholder="Ricerca generica nei dati dei test..." value={notebookSearch} onChange={e => setExpandedGroups(p => ({...p, notebookSearch: e.target.value}))} className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-500"/>
+                                        </div>
+                                        <button onClick={handlePrint} className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center gap-2 shadow-sm">
+                                            🖨️ Stampa / Salva PDF (App)
+                                        </button>
+                                    </div>
+                                    <div className="flex-1 overflow-hidden relative">
+                                        <LabNotebook tests={filteredTests} allCellLines={[...new Set([...DEF_CELL_LINES, ...customCellLines])]} testCategories={testCategories} jumpToTest={(id) => { setActiveTestId(id); setCurrentModule('active-test'); }} customConc={customConc} cmpColors={cmpColors} allCmpds={[...new Set([...DEF_COMPOUNDS, ...customCmpds])]} />
+                                    </div>
+                                </div>
+                            );
+                        })()}
                     </div>
                 </div>
             )}
