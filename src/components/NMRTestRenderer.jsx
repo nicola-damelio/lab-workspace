@@ -1,12 +1,14 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea } from 'recharts';
 
+// --- UTILITY CLASSES FOR FULLSCREEN ---
 const FS_CLASSES = "fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col";
 const OVERLAY_CLASSES = "fixed top-0 left-0 w-screen h-screen bg-slate-900/50 backdrop-blur-sm z-[999990]";
 
+// --- 1. NMR INTEGRATED CONSTANTS & DATA ---
 const AMINO_ACID_DB = {
     'A': { name: 'Alanine', code3: 'Ala', atoms: ['HN', 'Hα', 'Hβ'], ranges: { 'HN': {min: 7.8, max: 8.6}, 'Hα': {min: 4.0, max: 4.5}, 'Hβ': {min: 1.2, max: 1.5} }, cosy: [['HN','Hα'], ['Hα','Hβ']], spinSystems: [['HN', 'Hα', 'Hβ']] },
-    'C': { name: 'Cystéine', code3: 'Cys', atoms: ['HN', 'Hα', 'Hβ1', 'Hβ2'], ranges: { 'HN': {min: 7.9, max: 8.7}, 'Hα': {min: 4.4, max: 4.8}, 'Hβ1': {min: 2.8, max: 3.3}, 'Hβ2': {min: 2.8, max: 3.3} }, cosy: [['HN','Hα'], ['Hα','Hβ1'], ['Hα','Hβ2'], ['Hβ1','Hβ2']], spinSystems: [['HN', 'Hα', 'Hβ1', 'Hβ2']] },
+    'C': { name: 'Cysteine', code3: 'Cys', atoms: ['HN', 'Hα', 'Hβ1', 'Hβ2'], ranges: { 'HN': {min: 7.9, max: 8.7}, 'Hα': {min: 4.4, max: 4.8}, 'Hβ1': {min: 2.8, max: 3.3}, 'Hβ2': {min: 2.8, max: 3.3} }, cosy: [['HN','Hα'], ['Hα','Hβ1'], ['Hα','Hβ2'], ['Hβ1','Hβ2']], spinSystems: [['HN', 'Hα', 'Hβ1', 'Hβ2']] },
     'D': { name: 'Aspartic Acid', code3: 'Asp', atoms: ['HN', 'Hα', 'Hβ1', 'Hβ2'], ranges: { 'HN': {min: 8.0, max: 8.8}, 'Hα': {min: 4.4, max: 4.9}, 'Hβ1': {min: 2.5, max: 2.9}, 'Hβ2': {min: 2.5, max: 2.9} }, cosy: [['HN','Hα'], ['Hα','Hβ1'], ['Hα','Hβ2'], ['Hβ1','Hβ2']], spinSystems: [['HN', 'Hα', 'Hβ1', 'Hβ2']] },
     'E': { name: 'Glutamic Acid', code3: 'Glu', atoms: ['HN', 'Hα', 'Hβ', 'Hγ'], ranges: { 'HN': {min: 8.0, max: 8.7}, 'Hα': {min: 4.1, max: 4.5}, 'Hβ': {min: 1.9, max: 2.3}, 'Hγ': {min: 2.1, max: 2.5} }, cosy: [['HN','Hα'], ['Hα','Hβ'], ['Hβ','Hγ']], spinSystems: [['HN', 'Hα', 'Hβ', 'Hγ']] },
     'F': { name: 'Phenylalanine', code3: 'Phe', atoms: ['HN', 'Hα', 'Hβ1', 'Hβ2', 'Hδ', 'Hε', 'Hζ'], ranges: { 'HN': {min: 8.0, max: 8.8}, 'Hα': {min: 4.4, max: 4.9}, 'Hβ1': {min: 2.9, max: 3.3}, 'Hβ2': {min: 2.9, max: 3.3}, 'Hδ': {min: 7.1, max: 7.4}, 'Hε': {min: 7.2, max: 7.5}, 'Hζ': {min: 7.1, max: 7.4} }, cosy: [['HN','Hα'], ['Hα','Hβ1'], ['Hα','Hβ2'], ['Hβ1','Hβ2'], ['Hδ','Hε'], ['Hε','Hζ']], spinSystems: [['HN', 'Hα', 'Hβ1', 'Hβ2'], ['Hδ', 'Hε', 'Hζ']] },
@@ -95,25 +97,36 @@ const getPentagon = (cx, cy, r, dir) => {
     return pts;
 };
 
+// --- 2. REUSABLE COLLAPSIBLE SECTION ---
 export const CollapsibleSection = ({ title, icon, defaultOpen = true, children, headerExtra, className="" }) => {
     const [isOpen, setIsOpen] = useState(defaultOpen);
     return (
         <div className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-6 break-inside-avoid ${className}`}>
-            <button onClick={() => setIsOpen(!isOpen)} className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left ${isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'}`}>
+            <button
+                onClick={() => setIsOpen(!isOpen)}
+                className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left ${isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'}`}
+            >
                 <div className="flex items-center gap-2 overflow-hidden">
                     {icon && <span className="text-xl shrink-0">{icon}</span>}
                     <h3 className="text-lg font-bold text-slate-800 truncate">{title}</h3>
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
                     {headerExtra && <div onClick={(e) => e.stopPropagation()}>{headerExtra}</div>}
-                    <svg className={`w-5 h-5 text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                    <svg className={`w-5 h-5 text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
                 </div>
             </button>
-            {isOpen && <div className="p-6">{children}</div>}
+            {isOpen && (
+                <div className="p-6 border-t border-slate-100">
+                    {children}
+                </div>
+            )}
         </div>
     );
 };
 
+// --- 3. RICH TEXT EDITOR ---
 const RichTextEditor = ({ value, onChange }) => {
   const editorRef = useRef(null);
   const execCmd = (command, val = null) => { document.execCommand(command, false, val); if (editorRef.current) onChange(editorRef.current.innerHTML); };
@@ -131,6 +144,7 @@ const RichTextEditor = ({ value, onChange }) => {
   );
 };
 
+// --- 4. CUSTOM TICKS & SHAPES RECHARTS ---
 const CustomXTick1H = ({ x, y, payload, isZoomed }) => {
   const numVal = Number(payload.value); const isInt = Number.isInteger(numVal); const isHalf = numVal % 0.5 === 0; const tickLength = isZoomed ? 5 : (isInt ? 8 : (isHalf ? 5 : 3));
   return (<g transform={`translate(${x||0},${y||0})`}><line x1={0} y1={0} x2={0} y2={tickLength} stroke="#94a3b8" strokeWidth={1} />{(isZoomed || isInt) && <text x={0} y={tickLength + 12} textAnchor="middle" fill="#64748b" fontSize={isZoomed ? 10 : 12} fontWeight={isInt && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(2) : numVal}</text>}</g>);
@@ -149,10 +163,9 @@ const CustomYTick13C = ({ x, y, payload, isZoomed }) => {
 };
 
 const CustomRangeShape = (props) => { 
-  const { cx, cy, payload, xAxis } = props; 
+  const { cy, payload, xAxis } = props; 
   if (!xAxis || typeof xAxis.scale !== 'function' || payload.min === undefined || payload.max === undefined) return null;
   const xMin = xAxis.scale(payload.max); const xMax = xAxis.scale(payload.min); 
-  if (isNaN(xMin) || isNaN(xMax) || isNaN(cy)) return null;
   const width = Math.max(Math.abs(xMax - xMin), 4); const height = 14; const level = payload.level || 0;
   let textY = cy;
   if (level % 4 === 0) textY = cy + 18; else if (level % 4 === 1) textY = cy - 10; else if (level % 4 === 2) textY = cy + 32; else textY = cy - 24;
@@ -160,7 +173,6 @@ const CustomRangeShape = (props) => {
 };
 
 const NMRPointShape = ({ cx, cy, fill, payload }) => {
-    if (isNaN(cx) || isNaN(cy)) return null;
     return <circle cx={cx} cy={cy} r={payload.size || 5} fill={payload.type === 'Diagonale' ? fill : getNMRFillColor(payload)} opacity={0.8} />;
 };
 
@@ -174,12 +186,18 @@ const NMRTooltip = ({ active, payload, diagonalColor }) => {
   return null;
 };
 
+// --- 5. ROBUST ZOOMABLE PLOTS (CORRECTED EVENT MAPPING) ---
 const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel }) => {
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState(fullDomain);
   const [refAreaLeft, setRefAreaLeft] = useState(null); const [refAreaRight, setRefAreaRight] = useState(null);
   const isZoomed = xDomain[0] !== fullDomain[0] || xDomain[1] !== fullDomain[1];
+  
   const zoom = () => { if (refAreaLeft === refAreaRight || refAreaLeft === null) { setRefAreaLeft(null); setRefAreaRight(null); return; } setXDomain([Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)]); setRefAreaLeft(null); setRefAreaRight(null); };
+  
+  const handleMouseDown = (e) => { if (e) { const x = e.xValue !== undefined ? e.xValue : e.activePayload?.[0]?.payload.x; if (x !== undefined) setRefAreaLeft(x); } };
+  const handleMouseMove = (e) => { if (refAreaLeft !== null && e) { const x = e.xValue !== undefined ? e.xValue : e.activePayload?.[0]?.payload.x; if (x !== undefined) setRefAreaRight(x); } };
+
   return (
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)}></div>}
@@ -190,15 +208,15 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
         </div>
         <div className="flex-1 min-h-0 select-none relative">
           <ResponsiveContainer width="100%" height="100%">
-            <ScatterChart margin={{ top: 10, right: 10, bottom: 40, left: 10 }} onMouseDown={(e) => { if (e?.activePayload?.[0]?.payload?.x !== undefined) setRefAreaLeft(e.activePayload[0].payload.x); }} onMouseMove={(e) => { if (refAreaLeft !== null && e?.activePayload?.[0]?.payload?.x !== undefined) setRefAreaRight(e.activePayload[0].payload.x); }} onMouseUp={zoom}>
+            <ScatterChart margin={{ top: 10, right: 10, bottom: 40, left: 10 }} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={zoom}>
               <CartesianGrid strokeDasharray="3 3" vertical={true} horizontal={false} stroke="#f1f5f9" />
               <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : ticks} interval={0} tickLine={false} tick={<TickComponent isZoomed={isZoomed} />} label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b' }} axisLine={{ stroke: '#cbd5e1' }} />
               <YAxis type="number" dataKey="y" domain={[0, 4.5]} hide={true} />
               <Tooltip cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} content={<NMRTooltip />} />
               <Scatter data={data} shape={(props) => { 
                   const { cx, cy, yAxis, payload } = props; 
-                  if (!yAxis || typeof yAxis.scale !== 'function' || isNaN(cx) || isNaN(cy)) return null;
-                  const y0 = yAxis.scale(0); if (isNaN(y0)) return null;
+                  if (!yAxis || typeof yAxis.scale !== 'function') return null;
+                  const y0 = yAxis.scale(0);
                   return <line x1={cx} y1={y0} x2={cx} y2={cy} stroke={payload.color} strokeWidth={1.5} />; 
               }} isAnimationActive={false} />
               {refAreaLeft !== null && refAreaRight !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} strokeOpacity={0.3} fill="#cbd5e1" />}
@@ -216,7 +234,12 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
   const [refAreaLeft, setRefAreaLeft] = useState(null); const [refAreaRight, setRefAreaRight] = useState(null);
   const [refAreaTop, setRefAreaTop] = useState(null); const [refAreaBottom, setRefAreaBottom] = useState(null);
   const isZoomed = xDomain[0] !== 0 || xDomain[1] !== 11 || yDomain[0] !== 0 || yDomain[1] !== 11;
+  
   const zoom = () => { if (refAreaLeft === refAreaRight || refAreaLeft === null || refAreaTop === refAreaBottom || refAreaTop === null) { setRefAreaLeft(null); setRefAreaRight(null); setRefAreaTop(null); setRefAreaBottom(null); return; } setXDomain([Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)]); setYDomain([Math.min(refAreaTop, refAreaBottom), Math.max(refAreaTop, refAreaBottom)]); setRefAreaLeft(null); setRefAreaRight(null); setRefAreaTop(null); setRefAreaBottom(null); };
+
+  const handleMouseDown = (e) => { if (e) { const x = e.xValue !== undefined ? e.xValue : e.activePayload?.[0]?.payload.x; const y = e.yValue !== undefined ? e.yValue : e.activePayload?.[0]?.payload.y; if (x !== undefined && y !== undefined) { setRefAreaLeft(x); setRefAreaTop(y); } } };
+  const handleMouseMove = (e) => { if (refAreaLeft !== null && e) { const x = e.xValue !== undefined ? e.xValue : e.activePayload?.[0]?.payload.x; const y = e.yValue !== undefined ? e.yValue : e.activePayload?.[0]?.payload.y; if (x !== undefined && y !== undefined) { setRefAreaRight(x); setRefAreaBottom(y); } } };
+
   return (
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)}></div>}
@@ -227,7 +250,7 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
         </div>
         <div className="flex-1 min-h-0 select-none relative">
           <ResponsiveContainer width="100%" height="100%">
-            <ScatterChart margin={{ top: 10, right: 10, bottom: 40, left: 40 }} onMouseDown={(e) => { if (e?.activePayload?.[0]?.payload) { setRefAreaLeft(e.activePayload[0].payload.x); setRefAreaTop(e.activePayload[0].payload.y); } }} onMouseMove={(e) => { if (refAreaLeft !== null && e?.activePayload?.[0]?.payload) { setRefAreaRight(e.activePayload[0].payload.x); setRefAreaBottom(e.activePayload[0].payload.y); } }} onMouseUp={zoom}>
+            <ScatterChart margin={{ top: 10, right: 10, bottom: 40, left: 40 }} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={zoom}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b' }} />
               <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomYTick1H isZoomed={isZoomed} />} label={{ value: '¹H F1 (ppm)', angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b' }} />
@@ -250,7 +273,12 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
   const [refAreaLeft, setRefAreaLeft] = useState(null); const [refAreaRight, setRefAreaRight] = useState(null);
   const [refAreaTop, setRefAreaTop] = useState(null); const [refAreaBottom, setRefAreaBottom] = useState(null);
   const isZoomed = xDomain[0] !== 0 || xDomain[1] !== 11 || yDomain[0] !== 10 || yDomain[1] !== 150;
+  
   const zoom = () => { if (refAreaLeft === refAreaRight || refAreaLeft === null || refAreaTop === refAreaBottom || refAreaTop === null) { setRefAreaLeft(null); setRefAreaRight(null); setRefAreaTop(null); setRefAreaBottom(null); return; } setXDomain([Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)]); setYDomain([Math.min(refAreaTop, refAreaBottom), Math.max(refAreaTop, refAreaBottom)]); setRefAreaLeft(null); setRefAreaRight(null); setRefAreaTop(null); setRefAreaBottom(null); };
+
+  const handleMouseDown = (e) => { if (e) { const x = e.xValue !== undefined ? e.xValue : e.activePayload?.[0]?.payload.x; const y = e.yValue !== undefined ? e.yValue : e.activePayload?.[0]?.payload.y; if (x !== undefined && y !== undefined) { setRefAreaLeft(x); setRefAreaTop(y); } } };
+  const handleMouseMove = (e) => { if (refAreaLeft !== null && e) { const x = e.xValue !== undefined ? e.xValue : e.activePayload?.[0]?.payload.x; const y = e.yValue !== undefined ? e.yValue : e.activePayload?.[0]?.payload.y; if (x !== undefined && y !== undefined) { setRefAreaRight(x); setRefAreaBottom(y); } } };
+
   return (
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)}></div>}
@@ -261,7 +289,7 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
         </div>
         <div className="flex-1 min-h-0 select-none relative">
           <ResponsiveContainer width="100%" height="100%">
-            <ScatterChart margin={{ top: 10, right: 10, bottom: 40, left: 40 }} onMouseDown={(e) => { if (e?.activePayload?.[0]?.payload) { setRefAreaLeft(e.activePayload[0].payload.x); setRefAreaTop(e.activePayload[0].payload.y); } }} onMouseMove={(e) => { if (refAreaLeft !== null && e?.activePayload?.[0]?.payload) { setRefAreaRight(e.activePayload[0].payload.x); setRefAreaBottom(e.activePayload[0].payload.y); } }} onMouseUp={zoom}>
+            <ScatterChart margin={{ top: 10, right: 10, bottom: 40, left: 40 }} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={zoom}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b' }} />
               <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_13C} interval={0} tickLine={false} tick={<CustomYTick13C isZoomed={isZoomed} />} label={{ value: '¹³C F1 (ppm)', angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b' }} />
@@ -276,7 +304,7 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
   );
 };
 
-// --- 6. 2D CHEMICAL STRUCTURE GENERATOR ---
+// --- 6. 2D CHEMICAL STRUCTURE GENERATOR CON FULLSCREEN E SCORRIMENTO ---
 const ChemicalStructure2D = ({ sequence, isExpanded, onToggleExpand }) => {
   if (!sequence || sequence.length === 0) return null;
   const elements = []; let minX = 0, maxX = 0, minY = 0, maxY = 0; let firstElement = true;
@@ -367,14 +395,15 @@ const ChemicalStructure2D = ({ sequence, isExpanded, onToggleExpand }) => {
   });
 
   const pad = 15; const viewBox = `${minX - pad} ${minY - pad} ${maxX - minX + 2*pad} ${maxY - minY + 2*pad}`;
+  const svgWidth = Math.max(100, sequence.length * 15);
 
   return (
       <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={onToggleExpand}></div>}
       <div className={isExpanded ? FS_CLASSES + " p-4 md:p-6 items-center justify-center" : "flex flex-col bg-white p-4 rounded-xl shadow-sm w-full h-full items-center justify-center relative border border-slate-200 break-inside-avoid"}>
           <button onClick={onToggleExpand} className="absolute top-3 right-3 z-[110] flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 w-8 h-8 justify-center rounded-lg text-lg font-bold transition-all shadow-sm">{isExpanded ? "↙️" : "↗️"}</button>
-          <div className="w-full flex-grow flex items-center justify-center overflow-hidden min-h-0">
-              <svg viewBox={viewBox} className={`w-full h-auto font-sans ${isExpanded ? 'max-h-full' : 'max-h-[300px]'}`}>
+          <div className="w-full flex-grow flex items-center justify-start overflow-x-auto overflow-y-hidden custom-scrollbar min-h-0">
+              <svg viewBox={viewBox} className={`h-auto font-sans ${isExpanded ? 'max-h-full' : 'max-h-[300px]'}`} style={{ minWidth: `${svgWidth}%` }}>
                   {elements.filter(e => e.type === 'line').map((el, idx) => <line key={`l${idx}`} x1={el.x1} y1={el.y1} x2={el.x2} y2={el.y2} stroke={el.color} strokeWidth="1.8" />)}
                   {elements.filter(e => e.type === 'path').map((el, idx) => <path key={`pa${idx}`} d={el.d} fill="none" stroke={el.color} strokeWidth="1.8" />)}
                   {elements.filter(e => e.type === 'polygon').map((el, idx) => <polygon key={`po${idx}`} points={el.points} fill="white" stroke={el.color} strokeWidth="1.8" />)}
@@ -389,12 +418,13 @@ const ChemicalStructure2D = ({ sequence, isExpanded, onToggleExpand }) => {
 
 
 // --- 7. MAIN COMPONENT ---
-export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader }) => {
+export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, datasetProtocols, jumpToProtocol }) => {
   const seq = (activeTest.proteinSequence || '').toUpperCase().replace(/[^A-Z]/g, '');
   const selNuc = activeTest.selectedNuclei || ['H', 'N', 'C'];
   const shifts = activeTest.chemicalShifts || {};
   const images = activeTest.nmrSpectraImages || [];
   const showSim = activeTest.showSpectraSimulation || false;
+  const linkedProtocolId = activeTest.linkedProtocolId || '';
   const [tableMode, setTableMode] = useState(activeTest.tableMode || 'backbone');
   const [expandedPanel, setExpandedPanel] = useState(null);
   const nucDefs = { H: ['HN', 'Hα', 'Hβ'], N: ['N'], C: ['Cα', 'Cβ', "C'"] };
@@ -403,6 +433,7 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader }) =>
   
   const parsedSeq = useMemo(() => {
     const upperSeq = seq.replace(/[^ACDEFGHIKLMNPQRSTVWY]/g, '');
+    if (upperSeq.length === 0) return [];
     const assignedShifts = []; 
     return upperSeq.split('').map((char, index) => {
       const aa = AMINO_ACID_DB[char]; const generatedShifts = {};
@@ -740,6 +771,29 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader }) =>
 
         {/* 8. LAB NOTEBOOK EXPORT */}
         <CollapsibleSection title="Lab Notebook Export" icon="📓" defaultOpen={false} className="no-print">
+            {/* PROTOCOL LINKING (Aggiunto per consistenza col PlateReader) */}
+            <div className="mb-6 pb-4 border-b border-slate-100 flex items-center gap-4">
+                <span className="text-[11px] font-bold text-slate-600 w-32">📋 Link Protocol:</span>
+                <select 
+                    value={linkedProtocolId} 
+                    onChange={(e) => updateActiveTest({linkedProtocolId: e.target.value})}
+                    className="border border-slate-300 rounded-lg px-3 py-1.5 text-xs bg-slate-50 outline-none focus:border-blue-500 flex-1 cursor-pointer"
+                >
+                    <option value="">-- No Protocol Linked --</option>
+                    {(datasetProtocols || []).map(p => (
+                        <option key={p.id} value={p.id}>{p.title} ({p.category})</option>
+                    ))}
+                </select>
+                {linkedProtocolId && (
+                    <button 
+                        onClick={() => jumpToProtocol(linkedProtocolId)}
+                        className="text-xs text-white font-bold bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg shadow-sm transition-colors flex items-center gap-1"
+                    >
+                        📖 Open Protocol
+                    </button>
+                )}
+            </div>
+
           <div className="flex flex-col gap-4">
             <p className="text-sm text-slate-600">Select the NMR data to format and append to the General Comments (which acts as the Lab Notebook entry).</p>
             <div className="flex flex-wrap gap-4 border border-slate-200 p-4 rounded-lg bg-white shadow-sm">
