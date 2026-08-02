@@ -19,6 +19,14 @@ const migrateLoadedDataset = (s) => {
         let migratedType = p.type;
         if (!migratedType && p.plateType) migratedType = p.plateType === '9x9box' ? 'plate-9x9box' : 'plate-' + p.plateType;
         let migratedCategory = p.testCategory || (p.expTypes && p.expTypes.length > 0 ? p.expTypes[0] : 'Activity');
+        
+        if (migratedType === 'nmr') {
+            return {
+                moleculeName: '', experimentDate: '', concentration: '', solvent: '', saltConcentration: '', temperature: '', otherMolecule: '', ratio: '', tableMode: 'backbone',
+                ...p, type: 'nmr', testCategory: migratedCategory, comments: safeComments, images: safeImages
+            };
+        }
+        
         return { ...p, type: migratedType || 'plate-96', testCategory: migratedCategory, comments: safeComments, images: safeImages };
     });
 
@@ -92,7 +100,11 @@ export default function App() {
                 chartCfg: { yMin:'',yMax:'',xMin:'',xMax:'', ptStyle:'circle',ptSize:5,fontSize:16,xPos:'bottom',yPos:'left', xAxisLabel:'', lineStyle:'solid', lineThickness:2 }
             };
         } else if (customType === 'nmr') {
-            return { ...baseTest, proteinSequence: '', selectedNuclei: ['H', 'C', 'N'], chemicalShifts: {}, nmrSpectraImages: [] };
+            return { 
+                ...baseTest, 
+                proteinSequence: '', selectedNuclei: ['H', 'C', 'N'], chemicalShifts: {}, nmrSpectraImages: [],
+                moleculeName: '', experimentDate: '', concentration: '', solvent: '', saltConcentration: '', temperature: '', otherMolecule: '', ratio: '', tableMode: 'backbone'
+            };
         }
         return baseTest;
     };
@@ -155,7 +167,10 @@ export default function App() {
 
     // --- FIREBASE AUTH & SYNC ---
     useEffect(() => {
-        if (!auth) return;
+        if (!auth) {
+            setIsCloudReady(true);
+            return;
+        }
         const initAuth = async () => {
             try {
                 if (typeof window.__initial_auth_token !== 'undefined' && window.__initial_auth_token) {
@@ -164,7 +179,7 @@ export default function App() {
                 } else { 
                     await auth.signInAnonymously(); 
                 }
-            } catch(e) { console.error("Auth error", e); }
+            } catch(e) { console.error("Auth error", e); setIsCloudReady(true); }
         };
         initAuth();
         const unsubscribe = auth.onAuthStateChanged(setUser);
@@ -488,13 +503,33 @@ export default function App() {
 
     return (
         <div className="w-full relative flex flex-col h-screen overflow-hidden bg-slate-50">
-            {/* CSS per la stampa (PDF) */}
+            {/* AGGIORNAMENTO CSS PER LA STAMPA PDF PERFETTA */}
             <style>{`
                 @media print {
-                    .no-print { display: none !important; }
+                    @page { margin: 1cm; size: A4 portrait; }
+                    .no-print, nav, button, input[type="file"], .w-64 { display: none !important; }
                     .print-only { display: block !important; }
-                    body { background: white; }
-                    .flex-1 { overflow: visible !important; height: auto !important; }
+                    body, html, #root { 
+                        background: white !important; 
+                        height: auto !important; 
+                        min-height: 100% !important; 
+                        overflow: visible !important; 
+                        color: black !important;
+                    }
+                    /* Forza l'espansione di tutti i contenitori di scorrimento e adatta lo schermo */
+                    .h-screen, .max-h-screen, .flex-1, .overflow-y-auto, .overflow-hidden, .custom-scrollbar, .h-full, .min-h-0 { 
+                        height: auto !important; 
+                        max-height: none !important; 
+                        overflow: visible !important; 
+                        position: static !important;
+                    }
+                    /* Evita bug dovuti al fixed nei layout PDF */
+                    .fixed, .absolute { position: static !important; }
+                    /* Migliora i bordi in modalità stampa (rimuove ombre pesanti) */
+                    .shadow-sm, .shadow-md, .shadow-lg, .shadow-xl, .shadow-2xl { 
+                        box-shadow: none !important; 
+                        border: 1px solid #e2e8f0 !important; 
+                    }
                 }
             `}</style>
 
@@ -651,11 +686,18 @@ export default function App() {
                                 <h1 className="text-3xl font-black text-slate-800 tracking-tight">Enterprise Lab Workspace</h1>
                                 <p className="text-slate-500 text-sm mt-1">Manage Datasets, Tests, and Protocols</p>
                             </div>
-                            <button onClick={createNewDataset} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-6 rounded-lg shadow-sm transition-colors flex items-center gap-2">
+                            <button onClick={createNewDataset} disabled={!isCloudReady} className={`font-bold py-2.5 px-6 rounded-lg shadow-sm transition-colors flex items-center gap-2 ${isCloudReady ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-slate-300 text-slate-500 cursor-not-allowed'}`}>
                                 <span className="text-lg">+</span> New Dataset
                             </button>
                         </div>
-                        {Object.keys(groupedDatasets).length === 0 ? (
+                        
+                        {!isCloudReady ? (
+                            <div className="text-center py-20 flex flex-col items-center gap-4">
+                                <div className="w-12 h-12 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin"></div>
+                                <h2 className="text-xl font-bold text-slate-700">Connecting to Cloud...</h2>
+                                <p className="text-slate-500">Syncing your workspace data securely.</p>
+                            </div>
+                        ) : Object.keys(groupedDatasets).length === 0 ? (
                             <div className="text-center py-16 text-slate-500 text-lg flex flex-col items-center gap-4">
                                 <span className="text-4xl opacity-50">📂</span>
                                 <span>No datasets found. Create a new one to start!</span>
