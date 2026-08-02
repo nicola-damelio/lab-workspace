@@ -3,12 +3,14 @@ import Chart from 'chart.js/auto';
 import * as XLSX from 'xlsx';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
-import { RichTextEditor } from './components/RichTextEditor'; 
-import {
-    PLATES_DEF, BOX_ROW_LABELS, formatConc, concKey, getDirectImageUrl,
-    getRegionColor, toHex, lighten, darken, needsDarkText, PALETTE,
-    fit4PL, errBarPlugin
-} from './data/constants'; 
+
+// --- IMPORT CORRETTI ---
+import { RichTextEditor } from './RichTextEditor'; 
+import { 
+    PLATES_DEF, BOX_ROW_LABELS, formatConc, concKey, getDirectImageUrl, 
+    getRegionColor, toHex, lighten, darken, needsDarkText, PALETTE, 
+    fit4PL, errBarPlugin 
+} from '../data/constants';
 
 // --- UTILITY CLASSES FOR FULLSCREEN ---
 const FS_CLASSES = "fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col";
@@ -238,15 +240,93 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
         minC: Math.min(currentSelectionBox.minC, fillEnd.c), maxC: Math.max(currentSelectionBox.maxC, fillEnd.c),
     } : null;
 
-    // Placeholder per evitare crash a runtime se le funzioni non sono implementate altrove
-    const exportXLS = () => { console.log("Export XLS triggered"); alert("Export XLS non ancora implementato in questo snippet."); };
-    const exportPDF = () => { console.log("Export PDF triggered"); alert("Export PDF non ancora implementato in questo snippet."); };
+    const exportXLS = () => {
+        try {
+            const wb = XLSX.utils.book_new();
+            const rawAoa = [['', ...COLS]];
+            ROWS.forEach((rl, r) => { rawAoa.push([rl, ...COLS.map((_, c) => { const v = grid[r][c]; return v === '' ? '' : Number(v); })]); });
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rawAoa), 'Raw OD');
+
+            const viabAoa = [['', ...COLS]];
+            ROWS.forEach((rl, r) => { viabAoa.push([rl, ...COLS.map((_, c) => {
+                const n = rawOD(r, c);
+                if (isNaN(n) || cellConfig[r][c].excluded) return '';
+                return Number(viability(n).toFixed(2));
+            })]); });
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(viabAoa), 'Viability %');
+
+            const mapAoa = [['', ...COLS]];
+            ROWS.forEach((rl, r) => { mapAoa.push([rl, ...COLS.map((_, c) => {
+                const role = getRole(r, c);
+                if (!role) return '';
+                const conc = concOf(r, c, role);
+                return conc > 0 ? `${role} @ ${formatConc(conc)} ${unit}` : role;
+            })]); });
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(mapAoa), 'Well Map');
+
+            const drAoa = [['Region', 'Compound', `Concentration (${unit})`, 'Log10(Conc)', 'Mean Viability (%)', 'SD', 'N']];
+            Object.entries(processedByRegion).forEach(([reg, comps]) => {
+                comps.forEach(cd => {
+                    cd.vPts.forEach(pt => { drAoa.push([ reg, cd.name, Number(pt.realX.toFixed(4)), Number(pt.x.toFixed(4)), Number(pt.y.toFixed(2)), Number(pt.sd.toFixed(4)), pt.pts ? pt.pts.length : 1 ]); });
+                });
+            });
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(drAoa), 'Dose-Response Data');
+
+            const summaryAoa = [['Region', 'Compound', `IC50 (${unit})`, 'Hill Slope', `SE (${unit})`]];
+            Object.entries(processedByRegion).forEach(([reg, comps]) => {
+                comps.forEach(cd => { if (cd.fit) summaryAoa.push([reg, cd.name, Number(cd.fit.ic50.toFixed(4)), Number(cd.fit.hill.toFixed(4)), Number(cd.fit.se.toFixed(4))]); });
+            });
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summaryAoa), 'IC50 Summary');
+
+            const fname = `${(activeTest.name || 'test').replace(/[^a-z0-9]+/gi, '_')}.xlsx`;
+            XLSX.writeFile(wb, fname);
+        } catch (e) { console.error(e); alert('Export Failed: ' + e.message); }
+    };
+
+    const exportPDF = async () => {
+        const el = document.getElementById('report-container-' + activeTest.id);
+        if (!el) return;
+        const scrollParent = el.closest('.overflow-y-auto');
+        const originalOverflow = scrollParent ? scrollParent.style.overflow : '';
+        const originalHeight = scrollParent ? scrollParent.style.height : '';
+
+        const loader = document.getElementById('loader');
+        const loaderText = document.getElementById('loader-text');
+        if (loader) loader.style.display = 'flex';
+        if (loaderText) loaderText.innerText = 'Generating PDF...';
+
+        const fixedEls = document.querySelectorAll('.fixed, [style*="position: fixed"]');
+        fixedEls.forEach(el => el.style.display = 'none');
+        const noPrintEls = el.querySelectorAll('.no-print');
+        noPrintEls.forEach(e => e.style.display = 'none');
+
+        if (scrollParent) { scrollParent.style.overflow = 'visible'; scrollParent.style.height = 'auto'; }
+
+        el.classList.add('pdf-mode'); window.scrollTo(0, 0); await new Promise(r => setTimeout(r, 800));
+
+        try {
+            const canvas = await html2canvas(el, { scale: 2, useCORS: true, allowTaint: true, backgroundColor: '#f8fafc', logging: false, imageTimeout: 15000, removeContainer: true, windowWidth: el.scrollWidth, windowHeight: el.scrollHeight });
+            const imgData = canvas.toDataURL('image/jpeg', 0.92);
+            const pdf = new jsPDF('p', 'pt', 'a4');
+            const pageWidth = pdf.internal.pageSize.getWidth(); const pageHeight = pdf.internal.pageSize.getHeight();
+            const imgWidth = pageWidth; const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+            let heightLeft = imgHeight; let position = 0;
+            pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight); heightLeft -= pageHeight;
+
+            while (heightLeft > 0) { position = heightLeft - imgHeight; pdf.addPage(); pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight); heightLeft -= pageHeight; }
+            pdf.save(`Report_${(activeTest.name || 'test').replace(/[^a-z0-9]+/gi, '_')}.pdf`);
+        } catch (e) { console.error(e); alert('Export Failed: ' + e.message); } finally {
+            el.classList.remove('pdf-mode');
+            fixedEls.forEach(el => el.style.display = ''); noPrintEls.forEach(e => e.style.display = '');
+            if (scrollParent) { scrollParent.style.overflow = originalOverflow; scrollParent.style.height = originalHeight; }
+            if (loader) loader.style.display = 'none';
+        }
+    };
 
     useEffect(() => { const h = () => setCtxMenu(null); document.addEventListener('click', h); return () => document.removeEventListener('click', h); }, []);
     useEffect(() => { const h = e => { if (e.key === 'Escape') setZoomImage(null); }; document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h); }, []);
     
-    // Nota: processedByRegion è usato qui sotto ma definito più avanti. 
-    // Essendo dentro una callback di un evento, non darà errore di "non definito" a runtime.
     useEffect(() => {
         const handleMouseUpGlobal = () => {
             if (dragState.active) {
@@ -746,21 +826,6 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
         if (changed) updatePlate({ cellConfig: nc });
     };
     const restoreAll = () => { const nc = cellConfig.map(row => row.map(c => ({ ...c, excluded: false, manualOverride: false }))); updatePlate({ cellConfig: nc }); };
-    const PanelHeader = ({ title, subtitle, panelId, extra }) => {
-        const isFs = fsPanel === panelId;
-        return (
-            <div className="flex justify-between items-start mb-2 gap-2">
-                <div className="min-w-0">
-                    <h2 className="text-sm lg:text-base font-bold text-slate-800 truncate">{title}</h2>
-                    {subtitle && <p className="text-[10px] text-slate-500 mt-0.5">{subtitle}</p>}
-                </div>
-                <div className="flex items-center shrink-0">
-                    {extra}
-                    <button onClick={() => toggleFs(panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-100 hover:bg-blue-100 rounded p-1 transition-colors">{isFs ? '↙️' : '↗️'}</button>
-                </div>
-            </div>
-        );
-    };
     
     return (
         <div id={`report-container-${activeTest.id}`} className="flex flex-col h-full overflow-hidden relative">
