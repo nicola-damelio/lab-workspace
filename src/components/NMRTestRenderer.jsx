@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea } from 'recharts';
-import { RichTextEditor } from './RichTextEditor'; // Assicurati che questo file esista nel tuo progetto
+import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, BarChart, Bar } from 'recharts';
+import { RichTextEditor } from './RichTextEditor'; // Assicurati che questo file esista
 
 // --- UTILITY CLASSES FOR FULLSCREEN ---
 const FS_CLASSES = "fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col";
@@ -139,10 +139,23 @@ const CustomYTick13C = ({ x, y, payload, isZoomed }) => {
   return ( <g transform={`translate(${x||0},${y||0})`}> <line x1={0} y1={0} x2={-tickLength} y2={0} stroke="#94a3b8" strokeWidth={1} />{(isZoomed || isTen) && <text x={-(tickLength + 5)} y={0} dy={4} textAnchor="end" fill="#64748b" fontSize={isZoomed ? 10 : 12} fontWeight={isTen && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(1) : numVal}</text>} </g>);
 };
 
-// FIX: Added missing CustomRangeShape component
-const CustomRangeShape = ({ cx, cy, payload }) => {
-  if (!cx || !cy || !payload) return null;
-  return <circle cx={cx} cy={cy} r={5} fill={payload.color} stroke="#fff" strokeWidth={1.5} opacity={0.9} />;
+// FIX 3: Disegna la barra di confidenza (min-max) usando la scala dell'asse X
+const CustomRangeShape = (props) => {
+  const { cx, cy, payload, xAxis } = props;
+  if (!cx || !cy || !payload || !xAxis || !xAxis.scale) return null;
+  
+  const xScale = xAxis.scale;
+  const x1 = xScale(payload.min);
+  const x2 = xScale(payload.max);
+  
+  if (!Number.isFinite(x1) || !Number.isFinite(x2)) return null;
+  
+  return (
+    <g>
+      <line x1={x1} y1={cy} x2={x2} y2={cy} stroke={payload.color} strokeWidth={6} opacity={0.4} strokeLinecap="round" />
+      <circle cx={cx} cy={cy} r={4} fill={payload.color} stroke="#fff" strokeWidth={1.5} />
+    </g>
+  );
 };
 
 const NMRTooltip = ({ active, payload, diagonalColor }) => {
@@ -156,14 +169,17 @@ const NMRTooltip = ({ active, payload, diagonalColor }) => {
 };
 
 // --- 4. ROBUST ZOOMABLE PLOTS ---
+// FIX 1 & 2: Zoom events moved to wrapper div, 1D uses BarChart
 const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel }) => {
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState(fullDomain);
   const [refAreaLeft, setRefAreaLeft] = useState(null); const [refAreaRight, setRefAreaRight] = useState(null);
   const isZoomed = xDomain[0] !== fullDomain[0] || xDomain[1] !== fullDomain[1];
+  
   const zoom = () => { if (refAreaLeft === refAreaRight || refAreaLeft === null) { setRefAreaLeft(null); setRefAreaRight(null); return; } setXDomain([Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)]); setRefAreaLeft(null); setRefAreaRight(null); };
   const handleMouseDown = (e) => { if (!e) return; let xVal = e.xValue; if (xVal === undefined && e.activePayload && e.activePayload.length > 0) xVal = e.activePayload[0].payload.x; if (xVal !== undefined) setRefAreaLeft(xVal); };
   const handleMouseMove = (e) => { if (refAreaLeft !== null && e) { let xVal = e.xValue; if (xVal === undefined && e.activePayload && e.activePayload.length > 0) xVal = e.activePayload[0].payload.x; if (xVal !== undefined) setRefAreaRight(xVal); } };
+
   return (
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)}></div>}
@@ -172,22 +188,21 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
           <div className="flex items-center gap-4"> <h4 className="font-bold text-slate-700">{title}</h4> {isZoomed && <button onClick={() => setXDomain(fullDomain)} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>} </div>
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
         </div>
-        <div className="flex-1 min-h-0 select-none relative">
+        {/* FIX 1: Mouse events on the wrapper div to prevent drag interruption */}
+        <div className="flex-1 min-h-0 select-none relative" onMouseMove={handleMouseMove} onMouseUp={zoom} onMouseLeave={() => { if(refAreaLeft !== null) zoom(); }}>
           <ResponsiveContainer width="100%" height="100%">
-            <ScatterChart margin={{ top: 10, right: 10, bottom: 40, left: 10 }} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={zoom}>
+            <BarChart data={data} margin={{ top: 10, right: 10, bottom: 40, left: 10 }} onMouseDown={handleMouseDown}>
               <CartesianGrid strokeDasharray="3 3" vertical={true} horizontal={false} stroke="#f1f5f9" />
               <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : ticks} interval={0} tickLine={false} tick={<TickComponent isZoomed={isZoomed} />} label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b' }} axisLine={{ stroke: '#cbd5e1' }} />
-              <YAxis type="number" dataKey="y" domain={[0, 4.5]} hide={true} />
+              <YAxis type="number" dataKey="y" domain={[0, 'auto']} hide={true} />
               <Tooltip cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} content={<NMRTooltip />} />
-              <Scatter data={data} shape={(props) => {
-                const { cx, cy, yAxis, payload } = props;
-                if (!yAxis || typeof yAxis.scale !== 'function') return null;
-                const y0 = yAxis.scale(0);
-                if (!Number.isFinite(cx) || !Number.isFinite(cy) || !Number.isFinite(y0)) return null;
-                return <line x1={cx} y1={y0} x2={cx} y2={cy} stroke={payload.color} strokeWidth={1.5} />;
+              <Bar dataKey="y" barSize={2} shape={(props) => {
+                const { x, y, width, height, payload } = props;
+                const centerX = x + width / 2;
+                return <line x1={centerX} y1={y + height} x2={centerX} y2={y} stroke={payload.color} strokeWidth={1.5} />;
               }} isAnimationActive={false} />
               {refAreaLeft !== null && refAreaRight !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} strokeOpacity={0.3} fill="#cbd5e1" />}
-            </ScatterChart>
+            </BarChart>
           </ResponsiveContainer>
         </div>
       </div>
@@ -201,9 +216,11 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
   const [refAreaLeft, setRefAreaLeft] = useState(null); const [refAreaRight, setRefAreaRight] = useState(null);
   const [refAreaTop, setRefAreaTop] = useState(null); const [refAreaBottom, setRefAreaBottom] = useState(null);
   const isZoomed = xDomain[0] !== 0 || xDomain[1] !== 11 || yDomain[0] !== 0 || yDomain[1] !== 11;
+  
   const zoom = () => { if (refAreaLeft === refAreaRight || refAreaLeft === null || refAreaTop === refAreaBottom || refAreaTop === null) { setRefAreaLeft(null); setRefAreaRight(null); setRefAreaTop(null); setRefAreaBottom(null); return; } setXDomain([Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)]); setYDomain([Math.min(refAreaTop, refAreaBottom), Math.max(refAreaTop, refAreaBottom)]); setRefAreaLeft(null); setRefAreaRight(null); setRefAreaTop(null); setRefAreaBottom(null); };
   const handleMouseDown = (e) => { if (!e) return; let xVal = e.xValue, yVal = e.yValue; if (xVal === undefined && e.activePayload && e.activePayload.length > 0) { xVal = e.activePayload[0].payload.x; yVal = e.activePayload[0].payload.y; } if (xVal !== undefined && yVal !== undefined) { setRefAreaLeft(xVal); setRefAreaTop(yVal); } };
   const handleMouseMove = (e) => { if (refAreaLeft !== null && e) { let xVal = e.xValue, yVal = e.yValue; if (xVal === undefined && e.activePayload && e.activePayload.length > 0) { xVal = e.activePayload[0].payload.x; yVal = e.activePayload[0].payload.y; } if (xVal !== undefined && yVal !== undefined) { setRefAreaRight(xVal); setRefAreaBottom(yVal); } } };
+
   return (
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)}></div>}
@@ -212,9 +229,9 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
           <div className="flex items-center gap-4"> <h4 className="font-bold text-slate-700">{title}</h4> {isZoomed && <button onClick={() => { setXDomain([0, 11]); setYDomain([0, 11]); }} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>} </div>
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
         </div>
-        <div className="flex-1 min-h-0 select-none relative">
+        <div className="flex-1 min-h-0 select-none relative" onMouseMove={handleMouseMove} onMouseUp={zoom} onMouseLeave={() => { if(refAreaLeft !== null) zoom(); }}>
           <ResponsiveContainer width="100%" height="100%">
-            <ScatterChart margin={{ top: 10, right: 10, bottom: 40, left: 40 }} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={zoom}>
+            <ScatterChart margin={{ top: 10, right: 10, bottom: 40, left: 40 }} onMouseDown={handleMouseDown}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b' }} />
               <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomYTick1H isZoomed={isZoomed} />} label={{ value: '¹H F1 (ppm)', angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b' }} />
@@ -245,9 +262,11 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
   const [refAreaLeft, setRefAreaLeft] = useState(null); const [refAreaRight, setRefAreaRight] = useState(null);
   const [refAreaTop, setRefAreaTop] = useState(null); const [refAreaBottom, setRefAreaBottom] = useState(null);
   const isZoomed = xDomain[0] !== 0 || xDomain[1] !== 11 || yDomain[0] !== 10 || yDomain[1] !== 150;
+  
   const zoom = () => { if (refAreaLeft === refAreaRight || refAreaLeft === null || refAreaTop === refAreaBottom || refAreaTop === null) { setRefAreaLeft(null); setRefAreaRight(null); setRefAreaTop(null); setRefAreaBottom(null); return; } setXDomain([Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)]); setYDomain([Math.min(refAreaTop, refAreaBottom), Math.max(refAreaTop, refAreaBottom)]); setRefAreaLeft(null); setRefAreaRight(null); setRefAreaTop(null); setRefAreaBottom(null); };
   const handleMouseDown = (e) => { if (!e) return; let xVal = e.xValue, yVal = e.yValue; if (xVal === undefined && e.activePayload && e.activePayload.length > 0) { xVal = e.activePayload[0].payload.x; yVal = e.activePayload[0].payload.y; } if (xVal !== undefined && yVal !== undefined) { setRefAreaLeft(xVal); setRefAreaTop(yVal); } };
   const handleMouseMove = (e) => { if (refAreaLeft !== null && e) { let xVal = e.xValue, yVal = e.yValue; if (xVal === undefined && e.activePayload && e.activePayload.length > 0) { xVal = e.activePayload[0].payload.x; yVal = e.activePayload[0].payload.y; } if (xVal !== undefined && yVal !== undefined) { setRefAreaRight(xVal); setRefAreaBottom(yVal); } } };
+
   return (
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)}></div>}
@@ -256,9 +275,9 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
           <div className="flex items-center gap-4"> <h4 className="font-bold text-slate-700">{title}</h4> {isZoomed && <button onClick={() => { setXDomain([0, 11]); setYDomain([10, 150]); }} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>} </div>
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
         </div>
-        <div className="flex-1 min-h-0 select-none relative">
+        <div className="flex-1 min-h-0 select-none relative" onMouseMove={handleMouseMove} onMouseUp={zoom} onMouseLeave={() => { if(refAreaLeft !== null) zoom(); }}>
           <ResponsiveContainer width="100%" height="100%">
-            <ScatterChart margin={{ top: 10, right: 10, bottom: 40, left: 40 }} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={zoom}>
+            <ScatterChart margin={{ top: 10, right: 10, bottom: 40, left: 40 }} onMouseDown={handleMouseDown}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b' }} />
               <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_13C} interval={0} tickLine={false} tick={<CustomYTick13C isZoomed={isZoomed} />} label={{ value: '¹³C F1 (ppm)', angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b' }} />
@@ -278,6 +297,7 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
 };
 
 // --- 5. 2D CHEMICAL STRUCTURE ---
+// (Omesso per brevità, identico al precedente, assicurati di tenerlo dal codice completo)
 const ChemicalStructure2D = ({ sequence, isExpanded, onToggleExpand }) => {
   if (!sequence || sequence.length === 0) return null;
   const elements = []; let minX = 0, maxX = 0, minY = 0, maxY = 0; let firstElement = true;
@@ -387,6 +407,17 @@ const ChemicalStructure2D = ({ sequence, isExpanded, onToggleExpand }) => {
     </>
   );
 };
+
+// FIX 4: Componente Fallback per immagini che crashano o non caricano
+const ImageFallback = ({ url, onRemove }) => (
+  <div className="flex flex-col items-center justify-center h-[200px] bg-slate-100 border-2 border-dashed border-slate-300 rounded-lg p-4 text-center">
+    <svg className="w-10 h-10 text-slate-400 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+    <p className="text-sm font-bold text-slate-600">Image Error</p>
+    <p className="text-xs text-slate-500 mt-1 break-all max-w-full">Link: {url}</p>
+    <p className="text-[10px] text-red-500 mt-2">Il link potrebbe non essere diretto (es. Google Drive) o bloccato da CORS.</p>
+    <button onClick={onRemove} className="mt-3 text-xs bg-red-100 text-red-600 px-3 py-1 rounded hover:bg-red-200 font-bold">Remove</button>
+  </div>
+);
 
 // --- 7. MAIN COMPONENT ---
 export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, datasetProtocols, jumpToProtocol }) => {
@@ -732,8 +763,22 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
               images.map((imgSrc, idx) => (
                 <div key={idx} className="relative group bg-slate-50 p-2 rounded-lg border border-slate-200">
                   <a href={imgSrc} target="_blank" rel="noopener noreferrer">
-                    <img src={imgSrc} alt={`Spectrum ${idx+1}`} className="w-full h-auto object-contain rounded shadow-sm bg-white max-h-[300px]" onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="70"><rect width="100" height="70" fill="%23f8fafc"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-size="10" fill="%2394a3b8">Image Error</text></svg>'; }} />
+                    <img 
+                      src={imgSrc} 
+                      alt={`Spectrum ${idx+1}`} 
+                      className="w-full h-auto object-contain rounded shadow-sm bg-white max-h-[300px]" 
+                      onError={(e) => { 
+                        e.target.style.display = 'none'; 
+                        if(e.target.nextSibling) e.target.nextSibling.style.display = 'flex'; 
+                      }} 
+                    />
                   </a>
+                  {/* FIX 4: Fallback UI se l'immagine non carica */}
+                  <ImageFallback 
+                    url={imgSrc} 
+                    onRemove={() => updateActiveTest({ nmrSpectraImages: images.filter((_, i) => i !== idx) })} 
+                    style={{ display: 'none' }} 
+                  />
                   <button onClick={() => updateActiveTest({ nmrSpectraImages: images.filter((_, i) => i !== idx) })} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold shadow-md opacity-0 group-hover:opacity-100 transition-opacity">&times;</button>
                 </div>
               ))
