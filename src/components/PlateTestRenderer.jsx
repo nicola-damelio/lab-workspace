@@ -3,12 +3,12 @@ import Chart from 'chart.js/auto';
 import * as XLSX from 'xlsx';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
-import { RichTextEditor } from './RichTextEditor';
+import { RichTextEditor } from './components/RichTextEditor'; // Assicurati che il path sia corretto
 import { 
     PLATES_DEF, BOX_ROW_LABELS, formatConc, concKey, getDirectImageUrl, 
     getRegionColor, toHex, lighten, darken, needsDarkText, PALETTE, 
     fit4PL, errBarPlugin 
-} from '../data/constants';
+} from './data/constants'; // Assicurati che il path sia corretto
 
 // --- UTILITY CLASSES FOR FULLSCREEN ---
 const FS_CLASSES = "fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col";
@@ -144,6 +144,8 @@ export function RegionCharts({ regionName, regionData, config }) {
     return (
         <CollapsibleSection title={`Region: ${regionName}`} icon="📍" defaultOpen={true} className="pdf-page-region">
             <div className="flex flex-col lg:flex-row gap-6 pdf-row relative">
+                
+                {/* DOSE RESPONSE PLOT */}
                 {isDrFs && <div className={OVERLAY_CLASSES} onClick={() => toggleFs(`dr_${regionName}`)}></div>}
                 <div className={`pdf-chart-main flex flex-col ${isDrFs ? FS_CLASSES + ' p-6' : 'min-w-0'}`} style={!isDrFs ? {width:fitIC50?`${drWidth}%`:'100%',flexShrink:0} : {}}>
                     <div className="flex justify-between items-start mb-4">
@@ -155,6 +157,7 @@ export function RegionCharts({ regionName, regionData, config }) {
                     </div>
                 </div>
 
+                {/* IC50 COMPARISON PLOT */}
                 {fitIC50 && (
                     <>
                         {isIc50Fs && <div className={OVERLAY_CLASSES} onClick={() => toggleFs(`ic50_${regionName}`)}></div>}
@@ -175,7 +178,7 @@ export function RegionCharts({ regionName, regionData, config }) {
 }
 
 // --- MAIN PLATE TEST COMPONENT ---
-export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, setAppClipboard, customCmpds, setCustomCmpds, customConc, setCustomConc, cmpColors, setCmpColors, allCmpds, TestHeader, datasetProtocols }) => {
+export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, setAppClipboard, customCmpds, setCustomCmpds, customConc, setCustomConc, cmpColors, setCmpColors, allCmpds, TestHeader, datasetProtocols, jumpToProtocol }) => {
     const updatePlate = (updates) => updateActiveTest(updates);
 
     const { plateType, grid, compounds, rowCompounds, cellConfig, ctrlType, ctrlODStr, bgType, bgManualStr, unit, manualErrors = {}, topConcStr, dilFactorStr, glbOffsetStr, errScaleStr, useFixedSD, fixedSDStr, showViab, fitIC50, showExcl, outlierThreshStr, chartCfg = { yMin:'',yMax:'',xMin:'',xMax:'', ptStyle:'circle',ptSize:5,fontSize:16,xPos:'bottom',yPos:'left', xAxisLabel:'', lineStyle:'solid', lineThickness:2 } } = activeTest;
@@ -768,12 +771,29 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
     };
 
     const restoreAll = () => { const nc = cellConfig.map(row=>row.map(c=>({...c,excluded:false,manualOverride:false}))); updatePlate({ cellConfig: nc }); };
+    
+    const PanelHeader = ({ title, subtitle, panelId, extra }) => {
+        const isFs = fsPanel === panelId;
+        return (
+            <div className="flex justify-between items-start mb-2 gap-2">
+                <div className="min-w-0">
+                    <h2 className="text-sm lg:text-base font-bold text-slate-800 truncate">{title}</h2>
+                    {subtitle && <p className="text-[10px] text-slate-500 mt-0.5">{subtitle}</p>}
+                </div>
+                <div className="flex items-center shrink-0">
+                    {extra}
+                    <button onClick={() => toggleFs(panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-100 hover:bg-blue-100 rounded p-1 transition-colors">{isFs ? '↙️' : '↗️'}</button>
+                </div>
+            </div>
+        );
+    };
 
     return (
         <div id={`report-container-${activeTest.id}`} className="flex flex-col h-full overflow-hidden relative">
             {TestHeader}
             
-            <div className="bg-white border-b border-slate-200 px-6 py-2 flex items-center justify-end gap-3 shrink-0 z-10 shadow-sm">
+            {/* Pulsanti Export XLS e PDF integrati qui */}
+            <div className="bg-white border-b border-slate-200 px-6 py-2 flex items-center justify-end gap-3 shrink-0 z-10 shadow-sm no-print">
                 <button onClick={exportXLS} className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1.5 px-3 rounded text-xs flex items-center gap-1 shadow-sm transition-colors">📊 Export XLS</button>
                 <button onClick={exportPDF} className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold py-1.5 px-3 rounded text-xs flex items-center gap-1 shadow-sm transition-colors">📄 Export PDF</button>
             </div>
@@ -784,7 +804,7 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
                 <CollapsibleSection title="Comments & Attachments" icon="📝">
                     <div className="flex flex-col lg:flex-row gap-6">
                         <div className="flex-1 flex flex-col h-full min-h-[160px]">
-                            <label className="text-xs font-bold text-slate-600 mb-2">Comments / Notes</label>
+                            <label className="text-xs font-bold text-slate-600 mb-2">Comments & Notes</label>
                             <RichTextEditor
                                 value={metaComments}
                                 onChange={val => updatePlate({comments: val})}
@@ -805,9 +825,12 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
                                     ))}
                                 </select>
                                 {linkedProtocolId && (
-                                    <span className="text-xs text-blue-600 font-bold bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-200">
-                                        Linked ✔
-                                    </span>
+                                    <button 
+                                        onClick={() => jumpToProtocol(linkedProtocolId)}
+                                        className="text-xs text-white font-bold bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg shadow-sm transition-colors flex items-center gap-1"
+                                    >
+                                        📖 Open Protocol
+                                    </button>
                                 )}
                             </div>
 

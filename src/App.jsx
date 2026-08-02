@@ -9,6 +9,7 @@ import { PlateTestRenderer } from './components/PlateTestRenderer';
 import { LabNotebook } from './components/LabNotebook';
 import { RichTextEditor } from './components/RichTextEditor';
 
+// --- MIGRAZIONE LEGACY (V1 -> V2) ---
 const migrateLoadedDataset = (s) => {
     const rawTests = (s && (s.tests || s.plates)) || [];
     let tests = rawTests.map(p => {
@@ -26,7 +27,7 @@ const migrateLoadedDataset = (s) => {
             };
         }
         
-        return { ...p, type: migratedType || 'plate-96', testCategory: migratedCategory, comments: safeComments, images: safeImages, linkedProtocolId: p.linkedProtocolId || '' };
+        return { ...p, type: migratedType || 'plate-96', testCategory: migratedCategory, comments: safeComments, images: safeImages };
     });
 
     const existingStorages = (s && s.storages) ? s.storages.slice() : [];
@@ -54,6 +55,7 @@ const migrateLoadedDataset = (s) => {
     return { tests, storages: newStorages.length > 0 ? [...existingStorages, ...newStorages] : existingStorages };
 };
 
+// --- INIZIALIZZAZIONE FIREBASE CLOUD ---
 const FIREBASE_CONFIG = {
     apiKey: "AQ.Ab8RN6I7-6yNsQyx8f39A4YT6Hp5jNWxz2JCxq2ZEwJ5Zhy1aQ",
     authDomain: "cell-experiment-tracker.firebaseapp.com",
@@ -81,7 +83,7 @@ export default function App() {
         const baseTest = {
             id, name: `Test ${num}`, date: new Date().toISOString().split('T')[0], instanceName: '', 
             testCategory: 'Activity', type: customType, storageType: '', storageLabel: '', storageIndex: null,
-            comments: '', images: [], documents: [], plan: [], linkedProtocolId: ''
+            comments: '', images: [], documents: [], plan: [], linkedProtocolId: '',
         };
 
         if (customType.startsWith('plate')) {
@@ -100,7 +102,7 @@ export default function App() {
         } else if (customType === 'nmr') {
             return { 
                 ...baseTest, 
-                proteinSequence: '', selectedNuclei: ['H', 'C', 'N'], chemicalShifts: {}, nmrSpectraImages: [], imageCalibration: {},
+                proteinSequence: '', selectedNuclei: ['H', 'C', 'N'], chemicalShifts: {}, nmrSpectraImages: [],
                 moleculeName: '', experimentDate: '', concentration: '', solvent: '', saltConcentration: '', temperature: '', otherMolecule: '', ratio: '', tableMode: 'backbone', compound: ''
             };
         }
@@ -163,7 +165,7 @@ export default function App() {
     const handleUndo = () => { if (historyIndex > 0) { const newIdx = historyIndex - 1; setHistoryIndex(newIdx); setReactTests(historyRef.current[newIdx]); } };
     const handleRedo = () => { if (historyIndex < historyRef.current.length - 1) { const newIdx = historyIndex + 1; setHistoryIndex(newIdx); setReactTests(historyRef.current[newIdx]); } };
 
-// ... FIREBASE AUTH & SYNC ...
+    // --- FIREBASE AUTH & SYNC ---
     useEffect(() => {
         if (!auth) {
             setIsCloudReady(true);
@@ -180,11 +182,9 @@ export default function App() {
             } catch(e) { console.error("Auth error", e); setIsCloudReady(true); }
         };
         initAuth();
-        // Rimuoviamo il listener onAuthStateChanged e passiamo direttamente all'hook DB.
     }, []);
 
     useEffect(() => {
-        // NON aspettiamo più 'user', Firebase ci farà accedere comunque alla collezione.
         if (db) {
             const collRef = db.collection(`artifacts/${appId}/public/data/datasets`);
             const unsubscribe = collRef.onSnapshot((snap) => {
@@ -195,7 +195,6 @@ export default function App() {
                 setIsCloudReady(true);
             }, (err) => { 
                 console.error("Firestore sync error:", err); 
-                // Se c'è un errore scarichiamo il locale come salvataggio
                 try {
                     const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
                     if (stored) setDatasetsList(JSON.parse(stored).sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
@@ -210,7 +209,7 @@ export default function App() {
             } catch (e) {}
             setIsCloudReady(true);
         }
-    }, [db]);
+    }, [user, db]);
 
     const latestDataRef = useRef(null);
     latestDataRef.current = { tests, datasetTitle, datasetSubtitle, customCmpds, customCellLines, customConc, cmpColors, testCategories, protocolCategories, datasetProtocols, storages };
@@ -485,6 +484,7 @@ export default function App() {
     }, [tests]);
 
     const jumpToTest = (testId) => { setActiveTestId(testId); setCurrentModule('active-test'); };
+    const jumpToProtocol = (protocolId) => { setExpandedGroups(p => ({ ...p, activeProtoId: protocolId })); setCurrentModule('protocols'); };
 
     const saveStorage = (e) => {
         e.preventDefault(); const formData = new FormData(e.target);
@@ -509,30 +509,25 @@ export default function App() {
 
     return (
         <div className="w-full relative flex flex-col h-screen overflow-hidden bg-slate-50">
-            {/* AGGIORNAMENTO CSS PER LA STAMPA PDF PERFETTA */}
             <style>{`
                 @media print {
-                    @page { margin: 10mm; size: A4 portrait; }
+                    @page { margin: 1cm; size: A4 portrait; }
                     .no-print, nav, button, input[type="file"], .w-64 { display: none !important; }
                     .print-only { display: block !important; }
                     body, html, #root { 
                         background: white !important; 
                         height: auto !important; 
-                        min-height: auto !important; 
+                        min-height: 100% !important; 
                         overflow: visible !important; 
                         color: black !important;
                     }
-                    /* Forza il browser a leggere tutto il contenuto scrollabile */
-                    * { overflow: visible !important; }
-                    .h-screen, .max-h-screen, .flex-1, .h-full, .min-h-0, .overflow-hidden, .overflow-y-auto, .custom-scrollbar { 
+                    .h-screen, .max-h-screen, .flex-1, .overflow-y-auto, .overflow-hidden, .custom-scrollbar, .h-full, .min-h-0 { 
                         height: auto !important; 
                         max-height: none !important; 
+                        overflow: visible !important; 
                         position: static !important;
                     }
-                    /* Evita tagli sui blocchi flessibili */
-                    .flex, .flex-col, .grid { page-break-inside: auto; }
-                    .break-inside-avoid { page-break-inside: avoid; break-inside: avoid; }
-                    /* Migliora i bordi */
+                    .fixed, .absolute { position: static !important; }
                     .shadow-sm, .shadow-md, .shadow-lg, .shadow-xl, .shadow-2xl { 
                         box-shadow: none !important; 
                         border: 1px solid #e2e8f0 !important; 
@@ -701,8 +696,8 @@ export default function App() {
                         {!isCloudReady ? (
                             <div className="text-center py-20 flex flex-col items-center gap-4">
                                 <div className="w-12 h-12 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin"></div>
-                                <h2 className="text-xl font-bold text-slate-700">Connecting...</h2>
-                                <p className="text-slate-500">Retrieving your workspace data.</p>
+                                <h2 className="text-xl font-bold text-slate-700">Connecting to Cloud...</h2>
+                                <p className="text-slate-500">Syncing your workspace data securely.</p>
                             </div>
                         ) : Object.keys(groupedDatasets).length === 0 ? (
                             <div className="text-center py-16 text-slate-500 text-lg flex flex-col items-center gap-4">
@@ -1223,6 +1218,25 @@ export default function App() {
                                                     onChange={val => setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? {...p, content: val} : p))}
                                                     placeholder="Write the detailed protocol steps here. You can paste images directly..."
                                                 />
+                                                
+                                                {/* LINKED TESTS SECTION */}
+                                                <div className="mt-6 border-t border-slate-100 pt-4 no-print">
+                                                    <h4 className="text-xs font-bold text-slate-500 uppercase mb-3">🧪 Tests Using This Protocol</h4>
+                                                    <div className="flex flex-wrap gap-2">
+                                                        {tests.filter(t => t.linkedProtocolId === activeProtocol.id).length === 0 && (
+                                                            <span className="text-sm text-slate-400 italic">No tests are currently linked to this protocol.</span>
+                                                        )}
+                                                        {tests.filter(t => t.linkedProtocolId === activeProtocol.id).map(t => (
+                                                            <button
+                                                                key={t.id}
+                                                                onClick={() => { setActiveTestId(t.id); setCurrentModule('active-test'); }}
+                                                                className="text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 hover:bg-blue-100 px-3 py-1.5 rounded-lg shadow-sm transition-colors flex items-center gap-1"
+                                                            >
+                                                                {t.type === 'nmr' ? '📉' : '🧫'} {t.name} {t.instanceName ? `(${t.instanceName})` : ''}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                </div>
                                             </div>
                                             <div className="w-full lg:w-80 flex flex-col gap-4 overflow-y-auto custom-scrollbar shrink-0 border-l border-slate-100 pl-4 no-print">
                                                 <label className="text-xs font-bold text-slate-500 uppercase">Attached Resources</label>
@@ -1325,10 +1339,8 @@ export default function App() {
                                                             e.stopPropagation();
                                                             if(confirm("Delete this protocol?")) { setDatasetProtocols(datasetProtocols.filter(p => p.id !== proto.id)); }
                                                         }} className="absolute top-3 right-3 text-slate-300 hover:text-red-500 text-lg opacity-0 group-hover:opacity-100 transition-opacity no-print" title="Delete Protocol">&times;</button>
-                                                        
                                                         <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded self-start mb-3 border border-emerald-200">{proto.category}</span>
                                                         <h3 className="font-bold text-slate-800 text-lg truncate pr-6">{proto.title}</h3>
-                                                        
                                                         <div className="mt-4 pt-4 border-t border-slate-100 flex gap-4 text-xs font-bold text-slate-500">
                                                             <span className="flex items-center gap-1">🔗 {(proto.links||[]).length} Links</span>
                                                             <span className="flex items-center gap-1">📝 {proto.content ? 'Has Content' : 'Empty'}</span>
@@ -1347,8 +1359,10 @@ export default function App() {
                             if (!activeTest) return <div className="p-6">Test not found.</div>;
                             
                             const updateActiveTest = (updates) => { setTests(prev => prev.map(t => t.id === activeTestId ? { ...t, ...updates } : t)); };
+                            const isBox = activeTest.type === 'plate-9x9box';
+                            const siblingTests = isBox ? [] : tests.filter(t => t.name === activeTest.name && t.name.trim() !== '').sort((a,b) => (a.date||'').localeCompare(b.date||''));
                             
-                            const siblingTests = tests.filter(t => t.name === activeTest.name && t.name.trim() !== '').sort((a,b) => (a.date||'').localeCompare(b.date||''));
+                            const jumpToProtocol = (id) => { setExpandedGroups(p => ({ ...p, activeProtoId: id })); setCurrentModule('protocols'); };
 
                             const handleDuplicateInstance = () => {
                                 const id = 't' + Date.now();
@@ -1362,10 +1376,17 @@ export default function App() {
                             };
 
                             const TestHeader = (
-                                <div className="flex flex-col shrink-0 z-20">
+                                <div className="flex flex-col shrink-0 z-20 no-print">
                                     <div className="bg-white border-b border-slate-200 px-6 py-4 flex flex-col md:flex-row justify-between items-start md:items-center shadow-sm gap-4">
                                         <div className="flex items-center gap-4 w-full md:w-auto">
-                                            <button onClick={() => setCurrentModule('tests')} className="text-slate-400 hover:text-blue-600 transition-colors bg-slate-50 hover:bg-blue-50 p-2 rounded-lg shadow-sm border border-slate-200">◀ Back</button>
+                                            <button onClick={() => {
+                                                if (isBox && activeTest.storageId) {
+                                                    setActiveStorageId(activeTest.storageId);
+                                                    setCurrentModule('storage-detail');
+                                                } else {
+                                                    setCurrentModule('tests');
+                                                }
+                                            }} className="text-slate-400 hover:text-blue-600 transition-colors bg-slate-50 hover:bg-blue-50 p-2 rounded-lg shadow-sm border border-slate-200">◀ Back</button>
                                             <div className="flex-1">
                                                 <input value={activeTest.name} onChange={e=>updateActiveTest({name: e.target.value})} className="text-xl font-black text-slate-800 bg-transparent border-none outline-none focus:ring-1 focus:ring-blue-500 rounded px-1 w-full md:w-64" placeholder="Test Name"/>
                                                 <div className="text-xs text-slate-500 font-medium px-1 mt-1 flex items-center gap-2">
@@ -1414,7 +1435,7 @@ export default function App() {
                             );
 
                             if (activeTest.type === 'nmr') {
-                                return <NMRTestRenderer activeTest={activeTest} updateActiveTest={updateActiveTest} TestHeader={TestHeader} />;
+                                return <NMRTestRenderer activeTest={activeTest} updateActiveTest={updateActiveTest} TestHeader={TestHeader} datasetProtocols={datasetProtocols} jumpToProtocol={jumpToProtocol} />;
                             }
                             
                             if (activeTest.type === 'plate-9x9box') {
@@ -1436,24 +1457,44 @@ export default function App() {
                                 const toggleWellSelection = (r, c) => { const exists = selectedWells.find(w => w.r === r && w.c === c); setVal('selectedWells', exists ? selectedWells.filter(w => !(w.r === r && w.c === c)) : [...selectedWells, {r, c}]); };
 
                                 const printBoxLabel = () => {
-                                    const printWin = window.open('', '_blank');
-                                    let html = `<!DOCTYPE html><html><head><title>Label Print</title><style>
-                                        @page { size: 12cm 12cm; margin: 0; }
-                                        body { font-family: 'Inter', sans-serif; padding: 15px; font-size: 11px; color: #000; box-sizing: border-box; width: 12cm; height: 12cm; }
-                                        h3 { margin-top: 0; margin-bottom: 10px; font-size: 14px; border-bottom: 1px solid #000; padding-bottom: 5px; }
-                                        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-                                        th, td { border: 1px solid #000; padding: 4px; text-align: left; }
-                                        th { background-color: #f3f4f6; }
-                                    </style></head><body>
-                                    <h3>Storage: ${activeTest.storageType || 'Unassigned'} - ${activeTest.storageLabel || 'N/A'} (Pos: ${activeTest.storageIndex !== null ? activeTest.storageIndex + 1 : 'N/A'})</h3>
-                                    <p><strong>Box/Experiment:</strong> ${activeTest.name}</p>
-                                    <table><tr><th>Pos</th><th>Compound</th><th>Solvent</th><th>Conc.</th><th>Vol.</th><th>Date</th><th>Wt(mg)</th><th>Description</th></tr>`;
-                                    const sortedWells = [...selectedWells].sort((a,b) => a.r === b.r ? a.c - b.c : a.r - b.r);
-                                    sortedWells.forEach(({r, c}) => {
-                                        const d = getWellData(r, c); const pos = `${BOX_ROW_LABELS[r]}${c+1}`;
-                                        html += `<tr><td>${pos}</td><td>${d.compound}</td><td>${d.solvent}</td><td>${d.concentration}</td><td>${d.volume}</td><td>${d.date}</td><td>${d.weight}</td><td>${d.description}</td></tr>`;
-                                    });
-                                    html += `</table></body></html>`; printWin.document.write(html); printWin.document.close(); printWin.focus(); setTimeout(() => { printWin.print(); printWin.close(); }, 250);
+                                    try {
+                                        const printWin = window.open('', '_blank');
+                                        if (!printWin) {
+                                            alert('Popup blocked! Please allow popups for this site, then try again.');
+                                            return;
+                                        }
+                                        const safe = (v) => (v === null || v === undefined) ? '' : String(v);
+                                        const storageName = storages.find(s => s.id === activeTest.storageId)?.name || activeTest.storageLabel || 'Unassigned';
+                                        const posLabel = activeTest.storageIndex !== null && activeTest.storageIndex !== undefined ? activeTest.storageIndex + 1 : 'N/A';
+
+                                        let html = `<!DOCTYPE html><html><head><title>Label Print</title><style>
+                                            @page { size: 12cm 12cm; margin: 0; }
+                                            body { font-family: 'Inter', Arial, sans-serif; padding: 15px; font-size: 11px; color: #000; box-sizing: border-box; width: 12cm; height: 12cm; }
+                                            h3 { margin-top: 0; margin-bottom: 10px; font-size: 14px; border-bottom: 1px solid #000; padding-bottom: 5px; }
+                                            table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+                                            th, td { border: 1px solid #000; padding: 4px; text-align: left; font-size: 10px; }
+                                            th { background-color: #f3f4f6; }
+                                        </style></head><body>
+                                        <h3>Storage: ${safe(storageName)} (Pos: ${posLabel})</h3>
+                                        <p><strong>Box:</strong> ${safe(activeTest.name)}${activeTest.instanceName ? ' - ' + safe(activeTest.instanceName) : ''}</p>
+                                        <table><tr><th>Pos</th><th>Compound</th><th>Solvent</th><th>Conc.</th><th>Vol.</th><th>Date</th><th>Wt(mg)</th><th>Notes</th></tr>`;
+
+                                        const sortedWells = [...selectedWells].sort((a, b) => a.r === b.r ? a.c - b.c : a.r - b.r);
+                                        sortedWells.forEach(({ r, c }) => {
+                                            const d = getWellData(r, c);
+                                            const rowLabel = (BOX_ROW_LABELS && BOX_ROW_LABELS[r]) ? BOX_ROW_LABELS[r] : String.fromCharCode(65 + r);
+                                            const pos = `${rowLabel}${c + 1}`;
+                                            html += `<tr><td>${pos}</td><td>${safe(d.compound)}</td><td>${safe(d.solvent)}</td><td>${safe(d.concentration)}</td><td>${safe(d.volume)}</td><td>${safe(d.date)}</td><td>${safe(d.weight)}</td><td>${safe(d.description)}</td></tr>`;
+                                        });
+
+                                        html += `</table></body></html>`;
+                                        printWin.document.write(html);
+                                        printWin.document.close();
+                                        printWin.focus();
+                                        setTimeout(() => { try { printWin.print(); } catch(e) {} }, 300);
+                                    } catch (err) {
+                                        alert('Print failed: ' + err.message);
+                                    }
                                 };
 
                                 return (
@@ -1464,6 +1505,37 @@ export default function App() {
                                                 <label className="text-xs font-bold text-slate-600 mb-2">📝 Box Notes / General Comments</label>
                                                 <RichTextEditor value={activeTest.comments || ''} onChange={val => updateActiveTest({comments: val})} placeholder="Aggiungi qui note generali sulla box, ubicazione, o log delle modifiche..." />
                                             </div>
+
+                                            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap gap-4 items-center mb-6 no-print">
+                                                <div className="flex items-center gap-2">
+                                                    <label className="text-xs font-bold text-slate-500 uppercase">Rows:</label>
+                                                    <input type="number" min="2" max="26" value={activeTest.boxRows || 9}
+                                                        onChange={e => updateActiveTest({ boxRows: Math.max(2, Math.min(26, parseInt(e.target.value) || 9)) })}
+                                                        className="w-16 border border-slate-300 rounded px-2 py-1 text-sm text-center outline-none focus:border-blue-500" />
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <label className="text-xs font-bold text-slate-500 uppercase">Cols:</label>
+                                                    <input type="number" min="2" max="26" value={activeTest.boxCols || 9}
+                                                        onChange={e => updateActiveTest({ boxCols: Math.max(2, Math.min(26, parseInt(e.target.value) || 9)) })}
+                                                        className="w-16 border border-slate-300 rounded px-2 py-1 text-sm text-center outline-none focus:border-blue-500" />
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <label className="text-xs font-bold text-slate-500 uppercase">Rotate:</label>
+                                                    <select value={boxRotation} onChange={e => setVal('boxRotation', parseInt(e.target.value))}
+                                                        className="border border-slate-300 rounded px-2 py-1 text-sm outline-none focus:border-blue-500 bg-white">
+                                                        <option value="0">0°</option>
+                                                        <option value="90">90°</option>
+                                                        <option value="180">180°</option>
+                                                        <option value="270">270°</option>
+                                                    </select>
+                                                </div>
+                                                <div className="flex-1 flex items-center gap-2 min-w-[200px]">
+                                                    <label className="text-xs font-bold text-slate-500 uppercase">Search:</label>
+                                                    <input type="text" value={boxSearch} onChange={e => setVal('boxSearch', e.target.value)} placeholder="Filter compounds..."
+                                                        className="flex-1 border border-slate-300 rounded px-3 py-1 text-sm outline-none focus:border-blue-500" />
+                                                </div>
+                                            </div>
+
                                             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 mb-6 overflow-x-auto text-center flex justify-center">
                                                 <div className="transition-transform duration-300 ease-in-out origin-center inline-block" style={{transform: `rotate(${boxRotation}deg)`}}>
                                                     <div className="grid gap-2 max-w-min mx-auto bg-slate-50 p-6 border border-slate-300 rounded-xl shadow-inner" style={{ gridTemplateColumns: `auto repeat(${activeTest.boxCols || 9}, minmax(55px, 1fr))` }}>
@@ -1508,7 +1580,7 @@ export default function App() {
                                                 </div>
                                             </div>
 
-                                            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                                            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 no-print">
                                                 <div className="flex justify-between items-center mb-6 border-b border-slate-100 pb-2">
                                                     <div>
                                                         <h4 className="text-lg font-black text-slate-800">Selected Slots ({selectedWells.length})</h4>
@@ -1557,9 +1629,8 @@ export default function App() {
                                         customConc={customConc} setCustomConc={setCustomConc}
                                         cmpColors={cmpColors} setCmpColors={setCmpColors}
                                         allCmpds={[...new Set([...DEF_COMPOUNDS, ...customCmpds])]}
-                                        jumpToTest={(id) => { setActiveTestId(id); setCurrentModule('active-test'); }} 
-                                        TestHeader={TestHeader}
-                                        datasetProtocols={datasetProtocols}
+                                        jumpToTest={(id) => { setActiveTestId(id); setCurrentModule('active-test'); }} TestHeader={TestHeader}
+                                        datasetProtocols={datasetProtocols} jumpToProtocol={jumpToProtocol}
                                     />
                                 );
                             }
