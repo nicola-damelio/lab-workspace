@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, BarChart, Bar } from 'recharts';
 import { RichTextEditor } from './RichTextEditor';
 
@@ -139,31 +139,6 @@ const CustomYTick13C = ({ x, y, payload, isZoomed }) => {
   return ( <g transform={`translate(${x||0},${y||0})`}> <line x1={0} y1={0} x2={-tickLength} y2={0} stroke="#94a3b8" strokeWidth={1} />{(isZoomed || isTen) && <text x={-(tickLength + 5)} y={0} dy={4} textAnchor="end" fill="#64748b" fontSize={isZoomed ? 10 : 12} fontWeight={isTen && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(1) : numVal}</text>} </g>);
 };
 
-// FIX 2: CustomRangeShape che usa le scale interne di Recharts per disegnare rettangoli perfetti
-const CustomRangeShape = (props) => {
-  const { cx, cy, payload, xAxis, yAxis } = props;
-  if (!cx || !cy || !payload || !xAxis || !yAxis || !xAxis.scale || !yAxis.scale) return null;
-  
-  const x1 = xAxis.scale(payload.min);
-  const x2 = xAxis.scale(payload.max);
-  const yTop = yAxis.scale(payload.y - 0.4);
-  const yBottom = yAxis.scale(payload.y + 0.4);
-  
-  if (!Number.isFinite(x1) || !Number.isFinite(x2) || !Number.isFinite(yTop) || !Number.isFinite(yBottom)) return null;
-  
-  const width = Math.abs(x2 - x1);
-  const height = Math.abs(yBottom - yTop);
-  const x = Math.min(x1, x2);
-  const y = Math.min(yTop, yBottom);
-  
-  return (
-    <g>
-      <rect x={x} y={y} width={width} height={height} fill={payload.color} opacity={0.5} rx={2} />
-      <circle cx={cx} cy={cy} r={3} fill={payload.color} />
-    </g>
-  );
-};
-
 const NMRTooltip = ({ active, payload, diagonalColor }) => {
   if (active && payload && payload.length) {
     const data = payload[0].payload;
@@ -174,16 +149,66 @@ const NMRTooltip = ({ active, payload, diagonalColor }) => {
   return null;
 };
 
-// --- 4. ROBUST ZOOMABLE PLOTS (FIX 1: NATIVE RECHARTS EVENTS) ---
+// --- 4. ROBUST ZOOMABLE PLOTS WITH WINDOW-LEVEL EVENTS ---
 const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel }) => {
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState(fullDomain);
-  const [refAreaLeft, setRefAreaLeft] = useState(null); const [refAreaRight, setRefAreaRight] = useState(null);
+  const [refAreaLeft, setRefAreaLeft] = useState(null);
+  const [refAreaRight, setRefAreaRight] = useState(null);
+  const chartRef = useRef(null);
+  const isDragging = useRef(false);
+  
   const isZoomed = xDomain[0] !== fullDomain[0] || xDomain[1] !== fullDomain[1];
   
-  const zoom = () => { if (refAreaLeft === refAreaRight || refAreaLeft === null) { setRefAreaLeft(null); setRefAreaRight(null); return; } setXDomain([Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)]); setRefAreaLeft(null); setRefAreaRight(null); };
-  const handleMouseDown = (e) => { if (!e) return; const xVal = e.xValue; if (xVal !== undefined) setRefAreaLeft(xVal); };
-  const handleMouseMove = (e) => { if (refAreaLeft !== null && e) { const xVal = e.xValue; if (xVal !== undefined) setRefAreaRight(xVal); } };
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      if (!isDragging.current || !chartRef.current) return;
+      const chart = chartRef.current;
+      const rect = chart.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const width = rect.width;
+      const margin = { left: 10, right: 10 };
+      const plotWidth = width - margin.left - margin.right;
+      const xVal = fullDomain[0] + (x - margin.left) / plotWidth * (fullDomain[1] - fullDomain[0]);
+      if (xVal >= fullDomain[0] && xVal <= fullDomain[1]) {
+        setRefAreaRight(xVal);
+      }
+    };
+    
+    const handleMouseUp = () => {
+      if (!isDragging.current) return;
+      isDragging.current = false;
+      if (refAreaLeft !== null && refAreaRight !== null && refAreaLeft !== refAreaRight) {
+        setXDomain([Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)]);
+      }
+      setRefAreaLeft(null);
+      setRefAreaRight(null);
+    };
+    
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [refAreaLeft, refAreaRight, fullDomain]);
+  
+  const handleMouseDown = (e) => {
+    if (!chartRef.current) return;
+    const chart = chartRef.current;
+    const rect = chart.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const width = rect.width;
+    const margin = { left: 10, right: 10 };
+    const plotWidth = width - margin.left - margin.right;
+    const xVal = fullDomain[0] + (x - margin.left) / plotWidth * (fullDomain[1] - fullDomain[0]);
+    if (xVal >= fullDomain[0] && xVal <= fullDomain[1]) {
+      isDragging.current = true;
+      setRefAreaLeft(xVal);
+      setRefAreaRight(xVal);
+    }
+  };
 
   return (
     <>
@@ -193,9 +218,9 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
           <div className="flex items-center gap-4"> <h4 className="font-bold text-slate-700">{title}</h4> {isZoomed && <button onClick={() => setXDomain(fullDomain)} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>} </div>
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
         </div>
-        <div className="flex-1 min-h-0 select-none relative" onMouseLeave={() => { if(refAreaLeft !== null) zoom(); }}>
+        <div className="flex-1 min-h-0 select-none relative" ref={chartRef} onMouseDown={handleMouseDown}>
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} margin={{ top: 10, right: 10, bottom: 40, left: 10 }} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={zoom}>
+            <BarChart data={data} margin={{ top: 10, right: 10, bottom: 40, left: 10 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={true} horizontal={false} stroke="#f1f5f9" />
               <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : ticks} interval={0} tickLine={false} tick={<TickComponent isZoomed={isZoomed} />} label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b' }} axisLine={{ stroke: '#cbd5e1' }} />
               <YAxis type="number" dataKey="y" domain={[0, 'auto']} hide={true} />
@@ -216,14 +241,82 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
 
 const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setExpandedPanel, panelId, diagonalColor }) => {
   const isExpanded = expandedPanel === panelId;
-  const [xDomain, setXDomain] = useState([0, 11]); const [yDomain, setYDomain] = useState([0, 11]);
-  const [refAreaLeft, setRefAreaLeft] = useState(null); const [refAreaRight, setRefAreaRight] = useState(null);
-  const [refAreaTop, setRefAreaTop] = useState(null); const [refAreaBottom, setRefAreaBottom] = useState(null);
+  const [xDomain, setXDomain] = useState([0, 11]);
+  const [yDomain, setYDomain] = useState([0, 11]);
+  const [refAreaLeft, setRefAreaLeft] = useState(null);
+  const [refAreaRight, setRefAreaRight] = useState(null);
+  const [refAreaTop, setRefAreaTop] = useState(null);
+  const [refAreaBottom, setRefAreaBottom] = useState(null);
+  const chartRef = useRef(null);
+  const isDragging = useRef(false);
+  
   const isZoomed = xDomain[0] !== 0 || xDomain[1] !== 11 || yDomain[0] !== 0 || yDomain[1] !== 11;
   
-  const zoom = () => { if (refAreaLeft === refAreaRight || refAreaLeft === null || refAreaTop === refAreaBottom || refAreaTop === null) { setRefAreaLeft(null); setRefAreaRight(null); setRefAreaTop(null); setRefAreaBottom(null); return; } setXDomain([Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)]); setYDomain([Math.min(refAreaTop, refAreaBottom), Math.max(refAreaTop, refAreaBottom)]); setRefAreaLeft(null); setRefAreaRight(null); setRefAreaTop(null); setRefAreaBottom(null); };
-  const handleMouseDown = (e) => { if (!e) return; const xVal = e.xValue, yVal = e.yValue; if (xVal !== undefined && yVal !== undefined) { setRefAreaLeft(xVal); setRefAreaTop(yVal); setRefAreaRight(xVal); setRefAreaBottom(yVal); } };
-  const handleMouseMove = (e) => { if (refAreaLeft !== null && e) { const xVal = e.xValue, yVal = e.yValue; if (xVal !== undefined && yVal !== undefined) { setRefAreaRight(xVal); setRefAreaBottom(yVal); } } };
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      if (!isDragging.current || !chartRef.current) return;
+      const chart = chartRef.current;
+      const rect = chart.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const width = rect.width;
+      const height = rect.height;
+      const margin = { left: 40, right: 10, top: 10, bottom: 40 };
+      const plotWidth = width - margin.left - margin.right;
+      const plotHeight = height - margin.top - margin.bottom;
+      const xVal = 11 - (x - margin.left) / plotWidth * 11;
+      const yVal = 11 - (y - margin.top) / plotHeight * 11;
+      if (xVal >= 0 && xVal <= 11 && yVal >= 0 && yVal <= 11) {
+        setRefAreaRight(xVal);
+        setRefAreaBottom(yVal);
+      }
+    };
+    
+    const handleMouseUp = () => {
+      if (!isDragging.current) return;
+      isDragging.current = false;
+      if (refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null) {
+        if (refAreaLeft !== refAreaRight && refAreaTop !== refAreaBottom) {
+          setXDomain([Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)]);
+          setYDomain([Math.min(refAreaTop, refAreaBottom), Math.max(refAreaTop, refAreaBottom)]);
+        }
+      }
+      setRefAreaLeft(null);
+      setRefAreaRight(null);
+      setRefAreaTop(null);
+      setRefAreaBottom(null);
+    };
+    
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [refAreaLeft, refAreaRight, refAreaTop, refAreaBottom]);
+  
+  const handleMouseDown = (e) => {
+    if (!chartRef.current) return;
+    const chart = chartRef.current;
+    const rect = chart.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const width = rect.width;
+    const height = rect.height;
+    const margin = { left: 40, right: 10, top: 10, bottom: 40 };
+    const plotWidth = width - margin.left - margin.right;
+    const plotHeight = height - margin.top - margin.bottom;
+    const xVal = 11 - (x - margin.left) / plotWidth * 11;
+    const yVal = 11 - (y - margin.top) / plotHeight * 11;
+    if (xVal >= 0 && xVal <= 11 && yVal >= 0 && yVal <= 11) {
+      isDragging.current = true;
+      setRefAreaLeft(xVal);
+      setRefAreaTop(yVal);
+      setRefAreaRight(xVal);
+      setRefAreaBottom(yVal);
+    }
+  };
 
   return (
     <>
@@ -233,9 +326,9 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
           <div className="flex items-center gap-4"> <h4 className="font-bold text-slate-700">{title}</h4> {isZoomed && <button onClick={() => { setXDomain([0, 11]); setYDomain([0, 11]); }} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>} </div>
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
         </div>
-        <div className="flex-1 min-h-0 select-none relative" onMouseLeave={() => { if(refAreaLeft !== null) zoom(); }}>
+        <div className="flex-1 min-h-0 select-none relative" ref={chartRef} onMouseDown={handleMouseDown}>
           <ResponsiveContainer width="100%" height="100%">
-            <ScatterChart margin={{ top: 10, right: 10, bottom: 40, left: 40 }} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={zoom}>
+            <ScatterChart margin={{ top: 10, right: 10, bottom: 40, left: 40 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b' }} />
               <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomYTick1H isZoomed={isZoomed} />} label={{ value: '¹H F1 (ppm)', angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b' }} />
@@ -262,14 +355,82 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
 
 const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panelId }) => {
   const isExpanded = expandedPanel === panelId;
-  const [xDomain, setXDomain] = useState([0, 11]); const [yDomain, setYDomain] = useState([10, 150]);
-  const [refAreaLeft, setRefAreaLeft] = useState(null); const [refAreaRight, setRefAreaRight] = useState(null);
-  const [refAreaTop, setRefAreaTop] = useState(null); const [refAreaBottom, setRefAreaBottom] = useState(null);
+  const [xDomain, setXDomain] = useState([0, 11]);
+  const [yDomain, setYDomain] = useState([10, 150]);
+  const [refAreaLeft, setRefAreaLeft] = useState(null);
+  const [refAreaRight, setRefAreaRight] = useState(null);
+  const [refAreaTop, setRefAreaTop] = useState(null);
+  const [refAreaBottom, setRefAreaBottom] = useState(null);
+  const chartRef = useRef(null);
+  const isDragging = useRef(false);
+  
   const isZoomed = xDomain[0] !== 0 || xDomain[1] !== 11 || yDomain[0] !== 10 || yDomain[1] !== 150;
   
-  const zoom = () => { if (refAreaLeft === refAreaRight || refAreaLeft === null || refAreaTop === refAreaBottom || refAreaTop === null) { setRefAreaLeft(null); setRefAreaRight(null); setRefAreaTop(null); setRefAreaBottom(null); return; } setXDomain([Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)]); setYDomain([Math.min(refAreaTop, refAreaBottom), Math.max(refAreaTop, refAreaBottom)]); setRefAreaLeft(null); setRefAreaRight(null); setRefAreaTop(null); setRefAreaBottom(null); };
-  const handleMouseDown = (e) => { if (!e) return; const xVal = e.xValue, yVal = e.yValue; if (xVal !== undefined && yVal !== undefined) { setRefAreaLeft(xVal); setRefAreaTop(yVal); setRefAreaRight(xVal); setRefAreaBottom(yVal); } };
-  const handleMouseMove = (e) => { if (refAreaLeft !== null && e) { const xVal = e.xValue, yVal = e.yValue; if (xVal !== undefined && yVal !== undefined) { setRefAreaRight(xVal); setRefAreaBottom(yVal); } } };
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      if (!isDragging.current || !chartRef.current) return;
+      const chart = chartRef.current;
+      const rect = chart.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const width = rect.width;
+      const height = rect.height;
+      const margin = { left: 40, right: 10, top: 10, bottom: 40 };
+      const plotWidth = width - margin.left - margin.right;
+      const plotHeight = height - margin.top - margin.bottom;
+      const xVal = 11 - (x - margin.left) / plotWidth * 11;
+      const yVal = 150 - (y - margin.top) / plotHeight * 140;
+      if (xVal >= 0 && xVal <= 11 && yVal >= 10 && yVal <= 150) {
+        setRefAreaRight(xVal);
+        setRefAreaBottom(yVal);
+      }
+    };
+    
+    const handleMouseUp = () => {
+      if (!isDragging.current) return;
+      isDragging.current = false;
+      if (refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null) {
+        if (refAreaLeft !== refAreaRight && refAreaTop !== refAreaBottom) {
+          setXDomain([Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)]);
+          setYDomain([Math.min(refAreaTop, refAreaBottom), Math.max(refAreaTop, refAreaBottom)]);
+        }
+      }
+      setRefAreaLeft(null);
+      setRefAreaRight(null);
+      setRefAreaTop(null);
+      setRefAreaBottom(null);
+    };
+    
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [refAreaLeft, refAreaRight, refAreaTop, refAreaBottom]);
+  
+  const handleMouseDown = (e) => {
+    if (!chartRef.current) return;
+    const chart = chartRef.current;
+    const rect = chart.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const width = rect.width;
+    const height = rect.height;
+    const margin = { left: 40, right: 10, top: 10, bottom: 40 };
+    const plotWidth = width - margin.left - margin.right;
+    const plotHeight = height - margin.top - margin.bottom;
+    const xVal = 11 - (x - margin.left) / plotWidth * 11;
+    const yVal = 150 - (y - margin.top) / plotHeight * 140;
+    if (xVal >= 0 && xVal <= 11 && yVal >= 10 && yVal <= 150) {
+      isDragging.current = true;
+      setRefAreaLeft(xVal);
+      setRefAreaTop(yVal);
+      setRefAreaRight(xVal);
+      setRefAreaBottom(yVal);
+    }
+  };
 
   return (
     <>
@@ -279,9 +440,9 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
           <div className="flex items-center gap-4"> <h4 className="font-bold text-slate-700">{title}</h4> {isZoomed && <button onClick={() => { setXDomain([0, 11]); setYDomain([10, 150]); }} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>} </div>
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
         </div>
-        <div className="flex-1 min-h-0 select-none relative" onMouseLeave={() => { if(refAreaLeft !== null) zoom(); }}>
+        <div className="flex-1 min-h-0 select-none relative" ref={chartRef} onMouseDown={handleMouseDown}>
           <ResponsiveContainer width="100%" height="100%">
-            <ScatterChart margin={{ top: 10, right: 10, bottom: 40, left: 40 }} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={zoom}>
+            <ScatterChart margin={{ top: 10, right: 10, bottom: 40, left: 40 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b' }} />
               <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_13C} interval={0} tickLine={false} tick={<CustomYTick13C isZoomed={isZoomed} />} label={{ value: '¹³C F1 (ppm)', angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b' }} />
@@ -601,7 +762,7 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
           </CollapsibleSection>
         )}
 
-        {/* 4. THEORETICAL RANGES (COMPACT & FIXED) */}
+        {/* 4. THEORETICAL RANGES - COMPACT WITH REFERENCE AREAS */}
         {uniqueAminoAcidTypes.length > 0 && (
           <CollapsibleSection title="Theoretical Chemical Shift Ranges" icon="📊" defaultOpen={true}>
             <div className="grid grid-cols-1 gap-6">
@@ -612,7 +773,19 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
                     <XAxis type="number" dataKey="x" domain={[0, 11]} reversed={true} ticks={TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={false} />} axisLine={{ stroke: '#e2e8f0' }} />
                     <YAxis type="number" dataKey="y" domain={[-0.5, uniqueAminoAcidTypes.length - 0.5]} axisLine={false} tickLine={false} width={60} ticks={yTicksForRanges} interval={0} tickFormatter={(val) => { const char = uniqueAminoAcidTypes[uniqueAminoAcidTypes.length - 1 - val]; return char ? AMINO_ACID_DB[char].code3 : ''; }} tick={{ fontSize: 14, fontWeight: 'bold', fill: '#64748b', dx: -5 }} />
                     <Tooltip content={<NMRTooltip />} cursor={false} />
-                    <Scatter data={referenceRangesData} shape={<CustomRangeShape />} isAnimationActive={false} />
+                    {referenceRangesData.map((range, idx) => (
+                      <ReferenceArea
+                        key={idx}
+                        x1={range.min}
+                        x2={range.max}
+                        y1={range.y - 0.35}
+                        y2={range.y + 0.35}
+                        fill={range.color}
+                        fillOpacity={0.5}
+                        stroke={range.color}
+                        strokeWidth={1}
+                      />
+                    ))}
                   </ScatterChart>
                 </ResponsiveContainer>
               </div>
@@ -623,7 +796,19 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
                     <XAxis type="number" dataKey="x" domain={[10, 150]} reversed={true} ticks={TICKS_13C} interval={0} tickLine={false} tick={<CustomXTick13C isZoomed={false} />} axisLine={{ stroke: '#e2e8f0' }} />
                     <YAxis type="number" dataKey="y" domain={[-0.5, uniqueAminoAcidTypes.length - 0.5]} axisLine={false} tickLine={false} width={60} ticks={yTicksForRanges} interval={0} tickFormatter={(val) => { const char = uniqueAminoAcidTypes[uniqueAminoAcidTypes.length - 1 - val]; return char ? AMINO_ACID_DB[char].code3 : ''; }} tick={{ fontSize: 14, fontWeight: 'bold', fill: '#64748b', dx: -5 }} />
                     <Tooltip content={<NMRTooltip />} cursor={false} />
-                    <Scatter data={referenceRangesData13C} shape={<CustomRangeShape />} isAnimationActive={false} />
+                    {referenceRangesData13C.map((range, idx) => (
+                      <ReferenceArea
+                        key={idx}
+                        x1={range.min}
+                        x2={range.max}
+                        y1={range.y - 0.35}
+                        y2={range.y + 0.35}
+                        fill={range.color}
+                        fillOpacity={0.5}
+                        stroke={range.color}
+                        strokeWidth={1}
+                      />
+                    ))}
                   </ScatterChart>
                 </ResponsiveContainer>
               </div>
@@ -776,7 +961,7 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
           </CollapsibleSection>
         )}
 
-        {/* 8. LAB NOTEBOOK EXPORT (WITH IMAGES) */}
+        {/* 8. LAB NOTEBOOK EXPORT - WITH IMAGES */}
         <CollapsibleSection title="Lab Notebook Export" icon="📓" defaultOpen={false} className="no-print">
           <div className="flex flex-col gap-4">
             <p className="text-sm text-slate-600">Select the NMR data to format and append to the General Comments (which acts as the Lab Notebook entry).</p>
