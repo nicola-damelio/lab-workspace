@@ -11,19 +11,16 @@ import { PlateTestRenderer } from './components/PlateTestRenderer';
 import { LabNotebook } from './components/LabNotebook';
 import { RichTextEditor } from './components/RichTextEditor';
 
-// --- MIGRAZIONE LEGACY (V1 -> V2) ---
+// --- MIGRAZIONE LEGACY (V1 -> V2) con controlli di sicurezza ---
 const migrateLoadedDataset = (s) => {
     const rawTests = (s && (s.tests || s.plates)) || [];
-
     let tests = rawTests.map(p => {
-        let safeComments = p.comments || '';
+        let safeComments = typeof p.comments === 'string' ? p.comments : '';
         safeComments = safeComments.replace(/<img[^>]+src="data:image\/[^;]+;base64,([^">]{500000,})"[^>]*>/gi, '<br/><span style="color:red; font-size:10px; font-weight:bold;">[Massive image removed]</span><br/>');
-        let safeImages = (p.images || []).filter(img => !(img.startsWith('data:image/') && img.length > 500000));
-
+        let safeImages = Array.isArray(p.images) ? p.images.filter(img => typeof img === 'string' && !(img.startsWith('data:image/') && img.length > 500000)) : [];
         let migratedType = p.type;
         if (!migratedType && p.plateType) migratedType = p.plateType === '9x9box' ? 'plate-9x9box' : 'plate-' + p.plateType;
         let migratedCategory = p.testCategory || (p.expTypes && p.expTypes.length > 0 ? p.expTypes[0] : 'Activity');
-
         return { ...p, type: migratedType || 'plate-96', testCategory: migratedCategory, comments: safeComments, images: safeImages };
     });
 
@@ -31,8 +28,8 @@ const migrateLoadedDataset = (s) => {
     const legacyGroups = {};
     tests.forEach(t => {
         if (t.type !== 'plate-9x9box' || t.storageId) return;
-        const label = (t.storageLabel || '').trim();
-        const typeText = (t.storageType || '').trim();
+        const label = typeof t.storageLabel === 'string' ? t.storageLabel.trim() : '';
+        const typeText = typeof t.storageType === 'string' ? t.storageType.trim() : '';
         if (!label && !typeText) return; 
         const key = typeText + '||' + label;
         if (!legacyGroups[key]) legacyGroups[key] = { typeText, label, items: [] };
@@ -52,7 +49,6 @@ const migrateLoadedDataset = (s) => {
     return { tests, storages: newStorages.length > 0 ? [...existingStorages, ...newStorages] : existingStorages };
 };
 
-// Cloud disattivato temporaneamente per usare il salvataggio in locale senza errori 401
 let app, auth, db, appId = 'lab-workspace-app';
 
 export default function App() {
@@ -341,9 +337,19 @@ export default function App() {
         const groups = {};
         datasetsList.forEach(dset => {
             let catSet = new Set(); let cellSet = new Set();
-            try { const s = parsePayload(dset); if (s && s.tests) { s.tests.forEach(t => { if (t.testCategory) catSet.add(t.testCategory); (t.cellLines || []).forEach(e => cellSet.add(e)); }); } } catch(e) {}
-            const catStr = Array.from(catSet).sort().join(', '); const cellStr = Array.from(cellSet).sort().join(', ');
-            const hasMeta = catStr || cellStr; const key = hasMeta ? `${catStr}|${cellStr}` : `unclassified_${dset.id}`;
+            try { 
+                const s = parsePayload(dset); 
+                if (s && s.tests) { 
+                    s.tests.forEach(t => { 
+                        if (t.testCategory) catSet.add(t.testCategory); 
+                        if (Array.isArray(t.cellLines)) t.cellLines.forEach(e => cellSet.add(e)); 
+                    }); 
+                } 
+            } catch(e) {}
+            const catStr = Array.from(catSet).sort().join(', '); 
+            const cellStr = Array.from(cellSet).sort().join(', ');
+            const hasMeta = catStr || cellStr; 
+            const key = hasMeta ? `${catStr}|${cellStr}` : `unclassified_${dset.id}`;
             if (!groups[key]) { groups[key] = { key, categories: catStr, cellLines: cellStr, isUnclassified: !hasMeta, items: [] }; }
             groups[key].items.push(dset);
         });
@@ -622,6 +628,26 @@ export default function App() {
 
                     <div className="flex-1 flex flex-col bg-slate-50 h-full overflow-hidden relative">
                         
+                        {/* AGGIUNTA VISTA DASHBOARD MANCANTE */}
+                        {currentModule === 'dashboard' && (
+                            <div className="p-6 h-full overflow-y-auto custom-scrollbar flex flex-col items-center justify-center text-center">
+                                <div className="text-6xl mb-6">🏠</div>
+                                <h2 className="text-3xl font-black text-slate-800 mb-4">Welcome to {datasetTitle || 'Your Workspace'}</h2>
+                                <p className="text-slate-500 mb-8 max-w-md">Select a module from the sidebar to start managing your tests, storage, protocols, or lab notebook.</p>
+                                <div className="flex flex-wrap gap-4 justify-center">
+                                    <button onClick={() => setCurrentModule('tests')} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg shadow-sm transition-colors flex items-center gap-2">
+                                        🧪 Go to Tests
+                                    </button>
+                                    <button onClick={() => setCurrentModule('storage')} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg shadow-sm transition-colors flex items-center gap-2">
+                                        📦 Go to Storage
+                                    </button>
+                                    <button onClick={() => setCurrentModule('agenda')} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-6 rounded-lg shadow-sm transition-colors flex items-center gap-2">
+                                        🗓️ View Agenda
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
                         {currentModule === 'agenda' && (
                             <div className="p-6 h-full overflow-y-auto custom-scrollbar flex flex-col">
                                 <div className="mb-6">
@@ -1070,7 +1096,8 @@ export default function App() {
                             
                             const updateActiveTest = (updates) => { setTests(prev => prev.map(t => t.id === activeTestId ? { ...t, ...updates } : t)); };
                             
-                            const siblingTests = tests.filter(t => t.name === activeTest.name && t.name.trim() !== '').sort((a,b) => (a.date||'').localeCompare(b.date||''));
+                            const isBox = activeTest.type === 'plate-9x9box';
+                            const siblingTests = isBox ? [] : tests.filter(t => t.name === activeTest.name && t.name.trim() !== '').sort((a,b) => (a.date||'').localeCompare(b.date||''));
 
                             const handleDuplicateInstance = () => {
                                 const id = 't' + Date.now();
@@ -1087,7 +1114,14 @@ export default function App() {
                                 <div className="flex flex-col shrink-0 z-20">
                                     <div className="bg-white border-b border-slate-200 px-6 py-4 flex flex-col md:flex-row justify-between items-start md:items-center shadow-sm gap-4">
                                         <div className="flex items-center gap-4 w-full md:w-auto">
-                                            <button onClick={() => setCurrentModule('tests')} className="text-slate-400 hover:text-blue-600 transition-colors bg-slate-50 hover:bg-blue-50 p-2 rounded-lg shadow-sm border border-slate-200">◀ Back</button>
+                                            <button onClick={() => {
+                                                if (isBox && activeTest.storageId) {
+                                                    setActiveStorageId(activeTest.storageId);
+                                                    setCurrentModule('storage-detail');
+                                                } else {
+                                                    setCurrentModule('tests');
+                                                }
+                                            }} className="text-slate-400 hover:text-blue-600 transition-colors bg-slate-50 hover:bg-blue-50 p-2 rounded-lg shadow-sm border border-slate-200">◀ Back</button>
                                             <div className="flex-1">
                                                 <input value={activeTest.name} onChange={e=>updateActiveTest({name: e.target.value})} className="text-xl font-black text-slate-800 bg-transparent border-none outline-none focus:ring-1 focus:ring-blue-500 rounded px-1 w-full md:w-64" placeholder="Test Name"/>
                                                 <div className="text-xs text-slate-500 font-medium px-1 mt-1 flex items-center gap-2">
@@ -1158,24 +1192,44 @@ export default function App() {
                                 const toggleWellSelection = (r, c) => { const exists = selectedWells.find(w => w.r === r && w.c === c); setVal('selectedWells', exists ? selectedWells.filter(w => !(w.r === r && w.c === c)) : [...selectedWells, {r, c}]); };
 
                                 const printBoxLabel = () => {
-                                    const printWin = window.open('', '_blank');
-                                    let html = `<!DOCTYPE html><html><head><title>Label Print</title><style>
-                                        @page { size: 12cm 12cm; margin: 0; }
-                                        body { font-family: 'Inter', sans-serif; padding: 15px; font-size: 11px; color: #000; box-sizing: border-box; width: 12cm; height: 12cm; }
-                                        h3 { margin-top: 0; margin-bottom: 10px; font-size: 14px; border-bottom: 1px solid #000; padding-bottom: 5px; }
-                                        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-                                        th, td { border: 1px solid #000; padding: 4px; text-align: left; }
-                                        th { background-color: #f3f4f6; }
-                                    </style></head><body>
-                                    <h3>Storage: ${activeTest.storageType || 'Unassigned'} - ${activeTest.storageLabel || 'N/A'} (Pos: ${activeTest.storageIndex !== null ? activeTest.storageIndex + 1 : 'N/A'})</h3>
-                                    <p><strong>Box/Experiment:</strong> ${activeTest.name}</p>
-                                    <table><tr><th>Pos</th><th>Compound</th><th>Solvent</th><th>Conc.</th><th>Vol.</th><th>Date</th><th>Wt(mg)</th><th>Description</th></tr>`;
-                                    const sortedWells = [...selectedWells].sort((a,b) => a.r === b.r ? a.c - b.c : a.r - b.r);
-                                    sortedWells.forEach(({r, c}) => {
-                                        const d = getWellData(r, c); const pos = `${BOX_ROW_LABELS[r]}${c+1}`;
-                                        html += `<tr><td>${pos}</td><td>${d.compound}</td><td>${d.solvent}</td><td>${d.concentration}</td><td>${d.volume}</td><td>${d.date}</td><td>${d.weight}</td><td>${d.description}</td></tr>`;
-                                    });
-                                    html += `</table></body></html>`; printWin.document.write(html); printWin.document.close(); printWin.focus(); setTimeout(() => { printWin.print(); printWin.close(); }, 250);
+                                    try {
+                                        const printWin = window.open('', '_blank');
+                                        if (!printWin) {
+                                            alert('Popup blocked! Please allow popups for this site, then try again.');
+                                            return;
+                                        }
+                                        const safe = (v) => (v === null || v === undefined) ? '' : String(v);
+                                        const storageName = storages.find(s => s.id === activeTest.storageId)?.name || activeTest.storageLabel || 'Unassigned';
+                                        const posLabel = activeTest.storageIndex !== null && activeTest.storageIndex !== undefined ? activeTest.storageIndex + 1 : 'N/A';
+
+                                        let html = `<!DOCTYPE html><html><head><title>Label Print</title><style>
+                                            @page { size: 12cm 12cm; margin: 0; }
+                                            body { font-family: 'Inter', Arial, sans-serif; padding: 15px; font-size: 11px; color: #000; box-sizing: border-box; width: 12cm; height: 12cm; }
+                                            h3 { margin-top: 0; margin-bottom: 10px; font-size: 14px; border-bottom: 1px solid #000; padding-bottom: 5px; }
+                                            table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+                                            th, td { border: 1px solid #000; padding: 4px; text-align: left; font-size: 10px; }
+                                            th { background-color: #f3f4f6; }
+                                        </style></head><body>
+                                        <h3>Storage: ${safe(storageName)} (Pos: ${posLabel})</h3>
+                                        <p><strong>Box:</strong> ${safe(activeTest.name)}${activeTest.instanceName ? ' - ' + safe(activeTest.instanceName) : ''}</p>
+                                        <table><tr><th>Pos</th><th>Compound</th><th>Solvent</th><th>Conc.</th><th>Vol.</th><th>Date</th><th>Wt(mg)</th><th>Notes</th></tr>`;
+
+                                        const sortedWells = [...selectedWells].sort((a, b) => a.r === b.r ? a.c - b.c : a.r - b.r);
+                                        sortedWells.forEach(({ r, c }) => {
+                                            const d = getWellData(r, c);
+                                            const rowLabel = (BOX_ROW_LABELS && BOX_ROW_LABELS[r]) ? BOX_ROW_LABELS[r] : String.fromCharCode(65 + r);
+                                            const pos = `${rowLabel}${c + 1}`;
+                                            html += `<tr><td>${pos}</td><td>${safe(d.compound)}</td><td>${safe(d.solvent)}</td><td>${safe(d.concentration)}</td><td>${safe(d.volume)}</td><td>${safe(d.date)}</td><td>${safe(d.weight)}</td><td>${safe(d.description)}</td></tr>`;
+                                        });
+
+                                        html += `</table></body></html>`;
+                                        printWin.document.write(html);
+                                        printWin.document.close();
+                                        printWin.focus();
+                                        setTimeout(() => { try { printWin.print(); } catch(e) {} }, 300);
+                                    } catch (err) {
+                                        alert('Print failed: ' + err.message);
+                                    }
                                 };
 
                                 return (
@@ -1186,6 +1240,37 @@ export default function App() {
                                                 <label className="text-xs font-bold text-slate-600 mb-2">📝 Box Notes / General Comments</label>
                                                 <RichTextEditor value={activeTest.comments || ''} onChange={val => updateActiveTest({comments: val})} placeholder="Aggiungi qui note generali sulla box, ubicazione, o log delle modifiche..." />
                                             </div>
+
+                                            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap gap-4 items-center mb-6">
+                                                <div className="flex items-center gap-2">
+                                                    <label className="text-xs font-bold text-slate-500 uppercase">Rows:</label>
+                                                    <input type="number" min="2" max="26" value={activeTest.boxRows || 9}
+                                                        onChange={e => updateActiveTest({ boxRows: Math.max(2, Math.min(26, parseInt(e.target.value) || 9)) })}
+                                                        className="w-16 border border-slate-300 rounded px-2 py-1 text-sm text-center outline-none focus:border-blue-500" />
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <label className="text-xs font-bold text-slate-500 uppercase">Cols:</label>
+                                                    <input type="number" min="2" max="26" value={activeTest.boxCols || 9}
+                                                        onChange={e => updateActiveTest({ boxCols: Math.max(2, Math.min(26, parseInt(e.target.value) || 9)) })}
+                                                        className="w-16 border border-slate-300 rounded px-2 py-1 text-sm text-center outline-none focus:border-blue-500" />
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <label className="text-xs font-bold text-slate-500 uppercase">Rotate:</label>
+                                                    <select value={boxRotation} onChange={e => setVal('boxRotation', parseInt(e.target.value))}
+                                                        className="border border-slate-300 rounded px-2 py-1 text-sm outline-none focus:border-blue-500 bg-white">
+                                                        <option value="0">0°</option>
+                                                        <option value="90">90°</option>
+                                                        <option value="180">180°</option>
+                                                        <option value="270">270°</option>
+                                                    </select>
+                                                </div>
+                                                <div className="flex-1 flex items-center gap-2 min-w-[200px]">
+                                                    <label className="text-xs font-bold text-slate-500 uppercase">Search:</label>
+                                                    <input type="text" value={boxSearch} onChange={e => setVal('boxSearch', e.target.value)} placeholder="Filter compounds..."
+                                                        className="flex-1 border border-slate-300 rounded px-3 py-1 text-sm outline-none focus:border-blue-500" />
+                                                </div>
+                                            </div>
+
                                             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 mb-6 overflow-x-auto text-center flex justify-center">
                                                 <div className="transition-transform duration-300 ease-in-out origin-center inline-block" style={{transform: `rotate(${boxRotation}deg)`}}>
                                                     <div className="grid gap-2 max-w-min mx-auto bg-slate-50 p-6 border border-slate-300 rounded-xl shadow-inner" style={{ gridTemplateColumns: `auto repeat(${activeTest.boxCols || 9}, minmax(55px, 1fr))` }}>
@@ -1294,4 +1379,3 @@ export default function App() {
         </div>
     );
 }
-
