@@ -10,6 +10,39 @@ import {
     fit4PL, errBarPlugin 
 } from '../data/constants';
 
+// --- CLASSI DI UTILITA' PER IL FULLSCREEN REALE ---
+const FS_CLASSES = "fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col";
+const OVERLAY_CLASSES = "fixed top-0 left-0 w-screen h-screen bg-slate-900/50 backdrop-blur-sm z-[999990]";
+
+// --- COMPONENTE SEZIONE ESPANDIBILE (FISARMONICA) ---
+export const CollapsibleSection = ({ title, icon, defaultOpen = true, children, headerExtra, className="" }) => {
+    const [isOpen, setIsOpen] = useState(defaultOpen);
+    return (
+        <div className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-6 ${className}`}>
+            <button
+                onClick={() => setIsOpen(!isOpen)}
+                className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left ${isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'}`}
+            >
+                <div className="flex items-center gap-2 overflow-hidden">
+                    {icon && <span className="text-xl shrink-0">{icon}</span>}
+                    <h3 className="text-lg font-bold text-slate-800 truncate">{title}</h3>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                    {headerExtra && <div onClick={(e) => e.stopPropagation()}>{headerExtra}</div>}
+                    <svg className={`w-5 h-5 text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                </div>
+            </button>
+            {isOpen && (
+                <div className="p-6">
+                    {children}
+                </div>
+            )}
+        </div>
+    );
+};
+
 // --- COMPONENTE AUSILIARIO PER L'INPUT DEGLI ERRORI ---
 export const ErrInput = ({ label, value, sdRaw, isOverridden, onSave, onReset }) => {
     const [tempVal, setTempVal] = useState(value !== undefined ? value : '');
@@ -109,13 +142,12 @@ export function RegionCharts({ regionName, regionData, config }) {
     }, [regionData, hiddenCmpds, fitIC50, eScale, chartCfg, fsPanel]);
 
     return (
-        <div className="pdf-page-region flex flex-col gap-4 bg-white border border-slate-200 p-6 rounded-xl shadow-sm mb-4 relative">
-            <h3 className="text-xl font-black text-slate-800 border-b border-slate-100 pb-3">📍 Region: {regionName}</h3>
-            <div className="flex flex-col lg:flex-row gap-6 pdf-row">
+        <CollapsibleSection title={`Region: ${regionName}`} icon="📍" defaultOpen={true} className="pdf-page-region">
+            <div className="flex flex-col lg:flex-row gap-6 pdf-row relative">
                 
                 {/* DOSE RESPONSE PLOT */}
-                {isDrFs && <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[90]" onClick={() => toggleFs(`dr_${regionName}`)}></div>}
-                <div className={`pdf-chart-main flex flex-col ${isDrFs ? 'fixed inset-4 md:inset-10 z-[100] bg-white p-6 rounded-2xl shadow-2xl' : 'min-w-0'}`} style={!isDrFs ? {width:fitIC50?`${drWidth}%`:'100%',flexShrink:0} : {}}>
+                {isDrFs && <div className={OVERLAY_CLASSES} onClick={() => toggleFs(`dr_${regionName}`)}></div>}
+                <div className={`pdf-chart-main flex flex-col ${isDrFs ? FS_CLASSES + ' p-6' : 'min-w-0'}`} style={!isDrFs ? {width:fitIC50?`${drWidth}%`:'100%',flexShrink:0} : {}}>
                     <div className="flex justify-between items-start mb-4">
                         <h2 className="text-sm font-bold text-slate-600 uppercase tracking-widest">Dose-Response Plot</h2>
                         <button onClick={() => toggleFs(`dr_${regionName}`)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors">{isDrFs ? '↙️' : '↗️'}</button>
@@ -128,8 +160,8 @@ export function RegionCharts({ regionName, regionData, config }) {
                 {/* IC50 COMPARISON PLOT */}
                 {fitIC50 && (
                     <>
-                        {isIc50Fs && <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[90]" onClick={() => toggleFs(`ic50_${regionName}`)}></div>}
-                        <div className={`pdf-chart-ic50 flex flex-col ${isIc50Fs ? 'fixed inset-4 md:inset-10 z-[100] bg-white p-6 rounded-2xl shadow-2xl' : 'flex-1 min-w-0'}`}>
+                        {isIc50Fs && <div className={OVERLAY_CLASSES} onClick={() => toggleFs(`ic50_${regionName}`)}></div>}
+                        <div className={`pdf-chart-ic50 flex flex-col ${isIc50Fs ? FS_CLASSES + ' p-6' : 'flex-1 min-w-0'}`}>
                             <div className="flex justify-between items-start mb-4">
                                 <h2 className="text-sm font-bold text-slate-600 uppercase tracking-widest">IC50 Comparison</h2>
                                 <button onClick={() => toggleFs(`ic50_${regionName}`)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors">{isIc50Fs ? '↙️' : '↗️'}</button>
@@ -141,7 +173,7 @@ export function RegionCharts({ regionName, regionData, config }) {
                     </>
                 )}
             </div>
-        </div>
+        </CollapsibleSection>
     );
 }
 
@@ -400,8 +432,7 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
                 if (ir < minR) minR = ir; if (ir > maxR) maxR = ir;
                 if (ic < minC) minC = ic; if (ic > maxC) maxC = ic;
             }
-        }
-        ));
+        }));
         setSelStart({r: minR, c: minC}); setSelEnd({r: maxR, c: maxC}); setDragMode('none');
     };
     const onMouseDownFillHandle = (e) => { e.stopPropagation(); setDragMode('filling'); setFillEnd(selEnd); };
@@ -866,518 +897,527 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
     };
 
     return (
-        <div id={`report-container-${activeTest.id}`} className="flex flex-col h-full overflow-hidden">
+        <div id={`report-container-${activeTest.id}`} className="flex flex-col h-full overflow-hidden relative">
             {TestHeader}
             
-            {/* Pulsanti Export XLS e PDF integrati qui */}
             <div className="bg-white border-b border-slate-200 px-6 py-2 flex items-center justify-end gap-3 shrink-0 z-10 shadow-sm">
                 <button onClick={exportXLS} className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1.5 px-3 rounded text-xs flex items-center gap-1 shadow-sm transition-colors">📊 Export XLS</button>
                 <button onClick={exportPDF} className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold py-1.5 px-3 rounded text-xs flex items-center gap-1 shadow-sm transition-colors">📄 Export PDF</button>
             </div>
 
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6">
-                {/* COMMENTS & ATTACHMENTS */}
-                <div className="flex flex-col lg:flex-row gap-6 bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
-                    <div className="flex-1 flex flex-col h-full min-h-[160px]">
-                        <label className="text-xs font-bold text-slate-600 mb-2">📝 Comments / Notes</label>
-                        <RichTextEditor
-                            value={metaComments}
-                            onChange={val => updatePlate({comments: val})}
-                            placeholder="Enter your experiment notes, protocol deviations, etc..."
-                        />
-                        <div className="mt-4 pt-4 border-t border-slate-100">
-                            <h3 className="text-[11px] font-bold text-slate-600 mb-2 flex justify-between items-center">
-                                <span>📅 Schedule / Planning (This Item)</span>
-                                <div className="flex gap-2">
-                                    <input type="date" id={`plan-date-${activeTest.id}`} className="border border-slate-300 px-2 py-1 text-xs rounded bg-white text-slate-800 outline-none focus:border-blue-500" />
-                                    <button onClick={() => {
-                                        const d = document.getElementById(`plan-date-${activeTest.id}`).value;
-                                        if(d) updatePlate({plan: [...experimentPlan, { id: Date.now(), date: d, task: '' }].sort((a,b)=>a.date.localeCompare(b.date))});
-                                    }} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs font-bold transition shadow-sm">Add Task</button>
-                                </div>
-                            </h3>
-                            <div className="flex flex-col gap-2 max-h-32 overflow-y-auto custom-scrollbar pr-2">
-                                {experimentPlan.length === 0 && <span className="text-xs text-slate-400 italic">No tasks planned yet.</span>}
-                                {experimentPlan.map(item => (
-                                    <div key={item.id} className="flex gap-2 items-center bg-slate-50 border border-slate-200 p-1.5 rounded-lg shadow-sm">
-                                        <span className="text-[10px] font-bold w-20 text-slate-600 pl-2">{item.date}</span>
-                                        <input type="text" value={item.task} onChange={e => {
-                                            updatePlate({plan: experimentPlan.map(p => p.id === item.id ? {...p, task: e.target.value} : p)});
-                                        }} className="bg-transparent border-none focus:outline-none focus:bg-white focus:ring-1 focus:ring-blue-500 p-1 text-xs flex-1 text-slate-700 rounded transition-all" placeholder="Task description..." />
-                                        <button onClick={() => updatePlate({plan: experimentPlan.filter(p => p.id !== item.id)})} className="text-slate-400 hover:text-red-500 text-[10px] font-bold px-2 transition">&times;</button>
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+                
+                {/* SEZIONE 1: COMMENTS & ATTACHMENTS */}
+                <CollapsibleSection title="Comments & Attachments" icon="📝">
+                    <div className="flex flex-col lg:flex-row gap-6">
+                        <div className="flex-1 flex flex-col h-full min-h-[160px]">
+                            <label className="text-xs font-bold text-slate-600 mb-2">Commenti / Note</label>
+                            <RichTextEditor
+                                value={metaComments}
+                                onChange={val => updatePlate({comments: val})}
+                                placeholder="Enter your experiment notes, protocol deviations, etc..."
+                            />
+                            <div className="mt-4 pt-4 border-t border-slate-100">
+                                <h3 className="text-[11px] font-bold text-slate-600 mb-2 flex justify-between items-center">
+                                    <span>📅 Schedule / Planning (This Item)</span>
+                                    <div className="flex gap-2">
+                                        <input type="date" id={`plan-date-${activeTest.id}`} className="border border-slate-300 px-2 py-1 text-xs rounded bg-white text-slate-800 outline-none focus:border-blue-500" />
+                                        <button onClick={() => {
+                                            const d = document.getElementById(`plan-date-${activeTest.id}`).value;
+                                            if(d) updatePlate({plan: [...experimentPlan, { id: Date.now(), date: d, task: '' }].sort((a,b)=>a.date.localeCompare(b.date))});
+                                        }} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs font-bold transition shadow-sm">Add Task</button>
                                     </div>
-                                ))}
+                                </h3>
+                                <div className="flex flex-col gap-2 max-h-32 overflow-y-auto custom-scrollbar pr-2">
+                                    {experimentPlan.length === 0 && <span className="text-xs text-slate-400 italic">No tasks planned yet.</span>}
+                                    {experimentPlan.map(item => (
+                                        <div key={item.id} className="flex gap-2 items-center bg-slate-50 border border-slate-200 p-1.5 rounded-lg shadow-sm">
+                                            <span className="text-[10px] font-bold w-20 text-slate-600 pl-2">{item.date}</span>
+                                            <input type="text" value={item.task} onChange={e => {
+                                                updatePlate({plan: experimentPlan.map(p => p.id === item.id ? {...p, task: e.target.value} : p)});
+                                            }} className="bg-transparent border-none focus:outline-none focus:bg-white focus:ring-1 focus:ring-blue-500 p-1 text-xs flex-1 text-slate-700 rounded transition-all" placeholder="Task description..." />
+                                            <button onClick={() => updatePlate({plan: experimentPlan.filter(p => p.id !== item.id)})} className="text-slate-400 hover:text-red-500 text-[10px] font-bold px-2 transition">&times;</button>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         </div>
-                    </div>
-                    <div className="flex-shrink-0 flex flex-col justify-start gap-4" style={{maxWidth:'300px',minWidth:'180px'}}>
-                        <div className="w-full flex flex-col items-end">
-                            <label className="text-xs font-bold text-slate-600 mb-2 w-full text-right">🔗 External Image Links</label>
-                            {displayImages.length > 0 ? (
-                                <div className="flex flex-wrap justify-end gap-2 max-w-[280px]">
-                                    {displayImages.map((imgSrc, idx) => {
-                                        const directSrc = getDirectImageUrl(imgSrc);
-                                        return (
-                                            <div key={idx} className="relative inline-block group">
-                                                <a href={imgSrc} target="_blank" rel="noopener noreferrer" onClick={(e) => {
-                                                    if (e.target.tagName === 'IMG' && !e.target.src.startsWith('data:image/svg+xml')) { e.preventDefault(); setZoomImage(directSrc); }
-                                                }}>
-                                                    <img src={directSrc} alt={`Ref ${idx+1}`} style={{maxHeight:'150px', maxWidth:'250px'}} className="object-contain rounded-lg border border-slate-200 shadow-sm bg-white hover:opacity-90" />
-                                                </a>
-                                                <button onClick={()=>{ updatePlate({images: displayImages.filter((_, i) => i !== idx)}); }} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold shadow opacity-0 group-hover:opacity-100 transition-opacity">&times;</button>
-                                            </div>
-                                        )})}
+                        <div className="flex-shrink-0 flex flex-col justify-start gap-4" style={{maxWidth:'300px',minWidth:'180px'}}>
+                            <div className="w-full flex flex-col items-end">
+                                <label className="text-xs font-bold text-slate-600 mb-2 w-full text-right">🔗 External Image Links</label>
+                                {displayImages.length > 0 ? (
+                                    <div className="flex flex-wrap justify-end gap-2 max-w-[280px]">
+                                        {displayImages.map((imgSrc, idx) => {
+                                            const directSrc = getDirectImageUrl(imgSrc);
+                                            return (
+                                                <div key={idx} className="relative inline-block group">
+                                                    <a href={imgSrc} target="_blank" rel="noopener noreferrer" onClick={(e) => {
+                                                        if (e.target.tagName === 'IMG' && !e.target.src.startsWith('data:image/svg+xml')) { e.preventDefault(); setZoomImage(directSrc); }
+                                                    }}>
+                                                        <img src={directSrc} alt={`Ref ${idx+1}`} style={{maxHeight:'150px', maxWidth:'250px'}} className="object-contain rounded-lg border border-slate-200 shadow-sm bg-white hover:opacity-90" />
+                                                    </a>
+                                                    <button onClick={()=>{ updatePlate({images: displayImages.filter((_, i) => i !== idx)}); }} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold shadow opacity-0 group-hover:opacity-100 transition-opacity">&times;</button>
+                                                </div>
+                                            )})}
+                                        <button onClick={()=>{
+                                            const url = prompt("Paste direct link(s) to images:");
+                                            if(url && url.trim()) {
+                                                const urls = url.split(/[\s,]+/).filter(u => u.trim() !== '');
+                                                updatePlate({images: [...displayImages, ...urls]});
+                                            }
+                                        }} className="flex items-center justify-center bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg text-blue-600 font-bold h-[50px] w-[35px] text-xl shadow-sm">+</button>
+                                    </div>
+                                ) : (
                                     <button onClick={()=>{
                                         const url = prompt("Paste direct link(s) to images:");
                                         if(url && url.trim()) {
                                             const urls = url.split(/[\s,]+/).filter(u => u.trim() !== '');
                                             updatePlate({images: [...displayImages, ...urls]});
                                         }
-                                    }} className="flex items-center justify-center bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg text-blue-600 font-bold h-[50px] w-[35px] text-xl shadow-sm">+</button>
+                                    }} className="text-xs font-bold text-blue-600 bg-blue-50 p-4 rounded-lg border-2 border-dashed border-blue-300 shadow-sm hover:bg-blue-100 transition-colors w-full text-center">+ Add Image Link(s)</button>
+                                )}
+                            </div>
+                            <div className="w-full flex flex-col items-end border-t border-slate-200 pt-3">
+                                <label className="text-xs font-bold text-slate-600 mb-2 w-full text-right">🔗 Document Links</label>
+                                <div className="flex flex-col gap-1 w-full mb-3 max-h-[140px] overflow-y-auto custom-scrollbar">
+                                    {documents.length === 0 && <span className="text-[10px] text-slate-400 italic text-right w-full">No documents attached.</span>}
+                                    {documents.map(doc => (
+                                        <div key={doc.id} className="flex items-center justify-between bg-slate-50 border border-slate-200 p-1.5 rounded-lg shadow-sm group">
+                                            <div className="flex items-center gap-2 truncate flex-1 cursor-pointer" onClick={() => {
+                                                const nn = prompt("Rename document:", doc.name);
+                                                if(nn) updatePlate({documents: documents.map(d=>d.id===doc.id ? {...d, name: nn.trim()} : d)});
+                                            }}>
+                                                <span className="text-sm">🔗</span>
+                                                <span className="text-[10px] font-bold text-slate-700 truncate group-hover:text-blue-600">{doc.name}</span>
+                                            </div>
+                                            <button onClick={() => updatePlate({documents: documents.filter(d=>d.id!==doc.id)})} className="text-slate-400 hover:text-red-500 font-bold px-1 opacity-0 group-hover:opacity-100">&times;</button>
+                                        </div>
+                                    ))}
                                 </div>
-                            ) : (
-                                <button onClick={()=>{
-                                    const url = prompt("Paste direct link(s) to images:");
+                                <label className="cursor-pointer text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 hover:bg-blue-100 px-3 py-1.5 rounded-lg shadow-sm transition-colors w-full text-center" onClick={()=>{
+                                    const url = prompt("Paste Google Drive link:");
                                     if(url && url.trim()) {
-                                        const urls = url.split(/[\s,]+/).filter(u => u.trim() !== '');
-                                        updatePlate({images: [...displayImages, ...urls]});
+                                        let name = url;
+                                        try { const p = new URL(url); name = p.hostname; } catch(e){}
+                                        updatePlate({ documents: [...documents, {id: Date.now().toString(), name: name, type: 'link', data: url.trim()}] });
                                     }
-                                }} className="text-xs font-bold text-blue-600 bg-blue-50 p-4 rounded-lg border-2 border-dashed border-blue-300 shadow-sm hover:bg-blue-100 transition-colors w-full text-center">+ Add Image Link(s)</button>
+                                }}>+ Add Document Link</label>
+                            </div>
+                        </div>
+                    </div>
+                </CollapsibleSection>
+
+                {/* SEZIONE 2: FORMAT E DOSI */}
+                <CollapsibleSection title="Format & Custom Concentrations" icon="⚙️">
+                    <div className="flex flex-wrap gap-4 items-stretch">
+                        <div className="border border-slate-200 bg-slate-50 rounded-lg p-3 flex flex-col gap-2 flex-1 w-full md:min-w-[350px]">
+                            <div className="text-[10px] uppercase font-bold text-slate-500 mb-1">Format, Dose & Units</div>
+                            <div className="flex flex-wrap gap-3 items-end">
+                                <div>
+                                    <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Plate Format</label>
+                                    <select value={plateType} onChange={e=>{
+                                        const dim = PLATES_DEF[e.target.value] || PLATES_DEF['96'];
+                                        const nGrid = Array(dim.rows).fill(null).map((_,r)=>Array(dim.cols).fill(null).map((_,c)=>grid[r]?.[c]||''));
+                                        const nCell = Array(dim.rows).fill(null).map((_,r)=>Array(dim.cols).fill(null).map((_,c)=>cellConfig[r]?.[c]||{excluded:false, role:null, conc:null, region:'Primary', manualOverride:false}));
+                                        updatePlate({ plateType: e.target.value, grid: nGrid, cellConfig: nCell });
+                                    }} className="border border-blue-300 text-blue-700 font-bold rounded-lg p-1.5 w-32 text-xs bg-blue-50 cursor-pointer outline-none">
+                                        <option value="96">96-well Plate</option>
+                                        <option value="48">48-well Plate</option>
+                                        <option value="24">24-well Plate</option>
+                                        <option value="12">12-well Plate</option>
+                                        <option value="6">6-well Plate</option>
+                                        <option value="1">1 Petri Dish</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Unit</label>
+                                    <select value={unit || 'µM'} onChange={e=>updatePlate({unit: e.target.value})} className="border border-slate-300 rounded-lg p-1.5 w-20 text-xs bg-white font-bold text-slate-800 outline-none">
+                                        <option value="µM">µM</option><option value="µg/mL">µg/mL</option><option value="nM">nM</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Max Conc</label>
+                                    <input type="number" step="0.1" value={topConcStr} onChange={e=>updatePlate({topConcStr: e.target.value})} className="border border-slate-300 rounded-lg p-1.5 w-20 text-xs outline-none focus:border-blue-500"/>
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Dil. Factor</label>
+                                    <input type="number" step="0.1" value={dilFactorStr} onChange={e=>updatePlate({dilFactorStr: e.target.value})} className="border border-slate-300 rounded-lg p-1.5 w-16 text-xs outline-none focus:border-blue-500"/>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="border border-slate-200 bg-slate-50 rounded-lg p-3 flex flex-col gap-2 flex-1 w-full md:min-w-[350px]">
+                            <div className="text-[10px] uppercase font-bold text-slate-500 mb-1">Custom Concentrations</div>
+                            <div className="flex flex-wrap gap-2 items-center">
+                                <select id={`cc-sel-${activeTest.id}`} className="border border-slate-300 rounded-lg p-1.5 text-xs w-28 bg-white outline-none">
+                                    <option value="">Compound…</option>{allCmpds.map(c=><option key={c} value={c}>{c}</option>)}
+                                </select>
+                                <input type="number" id={`cc-top-${activeTest.id}`} className="border border-slate-300 rounded-lg p-1.5 w-20 text-xs outline-none" placeholder="Top µM"/>
+                                <input type="number" id={`cc-dil-${activeTest.id}`} className="border border-slate-300 rounded-lg p-1.5 w-16 text-xs outline-none" placeholder="Dil" defaultValue={dFact}/>
+                                <button onClick={()=>{
+                                    const c=document.getElementById(`cc-sel-${activeTest.id}`).value;
+                                    const t=parseFloat(document.getElementById(`cc-top-${activeTest.id}`).value);
+                                    const d=parseFloat(document.getElementById(`cc-dil-${activeTest.id}`).value)||dFact;
+                                    if(c&&!isNaN(t)&&t>0&&d>0){setCustomConc({...customConc,[c]:{top:t,dil:d}}); document.getElementById(`cc-top-${activeTest.id}`).value='';}
+                                }} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm">Set</button>
+                            </div>
+                            {Object.keys(customConc).length>0 && (
+                                <div className="flex flex-wrap gap-1 mt-1">
+                                    {Object.entries(customConc).map(([c,s])=>(
+                                        <span key={c} className="bg-indigo-50 border border-indigo-200 text-indigo-800 text-[10px] px-2 py-0.5 rounded-md flex items-center gap-1 font-bold shadow-sm">
+                                            {c}: {s.top}µM ÷ {s.dil}
+                                            <button onClick={()=>{const n={...customConc}; delete n[c]; setCustomConc(n);}} className="text-red-500 hover:text-red-700 font-black">&times;</button>
+                                        </span>
+                                    ))}
+                                </div>
                             )}
                         </div>
-                        <div className="w-full flex flex-col items-end border-t border-slate-200 pt-3">
-                            <label className="text-xs font-bold text-slate-600 mb-2 w-full text-right">🔗 Document Links</label>
-                            <div className="flex flex-col gap-1 w-full mb-3 max-h-[140px] overflow-y-auto custom-scrollbar">
-                                {documents.length === 0 && <span className="text-[10px] text-slate-400 italic text-right w-full">No documents attached.</span>}
-                                {documents.map(doc => (
-                                    <div key={doc.id} className="flex items-center justify-between bg-slate-50 border border-slate-200 p-1.5 rounded-lg shadow-sm group">
-                                        <div className="flex items-center gap-2 truncate flex-1 cursor-pointer" onClick={() => {
-                                            const nn = prompt("Rename document:", doc.name);
-                                            if(nn) updatePlate({documents: documents.map(d=>d.id===doc.id ? {...d, name: nn.trim()} : d)});
-                                        }}>
-                                            <span className="text-sm">🔗</span>
-                                            <span className="text-[10px] font-bold text-slate-700 truncate group-hover:text-blue-600">{doc.name}</span>
-                                        </div>
-                                        <button onClick={() => updatePlate({documents: documents.filter(d=>d.id!==doc.id)})} className="text-slate-400 hover:text-red-500 font-bold px-1 opacity-0 group-hover:opacity-100">&times;</button>
+                    </div>
+                </CollapsibleSection>
+
+                {/* SEZIONE 3: DATA GRID & MAP */}
+                <CollapsibleSection title="Data Grid & Visual Plate Map" icon="🧫">
+                    <div className="flex flex-col xl:flex-row gap-6">
+                        {fsPanel === 'data' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('data')}></div>}
+                        
+                        <div className={`bg-slate-50 border border-slate-200 p-4 min-w-0 flex flex-col ${fsPanel === 'data' ? FS_CLASSES : 'rounded-xl xl:w-1/2'}`}>
+                            <PanelHeader title={`Data Grid (${activePlateDim.rows}x${activePlateDim.cols})`} panelId="data" extra={
+                                <div className="flex bg-slate-200 p-1 rounded-lg shadow-inner mr-4">
+                                    <button onClick={()=>setTableView('od')} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableView==='od'?'bg-white text-blue-700 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>Raw OD</button>
+                                    <button onClick={()=>setTableView('conc')} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableView==='conc'?'bg-white text-blue-700 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>Concentrations</button>
+                                    <button onClick={()=>setTableView('region')} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableView==='region'?'bg-white text-blue-700 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>Regions</button>
+                                </div>
+                            }/>
+                            <div className="text-[10px] text-slate-500 mb-3 italic px-1 flex justify-between">
+                                <span>
+                                    {tableView === 'od' && "Input raw ODs. Right-click to exclude points or override."}
+                                    {tableView === 'conc' && "Manually override concentrations per well."}
+                                    {tableView === 'region' && "Assign regions for independent IC50 plots."}
+                                </span>
+                                {activeSel && <span className="text-red-500 font-bold bg-red-50 px-1.5 py-0.5 rounded border border-red-100">Del/Backspace to Clear</span>}
+                            </div>
+                            <div className={`border border-slate-300 rounded-lg bg-white select-none relative w-full overflow-auto shadow-sm ${fsPanel==='data'?'flex-1':''}`}>
+                                <table className="w-full border-collapse table-fixed min-w-[700px] relative z-10">
+                                    <thead><tr>
+                                        <th className="bg-slate-200 border border-slate-300 p-1 text-xs text-slate-600 w-8">R\C</th>
+                                        <th className="bg-slate-100 border border-slate-300 p-1 text-[10px] text-slate-600 w-28">Row Cmpd →</th>
+                                        {COLS.map((col,c)=>(
+                                            <th key={col} className="bg-slate-50 border border-slate-300 p-1">
+                                                <div className="text-[11px] text-slate-500 font-black">{col}</div>
+                                                <select value={compounds[c]} onChange={e=>updateCmp(c,e.target.value)}
+                                                    className="w-full text-center border border-slate-300 rounded p-0.5 font-bold text-blue-800 text-[10px] h-6 bg-white cursor-pointer outline-none focus:ring-1 focus:ring-blue-500">
+                                                    <option value="">Col Cmpd ↓</option>
+                                                    {allCmpds.map(o=><option key={o} value={o}>{o}</option>)}
+                                                </select>
+                                            </th>
+                                        ))}
+                                    </tr></thead>
+                                    <tbody>{ROWS.map((rl,r)=>(
+                                        <tr key={rl}>
+                                            <td className="bg-slate-100 border border-slate-300 font-black text-center text-xs text-slate-700">{rl}</td>
+                                            <td className="bg-slate-50 border border-slate-300 p-1 align-middle">
+                                                <select value={rowCompounds[r]} onChange={e=>updateRowCmp(r,e.target.value)}
+                                                    className="w-full text-center border border-slate-300 rounded p-0.5 font-bold text-blue-800 text-[10px] h-6 bg-white cursor-pointer outline-none focus:ring-1 focus:ring-blue-500">
+                                                    <option value="">Row Cmpd →</option>
+                                                    {allCmpds.map(o=><option key={o} value={o}>{o}</option>)}
+                                                </select>
+                                            </td>
+                                            {COLS.map((col,c)=>{
+                                                const cfg=cellConfig[r][c];
+                                                let val = '';
+                                                if(tableView === 'od') val = grid[r][c]===''?'':(focusedCell&&focusedCell.r===r&&focusedCell.c===c?grid[r][c]:displayVal(r,c));
+                                                else if(tableView === 'conc') val = cfg.conc !== null && cfg.conc !== undefined ? cfg.conc : '';
+                                                else if(tableView === 'region') val = cfg.region || 'Primary';
+                                                
+                                                const isSelBox = currentSelectionBox && r >= currentSelectionBox.minR && r <= currentSelectionBox.maxR && c >= currentSelectionBox.minC && c <= currentSelectionBox.maxC;
+                                                const isFillBox = activeFill && r >= activeFill.minR && r <= activeFill.maxR && c >= activeFill.minC && c <= activeFill.maxC && !isSelBox;
+                                                let cellStyle = {};
+                                                
+                                                if (tableView === 'region') {
+                                                    const rColor = getRegionColor(cfg.region);
+                                                    if (isSelBox) cellStyle.backgroundColor = '#bfdbfe';
+                                                    else if (isFillBox) cellStyle.backgroundColor = '#bbf7d0';
+                                                    else if (rColor !== 'transparent') cellStyle.backgroundColor = rColor + '33';
+                                                } else {
+                                                    if (isSelBox) cellStyle.backgroundColor = '#eff6ff';
+                                                    if (isFillBox) cellStyle.backgroundColor = '#f0fdf4';
+                                                }
+                                                
+                                                const shadows = [];
+                                                if (isSelBox) {
+                                                    if (r === currentSelectionBox.minR) shadows.push(`inset 0 2px 0 0 #2563eb`);
+                                                    if (r === currentSelectionBox.maxR) shadows.push(`inset 0 -2px 0 0 #2563eb`);
+                                                    if (c === currentSelectionBox.minC) shadows.push(`inset 2px 0 0 0 #2563eb`);
+                                                    if (c === currentSelectionBox.maxC) shadows.push(`inset -2px 0 0 0 #2563eb`);
+                                                }
+                                                if (isFillBox) {
+                                                    if (r === activeFill.minR && r < currentSelectionBox.minR) shadows.push(`inset 0 2px 0 0 #16a34a`);
+                                                    if (r === activeFill.maxR && r > currentSelectionBox.maxR) shadows.push(`inset 0 -2px 0 0 #16a34a`);
+                                                    if (c === activeFill.minC && c < currentSelectionBox.minC) shadows.push(`inset 2px 0 0 0 #16a34a`);
+                                                    if (c === activeFill.maxC && c > currentSelectionBox.maxC) shadows.push(`inset -2px 0 0 0 #16a34a`);
+                                                }
+                                                if (shadows.length > 0) cellStyle.boxShadow = shadows.join(', ');
+                                                
+                                                return (
+                                                    <td key={col} className={`border p-0 ${fsPanel==='data'?'h-12':'h-9'} relative align-middle ${cfg.excluded?'border-slate-300':'border-slate-200'} ${tableView==='region'?'cursor-crosshair':''}`}
+                                                        onContextMenu={e=>handleContextMenu(e,r,c)} onMouseDown={e=>onMouseDownCell(e,r,c)} onMouseEnter={()=>onMouseEnterCell(r,c)} onDoubleClick={()=>onDoubleClickCell(r,c)} onDragOver={e=>e.preventDefault()} onDrop={e=>handleDrop(e,r,c)}
+                                                        style={cellStyle}>
+                                                        {!cfg.excluded && tableView==='od' && !isSelBox && !isFillBox && <div className="absolute inset-0 pointer-events-none z-0" style={{backgroundColor:heatColor(r,c)}}/>}
+                                                        {isSelBox && r === currentSelectionBox.maxR && c === currentSelectionBox.maxC && (
+                                                            <div className="fill-handle absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-blue-600 border border-white cursor-crosshair z-40 rounded-sm" onMouseDown={onMouseDownFillHandle} title="Drag to fill"/>
+                                                        )}
+                                                        {isSelBox && r === currentSelectionBox.minR && c === currentSelectionBox.minC && (
+                                                            <div draggable={true} onDragStart={e=>{e.dataTransfer.setData('text/plain', JSON.stringify({ action: 'copy', sel: currentSelectionBox, grid, cellConfig, sourcePlate: activeTest.id }));}}
+                                                                className="drag-handle absolute -top-2 -left-2 w-4 h-4 bg-blue-600 text-white rounded shadow cursor-grab z-40 flex items-center justify-center text-[10px]">✥</div>
+                                                        )}
+                                                        {tableView === 'region' ? (
+                                                            <div className={`w-full h-full flex items-center justify-center select-none text-[10px] font-bold ${cfg.region && cfg.region !== 'Primary' ? 'text-slate-800' : 'text-slate-400'}`}>{cfg.region || 'Primary'}</div>
+                                                        ) : (
+                                                            <input type="text" value={val}
+                                                                onFocus={()=>{ if(!cfg.excluded && tableView==='od') setFocusedCell({r,c}); }} onBlur={()=>setFocusedCell(null)}
+                                                                onChange={ev=>{ if(cfg.excluded) return; if(tableView === 'od') updateCell(r,c,ev.target.value); else if(tableView === 'conc') updateCellCfg(r,c,{conc: ev.target.value}); }}
+                                                                onPaste={ev=>{ if(!cfg.excluded && tableView==='od') handlePaste(ev,r,c); }}
+                                                                readOnly={cfg.excluded}
+                                                                className={`grid-input relative z-10 pt-3 pb-0.5 font-medium ${cfg.excluded?'line-through text-slate-400':'text-slate-900'} ${fsPanel==='data'?'text-sm pt-4':'text-[0.75rem]'}`}/>
+                                                        )}
+                                                        {cfg.role && !cfg.excluded && tableView === 'od' && (
+                                                            <div className="absolute top-0 left-0 max-w-[85%] truncate text-[6.5px] sm:text-[7.5px] leading-tight font-bold bg-blue-500 text-white px-1 py-0.5 rounded-br pointer-events-none z-20 shadow-sm">{cfg.role}</div>
+                                                        )}
+                                                        {cfg.role && tableView === 'conc' && (
+                                                            <div className="absolute top-0 left-0 max-w-[85%] truncate text-[6.5px] sm:text-[7.5px] leading-tight font-bold bg-slate-300 text-slate-800 px-1 py-0.5 rounded-br pointer-events-none z-20">{cfg.role}</div>
+                                                        )}
+                                                    </td>
+                                                );
+                                            })}
+                                        </tr>
+                                    ))}</tbody>
+                                </table>
+                            </div>
+                        </div>
+                        
+                        {fsPanel === 'map' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('map')}></div>}
+
+                        <div className={`bg-slate-50 border border-slate-200 p-4 min-w-0 flex flex-col ${fsPanel === 'map' ? FS_CLASSES : 'rounded-xl xl:w-1/2'}`}>
+                            <PanelHeader title="Visual Plate Map" panelId="map" subtitle="Shows compound & exact concentration assigned." extra={
+                                <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1 shadow-sm">
+                                    <span className="text-[10px] text-slate-500 font-bold">A</span>
+                                    <input type="range" min="4" max="24" value={mapFontSize} onChange={e=>setMapFontSize(Number(e.target.value))} className="w-16 accent-blue-600"/>
+                                    <span className="text-[12px] text-slate-500 font-bold">A</span>
+                                </div>
+                            }/>
+                            <div className={`bg-white p-4 rounded-xl border border-slate-200 flex flex-col justify-evenly gap-1 shadow-sm overflow-auto ${fsPanel==='map'?'flex-1':''}`}>
+                                <div className="flex w-full mb-1">
+                                    <div className="w-4 lg:w-6"/>
+                                    {COLS.map(c=><div key={c} className="flex-1 text-center text-[10px] lg:text-xs font-black text-slate-400">{c}</div>)}
+                                </div>
+                                {ROWS.map((rl,r)=>(
+                                    <div key={rl} className={`flex items-center w-full ${fsPanel==='map' ? 'flex-1 min-h-[30px]' : ''}`}>
+                                        <div className="w-4 lg:w-6 text-[10px] lg:text-xs font-black text-slate-400 text-center">{rl}</div>
+                                        {COLS.map((col,c)=>{
+                                            const cfg = cellConfig[r][c];
+                                            const role = getRole(r,c);
+                                            const {bg,dark} = wellColor(r,c);
+                                            const conc = concOf(r,c,role);
+                                            const tc = dark?'text-slate-900':'text-white';
+                                            const fSize1 = fsPanel === 'map' ? mapFontSize * 1.5 : mapFontSize;
+                                            const fSize2 = fsPanel === 'map' ? (mapFontSize - 1) * 1.5 : (mapFontSize - 1);
+                                            const reg = cfg.region || 'Primary';
+                                            const regColor = getRegionColor(reg);
+                                            const hasCustomReg = reg !== 'Primary';
+                                            
+                                            let bTop = r === 0 || (cellConfig[r-1] && (cellConfig[r-1][c].region || 'Primary') !== reg);
+                                            let bBottom = r === activePlateDim.rows - 1 || (cellConfig[r+1] && (cellConfig[r+1][c].region || 'Primary') !== reg);
+                                            let bLeft = c === 0 || (cellConfig[r] && (cellConfig[r][c-1].region || 'Primary') !== reg);
+                                            let bRight = c === activePlateDim.cols - 1 || (cellConfig[r] && (cellConfig[r][c+1].region || 'Primary') !== reg);
+                                            
+                                            const shadows = [];
+                                            if (hasCustomReg) {
+                                                if (bTop) shadows.push(`inset 0 3px 0 0 ${regColor}`);
+                                                if (bBottom) shadows.push(`inset 0 -3px 0 0 ${regColor}`);
+                                                if (bLeft) shadows.push(`inset 3px 0 0 0 ${regColor}`);
+                                                if (bRight) shadows.push(`inset -3px 0 0 0 ${regColor}`);
+                                            }
+                                            const boxSh = shadows.length > 0 ? shadows.join(', ') : 'none';
+                                            
+                                            return (
+                                                <div key={col} className="flex-1 flex justify-center items-center relative py-1 h-full" style={{backgroundColor: hasCustomReg ? regColor + '1a' : 'transparent', boxShadow: boxSh }}>
+                                                    <div className={`z-10 ${mapSizeClass} rounded-full border border-black/10 flex flex-col items-center justify-center shadow-sm overflow-hidden`} style={{backgroundColor:bg}}>
+                                                        <span style={{fontSize: fSize1+'px'}} className={`font-bold leading-tight truncate max-w-full text-center px-0.5 ${tc}`}>{role||'–'}</span>
+                                                        {role&&!['cells','pbs','medium'].includes(role.toLowerCase())&&(
+                                                            <span style={{fontSize: fSize2+'px'}} className={`font-bold truncate max-w-full px-0.5 opacity-90 ${tc}`}>{formatConc(conc)}</span>
+                                                        )}
+                                                    </div>
+                                                    {hasCustomReg && bTop && bLeft && (
+                                                        <span className="absolute top-[2px] left-[3px] text-[9px] font-black z-20 px-1 rounded shadow-sm whitespace-nowrap" style={{color: '#fff', backgroundColor: regColor}}>{reg}</span>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
                                     </div>
                                 ))}
                             </div>
-                            <label className="cursor-pointer text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 hover:bg-blue-100 px-3 py-1.5 rounded-lg shadow-sm transition-colors w-full text-center" onClick={()=>{
-                                const url = prompt("Paste Google Drive link:");
-                                if(url && url.trim()) {
-                                    let name = url;
-                                    try { const p = new URL(url); name = p.hostname; } catch(e){}
-                                    updatePlate({ documents: [...documents, {id: Date.now().toString(), name: name, type: 'link', data: url.trim()}] });
-                                }
-                            }}>+ Add Document Link</label>
                         </div>
                     </div>
-                </div>
+                </CollapsibleSection>
 
-                {/* FORMAT, DOSE & METADATA */}
-                <div className="flex flex-wrap gap-4 items-stretch bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-                    <div className="border border-slate-200 bg-slate-50 rounded-lg p-3 flex flex-col gap-2 flex-1 w-full md:min-w-[350px]">
-                        <div className="text-[10px] uppercase font-bold text-slate-500 mb-1">Format, Dose & Units</div>
-                        <div className="flex flex-wrap gap-3 items-end">
-                            <div>
-                                <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Plate Format</label>
-                                <select value={plateType} onChange={e=>{
-                                    const dim = PLATES_DEF[e.target.value] || PLATES_DEF['96'];
-                                    const nGrid = Array(dim.rows).fill(null).map((_,r)=>Array(dim.cols).fill(null).map((_,c)=>grid[r]?.[c]||''));
-                                    const nCell = Array(dim.rows).fill(null).map((_,r)=>Array(dim.cols).fill(null).map((_,c)=>cellConfig[r]?.[c]||{excluded:false, role:null, conc:null, region:'Primary', manualOverride:false}));
-                                    updatePlate({ plateType: e.target.value, grid: nGrid, cellConfig: nCell });
-                                }} className="border border-blue-300 text-blue-700 font-bold rounded-lg p-1.5 w-32 text-xs bg-blue-50 cursor-pointer outline-none">
-                                    <option value="96">96-well Plate</option>
-                                    <option value="48">48-well Plate</option>
-                                    <option value="24">24-well Plate</option>
-                                    <option value="12">12-well Plate</option>
-                                    <option value="6">6-well Plate</option>
-                                    <option value="1">1 Petri Dish</option>
-                                </select>
+                {/* SEZIONE 4: DATA SETTINGS & FITTING */}
+                <CollapsibleSection title="Normalization & Fitting Settings" icon="📊">
+                    <div className="flex flex-wrap gap-4 items-stretch">
+                        <div className="border border-slate-200 bg-slate-50 rounded-lg p-4 flex flex-col gap-3 flex-1 min-w-[300px]">
+                            <div className="text-[10px] uppercase font-bold text-slate-500">Data Normalization</div>
+                            <div className="grid grid-cols-2 gap-3 items-center">
+                                <div className="flex flex-col gap-1">
+                                    <label className="text-[11px] font-bold text-slate-600">100% Control:</label>
+                                    <div className="flex items-center gap-1">
+                                        <select value={ctrlType} onChange={e=>updatePlate({ctrlType: e.target.value})} className="border border-slate-300 rounded-md p-1.5 text-xs bg-white w-full outline-none">
+                                            <option value="none">Manual</option>{allCmpds.map(c=><option key={c} value={c}>{c}</option>)}
+                                        </select>
+                                        <button onClick={autoCalcControl} className="text-[10px] font-bold bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-2 py-1.5 rounded-md shadow-sm transition whitespace-nowrap">🎯 Auto</button>
+                                    </div>
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                    <label className="text-[11px] font-bold text-slate-600">Control OD:</label>
+                                    <div className="flex items-center gap-1">
+                                        <input type="number" step="0.01" value={ctrlODStr} onChange={e=>updatePlate({ctrlODStr: e.target.value})}
+                                            className={`border border-slate-300 rounded-md p-1.5 w-full text-xs font-bold outline-none ${ctrlType!=='none'?'bg-slate-200 text-slate-500':'text-emerald-700'}`} readOnly={ctrlType!=='none'}/>
+                                    </div>
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                    <label className="text-[11px] font-bold text-slate-600">Subtract Blank:</label>
+                                    <select value={bgType} onChange={e=>updatePlate({bgType: e.target.value})} className="border border-slate-300 rounded-md p-1.5 text-xs bg-white w-full outline-none">
+                                        <option value="none">None</option><option value="manual">Manual</option>{allCmpds.map(c=><option key={c} value={c}>{c}</option>)}
+                                    </select>
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                    <label className="text-[11px] font-bold text-slate-600">Calc/Man Blank OD:</label>
+                                    {bgType==='manual' ? (
+                                        <input type="number" step="0.01" value={bgManualStr} onChange={e=>updatePlate({bgManualStr: e.target.value})} className="border border-slate-300 rounded-md p-1.5 w-full text-xs font-bold text-red-600 outline-none"/>
+                                    ) : bgType!=='none' ? (
+                                        <span className="text-xs font-bold text-red-600 bg-white border border-slate-200 px-3 py-1.5 rounded-md w-full">{bgOD.toFixed(4)}</span>
+                                    ) : (<span className="text-xs text-slate-400 bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-md w-full">—</span>)}
+                                </div>
                             </div>
-                            <div>
-                                <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Unit</label>
-                                <select value={unit || 'µM'} onChange={e=>updatePlate({unit: e.target.value})} className="border border-slate-300 rounded-lg p-1.5 w-20 text-xs bg-white font-bold text-slate-800 outline-none">
-                                    <option value="µM">µM</option><option value="µg/mL">µg/mL</option><option value="nM">nM</option>
-                                </select>
+                        </div>
+                        <div className="border border-slate-200 bg-slate-50 rounded-lg p-4 flex flex-col gap-3 flex-[2] min-w-[350px]">
+                            <div className="text-[10px] uppercase font-bold text-slate-500">Errors, Outliers & Fitting</div>
+                            <div className="flex flex-wrap items-center gap-4 bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
+                                <div className="flex items-center gap-2">
+                                    <label className="text-xs font-bold text-slate-700 flex items-center gap-2 cursor-pointer hover:text-blue-600">
+                                        <input type="checkbox" checked={useFixedSD} onChange={e=>updatePlate({useFixedSD: e.target.checked})} className="cursor-pointer w-4 h-4 accent-blue-600"/>
+                                        Fixed SD ±:
+                                    </label>
+                                    <input type="number" step="0.1" min="0" value={fixedSDStr} onChange={e=>updatePlate({fixedSDStr: e.target.value})} disabled={!useFixedSD} className={`border border-slate-300 rounded-md p-1.5 w-16 text-xs outline-none ${!useFixedSD ? 'bg-slate-100 text-slate-400' : 'bg-white font-bold text-blue-700'}`}/>
+                                </div>
+                                <div className="w-px h-8 bg-slate-200 hidden sm:block"></div>
+                                <div className="flex flex-col gap-1">
+                                    <button onClick={autoTouchAll} className="text-[10px] uppercase tracking-wider bg-amber-100 hover:bg-amber-200 text-amber-800 font-bold py-1.5 px-3 rounded-md shadow-sm flex items-center justify-center gap-1 transition-colors">🎯 Auto-Touch All SD</button>
+                                    <button onClick={revertNormalSD} className="text-[9px] uppercase tracking-wider bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-1 px-3 rounded-md shadow-sm flex items-center justify-center gap-1 transition-colors">🔄 Revert Normal SD</button>
+                                </div>
+                                <div className="w-px h-8 bg-slate-200 hidden md:block"></div>
+                                <div className="flex items-center gap-2">
+                                    <label className="text-xs font-bold text-slate-600">Outlier Threshold (×Err):</label>
+                                    <input type="number" step="0.1" min="0.1" value={outlierThreshStr} onChange={e=>updatePlate({outlierThreshStr: e.target.value})} className="border border-slate-300 rounded-md p-1.5 w-16 text-xs outline-none"/>
+                                </div>
+                                <button onClick={()=>cleanOutliers()} className="bg-yellow-400 hover:bg-yellow-500 text-slate-900 font-black py-2 px-4 rounded-lg text-xs shadow-sm ml-auto">🧹 Clean Outliers</button>
                             </div>
-                            <div>
-                                <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Max Conc</label>
-                                <input type="number" step="0.1" value={topConcStr} onChange={e=>updatePlate({topConcStr: e.target.value})} className="border border-slate-300 rounded-lg p-1.5 w-20 text-xs outline-none focus:border-blue-500"/>
-                            </div>
-                            <div>
-                                <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Dil. Factor</label>
-                                <input type="number" step="0.1" value={dilFactorStr} onChange={e=>updatePlate({dilFactorStr: e.target.value})} className="border border-slate-300 rounded-lg p-1.5 w-16 text-xs outline-none focus:border-blue-500"/>
+                            <div className="flex flex-wrap items-center gap-4 mt-1">
+                                <label className="flex items-center gap-2 bg-blue-50 border border-blue-200 hover:bg-blue-100 rounded-md px-3 py-1.5 cursor-pointer transition-colors shadow-sm">
+                                    <span className="text-xs font-bold text-blue-800">Fit IC50 (4PL)</span>
+                                    <input type="checkbox" checked={fitIC50} onChange={e=>updatePlate({fitIC50: e.target.checked})} className="w-4 h-4 cursor-pointer accent-blue-600"/>
+                                </label>
+                                <label className="flex items-center gap-2 bg-slate-100 border border-slate-200 hover:bg-slate-200 rounded-md px-3 py-1.5 cursor-pointer transition-colors shadow-sm">
+                                    <span className="text-xs font-bold text-slate-700">Show Excl. Points</span>
+                                    <input type="checkbox" checked={showExcl} onChange={e=>updatePlate({showExcl: e.target.checked})} className="w-4 h-4 cursor-pointer accent-slate-600"/>
+                                </label>
+                                <button onClick={restoreAll} className="text-xs bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 font-bold py-1.5 px-3 rounded-md ml-auto shadow-sm transition-colors">↩️ Restore All Excluded</button>
                             </div>
                         </div>
                     </div>
-                    <div className="border border-slate-200 bg-slate-50 rounded-lg p-3 flex flex-col gap-2 flex-1 w-full md:min-w-[350px]">
-                        <div className="text-[10px] uppercase font-bold text-slate-500 mb-1">Custom Concentrations</div>
-                        <div className="flex flex-wrap gap-2 items-center">
-                            <select id={`cc-sel-${activeTest.id}`} className="border border-slate-300 rounded-lg p-1.5 text-xs w-28 bg-white outline-none">
-                                <option value="">Compound…</option>{allCmpds.map(c=><option key={c} value={c}>{c}</option>)}
-                            </select>
-                            <input type="number" id={`cc-top-${activeTest.id}`} className="border border-slate-300 rounded-lg p-1.5 w-20 text-xs outline-none" placeholder="Top µM"/>
-                            <input type="number" id={`cc-dil-${activeTest.id}`} className="border border-slate-300 rounded-lg p-1.5 w-16 text-xs outline-none" placeholder="Dil" defaultValue={dFact}/>
-                            <button onClick={()=>{
-                                const c=document.getElementById(`cc-sel-${activeTest.id}`).value;
-                                const t=parseFloat(document.getElementById(`cc-top-${activeTest.id}`).value);
-                                const d=parseFloat(document.getElementById(`cc-dil-${activeTest.id}`).value)||dFact;
-                                if(c&&!isNaN(t)&&t>0&&d>0){setCustomConc({...customConc,[c]:{top:t,dil:d}}); document.getElementById(`cc-top-${activeTest.id}`).value='';}
-                            }} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm">Set</button>
+                </CollapsibleSection>
+
+                {/* SEZIONE 5: CHARTS SETTINGS E COLORI */}
+                <CollapsibleSection title="Chart Configuration & Filters" icon="🎨" defaultOpen={false}>
+                    <div className="flex flex-col gap-4">
+                        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+                            {plotCmps.length>0 && (
+                                <div className="flex-1">
+                                    <span className="text-xs font-black text-slate-500 uppercase tracking-wide block mb-2">Filter & Color Series</span>
+                                    <div className="flex flex-wrap gap-3">
+                                        {plotCmps.map((cmp)=>{
+                                            const hex=cmpColor(cmp, allCmpds.indexOf(cmp));
+                                            return (
+                                                <div key={cmp} className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm">
+                                                    <input type="checkbox" checked={!hiddenCmpds[cmp]} onChange={e=>setHiddenCmpds(p=>({...p,[cmp]:!e.target.checked}))} className="w-4 h-4 cursor-pointer accent-blue-600"/>
+                                                    <label style={{cursor:'pointer',display:'inline-flex',alignItems:'center',position:'relative'}}>
+                                                        <span className="color-swatch" style={{backgroundColor:hex}}/>
+                                                        <input type="color" value={hex} style={{position:'absolute',opacity:0,cursor:'pointer',width:0,height:0}} onChange={e=>setCmpColors({...cmpColors,[cmp]:e.target.value})}/>
+                                                    </label>
+                                                    <span className="text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600" onClick={()=>setHiddenCmpds(p=>({...p,[cmp]:!p[cmp]}))}>{cmp}</span>
+                                                    <button onClick={() => { const newHidden = {}; plotCmps.forEach(c => { if(c !== cmp) newHidden[c] = true; }); setHiddenCmpds(newHidden); }} className="text-[10px] bg-blue-100 text-blue-800 hover:bg-blue-200 px-2 py-0.5 rounded-md transition-colors ml-1 font-bold">Solo</button>
+                                                </div>
+                                            );
+                                        })}
+                                        <button onClick={() => setHiddenCmpds({})} className="text-xs font-bold text-slate-500 underline hover:text-slate-800 ml-2">Show All</button>
+                                    </div>
+                                </div>
+                            )}
+                            <div className="flex gap-3">
+                                <button onClick={()=>setShowErrPanel(!showErrPanel)} className={`font-bold py-2 px-4 rounded-lg text-xs transition-colors shadow-sm ${showErrPanel ? 'bg-orange-100 border border-orange-400 text-orange-800' : 'bg-white hover:bg-orange-50 text-orange-700 border border-orange-300'}`}>⚠️ Manual SD</button>
+                                <button onClick={()=>setShowChartCfg(!showChartCfg)} className={`font-bold py-2 px-4 rounded-lg text-xs transition-colors shadow-sm ${showChartCfg ? 'bg-slate-200 border border-slate-400 text-slate-900' : 'bg-white hover:bg-slate-50 text-slate-800 border border-slate-300'}`}>⚙️ Chart Config</button>
+                            </div>
                         </div>
-                        {Object.keys(customConc).length>0 && (
-                            <div className="flex flex-wrap gap-1 mt-1">
-                                {Object.entries(customConc).map(([c,s])=>(
-                                    <span key={c} className="bg-indigo-50 border border-indigo-200 text-indigo-800 text-[10px] px-2 py-0.5 rounded-md flex items-center gap-1 font-bold shadow-sm">
-                                        {c}: {s.top}µM ÷ {s.dil}
-                                        <button onClick={()=>{const n={...customConc}; delete n[c]; setCustomConc(n);}} className="text-red-500 hover:text-red-700 font-black">&times;</button>
-                                    </span>
+
+                        {showChartCfg && (
+                            <div className="p-5 bg-white border border-slate-300 rounded-xl grid grid-cols-2 lg:grid-cols-4 gap-4 shadow-sm">
+                                {[['X Min','xMin'],['X Max','xMax'],['Y Min','yMin'],['Y Max','yMax']].map(([lbl,k])=>(
+                                    <div key={k} className="flex flex-col gap-1">
+                                        <label className="text-xs font-bold text-slate-600">{lbl}</label>
+                                        <input type="number" placeholder="Auto" value={chartCfg[k]} onChange={e=>updatePlate({chartCfg:{...chartCfg,[k]:e.target.value}})} className="border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500"/>
+                                    </div>
                                 ))}
+                                <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-600">X Axis Label</label><input type="text" placeholder={`Log₁₀ [Conc. (${unit})]`} value={chartCfg.xAxisLabel} onChange={e=>updatePlate({chartCfg:{...chartCfg,xAxisLabel:e.target.value}})} className="border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500"/></div>
+                                <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-600">Font Size</label><input type="number" value={chartCfg.fontSize} onChange={e=>updatePlate({chartCfg:{...chartCfg,fontSize:parseFloat(e.target.value)||12}})} className="border border-slate-300 rounded-md p-2 text-sm outline-none"/></div>
+                                <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-600">Point Style</label><select value={chartCfg.ptStyle} onChange={e=>updatePlate({chartCfg:{...chartCfg,ptStyle:e.target.value}})} className="border border-slate-300 rounded-md p-2 text-sm bg-white outline-none">{['circle','triangle','rect','rectRot','cross','crossRot','star'].map(s=><option key={s} value={s}>{s}</option>)}</select></div>
+                                <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-600">Point Size</label><input type="number" value={chartCfg.ptSize} onChange={e=>updatePlate({chartCfg:{...chartCfg,ptSize:parseFloat(e.target.value)||1}})} className="border border-slate-300 rounded-md p-2 text-sm outline-none"/></div>
+                                <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-600">Line Style / Thick.</label><div className="flex gap-2"><select value={chartCfg.lineStyle} onChange={e=>updatePlate({chartCfg:{...chartCfg,lineStyle:e.target.value}})} className="border border-slate-300 rounded-md p-2 text-sm bg-white flex-1 outline-none"><option value="solid">Solid</option><option value="dashed">Dashed</option><option value="dotted">Dotted</option></select><input type="number" value={chartCfg.lineThickness} onChange={e=>updatePlate({chartCfg:{...chartCfg,lineThickness:parseFloat(e.target.value)||2}})} className="border border-slate-300 rounded-md p-2 text-sm w-16 outline-none"/></div></div>
+                                <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-600">Chart Split (DR Width %)</label><input type="range" min="20" max="80" step="5" value={drWidth} onChange={e=>setDrWidth(parseInt(e.target.value))} className="accent-blue-600 mt-2" disabled={!fitIC50}/></div>
+                                <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-600">Chart Height (px)</label><input type="range" min="200" max="1000" step="25" value={chartH} onChange={e=>setChartH(parseInt(e.target.value))} className="accent-blue-600 mt-2"/></div>
+                            </div>
+                        )}
+
+                        {showErrPanel && (
+                            <div className="p-5 bg-orange-50 border border-orange-200 rounded-xl shadow-sm mt-4">
+                                <h3 className="text-sm font-black text-orange-800 mb-4">Manual SD Overrides (Weighted Fit)</h3>
+                                <div className="flex flex-col gap-4">
+                                    {Object.entries(processedByRegion).map(([reg, comps]) => (
+                                        <div key={reg} className="bg-white rounded-lg border border-orange-200 p-4 shadow-sm">
+                                            <h4 className="text-xs font-black text-slate-500 uppercase mb-3 border-b border-slate-100 pb-2">Region: {reg}</h4>
+                                            <div className="flex flex-col gap-4">
+                                                {comps.filter(d=>!hiddenCmpds[d.name]&&d.vPts.length>0).map(comp=>(
+                                                    <div key={comp.name} className="flex flex-col gap-2">
+                                                        <div className="flex items-center justify-between">
+                                                            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full" style={{backgroundColor:comp.color}}/><span className="text-sm font-bold text-slate-800">{comp.name}</span></div>
+                                                            <div className="flex gap-2">
+                                                                <button onClick={()=>{autoTouchSD(reg, comp.name); updatePlate({useFixedSD: true});}} className="text-xs text-orange-700 bg-orange-100 hover:bg-orange-200 px-2 py-1 rounded font-bold shadow-sm">🎯 Auto-Touch</button>
+                                                                <button onClick={()=>cleanOutliers(reg, comp.name)} className="text-xs text-yellow-800 bg-yellow-100 hover:bg-yellow-200 px-2 py-1 rounded font-bold shadow-sm">🧹 Clean Outliers</button>
+                                                                <button onClick={()=>clearAllManual(comp.name)} className="text-xs text-orange-600 hover:underline font-bold">🔄 Reset</button>
+                                                            </div>
+                                                        </div>
+                                                        <div className="flex flex-wrap gap-3 p-3 bg-slate-50 rounded-lg border border-slate-100">
+                                                            {comp.vPts.map(pt=>{
+                                                                const isOverridden = hasManual(comp.name, pt.realX);
+                                                                return <ErrInput key={`${comp.name}-${concKey(pt.realX)}`} label={`${formatConc(pt.realX)} µM`} value={isOverridden ? getManual(comp.name,pt.realX) : pt.sdRaw} sdRaw={pt.sdRaw} isOverridden={isOverridden} onSave={v=>storeManual(comp.name,pt.realX,v)} onReset={()=>clearManual(comp.name,pt.realX)} />
+                                                            })}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         )}
                     </div>
-                </div>
-
-                {/* DATA GRID & MAP */}
-                <div className="flex flex-col xl:flex-row gap-6 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                    {/* OVERLAY SFONDO SCURO QUANDO LA GRIGLIA E' ESPANSA */}
-                    {fsPanel === 'data' && <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[90]" onClick={() => toggleFs('data')}></div>}
-                    
-                    <div className={`bg-slate-50 rounded-xl border border-slate-200 p-4 min-w-0 flex flex-col ${fsPanel === 'data' ? 'fixed inset-4 md:inset-10 z-[100] bg-white shadow-2xl' : 'xl:w-1/2'}`}>
-                        <PanelHeader title={`Data Grid (${activePlateDim.rows}x${activePlateDim.cols})`} panelId="data" extra={
-                            <div className="flex bg-slate-200 p-1 rounded-lg shadow-inner mr-4">
-                                <button onClick={()=>setTableView('od')} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableView==='od'?'bg-white text-blue-700 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>Raw OD</button>
-                                <button onClick={()=>setTableView('conc')} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableView==='conc'?'bg-white text-blue-700 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>Concentrations</button>
-                                <button onClick={()=>setTableView('region')} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableView==='region'?'bg-white text-blue-700 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>Regions</button>
-                            </div>
-                        }/>
-                        <div className="text-[10px] text-slate-500 mb-3 italic px-1 flex justify-between">
-                            <span>
-                                {tableView === 'od' && "Input raw ODs. Right-click to exclude points or override."}
-                                {tableView === 'conc' && "Manually override concentrations per well."}
-                                {tableView === 'region' && "Assign regions for independent IC50 plots."}
-                            </span>
-                            {activeSel && <span className="text-red-500 font-bold bg-red-50 px-1.5 py-0.5 rounded border border-red-100">Del/Backspace to Clear</span>}
-                        </div>
-                        {/* Modificato overflow-x-auto con overflow-auto per consentire lo scrolling verticale a schermo intero */}
-                        <div className={`border border-slate-300 rounded-lg bg-white select-none relative w-full overflow-auto shadow-sm ${fsPanel==='data'?'flex-1':''}`}>
-                            <table className="w-full border-collapse table-fixed min-w-[700px] relative z-10">
-                                <thead><tr>
-                                    <th className="bg-slate-200 border border-slate-300 p-1 text-xs text-slate-600 w-8">R\C</th>
-                                    <th className="bg-slate-100 border border-slate-300 p-1 text-[10px] text-slate-600 w-28">Row Cmpd →</th>
-                                    {COLS.map((col,c)=>(
-                                        <th key={col} className="bg-slate-50 border border-slate-300 p-1">
-                                            <div className="text-[11px] text-slate-500 font-black">{col}</div>
-                                            <select value={compounds[c]} onChange={e=>updateCmp(c,e.target.value)}
-                                                className="w-full text-center border border-slate-300 rounded p-0.5 font-bold text-blue-800 text-[10px] h-6 bg-white cursor-pointer outline-none focus:ring-1 focus:ring-blue-500">
-                                                <option value="">Col Cmpd ↓</option>
-                                                {allCmpds.map(o=><option key={o} value={o}>{o}</option>)}
-                                            </select>
-                                        </th>
-                                    ))}
-                                </tr></thead>
-                                <tbody>{ROWS.map((rl,r)=>(
-                                    <tr key={rl}>
-                                        <td className="bg-slate-100 border border-slate-300 font-black text-center text-xs text-slate-700">{rl}</td>
-                                        <td className="bg-slate-50 border border-slate-300 p-1 align-middle">
-                                            <select value={rowCompounds[r]} onChange={e=>updateRowCmp(r,e.target.value)}
-                                                className="w-full text-center border border-slate-300 rounded p-0.5 font-bold text-blue-800 text-[10px] h-6 bg-white cursor-pointer outline-none focus:ring-1 focus:ring-blue-500">
-                                                <option value="">Row Cmpd →</option>
-                                                {allCmpds.map(o=><option key={o} value={o}>{o}</option>)}
-                                            </select>
-                                        </td>
-                                        {COLS.map((col,c)=>{
-                                            const cfg=cellConfig[r][c];
-                                            let val = '';
-                                            if(tableView === 'od') val = grid[r][c]===''?'':(focusedCell&&focusedCell.r===r&&focusedCell.c===c?grid[r][c]:displayVal(r,c));
-                                            else if(tableView === 'conc') val = cfg.conc !== null && cfg.conc !== undefined ? cfg.conc : '';
-                                            else if(tableView === 'region') val = cfg.region || 'Primary';
-                                            
-                                            const isSelBox = currentSelectionBox && r >= currentSelectionBox.minR && r <= currentSelectionBox.maxR && c >= currentSelectionBox.minC && c <= currentSelectionBox.maxC;
-                                            const isFillBox = activeFill && r >= activeFill.minR && r <= activeFill.maxR && c >= activeFill.minC && c <= activeFill.maxC && !isSelBox;
-                                            let cellStyle = {};
-                                            
-                                            if (tableView === 'region') {
-                                                const rColor = getRegionColor(cfg.region);
-                                                if (isSelBox) cellStyle.backgroundColor = '#bfdbfe';
-                                                else if (isFillBox) cellStyle.backgroundColor = '#bbf7d0';
-                                                else if (rColor !== 'transparent') cellStyle.backgroundColor = rColor + '33';
-                                            } else {
-                                                if (isSelBox) cellStyle.backgroundColor = '#eff6ff';
-                                                if (isFillBox) cellStyle.backgroundColor = '#f0fdf4';
-                                            }
-                                            
-                                            const shadows = [];
-                                            if (isSelBox) {
-                                                if (r === currentSelectionBox.minR) shadows.push(`inset 0 2px 0 0 #2563eb`);
-                                                if (r === currentSelectionBox.maxR) shadows.push(`inset 0 -2px 0 0 #2563eb`);
-                                                if (c === currentSelectionBox.minC) shadows.push(`inset 2px 0 0 0 #2563eb`);
-                                                if (c === currentSelectionBox.maxC) shadows.push(`inset -2px 0 0 0 #2563eb`);
-                                            }
-                                            if (isFillBox) {
-                                                if (r === activeFill.minR && r < currentSelectionBox.minR) shadows.push(`inset 0 2px 0 0 #16a34a`);
-                                                if (r === activeFill.maxR && r > currentSelectionBox.maxR) shadows.push(`inset 0 -2px 0 0 #16a34a`);
-                                                if (c === activeFill.minC && c < currentSelectionBox.minC) shadows.push(`inset 2px 0 0 0 #16a34a`);
-                                                if (c === activeFill.maxC && c > currentSelectionBox.maxC) shadows.push(`inset -2px 0 0 0 #16a34a`);
-                                            }
-                                            if (shadows.length > 0) cellStyle.boxShadow = shadows.join(', ');
-                                            
-                                            return (
-                                                <td key={col} className={`border p-0 ${fsPanel==='data'?'h-12':'h-9'} relative align-middle ${cfg.excluded?'border-slate-300':'border-slate-200'} ${tableView==='region'?'cursor-crosshair':''}`}
-                                                    onContextMenu={e=>handleContextMenu(e,r,c)} onMouseDown={e=>onMouseDownCell(e,r,c)} onMouseEnter={()=>onMouseEnterCell(r,c)} onDoubleClick={()=>onDoubleClickCell(r,c)} onDragOver={e=>e.preventDefault()} onDrop={e=>handleDrop(e,r,c)}
-                                                    style={cellStyle}>
-                                                    {!cfg.excluded && tableView==='od' && !isSelBox && !isFillBox && <div className="absolute inset-0 pointer-events-none z-0" style={{backgroundColor:heatColor(r,c)}}/>}
-                                                    {isSelBox && r === currentSelectionBox.maxR && c === currentSelectionBox.maxC && (
-                                                        <div className="fill-handle absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-blue-600 border border-white cursor-crosshair z-40 rounded-sm" onMouseDown={onMouseDownFillHandle} title="Drag to fill"/>
-                                                    )}
-                                                    {isSelBox && r === currentSelectionBox.minR && c === currentSelectionBox.minC && (
-                                                        <div draggable={true} onDragStart={e=>{e.dataTransfer.setData('text/plain', JSON.stringify({ action: 'copy', sel: currentSelectionBox, grid, cellConfig, sourcePlate: activeTest.id }));}}
-                                                            className="drag-handle absolute -top-2 -left-2 w-4 h-4 bg-blue-600 text-white rounded shadow cursor-grab z-40 flex items-center justify-center text-[10px]">✥</div>
-                                                    )}
-                                                    {tableView === 'region' ? (
-                                                        <div className={`w-full h-full flex items-center justify-center select-none text-[10px] font-bold ${cfg.region && cfg.region !== 'Primary' ? 'text-slate-800' : 'text-slate-400'}`}>{cfg.region || 'Primary'}</div>
-                                                    ) : (
-                                                        <input type="text" value={val}
-                                                            onFocus={()=>{ if(!cfg.excluded && tableView==='od') setFocusedCell({r,c}); }} onBlur={()=>setFocusedCell(null)}
-                                                            onChange={ev=>{ if(cfg.excluded) return; if(tableView === 'od') updateCell(r,c,ev.target.value); else if(tableView === 'conc') updateCellCfg(r,c,{conc: ev.target.value}); }}
-                                                            onPaste={ev=>{ if(!cfg.excluded && tableView==='od') handlePaste(ev,r,c); }}
-                                                            readOnly={cfg.excluded}
-                                                            className={`grid-input relative z-10 pt-3 pb-0.5 font-medium ${cfg.excluded?'line-through text-slate-400':'text-slate-900'} ${fsPanel==='data'?'text-sm pt-4':'text-[0.75rem]'}`}/>
-                                                    )}
-                                                    {cfg.role && !cfg.excluded && tableView === 'od' && (
-                                                        <div className="absolute top-0 left-0 max-w-[85%] truncate text-[6.5px] sm:text-[7.5px] leading-tight font-bold bg-blue-500 text-white px-1 py-0.5 rounded-br pointer-events-none z-20 shadow-sm">{cfg.role}</div>
-                                                    )}
-                                                    {cfg.role && tableView === 'conc' && (
-                                                        <div className="absolute top-0 left-0 max-w-[85%] truncate text-[6.5px] sm:text-[7.5px] leading-tight font-bold bg-slate-300 text-slate-800 px-1 py-0.5 rounded-br pointer-events-none z-20">{cfg.role}</div>
-                                                    )}
-                                                </td>
-                                            );
-                                        })}
-                                    </tr>
-                                ))}</tbody>
-                            </table>
-                        </div>
-                    </div>
-                    
-                    {/* OVERLAY SFONDO SCURO QUANDO LA MAPPA E' ESPANSA */}
-                    {fsPanel === 'map' && <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[90]" onClick={() => toggleFs('map')}></div>}
-
-                    <div className={`bg-slate-50 rounded-xl border border-slate-200 p-4 min-w-0 flex flex-col ${fsPanel === 'map' ? 'fixed inset-4 md:inset-10 z-[100] bg-white shadow-2xl' : 'xl:w-1/2'}`}>
-                        <PanelHeader title="Visual Plate Map" panelId="map" subtitle="Shows compound & exact concentration assigned." extra={
-                            <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1 shadow-sm">
-                                <span className="text-[10px] text-slate-500 font-bold">A</span>
-                                <input type="range" min="4" max="24" value={mapFontSize} onChange={e=>setMapFontSize(Number(e.target.value))} className="w-16 accent-blue-600"/>
-                                <span className="text-[12px] text-slate-500 font-bold">A</span>
-                            </div>
-                        }/>
-                        <div className={`bg-white p-4 rounded-xl border border-slate-200 flex flex-col justify-evenly gap-1 shadow-sm overflow-auto ${fsPanel==='map'?'flex-1':''}`}>
-                            <div className="flex w-full mb-1">
-                                <div className="w-4 lg:w-6"/>
-                                {COLS.map(c=><div key={c} className="flex-1 text-center text-[10px] lg:text-xs font-black text-slate-400">{c}</div>)}
-                            </div>
-                            {ROWS.map((rl,r)=>(
-                                <div key={rl} className={`flex items-center w-full ${fsPanel==='map' ? 'flex-1 min-h-[30px]' : ''}`}>
-                                    <div className="w-4 lg:w-6 text-[10px] lg:text-xs font-black text-slate-400 text-center">{rl}</div>
-                                    {COLS.map((col,c)=>{
-                                        const cfg = cellConfig[r][c];
-                                        const role = getRole(r,c);
-                                        const {bg,dark} = wellColor(r,c);
-                                        const conc = concOf(r,c,role);
-                                        const tc = dark?'text-slate-900':'text-white';
-                                        const fSize1 = fsPanel === 'map' ? mapFontSize * 1.5 : mapFontSize;
-                                        const fSize2 = fsPanel === 'map' ? (mapFontSize - 1) * 1.5 : (mapFontSize - 1);
-                                        const reg = cfg.region || 'Primary';
-                                        const regColor = getRegionColor(reg);
-                                        const hasCustomReg = reg !== 'Primary';
-                                        
-                                        let bTop = r === 0 || (cellConfig[r-1] && (cellConfig[r-1][c].region || 'Primary') !== reg);
-                                        let bBottom = r === activePlateDim.rows - 1 || (cellConfig[r+1] && (cellConfig[r+1][c].region || 'Primary') !== reg);
-                                        let bLeft = c === 0 || (cellConfig[r] && (cellConfig[r][c-1].region || 'Primary') !== reg);
-                                        let bRight = c === activePlateDim.cols - 1 || (cellConfig[r] && (cellConfig[r][c+1].region || 'Primary') !== reg);
-                                        
-                                        const shadows = [];
-                                        if (hasCustomReg) {
-                                            if (bTop) shadows.push(`inset 0 3px 0 0 ${regColor}`);
-                                            if (bBottom) shadows.push(`inset 0 -3px 0 0 ${regColor}`);
-                                            if (bLeft) shadows.push(`inset 3px 0 0 0 ${regColor}`);
-                                            if (bRight) shadows.push(`inset -3px 0 0 0 ${regColor}`);
-                                        }
-                                        const boxSh = shadows.length > 0 ? shadows.join(', ') : 'none';
-                                        
-                                        return (
-                                            <div key={col} className="flex-1 flex justify-center items-center relative py-1 h-full" style={{backgroundColor: hasCustomReg ? regColor + '1a' : 'transparent', boxShadow: boxSh }}>
-                                                <div className={`z-10 ${mapSizeClass} rounded-full border border-black/10 flex flex-col items-center justify-center shadow-sm overflow-hidden`} style={{backgroundColor:bg}}>
-                                                    <span style={{fontSize: fSize1+'px'}} className={`font-bold leading-tight truncate max-w-full text-center px-0.5 ${tc}`}>{role||'–'}</span>
-                                                    {role&&!['cells','pbs','medium'].includes(role.toLowerCase())&&(
-                                                        <span style={{fontSize: fSize2+'px'}} className={`font-bold truncate max-w-full px-0.5 opacity-90 ${tc}`}>{formatConc(conc)}</span>
-                                                    )}
-                                                </div>
-                                                {hasCustomReg && bTop && bLeft && (
-                                                    <span className="absolute top-[2px] left-[3px] text-[9px] font-black z-20 px-1 rounded shadow-sm whitespace-nowrap" style={{color: '#fff', backgroundColor: regColor}}>{reg}</span>
-                                                )}
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-
-                {/* DATA SETTINGS & FITTING */}
-                <div className="flex flex-wrap gap-4 items-stretch bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-                    <div className="border border-slate-200 bg-slate-50 rounded-lg p-4 flex flex-col gap-3 flex-1 min-w-[300px]">
-                        <div className="text-[10px] uppercase font-bold text-slate-500">Data Normalization</div>
-                        <div className="grid grid-cols-2 gap-3 items-center">
-                            <div className="flex flex-col gap-1">
-                                <label className="text-[11px] font-bold text-slate-600">100% Control:</label>
-                                <div className="flex items-center gap-1">
-                                    <select value={ctrlType} onChange={e=>updatePlate({ctrlType: e.target.value})} className="border border-slate-300 rounded-md p-1.5 text-xs bg-white w-full outline-none">
-                                        <option value="none">Manual</option>{allCmpds.map(c=><option key={c} value={c}>{c}</option>)}
-                                    </select>
-                                    <button onClick={autoCalcControl} className="text-[10px] font-bold bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-2 py-1.5 rounded-md shadow-sm transition whitespace-nowrap">🎯 Auto</button>
-                                </div>
-                            </div>
-                            <div className="flex flex-col gap-1">
-                                <label className="text-[11px] font-bold text-slate-600">Control OD:</label>
-                                <div className="flex items-center gap-1">
-                                    <input type="number" step="0.01" value={ctrlODStr} onChange={e=>updatePlate({ctrlODStr: e.target.value})}
-                                        className={`border border-slate-300 rounded-md p-1.5 w-full text-xs font-bold outline-none ${ctrlType!=='none'?'bg-slate-200 text-slate-500':'text-emerald-700'}`} readOnly={ctrlType!=='none'}/>
-                                </div>
-                            </div>
-                            <div className="flex flex-col gap-1">
-                                <label className="text-[11px] font-bold text-slate-600">Subtract Blank:</label>
-                                <select value={bgType} onChange={e=>updatePlate({bgType: e.target.value})} className="border border-slate-300 rounded-md p-1.5 text-xs bg-white w-full outline-none">
-                                    <option value="none">None</option><option value="manual">Manual</option>{allCmpds.map(c=><option key={c} value={c}>{c}</option>)}
-                                </select>
-                            </div>
-                            <div className="flex flex-col gap-1">
-                                <label className="text-[11px] font-bold text-slate-600">Calc/Man Blank OD:</label>
-                                {bgType==='manual' ? (
-                                    <input type="number" step="0.01" value={bgManualStr} onChange={e=>updatePlate({bgManualStr: e.target.value})} className="border border-slate-300 rounded-md p-1.5 w-full text-xs font-bold text-red-600 outline-none"/>
-                                ) : bgType!=='none' ? (
-                                    <span className="text-xs font-bold text-red-600 bg-white border border-slate-200 px-3 py-1.5 rounded-md w-full">{bgOD.toFixed(4)}</span>
-                                ) : (<span className="text-xs text-slate-400 bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-md w-full">—</span>)}
-                            </div>
-                        </div>
-                    </div>
-                    <div className="border border-slate-200 bg-slate-50 rounded-lg p-4 flex flex-col gap-3 flex-[2] min-w-[350px]">
-                        <div className="text-[10px] uppercase font-bold text-slate-500">Errors, Outliers & Fitting</div>
-                        <div className="flex flex-wrap items-center gap-4 bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
-                            <div className="flex items-center gap-2">
-                                <label className="text-xs font-bold text-slate-700 flex items-center gap-2 cursor-pointer hover:text-blue-600">
-                                    <input type="checkbox" checked={useFixedSD} onChange={e=>updatePlate({useFixedSD: e.target.checked})} className="cursor-pointer w-4 h-4 accent-blue-600"/>
-                                    Fixed SD ±:
-                                </label>
-                                <input type="number" step="0.1" min="0" value={fixedSDStr} onChange={e=>updatePlate({fixedSDStr: e.target.value})} disabled={!useFixedSD} className={`border border-slate-300 rounded-md p-1.5 w-16 text-xs outline-none ${!useFixedSD ? 'bg-slate-100 text-slate-400' : 'bg-white font-bold text-blue-700'}`}/>
-                            </div>
-                            <div className="w-px h-8 bg-slate-200 hidden sm:block"></div>
-                            <div className="flex flex-col gap-1">
-                                <button onClick={autoTouchAll} className="text-[10px] uppercase tracking-wider bg-amber-100 hover:bg-amber-200 text-amber-800 font-bold py-1.5 px-3 rounded-md shadow-sm flex items-center justify-center gap-1 transition-colors">🎯 Auto-Touch All SD</button>
-                                <button onClick={revertNormalSD} className="text-[9px] uppercase tracking-wider bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-1 px-3 rounded-md shadow-sm flex items-center justify-center gap-1 transition-colors">🔄 Revert Normal SD</button>
-                            </div>
-                            <div className="w-px h-8 bg-slate-200 hidden md:block"></div>
-                            <div className="flex items-center gap-2">
-                                <label className="text-xs font-bold text-slate-600">Outlier Threshold (×Err):</label>
-                                <input type="number" step="0.1" min="0.1" value={outlierThreshStr} onChange={e=>updatePlate({outlierThreshStr: e.target.value})} className="border border-slate-300 rounded-md p-1.5 w-16 text-xs outline-none"/>
-                            </div>
-                            <button onClick={()=>cleanOutliers()} className="bg-yellow-400 hover:bg-yellow-500 text-slate-900 font-black py-2 px-4 rounded-lg text-xs shadow-sm ml-auto">🧹 Clean Outliers</button>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-4 mt-1">
-                            <label className="flex items-center gap-2 bg-blue-50 border border-blue-200 hover:bg-blue-100 rounded-md px-3 py-1.5 cursor-pointer transition-colors shadow-sm">
-                                <span className="text-xs font-bold text-blue-800">Fit IC50 (4PL)</span>
-                                <input type="checkbox" checked={fitIC50} onChange={e=>updatePlate({fitIC50: e.target.checked})} className="w-4 h-4 cursor-pointer accent-blue-600"/>
-                            </label>
-                            <label className="flex items-center gap-2 bg-slate-100 border border-slate-200 hover:bg-slate-200 rounded-md px-3 py-1.5 cursor-pointer transition-colors shadow-sm">
-                                <span className="text-xs font-bold text-slate-700">Show Excl. Points</span>
-                                <input type="checkbox" checked={showExcl} onChange={e=>updatePlate({showExcl: e.target.checked})} className="w-4 h-4 cursor-pointer accent-slate-600"/>
-                            </label>
-                            <button onClick={restoreAll} className="text-xs bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 font-bold py-1.5 px-3 rounded-md ml-auto shadow-sm transition-colors">↩️ Restore All Excluded</button>
-                        </div>
-                    </div>
-                </div>
-
-                {/* CHARTS SETTINGS & DISPLAY */}
-                <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center p-4 bg-white border border-slate-200 rounded-xl shadow-sm gap-4">
-                    {plotCmps.length>0 && (
-                        <div className="flex-1">
-                            <span className="text-xs font-black text-slate-500 uppercase tracking-wide block mb-2">Filter & Color Series</span>
-                            <div className="flex flex-wrap gap-3">
-                                {plotCmps.map((cmp)=>{
-                                    const hex=cmpColor(cmp, allCmpds.indexOf(cmp));
-                                    return (
-                                        <div key={cmp} className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm">
-                                            <input type="checkbox" checked={!hiddenCmpds[cmp]} onChange={e=>setHiddenCmpds(p=>({...p,[cmp]:!e.target.checked}))} className="w-4 h-4 cursor-pointer accent-blue-600"/>
-                                            <label style={{cursor:'pointer',display:'inline-flex',alignItems:'center',position:'relative'}}>
-                                                <span className="color-swatch" style={{backgroundColor:hex}}/>
-                                                <input type="color" value={hex} style={{position:'absolute',opacity:0,cursor:'pointer',width:0,height:0}} onChange={e=>setCmpColors({...cmpColors,[cmp]:e.target.value})}/>
-                                            </label>
-                                            <span className="text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600" onClick={()=>setHiddenCmpds(p=>({...p,[cmp]:!p[cmp]}))}>{cmp}</span>
-                                            <button onClick={() => { const newHidden = {}; plotCmps.forEach(c => { if(c !== cmp) newHidden[c] = true; }); setHiddenCmpds(newHidden); }} className="text-[10px] bg-blue-100 text-blue-800 hover:bg-blue-200 px-2 py-0.5 rounded-md transition-colors ml-1 font-bold">Solo</button>
-                                        </div>
-                                    );
-                                })}
-                                <button onClick={() => setHiddenCmpds({})} className="text-xs font-bold text-slate-500 underline hover:text-slate-800 ml-2">Show All</button>
-                            </div>
-                        </div>
-                    )}
-                    <div className="flex gap-3">
-                        <button onClick={()=>setShowErrPanel(!showErrPanel)} className={`font-bold py-2 px-4 rounded-lg text-xs transition-colors shadow-sm ${showErrPanel ? 'bg-orange-100 border border-orange-400 text-orange-800' : 'bg-white hover:bg-orange-50 text-orange-700 border border-orange-300'}`}>⚠️ Manual SD</button>
-                        <button onClick={()=>setShowChartCfg(!showChartCfg)} className={`font-bold py-2 px-4 rounded-lg text-xs transition-colors shadow-sm ${showChartCfg ? 'bg-slate-200 border border-slate-400 text-slate-900' : 'bg-white hover:bg-slate-50 text-slate-800 border border-slate-300'}`}>⚙️ Chart Config</button>
-                    </div>
-                </div>
-
-                {showChartCfg && (
-                    <div className="p-5 bg-white border border-slate-300 rounded-xl grid grid-cols-2 lg:grid-cols-4 gap-4 shadow-sm">
-                        {[['X Min','xMin'],['X Max','xMax'],['Y Min','yMin'],['Y Max','yMax']].map(([lbl,k])=>(
-                            <div key={k} className="flex flex-col gap-1">
-                                <label className="text-xs font-bold text-slate-600">{lbl}</label>
-                                <input type="number" placeholder="Auto" value={chartCfg[k]} onChange={e=>updatePlate({chartCfg:{...chartCfg,[k]:e.target.value}})} className="border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500"/>
-                            </div>
-                        ))}
-                        <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-600">X Axis Label</label><input type="text" placeholder={`Log₁₀ [Conc. (${unit})]`} value={chartCfg.xAxisLabel} onChange={e=>updatePlate({chartCfg:{...chartCfg,xAxisLabel:e.target.value}})} className="border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500"/></div>
-                        <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-600">Font Size</label><input type="number" value={chartCfg.fontSize} onChange={e=>updatePlate({chartCfg:{...chartCfg,fontSize:parseFloat(e.target.value)||12}})} className="border border-slate-300 rounded-md p-2 text-sm outline-none"/></div>
-                        <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-600">Point Style</label><select value={chartCfg.ptStyle} onChange={e=>updatePlate({chartCfg:{...chartCfg,ptStyle:e.target.value}})} className="border border-slate-300 rounded-md p-2 text-sm bg-white outline-none">{['circle','triangle','rect','rectRot','cross','crossRot','star'].map(s=><option key={s} value={s}>{s}</option>)}</select></div>
-                        <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-600">Point Size</label><input type="number" value={chartCfg.ptSize} onChange={e=>updatePlate({chartCfg:{...chartCfg,ptSize:parseFloat(e.target.value)||1}})} className="border border-slate-300 rounded-md p-2 text-sm outline-none"/></div>
-                        <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-600">Line Style / Thick.</label><div className="flex gap-2"><select value={chartCfg.lineStyle} onChange={e=>updatePlate({chartCfg:{...chartCfg,lineStyle:e.target.value}})} className="border border-slate-300 rounded-md p-2 text-sm bg-white flex-1 outline-none"><option value="solid">Solid</option><option value="dashed">Dashed</option><option value="dotted">Dotted</option></select><input type="number" value={chartCfg.lineThickness} onChange={e=>updatePlate({chartCfg:{...chartCfg,lineThickness:parseFloat(e.target.value)||2}})} className="border border-slate-300 rounded-md p-2 text-sm w-16 outline-none"/></div></div>
-                        <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-600">Chart Split (DR Width %)</label><input type="range" min="20" max="80" step="5" value={drWidth} onChange={e=>setDrWidth(parseInt(e.target.value))} className="accent-blue-600 mt-2" disabled={!fitIC50}/></div>
-                        <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-600">Chart Height (px)</label><input type="range" min="200" max="1000" step="25" value={chartH} onChange={e=>setChartH(parseInt(e.target.value))} className="accent-blue-600 mt-2"/></div>
-                    </div>
-                )}
-
-                {showErrPanel && (
-                    <div className="p-5 bg-orange-50 border border-orange-200 rounded-xl shadow-sm">
-                        <h3 className="text-sm font-black text-orange-800 mb-4">Manual SD Overrides (Weighted Fit)</h3>
-                        <div className="flex flex-col gap-4">
-                            {Object.entries(processedByRegion).map(([reg, comps]) => (
-                                <div key={reg} className="bg-white rounded-lg border border-orange-200 p-4 shadow-sm">
-                                    <h4 className="text-xs font-black text-slate-500 uppercase mb-3 border-b border-slate-100 pb-2">Region: {reg}</h4>
-                                    <div className="flex flex-col gap-4">
-                                        {comps.filter(d=>!hiddenCmpds[d.name]&&d.vPts.length>0).map(comp=>(
-                                            <div key={comp.name} className="flex flex-col gap-2">
-                                                <div className="flex items-center justify-between">
-                                                    <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full" style={{backgroundColor:comp.color}}/><span className="text-sm font-bold text-slate-800">{comp.name}</span></div>
-                                                    <div className="flex gap-2">
-                                                        <button onClick={()=>{autoTouchSD(reg, comp.name); updatePlate({useFixedSD: true});}} className="text-xs text-orange-700 bg-orange-100 hover:bg-orange-200 px-2 py-1 rounded font-bold shadow-sm">🎯 Auto-Touch</button>
-                                                        <button onClick={()=>cleanOutliers(reg, comp.name)} className="text-xs text-yellow-800 bg-yellow-100 hover:bg-yellow-200 px-2 py-1 rounded font-bold shadow-sm">🧹 Clean Outliers</button>
-                                                        <button onClick={()=>clearAllManual(comp.name)} className="text-xs text-orange-600 hover:underline font-bold">🔄 Reset</button>
-                                                    </div>
-                                                </div>
-                                                <div className="flex flex-wrap gap-3 p-3 bg-slate-50 rounded-lg border border-slate-100">
-                                                    {comp.vPts.map(pt=>{
-                                                        const isOverridden = hasManual(comp.name, pt.realX);
-                                                        return <ErrInput key={`${comp.name}-${concKey(pt.realX)}`} label={`${formatConc(pt.realX)} µM`} value={isOverridden ? getManual(comp.name,pt.realX) : pt.sdRaw} sdRaw={pt.sdRaw} isOverridden={isOverridden} onSave={v=>storeManual(comp.name,pt.realX,v)} onReset={()=>clearManual(comp.name,pt.realX)} />
-                                                    })}
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
+                </CollapsibleSection>
 
                 {/* RENDER ACTUAL CHARTS FOR EACH REGION */}
                 {Object.entries(processedByRegion).map(([reg, comps]) => (
