@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { 
@@ -33,23 +33,41 @@ export const LabNotebook = ({ tests, allCellLines, testCategories, jumpToTest, c
     const exportPDF = async () => {
         const el = document.getElementById('notebook-report-container');
         if (!el) return;
+        
+        const scrollParent = el.closest('.overflow-y-auto') || el;
+        const originalOverflow = scrollParent.style.overflow;
+        const originalHeight = scrollParent.style.height;
+
         const loader = document.getElementById('loader');
         const loaderText = document.getElementById('loader-text');
         if (loader) loader.style.display = 'flex';
         if (loaderText) loaderText.innerText = 'Generating PDF...';
 
         const fixedEls = document.querySelectorAll('.fixed, [style*="position: fixed"]');
-        fixedEls.forEach(el => el.style.display = 'none');
+        fixedEls.forEach(e => e.style.display = 'none');
 
         const noPrintEls = el.querySelectorAll('.no-print');
         noPrintEls.forEach(e => e.style.display = 'none');
 
+        scrollParent.style.overflow = 'visible';
+        scrollParent.style.height = 'auto';
         el.classList.add('pdf-mode');
         window.scrollTo(0, 0);
-        await new Promise(r => setTimeout(r, 500));
+        
+        await new Promise(r => setTimeout(r, 800));
 
         try {
-            const canvas = await html2canvas(el, { scale: 2, useCORS: true, allowTaint: true, backgroundColor: '#f8fafc', logging: false, imageTimeout: 15000, removeContainer: true });
+            const canvas = await html2canvas(el, { 
+                scale: 2, 
+                useCORS: true, 
+                allowTaint: true, 
+                backgroundColor: '#f8fafc', 
+                logging: false, 
+                imageTimeout: 15000, 
+                removeContainer: true,
+                windowWidth: el.scrollWidth,
+                windowHeight: el.scrollHeight
+            });
             const imgData = canvas.toDataURL('image/jpeg', 0.92);
             const pdf = new jsPDF('p', 'pt', 'a4');
             const pageWidth = pdf.internal.pageSize.getWidth();
@@ -72,8 +90,10 @@ export const LabNotebook = ({ tests, allCellLines, testCategories, jumpToTest, c
             console.error(e); alert('Export Failed: ' + e.message);
         } finally {
             el.classList.remove('pdf-mode');
-            fixedEls.forEach(el => el.style.display = '');
+            fixedEls.forEach(e => e.style.display = '');
             noPrintEls.forEach(e => e.style.display = '');
+            scrollParent.style.overflow = originalOverflow;
+            scrollParent.style.height = originalHeight;
             if (loader) loader.style.display = 'none';
         }
     };
@@ -102,6 +122,8 @@ export const LabNotebook = ({ tests, allCellLines, testCategories, jumpToTest, c
                         }
                     } catch(e) {}
                 }));
+            } else if (t.type === 'nmr' || t.type === 'cd') {
+                if (t.compound === filterCmpd) found = true;
             }
             if (!found) return false;
         }
@@ -144,14 +166,14 @@ export const LabNotebook = ({ tests, allCellLines, testCategories, jumpToTest, c
                         </select>
                     </div>
                     <div className="flex flex-col gap-1 w-full md:w-auto flex-1 md:flex-none">
-                        <label className="text-xs font-bold text-slate-500 uppercase">Cell Line</label>
+                        <label className="text-xs font-bold text-slate-500 uppercase">Cell Line / Detail</label>
                         <select value={filterCell} onChange={e=>setFilterCell(e.target.value)} className="border border-slate-300 rounded-lg px-3 py-2 text-sm focus:border-purple-500 outline-none bg-white">
-                            <option value="ALL">All Cell Lines</option>
+                            <option value="ALL">All Associated</option>
                             {allCellLines.map(c => <option key={c} value={c}>{c}</option>)}
                         </select>
                     </div>
                     <div className="flex flex-col gap-1 w-full md:w-auto flex-1 md:flex-none">
-                        <label className="text-xs font-bold text-slate-500 uppercase">Compound</label>
+                        <label className="text-xs font-bold text-slate-500 uppercase">Compound / Sample</label>
                         <select value={filterCmpd} onChange={e=>setFilterCmpd(e.target.value)} className="border border-slate-300 rounded-lg px-3 py-2 text-sm focus:border-purple-500 outline-none bg-white">
                             <option value="ALL">All Compounds</option>
                             {allCmpds.map(c => <option key={c} value={c}>{c}</option>)}
@@ -181,13 +203,13 @@ export const LabNotebook = ({ tests, allCellLines, testCategories, jumpToTest, c
                 <div className="border-t border-slate-100 pt-3 flex flex-wrap gap-6">
                     <span className="text-xs font-bold text-slate-500 uppercase flex items-center">Include in Report:</span>
                     <label className="flex items-center gap-2 cursor-pointer text-sm font-medium text-slate-700">
-                        <input type="checkbox" checked={showImages} onChange={e=>setShowImages(e.target.checked)} className="accent-blue-600 w-4 h-4"/> Images
+                        <input type="checkbox" checked={showImages} onChange={e=>setShowImages(e.target.checked)} className="accent-blue-600 w-4 h-4"/> Images & Attachments
                     </label>
                     <label className="flex items-center gap-2 cursor-pointer text-sm font-medium text-slate-700">
-                        <input type="checkbox" checked={showMap} onChange={e=>setShowMap(e.target.checked)} className="accent-blue-600 w-4 h-4"/> Plate Map
+                        <input type="checkbox" checked={showMap} onChange={e=>setShowMap(e.target.checked)} className="accent-blue-600 w-4 h-4"/> Metadata & Plate Maps
                     </label>
                     <label className="flex items-center gap-2 cursor-pointer text-sm font-medium text-slate-700">
-                        <input type="checkbox" checked={showData} onChange={e=>setShowData(e.target.checked)} className="accent-blue-600 w-4 h-4"/> Data/Intensities
+                        <input type="checkbox" checked={showData} onChange={e=>setShowData(e.target.checked)} className="accent-blue-600 w-4 h-4"/> Raw Data & Tables
                     </label>
                     <label className="flex items-center gap-2 cursor-pointer text-sm font-medium text-slate-700">
                         <input type="checkbox" checked={showGraphs} onChange={e=>setShowGraphs(e.target.checked)} className="accent-blue-600 w-4 h-4"/> Fittings & Graphs
@@ -223,6 +245,9 @@ export const LabNotebook = ({ tests, allCellLines, testCategories, jumpToTest, c
 
 export const NotebookTestItem = ({ test, jumpToTest, onHide, showImages, showMap, showData, showGraphs, customConc, cmpColors, allCmpds }) => {
     const isPlate = test.type && test.type.startsWith('plate-') && test.type !== 'plate-9x9box';
+    const isNMR = test.type === 'nmr';
+    const isCD = test.type === 'cd';
+    
     const activePlateDim = PLATES_DEF[test.plateType] || PLATES_DEF['96'];
     const ROWS = ['A','B','C','D','E','F','G','H','I','J','K','L'].slice(0, activePlateDim?.rows || 8);
     const COLS = Array.from({length: activePlateDim?.cols || 12}, (_, i) => i + 1);
@@ -389,7 +414,7 @@ export const NotebookTestItem = ({ test, jumpToTest, onHide, showImages, showMap
             {/* Header */}
             <div className="bg-slate-50 border-b border-slate-200 px-5 py-3 flex justify-between items-center">
                 <div className="flex items-center gap-3">
-                    <span className="text-xl">{test.type === 'nmr' ? '📉' : test.type === 'plate-9x9box' ? '📦' : '🧫'}</span>
+                    <span className="text-xl">{isNMR ? '📉' : isCD ? '🌀' : test.type === 'plate-9x9box' ? '📦' : '🧫'}</span>
                     <div>
                         <h3 className="font-black text-slate-800 text-lg">{test.name}</h3>
                         <p className="text-xs text-slate-500 font-medium">Instance: {test.instanceName || 'Primary'} • {test.date}</p>
@@ -404,11 +429,12 @@ export const NotebookTestItem = ({ test, jumpToTest, onHide, showImages, showMap
             
             {/* Body */}
             <div className="p-5 flex flex-col gap-6">
-                {/* Comments */}
+                
+                {/* General Comments (Used as the core Notebook Entry) */}
                 {test.comments ? (
                     <div>
                         <h4 className="text-xs font-bold text-slate-400 uppercase mb-2">Notebook Entry / Comments</h4>
-                        <div className="text-sm text-slate-700 bg-slate-50 p-3 rounded-lg border border-slate-100" dangerouslySetInnerHTML={{__html: test.comments}}></div>
+                        <div className="text-sm text-slate-700 bg-slate-50 p-4 rounded-lg border border-slate-100 prose max-w-none" dangerouslySetInnerHTML={{__html: test.comments}}></div>
                     </div>
                 ) : (
                     <p className="text-sm text-slate-400 italic">No notes recorded for this test.</p>
@@ -429,14 +455,75 @@ export const NotebookTestItem = ({ test, jumpToTest, onHide, showImages, showMap
                         <div className="flex flex-wrap gap-2">
                             {test.images.map((imgSrc, idx) => (
                                 <a key={idx} href={imgSrc} target="_blank" rel="noopener noreferrer">
-                                    <img src={getDirectImageUrl(imgSrc)} alt={`Attachment ${idx+1}`} className="h-48 w-auto object-contain rounded border border-slate-200 shadow-sm hover:opacity-80 transition-opacity bg-white" />
+                                    <img src={getDirectImageUrl(imgSrc)} alt={`Attachment ${idx+1}`} style={{ maxWidth: '100%', maxHeight: '400px', objectFit: 'contain', pageBreakInside: 'avoid' }} className="rounded border border-slate-200 shadow-sm hover:opacity-80 transition-opacity bg-white" />
                                 </a>
                             ))}
                         </div>
                     </div>
                 )}
 
-                {/* Map & Data Grid (Full Width, Stacked) */}
+                {/* NMR Specific Data */}
+                {isNMR && showMap && (
+                    <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 avoid-break">
+                        <h4 className="text-xs font-bold text-slate-500 uppercase mb-2">Experimental Setup & Metadata</h4>
+                        <div className="text-sm text-slate-700 grid grid-cols-2 gap-2">
+                            <div><b>Compound:</b> {test.compound || 'N/A'}</div>
+                            <div><b>Target Nuclei:</b> {(test.selectedNuclei || []).join(', ')}</div>
+                            <div className="col-span-2"><b>Sequence:</b> <span className="font-mono bg-white px-2 py-0.5 rounded border border-slate-200">{test.proteinSequence || 'None'}</span></div>
+                        </div>
+                    </div>
+                )}
+                {isNMR && showData && test.chemicalShifts && Object.keys(test.chemicalShifts).length > 0 && (
+                    <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 avoid-break">
+                        <h4 className="text-xs font-bold text-slate-500 uppercase mb-2">Chemical Shifts Table</h4>
+                        <div className="max-h-60 overflow-y-auto custom-scrollbar bg-white border border-slate-200 rounded-lg">
+                            <table className="w-full text-xs text-left">
+                                <thead className="bg-slate-100 sticky top-0">
+                                    <tr><th className="p-2 border-b">Position/Residue</th><th className="p-2 border-b">Atom</th><th className="p-2 border-b">Shift (ppm)</th></tr>
+                                </thead>
+                                <tbody>
+                                    {Object.keys(test.chemicalShifts).map(key => {
+                                        const [idx, ...atomParts] = key.split('-');
+                                        const atom = atomParts.join('-');
+                                        const shift = test.chemicalShifts[key];
+                                        if(!shift) return null;
+                                        return (
+                                            <tr key={key} className="border-b border-slate-50">
+                                                <td className="p-2 font-bold">{parseInt(idx)+1}</td>
+                                                <td className="p-2">{atom}</td>
+                                                <td className="p-2 font-mono text-blue-700">{shift}</td>
+                                            </tr>
+                                        )
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                )}
+
+                {/* CD Specific Data */}
+                {isCD && showMap && (
+                    <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 avoid-break">
+                        <h4 className="text-xs font-bold text-slate-500 uppercase mb-2">Structure Composition</h4>
+                        <div className="text-sm text-slate-700">
+                            {test.structureComposition ? Object.entries(test.structureComposition).map(([k,v]) => (
+                                <span key={k} className="inline-block bg-white border border-slate-200 px-2 py-1 rounded mr-2 mb-2 font-mono"><b>{k}:</b> {v}%</span>
+                            )) : 'No composition data.'}
+                        </div>
+                    </div>
+                )}
+                {isCD && showData && test.spectraColumns && test.spectraColumns.length > 0 && (
+                    <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 avoid-break">
+                        <h4 className="text-xs font-bold text-slate-500 uppercase mb-2">Recorded Spectra</h4>
+                        <ul className="text-sm list-disc list-inside ml-4 text-slate-700">
+                            {test.spectraColumns.map((s, idx) => (
+                                <li key={idx}><span style={{color: s.color, fontWeight: 'bold'}}>{s.title}</span> - {s.values?.length || 0} data points</li>
+                            ))}
+                        </ul>
+                    </div>
+                )}
+
+                {/* Plate Map & Data Grid */}
                 {isPlate && (showMap || showData) && (
                     <div className="flex flex-col gap-6">
                         {showMap && (
@@ -444,12 +531,10 @@ export const NotebookTestItem = ({ test, jumpToTest, onHide, showImages, showMap
                                 <h4 className="text-xs font-bold text-slate-500 uppercase mb-3">Plate Map</h4>
                                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm inline-block min-w-full">
                                     <div className="grid gap-1.5 items-center justify-center" style={{ gridTemplateColumns: `30px repeat(${activePlateDim.cols}, minmax(42px, 1fr))` }}>
-                                        {/* Header Row (Colours/Numbers) */}
                                         <div />
                                         {COLS.map(c => (
                                             <div key={c} className="text-center text-xs font-black text-slate-400">{c}</div>
                                         ))}
-                                        {/* Data Rows */}
                                         {ROWS.map((rl, r) => (
                                             <React.Fragment key={rl}>
                                                 <div className="text-xs font-black text-slate-400 text-center">{rl}</div>
@@ -517,7 +602,7 @@ export const NotebookTestItem = ({ test, jumpToTest, onHide, showImages, showMap
                     </div>
                 )}
 
-                {/* Fitting Graphs */}
+                {/* Fitting Graphs (Plate only) */}
                 {isPlate && showGraphs && test.fitIC50 && Object.keys(processedByRegion).length > 0 && (
                     <div className="flex flex-col gap-4 border-t border-slate-100 pt-4 avoid-break">
                         <h4 className="text-xs font-bold text-slate-500 uppercase mb-2">Fittings & Graphs</h4>
@@ -532,7 +617,7 @@ export const NotebookTestItem = ({ test, jumpToTest, onHide, showImages, showMap
                                     showExcl: test.showExcl, 
                                     eScale: eScale, 
                                     fsPanel: null, 
-                                    chartH: 500, // Altezza raddoppiata per i grafici nel Notebook
+                                    chartH: 500,
                                     drWidth: 50, 
                                     hiddenCmpds: {}, 
                                     unit: test.unit, 
