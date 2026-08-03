@@ -183,19 +183,44 @@ export default function App() {
     const handleUndo = () => { if (historyIndex > 0) { const newIdx = historyIndex - 1; setHistoryIndex(newIdx); setReactTests(historyRef.current[newIdx]); } };
     const handleRedo = () => { if (historyIndex < historyRef.current.length - 1) { const newIdx = historyIndex + 1; setHistoryIndex(newIdx); setReactTests(historyRef.current[newIdx]); } };
 
-    // --- FIREBASE AUTH & SYNC ---
+    // --- MODIFICA PER COLLABORAZIONE 1: AUTENTICAZIONE GOOGLE ---
     useEffect(() => {
         if (!auth) { setIsCloudReady(true); return; }
+        
         const initAuth = async () => {
-            try {
-                if (typeof window.__initial_auth_token !== 'undefined' && window.__initial_auth_token) {
-                    try { await auth.signInWithCustomToken(window.__initial_auth_token); }
-                    catch(err) { await auth.signInAnonymously(); }
-                } else { await auth.signInAnonymously(); }
-            } catch(e) { console.error("Auth error", e); setIsCloudReady(true); }
+            auth.onAuthStateChanged(async (currentUser) => {
+                if (currentUser) {
+                    setUser(currentUser);
+                    setIsCloudReady(true);
+                } else {
+                    const provider = new window.firebase.auth.GoogleAuthProvider();
+                    try {
+                        await auth.signInWithPopup(provider);
+                    } catch(e) {
+                        console.error("Auth error", e); 
+                        setIsCloudReady(true);
+                    }
+                }
+            });
         };
         initAuth();
     }, []);
+
+    // --- MODIFICA PER COLLABORAZIONE 2: LETTURA URL PER CONDIVISIONE LINK ---
+    useEffect(() => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const sharedDatasetId = urlParams.get('dataset');
+        
+        if (sharedDatasetId && isCloudReady && db && !currentDatasetId) {
+            db.collection(`artifacts/${appId}/public/data/datasets`).doc(sharedDatasetId).get()
+            .then(doc => {
+                if (doc.exists) {
+                    const dset = { id: doc.id, ...doc.data() };
+                    openDataset(dset);
+                }
+            }).catch(err => console.error("Errore nel caricamento del dataset condiviso:", err));
+        }
+    }, [isCloudReady, db, currentDatasetId]);
 
     useEffect(() => {
         if (db) {
@@ -226,9 +251,11 @@ export default function App() {
 
     const latestDataRef = useRef(null);
     latestDataRef.current = { tests, datasetTitle, datasetSubtitle, customCmpds, customCellLines, customConc, cmpColors, testCategories, protocolCategories, datasetProtocols, storages };
+    
     const getCompressedPayload = () => LZString.compressToUTF16(JSON.stringify(latestDataRef.current));
     const saveTimeoutRef = useRef(null);
 
+    // --- MODIFICA PER COLLABORAZIONE 3: SALVATAGGIO IN CHIARO PER GESTIONE CONFLITTI ---
     useEffect(() => {
         if (!isCloudReady || appView !== 'dataset' || !currentDatasetId) return;
         setSaveStatus('saving');
@@ -238,8 +265,10 @@ export default function App() {
                 const updatedPayload = {
                     title: datasetTitle || 'Untitled Dataset', subtitle: datasetSubtitle || '',
                     date: tests[0]?.date || new Date().toISOString().split('T')[0],
-                    testCount: tests.length, updatedAt: Date.now(),
-                    payload: getCompressedPayload(), isCompressed: true
+                    testCount: tests.length, 
+                    updatedAt: window.firebase ? window.firebase.firestore.FieldValue.serverTimestamp() : Date.now(),
+                    payload: JSON.stringify(latestDataRef.current), // Non compresso, permette a Firebase di fare merge
+                    isCompressed: false
                 };
                 if (db && user) {
                     const docRef = db.collection(`artifacts/${appId}/public/data/datasets`).doc(currentDatasetId);
@@ -342,9 +371,15 @@ export default function App() {
         setTestCategories(["Activity", "Toxicity", "Microscopy", "Flow Cytometry", "Viability"]);
         setProtocolCategories(["Preparation", "Measurement", "Analysis"]); setDatasetProtocols([]); setStorages([]); 
         setCurrentDatasetId(newId); setAppView('dataset'); setCurrentModule('dashboard');
+        
+        // --- MODIFICA URL E SALVATAGGIO ---
+        window.history.pushState({}, '', '?dataset=' + newId);
+        
         const updatedPayload = {
-            title: 'New Dataset', date: new Date().toISOString().split('T')[0], createdAt: Date.now(), updatedAt: Date.now(),
-            payload: LZString.compressToUTF16(JSON.stringify({ tests: freshTests })), isCompressed: true
+            title: 'New Dataset', date: new Date().toISOString().split('T')[0], 
+            createdAt: window.firebase ? window.firebase.firestore.FieldValue.serverTimestamp() : Date.now(), 
+            updatedAt: window.firebase ? window.firebase.firestore.FieldValue.serverTimestamp() : Date.now(),
+            payload: JSON.stringify({ tests: freshTests }), isCompressed: false
         };
         if(db && user) { 
             await db.collection(`artifacts/${appId}/public/data/datasets`).doc(newId).set(updatedPayload); 
@@ -361,7 +396,8 @@ export default function App() {
             try {
                 const updatedPayload = {
                     title: datasetTitle || 'Untitled Dataset', subtitle: datasetSubtitle || '', date: tests[0]?.date || new Date().toISOString().split('T')[0],
-                    testCount: tests.length, updatedAt: Date.now(), payload: getCompressedPayload(), isCompressed: true
+                    testCount: tests.length, updatedAt: window.firebase ? window.firebase.firestore.FieldValue.serverTimestamp() : Date.now(), 
+                    payload: JSON.stringify(latestDataRef.current), isCompressed: false
                 };
                 if (db && user) {
                     await db.collection(`artifacts/${appId}/public/data/datasets`).doc(currentDatasetId).set(updatedPayload, { merge: true });
@@ -374,6 +410,7 @@ export default function App() {
                 }
             } catch(e) {}
         }
+        window.history.pushState({}, '', window.location.pathname);
         setAppView('explorer');
     };
 
@@ -391,6 +428,10 @@ export default function App() {
             setProtocolCategories(s.protocolCategories || ["Preparation", "Measurement", "Analysis"]);
             setDatasetProtocols(s.datasetProtocols || []); setStorages(migrated.storages); 
             setCurrentDatasetId(dset.id); setAppView('dataset'); setCurrentModule('dashboard');
+            
+            // --- MODIFICA URL ---
+            window.history.pushState({}, '', '?dataset=' + dset.id);
+            
         } catch(e) { setDialog({type: 'alert', title: 'Error', message: "Error reading dataset structure."}); }
     };
 
