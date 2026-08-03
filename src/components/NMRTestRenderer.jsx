@@ -2,10 +2,9 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, BarChart, Bar } from 'recharts';
 import { RichTextEditor } from './RichTextEditor';
 
-// --- FULLSCREEN UTILS ---
 const FS_CLASSES = "fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col";
 const OVERLAY_CLASSES = "fixed top-0 left-0 w-screen h-screen bg-slate-900/50 backdrop-blur-sm z-[999990]";
-const SELECT_COLOR = '#f59e0b'; // amber highlight for selected atom
+const SELECT_COLOR = '#f59e0b';
 
 // ================= DATABASES =================
 const AMINO_ACID_DB = {
@@ -32,16 +31,16 @@ const AMINO_ACID_DB = {
 };
 const NUCLEOTIDE_DB = {
   DNA: {
-    'A': { name: 'Deoxyadenosine', code3: 'dA', atoms: ["H8","H2","H1'","H2'","H2''","H3'","H4'","H5'","H5''"], ranges: { 'H8':{min:7.9,max:8.4}, 'H2':{min:7.7,max:8.3}, "H1'":{min:5.9,max:6.4}, "H2'":{min:2.2,max:2.8}, "H2''":{min:2.5,max:2.9}, "H3'":{min:4.7,max:5.1}, "H4'":{min:4.1,max:4.5}, "H5'":{min:3.8,max:4.3}, "H5''":{min:3.7,max:4.2} }, cosy: [["H1'","H2'"],["H1'","H2''"],["H2'","H3'"],["H3'","H4'"],["H4'","H5'"],["H4'","H5''"],["H5'","H5''"]], spinSystems: [["H1'","H2'","H2''","H3'","H4'","H5'","H5''"]] },
-    'G': { name: 'Deoxyguanosine', code3: 'dG', atoms: ["H8","H1'","H2'","H2''","H3'","H4'","H5'","H5''"], ranges: { 'H8':{min:7.6,max:8.2}, "H1'":{min:5.6,max:6.2}, "H2'":{min:2.2,max:2.8}, "H2''":{min:2.5,max:3.0}, "H3'":{min:4.7,max:5.1}, "H4'":{min:4.0,max:4.5}, "H5'":{min:3.8,max:4.3}, "H5''":{min:3.7,max:4.2} }, cosy: [["H1'","H2'"],["H1'","H2''"],["H2'","H3'"],["H3'","H4'"],["H4'","H5'"],["H4'","H5''"],["H5'","H5''"]], spinSystems: [["H1'","H2'","H2''","H3'","H4'","H5'","H5''"]] },
-    'C': { name: 'Deoxycytidine', code3: 'dC', atoms: ["H6","H5","H1'","H2'","H2''","H3'","H4'","H5'","H5''"], ranges: { 'H6':{min:7.3,max:8.0}, 'H5':{min:5.2,max:5.9}, "H1'":{min:5.8,max:6.4}, "H2'":{min:2.0,max:2.7}, "H2''":{min:2.2,max:2.9}, "H3'":{min:4.7,max:5.1}, "H4'":{min:4.0,max:4.5}, "H5'":{min:3.8,max:4.3}, "H5''":{min:3.6,max:4.2} }, cosy: [["H5","H6"],["H1'","H2'"],["H1'","H2''"],["H2'","H3'"],["H3'","H4'"],["H4'","H5'"],["H4'","H5''"],["H5'","H5''"]], spinSystems: [["H1'","H2'","H2''","H3'","H4'","H5'","H5''"],["H5","H6"]] },
-    'T': { name: 'Thymidine', code3: 'T', atoms: ["H6","H7(CH3)","H1'","H2'","H2''","H3'","H4'","H5'","H5''"], ranges: { 'H6':{min:7.2,max:7.9}, 'H7(CH3)':{min:1.6,max:2.0}, "H1'":{min:5.9,max:6.4}, "H2'":{min:1.9,max:2.5}, "H2''":{min:2.1,max:2.7}, "H3'":{min:4.7,max:5.1}, "H4'":{min:4.0,max:4.5}, "H5'":{min:3.8,max:4.3}, "H5''":{min:3.6,max:4.2} }, cosy: [["H1'","H2'"],["H1'","H2''"],["H2'","H3'"],["H3'","H4'"],["H4'","H5'"],["H4'","H5''"],["H5'","H5''"]], spinSystems: [["H1'","H2'","H2''","H3'","H4'","H5'","H5''"],["H7(CH3)"]] }
+    'A': { name: 'Deoxyadenosine', code3: 'dA', base: 'purine', atoms: ["H8","H2","H1'","H2'","H2''","H3'","H4'","H5'","H5''"], ranges: { 'H8':{min:7.9,max:8.4}, 'H2':{min:7.7,max:8.3}, "H1'":{min:5.9,max:6.4}, "H2'":{min:2.2,max:2.8}, "H2''":{min:2.5,max:2.9}, "H3'":{min:4.7,max:5.1}, "H4'":{min:4.1,max:4.5}, "H5'":{min:3.8,max:4.3}, "H5''":{min:3.7,max:4.2} }, cosy: [["H1'","H2'"],["H1'","H2''"],["H2'","H3'"],["H3'","H4'"],["H4'","H5'"],["H4'","H5''"],["H5'","H5''"]], spinSystems: [["H1'","H2'","H2''","H3'","H4'","H5'","H5''"]] },
+    'G': { name: 'Deoxyguanosine', code3: 'dG', base: 'purine', atoms: ["H8","H1'","H2'","H2''","H3'","H4'","H5'","H5''"], ranges: { 'H8':{min:7.6,max:8.2}, "H1'":{min:5.6,max:6.2}, "H2'":{min:2.2,max:2.8}, "H2''":{min:2.5,max:3.0}, "H3'":{min:4.7,max:5.1}, "H4'":{min:4.0,max:4.5}, "H5'":{min:3.8,max:4.3}, "H5''":{min:3.7,max:4.2} }, cosy: [["H1'","H2'"],["H1'","H2''"],["H2'","H3'"],["H3'","H4'"],["H4'","H5'"],["H4'","H5''"],["H5'","H5''"]], spinSystems: [["H1'","H2'","H2''","H3'","H4'","H5'","H5''"]] },
+    'C': { name: 'Deoxycytidine', code3: 'dC', base: 'pyrimidine', atoms: ["H6","H5","H1'","H2'","H2''","H3'","H4'","H5'","H5''"], ranges: { 'H6':{min:7.3,max:8.0}, 'H5':{min:5.2,max:5.9}, "H1'":{min:5.8,max:6.4}, "H2'":{min:2.0,max:2.7}, "H2''":{min:2.2,max:2.9}, "H3'":{min:4.7,max:5.1}, "H4'":{min:4.0,max:4.5}, "H5'":{min:3.8,max:4.3}, "H5''":{min:3.6,max:4.2} }, cosy: [["H5","H6"],["H1'","H2'"],["H1'","H2''"],["H2'","H3'"],["H3'","H4'"],["H4'","H5'"],["H4'","H5''"],["H5'","H5''"]], spinSystems: [["H1'","H2'","H2''","H3'","H4'","H5'","H5''"],["H5","H6"]] },
+    'T': { name: 'Thymidine', code3: 'T', base: 'pyrimidine', atoms: ["H6","H7(CH3)","H1'","H2'","H2''","H3'","H4'","H5'","H5''"], ranges: { 'H6':{min:7.2,max:7.9}, 'H7(CH3)':{min:1.6,max:2.0}, "H1'":{min:5.9,max:6.4}, "H2'":{min:1.9,max:2.5}, "H2''":{min:2.1,max:2.7}, "H3'":{min:4.7,max:5.1}, "H4'":{min:4.0,max:4.5}, "H5'":{min:3.8,max:4.3}, "H5''":{min:3.6,max:4.2} }, cosy: [["H1'","H2'"],["H1'","H2''"],["H2'","H3'"],["H3'","H4'"],["H4'","H5'"],["H4'","H5''"],["H5'","H5''"]], spinSystems: [["H1'","H2'","H2''","H3'","H4'","H5'","H5''"],["H7(CH3)"]] }
   },
   RNA: {
-    'A': { name: 'Adenosine', code3: 'A', atoms: ["H8","H2","H1'","H2'","OH2'","H3'","H4'","H5'","H5''"], ranges: { 'H8':{min:7.9,max:8.5}, 'H2':{min:7.8,max:8.4}, "H1'":{min:5.7,max:6.2}, "H2'":{min:4.4,max:4.9}, "OH2'":{min:5.0,max:5.6}, "H3'":{min:4.2,max:4.7}, "H4'":{min:4.1,max:4.6}, "H5'":{min:3.9,max:4.4}, "H5''":{min:3.8,max:4.3} }, cosy: [["H1'","H2'"],["H2'","H3'"],["H3'","H4'"],["H4'","H5'"],["H4'","H5''"],["H5'","H5''"]], spinSystems: [["H1'","H2'","H3'","H4'","H5'","H5''"]] },
-    'G': { name: 'Guanosine', code3: 'G', atoms: ["H8","H1'","H2'","OH2'","H3'","H4'","H5'","H5''"], ranges: { 'H8':{min:7.6,max:8.3}, "H1'":{min:5.5,max:6.1}, "H2'":{min:4.3,max:4.9}, "OH2'":{min:5.0,max:5.6}, "H3'":{min:4.2,max:4.7}, "H4'":{min:4.0,max:4.6}, "H5'":{min:3.9,max:4.4}, "H5''":{min:3.8,max:4.3} }, cosy: [["H1'","H2'"],["H2'","H3'"],["H3'","H4'"],["H4'","H5'"],["H4'","H5''"],["H5'","H5''"]], spinSystems: [["H1'","H2'","H3'","H4'","H5'","H5''"]] },
-    'C': { name: 'Cytidine', code3: 'C', atoms: ["H6","H5","H1'","H2'","OH2'","H3'","H4'","H5'","H5''"], ranges: { 'H6':{min:7.4,max:8.1}, 'H5':{min:5.3,max:6.0}, "H1'":{min:5.6,max:6.2}, "H2'":{min:4.1,max:4.7}, "OH2'":{min:5.0,max:5.6}, "H3'":{min:4.2,max:4.7}, "H4'":{min:4.0,max:4.5}, "H5'":{min:3.8,max:4.4}, "H5''":{min:3.7,max:4.3} }, cosy: [["H5","H6"],["H1'","H2'"],["H2'","H3'"],["H3'","H4'"],["H4'","H5'"],["H4'","H5''"],["H5'","H5''"]], spinSystems: [["H1'","H2'","H3'","H4'","H5'","H5''"],["H5","H6"]] },
-    'U': { name: 'Uridine', code3: 'U', atoms: ["H6","H5","H1'","H2'","OH2'","H3'","H4'","H5'","H5''"], ranges: { 'H6':{min:7.4,max:8.1}, 'H5':{min:5.3,max:6.0}, "H1'":{min:5.4,max:6.0}, "H2'":{min:4.1,max:4.7}, "OH2'":{min:5.0,max:5.6}, "H3'":{min:4.1,max:4.7}, "H4'":{min:4.0,max:4.5}, "H5'":{min:3.8,max:4.4}, "H5''":{min:3.7,max:4.3} }, cosy: [["H5","H6"],["H1'","H2'"],["H2'","H3'"],["H3'","H4'"],["H4'","H5'"],["H4'","H5''"],["H5'","H5''"]], spinSystems: [["H1'","H2'","H3'","H4'","H5'","H5''"],["H5","H6"]] }
+    'A': { name: 'Adenosine', code3: 'A', base: 'purine', atoms: ["H8","H2","H1'","H2'","OH2'","H3'","H4'","H5'","H5''"], ranges: { 'H8':{min:7.9,max:8.5}, 'H2':{min:7.8,max:8.4}, "H1'":{min:5.7,max:6.2}, "H2'":{min:4.4,max:4.9}, "OH2'":{min:5.0,max:5.6}, "H3'":{min:4.2,max:4.7}, "H4'":{min:4.1,max:4.6}, "H5'":{min:3.9,max:4.4}, "H5''":{min:3.8,max:4.3} }, cosy: [["H1'","H2'"],["H2'","H3'"],["H3'","H4'"],["H4'","H5'"],["H4'","H5''"],["H5'","H5''"]], spinSystems: [["H1'","H2'","H3'","H4'","H5'","H5''"]] },
+    'G': { name: 'Guanosine', code3: 'G', base: 'purine', atoms: ["H8","H1'","H2'","OH2'","H3'","H4'","H5'","H5''"], ranges: { 'H8':{min:7.6,max:8.3}, "H1'":{min:5.5,max:6.1}, "H2'":{min:4.3,max:4.9}, "OH2'":{min:5.0,max:5.6}, "H3'":{min:4.2,max:4.7}, "H4'":{min:4.0,max:4.6}, "H5'":{min:3.9,max:4.4}, "H5''":{min:3.8,max:4.3} }, cosy: [["H1'","H2'"],["H2'","H3'"],["H3'","H4'"],["H4'","H5'"],["H4'","H5''"],["H5'","H5''"]], spinSystems: [["H1'","H2'","H3'","H4'","H5'","H5''"]] },
+    'C': { name: 'Cytidine', code3: 'C', base: 'pyrimidine', atoms: ["H6","H5","H1'","H2'","OH2'","H3'","H4'","H5'","H5''"], ranges: { 'H6':{min:7.4,max:8.1}, 'H5':{min:5.3,max:6.0}, "H1'":{min:5.6,max:6.2}, "H2'":{min:4.1,max:4.7}, "OH2'":{min:5.0,max:5.6}, "H3'":{min:4.2,max:4.7}, "H4'":{min:4.0,max:4.5}, "H5'":{min:3.8,max:4.4}, "H5''":{min:3.7,max:4.3} }, cosy: [["H5","H6"],["H1'","H2'"],["H2'","H3'"],["H3'","H4'"],["H4'","H5'"],["H4'","H5''"],["H5'","H5''"]], spinSystems: [["H1'","H2'","H3'","H4'","H5'","H5''"],["H5","H6"]] },
+    'U': { name: 'Uridine', code3: 'U', base: 'pyrimidine', atoms: ["H6","H5","H1'","H2'","OH2'","H3'","H4'","H5'","H5''"], ranges: { 'H6':{min:7.4,max:8.1}, 'H5':{min:5.3,max:6.0}, "H1'":{min:5.4,max:6.0}, "H2'":{min:4.1,max:4.7}, "OH2'":{min:5.0,max:5.6}, "H3'":{min:4.1,max:4.7}, "H4'":{min:4.0,max:4.5}, "H5'":{min:3.8,max:4.4}, "H5''":{min:3.7,max:4.3} }, cosy: [["H5","H6"],["H1'","H2'"],["H2'","H3'"],["H3'","H4'"],["H4'","H5'"],["H4'","H5''"],["H5'","H5''"]], spinSystems: [["H1'","H2'","H3'","H4'","H5'","H5''"],["H5","H6"]] }
   }
 };
 const SUGAR_DB = {
@@ -52,10 +51,10 @@ const SUGAR_DB = {
   'NAG': { name: 'N-Acetylglucosamine', code3: 'GlcNAc', atoms: ['H1','H2','H3','H4','H5','H6a','H6b','NHAc','AcCH3'], ranges: { 'H1':{min:4.60,max:5.20}, 'H2':{min:3.70,max:4.05}, 'H3':{min:3.60,max:3.90}, 'H4':{min:3.40,max:3.70}, 'H5':{min:3.60,max:3.90}, 'H6a':{min:3.65,max:3.95}, 'H6b':{min:3.70,max:4.00}, 'NHAc':{min:7.50,max:8.20}, 'AcCH3':{min:1.90,max:2.10} }, cosy: [['H1','H2'],['H2','H3'],['H3','H4'],['H4','H5'],['H5','H6a'],['H5','H6b'],['H6a','H6b']], spinSystems: [['H1','H2','H3','H4','H5','H6a','H6b'],['NHAc'],['AcCH3']] }
 };
 const LIPID_DB = {
-  'POPC': { name: 'POPC', head: 'PC', atoms: ['Hsn1a','Hsn1b','Hsn2','Hsn3a','Hsn3b','H2-sn1','H3-sn1','H4-sn1','H16-sn1','H2-sn2','H3-sn2','H4-sn2','Hall-sn2','H9-sn2','H10-sn2','H11-sn2','H18-sn2','HCH2N','HNMe3'], ranges: { 'Hsn1a':{min:4.15,max:4.45}, 'Hsn1b':{min:4.15,max:4.45}, 'Hsn2':{min:5.15,max:5.35}, 'Hsn3a':{min:3.95,max:4.35}, 'Hsn3b':{min:3.95,max:4.35}, 'H2-sn1':{min:2.25,max:2.40}, 'H3-sn1':{min:1.55,max:1.70}, 'H4-sn1':{min:1.20,max:1.35}, 'H16-sn1':{min:0.82,max:0.92}, 'H2-sn2':{min:2.25,max:2.40}, 'H3-sn2':{min:1.55,max:1.70}, 'H4-sn2':{min:1.20,max:1.35}, 'Hall-sn2':{min:1.95,max:2.10}, 'H9-sn2':{min:5.30,max:5.40}, 'H10-sn2':{min:5.30,max:5.40}, 'H11-sn2':{min:1.95,max:2.10}, 'H18-sn2':{min:0.82,max:0.92}, 'HCH2N':{min:3.60,max:3.80}, 'HNMe3':{min:3.18,max:3.28} }, cosy: [['Hsn1a','Hsn2'],['Hsn1b','Hsn2'],['Hsn2','Hsn3a'],['Hsn2','Hsn3b'],['H2-sn1','H3-sn1'],['H3-sn1','H4-sn1'],['H2-sn2','H3-sn2'],['H3-sn2','H4-sn2'],['Hall-sn2','H9-sn2'],['H9-sn2','H10-sn2'],['H10-sn2','H11-sn2'],['HCH2N','HNMe3']], spinSystems: [['Hsn1a','Hsn1b','Hsn2','Hsn3a','Hsn3b'],['H2-sn1','H3-sn1','H4-sn1','H16-sn1'],['H2-sn2','H3-sn2','H4-sn2','Hall-sn2','H9-sn2','H10-sn2','H11-sn2','H18-sn2'],['HCH2N','HNMe3']] },
-  'POPE': { name: 'POPE', head: 'PE', atoms: ['Hsn1a','Hsn1b','Hsn2','Hsn3a','Hsn3b','H2-sn1','H3-sn1','H4-sn1','H16-sn1','H2-sn2','H3-sn2','H4-sn2','Hall-sn2','H9-sn2','H10-sn2','H11-sn2','H18-sn2','HCH2N','HNH3'], ranges: { 'Hsn1a':{min:4.15,max:4.45}, 'Hsn1b':{min:4.15,max:4.45}, 'Hsn2':{min:5.15,max:5.35}, 'Hsn3a':{min:3.95,max:4.35}, 'Hsn3b':{min:3.95,max:4.35}, 'H2-sn1':{min:2.25,max:2.40}, 'H3-sn1':{min:1.55,max:1.70}, 'H4-sn1':{min:1.20,max:1.35}, 'H16-sn1':{min:0.82,max:0.92}, 'H2-sn2':{min:2.25,max:2.40}, 'H3-sn2':{min:1.55,max:1.70}, 'H4-sn2':{min:1.20,max:1.35}, 'Hall-sn2':{min:1.95,max:2.10}, 'H9-sn2':{min:5.30,max:5.40}, 'H10-sn2':{min:5.30,max:5.40}, 'H11-sn2':{min:1.95,max:2.10}, 'H18-sn2':{min:0.82,max:0.92}, 'HCH2N':{min:3.10,max:3.30}, 'HNH3':{min:7.50,max:8.50} }, cosy: [['Hsn1a','Hsn2'],['Hsn1b','Hsn2'],['Hsn2','Hsn3a'],['Hsn2','Hsn3b'],['H2-sn1','H3-sn1'],['H3-sn1','H4-sn1'],['H2-sn2','H3-sn2'],['H3-sn2','H4-sn2'],['Hall-sn2','H9-sn2'],['H9-sn2','H10-sn2'],['H10-sn2','H11-sn2']], spinSystems: [['Hsn1a','Hsn1b','Hsn2','Hsn3a','Hsn3b'],['H2-sn1','H3-sn1','H4-sn1','H16-sn1'],['H2-sn2','H3-sn2','H4-sn2','Hall-sn2','H9-sn2','H10-sn2','H11-sn2','H18-sn2'],['HCH2N','HNH3']] },
-  'POPS': { name: 'POPS', head: 'PS', atoms: ['Hsn1a','Hsn1b','Hsn2','Hsn3a','Hsn3b','H2-sn1','H3-sn1','H4-sn1','H16-sn1','H2-sn2','H3-sn2','H4-sn2','Hall-sn2','H9-sn2','H10-sn2','H11-sn2','H18-sn2','HαS','HβS1','HβS2','HNH3'], ranges: { 'Hsn1a':{min:4.15,max:4.45}, 'Hsn1b':{min:4.15,max:4.45}, 'Hsn2':{min:5.15,max:5.35}, 'Hsn3a':{min:3.95,max:4.35}, 'Hsn3b':{min:3.95,max:4.35}, 'H2-sn1':{min:2.25,max:2.40}, 'H3-sn1':{min:1.55,max:1.70}, 'H4-sn1':{min:1.20,max:1.35}, 'H16-sn1':{min:0.82,max:0.92}, 'H2-sn2':{min:2.25,max:2.40}, 'H3-sn2':{min:1.55,max:1.70}, 'H4-sn2':{min:1.20,max:1.35}, 'Hall-sn2':{min:1.95,max:2.10}, 'H9-sn2':{min:5.30,max:5.40}, 'H10-sn2':{min:5.30,max:5.40}, 'H11-sn2':{min:1.95,max:2.10}, 'H18-sn2':{min:0.82,max:0.92}, 'HαS':{min:4.00,max:4.30}, 'HβS1':{min:3.75,max:4.05}, 'HβS2':{min:3.75,max:4.05}, 'HNH3':{min:7.50,max:8.50} }, cosy: [['Hsn1a','Hsn2'],['Hsn1b','Hsn2'],['Hsn2','Hsn3a'],['Hsn2','Hsn3b'],['H2-sn1','H3-sn1'],['H3-sn1','H4-sn1'],['H2-sn2','H3-sn2'],['H3-sn2','H4-sn2'],['Hall-sn2','H9-sn2'],['H9-sn2','H10-sn2'],['H10-sn2','H11-sn2'],['HαS','HβS1'],['HαS','HβS2']], spinSystems: [['Hsn1a','Hsn1b','Hsn2','Hsn3a','Hsn3b'],['H2-sn1','H3-sn1','H4-sn1','H16-sn1'],['H2-sn2','H3-sn2','H4-sn2','Hall-sn2','H9-sn2','H10-sn2','H11-sn2','H18-sn2'],['HαS','HβS1','HβS2','HNH3']] },
-  'POPG': { name: 'POPG', head: 'PG', atoms: ['Hsn1a','Hsn1b','Hsn2','Hsn3a','Hsn3b','H2-sn1','H3-sn1','H4-sn1','H16-sn1','H2-sn2','H3-sn2','H4-sn2','Hall-sn2','H9-sn2','H10-sn2','H11-sn2','H18-sn2','HCH2OH','HCHOH'], ranges: { 'Hsn1a':{min:4.15,max:4.45}, 'Hsn1b':{min:4.15,max:4.45}, 'Hsn2':{min:5.15,max:5.35}, 'Hsn3a':{min:3.95,max:4.35}, 'Hsn3b':{min:3.95,max:4.35}, 'H2-sn1':{min:2.25,max:2.40}, 'H3-sn1':{min:1.55,max:1.70}, 'H4-sn1':{min:1.20,max:1.35}, 'H16-sn1':{min:0.82,max:0.92}, 'H2-sn2':{min:2.25,max:2.40}, 'H3-sn2':{min:1.55,max:1.70}, 'H4-sn2':{min:1.20,max:1.35}, 'Hall-sn2':{min:1.95,max:2.10}, 'H9-sn2':{min:5.30,max:5.40}, 'H10-sn2':{min:5.30,max:5.40}, 'H11-sn2':{min:1.95,max:2.10}, 'H18-sn2':{min:0.82,max:0.92}, 'HCH2OH':{min:3.45,max:3.75}, 'HCHOH':{min:3.65,max:3.90} }, cosy: [['Hsn1a','Hsn2'],['Hsn1b','Hsn2'],['Hsn2','Hsn3a'],['Hsn2','Hsn3b'],['H2-sn1','H3-sn1'],['H3-sn1','H4-sn1'],['H2-sn2','H3-sn2'],['H3-sn2','H4-sn2'],['Hall-sn2','H9-sn2'],['H9-sn2','H10-sn2'],['H10-sn2','H11-sn2'],['HCH2OH','HCHOH']], spinSystems: [['Hsn1a','Hsn1b','Hsn2','Hsn3a','Hsn3b'],['H2-sn1','H3-sn1','H4-sn1','H16-sn1'],['H2-sn2','H3-sn2','H4-sn2','Hall-sn2','H9-sn2','H10-sn2','H11-sn2','H18-sn2'],['HCH2OH','HCHOH']] }
+  'POPC': { name: 'POPC', head: 'PC', headLabel: 'N(CH₃)₃⁺', atoms: ['Hsn1a','Hsn1b','Hsn2','Hsn3a','Hsn3b','H2-sn1','H3-sn1','H4-sn1','H16-sn1','H2-sn2','H3-sn2','H4-sn2','Hall-sn2','H9-sn2','H10-sn2','H11-sn2','H18-sn2','HCH2N','HNMe3'], ranges: { 'Hsn1a':{min:4.15,max:4.45}, 'Hsn1b':{min:4.15,max:4.45}, 'Hsn2':{min:5.15,max:5.35}, 'Hsn3a':{min:3.95,max:4.35}, 'Hsn3b':{min:3.95,max:4.35}, 'H2-sn1':{min:2.25,max:2.40}, 'H3-sn1':{min:1.55,max:1.70}, 'H4-sn1':{min:1.20,max:1.35}, 'H16-sn1':{min:0.82,max:0.92}, 'H2-sn2':{min:2.25,max:2.40}, 'H3-sn2':{min:1.55,max:1.70}, 'H4-sn2':{min:1.20,max:1.35}, 'Hall-sn2':{min:1.95,max:2.10}, 'H9-sn2':{min:5.30,max:5.40}, 'H10-sn2':{min:5.30,max:5.40}, 'H11-sn2':{min:1.95,max:2.10}, 'H18-sn2':{min:0.82,max:0.92}, 'HCH2N':{min:3.60,max:3.80}, 'HNMe3':{min:3.18,max:3.28} }, cosy: [['Hsn1a','Hsn2'],['Hsn1b','Hsn2'],['Hsn2','Hsn3a'],['Hsn2','Hsn3b'],['H2-sn1','H3-sn1'],['H3-sn1','H4-sn1'],['H2-sn2','H3-sn2'],['H3-sn2','H4-sn2'],['Hall-sn2','H9-sn2'],['H9-sn2','H10-sn2'],['H10-sn2','H11-sn2'],['HCH2N','HNMe3']], spinSystems: [['Hsn1a','Hsn1b','Hsn2','Hsn3a','Hsn3b'],['H2-sn1','H3-sn1','H4-sn1','H16-sn1'],['H2-sn2','H3-sn2','H4-sn2','Hall-sn2','H9-sn2','H10-sn2','H11-sn2','H18-sn2'],['HCH2N','HNMe3']] },
+  'POPE': { name: 'POPE', head: 'PE', headLabel: 'NH₃⁺', atoms: ['Hsn1a','Hsn1b','Hsn2','Hsn3a','Hsn3b','H2-sn1','H3-sn1','H4-sn1','H16-sn1','H2-sn2','H3-sn2','H4-sn2','Hall-sn2','H9-sn2','H10-sn2','H11-sn2','H18-sn2','HCH2N','HNH3'], ranges: { 'Hsn1a':{min:4.15,max:4.45}, 'Hsn1b':{min:4.15,max:4.45}, 'Hsn2':{min:5.15,max:5.35}, 'Hsn3a':{min:3.95,max:4.35}, 'Hsn3b':{min:3.95,max:4.35}, 'H2-sn1':{min:2.25,max:2.40}, 'H3-sn1':{min:1.55,max:1.70}, 'H4-sn1':{min:1.20,max:1.35}, 'H16-sn1':{min:0.82,max:0.92}, 'H2-sn2':{min:2.25,max:2.40}, 'H3-sn2':{min:1.55,max:1.70}, 'H4-sn2':{min:1.20,max:1.35}, 'Hall-sn2':{min:1.95,max:2.10}, 'H9-sn2':{min:5.30,max:5.40}, 'H10-sn2':{min:5.30,max:5.40}, 'H11-sn2':{min:1.95,max:2.10}, 'H18-sn2':{min:0.82,max:0.92}, 'HCH2N':{min:3.10,max:3.30}, 'HNH3':{min:7.50,max:8.50} }, cosy: [['Hsn1a','Hsn2'],['Hsn1b','Hsn2'],['Hsn2','Hsn3a'],['Hsn2','Hsn3b'],['H2-sn1','H3-sn1'],['H3-sn1','H4-sn1'],['H2-sn2','H3-sn2'],['H3-sn2','H4-sn2'],['Hall-sn2','H9-sn2'],['H9-sn2','H10-sn2'],['H10-sn2','H11-sn2']], spinSystems: [['Hsn1a','Hsn1b','Hsn2','Hsn3a','Hsn3b'],['H2-sn1','H3-sn1','H4-sn1','H16-sn1'],['H2-sn2','H3-sn2','H4-sn2','Hall-sn2','H9-sn2','H10-sn2','H11-sn2','H18-sn2'],['HCH2N','HNH3']] },
+  'POPS': { name: 'POPS', head: 'PS', headLabel: 'Ser', atoms: ['Hsn1a','Hsn1b','Hsn2','Hsn3a','Hsn3b','H2-sn1','H3-sn1','H4-sn1','H16-sn1','H2-sn2','H3-sn2','H4-sn2','Hall-sn2','H9-sn2','H10-sn2','H11-sn2','H18-sn2','HαS','HβS1','HβS2','HNH3'], ranges: { 'Hsn1a':{min:4.15,max:4.45}, 'Hsn1b':{min:4.15,max:4.45}, 'Hsn2':{min:5.15,max:5.35}, 'Hsn3a':{min:3.95,max:4.35}, 'Hsn3b':{min:3.95,max:4.35}, 'H2-sn1':{min:2.25,max:2.40}, 'H3-sn1':{min:1.55,max:1.70}, 'H4-sn1':{min:1.20,max:1.35}, 'H16-sn1':{min:0.82,max:0.92}, 'H2-sn2':{min:2.25,max:2.40}, 'H3-sn2':{min:1.55,max:1.70}, 'H4-sn2':{min:1.20,max:1.35}, 'Hall-sn2':{min:1.95,max:2.10}, 'H9-sn2':{min:5.30,max:5.40}, 'H10-sn2':{min:5.30,max:5.40}, 'H11-sn2':{min:1.95,max:2.10}, 'H18-sn2':{min:0.82,max:0.92}, 'HαS':{min:4.00,max:4.30}, 'HβS1':{min:3.75,max:4.05}, 'HβS2':{min:3.75,max:4.05}, 'HNH3':{min:7.50,max:8.50} }, cosy: [['Hsn1a','Hsn2'],['Hsn1b','Hsn2'],['Hsn2','Hsn3a'],['Hsn2','Hsn3b'],['H2-sn1','H3-sn1'],['H3-sn1','H4-sn1'],['H2-sn2','H3-sn2'],['H3-sn2','H4-sn2'],['Hall-sn2','H9-sn2'],['H9-sn2','H10-sn2'],['H10-sn2','H11-sn2'],['HαS','HβS1'],['HαS','HβS2']], spinSystems: [['Hsn1a','Hsn1b','Hsn2','Hsn3a','Hsn3b'],['H2-sn1','H3-sn1','H4-sn1','H16-sn1'],['H2-sn2','H3-sn2','H4-sn2','Hall-sn2','H9-sn2','H10-sn2','H11-sn2','H18-sn2'],['HαS','HβS1','HβS2','HNH3']] },
+  'POPG': { name: 'POPG', head: 'PG', headLabel: 'Gly', atoms: ['Hsn1a','Hsn1b','Hsn2','Hsn3a','Hsn3b','H2-sn1','H3-sn1','H4-sn1','H16-sn1','H2-sn2','H3-sn2','H4-sn2','Hall-sn2','H9-sn2','H10-sn2','H11-sn2','H18-sn2','HCH2OH','HCHOH'], ranges: { 'Hsn1a':{min:4.15,max:4.45}, 'Hsn1b':{min:4.15,max:4.45}, 'Hsn2':{min:5.15,max:5.35}, 'Hsn3a':{min:3.95,max:4.35}, 'Hsn3b':{min:3.95,max:4.35}, 'H2-sn1':{min:2.25,max:2.40}, 'H3-sn1':{min:1.55,max:1.70}, 'H4-sn1':{min:1.20,max:1.35}, 'H16-sn1':{min:0.82,max:0.92}, 'H2-sn2':{min:2.25,max:2.40}, 'H3-sn2':{min:1.55,max:1.70}, 'H4-sn2':{min:1.20,max:1.35}, 'Hall-sn2':{min:1.95,max:2.10}, 'H9-sn2':{min:5.30,max:5.40}, 'H10-sn2':{min:5.30,max:5.40}, 'H11-sn2':{min:1.95,max:2.10}, 'H18-sn2':{min:0.82,max:0.92}, 'HCH2OH':{min:3.45,max:3.75}, 'HCHOH':{min:3.65,max:3.90} }, cosy: [['Hsn1a','Hsn2'],['Hsn1b','Hsn2'],['Hsn2','Hsn3a'],['Hsn2','Hsn3b'],['H2-sn1','H3-sn1'],['H3-sn1','H4-sn1'],['H2-sn2','H3-sn2'],['H3-sn2','H4-sn2'],['Hall-sn2','H9-sn2'],['H9-sn2','H10-sn2'],['H10-sn2','H11-sn2'],['HCH2OH','HCHOH']], spinSystems: [['Hsn1a','Hsn1b','Hsn2','Hsn3a','Hsn3b'],['H2-sn1','H3-sn1','H4-sn1','H16-sn1'],['H2-sn2','H3-sn2','H4-sn2','Hall-sn2','H9-sn2','H10-sn2','H11-sn2','H18-sn2'],['HCH2OH','HCHOH']] }
 };
 const CARBON_RANGE_DB = {
 'A':{'Cα':[49.5,53.5],'Cβ':[15.5,20.5]},'C':{'Cα':[54.5,60],'Cβ':[26,32]},'D':{'Cα':[50,55],'Cβ':[37,42],'Cγ':[173,178]},'E':{'Cα':[53,58],'Cβ':[26,31],'Cγ':[32,37],'Cδ':[176,181]},'F':{'Cα':[53,58.5],'Cβ':[35,41],'Cγ':[133,139],'Cδ':[126.5,132],'Cε':[126,131.5],'Cζ':[124,129.5]},'G':{'Cα':[41,46]},'H':{'Cα':[51.5,57],'Cβ':[27,33],'Cδ2':[114,120],'Cε1':[131,138]},'I':{'Cα':[57,62.5],'Cβ':[34,39.5],'Cγ1':[23,29],'Cγ2':[13.5,19],'Cδ1':[9,14.5]},'K':{'Cα':[53,58.5],'Cβ':[29,34.5],'Cγ':[21,26.5],'Cδ':[26,31.5],'Cε':[38.5,43.5]},'L':{'Cα':[51,56.5],'Cβ':[38,44],'Cγ':[22.5,28],'Cδ1':[20,25.5],'Cδ2':[20,25.5]},'M':{'Cα':[51.5,57],'Cβ':[28,33.5],'Cγ':[13,18.5],'Cε':[12.5,18]},'N':{'Cα':[49.5,54.5],'Cβ':[35,40],'Cγ':[171,176]},'P':{'Cα':[58,64],'Cβ':[27.5,33.5],'Cγ':[22.5,28.5],'Cδ':[45,51.5]},'Q':{'Cα':[52.5,57.5],'Cβ':[26,31],'Cγ':[30,35],'Cδ':[173,178]},'R':{'Cα':[53,58],'Cβ':[27,32],'Cγ':[23,28],'Cδ':[39,44],'Cζ':[155,160]},'S':{'Cα':[53.5,60],'Cβ':[59.5,66.5]},'T':{'Cα':[56.5,64],'Cβ':[64.5,72.5],'Cγ2':[17.5,23.5]},'V':{'Cα':[57.5,64],'Cβ':[28.5,34.5],'Cγ1':[16.5,22.5],'Cγ2':[16.5,22.5]},'W':{'Cα':[53.5,59],'Cβ':[25.5,32],'Cδ1':[119,126],'Cε3':[115,121],'Cζ2':[115,122],'Cη2':[117,124],'Cζ3':[115,122]},'Y':{'Cα':[53,58.5],'Cβ':[34.5,41],'Cγ':[125.5,131.5],'Cδ':[128,134],'Cε':[112.5,118.5],'Cζ':[151,158]}
@@ -66,6 +65,11 @@ const SS_CORRECTIONS = {
   sheet: { h: { 'HN': 0.40, 'Hα': 0.30, 'Hα1': 0.30, 'Hα2': 0.30, other: 0.05 }, c: { 'Cα': -1.6, 'Cβ': 1.4, "C'": 1.5, 'N': 2.0 } }
 };
 const SS_META = { 'C': { label: 'Random coil', color: '#64748b' }, 'H': { label: 'α-Helix', color: '#8b5cf6' }, 'E': { label: 'β-Sheet', color: '#f59e0b' } };
+const DNA_FORM_OFFSETS = {
+  'B': { "H1'": 0, "H2'": 0, "H3'": 0, "H2''": 0 },
+  'A': { "H1'": 0.20, "H2'": -0.30, "H3'": 0.15, "H2''": -0.25 },
+  'Z': { "H1'": -0.15, "H2'": 0.25, "H3'": -0.10, "H2''": 0.20 }
+};
 const RESIDUE_COLORS = ['#3b82f6', '#8b5cf6', '#d946ef', '#ec4899', '#f43f5e', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#6366f1'];
 const TICKS_1H = Array.from({length: 111}, (_, i) => parseFloat((i / 10).toFixed(1)));
 const TICKS_13C = Array.from({length: 281}, (_, i) => parseFloat((10 + i * 0.5).toFixed(1)));
@@ -82,17 +86,47 @@ const getNMRFillColor = (entry) => {
   if (entry.colorClass === 'noesyIntra4') return '#fca5a5';
   if (entry.colorClass === 'noesySeq') return '#991b1b';
   if (entry.colorClass === 'hsqc') return '#8b5cf6';
+  if (entry.colorClass === 'p31') return '#0d9488';
   return '#cbd5e1';
 };
-const getCarbonName = (char, atom) => {
-  if (atom.startsWith('HN') || atom.startsWith('NH') || atom.includes('NH3') || atom.startsWith('OH') || atom.startsWith('NHAc') || atom.startsWith('Ac') || (atom === 'Hε' && char === 'R')) return null;
-  if (atom.includes('CH3')) return atom.replace('H', 'C');
-  if (atom.includes("''")) return atom.replace('H', 'C').replace("''", "'");
-  let cName = atom.replace('H', 'C').replace(/\d+$/, '');
-  if (['V', 'I', 'T'].includes(char) && atom.includes('γ')) return atom.replace('H', 'C');
-  if (['L', 'I'].includes(char) && atom.includes('δ')) return atom.replace('H', 'C');
-  if (['F', 'Y', 'W', 'H'].includes(char) && (atom.includes('δ') || atom.includes('ε') || atom.includes('ζ') || atom.includes('η'))) return atom.replace('H', 'C');
-  return cName;
+// Molecule-type-aware carbon naming (fixes the sugar "all carbons collapse" bug)
+const getCarbonName = (molType, char, atom) => {
+  if (!atom) return null;
+  if (atom.startsWith('HN') || atom.startsWith('NH') || atom.startsWith('OH') || atom.startsWith('NHAc') || atom.startsWith('Ac') || atom.includes('NH3')) return null;
+  if (molType === 'protein') {
+    if (atom === 'Hε' && char === 'R') return null;
+    if (char === 'W' && atom === 'Hδ1') return null;
+    if (atom.includes('CH3')) return atom.replace('H','C');
+    let cName = atom.replace('H','C').replace(/\d+$/,'');
+    if (['V','I','T'].includes(char) && atom.includes('γ')) return atom.replace('H','C');
+    if (['L','I'].includes(char) && atom.includes('δ')) return atom.replace('H','C');
+    if (['F','Y','W','H'].includes(char) && (atom.includes('δ')||atom.includes('ε')||atom.includes('ζ')||atom.includes('η'))) return atom.replace('H','C');
+    return cName;
+  }
+  if (molType === 'dna' || molType === 'rna') {
+    if (atom.includes('CH3')) return atom.replace('H','C');
+    return atom.replace('H','C').replace(/''/g, "'");
+  }
+  if (molType === 'sugar') return atom.replace('H','C').replace(/[ab]$/,'');
+  if (molType === 'lipid') {
+    const map = { 'Hsn1a':'Csn1','Hsn1b':'Csn1','Hsn2':'Csn2','Hsn3a':'Csn3','Hsn3b':'Csn3','H2-sn1':'C2-sn1','H3-sn1':'C3-sn1','H4-sn1':'C4-sn1','H16-sn1':'C16-sn1','H2-sn2':'C2-sn2','H3-sn2':'C3-sn2','H4-sn2':'C4-sn2','Hall-sn2':'Call-sn2','H9-sn2':'C9-sn2','H10-sn2':'C10-sn2','H11-sn2':'C11-sn2','H18-sn2':'C18-sn2','HCH2N':'CCH2N','HNMe3':'CNMe3','HNH3':null,'HαS':'CαS','HβS1':'CβS','HβS2':'CβS','HCH2OH':'CCH2OH','HCHOH':'CCHOH' };
+    return map[atom] !== undefined ? map[atom] : atom.replace('H','C');
+  }
+  return atom.replace('H','C');
+};
+const buildKeys = (ri, tokens, molType, char) => {
+  const set = new Set();
+  (tokens||[]).forEach(tok => {
+    const variants = new Set([tok]);
+    [1,2].forEach(n => variants.add(tok+n));
+    const stripped = tok.replace(/\d+$/,'');
+    if (stripped !== tok && stripped.length > 1) variants.add(stripped);
+    variants.forEach(v => {
+      set.add(`${ri}-${v}`);
+      if (v.startsWith('H')) { const c = getCarbonName(molType, char, v); if (c) set.add(`${ri}-${c}`); }
+    });
+  });
+  return [...set];
 };
 const getProtonCountEx = (molType, res, atom) => {
   if (molType === 'protein') {
@@ -108,7 +142,7 @@ const getProtonCountEx = (molType, res, atom) => {
   if (molType === 'dna' || molType === 'rna') return atom.includes('CH3') ? 3 : 1;
   if (molType === 'sugar') return atom === 'AcCH3' ? 3 : 1;
   if (molType === 'lipid') {
-    const map = { 'H4-sn1':20, 'H4-sn2':12, 'Hall-sn2':4, 'HNMe3':9, 'HCH2N':2, 'HCH2OH':2, 'Hsn1a':1, 'Hsn1b':1, 'Hsn3a':1, 'Hsn3b':1, 'H16-sn1':3, 'H18-sn2':3 };
+    const map = { 'H4-sn1':20, 'H4-sn2':12, 'Hall-sn2':4, 'HNMe3':9, 'HCH2N':2, 'HCH2OH':2, 'H16-sn1':3, 'H18-sn2':3 };
     return map[atom] ?? 1;
   }
   return 1;
@@ -116,11 +150,7 @@ const getProtonCountEx = (molType, res, atom) => {
 const getPascalRow = (n) => { if (n === 0) return [1]; let row = [1]; for (let i = 0; i < n; i++) { let nextRow = [1]; for (let j = 0; j < row.length - 1; j++) nextRow.push(row[j] + row[j+1]); nextRow.push(1); row = nextRow; } return row; };
 const getCarbonRangeFor = (molType, char, cName) => {
   if (!cName) return { min: 40, max: 50 };
-  if (molType === 'protein') {
-    if (cName === "C'") return { min: 171, max: 178 };
-    const r = CARBON_RANGE_DB[char]?.[cName]; if (r) return { min: r[0], max: r[1] };
-    return { min: 40, max: 60 };
-  }
+  if (molType === 'protein') { if (cName === "C'") return { min: 171, max: 178 }; const r = CARBON_RANGE_DB[char]?.[cName]; if (r) return { min: r[0], max: r[1] }; return { min: 40, max: 60 }; }
   if (molType === 'dna' || molType === 'rna') {
     if (cName.includes("C1'")) return { min: 80, max: 90 };
     if (cName.includes("C2'")) return molType === 'dna' ? { min: 35, max: 42 } : { min: 68, max: 77 };
@@ -130,7 +160,7 @@ const getCarbonRangeFor = (molType, char, cName) => {
     if (cName === 'C8' || cName === 'C6') return { min: 134, max: 146 };
     if (cName === 'C2') return { min: 147, max: 156 };
     if (cName === 'C5') return { min: 98, max: 108 };
-    if (cName === 'C7') return { min: 10, max: 16 };
+    if (cName === 'C7(CH3)') return { min: 10, max: 16 };
     return { min: 110, max: 160 };
   }
   if (molType === 'sugar') {
@@ -141,83 +171,279 @@ const getCarbonRangeFor = (molType, char, cName) => {
     return { min: 66, max: 77 };
   }
   if (molType === 'lipid') {
-    if (cName.includes('sn2') && cName.includes('Cg')) return { min: 67, max: 72 };
     if (cName === 'C9-sn2' || cName === 'C10-sn2') return { min: 127, max: 132 };
-    if (cName.includes('CH2N') || cName.includes('NMe3')) return { min: 52, max: 61 };
-    if (cName.includes('C16') || cName.includes('C18')) return { min: 13, max: 15 };
-    if (cName.includes('C2-')) return { min: 33, max: 36 };
-    if (cName.includes('C4-')) return { min: 28, max: 31 };
-    if (cName.includes('Call')) return { min: 26, max: 29 };
-    if (cName.includes('Csn')) return { min: 61, max: 68 };
+    if (cName === 'CCH2N' || cName === 'CNMe3') return { min: 52, max: 61 };
+    if (cName === 'C16-sn1' || cName === 'C18-sn2') return { min: 13, max: 15 };
+    if (cName === 'C2-sn1' || cName === 'C2-sn2') return { min: 33, max: 36 };
+    if (cName === 'C4-sn1' || cName === 'C4-sn2') return { min: 28, max: 31 };
+    if (cName === 'Call-sn2' || cName === 'C11-sn2') return { min: 26, max: 29 };
+    if (cName === 'Csn1' || cName === 'Csn2' || cName === 'Csn3') return { min: 61, max: 68 };
     return { min: 28, max: 32 };
   }
   return { min: 40, max: 60 };
 };
 const getHexagon = (cx, cy, r, dir) => { const pts = []; const baseAngle = dir === 1 ? -Math.PI/2 : Math.PI/2; for(let i=0; i<6; i++) { const a = baseAngle + i * (Math.PI/3) * dir; pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) }); } return pts; };
 const getPentagon = (cx, cy, r, dir) => { const pts = []; const baseAngle = dir === 1 ? -Math.PI/2 : Math.PI/2; for(let i=0; i<5; i++) { const a = baseAngle + i * (2*Math.PI/5) * dir; pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) }); } return pts; };
-// Build a fused pentagon on hexagon edge A-B (for purines)
-const fusedPentagon = (A, B, hexCenter) => {
-  const mx=(A.x+B.x)/2, my=(A.y+B.y)/2;
-  let nx=-(B.y-A.y), ny=(B.x-A.x); const nl=Math.hypot(nx,ny)||1; nx/=nl; ny/=nl;
-  const toC={x:hexCenter.x-mx, y:hexCenter.y-my};
-  if(nx*toC.x + ny*toC.y > 0){ nx=-nx; ny=-ny; }
-  const L=Math.hypot(B.x-A.x,B.y-A.y);
-  const r5=L/(2*Math.sin(Math.PI/5));
-  const apothem=r5*Math.cos(Math.PI/5);
-  const pc={x:mx+nx*apothem, y:my+ny*apothem};
-  const angA=Math.atan2(A.y-pc.y,A.x-pc.x);
-  const angB=Math.atan2(B.y-pc.y,B.x-pc.x);
-  let d=angB-angA; while(d>Math.PI)d-=2*Math.PI; while(d<-Math.PI)d+=2*Math.PI;
-  const dir=d>0?1:-1; const step=2*Math.PI/5;
-  const verts=[A];
-  for(let k=1;k<5;k++){ const ang=angA+dir*step*k; verts.push({x:pc.x+r5*Math.cos(ang), y:pc.y+r5*Math.sin(ang)}); }
-  return { verts, center: pc };
-};
-// Expand atom tokens → keys for selection matching
-const buildKeys = (ri, tokens) => {
-  const set = new Set();
-  (tokens||[]).forEach(tok => {
-    const variants = new Set([tok]);
-    [1,2].forEach(n => variants.add(tok+n));
-    const stripped = tok.replace(/\d+$/,'');
-    if (stripped !== tok) variants.add(stripped);
-    variants.forEach(v => {
-      set.add(`${ri}-${v}`);
-      if (v.startsWith('H')) set.add(`${ri}-C${v.slice(1)}`);
-    });
-  });
-  return [...set];
-};
-const atomsFromLabel = (t) => {
-  if (!t) return null;
-  const m = t.match(/\(([^)]+)\)/);
-  let toks = m ? m[1].split(/[,\s]+/) : t.split(/[,\s]+/);
-  toks = toks.map(x => x.trim()).filter(Boolean);
-  const res = toks.filter(x => /^(H|C|N|O|S|P)[A-Za-zαβγδεζη0-9'′()]*$/.test(x));
-  return res.length ? res : null;
+
+// ================= STRUCTURE ELEMENT BUILDER FACTORY =================
+const makeBuilder = () => {
+  const elements = []; let minX = 0, maxX = 0, minY = 0, maxY = 0; let first = true;
+  const ub = (x, y) => { if (first) { minX = maxX = x; minY = maxY = y; first = false; } else { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; } };
+  const addLine = (x1, y1, x2, y2, color, isDouble = false) => {
+    ub(x1, y1); ub(x2, y2);
+    if (isDouble) { const dx = x2 - x1; const dy = y2 - y1; const len = Math.hypot(dx, dy) || 1; const nx = -dy/len*2.5; const ny = dx/len*2.5; elements.push({ type:'line', x1:x1+nx, y1:y1+ny, x2:x2+nx, y2:y2+ny, color }); elements.push({ type:'line', x1:x1-nx, y1:y1-ny, x2:x2-nx, y2:y2-ny, color }); }
+    else elements.push({ type:'line', x1, y1, x2, y2, color });
+  };
+  const addPolygon = (pts, color) => { pts.forEach(p => ub(p.x, p.y)); elements.push({ type:'polygon', points: pts.map(p => `${p.x},${p.y}`).join(' '), color }); };
+  const addCircle = (x, y, r, color, fill = 'white', strokeWidth) => { ub(x, y); elements.push({ type:'circle', x, y, r, color, fill, strokeWidth }); };
+  const finish = (pad = 15) => ({ elements, viewBox: `${minX - pad} ${minY - pad} ${maxX - minX + 2*pad} ${maxY - minY + 2*pad}` });
+  return { elements, ub, addLine, addPolygon, addCircle, finish };
 };
 
-// ================= IMAGE URL NORMALIZATION (Drive/Dropbox) =================
-const normalizeImageCandidates = (url) => {
-  const u = (url || '').trim();
-  let m = u.match(/drive\.google\.com\/file\/d\/([^\/\?]+)/);
-  if (m) { const id = m[1]; return [ `https://lh3.googleusercontent.com/d/${id}`, `https://drive.google.com/thumbnail?id=${id}&sz=w1600`, `https://drive.google.com/uc?export=view&id=${id}` ]; }
-  m = u.match(/drive\.google\.com\/(?:open|uc)[^#]*[?&]id=([^&#]+)/);
-  if (m) { const id = m[1]; return [ `https://lh3.googleusercontent.com/d/${id}`, `https://drive.google.com/thumbnail?id=${id}&sz=w1600`, `https://drive.google.com/uc?export=view&id=${id}` ]; }
-  if (u.includes('dropbox.com')) return [ u.replace(/[?&]dl=0/g,'') + (u.includes('?') ? '&raw=1' : '?raw=1'), u ];
-  return [ u ];
+// ---------- PROTEIN STRUCTURE ----------
+const buildProteinStructure = (sequence) => {
+  const b = makeBuilder(); let curRi = null;
+  const addText = (x, y, text, color, fontSize = 11, align = 'middle', atoms = null) => { b.ub(x, y - 15); b.ub(x, y + 15); b.ub(x - 30, y); b.ub(x + 30, y); b.elements.push({ type:'text', x, y, text, color, fontSize, align, ri: curRi, atoms, keys: atoms ? buildKeys(curRi, atoms, 'protein', sequence[curRi]?.char) : null }); };
+  const addRingHeteroatom = (x, y, text, color) => { b.addCircle(x, y, 12, 'white', 'white', 0); addText(x, y, text, color, 12, 'middle'); };
+  const placeRadialLabel = (cx, cy, pt, text, color, atoms = null) => { const angle = Math.atan2(pt.y - cy, pt.x - cx); const dist = 18; const lx = pt.x + dist * Math.cos(angle); const ly = pt.y + dist * Math.sin(angle); let anchor = 'middle'; if (Math.abs(angle) < Math.PI/3) anchor = 'start'; else if (Math.abs(angle) > 2*Math.PI/3) anchor = 'end'; addText(lx, ly, text, color, 11, anchor, atoms); };
+  const dx = 45, dy = 30, S = 25;
+  const coords = []; let cx = 100, cy = 200, slope = -1;
+  for (let i = 0; i < sequence.length; i++) { const nX = cx, nY = cy; cx += dx; cy += slope * dy; const caX = cx, caY = cy, scDir = slope; slope *= -1; cx += dx; cy += slope * dy; const cX = cx, cY = cy, oDir = slope; slope *= -1; cx += dx; cy += slope * dy; const nextNX = cx, nextNY = cy; slope *= -1; coords.push({ nX, nY, caX, caY, cX, cY, nextNX, nextNY, scDir, oDir, res: sequence[i] }); }
+  coords.forEach((c, i) => {
+    curRi = i; const color = c.res.color; const isFirst = i === 0; const isLast = i === sequence.length - 1; const char = c.res.char;
+    if (!isFirst) b.addLine(coords[i-1].cX, coords[i-1].cY, c.nX, c.nY, coords[i-1].res.color);
+    b.addLine(c.nX, c.nY, c.caX, c.caY, color); b.addLine(c.caX, c.caY, c.cX, c.cY, color); b.addLine(c.cX, c.cY, c.cX, c.cY + c.oDir * 25, "red", true);
+    if (isLast) b.addLine(c.cX, c.cY, c.nextNX, c.nextNY, color);
+    if (!isFirst && char !== 'P') { const hDir = c.nY < c.caY ? -1 : 1; b.addLine(c.nX, c.nY, c.nX, c.nY + hDir * 15, color); addText(c.nX, c.nY + hDir * 25, "H", color, 11, 'middle', ['HN']); }
+    if (char !== 'G') { const haDir = -c.scDir; b.addLine(c.caX, c.caY, c.caX, c.caY + haDir * 15, color); addText(c.caX, c.caY + haDir * 25, "Hα", color, 11, 'middle', ['Hα']); } else { b.addLine(c.caX, c.caY, c.caX, c.caY - 15, color); addText(c.caX, c.caY - 25, "Hα1", color, 11, 'middle', ['Hα1']); b.addLine(c.caX, c.caY, c.caX, c.caY + 15, color); addText(c.caX, c.caY + 25, "Hα2", color, 11, 'middle', ['Hα2']); }
+    if (char === 'P') { b.elements.push({ type:'path', d: `M ${c.nX} ${c.nY} Q ${c.caX} ${c.caY + c.scDir*40} ${c.caX} ${c.caY + c.scDir*25}`, color }); b.addLine(c.caX, c.caY, c.caX, c.caY + c.scDir * 25, color); }
+    b.addCircle(c.nX, c.nY, 13, color); if (isFirst) addText(c.nX, c.nY, char === 'P' ? "H₂N⁺" : "H₃N⁺", color, 13, 'middle', ['HN']); else addText(c.nX, c.nY, "N", color, 13, 'middle', ['N','HN']);
+    b.addCircle(c.caX, c.caY, 13, color); addText(c.caX, c.caY, "Cα", color, 13, 'middle', ['Cα','Hα']);
+    b.addCircle(c.cX, c.cY, 13, color); addText(c.cX, c.cY, "C", color, 13, 'middle', ["C'"]);
+    addText(c.cX, c.cY + c.oDir * 35, "O", "red", 13, 'middle', null);
+    if (isLast) { b.addCircle(c.nextNX, c.nextNY, 13, color); addText(c.nextNX, c.nextNY, "O⁻", "red", 13, 'middle', null); }
+    const vNode = (lvl, text, atoms) => { if(lvl > 0) b.addLine(c.caX, c.caY + c.scDir * (lvl - 1) * S, c.caX, c.caY + c.scDir * lvl * S, color); addText(c.caX, c.caY + c.scDir * (lvl * S + (c.scDir === 1 ? 10 : -10)), text, color, 11, 'middle', atoms); };
+    if (char !== 'G' && char !== 'P') { b.addLine(c.caX, c.caY, c.caX, c.caY + c.scDir * S, color); if (!['A','I','V','T','F','Y','W','H'].includes(char)) addText(c.caX, c.caY + c.scDir * S, "CH₂ (Hβ)", color, 11, 'middle', ['Hβ','Hβ1','Hβ2']); }
+    switch(char) {
+      case 'A': addText(c.caX, c.caY + c.scDir * S, "CH₃ (Hβ)", color, 11, 'middle', ['Hβ']); break;
+      case 'V': addText(c.caX, c.caY + c.scDir * S, "CH (Hβ)", color, 11, 'middle', ['Hβ']); b.addLine(c.caX, c.caY+c.scDir*S, c.caX-20, c.caY+c.scDir*1.8*S, color); addText(c.caX-20, c.caY+c.scDir*(1.8*S+10), 'CH₃ (Hγ1)', color, 11, 'middle', ['Hγ1']); b.addLine(c.caX, c.caY+c.scDir*S, c.caX+20, c.caY+c.scDir*1.8*S, color); addText(c.caX+20, c.caY+c.scDir*(1.8*S+10), 'CH₃ (Hγ2)', color, 11, 'middle', ['Hγ2']); break;
+      case 'L': vNode(2, 'CH (Hγ)', ['Hγ']); b.addLine(c.caX, c.caY+c.scDir*2*S, c.caX-20, c.caY+c.scDir*2.8*S, color); addText(c.caX-20, c.caY+c.scDir*(2.8*S+10), 'CH₃ (Hδ1)', color, 11, 'middle', ['Hδ1']); b.addLine(c.caX, c.caY+c.scDir*2*S, c.caX+20, c.caY+c.scDir*2.8*S, color); addText(c.caX+20, c.caY+c.scDir*(2.8*S+10), 'CH₃ (Hδ2)', color, 11, 'middle', ['Hδ2']); break;
+      case 'I': addText(c.caX, c.caY + c.scDir * S, "CH (Hβ)", color, 11, 'middle', ['Hβ']); b.addLine(c.caX, c.caY+c.scDir*S, c.caX-20, c.caY+c.scDir*1.8*S, color); addText(c.caX-20, c.caY+c.scDir*(1.8*S+10), 'CH₃ (Hγ2)', color, 11, 'middle', ['Hγ2']); b.addLine(c.caX, c.caY+c.scDir*S, c.caX+20, c.caY+c.scDir*1.8*S, color); addText(c.caX+20, c.caY+c.scDir*(1.8*S+10), 'CH₂ (Hγ1)', color, 11, 'middle', ['Hγ1']); b.addLine(c.caX+20, c.caY+c.scDir*1.8*S, c.caX+20, c.caY+c.scDir*2.8*S, color); addText(c.caX+20, c.caY+c.scDir*(2.8*S+10), 'CH₃ (Hδ1)', color, 11, 'middle', ['Hδ1']); break;
+      case 'S': vNode(2, 'OH (Hγ)', ['Hγ']); break;
+      case 'T': addText(c.caX, c.caY + c.scDir * S, "CH (Hβ)", color, 11, 'middle', ['Hβ']); b.addLine(c.caX, c.caY+c.scDir*S, c.caX-20, c.caY+c.scDir*1.8*S, color); addText(c.caX-20, c.caY+c.scDir*(1.8*S+10), 'CH₃ (Hγ2)', color, 11, 'middle', ['Hγ2']); b.addLine(c.caX, c.caY+c.scDir*S, c.caX+20, c.caY+c.scDir*1.5*S, color); addText(c.caX+20, c.caY+c.scDir*(1.5*S+10), 'OH (Hγ1)', color, 11, 'middle', ['Hγ1']); break;
+      case 'C': vNode(2, 'SH (Hγ)', ['Hγ']); break;
+      case 'M': vNode(2, 'CH₂ (Hγ)', ['Hγ']); vNode(3, 'S (Hδ)', ['Hδ']); vNode(4, 'CH₃ (Hε)', ['Hε(CH3)']); break;
+      case 'D': vNode(2, 'C (Hγ)', ['Hγ']); b.addLine(c.caX, c.caY+c.scDir*2*S, c.caX-20, c.caY+c.scDir*2.8*S, color); addText(c.caX-20, c.caY+c.scDir*(2.8*S+10), 'O⁻', color); b.addLine(c.caX, c.caY+c.scDir*2*S, c.caX+20, c.caY+c.scDir*2.8*S, color, true); addText(c.caX+20, c.caY+c.scDir*(2.8*S+10), 'O', color); break;
+      case 'N': vNode(2, 'C (Hγ)', ['Hγ']); b.addLine(c.caX, c.caY+c.scDir*2*S, c.caX-20, c.caY+c.scDir*2.8*S, color); addText(c.caX-20, c.caY+c.scDir*(2.8*S+10), 'NH₂ (Hδ2)', color, 11, 'middle', ['Hδ21','Hδ22']); b.addLine(c.caX, c.caY+c.scDir*2*S, c.caX+20, c.caY+c.scDir*2.8*S, color, true); addText(c.caX+20, c.caY+c.scDir*(2.8*S+10), 'O', color); break;
+      case 'E': vNode(2, 'CH₂ (Hγ)', ['Hγ']); vNode(3, 'C (Hδ)', ['Hδ']); b.addLine(c.caX, c.caY+c.scDir*3*S, c.caX-20, c.caY+c.scDir*3.8*S, color); addText(c.caX-20, c.caY+c.scDir*(3.8*S+10), 'O⁻', color); b.addLine(c.caX, c.caY+c.scDir*3*S, c.caX+20, c.caY+c.scDir*3.8*S, color, true); addText(c.caX+20, c.caY+c.scDir*(3.8*S+10), 'O', color); break;
+      case 'Q': vNode(2, 'CH₂ (Hγ)', ['Hγ']); vNode(3, 'C (Hδ)', ['Hδ']); b.addLine(c.caX, c.caY+c.scDir*3*S, c.caX-20, c.caY+c.scDir*3.8*S, color); addText(c.caX-20, c.caY+c.scDir*(3.8*S+10), 'NH₂ (Hε2)', color, 11, 'middle', ['Hε21','Hε22']); b.addLine(c.caX, c.caY+c.scDir*3*S, c.caX+20, c.caY+c.scDir*3.8*S, color, true); addText(c.caX+20, c.caY+c.scDir*(3.8*S+10), 'O', color); break;
+      case 'K': vNode(2, 'CH₂ (Hγ)', ['Hγ']); vNode(3, 'CH₂ (Hδ)', ['Hδ']); vNode(4, 'CH₂ (Hε)', ['Hε']); vNode(5, 'NH₃⁺ (Hζ)', ['Hζ(NH3)']); break;
+      case 'R': vNode(2, 'CH₂ (Hγ)', ['Hγ']); vNode(3, 'CH₂ (Hδ)', ['Hδ']); vNode(4, 'NH (Hε)', ['Hε']); vNode(5, 'C (Hζ)', ['Hζ']); b.addLine(c.caX, c.caY+c.scDir*5*S, c.caX-20, c.caY+c.scDir*5.8*S, color); addText(c.caX-20, c.caY+c.scDir*(5.8*S+10), 'NH₂', color); b.addLine(c.caX, c.caY+c.scDir*5*S, c.caX+20, c.caY+c.scDir*5.8*S, color, true); addText(c.caX+20, c.caY+c.scDir*(5.8*S+10), 'NH₂⁺', color); break;
+      case 'F': case 'Y': {
+        addText(c.caX, c.caY + c.scDir * S, "CH₂ (Hβ)", color, 11, 'middle', ['Hβ','Hβ1','Hβ2']);
+        const hcx = c.caX, hcy = c.caY + c.scDir * 3 * S; const hPts = getHexagon(hcx, hcy, S, c.scDir);
+        b.addLine(c.caX, c.caY + c.scDir * S, hPts[0].x, hPts[0].y, color); b.addPolygon(hPts, color); b.addCircle(hcx, hcy, S * 0.6, color, 'none');
+        placeRadialLabel(hcx, hcy, hPts[1], 'CH (Hδ2)', color, ['Hδ']); placeRadialLabel(hcx, hcy, hPts[2], 'CH (Hε2)', color, ['Hε']); placeRadialLabel(hcx, hcy, hPts[5], 'CH (Hδ1)', color, ['Hδ']); placeRadialLabel(hcx, hcy, hPts[4], 'CH (Hε1)', color, ['Hε']);
+        if (char === 'Y') { const angleZ = Math.atan2(hPts[3].y - hcy, hPts[3].x - hcx); const ohX = hPts[3].x + S * Math.cos(angleZ); const ohY = hPts[3].y + S * Math.sin(angleZ); b.addLine(hPts[3].x, hPts[3].y, ohX, ohY, color); placeRadialLabel(hPts[3].x, hPts[3].y, {x: ohX, y: ohY}, 'OH', color); } else placeRadialLabel(hcx, hcy, hPts[3], 'CH (Hζ)', color, ['Hζ']);
+        break;
+      }
+      case 'H': {
+        addText(c.caX, c.caY + c.scDir * S, "CH₂ (Hβ)", color, 11, 'middle', ['Hβ','Hβ1','Hβ2']);
+        const R5 = S * 0.85065; const pcx = c.caX, pcy = c.caY + c.scDir * 2 * S + c.scDir * R5; const pPts = getPentagon(pcx, pcy, R5, c.scDir);
+        b.addLine(c.caX, c.caY + c.scDir * S, pPts[0].x, pPts[0].y, color); b.addPolygon(pPts, color); b.addCircle(pcx, pcy, R5 * 0.5, color, 'none');
+        addRingHeteroatom(pPts[2].x, pPts[2].y, "NH", color); addRingHeteroatom(pPts[4].x, pPts[4].y, "N", color);
+        placeRadialLabel(pcx, pcy, pPts[1], 'CH (Hδ2)', color, ['Hδ2']); placeRadialLabel(pcx, pcy, pPts[3], 'CH (Hε1)', color, ['Hε1']);
+        break;
+      }
+      case 'W': {
+        addText(c.caX, c.caY + c.scDir * S, "CH₂ (Hβ)", color, 11, 'middle', ['Hβ','Hβ1','Hβ2']);
+        const R5 = S * 0.85065; const pcx = c.caX, pcy = c.caY + c.scDir * 2 * S + c.scDir * R5; const pPts = getPentagon(pcx, pcy, R5, c.scDir);
+        b.addLine(c.caX, c.caY + c.scDir * S, pPts[0].x, pPts[0].y, color); b.addPolygon(pPts, color); b.addCircle(pcx, pcy, R5 * 0.5, color, 'none');
+        const ce2 = pPts[3], cd2 = pPts[4]; const mx = (ce2.x + cd2.x) / 2, my = (ce2.y + cd2.y) / 2;
+        const midA = Math.atan2(my - pcy, mx - pcx); const hcx = mx + Math.cos(midA) * S * Math.sqrt(3)/2, hcy = my + Math.sin(midA) * S * Math.sqrt(3)/2;
+        const startA = Math.atan2(ce2.y - hcy, ce2.x - hcx); const testA = startA + Math.PI/3; const sign = Math.hypot(hcx + S * Math.cos(testA) - cd2.x, hcy + S * Math.sin(testA) - cd2.y) < 0.1 ? 1 : -1;
+        const hPts = []; for(let j=0; j<6; j++) { const a = startA + j * sign * Math.PI/3; hPts.push({ x: hcx + S * Math.cos(a), y: hcy + S * Math.sin(a) }); }
+        b.addPolygon(hPts, color); b.addCircle(hcx, hcy, S * 0.6, color, 'none');
+        addRingHeteroatom(pPts[2].x, pPts[2].y, "NH", color);
+        placeRadialLabel(pcx, pcy, pPts[1], 'CH (Hδ1)', color, ['Hδ1']); placeRadialLabel(hcx, hcy, hPts[2], 'CH (Hε3)', color, ['Hε3']); placeRadialLabel(hcx, hcy, hPts[3], 'CH (Hζ3)', color, ['Hζ3']); placeRadialLabel(hcx, hcy, hPts[4], 'CH (Hη2)', color, ['Hη2']); placeRadialLabel(hcx, hcy, hPts[5], 'CH (Hζ2)', color, ['Hζ2']);
+        break;
+      }
+    }
+    const labelY = c.caY + (c.scDir > 0 ? 170 : -170); addText(c.caX, labelY, `${c.res.name} (${c.res.id})`, color, 14, 'middle', null);
+  });
+  return b.finish();
 };
-const SmartImage = ({ src, alt }) => {
-  const cands = useMemo(() => normalizeImageCandidates(src), [src]);
-  const [idx, setIdx] = useState(0);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => { setIdx(0); setFailed(false); }, [src]);
-  if (failed) return (
-    <div className="w-full h-40 flex flex-col items-center justify-center bg-slate-50 border border-dashed border-slate-300 rounded text-slate-400 text-xs text-center px-4">
-      ⚠️ Anteprima non disponibile. Se il file è privato, impostalo come "Condividi con chiunque abbia il link".
-    </div>
+
+// ---------- NUCLEIC STRUCTURE (clean) ----------
+const buildNucleicStructure = (sequence, molType) => {
+  const b = makeBuilder(); let curRi = null, curChar = null; const isDNA = molType === 'dna';
+  const addText = (x, y, text, color, fontSize = 11, align = 'middle', atoms = null) => { b.ub(x, y - 15); b.ub(x, y + 15); b.ub(x - 30, y); b.ub(x + 30, y); b.elements.push({ type:'text', x, y, text, color, fontSize, align, ri: curRi, atoms, keys: atoms ? buildKeys(curRi, atoms, molType, curChar) : null }); };
+  const spacing = 150;
+  sequence.forEach((res, i) => {
+    curRi = i; curChar = res.char; const color = res.color;
+    const xc = 100 + i * spacing;
+    const pY = 40, sugarY = 110, baseY = 215;
+    // backbone P nodes + connecting line
+    b.addCircle(xc, pY, 14, color); addText(xc, pY, 'P', color, 13, 'middle', ['P']);
+    b.addLine(xc, pY - 14, xc, pY - 26, color, true); addText(xc, pY - 34, 'O', color, 10, 'middle', null);
+    if (i < sequence.length - 1) b.addLine(xc + 14, pY, xc + spacing - 14, pY, color);
+    // P -> sugar
+    b.addLine(xc, pY + 14, xc, sugarY - 24, color);
+    // sugar pentagon
+    const sPts = getPentagon(xc, sugarY, 24, 1);
+    b.addPolygon(sPts, color);
+    addText(xc + 30, sugarY - 8, "C1'", color, 9, 'start', ["H1'","C1'"]);
+    addText(xc + 22, sugarY + 26, isDNA ? "C2'" : "C2'·OH", color, 9, 'start', isDNA ? ["H2'","H2''","C2'"] : ["H2'","OH2'","C2'"]);
+    addText(xc - 22, sugarY + 26, "C3'", color, 9, 'end', ["H3'","C3'"]);
+    addText(xc - 30, sugarY - 8, "C4'", color, 9, 'end', ["H4'","C4'"]);
+    addText(xc, sugarY - 30, "O4'", color, 9, 'middle', null);
+    addText(xc + 34, sugarY - 26, "H5'", color, 8, 'start', ["H5'","H5''","C5'"]);
+    // glycosidic bond sugar -> base
+    b.addLine(xc, sugarY + 24, xc, baseY - 28, color);
+    addText(xc + 8, (sugarY + baseY) / 2, "N", color, 9, 'start', null);
+    // base
+    const isPur = res.base === 'purine';
+    if (!isPur) {
+      const hPts = getHexagon(xc, baseY, 26, 1);
+      b.addPolygon(hPts, color); b.addCircle(xc, baseY, 26 * 0.55, color, 'none');
+      const lbl = ['N1','C2','N3','C4','C5','C6'];
+      hPts.forEach((p, k) => { const ang = Math.atan2(p.y - baseY, p.x - xc); addText(p.x + 14*Math.cos(ang), p.y + 14*Math.sin(ang), lbl[k], color, 8, Math.cos(ang) > 0.3 ? 'start' : (Math.cos(ang) < -0.3 ? 'end' : 'middle'), [lbl[k]]); });
+      const exo = (pt, txt, atoms) => { const ang = Math.atan2(pt.y - baseY, pt.x - xc); addText(pt.x + 30*Math.cos(ang), pt.y + 30*Math.sin(ang), txt, color, 9, Math.cos(ang) > 0.3 ? 'start' : 'end', atoms); };
+      exo(hPts[1], 'O', null);
+      if (res.char === 'C' || res.char === 'dC') exo(hPts[3], 'NH₂', null); else exo(hPts[3], 'O', null);
+      if (res.char === 'T') exo(hPts[4], 'CH₃', ['H7(CH3)']); else exo(hPts[4], 'H', ['H5']);
+      exo(hPts[5], 'H', ['H6']);
+    } else {
+      const hPts = getHexagon(xc, baseY + 6, 24, 1);
+      b.addPolygon(hPts, color);
+      // fused pentagon on right edge
+      const A = hPts[1], B = hPts[2]; const mx = (A.x+B.x)/2, my = (A.y+B.y)/2;
+      let nx = -(B.y-A.y), ny = (B.x-A.x); const nl = Math.hypot(nx,ny)||1; nx/=nl; ny/=nl;
+      const tc = {x: xc - mx, y: baseY + 6 - my}; if (nx*tc.x + ny*tc.y > 0) { nx=-nx; ny=-ny; }
+      const L = Math.hypot(B.x-A.x, B.y-A.y); const r5 = L/(2*Math.sin(Math.PI/5)); const ap = r5*Math.cos(Math.PI/5);
+      const pc = {x: mx + nx*ap, y: my + ny*ap};
+      const angA = Math.atan2(A.y-pc.y, A.x-pc.x), angB = Math.atan2(B.y-pc.y, B.x-pc.x);
+      let d = angB-angA; while(d>Math.PI)d-=2*Math.PI; while(d<-Math.PI)d+=2*Math.PI; const dir = d>0?1:-1; const step=2*Math.PI/5;
+      const fPts=[A]; for(let k=1;k<5;k++){ const ang=angA+dir*step*k; fPts.push({x:pc.x+r5*Math.cos(ang), y:pc.y+r5*Math.sin(ang)}); }
+      b.addPolygon(fPts, color); b.addCircle(xc, baseY + 6, 24*0.5, color, 'none');
+      addText(xc - 28, baseY - 12, 'N', color, 8, 'end', null);
+      addText(xc - 30, baseY + 14, 'C', color, 8, 'end', null);
+      addText(pc.x + 10, fPts[3].y, res.char === 'A' || res.char === 'dA' ? 'N7' : 'N7', color, 8, 'start', null);
+      addText(pc.x + 4, fPts[2].y - 14, 'H8', color, 8, 'middle', ['H8']);
+      if (res.char === 'A' || res.char === 'dA') addText(xc + 26, baseY - 18, 'NH₂', color, 9, 'start', null);
+      else { addText(xc + 26, baseY - 18, 'O', color, 9, 'start', null); addText(xc - 8, baseY + 34, 'NH₂', color, 9, 'middle', null); }
+      if (res.char === 'A' || res.char === 'dA') addText(xc - 6, baseY + 34, 'H2', color, 8, 'middle', ['H2']);
+    }
+    addText(xc, baseY + 60, `${res.name} (${res.id})`, color, 12, 'middle', null);
+  });
+  return b.finish();
+};
+
+// ---------- SUGAR STRUCTURE (chair/boat) ----------
+const buildSugarStructure = (res, conformation) => {
+  const b = makeBuilder(); const curRi = 0; const curChar = res.char;
+  const addText = (x, y, text, color, fontSize = 11, align = 'middle', atoms = null) => { b.ub(x, y - 15); b.ub(x, y + 15); b.ub(x - 30, y); b.ub(x + 30, y); b.elements.push({ type:'text', x, y, text, color, fontSize, align, ri: curRi, atoms, keys: atoms ? buildKeys(curRi, atoms, 'sugar', curChar) : null }); };
+  const ox = 200, oy = 180;
+  let pos = conformation === 'boat'
+    ? { O:{x:ox+60,y:oy+20}, C1:{x:ox+15,y:oy-10}, C2:{x:ox+55,y:oy-55}, C3:{x:ox+125,y:oy-55}, C4:{x:ox+165,y:oy-10}, C5:{x:ox+120,y:oy+20} }
+    : { O:{x:ox+70,y:oy+15}, C1:{x:ox+20,y:oy-20}, C2:{x:ox+60,y:oy-50}, C3:{x:ox+120,y:oy-50}, C4:{x:ox+160,y:oy-20}, C5:{x:ox+130,y:oy+15} };
+  const order = ['O','C1','C2','C3','C4','C5'];
+  for (let k = 0; k < order.length; k++) { const a = pos[order[k]], bb = pos[order[(k+1) % order.length]]; b.addLine(a.x, a.y, bb.x, bb.y, res.color); }
+  Object.entries(pos).forEach(([name, p]) => {
+    if (name === 'O') addText(p.x, p.y, 'O', res.color, 11, 'middle', null);
+    else { const n = name.replace('C',''); addText(p.x, p.y, name, res.color, 10, 'middle', [`H${n}`, `C${n}`]); }
+  });
+  // OH substituents on C1-C4
+  ['C1','C2','C3','C4'].forEach(c => {
+    const p = pos[c]; const cx = ox + 90, cy = oy - 15; const ang = Math.atan2(p.y - cy, p.x - cx);
+    b.addLine(p.x, p.y, p.x + 18*Math.cos(ang), p.y + 18*Math.sin(ang), res.color);
+    addText(p.x + 28*Math.cos(ang), p.y + 28*Math.sin(ang), 'OH', res.color, 9, Math.cos(ang) > 0.3 ? 'start' : 'end', null);
+  });
+  // C5 -> CH2OH / CH3
+  const c5 = pos.C5; b.addLine(c5.x, c5.y, c5.x + 30, c5.y + 20, res.color);
+  addText(c5.x + 38, c5.y + 24, res.char === 'FUC' ? 'CH₃' : 'CH₂OH', res.color, 10, 'start', res.char === 'FUC' ? ['H6'] : ['H6a','H6b']);
+  addText(c5.x - 4, c5.y + 34, 'H5', res.color, 9, 'end', ['H5']);
+  if (res.char === 'NAG') { const c2 = pos.C2; b.addLine(c2.x, c2.y, c2.x - 8, c2.y - 26, res.color); addText(c2.x - 10, c2.y - 34, 'NHCOCH₃', res.color, 9, 'end', ['NHAc','AcCH3']); }
+  addText(ox + 90, oy + 70, `${res.name} (${conformation === 'boat' ? 'barca' : 'sedia'})`, res.color, 13, 'middle', null);
+  return b.finish();
+};
+
+// ---------- LIPID STRUCTURE (single cis double bond) ----------
+const buildLipidStructure = (res) => {
+  const b = makeBuilder(); const curRi = 0; const curChar = res.char;
+  const addText = (x, y, text, color, fontSize = 11, align = 'middle', atoms = null) => { b.ub(x, y - 15); b.ub(x, y + 15); b.ub(x - 30, y); b.ub(x + 30, y); b.elements.push({ type:'text', x, y, text, color, fontSize, align, ri: curRi, atoms, keys: atoms ? buildKeys(curRi, atoms, 'lipid', curChar) : null }); };
+  const color = res.color;
+  // headgroup
+  addText(60, 150, res.headLabel, color, 12, 'middle', res.head === 'PC' ? ['HNMe3','HCH2N'] : res.head === 'PE' ? ['HNH3','HCH2N'] : res.head === 'PS' ? ['HαS','HβS1','HβS2'] : ['HCH2OH','HCHOH']);
+  b.addLine(75, 150, 100, 150, color);
+  addText(110, 150, 'P', color, 13, 'middle', ['P']);
+  b.addLine(110, 150, 110, 128, color, true); addText(110, 118, 'O', color, 9, 'middle', null);
+  b.addLine(110, 150, 110, 172, color); addText(110, 186, 'O⁻', color, 9, 'middle', null);
+  b.addLine(110, 150, 138, 150, color); addText(148, 150, 'O', color, 10, 'middle', null);
+  b.addLine(158, 150, 180, 150, color);
+  // glycerol
+  addText(188, 150, 'CH₂', color, 10, 'middle', ['Hsn3a','Hsn3b']); b.addLine(196, 150, 216, 128, color);
+  addText(222, 122, 'CH', color, 10, 'middle', ['Hsn2']); b.addLine(228, 122, 250, 100, color);
+  addText(258, 95, 'CH₂', color, 10, 'middle', ['Hsn1a','Hsn1b']);
+  // sn-1 palmitoyl (saturated) zigzag up
+  const buildChain = (x0, y0, segs, L, amp, dbIndex) => { const pts = [{x:x0,y:y0}]; let dir = -1; for (let k = 0; k < segs; k++) { const prev = pts[pts.length-1]; pts.push({x: prev.x + L, y: prev.y + dir*amp}); if (k !== dbIndex) dir *= -1; } return pts; };
+  const sn1 = buildChain(266, 92, 13, 22, 11, -1);
+  for (let k = 0; k < sn1.length - 1; k++) b.addLine(sn1[k].x, sn1[k].y, sn1[k+1].x, sn1[k+1].y, color);
+  addText(sn1[1].x, sn1[1].y - 14, 'C2', color, 8, 'middle', ['H2-sn1']); addText(sn1[3].x, sn1[3].y + 18, 'C3', color, 8, 'middle', ['H3-sn1']);
+  addText(sn1[6].x, sn1[6].y - 14, '(CH₂)ₙ', color, 9, 'middle', ['H4-sn1']); addText(sn1[12].x + 6, sn1[12].y, 'CH₃', color, 9, 'start', ['H16-sn1']);
+  // sn-2 oleoyl with ONE cis double bond (kink)
+  const sn2 = buildChain(228, 130, 15, 22, 11, 7);
+  for (let k = 0; k < sn2.length - 1; k++) b.addLine(sn2[k].x, sn2[k].y, sn2[k+1].x, sn2[k+1].y, color, k === 7);
+  addText(sn2[1].x, sn2[1].y + 18, 'C2', color, 8, 'middle', ['H2-sn2']); addText(sn2[3].x, sn2[3].y - 14, 'C3', color, 8, 'middle', ['H3-sn2']);
+  addText(sn2[6].x, sn2[6].y + 18, 'CH₂', color, 8, 'middle', ['Hall-sn2']); addText(sn2[7].x + 4, sn2[7].y - 14, 'C9', color, 8, 'middle', ['H9-sn2']);
+  addText(sn2[8].x + 4, sn2[8].y + 18, 'C10', color, 8, 'middle', ['H10-sn2']); addText(sn2[9].x + 4, sn2[9].y - 14, 'CH₂', color, 8, 'middle', ['H11-sn2']);
+  addText(sn2[12].x, sn2[12].y - 14, '(CH₂)ₙ', color, 9, 'middle', ['H4-sn2']); addText(sn2[14].x + 6, sn2[14].y, 'CH₃', color, 9, 'start', ['H18-sn2']);
+  addText(320, 210, res.name, color, 13, 'middle', null);
+  return b.finish();
+};
+
+// Serialize structure elements to an SVG string (for Lab Notebook)
+const elementsToSVG = (structure, height = 320) => {
+  let inner = '';
+  structure.elements.forEach(el => {
+    if (el.type === 'line') inner += `<line x1="${el.x1}" y1="${el.y1}" x2="${el.x2}" y2="${el.y2}" stroke="${el.color}" stroke-width="1.8"/>`;
+    else if (el.type === 'path') inner += `<path d="${el.d}" fill="none" stroke="${el.color}" stroke-width="1.8"/>`;
+    else if (el.type === 'polygon') inner += `<polygon points="${el.points}" fill="white" stroke="${el.color}" stroke-width="1.8"/>`;
+    else if (el.type === 'circle') inner += `<circle cx="${el.x}" cy="${el.y}" r="${el.r}" fill="${el.fill||'white'}" stroke="${el.color}" stroke-width="${el.strokeWidth!==undefined?el.strokeWidth:1.5}"/>`;
+    else if (el.type === 'text') inner += `<text x="${el.x}" y="${el.y}" fill="white" stroke="white" stroke-width="3" stroke-linejoin="round" font-size="${el.fontSize}" text-anchor="${el.align}" dominant-baseline="middle" font-weight="bold">${el.text}</text><text x="${el.x}" y="${el.y}" fill="${el.color}" font-size="${el.fontSize}" text-anchor="${el.align}" dominant-baseline="middle" font-weight="bold">${el.text}</text>`;
+  });
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${structure.viewBox}" style="height:${height}px;max-width:100%;font-family:sans-serif;background:white;">${inner}</svg>`;
+};
+
+// ---------- STRUCTURE VIEW (React) ----------
+const StructureSVGView = ({ structure, minWidth, isExpanded, onToggleExpand, selectedKeys, onAtomClick, height = '300px' }) => {
+  return (
+    <>
+      {isExpanded && <div className={OVERLAY_CLASSES} onClick={onToggleExpand}></div>}
+      <div className={isExpanded ? FS_CLASSES + " p-4 md:p-6 items-center justify-center" : "flex flex-col bg-white p-4 rounded-xl shadow-sm w-full h-full items-center justify-center relative border border-slate-200 break-inside-avoid"}>
+        <button onClick={onToggleExpand} className="absolute top-3 right-3 z-[110] flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 w-8 h-8 justify-center rounded-lg text-lg font-bold transition-all shadow-sm">{isExpanded ? "↙️" : "↗️"}</button>
+        <div className="w-full flex-grow flex items-center justify-start overflow-x-auto overflow-y-hidden custom-scrollbar min-h-0 relative">
+          <svg viewBox={structure.viewBox} className="font-sans" style={{ height: isExpanded ? '80vh' : height, minWidth }}>
+            {structure.elements.filter(e => e.type === 'line').map((el, idx) => <line key={`l${idx}`} x1={el.x1} y1={el.y1} x2={el.x2} y2={el.y2} stroke={el.color} strokeWidth="1.8" />)}
+            {structure.elements.filter(e => e.type === 'path').map((el, idx) => <path key={`pa${idx}`} d={el.d} fill="none" stroke={el.color} strokeWidth="1.8" />)}
+            {structure.elements.filter(e => e.type === 'polygon').map((el, idx) => <polygon key={`po${idx}`} points={el.points} fill="white" stroke={el.color} strokeWidth="1.8" />)}
+            {structure.elements.filter(e => e.type === 'circle').map((el, idx) => <circle key={`c${idx}`} cx={el.x} cy={el.y} r={el.r} fill={el.fill || 'white'} stroke={el.color} strokeWidth={el.strokeWidth !== undefined ? el.strokeWidth : "1.5"} />)}
+            {structure.elements.filter(e => e.type === 'text').map((el, idx) => {
+              const clickable = el.ri !== null && el.atoms && onAtomClick;
+              const isSel = selectedKeys && el.keys && el.keys.some(k => selectedKeys.includes(k));
+              return (
+                <g key={`t${idx}`} onClick={clickable ? () => onAtomClick(el.ri, el.keys) : undefined} style={clickable ? { cursor: 'pointer' } : undefined}>
+                  {isSel && <circle cx={el.x} cy={el.y} r={el.text.length * 4 + 8} fill={SELECT_COLOR} opacity={0.25} />}
+                  <text x={el.x} y={el.y} fill="white" stroke="white" strokeWidth="3" strokeLinejoin="round" fontSize={el.fontSize} textAnchor={el.align} dominantBaseline="middle" fontWeight="bold">{el.text}</text>
+                  <text x={el.x} y={el.y} fill={isSel ? SELECT_COLOR : el.color} fontSize={el.fontSize} textAnchor={el.align} dominantBaseline="middle" fontWeight="bold">{el.text}</text>
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+      </div>
+    </>
   );
-  return <img src={cands[Math.min(idx, cands.length-1)]} alt={alt} className="w-full h-auto object-contain rounded bg-white" style={{minHeight:'150px', maxHeight:'400px'}} onError={() => { if (idx < cands.length-1) setIdx(idx+1); else setFailed(true); }} />;
 };
 
 // ================= COLLAPSIBLE SECTION =================
@@ -241,26 +467,10 @@ export const CollapsibleSection = ({ title, icon, defaultOpen = true, children, 
 };
 
 // ================= CUSTOM TICKS / TOOLTIP =================
-const CustomXTick1H = ({ x, y, payload, isZoomed }) => {
-  const numVal = Number(payload.value); const isInt = Number.isInteger(numVal); const isHalf = numVal % 0.5 === 0;
-  const tickLength = isZoomed ? 5 : (isInt ? 8 : (isHalf ? 5 : 3));
-  return (<g transform={`translate(${x||0},${y||0})`}><line x1={0} y1={0} x2={0} y2={tickLength} stroke="#94a3b8" strokeWidth={1} />{(isZoomed || isInt) && <text x={0} y={tickLength + 12} textAnchor="middle" fill="#64748b" fontSize={isZoomed ? 10 : 11} fontWeight={isInt && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(2) : numVal}</text>}</g>);
-};
-const CustomYTick1H = ({ x, y, payload, isZoomed }) => {
-  const numVal = Number(payload.value); const isInt = Number.isInteger(numVal); const isHalf = numVal % 0.5 === 0;
-  const tickLength = isZoomed ? 5 : (isInt ? 8 : (isHalf ? 5 : 3));
-  return (<g transform={`translate(${x||0},${y||0})`}><line x1={0} y1={0} x2={-tickLength} y2={0} stroke="#94a3b8" strokeWidth={1} />{(isZoomed || isInt) && <text x={-(tickLength + 4)} y={0} dy={4} textAnchor="end" fill="#64748b" fontSize={isZoomed ? 10 : 11} fontWeight={isInt && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(2) : numVal}</text>}</g>);
-};
-const CustomXTick13C = ({ x, y, payload, isZoomed }) => {
-  const numVal = Number(payload.value); const isTen = numVal % 10 === 0; const isFive = numVal % 5 === 0;
-  const tickLength = isZoomed ? 5 : (isTen ? 8 : (isFive ? 6 : 4));
-  return (<g transform={`translate(${x||0},${y||0})`}><line x1={0} y1={0} x2={0} y2={tickLength} stroke="#94a3b8" strokeWidth={1} />{(isZoomed || isTen) && <text x={0} y={tickLength + 12} textAnchor="middle" fill="#64748b" fontSize={isZoomed ? 10 : 11} fontWeight={isTen && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(1) : numVal}</text>}</g>);
-};
-const CustomYTick13C = ({ x, y, payload, isZoomed }) => {
-  const numVal = Number(payload.value); const isTen = numVal % 10 === 0; const isFive = numVal % 5 === 0;
-  const tickLength = isZoomed ? 5 : (isTen ? 10 : (isFive ? 6 : 4));
-  return (<g transform={`translate(${x||0},${y||0})`}><line x1={0} y1={0} x2={-tickLength} y2={0} stroke="#94a3b8" strokeWidth={1} />{(isZoomed || isTen) && <text x={-(tickLength + 5)} y={0} dy={4} textAnchor="end" fill="#64748b" fontSize={isZoomed ? 10 : 11} fontWeight={isTen && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(1) : numVal}</text>}</g>);
-};
+const CustomXTick1H = ({ x, y, payload, isZoomed }) => { const numVal = Number(payload.value); const isInt = Number.isInteger(numVal); const isHalf = numVal % 0.5 === 0; const tickLength = isZoomed ? 5 : (isInt ? 8 : (isHalf ? 5 : 3)); return (<g transform={`translate(${x||0},${y||0})`}><line x1={0} y1={0} x2={0} y2={tickLength} stroke="#94a3b8" strokeWidth={1} />{(isZoomed || isInt) && <text x={0} y={tickLength + 12} textAnchor="middle" fill="#64748b" fontSize={isZoomed ? 10 : 11} fontWeight={isInt && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(2) : numVal}</text>}</g>); };
+const CustomYTick1H = ({ x, y, payload, isZoomed }) => { const numVal = Number(payload.value); const isInt = Number.isInteger(numVal); const isHalf = numVal % 0.5 === 0; const tickLength = isZoomed ? 5 : (isInt ? 8 : (isHalf ? 5 : 3)); return (<g transform={`translate(${x||0},${y||0})`}><line x1={0} y1={0} x2={-tickLength} y2={0} stroke="#94a3b8" strokeWidth={1} />{(isZoomed || isInt) && <text x={-(tickLength + 4)} y={0} dy={4} textAnchor="end" fill="#64748b" fontSize={isZoomed ? 10 : 11} fontWeight={isInt && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(2) : numVal}</text>}</g>); };
+const CustomXTick13C = ({ x, y, payload, isZoomed }) => { const numVal = Number(payload.value); const isTen = numVal % 10 === 0; const tickLength = isZoomed ? 5 : (isTen ? 8 : 4); return (<g transform={`translate(${x||0},${y||0})`}><line x1={0} y1={0} x2={0} y2={tickLength} stroke="#94a3b8" strokeWidth={1} />{(isZoomed || isTen) && <text x={0} y={tickLength + 12} textAnchor="middle" fill="#64748b" fontSize={isZoomed ? 10 : 11} fontWeight={isTen && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(1) : numVal}</text>}</g>); };
+const CustomYTick13C = ({ x, y, payload, isZoomed }) => { const numVal = Number(payload.value); const isTen = numVal % 10 === 0; const tickLength = isZoomed ? 5 : (isTen ? 10 : 4); return (<g transform={`translate(${x||0},${y||0})`}><line x1={0} y1={0} x2={-tickLength} y2={0} stroke="#94a3b8" strokeWidth={1} />{(isZoomed || isTen) && <text x={-(tickLength + 5)} y={0} dy={4} textAnchor="end" fill="#64748b" fontSize={isZoomed ? 10 : 11} fontWeight={isTen && !isZoomed ? "bold" : "normal"}>{isZoomed ? numVal.toFixed(1) : numVal}</text>}</g>); };
 const NMRTooltip = ({ active, payload, diagonalColor, selectedKeys }) => {
   if (active && payload && payload.length) {
     const data = payload[0].payload;
@@ -274,92 +484,39 @@ const NMRTooltip = ({ active, payload, diagonalColor, selectedKeys }) => {
 
 // ================= RANGE CHART =================
 const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, rowLabels }) => {
-  const containerRef = useRef(null);
-  const [width, setWidth] = useState(0);
-  const [hover, setHover] = useState(null);
-  useEffect(() => {
-    const el = containerRef.current; if (!el) return;
-    const update = () => setWidth(el.clientWidth); update();
-    let ro = null; if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(update); ro.observe(el); }
-    window.addEventListener('resize', update);
-    return () => { if (ro) ro.disconnect(); window.removeEventListener('resize', update); };
-  }, []);
-  const margin = { top: 10, right: 24, bottom: 40, left: 56 };
-  const rowH = 26; const nRows = Math.max(1, rowCount);
-  const svgHeight = margin.top + nRows * rowH + margin.bottom;
-  const plotW = Math.max(10, (width || 600) - margin.left - margin.right);
-  const span = domain[1] - domain[0];
-  const xScale = (v) => margin.left + ((domain[1] - v) / span) * plotW;
-  const yCenter = (row) => margin.top + row * rowH + rowH / 2;
-  const axisY = margin.top + nRows * rowH;
+  const containerRef = useRef(null); const [width, setWidth] = useState(0); const [hover, setHover] = useState(null);
+  useEffect(() => { const el = containerRef.current; if (!el) return; const update = () => setWidth(el.clientWidth); update(); let ro = null; if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(update); ro.observe(el); } window.addEventListener('resize', update); return () => { if (ro) ro.disconnect(); window.removeEventListener('resize', update); }; }, []);
+  const margin = { top: 10, right: 24, bottom: 40, left: 56 }; const rowH = 26; const nRows = Math.max(1, rowCount);
+  const svgHeight = margin.top + nRows * rowH + margin.bottom; const plotW = Math.max(10, (width || 600) - margin.left - margin.right);
+  const span = domain[1] - domain[0]; const xScale = (v) => margin.left + ((domain[1] - v) / span) * plotW; const yCenter = (row) => margin.top + row * rowH + rowH / 2; const axisY = margin.top + nRows * rowH;
   return (
     <div ref={containerRef} className="bg-slate-50 rounded-xl border border-slate-200 p-3 relative">
       <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2 ml-1">{title}</h4>
       <svg width="100%" height={svgHeight} className="block select-none">
-        {rowLabels.map((label, row) => (
-          <g key={`row-${row}`}>
-            {row % 2 === 0 && <rect x={margin.left} y={margin.top + row * rowH} width={plotW} height={rowH} fill="#f1f5f9" opacity={0.6} />}
-            <text x={margin.left - 8} y={yCenter(row)} textAnchor="end" dominantBaseline="middle" fontSize={11} fontWeight="bold" fill="#64748b">{label}</text>
-          </g>
-        ))}
-        {ticks.map((t) => (
-          <g key={`tick-${t}`}>
-            <line x1={xScale(t)} y1={margin.top} x2={xScale(t)} y2={axisY} stroke="#e2e8f0" strokeWidth={1} />
-            <line x1={xScale(t)} y1={axisY} x2={xScale(t)} y2={axisY + 5} stroke="#94a3b8" strokeWidth={1} />
-            <text x={xScale(t)} y={axisY + 16} textAnchor="middle" fontSize={10} fill="#64748b">{t}</text>
-          </g>
-        ))}
+        {rowLabels.map((label, row) => (<g key={`row-${row}`}>{row % 2 === 0 && <rect x={margin.left} y={margin.top + row * rowH} width={plotW} height={rowH} fill="#f1f5f9" opacity={0.6} />}<text x={margin.left - 8} y={yCenter(row)} textAnchor="end" dominantBaseline="middle" fontSize={11} fontWeight="bold" fill="#64748b">{label}</text></g>))}
+        {ticks.map((t) => (<g key={`tick-${t}`}><line x1={xScale(t)} y1={margin.top} x2={xScale(t)} y2={axisY} stroke="#e2e8f0" strokeWidth={1} /><line x1={xScale(t)} y1={axisY} x2={xScale(t)} y2={axisY + 5} stroke="#94a3b8" strokeWidth={1} /><text x={xScale(t)} y={axisY + 16} textAnchor="middle" fontSize={10} fill="#64748b">{t}</text></g>))}
         <line x1={margin.left} y1={axisY} x2={margin.left + plotW} y2={axisY} stroke="#cbd5e1" strokeWidth={1} />
-        {ranges.map((r, i) => {
-          const row = nRows - 1 - r.y; const x1 = xScale(r.max); const x2 = xScale(r.min); const cy = yCenter(row);
-          const isHov = hover && hover.idx === i;
-          return (<rect key={`range-${i}`} x={x1} y={cy - 5} width={Math.max(2, x2 - x1)} height={10} rx={3} fill={r.color} fillOpacity={isHov ? 1 : 0.75} stroke={r.color} strokeWidth={1} style={{ cursor: 'pointer' }} onMouseMove={(e) => { const crect = containerRef.current.getBoundingClientRect(); setHover({ idx: i, x: e.clientX - crect.left, y: e.clientY - crect.top }); }} onMouseLeave={() => setHover(null)} />);
-        })}
+        {ranges.map((r, i) => { const row = nRows - 1 - r.y; const x1 = xScale(r.max); const x2 = xScale(r.min); const cy = yCenter(row); const isHov = hover && hover.idx === i; return (<rect key={`range-${i}`} x={x1} y={cy - 5} width={Math.max(2, x2 - x1)} height={10} rx={3} fill={r.color} fillOpacity={isHov ? 1 : 0.75} stroke={r.color} strokeWidth={1} style={{ cursor: 'pointer' }} onMouseMove={(e) => { const crect = containerRef.current.getBoundingClientRect(); setHover({ idx: i, x: e.clientX - crect.left, y: e.clientY - crect.top }); }} onMouseLeave={() => setHover(null)} />); })}
         <text x={margin.left + plotW / 2} y={svgHeight - 6} textAnchor="middle" fontSize={11} fill="#64748b">{xAxisLabel}</text>
       </svg>
-      {hover && ranges[hover.idx] && (
-        <div className="absolute bg-white p-2 border border-slate-200 shadow-md rounded text-xs z-50 pointer-events-none whitespace-nowrap" style={{ left: hover.x + 12, top: Math.max(0, hover.y - 44) }}>
-          <p className="font-bold text-slate-800">{ranges[hover.idx].res} - {ranges[hover.idx].atom}</p>
-          <p className="text-slate-500">Theoretical Range: {ranges[hover.idx].min.toFixed(2)} - {ranges[hover.idx].max.toFixed(2)} ppm</p>
-        </div>
-      )}
+      {hover && ranges[hover.idx] && (<div className="absolute bg-white p-2 border border-slate-200 shadow-md rounded text-xs z-50 pointer-events-none whitespace-nowrap" style={{ left: hover.x + 12, top: Math.max(0, hover.y - 44) }}><p className="font-bold text-slate-800">{ranges[hover.idx].res} - {ranges[hover.idx].atom}</p><p className="text-slate-500">Theoretical Range: {ranges[hover.idx].min.toFixed(2)} - {ranges[hover.idx].max.toFixed(2)} ppm</p></div>)}
     </div>
   );
 };
 
-// ================= ZOOMABLE PLOTS (with selection highlighting) =================
+// ================= ZOOMABLE PLOTS =================
 const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel, selectedKeys }) => {
-  const isExpanded = expandedPanel === panelId;
-  const [xDomain, setXDomain] = useState(fullDomain);
-  const [refAreaLeft, setRefAreaLeft] = useState(null);
-  const [refAreaRight, setRefAreaRight] = useState(null);
-  const chartRef = useRef(null); const isDragging = useRef(false);
-  const isZoomed = xDomain[0] !== fullDomain[0] || xDomain[1] !== fullDomain[1];
-  const getXVal = (clientX) => {
-    if (!chartRef.current) return null;
-    const wrapper = chartRef.current.querySelector('.recharts-wrapper'); if (!wrapper) return null;
-    const rect = wrapper.getBoundingClientRect();
-    const plotW = rect.width - CHART_MARGIN_1D.left - CHART_MARGIN_1D.right; if (plotW <= 0) return null;
-    const px = clientX - rect.left - CHART_MARGIN_1D.left;
-    const fx = Math.min(1, Math.max(0, px / plotW));
-    return xDomain[1] - fx * (xDomain[1] - xDomain[0]);
-  };
-  useEffect(() => {
-    const handleMouseMove = (e) => { if (!isDragging.current) return; const xVal = getXVal(e.clientX); if (xVal !== null) setRefAreaRight(xVal); };
-    const handleMouseUp = () => { if (!isDragging.current) return; isDragging.current = false; if (refAreaLeft !== null && refAreaRight !== null && refAreaLeft !== refAreaRight) setXDomain([Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)]); setRefAreaLeft(null); setRefAreaRight(null); };
-    window.addEventListener('mousemove', handleMouseMove); window.addEventListener('mouseup', handleMouseUp);
-    return () => { window.removeEventListener('mousemove', handleMouseMove); window.removeEventListener('mouseup', handleMouseUp); };
-  }, [refAreaLeft, refAreaRight]);
+  const isExpanded = expandedPanel === panelId; const [xDomain, setXDomain] = useState(fullDomain); const [refAreaLeft, setRefAreaLeft] = useState(null); const [refAreaRight, setRefAreaRight] = useState(null);
+  const chartRef = useRef(null); const isDragging = useRef(false); const isZoomed = xDomain[0] !== fullDomain[0] || xDomain[1] !== fullDomain[1];
+  const getXVal = (clientX) => { if (!chartRef.current) return null; const wrapper = chartRef.current.querySelector('.recharts-wrapper'); if (!wrapper) return null; const rect = wrapper.getBoundingClientRect(); const plotW = rect.width - CHART_MARGIN_1D.left - CHART_MARGIN_1D.right; if (plotW <= 0) return null; const px = clientX - rect.left - CHART_MARGIN_1D.left; const fx = Math.min(1, Math.max(0, px / plotW)); return xDomain[1] - fx * (xDomain[1] - xDomain[0]); };
+  useEffect(() => { const handleMouseMove = (e) => { if (!isDragging.current) return; const xVal = getXVal(e.clientX); if (xVal !== null) setRefAreaRight(xVal); }; const handleMouseUp = () => { if (!isDragging.current) return; isDragging.current = false; if (refAreaLeft !== null && refAreaRight !== null && refAreaLeft !== refAreaRight) setXDomain([Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)]); setRefAreaLeft(null); setRefAreaRight(null); }; window.addEventListener('mousemove', handleMouseMove); window.addEventListener('mouseup', handleMouseUp); return () => { window.removeEventListener('mousemove', handleMouseMove); window.removeEventListener('mouseup', handleMouseUp); }; }, [refAreaLeft, refAreaRight]);
   const handleMouseDown = (e) => { const xVal = getXVal(e.clientX); if (xVal !== null) { isDragging.current = true; setRefAreaLeft(xVal); setRefAreaRight(xVal); } };
   return (
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)}></div>}
       <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'h-[400px] break-inside-avoid'}`}>
         <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
-          <div className="flex items-center gap-4">
-            <h4 className="font-bold text-slate-700">{title}</h4>
-            {isZoomed && <button onClick={() => setXDomain(fullDomain)} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>}
-          </div>
+          <div className="flex items-center gap-4"><h4 className="font-bold text-slate-700">{title}</h4>{isZoomed && <button onClick={() => setXDomain(fullDomain)} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>}</div>
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
         </div>
         <div className="flex-1 min-h-0 select-none relative" ref={chartRef} onMouseDown={handleMouseDown}>
@@ -369,12 +526,7 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
               <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : ticks} interval={0} tickLine={false} tick={<TickComponent isZoomed={isZoomed} />} label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b' }} axisLine={{ stroke: '#cbd5e1' }} />
               <YAxis type="number" dataKey="y" domain={[0, 'auto']} hide={true} />
               <Tooltip cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} content={<NMRTooltip selectedKeys={selectedKeys} />} />
-              <Bar dataKey="y" barSize={2} shape={(props) => {
-                const { x, y, width, height, payload } = props; const centerX = x + width / 2;
-                const isSel = selectedKeys && payload.keys && payload.keys.some(k => selectedKeys.includes(k));
-                const dimmed = selectedKeys && !isSel;
-                return <line x1={centerX} y1={y + height} x2={centerX} y2={y} stroke={isSel ? SELECT_COLOR : payload.color} strokeWidth={isSel ? 3 : 1.5} opacity={dimmed ? 0.2 : 1} />;
-              }} isAnimationActive={false} />
+              <Bar dataKey="y" barSize={2} shape={(props) => { const { x, y, width, height, payload } = props; const centerX = x + width / 2; const isSel = selectedKeys && payload.keys && payload.keys.some(k => selectedKeys.includes(k)); const dimmed = selectedKeys && !isSel; return <line x1={centerX} y1={y + height} x2={centerX} y2={y} stroke={isSel ? SELECT_COLOR : payload.color} strokeWidth={isSel ? 3 : 1.5} opacity={dimmed ? 0.2 : 1} />; }} isAnimationActive={false} />
               {refAreaLeft !== null && refAreaRight !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} strokeOpacity={0.3} fill="#cbd5e1" />}
             </BarChart>
           </ResponsiveContainer>
@@ -384,48 +536,19 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
   );
 };
 const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setExpandedPanel, panelId, diagonalColor, selectedKeys }) => {
-  const isExpanded = expandedPanel === panelId;
-  const [xDomain, setXDomain] = useState([0, 11]); const [yDomain, setYDomain] = useState([0, 11]);
-  const [refAreaLeft, setRefAreaLeft] = useState(null); const [refAreaRight, setRefAreaRight] = useState(null);
-  const [refAreaTop, setRefAreaTop] = useState(null); const [refAreaBottom, setRefAreaBottom] = useState(null);
-  const chartRef = useRef(null); const isDragging = useRef(false);
-  const isZoomed = xDomain[0] !== 0 || xDomain[1] !== 11 || yDomain[0] !== 0 || yDomain[1] !== 11;
-  const getPlotCoords = (clientX, clientY) => {
-    if (!chartRef.current) return null;
-    const wrapper = chartRef.current.querySelector('.recharts-wrapper'); if (!wrapper) return null;
-    const rect = wrapper.getBoundingClientRect();
-    const plotW = rect.width - CHART_MARGIN.left - CHART_MARGIN.right; const plotH = rect.height - CHART_MARGIN.top - CHART_MARGIN.bottom;
-    if (plotW <= 0 || plotH <= 0) return null;
-    const px = clientX - rect.left - CHART_MARGIN.left; const py = clientY - rect.top - CHART_MARGIN.top;
-    const fx = Math.min(1, Math.max(0, px / plotW)); const fy = Math.min(1, Math.max(0, py / plotH));
-    return { x: xDomain[1] - fx * (xDomain[1] - xDomain[0]), y: yDomain[0] + fy * (yDomain[1] - yDomain[0]) };
-  };
-  useEffect(() => {
-    const handleMouseMove = (e) => { if (!isDragging.current) return; const coords = getPlotCoords(e.clientX, e.clientY); if (coords) { setRefAreaRight(coords.x); setRefAreaBottom(coords.y); } };
-    const handleMouseUp = () => { if (!isDragging.current) return; isDragging.current = false; if (refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null) { if (refAreaLeft !== refAreaRight && refAreaTop !== refAreaBottom) { setXDomain([Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)]); setYDomain([Math.min(refAreaTop, refAreaBottom), Math.max(refAreaTop, refAreaBottom)]); } } setRefAreaLeft(null); setRefAreaRight(null); setRefAreaTop(null); setRefAreaBottom(null); };
-    window.addEventListener('mousemove', handleMouseMove); window.addEventListener('mouseup', handleMouseUp);
-    return () => { window.removeEventListener('mousemove', handleMouseMove); window.removeEventListener('mouseup', handleMouseUp); };
-  }, [refAreaLeft, refAreaRight, refAreaTop, refAreaBottom]);
+  const isExpanded = expandedPanel === panelId; const [xDomain, setXDomain] = useState([0, 11]); const [yDomain, setYDomain] = useState([0, 11]);
+  const [refAreaLeft, setRefAreaLeft] = useState(null); const [refAreaRight, setRefAreaRight] = useState(null); const [refAreaTop, setRefAreaTop] = useState(null); const [refAreaBottom, setRefAreaBottom] = useState(null);
+  const chartRef = useRef(null); const isDragging = useRef(false); const isZoomed = xDomain[0] !== 0 || xDomain[1] !== 11 || yDomain[0] !== 0 || yDomain[1] !== 11;
+  const getPlotCoords = (clientX, clientY) => { if (!chartRef.current) return null; const wrapper = chartRef.current.querySelector('.recharts-wrapper'); if (!wrapper) return null; const rect = wrapper.getBoundingClientRect(); const plotW = rect.width - CHART_MARGIN.left - CHART_MARGIN.right; const plotH = rect.height - CHART_MARGIN.top - CHART_MARGIN.bottom; if (plotW <= 0 || plotH <= 0) return null; const px = clientX - rect.left - CHART_MARGIN.left; const py = clientY - rect.top - CHART_MARGIN.top; const fx = Math.min(1, Math.max(0, px / plotW)); const fy = Math.min(1, Math.max(0, py / plotH)); return { x: xDomain[1] - fx * (xDomain[1] - xDomain[0]), y: yDomain[0] + fy * (yDomain[1] - yDomain[0]) }; };
+  useEffect(() => { const handleMouseMove = (e) => { if (!isDragging.current) return; const coords = getPlotCoords(e.clientX, e.clientY); if (coords) { setRefAreaRight(coords.x); setRefAreaBottom(coords.y); } }; const handleMouseUp = () => { if (!isDragging.current) return; isDragging.current = false; if (refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null) { if (refAreaLeft !== refAreaRight && refAreaTop !== refAreaBottom) { setXDomain([Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)]); setYDomain([Math.min(refAreaTop, refAreaBottom), Math.max(refAreaTop, refAreaBottom)]); } } setRefAreaLeft(null); setRefAreaRight(null); setRefAreaTop(null); setRefAreaBottom(null); }; window.addEventListener('mousemove', handleMouseMove); window.addEventListener('mouseup', handleMouseUp); return () => { window.removeEventListener('mousemove', handleMouseMove); window.removeEventListener('mouseup', handleMouseUp); }; }, [refAreaLeft, refAreaRight, refAreaTop, refAreaBottom]);
   const handleMouseDown = (e) => { const coords = getPlotCoords(e.clientX, e.clientY); if (coords) { isDragging.current = true; setRefAreaLeft(coords.x); setRefAreaTop(coords.y); setRefAreaRight(coords.x); setRefAreaBottom(coords.y); } };
-  const shape = (props) => {
-    const { cx, cy, fill, payload } = props;
-    if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
-    const isSel = selectedKeys && payload.keys && payload.keys.some(k => selectedKeys.includes(k));
-    const dimmed = selectedKeys && !isSel && payload.type !== 'Diagonal';
-    return (<g opacity={dimmed ? 0.18 : 1}>
-      {isSel && <circle cx={cx} cy={cy} r={(payload.size || 5) + 5} fill={SELECT_COLOR} opacity={0.3} />}
-      <circle cx={cx} cy={cy} r={isSel ? (payload.size || 5) + 2 : (payload.size || 5)} fill={isSel ? SELECT_COLOR : (payload.type === 'Diagonal' ? fill : getNMRFillColor(payload))} stroke={isSel ? '#b45309' : 'none'} strokeWidth={isSel ? 2 : 0} opacity={0.85} />
-    </g>);
-  };
+  const shape = (props) => { const { cx, cy, fill, payload } = props; if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null; const isSel = selectedKeys && payload.keys && payload.keys.some(k => selectedKeys.includes(k)); const dimmed = selectedKeys && !isSel && payload.type !== 'Diagonal'; return (<g opacity={dimmed ? 0.18 : 1}>{isSel && <circle cx={cx} cy={cy} r={(payload.size || 5) + 5} fill={SELECT_COLOR} opacity={0.3} />}<circle cx={cx} cy={cy} r={isSel ? (payload.size || 5) + 2 : (payload.size || 5)} fill={isSel ? SELECT_COLOR : (payload.type === 'Diagonal' ? fill : getNMRFillColor(payload))} stroke={isSel ? '#b45309' : 'none'} strokeWidth={isSel ? 2 : 0} opacity={0.85} /></g>); };
   return (
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)}></div>}
       <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'h-[400px] break-inside-avoid'}`}>
         <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
-          <div className="flex items-center gap-4">
-            <h4 className="font-bold text-slate-700">{title}</h4>
-            {isZoomed && <button onClick={() => { setXDomain([0, 11]); setYDomain([0, 11]); }} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>}
-          </div>
+          <div className="flex items-center gap-4"><h4 className="font-bold text-slate-700">{title}</h4>{isZoomed && <button onClick={() => { setXDomain([0, 11]); setYDomain([0, 11]); }} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>}</div>
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
         </div>
         <div className="flex-1 min-h-0 select-none relative" ref={chartRef} onMouseDown={handleMouseDown}>
@@ -446,39 +569,19 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
     </>
   );
 };
-const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panelId, selectedKeys }) => {
-  const isExpanded = expandedPanel === panelId;
-  const [xDomain, setXDomain] = useState([0, 11]); const [yDomain, setYDomain] = useState([10, 150]);
-  const [refAreaLeft, setRefAreaLeft] = useState(null); const [refAreaRight, setRefAreaRight] = useState(null);
-  const [refAreaTop, setRefAreaTop] = useState(null); const [refAreaBottom, setRefAreaBottom] = useState(null);
-  const chartRef = useRef(null); const isDragging = useRef(false);
-  const isZoomed = xDomain[0] !== 0 || xDomain[1] !== 11 || yDomain[0] !== 10 || yDomain[1] !== 150;
-  const getPlotCoords = (clientX, clientY) => {
-    if (!chartRef.current) return null;
-    const wrapper = chartRef.current.querySelector('.recharts-wrapper'); if (!wrapper) return null;
-    const rect = wrapper.getBoundingClientRect();
-    const plotW = rect.width - CHART_MARGIN.left - CHART_MARGIN.right; const plotH = rect.height - CHART_MARGIN.top - CHART_MARGIN.bottom;
-    if (plotW <= 0 || plotH <= 0) return null;
-    const px = clientX - rect.left - CHART_MARGIN.left; const py = clientY - rect.top - CHART_MARGIN.top;
-    const fx = Math.min(1, Math.max(0, px / plotW)); const fy = Math.min(1, Math.max(0, py / plotH));
-    return { x: xDomain[1] - fx * (xDomain[1] - xDomain[0]), y: yDomain[0] + fy * (yDomain[1] - yDomain[0]) };
-  };
-  useEffect(() => {
-    const handleMouseMove = (e) => { if (!isDragging.current) return; const coords = getPlotCoords(e.clientX, e.clientY); if (coords) { setRefAreaRight(coords.x); setRefAreaBottom(coords.y); } };
-    const handleMouseUp = () => { if (!isDragging.current) return; isDragging.current = false; if (refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null) { if (refAreaLeft !== refAreaRight && refAreaTop !== refAreaBottom) { setXDomain([Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)]); setYDomain([Math.min(refAreaTop, refAreaBottom), Math.max(refAreaTop, refAreaBottom)]); } } setRefAreaLeft(null); setRefAreaRight(null); setRefAreaTop(null); setRefAreaBottom(null); };
-    window.addEventListener('mousemove', handleMouseMove); window.addEventListener('mouseup', handleMouseUp);
-    return () => { window.removeEventListener('mousemove', handleMouseMove); window.removeEventListener('mouseup', handleMouseUp); };
-  }, [refAreaLeft, refAreaRight, refAreaTop, refAreaBottom]);
+const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panelId, selectedKeys, yAxisLabel = '¹³C F1 (ppm)', yDomainInit = [10, 150] }) => {
+  const isExpanded = expandedPanel === panelId; const [xDomain, setXDomain] = useState([0, 11]); const [yDomain, setYDomain] = useState(yDomainInit);
+  const [refAreaLeft, setRefAreaLeft] = useState(null); const [refAreaRight, setRefAreaRight] = useState(null); const [refAreaTop, setRefAreaTop] = useState(null); const [refAreaBottom, setRefAreaBottom] = useState(null);
+  const chartRef = useRef(null); const isDragging = useRef(false); const isZoomed = xDomain[0] !== 0 || xDomain[1] !== 11 || yDomain[0] !== yDomainInit[0] || yDomain[1] !== yDomainInit[1];
+  const getPlotCoords = (clientX, clientY) => { if (!chartRef.current) return null; const wrapper = chartRef.current.querySelector('.recharts-wrapper'); if (!wrapper) return null; const rect = wrapper.getBoundingClientRect(); const plotW = rect.width - CHART_MARGIN.left - CHART_MARGIN.right; const plotH = rect.height - CHART_MARGIN.top - CHART_MARGIN.bottom; if (plotW <= 0 || plotH <= 0) return null; const px = clientX - rect.left - CHART_MARGIN.left; const py = clientY - rect.top - CHART_MARGIN.top; const fx = Math.min(1, Math.max(0, px / plotW)); const fy = Math.min(1, Math.max(0, py / plotH)); return { x: xDomain[1] - fx * (xDomain[1] - xDomain[0]), y: yDomain[0] + fy * (yDomain[1] - yDomain[0]) }; };
+  useEffect(() => { const handleMouseMove = (e) => { if (!isDragging.current) return; const coords = getPlotCoords(e.clientX, e.clientY); if (coords) { setRefAreaRight(coords.x); setRefAreaBottom(coords.y); } }; const handleMouseUp = () => { if (!isDragging.current) return; isDragging.current = false; if (refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null) { if (refAreaLeft !== refAreaRight && refAreaTop !== refAreaBottom) { setXDomain([Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)]); setYDomain([Math.min(refAreaTop, refAreaBottom), Math.max(refAreaTop, refAreaBottom)]); } } setRefAreaLeft(null); setRefAreaRight(null); setRefAreaTop(null); setRefAreaBottom(null); }; window.addEventListener('mousemove', handleMouseMove); window.addEventListener('mouseup', handleMouseUp); return () => { window.removeEventListener('mousemove', handleMouseMove); window.removeEventListener('mouseup', handleMouseUp); }; }, [refAreaLeft, refAreaRight, refAreaTop, refAreaBottom]);
   const handleMouseDown = (e) => { const coords = getPlotCoords(e.clientX, e.clientY); if (coords) { isDragging.current = true; setRefAreaLeft(coords.x); setRefAreaTop(coords.y); setRefAreaRight(coords.x); setRefAreaBottom(coords.y); } };
   return (
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)}></div>}
       <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'h-[400px] lg:col-span-2 break-inside-avoid'}`}>
         <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
-          <div className="flex items-center gap-4">
-            <h4 className="font-bold text-slate-700">{title}</h4>
-            {isZoomed && <button onClick={() => { setXDomain([0, 11]); setYDomain([10, 150]); }} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>}
-          </div>
+          <div className="flex items-center gap-4"><h4 className="font-bold text-slate-700">{title}</h4>{isZoomed && <button onClick={() => { setXDomain([0, 11]); setYDomain(yDomainInit); }} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>}</div>
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
         </div>
         <div className="flex-1 min-h-0 select-none relative" ref={chartRef} onMouseDown={handleMouseDown}>
@@ -486,18 +589,9 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
             <ScatterChart margin={CHART_MARGIN}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b' }} />
-              <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_13C} interval={0} tickLine={false} tick={<CustomYTick13C isZoomed={isZoomed} />} label={{ value: '¹³C F1 (ppm)', angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b' }} />
+              <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_13C} interval={0} tickLine={false} tick={<CustomYTick13C isZoomed={isZoomed} />} label={{ value: yAxisLabel, angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b' }} />
               <Tooltip content={<NMRTooltip diagonalColor="#8b5cf6" selectedKeys={selectedKeys} />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
-              <Scatter data={crossPeakData} shape={(props) => {
-                const { cx, cy, payload } = props;
-                if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
-                const isSel = selectedKeys && payload.keys && payload.keys.some(k => selectedKeys.includes(k));
-                const dimmed = selectedKeys && !isSel;
-                return (<g opacity={dimmed ? 0.18 : 1}>
-                  {isSel && <circle cx={cx} cy={cy} r={(payload.size || 5) + 5} fill={SELECT_COLOR} opacity={0.3} />}
-                  <circle cx={cx} cy={cy} r={isSel ? (payload.size || 5) + 2 : (payload.size || 5)} fill={isSel ? SELECT_COLOR : getNMRFillColor(payload)} stroke={isSel ? '#b45309' : 'none'} strokeWidth={isSel ? 2 : 0} opacity={0.85} />
-                </g>);
-              }} isAnimationActive={false} />
+              <Scatter data={crossPeakData} shape={(props) => { const { cx, cy, payload } = props; if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null; const isSel = selectedKeys && payload.keys && payload.keys.some(k => selectedKeys.includes(k)); const dimmed = selectedKeys && !isSel; return (<g opacity={dimmed ? 0.18 : 1}>{isSel && <circle cx={cx} cy={cy} r={(payload.size || 5) + 5} fill={SELECT_COLOR} opacity={0.3} />}<circle cx={cx} cy={cy} r={isSel ? (payload.size || 5) + 2 : (payload.size || 5)} fill={isSel ? SELECT_COLOR : getNMRFillColor(payload)} stroke={isSel ? '#b45309' : 'none'} strokeWidth={isSel ? 2 : 0} opacity={0.85} /></g>); }} isAnimationActive={false} />
               {refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} y1={refAreaTop} y2={refAreaBottom} strokeOpacity={0.3} fill="#cbd5e1" />}
             </ScatterChart>
           </ResponsiveContainer>
@@ -507,332 +601,22 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
   );
 };
 
-// ================= SHARED SVG STRUCTURE RENDERER =================
-const StructureSVG = ({ elements, viewBox, minWidth, isExpanded, onToggleExpand, selectedKeys, onAtomClick, height = '300px' }) => {
-  return (
-    <>
-      {isExpanded && <div className={OVERLAY_CLASSES} onClick={onToggleExpand}></div>}
-      <div className={isExpanded ? FS_CLASSES + " p-4 md:p-6 items-center justify-center" : "flex flex-col bg-white p-4 rounded-xl shadow-sm w-full h-full items-center justify-center relative border border-slate-200 break-inside-avoid"}>
-        <button onClick={onToggleExpand} className="absolute top-3 right-3 z-[110] flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 w-8 h-8 justify-center rounded-lg text-lg font-bold transition-all shadow-sm">{isExpanded ? "↙️" : "↗️"}</button>
-        <div className="w-full flex-grow flex items-center justify-start overflow-x-auto overflow-y-hidden custom-scrollbar min-h-0 relative">
-          <svg viewBox={viewBox} className="font-sans" style={{ height: isExpanded ? '80vh' : height, minWidth }}>
-            {elements.filter(e => e.type === 'line').map((el, idx) => <line key={`l${idx}`} x1={el.x1} y1={el.y1} x2={el.x2} y2={el.y2} stroke={el.color} strokeWidth="1.8" />)}
-            {elements.filter(e => e.type === 'path').map((el, idx) => <path key={`pa${idx}`} d={el.d} fill="none" stroke={el.color} strokeWidth="1.8" />)}
-            {elements.filter(e => e.type === 'polygon').map((el, idx) => <polygon key={`po${idx}`} points={el.points} fill="white" stroke={el.color} strokeWidth="1.8" />)}
-            {elements.filter(e => e.type === 'circle').map((el, idx) => <circle key={`c${idx}`} cx={el.x} cy={el.y} r={el.r} fill={el.fill || 'white'} stroke={el.color} strokeWidth={el.strokeWidth !== undefined ? el.strokeWidth : "1.5"} />)}
-            {elements.filter(e => e.type === 'text').map((el, idx) => {
-              const clickable = el.ri !== null && el.atoms && onAtomClick;
-              const isSel = selectedKeys && el.ri !== null && el.atoms && el.keys && el.keys.some(k => selectedKeys.includes(k));
-              return (
-                <g key={`t${idx}`} onClick={clickable ? () => onAtomClick(el.ri, el.atoms) : undefined} style={clickable ? { cursor: 'pointer' } : undefined}>
-                  {isSel && <rect x={el.x - (el.text.length * el.fontSize * 0.35) - 4} y={el.y - el.fontSize} width={el.text.length * el.fontSize * 0.7 + 8} height={el.fontSize * 2} rx={4} fill={SELECT_COLOR} opacity={0.25} />}
-                  <text x={el.x} y={el.y} fill="white" stroke="white" strokeWidth="3" strokeLinejoin="round" fontSize={el.fontSize} textAnchor={el.align} dominantBaseline="middle" fontWeight="bold">{el.text}</text>
-                  <text x={el.x} y={el.y} fill={isSel ? SELECT_COLOR : el.color} fontSize={el.fontSize} textAnchor={el.align} dominantBaseline="middle" fontWeight="bold" style={clickable ? { textDecoration: 'none' } : undefined}>{el.text}</text>
-                </g>
-              );
-            })}
-          </svg>
-        </div>
-      </div>
-    </>
-  );
+// ================= IMAGE URL NORMALIZATION =================
+const normalizeImageCandidates = (url) => {
+  const u = (url || '').trim();
+  let m = u.match(/drive\.google\.com\/file\/d\/([^\/\?]+)/);
+  if (m) { const id = m[1]; return [ `https://lh3.googleusercontent.com/d/${id}`, `https://drive.google.com/thumbnail?id=${id}&sz=w1600`, `https://drive.google.com/uc?export=view&id=${id}` ]; }
+  m = u.match(/drive\.google\.com\/(?:open|uc)[^#]*[?&]id=([^&#]+)/);
+  if (m) { const id = m[1]; return [ `https://lh3.googleusercontent.com/d/${id}`, `https://drive.google.com/thumbnail?id=${id}&sz=w1600`, `https://drive.google.com/uc?export=view&id=${id}` ]; }
+  if (u.includes('dropbox.com')) return [ u.replace(/[?&]dl=0/g,'') + (u.includes('?') ? '&raw=1' : '?raw=1'), u ];
+  return [ u ];
 };
-
-// ================= PROTEIN 2D STRUCTURE (clickable) =================
-const ChemicalStructure2D = ({ sequence, isExpanded, onToggleExpand, selectedKeys, onAtomClick }) => {
-  if (!sequence || sequence.length === 0) return null;
-  const elements = []; let minX = 0, maxX = 0, minY = 0, maxY = 0; let firstElement = true;
-  const updateBounds = (x, y) => { if (firstElement) { minX = maxX = x; minY = maxY = y; firstElement = false; } else { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; } };
-  let curRi = null;
-  const addLine = (x1, y1, x2, y2, color, isDouble = false) => {
-    updateBounds(x1, y1); updateBounds(x2, y2);
-    if (isDouble) { const dx = x2 - x1; const dy = y2 - y1; const len = Math.sqrt(dx * dx + dy * dy); const nx = -dy / len * 2.5; const ny = dx / len * 2.5; elements.push({ type: 'line', x1: x1+nx, y1: y1+ny, x2: x2+nx, y2: y2+ny, color }); elements.push({ type: 'line', x1: x1-nx, y1: y1-ny, x2: x2-nx, y2: y2-ny, color }); } else elements.push({ type: 'line', x1, y1, x2, y2, color });
-  };
-  const addText = (x, y, text, color, fontSize = 11, align = 'middle', atoms = null) => { updateBounds(x, y - 15); updateBounds(x, y + 15); updateBounds(x - 30, y); updateBounds(x + 30, y); const toks = atoms || atomsFromLabel(text); elements.push({ type: 'text', x, y, text, color, fontSize, align, ri: curRi, atoms: toks, keys: toks ? buildKeys(curRi, toks) : null }); };
-  const addRingHeteroatom = (x, y, text, color) => { elements.push({ type: 'circle', x, y, r: 12, color: 'white', fill: 'white', strokeWidth: 0 }); addText(x, y, text, color, 12, 'middle'); };
-  const placeRadialLabel = (cx, cy, pt, text, color) => { const angle = Math.atan2(pt.y - cy, pt.x - cx); const dist = 18; const lx = pt.x + dist * Math.cos(angle); const ly = pt.y + dist * Math.sin(angle); let anchor = 'middle'; if (Math.abs(angle) < Math.PI/3) anchor = 'start'; else if (Math.abs(angle) > 2*Math.PI/3) anchor = 'end'; addText(lx, ly, text, color, 11, anchor); };
-  const addPolygon = (pointsStr, color) => { const pts = pointsStr.split(' ').map(p => p.split(',').map(Number)); pts.forEach(([x, y]) => updateBounds(x, y)); elements.push({ type: 'polygon', points: pointsStr, color }); };
-  const dx = 45; const dy = 30; const S = 25;
-  const coords = []; let cx = 100; let cy = 200; let slope = -1;
-  for (let i = 0; i < sequence.length; i++) {
-    const nX = cx; const nY = cy; cx += dx; cy += slope * dy;
-    const caX = cx; const caY = cy; const scDir = slope; slope *= -1;
-    cx += dx; cy += slope * dy; const cX = cx; const cY = cy; const oDir = slope; slope *= -1;
-    cx += dx; cy += slope * dy; const nextNX = cx; const nextNY = cy; slope *= -1;
-    coords.push({ nX, nY, caX, caY, cX, cY, nextNX, nextNY, scDir, oDir, res: sequence[i] });
-  }
-  coords.forEach((c, i) => {
-    curRi = i;
-    const color = c.res.color; const isFirst = i === 0; const isLast = i === sequence.length - 1; const char = c.res.char;
-    if (!isFirst) addLine(coords[i-1].cX, coords[i-1].cY, c.nX, c.nY, coords[i-1].res.color);
-    addLine(c.nX, c.nY, c.caX, c.caY, color); addLine(c.caX, c.caY, c.cX, c.cY, color); addLine(c.cX, c.cY, c.cX, c.cY + c.oDir * 25, "red", true);
-    if (isLast) addLine(c.cX, c.cY, c.nextNX, c.nextNY, color);
-    if (!isFirst && char !== 'P') { const hDir = c.nY < c.caY ? -1 : 1; addLine(c.nX, c.nY, c.nX, c.nY + hDir * 15, color); addText(c.nX, c.nY + hDir * 25, "H", color, 11, 'middle', ['HN']); }
-    if (char !== 'G') { const haDir = -c.scDir; addLine(c.caX, c.caY, c.caX, c.caY + haDir * 15, color); addText(c.caX, c.caY + haDir * 25, "Hα", color, 11, 'middle', ['Hα']); } else { addLine(c.caX, c.caY, c.caX, c.caY - 15, color); addText(c.caX, c.caY - 25, "Hα1", color, 11, 'middle', ['Hα1']); addLine(c.caX, c.caY, c.caX, c.caY + 15, color); addText(c.caX, c.caY + 25, "Hα2", color, 11, 'middle', ['Hα2']); }
-    if (char === 'P') { elements.push({ type: 'path', d: `M ${c.nX} ${c.nY} Q ${c.caX} ${c.caY + c.scDir*40} ${c.caX} ${c.caY + c.scDir*25}`, color }); addLine(c.caX, c.caY, c.caX, c.caY + c.scDir * 25, color); }
-    elements.push({ type: 'circle', x: c.nX, y: c.nY, r: 13, color: color, fill: 'white' });
-    if (isFirst) addText(c.nX, c.nY, char === 'P' ? "H₂N⁺" : "H₃N⁺", color, 13, 'middle', ['HN']); else addText(c.nX, c.nY, "N", color, 13, 'middle', ['N','HN']);
-    elements.push({ type: 'circle', x: c.caX, y: c.caY, r: 13, color: color, fill: 'white' }); addText(c.caX, c.caY, "Cα", color, 13, 'middle', ['Cα','Hα']);
-    elements.push({ type: 'circle', x: c.cX, y: c.cY, r: 13, color: color, fill: 'white' }); addText(c.cX, c.cY, "C", color, 13, 'middle', ["C'"]);
-    addText(c.cX, c.cY + c.oDir * 35, "O", "red", 13, 'middle', ["O"]);
-    if (isLast) { elements.push({ type: 'circle', x: c.nextNX, y: c.nextNY, r: 13, color: color, fill: 'white' }); addText(c.nextNX, c.nextNY, "O⁻", "red", 13, 'middle', ["O'"]); }
-    const vNode = (lvl, text, atoms) => { if(lvl > 0) addLine(c.caX, c.caY + c.scDir * (lvl - 1) * S, c.caX, c.caY + c.scDir * lvl * S, color); addText(c.caX, c.caY + c.scDir * (lvl * S + (c.scDir === 1 ? 10 : -10)), text, color, 11, 'middle', atoms); };
-    if (char !== 'G' && char !== 'P') { addLine(c.caX, c.caY, c.caX, c.caY + c.scDir * S, color); if (!['A','I','V','T','F','Y','W','H'].includes(char)) addText(c.caX, c.caY + c.scDir * S, "CH₂ (Hβ)", color, 11, 'middle', ['Hβ','Hβ1','Hβ2']); }
-    switch(char) {
-      case 'A': addText(c.caX, c.caY + c.scDir * S, "CH₃ (Hβ)", color, 11, 'middle', ['Hβ']); break;
-      case 'V': addText(c.caX, c.caY + c.scDir * S, "CH (Hβ)", color, 11, 'middle', ['Hβ']); addLine(c.caX, c.caY+c.scDir*S, c.caX-20, c.caY+c.scDir*1.8*S, color); addText(c.caX-20, c.caY+c.scDir*(1.8*S+10), 'CH₃ (Hγ1)', color, 11, 'middle', ['Hγ1']); addLine(c.caX, c.caY+c.scDir*S, c.caX+20, c.caY+c.scDir*1.8*S, color); addText(c.caX+20, c.caY+c.scDir*(1.8*S+10), 'CH₃ (Hγ2)', color, 11, 'middle', ['Hγ2']); break;
-      case 'L': vNode(2, 'CH (Hγ)', ['Hγ']); addLine(c.caX, c.caY+c.scDir*2*S, c.caX-20, c.caY+c.scDir*2.8*S, color); addText(c.caX-20, c.caY+c.scDir*(2.8*S+10), 'CH₃ (Hδ1)', color, 11, 'middle', ['Hδ1']); addLine(c.caX, c.caY+c.scDir*2*S, c.caX+20, c.caY+c.scDir*2.8*S, color); addText(c.caX+20, c.caY+c.scDir*(2.8*S+10), 'CH₃ (Hδ2)', color, 11, 'middle', ['Hδ2']); break;
-      case 'I': addText(c.caX, c.caY + c.scDir * S, "CH (Hβ)", color, 11, 'middle', ['Hβ']); addLine(c.caX, c.caY+c.scDir*S, c.caX-20, c.caY+c.scDir*1.8*S, color); addText(c.caX-20, c.caY+c.scDir*(1.8*S+10), 'CH₃ (Hγ2)', color, 11, 'middle', ['Hγ2']); addLine(c.caX, c.caY+c.scDir*S, c.caX+20, c.caY+c.scDir*1.8*S, color); addText(c.caX+20, c.caY+c.scDir*(1.8*S+10), 'CH₂ (Hγ1)', color, 11, 'middle', ['Hγ1']); addLine(c.caX+20, c.caY+c.scDir*1.8*S, c.caX+20, c.caY+c.scDir*2.8*S, color); addText(c.caX+20, c.caY+c.scDir*(2.8*S+10), 'CH₃ (Hδ1)', color, 11, 'middle', ['Hδ1']); break;
-      case 'S': vNode(2, 'OH (Hγ)', ['Hγ']); break;
-      case 'T': addText(c.caX, c.caY + c.scDir * S, "CH (Hβ)", color, 11, 'middle', ['Hβ']); addLine(c.caX, c.caY+c.scDir*S, c.caX-20, c.caY+c.scDir*1.8*S, color); addText(c.caX-20, c.caY+c.scDir*(1.8*S+10), 'CH₃ (Hγ2)', color, 11, 'middle', ['Hγ2']); addLine(c.caX, c.caY+c.scDir*S, c.caX+20, c.caY+c.scDir*1.5*S, color); addText(c.caX+20, c.caY+c.scDir*(1.5*S+10), 'OH (Hγ1)', color, 11, 'middle', ['Hγ1']); break;
-      case 'C': vNode(2, 'SH (Hγ)', ['Hγ']); break;
-      case 'M': vNode(2, 'CH₂ (Hγ)', ['Hγ']); vNode(3, 'S (Hδ)', ['Hδ']); vNode(4, 'CH₃ (Hε)', ['Hε(CH3)']); break;
-      case 'D': vNode(2, 'C (Hγ)', ['Hγ']); addLine(c.caX, c.caY+c.scDir*2*S, c.caX-20, c.caY+c.scDir*2.8*S, color); addText(c.caX-20, c.caY+c.scDir*(2.8*S+10), 'O⁻', color); addLine(c.caX, c.caY+c.scDir*2*S, c.caX+20, c.caY+c.scDir*2.8*S, color, true); addText(c.caX+20, c.caY+c.scDir*(2.8*S+10), 'O', color); break;
-      case 'N': vNode(2, 'C (Hγ)', ['Hγ']); addLine(c.caX, c.caY+c.scDir*2*S, c.caX-20, c.caY+c.scDir*2.8*S, color); addText(c.caX-20, c.caY+c.scDir*(2.8*S+10), 'NH₂ (Hδ2)', color, 11, 'middle', ['Hδ21','Hδ22']); addLine(c.caX, c.caY+c.scDir*2*S, c.caX+20, c.caY+c.scDir*2.8*S, color, true); addText(c.caX+20, c.caY+c.scDir*(2.8*S+10), 'O', color); break;
-      case 'E': vNode(2, 'CH₂ (Hγ)', ['Hγ']); vNode(3, 'C (Hδ)', ['Hδ']); addLine(c.caX, c.caY+c.scDir*3*S, c.caX-20, c.caY+c.scDir*3.8*S, color); addText(c.caX-20, c.caY+c.scDir*(3.8*S+10), 'O⁻', color); addLine(c.caX, c.caY+c.scDir*3*S, c.caX+20, c.caY+c.scDir*3.8*S, color, true); addText(c.caX+20, c.caY+c.scDir*(3.8*S+10), 'O', color); break;
-      case 'Q': vNode(2, 'CH₂ (Hγ)', ['Hγ']); vNode(3, 'C (Hδ)', ['Hδ']); addLine(c.caX, c.caY+c.scDir*3*S, c.caX-20, c.caY+c.scDir*3.8*S, color); addText(c.caX-20, c.caY+c.scDir*(3.8*S+10), 'NH₂ (Hε2)', color, 11, 'middle', ['Hε21','Hε22']); addLine(c.caX, c.caY+c.scDir*3*S, c.caX+20, c.caY+c.scDir*3.8*S, color, true); addText(c.caX+20, c.caY+c.scDir*(3.8*S+10), 'O', color); break;
-      case 'K': vNode(2, 'CH₂ (Hγ)', ['Hγ']); vNode(3, 'CH₂ (Hδ)', ['Hδ']); vNode(4, 'CH₂ (Hε)', ['Hε']); vNode(5, 'NH₃⁺ (Hζ)', ['Hζ(NH3)']); break;
-      case 'R': vNode(2, 'CH₂ (Hγ)', ['Hγ']); vNode(3, 'CH₂ (Hδ)', ['Hδ']); vNode(4, 'NH (Hε)', ['Hε']); vNode(5, 'C (Hζ)', ['Hζ']); addLine(c.caX, c.caY+c.scDir*5*S, c.caX-20, c.caY+c.scDir*5.8*S, color); addText(c.caX-20, c.caY+c.scDir*(5.8*S+10), 'NH₂', color); addLine(c.caX, c.caY+c.scDir*5*S, c.caX+20, c.caY+c.scDir*5.8*S, color, true); addText(c.caX+20, c.caY+c.scDir*(5.8*S+10), 'NH₂⁺', color); break;
-      case 'F':
-      case 'Y': {
-        addText(c.caX, c.caY + c.scDir * S, "CH₂ (Hβ)", color, 11, 'middle', ['Hβ','Hβ1','Hβ2']);
-        const hcx = c.caX; const hcy = c.caY + c.scDir * 3 * S; const hPts = getHexagon(hcx, hcy, S, c.scDir);
-        addLine(c.caX, c.caY + c.scDir * S, hPts[0].x, hPts[0].y, color); addPolygon(hPts.map(p => `${p.x},${p.y}`).join(' '), color); elements.push({ type: 'circle', x: hcx, y: hcy, r: S * 0.6, color: color, fill: 'none' });
-        placeRadialLabel(hcx, hcy, hPts[1], 'CH (Hδ2)', color); placeRadialLabel(hcx, hcy, hPts[2], 'CH (Hε2)', color); placeRadialLabel(hcx, hcy, hPts[5], 'CH (Hδ1)', color); placeRadialLabel(hcx, hcy, hPts[4], 'CH (Hε1)', color);
-        if (char === 'Y') { const angleZ = Math.atan2(hPts[3].y - hcy, hPts[3].x - hcx); const ohX = hPts[3].x + S * Math.cos(angleZ); const ohY = hPts[3].y + S * Math.sin(angleZ); addLine(hPts[3].x, hPts[3].y, ohX, ohY, color); placeRadialLabel(hPts[3].x, hPts[3].y, {x: ohX, y: ohY}, 'OH', color); } else placeRadialLabel(hcx, hcy, hPts[3], 'CH (Hζ)', color);
-        break;
-      }
-      case 'H': {
-        addText(c.caX, c.caY + c.scDir * S, "CH₂ (Hβ)", color, 11, 'middle', ['Hβ','Hβ1','Hβ2']);
-        const R5 = S * 0.85065; const pcx = c.caX; const pcy = c.caY + c.scDir * 2 * S + c.scDir * R5; const pPts = getPentagon(pcx, pcy, R5, c.scDir);
-        addLine(c.caX, c.caY + c.scDir * S, pPts[0].x, pPts[0].y, color); addPolygon(pPts.map(p => `${p.x},${p.y}`).join(' '), color); elements.push({ type: 'circle', x: pcx, y: pcy, r: R5 * 0.5, color: color, fill: 'none' });
-        addRingHeteroatom(pPts[2].x, pPts[2].y, "NH", color); addRingHeteroatom(pPts[4].x, pPts[4].y, "N", color);
-        placeRadialLabel(pcx, pcy, pPts[1], 'CH (Hδ2)', color); placeRadialLabel(pcx, pcy, pPts[3], 'CH (Hε1)', color);
-        break;
-      }
-      case 'W': {
-        addText(c.caX, c.caY + c.scDir * S, "CH₂ (Hβ)", color, 11, 'middle', ['Hβ','Hβ1','Hβ2']);
-        const R5 = S * 0.85065; const pcx = c.caX; const pcy = c.caY + c.scDir * 2 * S + c.scDir * R5; const pPts = getPentagon(pcx, pcy, R5, c.scDir);
-        addLine(c.caX, c.caY + c.scDir * S, pPts[0].x, pPts[0].y, color); addPolygon(pPts.map(p => `${p.x},${p.y}`).join(' '), color); elements.push({ type: 'circle', x: pcx, y: pcy, r: R5 * 0.5, color: color, fill: 'none' });
-        const ce2 = pPts[3]; const cd2 = pPts[4]; const mx = (ce2.x + cd2.x) / 2; const my = (ce2.y + cd2.y) / 2;
-        const midA = Math.atan2(my - pcy, mx - pcx); const hcx = mx + Math.cos(midA) * S * Math.sqrt(3)/2; const hcy = my + Math.sin(midA) * S * Math.sqrt(3)/2;
-        const startA = Math.atan2(ce2.y - hcy, ce2.x - hcx); const testA = startA + Math.PI/3; const sign = Math.hypot(hcx + S * Math.cos(testA) - cd2.x, hcy + S * Math.sin(testA) - cd2.y) < 0.1 ? 1 : -1;
-        const hPts = []; for(let j=0; j<6; j++) { const a = startA + j * sign * Math.PI/3; hPts.push({ x: hcx + S * Math.cos(a), y: hcy + S * Math.sin(a) }); }
-        addPolygon(hPts.map(p => `${p.x},${p.y}`).join(' '), color); elements.push({ type: 'circle', x: hcx, y: hcy, r: S * 0.6, color: color, fill: 'none' });
-        addRingHeteroatom(pPts[2].x, pPts[2].y, "NH", color);
-        placeRadialLabel(pcx, pcy, pPts[1], 'CH (Hδ1)', color); placeRadialLabel(hcx, hcy, hPts[2], 'CH (Hε3)', color); placeRadialLabel(hcx, hcy, hPts[3], 'CH (Hζ3)', color); placeRadialLabel(hcx, hcy, hPts[4], 'CH (Hη2)', color); placeRadialLabel(hcx, hcy, hPts[5], 'CH (Hζ2)', color);
-        break;
-      }
-    }
-    const labelY = c.caY + (c.scDir > 0 ? 170 : -170); addText(c.caX, labelY, `${c.res.name} (${c.res.id})`, color, 14, 'middle', null);
-  });
-  const pad = 15; const viewBox = `${minX - pad} ${minY - pad} ${maxX - minX + 2*pad} ${maxY - minY + 2*pad}`;
-  return <StructureSVG elements={elements} viewBox={viewBox} minWidth={sequence.length > 3 ? `${sequence.length * 120}px` : '100%'} isExpanded={isExpanded} onToggleExpand={onToggleExpand} selectedKeys={selectedKeys} onAtomClick={onAtomClick} />;
-};
-
-// ================= NUCLEIC ACID 2D STRUCTURE (redesigned, clickable) =================
-const NucleicStructure2D = ({ sequence, isExpanded, onToggleExpand, molType, selectedKeys, onAtomClick }) => {
-  if (!sequence || sequence.length === 0) return null;
-  const elements = []; let minX = 0, maxX = 0, minY = 0, maxY = 0; let firstElement = true;
-  const updateBounds = (x, y) => { if (firstElement) { minX = maxX = x; minY = maxY = y; firstElement = false; } else { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; } };
-  let curRi = null;
-  const addLine = (x1, y1, x2, y2, color, isDouble = false) => {
-    updateBounds(x1, y1); updateBounds(x2, y2);
-    if (isDouble) { const dx = x2 - x1; const dy = y2 - y1; const len = Math.hypot(dx, dy) || 1; const nx = -dy/len*2.5; const ny = dx/len*2.5; elements.push({ type:'line', x1:x1+nx, y1:y1+ny, x2:x2+nx, y2:y2+ny, color }); elements.push({ type:'line', x1:x1-nx, y1:y1-ny, x2:x2-nx, y2:y2-ny, color }); }
-    else elements.push({ type:'line', x1, y1, x2, y2, color });
-  };
-  const addText = (x, y, text, color, fontSize = 11, align = 'middle', atoms = null) => { updateBounds(x, y - 15); updateBounds(x, y + 15); updateBounds(x - 30, y); updateBounds(x + 30, y); const toks = atoms; elements.push({ type:'text', x, y, text, color, fontSize, align, ri: curRi, atoms: toks, keys: toks ? buildKeys(curRi, toks) : null }); };
-  const addPoly = (pts, color) => { pts.forEach(p => updateBounds(p.x, p.y)); elements.push({ type:'polygon', points: pts.map(p => `${p.x},${p.y}`).join(' '), color }); };
-  const isDNA = molType === 'dna';
-  const SP = 230, SY = 70, R = 26;
-  sequence.forEach((res, i) => {
-    curRi = i;
-    const color = res.color; const char = res.char;
-    const sx = 150 + i*SP, sy = SY;
-    // sugar furanose vertices: C1 bottom, C2 bottom-left, C3 top-left, C4 top-right, O4 bottom-right
-    const C1 = {x: sx, y: sy + R};
-    const C2 = {x: sx - 0.95*R, y: sy + 0.31*R};
-    const C3 = {x: sx - 0.59*R, y: sy - 0.81*R};
-    const C4 = {x: sx + 0.59*R, y: sy - 0.81*R};
-    const O4 = {x: sx + 0.95*R, y: sy + 0.31*R};
-    addPoly([O4, C1, C2, C3, C4], color);
-    // sugar labels
-    addText(O4.x + 13, O4.y + 2, "O4'", color, 8, 'start', ["O4'"]);
-    addText(C1.x + 12, C1.y + 6, "C1'", color, 8, 'start', ["C1'", "H1'"]);
-    addText(C2.x - 12, C2.y + 12, "C2'", color, 8, 'end', isDNA ? ["C2'", "H2'", "H2''"] : ["C2'", "H2'"]);
-    addText(C3.x - 12, C3.y, "C3'", color, 8, 'end', ["C3'", "H3'"]);
-    addText(C4.x + 4, C4.y - 10, "C4'", color, 8, 'middle', ["C4'", "H4'"]);
-    if (!isDNA) addText(C2.x - 10, C2.y + 26, "2'OH", color, 7, 'end', ["OH2'"]);
-    // 5' arm: C4'-C5'-O5'-P(i)
-    const C5 = {x: sx + 0.59*R + 18, y: sy - 0.81*R - 16};
-    const O5 = {x: sx + 0.59*R + 10, y: sy - 0.81*R - 40};
-    addLine(C4.x, C4.y, C5.x, C5.y, color);
-    addText(C5.x + 14, C5.y, "C5'", color, 8, 'start', ["C5'", "H5'", "H5''"]);
-    addLine(C5.x, C5.y, O5.x, O5.y, color);
-    addText(O5.x - 12, O5.y, "O5'", color, 8, 'end', ["O5'"]);
-    // phosphate P(i)
-    const P = {x: sx - 115, y: sy - 110};
-    addLine(O5.x, O5.y, P.x, P.y, color);
-    if (i > 0) { const prevO3 = {x: 150 + (i-1)*SP - 0.59*R - 26, y: SY - 0.81*R - 18}; addLine(prevO3.x, prevO3.y, P.x, P.y, color); }
-    else addText(P.x - 18, P.y, "5'", color, 9, 'end', null);
-    elements.push({ type:'circle', x: P.x, y: P.y, r: 13, color, fill: 'white' });
-    addText(P.x, P.y, "P", color, 11, 'middle', ["P"]);
-    addLine(P.x, P.y, P.x - 16, P.y - 13, color, true); addText(P.x - 26, P.y - 16, "O", color, 8, 'end', null);
-    addLine(P.x, P.y, P.x + 4, P.y + 18, color); addText(P.x + 8, P.y + 26, "O⁻", color, 8, 'start', null);
-    // 3' arm
-    const O3 = {x: sx - 0.59*R - 16, y: sy - 0.81*R - 16};
-    addLine(C3.x, C3.y, O3.x, O3.y, color);
-    addText(O3.x - 2, O3.y - 9, "O3'", color, 8, 'end', ["O3'"]);
-    if (i === sequence.length - 1) addText(O3.x - 16, O3.y - 20, "3'", color, 9, 'end', null);
-    // glycosidic bond to base
-    const baseTop = {x: sx, y: sy + R + 6};
-    addLine(C1.x, C1.y, baseTop.x, baseTop.y, color);
-    // base
-    const isPurine = char === 'A' || char === 'G';
-    if (!isPurine) {
-      const c = {x: sx, y: sy + R + 48}; const r = 30;
-      const pts = getHexagon(c.x, c.y, r, 1); // pts[0] top = N1
-      addLine(baseTop.x, baseTop.y, pts[0].x, pts[0].y, color);
-      addPoly(pts, color);
-      const lbl = ['N1','C2','N3','C4','C5','C6'];
-      pts.forEach((p, k) => { const ang = Math.atan2(p.y - c.y, p.x - c.x); addText(p.x + 14*Math.cos(ang), p.y + 14*Math.sin(ang), lbl[k], color, 8, Math.cos(ang) > 0.3 ? 'start' : (Math.cos(ang) < -0.3 ? 'end' : 'middle'), [lbl[k]]); });
-      elements.push({ type:'circle', x: c.x, y: c.y, r: r*0.55, color, fill: 'none' });
-      const exo = (pt, txt, atoms) => { const ang = Math.atan2(pt.y - c.y, pt.x - c.x); addText(pt.x + 32*Math.cos(ang), pt.y + 32*Math.sin(ang), txt, color, 9, Math.cos(ang) > 0.3 ? 'start' : 'end', atoms); };
-      exo(pts[1], 'O', null);
-      if (char === 'C') exo(pts[3], 'NH₂', ["NH2"]); else exo(pts[3], 'O', null);
-      if (char === 'T') exo(pts[4], 'CH₃', ["H7(CH3)"]); else exo(pts[4], 'H', ["H5"]);
-      exo(pts[5], 'H', ["H6"]);
-    } else {
-      const c = {x: sx, y: sy + R + 62}; const r = 27;
-      const hpts = getHexagon(c.x, c.y, r, 1);
-      // fuse pentagon on edge hpts[5]-hpts[0] (top-right side) away from sugar? Use edge hpts[0]-hpts[1]
-      const fused = fusedPentagon(hpts[5], hpts[0], c);
-      addPoly(hpts, color); addPoly(fused.verts, color);
-      const hlbl = ['C6','N1','C2','N3','C4','C5'];
-      hpts.forEach((p, k) => { const ang = Math.atan2(p.y - c.y, p.x - c.x); addText(p.x + 13*Math.cos(ang), p.y + 13*Math.sin(ang), hlbl[k], color, 7.5, Math.cos(ang) > 0.3 ? 'start' : (Math.cos(ang) < -0.3 ? 'end' : 'middle'), [hlbl[k]]); });
-      // pentagon labels: verts[0]=hpts[5](C5 shared), verts[1]=hpts[0](C4 shared)... label the 3 outer ones
-      const fiveLabels = {2: 'N7', 3: 'C8', 4: 'N9'};
-      Object.entries(fiveLabels).forEach(([idx, lab]) => { const p = fused.verts[idx]; addText(p.x, p.y - 12, lab, color, 7.5, 'middle', [lab]); });
-      // glycosidic from N9 to sugar
-      const n9 = fused.verts[4]; addLine(baseTop.x, baseTop.y, n9.x, n9.y, color);
-      const exo = (pt, txt, atoms) => { const ang = Math.atan2(pt.y - c.y, pt.x - c.x); addText(pt.x + 30*Math.cos(ang), pt.y + 30*Math.sin(ang), txt, color, 9, Math.cos(ang) > 0.3 ? 'start' : 'end', atoms); };
-      if (char === 'A') { exo(hpts[0], 'NH₂', ["NH2"]); exo(hpts[2], 'H', ["H2"]); }
-      else { exo(hpts[0], 'O', null); exo(hpts[2], 'NH₂', ["NH2"]); }
-      const c8 = fused.verts[3]; addText(c8.x + 14, c8.y, 'H8', color, 8, 'start', ["H8"]);
-    }
-    // residue label
-    addText(sx, sy + R + 130, `${res.name} (${res.id})`, color, 12, 'middle', null);
-  });
-  const pad = 15; const viewBox = `${minX - pad} ${minY - pad} ${maxX - minX + 2*pad} ${maxY - minY + 2*pad}`;
-  return <StructureSVG elements={elements} viewBox={viewBox} minWidth={sequence.length > 2 ? `${sequence.length * 210}px` : '100%'} isExpanded={isExpanded} onToggleExpand={onToggleExpand} selectedKeys={selectedKeys} onAtomClick={onAtomClick} height="360px" />;
-};
-
-// ================= SUGAR 2D STRUCTURE (chair/boat toggle, clickable) =================
-const SugarStructure2D = ({ res, isExpanded, onToggleExpand, conformation, selectedKeys, onAtomClick }) => {
-  if (!res) return null;
-  const elements = []; let minX = 0, maxX = 0, minY = 0, maxY = 0; let firstElement = true;
-  const updateBounds = (x, y) => { if (firstElement) { minX = maxX = x; minY = maxY = y; firstElement = false; } else { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; } };
-  const curRi = 0;
-  const addLine = (x1, y1, x2, y2, color, isDouble = false) => { updateBounds(x1, y1); updateBounds(x2, y2); elements.push({ type:'line', x1, y1, x2, y2, color }); };
-  const addText = (x, y, text, color, fontSize = 11, align = 'middle', atoms = null) => { updateBounds(x, y - 15); updateBounds(x, y + 15); updateBounds(x - 30, y); updateBounds(x + 30, y); elements.push({ type:'text', x, y, text, color, fontSize, align, ri: curRi, atoms, keys: atoms ? buildKeys(curRi, atoms) : null }); };
-  const color = res.color;
-  const ox = 200, oy = 200;
-  // ring atom positions by conformation
-  let pos = {};
-  if (conformation === 'boat') {
-    pos = { O:{x:ox+60,y:oy+20}, C1:{x:ox+15,y:oy-10}, C2:{x:ox+55,y:oy-55}, C3:{x:ox+125,y:oy-55}, C4:{x:ox+165,y:oy-10}, C5:{x:ox+120,y:oy+20} };
-  } else { // chair (default)
-    pos = { O:{x:ox+70,y:oy+15}, C1:{x:ox+20,y:oy-20}, C2:{x:ox+60,y:oy-50}, C3:{x:ox+120,y:oy-50}, C4:{x:ox+160,y:oy-20}, C5:{x:ox+130,y:oy+15} };
-  }
-  const order = ['O','C1','C2','C3','C4','C5'];
-  for (let k = 0; k < order.length; k++) { const a = pos[order[k]]; const b = pos[order[(k+1) % order.length]]; addLine(a.x, a.y, b.x, b.y, color); }
-  // ring atom labels
-  Object.entries(pos).forEach(([name, p]) => {
-    const atoms = name === 'O' ? null : [name.replace('C','H')];
-    addText(p.x, p.y, name, color, 10, 'middle', atoms);
-  });
-  // substituents (OH on C1-C4, CH2OH at C5)
-  const subs = { C1:'OH', C2:'OH', C3:'OH', C4:'OH' };
-  Object.entries(subs).forEach(([c, label]) => {
-    const p = pos[c]; const cx = ox + 90, cy = oy - 15; const ang = Math.atan2(p.y - cy, p.x - cx);
-    const lx = p.x + 26*Math.cos(ang), ly = p.y + 26*Math.sin(ang);
-    addLine(p.x, p.y, p.x + 18*Math.cos(ang), p.y + 18*Math.sin(ang), color);
-    addText(lx, ly, label, color, 9, Math.cos(ang) > 0.3 ? 'start' : 'end', null);
-  });
-  // C5 -> C6 CH2OH
-  const c5 = pos.C5;
-  addLine(c5.x, c5.y, c5.x + 30, c5.y + 20, color);
-  addText(c5.x + 36, c5.y + 24, res.char === 'FUC' ? 'CH₃' : 'CH₂OH', color, 10, 'start', res.char === 'FUC' ? ['H6'] : ['H6a','H6b']);
-  // anomeric H at C1
-  const c1 = pos.C1; addText(c1.x - 20, c1.y + 16, 'H1', color, 9, 'end', ['H1']);
-  addText(ox + 90, oy + 70, `${res.name} (${conformation === 'boat' ? 'barca' : 'sedia'})`, color, 13, 'middle', null);
-  const pad = 20; const viewBox = `${minX - pad} ${minY - pad} ${maxX - minX + 2*pad} ${maxY - minY + 2*pad}`;
-  return <StructureSVG elements={elements} viewBox={viewBox} minWidth="420px" isExpanded={isExpanded} onToggleExpand={onToggleExpand} selectedKeys={selectedKeys} onAtomClick={onAtomClick} />;
-};
-
-// ================= LIPID 2D STRUCTURE (fixed oleic cis double bond, clickable) =================
-const LipidStructure2D = ({ res, isExpanded, onToggleExpand, selectedKeys, onAtomClick }) => {
-  if (!res) return null;
-  const elements = []; let minX = 0, maxX = 0, minY = 0, maxY = 0; let firstElement = true;
-  const updateBounds = (x, y) => { if (firstElement) { minX = maxX = x; minY = maxY = y; firstElement = false; } else { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; } };
-  const curRi = 0;
-  const addLine = (x1, y1, x2, y2, color, isDouble = false) => {
-    updateBounds(x1, y1); updateBounds(x2, y2);
-    if (isDouble) { const dx = x2 - x1; const dy = y2 - y1; const len = Math.hypot(dx, dy) || 1; const nx = -dy/len*2.5; const ny = dx/len*2.5; elements.push({ type:'line', x1:x1+nx, y1:y1+ny, x2:x2+nx, y2:y2+ny, color }); elements.push({ type:'line', x1:x1-nx, y1:y1-ny, x2:x2-nx, y2:y2-ny, color }); }
-    else elements.push({ type:'line', x1, y1, x2, y2, color });
-  };
-  const addText = (x, y, text, color, fontSize = 11, align = 'middle', atoms = null) => { updateBounds(x, y - 15); updateBounds(x, y + 15); updateBounds(x - 30, y); updateBounds(x + 30, y); elements.push({ type:'text', x, y, text, color, fontSize, align, ri: curRi, atoms, keys: atoms ? buildKeys(curRi, atoms) : null }); };
-  const color = res.color; const head = res.head;
-  // head group (simplified)
-  addText(60, 150, head === 'PC' ? 'N(CH₃)₃⁺' : head === 'PE' ? 'NH₃⁺' : head === 'PS' ? 'Ser' : 'Gly', color, 12, 'middle', head === 'PC' ? ['HNMe3'] : head === 'PE' ? ['HNH3'] : head === 'PS' ? ['HαS','HβS1','HβS2'] : ['HCH2OH','HCHOH']);
-  addText(60, 170, head === 'PC' ? 'HCH2N' : 'HCH2N', color, 9, 'middle', ['HCH2N']);
-  addLine(60, 158, 100, 158, color);
-  // phosphate
-  addText(110, 158, 'P', color, 12, 'middle', ['P']);
-  addLine(110, 158, 110, 138, color, true); addText(110, 128, 'O', color, 9, 'middle', null);
-  addLine(110, 158, 110, 178, color); addText(110, 190, 'O⁻', color, 9, 'middle', null);
-  addLine(110, 158, 140, 158, color);
-  addText(150, 158, 'O', color, 10, 'middle', null);
-  // glycerol
-  addLine(150, 158, 180, 158, color);
-  addText(185, 158, 'CH₂', color, 10, 'middle', ['Hsn3a','Hsn3b']);
-  addLine(185, 158, 215, 130, color);
-  addText(220, 125, 'CH', color, 10, 'middle', ['Hsn2']);
-  addLine(215, 130, 250, 105, color);
-  addText(255, 100, 'CH₂', color, 10, 'middle', ['Hsn1a','Hsn1b']);
-  // sn-1 chain (palmitoyl, saturated) upward zigzag
-  const buildChain = (x0, y0, segs, L, amp, dbIndex) => {
-    const pts = [{x: x0, y: y0}]; let dir = -1;
-    for (let k = 0; k < segs; k++) {
-      const prev = pts[pts.length - 1];
-      pts.push({x: prev.x + L, y: prev.y + dir*amp});
-      if (k !== dbIndex) dir *= -1; // keep direction across double bond -> cis kink
-    }
-    return pts;
-  };
-  const sn1 = buildChain(260, 100, 13, 22, 11, -1);
-  for (let k = 0; k < sn1.length - 1; k++) addLine(sn1[k].x, sn1[k].y, sn1[k+1].x, sn1[k+1].y, color);
-  addText(sn1[1].x, sn1[1].y - 14, 'C2', color, 8, 'middle', ['H2-sn1']);
-  addText(sn1[3].x, sn1[3].y + 18, 'C3', color, 8, 'middle', ['H3-sn1']);
-  addText(sn1[6].x, sn1[6].y - 14, '(CH₂)ₙ', color, 9, 'middle', ['H4-sn1']);
-  addText(sn1[12].x + 6, sn1[12].y, 'CH₃', color, 9, 'start', ['H16-sn1']);
-  // sn-2 chain (oleoyl) with ONE cis double bond at C9=C10
-  const sn2 = buildChain(225, 130, 15, 22, 11, 7); // dbIndex 7 => segment 8-9 = C9=C10
-  for (let k = 0; k < sn2.length - 1; k++) {
-    const isDB = (k === 7);
-    addLine(sn2[k].x, sn2[k].y, sn2[k+1].x, sn2[k+1].y, color, isDB);
-  }
-  addText(sn2[1].x, sn2[1].y + 18, 'C2', color, 8, 'middle', ['H2-sn2']);
-  addText(sn2[3].x, sn2[3].y - 14, 'C3', color, 8, 'middle', ['H3-sn2']);
-  addText(sn2[6].x, sn2[6].y + 18, 'CH₂', color, 8, 'middle', ['Hall-sn2']);
-  addText(sn2[7].x + 4, sn2[7].y - 14, 'C9', color, 8, 'middle', ['H9-sn2']);
-  addText(sn2[8].x + 4, sn2[8].y + 18, 'C10', color, 8, 'middle', ['H10-sn2']);
-  addText(sn2[9].x + 4, sn2[9].y - 14, 'CH₂', color, 8, 'middle', ['H11-sn2']);
-  addText(sn2[12].x, sn2[12].y - 14, '(CH₂)ₙ', color, 9, 'middle', ['H4-sn2']);
-  addText(sn2[14].x + 6, sn2[14].y, 'CH₃', color, 9, 'start', ['H18-sn2']);
-  addText(300, 210, res.name, color, 13, 'middle', null);
-  const pad = 20; const viewBox = `${minX - pad} ${minY - pad} ${maxX - minX + 2*pad} ${maxY - minY + 2*pad}`;
-  return <StructureSVG elements={elements} viewBox={viewBox} minWidth="620px" isExpanded={isExpanded} onToggleExpand={onToggleExpand} selectedKeys={selectedKeys} onAtomClick={onAtomClick} height="300px" />;
+const SmartImage = ({ src, alt }) => {
+  const cands = useMemo(() => normalizeImageCandidates(src), [src]);
+  const [idx, setIdx] = useState(0); const [failed, setFailed] = useState(false);
+  useEffect(() => { setIdx(0); setFailed(false); }, [src]);
+  if (failed) return (<div className="w-full h-40 flex flex-col items-center justify-center bg-slate-50 border border-dashed border-slate-300 rounded text-slate-400 text-xs text-center px-4">⚠️ Anteprima non disponibile. Se il file è privato, impostalo come "Condividi con chiunque abbia il link".</div>);
+  return <img src={cands[Math.min(idx, cands.length-1)]} alt={alt} className="w-full h-auto object-contain rounded bg-white" style={{minHeight:'150px', maxHeight:'400px'}} onError={() => { if (idx < cands.length-1) setIdx(idx+1); else setFailed(true); }} />;
 };
 
 // ================= MAIN COMPONENT =================
@@ -844,35 +628,25 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
   const selNuc = activeTest.selectedNuclei || ['H', 'N', 'C'];
   const shifts = activeTest.chemicalShifts || {};
   const images = activeTest.nmrSpectraImages || [];
-  const showSim = activeTest.showSpectraSimulation || false;
   const linkedProtocolId = activeTest.linkedProtocolId || '';
+  const dnaForm = activeTest.dnaForm || 'B';
   const [tableMode, setTableMode] = useState(activeTest.tableMode || 'backbone');
   const [expandedPanel, setExpandedPanel] = useState(null);
   const [focusIdx, setFocusIdx] = useState('ALL');
-  const [reveal, setReveal] = useState(false);
-  const [ssPreview, setSsPreview] = useState('current');
-  const [selected, setSelected] = useState(null); // { ri, keys: [...] }
+  const [selected, setSelected] = useState(null);
   const [sugarConf, setSugarConf] = useState('chair');
   const isPolymer = moleculeType === 'protein' || moleculeType === 'dna' || moleculeType === 'rna';
+  const hasPhosphorus = moleculeType === 'dna' || moleculeType === 'rna' || moleculeType === 'lipid';
   const DB = moleculeType === 'protein' ? AMINO_ACID_DB : moleculeType === 'dna' ? NUCLEOTIDE_DB.DNA : moleculeType === 'rna' ? NUCLEOTIDE_DB.RNA : moleculeType === 'sugar' ? SUGAR_DB : LIPID_DB;
   const ssRaw = activeTest.secondaryStructure || '';
   const getSSAt = (i) => (ssRaw[i] && 'HES'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
   const effTableMode = (moleculeType === 'sugar' || moleculeType === 'lipid') ? 'all' : tableMode;
   const nucDefs = moleculeType === 'protein' ? { H: ['HN', 'Hα', 'Hβ'], N: ['N'], C: ['Cα', 'Cβ', "C'"] }
-    : moleculeType === 'dna' ? { H: ["H1'", "H2'", "H3'"], N: [], C: ["C1'", "C2'", "C3'"] }
-    : moleculeType === 'rna' ? { H: ["H1'", "H2'", "H3'"], N: [], C: ["C1'", "C2'", "C3'"] }
+    : (moleculeType === 'dna' || moleculeType === 'rna') ? { H: ["H1'", "H2'", "H3'"], N: [], C: ["C1'", "C2'", "C3'"] }
     : { H: [], N: [], C: [] };
   const handleShiftChange = (resIdx, atom, val) => updateActiveTest({ chemicalShifts: { ...shifts, [`${resIdx}-${atom}`]: val } });
-  // selection handler (toggle)
-  const handleAtomClick = (ri, atoms) => {
-    if (ri === null || !atoms) return;
-    const keys = buildKeys(ri, atoms);
-    setSelected(prev => {
-      if (prev && prev.ri === ri && prev.keys.join('|') === keys.join('|')) return null;
-      return { ri, keys };
-    });
-  };
   const selectedKeys = selected ? selected.keys : null;
+  const handleAtomClick = (ri, keys) => { if (ri === null || !keys) return; setSelected(prev => (prev && prev.ri === ri && prev.keys.join('|') === keys.join('|')) ? null : { ri, keys }); };
   const cellIsSelected = (idx, atom) => selectedKeys && selectedKeys.includes(`${idx}-${atom}`);
   const cycleSS = (i) => { const cur = getSSAt(i); const next = cur === 'C' ? 'H' : cur === 'H' ? 'E' : 'C'; const arr = seq.split('').map((_, j) => getSSAt(j)); arr[i] = next; updateActiveTest({ secondaryStructure: arr.join('') }); };
   const setAllSS = (letter) => updateActiveTest({ secondaryStructure: seq.split('').map(() => letter).join('') });
@@ -893,41 +667,47 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
       });
       const cShifts = {}; const generatedShifts13C = {};
       Object.keys(generatedShifts).forEach(atom => {
-        const cName = getCarbonName(char, atom); if (!cName) return;
+        const cName = getCarbonName(moleculeType, char, atom); if (!cName) return;
         if (!cShifts[cName]) { const range = getCarbonRangeFor(moleculeType, char, cName); cShifts[cName] = parseFloat((range.min + Math.random() * (range.max - range.min)).toFixed(1)); }
         generatedShifts13C[atom] = cShifts[cName];
       });
       const backboneRand = moleculeType === 'protein' ? { N: parseFloat((117 + Math.random() * 8).toFixed(1)), CP: parseFloat((172 + Math.random() * 5).toFixed(1)) } : null;
-      return { ...entry, id: `${entry.code3 || char}${index + 1}`, char, color: RESIDUE_COLORS[index % RESIDUE_COLORS.length], shifts: generatedShifts, shifts13C: generatedShifts13C, uniqueCShifts: { ...cShifts }, backboneRand };
+      const p31 = hasPhosphorus ? parseFloat((-2 + Math.random() * 3).toFixed(2)) : null;
+      return { ...entry, id: `${entry.code3 || char}${index + 1}`, char, color: RESIDUE_COLORS[index % RESIDUE_COLORS.length], shifts: generatedShifts, shifts13C: generatedShifts13C, uniqueCShifts: { ...cShifts }, backboneRand, p31 };
     }).filter(Boolean);
   }, [seq, moleculeType, activeTest.sugarChoice, activeTest.lipidChoice]);
 
   useEffect(() => { if (focusIdx !== 'ALL' && focusIdx >= parsedSeq.length) setFocusIdx('ALL'); setSelected(null); }, [parsedSeq.length]);
   useEffect(() => { setFocusIdx('ALL'); setSelected(null); }, [moleculeType]);
 
-  // estimated shifts (stable, SS-corrected for protein)
+  // estimated shifts (stable) with SS + DNA form corrections
   const estSeq = useMemo(() => parsedSeq.map((res, idx) => {
-    const ssLetter = moleculeType === 'protein' ? (ssPreview !== 'current' ? ssPreview : getSSAt(idx)) : 'C';
+    const ssLetter = moleculeType === 'protein' ? getSSAt(idx) : 'C';
     const ssKey = { C: 'coil', H: 'helix', E: 'sheet' }[ssLetter];
     const corr = SS_CORRECTIONS[ssKey];
     const estShifts = {};
-    Object.keys(res.shifts || {}).forEach(a => { let v = res.shifts[a]; if (moleculeType === 'protein' && ssKey !== 'coil') { const h = corr.h; v += (h[a] !== undefined ? h[a] : (h.other || 0)); } estShifts[a] = +v.toFixed(2); });
+    Object.keys(res.shifts || {}).forEach(a => {
+      let v = res.shifts[a];
+      if (moleculeType === 'protein' && ssKey !== 'coil') { const h = corr.h; v += (h[a] !== undefined ? h[a] : (h.other || 0)); }
+      if (moleculeType === 'dna' && DNA_FORM_OFFSETS[dnaForm] && DNA_FORM_OFFSETS[dnaForm][a] !== undefined) v += DNA_FORM_OFFSETS[dnaForm][a];
+      estShifts[a] = +v.toFixed(2);
+    });
     const estUniqueC = {};
     Object.keys(res.uniqueCShifts || {}).forEach(cn => { let v = res.uniqueCShifts[cn]; if (moleculeType === 'protein' && ssKey !== 'coil') v += (corr.c[cn] || 0); estUniqueC[cn] = +v.toFixed(2); });
     const estShifts13C = {};
-    Object.keys(res.shifts13C || {}).forEach(a => { const cn = getCarbonName(res.char, a); if (cn) estShifts13C[a] = estUniqueC[cn]; });
+    Object.keys(res.shifts13C || {}).forEach(a => { const cn = getCarbonName(moleculeType, res.char, a); if (cn && estUniqueC[cn] !== undefined) estShifts13C[a] = estUniqueC[cn]; });
     let estN = null, estCP = null;
     if (moleculeType === 'protein' && res.backboneRand) { estN = +(res.backboneRand.N + (ssKey !== 'coil' ? (corr.c['N'] || 0) : 0)).toFixed(2); estCP = +(res.backboneRand.CP + (ssKey !== 'coil' ? (corr.c["C'"] || 0) : 0)).toFixed(2); }
     return { ...res, estShifts, estUniqueC, estShifts13C, estN, estCP, ssLetter };
-  }), [parsedSeq, moleculeType, ssRaw, ssPreview]);
+  }), [parsedSeq, moleculeType, ssRaw, dnaForm]);
 
-  // simulation shifts: manual overrides for peaks only
+  // simulation shifts: manual overrides for peaks only (estimates stay stable)
   const simSeq = useMemo(() => estSeq.map((res, idx) => {
     const simShifts = {}; Object.keys(res.estShifts || {}).forEach(a => { const m = parseManual(shifts[`${idx}-${a}`]); simShifts[a] = m !== null ? m : res.estShifts[a]; });
     const simUniqueC = {}; Object.keys(res.estUniqueC || {}).forEach(cn => { const m = parseManual(shifts[`${idx}-${cn}`]); simUniqueC[cn] = m !== null ? m : res.estUniqueC[cn]; });
-    const simShifts13C = {}; Object.keys(res.estShifts13C || {}).forEach(a => { const cn = getCarbonName(res.char, a); if (cn) simShifts13C[a] = simUniqueC[cn]; });
+    const simShifts13C = {}; Object.keys(res.estShifts13C || {}).forEach(a => { const cn = getCarbonName(moleculeType, res.char, a); if (cn) simShifts13C[a] = simUniqueC[cn]; });
     return { ...res, simShifts, simUniqueC, simShifts13C };
-  }), [estSeq, shifts]);
+  }), [estSeq, shifts, moleculeType]);
 
   const uniqueTypes = useMemo(() => [...new Set(parsedSeq.map(r => r.char))], [parsedSeq]);
   const visibleTypes = focusIdx === 'ALL' ? uniqueTypes : uniqueTypes.filter(t => t === parsedSeq[focusIdx]?.char);
@@ -937,56 +717,59 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
     visibleTypes.forEach((char, index) => {
       const db = DB[char]; if (!db) return;
       const color = RESIDUE_COLORS[Object.keys(DB).indexOf(char) % RESIDUE_COLORS.length];
-      const label = db.code3 || char; const y = visibleTypes.length - 1 - index;
-      let ai = 0;
-      Object.keys(db.ranges).forEach(atom => { const r = db.ranges[atom]; r1.push({ x: (r.min + r.max) / 2, res: label, atom, min: r.min, max: r.max, y, color, level: ai++ }); });
-      const cNames = new Set();
-      Object.keys(db.ranges).forEach(atom => { const cn = getCarbonName(char, atom); if (cn) cNames.add(cn); });
+      const label = db.code3 || char; const y = visibleTypes.length - 1 - index; let atomIdx = 0;
+      Object.keys(db.ranges).forEach(atom => { const r = db.ranges[atom]; r1.push({ x: (r.min + r.max) / 2, res: label, atom, min: r.min, max: r.max, y, color, level: atomIdx++ }); });
+      const cNames = new Set(); Object.keys(db.ranges).forEach(atom => { const cn = getCarbonName(moleculeType, char, atom); if (cn) cNames.add(cn); });
       if (moleculeType === 'protein') cNames.add("C'");
-      let ci = 0;
-      cNames.forEach(cn => { const rg = getCarbonRangeFor(moleculeType, char, cn); r13.push({ x: (rg.min + rg.max) / 2, res: label, atom: cn, min: rg.min, max: rg.max, y, color, level: ci++ }); });
+      let cIdx = 0; cNames.forEach(cn => { const rg = getCarbonRangeFor(moleculeType, char, cn); r13.push({ x: (rg.min + rg.max) / 2, res: label, atom: cn, min: rg.min, max: rg.max, y, color, level: cIdx++ }); });
     });
     return { ranges1H: r1, ranges13C: r13 };
   }, [visibleTypes, moleculeType]);
 
-  // peaks (with keys for selection)
+  // peaks (always simulated)
   const peaks = useMemo(() => {
-    let diag = [], cosy = [], tocsy = [], noesy = [], hsqc = [], d1H = [], d13C = [];
-    const addPair = (arr, x, y, label, type, colorClass, size, ri, ri2, keys) => { arr.push({ x, y, label, type, colorClass, size, keys }); arr.push({ x: y, y: x, label, type, colorClass, size, keys }); };
+    let diag = [], cosy = [], tocsy = [], noesy = [], hsqc = [], d1H = [], d13C = [], p31 = [];
+    const addPair = (arr, x, y, label, type, colorClass, size, keys) => { arr.push({ x, y, label, type, colorClass, size, keys }); arr.push({ x: y, y: x, label, type, colorClass, size, keys }); };
     simSeq.forEach((res, index) => {
       if (!res.simShifts) return;
       Object.entries(res.simShifts).forEach(([atom, ppm]) => {
         let pks = [{ shift: ppm, intensity: 1 }]; let totalNeighbors = 0;
-        if (res.cosy) res.cosy.forEach(pair => {
-          const neighborAtom = pair[0] === atom ? pair[1] : (pair[1] === atom ? pair[0] : null);
-          if (neighborAtom) { const count = getProtonCountEx(moleculeType, res, neighborAtom); totalNeighbors += count; const jC = 0.010 + Math.random() * 0.008; const pascalRow = getPascalRow(count); let newPeaks = []; pks.forEach(p => { for (let k = 0; k <= count; k++) newPeaks.push({ shift: p.shift + (k - count/2) * jC, intensity: p.intensity * pascalRow[k] }); }); pks = newPeaks; }
-        });
+        if (res.cosy) res.cosy.forEach(pair => { const neighborAtom = pair[0] === atom ? pair[1] : (pair[1] === atom ? pair[0] : null); if (neighborAtom) { const count = getProtonCountEx(moleculeType, res, neighborAtom); totalNeighbors += count; const jC = 0.010 + Math.random() * 0.008; const pascalRow = getPascalRow(count); let newPeaks = []; pks.forEach(p => { for (let k = 0; k <= count; k++) newPeaks.push({ shift: p.shift + (k - count/2) * jC, intensity: p.intensity * pascalRow[k] }); }); pks = newPeaks; } });
         let merged = []; pks.sort((a, b) => a.shift - b.shift);
         pks.forEach(p => { if (merged.length > 0) { const last = merged[merged.length - 1]; if (Math.abs(last.shift - p.shift) < 0.002) { last.shift = (last.shift * last.intensity + p.shift * p.intensity) / (last.intensity + p.intensity); last.intensity += p.intensity; } else merged.push({ ...p }); } else merged.push({ ...p }); });
         const pCount = getProtonCountEx(moleculeType, res, atom); const maxIntensity = Math.max(...merged.map(p => p.intensity)); const baseIntensity = (1.5 + Math.random() * 0.5) * pCount;
         let multStr = "m"; if (totalNeighbors === 0) multStr = "s"; else if (totalNeighbors === 1) multStr = "d"; else if (totalNeighbors === 2) multStr = merged.length === 3 ? "t" : "dd"; else if (totalNeighbors === 3) multStr = merged.length === 4 ? "q" : "m";
-        const keys = buildKeys(index, [atom]);
+        const keys = buildKeys(index, [atom], moleculeType, res.char);
         merged.forEach(p => d1H.push({ x: p.shift, y: (p.intensity / maxIntensity) * baseIntensity, label: `${res.id} ${atom}`, color: res.color, type: '1D', multiplet: multStr, keys }));
       });
       Object.entries(res.simUniqueC || {}).forEach(([cName, ppm]) => d13C.push({ x: ppm, y: 0.8 + Math.random() * 0.4, label: `${res.id} ${cName}`, color: res.color, type: '1D', keys: [`${index}-${cName}`] }));
-      Object.keys(res.simShifts).forEach(atom => diag.push({ x: res.simShifts[atom], y: res.simShifts[atom], label: `${res.id} ${atom}`, type: 'Diagonal', size: 4, keys: buildKeys(index, [atom]) }));
-      if (res.cosy) res.cosy.forEach(([a1, a2]) => { if (res.simShifts[a1] !== undefined && res.simShifts[a2] !== undefined) addPair(cosy, res.simShifts[a1], res.simShifts[a2], res.id, `${a1}-${a2} (COSY)`, 'cosy', 4, index, index, buildKeys(index, [a1, a2])); });
-      if (res.spinSystems) res.spinSystems.forEach(sys => { for (let i = 0; i < sys.length; i++) for (let j = i + 1; j < sys.length; j++) if (res.simShifts[sys[i]] !== undefined && res.simShifts[sys[j]] !== undefined) { const isDirect = res.cosy && res.cosy.some(c => (c[0] === sys[i] && c[1] === sys[j]) || (c[0] === sys[j] && c[1] === sys[i])); addPair(tocsy, res.simShifts[sys[i]], res.simShifts[sys[j]], res.id, `${sys[i]}-${sys[j]} (${isDirect ? 'Direct' : 'Relay'})`, isDirect ? 'tocsyDirect' : 'tocsyRelay', 4, index, index, buildKeys(index, [sys[i], sys[j]])); } });
-      const adj = {};
-      if (res.cosy) res.cosy.forEach(([u, v]) => { if (!adj[u]) adj[u] = []; if (!adj[v]) adj[v] = []; adj[u].push(v); adj[v].push(u); });
+      Object.keys(res.simShifts).forEach(atom => diag.push({ x: res.simShifts[atom], y: res.simShifts[atom], label: `${res.id} ${atom}`, type: 'Diagonal', size: 4, keys: buildKeys(index, [atom], moleculeType, res.char) }));
+      if (res.cosy) res.cosy.forEach(([a1, a2]) => { if (res.simShifts[a1] !== undefined && res.simShifts[a2] !== undefined) addPair(cosy, res.simShifts[a1], res.simShifts[a2], res.id, `${a1}-${a2} (COSY)`, 'cosy', 4, buildKeys(index, [a1, a2], moleculeType, res.char)); });
+      if (res.spinSystems) res.spinSystems.forEach(sys => { for (let i = 0; i < sys.length; i++) for (let j = i + 1; j < sys.length; j++) if (res.simShifts[sys[i]] !== undefined && res.simShifts[sys[j]] !== undefined) { const isDirect = res.cosy && res.cosy.some(c => (c[0] === sys[i] && c[1] === sys[j]) || (c[0] === sys[j] && c[1] === sys[i])); addPair(tocsy, res.simShifts[sys[i]], res.simShifts[sys[j]], res.id, `${sys[i]}-${sys[j]} (${isDirect ? 'Direct' : 'Relay'})`, isDirect ? 'tocsyDirect' : 'tocsyRelay', 4, buildKeys(index, [sys[i], sys[j]], moleculeType, res.char)); } });
+      const adj = {}; if (res.cosy) res.cosy.forEach(([u, v]) => { if (!adj[u]) adj[u] = []; if (!adj[v]) adj[v] = []; adj[u].push(v); adj[v].push(u); });
       const seenPairs = new Set();
-      if (res.cosy) res.cosy.forEach(([a1, a2]) => { seenPairs.add([a1, a2].sort().join('-')); if (res.simShifts[a1] !== undefined && res.simShifts[a2] !== undefined) addPair(noesy, res.simShifts[a1], res.simShifts[a2], res.id, `${a1}-${a2} (NOE Intra)`, 'noesyIntra', 4, index, index, buildKeys(index, [a1, a2])); });
-      Object.keys(adj).forEach(u => { adj[u].forEach(v => { adj[v].forEach(w => { if (u !== w) { const pk = [u, w].sort().join('-'); if (!seenPairs.has(pk)) { seenPairs.add(pk); if (res.simShifts[u] !== undefined && res.simShifts[w] !== undefined) addPair(noesy, res.simShifts[u], res.simShifts[w], res.id, `${u}-${w} (NOE 4-bond)`, 'noesyIntra4', 3, index, index, buildKeys(index, [u, w])); } } }); }); });
+      if (res.cosy) res.cosy.forEach(([a1, a2]) => { seenPairs.add([a1, a2].sort().join('-')); if (res.simShifts[a1] !== undefined && res.simShifts[a2] !== undefined) addPair(noesy, res.simShifts[a1], res.simShifts[a2], res.id, `${a1}-${a2} (NOE Intra)`, 'noesyIntra', 4, buildKeys(index, [a1, a2], moleculeType, res.char)); });
+      Object.keys(adj).forEach(u => { adj[u].forEach(v => { adj[v].forEach(w => { if (u !== w) { const pk = [u, w].sort().join('-'); if (!seenPairs.has(pk)) { seenPairs.add(pk); if (res.simShifts[u] !== undefined && res.simShifts[w] !== undefined) addPair(noesy, res.simShifts[u], res.simShifts[w], res.id, `${u}-${w} (NOE 4-bond)`, 'noesyIntra4', 3, buildKeys(index, [u, w], moleculeType, res.char)); } } }); }); });
       if (index < simSeq.length - 1 && moleculeType === 'protein') {
         const nextRes = simSeq[index + 1];
-        if (res.simShifts['HN'] !== undefined && nextRes.simShifts['HN'] !== undefined) addPair(noesy, res.simShifts['HN'], nextRes.simShifts['HN'], 'Seq. NOE', `${res.id} HN ↔ ${nextRes.id} HN`, 'noesySeq', 3, index, index + 1, [...buildKeys(index, ['HN']), ...buildKeys(index + 1, ['HN'])]);
+        if (res.simShifts['HN'] !== undefined && nextRes.simShifts['HN'] !== undefined) addPair(noesy, res.simShifts['HN'], nextRes.simShifts['HN'], 'Seq. NOE', `${res.id} HN ↔ ${nextRes.id} HN`, 'noesySeq', 3, [...buildKeys(index, ['HN'], 'protein', res.char), ...buildKeys(index + 1, ['HN'], 'protein', nextRes.char)]);
       }
-      Object.keys(res.simShifts13C || {}).forEach(atom => { if (res.simShifts[atom] !== undefined) { const cn = getCarbonName(res.char, atom); hsqc.push({ x: res.simShifts[atom], y: res.simShifts13C[atom], label: `${res.id} ${atom}-${cn}`, type: 'HSQC', colorClass: 'hsqc', size: 4, keys: [...buildKeys(index, [atom]), `${index}-${cn}`] }); } });
+      Object.keys(res.simShifts13C || {}).forEach(atom => { if (res.simShifts[atom] !== undefined) { const cn = getCarbonName(moleculeType, res.char, atom); hsqc.push({ x: res.simShifts[atom], y: res.simShifts13C[atom], label: `${res.id} ${atom}-${cn}`, type: 'HSQC', colorClass: 'hsqc', size: 4, keys: [...buildKeys(index, [atom], moleculeType, res.char), `${index}-${cn}`] }); } });
+      if (hasPhosphorus && res.p31 !== null) p31.push({ x: res.p31, y: 0.8 + Math.random() * 0.4, label: `${res.id} P`, color: res.color, type: '1D', colorClass: 'p31', keys: [`${index}-P`] });
     });
-    return { diagonalData: diag, cosyPeaks: cosy, tocsyPeaks: tocsy, noesyPeaks: noesy, hsqcPeaks: hsqc, data1H: d1H, data13C: d13C };
-  }, [simSeq, moleculeType]);
+    return { diagonalData: diag, cosyPeaks: cosy, tocsyPeaks: tocsy, noesyPeaks: noesy, hsqcPeaks: hsqc, data1H: d1H, data13C: d13C, p31Data: p31 };
+  }, [simSeq, moleculeType, hasPhosphorus]);
 
-  const visFilter = (arr) => focusIdx === 'ALL' ? arr : arr.filter(p => true);
+  // structure (memoized)
+  const structure = useMemo(() => {
+    if (parsedSeq.length === 0) return null;
+    if (moleculeType === 'protein') return buildProteinStructure(parsedSeq);
+    if (moleculeType === 'dna' || moleculeType === 'rna') return buildNucleicStructure(parsedSeq, moleculeType);
+    if (moleculeType === 'sugar') return buildSugarStructure(parsedSeq[0], sugarConf);
+    if (moleculeType === 'lipid') return buildLipidStructure(parsedSeq[0]);
+    return null;
+  }, [parsedSeq, moleculeType, sugarConf]);
+
   const fillEstimated = () => {
     const newShifts = { ...shifts };
     estSeq.forEach((res, idx) => { Object.entries(res.estShifts || {}).forEach(([a, v]) => { newShifts[`${idx}-${a}`] = String(v); }); Object.entries(res.estUniqueC || {}).forEach(([cn, v]) => { newShifts[`${idx}-${cn}`] = String(v); }); if (res.estN !== null) newShifts[`${idx}-N`] = String(res.estN); if (res.estCP !== null) newShifts[`${idx}-C'`] = String(res.estCP); });
@@ -1005,15 +788,13 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
             <option value="ALL">All residues</option>
             {parsedSeq.map((r, i) => <option key={i} value={i}>{r.id} — {r.name}</option>)}
           </select>
-          {moleculeType === 'protein' && (
-            <select value={ssPreview} onChange={e => setSsPreview(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white outline-none focus:border-blue-500">
-              <option value="current">As painted (C/H/E)</option>
-              <option value="C">Force all Coil</option>
-              <option value="H">Force all α-Helix</option>
-              <option value="E">Force all β-Sheet</option>
+          {moleculeType === 'dna' && (
+            <select value={dnaForm} onChange={e => updateActiveTest({ dnaForm: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white outline-none focus:border-blue-500">
+              <option value="B">DNA B-form</option>
+              <option value="A">DNA A-form</option>
+              <option value="Z">DNA Z-form</option>
             </select>
           )}
-          <button onClick={() => setReveal(!reveal)} className={`px-3 py-1.5 rounded-lg text-sm font-bold border transition-colors ${reveal ? 'bg-amber-100 border-amber-400 text-amber-800' : 'bg-slate-100 border-slate-300 text-slate-600 hover:bg-slate-200'}`}>👁 Reveal estimated</button>
           <button onClick={fillEstimated} className="px-3 py-1.5 rounded-lg text-sm font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100">🪄 Fill with estimated</button>
           <button onClick={() => updateActiveTest({ chemicalShifts: {} })} className="px-3 py-1.5 rounded-lg text-sm font-bold bg-red-50 border border-red-200 text-red-600 hover:bg-red-100">🧹 Clear manual</button>
           {selected && <button onClick={() => setSelected(null)} className="px-3 py-1.5 rounded-lg text-sm font-bold bg-amber-100 border border-amber-400 text-amber-800">✖ Deseleziona atomo</button>}
@@ -1082,18 +863,14 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
               <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
                 <label className="block text-xs font-bold text-slate-500 uppercase mb-3">Target Nuclei</label>
                 <div className="flex flex-col gap-2">
-                  {['H', 'N', 'C'].map(n => (
+                  {['H', 'N', 'C', ...(hasPhosphorus ? ['P'] : [])].map(n => (
                     <label key={n} className="flex items-center gap-3 cursor-pointer bg-white border border-slate-200 p-2 rounded shadow-sm hover:border-blue-300 transition-colors">
                       <input type="checkbox" checked={selNuc.includes(n)} onChange={() => updateActiveTest({ selectedNuclei: selNuc.includes(n) ? selNuc.filter(x => x !== n) : [...selNuc, n] })} className="w-4 h-4 cursor-pointer accent-blue-600" />
-                      <span className="font-bold text-slate-700">Nucleus {n}</span>
+                      <span className="font-bold text-slate-700">{n === 'H' ? '¹H' : n === 'N' ? '¹⁵N' : n === 'C' ? '¹³C' : '³¹P'}</span>
                     </label>
                   ))}
                 </div>
               </div>
-              <label className="flex items-center gap-3 cursor-pointer bg-purple-50 border border-purple-200 p-3 rounded-lg shadow-sm hover:bg-purple-100 transition-colors">
-                <input type="checkbox" checked={showSim} onChange={(e) => updateActiveTest({ showSpectraSimulation: e.target.checked })} className="w-5 h-5 cursor-pointer accent-purple-600" />
-                <span className="font-bold text-purple-700 text-sm">Simulate Spectra (NMR)</span>
-              </label>
             </div>
           </div>
         </CollapsibleSection>
@@ -1115,7 +892,7 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
         )}
 
         {/* 2D CHEMICAL STRUCTURE */}
-        {parsedSeq.length > 0 && (
+        {structure && (
           <CollapsibleSection title={`2D Chemical Structure (${typeLabel})`} icon="🔬" defaultOpen={true} headerExtra={moleculeType === 'sugar' ? (
             <div className="flex bg-slate-200 p-1 rounded-lg">
               <button onClick={() => setSugarConf('chair')} className={`px-3 py-1 text-xs font-bold rounded-md ${sugarConf === 'chair' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'}`}>Sedia</button>
@@ -1123,10 +900,7 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
             </div>
           ) : null}>
             <p className="text-xs text-slate-400 mb-2">💡 Clicca su un atomo nella formula per evidenziare la sua casella in tabella e i suoi picchi negli spettri.</p>
-            {moleculeType === 'protein' && <ChemicalStructure2D sequence={parsedSeq} isExpanded={expandedPanel === 'formula'} onToggleExpand={() => setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')} selectedKeys={selectedKeys} onAtomClick={handleAtomClick} />}
-            {(moleculeType === 'dna' || moleculeType === 'rna') && <NucleicStructure2D sequence={parsedSeq} molType={moleculeType} isExpanded={expandedPanel === 'formula'} onToggleExpand={() => setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')} selectedKeys={selectedKeys} onAtomClick={handleAtomClick} />}
-            {moleculeType === 'sugar' && <SugarStructure2D res={parsedSeq[0]} conformation={sugarConf} isExpanded={expandedPanel === 'formula'} onToggleExpand={() => setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')} selectedKeys={selectedKeys} onAtomClick={handleAtomClick} />}
-            {moleculeType === 'lipid' && <LipidStructure2D res={parsedSeq[0]} isExpanded={expandedPanel === 'formula'} onToggleExpand={() => setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')} selectedKeys={selectedKeys} onAtomClick={handleAtomClick} />}
+            <StructureSVGView structure={structure} minWidth={moleculeType === 'protein' && parsedSeq.length > 3 ? `${parsedSeq.length * 120}px` : moleculeType === 'dna' || moleculeType === 'rna' ? `${parsedSeq.length * 150}px` : '100%'} isExpanded={expandedPanel === 'formula'} onToggleExpand={() => setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')} selectedKeys={selectedKeys} onAtomClick={handleAtomClick} height={moleculeType === 'dna' || moleculeType === 'rna' ? '360px' : '300px'} />
           </CollapsibleSection>
         )}
 
@@ -1168,27 +942,9 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
                       <tr key={idx} className="hover:bg-slate-50 transition-colors">
                         <td className="px-4 py-2 font-black text-slate-700 text-center bg-slate-50 border-r border-slate-100">{res.id}</td>
                         {moleculeType === 'protein' && <td className="px-2 py-1 text-center"><span className="inline-block w-6 h-6 leading-6 rounded-full text-xs font-black text-white" style={{ backgroundColor: SS_META[res.ssLetter].color }}>{res.ssLetter}</span></td>}
-                        {selNuc.includes('H') && nucDefs.H.map(a => {
-                          const isMan = parseManual(shifts[`${idx}-${a}`]) !== null; const isSel = cellIsSelected(idx, a); const est = res.estShifts?.[a];
-                          return (<td key={a} className={`px-3 py-1 ${isSel ? 'bg-amber-50 ring-2 ring-amber-400' : isMan ? 'bg-rose-50' : ''}`}>
-                            <input type="text" value={shifts[`${idx}-${a}`] || ''} onChange={e => handleShiftChange(idx, a, e.target.value)} className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${isMan ? 'border-rose-400 bg-rose-50 text-rose-700 font-bold' : 'border-slate-200 focus:border-blue-500'}`} placeholder="—" />
-                            {reveal && est !== undefined && <div className="text-[13px] font-bold text-blue-600 text-center mt-0.5">≈ {est.toFixed(2)}</div>}
-                          </td>);
-                        })}
-                        {selNuc.includes('N') && nucDefs.N.map(a => {
-                          const isMan = parseManual(shifts[`${idx}-${a}`]) !== null; const isSel = cellIsSelected(idx, a);
-                          return (<td key={a} className={`px-3 py-1 ${isSel ? 'bg-amber-50 ring-2 ring-amber-400' : isMan ? 'bg-rose-50' : ''}`}>
-                            <input type="text" value={shifts[`${idx}-${a}`] || ''} onChange={e => handleShiftChange(idx, a, e.target.value)} className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${isMan ? 'border-rose-400 bg-rose-50 text-rose-700 font-bold' : 'border-slate-200 focus:border-emerald-500'}`} placeholder="—" />
-                            {reveal && res.estN !== null && <div className="text-[13px] font-bold text-emerald-600 text-center mt-0.5">≈ {res.estN.toFixed(2)}</div>}
-                          </td>);
-                        })}
-                        {selNuc.includes('C') && nucDefs.C.map(a => {
-                          const isMan = parseManual(shifts[`${idx}-${a}`]) !== null; const isSel = cellIsSelected(idx, a); const est = a === "C'" ? res.estCP : res.estUniqueC?.[a];
-                          return (<td key={a} className={`px-3 py-1 ${isSel ? 'bg-amber-50 ring-2 ring-amber-400' : isMan ? 'bg-rose-50' : ''}`}>
-                            <input type="text" value={shifts[`${idx}-${a}`] || ''} onChange={e => handleShiftChange(idx, a, e.target.value)} className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${isMan ? 'border-rose-400 bg-rose-50 text-rose-700 font-bold' : 'border-slate-200 focus:border-purple-500'}`} placeholder="—" />
-                            {reveal && est !== undefined && est !== null && <div className="text-[13px] font-bold text-purple-600 text-center mt-0.5">≈ {est.toFixed(2)}</div>}
-                          </td>);
-                        })}
+                        {selNuc.includes('H') && nucDefs.H.map(a => { const isMan = parseManual(shifts[`${idx}-${a}`]) !== null; const isSel = cellIsSelected(idx, a); const est = res.estShifts?.[a]; return (<td key={a} className={`px-3 py-1 ${isSel ? 'bg-amber-50 ring-2 ring-amber-400' : isMan ? 'bg-rose-50' : ''}`}><input type="text" value={shifts[`${idx}-${a}`] || ''} onChange={e => handleShiftChange(idx, a, e.target.value)} className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${isMan ? 'border-rose-400 bg-rose-50 text-rose-700 font-bold' : 'border-slate-200 focus:border-blue-500'}`} placeholder="—" />{est !== undefined && <div className="text-[13px] font-bold text-blue-600 text-center mt-0.5">≈ {est.toFixed(2)}</div>}</td>); })}
+                        {selNuc.includes('N') && nucDefs.N.map(a => { const isMan = parseManual(shifts[`${idx}-${a}`]) !== null; const isSel = cellIsSelected(idx, a); return (<td key={a} className={`px-3 py-1 ${isSel ? 'bg-amber-50 ring-2 ring-amber-400' : isMan ? 'bg-rose-50' : ''}`}><input type="text" value={shifts[`${idx}-${a}`] || ''} onChange={e => handleShiftChange(idx, a, e.target.value)} className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${isMan ? 'border-rose-400 bg-rose-50 text-rose-700 font-bold' : 'border-slate-200 focus:border-emerald-500'}`} placeholder="—" />{res.estN !== null && <div className="text-[13px] font-bold text-emerald-600 text-center mt-0.5">≈ {res.estN.toFixed(2)}</div>}</td>); })}
+                        {selNuc.includes('C') && nucDefs.C.map(a => { const isMan = parseManual(shifts[`${idx}-${a}`]) !== null; const isSel = cellIsSelected(idx, a); const est = a === "C'" ? res.estCP : res.estUniqueC?.[a]; return (<td key={a} className={`px-3 py-1 ${isSel ? 'bg-amber-50 ring-2 ring-amber-400' : isMan ? 'bg-rose-50' : ''}`}><input type="text" value={shifts[`${idx}-${a}`] || ''} onChange={e => handleShiftChange(idx, a, e.target.value)} className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${isMan ? 'border-rose-400 bg-rose-50 text-rose-700 font-bold' : 'border-slate-200 focus:border-purple-500'}`} placeholder="—" />{est !== undefined && est !== null && <div className="text-[13px] font-bold text-purple-600 text-center mt-0.5">≈ {est.toFixed(2)}</div>}</td>); })}
                       </tr>
                     );
                   })}
@@ -1207,20 +963,17 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
                       <table className="w-full text-sm text-left bg-white">
                         <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200"><tr><th className="px-3 py-2 font-semibold">Atom</th><th className="px-3 py-2 font-semibold text-center">Shift (ppm)</th></tr></thead>
                         <tbody className="text-slate-700 divide-y divide-slate-100">
-                          {res.atoms.map(atom => {
-                            const isMan = parseManual(shifts[`${resIdx}-${atom}`]) !== null; const isSel = cellIsSelected(resIdx, atom);
-                            return (
-                              <tr key={atom} className={`hover:bg-slate-50 ${isSel ? 'bg-amber-50' : isMan ? 'bg-rose-50' : ''}`}>
-                                <td className={`px-3 py-1 font-medium ${isSel ? 'text-amber-700 font-bold' : isMan ? 'text-rose-700 font-bold' : ''}`}>{atom}</td>
-                                <td className={`px-3 py-1 text-center border-l border-slate-100 font-mono ${isSel ? 'ring-2 ring-amber-400' : ''}`}>
-                                  <div className="flex items-center justify-center gap-2 flex-wrap">
-                                    <input type="text" value={shifts[`${resIdx}-${atom}`] || ''} onChange={e => handleShiftChange(resIdx, atom, e.target.value)} className={`w-16 text-center border rounded py-0.5 outline-none text-xs ${isMan ? 'border-rose-400 bg-rose-50 text-rose-700 font-bold' : 'border-slate-300 focus:border-blue-500'}`} placeholder="—" />
-                                    {reveal && res.estShifts[atom] !== undefined && <span className="text-[13px] font-bold text-blue-600">≈ {res.estShifts[atom].toFixed(2)}</span>}
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })}
+                          {res.atoms.map(atom => { const isMan = parseManual(shifts[`${resIdx}-${atom}`]) !== null; const isSel = cellIsSelected(resIdx, atom); return (
+                            <tr key={atom} className={`hover:bg-slate-50 ${isSel ? 'bg-amber-50' : isMan ? 'bg-rose-50' : ''}`}>
+                              <td className={`px-3 py-1 font-medium ${isSel ? 'text-amber-700 font-bold' : isMan ? 'text-rose-700 font-bold' : ''}`}>{atom}</td>
+                              <td className={`px-3 py-1 text-center border-l border-slate-100 font-mono ${isSel ? 'ring-2 ring-amber-400' : ''}`}>
+                                <div className="flex items-center justify-center gap-2 flex-wrap">
+                                  <input type="text" value={shifts[`${resIdx}-${atom}`] || ''} onChange={e => handleShiftChange(resIdx, atom, e.target.value)} className={`w-16 text-center border rounded py-0.5 outline-none text-xs ${isMan ? 'border-rose-400 bg-rose-50 text-rose-700 font-bold' : 'border-slate-300 focus:border-blue-500'}`} placeholder="—" />
+                                  {res.estShifts[atom] !== undefined && <span className="text-[13px] font-bold text-blue-600">≈ {res.estShifts[atom].toFixed(2)}</span>}
+                                </div>
+                              </td>
+                            </tr>
+                          ); })}
                         </tbody>
                       </table>
                     </div>
@@ -1237,26 +990,46 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
                       <table className="w-full text-sm text-left bg-white">
                         <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200"><tr><th className="px-3 py-2 font-semibold">Atom</th><th className="px-3 py-2 font-semibold text-center">Shift (ppm)</th></tr></thead>
                         <tbody className="text-slate-700 divide-y divide-slate-100">
-                          {Object.keys(res.estUniqueC || {}).map(cName => {
-                            const isMan = parseManual(shifts[`${resIdx}-${cName}`]) !== null; const isSel = cellIsSelected(resIdx, cName);
-                            return (
-                              <tr key={cName} className={`hover:bg-slate-50 ${isSel ? 'bg-amber-50' : isMan ? 'bg-rose-50' : ''}`}>
-                                <td className={`px-3 py-1 font-medium ${isSel ? 'text-amber-700 font-bold' : 'text-purple-800'}`}>{cName}</td>
-                                <td className={`px-3 py-1 text-center border-l border-slate-100 font-mono ${isSel ? 'ring-2 ring-amber-400' : ''}`}>
-                                  <div className="flex items-center justify-center gap-2 flex-wrap">
-                                    <input type="text" value={shifts[`${resIdx}-${cName}`] || ''} onChange={e => handleShiftChange(resIdx, cName, e.target.value)} className={`w-16 text-center border rounded py-0.5 outline-none text-xs ${isMan ? 'border-rose-400 bg-rose-50 text-rose-700 font-bold' : 'border-slate-300 focus:border-purple-500'}`} placeholder="—" />
-                                    {reveal && <span className="text-[13px] font-bold text-purple-600">≈ {res.estUniqueC[cName].toFixed(1)}</span>}
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })}
+                          {Object.keys(res.estUniqueC || {}).map(cName => { const isMan = parseManual(shifts[`${resIdx}-${cName}`]) !== null; const isSel = cellIsSelected(resIdx, cName); return (
+                            <tr key={cName} className={`hover:bg-slate-50 ${isSel ? 'bg-amber-50' : isMan ? 'bg-rose-50' : ''}`}>
+                              <td className={`px-3 py-1 font-medium ${isSel ? 'text-amber-700 font-bold' : 'text-purple-800'}`}>{cName}</td>
+                              <td className={`px-3 py-1 text-center border-l border-slate-100 font-mono ${isSel ? 'ring-2 ring-amber-400' : ''}`}>
+                                <div className="flex items-center justify-center gap-2 flex-wrap">
+                                  <input type="text" value={shifts[`${resIdx}-${cName}`] || ''} onChange={e => handleShiftChange(resIdx, cName, e.target.value)} className={`w-16 text-center border rounded py-0.5 outline-none text-xs ${isMan ? 'border-rose-400 bg-rose-50 text-rose-700 font-bold' : 'border-slate-300 focus:border-purple-500'}`} placeholder="—" />
+                                  <span className="text-[13px] font-bold text-purple-600">≈ {res.estUniqueC[cName].toFixed(1)}</span>
+                                </div>
+                              </td>
+                            </tr>
+                          ); })}
                         </tbody>
                       </table>
                     </div>
                   );
                 })}
               </div>
+              {/* ³¹P assignment */}
+              {hasPhosphorus && selNuc.includes('P') && (
+                <>
+                  <h4 className="text-md font-bold text-teal-700 border-b-2 border-teal-100 inline-block pr-4 pb-1 mt-4">³¹P Assignment</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-4">
+                    {estSeq.map((res, resIdx) => {
+                      if (focusIdx !== 'ALL' && focusIdx !== resIdx) return null;
+                      if (res.p31 === null) return null;
+                      const isMan = parseManual(shifts[`${resIdx}-P`]) !== null; const isSel = cellIsSelected(resIdx, 'P');
+                      return (
+                        <div key={`p-${resIdx}`} className="border border-slate-200 rounded-lg overflow-hidden shadow-sm h-fit">
+                          <div className="py-2 text-center font-bold text-sm" style={{ backgroundColor: `${res.color}15`, color: res.color, borderBottom: `1px solid ${res.color}30` }}>{res.name} ({res.id})</div>
+                          <div className={`p-3 flex items-center justify-center gap-3 ${isSel ? 'bg-amber-50 ring-2 ring-amber-400' : isMan ? 'bg-rose-50' : ''}`}>
+                            <span className="font-bold text-teal-700">P</span>
+                            <input type="text" value={shifts[`${resIdx}-P`] || ''} onChange={e => handleShiftChange(resIdx, 'P', e.target.value)} className={`w-16 text-center border rounded py-0.5 outline-none text-xs font-mono ${isMan ? 'border-rose-400 bg-rose-50 text-rose-700 font-bold' : 'border-slate-300 focus:border-teal-500'}`} placeholder="—" />
+                            <span className="text-[13px] font-bold text-teal-600">≈ {res.p31.toFixed(2)}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
             </div>
           )}
         </CollapsibleSection>
@@ -1277,9 +1050,7 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
                     <span className="text-xs font-bold text-slate-500">Spectrum {idx + 1}</span>
                     <button onClick={() => updateActiveTest({ nmrSpectraImages: images.filter((_, i) => i !== idx) })} className="bg-red-50 hover:bg-red-100 text-red-500 hover:text-red-700 rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold transition-colors border border-red-200">&times;</button>
                   </div>
-                  <div className="bg-slate-50 rounded-lg p-2 border border-slate-100">
-                    <SmartImage src={imgSrc} alt={`Spectrum ${idx + 1}`} />
-                  </div>
+                  <div className="bg-slate-50 rounded-lg p-2 border border-slate-100"><SmartImage src={imgSrc} alt={`Spectrum ${idx + 1}`} /></div>
                   <a href={imgSrc} target="_blank" rel="noopener noreferrer" className="mt-2 text-xs text-blue-500 hover:text-blue-700 font-medium flex items-center gap-1">🔗 Open original link</a>
                 </div>
               ))
@@ -1287,12 +1058,15 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
           </div>
         </CollapsibleSection>
 
-        {/* SIMULATED SPECTRA */}
-        {showSim && parsedSeq.length > 0 && (
+        {/* SIMULATED SPECTRA (always on) */}
+        {parsedSeq.length > 0 && (
           <CollapsibleSection title="Simulated Spectra (Drag to Zoom)" icon="📈" defaultOpen={false}>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <OneDSpectrumPlot title="Simulated ¹H 1D Spectrum" data={peaks.data1H} fullDomain={[0, 11]} ticks={TICKS_1H} TickComponent={CustomXTick1H} xLabel="¹H (ppm)" panelId="1D_1H" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} />
               <OneDSpectrumPlot title="Simulated ¹³C 1D Spectrum" data={peaks.data13C} fullDomain={[0, 190]} ticks={TICKS_13C} TickComponent={CustomXTick13C} xLabel="¹³C (ppm)" panelId="1D_13C" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} />
+              {hasPhosphorus && selNuc.includes('P') && peaks.p31Data.length > 0 && (
+                <OneDSpectrumPlot title="Simulated ³¹P 1D Spectrum" data={peaks.p31Data} fullDomain={[-5, 5]} ticks={Array.from({ length: 11 }, (_, i) => i - 5)} TickComponent={CustomXTick1H} xLabel="³¹P (ppm)" panelId="1D_31P" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} />
+              )}
               <SpectrumPlot title="Simulated COSY Spectrum" diagonalData={peaks.diagonalData} crossPeakData={peaks.cosyPeaks} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="cosy" diagonalColor="#22c55e" selectedKeys={selectedKeys} />
               <SpectrumPlot title="Simulated NOESY Spectrum" diagonalData={peaks.diagonalData} crossPeakData={peaks.noesyPeaks} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="noesy" diagonalColor="#ef4444" selectedKeys={selectedKeys} />
               <SpectrumPlot title="Simulated TOCSY Spectrum" diagonalData={peaks.diagonalData} crossPeakData={peaks.tocsyPeaks} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="tocsy" diagonalColor="#1e3a8a" selectedKeys={selectedKeys} />
@@ -1306,10 +1080,11 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
           <div className="flex flex-col gap-4">
             <p className="text-sm text-slate-600">Select the NMR data to format and append to the General Comments (which acts as the Lab Notebook entry).</p>
             <div className="flex flex-wrap gap-4 border border-slate-200 p-4 rounded-lg bg-white shadow-sm">
-              <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600"><input type="checkbox" id="nb-cond" defaultChecked className="w-4 h-4 accent-blue-600 cursor-pointer" /> Experimental Conditions</label>
-              <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600"><input type="checkbox" id="nb-seq" defaultChecked className="w-4 h-4 accent-blue-600 cursor-pointer" /> Sequence</label>
-              <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600"><input type="checkbox" id="nb-table" defaultChecked className="w-4 h-4 accent-blue-600 cursor-pointer" /> Shifts Table</label>
-              <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600"><input type="checkbox" id="nb-images" defaultChecked className="w-4 h-4 accent-blue-600 cursor-pointer" /> Spectra Images</label>
+              <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600"><input type="checkbox" id="nb-cond" defaultChecked className="w-4 h-4 accent-blue-600 cursor-pointer"/> Experimental Conditions</label>
+              <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600"><input type="checkbox" id="nb-seq" defaultChecked className="w-4 h-4 accent-blue-600 cursor-pointer"/> Sequence</label>
+              <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600"><input type="checkbox" id="nb-table" defaultChecked className="w-4 h-4 accent-blue-600 cursor-pointer"/> Shifts Table</label>
+              <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600"><input type="checkbox" id="nb-formula" defaultChecked className="w-4 h-4 accent-blue-600 cursor-pointer"/> Chemical Formula</label>
+              <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600"><input type="checkbox" id="nb-images" defaultChecked className="w-4 h-4 accent-blue-600 cursor-pointer"/> Spectra Images</label>
             </div>
             <button
               onClick={() => {
@@ -1318,9 +1093,11 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
                 const cbCond = document.getElementById('nb-cond')?.checked;
                 const cbSeq = document.getElementById('nb-seq')?.checked;
                 const cbTable = document.getElementById('nb-table')?.checked;
+                const cbFormula = document.getElementById('nb-formula')?.checked;
                 const cbImages = document.getElementById('nb-images')?.checked;
-                if (cbCond) html += `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;"><b>Compound:</b> ${activeTest.compound || 'N/A'} | <b>Solvent:</b> ${activeTest.solvent || 'N/A'} | <b>Temp:</b> ${activeTest.temperature || 'N/A'} | <b>Conc:</b> ${activeTest.concentration || 'N/A'}</p>`;
+                if (cbCond) html += `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;"><b>Compound:</b> ${activeTest.compound || 'N/A'} | <b>Solvent:</b> ${activeTest.solvent || 'N/A'} | <b>Temp:</b> ${activeTest.temperature || 'N/A'} | <b>Conc:</b> ${activeTest.concentration || 'N/A'}${moleculeType === 'dna' ? ` | <b>DNA form:</b> ${dnaForm}` : ''}</p>`;
                 if (cbSeq) html += `<p style="font-size: 12px; color: #475569; margin-bottom: 12px;"><b>${typeLabel}:</b> <span style="font-family: monospace; background: #e2e8f0; padding: 2px 4px; border-radius: 4px;">${isPolymer ? (activeTest.proteinSequence || 'N/A') : parsedSeq[0]?.name || 'N/A'}</span></p>`;
+                if (cbFormula && structure) html += `<div style="margin-bottom: 12px;">${elementsToSVG(structure, 300)}</div>`;
                 if (cbTable && Object.keys(shifts).length > 0) {
                   html += `<table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; text-align: left; background: white;"><tr style="background-color: #f1f5f9;"><th style="padding: 6px; border: 1px solid #cbd5e1;">Residue</th><th style="padding: 6px; border: 1px solid #cbd5e1;">Atom</th><th style="padding: 6px; border: 1px solid #cbd5e1;">Shift (ppm)</th></tr>`;
                   Object.keys(shifts).forEach(key => { const parts = key.split('-'); const resIdx = parts[0]; const atom = parts.slice(1).join('-'); const res = parsedSeq[resIdx]; if (res && shifts[key]) html += `<tr><td style="padding: 6px; border: 1px solid #e2e8f0; color: #334155;"><b>${res.name} (${res.id})</b></td><td style="padding: 6px; border: 1px solid #e2e8f0; color: #334155;">${atom}</td><td style="padding: 6px; border: 1px solid #e2e8f0; color: #334155; font-family: monospace;">${shifts[key]}</td></tr>`; });
