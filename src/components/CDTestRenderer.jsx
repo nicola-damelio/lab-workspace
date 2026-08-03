@@ -24,7 +24,7 @@ const STRUCTURE_COLORS = {
   'Other': '#8b5cf6'
 };
 
-// --- CD SIMULATOR DATA (from cd_spectra_dashboard) ---
+// --- CD SIMULATOR DATA ---
 const CD_REFERENCE_SPECTRA = {
   'Alpha-helix': { peaks: [[190, -5.5], [192, -3.5], [208, -3.2], [222, -2.8]], desc: 'Characteristic double minimum at 208 & 222 nm' },
   'Beta-sheet': { peaks: [[195, -2.5], [218, 1.2]], desc: 'Single minimum near 218 nm, positive band at 195' },
@@ -73,25 +73,36 @@ const ProteinCDMixer = ({ isExpanded, onToggleExpand }) => {
   const [compositions, setCompositions] = useState({ helix: 0, sheet: 0, turn: 0, coil: 100 });
   const [autoNormalize, setAutoNormalize] = useState(true);
 
+  // FIXED: Improved auto-normalization logic to prevent erratic jumping
   const updateComp = (key, val) => {
     let newVal = Math.max(0, Math.min(100, val));
+    let newComps = { ...compositions, [key]: newVal };
+    
     if (autoNormalize) {
-      const others = Object.entries(compositions).filter(([k]) => k !== key);
-      const otherSum = others.reduce((s, [, v]) => s + v, 0);
-      const remaining = 100 - newVal;
-      if (otherSum > 0 && remaining > 0) {
-        const scale = remaining / otherSum;
-        const newComps = { [key]: newVal };
-        others.forEach(([k, v]) => { newComps[k] = Math.round(v * scale); });
-        const total = Object.values(newComps).reduce((s, v) => s + v, 0);
-        const diff = 100 - total;
-        const otherKeys = others.map(([k]) => k);
-        if (otherKeys.length > 0 && diff !== 0) newComps[otherKeys[0]] += diff;
-        setCompositions(newComps);
-        return;
-      }
+        let currentTotal = 0;
+        const others = Object.keys(newComps).filter(k => k !== key);
+        others.forEach(k => { currentTotal += newComps[k]; });
+        
+        if ((newVal + currentTotal) > 100) {
+            const excess = (newVal + currentTotal) - 100;
+            if (currentTotal > 0) {
+                others.forEach(k => {
+                    const reduction = Math.round(excess * (newComps[k] / currentTotal));
+                    newComps[k] = Math.max(0, newComps[k] - reduction);
+                });
+            } else {
+                others.forEach(k => { newComps[k] = 0; });
+            }
+        }
+        
+        let finalTotal = Object.values(newComps).reduce((a,b) => a + b, 0);
+        if (finalTotal !== 100 && finalTotal < 100) {
+            const diff = 100 - finalTotal;
+            const target = (key !== 'coil') ? 'coil' : 'turn';
+            newComps[target] += diff;
+        }
     }
-    setCompositions(prev => ({ ...prev, [key]: newVal }));
+    setCompositions(newComps);
   };
 
   const generateSpectrum = useCallback(() => {
@@ -283,10 +294,6 @@ const CDSpectraLibrary = ({ isExpanded, onToggleExpand }) => {
     const plotW = W - pad.left - pad.right;
     const plotH = H - pad.top - pad.bottom;
 
-    const allTypes = showDNA
-      ? ['Alpha-helix', 'Beta-sheet', 'Turn', 'Random Coil', 'A-DNA', 'B-DNA', 'Z-DNA']
-      : ['Alpha-helix', 'Beta-sheet', 'Turn', 'Random Coil'];
-
     const spectra = selectedTypes.map(t => ({ type: t, ...generateRefSpectrum(t) }));
     const xMin = showDNA ? 180 : 190, xMax = showDNA ? 300 : 260;
     let yMin = -6, yMax = 3;
@@ -436,13 +443,11 @@ export const CDTestRenderer = ({ activeTest, updateActiveTest, appClipboard, set
 
   const toggleFs = (id) => setFsPanel(prev => prev === id ? null : id);
 
-  // Parse wavelength data
   const parsedWavelengths = useMemo(() => {
     if (!wavelengthData) return [];
     return wavelengthData.split(/[\n,]+/).map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
   }, [wavelengthData]);
 
-  // Parse each spectra column
   const parsedSpectra = useMemo(() => {
     return spectraColumns.map((col, idx) => {
       const values = (col.data || '').split(/[\n,]+/).map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
@@ -450,7 +455,6 @@ export const CDTestRenderer = ({ activeTest, updateActiveTest, appClipboard, set
     });
   }, [spectraColumns]);
 
-  // Add new spectra column
   const addSpectrumColumn = () => {
     const newCol = {
       id: Date.now().toString(),
@@ -472,7 +476,6 @@ export const CDTestRenderer = ({ activeTest, updateActiveTest, appClipboard, set
     updatePlate({ spectraColumns: spectraColumns.filter(c => c.id !== id) });
   };
 
-  // CD Spectra Chart
   useEffect(() => {
     if (!cdChartRef.current) return;
     if (cdChart.current) cdChart.current.destroy();
@@ -550,7 +553,6 @@ export const CDTestRenderer = ({ activeTest, updateActiveTest, appClipboard, set
     return () => { if (cdChart.current) cdChart.current.destroy(); };
   }, [parsedWavelengths, parsedSpectra, chartCfg]);
 
-  // Secondary Structure Chart
   useEffect(() => {
     if (!structChartRef.current) return;
     if (structChart.current) structChart.current.destroy();
@@ -591,11 +593,9 @@ export const CDTestRenderer = ({ activeTest, updateActiveTest, appClipboard, set
     return () => { if (structChart.current) structChart.current.destroy(); };
   }, [structureComposition]);
 
-  // Export XLS
   const exportXLS = () => {
     try {
       const wb = XLSX.utils.book_new();
-      // Wavelength sheet
       const wlAoa = [['Wavelength (nm)', ...parsedSpectra.map(s => s.title)]];
       parsedWavelengths.forEach((w, i) => {
         const row = [w];
@@ -604,7 +604,6 @@ export const CDTestRenderer = ({ activeTest, updateActiveTest, appClipboard, set
       });
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(wlAoa), 'CD Data');
 
-      // Structure sheet
       const structAoa = [['Structure', 'Percentage (%)']];
       Object.entries(structureComposition).forEach(([k, v]) => structAoa.push([k, v]));
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(structAoa), 'Structure');
@@ -614,7 +613,6 @@ export const CDTestRenderer = ({ activeTest, updateActiveTest, appClipboard, set
     } catch (e) { console.error(e); alert('Export Failed: ' + e.message); }
   };
 
-  // Export PDF
   const exportPDF = async () => {
     const el = document.getElementById('cd-report-' + (activeTest.id || 'default'));
     if (!el) return;
@@ -650,7 +648,6 @@ export const CDTestRenderer = ({ activeTest, updateActiveTest, appClipboard, set
     <div id={`cd-report-${activeTest.id || 'default'}`} className="flex flex-col h-full overflow-hidden relative">
       {TestHeader}
 
-      {/* Export Buttons */}
       <div className="bg-white border-b border-slate-200 px-6 py-2 flex items-center justify-end gap-3 shrink-0 z-10 shadow-sm no-print">
         <button onClick={exportXLS} className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1.5 px-3 rounded text-xs flex items-center gap-1 shadow-sm transition-colors">
           📊 Export XLS
@@ -661,8 +658,6 @@ export const CDTestRenderer = ({ activeTest, updateActiveTest, appClipboard, set
       </div>
 
       <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
-
-        {/* SEZIONE 1: COMMENTI & ALLEGATI */}
         <CollapsibleSection title="Comments & Attachments" icon="📝">
           <div className="flex flex-col lg:flex-row gap-6">
             <div className="flex-1 flex flex-col h-full min-h-[160px]">
@@ -672,7 +667,6 @@ export const CDTestRenderer = ({ activeTest, updateActiveTest, appClipboard, set
                 onChange={val => updatePlate({ comments: val })}
                 placeholder="Enter your experiment notes, observations, etc..."
               />
-              {/* Protocol Linking */}
               <div className="mt-4 pt-4 border-t border-slate-100 flex items-center gap-4">
                 <span className="text-[11px] font-bold text-slate-600 w-32">📋 Link Protocol:</span>
                 <select
@@ -748,7 +742,7 @@ export const CDTestRenderer = ({ activeTest, updateActiveTest, appClipboard, set
                 </div>
                 <label className="cursor-pointer text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 hover:bg-blue-100 px-3 py-1.5 rounded-lg shadow-sm transition-colors w-full text-center"
                   onClick={() => {
-                    const url = prompt("Paste Google Drive link:");
+                    const url = prompt("Paste external link (Drive, PDF, Image URL):");
                     if (url && url.trim()) {
                       let name = url;
                       try { const p = new URL(url); name = p.hostname; } catch (e) { }
@@ -760,7 +754,6 @@ export const CDTestRenderer = ({ activeTest, updateActiveTest, appClipboard, set
           </div>
         </CollapsibleSection>
 
-        {/* SEZIONE 2: CONDIZIONI SPERIMENTALI */}
         <CollapsibleSection title="Experimental Conditions" icon="🧪">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
             <div className="flex flex-col gap-1 col-span-1 md:col-span-2 lg:col-span-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
@@ -825,10 +818,8 @@ export const CDTestRenderer = ({ activeTest, updateActiveTest, appClipboard, set
           </div>
         </CollapsibleSection>
 
-        {/* SEZIONE 3: INPUT DATI CD */}
         <CollapsibleSection title="CD Data Input" icon="📥">
           <div className="flex flex-col gap-4">
-            {/* Wavelength Input */}
             <div className="border border-slate-200 bg-slate-50 rounded-lg p-4">
               <div className="flex justify-between items-center mb-2">
                 <label className="text-xs font-bold text-slate-600 uppercase">
@@ -849,7 +840,6 @@ export const CDTestRenderer = ({ activeTest, updateActiveTest, appClipboard, set
               </p>
             </div>
 
-            {/* Spectra Columns */}
             <div className="border border-slate-200 bg-slate-50 rounded-lg p-4">
               <div className="flex justify-between items-center mb-3">
                 <label className="text-xs font-bold text-slate-600 uppercase">
@@ -905,10 +895,8 @@ export const CDTestRenderer = ({ activeTest, updateActiveTest, appClipboard, set
           </div>
         </CollapsibleSection>
 
-        {/* SEZIONE 4: GRAFICI CD E STRUTTURA SECONDARIA */}
         <CollapsibleSection title="CD Spectra & Secondary Structure Analysis" icon="📈">
           <div className="flex flex-col lg:flex-row gap-6">
-            {/* CD Spectra Plot */}
             {fsPanel === 'cd' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('cd')}></div>}
             <div className={`flex flex-col ${fsPanel === 'cd' ? FS_CLASSES + ' p-6' : 'flex-[3] min-w-0'}`}>
               <div className="flex justify-between items-start mb-3">
@@ -923,7 +911,6 @@ export const CDTestRenderer = ({ activeTest, updateActiveTest, appClipboard, set
               </div>
             </div>
 
-            {/* Secondary Structure Chart */}
             {fsPanel === 'struct' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('struct')}></div>}
             <div className={`flex flex-col ${fsPanel === 'struct' ? FS_CLASSES + ' p-6' : 'flex-[2] min-w-0'}`}>
               <div className="flex justify-between items-start mb-3">
@@ -937,7 +924,6 @@ export const CDTestRenderer = ({ activeTest, updateActiveTest, appClipboard, set
                 <div className="w-full max-w-[280px] aspect-square relative">
                   <canvas ref={structChartRef}></canvas>
                 </div>
-                {/* Structure Sliders */}
                 <div className="w-full mt-4 grid grid-cols-2 gap-2">
                   {Object.entries(structureComposition).map(([key, val]) => (
                     <div key={key} className="flex flex-col gap-0.5">
@@ -961,7 +947,6 @@ export const CDTestRenderer = ({ activeTest, updateActiveTest, appClipboard, set
           </div>
         </CollapsibleSection>
 
-        {/* SEZIONE 5: CHART CONFIGURATION */}
         <CollapsibleSection title="Chart Configuration" icon="⚙️" defaultOpen={false}>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             {[['X Min (nm)', 'xMin'], ['X Max (nm)', 'xMax'], ['Y Min (mdeg)', 'yMin'], ['Y Max (mdeg)', 'yMax']].map(([lbl, k]) => (
@@ -987,7 +972,6 @@ export const CDTestRenderer = ({ activeTest, updateActiveTest, appClipboard, set
           </div>
         </CollapsibleSection>
 
-        {/* SEZIONE 6: CD SIMULATORS */}
         <CollapsibleSection title="CD Spectra Simulators & Reference Library" icon="🧬" defaultOpen={false}>
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
             {fsPanel === 'mixer' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('mixer')}></div>}
@@ -1007,7 +991,6 @@ export const CDTestRenderer = ({ activeTest, updateActiveTest, appClipboard, set
           </div>
         </CollapsibleSection>
 
-        {/* SEZIONE 7: LAB NOTEBOOK EXPORT */}
         <CollapsibleSection title="Lab Notebook Export" icon="📓" defaultOpen={false} className="no-print">
           <div className="flex flex-col gap-4">
             <p className="text-sm text-slate-600">Select the CD data to format and append to the General Comments (which acts as the Lab Notebook entry).</p>
@@ -1066,7 +1049,6 @@ export const CDTestRenderer = ({ activeTest, updateActiveTest, appClipboard, set
         </CollapsibleSection>
       </div>
 
-      {/* MODALS */}
       {zoomImage && (
         <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-slate-900/90 backdrop-blur-sm" onClick={() => setZoomImage(null)}>
           <div className="relative" style={{ maxWidth: '90vw', maxHeight: '90vh' }}>
