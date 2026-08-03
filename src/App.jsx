@@ -426,8 +426,32 @@ export default function App() {
         });
     };
 
-    const deleteEmptyDatasets = async () => {
-        const emptyDatasets = datasetsList.filter(dset => !dset.testCount || dset.testCount === 0);
+  const deleteEmptyDatasets = async () => {
+        const emptyDatasets = datasetsList.filter(dset => {
+            // 0 tests is definitely empty
+            if (!dset.testCount || dset.testCount === 0) return true;
+            
+            // 1 test might be the default empty test ("Test 1")
+            if (dset.testCount === 1) {
+                try {
+                    // Check if it has the default title
+                    if (dset.title === 'New Dataset' || dset.title === 'Untitled Dataset') {
+                        // Using your existing parsePayload utility
+                        const s = parsePayload(dset);
+                        if (s && s.tests && s.tests.length === 1) {
+                            const t = s.tests[0];
+                            // If it's unmodified "Test 1" with no actual notes or attachments
+                            if (t.name === 'Test 1' && !t.instanceName && !t.comments && (!t.images || t.images.length === 0)) {
+                                return true;
+                            }
+                        }
+                    }
+                } catch(e) {
+                    return false;
+                }
+            }
+            return false;
+        });
         
         if (emptyDatasets.length === 0) {
             setDialog({ type: 'alert', title: 'Clean Up', message: 'No empty datasets found.' });

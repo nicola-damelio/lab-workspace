@@ -66,7 +66,27 @@ export const LabNotebook = ({ tests, allCellLines, testCategories, jumpToTest, c
                 imageTimeout: 15000, 
                 removeContainer: true,
                 windowWidth: el.scrollWidth,
-                windowHeight: el.scrollHeight
+                windowHeight: el.scrollHeight,
+                // FIX FOR oklch ERROR: Sanitize cloned document before rendering
+                onclone: (doc) => {
+                    const elements = doc.querySelectorAll('*');
+                    elements.forEach(element => {
+                        try {
+                            const style = window.getComputedStyle(element);
+                            if (style.color && style.color.includes('oklch')) {
+                                element.style.setProperty('color', '#333333', 'important');
+                            }
+                            if (style.backgroundColor && style.backgroundColor.includes('oklch')) {
+                                element.style.setProperty('background-color', '#ffffff', 'important');
+                            }
+                            if (style.borderColor && style.borderColor.includes('oklch')) {
+                                element.style.setProperty('border-color', '#e2e8f0', 'important');
+                            }
+                        } catch (err) {
+                            // Ignore elements that cannot have their styles read
+                        }
+                    });
+                }
             });
             const imgData = canvas.toDataURL('image/jpeg', 0.92);
             const pdf = new jsPDF('p', 'pt', 'a4');
