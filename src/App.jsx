@@ -142,7 +142,6 @@ export default function App() {
     const [customConc, setCustomConc] = useState({});
     const [cmpColors, setCmpColors] = useState({});
     
-    // Sidebar State: Chiusa di default su schermi piccoli per usabilità mobile
     const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth > 768);
 
     const [storages, setStorages] = useState([]);
@@ -179,10 +178,20 @@ export default function App() {
     const handleUndo = () => { if (historyIndex > 0) { const newIdx = historyIndex - 1; setHistoryIndex(newIdx); setReactTests(historyRef.current[newIdx]); } };
     const handleRedo = () => { if (historyIndex < historyRef.current.length - 1) { const newIdx = historyIndex + 1; setHistoryIndex(newIdx); setReactTests(historyRef.current[newIdx]); } };
 
-    // --- AUTENTICAZIONE TEAM (Google Login) ---
+    // --- AUTENTICAZIONE TEAM OTTIMIZZATA PER MOBILE (Redirect invece di Popup) ---
     useEffect(() => {
         if (!auth) { setIsCloudReady(true); return; }
+        
         const initAuth = async () => {
+            try {
+                // Recupera l'utente se stiamo tornando da un redirect di login
+                if (window.firebase && window.firebase.auth) {
+                    await auth.getRedirectResult();
+                }
+            } catch(e) {
+                console.error("Errore nel redirect auth:", e);
+            }
+
             auth.onAuthStateChanged(async (currentUser) => {
                 if (currentUser) {
                     setUser(currentUser);
@@ -190,7 +199,8 @@ export default function App() {
                 } else {
                     const provider = new window.firebase.auth.GoogleAuthProvider();
                     try {
-                        await auth.signInWithPopup(provider);
+                        // Usa Redirect per aggirare i blocchi popup di Safari/Chrome su mobile
+                        await auth.signInWithRedirect(provider);
                     } catch(e) {
                         console.error("Auth error", e); 
                         setIsCloudReady(true);
@@ -249,7 +259,7 @@ export default function App() {
     const getCompressedPayload = () => LZString.compressToUTF16(JSON.stringify(latestDataRef.current));
     const saveTimeoutRef = useRef(null);
 
-    // --- SALVATAGGIO IN CHIARO (Senza Compressione per Sincronizzazione Conflitti) ---
+    // --- SALVATAGGIO IN CHIARO ---
     useEffect(() => {
         if (!isCloudReady || appView !== 'dataset' || !currentDatasetId) return;
         setSaveStatus('saving');
@@ -329,8 +339,18 @@ export default function App() {
         reader.readAsText(file); e.target.value = '';
     };
 
+    // --- CARICAMENTO E FORZATURA INIZIALIZZAZIONE CLOUD ---
     const confirmLoad = (mode) => {
         const { tests: loadedTests, fullState: s } = pendingLoad;
+        
+        let targetId = currentDatasetId;
+        if (!targetId || mode === 'replace') {
+            targetId = s.id || ('ds_' + Date.now()); 
+            setCurrentDatasetId(targetId);
+            setAppView('dataset');
+            window.history.pushState({}, '', '?dataset=' + targetId);
+        }
+
         if (mode === 'replace') {
             setReactTests(loadedTests); historyRef.current = [loadedTests]; setHistoryIndex(0); setActiveTestId(loadedTests[0].id);
             if(s.datasetTitle !== undefined) setDatasetTitle(s.datasetTitle); else if(s.reportTitle !== undefined) setDatasetTitle(s.reportTitle);
@@ -354,8 +374,9 @@ export default function App() {
                 setStorages(prev => { const merged = [...prev]; s.storages.forEach(newSt => { if(!merged.find(st => st.id === newSt.id)) merged.push(newSt); }); return merged; });
             }
         }
-        setPendingLoad(null); setCurrentModule('tests');
-        // Chiudi menu su mobile dopo il caricamento
+        
+        setPendingLoad(null); 
+        setCurrentModule('tests');
         if (window.innerWidth < 768) setIsSidebarOpen(false);
     };
 
