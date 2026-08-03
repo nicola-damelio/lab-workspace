@@ -910,6 +910,40 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
             <div className="grid grid-cols-1 gap-4">
               <RangeBarChart title="Theoretical ¹H Ranges" ranges={ranges1H} domain={[0, 11]} ticks={Array.from({ length: 12 }, (_, i) => i)} xAxisLabel="¹H (ppm)" rowCount={visibleTypes.length} rowLabels={visibleTypes.map(c => DB[c]?.code3 || c)} />
               <RangeBarChart title="Theoretical ¹³C Ranges" ranges={ranges13C} domain={[0, 190]} ticks={Array.from({ length: 20 }, (_, i) => i * 10)} xAxisLabel="¹³C (ppm)" rowCount={visibleTypes.length} rowLabels={visibleTypes.map(c => DB[c]?.code3 || c)} />
+{/* Numerical Reference Values Table */}
+<div className="bg-white rounded-xl border border-slate-200 p-4">
+  <h4 className="text-md font-bold text-slate-700 mb-4 border-b pb-2">Numerical Reference Values</h4>
+  <div className="overflow-x-auto">
+    <table className="w-full text-sm text-left">
+      <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200">
+        <tr>
+          <th className="px-4 py-2 font-bold">Residue</th>
+          <th className="px-4 py-2 font-bold text-blue-700">¹H Atoms</th>
+          <th className="px-4 py-2 font-bold text-blue-700">¹H Range (ppm)</th>
+          <th className="px-4 py-2 font-bold text-purple-700">¹³C Atoms</th>
+          <th className="px-4 py-2 font-bold text-purple-700">¹³C Range (ppm)</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-slate-100">
+        {visibleTypes.map(char => {
+          const db = DB[char]; if (!db) return null;
+          const hAtoms = Object.keys(db.ranges);
+          const cAtoms = [...new Set(hAtoms.map(k => getCarbonName(moleculeType, char, k)).filter(Boolean))];
+          if (moleculeType === 'protein') cAtoms.push("C'");
+          return (
+            <tr key={char} className="hover:bg-slate-50">
+              <td className="px-4 py-2 font-bold text-slate-700">{db.name} ({db.code3 || char})</td>
+              <td className="px-4 py-2 text-blue-800 text-xs">{hAtoms.join(', ')}</td>
+              <td className="px-4 py-2 font-mono text-xs text-slate-600">{hAtoms.map(k => `${k}: ${db.ranges[k].min}-${db.ranges[k].max}`).join('; ')}</td>
+              <td className="px-4 py-2 text-purple-800 text-xs">{cAtoms.join(', ')}</td>
+              <td className="px-4 py-2 font-mono text-xs text-slate-600">{cAtoms.map(cName => { const cRange = getCarbonRangeFor(moleculeType, char, cName); return `${cName}: ${cRange.min}-${cRange.max}`; }).join('; ')}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  </div>
+</div>
             </div>
           </CollapsibleSection>
         )}
