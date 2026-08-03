@@ -34,7 +34,7 @@ const RESIDUE_COLORS = ['#3b82f6', '#8b5cf6', '#d946ef', '#ec4899', '#f43f5e', '
 const TICKS_1H = Array.from({length: 111}, (_, i) => parseFloat((i / 10).toFixed(1)));
 const TICKS_13C = Array.from({length: 281}, (_, i) => parseFloat((10 + i * 0.5).toFixed(1)));
 
-// MARGINI COSTANTI per coerenza tra calcolo coordinate e rendering
+// CONSTANT MARGINS for consistency between coordinate calculation and rendering
 const CHART_MARGIN = { top: 20, right: 20, bottom: 45, left: 50 };
 const CHART_MARGIN_1D = { top: 10, right: 15, bottom: 45, left: 15 };
 
@@ -189,7 +189,7 @@ const NMRTooltip = ({ active, payload, diagonalColor }) => {
     return (
       <div className="bg-white p-3 border border-slate-200 shadow-xl rounded text-sm z-50">
         <p className="font-bold text-slate-800">{data.label}</p>
-        <p className="font-semibold" style={{ color: data.type === 'Diagonale' ? diagonalColor : getNMRFillColor(data) }}>{data.type}</p>
+        <p className="font-semibold" style={{ color: data.type === 'Diagonal' ? diagonalColor : getNMRFillColor(data) }}>{data.type}</p>
         <p className="text-slate-500 text-xs mt-1">
           F2: {Number(data.x).toFixed(2)} ppm<br/>
           F1: {Number(data.y).toFixed(2)} ppm
@@ -200,48 +200,48 @@ const NMRTooltip = ({ active, payload, diagonalColor }) => {
   return null;
 };
 
-// --- 4. ROBUST ZOOMABLE PLOTS - CORRETTI CON COORDINATE ALLINEATE ---
+// --- 4. ROBUST ZOOMABLE PLOTS - CORRECTED WITH ALIGNED COORDINATES ---
 
-// Hook personalizzato per il calcolo corretto delle coordinate nel plot area
+// Custom hook for correct coordinate calculation in the plot area
 const usePlotCoordinates = (chartRef, margin, xDomainFull, yDomainFull) => {
   const getPlotCoords = (clientX, clientY) => {
     if (!chartRef.current) return null;
     const rect = chartRef.current.getBoundingClientRect();
     
-    // Trovare l'area di plot effettiva dentro il container
-    // Recharts renderizza il grafico dentro il ResponsiveContainer
-    // L'area di plot inizia dopo i margini degli assi
+    // Find the actual plot area inside the container
+    // Recharts renders the chart inside the ResponsiveContainer
+    // The plot area starts after the axis margins
     const svgEl = chartRef.current.querySelector('svg');
     if (!svgEl) return null;
     
-    // Ottenere le dimensioni effettive del SVG
+    // Get the actual dimensions of the SVG
     const svgRect = svgEl.getBoundingClientRect();
     
-    // Calcolare offset del SVG rispetto al container
+    // Calculate SVG offset relative to the container
     const svgOffsetX = svgRect.left - rect.left;
     const svgOffsetY = svgRect.top - rect.top;
     
-    // Coordinate relative al SVG
+    // Coordinates relative to SVG
     const relX = clientX - svgRect.left;
     const relY = clientY - svgRect.top;
     
-    // L'area di plot nel SVG inizia dopo il margine sinistro e superiore
-    // e finisce prima del margine destro e inferiore
+    // The plot area in the SVG starts after the left and top margin
+    // and ends before the right and bottom margin
     const plotWidth = svgRect.width - margin.left - margin.right;
     const plotHeight = svgRect.height - margin.top - margin.bottom;
     
-    // Coordinate relative all'area di plot
+    // Coordinates relative to the plot area
     const plotX = relX - margin.left;
     const plotY = relY - margin.top;
     
-    // Verificare se siamo dentro l'area di plot
+    // Check if we are inside the plot area
     if (plotX < 0 || plotX > plotWidth || plotY < 0 || plotY > plotHeight) return null;
     
-    // Convertire in coordinate del dominio
+    // Convert to domain coordinates
     const xRange = xDomainFull[1] - xDomainFull[0];
     const yRange = yDomainFull[1] - yDomainFull[0];
     
-    // Per assi reversed, il calcolo è diverso
+    // For reversed axes, the calculation is different
     const xVal = xDomainFull[0] + (plotX / plotWidth) * xRange;
     const yVal = yDomainFull[0] + (plotY / plotHeight) * yRange;
     
@@ -272,7 +272,7 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
     
     if (plotX < 0 || plotX > plotWidth) return null;
     
-    // Asse X è reversed, quindi 0 è a destra e fullDomain[1] è a sinistra
+    // X-axis is reversed, so 0 is on the right and fullDomain[1] is on the left
     const xVal = fullDomain[1] - (plotX / plotWidth) * (fullDomain[1] - fullDomain[0]);
     return xVal;
   };
@@ -353,27 +353,27 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
   const isDragging = useRef(false);
   const isZoomed = xDomain[0] !== 0 || xDomain[1] !== 11 || yDomain[0] !== 0 || yDomain[1] !== 11;
 
-  // Funzione corretta per ottenere coordinate dal plot area
+  // Correct function to get coordinates from the plot area
   const getPlotCoords = (clientX, clientY) => {
     if (!chartRef.current) return null;
     const containerRect = chartRef.current.getBoundingClientRect();
     
-    // Trovare il wrapper interno di Recharts (l'area di plot effettiva)
+    // Find the internal Recharts wrapper (the actual plot area)
     const rechartsWrapper = chartRef.current.querySelector('.recharts-wrapper');
     if (!rechartsWrapper) return null;
     
     const wrapperRect = rechartsWrapper.getBoundingClientRect();
     
-    // Coordinate relative all'area di plot di Recharts
+    // Coordinates relative to the Recharts plot area
     const plotX = clientX - wrapperRect.left;
     const plotY = clientY - wrapperRect.top;
     const plotWidth = wrapperRect.width;
     const plotHeight = wrapperRect.height;
     
-    // Verificare se siamo dentro l'area di plot
+    // Check if we are inside the plot area
     if (plotX < 0 || plotX > plotWidth || plotY < 0 || plotY > plotHeight) return null;
     
-    // Entrambi gli assi sono reversed: 0 in alto/a destra, 11 in basso/a sinistra
+    // Both axes are reversed: 0 at top/right, 11 at bottom/left
     const xVal = 11 - (plotX / plotWidth) * 11;
     const yVal = 11 - (plotY / plotHeight) * 11;
     
@@ -440,16 +440,16 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
               <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b' }} />
               <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomYTick1H isZoomed={isZoomed} />} label={{ value: '¹H F1 (ppm)', angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b' }} />
               <Tooltip content={<NMRTooltip diagonalColor={diagonalColor} />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
-              <Scatter name="Diagonale" data={[{x:0, y:0}, {x:11, y:11}]} line={{ stroke: '#cbd5e1', strokeWidth: 1 }} shape={<circle r={0} />} legendType="none" isAnimationActive={false} />
+              <Scatter name="Diagonal" data={[{x:0, y:0}, {x:11, y:11}]} line={{ stroke: '#cbd5e1', strokeWidth: 1 }} shape={<circle r={0} />} legendType="none" isAnimationActive={false} />
               <Scatter data={diagonalData} fill={diagonalColor} shape={(props) => {
                 const { cx, cy, fill, payload } = props;
                 if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
-                return <circle cx={cx} cy={cy} r={payload.size || 5} fill={payload.type === 'Diagonale' ? fill : getNMRFillColor(payload)} opacity={0.8} />;
+                return <circle cx={cx} cy={cy} r={payload.size || 5} fill={payload.type === 'Diagonal' ? fill : getNMRFillColor(payload)} opacity={0.8} />;
               }} isAnimationActive={false} />
               <Scatter data={crossPeakData} shape={(props) => {
                 const { cx, cy, fill, payload } = props;
                 if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
-                return <circle cx={cx} cy={cy} r={payload.size || 5} fill={payload.type === 'Diagonale' ? fill : getNMRFillColor(payload)} opacity={0.8} />;
+                return <circle cx={cx} cy={cy} r={payload.size || 5} fill={payload.type === 'Diagonal' ? fill : getNMRFillColor(payload)} opacity={0.8} />;
               }} isAnimationActive={false} />
               {refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} y1={refAreaTop} y2={refAreaBottom} strokeOpacity={0.3} fill="#cbd5e1" />}
             </ScatterChart>
@@ -485,9 +485,9 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
     
     if (plotX < 0 || plotX > plotWidth || plotY < 0 || plotY > plotHeight) return null;
     
-    // X reversed: 0 a destra, 11 a sinistra
+    // X reversed: 0 on right, 11 on left
     const xVal = 11 - (plotX / plotWidth) * 11;
-    // Y reversed: 10 in alto, 150 in basso
+    // Y reversed: 10 at top, 150 at bottom
     const yVal = 150 - (plotY / plotHeight) * (150 - 10);
     
     return { x: xVal, y: yVal };
@@ -556,7 +556,7 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
               <Scatter data={crossPeakData} shape={(props) => {
                 const { cx, cy, fill, payload } = props;
                 if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
-                return <circle cx={cx} cy={cy} r={payload.size || 5} fill={payload.type === 'Diagonale' ? fill : getNMRFillColor(payload)} opacity={0.8} />;
+                return <circle cx={cx} cy={cy} r={payload.size || 5} fill={payload.type === 'Diagonal' ? fill : getNMRFillColor(payload)} opacity={0.8} />;
               }} isAnimationActive={false} />
               {refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} y1={refAreaTop} y2={refAreaBottom} strokeOpacity={0.3} fill="#cbd5e1" />}
             </ScatterChart>
@@ -776,14 +776,14 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
       });
       const uniqueC = new Map(); Object.entries(res.shifts13C || {}).forEach(([atom, ppm]) => { const cName = getCarbonName(res.char, atom); if (cName) uniqueC.set(cName, ppm); });
       uniqueC.forEach((ppm, cName) => d13C.push({ x: ppm, y: 0.8 + Math.random() * 0.4, label: `${res.id} ${cName}`, color: res.color, type: '1D' }));
-      Object.keys(res.shifts).forEach(atom => diag.push({ x: res.shifts[atom], y: res.shifts[atom], label: `${res.id} ${atom}`, type: 'Diagonale', size: 4 }));
+      Object.keys(res.shifts).forEach(atom => diag.push({ x: res.shifts[atom], y: res.shifts[atom], label: `${res.id} ${atom}`, type: 'Diagonal', size: 4 }));
       if(res.cosy) res.cosy.forEach(([a1, a2]) => { if(res.shifts[a1] && res.shifts[a2]) addPair(cosy, res.shifts[a1], res.shifts[a2], res.id, `${a1}-${a2} (COSY)`, 'cosy', 4); });
       if(res.spinSystems) res.spinSystems.forEach(sys => { for(let i=0; i<sys.length; i++) for(let j=i+1; j<sys.length; j++) if(res.shifts[sys[i]] && res.shifts[sys[j]]) addPair(tocsy, res.shifts[sys[i]], res.shifts[sys[j]], res.id, `${sys[i]}-${sys[j]} (TOCSY)`, 'tocsyDirect', 4); });
       const seenPairs = new Set();
       if(res.cosy) res.cosy.forEach(([a1, a2]) => { seenPairs.add([a1, a2].sort().join('-')); if(res.shifts[a1] && res.shifts[a2]) addPair(noesy, res.shifts[a1], res.shifts[a2], res.id, `${a1}-${a2} (NOE Intra 3)`, 'noesyIntra', 4); });
       if (index < parsedSeq.length - 1) {
         const nextRes = parsedSeq[index + 1];
-        if (res.shifts['HN'] && nextRes.shifts['HN']) addPair(noesy, res.shifts['HN'], nextRes.shifts['HN'], 'NOE Seq.', `${res.id} HN ↔ ${nextRes.id} HN (dNN)`, 'noesySeq', 3);
+        if (res.shifts['HN'] && nextRes.shifts['HN']) addPair(noesy, res.shifts['HN'], nextRes.shifts['HN'], 'Seq. NOE', `${res.id} HN ↔ ${nextRes.id} HN (dNN)`, 'noesySeq', 3);
       }
       Object.keys(res.shifts13C || {}).forEach(atom => { if (res.shifts[atom] && res.shifts13C[atom]) hsqc.push({ x: res.shifts[atom], y: res.shifts13C[atom], label: `${res.id} ${atom}-${getCarbonName(res.char, atom)}`, type: 'HSQC', colorClass: 'hsqc', size: 4 }); });
     });
@@ -792,7 +792,7 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
 
   const yTicksForRanges = useMemo(() => Array.from({length: uniqueAminoAcidTypes.length}, (_, i) => i), [uniqueAminoAcidTypes]);
 
-  // Altezza compatta per asse verticale: 28px per residuo + padding
+  // Compact height for vertical axis: 28px per residue + padding
   const rangeChartHeight = Math.max(120, uniqueAminoAcidTypes.length * 28 + 50);
 
   return (
@@ -867,7 +867,7 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
           </CollapsibleSection>
         )}
 
-        {/* 4. THEORETICAL RANGES - CORRETTO CON BARRE VISIBILI E ASSE COMPATTO */}
+        {/* 4. THEORETICAL RANGES - CORRECTED WITH VISIBLE BARS AND COMPACT AXIS */}
         {uniqueAminoAcidTypes.length > 0 && (
           <CollapsibleSection title="Theoretical Chemical Shift Ranges" icon="📊" defaultOpen={true}>
             <div className="grid grid-cols-1 gap-4">
@@ -1036,7 +1036,7 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
           )}
         </CollapsibleSection>
 
-        {/* 6. SPECTRA IMAGES - CORRETTO: ANTEPRIMA DIRETTA SENZA CLICK */}
+        {/* 6. SPECTRA IMAGES */}
         <CollapsibleSection title="Spectra Images" icon="🖼️" defaultOpen={true}>
           <div className="flex justify-between items-center mb-4">
             <p className="text-sm text-slate-500">Attach direct image links for your experimental spectra.</p>
