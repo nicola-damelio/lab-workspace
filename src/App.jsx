@@ -426,6 +426,43 @@ export default function App() {
         });
     };
 
+    const deleteEmptyDatasets = async () => {
+        const emptyDatasets = datasetsList.filter(dset => !dset.testCount || dset.testCount === 0);
+        
+        if (emptyDatasets.length === 0) {
+            setDialog({ type: 'alert', title: 'Clean Up', message: 'No empty datasets found.' });
+            return;
+        }
+
+        setDialog({
+            type: 'confirm', 
+            title: 'Delete Empty Datasets', 
+            message: `Are you sure you want to delete ${emptyDatasets.length} empty dataset(s)?`,
+            onConfirm: async () => {
+                if (db && user) {
+                    try {
+                        const batch = db.batch();
+                        emptyDatasets.forEach(dset => {
+                            const docRef = db.collection(`artifacts/${appId}/public/data/datasets`).doc(dset.id);
+                            batch.delete(docRef);
+                        });
+                        await batch.commit();
+                    } catch(e) {
+                        console.error("Batch delete failed", e);
+                        setDialog({ type: 'alert', title: 'Error', message: 'Cloud deletion failed.' });
+                    }
+                } else {
+                    let stored = []; 
+                    try { stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]'); } catch(e){}
+                    const emptyIds = emptyDatasets.map(d => d.id);
+                    stored = stored.filter(d => !emptyIds.includes(d.id)); 
+                    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
+                    setDatasetsList(stored);
+                }
+            }
+        });
+    };
+
     const [searchQuery, setSearchQuery] = useState('');
     const [expandedGroups, setExpandedGroups] = useState({});
     const toggleGroup = (key) => setExpandedGroups(prev => ({...prev, [key]: !prev[key]}));
@@ -579,10 +616,15 @@ export default function App() {
                         <div className="bg-white p-8 rounded-2xl shadow-xl border border-slate-200">
                             <div className="flex justify-between items-center mb-6 border-b border-slate-100 pb-4">
                                 <h2 className="text-2xl font-bold text-slate-800">Your Recent Datasets</h2>
-                                <label className="bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex items-center gap-2 cursor-pointer text-sm">
-                                    📂 Load HTML File
-                                    <input type="file" accept=".html" onChange={loadHTML} className="hidden"/>
-                                </label>
+                                <div className="flex gap-2">
+                                    <button onClick={deleteEmptyDatasets} className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex items-center gap-2 cursor-pointer text-sm">
+                                        🗑️ Delete Empty
+                                    </button>
+                                    <label className="bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex items-center gap-2 cursor-pointer text-sm">
+                                        📂 Load HTML File
+                                        <input type="file" accept=".html" onChange={loadHTML} className="hidden"/>
+                                    </label>
+                                </div>
                             </div>
                             
                             {isCloudReady && Object.keys(groupedDatasets).length === 0 ? (
