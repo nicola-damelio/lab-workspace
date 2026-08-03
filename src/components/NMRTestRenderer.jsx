@@ -200,6 +200,83 @@ const NMRTooltip = ({ active, payload, diagonalColor }) => {
   return null;
 };
 
+// --- 4A. BULLETPROOF CUSTOM SVG RANGE CHART (no Recharts dependency) ---
+const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, rowLabels }) => {
+  const containerRef = useRef(null);
+  const [width, setWidth] = useState(0);
+  const [hover, setHover] = useState(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const update = () => setWidth(el.clientWidth);
+    update();
+    let ro = null;
+    if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(update); ro.observe(el); }
+    window.addEventListener('resize', update);
+    return () => { if (ro) ro.disconnect(); window.removeEventListener('resize', update); };
+  }, []);
+
+  const margin = { top: 10, right: 24, bottom: 40, left: 56 };
+  const rowH = 26;
+  const nRows = Math.max(1, rowCount);
+  const svgHeight = margin.top + nRows * rowH + margin.bottom;
+  const plotW = Math.max(10, (width || 600) - margin.left - margin.right);
+  const span = domain[1] - domain[0];
+  const xScale = (v) => margin.left + ((domain[1] - v) / span) * plotW; // NMR: high ppm on the LEFT
+  const yCenter = (row) => margin.top + row * rowH + rowH / 2;
+  const axisY = margin.top + nRows * rowH;
+
+  return (
+    <div ref={containerRef} className="bg-slate-50 rounded-xl border border-slate-200 p-3 relative">
+      <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2 ml-1">{title}</h4>
+      <svg width="100%" height={svgHeight} className="block select-none">
+        {rowLabels.map((label, row) => (
+          <g key={`row-${row}`}>
+            {row % 2 === 0 && <rect x={margin.left} y={margin.top + row * rowH} width={plotW} height={rowH} fill="#f1f5f9" opacity={0.6} />}
+            <text x={margin.left - 8} y={yCenter(row)} textAnchor="end" dominantBaseline="middle" fontSize={11} fontWeight="bold" fill="#64748b">{label}</text>
+          </g>
+        ))}
+        {ticks.map((t) => (
+          <g key={`tick-${t}`}>
+            <line x1={xScale(t)} y1={margin.top} x2={xScale(t)} y2={axisY} stroke="#e2e8f0" strokeWidth={1} />
+            <line x1={xScale(t)} y1={axisY} x2={xScale(t)} y2={axisY + 5} stroke="#94a3b8" strokeWidth={1} />
+            <text x={xScale(t)} y={axisY + 16} textAnchor="middle" fontSize={10} fill="#64748b">{t}</text>
+          </g>
+        ))}
+        <line x1={margin.left} y1={axisY} x2={margin.left + plotW} y2={axisY} stroke="#cbd5e1" strokeWidth={1} />
+        {ranges.map((r, i) => {
+          const row = nRows - 1 - r.y;
+          const x1 = xScale(r.max);
+          const x2 = xScale(r.min);
+          const cy = yCenter(row);
+          const isHov = hover && hover.idx === i;
+          return (
+            <rect key={`range-${i}`} x={x1} y={cy - 5} width={Math.max(2, x2 - x1)} height={10} rx={3}
+              fill={r.color} fillOpacity={isHov ? 1 : 0.75} stroke={r.color} strokeWidth={1}
+              style={{ cursor: 'pointer' }}
+              onMouseMove={(e) => {
+                const crect = containerRef.current.getBoundingClientRect();
+                setHover({ idx: i, x: e.clientX - crect.left, y: e.clientY - crect.top });
+              }}
+              onMouseLeave={() => setHover(null)}
+            />
+          );
+        })}
+        <text x={margin.left + plotW / 2} y={svgHeight - 6} textAnchor="middle" fontSize={11} fill="#64748b">{xAxisLabel}</text>
+      </svg>
+      {hover && ranges[hover.idx] && (
+        <div className="absolute bg-white p-2 border border-slate-200 shadow-md rounded text-xs z-50 pointer-events-none whitespace-nowrap"
+          style={{ left: hover.x + 12, top: Math.max(0, hover.y - 44) }}>
+          <p className="font-bold text-slate-800">{ranges[hover.idx].res} - {ranges[hover.idx].atom}</p>
+          <p className="text-slate-500">Theoretical Range: {ranges[hover.idx].min.toFixed(2)} - {ranges[hover.idx].max.toFixed(2)} ppm</p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+
 // --- 4. ROBUST ZOOMABLE PLOTS - CORRECTED WITH ALIGNED COORDINATES ---
 
 const usePlotCoordinates = (chartRef, margin, xDomainFull, yDomainFull) => {
@@ -246,21 +323,18 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
   const isDragging = useRef(false);
   const isZoomed = xDomain[0] !== fullDomain[0] || xDomain[1] !== fullDomain[1];
 
-  const getXVal = (clientX) => {
-    if (!chartRef.current) return null;
-    const rect = chartRef.current.getBoundingClientRect();
-    const svgEl = chartRef.current.querySelector('.recharts-wrapper');
-    if (!svgEl) return null;
-    
-    const svgRect = svgEl.getBoundingClientRect();
-    const plotX = clientX - svgRect.left;
-    const plotWidth = svgRect.width;
-    
-    if (plotX < 0 || plotX > plotWidth) return null;
-    
-    const xVal = fullDomain[1] - (plotX / plotWidth) * (fullDomain[1] - fullDomain[0]);
-    return xVal;
-  };
+const getXVal = (clientX) => {
+  if (!chartRef.current) return null;
+  const wrapper = chartRef.current.querySelector('.recharts-wrapper');
+  if (!wrapper) return null;
+  const rect = wrapper.getBoundingClientRect();
+  const plotW = rect.width - CHART_MARGIN_1D.left - CHART_MARGIN_1D.right;
+  if (plotW <= 0) return null;
+  const px = clientX - rect.left - CHART_MARGIN_1D.left;
+  const fx = Math.min(1, Math.max(0, px / plotW));
+  // reversed axis + use the CURRENT (zoomed) domain
+  return xDomain[1] - fx * (xDomain[1] - xDomain[0]);
+};
 
   useEffect(() => {
     const handleMouseMove = (e) => {
@@ -338,24 +412,25 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
   const isDragging = useRef(false);
   const isZoomed = xDomain[0] !== 0 || xDomain[1] !== 11 || yDomain[0] !== 0 || yDomain[1] !== 11;
 
-  const getPlotCoords = (clientX, clientY) => {
-    if (!chartRef.current) return null;
-    const rechartsWrapper = chartRef.current.querySelector('.recharts-wrapper');
-    if (!rechartsWrapper) return null;
-    
-    const wrapperRect = rechartsWrapper.getBoundingClientRect();
-    const plotX = clientX - wrapperRect.left;
-    const plotY = clientY - wrapperRect.top;
-    const plotWidth = wrapperRect.width;
-    const plotHeight = wrapperRect.height;
-    
-    if (plotX < 0 || plotX > plotWidth || plotY < 0 || plotY > plotHeight) return null;
-    
-    const xVal = 11 - (plotX / plotWidth) * 11;
-    const yVal = 11 - (plotY / plotHeight) * 11;
-    
-    return { x: xVal, y: yVal };
+const getPlotCoords = (clientX, clientY) => {
+  if (!chartRef.current) return null;
+  const wrapper = chartRef.current.querySelector('.recharts-wrapper');
+  if (!wrapper) return null;
+  const rect = wrapper.getBoundingClientRect();
+  const plotW = rect.width - CHART_MARGIN.left - CHART_MARGIN.right;
+  const plotH = rect.height - CHART_MARGIN.top - CHART_MARGIN.bottom;
+  if (plotW <= 0 || plotH <= 0) return null;
+  const px = clientX - rect.left - CHART_MARGIN.left;
+  const py = clientY - rect.top - CHART_MARGIN.top;
+  const fx = Math.min(1, Math.max(0, px / plotW));
+  const fy = Math.min(1, Math.max(0, py / plotH));
+  return {
+    // X axis reversed: high ppm on the LEFT
+    x: xDomain[1] - fx * (xDomain[1] - xDomain[0]),
+    // Y axis reversed: domain[0] is at the TOP
+    y: yDomain[0] + fy * (yDomain[1] - yDomain[0]),
   };
+};  
 
   useEffect(() => {
     const handleMouseMove = (e) => {
@@ -449,24 +524,23 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
   const isDragging = useRef(false);
   const isZoomed = xDomain[0] !== 0 || xDomain[1] !== 11 || yDomain[0] !== 10 || yDomain[1] !== 150;
 
-  const getPlotCoords = (clientX, clientY) => {
-    if (!chartRef.current) return null;
-    const rechartsWrapper = chartRef.current.querySelector('.recharts-wrapper');
-    if (!rechartsWrapper) return null;
-    
-    const wrapperRect = rechartsWrapper.getBoundingClientRect();
-    const plotX = clientX - wrapperRect.left;
-    const plotY = clientY - wrapperRect.top;
-    const plotWidth = wrapperRect.width;
-    const plotHeight = wrapperRect.height;
-    
-    if (plotX < 0 || plotX > plotWidth || plotY < 0 || plotY > plotHeight) return null;
-    
-    const xVal = 11 - (plotX / plotWidth) * 11;
-    const yVal = 150 - (plotY / plotHeight) * (150 - 10);
-    
-    return { x: xVal, y: yVal };
+const getPlotCoords = (clientX, clientY) => {
+  if (!chartRef.current) return null;
+  const wrapper = chartRef.current.querySelector('.recharts-wrapper');
+  if (!wrapper) return null;
+  const rect = wrapper.getBoundingClientRect();
+  const plotW = rect.width - CHART_MARGIN.left - CHART_MARGIN.right;
+  const plotH = rect.height - CHART_MARGIN.top - CHART_MARGIN.bottom;
+  if (plotW <= 0 || plotH <= 0) return null;
+  const px = clientX - rect.left - CHART_MARGIN.left;
+  const py = clientY - rect.top - CHART_MARGIN.top;
+  const fx = Math.min(1, Math.max(0, px / plotW));
+  const fy = Math.min(1, Math.max(0, py / plotH));
+  return {
+    x: xDomain[1] - fx * (xDomain[1] - xDomain[0]),
+    y: yDomain[0] + fy * (yDomain[1] - yDomain[0]),
   };
+}; 
 
   useEffect(() => {
     const handleMouseMove = (e) => {
@@ -907,56 +981,28 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
         {uniqueAminoAcidTypes.length > 0 && (
           <CollapsibleSection title="Theoretical Chemical Shift Ranges" icon="📊" defaultOpen={true}>
             <div className="grid grid-cols-1 gap-4">
-              {/* ¹H Ranges */}
-              <div className="bg-slate-50 rounded-xl border border-slate-200 p-3" style={{ height: `${rangeChartHeight}px` }}>
-                <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2 ml-14">Theoretical ¹H Ranges</h4>
-                <ResponsiveContainer width="100%" height="calc(100% - 24px)">
-                  <ScatterChart margin={{ top: 5, right: 20, bottom: 25, left: 55 }}>
-                    <XAxis type="number" dataKey="x" domain={[0, 11]} reversed={true} ticks={TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={false} />} axisLine={{ stroke: '#e2e8f0' }} />
-                    <YAxis type="number" dataKey="y" domain={[-0.5, uniqueAminoAcidTypes.length - 0.5]} axisLine={false} tickLine={false} width={55} ticks={yTicksForRanges} interval={0} tickFormatter={(val) => { const char = uniqueAminoAcidTypes[uniqueAminoAcidTypes.length - 1 - val]; return char ? AMINO_ACID_DB[char].code3 : ''; }} tick={{ fontSize: 11, fontWeight: 'bold', fill: '#64748b', dx: -5 }} />
-                    <Tooltip content={<NMRTooltip />} cursor={false} />
-                    {referenceRangesData.map((range, idx) => (
-                      <ReferenceArea
-                        key={idx}
-                        x1={range.min}
-                        x2={range.max}
-                        y1={range.y - 0.4}
-                        y2={range.y + 0.4}
-                        fill={range.color}
-                        fillOpacity={0.75}
-                        stroke={range.color}
-                        strokeWidth={1.5}
-                        strokeOpacity={0.9}
-                      />
-                    ))}
-                  </ScatterChart>
-                </ResponsiveContainer>
-              </div>
-              {/* ¹³C Ranges */}
-              <div className="bg-slate-50 rounded-xl border border-slate-200 p-3" style={{ height: `${rangeChartHeight}px` }}>
-                <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2 ml-14">Theoretical ¹³C Ranges</h4>
-                <ResponsiveContainer width="100%" height="calc(100% - 24px)">
-                  <ScatterChart margin={{ top: 5, right: 20, bottom: 25, left: 55 }}>
-                    <XAxis type="number" dataKey="x" domain={[10, 150]} reversed={true} ticks={TICKS_13C} interval={0} tickLine={false} tick={<CustomXTick13C isZoomed={false} />} axisLine={{ stroke: '#e2e8f0' }} />
-                    <YAxis type="number" dataKey="y" domain={[-0.5, uniqueAminoAcidTypes.length - 0.5]} axisLine={false} tickLine={false} width={55} ticks={yTicksForRanges} interval={0} tickFormatter={(val) => { const char = uniqueAminoAcidTypes[uniqueAminoAcidTypes.length - 1 - val]; return char ? AMINO_ACID_DB[char].code3 : ''; }} tick={{ fontSize: 11, fontWeight: 'bold', fill: '#64748b', dx: -5 }} />
-                    <Tooltip content={<NMRTooltip />} cursor={false} />
-                    {referenceRangesData13C.map((range, idx) => (
-                      <ReferenceArea
-                        key={idx}
-                        x1={range.min}
-                        x2={range.max}
-                        y1={range.y - 0.4}
-                        y2={range.y + 0.4}
-                        fill={range.color}
-                        fillOpacity={0.75}
-                        stroke={range.color}
-                        strokeWidth={1.5}
-                        strokeOpacity={0.9}
-                      />
-                    ))}
-                  </ScatterChart>
-                </ResponsiveContainer>
-              </div>
+             
+{/* ¹H Ranges */}
+<RangeBarChart
+  title="Theoretical ¹H Ranges"
+  ranges={referenceRangesData}
+  domain={[0, 11]}
+  ticks={Array.from({ length: 12 }, (_, i) => i)}
+  xAxisLabel="¹H (ppm)"
+  rowCount={uniqueAminoAcidTypes.length}
+  rowLabels={uniqueAminoAcidTypes.map((c) => AMINO_ACID_DB[c]?.code3 || c)}
+/>
+{/* ¹³C Ranges */}
+<RangeBarChart
+  title="Theoretical ¹³C Ranges"
+  ranges={referenceRangesData13C}
+  domain={[10, 150]}
+  ticks={Array.from({ length: 15 }, (_, i) => 10 + i * 10)}
+  xAxisLabel="¹³C (ppm)"
+  rowCount={uniqueAminoAcidTypes.length}
+  rowLabels={uniqueAminoAcidTypes.map((c) => AMINO_ACID_DB[c]?.code3 || c)}
+/>
+
               {/* Numerical Reference Values Table */}
               <div className="bg-white rounded-xl border border-slate-200 p-4">
                 <h4 className="text-md font-bold text-slate-700 mb-4 border-b pb-2">Numerical Reference Values</h4>
