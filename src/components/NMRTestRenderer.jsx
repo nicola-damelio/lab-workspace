@@ -34,7 +34,6 @@ const RESIDUE_COLORS = ['#3b82f6', '#8b5cf6', '#d946ef', '#ec4899', '#f43f5e', '
 const TICKS_1H = Array.from({length: 111}, (_, i) => parseFloat((i / 10).toFixed(1)));
 const TICKS_13C = Array.from({length: 281}, (_, i) => parseFloat((10 + i * 0.5).toFixed(1)));
 
-// CONSTANT MARGINS for consistency between coordinate calculation and rendering
 const CHART_MARGIN = { top: 20, right: 20, bottom: 45, left: 50 };
 const CHART_MARGIN_1D = { top: 10, right: 15, bottom: 45, left: 15 };
 
@@ -80,14 +79,23 @@ const getPascalRow = (n) => {
   return row;
 };
 
+// --- AGGIORNAMENTO RANGE 13C ---
 const getCarbonRange = (char, cName) => {
   if (!cName) return {min: 40, max: 50};
-  if (cName.includes('Cα')) return {min: 50, max: 65};
-  if (cName.includes('Cβ')) return (char === 'S' || char === 'T') ? {min: 60, max: 70} : {min: 25, max: 45};
-  if (cName.includes('Cγ')) return (['V','I','T'].includes(char)) ? {min: 15, max: 25} : {min: 25, max: 35};
-  if (cName.includes('Cδ')) return (['F','Y','W','H'].includes(char)) ? {min: 110, max: 135} : {min: 20, max: 50};
-  if (cName.includes('Cε')) return (['F','Y','W','H'].includes(char)) ? {min: 110, max: 135} : {min: 25, max: 45};
-  if (cName.includes('Cζ') || cName.includes('Cη')) return {min: 110, max: 135};
+  if (cName.includes('Cα')) {
+    if (char === 'G') return {min: 42, max: 45};
+    return {min: 52, max: 58};
+  }
+  if (cName.includes('Cβ')) {
+    if (char === 'A') return {min: 17, max: 21};
+    if (char === 'S' || char === 'T') return {min: 60, max: 68};
+    if (['V', 'I'].includes(char)) return {min: 30, max: 38};
+    return {min: 27, max: 42};
+  }
+  if (cName.includes('Cγ')) return (['V','I','T'].includes(char)) ? {min: 18, max: 24} : {min: 23, max: 34};
+  if (cName.includes('Cδ')) return (['F','Y','W','H'].includes(char)) ? {min: 115, max: 135} : {min: 22, max: 45};
+  if (cName.includes('Cε')) return (['F','Y','W','H'].includes(char)) ? {min: 115, max: 135} : {min: 25, max: 42};
+  if (cName.includes('Cζ') || cName.includes('Cη')) return {min: 115, max: 135};
   return {min: 40, max: 50};
 };
 
@@ -200,7 +208,7 @@ const NMRTooltip = ({ active, payload, diagonalColor }) => {
   return null;
 };
 
-// --- 4A. BULLETPROOF CUSTOM SVG RANGE CHART (no Recharts dependency) ---
+// --- 4A. BULLETPROOF CUSTOM SVG RANGE CHART ---
 const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, rowLabels }) => {
   const containerRef = useRef(null);
   const [width, setWidth] = useState(0);
@@ -223,7 +231,7 @@ const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, row
   const svgHeight = margin.top + nRows * rowH + margin.bottom;
   const plotW = Math.max(10, (width || 600) - margin.left - margin.right);
   const span = domain[1] - domain[0];
-  const xScale = (v) => margin.left + ((domain[1] - v) / span) * plotW; // NMR: high ppm on the LEFT
+  const xScale = (v) => margin.left + ((domain[1] - v) / span) * plotW; 
   const yCenter = (row) => margin.top + row * rowH + rowH / 2;
   const axisY = margin.top + nRows * rowH;
 
@@ -277,43 +285,7 @@ const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, row
 };
 
 
-// --- 4. ROBUST ZOOMABLE PLOTS - CORRECTED WITH ALIGNED COORDINATES ---
-
-const usePlotCoordinates = (chartRef, margin, xDomainFull, yDomainFull) => {
-  const getPlotCoords = (clientX, clientY) => {
-    if (!chartRef.current) return null;
-    const rect = chartRef.current.getBoundingClientRect();
-    
-    const svgEl = chartRef.current.querySelector('svg');
-    if (!svgEl) return null;
-    
-    const svgRect = svgEl.getBoundingClientRect();
-    const svgOffsetX = svgRect.left - rect.left;
-    const svgOffsetY = svgRect.top - rect.top;
-    
-    const relX = clientX - svgRect.left;
-    const relY = clientY - svgRect.top;
-    
-    const plotWidth = svgRect.width - margin.left - margin.right;
-    const plotHeight = svgRect.height - margin.top - margin.bottom;
-    
-    const plotX = relX - margin.left;
-    const plotY = relY - margin.top;
-    
-    if (plotX < 0 || plotX > plotWidth || plotY < 0 || plotY > plotHeight) return null;
-    
-    const xRange = xDomainFull[1] - xDomainFull[0];
-    const yRange = yDomainFull[1] - yDomainFull[0];
-    
-    const xVal = xDomainFull[0] + (plotX / plotWidth) * xRange;
-    const yVal = yDomainFull[0] + (plotY / plotHeight) * yRange;
-    
-    return { x: xVal, y: yVal };
-  };
-  
-  return getPlotCoords;
-};
-
+// --- 4. ROBUST ZOOMABLE PLOTS ---
 const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel }) => {
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState(fullDomain);
@@ -323,18 +295,17 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
   const isDragging = useRef(false);
   const isZoomed = xDomain[0] !== fullDomain[0] || xDomain[1] !== fullDomain[1];
 
-const getXVal = (clientX) => {
-  if (!chartRef.current) return null;
-  const wrapper = chartRef.current.querySelector('.recharts-wrapper');
-  if (!wrapper) return null;
-  const rect = wrapper.getBoundingClientRect();
-  const plotW = rect.width - CHART_MARGIN_1D.left - CHART_MARGIN_1D.right;
-  if (plotW <= 0) return null;
-  const px = clientX - rect.left - CHART_MARGIN_1D.left;
-  const fx = Math.min(1, Math.max(0, px / plotW));
-  // reversed axis + use the CURRENT (zoomed) domain
-  return xDomain[1] - fx * (xDomain[1] - xDomain[0]);
-};
+  const getXVal = (clientX) => {
+    if (!chartRef.current) return null;
+    const wrapper = chartRef.current.querySelector('.recharts-wrapper');
+    if (!wrapper) return null;
+    const rect = wrapper.getBoundingClientRect();
+    const plotW = rect.width - CHART_MARGIN_1D.left - CHART_MARGIN_1D.right;
+    if (plotW <= 0) return null;
+    const px = clientX - rect.left - CHART_MARGIN_1D.left;
+    const fx = Math.min(1, Math.max(0, px / plotW));
+    return xDomain[1] - fx * (xDomain[1] - xDomain[0]);
+  };
 
   useEffect(() => {
     const handleMouseMove = (e) => {
@@ -412,25 +383,23 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
   const isDragging = useRef(false);
   const isZoomed = xDomain[0] !== 0 || xDomain[1] !== 11 || yDomain[0] !== 0 || yDomain[1] !== 11;
 
-const getPlotCoords = (clientX, clientY) => {
-  if (!chartRef.current) return null;
-  const wrapper = chartRef.current.querySelector('.recharts-wrapper');
-  if (!wrapper) return null;
-  const rect = wrapper.getBoundingClientRect();
-  const plotW = rect.width - CHART_MARGIN.left - CHART_MARGIN.right;
-  const plotH = rect.height - CHART_MARGIN.top - CHART_MARGIN.bottom;
-  if (plotW <= 0 || plotH <= 0) return null;
-  const px = clientX - rect.left - CHART_MARGIN.left;
-  const py = clientY - rect.top - CHART_MARGIN.top;
-  const fx = Math.min(1, Math.max(0, px / plotW));
-  const fy = Math.min(1, Math.max(0, py / plotH));
-  return {
-    // X axis reversed: high ppm on the LEFT
-    x: xDomain[1] - fx * (xDomain[1] - xDomain[0]),
-    // Y axis reversed: domain[0] is at the TOP
-    y: yDomain[0] + fy * (yDomain[1] - yDomain[0]),
-  };
-};  
+  const getPlotCoords = (clientX, clientY) => {
+    if (!chartRef.current) return null;
+    const wrapper = chartRef.current.querySelector('.recharts-wrapper');
+    if (!wrapper) return null;
+    const rect = wrapper.getBoundingClientRect();
+    const plotW = rect.width - CHART_MARGIN.left - CHART_MARGIN.right;
+    const plotH = rect.height - CHART_MARGIN.top - CHART_MARGIN.bottom;
+    if (plotW <= 0 || plotH <= 0) return null;
+    const px = clientX - rect.left - CHART_MARGIN.left;
+    const py = clientY - rect.top - CHART_MARGIN.top;
+    const fx = Math.min(1, Math.max(0, px / plotW));
+    const fy = Math.min(1, Math.max(0, py / plotH));
+    return {
+      x: xDomain[1] - fx * (xDomain[1] - xDomain[0]),
+      y: yDomain[0] + fy * (yDomain[1] - yDomain[0]),
+    };
+  };  
 
   useEffect(() => {
     const handleMouseMove = (e) => {
@@ -524,23 +493,23 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
   const isDragging = useRef(false);
   const isZoomed = xDomain[0] !== 0 || xDomain[1] !== 11 || yDomain[0] !== 10 || yDomain[1] !== 150;
 
-const getPlotCoords = (clientX, clientY) => {
-  if (!chartRef.current) return null;
-  const wrapper = chartRef.current.querySelector('.recharts-wrapper');
-  if (!wrapper) return null;
-  const rect = wrapper.getBoundingClientRect();
-  const plotW = rect.width - CHART_MARGIN.left - CHART_MARGIN.right;
-  const plotH = rect.height - CHART_MARGIN.top - CHART_MARGIN.bottom;
-  if (plotW <= 0 || plotH <= 0) return null;
-  const px = clientX - rect.left - CHART_MARGIN.left;
-  const py = clientY - rect.top - CHART_MARGIN.top;
-  const fx = Math.min(1, Math.max(0, px / plotW));
-  const fy = Math.min(1, Math.max(0, py / plotH));
-  return {
-    x: xDomain[1] - fx * (xDomain[1] - xDomain[0]),
-    y: yDomain[0] + fy * (yDomain[1] - yDomain[0]),
-  };
-}; 
+  const getPlotCoords = (clientX, clientY) => {
+    if (!chartRef.current) return null;
+    const wrapper = chartRef.current.querySelector('.recharts-wrapper');
+    if (!wrapper) return null;
+    const rect = wrapper.getBoundingClientRect();
+    const plotW = rect.width - CHART_MARGIN.left - CHART_MARGIN.right;
+    const plotH = rect.height - CHART_MARGIN.top - CHART_MARGIN.bottom;
+    if (plotW <= 0 || plotH <= 0) return null;
+    const px = clientX - rect.left - CHART_MARGIN.left;
+    const py = clientY - rect.top - CHART_MARGIN.top;
+    const fx = Math.min(1, Math.max(0, px / plotW));
+    const fy = Math.min(1, Math.max(0, py / plotH));
+    return {
+      x: xDomain[1] - fx * (xDomain[1] - xDomain[0]),
+      y: yDomain[0] + fy * (yDomain[1] - yDomain[0]),
+    };
+  }; 
 
   useEffect(() => {
     const handleMouseMove = (e) => {
@@ -736,7 +705,12 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
   const showSim = activeTest.showSpectraSimulation || false;
   const linkedProtocolId = activeTest.linkedProtocolId || '';
   const [tableMode, setTableMode] = useState(activeTest.tableMode || 'backbone');
+  
+  // --- NUOVI STATI AGGIUNTI ---
+  const [selectedResidueId, setSelectedResidueId] = useState('ALL');
+  const [showShifts, setShowShifts] = useState(false);
   const [expandedPanel, setExpandedPanel] = useState(null);
+  
   const nucDefs = { H: ['HN', 'Hα', 'Hβ'], N: ['N'], C: ['Cα', 'Cβ', "C'"] };
   const handleShiftChange = (resIdx, atom, val) => updateActiveTest({ chemicalShifts: { ...shifts, [`${resIdx}-${atom}`]: val } });
 
@@ -798,11 +772,27 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
       });
     });
     
+    // Funzioni helper per dare priorità ai valori inseriti manualmente rispetto a quelli generati
+    const getShift = (resIdx, atom, res) => {
+      const manual = parseFloat(shifts[`${resIdx}-${atom}`]?.toString().replace(',', '.'));
+      return !isNaN(manual) ? manual : res.shifts[atom];
+    };
+
+    const getCShift = (resIdx, cName, res) => {
+      const manual = parseFloat(shifts[`${resIdx}-${cName}`]?.toString().replace(',', '.'));
+      return !isNaN(manual) ? manual : res.uniqueCShifts[cName];
+    };
+
     parsedSeq.forEach((res, index) => {
       if(!res.shifts) return;
+      // Applicazione Filtro per il Rendering
+      if (selectedResidueId !== 'ALL' && res.id !== selectedResidueId) return;
       
       // 1D and Multiplets Generation
-      Object.entries(res.shifts).forEach(([atom, ppm]) => {
+      Object.entries(res.shifts).forEach(([atom, ppmT]) => {
+        const ppm = getShift(index, atom, res); // Usa valore manuale se presente
+        if(ppm === undefined) return;
+        
         let peaks = [{ shift: ppm, intensity: 1 }]; let totalNeighbors = 0;
         if(res.cosy) {
           res.cosy.forEach(pair => {
@@ -828,15 +818,31 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
         mergedPeaks.forEach(p => d1H.push({ x: p.shift, y: (p.intensity / maxIntensity) * baseIntensity, label: `${res.id} ${atom}`, color: res.color, type: '1D', multiplet: multStr }));
       });
       
-      const uniqueC = new Map(); Object.entries(res.shifts13C || {}).forEach(([atom, ppm]) => { const cName = getCarbonName(res.char, atom); if (cName) uniqueC.set(cName, ppm); });
+      const uniqueC = new Map(); 
+      Object.entries(res.shifts13C || {}).forEach(([atom, ppmT]) => { 
+        const cName = getCarbonName(res.char, atom); 
+        if (cName) uniqueC.set(cName, getCShift(index, cName, res)); 
+      });
       uniqueC.forEach((ppm, cName) => d13C.push({ x: ppm, y: 0.8 + Math.random() * 0.4, label: `${res.id} ${cName}`, color: res.color, type: '1D' }));
-      Object.keys(res.shifts).forEach(atom => diag.push({ x: res.shifts[atom], y: res.shifts[atom], label: `${res.id} ${atom}`, type: 'Diagonal', size: 4 }));
+      
+      Object.keys(res.shifts).forEach(atom => {
+        const val = getShift(index, atom, res);
+        if(val !== undefined) diag.push({ x: val, y: val, label: `${res.id} ${atom}`, type: 'Diagonal', size: 4 });
+      });
       
       // COSY and TOCSY
-      if(res.cosy) res.cosy.forEach(([a1, a2]) => { if(res.shifts[a1] && res.shifts[a2]) addPair(cosy, res.shifts[a1], res.shifts[a2], res.id, `${a1}-${a2} (COSY)`, 'cosy', 4); });
-      if(res.spinSystems) res.spinSystems.forEach(sys => { for(let i=0; i<sys.length; i++) for(let j=i+1; j<sys.length; j++) if(res.shifts[sys[i]] && res.shifts[sys[j]]) {
-          const isDirect = res.cosy && res.cosy.some(c => (c[0]===sys[i] && c[1]===sys[j]) || (c[0]===sys[j] && c[1]===sys[i]));
-          addPair(tocsy, res.shifts[sys[i]], res.shifts[sys[j]], res.id, `${sys[i]}-${sys[j]} (${isDirect ? 'Direct' : 'Relay'})`, isDirect ? 'tocsyDirect' : 'tocsyRelay', 4);
+      if(res.cosy) res.cosy.forEach(([a1, a2]) => { 
+        const v1 = getShift(index, a1, res); const v2 = getShift(index, a2, res);
+        if(v1 && v2) addPair(cosy, v1, v2, res.id, `${a1}-${a2} (COSY)`, 'cosy', 4); 
+      });
+
+      if(res.spinSystems) res.spinSystems.forEach(sys => { 
+        for(let i=0; i<sys.length; i++) for(let j=i+1; j<sys.length; j++) {
+          const v1 = getShift(index, sys[i], res); const v2 = getShift(index, sys[j], res);
+          if(v1 && v2) {
+            const isDirect = res.cosy && res.cosy.some(c => (c[0]===sys[i] && c[1]===sys[j]) || (c[0]===sys[j] && c[1]===sys[i]));
+            addPair(tocsy, v1, v2, res.id, `${sys[i]}-${sys[j]} (${isDirect ? 'Direct' : 'Relay'})`, isDirect ? 'tocsyDirect' : 'tocsyRelay', 4);
+          }
       }});
       
       // Advanced NOESY Logic (Intra-3, Intra-4, Aromatics, and Sequential)
@@ -851,7 +857,8 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
       if(res.cosy) {
         res.cosy.forEach(([a1, a2]) => {
           seenPairs.add([a1, a2].sort().join('-'));
-          if(res.shifts[a1] && res.shifts[a2]) addPair(noesy, res.shifts[a1], res.shifts[a2], res.id, `${a1}-${a2} (NOE Intra 3-bond)`, 'noesyIntra', 4); 
+          const v1 = getShift(index, a1, res); const v2 = getShift(index, a2, res);
+          if(v1 && v2) addPair(noesy, v1, v2, res.id, `${a1}-${a2} (NOE Intra 3-bond)`, 'noesyIntra', 4); 
         });
       }
       
@@ -862,44 +869,58 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
               const pairKey = [u, w].sort().join('-');
               if (!seenPairs.has(pairKey)) {
                 seenPairs.add(pairKey);
-                if (res.shifts[u] && res.shifts[w]) addPair(noesy, res.shifts[u], res.shifts[w], res.id, `${u}-${w} (NOE Intra 4-bond)`, 'noesyIntra4', 3);
+                const vU = getShift(index, u, res); const vW = getShift(index, w, res);
+                if (vU && vW) addPair(noesy, vU, vW, res.id, `${u}-${w} (NOE Intra 4-bond)`, 'noesyIntra4', 3);
               }
             }
           });
         });
       });
 
-      if (res.char === 'H' && res.shifts['Hβ1'] && res.shifts['Hδ2']) {
-          addPair(noesy, res.shifts['Hβ1'], res.shifts['Hδ2'], res.id, 'Hβ-Hδ2 (Arom.)', 'noesyIntra', 4);
-          if(res.shifts['Hβ2']) addPair(noesy, res.shifts['Hβ2'], res.shifts['Hδ2'], res.id, 'Hβ-Hδ2 (Arom.)', 'noesyIntra', 4);
+      if (res.char === 'H') {
+        const hb1 = getShift(index, 'Hβ1', res); const hd2 = getShift(index, 'Hδ2', res); const hb2 = getShift(index, 'Hβ2', res);
+        if (hb1 && hd2) addPair(noesy, hb1, hd2, res.id, 'Hβ-Hδ2 (Arom.)', 'noesyIntra', 4);
+        if (hb2 && hd2) addPair(noesy, hb2, hd2, res.id, 'Hβ-Hδ2 (Arom.)', 'noesyIntra', 4);
       }
-      if (res.char === 'F' && res.shifts['Hβ1'] && res.shifts['Hδ']) {
-          addPair(noesy, res.shifts['Hβ1'], res.shifts['Hδ'], res.id, 'Hβ-Hδ (Arom.)', 'noesyIntra', 4);
-          if(res.shifts['Hβ2']) addPair(noesy, res.shifts['Hβ2'], res.shifts['Hδ'], res.id, 'Hβ-Hδ (Arom.)', 'noesyIntra', 4);
+      if (res.char === 'F' || res.char === 'Y') {
+        const hb1 = getShift(index, 'Hβ1', res); const hd = getShift(index, 'Hδ', res); const hb2 = getShift(index, 'Hβ2', res);
+        if (hb1 && hd) addPair(noesy, hb1, hd, res.id, 'Hβ-Hδ (Arom.)', 'noesyIntra', 4);
+        if (hb2 && hd) addPair(noesy, hb2, hd, res.id, 'Hβ-Hδ (Arom.)', 'noesyIntra', 4);
       }
-      if (res.char === 'Y' && res.shifts['Hβ1'] && res.shifts['Hδ']) {
-          addPair(noesy, res.shifts['Hβ1'], res.shifts['Hδ'], res.id, 'Hβ-Hδ (Arom.)', 'noesyIntra', 4);
-          if(res.shifts['Hβ2']) addPair(noesy, res.shifts['Hβ2'], res.shifts['Hδ'], res.id, 'Hβ-Hδ (Arom.)', 'noesyIntra', 4);
-      }
-      if (res.char === 'W' && res.shifts['Hβ1'] && res.shifts['Hδ1']) {
-          addPair(noesy, res.shifts['Hβ1'], res.shifts['Hδ1'], res.id, 'Hβ-Hδ1 (Arom.)', 'noesyIntra', 4);
-          if(res.shifts['Hβ2']) addPair(noesy, res.shifts['Hβ2'], res.shifts['Hδ1'], res.id, 'Hβ-Hδ1 (Arom.)', 'noesyIntra', 4);
+      if (res.char === 'W') {
+        const hb1 = getShift(index, 'Hβ1', res); const hd1 = getShift(index, 'Hδ1', res); const hb2 = getShift(index, 'Hβ2', res);
+        if (hb1 && hd1) addPair(noesy, hb1, hd1, res.id, 'Hβ-Hδ1 (Arom.)', 'noesyIntra', 4);
+        if (hb2 && hd1) addPair(noesy, hb2, hd1, res.id, 'Hβ-Hδ1 (Arom.)', 'noesyIntra', 4);
       }
 
       if (index < parsedSeq.length - 1) {
         const nextRes = parsedSeq[index + 1];
-        if (res.shifts['HN'] && nextRes.shifts['HN']) addPair(noesy, res.shifts['HN'], nextRes.shifts['HN'], 'Seq. NOE', `${res.id} HN ↔ ${nextRes.id} HN (dNN)`, 'noesySeq', 3);
-        const alphaAtoms = (res.atoms || []).filter(a => a.includes('Hα')); 
-        alphaAtoms.forEach(alphaAtom => { if (res.shifts[alphaAtom] && nextRes.shifts['HN']) addPair(noesy, res.shifts[alphaAtom], nextRes.shifts['HN'], 'Seq. NOE', `${res.id} ${alphaAtom} ↔ ${nextRes.id} HN (dαN)`, 'noesySeq', 3); }); 
-        const betaAtoms = (res.atoms || []).filter(a => a.includes('Hβ')); 
-        betaAtoms.forEach(betaAtom => { if (res.shifts[betaAtom] && nextRes.shifts['HN']) addPair(noesy, res.shifts[betaAtom], nextRes.shifts['HN'], 'Seq. NOE', `${res.id} ${betaAtom} ↔ ${nextRes.id} HN (dβN)`, 'noesySeq', 3); });
+        if (selectedResidueId === 'ALL' || nextRes.id === selectedResidueId) {
+          const hnCurr = getShift(index, 'HN', res); const hnNext = getShift(index + 1, 'HN', nextRes);
+          if (hnCurr && hnNext) addPair(noesy, hnCurr, hnNext, 'Seq. NOE', `${res.id} HN ↔ ${nextRes.id} HN (dNN)`, 'noesySeq', 3);
+          const alphaAtoms = (res.atoms || []).filter(a => a.includes('Hα')); 
+          alphaAtoms.forEach(alphaAtom => { 
+            const aCurr = getShift(index, alphaAtom, res);
+            if (aCurr && hnNext) addPair(noesy, aCurr, hnNext, 'Seq. NOE', `${res.id} ${alphaAtom} ↔ ${nextRes.id} HN (dαN)`, 'noesySeq', 3); 
+          }); 
+          const betaAtoms = (res.atoms || []).filter(a => a.includes('Hβ')); 
+          betaAtoms.forEach(betaAtom => { 
+            const bCurr = getShift(index, betaAtom, res);
+            if (bCurr && hnNext) addPair(noesy, bCurr, hnNext, 'Seq. NOE', `${res.id} ${betaAtom} ↔ ${nextRes.id} HN (dβN)`, 'noesySeq', 3); 
+          });
+        }
       }
       
       // HSQC
-      Object.keys(res.shifts13C || {}).forEach(atom => { if (res.shifts[atom] && res.shifts13C[atom]) hsqc.push({ x: res.shifts[atom], y: res.shifts13C[atom], label: `${res.id} ${atom}-${getCarbonName(res.char, atom)}`, type: 'HSQC', colorClass: 'hsqc', size: 4 }); });
+      Object.keys(res.shifts13C || {}).forEach(atom => { 
+        const cName = getCarbonName(res.char, atom);
+        const vH = getShift(index, atom, res);
+        const vC = getCShift(index, cName, res);
+        if (vH && vC) hsqc.push({ x: vH, y: vC, label: `${res.id} ${atom}-${cName}`, type: 'HSQC', colorClass: 'hsqc', size: 4 }); 
+      });
     });
     return { diagonalData: diag, referenceRangesData: ranges, referenceRangesData13C: ranges13C, cosyPeaks: cosy, tocsyPeaks: tocsy, noesyPeaks: noesy, hsqcPeaks: hsqc, data1H: d1H, data13C: d13C };
-  }, [parsedSeq, uniqueAminoAcidTypes]);
+  }, [parsedSeq, uniqueAminoAcidTypes, shifts, selectedResidueId]); // Nota: dipendenza "shifts" per priorità valori manuali
 
   const yTicksForRanges = useMemo(() => Array.from({length: uniqueAminoAcidTypes.length}, (_, i) => i), [uniqueAminoAcidTypes]);
 
@@ -977,31 +998,31 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
           </CollapsibleSection>
         )}
 
-        {/* 4. THEORETICAL RANGES - CORRECTED WITH VISIBLE BARS AND COMPACT AXIS */}
+        {/* 4. THEORETICAL RANGES */}
         {uniqueAminoAcidTypes.length > 0 && (
           <CollapsibleSection title="Theoretical Chemical Shift Ranges" icon="📊" defaultOpen={true}>
             <div className="grid grid-cols-1 gap-4">
              
-{/* ¹H Ranges */}
-<RangeBarChart
-  title="Theoretical ¹H Ranges"
-  ranges={referenceRangesData}
-  domain={[0, 11]}
-  ticks={Array.from({ length: 12 }, (_, i) => i)}
-  xAxisLabel="¹H (ppm)"
-  rowCount={uniqueAminoAcidTypes.length}
-  rowLabels={uniqueAminoAcidTypes.map((c) => AMINO_ACID_DB[c]?.code3 || c)}
-/>
-{/* ¹³C Ranges */}
-<RangeBarChart
-  title="Theoretical ¹³C Ranges"
-  ranges={referenceRangesData13C}
-  domain={[10, 150]}
-  ticks={Array.from({ length: 15 }, (_, i) => 10 + i * 10)}
-  xAxisLabel="¹³C (ppm)"
-  rowCount={uniqueAminoAcidTypes.length}
-  rowLabels={uniqueAminoAcidTypes.map((c) => AMINO_ACID_DB[c]?.code3 || c)}
-/>
+              {/* ¹H Ranges */}
+              <RangeBarChart
+                title="Theoretical ¹H Ranges"
+                ranges={referenceRangesData}
+                domain={[0, 11]}
+                ticks={Array.from({ length: 12 }, (_, i) => i)}
+                xAxisLabel="¹H (ppm)"
+                rowCount={uniqueAminoAcidTypes.length}
+                rowLabels={uniqueAminoAcidTypes.map((c) => AMINO_ACID_DB[c]?.code3 || c)}
+              />
+              {/* ¹³C Ranges */}
+              <RangeBarChart
+                title="Theoretical ¹³C Ranges"
+                ranges={referenceRangesData13C}
+                domain={[10, 150]}
+                ticks={Array.from({ length: 15 }, (_, i) => 10 + i * 10)}
+                xAxisLabel="¹³C (ppm)"
+                rowCount={uniqueAminoAcidTypes.length}
+                rowLabels={uniqueAminoAcidTypes.map((c) => AMINO_ACID_DB[c]?.code3 || c)}
+              />
 
               {/* Numerical Reference Values Table */}
               <div className="bg-white rounded-xl border border-slate-200 p-4">
@@ -1034,12 +1055,35 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
           </CollapsibleSection>
         )}
 
-        {/* 5. ASSIGNMENT TABLE */}
+        {/* 5. ASSIGNMENT TABLE CON FILTRI E REVEAL */}
         <CollapsibleSection title="Assignment Table" icon="📋" defaultOpen={true} headerExtra={
           seq.length > 0 ? (
-            <div className="flex bg-slate-200 p-1 rounded-lg">
-              <button onClick={() => {setTableMode('backbone'); updateActiveTest({tableMode: 'backbone'});}} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableMode==='backbone'?'bg-white text-blue-700 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>Backbone</button>
-              <button onClick={() => {setTableMode('all'); updateActiveTest({tableMode: 'all'});}} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableMode==='all'?'bg-white text-blue-700 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>All Atoms</button>
+            <div className="flex flex-col sm:flex-row gap-4 items-center">
+              {parsedSeq.length > 1 && (
+                <div className="flex items-center gap-2 bg-blue-50 p-1.5 rounded-lg border border-blue-200">
+                  <label className="font-bold text-blue-700 text-xs ml-1">Filtra:</label>
+                  <select 
+                    value={selectedResidueId} 
+                    onChange={(e) => setSelectedResidueId(e.target.value)}
+                    className="border border-blue-300 rounded px-2 py-1 text-xs font-semibold text-blue-800 outline-none focus:ring-1 focus:ring-blue-400 bg-white"
+                  >
+                    <option value="ALL">Tutti</option>
+                    {parsedSeq.map(res => (
+                      <option key={res.id} value={res.id}>{res.name} ({res.id})</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <button 
+                onClick={() => setShowShifts(!showShifts)}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-1.5 px-3 rounded-lg transition-colors shadow-sm text-xs"
+              >
+                {showShifts ? "Nascondi Shifts" : "Reveal Shifts"}
+              </button>
+              <div className="flex bg-slate-200 p-1 rounded-lg">
+                <button onClick={() => {setTableMode('backbone'); updateActiveTest({tableMode: 'backbone'});}} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableMode==='backbone'?'bg-white text-blue-700 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>Backbone</button>
+                <button onClick={() => {setTableMode('all'); updateActiveTest({tableMode: 'all'});}} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableMode==='all'?'bg-white text-blue-700 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>All Atoms</button>
+              </div>
             </div>
           ) : null
         }>
@@ -1057,14 +1101,34 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
-                  {seq.split('').map((aa, idx) => (
-                    <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                      <td className="px-4 py-2 font-black text-slate-700 text-center bg-slate-50 border-r border-slate-100">{aa}{idx + 1}</td>
-                      {selNuc.includes('H') && nucDefs.H.map(a => (<td key={a} className="px-3 py-1"><input type="text" value={shifts[`${idx}-${a}`] || ''} onChange={e => handleShiftChange(idx, a, e.target.value)} className="w-full border border-slate-200 rounded px-2 py-1 outline-none focus:border-blue-500 text-center text-xs font-mono" placeholder="—"/></td>))}
-                      {selNuc.includes('N') && nucDefs.N.map(a => (<td key={a} className="px-3 py-1"><input type="text" value={shifts[`${idx}-${a}`] || ''} onChange={e => handleShiftChange(idx, a, e.target.value)} className="w-full border border-slate-200 rounded px-2 py-1 outline-none focus:border-emerald-500 text-center text-xs font-mono" placeholder="—"/></td>))}
-                      {selNuc.includes('C') && nucDefs.C.map(a => (<td key={a} className="px-3 py-1"><input type="text" value={shifts[`${idx}-${a}`] || ''} onChange={e => handleShiftChange(idx, a, e.target.value)} className="w-full border border-slate-200 rounded px-2 py-1 outline-none focus:border-purple-500 text-center text-xs font-mono" placeholder="—"/></td>))}
-                    </tr>
-                  ))}
+                  {parsedSeq.map((res, idx) => {
+                    if (selectedResidueId !== 'ALL' && res.id !== selectedResidueId) return null;
+                    return (
+                      <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                        <td className="px-4 py-2 font-black text-slate-700 text-center bg-slate-50 border-r border-slate-100">{res.char}{idx + 1}</td>
+                        {selNuc.includes('H') && nucDefs.H.map(a => (
+                          <td key={a} className="px-3 py-1 relative">
+                            <input type="text" value={shifts[`${idx}-${a}`] || ''} onChange={e => handleShiftChange(idx, a, e.target.value)} className="w-full border border-slate-200 rounded px-2 py-1 outline-none focus:border-blue-500 text-center text-xs font-mono" placeholder="—"/>
+                            {showShifts && res.shifts[a] && <span className="absolute right-1 top-2 text-[10px] font-bold text-blue-600 opacity-70">({res.shifts[a].toFixed(2)})</span>}
+                          </td>
+                        ))}
+                        {selNuc.includes('N') && nucDefs.N.map(a => (
+                          <td key={a} className="px-3 py-1">
+                            <input type="text" value={shifts[`${idx}-${a}`] || ''} onChange={e => handleShiftChange(idx, a, e.target.value)} className="w-full border border-slate-200 rounded px-2 py-1 outline-none focus:border-emerald-500 text-center text-xs font-mono" placeholder="—"/>
+                          </td>
+                        ))}
+                        {selNuc.includes('C') && nucDefs.C.map(a => {
+                          const cName = getCarbonName(res.char, a);
+                          return (
+                            <td key={a} className="px-3 py-1 relative">
+                              <input type="text" value={shifts[`${idx}-${cName}`] || ''} onChange={e => handleShiftChange(idx, cName, e.target.value)} className="w-full border border-slate-200 rounded px-2 py-1 outline-none focus:border-purple-500 text-center text-xs font-mono" placeholder="—"/>
+                              {showShifts && cName && res.uniqueCShifts[cName] && <span className="absolute right-1 top-2 text-[10px] font-bold text-purple-600 opacity-70">({res.uniqueCShifts[cName].toFixed(1)})</span>}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1072,47 +1136,53 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
             <div className="flex flex-col gap-6 max-h-[600px] overflow-y-auto custom-scrollbar pr-2">
               <h4 className="text-md font-bold text-blue-700 border-b-2 border-blue-100 inline-block pr-4 pb-1">¹H Assignment</h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                {parsedSeq.map((res, resIdx) => (
-                  <div key={`1h-${resIdx}`} className="border border-slate-200 rounded-lg overflow-hidden shadow-sm h-fit">
-                    <div className="py-2 text-center font-bold text-sm" style={{ backgroundColor: `${res.color}15`, color: res.color, borderBottom: `1px solid ${res.color}30` }}>{res.name} ({res.id})</div>
-                    <table className="w-full text-sm text-left bg-white">
-                      <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200"><tr><th className="px-3 py-2 font-semibold">Atom</th><th className="px-3 py-2 font-semibold text-center">Shift (ppm)</th></tr></thead>
-                      <tbody className="text-slate-700 divide-y divide-slate-100">
-                        {res.atoms.map(atom => (
-                          <tr key={atom} className="hover:bg-slate-50">
-                            <td className="px-3 py-1 font-medium">{atom}</td>
-                            <td className="px-3 py-1 text-center border-l border-slate-100 font-mono flex items-center justify-center gap-1">
-                              <input type="text" value={shifts[`${resIdx}-${atom}`] || ''} onChange={e => handleShiftChange(resIdx, atom, e.target.value)} className="w-14 text-center border border-slate-300 rounded py-0.5 outline-none focus:border-blue-500 text-xs" placeholder="—" />
-                              {showSim && res.shifts[atom] && <span className="text-[9px] font-bold text-blue-600">({res.shifts[atom].toFixed(2)})</span>}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ))}
+                {parsedSeq.filter(res => selectedResidueId === 'ALL' || res.id === selectedResidueId).map((res) => {
+                  const resIdx = parsedSeq.findIndex(r => r.id === res.id);
+                  return (
+                    <div key={`1h-${resIdx}`} className="border border-slate-200 rounded-lg overflow-hidden shadow-sm h-fit">
+                      <div className="py-2 text-center font-bold text-sm" style={{ backgroundColor: `${res.color}15`, color: res.color, borderBottom: `1px solid ${res.color}30` }}>{res.name} ({res.id})</div>
+                      <table className="w-full text-sm text-left bg-white">
+                        <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200"><tr><th className="px-3 py-2 font-semibold">Atom</th><th className="px-3 py-2 font-semibold text-center">Shift (ppm)</th></tr></thead>
+                        <tbody className="text-slate-700 divide-y divide-slate-100">
+                          {res.atoms.map(atom => (
+                            <tr key={atom} className="hover:bg-slate-50">
+                              <td className="px-3 py-1 font-medium">{atom}</td>
+                              <td className="px-3 py-1 text-center border-l border-slate-100 font-mono flex items-center justify-center gap-1">
+                                <input type="text" value={shifts[`${resIdx}-${atom}`] || ''} onChange={e => handleShiftChange(resIdx, atom, e.target.value)} className="w-14 text-center border border-slate-300 rounded py-0.5 outline-none focus:border-blue-500 text-xs" placeholder="—" />
+                                {showShifts && res.shifts[atom] && <span className="text-[9px] font-bold text-blue-600">({res.shifts[atom].toFixed(2)})</span>}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })}
               </div>
               <h4 className="text-md font-bold text-purple-700 border-b-2 border-purple-100 inline-block pr-4 pb-1 mt-4">¹³C Assignment</h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-4">
-                {parsedSeq.map((res, resIdx) => (
-                  <div key={`13c-${resIdx}`} className="border border-slate-200 rounded-lg overflow-hidden shadow-sm h-fit">
-                    <div className="py-2 text-center font-bold text-sm" style={{ backgroundColor: `${res.color}15`, color: res.color, borderBottom: `1px solid ${res.color}30` }}>{res.name} ({res.id})</div>
-                    <table className="w-full text-sm text-left bg-white">
-                      <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200"><tr><th className="px-3 py-2 font-semibold">Atom</th><th className="px-3 py-2 font-semibold text-center">Shift (ppm)</th></tr></thead>
-                      <tbody className="text-slate-700 divide-y divide-slate-100">
-                        {Object.keys(res.uniqueCShifts || {}).map(cName => (
-                          <tr key={cName} className="hover:bg-slate-50">
-                            <td className="px-3 py-1 font-medium text-purple-800">{cName}</td>
-                            <td className="px-3 py-1 text-center border-l border-slate-100 font-mono flex items-center justify-center gap-1">
-                              <input type="text" value={shifts[`${resIdx}-${cName}`] || ''} onChange={e => handleShiftChange(resIdx, cName, e.target.value)} className="w-14 text-center border border-slate-300 rounded py-0.5 outline-none focus:border-purple-500 text-xs" placeholder="—" />
-                              {showSim && res.uniqueCShifts[cName] && <span className="text-[9px] font-bold text-purple-600">({res.uniqueCShifts[cName].toFixed(1)})</span>}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ))}
+                {parsedSeq.filter(res => selectedResidueId === 'ALL' || res.id === selectedResidueId).map((res) => {
+                  const resIdx = parsedSeq.findIndex(r => r.id === res.id);
+                  return (
+                    <div key={`13c-${resIdx}`} className="border border-slate-200 rounded-lg overflow-hidden shadow-sm h-fit">
+                      <div className="py-2 text-center font-bold text-sm" style={{ backgroundColor: `${res.color}15`, color: res.color, borderBottom: `1px solid ${res.color}30` }}>{res.name} ({res.id})</div>
+                      <table className="w-full text-sm text-left bg-white">
+                        <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200"><tr><th className="px-3 py-2 font-semibold">Atom</th><th className="px-3 py-2 font-semibold text-center">Shift (ppm)</th></tr></thead>
+                        <tbody className="text-slate-700 divide-y divide-slate-100">
+                          {Object.keys(res.uniqueCShifts || {}).map(cName => (
+                            <tr key={cName} className="hover:bg-slate-50">
+                              <td className="px-3 py-1 font-medium text-purple-800">{cName}</td>
+                              <td className="px-3 py-1 text-center border-l border-slate-100 font-mono flex items-center justify-center gap-1">
+                                <input type="text" value={shifts[`${resIdx}-${cName}`] || ''} onChange={e => handleShiftChange(resIdx, cName, e.target.value)} className="w-14 text-center border border-slate-300 rounded py-0.5 outline-none focus:border-purple-500 text-xs" placeholder="—" />
+                                {showShifts && res.uniqueCShifts[cName] && <span className="text-[9px] font-bold text-purple-600">({res.uniqueCShifts[cName].toFixed(1)})</span>}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
