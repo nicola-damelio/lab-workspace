@@ -202,46 +202,32 @@ const NMRTooltip = ({ active, payload, diagonalColor }) => {
 
 // --- 4. ROBUST ZOOMABLE PLOTS - CORRECTED WITH ALIGNED COORDINATES ---
 
-// Custom hook for correct coordinate calculation in the plot area
 const usePlotCoordinates = (chartRef, margin, xDomainFull, yDomainFull) => {
   const getPlotCoords = (clientX, clientY) => {
     if (!chartRef.current) return null;
     const rect = chartRef.current.getBoundingClientRect();
     
-    // Find the actual plot area inside the container
-    // Recharts renders the chart inside the ResponsiveContainer
-    // The plot area starts after the axis margins
     const svgEl = chartRef.current.querySelector('svg');
     if (!svgEl) return null;
     
-    // Get the actual dimensions of the SVG
     const svgRect = svgEl.getBoundingClientRect();
-    
-    // Calculate SVG offset relative to the container
     const svgOffsetX = svgRect.left - rect.left;
     const svgOffsetY = svgRect.top - rect.top;
     
-    // Coordinates relative to SVG
     const relX = clientX - svgRect.left;
     const relY = clientY - svgRect.top;
     
-    // The plot area in the SVG starts after the left and top margin
-    // and ends before the right and bottom margin
     const plotWidth = svgRect.width - margin.left - margin.right;
     const plotHeight = svgRect.height - margin.top - margin.bottom;
     
-    // Coordinates relative to the plot area
     const plotX = relX - margin.left;
     const plotY = relY - margin.top;
     
-    // Check if we are inside the plot area
     if (plotX < 0 || plotX > plotWidth || plotY < 0 || plotY > plotHeight) return null;
     
-    // Convert to domain coordinates
     const xRange = xDomainFull[1] - xDomainFull[0];
     const yRange = yDomainFull[1] - yDomainFull[0];
     
-    // For reversed axes, the calculation is different
     const xVal = xDomainFull[0] + (plotX / plotWidth) * xRange;
     const yVal = yDomainFull[0] + (plotY / plotHeight) * yRange;
     
@@ -272,7 +258,6 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
     
     if (plotX < 0 || plotX > plotWidth) return null;
     
-    // X-axis is reversed, so 0 is on the right and fullDomain[1] is on the left
     const xVal = fullDomain[1] - (plotX / plotWidth) * (fullDomain[1] - fullDomain[0]);
     return xVal;
   };
@@ -353,27 +338,19 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
   const isDragging = useRef(false);
   const isZoomed = xDomain[0] !== 0 || xDomain[1] !== 11 || yDomain[0] !== 0 || yDomain[1] !== 11;
 
-  // Correct function to get coordinates from the plot area
   const getPlotCoords = (clientX, clientY) => {
     if (!chartRef.current) return null;
-    const containerRect = chartRef.current.getBoundingClientRect();
-    
-    // Find the internal Recharts wrapper (the actual plot area)
     const rechartsWrapper = chartRef.current.querySelector('.recharts-wrapper');
     if (!rechartsWrapper) return null;
     
     const wrapperRect = rechartsWrapper.getBoundingClientRect();
-    
-    // Coordinates relative to the Recharts plot area
     const plotX = clientX - wrapperRect.left;
     const plotY = clientY - wrapperRect.top;
     const plotWidth = wrapperRect.width;
     const plotHeight = wrapperRect.height;
     
-    // Check if we are inside the plot area
     if (plotX < 0 || plotX > plotWidth || plotY < 0 || plotY > plotHeight) return null;
     
-    // Both axes are reversed: 0 at top/right, 11 at bottom/left
     const xVal = 11 - (plotX / plotWidth) * 11;
     const yVal = 11 - (plotY / plotHeight) * 11;
     
@@ -485,9 +462,7 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
     
     if (plotX < 0 || plotX > plotWidth || plotY < 0 || plotY > plotHeight) return null;
     
-    // X reversed: 0 on right, 11 on left
     const xVal = 11 - (plotX / plotWidth) * 11;
-    // Y reversed: 10 at top, 150 at bottom
     const yVal = 150 - (plotY / plotHeight) * (150 - 10);
     
     return { x: xVal, y: yVal };
@@ -727,6 +702,7 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
   const { diagonalData, referenceRangesData, referenceRangesData13C, cosyPeaks, tocsyPeaks, noesyPeaks, hsqcPeaks, data1H, data13C } = useMemo(() => {
     let diag = [], ranges = [], ranges13C = [], cosy = [], tocsy = [], noesy = [], hsqc = [], d1H = [], d13C = [];
     const addPair = (arr, x, y, label, type, colorClass, size = 5) => { arr.push({ x, y, label, type, colorClass, size }); arr.push({ x: y, y: x, label, type, colorClass, size }); };
+    
     uniqueAminoAcidTypes.forEach((char, index) => {
       const aa = AMINO_ACID_DB[char];
       if(!aa) return;
@@ -747,8 +723,11 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
         cIdx++;
       });
     });
+    
     parsedSeq.forEach((res, index) => {
       if(!res.shifts) return;
+      
+      // 1D and Multiplets Generation
       Object.entries(res.shifts).forEach(([atom, ppm]) => {
         let peaks = [{ shift: ppm, intensity: 1 }]; let totalNeighbors = 0;
         if(res.cosy) {
@@ -774,17 +753,75 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
         let multStr = "m"; if (totalNeighbors === 0) multStr = "s"; else if (totalNeighbors === 1) multStr = "d"; else if (totalNeighbors === 2) multStr = mergedPeaks.length === 3 ? "t" : "dd"; else if (totalNeighbors === 3) multStr = mergedPeaks.length === 4 ? "q" : "m";
         mergedPeaks.forEach(p => d1H.push({ x: p.shift, y: (p.intensity / maxIntensity) * baseIntensity, label: `${res.id} ${atom}`, color: res.color, type: '1D', multiplet: multStr }));
       });
+      
       const uniqueC = new Map(); Object.entries(res.shifts13C || {}).forEach(([atom, ppm]) => { const cName = getCarbonName(res.char, atom); if (cName) uniqueC.set(cName, ppm); });
       uniqueC.forEach((ppm, cName) => d13C.push({ x: ppm, y: 0.8 + Math.random() * 0.4, label: `${res.id} ${cName}`, color: res.color, type: '1D' }));
       Object.keys(res.shifts).forEach(atom => diag.push({ x: res.shifts[atom], y: res.shifts[atom], label: `${res.id} ${atom}`, type: 'Diagonal', size: 4 }));
+      
+      // COSY and TOCSY
       if(res.cosy) res.cosy.forEach(([a1, a2]) => { if(res.shifts[a1] && res.shifts[a2]) addPair(cosy, res.shifts[a1], res.shifts[a2], res.id, `${a1}-${a2} (COSY)`, 'cosy', 4); });
-      if(res.spinSystems) res.spinSystems.forEach(sys => { for(let i=0; i<sys.length; i++) for(let j=i+1; j<sys.length; j++) if(res.shifts[sys[i]] && res.shifts[sys[j]]) addPair(tocsy, res.shifts[sys[i]], res.shifts[sys[j]], res.id, `${sys[i]}-${sys[j]} (TOCSY)`, 'tocsyDirect', 4); });
+      if(res.spinSystems) res.spinSystems.forEach(sys => { for(let i=0; i<sys.length; i++) for(let j=i+1; j<sys.length; j++) if(res.shifts[sys[i]] && res.shifts[sys[j]]) {
+          const isDirect = res.cosy && res.cosy.some(c => (c[0]===sys[i] && c[1]===sys[j]) || (c[0]===sys[j] && c[1]===sys[i]));
+          addPair(tocsy, res.shifts[sys[i]], res.shifts[sys[j]], res.id, `${sys[i]}-${sys[j]} (${isDirect ? 'Direct' : 'Relay'})`, isDirect ? 'tocsyDirect' : 'tocsyRelay', 4);
+      }});
+      
+      // Advanced NOESY Logic (Intra-3, Intra-4, Aromatics, and Sequential)
+      const adj = {};
+      if(res.cosy) {
+        res.cosy.forEach(([u, v]) => {
+          if(!adj[u]) adj[u] = []; if(!adj[v]) adj[v] = [];
+          adj[u].push(v); adj[v].push(u);
+        });
+      }
       const seenPairs = new Set();
-      if(res.cosy) res.cosy.forEach(([a1, a2]) => { seenPairs.add([a1, a2].sort().join('-')); if(res.shifts[a1] && res.shifts[a2]) addPair(noesy, res.shifts[a1], res.shifts[a2], res.id, `${a1}-${a2} (NOE Intra 3)`, 'noesyIntra', 4); });
+      if(res.cosy) {
+        res.cosy.forEach(([a1, a2]) => {
+          seenPairs.add([a1, a2].sort().join('-'));
+          if(res.shifts[a1] && res.shifts[a2]) addPair(noesy, res.shifts[a1], res.shifts[a2], res.id, `${a1}-${a2} (NOE Intra 3-bond)`, 'noesyIntra', 4); 
+        });
+      }
+      
+      Object.keys(adj).forEach(u => {
+        adj[u].forEach(v => {
+          adj[v].forEach(w => {
+            if (u !== w) {
+              const pairKey = [u, w].sort().join('-');
+              if (!seenPairs.has(pairKey)) {
+                seenPairs.add(pairKey);
+                if (res.shifts[u] && res.shifts[w]) addPair(noesy, res.shifts[u], res.shifts[w], res.id, `${u}-${w} (NOE Intra 4-bond)`, 'noesyIntra4', 3);
+              }
+            }
+          });
+        });
+      });
+
+      if (res.char === 'H' && res.shifts['Hβ1'] && res.shifts['Hδ2']) {
+          addPair(noesy, res.shifts['Hβ1'], res.shifts['Hδ2'], res.id, 'Hβ-Hδ2 (Arom.)', 'noesyIntra', 4);
+          if(res.shifts['Hβ2']) addPair(noesy, res.shifts['Hβ2'], res.shifts['Hδ2'], res.id, 'Hβ-Hδ2 (Arom.)', 'noesyIntra', 4);
+      }
+      if (res.char === 'F' && res.shifts['Hβ1'] && res.shifts['Hδ']) {
+          addPair(noesy, res.shifts['Hβ1'], res.shifts['Hδ'], res.id, 'Hβ-Hδ (Arom.)', 'noesyIntra', 4);
+          if(res.shifts['Hβ2']) addPair(noesy, res.shifts['Hβ2'], res.shifts['Hδ'], res.id, 'Hβ-Hδ (Arom.)', 'noesyIntra', 4);
+      }
+      if (res.char === 'Y' && res.shifts['Hβ1'] && res.shifts['Hδ']) {
+          addPair(noesy, res.shifts['Hβ1'], res.shifts['Hδ'], res.id, 'Hβ-Hδ (Arom.)', 'noesyIntra', 4);
+          if(res.shifts['Hβ2']) addPair(noesy, res.shifts['Hβ2'], res.shifts['Hδ'], res.id, 'Hβ-Hδ (Arom.)', 'noesyIntra', 4);
+      }
+      if (res.char === 'W' && res.shifts['Hβ1'] && res.shifts['Hδ1']) {
+          addPair(noesy, res.shifts['Hβ1'], res.shifts['Hδ1'], res.id, 'Hβ-Hδ1 (Arom.)', 'noesyIntra', 4);
+          if(res.shifts['Hβ2']) addPair(noesy, res.shifts['Hβ2'], res.shifts['Hδ1'], res.id, 'Hβ-Hδ1 (Arom.)', 'noesyIntra', 4);
+      }
+
       if (index < parsedSeq.length - 1) {
         const nextRes = parsedSeq[index + 1];
         if (res.shifts['HN'] && nextRes.shifts['HN']) addPair(noesy, res.shifts['HN'], nextRes.shifts['HN'], 'Seq. NOE', `${res.id} HN ↔ ${nextRes.id} HN (dNN)`, 'noesySeq', 3);
+        const alphaAtoms = (res.atoms || []).filter(a => a.includes('Hα')); 
+        alphaAtoms.forEach(alphaAtom => { if (res.shifts[alphaAtom] && nextRes.shifts['HN']) addPair(noesy, res.shifts[alphaAtom], nextRes.shifts['HN'], 'Seq. NOE', `${res.id} ${alphaAtom} ↔ ${nextRes.id} HN (dαN)`, 'noesySeq', 3); }); 
+        const betaAtoms = (res.atoms || []).filter(a => a.includes('Hβ')); 
+        betaAtoms.forEach(betaAtom => { if (res.shifts[betaAtom] && nextRes.shifts['HN']) addPair(noesy, res.shifts[betaAtom], nextRes.shifts['HN'], 'Seq. NOE', `${res.id} ${betaAtom} ↔ ${nextRes.id} HN (dβN)`, 'noesySeq', 3); });
       }
+      
+      // HSQC
       Object.keys(res.shifts13C || {}).forEach(atom => { if (res.shifts[atom] && res.shifts13C[atom]) hsqc.push({ x: res.shifts[atom], y: res.shifts13C[atom], label: `${res.id} ${atom}-${getCarbonName(res.char, atom)}`, type: 'HSQC', colorClass: 'hsqc', size: 4 }); });
     });
     return { diagonalData: diag, referenceRangesData: ranges, referenceRangesData13C: ranges13C, cosyPeaks: cosy, tocsyPeaks: tocsy, noesyPeaks: noesy, hsqcPeaks: hsqc, data1H: d1H, data13C: d13C };
@@ -792,7 +829,6 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
 
   const yTicksForRanges = useMemo(() => Array.from({length: uniqueAminoAcidTypes.length}, (_, i) => i), [uniqueAminoAcidTypes]);
 
-  // Compact height for vertical axis: 28px per residue + padding
   const rangeChartHeight = Math.max(120, uniqueAminoAcidTypes.length * 28 + 50);
 
   return (
@@ -921,7 +957,7 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
                   </ScatterChart>
                 </ResponsiveContainer>
               </div>
-              {/* Tabella numerica */}
+              {/* Numerical Reference Values Table */}
               <div className="bg-white rounded-xl border border-slate-200 p-4">
                 <h4 className="text-md font-bold text-slate-700 mb-4 border-b pb-2">Numerical Reference Values</h4>
                 <div className="overflow-x-auto">
@@ -1078,6 +1114,7 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
           <CollapsibleSection title="Simulated Spectra (Drag to Zoom)" icon="📈" defaultOpen={false}>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <OneDSpectrumPlot title="Simulated ¹H 1D Spectrum" data={data1H} fullDomain={[0, 11]} ticks={TICKS_1H} TickComponent={CustomXTick1H} xLabel="¹H (ppm)" panelId="1D_1H" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} />
+              <OneDSpectrumPlot title="Simulated ¹³C 1D Spectrum" data={data13C} fullDomain={[10, 150]} ticks={TICKS_13C} TickComponent={CustomXTick13C} xLabel="¹³C (ppm)" panelId="1D_13C" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} />
               <SpectrumPlot title="Simulated COSY Spectrum" diagonalData={diagonalData} crossPeakData={cosyPeaks} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="cosy" diagonalColor="#22c55e" />
               <SpectrumPlot title="Simulated NOESY Spectrum" diagonalData={diagonalData} crossPeakData={noesyPeaks} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="noesy" diagonalColor="#ef4444" />
               <SpectrumPlot title="Simulated TOCSY Spectrum" diagonalData={diagonalData} crossPeakData={tocsyPeaks} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="tocsy" diagonalColor="#1e3a8a" />
