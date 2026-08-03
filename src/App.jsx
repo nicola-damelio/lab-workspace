@@ -66,13 +66,14 @@ const migrateLoadedDataset = (s) => {
 };
 
 const FIREBASE_CONFIG = {
-    apiKey: "AQ.Ab8RN6I7-6yNsQyx8f39A4YT6Hp5jNWxz2JCxq2ZEwJ5Zhy1aQ",
+    apiKey: "AIzaSyCVemPUayc_Q-IsbcQxnFRHg8bBLZFSHfA",
     authDomain: "cell-experiment-tracker.firebaseapp.com",
     projectId: "cell-experiment-tracker",
     storageBucket: "cell-experiment-tracker.firebasestorage.app",
     messagingSenderId: "855790481107",
     appId: "1:855790481107:web:a566455d3f13a48a20ae26"
 };
+
 let app, auth, db, appId = 'lab-workspace-app';
 try {
     if (!window.firebase.apps.length) {
