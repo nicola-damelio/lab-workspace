@@ -4,7 +4,6 @@ import * as XLSX from 'xlsx';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 
-// --- IMPORT CORRETTI ---
 import { RichTextEditor } from './RichTextEditor'; 
 import { 
     PLATES_DEF, BOX_ROW_LABELS, formatConc, concKey, getDirectImageUrl, 
@@ -830,13 +829,11 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
     return (
         <div id={`report-container-${activeTest.id}`} className="flex flex-col h-full overflow-hidden relative">
             {TestHeader}
-            {/* Pulsanti Export XLS e PDF integrati qui */}
             <div className="bg-white border-b border-slate-200 px-6 py-2 flex items-center justify-end gap-3 shrink-0 z-10 shadow-sm no-print">
                 <button onClick={exportXLS} className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1.5 px-3 rounded text-xs flex items-center gap-1 shadow-sm transition-colors">📊 Export XLS</button>
                 <button onClick={exportPDF} className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold py-1.5 px-3 rounded text-xs flex items-center gap-1 shadow-sm transition-colors">📄 Export PDF</button>
             </div>
             <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
-                {/* SEZIONE 1: COMMENTS & ATTACHMENTS */}
                 <CollapsibleSection title="Comments & Attachments" icon="📝">
                     <div className="flex flex-col lg:flex-row gap-6">
                         <div className="flex-1 flex flex-col h-full min-h-[160px]">
@@ -846,7 +843,6 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
                                 onChange={val => updatePlate({ comments: val })}
                                 placeholder="Enter your experiment notes, protocol deviations, etc..."
                             />
-                            {/* PROTOCOL LINKING */}
                             <div className="mt-4 pt-4 border-t border-slate-100 flex items-center gap-4">
                                 <span className="text-[11px] font-bold text-slate-600 w-32">📋 Link Protocol:</span>
                                 <select
@@ -912,18 +908,18 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
                                             )
                                         })}
                                         <button onClick={() => {
-                                            const url = prompt("Paste direct link(s) to images:");
-                                            if (url && url.trim()) {
-                                                const urls = url.split(/[\s,]+/).filter(u => u.trim() !== '');
+                                            const urlsText = prompt("Paste external link(s) separated by commas to images:");
+                                            if (urlsText && urlsText.trim()) {
+                                                const urls = urlsText.split(/[\s,]+/).filter(u => u.trim() !== '');
                                                 updatePlate({ images: [...displayImages, ...urls] });
                                             }
                                         }} className="flex items-center justify-center bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg text-blue-600 font-bold h-[50px] w-[35px] text-xl shadow-sm">+</button>
                                     </div>
                                 ) : (
                                     <button onClick={() => {
-                                        const url = prompt("Paste direct link(s) to images:");
-                                        if (url && url.trim()) {
-                                            const urls = url.split(/[\s,]+/).filter(u => u.trim() !== '');
+                                        const urlsText = prompt("Paste external link(s) separated by commas to images:");
+                                        if (urlsText && urlsText.trim()) {
+                                            const urls = urlsText.split(/[\s,]+/).filter(u => u.trim() !== '');
                                             updatePlate({ images: [...displayImages, ...urls] });
                                         }
                                     }} className="text-xs font-bold text-blue-600 bg-blue-50 p-4 rounded-lg border-2 border-dashed border-blue-300 shadow-sm hover:bg-blue-100 transition-colors w-full text-center">+ Add Image Link(s)</button>
@@ -947,18 +943,21 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
                                     ))}
                                 </div>
                                 <label className="cursor-pointer text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 hover:bg-blue-100 px-3 py-1.5 rounded-lg shadow-sm transition-colors w-full text-center" onClick={() => {
-                                    const url = prompt("Paste Google Drive link:");
-                                    if (url && url.trim()) {
-                                        let name = url;
-                                        try { const p = new URL(url); name = p.hostname; } catch (e) { }
-                                        updatePlate({ documents: [...documents, { id: Date.now().toString(), name: name, type: 'link', data: url.trim() }] });
+                                    const urlsText = prompt("Paste external link(s) separated by commas (Drive, PDF, Image URL):");
+                                    if (urlsText && urlsText.trim()) {
+                                        const urls = urlsText.split(',').map(s => s.trim()).filter(Boolean);
+                                        const newDocs = urls.map((url, idx) => {
+                                            let name = url;
+                                            try { const p = new URL(url); name = p.hostname; } catch (e) { }
+                                            return { id: Date.now().toString() + idx + Math.random(), name: name, type: 'link', data: url };
+                                        });
+                                        updatePlate({ documents: [...documents, ...newDocs] });
                                     }
-                                }}>+ Add Document Link</label>
+                                }}>+ Add Document Link(s)</label>
                             </div>
                         </div>
                     </div>
                 </CollapsibleSection>
-                {/* SEZIONE 2: FORMAT E DOSI */}
                 <CollapsibleSection title="Format & Custom Concentrations" icon="⚙️">
                     <div className="flex flex-wrap gap-4 items-stretch">
                         <div className="border border-slate-200 bg-slate-50 rounded-lg p-3 flex flex-col gap-2 flex-1 w-full md:min-w-[350px]">
@@ -1024,7 +1023,6 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
                         </div>
                     </div>
                 </CollapsibleSection>
-                {/* SEZIONE 3: DATA GRID & MAP */}
                 <CollapsibleSection title="Data Grid & Visual Plate Map" icon="🧫">
                     <div className="flex flex-col xl:flex-row gap-6">
                         {fsPanel === 'data' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('data')}></div>}
@@ -1144,7 +1142,6 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
                                 </table>
                             </div>
                         </div>
-                        {/* OVERLAY SFONDO SCURO QUANDO LA MAPPA E' ESPANSA */}
                         {fsPanel === 'map' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('map')}></div>}
                         <div className={`bg-slate-50 border border-slate-200 p-4 min-w-0 flex flex-col ${fsPanel === 'map' ? FS_CLASSES : 'rounded-xl xl:w-1/2'}`}>
                             <div className="flex justify-between items-start mb-2 gap-2">
@@ -1212,7 +1209,6 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
                         </div>
                     </div>
                 </CollapsibleSection>
-                {/* SEZIONE 4: DATA SETTINGS & FITTING */}
                 <CollapsibleSection title="Normalization & Fitting Settings" icon="📊">
                     <div className="flex flex-wrap gap-4 items-stretch">
                         <div className="border border-slate-200 bg-slate-50 rounded-lg p-4 flex flex-col gap-3 flex-1 min-w-[300px]">
@@ -1286,7 +1282,6 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
                         </div>
                     </div>
                 </CollapsibleSection>
-                {/* SEZIONE 5: CHARTS SETTINGS E COLORI */}
                 <CollapsibleSection title="Chart Configuration & Filters" icon="🎨" defaultOpen={false}>
                     <div className="flex flex-col gap-4">
                         <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
@@ -1329,7 +1324,7 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
                                 <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-600">Font Size</label><input type="number" value={chartCfg.fontSize} onChange={e => updatePlate({ chartCfg: { ...chartCfg, fontSize: parseFloat(e.target.value) || 12 } })} className="border border-slate-300 rounded-md p-2 text-sm outline-none" /></div>
                                 <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-600">Point Style</label><select value={chartCfg.ptStyle} onChange={e => updatePlate({ chartCfg: { ...chartCfg, ptStyle: e.target.value } })} className="border border-slate-300 rounded-md p-2 text-sm bg-white outline-none">{['circle', 'triangle', 'rect', 'rectRot', 'cross', 'crossRot', 'star'].map(s => <option key={s} value={s}>{s}</option>)}</select></div>
                                 <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-600">Point Size</label><input type="number" value={chartCfg.ptSize} onChange={e => updatePlate({ chartCfg: { ...chartCfg, ptSize: parseFloat(e.target.value) || 1 } })} className="border border-slate-300 rounded-md p-2 text-sm outline-none" /></div>
-                                <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-600">Line Style / Thick.</label><div className="flex gap-2"><select value={chartCfg.lineStyle} onChange={e => updatePlate({ chartCfg: { ...chartCfg, lineStyle: e.target.value } })} className="border border-slate-300 rounded-md p-2 text-sm bg-white flex-1 outline-none"><option value="solid">Solid</option><option value="dashed">Dashed</option><option value="dotted">Dotted</option></select><input type="number" value={chartCfg.lineThickness} onChange={e => updatePlate({ chartCfg: { ...chartCfg, lineThickness: parseFloat(e.target.value) || 2 } })} className="border border-slate-300 rounded-md p-2 text-sm w-16 outline-none" /></div></div>
+                                <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-600">Line Style / Thick.</label><div className="flex gap-2"><select value={chartCfg.lineStyle} onChange={e => updatePlate({ chartCfg: { ...chartCfg, lineStyle: e.target.value } })} className="border border-slate-300 rounded-md p-2 text-sm bg-white flex-1 outline-none"><option value="solid">Solid</option><option value="dashed">Dotted</option><option value="dotted">Dotted</option></select><input type="number" value={chartCfg.lineThickness} onChange={e => updatePlate({ chartCfg: { ...chartCfg, lineThickness: parseFloat(e.target.value) || 2 } })} className="border border-slate-300 rounded-md p-2 text-sm w-16 outline-none" /></div></div>
                                 <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-600">Chart Split (DR Width %)</label><input type="range" min="20" max="80" step="5" value={drWidth} onChange={e => setDrWidth(parseInt(e.target.value))} className="accent-blue-600 mt-2" disabled={!fitIC50} /></div>
                                 <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-600">Chart Height (px)</label><input type="range" min="200" max="1000" step="25" value={chartH} onChange={e => setChartH(parseInt(e.target.value))} className="accent-blue-600 mt-2" /></div>
                             </div>
@@ -1368,11 +1363,9 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
                         )}
                     </div>
                 </CollapsibleSection>
-                {/* RENDER ACTUAL CHARTS FOR EACH REGION */}
                 {Object.entries(processedByRegion).map(([reg, comps]) => (
                     <RegionCharts key={reg} regionName={reg} regionData={comps} config={{ chartCfg, fitIC50, showExcl, eScale, fsPanel, chartH, drWidth, hiddenCmpds, unit, cellConfig, setCellConfig: (cfg) => updatePlate({ cellConfig: cfg }), activePlateDim, toggleFs }} />
                 ))}
-                {/* 6. LAB NOTEBOOK EXPORT */}
                 <CollapsibleSection title="Lab Notebook Export" icon="📓" defaultOpen={false} className="no-print">
                     <div className="flex flex-col gap-4">
                         <p className="text-sm text-slate-600">Select the data to format and append to the General Comments (which acts as the Lab Notebook entry).</p>
@@ -1424,7 +1417,6 @@ export const PlateTestRenderer = ({ activeTest, updateActiveTest, appClipboard, 
                     </div>
                 </CollapsibleSection>
             </div>
-            {/* MODALS */}
             {ctxMenu && (
                 <div className="fixed bg-white border border-slate-200 shadow-2xl rounded-lg py-2 z-50 text-sm w-56 flex flex-col" style={{ top: ctxMenu.y, left: ctxMenu.x, maxHeight: '80vh', transform: ctxMenu.y > window.innerHeight / 2 ? 'translateY(-100%)' : 'none' }}>
                     <div className="overflow-y-auto custom-scrollbar flex-1">
