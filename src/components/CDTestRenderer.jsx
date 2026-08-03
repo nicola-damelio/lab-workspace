@@ -5,12 +5,12 @@ import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { RichTextEditor } from './RichTextEditor';
 
-// --- UTILITY CLASSES FOR FULLSCREEN ---
+// --- FULLSCREEN UTILITIES ---
 const FS_CLASSES =
   'fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col';
 const OVERLAY_CLASSES = 'fixed top-0 left-0 w-screen h-screen bg-slate-900/50 backdrop-blur-sm z-[999990]';
 
-// --- PALETTE COLORS ---
+// --- PALETTE ---
 const SPECTRA_PALETTE = [
   '#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6',
   '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#06b6d4',
@@ -20,12 +20,12 @@ const SPECTRA_PALETTE = [
 const STRUCTURE_COLORS = {
   'α-Helix': '#3b82f6',
   'β-Sheet': '#ef4444',
-  'Turn': '#f59e0b',
+  Turn: '#f59e0b',
   'Random Coil': '#94a3b8',
-  'Other': '#8b5cf6'
+  Other: '#8b5cf6'
 };
 
-// --- SPLINE INTERPOLATION LOGIC ---
+// --- SPLINE INTERPOLATION ---
 class NaturalCubicSpline {
   constructor(xs, ys) {
     this.xs = xs;
@@ -44,7 +44,9 @@ class NaturalCubicSpline {
 
     const alpha = new Array(this.n - 1).fill(0);
     for (let i = 1; i < this.n - 1; i++) {
-      alpha[i] = (3 / h[i] * (this.a[i + 1] - this.a[i])) - (3 / h[i - 1] * (this.a[i] - this.a[i - 1]));
+      alpha[i] =
+        (3 / h[i]) * (this.a[i + 1] - this.a[i]) -
+        (3 / h[i - 1]) * (this.a[i] - this.a[i - 1]);
     }
 
     const l = new Array(this.n).fill(0);
@@ -62,7 +64,9 @@ class NaturalCubicSpline {
 
     for (let j = this.n - 2; j >= 0; j--) {
       this.c[j] = z[j] - mu[j] * this.c[j + 1];
-      this.b[j] = (this.a[j + 1] - this.a[j]) / h[j] - h[j] * (this.c[j + 1] + 2 * this.c[j]) / 3;
+      this.b[j] =
+        (this.a[j + 1] - this.a[j]) / h[j] -
+        (h[j] * (this.c[j + 1] + 2 * this.c[j])) / 3;
       this.d[j] = (this.c[j + 1] - this.c[j]) / (3 * h[j]);
     }
   }
@@ -92,7 +96,7 @@ class NaturalCubicSpline {
   }
 }
 
-// --- CD KNOT DATA ---
+// --- CD REFERENCE KNOTS ---
 const alphaKnots = [
   { x: 176, y: 12000 }, { x: 180, y: 22000 }, { x: 185, y: 48000 }, { x: 190, y: 66000 },
   { x: 192, y: 65000 }, { x: 195, y: 55000 }, { x: 200, y: 20000 }, { x: 203, y: 0 },
@@ -174,6 +178,125 @@ const splineGQP = new NaturalCubicSpline(gqParallelKnots.map((p) => p.x), gqPara
 const splineGQH = new NaturalCubicSpline(gqHybridKnots.map((p) => p.x), gqHybridKnots.map((p) => p.y));
 const splineGQA = new NaturalCubicSpline(gqAntiparallelKnots.map((p) => p.x), gqAntiparallelKnots.map((p) => p.y));
 
+// --- JASCO IMPORT PARSER ---
+const parseJascoDate = (value) => {
+  if (!value) return '';
+
+  const s = String(value);
+
+  let m = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) {
+    return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
+  }
+
+  m = s.match(/^(\d{2})\/(\d{2})\/(\d{2})$/);
+  if (m) {
+    return `20${m[1]}-${m[2]}-${m[3]}`;
+  }
+
+  return '';
+};
+
+const parseJascoCDText = (text) => {
+  const meta = {};
+  let xs = [];
+  let ys = [];
+  let inData = false;
+
+  const addMeta = (line) => {
+    if (!line) return;
+
+    if (line.includes('\t')) {
+      const parts = line.split('\t');
+      const key = parts[0].trim();
+      const value = parts.slice(1).join('\t').trim();
+      if (key) meta[key] = value;
+      return;
+    }
+
+    if (line.includes(',') && !/^[-+]?\d/.test(line)) {
+      const idx = line.indexOf(',');
+      const key = line.slice(0, idx).trim();
+      const value = line.slice(idx + 1).trim();
+      if (key) meta[key] = value;
+      return;
+    }
+
+    const m = line.match(/^([A-Za-z0-9\/\.\-\(\) ]{2,60}?)\s+(.*)$/);
+    if (m && !/^\d/.test(m[1])) {
+      meta[m[1].trim()] = m[2].trim();
+    }
+  };
+
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    if (line.startsWith('#####')) {
+      inData = false;
+      continue;
+    }
+
+    if (line.startsWith('[')) {
+      continue;
+    }
+
+    if (/^XYDATA/i.test(line)) {
+      inData = true;
+      continue;
+    }
+
+    if (inData) {
+      const cols = line.split(/[,\s]+/).filter(Boolean);
+
+      if (cols.length >= 2) {
+        const x = parseFloat(cols[0]);
+        const y = parseFloat(cols[1]);
+
+        if (!isNaN(x) && !isNaN(y)) {
+          xs.push(x);
+          ys.push(y);
+        }
+      }
+
+      continue;
+    }
+
+    addMeta(line);
+  }
+
+  if (xs.length > 1 && xs[0] > xs[xs.length - 1]) {
+    xs.reverse();
+    ys.reverse();
+  }
+
+  const title = meta['Sample name'] || meta['TITLE'] || '';
+
+  const experimentDate = parseJascoDate(
+    meta['Measurement date'] || meta['DATE'] || meta['Creation date'] || ''
+  );
+
+  const temperatureRaw = meta['Temperature'] || '';
+  const temperature = temperatureRaw ? temperatureRaw.replace(/\s*C\s*$/, ' °C') : '';
+
+  const pathRaw = meta['Cell length'] || '';
+  const pathMatch = pathRaw.match(/(-?\d+(?:\.\d+)?)/);
+  const pathLength = pathMatch ? pathMatch[1] : pathRaw;
+
+  const concentration = meta['Concentration'] || '';
+
+  return {
+    xs,
+    ys,
+    meta,
+    title,
+    experimentDate,
+    temperature,
+    pathLength,
+    concentration
+  };
+};
+
 // --- RESPONSIVE CANVAS HELPER ---
 const useElementSize = (ref) => {
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -194,7 +317,7 @@ const useElementSize = (ref) => {
   return size;
 };
 
-// --- COLLAPSIBLE SECTION COMPONENT ---
+// --- COLLAPSIBLE SECTION ---
 export const CollapsibleSection = ({
   title,
   icon,
@@ -220,6 +343,7 @@ export const CollapsibleSection = ({
 
         <div className="flex items-center gap-3 shrink-0">
           {headerExtra && <div onClick={(e) => e.stopPropagation()}>{headerExtra}</div>}
+
           <svg
             className={`w-5 h-5 text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
             fill="none"
@@ -236,7 +360,7 @@ export const CollapsibleSection = ({
   );
 };
 
-// --- PROTEIN CD MIXER SIMULATOR ---
+// --- PROTEIN CD MIXER ---
 const ProteinCDMixer = ({ isExpanded, onToggleExpand }) => {
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
@@ -416,6 +540,7 @@ const ProteinCDMixer = ({ isExpanded, onToggleExpand }) => {
         <h4 className="font-bold text-slate-700 flex items-center gap-2">
           <span>🧬</span> Protein Secondary Structure Simulator
         </h4>
+
         <button
           onClick={onToggleExpand}
           className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors"
@@ -502,7 +627,7 @@ const ProteinCDMixer = ({ isExpanded, onToggleExpand }) => {
   );
 };
 
-// --- ENHANCED CD LIBRARY / SIMULATOR ---
+// --- ENHANCED CD LIBRARY / DASHBOARD ---
 const CD_LIBRARY_TABS = [
   { id: 'protein', label: 'Protein Structures' },
   { id: 'dna', label: 'DNA Helices' },
@@ -1017,6 +1142,7 @@ const CDSpectraLibrary = ({ isExpanded, onToggleExpand }) => {
         <h4 className="font-bold text-slate-700 flex items-center gap-2">
           <span>📚</span> CD Spectra Reference Library & Simulator
         </h4>
+
         <button
           onClick={onToggleExpand}
           className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors"
@@ -1070,6 +1196,7 @@ const CDSpectraLibrary = ({ isExpanded, onToggleExpand }) => {
           {tab === 'protein' && (
             <div className="flex flex-col gap-1">
               <div className="text-[10px] uppercase font-bold text-slate-500">Protein Structures</div>
+
               {proteinTypes.map((t) => (
                 <label key={t} className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 p-1 rounded">
                   <input
@@ -1088,6 +1215,7 @@ const CDSpectraLibrary = ({ isExpanded, onToggleExpand }) => {
           {tab === 'dna' && (
             <div className="flex flex-col gap-1">
               <div className="text-[10px] uppercase font-bold text-slate-500">DNA Helices</div>
+
               {dnaTypes.map((t) => (
                 <label key={t} className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 p-1 rounded">
                   <input
@@ -1106,6 +1234,7 @@ const CDSpectraLibrary = ({ isExpanded, onToggleExpand }) => {
           {tab === 'gq' && (
             <div className="flex flex-col gap-1">
               <div className="text-[10px] uppercase font-bold text-slate-500">G-Quadruplexes</div>
+
               {gqTypes.map((t) => (
                 <label key={t} className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 p-1 rounded">
                   <input
@@ -1204,6 +1333,9 @@ export const CDTestRenderer = ({
   const cdChart = useRef(null);
   const structChart = useRef(null);
 
+  const fileInputRef = useRef(null);
+  const importModeRef = useRef('replace');
+
   const toggleFs = (id) => setFsPanel((prev) => (prev === id ? null : id));
 
   const parsedWavelengths = useMemo(() => {
@@ -1249,6 +1381,123 @@ export const CDTestRenderer = ({
 
   const removeSpectrumColumn = (id) => {
     updatePlate({ spectraColumns: spectraColumns.filter((c) => c.id !== id) });
+  };
+
+  const triggerJascoImport = (mode) => {
+    importModeRef.current = mode;
+    if (fileInputRef.current) fileInputRef.current.click();
+  };
+
+  const importJascoFiles = async (event) => {
+    const input = event.target;
+    const mode = importModeRef.current || 'replace';
+    const files = Array.from(input.files || []);
+
+    if (!files.length) return;
+
+    const imported = [];
+    let baseX = null;
+    let firstMeta = null;
+
+    for (const file of files) {
+      try {
+        const text = await file.text();
+        const parsed = parseJascoCDText(text);
+
+        if (!parsed.xs.length || !parsed.ys.length) {
+          alert(`No numeric CD data found in ${file.name}.`);
+          continue;
+        }
+
+        if (!baseX) {
+          baseX = parsed.xs;
+          firstMeta = parsed;
+        } else {
+          const sameX =
+            parsed.xs.length === baseX.length &&
+            parsed.xs.every((x, i) => Math.abs(x - baseX[i]) < 0.01);
+
+          if (!sameX) {
+            alert(`Wavelength axes do not match between imported files.\nStopped before: ${file.name}`);
+            break;
+          }
+        }
+
+        imported.push({ file, parsed });
+      } catch (err) {
+        alert(`Could not read ${file.name}: ${err.message}`);
+      }
+    }
+
+    if (!imported.length || !baseX) {
+      input.value = '';
+      return;
+    }
+
+    const startIndex = mode === 'append' ? spectraColumns.length : 0;
+
+    const newCols = imported.map(({ file, parsed }, i) => {
+      const baseName = file.name.replace(/\.[^.]+$/, '');
+      const title = baseName || parsed.title || `Spectrum ${startIndex + i + 1}`;
+
+      return {
+        id: `${Date.now()}-${i}-${Math.random().toString(16).slice(2)}`,
+        title,
+        data: parsed.ys.join('\n'),
+        color: SPECTRA_PALETTE[(startIndex + i) % SPECTRA_PALETTE.length],
+        visible: true
+      };
+    });
+
+    const updates = {};
+
+    const minX = Math.min(...baseX);
+    const maxX = Math.max(...baseX);
+
+    if (mode === 'replace' || parsedWavelengths.length === 0) {
+      updates.wavelengthData = baseX.join('\n');
+      updates.spectraColumns = newCols;
+
+      updates.chartCfg = {
+        ...chartCfg,
+        xMin: String(minX),
+        xMax: String(maxX)
+      };
+    } else {
+      const sameAsCurrent =
+        baseX.length === parsedWavelengths.length &&
+        baseX.every((x, i) => Math.abs(x - parsedWavelengths[i]) < 0.01);
+
+      if (!sameAsCurrent) {
+        alert(
+          'Cannot append: imported wavelength axis does not match the current wavelength axis.\nUse Replace import or clear the current data.'
+        );
+        input.value = '';
+        return;
+      }
+
+      const currentMin = parsedWavelengths.length ? Math.min(...parsedWavelengths) : minX;
+      const currentMax = parsedWavelengths.length ? Math.max(...parsedWavelengths) : maxX;
+
+      updates.spectraColumns = [...spectraColumns, ...newCols];
+
+      updates.chartCfg = {
+        ...chartCfg,
+        xMin: String(Math.min(currentMin, minX)),
+        xMax: String(Math.max(currentMax, maxX))
+      };
+    }
+
+    if (firstMeta) {
+      if (firstMeta.title && !compound) updates.compound = firstMeta.title;
+      if (firstMeta.experimentDate && !experimentDate) updates.experimentDate = firstMeta.experimentDate;
+      if (firstMeta.temperature && !temperature) updates.temperature = firstMeta.temperature;
+      if (firstMeta.pathLength && !pathLength) updates.pathLength = firstMeta.pathLength;
+      if (firstMeta.concentration && !concentration) updates.concentration = firstMeta.concentration;
+    }
+
+    updatePlate(updates);
+    input.value = '';
   };
 
   useEffect(() => {
@@ -1638,7 +1887,7 @@ export const CDTestRenderer = ({
                         const p = new URL(url);
                         name = p.hostname;
                       } catch (e) {
-                        // keep raw URL as name
+                        // keep raw URL
                       }
 
                       updatePlate({
@@ -1771,7 +2020,45 @@ export const CDTestRenderer = ({
         </CollapsibleSection>
 
         <CollapsibleSection title="CD Data Input" icon="📥">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".txt,.csv,.asc,.dcm"
+            multiple
+            className="hidden"
+            onChange={importJascoFiles}
+          />
+
           <div className="flex flex-col gap-4">
+            <div className="border border-blue-200 bg-blue-50 rounded-lg p-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-bold text-blue-800 uppercase">JASCO / TXT Import</div>
+
+                  <p className="text-[10px] text-blue-700 mt-1">
+                    Imports the CD [mdeg] channel from JASCO .txt files, converts the wavelength axis to ascending
+                    order, and fills sample metadata when available.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => triggerJascoImport('replace')}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm transition-colors"
+                  >
+                    📂 Import JASCO (Replace)
+                  </button>
+
+                  <button
+                    onClick={() => triggerJascoImport('append')}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm transition-colors"
+                  >
+                    ➕ Import JASCO (Append)
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <div className="border border-slate-200 bg-slate-50 rounded-lg p-4">
               <div className="flex justify-between items-center mb-2">
                 <label className="text-xs font-bold text-slate-600 uppercase">📏 Wavelength Data (X axis - nm)</label>
@@ -1782,7 +2069,9 @@ export const CDTestRenderer = ({
                 value={wavelengthData}
                 onChange={(e) => updatePlate({ wavelengthData: e.target.value })}
                 className="w-full border border-slate-300 rounded-lg p-3 font-mono text-xs outline-none focus:border-blue-500 h-24 resize-y shadow-inner"
-                placeholder={'Paste wavelength values (one per line or comma-separated)\ne.g.: 190, 191, 192, 193, ... 260'}
+                placeholder={
+                  'Paste wavelength values (one per line or comma-separated)\ne.g.: 190, 191, 192, 193, ... 260'
+                }
               />
 
               <p className="text-[10px] text-slate-400 mt-1">
@@ -1812,7 +2101,10 @@ export const CDTestRenderer = ({
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                   {parsedSpectra.map((spectrum) => (
-                    <div key={spectrum.id} className="bg-white border border-slate-200 rounded-lg p-3 shadow-sm relative group">
+                    <div
+                      key={spectrum.id}
+                      className="bg-white border border-slate-200 rounded-lg p-3 shadow-sm relative group"
+                    >
                       <div className="flex items-center gap-2 mb-2">
                         <input
                           type="color"
