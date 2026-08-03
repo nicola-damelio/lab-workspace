@@ -73,7 +73,6 @@ const FIREBASE_CONFIG = {
     messagingSenderId: "855790481107",
     appId: "1:855790481107:web:a566455d3f13a48a20ae26"
 };
-
 let app, auth, db, appId = 'lab-workspace-app';
 try {
     if (!window.firebase.apps.length) {
@@ -126,6 +125,7 @@ export default function App() {
     };
 
     const [user, setUser] = useState(null);
+    const [needsLogin, setNeedsLogin] = useState(false);
     const [isCloudReady, setIsCloudReady] = useState(false);
     const [saveStatus, setSaveStatus] = useState('idle');
     const [saveErrorMsg, setSaveErrorMsg] = useState('');
@@ -179,41 +179,39 @@ export default function App() {
     const handleUndo = () => { if (historyIndex > 0) { const newIdx = historyIndex - 1; setHistoryIndex(newIdx); setReactTests(historyRef.current[newIdx]); } };
     const handleRedo = () => { if (historyIndex < historyRef.current.length - 1) { const newIdx = historyIndex + 1; setHistoryIndex(newIdx); setReactTests(historyRef.current[newIdx]); } };
 
-    // --- AUTENTICAZIONE TEAM OTTIMIZZATA PER MOBILE (Redirect invece di Popup) ---
+    // --- MODIFICA ANTI-LOOP: Mostra pulsante invece di fare redirect forzato ---
     useEffect(() => {
         if (!auth) { setIsCloudReady(true); return; }
         
         const initAuth = async () => {
-            try {
-                // Recupera l'utente se stiamo tornando da un redirect di login
-                if (window.firebase && window.firebase.auth) {
-                    await auth.getRedirectResult();
-                }
-            } catch(e) {
-                console.error("Errore nel redirect auth:", e);
-            }
-
-            auth.onAuthStateChanged(async (currentUser) => {
+            auth.onAuthStateChanged(currentUser => {
                 if (currentUser) {
                     setUser(currentUser);
+                    setNeedsLogin(false);
                     setIsCloudReady(true);
                 } else {
-                    const provider = new window.firebase.auth.GoogleAuthProvider();
-                    try {
-                        // Usa Redirect per aggirare i blocchi popup di Safari/Chrome su mobile
-                        await auth.signInWithRedirect(provider);
-                    } catch(e) {
-                        console.error("Auth error", e); 
-                        setIsCloudReady(true);
-                    }
+                    setNeedsLogin(true);
+                    setIsCloudReady(true);
                 }
             });
         };
         initAuth();
     }, []);
 
+    const handleManualLogin = async () => {
+        const provider = new window.firebase.auth.GoogleAuthProvider();
+        try {
+            // Usando Popup su un clic manuale, i cellulari non lo bloccano.
+            await auth.signInWithPopup(provider);
+        } catch (e) {
+            console.error("Errore login:", e);
+        }
+    };
+
     // --- CONDIVISIONE LINK: Lettura URL ---
     useEffect(() => {
+        if (needsLogin) return; // Aspetta che l'utente sia loggato
+        
         const urlParams = new URLSearchParams(window.location.search);
         const sharedDatasetId = urlParams.get('dataset');
         
@@ -226,10 +224,10 @@ export default function App() {
                 }
             }).catch(err => console.error("Errore dataset condiviso:", err));
         }
-    }, [isCloudReady, db, currentDatasetId]);
+    }, [isCloudReady, db, currentDatasetId, needsLogin]);
 
     useEffect(() => {
-        if (db) {
+        if (db && user) {
             const collRef = db.collection(`artifacts/${appId}/public/data/datasets`);
             const unsubscribe = collRef.onSnapshot((snap) => {
                 const dsets = [];
@@ -246,7 +244,7 @@ export default function App() {
                 setIsCloudReady(true); 
             });
             return () => unsubscribe();
-        } else {
+        } else if (!user) {
             try {
                 const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
                 if (stored) setDatasetsList(JSON.parse(stored).sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
@@ -340,7 +338,6 @@ export default function App() {
         reader.readAsText(file); e.target.value = '';
     };
 
-    // --- CARICAMENTO E FORZATURA INIZIALIZZAZIONE CLOUD ---
     const confirmLoad = (mode) => {
         const { tests: loadedTests, fullState: s } = pendingLoad;
         
@@ -591,6 +588,28 @@ export default function App() {
 
     const handlePrint = () => { window.print(); };
 
+    // --- SCHERMATA DI LOGIN MANUALE (per sbloccare Safari/Chrome su mobile) ---
+    if (needsLogin) {
+        return (
+            <div className="flex h-screen w-full items-center justify-center bg-slate-100 p-4">
+                <div className="bg-white p-8 rounded-2xl shadow-xl flex flex-col items-center max-w-sm border border-slate-200 text-center">
+                    <div className="text-5xl mb-4">🔐</div>
+                    <h1 className="text-2xl font-black text-slate-800 mb-2">Accesso Richiesto</h1>
+                    <p className="text-slate-500 mb-8 text-sm leading-relaxed">
+                        Per ragioni di sicurezza e per sincronizzare i tuoi dati di laboratorio sul Cloud, 
+                        il browser richiede un'azione manuale per il login.
+                    </p>
+                    <button
+                        onClick={handleManualLogin}
+                        className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-full shadow-lg transition-transform hover:scale-105 w-full flex items-center justify-center gap-2"
+                    >
+                        <span>Accedi con Google</span>
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="w-full relative flex flex-col h-screen overflow-hidden bg-slate-50">
             <style>{`
@@ -752,11 +771,11 @@ export default function App() {
             {appView === 'dataset' && (
                 <div className="flex flex-col md:flex-row h-screen w-full overflow-hidden">
                     
-                    {/* MOBILE TOP BAR (solo se la sidebar è nascosta su mobile) */}
+                    {/* MOBILE TOP BAR */}
                     <div className="md:hidden bg-white border-b border-slate-200 p-3 flex justify-between items-center z-10 shrink-0">
                          <button onClick={() => setIsSidebarOpen(true)} className="text-2xl text-slate-600 px-2 py-1">☰</button>
                          <span className="font-bold text-slate-800 truncate px-4">{datasetTitle || 'Lab Workspace'}</span>
-                         <div className="w-8"></div> {/* Spacer for centering */}
+                         <div className="w-8"></div>
                     </div>
 
                     {/* OVERLAY SFONDO MOBILE */}
