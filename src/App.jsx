@@ -10,10 +10,8 @@ import { CDTestRenderer } from './components/CDTestRenderer';
 import { LabNotebook } from './components/LabNotebook';
 import { RichTextEditor } from './components/RichTextEditor';
 
-// --- IMPORT EXTRACTED STORAGE COMPONENTS ---
 import { StorageModals, StorageList, StorageDetail, BoxDetail } from './components/Storage';
 
-// --- LEGACY MIGRATION (V1 -> V2) ---
 const migrateLoadedDataset = (s) => {
     const rawTests = (s && (s.tests || s.plates)) || [];
     let tests = rawTests.map(p => {
@@ -67,7 +65,6 @@ const migrateLoadedDataset = (s) => {
     return { tests, storages: newStorages.length > 0 ? [...existingStorages, ...newStorages] : existingStorages };
 };
 
-// --- FIREBASE CLOUD INIT ---
 const FIREBASE_CONFIG = {
     apiKey: "AQ.Ab8RN6I7-6yNsQyx8f39A4YT6Hp5jNWxz2JCxq2ZEwJ5Zhy1aQ",
     authDomain: "cell-experiment-tracker.firebaseapp.com",
@@ -145,10 +142,9 @@ export default function App() {
     const [customConc, setCustomConc] = useState({});
     const [cmpColors, setCmpColors] = useState({});
     
-    // Sidebar State
-    const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+    // Sidebar State: Chiusa di default su schermi piccoli per usabilità mobile
+    const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth > 768);
 
-    // Storage States
     const [storages, setStorages] = useState([]);
     const [activeStorageId, setActiveStorageId] = useState(null);
     const [storageModal, setStorageModal] = useState(null);
@@ -183,10 +179,9 @@ export default function App() {
     const handleUndo = () => { if (historyIndex > 0) { const newIdx = historyIndex - 1; setHistoryIndex(newIdx); setReactTests(historyRef.current[newIdx]); } };
     const handleRedo = () => { if (historyIndex < historyRef.current.length - 1) { const newIdx = historyIndex + 1; setHistoryIndex(newIdx); setReactTests(historyRef.current[newIdx]); } };
 
-    // --- MODIFICA PER COLLABORAZIONE 1: AUTENTICAZIONE GOOGLE ---
+    // --- AUTENTICAZIONE TEAM (Google Login) ---
     useEffect(() => {
         if (!auth) { setIsCloudReady(true); return; }
-        
         const initAuth = async () => {
             auth.onAuthStateChanged(async (currentUser) => {
                 if (currentUser) {
@@ -206,7 +201,7 @@ export default function App() {
         initAuth();
     }, []);
 
-    // --- MODIFICA PER COLLABORAZIONE 2: LETTURA URL PER CONDIVISIONE LINK ---
+    // --- CONDIVISIONE LINK: Lettura URL ---
     useEffect(() => {
         const urlParams = new URLSearchParams(window.location.search);
         const sharedDatasetId = urlParams.get('dataset');
@@ -218,7 +213,7 @@ export default function App() {
                     const dset = { id: doc.id, ...doc.data() };
                     openDataset(dset);
                 }
-            }).catch(err => console.error("Errore nel caricamento del dataset condiviso:", err));
+            }).catch(err => console.error("Errore dataset condiviso:", err));
         }
     }, [isCloudReady, db, currentDatasetId]);
 
@@ -251,11 +246,10 @@ export default function App() {
 
     const latestDataRef = useRef(null);
     latestDataRef.current = { tests, datasetTitle, datasetSubtitle, customCmpds, customCellLines, customConc, cmpColors, testCategories, protocolCategories, datasetProtocols, storages };
-    
     const getCompressedPayload = () => LZString.compressToUTF16(JSON.stringify(latestDataRef.current));
     const saveTimeoutRef = useRef(null);
 
-    // --- MODIFICA PER COLLABORAZIONE 3: SALVATAGGIO IN CHIARO PER GESTIONE CONFLITTI ---
+    // --- SALVATAGGIO IN CHIARO (Senza Compressione per Sincronizzazione Conflitti) ---
     useEffect(() => {
         if (!isCloudReady || appView !== 'dataset' || !currentDatasetId) return;
         setSaveStatus('saving');
@@ -267,7 +261,7 @@ export default function App() {
                     date: tests[0]?.date || new Date().toISOString().split('T')[0],
                     testCount: tests.length, 
                     updatedAt: window.firebase ? window.firebase.firestore.FieldValue.serverTimestamp() : Date.now(),
-                    payload: JSON.stringify(latestDataRef.current), // Non compresso, permette a Firebase di fare merge
+                    payload: JSON.stringify(latestDataRef.current), 
                     isCompressed: false
                 };
                 if (db && user) {
@@ -361,6 +355,8 @@ export default function App() {
             }
         }
         setPendingLoad(null); setCurrentModule('tests');
+        // Chiudi menu su mobile dopo il caricamento
+        if (window.innerWidth < 768) setIsSidebarOpen(false);
     };
 
     const createNewDataset = async () => {
@@ -372,7 +368,6 @@ export default function App() {
         setProtocolCategories(["Preparation", "Measurement", "Analysis"]); setDatasetProtocols([]); setStorages([]); 
         setCurrentDatasetId(newId); setAppView('dataset'); setCurrentModule('dashboard');
         
-        // --- MODIFICA URL E SALVATAGGIO ---
         window.history.pushState({}, '', '?dataset=' + newId);
         
         const updatedPayload = {
@@ -429,7 +424,6 @@ export default function App() {
             setDatasetProtocols(s.datasetProtocols || []); setStorages(migrated.storages); 
             setCurrentDatasetId(dset.id); setAppView('dataset'); setCurrentModule('dashboard');
             
-            // --- MODIFICA URL ---
             window.history.pushState({}, '', '?dataset=' + dset.id);
             
         } catch(e) { setDialog({type: 'alert', title: 'Error', message: "Error reading dataset structure."}); }
@@ -469,27 +463,19 @@ export default function App() {
 
   const deleteEmptyDatasets = async () => {
         const emptyDatasets = datasetsList.filter(dset => {
-            // 0 tests is definitely empty
             if (!dset.testCount || dset.testCount === 0) return true;
-            
-            // 1 test might be the default empty test ("Test 1")
             if (dset.testCount === 1) {
                 try {
-                    // Check if it has the default title
                     if (dset.title === 'New Dataset' || dset.title === 'Untitled Dataset') {
-                        // Using your existing parsePayload utility
                         const s = parsePayload(dset);
                         if (s && s.tests && s.tests.length === 1) {
                             const t = s.tests[0];
-                            // If it's unmodified "Test 1" with no actual notes or attachments
                             if (t.name === 'Test 1' && !t.instanceName && !t.comments && (!t.images || t.images.length === 0)) {
                                 return true;
                             }
                         }
                     }
-                } catch(e) {
-                    return false;
-                }
+                } catch(e) { return false; }
             }
             return false;
         });
@@ -578,8 +564,8 @@ export default function App() {
     const handlePrevMonth = () => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1));
     const handleNextMonth = () => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1));
 
-    const jumpToTest = (testId) => { setActiveTestId(testId); setCurrentModule('active-test'); };
-    const jumpToProtocol = (protocolId) => { setExpandedGroups(p => ({ ...p, activeProtoId: protocolId })); setCurrentModule('protocols'); };
+    const jumpToTest = (testId) => { setActiveTestId(testId); setCurrentModule('active-test'); if(window.innerWidth < 768) setIsSidebarOpen(false); };
+    const jumpToProtocol = (protocolId) => { setExpandedGroups(p => ({ ...p, activeProtoId: protocolId })); setCurrentModule('protocols'); if(window.innerWidth < 768) setIsSidebarOpen(false); };
 
     const handlePrint = () => { window.print(); };
 
@@ -637,7 +623,7 @@ export default function App() {
 
             {pendingLoad && (
                 <div className="fixed inset-0 bg-slate-900/50 z-[99999] flex items-center justify-center backdrop-blur-sm">
-                    <div className="bg-white p-6 rounded-xl shadow-xl border border-slate-200 w-96">
+                    <div className="bg-white p-6 rounded-xl shadow-xl border border-slate-200 w-full max-w-sm mx-4">
                         <h3 className="text-lg font-black text-slate-800 mb-2">Load Workspace Data</h3>
                         <p className="text-sm text-slate-500 mb-6">How would you like to load the data from this file?</p>
                         <div className="flex flex-col gap-3">
@@ -649,7 +635,6 @@ export default function App() {
                 </div>
             )}
 
-            {/* STORAGE MODALS INJECTED HERE */}
             <StorageModals 
                 storageModal={storageModal} setStorageModal={setStorageModal} 
                 storages={storages} setStorages={setStorages} 
@@ -659,14 +644,13 @@ export default function App() {
 
             {/* ===== EXPLORER VIEW (Home Screen) ===== */}
             {appView === 'explorer' && (
-                <div className="absolute inset-0 z-[100] flex flex-col items-center p-10 bg-slate-100 overflow-y-auto">
+                <div className="absolute inset-0 z-[100] flex flex-col items-center p-4 md:p-10 bg-slate-100 overflow-y-auto">
                     <div className="w-full max-w-6xl">
                         
-                        {/* HERO SECTION FOR IMMEDIATE CREATION */}
-                        <div className="flex flex-col items-center justify-center py-16 px-8 border border-blue-100 mb-10 bg-gradient-to-b from-white to-blue-50/50 rounded-2xl shadow-lg">
-                            <h1 className="text-4xl md:text-5xl font-black text-slate-800 tracking-tight mb-4 text-center">Lab Workspace</h1>
-                            <p className="text-slate-500 text-lg md:text-xl mb-8 text-center max-w-2xl font-medium">Create, manage, and analyze your experiments, assays, and inventory in one unified environment.</p>
-                            <button onClick={createNewDataset} disabled={!isCloudReady} className={`font-black py-4 px-10 rounded-full shadow-lg transition-all transform hover:scale-105 flex items-center gap-3 text-lg ${isCloudReady ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-slate-300 text-slate-500 cursor-not-allowed'}`}>
+                        <div className="flex flex-col items-center justify-center py-12 md:py-16 px-6 md:px-8 border border-blue-100 mb-6 md:mb-10 bg-gradient-to-b from-white to-blue-50/50 rounded-2xl shadow-lg mt-4 md:mt-0">
+                            <h1 className="text-3xl md:text-5xl font-black text-slate-800 tracking-tight mb-4 text-center">Lab Workspace</h1>
+                            <p className="text-slate-500 text-base md:text-xl mb-8 text-center max-w-2xl font-medium">Create, manage, and analyze your experiments, assays, and inventory in one unified environment.</p>
+                            <button onClick={createNewDataset} disabled={!isCloudReady} className={`font-black py-3 md:py-4 px-6 md:px-10 rounded-full shadow-lg transition-all transform hover:scale-105 flex items-center gap-3 text-base md:text-lg w-full md:w-auto justify-center ${isCloudReady ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-slate-300 text-slate-500 cursor-not-allowed'}`}>
                                 <span className="text-2xl">+</span> Create New Dataset
                             </button>
                             {!isCloudReady && (
@@ -677,15 +661,14 @@ export default function App() {
                             )}
                         </div>
 
-                        {/* DATASETS LIST SECTION */}
-                        <div className="bg-white p-8 rounded-2xl shadow-xl border border-slate-200">
-                            <div className="flex justify-between items-center mb-6 border-b border-slate-100 pb-4">
-                                <h2 className="text-2xl font-bold text-slate-800">Your Recent Datasets</h2>
-                                <div className="flex gap-2">
-                                    <button onClick={deleteEmptyDatasets} className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex items-center gap-2 cursor-pointer text-sm">
+                        <div className="bg-white p-4 md:p-8 rounded-2xl shadow-xl border border-slate-200">
+                            <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 border-b border-slate-100 pb-4 gap-4">
+                                <h2 className="text-xl md:text-2xl font-bold text-slate-800">Your Recent Datasets</h2>
+                                <div className="flex flex-wrap gap-2 w-full md:w-auto">
+                                    <button onClick={deleteEmptyDatasets} className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex-1 md:flex-none items-center justify-center gap-2 cursor-pointer text-sm">
                                         🗑️ Delete Empty
                                     </button>
-                                    <label className="bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex items-center gap-2 cursor-pointer text-sm">
+                                    <label className="bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex-1 md:flex-none flex items-center justify-center gap-2 cursor-pointer text-sm">
                                         📂 Load HTML File
                                         <input type="file" accept=".html" onChange={loadHTML} className="hidden"/>
                                     </label>
@@ -698,7 +681,7 @@ export default function App() {
                                     <span>No datasets found in cloud or local storage.</span>
                                 </div>
                             ) : (
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
                                     {Object.values(groupedDatasets).map(group => {
                                         const titleParts = [];
                                         if (group.categories) titleParts.push(group.categories);
@@ -706,7 +689,7 @@ export default function App() {
                                         const groupTitle = group.isUnclassified ? (group.items[0].title || 'Untitled') : titleParts.join(' - ');
                                         const isExpanded = expandedGroups[group.key];
                                         return (
-                                            <div key={group.key} className="border border-slate-200 rounded-xl p-5 hover:shadow-lg hover:border-blue-300 transition-all bg-white flex flex-col h-full">
+                                            <div key={group.key} className="border border-slate-200 rounded-xl p-4 md:p-5 hover:shadow-lg hover:border-blue-300 transition-all bg-white flex flex-col h-full">
                                                 <h3 className="font-bold text-lg text-slate-800 mb-2 leading-tight truncate" title={groupTitle}>{groupTitle}</h3>
                                                 <p className="text-xs text-slate-500 mb-4 font-medium bg-slate-100 inline-block px-2 py-1 rounded-md self-start">
                                                     {group.items.length} Dataset{group.items.length === 1 ? '' : 's'}
@@ -721,9 +704,9 @@ export default function App() {
                                                                     <span>🧪 {dset.testCount || 1} Tests</span>
                                                                 </span>
                                                             </div>
-                                                            <div className="flex flex-col gap-1 opacity-0 group-hover/item:opacity-100 transition-all shrink-0 ml-2">
-                                                                <button onClick={(e) => renameDataset(e, dset.id, dset.title || groupTitle)} className="text-slate-500 hover:text-blue-600 hover:bg-blue-50 px-2 py-1 rounded text-xs font-bold transition-colors">Rename</button>
-                                                                <button onClick={(e) => { e.stopPropagation(); deleteDataset(e, dset.id); }} className="text-slate-500 hover:text-red-600 hover:bg-red-50 px-2 py-1 rounded text-xs font-bold transition-colors">Delete</button>
+                                                            <div className="flex flex-col gap-1 opacity-100 md:opacity-0 group-hover/item:opacity-100 transition-all shrink-0 ml-2">
+                                                                <button onClick={(e) => renameDataset(e, dset.id, dset.title || groupTitle)} className="text-slate-500 hover:text-blue-600 hover:bg-blue-50 px-2 py-1 rounded text-xs font-bold transition-colors text-right">Rename</button>
+                                                                <button onClick={(e) => { e.stopPropagation(); deleteDataset(e, dset.id); }} className="text-slate-500 hover:text-red-600 hover:bg-red-50 px-2 py-1 rounded text-xs font-bold transition-colors text-right">Delete</button>
                                                             </div>
                                                         </div>
                                                     ))}
@@ -745,10 +728,22 @@ export default function App() {
 
             {/* ===== DATASET VIEW ===== */}
             {appView === 'dataset' && (
-                <div className="flex h-screen w-full overflow-hidden">
+                <div className="flex flex-col md:flex-row h-screen w-full overflow-hidden">
                     
+                    {/* MOBILE TOP BAR (solo se la sidebar è nascosta su mobile) */}
+                    <div className="md:hidden bg-white border-b border-slate-200 p-3 flex justify-between items-center z-10 shrink-0">
+                         <button onClick={() => setIsSidebarOpen(true)} className="text-2xl text-slate-600 px-2 py-1">☰</button>
+                         <span className="font-bold text-slate-800 truncate px-4">{datasetTitle || 'Lab Workspace'}</span>
+                         <div className="w-8"></div> {/* Spacer for centering */}
+                    </div>
+
+                    {/* OVERLAY SFONDO MOBILE */}
+                    {isSidebarOpen && (
+                        <div className="md:hidden fixed inset-0 bg-slate-900/50 z-40" onClick={() => setIsSidebarOpen(false)}></div>
+                    )}
+
                     {/* COLLAPSIBLE SIDEBAR */}
-                    <div className={`bg-white border-r border-slate-200 flex flex-col shadow-sm z-30 shrink-0 no-print transition-all duration-300 ${isSidebarOpen ? 'w-64' : 'w-16 items-center'}`}>
+                    <div className={`bg-white border-r border-slate-200 flex flex-col shadow-sm z-50 shrink-0 no-print transition-all duration-300 absolute md:relative h-full ${isSidebarOpen ? 'translate-x-0 w-64' : '-translate-x-full md:translate-x-0 md:w-16 items-center'}`}>
                         <div className={`p-4 border-b border-slate-200 flex items-center gap-2 ${isSidebarOpen ? 'justify-between' : 'flex-col justify-center'}`}>
                             <button onClick={handleBackToExplorer} className="text-slate-400 hover:text-blue-600 transition-colors" title="Back to Workspace">◀</button>
                             {isSidebarOpen && (
@@ -783,7 +778,10 @@ export default function App() {
                             ].map(nav => (
                                 <button 
                                     key={nav.id}
-                                    onClick={() => setCurrentModule(nav.id)}
+                                    onClick={() => {
+                                        setCurrentModule(nav.id);
+                                        if(window.innerWidth < 768) setIsSidebarOpen(false);
+                                    }}
                                     title={!isSidebarOpen ? nav.label : ''}
                                     className={`flex items-center gap-3 py-2 rounded-lg text-sm transition-all text-left ${isSidebarOpen ? 'px-3 w-full' : 'px-0 w-10 justify-center'} ${currentModule === nav.id ? 'bg-blue-50 text-blue-700 font-bold shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}
                                 >
@@ -813,33 +811,33 @@ export default function App() {
                     {/* MAIN CONTENT */}
                     <div className="flex-1 flex flex-col bg-slate-50 h-full overflow-hidden relative">
                         {currentModule === 'dashboard' && (
-                            <div className="p-8 h-full overflow-y-auto custom-scrollbar bg-slate-50">
+                            <div className="p-4 md:p-8 h-full overflow-y-auto custom-scrollbar bg-slate-50">
                                 <div className="max-w-6xl mx-auto">
-                                    <div className="flex justify-between items-end mb-8 border-b border-slate-200 pb-4">
+                                    <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-6 md:mb-8 border-b border-slate-200 pb-4 gap-4">
                                         <div>
-                                            <h1 className="text-3xl font-bold text-slate-800">{datasetTitle || 'Dataset Overview'}</h1>
-                                            <p className="text-slate-500 mt-1">{datasetSubtitle || 'Manage your experiments, inventory, and protocols.'}</p>
+                                            <h1 className="text-2xl md:text-3xl font-bold text-slate-800">{datasetTitle || 'Dataset Overview'}</h1>
+                                            <p className="text-sm md:text-base text-slate-500 mt-1">{datasetSubtitle || 'Manage your experiments, inventory, and protocols.'}</p>
                                         </div>
-                                        <button onClick={handlePrint} className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center gap-2 shadow-sm no-print">
+                                        <button onClick={handlePrint} className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center gap-2 shadow-sm no-print w-full md:w-auto justify-center">
                                             🖨️ Print / Save PDF
                                         </button>
                                     </div>
-                                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-                                        <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
-                                            <div className="text-slate-500 text-xs font-bold uppercase tracking-wide">Total Tests</div>
-                                            <div className="text-3xl font-bold text-slate-800 mt-1">{tests.filter(t => t.type !== 'plate-9x9box').length}</div>
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-8">
+                                        <div className="bg-white p-4 md:p-5 rounded-lg border border-slate-200 shadow-sm">
+                                            <div className="text-slate-500 text-[10px] md:text-xs font-bold uppercase tracking-wide">Total Tests</div>
+                                            <div className="text-2xl md:text-3xl font-bold text-slate-800 mt-1">{tests.filter(t => t.type !== 'plate-9x9box').length}</div>
                                         </div>
-                                        <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
-                                            <div className="text-slate-500 text-xs font-bold uppercase tracking-wide">Stored Boxes</div>
-                                            <div className="text-3xl font-bold text-slate-800 mt-1">{tests.filter(t => t.type === 'plate-9x9box').length}</div>
+                                        <div className="bg-white p-4 md:p-5 rounded-lg border border-slate-200 shadow-sm">
+                                            <div className="text-slate-500 text-[10px] md:text-xs font-bold uppercase tracking-wide">Stored Boxes</div>
+                                            <div className="text-2xl md:text-3xl font-bold text-slate-800 mt-1">{tests.filter(t => t.type === 'plate-9x9box').length}</div>
                                         </div>
-                                        <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
-                                            <div className="text-slate-500 text-xs font-bold uppercase tracking-wide">Storage Units</div>
-                                            <div className="text-3xl font-bold text-slate-800 mt-1">{storages.length}</div>
+                                        <div className="bg-white p-4 md:p-5 rounded-lg border border-slate-200 shadow-sm">
+                                            <div className="text-slate-500 text-[10px] md:text-xs font-bold uppercase tracking-wide">Storage Units</div>
+                                            <div className="text-2xl md:text-3xl font-bold text-slate-800 mt-1">{storages.length}</div>
                                         </div>
-                                        <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
-                                            <div className="text-slate-500 text-xs font-bold uppercase tracking-wide">Upcoming Tasks</div>
-                                            <div className="text-3xl font-bold text-slate-800 mt-1">{mergedPlan.filter(t => t.date >= new Date().toISOString().split('T')[0]).length}</div>
+                                        <div className="bg-white p-4 md:p-5 rounded-lg border border-slate-200 shadow-sm">
+                                            <div className="text-slate-500 text-[10px] md:text-xs font-bold uppercase tracking-wide">Upcoming Tasks</div>
+                                            <div className="text-2xl md:text-3xl font-bold text-slate-800 mt-1">{mergedPlan.filter(t => t.date >= new Date().toISOString().split('T')[0]).length}</div>
                                         </div>
                                     </div>
                                     <h2 className="text-lg font-bold text-slate-700 mb-4">Quick Navigation</h2>
@@ -854,7 +852,7 @@ export default function App() {
                                             <button 
                                                 key={mod.id}
                                                 onClick={() => setCurrentModule(mod.id)}
-                                                className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-400 transition-all text-left group no-print"
+                                                className="bg-white p-5 md:p-6 rounded-lg border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-400 transition-all text-left group no-print"
                                             >
                                                 <div className="text-2xl mb-3 group-hover:scale-110 transition-transform duration-200">{mod.icon}</div>
                                                 <h3 className="font-bold text-slate-800 text-lg mb-1">{mod.title}</h3>
@@ -867,13 +865,13 @@ export default function App() {
                         )}
 
                         {currentModule === 'agenda' && (
-                            <div className="p-6 h-full overflow-y-auto custom-scrollbar flex flex-col">
-                                <div className="mb-6 flex justify-between items-end border-b border-slate-200 pb-4">
+                            <div className="p-4 md:p-6 h-full overflow-y-auto custom-scrollbar flex flex-col">
+                                <div className="mb-6 flex flex-col md:flex-row justify-between items-start md:items-end border-b border-slate-200 pb-4 gap-4">
                                     <div>
-                                        <h2 className="text-2xl font-black text-slate-800">Project Timeline (Agenda)</h2>
+                                        <h2 className="text-xl md:text-2xl font-black text-slate-800">Project Timeline</h2>
                                         <p className="text-sm text-slate-500">Aggregated view of all tasks scheduled across tests.</p>
                                     </div>
-                                    <button onClick={handlePrint} className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center gap-2 shadow-sm no-print">
+                                    <button onClick={handlePrint} className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center gap-2 shadow-sm no-print w-full md:w-auto justify-center">
                                         🖨️ Print / Save PDF
                                     </button>
                                 </div>
@@ -907,7 +905,7 @@ export default function App() {
                                             <button onClick={()=>setCalFilterDate(null)} className="mt-4 w-full text-xs text-red-500 font-bold hover:bg-red-50 py-2 rounded transition-colors">Clear Filter</button>
                                         )}
                                     </div>
-                                    <div className="flex-1 bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+                                    <div className="flex-1 bg-white border border-slate-200 rounded-xl p-4 md:p-6 shadow-sm">
                                         <h3 className="text-lg font-bold text-slate-700 mb-4 border-b border-slate-100 pb-2">
                                             {calFilterDate ? `Tasks for ${calFilterDate}` : 'All Scheduled Tasks'}
                                         </h3>
@@ -920,8 +918,8 @@ export default function App() {
                                                         <h4 className="font-bold text-sm text-slate-500 mb-2">{date}</h4>
                                                         <div className="flex flex-col gap-2">
                                                             {tasks.map((t, idx) => (
-                                                                <div key={idx} className="flex items-center gap-3 bg-slate-50 p-3 border border-slate-200 rounded-lg group hover:border-blue-300 transition-colors">
-                                                                    <button onClick={()=>jumpToTest(t.testId)} className="text-xs font-bold bg-blue-100 hover:bg-blue-200 text-blue-800 px-3 py-1.5 rounded-md transition-colors whitespace-nowrap shadow-sm">
+                                                                <div key={idx} className="flex flex-col md:flex-row md:items-center gap-2 md:gap-3 bg-slate-50 p-3 border border-slate-200 rounded-lg group hover:border-blue-300 transition-colors">
+                                                                    <button onClick={()=>jumpToTest(t.testId)} className="text-xs font-bold bg-blue-100 hover:bg-blue-200 text-blue-800 px-3 py-1.5 rounded-md transition-colors whitespace-nowrap shadow-sm self-start md:self-auto">
                                                                         {t.testName}
                                                                     </button>
                                                                     <span className="text-sm text-slate-700 flex-1">{t.task}</span>
@@ -937,7 +935,6 @@ export default function App() {
                             </div>
                         )}
 
-                        {/* STORAGE OVERVIEW & DETAILS INJECTED HERE */}
                         {currentModule === 'storage' && (
                             <StorageList 
                                 storages={storages} tests={tests} 
@@ -972,35 +969,35 @@ export default function App() {
                                 if (!seenTestNames.has(t.name)) { seenTestNames.add(t.name); filteredTests.push(t); }
                             });
                             return (
-                                <div className="p-6 h-full flex flex-col">
+                                <div className="p-4 md:p-6 h-full flex flex-col">
                                     <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-6 gap-4 border-b border-slate-200 pb-4">
                                         <div>
-                                            <h2 className="text-2xl font-black text-slate-800">Tests & Assays</h2>
-                                            <p className="text-sm text-slate-500">Manage all experimental plates, boxes, and spectroscopic data.</p>
+                                            <h2 className="text-xl md:text-2xl font-black text-slate-800">Tests & Assays</h2>
+                                            <p className="text-sm text-slate-500">Manage experimental plates and spectroscopic data.</p>
                                         </div>
-                                        <div className="flex flex-wrap gap-2 no-print">
-                                            <button onClick={handlePrint} className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center gap-2 shadow-sm">
-                                                🖨️ Print / Save PDF
+                                        <div className="flex flex-wrap gap-2 no-print w-full md:w-auto">
+                                            <button onClick={handlePrint} className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 shadow-sm flex-1 md:flex-none">
+                                                🖨️ PDF
                                             </button>
                                             <button onClick={() => {
                                                 const id = 't' + Date.now();
                                                 setTests(prev => [...prev, createEmptyTest(id, prev.length + 1, 'plate-96')]);
                                                 setActiveTestId(id); setCurrentModule('active-test');
-                                            }} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors">+ Plate Test</button>
+                                            }} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none">+ Plate</button>
                                             <button onClick={() => {
                                                 const id = 't' + Date.now();
                                                 setTests(prev => [...prev, createEmptyTest(id, prev.length + 1, 'nmr')]);
                                                 setActiveTestId(id); setCurrentModule('active-test');
-                                            }} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors">+ NMR Spectrum</button>
+                                            }} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none">+ NMR</button>
                                             <button onClick={() => {
                                                 const id = 't' + Date.now();
                                                 setTests(prev => [...prev, createEmptyTest(id, prev.length + 1, 'cd')]);
                                                 setActiveTestId(id); setCurrentModule('active-test');
-                                            }} className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors">+ CD Spectrum</button>
+                                            }} className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none">+ CD</button>
                                         </div>
                                     </div>
-                                    <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex flex-col gap-4 shrink-0 no-print">
-                                        <div className="flex flex-col md:flex-row gap-4 items-center">
+                                    <div className="bg-white p-3 md:p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex flex-col gap-4 shrink-0 no-print">
+                                        <div className="flex flex-col md:flex-row gap-3 md:gap-4 items-center">
                                             <div className="flex-1 w-full relative">
                                                 <span className="absolute left-3 top-2.5 text-slate-400">🔍</span>
                                                 <input type="text" placeholder="Search tests by name..." value={testSearch} onChange={e => setExpandedGroups(p=>({...p, testSearch: e.target.value}))} className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"/>
@@ -1016,14 +1013,14 @@ export default function App() {
                                         {showCatMgr && (
                                             <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 flex flex-col gap-3">
                                                 <h4 className="text-xs font-bold text-slate-500 uppercase">Manage Test Categories</h4>
-                                                <div className="flex gap-2">
-                                                    <input type="text" placeholder="New category name..." value={newCatInput} onChange={e => setExpandedGroups(p=>({...p, newTestCatInput: e.target.value}))} className="flex-1 border border-slate-300 rounded px-3 py-1.5 text-sm outline-none focus:border-blue-500"/>
+                                                <div className="flex flex-col md:flex-row gap-2">
+                                                    <input type="text" placeholder="New category name..." value={newCatInput} onChange={e => setExpandedGroups(p=>({...p, newTestCatInput: e.target.value}))} className="flex-1 border border-slate-300 rounded px-3 py-2 text-sm outline-none focus:border-blue-500"/>
                                                     <button onClick={() => {
                                                         const v = newCatInput.trim();
                                                         if(v && !testCategories.includes(v)) {
                                                             setTestCategories([...testCategories, v]); setExpandedGroups(p=>({...p, newTestCatInput: ''}));
                                                         }
-                                                    }} className="bg-blue-600 text-white font-bold px-4 py-1.5 rounded text-sm shadow-sm hover:bg-blue-700 transition-colors">Add</button>
+                                                    }} className="bg-blue-600 text-white font-bold px-4 py-2 rounded text-sm shadow-sm hover:bg-blue-700 transition-colors">Add Category</button>
                                                 </div>
                                             </div>
                                         )}
@@ -1068,25 +1065,25 @@ export default function App() {
                             const activeProtocol = activeProtoId ? datasetProtocols.find(p => p.id === activeProtoId) : null;
                             if (activeProtocol) {
                                 return (
-                                    <div className="p-6 h-full flex flex-col bg-white">
-                                        <div className="flex items-center gap-3 mb-6 border-b border-slate-100 pb-4 shrink-0">
-                                            <button onClick={() => setExpandedGroups(p=>({...p, activeProtoId: null}))} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 p-2 rounded-lg transition-colors shadow-sm no-print">◀ Back</button>
-                                            <div className="flex-1">
-                                                <input type="text" value={activeProtocol.title} onChange={e => setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? {...p, title: e.target.value} : p))} className="text-2xl font-black text-slate-800 bg-transparent border-none outline-none w-full focus:ring-1 focus:ring-blue-500 rounded px-1" placeholder="Protocol Title"/>
+                                    <div className="p-4 md:p-6 h-full flex flex-col bg-white">
+                                        <div className="flex flex-col md:flex-row items-start md:items-center gap-3 mb-6 border-b border-slate-100 pb-4 shrink-0">
+                                            <button onClick={() => setExpandedGroups(p=>({...p, activeProtoId: null}))} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 p-2 rounded-lg transition-colors shadow-sm no-print self-start">◀ Back</button>
+                                            <div className="flex-1 w-full">
+                                                <input type="text" value={activeProtocol.title} onChange={e => setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? {...p, title: e.target.value} : p))} className="text-xl md:text-2xl font-black text-slate-800 bg-transparent border-none outline-none w-full focus:ring-1 focus:ring-blue-500 rounded px-1" placeholder="Protocol Title"/>
                                             </div>
-                                            <select value={activeProtocol.category} onChange={e => setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? {...p, category: e.target.value} : p))} className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm bg-slate-50 font-semibold text-slate-700 outline-none cursor-pointer no-print">
+                                            <select value={activeProtocol.category} onChange={e => setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? {...p, category: e.target.value} : p))} className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm bg-slate-50 font-semibold text-slate-700 outline-none cursor-pointer w-full md:w-auto no-print">
                                                 {protocolCategories.map(c => <option key={c} value={c}>{c}</option>)}
                                             </select>
                                         </div>
-                                        <div className="flex-1 flex flex-col lg:flex-row gap-6 overflow-hidden">
-                                            <div className="flex-1 flex flex-col h-full min-h-[300px]">
+                                        <div className="flex-1 flex flex-col lg:flex-row gap-6 overflow-y-auto lg:overflow-hidden">
+                                            <div className="flex-1 flex flex-col h-auto lg:h-full min-h-[300px]">
                                                 <label className="text-xs font-bold text-slate-500 uppercase mb-2">Protocol Description & Steps</label>
                                                 <RichTextEditor
                                                     value={activeProtocol.content || ''}
                                                     onChange={val => setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? {...p, content: val} : p))}
                                                     placeholder="Write the detailed protocol steps here. You can paste images directly..."
                                                 />
-                                                <div className="mt-6 border-t border-slate-100 pt-4 no-print">
+                                                <div className="mt-6 border-t border-slate-100 pt-4 no-print shrink-0">
                                                     <h4 className="text-xs font-bold text-slate-500 uppercase mb-3">🧪 Tests Using This Protocol</h4>
                                                     <div className="flex flex-wrap gap-2">
                                                         {tests.filter(t => t.linkedProtocolId === activeProtocol.id).length === 0 && (
@@ -1104,7 +1101,7 @@ export default function App() {
                                                     </div>
                                                 </div>
                                             </div>
-                                            <div className="w-full lg:w-80 flex flex-col gap-4 overflow-y-auto custom-scrollbar shrink-0 border-l border-slate-100 pl-4 no-print">
+                                            <div className="w-full lg:w-80 flex flex-col gap-4 lg:overflow-y-auto custom-scrollbar shrink-0 lg:border-l border-t lg:border-t-0 border-slate-100 pt-4 lg:pt-0 lg:pl-4 no-print">
                                                 <label className="text-xs font-bold text-slate-500 uppercase">Attached Resources</label>
                                                 <div className="flex flex-col gap-2">
                                                     {(activeProtocol.links || []).length === 0 && <span className="text-sm text-slate-400 italic">No external links or documents attached.</span>}
@@ -1117,7 +1114,7 @@ export default function App() {
                                                                 <span className="text-lg">{link.url.match(/\.(jpeg|jpg|gif|png|svg)$/i) ? '🖼️' : '🔗'}</span>
                                                                 <a href={link.url} target="_blank" rel="noopener noreferrer" className="text-sm font-bold text-slate-700 truncate group-hover:text-blue-600" onClick={e=>e.stopPropagation()}>{link.name}</a>
                                                             </div>
-                                                            <button onClick={() => setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? {...p, links: p.links.filter(l => l.id !== link.id)} : p))} className="text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 font-bold px-1 transition-opacity">&times;</button>
+                                                            <button onClick={() => setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? {...p, links: p.links.filter(l => l.id !== link.id)} : p))} className="text-slate-400 hover:text-red-500 font-bold px-2 py-1 transition-opacity">&times;</button>
                                                         </div>
                                                     ))}
                                                 </div>
@@ -1157,27 +1154,27 @@ export default function App() {
                                 );
                             }
                             return (
-                                <div className="p-6 h-full flex flex-col">
+                                <div className="p-4 md:p-6 h-full flex flex-col">
                                     <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-6 gap-4 border-b border-slate-200 pb-4">
                                         <div>
-                                            <h2 className="text-2xl font-black text-slate-800">Protocols Library</h2>
+                                            <h2 className="text-xl md:text-2xl font-black text-slate-800">Protocols Library</h2>
                                             <p className="text-sm text-slate-500">Draft, store, and link your experimental procedures.</p>
                                         </div>
-                                        <div className="flex gap-2 no-print">
-                                            <button onClick={handlePrint} className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center gap-2 shadow-sm">
-                                                🖨️ Print / Save PDF
+                                        <div className="flex flex-wrap gap-2 no-print w-full md:w-auto">
+                                            <button onClick={handlePrint} className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 shadow-sm flex-1 md:flex-none">
+                                                🖨️ PDF
                                             </button>
                                             <button onClick={() => {
                                                 const newProto = { id: 'pr' + Date.now(), title: 'Untitled Protocol', category: protocolCategories[0] || 'Uncategorized', content: '', links: [] };
                                                 setDatasetProtocols([newProto, ...datasetProtocols]);
                                                 setExpandedGroups(p=>({...p, activeProtoId: newProto.id}));
-                                            }} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-6 rounded-lg shadow-sm text-sm transition-colors flex items-center gap-2">
+                                            }} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-6 rounded-lg shadow-sm text-sm transition-colors flex-1 md:flex-none flex items-center justify-center gap-2">
                                                 ➕ New Protocol
                                             </button>
                                         </div>
                                     </div>
-                                    <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex flex-col gap-4 shrink-0 no-print">
-                                        <div className="flex flex-col md:flex-row gap-4 items-center">
+                                    <div className="bg-white p-3 md:p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex flex-col gap-4 shrink-0 no-print">
+                                        <div className="flex flex-col md:flex-row gap-3 md:gap-4 items-center">
                                             <div className="flex-1 w-full relative">
                                                 <span className="absolute left-3 top-2.5 text-slate-400">🔍</span>
                                                 <input type="text" placeholder="Search protocols..." value={protoSearch} onChange={e => setExpandedGroups(p=>({...p, protoSearch: e.target.value}))} className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"/>
@@ -1193,14 +1190,14 @@ export default function App() {
                                         {showProtoCatMgr && (
                                             <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 flex flex-col gap-3">
                                                 <h4 className="text-xs font-bold text-slate-500 uppercase">Manage Protocol Categories</h4>
-                                                <div className="flex gap-2">
-                                                    <input type="text" placeholder="New category name..." value={newProtoCatInput} onChange={e => setExpandedGroups(p=>({...p, newProtoCatInput: e.target.value}))} className="flex-1 border border-slate-300 rounded px-3 py-1.5 text-sm outline-none focus:border-emerald-500"/>
+                                                <div className="flex flex-col md:flex-row gap-2">
+                                                    <input type="text" placeholder="New category name..." value={newProtoCatInput} onChange={e => setExpandedGroups(p=>({...p, newProtoCatInput: e.target.value}))} className="flex-1 border border-slate-300 rounded px-3 py-2 text-sm outline-none focus:border-emerald-500"/>
                                                     <button onClick={() => {
                                                         const v = newProtoCatInput.trim();
                                                         if(v && !protocolCategories.includes(v)) {
                                                             setProtocolCategories([...protocolCategories, v]); setExpandedGroups(p=>({...p, newProtoCatInput: ''}));
                                                         }
-                                                    }} className="bg-emerald-600 text-white font-bold px-4 py-1.5 rounded text-sm shadow-sm hover:bg-emerald-700 transition-colors">Add</button>
+                                                    }} className="bg-emerald-600 text-white font-bold px-4 py-2 rounded text-sm shadow-sm hover:bg-emerald-700 transition-colors">Add</button>
                                                 </div>
                                                 <div className="flex flex-wrap gap-2 mt-2">
                                                     {protocolCategories.map(c => (
@@ -1218,11 +1215,11 @@ export default function App() {
                                         ) : (
                                             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                                                 {filteredProtocols.map(proto => (
-                                                    <div key={proto.id} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm hover:shadow-md hover:border-emerald-400 cursor-pointer transition-all flex flex-col group relative" onClick={() => setExpandedGroups(p=>({...p, activeProtoId: proto.id}))}>
+                                                    <div key={proto.id} className="bg-white border border-slate-200 rounded-xl p-4 md:p-5 shadow-sm hover:shadow-md hover:border-emerald-400 cursor-pointer transition-all flex flex-col group relative" onClick={() => setExpandedGroups(p=>({...p, activeProtoId: proto.id}))}>
                                                         <button onClick={(e) => {
                                                             e.stopPropagation();
                                                             if(confirm("Delete this protocol?")) { setDatasetProtocols(datasetProtocols.filter(p => p.id !== proto.id)); }
-                                                        }} className="absolute top-3 right-3 text-slate-300 hover:text-red-500 text-lg opacity-0 group-hover:opacity-100 transition-opacity no-print" title="Delete Protocol">&times;</button>
+                                                        }} className="absolute top-3 right-3 text-slate-300 hover:text-red-500 text-lg md:opacity-0 group-hover:opacity-100 transition-opacity no-print" title="Delete Protocol">&times;</button>
                                                         <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded self-start mb-3 border border-emerald-200">{proto.category}</span>
                                                         <h3 className="font-bold text-slate-800 text-lg truncate pr-6">{proto.title}</h3>
                                                         <div className="mt-4 pt-4 border-t border-slate-100 flex gap-4 text-xs font-bold text-slate-500">
@@ -1257,8 +1254,8 @@ export default function App() {
                             };
                             const TestHeader = (
                                 <div className="flex flex-col shrink-0 z-20 no-print">
-                                    <div className="bg-white border-b border-slate-200 px-6 py-4 flex flex-col md:flex-row justify-between items-start md:items-center shadow-sm gap-4">
-                                        <div className="flex items-center gap-4 w-full md:w-auto">
+                                    <div className="bg-white border-b border-slate-200 px-4 md:px-6 py-4 flex flex-col lg:flex-row justify-between items-start lg:items-center shadow-sm gap-4">
+                                        <div className="flex flex-col md:flex-row md:items-center gap-3 md:gap-4 w-full lg:w-auto">
                                             <button onClick={() => {
                                                 if (isBox && activeTest.storageId) {
                                                     setActiveStorageId(activeTest.storageId);
@@ -1266,8 +1263,8 @@ export default function App() {
                                                 } else {
                                                     setCurrentModule('tests');
                                                 }
-                                            }} className="text-slate-400 hover:text-blue-600 transition-colors bg-slate-50 hover:bg-blue-50 p-2 rounded-lg shadow-sm border border-slate-200">◀ Back</button>
-                                            <div className="flex-1">
+                                            }} className="text-slate-400 hover:text-blue-600 transition-colors bg-slate-50 hover:bg-blue-50 p-2 rounded-lg shadow-sm border border-slate-200 self-start md:self-auto">◀ Back</button>
+                                            <div className="flex-1 w-full">
                                                 <input value={activeTest.name} onChange={e=>updateActiveTest({name: e.target.value})} className="text-xl font-black text-slate-800 bg-transparent border-none outline-none focus:ring-1 focus:ring-blue-500 rounded px-1 w-full md:w-64" placeholder="Test Name"/>
                                                 <div className="text-xs text-slate-500 font-medium px-1 mt-1 flex items-center gap-2">
                                                     <span className="uppercase text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">{activeTest.testCategory}</span>
@@ -1275,22 +1272,22 @@ export default function App() {
                                                 </div>
                                             </div>
                                         </div>
-                                        <div className="flex items-center gap-3 w-full md:w-auto">
-                                            <div className="flex flex-col flex-1 md:flex-none">
+                                        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full lg:w-auto">
+                                            <div className="flex flex-col flex-1 w-full sm:w-auto">
                                                 <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Instance</label>
-                                                <input type="text" value={activeTest.instanceName || ''} onChange={e=>updateActiveTest({instanceName: e.target.value})} className="bg-slate-50 border border-slate-200 text-xs px-3 py-1.5 rounded-lg outline-none focus:border-blue-500 w-full md:w-32" placeholder="e.g. 24h / Rep 1"/>
+                                                <input type="text" value={activeTest.instanceName || ''} onChange={e=>updateActiveTest({instanceName: e.target.value})} className="bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-lg outline-none focus:border-blue-500 w-full sm:w-32" placeholder="e.g. 24h / Rep 1"/>
                                             </div>
-                                            <div className="flex flex-col flex-1 md:flex-none">
+                                            <div className="flex flex-col flex-1 w-full sm:w-auto">
                                                 <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Date</label>
-                                                <input type="date" value={activeTest.date} onChange={e=>updateActiveTest({date: e.target.value})} className="bg-slate-50 border border-slate-200 text-xs px-3 py-1.5 rounded-lg outline-none focus:border-blue-500 w-full"/>
+                                                <input type="date" value={activeTest.date} onChange={e=>updateActiveTest({date: e.target.value})} className="bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-lg outline-none focus:border-blue-500 w-full"/>
                                             </div>
                                         </div>
                                     </div>
                                     {siblingTests.length > 0 && (
-                                        <div className="bg-blue-50 border-b border-blue-200 px-6 py-2 flex items-center overflow-x-auto gap-2 shadow-inner">
-                                            <span className="text-[10px] font-bold text-blue-800 uppercase tracking-wide mr-2">⏱️ Instances:</span>
+                                        <div className="bg-blue-50 border-b border-blue-200 px-4 md:px-6 py-2 flex items-center overflow-x-auto custom-scrollbar gap-2 shadow-inner">
+                                            <span className="text-[10px] font-bold text-blue-800 uppercase tracking-wide mr-2 shrink-0">⏱️ Instances:</span>
                                             {siblingTests.map((t, idx) => (
-                                                <button key={t.id} onClick={() => setActiveTestId(t.id)} className={`px-3 py-1 text-xs font-bold rounded-full transition-colors flex items-center gap-1.5 shadow-sm group ${activeTestId === t.id ? 'bg-blue-600 text-white' : 'bg-white text-blue-700 border border-blue-300 hover:bg-blue-100'}`}>
+                                                <button key={t.id} onClick={() => setActiveTestId(t.id)} className={`shrink-0 px-3 py-1.5 md:py-1 text-xs font-bold rounded-full transition-colors flex items-center gap-1.5 shadow-sm group ${activeTestId === t.id ? 'bg-blue-600 text-white' : 'bg-white text-blue-700 border border-blue-300 hover:bg-blue-100'}`}>
                                                     📅 {t.instanceName || t.date || `Inst ${idx+1}`}
                                                     {siblingTests.length > 1 && (
                                                         <span onClick={(e) => {
@@ -1302,11 +1299,11 @@ export default function App() {
                                                                     return next;
                                                                 });
                                                             }
-                                                        }} className={`ml-1 opacity-0 group-hover:opacity-100 ${activeTestId === t.id ? 'text-blue-300 hover:text-white' : 'text-red-300 hover:text-red-500'}`}>&times;</span>
+                                                        }} className={`ml-1 px-1 opacity-100 md:opacity-0 group-hover:opacity-100 ${activeTestId === t.id ? 'text-blue-300 hover:text-white' : 'text-red-400 hover:text-red-600'}`}>&times;</span>
                                                     )}
                                                 </button>
                                             ))}
-                                            <button onClick={handleDuplicateInstance} className="px-3 py-1 text-[10px] font-bold text-blue-600 border border-dashed border-blue-400 rounded-full hover:bg-blue-100 transition-colors bg-white shadow-sm ml-2">
+                                            <button onClick={handleDuplicateInstance} className="shrink-0 px-3 py-1.5 md:py-1 text-[10px] font-bold text-blue-600 border border-dashed border-blue-400 rounded-full hover:bg-blue-100 transition-colors bg-white shadow-sm ml-2">
                                                 + Add Timepoint/Copy
                                             </button>
                                         </div>
@@ -1366,13 +1363,13 @@ export default function App() {
                             });
                             return (
                                 <div className="flex flex-col h-full w-full">
-                                    <div className="bg-white p-4 border-b border-slate-200 shadow-sm flex items-center justify-between no-print shrink-0">
-                                        <div className="flex-1 max-w-md relative">
+                                    <div className="bg-white p-3 md:p-4 border-b border-slate-200 shadow-sm flex flex-col md:flex-row items-center justify-between no-print shrink-0 gap-3">
+                                        <div className="w-full md:flex-1 md:max-w-md relative">
                                             <span className="absolute left-3 top-2.5 text-slate-400">🔍</span>
                                             <input type="text" placeholder="Generic search in test data..." value={notebookSearch} onChange={e => setExpandedGroups(p => ({...p, notebookSearch: e.target.value}))} className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-500"/>
                                         </div>
-                                        <button onClick={handlePrint} className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center gap-2 shadow-sm">
-                                            🖨️ Print / Save PDF (App)
+                                        <button onClick={handlePrint} className="w-full md:w-auto bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 shadow-sm">
+                                            🖨️ Print / Save PDF
                                         </button>
                                     </div>
                                     <div className="flex-1 overflow-hidden relative">
