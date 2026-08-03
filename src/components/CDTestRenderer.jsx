@@ -24,19 +24,87 @@ const STRUCTURE_COLORS = {
   'Other': '#8b5cf6'
 };
 
-// --- CD SIMULATOR DATA ---
-const CD_REFERENCE_SPECTRA = {
-  'Alpha-helix': { peaks: [[190, -5.5], [192, -3.5], [208, -3.2], [222, -2.8]], desc: 'Characteristic double minimum at 208 & 222 nm' },
-  'Beta-sheet': { peaks: [[195, -2.5], [218, 1.2]], desc: 'Single minimum near 218 nm, positive band at 195' },
-  'Turn': { peaks: [[190, -1.0], [205, -0.5], [225, 0.8]], desc: 'Variable spectrum with weak bands' },
-  'Random Coil': { peaks: [[195, -1.5], [200, 0.2]], desc: 'Weak negative band near 195 nm' },
-  'A-DNA': { peaks: [[185, -2.0], [195, 1.5], [210, 0.8], [245, -0.5], [270, 0.3]], desc: 'Right-handed A-form' },
-  'B-DNA': { peaks: [[185, -1.0], [195, 2.0], [220, -0.3], [245, 0.5], [275, 0.8]], desc: 'Right-handed B-form' },
-  'Z-DNA': { peaks: [[195, -1.5], [210, -1.0], [235, 1.2], [260, -0.8], [290, 0.5]], desc: 'Left-handed Z-form, inverted signature' },
-  'G-Quad (Parallel)': { peaks: [[240, 2.5], [260, 1.8], [295, -0.5]], desc: 'Positive peak at 260 nm' },
-  'G-Quad (Antiparallel)': { peaks: [[245, -1.0], [265, 2.0], [290, 0.8]], desc: 'Positive peak at 265 nm' },
-  'G-Quad (Hybrid)': { peaks: [[240, 1.5], [260, 2.2], [290, -0.3]], desc: 'Mixed topology signature' }
-};
+// --- SPLINE INTERPOLATION LOGIC ---
+class NaturalCubicSpline {
+    constructor(xs, ys) {
+        this.xs = xs;
+        this.ys = ys;
+        this.n = xs.length;
+        this.a = ys.slice();
+        this.b = new Array(this.n).fill(0);
+        this.c = new Array(this.n).fill(0);
+        this.d = new Array(this.n).fill(0);
+        this.calculateCoefficients();
+    }
+    calculateCoefficients() {
+        const h = [];
+        for (let i = 0; i < this.n - 1; i++) h.push(this.xs[i + 1] - this.xs[i]);
+        const alpha = new Array(this.n - 1).fill(0);
+        for (let i = 1; i < this.n - 1; i++) {
+            alpha[i] = (3 / h[i] * (this.a[i + 1] - this.a[i])) - (3 / h[i - 1] * (this.a[i] - this.a[i - 1]));
+        }
+        const l = new Array(this.n).fill(0);
+        const mu = new Array(this.n).fill(0);
+        const z = new Array(this.n).fill(0);
+        l[0] = 1;
+        for (let i = 1; i < this.n - 1; i++) {
+            l[i] = 2 * (this.xs[i + 1] - this.xs[i - 1]) - h[i - 1] * mu[i - 1];
+            mu[i] = h[i] / l[i];
+            z[i] = (alpha[i] - h[i - 1] * z[i - 1]) / l[i];
+        }
+        l[this.n - 1] = 1;
+        for (let j = this.n - 2; j >= 0; j--) {
+            this.c[j] = z[j] - mu[j] * this.c[j + 1];
+            this.b[j] = (this.a[j + 1] - this.a[j]) / h[j] - h[j] * (this.c[j + 1] + 2 * this.c[j]) / 3;
+            this.d[j] = (this.c[j + 1] - this.c[j]) / (3 * h[j]);
+        }
+    }
+    at(x) {
+        let i = 0;
+        if (x >= this.xs[this.n - 1]) i = this.n - 2;
+        else if (x <= this.xs[0]) i = 0;
+        else {
+            let low = 0, high = this.n - 1;
+            while (low <= high) {
+                let mid = Math.floor((low + high) / 2);
+                if (this.xs[mid] < x) low = mid + 1;
+                else high = mid - 1;
+            }
+            i = Math.max(0, high);
+        }
+        if (i >= this.n - 1) i = this.n - 2;
+        const dx = x - this.xs[i];
+        return this.a[i] + this.b[i] * dx + this.c[i] * dx * dx + this.d[i] * dx * dx * dx;
+    }
+}
+
+// --- CD KNOT DATA ---
+const alphaKnots = [{x: 176, y: 12000}, {x: 180, y: 22000}, {x: 185, y: 48000}, {x: 190, y: 66000}, {x: 192, y: 65000}, {x: 195, y: 55000}, {x: 200, y: 20000}, {x: 203, y: 0}, {x: 205, y: -15000}, {x: 208, y: -32000}, {x: 215, y: -29000}, {x: 222, y: -35000}, {x: 230, y: -20000}, {x: 240, y: -2000}, {x: 250, y: 0}, {x: 260, y: 0}];
+const betaKnots = [{x: 176, y: -10000}, {x: 180, y: -8000}, {x: 185, y: -4000}, {x: 190, y: 2000}, {x: 196, y: 12000}, {x: 205, y: 4000}, {x: 210, y: 0}, {x: 217, y: -5000}, {x: 225, y: -4000}, {x: 240, y: -500}, {x: 260, y: 0}];
+const turnKnots = [{x: 176, y: 0}, {x: 185, y: 10000}, {x: 193, y: 20000}, {x: 200, y: 8000}, {x: 203, y: 0}, {x: 210, y: -10500}, {x: 220, y: -8000}, {x: 230, y: -4000}, {x: 245, y: 0}, {x: 260, y: 0}];
+const coilKnots = [{x: 176, y: -5000}, {x: 185, y: 0}, {x: 187, y: 2000}, {x: 190, y: 0}, {x: 198, y: -16000}, {x: 212, y: -2000}, {x: 220, y: 1000}, {x: 230, y: 1500}, {x: 245, y: 0}, {x: 260, y: 0}];
+
+const bDnaKnots = [{x: 180, y: -10}, {x: 184, y: 30}, {x: 187, y: 65}, {x: 192, y: 40}, {x: 195, y: 15}, {x: 200, y: -5}, {x: 205, y: -10}, {x: 210, y: -12}, {x: 215, y: -8}, {x: 220, y: -2}, {x: 230, y: 0}, {x: 240, y: -2}, {x: 250, y: -6}, {x: 260, y: -2}, {x: 275, y: 5}, {x: 290, y: 2}, {x: 300, y: 0}, {x: 320, y: 0}];
+const aDnaKnots = [{x: 180, y: -15}, {x: 185, y: 40}, {x: 190, y: 81}, {x: 195, y: 50}, {x: 200, y: 0}, {x: 205, y: -25}, {x: 210, y: -30}, {x: 215, y: -20}, {x: 220, y: -10}, {x: 225, y: -6}, {x: 230, y: -5}, {x: 240, y: -5}, {x: 250, y: 0}, {x: 265, y: 9}, {x: 280, y: 5}, {x: 300, y: 0}, {x: 320, y: 0}];
+const zDnaKnots = [{x: 180, y: 30}, {x: 183, y: 76}, {x: 186, y: 40}, {x: 188, y: 20}, {x: 190, y: -10}, {x: 195, y: -48}, {x: 200, y: -40}, {x: 205, y: -30}, {x: 210, y: -22}, {x: 220, y: -5}, {x: 230, y: 2}, {x: 240, y: 2}, {x: 250, y: 4}, {x: 260, y: 4}, {x: 280, y: -5}, {x: 295, y: -6}, {x: 310, y: 0}, {x: 320, y: 0}];
+
+const gqParallelKnots = [{x: 220, y: 40}, {x: 225, y: 0}, {x: 230, y: -50}, {x: 235, y: -100}, {x: 240, y: -115}, {x: 245, y: -80}, {x: 250, y: 50}, {x: 255, y: 300}, {x: 262, y: 475}, {x: 270, y: 350}, {x: 280, y: 80}, {x: 290, y: 30}, {x: 300, y: 25}, {x: 310, y: 0}, {x: 320, y: 0}];
+const gqHybridKnots = [{x: 220, y: 110}, {x: 225, y: 50}, {x: 230, y: 0}, {x: 236, y: -32}, {x: 245, y: 0}, {x: 250, y: 40}, {x: 260, y: 110}, {x: 270, y: 142}, {x: 280, y: 160}, {x: 288, y: 190}, {x: 300, y: 140}, {x: 310, y: 20}, {x: 320, y: 5}];
+const gqAntiparallelKnots = [{x: 220, y: 65}, {x: 225, y: 30}, {x: 233, y: 4}, {x: 240, y: 25}, {x: 248, y: 50}, {x: 255, y: 0}, {x: 260, y: -50}, {x: 265, y: -70}, {x: 272, y: -30}, {x: 280, y: 0}, {x: 290, y: 60}, {x: 297, y: 78}, {x: 305, y: 50}, {x: 315, y: 0}, {x: 320, y: -4}];
+
+const splineAlpha = new NaturalCubicSpline(alphaKnots.map(p=>p.x), alphaKnots.map(p=>p.y));
+const splineBeta = new NaturalCubicSpline(betaKnots.map(p=>p.x), betaKnots.map(p=>p.y));
+const splineTurn = new NaturalCubicSpline(turnKnots.map(p=>p.x), turnKnots.map(p=>p.y));
+const splineCoil = new NaturalCubicSpline(coilKnots.map(p=>p.x), coilKnots.map(p=>p.y));
+
+const splineADNA = new NaturalCubicSpline(aDnaKnots.map(p=>p.x), aDnaKnots.map(p=>p.y));
+const splineBDNA = new NaturalCubicSpline(bDnaKnots.map(p=>p.x), bDnaKnots.map(p=>p.y));
+const splineZDNA = new NaturalCubicSpline(zDnaKnots.map(p=>p.x), zDnaKnots.map(p=>p.y));
+
+const splineGQP = new NaturalCubicSpline(gqParallelKnots.map(p=>p.x), gqParallelKnots.map(p=>p.y));
+const splineGQH = new NaturalCubicSpline(gqHybridKnots.map(p=>p.x), gqHybridKnots.map(p=>p.y));
+const splineGQA = new NaturalCubicSpline(gqAntiparallelKnots.map(p=>p.x), gqAntiparallelKnots.map(p=>p.y));
+
 
 // --- COLLAPSIBLE SECTION COMPONENT ---
 export const CollapsibleSection = ({ title, icon, defaultOpen = true, children, headerExtra, className = "" }) => {
@@ -73,7 +141,6 @@ const ProteinCDMixer = ({ isExpanded, onToggleExpand }) => {
   const [compositions, setCompositions] = useState({ helix: 0, sheet: 0, turn: 0, coil: 100 });
   const [autoNormalize, setAutoNormalize] = useState(true);
 
-  // FIXED: Improved auto-normalization logic to prevent erratic jumping
   const updateComp = (key, val) => {
     let newVal = Math.max(0, Math.min(100, val));
     let newComps = { ...compositions, [key]: newVal };
@@ -108,29 +175,18 @@ const ProteinCDMixer = ({ isExpanded, onToggleExpand }) => {
   const generateSpectrum = useCallback(() => {
     const wavelengths = [];
     const values = [];
-    for (let w = 190; w <= 260; w += 1) {
+    
+    const pA = compositions.helix / 100;
+    const pB = compositions.sheet / 100;
+    const pT = compositions.turn / 100;
+    const pC = compositions.coil / 100;
+
+    for (let w = 176; w <= 260; w += 1) {
       wavelengths.push(w);
-      let cd = 0;
-      // Alpha-helix contribution
-      const helixFrac = compositions.helix / 100;
-      cd += helixFrac * (-5.5 * Math.exp(-0.5 * Math.pow((w - 190) / 5, 2))
-        - 3.2 * Math.exp(-0.5 * Math.pow((w - 208) / 6, 2))
-        - 2.8 * Math.exp(-0.5 * Math.pow((w - 222) / 8, 2)));
-      // Beta-sheet contribution
-      const sheetFrac = compositions.sheet / 100;
-      cd += sheetFrac * (-2.5 * Math.exp(-0.5 * Math.pow((w - 195) / 8, 2))
-        + 1.2 * Math.exp(-0.5 * Math.pow((w - 218) / 10, 2)));
-      // Turn contribution
-      const turnFrac = compositions.turn / 100;
-      cd += turnFrac * (-1.0 * Math.exp(-0.5 * Math.pow((w - 195) / 10, 2))
-        - 0.5 * Math.exp(-0.5 * Math.pow((w - 205) / 8, 2))
-        + 0.8 * Math.exp(-0.5 * Math.pow((w - 225) / 12, 2)));
-      // Random coil contribution
-      const coilFrac = compositions.coil / 100;
-      cd += coilFrac * (-1.5 * Math.exp(-0.5 * Math.pow((w - 195) / 6, 2))
-        + 0.2 * Math.exp(-0.5 * Math.pow((w - 200) / 10, 2)));
-      // Add small noise
-      cd += (Math.random() - 0.5) * 0.1;
+      const cd = (splineAlpha.at(w) * pA) +
+                 (splineBeta.at(w) * pB) +
+                 (splineTurn.at(w) * pT) +
+                 (splineCoil.at(w) * pC);
       values.push(cd);
     }
     return { wavelengths, values };
@@ -142,11 +198,16 @@ const ProteinCDMixer = ({ isExpanded, onToggleExpand }) => {
     const { wavelengths, values } = generateSpectrum();
     const W = canvasRef.current.width;
     const H = canvasRef.current.height;
-    const pad = { top: 20, right: 20, bottom: 40, left: 50 };
+    const pad = { top: 20, right: 20, bottom: 40, left: 60 };
     const plotW = W - pad.left - pad.right;
     const plotH = H - pad.top - pad.bottom;
-    const xMin = 190, xMax = 260;
-    const yMin = Math.min(...values, -6), yMax = Math.max(...values, 3);
+    const xMin = 176, xMax = 260;
+    
+    // Establishing dynamic Y bounds with strict minimums based on actual MRE values
+    const dataMin = Math.min(...values);
+    const dataMax = Math.max(...values);
+    const yMin = Math.min(dataMin, -40000); 
+    const yMax = Math.max(dataMax, 80000); 
 
     ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = '#f8fafc';
@@ -155,11 +216,14 @@ const ProteinCDMixer = ({ isExpanded, onToggleExpand }) => {
     // Grid
     ctx.strokeStyle = '#e2e8f0';
     ctx.lineWidth = 0.5;
-    for (let x = xMin; x <= xMax; x += 10) {
+    for (let x = Math.ceil(xMin/10)*10; x <= xMax; x += 10) {
       const px = pad.left + ((x - xMin) / (xMax - xMin)) * plotW;
       ctx.beginPath(); ctx.moveTo(px, pad.top); ctx.lineTo(px, pad.top + plotH); ctx.stroke();
     }
-    for (let y = Math.ceil(yMin); y <= Math.floor(yMax); y += 1) {
+    
+    const yRange = yMax - yMin;
+    const yTickStep = yRange > 100000 ? 20000 : 10000;
+    for (let y = Math.ceil(yMin / yTickStep) * yTickStep; y <= yMax; y += yTickStep) {
       const py = pad.top + plotH - ((y - yMin) / (yMax - yMin)) * plotH;
       ctx.beginPath(); ctx.moveTo(pad.left, py); ctx.lineTo(pad.left + plotW, py); ctx.stroke();
     }
@@ -175,8 +239,8 @@ const ProteinCDMixer = ({ isExpanded, onToggleExpand }) => {
     }
 
     // Spectrum line
-    ctx.strokeStyle = '#3b82f6';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#8e44ad';
+    ctx.lineWidth = 2.5;
     ctx.beginPath();
     wavelengths.forEach((w, i) => {
       const px = pad.left + ((w - xMin) / (xMax - xMin)) * plotW;
@@ -189,21 +253,21 @@ const ProteinCDMixer = ({ isExpanded, onToggleExpand }) => {
     ctx.fillStyle = '#64748b';
     ctx.font = '11px sans-serif';
     ctx.textAlign = 'center';
-    for (let x = xMin; x <= xMax; x += 10) {
+    for (let x = Math.ceil(xMin/10)*10; x <= xMax; x += 10) {
       const px = pad.left + ((x - xMin) / (xMax - xMin)) * plotW;
       ctx.fillText(x.toString(), px, pad.top + plotH + 15);
     }
     ctx.fillText('Wavelength (nm)', pad.left + plotW / 2, H - 5);
     ctx.textAlign = 'right';
-    for (let y = Math.ceil(yMin); y <= Math.floor(yMax); y += 1) {
+    for (let y = Math.ceil(yMin / yTickStep) * yTickStep; y <= yMax; y += yTickStep) {
       const py = pad.top + plotH - ((y - yMin) / (yMax - yMin)) * plotH;
-      ctx.fillText(y.toFixed(0), pad.left - 5, py + 4);
+      ctx.fillText((y/1000).toFixed(0) + 'k', pad.left - 5, py + 4);
     }
     ctx.save();
     ctx.translate(12, pad.top + plotH / 2);
     ctx.rotate(-Math.PI / 2);
     ctx.textAlign = 'center';
-    ctx.fillText('CD (mdeg)', 0, 0);
+    ctx.fillText('MRE (deg cm² dmol⁻¹)', 0, 0);
     ctx.restore();
   }, [generateSpectrum]);
 
@@ -270,17 +334,25 @@ const CDSpectraLibrary = ({ isExpanded, onToggleExpand }) => {
   const generateRefSpectrum = (type) => {
     const wavelengths = [];
     const values = [];
-    const ref = CD_REFERENCE_SPECTRA[type];
-    if (!ref) return { wavelengths, values };
-    for (let w = 180; w <= 300; w += 1) {
-      wavelengths.push(w);
-      let cd = 0;
-      ref.peaks.forEach(([peakW, peakA]) => {
-        const sigma = type.includes('DNA') || type.includes('G-Quad') ? 8 : 6;
-        cd += peakA * Math.exp(-0.5 * Math.pow((w - peakW) / sigma, 2));
-      });
-      cd += (Math.random() - 0.5) * 0.05;
-      values.push(cd);
+    let spline;
+    let start = 176, end = 260; 
+
+    if (type === 'Alpha-helix') spline = splineAlpha;
+    else if (type === 'Beta-sheet') spline = splineBeta;
+    else if (type === 'Turn') spline = splineTurn;
+    else if (type === 'Random Coil') spline = splineCoil;
+    else if (type === 'A-DNA') { spline = splineADNA; start = 180; end = 320; }
+    else if (type === 'B-DNA') { spline = splineBDNA; start = 180; end = 320; }
+    else if (type === 'Z-DNA') { spline = splineZDNA; start = 180; end = 320; }
+    else if (type === 'G-Quad (Parallel)') { spline = splineGQP; start = 220; end = 320; }
+    else if (type === 'G-Quad (Hybrid)') { spline = splineGQH; start = 220; end = 320; }
+    else if (type === 'G-Quad (Antiparallel)') { spline = splineGQA; start = 220; end = 320; }
+
+    if (!spline) return { wavelengths, values };
+
+    for (let w = start; w <= end; w += 1) {
+        wavelengths.push(w);
+        values.push(spline.at(w));
     }
     return { wavelengths, values };
   };
@@ -290,16 +362,23 @@ const CDSpectraLibrary = ({ isExpanded, onToggleExpand }) => {
     const ctx = canvasRef.current.getContext('2d');
     const W = canvasRef.current.width;
     const H = canvasRef.current.height;
-    const pad = { top: 20, right: 20, bottom: 40, left: 50 };
+    const pad = { top: 20, right: 20, bottom: 40, left: 60 };
     const plotW = W - pad.left - pad.right;
     const plotH = H - pad.top - pad.bottom;
 
     const spectra = selectedTypes.map(t => ({ type: t, ...generateRefSpectrum(t) }));
-    const xMin = showDNA ? 180 : 190, xMax = showDNA ? 300 : 260;
-    let yMin = -6, yMax = 3;
+    const xMin = showDNA ? 176 : 176, xMax = showDNA ? 320 : 260;
+    
+    let yMin = 0, yMax = 0;
     spectra.forEach(s => {
-      s.values.forEach(v => { if (v < yMin) yMin = v - 0.5; if (v > yMax) yMax = v + 0.5; });
+      s.values.forEach(v => { if (v < yMin) yMin = v; if (v > yMax) yMax = v; });
     });
+    
+    // Add margin to Y-axis
+    const yMargin = (yMax - yMin) * 0.1;
+    yMin -= yMargin;
+    yMax += yMargin;
+    if (yMin === yMax) { yMin = -100; yMax = 100; } // Fallback
 
     ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = '#f8fafc';
@@ -308,7 +387,7 @@ const CDSpectraLibrary = ({ isExpanded, onToggleExpand }) => {
     // Grid
     ctx.strokeStyle = '#e2e8f0';
     ctx.lineWidth = 0.5;
-    for (let x = xMin; x <= xMax; x += 10) {
+    for (let x = Math.ceil(xMin/10)*10; x <= xMax; x += (showDNA ? 20 : 10)) {
       const px = pad.left + ((x - xMin) / (xMax - xMin)) * plotW;
       ctx.beginPath(); ctx.moveTo(px, pad.top); ctx.lineTo(px, pad.top + plotH); ctx.stroke();
     }
@@ -350,7 +429,7 @@ const CDSpectraLibrary = ({ isExpanded, onToggleExpand }) => {
     ctx.fillStyle = '#64748b';
     ctx.font = '11px sans-serif';
     ctx.textAlign = 'center';
-    for (let x = xMin; x <= xMax; x += (showDNA ? 20 : 10)) {
+    for (let x = Math.ceil(xMin/10)*10; x <= xMax; x += (showDNA ? 20 : 10)) {
       const px = pad.left + ((x - xMin) / (xMax - xMin)) * plotW;
       ctx.fillText(x.toString(), px, pad.top + plotH + 15);
     }
@@ -672,7 +751,7 @@ export const CDTestRenderer = ({ activeTest, updateActiveTest, appClipboard, set
                 <select
                   value={linkedProtocolId}
                   onChange={(e) => updatePlate({ linkedProtocolId: e.target.value })}
-                  className="border border-slate-300 rounded-lg px-3 py-1.5 text-xs bg-slate-50 outline-none focus:border-blue-500 flex-1 cursor-pointer"
+                  className="border border-slate-300 rounded-lg px-3 py-1.5 text-xs bg-slate-50 outline-none focus:border-blue-50 flex-1 cursor-pointer"
                 >
                   <option value="">-- No Protocol Linked --</option>
                   {(datasetProtocols || []).map(p => (
