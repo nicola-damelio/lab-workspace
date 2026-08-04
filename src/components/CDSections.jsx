@@ -1787,14 +1787,20 @@ export const FittingGraphics = ({ ctx }) => {
 };
 
 // ================= SIMULATIONS (Mixer + Reference Library) =================
+// ================= SIMULATIONS (Mixer + Reference Library) =================
 export const Simulations = () => {
   const [fsPanel, setFsPanel] = useState(null);
   const toggleFs = (id) => setFsPanel((prev) => (prev === id ? null : id));
   return (
     <div className="flex flex-col gap-6">
-      {fsPanel === 'mixer' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('mixer')}></div>}
+      {fsPanel === 'mixer' && (
+        <div className={OVERLAY_CLASSES} onClick={() => toggleFs('mixer')}></div>
+      )}
       <ProteinCDMixer isExpanded={fsPanel === 'mixer'} onToggleExpand={() => toggleFs('mixer')} />
-      {fsPanel === 'library' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('library')}></div>}
+
+      {fsPanel === 'library' && (
+        <div className={OVERLAY_CLASSES} onClick={() => toggleFs('library')}></div>
+      )}
       <CDSpectraLibrary isExpanded={fsPanel === 'library'} onToggleExpand={() => toggleFs('library')} />
     </div>
   );
