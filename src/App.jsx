@@ -1073,6 +1073,18 @@ export default function App() {
                                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                                                 {filteredTests.map(test => (
                                                     <div key={test.id} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:shadow-md hover:border-blue-400 cursor-pointer transition-all flex flex-col group relative" onClick={() => { setActiveTestId(test.id); setCurrentModule('active-test'); }}>
+                                                        <button 
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                if (window.confirm(`Eliminare definitivamente il test "${test.name}"?`)) {
+                                                                    setTests(prev => prev.filter(t => t.id !== test.id));
+                                                                }
+                                                            }} 
+                                                            className="absolute top-3 right-10 text-slate-300 hover:text-red-500 text-xl opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity no-print z-10" 
+                                                            title="Elimina Test"
+                                                        >
+                                                            &times;
+                                                        </button>
                                                         <div className="absolute top-3 right-3 text-2xl opacity-80 group-hover:scale-110 transition-transform">
                                                             {test.type === 'nmr' ? '📉' : test.type === 'cd' ? '🌀' : test.type === 'plate-9x9box' ? '📦' : '🧫'}
                                                         </div>
@@ -1314,6 +1326,17 @@ export default function App() {
                                             </div>
                                         </div>
                                         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full lg:w-auto">
+                                            <button 
+                                                onClick={() => {
+                                                    if (window.confirm("Sei sicuro di voler eliminare definitivamente questo test?")) {
+                                                        setTests(prev => prev.filter(t => t.id !== activeTest.id));
+                                                        setCurrentModule('tests');
+                                                    }
+                                                }} 
+                                                className="bg-red-50 text-red-600 hover:bg-red-100 hover:border-red-300 font-bold py-2 px-3 rounded-lg text-xs transition-colors border border-red-200 shadow-sm"
+                                            >
+                                                🗑️ Elimina
+                                            </button>
                                             <div className="flex flex-col flex-1 w-full sm:w-auto">
                                                 <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Instance</label>
                                                 <input type="text" value={activeTest.instanceName || ''} onChange={e=>updateActiveTest({instanceName: e.target.value})} className="bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-lg outline-none focus:border-blue-500 w-full sm:w-32" placeholder="e.g. 24h / Rep 1"/>
