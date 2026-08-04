@@ -716,13 +716,14 @@ export const All = ({ ctx }) => {
     return isNaN(n) ? NaN : n - gOff;
   };
 
+
 const concOf = (r, c, role) => {
   const rl = role !== undefined ? role : getRole(r, c);
   if (!rl || ['cells', 'medium', 'pbs'].includes(String(rl).toLowerCase())) return 0;
 
-  // If user manually overrode concentration, respect it
+  // If user manually typed a concentration override, respect it
   const cfg = cellConfig?.[r]?.[c];
-  if (cfg && cfg.conc !== null && cfg.conc !== undefined) {
+  if (cfg && cfg.conc !== null && cfg.conc !== undefined && cfg.conc !== '') {
     return Number(cfg.conc);
   }
 
@@ -733,31 +734,32 @@ const concOf = (r, c, role) => {
       }
     : { top: tConc, dil: dFact };
 
-  let isHoriz = false;
+  // Guard: if top is 0, we can't compute a dilution series
+  if (!s.top || s.top <= 0) return 0;
+
   let step = 0;
 
+  // Determine dilution direction
   if (rowCompounds[r] === rl) {
-    isHoriz = true;
+    // Horizontal: assigned via row dropdown
+    for (let i = 0; i < c; i++) {
+      if (getRole(r, i) === rl) step++;
+    }
   } else if (compounds[c] === rl) {
-    isHoriz = false;
-  } else if (rowCompounds.includes(rl)) {
-    isHoriz = true;
-  } else {
-    // ─── NEW: compound assigned via paint tool (not in row/column arrays) ───
-    // Count preceding wells with the same compound in the same row → horizontal dilution
-    for (let i = 0; i < c; i++) {
-      if (getRole(r, i) === rl) step++;
-    }
-    return s.top / Math.pow(s.dil, step);
-  }
-
-  if (isHoriz) {
-    for (let i = 0; i < c; i++) {
-      if (getRole(r, i) === rl) step++;
-    }
-  } else {
+    // Vertical: assigned via column dropdown
     for (let i = 0; i < r; i++) {
       if (getRole(i, c) === rl) step++;
+    }
+  } else if (rowCompounds.includes(rl)) {
+    // Horizontal: compound exists somewhere in rowCompounds
+    for (let i = 0; i < c; i++) {
+      if (getRole(r, i) === rl) step++;
+    }
+  } else {
+    // ★ PAINTED COMPOUND: not in rowCompounds or compounds arrays
+    // Count preceding wells with the same compound in the SAME ROW (horizontal dilution)
+    for (let i = 0; i < c; i++) {
+      if (getRole(r, i) === rl) step++;
     }
   }
 
@@ -1476,12 +1478,12 @@ const assignCompoundToCell = (r, c, name) => {
   const nc = cellConfig.map((row) => row.map((cell) => ({ ...cell })));
   if (!name) {
     nc[r][c].role = null;
-    nc[r][c].conc = null;          // clear so concOf recalculates
+    nc[r][c].conc = null;
     nc[r][c].manualOverride = false;
   } else {
     nc[r][c].role = name;
     nc[r][c].manualOverride = true;
-    nc[r][c].conc = null;          // ← KEY: leave null so concOf calculates dynamically
+    nc[r][c].conc = null; // ← MUST be null so concOf recalculates dynamically
   }
   updatePlate({ cellConfig: nc });
 
@@ -2417,14 +2419,14 @@ const assignCompoundToCell = (r, c, name) => {
                             >
                               {role || '–'}
                             </span>
-                            {role && !['cells', 'pbs', 'medium'].includes(role.toLowerCase()) && (
-                              <span
-                                style={{ fontSize: fSize2 + 'px' }}
-                                className={`font-bold truncate max-w-full px-0.5 opacity-90 ${tc}`}
-                              >
-                                {formatConc(conc)}
-                              </span>
-                            )}
+{role && !['cells', 'pbs', 'medium'].includes(String(role).toLowerCase()) && (
+  <span
+    style={{ fontSize: fSize2 + 'px' }}
+    className={`font-bold truncate max-w-full px-0.5 opacity-90 ${tc}`}
+  >
+    {conc > 0 ? formatConc(conc) : '–'}
+  </span>
+)}
                           </div>
                           {hasCustomReg && bTop && bLeft && (
                             <span
