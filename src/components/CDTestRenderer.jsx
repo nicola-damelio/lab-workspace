@@ -6,15 +6,14 @@ import { CD_TAB_CONFIG } from './tabConfigs';
 
 /* ============================================================================
 CD renderer using the shared shell.
-Common sections come from TestShellRenderer.
-CD-specific sections are below.
 
-Changes in this rewrite:
-• Classification now uses the testCategories passed from App.jsx (Definitions
-  & Labels) instead of the hardcoded CD_TAB_CONFIG.categories.
-• Experimental Setup can define "Report Metrics" (e.g. CD Intensity at X nm).
-  Each metric becomes a column in the titration table and can be plotted in
-  the new Report Graph (Graphical Parameters) against any variable.
+This version:
+• Classification reads testCategories from App.jsx (Definitions & Labels).
+• Experimental Setup defines "Report Metrics" (e.g. CD Intensity at 222 nm).
+• AUTO metrics are READ from the uploaded spectra: each titration point links
+  to a spectrum, and the metric value is interpolated at the metric wavelength
+  (baseline-offset corrected). No manual value entry for AUTO metrics.
+• Report Graph plots the selected metric vs any experimental variable.
 ========================================================================== */
 
 const SPECTRA_PALETTE = [
@@ -34,15 +33,19 @@ const STRUCTURE_COLORS = {
 // ================= REPORT METRICS HELPERS =================
 const REPORT_METRIC_UNITS = ['mdeg', 'MRE', 'Δε', 'a.u.'];
 
-const makeMetricId = () =>
-  `met_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+const makeMetricId = () => `met_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
-const makeMetric = (name, wavelength = '', unit = 'mdeg') => ({
-  id: makeMetricId(),
-  name,
-  wavelength: String(wavelength || ''),
-  unit
-});
+const makeMetric = (name, { wavelength = '', unit = 'mdeg', mode } = {}) => {
+  const wl = String(wavelength || '').trim();
+  return {
+    id: makeMetricId(),
+    name,
+    wavelength: wl,
+    unit,
+    // a metric with a wavelength is read automatically from the linked spectrum
+    mode: mode || (wl !== '' ? 'auto' : 'manual')
+  };
+};
 
 const parseNum = (v) => parseFloat(String(v ?? '').replace(',', '.'));
 
@@ -1038,7 +1041,10 @@ const CDAll = ({ ctx }) => {
     titrationVariables.forEach((v) => { values[v] = ''; });
     update({
       titrationVariables,
-      titrationRows: [...titrationRows, { id: makeTitrationId(), values, notes: '', metricValues: {} }]
+      titrationRows: [
+        ...titrationRows,
+        { id: makeTitrationId(), values, notes: '', metricValues: {}, spectrumId: '' }
+      ]
     });
   };
 
@@ -1059,7 +1065,10 @@ const CDAll = ({ ctx }) => {
     });
     update({
       titrationVariables,
-      titrationRows: [...titrationRows, { id: makeTitrationId(), values, notes: '', metricValues: {} }]
+      titrationRows: [
+        ...titrationRows,
+        { id: makeTitrationId(), values, notes: '', metricValues: {}, spectrumId: '' }
+      ]
     });
   };
 
@@ -1082,70 +1091,6 @@ const CDAll = ({ ctx }) => {
   const removeTitrationRow = (id) => {
     update({ titrationRows: titrationRows.filter((row) => row.id !== id) });
   };
-
-  // ===== REPORT METRICS (what the Graph section will plot) =====
-  const reportMetrics = Array.isArray(activeTest.reportMetrics) ? activeTest.reportMetrics : [];
-  const [metricWavelength, setMetricWavelength] = useState('222');
-  const [customMetricName, setCustomMetricName] = useState('');
-  const [customMetricUnit, setCustomMetricUnit] = useState('mdeg');
-
-  const addMetricAtWavelength = () => {
-    const wl = metricWavelength.trim();
-    if (!wl) return;
-    const name = `CD Intensity at ${wl} nm`;
-    if (reportMetrics.some((m) => m.name === name)) return;
-    update({ reportMetrics: [...reportMetrics, makeMetric(name, wl, 'mdeg')] });
-  };
-
-  const addCustomMetric = () => {
-    const name = customMetricName.trim();
-    if (!name || reportMetrics.some((m) => m.name === name)) return;
-    update({ reportMetrics: [...reportMetrics, makeMetric(name, '', customMetricUnit)] });
-    setCustomMetricName('');
-  };
-
-  const removeMetric = (id) => {
-    update({
-      reportMetrics: reportMetrics.filter((m) => m.id !== id),
-      titrationRows: titrationRows.map((row) => {
-        const metricValues = { ...(row.metricValues || {}) };
-        delete metricValues[id];
-        return { ...row, metricValues };
-      })
-    });
-  };
-
-  const updateMetricRowValue = (rowId, metricId, value) => {
-    update({
-      titrationRows: titrationRows.map((row) =>
-        row.id === rowId
-          ? { ...row, metricValues: { ...(row.metricValues || {}), [metricId]: value } }
-          : row
-      )
-    });
-  };
-
-  // ===== REPORT GRAPH (metric vs variable) =====
-  const [reportXVar, setReportXVar] = useState('');
-  const [reportYMetricId, setReportYMetricId] = useState('');
-  const reportChartRef = useRef(null);
-  const reportChart = useRef(null);
-
-  const reportXVarEff = reportXVar || titrationVariables[0] || '';
-  const reportYMetric =
-    reportMetrics.find((m) => m.id === reportYMetricId) || reportMetrics[0] || null;
-
-  const reportPoints = useMemo(() => {
-    if (!reportXVarEff || !reportYMetric) return [];
-    return titrationRows
-      .map((row, idx) => {
-        const x = parseNum((row.values || {})[reportXVarEff]);
-        const y = parseNum((row.metricValues || {})[reportYMetric.id]);
-        return { x, y, rowIdx: idx + 1, notes: row.notes || '' };
-      })
-      .filter((p) => !isNaN(p.x) && !isNaN(p.y))
-      .sort((a, b) => a.x - b.x);
-  }, [titrationRows, reportXVarEff, reportYMetric]);
 
   // ===== DATA / SPECTRA =====
   const parsedWavelengths = useMemo(() => {
@@ -1182,7 +1127,12 @@ const CDAll = ({ ctx }) => {
   };
 
   const removeSpectrumColumn = (id) => {
-    update({ spectraColumns: spectraColumns.filter((c) => c.id !== id) });
+    update({
+      spectraColumns: spectraColumns.filter((c) => c.id !== id),
+      titrationRows: titrationRows.map((row) =>
+        row.spectrumId === id ? { ...row, spectrumId: '' } : row
+      )
+    });
   };
 
   const triggerJascoImport = (mode) => {
@@ -1307,6 +1257,158 @@ const CDAll = ({ ctx }) => {
       alert('Image import failed.');
     }
   };
+
+  // =====================================================================
+  // ===== REPORT METRICS — values are READ from the uploaded spectra =====
+  // =====================================================================
+  const reportMetrics = Array.isArray(activeTest.reportMetrics) ? activeTest.reportMetrics : [];
+  const [metricWavelength, setMetricWavelength] = useState('222');
+  const [customMetricName, setCustomMetricName] = useState('');
+  const [customMetricWavelength, setCustomMetricWavelength] = useState('');
+  const [customMetricUnit, setCustomMetricUnit] = useState('mdeg');
+
+  const addMetricAtWavelength = () => {
+    const wl = metricWavelength.trim();
+    if (!wl) return;
+    const name = `CD Intensity at ${wl} nm`;
+    if (reportMetrics.some((m) => m.name === name)) return;
+    update({ reportMetrics: [...reportMetrics, makeMetric(name, { wavelength: wl, unit: 'mdeg' })] });
+  };
+
+  const addCustomMetric = () => {
+    const name = customMetricName.trim();
+    if (!name || reportMetrics.some((m) => m.name === name)) return;
+    update({
+      reportMetrics: [
+        ...reportMetrics,
+        makeMetric(name, { wavelength: customMetricWavelength, unit: customMetricUnit })
+      ]
+    });
+    setCustomMetricName('');
+    setCustomMetricWavelength('');
+  };
+
+  const removeMetric = (id) => {
+    update({
+      reportMetrics: reportMetrics.filter((m) => m.id !== id),
+      titrationRows: titrationRows.map((row) => {
+        const metricValues = { ...(row.metricValues || {}) };
+        delete metricValues[id];
+        return { ...row, metricValues };
+      })
+    });
+  };
+
+  const updateMetricRowValue = (rowId, metricId, value) => {
+    update({
+      titrationRows: titrationRows.map((row) =>
+        row.id === rowId
+          ? { ...row, metricValues: { ...(row.metricValues || {}), [metricId]: value } }
+          : row
+      )
+    });
+  };
+
+  /**
+   * Reads the CD value of a spectrum at a given wavelength.
+   * - exact match if the wavelength exists in the data
+   * - otherwise linear interpolation between the two nearest points
+   * - out-of-range wavelengths clamp to the nearest endpoint
+   * - the global baseline offset (same as the CD plot) is subtracted
+   */
+  const getCdValueAtWavelength = (spectrum, wl) => {
+    if (!spectrum || wl === '' || wl === null || wl === undefined) return null;
+    const target = parseNum(wl);
+    if (isNaN(target)) return null;
+    const xs = parsedWavelengths;
+    const ys = spectrum.values || [];
+    if (xs.length === 0 || ys.length === 0) return null;
+
+    // normalize to ascending order (JASCO import already sorts, but be safe)
+    let ax = xs;
+    let ay = ys;
+    if (xs.length > 1 && xs[0] > xs[xs.length - 1]) {
+      ax = [...xs].reverse();
+      ay = [...ys].reverse();
+    }
+
+    const exactIdx = ax.findIndex((x) => Math.abs(x - target) < 1e-9);
+    if (exactIdx >= 0 && ay[exactIdx] !== undefined) return ay[exactIdx] - gOff;
+
+    if (target <= ax[0]) return ay[0] !== undefined ? ay[0] - gOff : null;
+    if (target >= ax[ax.length - 1]) {
+      const last = ay[ax.length - 1];
+      return last !== undefined ? last - gOff : null;
+    }
+
+    for (let i = 0; i < ax.length - 1; i++) {
+      if (target >= ax[i] && target <= ax[i + 1]) {
+        const x0 = ax[i];
+        const x1 = ax[i + 1];
+        const y0 = ay[i];
+        const y1 = ay[i + 1];
+        if (y0 === undefined || y1 === undefined) return null;
+        const y = x1 === x0 ? y0 : y0 + ((target - x0) * (y1 - y0)) / (x1 - x0);
+        return y - gOff;
+      }
+    }
+    return null;
+  };
+
+  /** Returns the value shown/used for a metric on a given titration row. */
+  const getRowMetricValue = (row, metric) => {
+    if (!metric) return '';
+    if (metric.mode === 'auto' && metric.wavelength) {
+      const spectrum = parsedSpectra.find((s) => s.id === row.spectrumId);
+      const v = getCdValueAtWavelength(spectrum, metric.wavelength);
+      if (v === null || v === undefined || isNaN(v)) return '';
+      return Math.round(v * 1000) / 1000;
+    }
+    const manual = (row.metricValues || {})[metric.id];
+    return manual === undefined || manual === null ? '' : manual;
+  };
+
+  /** Link a spectrum to a titration point. */
+  const updateRowSpectrum = (rowId, spectrumId) => {
+    update({
+      titrationRows: titrationRows.map((row) =>
+        row.id === rowId ? { ...row, spectrumId } : row
+      )
+    });
+  };
+
+  /** Assign spectra to points in order (spectrum #1 → point #1, etc.). */
+  const autoLinkSpectraToRows = () => {
+    update({
+      titrationRows: titrationRows.map((row, idx) => ({
+        ...row,
+        spectrumId: spectraColumns[idx] ? spectraColumns[idx].id : row.spectrumId || ''
+      }))
+    });
+  };
+
+  // ===== REPORT GRAPH (metric vs variable) =====
+  const [reportXVar, setReportXVar] = useState('');
+  const [reportYMetricId, setReportYMetricId] = useState('');
+  const reportChartRef = useRef(null);
+  const reportChart = useRef(null);
+
+  const reportXVarEff = reportXVar || titrationVariables[0] || '';
+  const reportYMetric =
+    reportMetrics.find((m) => m.id === reportYMetricId) || reportMetrics[0] || null;
+
+  const reportPoints = useMemo(() => {
+    if (!reportXVarEff || !reportYMetric) return [];
+    return titrationRows
+      .map((row, idx) => {
+        const x = parseNum((row.values || {})[reportXVarEff]);
+        const y = parseNum(getRowMetricValue(row, reportYMetric));
+        return { x, y, rowIdx: idx + 1, notes: row.notes || '' };
+      })
+      .filter((p) => !isNaN(p.x) && !isNaN(p.y))
+      .sort((a, b) => a.x - b.x);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [titrationRows, reportXVarEff, reportYMetric, parsedSpectra, parsedWavelengths, gOff]);
 
   // ===== CHARTS =====
   const cdChartRef = useRef(null);
@@ -1516,13 +1618,19 @@ const CDAll = ({ ctx }) => {
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(structAoa), 'Structure');
 
       if (titrationRows.length > 0) {
-        const metricHeaders = reportMetrics.map((m) => `${m.name}${m.unit ? ` (${m.unit})` : ''}`);
-        const titrationAoa = [['Point', ...titrationVariables, ...metricHeaders, 'Notes']];
+        const metricHeaders = reportMetrics.map(
+          (m) => `${m.name}${m.unit ? ` (${m.unit})` : ''}${m.mode === 'auto' ? ' [auto]' : ''}`
+        );
+        const titrationAoa = [
+          ['Point', 'Linked Spectrum', ...titrationVariables, ...metricHeaders, 'Notes']
+        ];
         titrationRows.forEach((row, idx) => {
+          const linked = spectraColumns.find((s) => s.id === row.spectrumId);
           titrationAoa.push([
             idx + 1,
+            linked ? linked.title : '',
             ...titrationVariables.map((v) => (row.values || {})[v] || ''),
-            ...reportMetrics.map((m) => (row.metricValues || {})[m.id] || ''),
+            ...reportMetrics.map((m) => getRowMetricValue(row, m)),
             row.notes || ''
           ]);
         });
@@ -1599,6 +1707,14 @@ const CDAll = ({ ctx }) => {
               >
                 + Add Empty Titration Point
               </button>
+              <button
+                type="button"
+                onClick={autoLinkSpectraToRows}
+                className="bg-purple-600 hover:bg-purple-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm"
+                title="Assigns spectrum #1 to point #1, spectrum #2 to point #2, and so on"
+              >
+                🔗 Auto-Link Spectra to Points
+              </button>
             </div>
           </div>
 
@@ -1636,6 +1752,11 @@ const CDAll = ({ ctx }) => {
                 e.g. CD intensity at 222 nm
               </span>
             </div>
+            <p className="text-[10px] text-purple-700 leading-4">
+              Metrics with a wavelength (<b>AUTO</b>) are read automatically from the spectrum linked to each
+              titration point (interpolated at the chosen wavelength, baseline-offset corrected). Only metrics
+              without a wavelength (<b>MANUAL</b>) require hand-entered values.
+            </p>
 
             <div className="flex flex-wrap gap-2 items-end">
               <div className="flex flex-col gap-1">
@@ -1663,7 +1784,17 @@ const CDAll = ({ ctx }) => {
                   value={customMetricName}
                   onChange={(e) => setCustomMetricName(e.target.value)}
                   className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-purple-500 w-56 bg-white"
-                  placeholder="e.g. Thermal stability Tm"
+                  placeholder="e.g. Tm, ellipticity..."
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">λ (opt. → auto)</label>
+                <input
+                  type="number"
+                  value={customMetricWavelength}
+                  onChange={(e) => setCustomMetricWavelength(e.target.value)}
+                  className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-purple-500 w-28 bg-white"
+                  placeholder="nm"
                 />
               </div>
               <select
@@ -1696,6 +1827,13 @@ const CDAll = ({ ctx }) => {
                   className="inline-flex items-center gap-2 bg-white border border-purple-300 px-2.5 py-1 rounded-lg text-xs font-bold text-purple-800 shadow-sm"
                 >
                   {m.name}{m.unit ? ` (${m.unit})` : ''}
+                  <span
+                    className={`text-[8px] font-black px-1 rounded ${
+                      m.mode === 'auto' ? 'bg-purple-600 text-white' : 'bg-slate-200 text-slate-600'
+                    }`}
+                  >
+                    {m.mode === 'auto' ? 'AUTO' : 'MANUAL'}
+                  </span>
                   <button
                     type="button"
                     onClick={() => removeMetric(m.id)}
@@ -1719,12 +1857,16 @@ const CDAll = ({ ctx }) => {
                       {v}
                     </th>
                   ))}
+                  <th className="px-3 py-2 font-bold text-slate-700 whitespace-nowrap border-b border-slate-200 bg-slate-50">
+                    🔗 Linked Spectrum
+                  </th>
                   {reportMetrics.map((m) => (
                     <th
                       key={m.id}
                       className="px-3 py-2 font-bold text-purple-700 whitespace-nowrap border-b border-slate-200 bg-purple-50"
                     >
                       📌 {m.name}{m.unit ? ` (${m.unit})` : ''}
+                      {m.mode === 'auto' && <span className="ml-1 text-[8px] bg-purple-600 text-white px-1 rounded">AUTO</span>}
                     </th>
                   ))}
                   <th className="px-3 py-2 min-w-[180px] border-b border-slate-200">Notes</th>
@@ -1735,7 +1877,7 @@ const CDAll = ({ ctx }) => {
                 {titrationRows.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={titrationVariables.length + reportMetrics.length + 3}
+                      colSpan={titrationVariables.length + reportMetrics.length + 4}
                       className="px-3 py-10 text-center text-slate-400 italic"
                     >
                       No titration points defined yet.
@@ -1756,17 +1898,49 @@ const CDAll = ({ ctx }) => {
                           />
                         </td>
                       ))}
-                      {reportMetrics.map((m) => (
-                        <td key={m.id} className="px-3 py-2 bg-purple-50/40">
-                          <input
-                            type="text"
-                            value={(row.metricValues || {})[m.id] || ''}
-                            onChange={(e) => updateMetricRowValue(row.id, m.id, e.target.value)}
-                            className="w-full min-w-[90px] border border-purple-200 rounded-md px-2 py-1.5 text-sm outline-none focus:border-purple-500"
-                            placeholder={m.unit || 'value'}
-                          />
-                        </td>
-                      ))}
+                      <td className="px-3 py-2 bg-slate-50/50">
+                        <select
+                          value={row.spectrumId || ''}
+                          onChange={(e) => updateRowSpectrum(row.id, e.target.value)}
+                          className="w-full min-w-[140px] border border-slate-300 rounded-md px-2 py-1.5 text-sm outline-none focus:border-blue-500 bg-white"
+                        >
+                          <option value="">— no spectrum —</option>
+                          {spectraColumns.map((s) => (
+                            <option key={s.id} value={s.id}>{s.title}</option>
+                          ))}
+                        </select>
+                      </td>
+                      {reportMetrics.map((m) => {
+                        if (m.mode === 'auto') {
+                          const val = getRowMetricValue(row, m);
+                          return (
+                            <td key={m.id} className="px-3 py-2 bg-purple-50/40">
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={`font-mono text-sm font-bold ${
+                                    val === '' ? 'text-slate-400 italic' : 'text-purple-800'
+                                  }`}
+                                  title={val === '' ? 'Link a spectrum containing this wavelength' : `Read at ${m.wavelength} nm`}
+                                >
+                                  {val === '' ? 'no data' : val}
+                                </span>
+                                <span className="text-[8px] font-black bg-purple-600 text-white px-1 rounded">AUTO</span>
+                              </div>
+                            </td>
+                          );
+                        }
+                        return (
+                          <td key={m.id} className="px-3 py-2 bg-purple-50/40">
+                            <input
+                              type="text"
+                              value={(row.metricValues || {})[m.id] || ''}
+                              onChange={(e) => updateMetricRowValue(row.id, m.id, e.target.value)}
+                              className="w-full min-w-[90px] border border-purple-200 rounded-md px-2 py-1.5 text-sm outline-none focus:border-purple-500"
+                              placeholder={m.unit || 'value'}
+                            />
+                          </td>
+                        );
+                      })}
                       <td className="px-3 py-2">
                         <input
                           type="text"
@@ -1831,7 +2005,8 @@ const CDAll = ({ ctx }) => {
                 <div className="text-xs font-bold text-blue-800 uppercase">JASCO / TXT Import</div>
                 <p className="text-[10px] text-blue-700 mt-1">
                   Imports the CD [mdeg] channel from JASCO .txt files, converts the wavelength axis to ascending
-                  order, and fills sample metadata when available.
+                  order, and fills sample metadata when available. Imported spectra can then be linked to
+                  titration points so report metrics are read automatically.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -1882,7 +2057,7 @@ const CDAll = ({ ctx }) => {
             </div>
             {parsedSpectra.length === 0 ? (
               <div className="text-center py-8 text-slate-400 italic bg-white rounded-lg border border-dashed border-slate-300">
-                No spectra added yet. Click “Add Spectrum” to start.
+                No spectra added yet. Click “Add Spectrum” or import JASCO files.
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
@@ -1991,6 +2166,7 @@ const CDAll = ({ ctx }) => {
               <p className="text-sm text-slate-500">
                 CD spectra are single measurements per spectrum, so there is no replicate-based SD. Use the controls
                 below for baseline correction and to include/exclude individual spectra from the plot and analysis.
+                The baseline offset is also applied to AUTO report metric values.
               </p>
               <div className="flex flex-col gap-1 max-w-xs">
                 <label className="text-xs font-bold text-slate-600">
@@ -2065,7 +2241,7 @@ const CDAll = ({ ctx }) => {
                     {reportMetrics.length === 0 && <option value="">No metrics</option>}
                     {reportMetrics.map((m) => (
                       <option key={m.id} value={m.id}>
-                        {m.name}{m.unit ? ` (${m.unit})` : ''}
+                        {m.name}{m.unit ? ` (${m.unit})` : ''}{m.mode === 'auto' ? ' [auto]' : ''}
                       </option>
                     ))}
                   </select>
@@ -2076,8 +2252,9 @@ const CDAll = ({ ctx }) => {
               </div>
               {(reportPoints.length === 0 || !reportYMetric) && (
                 <p className="text-xs text-slate-400 italic mt-2">
-                  Define a report metric in Experiment Setup and enter numeric values in the purple table columns
-                  (X values like ratios must be numeric, e.g. 0.5 instead of 1:2).
+                  Define a report metric in Experiment Setup, link each titration point to its spectrum (or use
+                  “Auto-Link Spectra to Points”), and the values will be read automatically from the uploaded data.
+                  X values like ratios must be numeric (e.g. 0.5 instead of 1:2).
                 </p>
               )}
             </div>
@@ -2245,7 +2422,7 @@ const buildCdNotebookHtml = (checked, ctx) => {
 
 // ================= MAIN CD RENDERER =================
 export const CDTestRenderer = (props) => {
-  // 1) Categories defined in App → Definitions & Labels take priority
+  // Categories defined in App → Definitions & Labels take priority
   const appCategories =
     Array.isArray(props.testCategories) && props.testCategories.length
       ? props.testCategories
@@ -2253,7 +2430,6 @@ export const CDTestRenderer = (props) => {
           'Activity', 'Toxicity', 'Structure', 'Binding', 'Characterization'
         ];
 
-  // 2) Also inject them into the config, in case the shell reads config.categories
   const config = { ...CD_TAB_CONFIG, categories: appCategories };
 
   return (
