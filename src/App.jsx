@@ -614,18 +614,45 @@ const baseTest = {
         <div className="w-full relative flex flex-col h-screen overflow-hidden bg-slate-50">
             <style>{`
                 @media print {
-                    @page { margin: 1cm; size: A4 portrait; }
+                    @page { margin: 1.5cm 1.2cm; size: A4 portrait; }
                     .no-print, nav, button, input[type="file"] { display: none !important; }
                     .print-only { display: block !important; }
                     body, html, #root { 
                         background: white !important; height: auto !important; min-height: 100% !important; 
                         overflow: visible !important; color: black !important;
+                        -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important;
                     }
                     .h-screen, .max-h-screen, .flex-1, .overflow-y-auto, .overflow-hidden, .custom-scrollbar, .h-full, .min-h-0 { 
                         height: auto !important; max-height: none !important; overflow: visible !important; position: static !important;
                     }
                     .fixed, .absolute { position: static !important; }
                     .shadow-sm, .shadow-md, .shadow-lg, .shadow-xl, .shadow-2xl { box-shadow: none !important; border: 1px solid #e2e8f0 !important; }
+
+                    /* --- Pagination: stop content being sliced mid-element --- */
+                    /* .avoid-break is used throughout LabNotebook.jsx but was never
+                       actually defined, so it silently did nothing. This is the
+                       main reason text/rows/images were being cut across pages. */
+                    .avoid-break, table, tr, thead, tbody, img, svg, canvas, figure {
+                        break-inside: avoid !important;
+                        page-break-inside: avoid !important;
+                    }
+                    h1, h2, h3, h4, h5, h6 {
+                        break-after: avoid !important;
+                        page-break-after: avoid !important;
+                        break-inside: avoid !important;
+                    }
+                    p, li, td, th {
+                        orphans: 3;
+                        widows: 3;
+                    }
+                    /* Give every top-level notebook card its own breathing room so a
+                       break never lands flush against its border */
+                    #notebook-report-container > * {
+                        break-inside: avoid !important;
+                        page-break-inside: avoid !important;
+                        margin-top: 0.4cm;
+                        margin-bottom: 0.4cm;
+                    }
                 }
             `}</style>
 

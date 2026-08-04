@@ -191,8 +191,21 @@ export const LabNotebook = ({ tests, allCellLines, testCategories, jumpToTest, c
     window.scrollTo(0, 0);
     await new Promise(r => setTimeout(r, 800));
     try {
+      // Record the vertical span (CSS px, relative to the container's top) of
+      // every block that must never be sliced in half: each notebook card,
+      // every ".avoid-break" sub-section (metadata, tables, charts...), plus
+      // individual table rows and images. Measured on the live DOM, while
+      // everything is still in normal layout flow, before the screenshot.
+      const scale = 2; // must match the html2canvas `scale` option below
+      const containerTop = el.getBoundingClientRect().top;
+      const unbreakableEls = el.querySelectorAll('.avoid-break, table, tr, img');
+      const breakRangesPx = Array.from(unbreakableEls).map(node => {
+        const r = node.getBoundingClientRect();
+        return { top: (r.top - containerTop) * scale, bottom: (r.bottom - containerTop) * scale };
+      }).filter(r => r.bottom > r.top);
+
       const canvas = await html2canvas(el, {
-        scale: 2,
+        scale,
         useCORS: true,
         allowTaint: true,
         backgroundColor: '#f8fafc',
@@ -219,21 +232,61 @@ export const LabNotebook = ({ tests, allCellLines, testCategories, jumpToTest, c
           });
         }
       });
-      const imgData = canvas.toDataURL('image/jpeg', 0.92);
+
       const pdf = new jsPDF('p', 'pt', 'a4');
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
-      const imgWidth = pageWidth;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      let heightLeft = imgHeight; let position = 0;
-      pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight;
-      while (heightLeft > 0) {
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-        heightLeft -= pageHeight;
+      const MARGIN_X = 28; // ~1cm - keeps left/right margin on every page
+      const MARGIN_Y = 32; // ~1.1cm - keeps top/bottom margin on every page
+      const usableWidth = pageWidth - MARGIN_X * 2;
+      const usablePageHeightPt = pageHeight - MARGIN_Y * 2;
+
+      // canvas-px <-> pdf-pt conversion factor
+      const pxPerPt = canvas.width / usableWidth;
+      const usablePageHeightPx = usablePageHeightPt * pxPerPt;
+
+      // Given a naive "one page's worth of pixels down" cut, nudge it in
+      // front of any unbreakable block it would otherwise slice through.
+      const findSafeCut = (start, naiveCut) => {
+        const straddling = breakRangesPx.filter(r => r.top < naiveCut && r.bottom > naiveCut && r.top > start);
+        if (straddling.length === 0) return naiveCut;
+        // Prefer pushing the whole (outer-most) unbreakable block to the next
+        // page - e.g. an entire notebook card or table, like a word processor would.
+        const outerMost = straddling.reduce((a, b) => (a.top <= b.top ? a : b));
+        if (outerMost.top - start >= usablePageHeightPx * 0.15) return outerMost.top;
+        // The outer block barely leaves room on this page (e.g. an oversized
+        // table). Fall back to the innermost straddling row/image instead, so
+        // we still avoid cutting through a single line or picture.
+        const innerMost = straddling.reduce((a, b) => ((a.bottom - a.top) <= (b.bottom - b.top) ? a : b));
+        if (innerMost.top - start >= usablePageHeightPx * 0.05) return innerMost.top;
+        return naiveCut;
+      };
+
+      const sliceCanvas = document.createElement('canvas');
+      const sliceCtx = sliceCanvas.getContext('2d');
+      let currentY = 0;
+      let pageNum = 0;
+
+      while (currentY < canvas.height) {
+        const naiveCut = Math.min(currentY + usablePageHeightPx, canvas.height);
+        const cut = naiveCut >= canvas.height ? canvas.height : findSafeCut(currentY, naiveCut);
+        const sliceHeightPx = Math.max(1, Math.round(cut - currentY));
+
+        sliceCanvas.width = canvas.width;
+        sliceCanvas.height = sliceHeightPx;
+        sliceCtx.clearRect(0, 0, sliceCanvas.width, sliceCanvas.height);
+        sliceCtx.drawImage(canvas, 0, currentY, canvas.width, sliceHeightPx, 0, 0, canvas.width, sliceHeightPx);
+
+        const sliceImgData = sliceCanvas.toDataURL('image/jpeg', 0.92);
+        const sliceHeightPt = sliceHeightPx / pxPerPt;
+
+        if (pageNum > 0) pdf.addPage();
+        pdf.addImage(sliceImgData, 'JPEG', MARGIN_X, MARGIN_Y, usableWidth, sliceHeightPt);
+
+        currentY = cut;
+        pageNum += 1;
       }
+
       pdf.save(`Lab_Notebook_${new Date().toISOString().split('T')[0]}.pdf`);
     } catch (e) {
       console.error(e); alert('Export Failed: ' + e.message);
@@ -298,7 +351,6 @@ const filtered = tests.filter(t => {
   });
 
   return (
-return (
     <div className="p-6 h-full overflow-y-auto custom-scrollbar flex flex-col bg-slate-50">
         <style>{`
             #notebook-report-container svg,
