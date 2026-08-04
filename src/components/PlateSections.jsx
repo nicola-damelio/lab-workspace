@@ -1677,6 +1677,7 @@ export const All = ({ ctx }) => {
       scrollParent.style.height = 'auto';
     }
 
+
     el.classList.add('pdf-mode');
     window.scrollTo(0, 0);
 
