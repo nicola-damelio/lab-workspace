@@ -1076,6 +1076,155 @@ export const CDTestRenderer = ({
 
     const [fsPanel, setFsPanel] = useState(null);
     const [zoomImage, setZoomImage] = useState(null);
+const [compoundDropdownOpen, setCompoundDropdownOpen] = useState(false);
+const compoundDropdownRef = useRef(null);
+const [newTitrationVariable, setNewTitrationVariable] = useState('');
+
+useEffect(() => {
+    const onDocMouseDown = (e) => {
+        if (compoundDropdownRef.current && !compoundDropdownRef.current.contains(e.target)) {
+            setCompoundDropdownOpen(false);
+        }
+    };
+
+    document.addEventListener('mousedown', onDocMouseDown);
+    return () => document.removeEventListener('mousedown', onDocMouseDown);
+}, []);
+
+const titrationVariables = Array.isArray(activeTest.titrationVariables)
+    ? activeTest.titrationVariables
+    : ['Ratio', 'Concentration', 'Temperature'];
+
+const titrationRows = activeTest.titrationRows || [];
+
+const makeTitrationId = () =>
+    `tit_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+const addTitrationVariable = () => {
+    const name = newTitrationVariable.trim();
+    if (!name || titrationVariables.includes(name)) return;
+
+    updatePlate({
+        titrationVariables: [...titrationVariables, name]
+    });
+
+    setNewTitrationVariable('');
+};
+
+const removeTitrationVariable = (name) => {
+    updatePlate({
+        titrationVariables: titrationVariables.filter((v) => v !== name),
+        titrationRows: titrationRows.map((row) => {
+            const values = { ...(row.values || {}) };
+            delete values[name];
+            return { ...row, values };
+        })
+    });
+};
+
+const addTitrationRow = () => {
+    const values = {};
+
+    titrationVariables.forEach((v) => {
+        values[v] = '';
+    });
+
+    updatePlate({
+        titrationVariables,
+        titrationRows: [
+            ...titrationRows,
+            {
+                id: makeTitrationId(),
+                values,
+                notes: ''
+            }
+        ]
+    });
+};
+
+const addTitrationRowFromCurrent = () => {
+    const values = {};
+
+    titrationVariables.forEach((v) => {
+        const key = v.toLowerCase();
+
+        if (key.includes('ratio')) {
+            values[v] = ratio || '';
+        } else if (key.includes('conc')) {
+            values[v] = concentration || '';
+        } else if (key.includes('temp')) {
+            values[v] = temperature || '';
+        } else if (key.includes('buffer') || key.includes('solvent')) {
+            values[v] = buffer || solvent || '';
+        } else if (key.includes('path')) {
+            values[v] = pathLength || '';
+        } else if (key.includes('salt')) {
+            values[v] = saltConcentration || '';
+        } else if (
+            key.includes('other') ||
+            key.includes('ligand') ||
+            key.includes('molecule')
+        ) {
+            values[v] = otherMolecule || '';
+        } else {
+            values[v] = '';
+        }
+    });
+
+    updatePlate({
+        titrationVariables,
+        titrationRows: [
+            ...titrationRows,
+            {
+                id: makeTitrationId(),
+                values,
+                notes: ''
+            }
+        ]
+    });
+};
+
+const updateTitrationRow = (id, updates) => {
+    updatePlate({
+        titrationRows: titrationRows.map((row) =>
+            row.id === id ? { ...row, ...updates } : row
+        )
+    });
+};
+
+const updateTitrationRowValue = (id, variable, value) => {
+    updatePlate({
+        titrationRows: titrationRows.map((row) =>
+            row.id === id
+                ? {
+                      ...row,
+                      values: {
+                          ...(row.values || {}),
+                          [variable]: value
+                      }
+                  }
+                : row
+        )
+    });
+};
+
+const duplicateTitrationRow = (row) => {
+    updatePlate({
+        titrationRows: [
+            ...titrationRows,
+            {
+                ...row,
+                id: makeTitrationId()
+            }
+        ]
+    });
+};
+
+const removeTitrationRow = (id) => {
+    updatePlate({
+        titrationRows: titrationRows.filter((row) => row.id !== id)
+    });
+};
     const cdChartRef = useRef(null);
     const structChartRef = useRef(null);
     const cdChart = useRef(null);
@@ -1411,6 +1560,23 @@ const toggleCompound = (cmp) => {
             const structAoa = [['Structure', 'Percentage (%)']];
             Object.entries(structureComposition).forEach(([k, v]) => structAoa.push([k, v]));
             XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(structAoa), 'Structure');
+if (titrationRows.length > 0) {
+    const titrationAoa = [['Point', ...titrationVariables, 'Notes']];
+
+    titrationRows.forEach((row, idx) => {
+        titrationAoa.push([
+            idx + 1,
+            ...titrationVariables.map((v) => (row.values || {})[v] || ''),
+            row.notes || ''
+        ]);
+    });
+
+    XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.aoa_to_sheet(titrationAoa),
+        'Titration Conditions'
+    );
+}
             const fname = `CD_${(compound || 'experiment').replace(/[^a-z0-9]+/gi, '_')}.xlsx`;
             XLSX.writeFile(wb, fname);
         } catch (e) {
@@ -1640,39 +1806,105 @@ const toggleCompound = (cmp) => {
                 {/* ===== EXPERIMENTAL CONDITIONS ===== */}
                 <CollapsibleSection title="Experimental Conditions" icon="🧪">
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-                        <div className="flex flex-col gap-1 col-span-1 md:col-span-2 lg:col-span-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                        <div
+    ref={compoundDropdownRef}
+    className="relative flex flex-col gap-1 col-span-1 md:col-span-2 lg:col-span-4 p-3 bg-blue-50 border border-blue-200 rounded-lg"
+>
     <label className="text-xs font-bold text-blue-800 uppercase flex items-center justify-between mb-2">
         <span>Compound / Sample Label(s)</span>
-        <span className="text-[9px] bg-blue-200 text-blue-800 px-2 py-0.5 rounded">Multiple selection allowed</span>
+        <span className="text-[9px] bg-blue-200 text-blue-800 px-2 py-0.5 rounded">
+            Dropdown • Multiple selection
+        </span>
     </label>
 
-    <div className="flex flex-wrap gap-2">
-        {(allCmpds || []).map((cmp) => (
-            <button
-                key={cmp}
-                type="button"
-                onClick={() => toggleCompound(cmp)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
-                    selectedCompounds.includes(cmp)
-                        ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                        : 'bg-white text-slate-600 border-slate-300 hover:border-blue-400 hover:bg-blue-50'
-                }`}
-            >
-                {selectedCompounds.includes(cmp) ? '✓ ' : ''}{cmp}
-            </button>
-        ))}
+    <button
+        type="button"
+        onClick={() => setCompoundDropdownOpen((v) => !v)}
+        className="w-full border border-blue-300 rounded-md p-2 text-sm bg-white outline-none focus:border-blue-500 flex items-center justify-between gap-3 shadow-sm"
+    >
+        <span
+            className={`truncate ${
+                selectedCompounds.length
+                    ? 'font-bold text-blue-900'
+                    : 'text-slate-400'
+            }`}
+        >
+            {selectedCompounds.length
+                ? selectedCompounds.join(', ')
+                : 'Select compound(s)...'}
+        </span>
 
-        {(allCmpds || []).length === 0 && (
-            <span className="text-sm text-slate-400 italic">
-                No compounds defined. Add them in Definitions & Labels.
-            </span>
-        )}
-    </div>
+        <span className="text-blue-700 font-bold">▾</span>
+    </button>
+
+    {compoundDropdownOpen && (
+        <div className="absolute top-full left-3 right-3 mt-1 z-50 bg-white border border-blue-200 rounded-lg shadow-xl max-h-56 overflow-y-auto custom-scrollbar">
+            {(allCmpds || []).length === 0 ? (
+                <div className="p-3 text-sm text-slate-400 italic">
+                    No compounds defined. Add them in Definitions & Labels.
+                </div>
+            ) : (
+                (allCmpds || []).map((cmp) => (
+                    <label
+                        key={cmp}
+                        className="flex items-center gap-2 px-3 py-2 hover:bg-blue-50 cursor-pointer border-b border-slate-100 last:border-b-0"
+                    >
+                        <input
+                            type="checkbox"
+                            checked={selectedCompounds.includes(cmp)}
+                            onChange={() => toggleCompound(cmp)}
+                            className="w-4 h-4 accent-blue-600"
+                        />
+
+                        <span
+                            className={`text-sm ${
+                                selectedCompounds.includes(cmp)
+                                    ? 'font-bold text-blue-800'
+                                    : 'text-slate-700'
+                            }`}
+                        >
+                            {cmp}
+                        </span>
+                    </label>
+                ))
+            )}
+        </div>
+    )}
 
     {selectedCompounds.length > 0 && (
-        <p className="text-[10px] text-blue-600 mt-2 font-bold">
-            Selected: {selectedCompounds.join(', ')}
-        </p>
+        <div className="flex flex-wrap gap-2 mt-2">
+            {selectedCompounds.map((cmp) => (
+                <span
+                    key={cmp}
+                    className="inline-flex items-center gap-1 bg-blue-100 border border-blue-300 text-blue-900 px-2 py-1 rounded-lg text-xs font-bold"
+                >
+                    {cmp}
+
+                    <button
+                        type="button"
+                        onClick={() => toggleCompound(cmp)}
+                        className="text-blue-500 hover:text-red-600 font-black"
+                        title={`Remove ${cmp}`}
+                    >
+                        ×
+                    </button>
+                </span>
+            ))}
+
+            <button
+                type="button"
+                onClick={() =>
+                    updatePlate({
+                        selectedCompounds: [],
+                        compounds: [],
+                        compound: ''
+                    })
+                }
+                className="text-xs font-bold text-red-500 hover:text-red-700 underline"
+            >
+                Clear all
+            </button>
+        </div>
     )}
 </div>
                         <div>
@@ -1766,6 +1998,188 @@ const toggleCompound = (cmp) => {
                         </div>
                     </div>
                 </CollapsibleSection>
+{/* ===== TITRATION CONDITIONS ===== */}
+<CollapsibleSection title="Titration Conditions" icon="🧪" defaultOpen={false}>
+    <div className="flex flex-col gap-4">
+        <div className="flex flex-col lg:flex-row gap-3 lg:items-end justify-between bg-slate-50 border border-slate-200 rounded-lg p-4">
+            <div className="flex flex-col md:flex-row gap-2 w-full lg:w-auto">
+                <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">
+                        New Experimental Variable
+                    </label>
+
+                    <input
+                        type="text"
+                        value={newTitrationVariable}
+                        onChange={(e) => setNewTitrationVariable(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                                e.preventDefault();
+                                addTitrationVariable();
+                            }
+                        }}
+                        placeholder="e.g. Ratio, Concentration, pH, Temperature"
+                        className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-full md:w-72 bg-white"
+                    />
+                </div>
+
+                <button
+                    type="button"
+                    onClick={addTitrationVariable}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm h-fit"
+                >
+                    + Add Variable
+                </button>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+                <button
+                    type="button"
+                    onClick={addTitrationRowFromCurrent}
+                    className="bg-white border border-blue-300 hover:bg-blue-50 text-blue-700 font-bold px-4 py-2 rounded-lg text-sm shadow-sm"
+                >
+                    + Add Point from Current Conditions
+                </button>
+
+                <button
+                    type="button"
+                    onClick={addTitrationRow}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm"
+                >
+                    + Add Empty Titration Point
+                </button>
+            </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+            {titrationVariables.length === 0 && (
+                <span className="text-sm text-slate-400 italic">
+                    No variables defined. Add variables such as Ratio, Concentration, pH, Temperature, etc.
+                </span>
+            )}
+
+            {titrationVariables.map((v) => (
+                <span
+                    key={v}
+                    className="inline-flex items-center gap-2 bg-white border border-slate-300 px-2.5 py-1 rounded-lg text-xs font-bold text-slate-700 shadow-sm"
+                >
+                    {v}
+
+                    <button
+                        type="button"
+                        onClick={() => removeTitrationVariable(v)}
+                        className="text-slate-400 hover:text-red-500 font-black"
+                        title={`Remove variable ${v}`}
+                    >
+                        ×
+                    </button>
+                </span>
+            ))}
+        </div>
+
+        <div className="overflow-x-auto custom-scrollbar border border-slate-200 rounded-lg">
+            <table className="w-full text-sm text-left min-w-[700px]">
+                <thead className="text-xs text-slate-500 uppercase bg-slate-100 sticky top-0 z-10">
+                    <tr>
+                        <th className="px-3 py-2 w-12 border-b border-slate-200">
+                            #
+                        </th>
+
+                        {titrationVariables.map((v) => (
+                            <th
+                                key={v}
+                                className="px-3 py-2 font-bold text-blue-700 whitespace-nowrap border-b border-slate-200"
+                            >
+                                {v}
+                            </th>
+                        ))}
+
+                        <th className="px-3 py-2 min-w-[180px] border-b border-slate-200">
+                            Notes
+                        </th>
+
+                        <th className="px-3 py-2 w-32 border-b border-slate-200">
+                            Actions
+                        </th>
+                    </tr>
+                </thead>
+
+                <tbody className="divide-y divide-slate-100 bg-white">
+                    {titrationRows.length === 0 ? (
+                        <tr>
+                            <td
+                                colSpan={titrationVariables.length + 3}
+                                className="px-3 py-10 text-center text-slate-400 italic"
+                            >
+                                No titration points defined yet.
+                            </td>
+                        </tr>
+                    ) : (
+                        titrationRows.map((row, idx) => (
+                            <tr key={row.id} className="hover:bg-slate-50">
+                                <td className="px-3 py-2 font-bold text-slate-500">
+                                    {idx + 1}
+                                </td>
+
+                                {titrationVariables.map((v) => (
+                                    <td key={v} className="px-3 py-2">
+                                        <input
+                                            type="text"
+                                            value={(row.values || {})[v] || ''}
+                                            onChange={(e) =>
+                                                updateTitrationRowValue(
+                                                    row.id,
+                                                    v,
+                                                    e.target.value
+                                                )
+                                            }
+                                            className="w-full min-w-[90px] border border-slate-300 rounded-md px-2 py-1.5 text-sm outline-none focus:border-blue-500"
+                                            placeholder={v}
+                                        />
+                                    </td>
+                                ))}
+
+                                <td className="px-3 py-2">
+                                    <input
+                                        type="text"
+                                        value={row.notes || ''}
+                                        onChange={(e) =>
+                                            updateTitrationRow(row.id, {
+                                                notes: e.target.value
+                                            })
+                                        }
+                                        className="w-full min-w-[180px] border border-slate-300 rounded-md px-2 py-1.5 text-sm outline-none focus:border-blue-500"
+                                        placeholder="Notes..."
+                                    />
+                                </td>
+
+                                <td className="px-3 py-2 whitespace-nowrap">
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => duplicateTitrationRow(row)}
+                                            className="text-xs font-bold text-blue-600 hover:text-blue-800"
+                                        >
+                                            Duplicate
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            onClick={() => removeTitrationRow(row.id)}
+                                            className="text-xs font-bold text-red-500 hover:text-red-700"
+                                        >
+                                            Delete
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        ))
+                    )}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</CollapsibleSection>
 
                 {/* ===== LABELS & CLASSIFICATION (NUOVA) ===== */}
                 <CollapsibleSection title="Labels & Classification" icon="🏷️" defaultOpen={true}>
@@ -2095,7 +2509,7 @@ const toggleCompound = (cmp) => {
 
                 {/* ===== CD SPECTRA SIMULATORS ===== */}
                 <CollapsibleSection title="CD Spectra Simulators & Reference Library" icon="🧬" defaultOpen={false}>
-                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                   <div className="flex flex-col gap-6">
                         {fsPanel === 'mixer' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('mixer')}></div>}
                         <ProteinCDMixer isExpanded={fsPanel === 'mixer'} onToggleExpand={() => toggleFs('mixer')} />
                         {fsPanel === 'library' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('library')}></div>}
