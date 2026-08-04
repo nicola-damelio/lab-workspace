@@ -5,10 +5,11 @@ import {
 } from 'recharts';
 
 /* ============================================================================
-NMRSections — all NMR-specific logic extracted from NMRTestRenderer.jsx
-Rendered by TestShellRenderer via the `custom` prop:
-Toolbar, Setup, Data, FittingErrors, FittingGraphics, Simulations, NotebookExtra.
-Every original function is preserved 1:1. All UI text in English.
+   NMRSections — NMR-specific sections rendered by TestShellRenderer:
+   Toolbar, Compounds, Data, Fitting, Simulations, NotebookExtra.
+   Cross-highlighting: selection is stored in activeTest.selectedAtomKeys and
+   shared by the formula (Compounds), the assignment table (Data) and all
+   simulated spectra (Simulations).
 ========================================================================== */
 
 const FS_CLASSES =
@@ -485,27 +486,21 @@ const SS_META = {
   H: { label: 'α-Helix', color: '#8b5cf6' },
   E: { label: 'β-Sheet', color: '#f59e0b' }
 };
-
 const FORM_META = {
   A: { label: 'A-form', color: '#0ea5e9' },
   B: { label: 'B-form', color: '#22c55e' },
   Z: { label: 'Z-form', color: '#f43f5e' }
 };
-
 const DNA_FORM_OFFSETS = {
   B: { "H1'": 0, "H2'": 0, "H3'": 0, "H2''": 0 },
   A: { "H1'": 0.2, "H2'": -0.3, "H3'": 0.15, "H2''": -0.25 },
   Z: { "H1'": -0.15, "H2'": 0.25, "H3'": -0.1, "H2''": 0.2 }
 };
-
-const SUGAR_ANOMER_OFFSETS = {
-  alpha: { H1: 0.25 },
-  beta: { H1: -0.15 }
-};
-
+const SUGAR_ANOMER_OFFSETS = { alpha: { H1: 0.25 }, beta: { H1: -0.15 } };
 const RESIDUE_COLORS = ['#3b82f6', '#8b5cf6', '#d946ef', '#ec4899', '#f43f5e', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#6366f1'];
 const TICKS_1H = Array.from({ length: 111 }, (_, i) => parseFloat((i / 10).toFixed(1)));
 const TICKS_13C = Array.from({ length: 281 }, (_, i) => parseFloat((10 + i * 0.5).toFixed(1)));
+const TICKS_15N = Array.from({ length: 81 }, (_, i) => parseFloat((95 + i * 0.5).toFixed(1)));
 const CHART_MARGIN = { top: 20, right: 20, bottom: 45, left: 50 };
 const CHART_MARGIN_1D = { top: 10, right: 15, bottom: 45, left: 15 };
 
@@ -524,6 +519,7 @@ const getNMRFillColor = (entry) => {
   if (entry.colorClass === 'noesyIntra4') return '#fca5a5';
   if (entry.colorClass === 'noesySeq') return '#991b1b';
   if (entry.colorClass === 'hsqc') return '#8b5cf6';
+  if (entry.colorClass === 'hsqc15n') return '#0ea5e9';
   if (entry.colorClass === 'p31') return '#0d9488';
   return '#cbd5e1';
 };
@@ -657,6 +653,33 @@ const getCarbonRangeFor = (molType, char, cName) => {
   return { min: 40, max: 60 };
 };
 
+// ---------- shared selection helpers (cross-highlight state lives in activeTest) ----------
+const getSelectedKeys = (activeTest) =>
+  Array.isArray(activeTest.selectedAtomKeys) && activeTest.selectedAtomKeys.length
+    ? activeTest.selectedAtomKeys
+    : null;
+
+const selectionLabel = (d, selectedKeys) => {
+  if (!selectedKeys || !selectedKeys.length) return '';
+  const ri = parseInt(selectedKeys[0].split('-')[0], 10);
+  const res = d.parsedSeq[ri];
+  const atoms = [...new Set(selectedKeys.map((k) => k.split('-').slice(1).join('-')))];
+  return `${res ? res.id : `#${ri + 1}`}: ${atoms.join(', ')}`;
+};
+
+const getManualKeys = (shifts) => {
+  const out = new Set();
+  Object.entries(shifts || {}).forEach(([k, v]) => {
+    if (parseManual(v) === null) return;
+    out.add(k);
+    const idx = k.split('-')[0];
+    const atom = k.slice(idx.length + 1);
+    out.add(`${idx}-${atom.trim()}`);
+    out.add(`${idx}-${atom.replace(/\s+/g, '')}`);
+  });
+  return [...out];
+};
+
 // ================= GEOMETRY =================
 const getHexagon = (cx, cy, r, dir) => {
   const pts = [];
@@ -667,7 +690,6 @@ const getHexagon = (cx, cy, r, dir) => {
   }
   return pts;
 };
-
 const getPentagon = (cx, cy, r, dir) => {
   const pts = [];
   const baseAngle = dir === 1 ? -Math.PI / 2 : Math.PI / 2;
@@ -677,7 +699,6 @@ const getPentagon = (cx, cy, r, dir) => {
   }
   return pts;
 };
-
 const hexAt = (cx, cy, r, deg0) => {
   const pts = [];
   for (let i = 0; i < 6; i++) {
@@ -686,7 +707,6 @@ const hexAt = (cx, cy, r, deg0) => {
   }
   return pts;
 };
-
 const fusePentagon = (A, B, nx, ny) => {
   const mx = (A.x + B.x) / 2, my = (A.y + B.y) / 2;
   const L = Math.hypot(B.x - A.x, B.y - A.y) || 1;
@@ -1123,7 +1143,7 @@ const buildNucleicStructure = (sequence, molType) => {
   return b.finish();
 };
 
-// ---------- SUGAR STRUCTURE (chair / inverted chair + alpha / beta) ----------
+// ---------- SUGAR STRUCTURE ----------
 const buildSugarStructure = (res, conformation, anomer) => {
   const b = makeBuilder();
   const curRi = 0, curChar = res.char, c = res.color;
@@ -1183,7 +1203,7 @@ const buildSugarStructure = (res, conformation, anomer) => {
   return b.finish();
 };
 
-// ---------- LIPID STRUCTURE (cis/trans double bond) ----------
+// ---------- LIPID STRUCTURE ----------
 const buildLipidStructure = (res, db) => {
   const b = makeBuilder();
   const curRi = 0, curChar = res.char, c = res.color;
@@ -1293,40 +1313,6 @@ const elementsToSVG = (structure, height = 320) => {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${structure.viewBox}" style="height:${height}px;max-width:100%;font-family:sans-serif;background:white;">${inner}</svg>`;
 };
 
-const ensureSvgSize = (svgStr, width = 1200) => {
-  const m = svgStr.match(/viewBox="([^"]+)"/);
-  if (!m) return svgStr;
-  const parts = m[1].trim().split(/\s+/).map(Number);
-  const vw = parts[2] || 1;
-  const vh = parts[3] || 1;
-  const height = Math.max(1, Math.round((vh / vw) * width));
-  return svgStr.replace('<svg ', `<svg width="${width}" height="${height}" `);
-};
-
-const svgToPngDataUrl = (svgStr, width = 1200) => new Promise((resolve, reject) => {
-  const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const img = new Image();
-  img.onload = () => {
-    const w = width;
-    const h = img.height || width;
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, w, h);
-    ctx.drawImage(img, 0, 0, w, h);
-    URL.revokeObjectURL(url);
-    resolve(canvas.toDataURL('image/png'));
-  };
-  img.onerror = (err) => {
-    URL.revokeObjectURL(url);
-    reject(err);
-  };
-  img.src = url;
-});
-
 // ================= IMAGE URL NORMALIZATION =================
 const normalizeImageCandidates = (url) => {
   const u = (url || '').trim();
@@ -1352,29 +1338,6 @@ const normalizeImageCandidates = (url) => {
     return [u.replace(/[?&]dl=0/g, '') + (u.includes('?') ? '&raw=1' : '?raw=1'), u];
   }
   return [u];
-};
-
-const SmartImage = ({ src, alt }) => {
-  const cands = useMemo(() => normalizeImageCandidates(src), [src]);
-  const [idx, setIdx] = useState(0);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => { setIdx(0); setFailed(false); }, [src]);
-  if (failed) {
-    return (
-      <div className="w-full h-40 flex flex-col items-center justify-center bg-slate-50 border border-dashed border-slate-300 rounded text-slate-400 text-xs text-center px-4">
-        ⚠️ Preview not available. If the file is private, set it to "Anyone with the link can view".
-      </div>
-    );
-  }
-  return (
-    <img
-      src={cands[Math.min(idx, cands.length - 1)]}
-      alt={alt}
-      className="w-full h-auto object-contain rounded bg-white"
-      style={{ minHeight: '150px', maxHeight: '400px' }}
-      onError={() => { if (idx < cands.length - 1) setIdx(idx + 1); else setFailed(true); }}
-    />
-  );
 };
 
 // ---------- STRUCTURE VIEW ----------
@@ -1513,7 +1476,6 @@ const CustomXTick1H = ({ x, y, payload, isZoomed }) => {
     </g>
   );
 };
-
 const CustomYTick1H = ({ x, y, payload, isZoomed }) => {
   const numVal = Number(payload.value);
   const isInt = Number.isInteger(numVal);
@@ -1530,7 +1492,6 @@ const CustomYTick1H = ({ x, y, payload, isZoomed }) => {
     </g>
   );
 };
-
 const CustomXTick13C = ({ x, y, payload, isZoomed }) => {
   const numVal = Number(payload.value);
   const isTen = numVal % 10 === 0;
@@ -1546,7 +1507,6 @@ const CustomXTick13C = ({ x, y, payload, isZoomed }) => {
     </g>
   );
 };
-
 const CustomYTick13C = ({ x, y, payload, isZoomed }) => {
   const numVal = Number(payload.value);
   const isTen = numVal % 10 === 0;
@@ -2001,7 +1961,7 @@ const SpectrumPlot = ({
 
 const HSQCPlot = ({
   title, crossPeakData, expandedPanel, setExpandedPanel, panelId, selectedKeys, manualKeys = [],
-  yAxisLabel = '¹³C F1 (ppm)', yDomainInit = [10, 150], heightPx = 400
+  yAxisLabel = '¹³C F1 (ppm)', yDomainInit = [10, 150], yTicks = TICKS_13C, heightPx = 400
 }) => {
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState([0, 11]);
@@ -2119,7 +2079,7 @@ const HSQCPlot = ({
                 domain={yDomain}
                 allowDataOverflow
                 reversed={true}
-                ticks={isZoomed ? undefined : TICKS_13C}
+                ticks={isZoomed ? undefined : yTicks}
                 interval={0}
                 tickLine={false}
                 tick={<CustomYTick13C isZoomed={isZoomed} />}
@@ -2173,10 +2133,10 @@ const useNmrDerived = (activeTest) => {
     moleculeType === 'protein'
       ? 'ACDEFGHIKLMNPQRSTVWY'
       : moleculeType === 'dna'
-      ? 'ACGT'
-      : moleculeType === 'rna'
-      ? 'ACGU'
-      : '';
+        ? 'ACGT'
+        : moleculeType === 'rna'
+          ? 'ACGU'
+          : '';
   const seq =
     moleculeType === 'protein' || moleculeType === 'dna' || moleculeType === 'rna'
       ? rawSeq.replace(new RegExp(`[^${validChars}]`, 'g'), '')
@@ -2190,12 +2150,12 @@ const useNmrDerived = (activeTest) => {
     moleculeType === 'protein'
       ? AMINO_ACID_DB
       : moleculeType === 'dna'
-      ? NUCLEOTIDE_DB.DNA
-      : moleculeType === 'rna'
-      ? NUCLEOTIDE_DB.RNA
-      : moleculeType === 'sugar'
-      ? SUGAR_DB
-      : LIPID_DB;
+        ? NUCLEOTIDE_DB.DNA
+        : moleculeType === 'rna'
+          ? NUCLEOTIDE_DB.RNA
+          : moleculeType === 'sugar'
+            ? SUGAR_DB
+            : LIPID_DB;
   const ssRaw = activeTest.secondaryStructure || '';
   const getSSAt = (i) => (ssRaw[i] && 'HES'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
   const formsRaw = activeTest.nucleicForms || '';
@@ -2207,15 +2167,15 @@ const useNmrDerived = (activeTest) => {
   const typeLabel =
     moleculeType === 'protein' ? 'Protein'
       : moleculeType === 'dna' ? 'DNA'
-      : moleculeType === 'rna' ? 'RNA'
-      : moleculeType === 'sugar' ? 'Sugar'
-      : 'Phospholipid';
+        : moleculeType === 'rna' ? 'RNA'
+          : moleculeType === 'sugar' ? 'Sugar'
+            : 'Phospholipid';
   const nucDefs =
     moleculeType === 'protein'
       ? { H: ['HN', 'Hα', 'Hβ'], N: ['N'], C: ['Cα', 'Cβ', "C'"] }
       : moleculeType === 'dna' || moleculeType === 'rna'
-      ? { H: ["H1'", "H2'", "H3'"], N: [], C: ["C1'", "C2'", "C3'"] }
-      : { H: [], N: [], C: [] };
+        ? { H: ["H1'", "H2'", "H3'"], N: [], C: ["C1'", "C2'", "C3'"] }
+        : { H: [], N: [], C: [] };
 
   const parsedSeq = useMemo(() => {
     let chars = [];
@@ -2312,9 +2272,7 @@ const useNmrDerived = (activeTest) => {
         const estUniqueC = {};
         Object.keys(res.uniqueCShifts || {}).forEach((cn) => {
           let v = res.uniqueCShifts[cn];
-          if (moleculeType === 'protein' && ssKey !== 'coil') {
-            v += corr.c[cn] || 0;
-          }
+          if (moleculeType === 'protein' && ssKey !== 'coil') v += corr.c[cn] || 0;
           estUniqueC[cn] = +v.toFixed(2);
         });
         const estShifts13C = {};
@@ -2362,7 +2320,18 @@ const useNmrDerived = (activeTest) => {
         const cn = getCarbonName(moleculeType, res.char, a);
         if (cn) simShifts13C[a] = simUniqueC[cn];
       });
-      return { ...res, simShifts, simUniqueC, simShifts13C };
+      // simulated backbone 15N (protein), manual override via `${idx}-N`
+      let simN = null;
+      if (moleculeType === 'protein' && res.estN !== null && res.estN !== undefined) {
+        const mN = getMan(idx, 'N');
+        simN = mN !== null ? mN : res.estN;
+      }
+      let simCP = null;
+      if (moleculeType === 'protein' && res.estCP !== null && res.estCP !== undefined) {
+        const mCP = getMan(idx, "C'");
+        simCP = mCP !== null ? mCP : res.estCP;
+      }
+      return { ...res, simShifts, simUniqueC, simShifts13C, simN, simCP };
     });
   }, [estSeq, shifts, moleculeType]);
 
@@ -2381,6 +2350,7 @@ const useNmrDerived = (activeTest) => {
     let tocsy = [];
     let noesy = [];
     let hsqc = [];
+    let hsqc15n = [];
     let d1H = [];
     let d13C = [];
     let p31 = [];
@@ -2457,6 +2427,16 @@ const useNmrDerived = (activeTest) => {
           keys: [`${index}-${cName}`]
         });
       });
+      if (moleculeType === 'protein' && res.simCP !== null && res.simCP !== undefined) {
+        d13C.push({
+          x: res.simCP,
+          y: 0.8 + Math.random() * 0.4,
+          label: `${res.id} C'`,
+          color: res.color,
+          type: '1D',
+          keys: [`${index}-C'`]
+        });
+      }
       Object.keys(res.simShifts).forEach((atom) => {
         diag.push({
           x: res.simShifts[atom],
@@ -2559,6 +2539,22 @@ const useNmrDerived = (activeTest) => {
           });
         }
       });
+      // ---------- 1H-15N HSQC (protein backbone amides) ----------
+      if (
+        moleculeType === 'protein' &&
+        res.simN !== null && res.simN !== undefined &&
+        res.simShifts['HN'] !== undefined
+      ) {
+        hsqc15n.push({
+          x: res.simShifts['HN'],
+          y: res.simN,
+          label: `${res.id} HN-N`,
+          type: 'HSQC',
+          colorClass: 'hsqc15n',
+          size: 4,
+          keys: [...buildKeys(index, ['HN'], moleculeType, res.char), `${index}-N`]
+        });
+      }
       if (hasPhosphorus && res.p31 !== null) {
         p31.push({
           x: res.p31,
@@ -2577,6 +2573,7 @@ const useNmrDerived = (activeTest) => {
       tocsyPeaks: tocsy,
       noesyPeaks: noesy,
       hsqcPeaks: hsqc,
+      hsqc15NPeaks: hsqc15n,
       data1H: d1H,
       data13C: d13C,
       p31Data: p31
@@ -2584,7 +2581,6 @@ const useNmrDerived = (activeTest) => {
   }, [simSeq, moleculeType, hasPhosphorus]);
 
   const uniqueTypes = useMemo(() => [...new Set(parsedSeq.map((r) => r.char))], [parsedSeq]);
-
   const ranges = useMemo(() => {
     const r1 = [];
     const r13 = [];
@@ -2671,35 +2667,29 @@ export const Toolbar = ({ ctx }) => {
   );
 };
 
-// ================= SETUP (molecule type + sequence + painting + target nuclei + 2D structure) =================
-export const Setup = ({ ctx }) => {
+// ================= COMPOUNDS (molecule definition + sequence + painting + 2D formula) =================
+// Rendered by TestShellRenderer inside "Compounds & Biological Models" via custom.Compounds.
+export const Compounds = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useNmrDerived(activeTest);
   const [focusIdx, setFocusIdx] = useState('ALL');
-  const [selected, setSelected] = useState(null);
   const [expandedPanel, setExpandedPanel] = useState(null);
   const [ssBrush, setSSBrush] = useState('H');
   const [formBrush, setFormBrush] = useState(activeTest.dnaForm || 'B');
   const [sugarBrushAnomer, setSugarBrushAnomer] = useState(activeTest.sugarAnomer || 'alpha');
   const [sugarBrushConf, setSugarBrushConf] = useState(activeTest.sugarConf || 'chair');
   const [lipidBrush, setLipidBrush] = useState(activeTest.lipidDB || 'cis');
-  const selectedKeys = selected ? selected.keys : null;
-  const manualKeys = useMemo(() => {
-    const out = new Set();
-    Object.entries(d.shifts || {}).forEach(([k, v]) => {
-      if (parseManual(v) === null) return;
-      out.add(k);
-      const idx = k.split('-')[0];
-      const atom = k.slice(idx.length + 1);
-      out.add(`${idx}-${atom.trim()}`);
-      out.add(`${idx}-${atom.replace(/\s+/g, '')}`);
-    });
-    return [...out];
-  }, [d.shifts]);
+
+  const selectedKeys = getSelectedKeys(activeTest);
+  const manualKeys = useMemo(() => getManualKeys(d.shifts), [d.shifts]);
+
   const handleAtomClick = (ri, keys) => {
     if (ri === null || !keys) return;
-    setSelected((prev) => (prev && prev.ri === ri && prev.keys.join('|') === keys.join('|') ? null : { ri, keys }));
+    const cur = getSelectedKeys(activeTest);
+    if (cur && cur.join('|') === keys.join('|')) updateActiveTest({ selectedAtomKeys: [] });
+    else updateActiveTest({ selectedAtomKeys: keys });
   };
+
   const paintSSAt = (i, letter) => {
     const arr = d.seq.split('').map((_, j) => d.getSSAt(j));
     arr[i] = letter;
@@ -2712,6 +2702,7 @@ export const Setup = ({ ctx }) => {
     updateActiveTest({ nucleicForms: arr.join('') });
   };
   const setAllForms = (letter) => updateActiveTest({ nucleicForms: d.seq.split('').map(() => letter).join(''), dnaForm: letter });
+
   const exportFormulaToNotebook = () => {
     if (!d.structure) return;
     const html =
@@ -2722,8 +2713,12 @@ export const Setup = ({ ctx }) => {
     updateActiveTest({ comments: currentComments + (currentComments ? '<br/>' : '') + html });
     alert('Chemical formula appended to the Lab Notebook notes.');
   };
+
   return (
     <div className="flex flex-col gap-6">
+      <h4 className="text-sm font-bold text-slate-700 uppercase tracking-widest flex items-center gap-2">
+        🧬 Molecule Definition & Chemical Formula
+      </h4>
       <div className="flex flex-wrap gap-2 mb-2">
         {[
           ['protein', '🧬 Protein'],
@@ -2735,9 +2730,7 @@ export const Setup = ({ ctx }) => {
           <button
             key={val}
             onClick={() => updateActiveTest({ moleculeType: val })}
-            className={`px-3 py-1.5 rounded-lg text-sm font-bold border transition-colors ${
-              d.moleculeType === val ? 'bg-blue-600 border-blue-700 text-white shadow' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
-            }`}
+            className={`px-3 py-1.5 rounded-lg text-sm font-bold border transition-colors ${d.moleculeType === val ? 'bg-blue-600 border-blue-700 text-white shadow' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}`}
           >
             {lab}
           </button>
@@ -2771,9 +2764,7 @@ export const Setup = ({ ctx }) => {
                 className="w-full border border-slate-300 rounded-lg p-2.5 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
               >
                 {Object.entries(SUGAR_DB).map(([k, v]) => (
-                  <option key={k} value={k}>
-                    {v.name} ({v.code3})
-                  </option>
+                  <option key={k} value={k}>{v.name} ({v.code3})</option>
                 ))}
               </select>
             </div>
@@ -2786,9 +2777,7 @@ export const Setup = ({ ctx }) => {
                 className="w-full border border-slate-300 rounded-lg p-2.5 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
               >
                 {Object.entries(LIPID_DB).map(([k, v]) => (
-                  <option key={k} value={k}>
-                    {k} — {v.name}
-                  </option>
+                  <option key={k} value={k}>{k} — {v.name}</option>
                 ))}
               </select>
             </div>
@@ -2847,7 +2836,7 @@ export const Setup = ({ ctx }) => {
             <button onClick={() => setAllSS('E')} className="px-3 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-300 text-amber-700 hover:bg-amber-200">All β-Sheet</button>
           </div>
           <p className="text-xs text-slate-400 mb-3">
-            💡 Select a brush, then click or drag across the sequence chips to paint secondary structure. Each chip shows: position, one-letter code, assigned SS.
+            💡 Select a brush, then click or drag across the sequence chips to paint secondary structure.
           </p>
           <SequencePaintStrip
             residues={d.parsedSeq}
@@ -2858,7 +2847,6 @@ export const Setup = ({ ctx }) => {
           />
         </div>
       )}
-
       {(d.moleculeType === 'dna' || d.moleculeType === 'rna') && d.parsedSeq.length > 0 && (
         <div>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
@@ -2894,7 +2882,6 @@ export const Setup = ({ ctx }) => {
           />
         </div>
       )}
-
       {d.moleculeType === 'sugar' && d.parsedSeq.length > 0 && (
         <div>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
@@ -2923,7 +2910,7 @@ export const Setup = ({ ctx }) => {
             ))}
           </div>
           <p className="text-xs text-slate-400 mb-3">
-            💡 Select the anomer brush (α/β for the anomeric center) and the ring-conformation brush, then click the sugar chip to apply.
+            💡 Select the anomer brush (α/β) and the ring-conformation brush, then click the sugar chip to apply.
           </p>
           <SequencePaintStrip
             residues={d.parsedSeq}
@@ -2935,7 +2922,6 @@ export const Setup = ({ ctx }) => {
           />
         </div>
       )}
-
       {d.moleculeType === 'lipid' && d.parsedSeq.length > 0 && (
         <div>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
@@ -2952,7 +2938,7 @@ export const Setup = ({ ctx }) => {
             ))}
           </div>
           <p className="text-xs text-slate-400 mb-3">
-            💡 Select the cis/trans brush, then click the lipid chip to set the geometry of the Δ9 double bond in the sn-2 chain.
+            💡 Select the cis/trans brush, then click the lipid chip to set the geometry of the Δ9 double bond.
           </p>
           <SequencePaintStrip
             residues={d.parsedSeq}
@@ -2976,17 +2962,15 @@ export const Setup = ({ ctx }) => {
             >
               <option value="ALL">All residues</option>
               {d.parsedSeq.map((r, i) => (
-                <option key={i} value={i}>
-                  {r.id} — {r.name}
-                </option>
+                <option key={i} value={i}>{r.id} — {r.name}</option>
               ))}
             </select>
-            {selected && (
+            {selectedKeys && (
               <button
-                onClick={() => setSelected(null)}
+                onClick={() => updateActiveTest({ selectedAtomKeys: [] })}
                 className="px-2 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-400 text-amber-800"
               >
-                ✖ Deselect atom
+                ✖ Deselect ({selectionLabel(d, selectedKeys)})
               </button>
             )}
             <button
@@ -2998,7 +2982,7 @@ export const Setup = ({ ctx }) => {
             </button>
           </div>
           <p className="text-xs text-slate-400 mb-2">
-            💡 Click an atom in the formula to highlight its cell in the table and its peaks in the spectra.
+            💡 Click an atom in the formula to highlight its cell in the assignment table and its peaks in the spectra.
           </p>
           <StructureSVGView
             structure={d.structure}
@@ -3025,39 +3009,54 @@ export const Data = ({ ctx }) => {
   const [tableMode, setTableMode] = useState(activeTest.tableMode || 'backbone');
   const [focusIdx, setFocusIdx] = useState('ALL');
   const effTableMode = d.moleculeType === 'sugar' || d.moleculeType === 'lipid' ? 'all' : tableMode;
-  const selectedKeys = null;
-  const manualKeys = useMemo(() => {
-    const out = new Set();
-    Object.entries(d.shifts || {}).forEach(([k, v]) => {
-      if (parseManual(v) === null) return;
-      out.add(k);
-      const idx = k.split('-')[0];
-      const atom = k.slice(idx.length + 1);
-      out.add(`${idx}-${atom.trim()}`);
-      out.add(`${idx}-${atom.replace(/\s+/g, '')}`);
-    });
-    return [...out];
-  }, [d.shifts]);
+
+  const selectedKeys = getSelectedKeys(activeTest);
+  const manualKeys = useMemo(() => getManualKeys(d.shifts), [d.shifts]);
+
   const handleShiftChange = (resIdx, atom, val) => {
     updateActiveTest({ chemicalShifts: { ...d.shifts, [`${resIdx}-${atom}`]: val } });
   };
-  const cellIsSelected = () => false;
+  const handleCellClick = (e, idx, atom) => {
+    if (e && e.target && e.target.tagName === 'INPUT') return;
+    const keys = buildKeys(idx, [atom], d.moleculeType, d.parsedSeq[idx]?.char);
+    const cur = getSelectedKeys(activeTest);
+    if (cur && cur.join('|') === keys.join('|')) updateActiveTest({ selectedAtomKeys: [] });
+    else updateActiveTest({ selectedAtomKeys: keys });
+  };
+  const cellIsSelected = (idx, atom) => Boolean(selectedKeys && selectedKeys.includes(`${idx}-${atom}`));
+
   const fillEstimated = () => {
     const newShifts = { ...d.shifts };
     d.estSeq.forEach((res, idx) => {
-      Object.entries(res.estShifts || {}).forEach(([a, v]) => {
-        newShifts[`${idx}-${a}`] = String(v);
-      });
-      Object.entries(res.estUniqueC || {}).forEach(([cn, v]) => {
-        newShifts[`${idx}-${cn}`] = String(v);
-      });
+      Object.entries(res.estShifts || {}).forEach(([a, v]) => { newShifts[`${idx}-${a}`] = String(v); });
+      Object.entries(res.estUniqueC || {}).forEach(([cn, v]) => { newShifts[`${idx}-${cn}`] = String(v); });
       if (res.estN !== null) newShifts[`${idx}-N`] = String(res.estN);
       if (res.estCP !== null) newShifts[`${idx}-C'`] = String(res.estCP);
     });
     updateActiveTest({ chemicalShifts: newShifts });
   };
+
+  const selTdCls = (isMan, isSel) =>
+    `px-3 py-1 cursor-pointer transition-colors ${isSel ? 'bg-amber-100 ring-2 ring-inset ring-amber-400' : isMan ? 'bg-green-50' : 'hover:bg-slate-50'}`;
+
   return (
     <div className="flex flex-col gap-6">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <h4 className="text-sm font-bold text-slate-700 uppercase tracking-widest">📊 NMR Data — Ranges & Assignment</h4>
+        {selectedKeys && (
+          <div className="flex items-center gap-2 bg-amber-50 border border-amber-300 rounded-lg px-3 py-1.5 text-xs font-bold text-amber-800">
+            🎯 Selected: {selectionLabel(d, selectedKeys)}
+            <button
+              onClick={() => updateActiveTest({ selectedAtomKeys: [] })}
+              className="ml-1 text-amber-600 hover:text-red-600 font-black"
+              title="Clear selection"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+      </div>
+
       {d.uniqueTypes.length > 0 && (
         <div className="grid grid-cols-1 gap-4">
           <RangeBarChart
@@ -3086,25 +3085,19 @@ export const Data = ({ ctx }) => {
           <div className="flex bg-slate-200 p-1 rounded-lg">
             <button
               onClick={() => { setTableMode('backbone'); updateActiveTest({ tableMode: 'backbone' }); }}
-              className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${
-                effTableMode === 'backbone' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              }`}
+              className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${effTableMode === 'backbone' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
             >
               Backbone
             </button>
             <button
               onClick={() => { setTableMode('all'); updateActiveTest({ tableMode: 'all' }); }}
-              className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${
-                effTableMode === 'all' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              }`}
+              className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${effTableMode === 'all' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
             >
               All Atoms
             </button>
             <button
               onClick={() => { setTableMode('unified'); updateActiveTest({ tableMode: 'unified' }); }}
-              className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${
-                effTableMode === 'unified' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              }`}
+              className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${effTableMode === 'unified' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
             >
               Unified
             </button>
@@ -3131,7 +3124,7 @@ export const Data = ({ ctx }) => {
 
       {d.parsedSeq.length === 0 ? (
         <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">
-          Enter a sequence / select a molecule to generate the table.
+          Enter a sequence / select a molecule (in Compounds & Biological Models) to generate the table.
         </div>
       ) : effTableMode === 'backbone' ? (
         <div className="overflow-x-auto custom-scrollbar border border-slate-200 rounded-lg max-h-[500px]">
@@ -3144,21 +3137,15 @@ export const Data = ({ ctx }) => {
                 )}
                 {d.selNuc.includes('H') &&
                   d.nucDefs.H.map((a) => (
-                    <th key={a} className="px-3 py-2 font-bold text-blue-700 border-b border-slate-200 bg-blue-50/50">
-                      {a} (ppm)
-                    </th>
+                    <th key={a} className="px-3 py-2 font-bold text-blue-700 border-b border-slate-200 bg-blue-50/50">{a} (ppm)</th>
                   ))}
                 {d.selNuc.includes('N') &&
                   d.nucDefs.N.map((a) => (
-                    <th key={a} className="px-3 py-2 font-bold text-emerald-700 border-b border-slate-200 bg-emerald-50/50">
-                      {a} (ppm)
-                    </th>
+                    <th key={a} className="px-3 py-2 font-bold text-emerald-700 border-b border-slate-200 bg-emerald-50/50">{a} (ppm)</th>
                   ))}
                 {d.selNuc.includes('C') &&
                   d.nucDefs.C.map((a) => (
-                    <th key={a} className="px-3 py-2 font-bold text-purple-700 border-b border-slate-200 bg-purple-50/50">
-                      {a} (ppm)
-                    </th>
+                    <th key={a} className="px-3 py-2 font-bold text-purple-700 border-b border-slate-200 bg-purple-50/50">{a} (ppm)</th>
                   ))}
               </tr>
             </thead>
@@ -3167,9 +3154,7 @@ export const Data = ({ ctx }) => {
                 if (focusIdx !== 'ALL' && focusIdx !== idx) return null;
                 return (
                   <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-4 py-2 font-black text-slate-700 text-center bg-slate-50 border-r border-slate-100">
-                      {res.id}
-                    </td>
+                    <td className="px-4 py-2 font-black text-slate-700 text-center bg-slate-50 border-r border-slate-100">{res.id}</td>
                     {d.moleculeType === 'protein' && (
                       <td className="px-2 py-1 text-center">
                         <span
@@ -3183,18 +3168,15 @@ export const Data = ({ ctx }) => {
                     {d.selNuc.includes('H') &&
                       d.nucDefs.H.map((a) => {
                         const isMan = parseManual(d.shifts[`${idx}-${a}`]) !== null;
+                        const isSel = cellIsSelected(idx, a);
                         const est = res.estShifts?.[a];
                         return (
-                          <td key={a} className={`px-3 py-1 ${isMan ? 'bg-green-50' : ''}`}>
+                          <td key={a} className={selTdCls(isMan, isSel)} onClick={(e) => handleCellClick(e, idx, a)} title="Click to highlight this atom everywhere">
                             <input
                               type="text"
                               value={d.shifts[`${idx}-${a}`] || ''}
                               onChange={(e) => handleShiftChange(idx, a, e.target.value)}
-                              className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${
-                                isMan
-                                  ? 'border-green-400 bg-green-50 text-green-700 font-bold'
-                                  : 'border-slate-200 focus:border-blue-500'
-                              }`}
+                              className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-200 focus:border-blue-500'}`}
                               placeholder="—"
                             />
                             {est !== undefined && (
@@ -3206,17 +3188,14 @@ export const Data = ({ ctx }) => {
                     {d.selNuc.includes('N') &&
                       d.nucDefs.N.map((a) => {
                         const isMan = parseManual(d.shifts[`${idx}-${a}`]) !== null;
+                        const isSel = cellIsSelected(idx, a);
                         return (
-                          <td key={a} className={`px-3 py-1 ${isMan ? 'bg-green-50' : ''}`}>
+                          <td key={a} className={selTdCls(isMan, isSel)} onClick={(e) => handleCellClick(e, idx, a)} title="Click to highlight this atom everywhere">
                             <input
                               type="text"
                               value={d.shifts[`${idx}-${a}`] || ''}
                               onChange={(e) => handleShiftChange(idx, a, e.target.value)}
-                              className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${
-                                isMan
-                                  ? 'border-green-400 bg-green-50 text-green-700 font-bold'
-                                  : 'border-slate-200 focus:border-emerald-500'
-                              }`}
+                              className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-200 focus:border-emerald-500'}`}
                               placeholder="—"
                             />
                             {res.estN !== null && (
@@ -3228,18 +3207,15 @@ export const Data = ({ ctx }) => {
                     {d.selNuc.includes('C') &&
                       d.nucDefs.C.map((a) => {
                         const isMan = parseManual(d.shifts[`${idx}-${a}`]) !== null;
+                        const isSel = cellIsSelected(idx, a);
                         const est = a === "C'" ? res.estCP : res.estUniqueC?.[a];
                         return (
-                          <td key={a} className={`px-3 py-1 ${isMan ? 'bg-green-50' : ''}`}>
+                          <td key={a} className={selTdCls(isMan, isSel)} onClick={(e) => handleCellClick(e, idx, a)} title="Click to highlight this atom everywhere">
                             <input
                               type="text"
                               value={d.shifts[`${idx}-${a}`] || ''}
                               onChange={(e) => handleShiftChange(idx, a, e.target.value)}
-                              className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${
-                                isMan
-                                  ? 'border-green-400 bg-green-50 text-green-700 font-bold'
-                                  : 'border-slate-200 focus:border-purple-500'
-                              }`}
+                              className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-200 focus:border-purple-500'}`}
                               placeholder="—"
                             />
                             {est !== undefined && est !== null && (
@@ -3288,8 +3264,14 @@ export const Data = ({ ctx }) => {
                 return rows.map((row, ri) => {
                   const key = `${idx}-${row.atom}`;
                   const isMan = parseManual(d.shifts[key]) !== null;
+                  const isSel = cellIsSelected(idx, row.atom);
                   return (
-                    <tr key={`${idx}-${ri}`} className={`hover:bg-slate-50 ${isMan ? 'bg-green-50' : ''}`}>
+                    <tr
+                      key={`${idx}-${ri}`}
+                      onClick={(e) => handleCellClick(e, idx, row.atom)}
+                      className={`cursor-pointer transition-colors ${isSel ? 'bg-amber-100' : isMan ? 'bg-green-50' : 'hover:bg-slate-50'}`}
+                      title="Click to highlight this atom everywhere"
+                    >
                       {ri === 0 && (
                         <td rowSpan={rows.length} className="px-4 py-2 font-black text-slate-700 text-center bg-slate-50 border-r border-slate-100 align-top">
                           {res.id}
@@ -3306,19 +3288,13 @@ export const Data = ({ ctx }) => {
                         </td>
                       )}
                       <td className="px-3 py-1 font-bold text-slate-600 whitespace-nowrap">{row.nuc}</td>
-                      <td className={`px-3 py-1 font-medium whitespace-nowrap ${isMan ? 'text-green-700 font-bold' : 'text-slate-700'}`}>
-                        {row.atom}
-                      </td>
+                      <td className={`px-3 py-1 font-medium whitespace-nowrap ${isMan ? 'text-green-700 font-bold' : 'text-slate-700'}`}>{row.atom}</td>
                       <td className="px-3 py-1 text-center">
                         <input
                           type="text"
                           value={d.shifts[key] || ''}
                           onChange={(e) => handleShiftChange(idx, row.atom, e.target.value)}
-                          className={`w-24 text-center border rounded px-2 py-1 outline-none text-xs font-mono ${
-                            isMan
-                              ? 'border-green-400 bg-green-50 text-green-700 font-bold'
-                              : 'border-slate-200 focus:border-blue-500'
-                          }`}
+                          className={`w-24 text-center border rounded px-2 py-1 outline-none text-xs font-mono ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-200 focus:border-blue-500'}`}
                           placeholder="—"
                         />
                       </td>
@@ -3354,22 +3330,22 @@ export const Data = ({ ctx }) => {
                     <tbody className="text-slate-700 divide-y divide-slate-100">
                       {res.atoms.map((atom) => {
                         const isMan = parseManual(d.shifts[`${resIdx}-${atom}`]) !== null;
+                        const isSel = cellIsSelected(resIdx, atom);
                         return (
-                          <tr key={atom} className={`hover:bg-slate-50 ${isMan ? 'bg-green-50' : ''}`}>
-                            <td className={`px-3 py-1 font-medium ${isMan ? 'text-green-700 font-bold' : ''}`}>
-                              {atom}
-                            </td>
+                          <tr
+                            key={atom}
+                            onClick={(e) => handleCellClick(e, resIdx, atom)}
+                            className={`cursor-pointer transition-colors ${isSel ? 'bg-amber-100' : isMan ? 'bg-green-50' : 'hover:bg-slate-50'}`}
+                            title="Click to highlight this atom everywhere"
+                          >
+                            <td className={`px-3 py-1 font-medium ${isMan ? 'text-green-700 font-bold' : ''}`}>{atom}</td>
                             <td className="px-3 py-1 text-center border-l border-slate-100 font-mono">
                               <div className="flex items-center justify-center gap-2 flex-wrap">
                                 <input
                                   type="text"
                                   value={d.shifts[`${resIdx}-${atom}`] || ''}
                                   onChange={(e) => handleShiftChange(resIdx, atom, e.target.value)}
-                                  className={`w-16 text-center border rounded py-0.5 outline-none text-xs ${
-                                    isMan
-                                      ? 'border-green-400 bg-green-50 text-green-700 font-bold'
-                                      : 'border-slate-300 focus:border-blue-500'
-                                  }`}
+                                  className={`w-16 text-center border rounded py-0.5 outline-none text-xs ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-300 focus:border-blue-500'}`}
                                   placeholder="—"
                                 />
                                 {res.estShifts[atom] !== undefined && (
@@ -3408,8 +3384,14 @@ export const Data = ({ ctx }) => {
                     <tbody className="text-slate-700 divide-y divide-slate-100">
                       {Object.keys(res.estUniqueC || {}).map((cName) => {
                         const isMan = parseManual(d.shifts[`${resIdx}-${cName}`]) !== null;
+                        const isSel = cellIsSelected(resIdx, cName);
                         return (
-                          <tr key={cName} className={`hover:bg-slate-50 ${isMan ? 'bg-green-50' : ''}`}>
+                          <tr
+                            key={cName}
+                            onClick={(e) => handleCellClick(e, resIdx, cName)}
+                            className={`cursor-pointer transition-colors ${isSel ? 'bg-amber-100' : isMan ? 'bg-green-50' : 'hover:bg-slate-50'}`}
+                            title="Click to highlight this atom everywhere"
+                          >
                             <td className={`px-3 py-1 font-medium ${isMan ? 'text-green-700 font-bold' : 'text-purple-800'}`}>{cName}</td>
                             <td className="px-3 py-1 text-center border-l border-slate-100 font-mono">
                               <div className="flex items-center justify-center gap-2 flex-wrap">
@@ -3417,11 +3399,7 @@ export const Data = ({ ctx }) => {
                                   type="text"
                                   value={d.shifts[`${resIdx}-${cName}`] || ''}
                                   onChange={(e) => handleShiftChange(resIdx, cName, e.target.value)}
-                                  className={`w-16 text-center border rounded py-0.5 outline-none text-xs ${
-                                    isMan
-                                      ? 'border-green-400 bg-green-50 text-green-700 font-bold'
-                                      : 'border-slate-300 focus:border-purple-500'
-                                  }`}
+                                  className={`w-16 text-center border rounded py-0.5 outline-none text-xs ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-300 focus:border-purple-500'}`}
                                   placeholder="—"
                                 />
                                 <span className="text-[13px] font-bold text-purple-600">≈ {res.estUniqueC[cName].toFixed(1)}</span>
@@ -3444,6 +3422,7 @@ export const Data = ({ ctx }) => {
                   if (focusIdx !== 'ALL' && focusIdx !== resIdx) return null;
                   if (res.p31 === null) return null;
                   const isMan = parseManual(d.shifts[`${resIdx}-P`]) !== null;
+                  const isSel = cellIsSelected(resIdx, 'P');
                   return (
                     <div key={`p-${resIdx}`} className="border border-slate-200 rounded-lg overflow-hidden shadow-sm h-fit">
                       <div
@@ -3452,15 +3431,17 @@ export const Data = ({ ctx }) => {
                       >
                         {res.name} ({res.id})
                       </div>
-                      <div className={`p-3 flex items-center justify-center gap-3 ${isMan ? 'bg-green-50' : ''}`}>
+                      <div
+                        className={`p-3 flex items-center justify-center gap-3 cursor-pointer ${isSel ? 'bg-amber-100' : isMan ? 'bg-green-50' : ''}`}
+                        onClick={(e) => handleCellClick(e, resIdx, 'P')}
+                        title="Click to highlight this atom everywhere"
+                      >
                         <span className="font-bold text-teal-700">P</span>
                         <input
                           type="text"
                           value={d.shifts[`${resIdx}-P`] || ''}
                           onChange={(e) => handleShiftChange(resIdx, 'P', e.target.value)}
-                          className={`w-16 text-center border rounded py-0.5 outline-none text-xs font-mono ${
-                            isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-300 focus:border-teal-500'
-                          }`}
+                          className={`w-16 text-center border rounded py-0.5 outline-none text-xs font-mono ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-300 focus:border-teal-500'}`}
                           placeholder="—"
                         />
                         <span className="text-[13px] font-bold text-teal-600">≈ {res.p31.toFixed(2)}</span>
@@ -3477,51 +3458,237 @@ export const Data = ({ ctx }) => {
   );
 };
 
-// ================= FITTING — ERROR MANAGEMENT =================
-export const FittingErrors = ({ ctx }) => {
-  const { activeTest } = ctx;
-  const d = useNmrDerived(activeTest);
-  const manualCount = Object.values(d.shifts || {}).filter((v) => parseManual(v) !== null).length;
-  return (
-    <div className="flex flex-col gap-3">
-      <p className="text-sm text-slate-600">
-        NMR assignment does not use curve fitting, so there is no SD / outlier model here. Instead, the
-        assignment table compares each <b>manual</b> shift against the <b>estimated</b> value so you can spot
-        large deviations at a glance.
-      </p>
-      <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm text-slate-700">
-        <b>{manualCount}</b> manual shift{manualCount === 1 ? '' : 's'} currently entered out of{' '}
-        <b>{d.estSeq.length}</b> residue{d.estSeq.length === 1 ? '' : 's'}. Use “Fill with estimated” in the Data
-        section to pre-populate the rest.
-      </div>
-    </div>
-  );
-};
-
-// ================= FITTING — GRAPHICAL PARAMETERS =================
-export const FittingGraphics = ({ ctx }) => {
+// ================= FITTING — VARIABLE PARAMETERS (CD-inspired) + GRAPHICAL PARAMETERS =================
+export const Fitting = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
+  const [newVariable, setNewVariable] = useState('');
+
+  const variables = Array.isArray(activeTest.variableParameters)
+    ? activeTest.variableParameters
+    : ['Temperature', 'pH', 'Concentration', 'Ratio'];
+  const rows = activeTest.variableRows || [];
   const heightPx = activeTest.nmrChartHeight || 400;
+
+  const makeId = () => `nvr_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+  const addVariable = () => {
+    const name = newVariable.trim();
+    if (!name || variables.includes(name)) return;
+    updateActiveTest({ variableParameters: [...variables, name] });
+    setNewVariable('');
+  };
+  const removeVariable = (name) => {
+    updateActiveTest({
+      variableParameters: variables.filter((v) => v !== name),
+      variableRows: rows.map((row) => {
+        const values = { ...(row.values || {}) };
+        delete values[name];
+        return { ...row, values };
+      })
+    });
+  };
+  const addRow = () => {
+    const values = {};
+    variables.forEach((v) => { values[v] = ''; });
+    updateActiveTest({
+      variableParameters: variables,
+      variableRows: [...rows, { id: makeId(), values, notes: '' }]
+    });
+  };
+  const addRowFromCurrent = () => {
+    const values = {};
+    variables.forEach((v) => {
+      const key = v.toLowerCase();
+      if (key.includes('temp')) values[v] = activeTest.temperature || '';
+      else if (key.includes('ph')) values[v] = activeTest.ph || '';
+      else if (key.includes('conc')) values[v] = activeTest.concentration || '';
+      else if (key.includes('ratio')) values[v] = activeTest.ratio || '';
+      else if (key.includes('salt')) values[v] = activeTest.saltConcentration || '';
+      else if (key.includes('solve') || key.includes('buffer')) values[v] = activeTest.solvent || '';
+      else if (key.includes('other') || key.includes('ligand') || key.includes('molecule')) values[v] = activeTest.otherMolecule || '';
+      else values[v] = '';
+    });
+    updateActiveTest({
+      variableParameters: variables,
+      variableRows: [...rows, { id: makeId(), values, notes: '' }]
+    });
+  };
+  const updateRowValue = (id, variable, value) => {
+    updateActiveTest({
+      variableRows: rows.map((row) =>
+        row.id === id ? { ...row, values: { ...(row.values || {}), [variable]: value } } : row
+      )
+    });
+  };
+  const updateRowNotes = (id, notes) => {
+    updateActiveTest({ variableRows: rows.map((row) => (row.id === id ? { ...row, notes } : row)) });
+  };
+  const duplicateRow = (row) => {
+    updateActiveTest({ variableRows: [...rows, { ...row, id: makeId() }] });
+  };
+  const removeRow = (id) => {
+    updateActiveTest({ variableRows: rows.filter((row) => row.id !== id) });
+  };
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <div className="flex flex-col gap-1">
-        <label className="text-xs font-bold text-slate-600">Simulated spectrum panel height (px): {heightPx}</label>
-        <input
-          type="range"
-          min="250"
-          max="700"
-          step="25"
-          value={heightPx}
-          onChange={(e) => updateActiveTest({ nmrChartHeight: parseInt(e.target.value, 10) })}
-          className="accent-blue-600 mt-2"
-        />
-        <p className="text-[10px] text-slate-400 mt-1">Controls the height of every simulated-spectrum panel in the Simulations section.</p>
+    <>
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 break-inside-avoid p-6">
+        <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-4">🎛️ Variable Parameters</h3>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col lg:flex-row gap-3 lg:items-end justify-between bg-slate-50 border border-slate-200 rounded-lg p-4">
+            <div className="flex flex-col md:flex-row gap-2 w-full lg:w-auto">
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">New Experimental Variable</label>
+                <input
+                  type="text"
+                  value={newVariable}
+                  onChange={(e) => setNewVariable(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      addVariable();
+                    }
+                  }}
+                  placeholder="e.g. Temperature, pH, Ligand ratio"
+                  className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-full md:w-72 bg-white"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={addVariable}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm h-fit"
+              >
+                + Add Variable
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={addRowFromCurrent}
+                className="bg-white border border-blue-300 hover:bg-blue-50 text-blue-700 font-bold px-4 py-2 rounded-lg text-sm shadow-sm"
+              >
+                + Add Point from Current Conditions
+              </button>
+              <button
+                type="button"
+                onClick={addRow}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm"
+              >
+                + Empty Point
+              </button>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {variables.length === 0 && (
+              <span className="text-sm text-slate-400 italic">
+                No variables defined. Add variables such as Temperature, pH, Concentration, Ratio, etc.
+              </span>
+            )}
+            {variables.map((v) => (
+              <span
+                key={v}
+                className="inline-flex items-center gap-2 bg-white border border-slate-300 px-2.5 py-1 rounded-lg text-xs font-bold text-slate-700 shadow-sm"
+              >
+                {v}
+                <button
+                  type="button"
+                  onClick={() => removeVariable(v)}
+                  className="text-slate-400 hover:text-red-500 font-black"
+                  title={`Remove variable ${v}`}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+          <div className="overflow-x-auto custom-scrollbar border border-slate-200 rounded-lg">
+            <table className="w-full text-sm text-left min-w-[700px]">
+              <thead className="text-xs text-slate-500 uppercase bg-slate-100 sticky top-0 z-10">
+                <tr>
+                  <th className="px-3 py-2 w-12 border-b border-slate-200">#</th>
+                  {variables.map((v) => (
+                    <th key={v} className="px-3 py-2 font-bold text-blue-700 whitespace-nowrap border-b border-slate-200">{v}</th>
+                  ))}
+                  <th className="px-3 py-2 min-w-[180px] border-b border-slate-200">Notes</th>
+                  <th className="px-3 py-2 w-32 border-b border-slate-200">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 bg-white">
+                {rows.length === 0 ? (
+                  <tr>
+                    <td colSpan={variables.length + 3} className="px-3 py-10 text-center text-slate-400 italic">
+                      No condition points defined yet.
+                    </td>
+                  </tr>
+                ) : (
+                  rows.map((row, idx) => (
+                    <tr key={row.id} className="hover:bg-slate-50">
+                      <td className="px-3 py-2 font-bold text-slate-500">{idx + 1}</td>
+                      {variables.map((v) => (
+                        <td key={v} className="px-3 py-2">
+                          <input
+                            type="text"
+                            value={(row.values || {})[v] || ''}
+                            onChange={(e) => updateRowValue(row.id, v, e.target.value)}
+                            className="w-full min-w-[90px] border border-slate-300 rounded-md px-2 py-1.5 text-sm outline-none focus:border-blue-500"
+                            placeholder={v}
+                          />
+                        </td>
+                      ))}
+                      <td className="px-3 py-2">
+                        <input
+                          type="text"
+                          value={row.notes || ''}
+                          onChange={(e) => updateRowNotes(row.id, e.target.value)}
+                          className="w-full min-w-[180px] border border-slate-300 rounded-md px-2 py-1.5 text-sm outline-none focus:border-blue-500"
+                          placeholder="Notes..."
+                        />
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <div className="flex items-center gap-2">
+                          <button type="button" onClick={() => duplicateRow(row)} className="text-xs font-bold text-blue-600 hover:text-blue-800">
+                            Duplicate
+                          </button>
+                          <button type="button" onClick={() => removeRow(row.id)} className="text-xs font-bold text-red-500 hover:text-red-700">
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
-      <div className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-3">
-        All simulated spectra support <b>drag-to-zoom</b> with a “Reset Zoom” button. Colors follow the residue
-        palette; manually-assigned peaks are highlighted in green and selected atoms in amber.
+
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 break-inside-avoid p-6">
+        <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-4">🎨 Graphical Parameters</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-bold text-slate-600">Simulated spectrum panel height (px): {heightPx}</label>
+            <input
+              type="range"
+              min="250"
+              max="700"
+              step="25"
+              value={heightPx}
+              onChange={(e) => updateActiveTest({ nmrChartHeight: parseInt(e.target.value, 10) })}
+              className="accent-blue-600 mt-2"
+            />
+            <p className="text-[10px] text-slate-400 mt-1">
+              Controls the height of every simulated-spectrum panel in the Simulations section.
+            </p>
+          </div>
+          <div className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-3">
+            All simulated spectra support <b>drag-to-zoom</b> with a “Reset Zoom” button. Manually-assigned peaks are
+            highlighted in <span style={{ color: MANUAL_COLOR }}>green</span> and the selected atom in{' '}
+            <span style={{ color: SELECT_COLOR }}>amber</span> (click an atom in the formula or a table cell).
+          </div>
+        </div>
       </div>
-    </div>
+    </>
   );
 };
 
@@ -3530,119 +3697,137 @@ export const Simulations = ({ ctx }) => {
   const { activeTest } = ctx;
   const d = useNmrDerived(activeTest);
   const [expandedPanel, setExpandedPanel] = useState(null);
-  const selectedKeys = null;
-  const manualKeys = useMemo(() => {
-    const out = new Set();
-    Object.entries(d.shifts || {}).forEach(([k, v]) => {
-      if (parseManual(v) === null) return;
-      out.add(k);
-      const idx = k.split('-')[0];
-      const atom = k.slice(idx.length + 1);
-      out.add(`${idx}-${atom.trim()}`);
-      out.add(`${idx}-${atom.replace(/\s+/g, '')}`);
-    });
-    return [...out];
-  }, [d.shifts]);
+  const selectedKeys = getSelectedKeys(activeTest);
+  const manualKeys = useMemo(() => getManualKeys(d.shifts), [d.shifts]);
   const heightPx = activeTest.nmrChartHeight || 400;
+
   if (d.parsedSeq.length === 0) {
     return (
       <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">
-        Enter a sequence / select a molecule to generate simulated spectra.
+        Enter a sequence / select a molecule (in Compounds & Biological Models) to generate simulated spectra.
       </div>
     );
   }
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <OneDSpectrumPlot
-        title="Simulated ¹H 1D Spectrum"
-        data={d.peaks.data1H}
-        fullDomain={[0, 11]}
-        ticks={TICKS_1H}
-        TickComponent={CustomXTick1H}
-        xLabel="¹H (ppm)"
-        panelId="1D_1H"
-        expandedPanel={expandedPanel}
-        setExpandedPanel={setExpandedPanel}
-        selectedKeys={selectedKeys}
-        manualKeys={manualKeys}
-        heightPx={heightPx}
-      />
-      <OneDSpectrumPlot
-        title="Simulated ¹³C 1D Spectrum"
-        data={d.peaks.data13C}
-        fullDomain={[0, 190]}
-        ticks={TICKS_13C}
-        TickComponent={CustomXTick13C}
-        xLabel="¹³C (ppm)"
-        panelId="1D_13C"
-        expandedPanel={expandedPanel}
-        setExpandedPanel={setExpandedPanel}
-        selectedKeys={selectedKeys}
-        manualKeys={manualKeys}
-        heightPx={heightPx}
-      />
-      {d.hasPhosphorus && d.selNuc.includes('P') && d.peaks.p31Data.length > 0 && (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <h4 className="text-sm font-bold text-slate-700 uppercase tracking-widest">🧪 Simulated Spectra</h4>
+        {selectedKeys && (
+          <span className="text-xs font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded-lg px-3 py-1.5">
+            🎯 Highlighting: {selectionLabel(d, selectedKeys)}
+          </span>
+        )}
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <OneDSpectrumPlot
-          title="Simulated ³¹P 1D Spectrum"
-          data={d.peaks.p31Data}
-          fullDomain={[-5, 5]}
-          ticks={Array.from({ length: 11 }, (_, i) => i - 5)}
+          title="Simulated ¹H 1D Spectrum"
+          data={d.peaks.data1H}
+          fullDomain={[0, 11]}
+          ticks={TICKS_1H}
           TickComponent={CustomXTick1H}
-          xLabel="³¹P (ppm)"
-          panelId="1D_31P"
+          xLabel="¹H (ppm)"
+          panelId="1D_1H"
           expandedPanel={expandedPanel}
           setExpandedPanel={setExpandedPanel}
           selectedKeys={selectedKeys}
           manualKeys={manualKeys}
           heightPx={heightPx}
         />
-      )}
-      <SpectrumPlot
-        title="Simulated COSY Spectrum"
-        diagonalData={d.peaks.diagonalData}
-        crossPeakData={d.peaks.cosyPeaks}
-        expandedPanel={expandedPanel}
-        setExpandedPanel={setExpandedPanel}
-        panelId="cosy"
-        diagonalColor="#22c55e"
-        selectedKeys={selectedKeys}
-        manualKeys={manualKeys}
-        heightPx={heightPx}
-      />
-      <SpectrumPlot
-        title="Simulated NOESY Spectrum"
-        diagonalData={d.peaks.diagonalData}
-        crossPeakData={d.peaks.noesyPeaks}
-        expandedPanel={expandedPanel}
-        setExpandedPanel={setExpandedPanel}
-        panelId="noesy"
-        diagonalColor="#ef4444"
-        selectedKeys={selectedKeys}
-        manualKeys={manualKeys}
-        heightPx={heightPx}
-      />
-      <SpectrumPlot
-        title="Simulated TOCSY Spectrum"
-        diagonalData={d.peaks.diagonalData}
-        crossPeakData={d.peaks.tocsyPeaks}
-        expandedPanel={expandedPanel}
-        setExpandedPanel={setExpandedPanel}
-        panelId="tocsy"
-        diagonalColor="#1e3a8a"
-        selectedKeys={selectedKeys}
-        manualKeys={manualKeys}
-        heightPx={heightPx}
-      />
-      <HSQCPlot
-        title="Simulated ¹H-¹³C HSQC Spectrum"
-        crossPeakData={d.peaks.hsqcPeaks}
-        expandedPanel={expandedPanel}
-        setExpandedPanel={setExpandedPanel}
-        panelId="hsqc"
-        selectedKeys={selectedKeys}
-        manualKeys={manualKeys}
-        heightPx={heightPx}
-      />
+        <OneDSpectrumPlot
+          title="Simulated ¹³C 1D Spectrum"
+          data={d.peaks.data13C}
+          fullDomain={[0, 190]}
+          ticks={TICKS_13C}
+          TickComponent={CustomXTick13C}
+          xLabel="¹³C (ppm)"
+          panelId="1D_13C"
+          expandedPanel={expandedPanel}
+          setExpandedPanel={setExpandedPanel}
+          selectedKeys={selectedKeys}
+          manualKeys={manualKeys}
+          heightPx={heightPx}
+        />
+        {d.hasPhosphorus && d.selNuc.includes('P') && d.peaks.p31Data.length > 0 && (
+          <OneDSpectrumPlot
+            title="Simulated ³¹P 1D Spectrum"
+            data={d.peaks.p31Data}
+            fullDomain={[-5, 5]}
+            ticks={Array.from({ length: 11 }, (_, i) => i - 5)}
+            TickComponent={CustomXTick1H}
+            xLabel="³¹P (ppm)"
+            panelId="1D_31P"
+            expandedPanel={expandedPanel}
+            setExpandedPanel={setExpandedPanel}
+            selectedKeys={selectedKeys}
+            manualKeys={manualKeys}
+            heightPx={heightPx}
+          />
+        )}
+        <SpectrumPlot
+          title="Simulated COSY Spectrum"
+          diagonalData={d.peaks.diagonalData}
+          crossPeakData={d.peaks.cosyPeaks}
+          expandedPanel={expandedPanel}
+          setExpandedPanel={setExpandedPanel}
+          panelId="cosy"
+          diagonalColor="#22c55e"
+          selectedKeys={selectedKeys}
+          manualKeys={manualKeys}
+          heightPx={heightPx}
+        />
+        <SpectrumPlot
+          title="Simulated NOESY Spectrum"
+          diagonalData={d.peaks.diagonalData}
+          crossPeakData={d.peaks.noesyPeaks}
+          expandedPanel={expandedPanel}
+          setExpandedPanel={setExpandedPanel}
+          panelId="noesy"
+          diagonalColor="#ef4444"
+          selectedKeys={selectedKeys}
+          manualKeys={manualKeys}
+          heightPx={heightPx}
+        />
+        <SpectrumPlot
+          title="Simulated TOCSY Spectrum"
+          diagonalData={d.peaks.diagonalData}
+          crossPeakData={d.peaks.tocsyPeaks}
+          expandedPanel={expandedPanel}
+          setExpandedPanel={setExpandedPanel}
+          panelId="tocsy"
+          diagonalColor="#1e3a8a"
+          selectedKeys={selectedKeys}
+          manualKeys={manualKeys}
+          heightPx={heightPx}
+        />
+        <HSQCPlot
+          title="Simulated ¹H-¹³C HSQC Spectrum"
+          crossPeakData={d.peaks.hsqcPeaks}
+          expandedPanel={expandedPanel}
+          setExpandedPanel={setExpandedPanel}
+          panelId="hsqc"
+          selectedKeys={selectedKeys}
+          manualKeys={manualKeys}
+          yAxisLabel="¹³C F1 (ppm)"
+          yDomainInit={[10, 150]}
+          yTicks={TICKS_13C}
+          heightPx={heightPx}
+        />
+        {d.moleculeType === 'protein' && d.selNuc.includes('N') && d.peaks.hsqc15NPeaks.length > 0 && (
+          <HSQCPlot
+            title="Simulated ¹H-¹⁵N HSQC Spectrum"
+            crossPeakData={d.peaks.hsqc15NPeaks}
+            expandedPanel={expandedPanel}
+            setExpandedPanel={setExpandedPanel}
+            panelId="hsqc15n"
+            selectedKeys={selectedKeys}
+            manualKeys={manualKeys}
+            yAxisLabel="¹⁵N F1 (ppm)"
+            yDomainInit={[95, 135]}
+            yTicks={TICKS_15N}
+            heightPx={heightPx}
+          />
+        )}
+      </div>
     </div>
   );
 };
@@ -3655,20 +3840,13 @@ export const NotebookExtra = ({ ctx, checkId }) => {
     return `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;"><b>Solvent:</b> ${activeTest.solvent || 'N/A'} | <b>Temp:</b> ${activeTest.temperature || 'N/A'} | <b>Conc:</b> ${activeTest.concentration || 'N/A'} | <b>Salt:</b> ${activeTest.saltConcentration || 'N/A'}</p>`;
   }
   if (checkId === 'seq') {
-    return `<p style="font-size: 12px; color: #475569; margin-bottom: 12px;"><b>${d.typeLabel}:</b> <span style="font-family: monospace; background: #e2e8f0; padding: 2px 4px; border-radius: 4px;">${
-      d.isPolymer ? activeTest.proteinSequence || 'N/A' : d.parsedSeq[0]?.name || 'N/A'
-    }</span></p>`;
+    return `<p style="font-size: 12px; color: #475569; margin-bottom: 12px;"><b>${d.typeLabel}:</b> <span style="font-family: monospace; background: #e2e8f0; padding: 2px 4px; border-radius: 4px;">${d.isPolymer ? activeTest.proteinSequence || 'N/A' : d.parsedSeq[0]?.name || 'N/A'}</span></p>`;
   }
   if (checkId === 'formula' && d.structure) {
     return `<div style="margin-bottom: 12px;">${elementsToSVG(d.structure, 300)}</div>`;
   }
   if (checkId === 'table' && Object.keys(d.shifts).length > 0) {
-    let html = `<table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; text-align: left; background: white;">
-      <tr style="background-color: #f1f5f9;">
-        <th style="padding: 6px; border: 1px solid #cbd5e1;">Residue</th>
-        <th style="padding: 6px; border: 1px solid #cbd5e1;">Atom</th>
-        <th style="padding: 6px; border: 1px solid #cbd5e1;">Shift (ppm)</th>
-      </tr>`;
+    let html = `<table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; text-align: left; background: white;"><tr style="background-color: #f1f5f9;"><th style="padding: 6px; border: 1px solid #cbd5e1;">Residue</th><th style="padding: 6px; border: 1px solid #cbd5e1;">Atom</th><th style="padding: 6px; border: 1px solid #cbd5e1;">Shift (ppm)</th></tr>`;
     Object.keys(d.shifts).forEach((key) => {
       const parts = key.split('-');
       const resIdx = parts[0];
