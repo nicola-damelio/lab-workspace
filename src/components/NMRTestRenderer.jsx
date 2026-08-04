@@ -1278,47 +1278,6 @@ const elementsToSVG = (structure, height = 320) => {
   });
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${structure.viewBox}" style="height:${height}px;max-width:100%;font-family:sans-serif;background:white;">${inner}</svg>`;
 };
-const ensureSvgSize = (svgStr, width = 1200) => {
-    const m = svgStr.match(/viewBox="([^"]+)"/);
-    if (!m) return svgStr;
-
-    const parts = m[1].trim().split(/\s+/).map(Number);
-    const vw = parts[2] || 1;
-    const vh = parts[3] || 1;
-    const height = Math.max(1, Math.round((vh / vw) * width));
-
-    return svgStr.replace('<svg ', `<svg width="${width}" height="${height}" `);
-};
-
-const svgToPngDataUrl = (svgStr, width = 1200) => new Promise((resolve, reject) => {
-    const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const img = new Image();
-
-    img.onload = () => {
-        const w = width;
-        const h = img.height || width;
-
-        const canvas = document.createElement('canvas');
-        canvas.width = w;
-        canvas.height = h;
-
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, w, h);
-        ctx.drawImage(img, 0, 0, w, h);
-
-        URL.revokeObjectURL(url);
-        resolve(canvas.toDataURL('image/png'));
-    };
-
-    img.onerror = (err) => {
-        URL.revokeObjectURL(url);
-        reject(err);
-    };
-
-    img.src = url;
-});
 
 // ---------- STRUCTURE VIEW ----------
 const StructureSVGView = ({
@@ -2217,27 +2176,12 @@ export const NMRTestRenderer = ({
     const updated = cellLines.includes(cl) ? cellLines.filter((c) => c !== cl) : [...cellLines, cl];
     updateActiveTest({ cellLines: updated });
   };
-
-const selectedCompounds = Array.isArray(activeTest.selectedCompounds)
-    ? activeTest.selectedCompounds
-    : Array.isArray(activeTest.compounds)
-        ? activeTest.compounds.filter(Boolean)
-        : activeTest.compound
-            ? [activeTest.compound]
-            : [];
-
-const toggleCompound = (cmp) => {
+  const toggleCompound = (cmp) => {
     const updated = selectedCompounds.includes(cmp)
-        ? selectedCompounds.filter((c) => c !== cmp)
-        : [...selectedCompounds, cmp];
-
-    updateActiveTest({
-        selectedCompounds: updated,
-        compounds: updated,
-        compound: updated.length > 0 ? updated[0] : ''
-    });
-};
-
+      ? selectedCompounds.filter((c) => c !== cmp)
+      : [...selectedCompounds, cmp];
+    updateActiveTest({ compounds: updated, compound: updated.length > 0 ? updated[0] : '' });
+  };
   const handleCustomFieldChange = (fieldName, value) => {
     updateActiveTest({ customFieldValues: { ...customFieldValues, [fieldName]: value } });
   };
@@ -3981,7 +3925,7 @@ const toggleCompound = (cmp) => {
               </label>
             </div>
             <button
-              onClick={async () => {
+              onClick={() => {
                 let html =
                   '<div style="background-color: #f8fafc; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0; margin-top: 15px; font-family: sans-serif;">';
                 html +=
@@ -4012,25 +3956,9 @@ const toggleCompound = (cmp) => {
                     isPolymer ? activeTest.proteinSequence || 'N/A' : parsedSeq[0]?.name || 'N/A'
                   }</span></p>`;
                 }
-
-if (cbFormula && structure) {
-    try {
-        const svgStr = ensureSvgSize(elementsToSVG(structure, 300), 1200);
-        const png = await svgToPngDataUrl(svgStr, 1200);
-
-        html += `
-            <div style="margin-bottom: 12px;">
-                <img
-                    src="${png}"
-                    alt="Chemical formula"
-                    style="max-width: 100%; height: auto; background: white; border: 1px solid #e2e8f0; border-radius: 4px;"
-                />
-            </div>
-        `;
-    } catch (err) {
-        html += `<div style="margin-bottom: 12px;">${elementsToSVG(structure, 300)}</div>`;
-    }
-}
+                if (cbFormula && structure) {
+                  html += `<div style="margin-bottom: 12px;">${elementsToSVG(structure, 300)}</div>`;
+                }
                 if (cbTable && Object.keys(shifts).length > 0) {
                   html += `<table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; text-align: left; background: white;"><tr style="background-color: #f1f5f9;"><th style="padding: 6px; border: 1px solid #cbd5e1;">Residue</th><th style="padding: 6px; border: 1px solid #cbd5e1;">Atom</th><th style="padding: 6px; border: 1px solid #cbd5e1;">Shift (ppm)</th></tr>`;
                   Object.keys(shifts).forEach((key) => {
