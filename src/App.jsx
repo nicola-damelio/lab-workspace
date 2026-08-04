@@ -19,6 +19,299 @@ import { RichTextEditor } from './components/RichTextEditor';
 import { StorageModals, StorageList, StorageDetail, BoxDetail } from './components/Storage';
 import { DefinitionsPanel } from './components/DefinitionsPanel';
 
+const CUSTOM_FIELD_TAB_OPTIONS = [
+  { value: 'all', label: 'All tabs' },
+  { value: 'plate', label: 'Plate' },
+  { value: 'nmr', label: 'NMR' },
+  { value: 'cd', label: 'CD' }
+];
+
+const normalizeCustomFields = (fields) => {
+  if (!Array.isArray(fields)) return [];
+
+  return fields.map((field, idx) => {
+    const base =
+      typeof field === 'string'
+        ? { name: field }
+        : field && typeof field === 'object'
+        ? field
+        : {};
+
+    const firstArrayType =
+      Array.isArray(base.types) && base.types.length ? base.types[0] : undefined;
+
+    let appliesTo =
+      base.appliesTo ||
+      base.applyTo ||
+      base.scope ||
+      base.tab ||
+      base.testType ||
+      firstArrayType ||
+      'all';
+
+    if (Array.isArray(appliesTo) && appliesTo.length === 0) {
+      appliesTo = 'all';
+    }
+
+    return {
+      ...base,
+      id:
+        base.id ||
+        `custom_field_${idx}_${Math.random().toString(36).slice(2, 8)}`,
+      name: base.name || `Field ${idx + 1}`,
+      type: base.type || 'text',
+      options: Array.isArray(base.options) ? base.options : [],
+      appliesTo
+    };
+  });
+};
+
+const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => {
+  const [draft, setDraft] = useState({
+    name: '',
+    type: 'text',
+    options: '',
+    appliesTo: 'all'
+  });
+
+  const addField = () => {
+    const name = draft.name.trim();
+
+    if (!name) {
+      alert('Please enter a field name.');
+      return;
+    }
+
+    const options =
+      draft.type === 'select'
+        ? draft.options
+            .split(',')
+            .map((opt) => opt.trim())
+            .filter(Boolean)
+        : [];
+
+    const newField = {
+      id: `custom_field_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      name,
+      type: draft.type,
+      options,
+      appliesTo: draft.appliesTo || 'all'
+    };
+
+    setCustomFields((prev) => [...(Array.isArray(prev) ? prev : []), newField]);
+
+    setDraft({
+      name: '',
+      type: 'text',
+      options: '',
+      appliesTo: 'all'
+    });
+  };
+
+  const updateField = (id, patch) => {
+    setCustomFields((prev) =>
+      (Array.isArray(prev) ? prev : []).map((field) =>
+        field.id === id ? { ...field, ...patch } : field
+      )
+    );
+  };
+
+  const removeField = (id) => {
+    setCustomFields((prev) =>
+      (Array.isArray(prev) ? prev : []).filter((field) => field.id !== id)
+    );
+  };
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+      <h3 className="text-sm font-bold text-slate-700 uppercase mb-3">
+        Custom Metadata Fields
+      </h3>
+
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-3 mb-4">
+        <div className="md:col-span-3">
+          <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+            Field Name
+          </label>
+
+          <input
+            type="text"
+            value={draft.name}
+            onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
+            placeholder="e.g. Instrument"
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
+          />
+        </div>
+
+        <div className="md:col-span-2">
+          <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+            Type
+          </label>
+
+          <select
+            value={draft.type}
+            onChange={(e) => setDraft((prev) => ({ ...prev, type: e.target.value }))}
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
+          >
+            <option value="text">Text</option>
+            <option value="number">Number</option>
+            <option value="date">Date</option>
+            <option value="textarea">Textarea</option>
+            <option value="select">Select</option>
+          </select>
+        </div>
+
+        <div className="md:col-span-3">
+          <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+            Options, comma separated
+          </label>
+
+          <input
+            type="text"
+            value={draft.options}
+            onChange={(e) => setDraft((prev) => ({ ...prev, options: e.target.value }))}
+            disabled={draft.type !== 'select'}
+            placeholder={draft.type === 'select' ? 'e.g. Low, Medium, High' : 'N/A'}
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 disabled:bg-slate-50 disabled:text-slate-400"
+          />
+        </div>
+
+        <div className="md:col-span-2">
+          <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+            Tab Type
+          </label>
+
+          <select
+            value={draft.appliesTo}
+            onChange={(e) => setDraft((prev) => ({ ...prev, appliesTo: e.target.value }))}
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
+          >
+            {CUSTOM_FIELD_TAB_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="md:col-span-2 flex items-end">
+          <button
+            type="button"
+            onClick={addField}
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm shadow-sm transition-colors"
+          >
+            Add Field
+          </button>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-3">
+        {(Array.isArray(customFields) ? customFields : []).length === 0 ? (
+          <div className="text-sm text-slate-400 italic bg-slate-50 border border-dashed border-slate-300 rounded-lg p-4">
+            No custom metadata fields defined.
+          </div>
+        ) : (
+          (Array.isArray(customFields) ? customFields : []).map((field) => {
+            const scopeValue = Array.isArray(field.appliesTo)
+              ? field.appliesTo[0] || 'all'
+              : field.appliesTo || 'all';
+
+            return (
+              <div
+                key={field.id || field.name}
+                className="border border-slate-200 rounded-lg p-3 bg-slate-50"
+              >
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
+                  <div className="md:col-span-3">
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
+                      Field Name
+                    </label>
+
+                    <input
+                      type="text"
+                      value={field.name || ''}
+                      onChange={(e) => updateField(field.id, { name: e.target.value })}
+                      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white"
+                    />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
+                      Type
+                    </label>
+
+                    <select
+                      value={field.type || 'text'}
+                      onChange={(e) => updateField(field.id, { type: e.target.value })}
+                      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
+                    >
+                      <option value="text">Text</option>
+                      <option value="number">Number</option>
+                      <option value="date">Date</option>
+                      <option value="textarea">Textarea</option>
+                      <option value="select">Select</option>
+                    </select>
+                  </div>
+
+                  <div className="md:col-span-3">
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
+                      Options
+                    </label>
+
+                    <input
+                      type="text"
+                      value={(field.options || []).join(', ')}
+                      onChange={(e) =>
+                        updateField(field.id, {
+                          options: e.target.value
+                            .split(',')
+                            .map((opt) => opt.trim())
+                            .filter(Boolean)
+                        })
+                      }
+                      disabled={field.type !== 'select'}
+                      placeholder={field.type === 'select' ? 'Comma separated options' : 'N/A'}
+                      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white disabled:bg-slate-100 disabled:text-slate-400"
+                    />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
+                      Tab Type
+                    </label>
+
+                    <select
+                      value={scopeValue}
+                      onChange={(e) => updateField(field.id, { appliesTo: e.target.value })}
+                      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
+                    >
+                      {CUSTOM_FIELD_TAB_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="md:col-span-2 flex items-end justify-end">
+                    <button
+                      type="button"
+                      onClick={() => removeField(field.id)}
+                      className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold py-2 px-4 rounded-lg text-sm transition-colors"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+};
+
 const migrateLoadedDataset = (s) => {
   const rawTests = (s && (s.tests || s.plates)) || [];
 
@@ -32,7 +325,9 @@ const migrateLoadedDataset = (s) => {
 
     let safeImages = Array.isArray(p.images)
       ? p.images.filter(
-          (img) => typeof img === 'string' && !(img.startsWith('data:image/') && img.length > 500000)
+          (img) =>
+            typeof img === 'string' &&
+            !(img.startsWith('data:image/') && img.length > 500000)
         )
       : [];
 
@@ -165,38 +460,6 @@ const migrateLoadedDataset = (s) => {
   };
 };
 
-const normalizeCustomFields = (fields) => {
-  if (!Array.isArray(fields)) return [];
-
-  return fields.map((field, idx) => {
-    const base =
-      typeof field === 'string'
-        ? { name: field }
-        : field && typeof field === 'object'
-        ? field
-        : {};
-
-    const firstArrayType =
-      Array.isArray(base.types) && base.types.length ? base.types[0] : undefined;
-
-    return {
-      ...base,
-      id: base.id || `custom_field_${idx}_${Math.random().toString(36).slice(2, 8)}`,
-      name: base.name || `Field ${idx + 1}`,
-      type: base.type || 'text',
-      options: Array.isArray(base.options) ? base.options : [],
-      appliesTo:
-        base.appliesTo ||
-        base.applyTo ||
-        base.scope ||
-        base.tab ||
-        base.testType ||
-        firstArrayType ||
-        'all'
-    };
-  });
-};
-
 const FIREBASE_CONFIG = {
   apiKey: 'AIzaSyCVemPUayc_Q-IsbcQxnFRHg8bBLZFSHfA',
   authDomain: 'cell-experiment-tracker.firebaseapp.com',
@@ -209,14 +472,16 @@ const FIREBASE_CONFIG = {
 let app, auth, db, appId = 'lab-workspace-app';
 
 try {
-  if (!window.firebase.apps.length) {
-    app = window.firebase.initializeApp(FIREBASE_CONFIG);
-  } else {
-    app = window.firebase.app();
-  }
+  if (window.firebase) {
+    if (!window.firebase.apps.length) {
+      app = window.firebase.initializeApp(FIREBASE_CONFIG);
+    } else {
+      app = window.firebase.app();
+    }
 
-  auth = window.firebase.auth();
-  db = window.firebase.firestore();
+    auth = window.firebase.auth();
+    db = window.firebase.firestore();
+  }
 } catch (e) {
   console.error('Firebase init error. Falling back to local storage.', e);
 }
@@ -439,6 +704,13 @@ export default function App() {
     [historyIndex]
   );
 
+  const handleSetCustomFields = useCallback((updater) => {
+    setCustomFields((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      return normalizeCustomFields(next);
+    });
+  }, []);
+
   const handleUndo = () => {
     if (historyIndex > 0) {
       const newIdx = historyIndex - 1;
@@ -574,7 +846,8 @@ export default function App() {
     customFields
   };
 
-  const getCompressedPayload = () => LZString.compressToUTF16(JSON.stringify(latestDataRef.current));
+  const getCompressedPayload = () =>
+    LZString.compressToUTF16(JSON.stringify(latestDataRef.current));
 
   const saveTimeoutRef = useRef(null);
 
@@ -600,7 +873,9 @@ export default function App() {
         };
 
         if (db && user) {
-          const docRef = db.collection(`artifacts/${appId}/public/data/datasets`).doc(currentDatasetId);
+          const docRef = db
+            .collection(`artifacts/${appId}/public/data/datasets`)
+            .doc(currentDatasetId);
 
           await docRef
             .set(updatedPayload, { merge: true })
@@ -816,7 +1091,10 @@ export default function App() {
       if (s.protocolCategories !== undefined) setProtocolCategories(s.protocolCategories);
       if (s.datasetProtocols !== undefined) setDatasetProtocols(s.datasetProtocols);
       if (s.storages !== undefined) setStorages(s.storages);
-      if (s.customFields !== undefined) setCustomFields(normalizeCustomFields(s.customFields));
+
+      if (s.customFields !== undefined) {
+        setCustomFields(normalizeCustomFields(s.customFields));
+      }
     } else if (mode === 'append') {
       const newTests = loadedTests.map((p) => ({
         ...p,
@@ -891,7 +1169,15 @@ export default function App() {
     setCustomConc({});
     setCmpColors({});
     setCustomFields([]);
-    setTestCategories(['Activity', 'Toxicity', 'Microscopy', 'Flow Cytometry', 'Viability']);
+
+    setTestCategories([
+      'Activity',
+      'Toxicity',
+      'Microscopy',
+      'Flow Cytometry',
+      'Viability'
+    ]);
+
     setProtocolCategories(['Preparation', 'Measurement', 'Analysis']);
     setDatasetProtocols([]);
     setStorages([]);
@@ -916,7 +1202,10 @@ export default function App() {
     };
 
     if (db && user) {
-      await db.collection(`artifacts/${appId}/public/data/datasets`).doc(newId).set(updatedPayload);
+      await db
+        .collection(`artifacts/${appId}/public/data/datasets`)
+        .doc(newId)
+        .set(updatedPayload);
     } else {
       let stored = [];
 
@@ -1026,7 +1315,13 @@ export default function App() {
       setCustomFields(normalizeCustomFields(s.customFields || []));
 
       setTestCategories(
-        s.testCategories || ['Activity', 'Toxicity', 'Microscopy', 'Flow Cytometry', 'Viability']
+        s.testCategories || [
+          'Activity',
+          'Toxicity',
+          'Microscopy',
+          'Flow Cytometry',
+          'Viability'
+        ]
       );
 
       setProtocolCategories(
@@ -1690,7 +1985,9 @@ export default function App() {
                               onClick={() => toggleGroup(group.key)}
                               className="text-xs text-blue-600 bg-blue-50 hover:bg-blue-100 font-bold py-2 rounded-lg mt-2 text-center transition-colors w-full"
                             >
-                              {isExpanded ? 'Hide Datasets' : `Show ${group.items.length - 3} more...`}
+                              {isExpanded
+                                ? 'Hide Datasets'
+                                : `Show ${group.items.length - 3} more...`}
                             </button>
                           )}
                         </div>
@@ -2019,21 +2316,29 @@ export default function App() {
             )}
 
             {currentModule === 'definitions' && (
-              <DefinitionsPanel
-                customCmpds={customCmpds}
-                setCustomCmpds={setCustomCmpds}
-                customCellLines={customCellLines}
-                setCustomCellLines={setCustomCellLines}
-                testCategories={testCategories}
-                setTestCategories={setTestCategories}
-                protocolCategories={protocolCategories}
-                setProtocolCategories={setProtocolCategories}
-                customFields={customFields}
-                setCustomFields={setCustomFields}
-                cmpColors={cmpColors}
-                setCmpColors={setCmpColors}
-                handlePrint={handlePrint}
-              />
+              <div className="h-full overflow-y-auto custom-scrollbar p-4 md:p-6 flex flex-col gap-6">
+                <CustomMetadataFieldsManager
+                  customFields={customFields}
+                  setCustomFields={handleSetCustomFields}
+                />
+
+                <DefinitionsPanel
+                  customCmpds={customCmpds}
+                  setCustomCmpds={setCustomCmpds}
+                  customCellLines={customCellLines}
+                  setCustomCellLines={setCustomCellLines}
+                  testCategories={testCategories}
+                  setTestCategories={setTestCategories}
+                  protocolCategories={protocolCategories}
+                  setProtocolCategories={setProtocolCategories}
+                  customFields={customFields}
+                  setCustomFields={handleSetCustomFields}
+                  customFieldTabOptions={CUSTOM_FIELD_TAB_OPTIONS}
+                  cmpColors={cmpColors}
+                  setCmpColors={setCmpColors}
+                  handlePrint={handlePrint}
+                />
+              </div>
             )}
 
             {currentModule === 'agenda' && (
@@ -3277,7 +3582,6 @@ export default function App() {
                   if (!notebookSearch) return true;
 
                   const query = notebookSearch.toLowerCase();
-
                   return JSON.stringify(t).toLowerCase().includes(query);
                 });
 
