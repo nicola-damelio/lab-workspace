@@ -84,12 +84,27 @@ try {
 
 export default function App() {
     const createEmptyTest = (id, num, customType = 'plate-96') => {
-        const baseTest = {
-            id, name: `Test ${num}`, date: new Date().toISOString().split('T')[0], instanceName: '',
-            testCategory: 'Activity', type: customType, storageType: '', storageLabel: '', storageIndex: null,
-            comments: '', images: [], documents: [], plan: [], linkedProtocolId: '',
-            cellLines: [], customFieldValues: {},
-        };
+
+const baseTest = {
+    id,
+    name: `Test ${num}`,
+    date: new Date().toISOString().split('T')[0],
+    instanceName: '',
+    testCategory: 'Activity',
+    type: customType,
+    storageType: '',
+    storageLabel: '',
+    storageIndex: null,
+    comments: '',
+    images: [],
+    documents: [],
+    plan: [],
+    linkedProtocolId: '',
+    cellLines: [],
+    customFieldValues: {},
+    selectedCompounds: [],
+    compound: ''
+};
         if (customType.startsWith('plate')) {
             const dimKey = customType.split('-')[1];
             const dim = PLATES_DEF[dimKey] || PLATES_DEF['96'];
@@ -788,31 +803,30 @@ export default function App() {
                             </div>
                         )}
 
-                        <nav className={`flex-1 overflow-y-auto py-4 flex flex-col gap-1 ${isSidebarOpen ? 'px-2' : 'px-1 items-center'}`}>
-                            {[
-                                { id: 'dashboard', icon: '📊', label: 'Dataset Overview' },
-                                { id: 'agenda', icon: '🗓️', label: 'Agenda (Timeline)' },
-                                { id: 'storage', icon: '📦', label: 'Storage & Boxes' },
-                                { id: 'definitions', icon: '🏷️', label: 'Definitions & Labels' },
-                                { id: 'tests', icon: '🧪', label: 'Tests & Fittings' },
-                                { id: 'protocols', icon: '📝', label: 'Protocols' },
-                                { id: 'notebook', icon: '📓', label: 'Lab Notebook' }
-                            ].map(nav => (
-                                <button
-                                    key={nav.id}
-                                    onClick={() => {
-                                        setCurrentModule(nav.id);
-                                        if (window.innerWidth < 768) setIsSidebarOpen(false);
-                                    }}
-                                    title={!isSidebarOpen ? nav.label : ''}
-                                    className={`flex items-center gap-3 py-2 rounded-lg text-sm transition-all text-left ${isSidebarOpen ? 'px-3 w-full' : 'px-0 w-10 justify-center'} ${currentModule === nav.id ? 'bg-blue-50 text-blue-700 font-bold shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}
-                                >
-                                    <span className="text-lg text-center w-6">{nav.icon}</span>
-                                    {isSidebarOpen && <span>{nav.label}</span>}
-                                </button>
-                            ))}
-                        </nav>
-
+<nav className={`flex-1 overflow-y-auto py-4 flex flex-col gap-1 ${isSidebarOpen ? 'px-2' : 'px-1 items-center'}`}>
+    {[
+        { id: 'dashboard', icon: '📊', label: 'Dataset Overview' },
+        { id: 'notebook', icon: '📓', label: 'Lab Notebook' },
+        { id: 'definitions', icon: '🏷️', label: 'Definitions & Labels' },
+        { id: 'tests', icon: '🧪', label: 'Tests & Fittings' },
+        { id: 'agenda', icon: '🗓️', label: 'Agenda (Timeline)' },
+        { id: 'protocols', icon: '📝', label: 'Protocols' },
+        { id: 'storage', icon: '📦', label: 'Storage & Boxes' }
+    ].map(nav => (
+        <button
+            key={nav.id}
+            onClick={() => {
+                setCurrentModule(nav.id);
+                if (window.innerWidth < 768) setIsSidebarOpen(false);
+            }}
+            title={!isSidebarOpen ? nav.label : ''}
+            className={`flex items-center gap-3 py-2 rounded-lg text-sm transition-all text-left ${isSidebarOpen ? 'px-3 w-full' : 'px-0 w-10 justify-center'} ${currentModule === nav.id ? 'bg-blue-50 text-blue-700 font-bold shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}
+        >
+            <span className="text-lg text-center w-6">{nav.icon}</span>
+            {isSidebarOpen && <span>{nav.label}</span>}
+        </button>
+    ))}
+</nav>
                         <div className={`p-4 border-t border-slate-200 flex flex-col gap-2 ${!isSidebarOpen ? 'items-center px-1' : ''}`}>
                             <div className={`flex ${isSidebarOpen ? 'gap-2' : 'flex-col gap-2 w-full'}`}>
                                 <label className={`flex-1 text-center bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-200 font-bold py-1.5 rounded text-xs cursor-pointer shadow-sm transition-colors ${!isSidebarOpen ? 'py-2 px-0 text-[10px]' : ''}`} title="Load HTML">
@@ -864,26 +878,26 @@ export default function App() {
                                         </div>
                                     </div>
                                     <h2 className="text-lg font-bold text-slate-700 mb-4">Quick Navigation</h2>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                        {[
-                                            { id: 'tests', icon: '🧪', title: 'Tests & Assays', desc: 'Manage experimental plates and spectroscopic data.' },
-                                            { id: 'storage', icon: '📦', title: 'Storage & Inventory', desc: 'Track physical boxes and storage locations.' },
-                                            { id: 'agenda', icon: '🗓️', title: 'Project Agenda', desc: 'Timeline of all scheduled experimental tasks.' },
-                                            { id: 'definitions', icon: '🏷️', title: 'Definitions & Labels', desc: 'Manage compounds, cell lines, and metadata fields.' },
-                                            { id: 'protocols', icon: '📝', title: 'Protocols Library', desc: 'Draft, store, and link experimental procedures.' },
-                                            { id: 'notebook', icon: '📓', title: 'Lab Notebook', desc: 'Consolidated view of all experiment notes and results.' }
-                                        ].map(mod => (
-                                            <button
-                                                key={mod.id}
-                                                onClick={() => setCurrentModule(mod.id)}
-                                                className="bg-white p-5 md:p-6 rounded-lg border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-400 transition-all text-left group no-print"
-                                            >
-                                                <div className="text-2xl mb-3 group-hover:scale-110 transition-transform duration-200">{mod.icon}</div>
-                                                <h3 className="font-bold text-slate-800 text-lg mb-1">{mod.title}</h3>
-                                                <p className="text-sm text-slate-500">{mod.desc}</p>
-                                            </button>
-                                        ))}
-                                    </div>
+<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    {[
+        { id: 'notebook', icon: '📓', title: 'Lab Notebook', desc: 'Consolidated view of all experiment notes and results.' },
+        { id: 'definitions', icon: '🏷️', title: 'Definitions & Labels', desc: 'Manage compounds, cell lines, and metadata fields.' },
+        { id: 'tests', icon: '🧪', title: 'Tests & Assays', desc: 'Manage experimental plates and spectroscopic data.' },
+        { id: 'agenda', icon: '🗓️', title: 'Project Agenda', desc: 'Timeline of all scheduled experimental tasks.' },
+        { id: 'protocols', icon: '📝', title: 'Protocols Library', desc: 'Draft, store, and link experimental procedures.' },
+        { id: 'storage', icon: '📦', title: 'Storage & Inventory', desc: 'Track physical boxes and storage locations.' }
+    ].map(mod => (
+        <button
+            key={mod.id}
+            onClick={() => setCurrentModule(mod.id)}
+            className="bg-white p-5 md:p-6 rounded-lg border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-400 transition-all text-left group no-print"
+        >
+            <div className="text-2xl mb-3 group-hover:scale-110 transition-transform duration-200">{mod.icon}</div>
+            <h3 className="font-bold text-slate-800 text-lg mb-1">{mod.title}</h3>
+            <p className="text-sm text-slate-500">{mod.desc}</p>
+        </button>
+    ))}
+</div>
                                 </div>
                             </div>
                         )}
@@ -1431,41 +1445,47 @@ export default function App() {
                             }
                             return <div className="p-6">Unknown test type.</div>;
                         })()}
+{currentModule === 'notebook' && (() => {
+    const getVal = (key, def) => expandedGroups[key] !== undefined ? expandedGroups[key] : def;
+    const notebookSearch = getVal('notebookSearch', '');
 
-                        {currentModule === 'notebook' && (() => {
-                            const getVal = (key, def) => expandedGroups[key] !== undefined ? expandedGroups[key] : def;
-                            const notebookSearch = getVal('notebookSearch', '');
-                            const filteredTests = tests.filter(t => {
-                                if (!notebookSearch) return true;
-                                const query = notebookSearch.toLowerCase();
-                                return JSON.stringify(t).toLowerCase().includes(query);
-                            });
-                            return (
-                                <div className="flex flex-col h-full w-full">
-                                    <div className="bg-white p-3 md:p-4 border-b border-slate-200 shadow-sm flex flex-col md:flex-row items-center justify-between no-print shrink-0 gap-3">
-                                        <div className="w-full md:flex-1 md:max-w-md relative">
-                                            <span className="absolute left-3 top-2.5 text-slate-400">🔍</span>
-                                            <input type="text" placeholder="Generic search in test data..." value={notebookSearch} onChange={e => setExpandedGroups(p => ({ ...p, notebookSearch: e.target.value }))} className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-500" />
-                                        </div>
-                                        <button onClick={handlePrint} className="w-full md:w-auto bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 shadow-sm">
-                                            🖨️ Print / Save PDF
-                                        </button>
-                                    </div>
-                                    <div className="flex-1 overflow-hidden relative">
-                                        <LabNotebook
-                                            tests={filteredTests}
-                                            allCellLines={[...new Set([...DEF_CELL_LINES, ...customCellLines])]}
-                                            testCategories={testCategories}
-                                            jumpToTest={(id) => { setActiveTestId(id); setCurrentModule('active-test'); }}
-                                            customConc={customConc}
-                                            cmpColors={cmpColors}
-                                            allCmpds={[...new Set([...DEF_COMPOUNDS, ...customCmpds])]}
-                                            customFields={customFields}
-                                        />
-                                    </div>
-                                </div>
-                            );
-                        })()}
+    const filteredTests = tests.filter(t => {
+        if (!notebookSearch) return true;
+        const query = notebookSearch.toLowerCase();
+        return JSON.stringify(t).toLowerCase().includes(query);
+    });
+
+    return (
+        <div className="flex flex-col h-full w-full">
+            <div className="bg-white p-3 md:p-4 border-b border-slate-200 shadow-sm flex flex-col md:flex-row items-center justify-between no-print shrink-0 gap-3">
+                <div className="w-full md:flex-1 md:max-w-md relative">
+                    <span className="absolute left-3 top-2.5 text-slate-400">🔍</span>
+                    <input
+                        type="text"
+                        placeholder="Generic search in test data..."
+                        value={notebookSearch}
+                        onChange={e => setExpandedGroups(p => ({ ...p, notebookSearch: e.target.value }))}
+                        className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-500"
+                    />
+                </div>
+            </div>
+
+            <div className="flex-1 overflow-hidden relative">
+                <LabNotebook
+                    tests={filteredTests}
+                    allCellLines={[...new Set([...DEF_CELL_LINES, ...customCellLines])]}
+                    testCategories={testCategories}
+                    jumpToTest={(id) => { setActiveTestId(id); setCurrentModule('active-test'); }}
+                    customConc={customConc}
+                    cmpColors={cmpColors}
+                    allCmpds={[...new Set([...DEF_COMPOUNDS, ...customCmpds])]}
+                    customFields={customFields}
+                />
+            </div>
+        </div>
+    );
+})()}
+            
                     </div>
                 </div>
             )}
