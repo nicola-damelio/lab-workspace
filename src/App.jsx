@@ -9,8 +9,8 @@ import { PlateTestRenderer } from './components/PlateTestRenderer';
 import { CDTestRenderer } from './components/CDTestRenderer';
 import { LabNotebook } from './components/LabNotebook';
 import { RichTextEditor } from './components/RichTextEditor';
-
 import { StorageModals, StorageList, StorageDetail, BoxDetail } from './components/Storage';
+import { DefinitionsPanel } from './components/DefinitionsPanel';
 
 const migrateLoadedDataset = (s) => {
     const rawTests = (s && (s.tests || s.plates)) || [];
@@ -18,18 +18,15 @@ const migrateLoadedDataset = (s) => {
         let safeComments = typeof p.comments === 'string' ? p.comments : '';
         safeComments = safeComments.replace(/<img[^>]+src="data:image\/[^;]+;base64,([^">]{500000,})"[^>]*>/gi, '<br/><span style="color:red; font-size:10px; font-weight:bold;">[Massive image removed]</span><br/>');
         let safeImages = Array.isArray(p.images) ? p.images.filter(img => typeof img === 'string' && !(img.startsWith('data:image/') && img.length > 500000)) : [];
-        
         let migratedType = p.type;
         if (!migratedType && p.plateType) migratedType = p.plateType === '9x9box' ? 'plate-9x9box' : 'plate-' + p.plateType;
         let migratedCategory = p.testCategory || (p.expTypes && p.expTypes.length > 0 ? p.expTypes[0] : 'Activity');
-
         if (migratedType === 'nmr') {
             return {
                 moleculeName: '', experimentDate: '', concentration: '', solvent: '', saltConcentration: '', temperature: '', otherMolecule: '', ratio: '', tableMode: 'backbone', compound: '',
                 ...p, type: 'nmr', testCategory: migratedCategory, comments: safeComments, images: safeImages
             };
         }
-        
         if (migratedType === 'cd') {
             return {
                 compound: '', experimentDate: '', concentration: '', solvent: '', saltConcentration: '', temperature: '', buffer: '', pathLength: '1', otherMolecule: '', ratio: '',
@@ -38,17 +35,15 @@ const migrateLoadedDataset = (s) => {
                 ...p, type: 'cd', testCategory: migratedCategory, comments: safeComments, images: safeImages
             };
         }
-
         return { ...p, type: migratedType || 'plate-96', testCategory: migratedCategory, comments: safeComments, images: safeImages };
     });
-
     const existingStorages = (s && s.storages) ? s.storages.slice() : [];
     const legacyGroups = {};
     tests.forEach(t => {
         if (t.type !== 'plate-9x9box' || t.storageId) return;
         const label = typeof t.storageLabel === 'string' ? t.storageLabel.trim() : '';
         const typeText = typeof t.storageType === 'string' ? t.storageType.trim() : '';
-        if (!label && !typeText) return; 
+        if (!label && !typeText) return;
         const key = typeText + '||' + label;
         if (!legacyGroups[key]) legacyGroups[key] = { typeText, label, items: [] };
         legacyGroups[key].items.push(t);
@@ -73,6 +68,7 @@ const FIREBASE_CONFIG = {
     messagingSenderId: "855790481107",
     appId: "1:855790481107:web:a566455d3f13a48a20ae26"
 };
+
 let app, auth, db, appId = 'lab-workspace-app';
 try {
     if (!window.firebase.apps.length) {
@@ -92,23 +88,23 @@ export default function App() {
             id, name: `Test ${num}`, date: new Date().toISOString().split('T')[0], instanceName: '',
             testCategory: 'Activity', type: customType, storageType: '', storageLabel: '', storageIndex: null,
             comments: '', images: [], documents: [], plan: [], linkedProtocolId: '',
+            cellLines: [], customFieldValues: {},
         };
-        
         if (customType.startsWith('plate')) {
             const dimKey = customType.split('-')[1];
             const dim = PLATES_DEF[dimKey] || PLATES_DEF['96'];
-            const defGrid = Array(26).fill(null).map(()=>Array(26).fill(''));
-            const defCell = Array(26).fill(null).map(()=>Array(26).fill(null).map(()=>({excluded:false, role:null, conc:null, region:'Primary', manualOverride:false})));
+            const defGrid = Array(26).fill(null).map(() => Array(26).fill(''));
+            const defCell = Array(26).fill(null).map(() => Array(26).fill(null).map(() => ({ excluded: false, role: null, conc: null, region: 'Primary', manualOverride: false })));
             return {
                 ...baseTest, plateType: dimKey, grid: defGrid, boxRows: 9, boxCols: 9,
-                compounds: Array(dim.cols).fill(''), rowCompounds: Array(dim.rows).fill(''), cellConfig: defCell, 
+                compounds: Array(dim.cols).fill(''), rowCompounds: Array(dim.rows).fill(''), cellConfig: defCell,
                 ctrlType: 'cells', ctrlODStr: '1.0', bgType: 'none', bgManualStr: '0', unit: 'µM', cellsSeeded: '', test: '',
                 manualErrors: {}, topConcStr: '100', dilFactorStr: '3', glbOffsetStr: '0', errScaleStr: '1', useFixedSD: false, fixedSDStr: '0', showViab: true, fitIC50: true, showExcl: false, outlierThreshStr: '2.0',
-                chartCfg: { yMin:'',yMax:'',xMin:'',xMax:'', ptStyle:'circle',ptSize:5,fontSize:16,xPos:'bottom',yPos:'left', xAxisLabel:'', lineStyle:'solid', lineThickness:2 }
+                chartCfg: { yMin: '', yMax: '', xMin: '', xMax: '', ptStyle: 'circle', ptSize: 5, fontSize: 16, xPos: 'bottom', yPos: 'left', xAxisLabel: '', lineStyle: 'solid', lineThickness: 2 }
             };
         } else if (customType === 'nmr') {
-            return { 
-                ...baseTest, 
+            return {
+                ...baseTest,
                 proteinSequence: '', selectedNuclei: ['H', 'C', 'N'], chemicalShifts: {}, nmrSpectraImages: [],
                 moleculeName: '', experimentDate: '', concentration: '', solvent: '', saltConcentration: '', temperature: '', otherMolecule: '', ratio: '', tableMode: 'backbone', compound: ''
             };
@@ -116,7 +112,7 @@ export default function App() {
             return {
                 ...baseTest,
                 compound: '', experimentDate: '', concentration: '', solvent: '', saltConcentration: '', temperature: '', buffer: '', pathLength: '1', otherMolecule: '', ratio: '',
-                wavelengthData: '', spectraColumns: [], 
+                wavelengthData: '', spectraColumns: [],
                 structureComposition: { 'α-Helix': 30, 'β-Sheet': 20, 'Turn': 10, 'Random Coil': 40 },
                 chartCfg: { yMin: '', yMax: '', xMin: '190', xMax: '260', fontSize: 12, lineWidth: 2 }
             };
@@ -129,7 +125,7 @@ export default function App() {
     const [isCloudReady, setIsCloudReady] = useState(false);
     const [saveStatus, setSaveStatus] = useState('idle');
     const [saveErrorMsg, setSaveErrorMsg] = useState('');
-    const [appView, setAppView] = useState('explorer'); 
+    const [appView, setAppView] = useState('explorer');
     const [currentModule, setCurrentModule] = useState('dashboard');
     const [datasetsList, setDatasetsList] = useState([]);
     const [currentDatasetId, setCurrentDatasetId] = useState(null);
@@ -142,19 +138,17 @@ export default function App() {
     const [customCellLines, setCustomCellLines] = useState([]);
     const [customConc, setCustomConc] = useState({});
     const [cmpColors, setCmpColors] = useState({});
-    
+    const [customFields, setCustomFields] = useState([]);
     const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth > 768);
-
     const [storages, setStorages] = useState([]);
     const [activeStorageId, setActiveStorageId] = useState(null);
     const [storageModal, setStorageModal] = useState(null);
-    const [moveModal, setMoveModal] = useState(null); 
-    
+    const [moveModal, setMoveModal] = useState(null);
     const [testCategories, setTestCategories] = useState(["Activity", "Toxicity", "Microscopy", "Flow Cytometry", "Viability"]);
     const [protocolCategories, setProtocolCategories] = useState(["Preparation", "Measurement", "Analysis"]);
     const [datasetProtocols, setDatasetProtocols] = useState([]);
-    
-    const historyRef = useRef([ [createEmptyTest('t1', 1, 'plate-96')] ]);
+
+    const historyRef = useRef([[createEmptyTest('t1', 1, 'plate-96')]]);
     const [historyIndex, setHistoryIndex] = useState(0);
     const [reactTests, setReactTests] = useState(historyRef.current[0]);
     const tests = reactTests;
@@ -179,10 +173,8 @@ export default function App() {
     const handleUndo = () => { if (historyIndex > 0) { const newIdx = historyIndex - 1; setHistoryIndex(newIdx); setReactTests(historyRef.current[newIdx]); } };
     const handleRedo = () => { if (historyIndex < historyRef.current.length - 1) { const newIdx = historyIndex + 1; setHistoryIndex(newIdx); setReactTests(historyRef.current[newIdx]); } };
 
-    // --- MODIFICA ANTI-LOOP: Mostra pulsante invece di fare redirect forzato ---
     useEffect(() => {
         if (!auth) { setIsCloudReady(true); return; }
-        
         const initAuth = async () => {
             auth.onAuthStateChanged(currentUser => {
                 if (currentUser) {
@@ -201,28 +193,24 @@ export default function App() {
     const handleManualLogin = async () => {
         const provider = new window.firebase.auth.GoogleAuthProvider();
         try {
-            // Usando Popup su un clic manuale, i cellulari non lo bloccano.
             await auth.signInWithPopup(provider);
         } catch (e) {
             console.error("Errore login:", e);
         }
     };
 
-    // --- CONDIVISIONE LINK: Lettura URL ---
     useEffect(() => {
-        if (needsLogin) return; // Aspetta che l'utente sia loggato
-        
+        if (needsLogin) return;
         const urlParams = new URLSearchParams(window.location.search);
         const sharedDatasetId = urlParams.get('dataset');
-        
         if (sharedDatasetId && isCloudReady && db && !currentDatasetId) {
             db.collection(`artifacts/${appId}/public/data/datasets`).doc(sharedDatasetId).get()
-            .then(doc => {
-                if (doc.exists) {
-                    const dset = { id: doc.id, ...doc.data() };
-                    openDataset(dset);
-                }
-            }).catch(err => console.error("Errore dataset condiviso:", err));
+                .then(doc => {
+                    if (doc.exists) {
+                        const dset = { id: doc.id, ...doc.data() };
+                        openDataset(dset);
+                    }
+                }).catch(err => console.error("Errore dataset condiviso:", err));
         }
     }, [isCloudReady, db, currentDatasetId, needsLogin]);
 
@@ -232,33 +220,38 @@ export default function App() {
             const unsubscribe = collRef.onSnapshot((snap) => {
                 const dsets = [];
                 snap.forEach(doc => { dsets.push({ id: doc.id, ...doc.data() }); });
-                dsets.sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+                dsets.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
                 setDatasetsList(dsets);
                 setIsCloudReady(true);
-            }, (err) => { 
-                console.error("Firestore sync error:", err); 
+            }, (err) => {
+                console.error("Firestore sync error:", err);
                 try {
                     const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
-                    if (stored) setDatasetsList(JSON.parse(stored).sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
-                } catch(e){}
-                setIsCloudReady(true); 
+                    if (stored) setDatasetsList(JSON.parse(stored).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
+                } catch (e) { }
+                setIsCloudReady(true);
             });
             return () => unsubscribe();
         } else if (!user) {
             try {
                 const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
-                if (stored) setDatasetsList(JSON.parse(stored).sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
-            } catch (e) {}
+                if (stored) setDatasetsList(JSON.parse(stored).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
+            } catch (e) { }
             setIsCloudReady(true);
         }
     }, [user, db]);
 
     const latestDataRef = useRef(null);
-    latestDataRef.current = { tests, datasetTitle, datasetSubtitle, customCmpds, customCellLines, customConc, cmpColors, testCategories, protocolCategories, datasetProtocols, storages };
+    latestDataRef.current = {
+        tests, datasetTitle, datasetSubtitle, customCmpds, customCellLines,
+        customConc, cmpColors, testCategories, protocolCategories, datasetProtocols,
+        storages, customFields
+    };
+
     const getCompressedPayload = () => LZString.compressToUTF16(JSON.stringify(latestDataRef.current));
+
     const saveTimeoutRef = useRef(null);
 
-    // --- SALVATAGGIO IN CHIARO ---
     useEffect(() => {
         if (!isCloudReady || appView !== 'dataset' || !currentDatasetId) return;
         setSaveStatus('saving');
@@ -268,9 +261,9 @@ export default function App() {
                 const updatedPayload = {
                     title: datasetTitle || 'Untitled Dataset', subtitle: datasetSubtitle || '',
                     date: tests[0]?.date || new Date().toISOString().split('T')[0],
-                    testCount: tests.length, 
+                    testCount: tests.length,
                     updatedAt: window.firebase ? window.firebase.firestore.FieldValue.serverTimestamp() : Date.now(),
-                    payload: JSON.stringify(latestDataRef.current), 
+                    payload: JSON.stringify(latestDataRef.current),
                     isCompressed: false
                 };
                 if (db && user) {
@@ -282,17 +275,17 @@ export default function App() {
                     });
                 } else {
                     let stored = [];
-                    try { stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]'); } catch(e){}
+                    try { stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]'); } catch (e) { }
                     const existingIdx = stored.findIndex(e => e.id === currentDatasetId);
                     const newDset = { id: currentDatasetId, ...updatedPayload };
                     if (existingIdx >= 0) stored[existingIdx] = { ...stored[existingIdx], ...newDset }; else stored.push(newDset);
                     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
-                    setDatasetsList([...stored].sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
+                    setDatasetsList([...stored].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
                     setSaveStatus('saved');
                 }
-            } catch(e) { setSaveStatus('error'); setSaveErrorMsg(e.message); }
+            } catch (e) { setSaveStatus('error'); setSaveErrorMsg(e.message); }
         }, 1500);
-    }, [tests, datasetTitle, datasetSubtitle, customCmpds, customCellLines, customConc, cmpColors, testCategories, protocolCategories, datasetProtocols, isCloudReady, appView, currentDatasetId, user]);
+    }, [tests, datasetTitle, datasetSubtitle, customCmpds, customCellLines, customConc, cmpColors, testCategories, protocolCategories, datasetProtocols, customFields, isCloudReady, appView, currentDatasetId, user]);
 
     const exportHTML = () => {
         try {
@@ -315,7 +308,7 @@ export default function App() {
     const loadHTML = (e) => {
         const file = e.target.files && e.target.files[0];
         if (!file) return;
-        if (file.size > 900000) setDialog({type: 'alert', title: 'Large File Warning', message: 'This file is very large. After loading, saving to cloud might fail due to the 1MB limit. Consider removing embedded images.'});
+        if (file.size > 900000) setDialog({ type: 'alert', title: 'Large File Warning', message: 'This file is very large. After loading, saving to cloud might fail due to the 1MB limit. Consider removing embedded images.' });
         const reader = new FileReader();
         reader.onload = (ev) => {
             try {
@@ -331,7 +324,7 @@ export default function App() {
                 } else { setDialog({ type: 'alert', title: 'Load Failed', message: 'No dataset data found in this HTML file.' }); return; }
                 const migrated = migrateLoadedDataset(s);
                 loadedTests = migrated.tests;
-                s.storages = migrated.storages; 
+                s.storages = migrated.storages;
                 setPendingLoad({ tests: loadedTests, fullState: s });
             } catch (err) { setDialog({ type: 'alert', title: 'Load Failed', message: 'Could not read this file: ' + err.message }); }
         };
@@ -340,40 +333,39 @@ export default function App() {
 
     const confirmLoad = (mode) => {
         const { tests: loadedTests, fullState: s } = pendingLoad;
-        
         let targetId = currentDatasetId;
         if (!targetId || mode === 'replace') {
-            targetId = s.id || ('ds_' + Date.now()); 
+            targetId = s.id || ('ds_' + Date.now());
             setCurrentDatasetId(targetId);
             setAppView('dataset');
             window.history.pushState({}, '', '?dataset=' + targetId);
         }
-
         if (mode === 'replace') {
             setReactTests(loadedTests); historyRef.current = [loadedTests]; setHistoryIndex(0); setActiveTestId(loadedTests[0].id);
-            if(s.datasetTitle !== undefined) setDatasetTitle(s.datasetTitle); else if(s.reportTitle !== undefined) setDatasetTitle(s.reportTitle);
-            if(s.datasetSubtitle !== undefined) setDatasetSubtitle(s.datasetSubtitle); else if(s.reportSubtitle !== undefined) setDatasetSubtitle(s.reportSubtitle);
-            if(s.customCmpds !== undefined) setCustomCmpds(s.customCmpds);
-            if(s.customCellLines !== undefined) setCustomCellLines(s.customCellLines);
-            if(s.customConc !== undefined) setCustomConc(s.customConc);
-            if(s.cmpColors !== undefined) setCmpColors(s.cmpColors);
-            if(s.testCategories !== undefined) setTestCategories(s.testCategories);
-            if(s.protocolCategories !== undefined) setProtocolCategories(s.protocolCategories);
-            if(s.datasetProtocols !== undefined) setDatasetProtocols(s.datasetProtocols);
-            if(s.storages !== undefined) setStorages(s.storages); 
+            if (s.datasetTitle !== undefined) setDatasetTitle(s.datasetTitle); else if (s.reportTitle !== undefined) setDatasetTitle(s.reportTitle);
+            if (s.datasetSubtitle !== undefined) setDatasetSubtitle(s.datasetSubtitle); else if (s.reportSubtitle !== undefined) setDatasetSubtitle(s.reportSubtitle);
+            if (s.customCmpds !== undefined) setCustomCmpds(s.customCmpds);
+            if (s.customCellLines !== undefined) setCustomCellLines(s.customCellLines);
+            if (s.customConc !== undefined) setCustomConc(s.customConc);
+            if (s.cmpColors !== undefined) setCmpColors(s.cmpColors);
+            if (s.testCategories !== undefined) setTestCategories(s.testCategories);
+            if (s.protocolCategories !== undefined) setProtocolCategories(s.protocolCategories);
+            if (s.datasetProtocols !== undefined) setDatasetProtocols(s.datasetProtocols);
+            if (s.storages !== undefined) setStorages(s.storages);
+            if (s.customFields !== undefined) setCustomFields(s.customFields);
         } else if (mode === 'append') {
             const newTests = loadedTests.map(p => ({ ...p, id: 't' + Math.random().toString(36).substr(2, 9) + Date.now() }));
             setTests(prev => [...prev, ...newTests]); setActiveTestId(newTests[0].id);
-            if(s.customCmpds !== undefined) setCustomCmpds(prev => [...new Set([...prev, ...s.customCmpds])]);
-            if(s.customCellLines !== undefined) setCustomCellLines(prev => [...new Set([...prev, ...s.customCellLines])]);
-            if(s.customConc !== undefined) setCustomConc(prev => ({...prev, ...s.customConc}));
-            if(s.cmpColors !== undefined) setCmpColors(prev => ({...prev, ...s.cmpColors}));
-            if(s.storages !== undefined) { 
-                setStorages(prev => { const merged = [...prev]; s.storages.forEach(newSt => { if(!merged.find(st => st.id === newSt.id)) merged.push(newSt); }); return merged; });
+            if (s.customCmpds !== undefined) setCustomCmpds(prev => [...new Set([...prev, ...s.customCmpds])]);
+            if (s.customCellLines !== undefined) setCustomCellLines(prev => [...new Set([...prev, ...s.customCellLines])]);
+            if (s.customConc !== undefined) setCustomConc(prev => ({ ...prev, ...s.customConc }));
+            if (s.cmpColors !== undefined) setCmpColors(prev => ({ ...prev, ...s.cmpColors }));
+            if (s.customFields !== undefined) setCustomFields(prev => [...new Set([...prev, ...s.customFields])]);
+            if (s.storages !== undefined) {
+                setStorages(prev => { const merged = [...prev]; s.storages.forEach(newSt => { if (!merged.find(st => st.id === newSt.id)) merged.push(newSt); }); return merged; });
             }
         }
-        
-        setPendingLoad(null); 
+        setPendingLoad(null);
         setCurrentModule('tests');
         if (window.innerWidth < 768) setIsSidebarOpen(false);
     };
@@ -382,25 +374,24 @@ export default function App() {
         const newId = 'ds_' + Date.now();
         const freshTests = [createEmptyTest('t1', 1, 'plate-96')];
         setReactTests(freshTests); historyRef.current = [freshTests]; setHistoryIndex(0); setActiveTestId('t1');
-        setDatasetTitle('New Dataset'); setDatasetSubtitle(''); setCustomCmpds([]); setCustomCellLines([]); setCustomConc({}); 
+        setDatasetTitle('New Dataset'); setDatasetSubtitle(''); setCustomCmpds([]); setCustomCellLines([]); setCustomConc({});
+        setCustomFields([]);
         setTestCategories(["Activity", "Toxicity", "Microscopy", "Flow Cytometry", "Viability"]);
-        setProtocolCategories(["Preparation", "Measurement", "Analysis"]); setDatasetProtocols([]); setStorages([]); 
+        setProtocolCategories(["Preparation", "Measurement", "Analysis"]); setDatasetProtocols([]); setStorages([]);
         setCurrentDatasetId(newId); setAppView('dataset'); setCurrentModule('dashboard');
-        
         window.history.pushState({}, '', '?dataset=' + newId);
-        
         const updatedPayload = {
-            title: 'New Dataset', date: new Date().toISOString().split('T')[0], 
-            createdAt: window.firebase ? window.firebase.firestore.FieldValue.serverTimestamp() : Date.now(), 
+            title: 'New Dataset', date: new Date().toISOString().split('T')[0],
+            createdAt: window.firebase ? window.firebase.firestore.FieldValue.serverTimestamp() : Date.now(),
             updatedAt: window.firebase ? window.firebase.firestore.FieldValue.serverTimestamp() : Date.now(),
             payload: JSON.stringify({ tests: freshTests }), isCompressed: false
         };
-        if(db && user) { 
-            await db.collection(`artifacts/${appId}/public/data/datasets`).doc(newId).set(updatedPayload); 
+        if (db && user) {
+            await db.collection(`artifacts/${appId}/public/data/datasets`).doc(newId).set(updatedPayload);
         } else {
-            let stored = []; try { stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]'); } catch(e){}
+            let stored = []; try { stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]'); } catch (e) { }
             stored.push({ id: newId, ...updatedPayload }); localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
-            setDatasetsList([...stored].sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
+            setDatasetsList([...stored].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
         }
     };
 
@@ -410,19 +401,19 @@ export default function App() {
             try {
                 const updatedPayload = {
                     title: datasetTitle || 'Untitled Dataset', subtitle: datasetSubtitle || '', date: tests[0]?.date || new Date().toISOString().split('T')[0],
-                    testCount: tests.length, updatedAt: window.firebase ? window.firebase.firestore.FieldValue.serverTimestamp() : Date.now(), 
+                    testCount: tests.length, updatedAt: window.firebase ? window.firebase.firestore.FieldValue.serverTimestamp() : Date.now(),
                     payload: JSON.stringify(latestDataRef.current), isCompressed: false
                 };
                 if (db && user) {
                     await db.collection(`artifacts/${appId}/public/data/datasets`).doc(currentDatasetId).set(updatedPayload, { merge: true });
                 } else {
-                    let stored = []; try { stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]'); } catch(e){}
+                    let stored = []; try { stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]'); } catch (e) { }
                     const existingIdx = stored.findIndex(e => e.id === currentDatasetId);
                     if (existingIdx >= 0) stored[existingIdx] = { ...stored[existingIdx], ...updatedPayload }; else stored.push({ id: currentDatasetId, ...updatedPayload });
                     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
-                    setDatasetsList([...stored].sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
+                    setDatasetsList([...stored].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
                 }
-            } catch(e) {}
+            } catch (e) { }
         }
         window.history.pushState({}, '', window.location.pathname);
         setAppView('explorer');
@@ -433,19 +424,18 @@ export default function App() {
         try {
             const migrated = migrateLoadedDataset(s);
             const loadedTests = migrated.tests;
-            if (loadedTests.length > 0) { setReactTests(loadedTests); historyRef.current = [loadedTests]; setHistoryIndex(0); setActiveTestId(loadedTests[0].id); } 
+            if (loadedTests.length > 0) { setReactTests(loadedTests); historyRef.current = [loadedTests]; setHistoryIndex(0); setActiveTestId(loadedTests[0].id); }
             else { const fresh = [createEmptyTest('t1', 1)]; setReactTests(fresh); historyRef.current = [fresh]; setHistoryIndex(0); setActiveTestId('t1'); }
             setDatasetTitle(s.datasetTitle !== undefined ? s.datasetTitle : (s.reportTitle !== undefined ? s.reportTitle : (dset.title || 'Untitled')));
             setDatasetSubtitle(s.datasetSubtitle !== undefined ? s.datasetSubtitle : (s.reportSubtitle || ''));
             setCustomCmpds(s.customCmpds || []); setCustomCellLines(s.customCellLines || []); setCustomConc(s.customConc || {}); setCmpColors(s.cmpColors || {});
+            setCustomFields(s.customFields || []);
             setTestCategories(s.testCategories || ["Activity", "Toxicity", "Microscopy", "Flow Cytometry", "Viability"]);
             setProtocolCategories(s.protocolCategories || ["Preparation", "Measurement", "Analysis"]);
-            setDatasetProtocols(s.datasetProtocols || []); setStorages(migrated.storages); 
+            setDatasetProtocols(s.datasetProtocols || []); setStorages(migrated.storages);
             setCurrentDatasetId(dset.id); setAppView('dataset'); setCurrentModule('dashboard');
-            
             window.history.pushState({}, '', '?dataset=' + dset.id);
-            
-        } catch(e) { setDialog({type: 'alert', title: 'Error', message: "Error reading dataset structure."}); }
+        } catch (e) { setDialog({ type: 'alert', title: 'Error', message: "Error reading dataset structure." }); }
     };
 
     const deleteDataset = (e, id) => {
@@ -453,9 +443,9 @@ export default function App() {
         setDialog({
             type: 'confirm', title: 'Delete Dataset', message: 'Are you sure you want to delete this entire Dataset?',
             onConfirm: async () => {
-                if(db && user) { await db.collection(`artifacts/${appId}/public/data/datasets`).doc(id).delete(); } 
+                if (db && user) { await db.collection(`artifacts/${appId}/public/data/datasets`).doc(id).delete(); }
                 else {
-                    let stored = []; try { stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]'); } catch(e){}
+                    let stored = []; try { stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]'); } catch (e) { }
                     stored = stored.filter(d => d.id !== id); localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
                     setDatasetsList(stored);
                 }
@@ -469,9 +459,9 @@ export default function App() {
             type: 'prompt', title: 'Rename Dataset', message: 'Enter a new title for this Dataset:', defaultValue: currentTitle,
             onConfirm: async (newTitle) => {
                 if (newTitle && newTitle.trim() !== currentTitle) {
-                    if (db && user) { await db.collection(`artifacts/${appId}/public/data/datasets`).doc(id).update({ title: newTitle.trim() }); } 
+                    if (db && user) { await db.collection(`artifacts/${appId}/public/data/datasets`).doc(id).update({ title: newTitle.trim() }); }
                     else {
-                        let stored = []; try { stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]'); } catch(e){}
+                        let stored = []; try { stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]'); } catch (e) { }
                         const idx = stored.findIndex(d => d.id === id);
                         if (idx >= 0) { stored[idx].title = newTitle.trim(); localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored)); setDatasetsList(stored); }
                     }
@@ -480,7 +470,7 @@ export default function App() {
         });
     };
 
-  const deleteEmptyDatasets = async () => {
+    const deleteEmptyDatasets = async () => {
         const emptyDatasets = datasetsList.filter(dset => {
             if (!dset.testCount || dset.testCount === 0) return true;
             if (dset.testCount === 1) {
@@ -494,19 +484,17 @@ export default function App() {
                             }
                         }
                     }
-                } catch(e) { return false; }
+                } catch (e) { return false; }
             }
             return false;
         });
-        
         if (emptyDatasets.length === 0) {
             setDialog({ type: 'alert', title: 'Clean Up', message: 'No empty datasets found.' });
             return;
         }
-
         setDialog({
-            type: 'confirm', 
-            title: 'Delete Empty Datasets', 
+            type: 'confirm',
+            title: 'Delete Empty Datasets',
             message: `Are you sure you want to delete ${emptyDatasets.length} empty dataset(s)?`,
             onConfirm: async () => {
                 if (db && user) {
@@ -517,15 +505,14 @@ export default function App() {
                             batch.delete(docRef);
                         });
                         await batch.commit();
-                    } catch(e) {
+                    } catch (e) {
                         console.error("Batch delete failed", e);
                         setDialog({ type: 'alert', title: 'Error', message: 'Cloud deletion failed.' });
                     }
                 } else {
-                    let stored = []; 
-                    try { stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]'); } catch(e){}
+                    let stored = []; try { stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]'); } catch (e) { }
                     const emptyIds = emptyDatasets.map(d => d.id);
-                    stored = stored.filter(d => !emptyIds.includes(d.id)); 
+                    stored = stored.filter(d => !emptyIds.includes(d.id));
                     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
                     setDatasetsList(stored);
                 }
@@ -535,29 +522,29 @@ export default function App() {
 
     const [searchQuery, setSearchQuery] = useState('');
     const [expandedGroups, setExpandedGroups] = useState({});
-    const toggleGroup = (key) => setExpandedGroups(prev => ({...prev, [key]: !prev[key]}));
+    const toggleGroup = (key) => setExpandedGroups(prev => ({ ...prev, [key]: !prev[key] }));
 
     const groupedDatasets = useMemo(() => {
         const groups = {};
         datasetsList.forEach(dset => {
             let catSet = new Set(); let cellSet = new Set();
-            try { 
-                const s = parsePayload(dset); 
-                if (s && s.tests) { 
-                    s.tests.forEach(t => { 
-                        if (t.testCategory) catSet.add(t.testCategory); 
-                        if (Array.isArray(t.cellLines)) t.cellLines.forEach(e => cellSet.add(e)); 
-                    }); 
-                } 
-            } catch(e) {}
-            const catStr = Array.from(catSet).sort().join(', '); 
+            try {
+                const s = parsePayload(dset);
+                if (s && s.tests) {
+                    s.tests.forEach(t => {
+                        if (t.testCategory) catSet.add(t.testCategory);
+                        if (Array.isArray(t.cellLines)) t.cellLines.forEach(e => cellSet.add(e));
+                    });
+                }
+            } catch (e) { }
+            const catStr = Array.from(catSet).sort().join(', ');
             const cellStr = Array.from(cellSet).sort().join(', ');
-            const hasMeta = catStr || cellStr; 
+            const hasMeta = catStr || cellStr;
             const key = hasMeta ? `${catStr}|${cellStr}` : `unclassified_${dset.id}`;
             if (!groups[key]) { groups[key] = { key, categories: catStr, cellLines: cellStr, isUnclassified: !hasMeta, items: [] }; }
             groups[key].items.push(dset);
         });
-        Object.values(groups).forEach(g => { g.items.sort((a,b) => new Date(b.date || 0) - new Date(a.date || 0)); });
+        Object.values(groups).forEach(g => { g.items.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0)); });
         return groups;
     }, [datasetsList]);
 
@@ -583,12 +570,10 @@ export default function App() {
     const handlePrevMonth = () => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1));
     const handleNextMonth = () => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1));
 
-    const jumpToTest = (testId) => { setActiveTestId(testId); setCurrentModule('active-test'); if(window.innerWidth < 768) setIsSidebarOpen(false); };
-    const jumpToProtocol = (protocolId) => { setExpandedGroups(p => ({ ...p, activeProtoId: protocolId })); setCurrentModule('protocols'); if(window.innerWidth < 768) setIsSidebarOpen(false); };
-
+    const jumpToTest = (testId) => { setActiveTestId(testId); setCurrentModule('active-test'); if (window.innerWidth < 768) setIsSidebarOpen(false); };
+    const jumpToProtocol = (protocolId) => { setExpandedGroups(p => ({ ...p, activeProtoId: protocolId })); setCurrentModule('protocols'); if (window.innerWidth < 768) setIsSidebarOpen(false); };
     const handlePrint = () => { window.print(); };
 
-    // --- SCHERMATA DI LOGIN MANUALE (per sbloccare Safari/Chrome su mobile) ---
     if (needsLogin) {
         return (
             <div className="flex h-screen w-full items-center justify-center bg-slate-100 p-4">
@@ -596,7 +581,7 @@ export default function App() {
                     <div className="text-5xl mb-4">🔐</div>
                     <h1 className="text-2xl font-black text-slate-800 mb-2">Accesso Richiesto</h1>
                     <p className="text-slate-500 mb-8 text-sm leading-relaxed">
-                        Per ragioni di sicurezza e per sincronizzare i tuoi dati di laboratorio sul Cloud, 
+                        Per ragioni di sicurezza e per sincronizzare i tuoi dati di laboratorio sul Cloud,
                         il browser richiede un'azione manuale per il login.
                     </p>
                     <button
@@ -631,25 +616,25 @@ export default function App() {
 
             {dialog && (
                 <div className="fixed inset-0 bg-slate-900/50 z-[999999] flex items-center justify-center p-4 backdrop-blur-sm">
-                    <div className="bg-white rounded-lg shadow-xl w-full max-w-sm overflow-hidden flex flex-col border border-slate-200" onClick={e=>e.stopPropagation()}>
+                    <div className="bg-white rounded-lg shadow-xl w-full max-w-sm overflow-hidden flex flex-col border border-slate-200" onClick={e => e.stopPropagation()}>
                         <div className="p-4 flex flex-col">
                             {dialog.title && <h3 className="text-lg font-bold text-slate-800 mb-2">{dialog.title}</h3>}
                             <p className="text-sm text-slate-600 mb-4">{dialog.message}</p>
                             {dialog.type === 'prompt' && (
                                 <input type="text" id="prompt-input" defaultValue={dialog.defaultValue} autoFocus
                                     onKeyDown={e => {
-                                        if(e.key === 'Enter'){ dialog.onConfirm(e.target.value); setDialog(null); }
-                                        if(e.key === 'Escape'){ setDialog(null); }
+                                        if (e.key === 'Enter') { dialog.onConfirm(e.target.value); setDialog(null); }
+                                        if (e.key === 'Escape') { setDialog(null); }
                                     }}
-                                    className="border border-slate-300 rounded p-2 text-sm focus:border-blue-500 focus:outline-none mb-2"/>
+                                    className="border border-slate-300 rounded p-2 text-sm focus:border-blue-500 focus:outline-none mb-2" />
                             )}
                             <div className="flex justify-end gap-2 mt-2">
                                 {(dialog.type === 'confirm' || dialog.type === 'prompt') && (
-                                    <button onClick={()=>setDialog(null)} className="px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded">Cancel</button>
+                                    <button onClick={() => setDialog(null)} className="px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded">Cancel</button>
                                 )}
-                                <button onClick={()=>{
+                                <button onClick={() => {
                                     if (dialog.onConfirm) {
-                                        if(dialog.type === 'prompt') dialog.onConfirm(document.getElementById('prompt-input').value);
+                                        if (dialog.type === 'prompt') dialog.onConfirm(document.getElementById('prompt-input').value);
                                         else dialog.onConfirm();
                                     }
                                     setDialog(null);
@@ -676,18 +661,17 @@ export default function App() {
                 </div>
             )}
 
-            <StorageModals 
-                storageModal={storageModal} setStorageModal={setStorageModal} 
-                storages={storages} setStorages={setStorages} 
-                moveModal={moveModal} setMoveModal={setMoveModal} 
-                tests={tests} setTests={setTests} 
+            <StorageModals
+                storageModal={storageModal} setStorageModal={setStorageModal}
+                storages={storages} setStorages={setStorages}
+                moveModal={moveModal} setMoveModal={setMoveModal}
+                tests={tests} setTests={setTests}
             />
 
-            {/* ===== EXPLORER VIEW (Home Screen) ===== */}
+            {/* ===== EXPLORER VIEW ===== */}
             {appView === 'explorer' && (
                 <div className="absolute inset-0 z-[100] flex flex-col items-center p-4 md:p-10 bg-slate-100 overflow-y-auto">
                     <div className="w-full max-w-6xl">
-                        
                         <div className="flex flex-col items-center justify-center py-12 md:py-16 px-6 md:px-8 border border-blue-100 mb-6 md:mb-10 bg-gradient-to-b from-white to-blue-50/50 rounded-2xl shadow-lg mt-4 md:mt-0">
                             <h1 className="text-3xl md:text-5xl font-black text-slate-800 tracking-tight mb-4 text-center">Lab Workspace</h1>
                             <p className="text-slate-500 text-base md:text-xl mb-8 text-center max-w-2xl font-medium">Create, manage, and analyze your experiments, assays, and inventory in one unified environment.</p>
@@ -701,7 +685,6 @@ export default function App() {
                                 </div>
                             )}
                         </div>
-
                         <div className="bg-white p-4 md:p-8 rounded-2xl shadow-xl border border-slate-200">
                             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 border-b border-slate-100 pb-4 gap-4">
                                 <h2 className="text-xl md:text-2xl font-bold text-slate-800">Your Recent Datasets</h2>
@@ -711,11 +694,10 @@ export default function App() {
                                     </button>
                                     <label className="bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex-1 md:flex-none flex items-center justify-center gap-2 cursor-pointer text-sm">
                                         📂 Load HTML File
-                                        <input type="file" accept=".html" onChange={loadHTML} className="hidden"/>
+                                        <input type="file" accept=".html" onChange={loadHTML} className="hidden" />
                                     </label>
                                 </div>
                             </div>
-                            
                             {isCloudReady && Object.keys(groupedDatasets).length === 0 ? (
                                 <div className="text-center py-12 text-slate-400 text-md flex flex-col items-center gap-3">
                                     <span className="text-4xl opacity-30">📂</span>
@@ -770,15 +752,13 @@ export default function App() {
             {/* ===== DATASET VIEW ===== */}
             {appView === 'dataset' && (
                 <div className="flex flex-col md:flex-row h-screen w-full overflow-hidden">
-                    
                     {/* MOBILE TOP BAR */}
                     <div className="md:hidden bg-white border-b border-slate-200 p-3 flex justify-between items-center z-10 shrink-0">
-                         <button onClick={() => setIsSidebarOpen(true)} className="text-2xl text-slate-600 px-2 py-1">☰</button>
-                         <span className="font-bold text-slate-800 truncate px-4">{datasetTitle || 'Lab Workspace'}</span>
-                         <div className="w-8"></div>
+                        <button onClick={() => setIsSidebarOpen(true)} className="text-2xl text-slate-600 px-2 py-1">☰</button>
+                        <span className="font-bold text-slate-800 truncate px-4">{datasetTitle || 'Lab Workspace'}</span>
+                        <div className="w-8"></div>
                     </div>
 
-                    {/* OVERLAY SFONDO MOBILE */}
                     {isSidebarOpen && (
                         <div className="md:hidden fixed inset-0 bg-slate-900/50 z-40" onClick={() => setIsSidebarOpen(false)}></div>
                     )}
@@ -789,8 +769,8 @@ export default function App() {
                             <button onClick={handleBackToExplorer} className="text-slate-400 hover:text-blue-600 transition-colors" title="Back to Workspace">◀</button>
                             {isSidebarOpen && (
                                 <div className="min-w-0 flex-1">
-                                    <input value={datasetTitle} onChange={e=>setDatasetTitle(e.target.value)} className="w-full text-sm font-black text-slate-800 bg-transparent border-none outline-none truncate focus:ring-1 focus:ring-blue-500 rounded px-1" placeholder="Dataset Title"/>
-                                    <input value={datasetSubtitle} onChange={e=>setDatasetSubtitle(e.target.value)} className="w-full text-[10px] font-medium text-slate-500 bg-transparent border-none outline-none truncate focus:ring-1 focus:ring-blue-500 rounded px-1 mt-0.5" placeholder="Subtitle / Project info"/>
+                                    <input value={datasetTitle} onChange={e => setDatasetTitle(e.target.value)} className="w-full text-sm font-black text-slate-800 bg-transparent border-none outline-none truncate focus:ring-1 focus:ring-blue-500 rounded px-1" placeholder="Dataset Title" />
+                                    <input value={datasetSubtitle} onChange={e => setDatasetSubtitle(e.target.value)} className="w-full text-[10px] font-medium text-slate-500 bg-transparent border-none outline-none truncate focus:ring-1 focus:ring-blue-500 rounded px-1 mt-0.5" placeholder="Subtitle / Project info" />
                                 </div>
                             )}
                             <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="text-slate-400 hover:text-slate-600 transition-colors text-lg" title="Toggle Sidebar">
@@ -802,9 +782,9 @@ export default function App() {
                             <div className="px-4 py-2 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center text-[10px] font-bold text-slate-500">
                                 <span>Status:</span>
                                 {saveStatus === 'saving' ? <span className="text-blue-500 animate-pulse">💾 Saving...</span> :
-                                 saveStatus === 'saved' ? <span className="text-emerald-600">☁️ Cloud Sync</span> :
-                                 saveStatus === 'error' ? <span className="text-red-600" title={saveErrorMsg}>❌ Error</span> :
-                                 <span className="text-slate-600">...</span>}
+                                    saveStatus === 'saved' ? <span className="text-emerald-600">☁️ Cloud Sync</span> :
+                                        saveStatus === 'error' ? <span className="text-red-600" title={saveErrorMsg}>❌ Error</span> :
+                                            <span className="text-slate-600">...</span>}
                             </div>
                         )}
 
@@ -813,15 +793,16 @@ export default function App() {
                                 { id: 'dashboard', icon: '📊', label: 'Dataset Overview' },
                                 { id: 'agenda', icon: '🗓️', label: 'Agenda (Timeline)' },
                                 { id: 'storage', icon: '📦', label: 'Storage & Boxes' },
+                                { id: 'definitions', icon: '🏷️', label: 'Definitions & Labels' },
                                 { id: 'tests', icon: '🧪', label: 'Tests & Fittings' },
                                 { id: 'protocols', icon: '📝', label: 'Protocols' },
                                 { id: 'notebook', icon: '📓', label: 'Lab Notebook' }
                             ].map(nav => (
-                                <button 
+                                <button
                                     key={nav.id}
                                     onClick={() => {
                                         setCurrentModule(nav.id);
-                                        if(window.innerWidth < 768) setIsSidebarOpen(false);
+                                        if (window.innerWidth < 768) setIsSidebarOpen(false);
                                     }}
                                     title={!isSidebarOpen ? nav.label : ''}
                                     className={`flex items-center gap-3 py-2 rounded-lg text-sm transition-all text-left ${isSidebarOpen ? 'px-3 w-full' : 'px-0 w-10 justify-center'} ${currentModule === nav.id ? 'bg-blue-50 text-blue-700 font-bold shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}
@@ -831,12 +812,12 @@ export default function App() {
                                 </button>
                             ))}
                         </nav>
-                        
+
                         <div className={`p-4 border-t border-slate-200 flex flex-col gap-2 ${!isSidebarOpen ? 'items-center px-1' : ''}`}>
                             <div className={`flex ${isSidebarOpen ? 'gap-2' : 'flex-col gap-2 w-full'}`}>
                                 <label className={`flex-1 text-center bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-200 font-bold py-1.5 rounded text-xs cursor-pointer shadow-sm transition-colors ${!isSidebarOpen ? 'py-2 px-0 text-[10px]' : ''}`} title="Load HTML">
                                     {isSidebarOpen ? '📂 Load HTML' : '📂'}
-                                    <input type="file" accept=".html" onChange={loadHTML} className="hidden"/>
+                                    <input type="file" accept=".html" onChange={loadHTML} className="hidden" />
                                 </label>
                                 <button onClick={exportHTML} className={`flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors ${!isSidebarOpen ? 'py-2 px-0 text-[10px]' : ''}`} title="Save HTML">
                                     {isSidebarOpen ? '💾 Save HTML' : '💾'}
@@ -851,6 +832,7 @@ export default function App() {
 
                     {/* MAIN CONTENT */}
                     <div className="flex-1 flex flex-col bg-slate-50 h-full overflow-hidden relative">
+
                         {currentModule === 'dashboard' && (
                             <div className="p-4 md:p-8 h-full overflow-y-auto custom-scrollbar bg-slate-50">
                                 <div className="max-w-6xl mx-auto">
@@ -887,10 +869,11 @@ export default function App() {
                                             { id: 'tests', icon: '🧪', title: 'Tests & Assays', desc: 'Manage experimental plates and spectroscopic data.' },
                                             { id: 'storage', icon: '📦', title: 'Storage & Inventory', desc: 'Track physical boxes and storage locations.' },
                                             { id: 'agenda', icon: '🗓️', title: 'Project Agenda', desc: 'Timeline of all scheduled experimental tasks.' },
+                                            { id: 'definitions', icon: '🏷️', title: 'Definitions & Labels', desc: 'Manage compounds, cell lines, and metadata fields.' },
                                             { id: 'protocols', icon: '📝', title: 'Protocols Library', desc: 'Draft, store, and link experimental procedures.' },
                                             { id: 'notebook', icon: '📓', title: 'Lab Notebook', desc: 'Consolidated view of all experiment notes and results.' }
                                         ].map(mod => (
-                                            <button 
+                                            <button
                                                 key={mod.id}
                                                 onClick={() => setCurrentModule(mod.id)}
                                                 className="bg-white p-5 md:p-6 rounded-lg border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-400 transition-all text-left group no-print"
@@ -903,6 +886,24 @@ export default function App() {
                                     </div>
                                 </div>
                             </div>
+                        )}
+
+                        {currentModule === 'definitions' && (
+                            <DefinitionsPanel
+                                customCmpds={customCmpds}
+                                setCustomCmpds={setCustomCmpds}
+                                customCellLines={customCellLines}
+                                setCustomCellLines={setCustomCellLines}
+                                testCategories={testCategories}
+                                setTestCategories={setTestCategories}
+                                protocolCategories={protocolCategories}
+                                setProtocolCategories={setProtocolCategories}
+                                customFields={customFields}
+                                setCustomFields={setCustomFields}
+                                cmpColors={cmpColors}
+                                setCmpColors={setCmpColors}
+                                handlePrint={handlePrint}
+                            />
                         )}
 
                         {currentModule === 'agenda' && (
@@ -924,26 +925,26 @@ export default function App() {
                                             <button onClick={handleNextMonth} className="text-slate-400 hover:text-blue-600 font-bold p-1 rounded hover:bg-slate-50 transition-colors">▶</button>
                                         </div>
                                         <div className="grid grid-cols-7 gap-1 text-center mb-2">
-                                            {['M','T','W','T','F','S','S'].map((d,i)=><div key={i} className="text-[11px] font-bold text-slate-400">{d}</div>)}
+                                            {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => <div key={i} className="text-[11px] font-bold text-slate-400">{d}</div>)}
                                         </div>
                                         <div className="grid grid-cols-7 gap-1">
-                                            {Array.from({length: startDayOffset}).map((_, i) => <div key={`empty-${i}`}></div>)}
-                                            {Array.from({length: totalDays}, (_,i)=>{
-                                                const day = String(i+1).padStart(2,'0');
-                                                const month = String(currentMonth.getMonth()+1).padStart(2,'0');
+                                            {Array.from({ length: startDayOffset }).map((_, i) => <div key={`empty-${i}`}></div>)}
+                                            {Array.from({ length: totalDays }, (_, i) => {
+                                                const day = String(i + 1).padStart(2, '0');
+                                                const month = String(currentMonth.getMonth() + 1).padStart(2, '0');
                                                 const dateStr = `${currentMonth.getFullYear()}-${month}-${day}`;
                                                 const hasTask = mergedPlan.some(p => p.date === dateStr);
                                                 const isSel = calFilterDate === dateStr;
                                                 return (
-                                                    <button key={i} onClick={()=>setCalFilterDate(isSel ? null : dateStr)}
+                                                    <button key={i} onClick={() => setCalFilterDate(isSel ? null : dateStr)}
                                                         className={`text-[11px] py-1.5 rounded-md transition-all font-medium ${isSel ? 'bg-blue-600 text-white shadow-md scale-105' : hasTask ? 'bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100' : 'text-slate-600 hover:bg-slate-100'}`}>
-                                                        {i+1}
+                                                        {i + 1}
                                                     </button>
                                                 );
                                             })}
                                         </div>
                                         {calFilterDate && (
-                                            <button onClick={()=>setCalFilterDate(null)} className="mt-4 w-full text-xs text-red-500 font-bold hover:bg-red-50 py-2 rounded transition-colors">Clear Filter</button>
+                                            <button onClick={() => setCalFilterDate(null)} className="mt-4 w-full text-xs text-red-500 font-bold hover:bg-red-50 py-2 rounded transition-colors">Clear Filter</button>
                                         )}
                                     </div>
                                     <div className="flex-1 bg-white border border-slate-200 rounded-xl p-4 md:p-6 shadow-sm">
@@ -960,7 +961,7 @@ export default function App() {
                                                         <div className="flex flex-col gap-2">
                                                             {tasks.map((t, idx) => (
                                                                 <div key={idx} className="flex flex-col md:flex-row md:items-center gap-2 md:gap-3 bg-slate-50 p-3 border border-slate-200 rounded-lg group hover:border-blue-300 transition-colors">
-                                                                    <button onClick={()=>jumpToTest(t.testId)} className="text-xs font-bold bg-blue-100 hover:bg-blue-200 text-blue-800 px-3 py-1.5 rounded-md transition-colors whitespace-nowrap shadow-sm self-start md:self-auto">
+                                                                    <button onClick={() => jumpToTest(t.testId)} className="text-xs font-bold bg-blue-100 hover:bg-blue-200 text-blue-800 px-3 py-1.5 rounded-md transition-colors whitespace-nowrap shadow-sm self-start md:self-auto">
                                                                         {t.testName}
                                                                     </button>
                                                                     <span className="text-sm text-slate-700 flex-1">{t.task}</span>
@@ -977,17 +978,17 @@ export default function App() {
                         )}
 
                         {currentModule === 'storage' && (
-                            <StorageList 
-                                storages={storages} tests={tests} 
-                                setStorageModal={setStorageModal} setActiveStorageId={setActiveStorageId} 
-                                setCurrentModule={setCurrentModule} handlePrint={handlePrint} 
+                            <StorageList
+                                storages={storages} tests={tests}
+                                setStorageModal={setStorageModal} setActiveStorageId={setActiveStorageId}
+                                setCurrentModule={setCurrentModule} handlePrint={handlePrint}
                             />
                         )}
 
                         {currentModule === 'storage-detail' && (
-                            <StorageDetail 
-                                storages={storages} activeStorageId={activeStorageId} 
-                                tests={tests} setTests={setTests} setCurrentModule={setCurrentModule} 
+                            <StorageDetail
+                                storages={storages} activeStorageId={activeStorageId}
+                                tests={tests} setTests={setTests} setCurrentModule={setCurrentModule}
                                 handlePrint={handlePrint} jumpToTest={jumpToTest} setMoveModal={setMoveModal}
                                 createEmptyTest={createEmptyTest} setActiveTestId={setActiveTestId}
                             />
@@ -1041,25 +1042,25 @@ export default function App() {
                                         <div className="flex flex-col md:flex-row gap-3 md:gap-4 items-center">
                                             <div className="flex-1 w-full relative">
                                                 <span className="absolute left-3 top-2.5 text-slate-400">🔍</span>
-                                                <input type="text" placeholder="Search tests by name..." value={testSearch} onChange={e => setExpandedGroups(p=>({...p, testSearch: e.target.value}))} className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"/>
+                                                <input type="text" placeholder="Search tests by name..." value={testSearch} onChange={e => setExpandedGroups(p => ({ ...p, testSearch: e.target.value }))} className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
                                             </div>
                                             <div className="w-full md:w-64 flex gap-2">
-                                                <select value={testCatFilter} onChange={e => setExpandedGroups(p=>({...p, testCatFilter: e.target.value}))} className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:border-blue-500 font-semibold text-slate-700 cursor-pointer">
+                                                <select value={testCatFilter} onChange={e => setExpandedGroups(p => ({ ...p, testCatFilter: e.target.value }))} className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:border-blue-500 font-semibold text-slate-700 cursor-pointer">
                                                     <option value="ALL">All Categories</option>
                                                     {testCategories.map(c => <option key={c} value={c}>{c}</option>)}
                                                 </select>
-                                                <button onClick={() => setExpandedGroups(p=>({...p, showTestCatMgr: !showCatMgr}))} className={`px-3 py-2 border rounded-lg text-sm font-bold transition-colors shadow-sm ${showCatMgr ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100'}`} title="Manage Categories">⚙️</button>
+                                                <button onClick={() => setExpandedGroups(p => ({ ...p, showTestCatMgr: !showCatMgr }))} className={`px-3 py-2 border rounded-lg text-sm font-bold transition-colors shadow-sm ${showCatMgr ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100'}`} title="Manage Categories">⚙️</button>
                                             </div>
                                         </div>
                                         {showCatMgr && (
                                             <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 flex flex-col gap-3">
                                                 <h4 className="text-xs font-bold text-slate-500 uppercase">Manage Test Categories</h4>
                                                 <div className="flex flex-col md:flex-row gap-2">
-                                                    <input type="text" placeholder="New category name..." value={newCatInput} onChange={e => setExpandedGroups(p=>({...p, newTestCatInput: e.target.value}))} className="flex-1 border border-slate-300 rounded px-3 py-2 text-sm outline-none focus:border-blue-500"/>
+                                                    <input type="text" placeholder="New category name..." value={newCatInput} onChange={e => setExpandedGroups(p => ({ ...p, newTestCatInput: e.target.value }))} className="flex-1 border border-slate-300 rounded px-3 py-2 text-sm outline-none focus:border-blue-500" />
                                                     <button onClick={() => {
                                                         const v = newCatInput.trim();
-                                                        if(v && !testCategories.includes(v)) {
-                                                            setTestCategories([...testCategories, v]); setExpandedGroups(p=>({...p, newTestCatInput: ''}));
+                                                        if (v && !testCategories.includes(v)) {
+                                                            setTestCategories([...testCategories, v]); setExpandedGroups(p => ({ ...p, newTestCatInput: '' }));
                                                         }
                                                     }} className="bg-blue-600 text-white font-bold px-4 py-2 rounded text-sm shadow-sm hover:bg-blue-700 transition-colors">Add Category</button>
                                                 </div>
@@ -1073,14 +1074,14 @@ export default function App() {
                                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                                                 {filteredTests.map(test => (
                                                     <div key={test.id} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:shadow-md hover:border-blue-400 cursor-pointer transition-all flex flex-col group relative" onClick={() => { setActiveTestId(test.id); setCurrentModule('active-test'); }}>
-                                                        <button 
+                                                        <button
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
                                                                 if (window.confirm(`Eliminare definitivamente il test "${test.name}"?`)) {
                                                                     setTests(prev => prev.filter(t => t.id !== test.id));
                                                                 }
-                                                            }} 
-                                                            className="absolute top-3 right-10 text-slate-300 hover:text-red-500 text-xl opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity no-print z-10" 
+                                                            }}
+                                                            className="absolute top-3 right-10 text-slate-300 hover:text-red-500 text-xl opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity no-print z-10"
                                                             title="Elimina Test"
                                                         >
                                                             &times;
@@ -1120,11 +1121,11 @@ export default function App() {
                                 return (
                                     <div className="p-4 md:p-6 h-full flex flex-col bg-white">
                                         <div className="flex flex-col md:flex-row items-start md:items-center gap-3 mb-6 border-b border-slate-100 pb-4 shrink-0">
-                                            <button onClick={() => setExpandedGroups(p=>({...p, activeProtoId: null}))} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 p-2 rounded-lg transition-colors shadow-sm no-print self-start">◀ Back</button>
+                                            <button onClick={() => setExpandedGroups(p => ({ ...p, activeProtoId: null }))} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 p-2 rounded-lg transition-colors shadow-sm no-print self-start">◀ Back</button>
                                             <div className="flex-1 w-full">
-                                                <input type="text" value={activeProtocol.title} onChange={e => setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? {...p, title: e.target.value} : p))} className="text-xl md:text-2xl font-black text-slate-800 bg-transparent border-none outline-none w-full focus:ring-1 focus:ring-blue-500 rounded px-1" placeholder="Protocol Title"/>
+                                                <input type="text" value={activeProtocol.title} onChange={e => setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? { ...p, title: e.target.value } : p))} className="text-xl md:text-2xl font-black text-slate-800 bg-transparent border-none outline-none w-full focus:ring-1 focus:ring-blue-500 rounded px-1" placeholder="Protocol Title" />
                                             </div>
-                                            <select value={activeProtocol.category} onChange={e => setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? {...p, category: e.target.value} : p))} className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm bg-slate-50 font-semibold text-slate-700 outline-none cursor-pointer w-full md:w-auto no-print">
+                                            <select value={activeProtocol.category} onChange={e => setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? { ...p, category: e.target.value } : p))} className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm bg-slate-50 font-semibold text-slate-700 outline-none cursor-pointer w-full md:w-auto no-print">
                                                 {protocolCategories.map(c => <option key={c} value={c}>{c}</option>)}
                                             </select>
                                         </div>
@@ -1133,7 +1134,7 @@ export default function App() {
                                                 <label className="text-xs font-bold text-slate-500 uppercase mb-2">Protocol Description & Steps</label>
                                                 <RichTextEditor
                                                     value={activeProtocol.content || ''}
-                                                    onChange={val => setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? {...p, content: val} : p))}
+                                                    onChange={val => setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? { ...p, content: val } : p))}
                                                     placeholder="Write the detailed protocol steps here. You can paste images directly..."
                                                 />
                                                 <div className="mt-6 border-t border-slate-100 pt-4 no-print shrink-0">
@@ -1162,22 +1163,22 @@ export default function App() {
                                                         <div key={link.id} className="bg-slate-50 border border-slate-200 p-2.5 rounded-lg flex items-center justify-between group shadow-sm">
                                                             <div className="flex items-center gap-2 overflow-hidden cursor-pointer flex-1" onClick={() => {
                                                                 const newName = prompt("Rename link:", link.name);
-                                                                if(newName) setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? {...p, links: p.links.map(l => l.id === link.id ? {...l, name: newName} : l)} : p));
+                                                                if (newName) setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? { ...p, links: p.links.map(l => l.id === link.id ? { ...l, name: newName } : l) } : p));
                                                             }}>
                                                                 <span className="text-lg">{link.url.match(/\.(jpeg|jpg|gif|png|svg)$/i) ? '🖼️' : '🔗'}</span>
-                                                                <a href={link.url} target="_blank" rel="noopener noreferrer" className="text-sm font-bold text-slate-700 truncate group-hover:text-blue-600" onClick={e=>e.stopPropagation()}>{link.name}</a>
+                                                                <a href={link.url} target="_blank" rel="noopener noreferrer" className="text-sm font-bold text-slate-700 truncate group-hover:text-blue-600" onClick={e => e.stopPropagation()}>{link.name}</a>
                                                             </div>
-                                                            <button onClick={() => setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? {...p, links: p.links.filter(l => l.id !== link.id)} : p))} className="text-slate-400 hover:text-red-500 font-bold px-2 py-1 transition-opacity">&times;</button>
+                                                            <button onClick={() => setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? { ...p, links: p.links.filter(l => l.id !== link.id) } : p))} className="text-slate-400 hover:text-red-500 font-bold px-2 py-1 transition-opacity">&times;</button>
                                                         </div>
                                                     ))}
                                                 </div>
                                                 <div className="flex flex-col gap-2">
                                                     <button onClick={() => {
                                                         const urlsText = prompt("Paste external link(s) separated by commas (Drive, PDF, Image URL):");
-                                                        if(urlsText && urlsText.trim()) {
+                                                        if (urlsText && urlsText.trim()) {
                                                             const urls = urlsText.split(',').map(s => s.trim()).filter(Boolean);
                                                             const newLinks = urls.map((url, idx) => ({ id: Date.now().toString() + idx + Math.random(), name: 'Linked Resource', url: url }));
-                                                            setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? {...p, links: [...(p.links||[]), ...newLinks]} : p));
+                                                            setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? { ...p, links: [...(p.links || []), ...newLinks] } : p));
                                                         }
                                                     }} className="border-2 border-dashed border-blue-200 text-blue-600 bg-blue-50 hover:bg-blue-100 font-bold rounded-lg p-3 text-center transition-colors shadow-sm text-sm">
                                                         + Add External Link(s)
@@ -1193,12 +1194,12 @@ export default function App() {
                                                                 reader.readAsDataURL(file);
                                                             }));
                                                             Promise.all(newLinksPromises).then(newLinks => {
-                                                                setDatasetProtocols(datasetProtocols.map(p => 
-                                                                    p.id === activeProtocol.id ? {...p, links: [...(p.links||[]), ...newLinks]} : p
+                                                                setDatasetProtocols(datasetProtocols.map(p =>
+                                                                    p.id === activeProtocol.id ? { ...p, links: [...(p.links || []), ...newLinks] } : p
                                                                 ));
                                                             });
                                                             e.target.value = '';
-                                                        }} className="hidden"/>
+                                                        }} className="hidden" />
                                                     </label>
                                                 </div>
                                             </div>
@@ -1220,7 +1221,7 @@ export default function App() {
                                             <button onClick={() => {
                                                 const newProto = { id: 'pr' + Date.now(), title: 'Untitled Protocol', category: protocolCategories[0] || 'Uncategorized', content: '', links: [] };
                                                 setDatasetProtocols([newProto, ...datasetProtocols]);
-                                                setExpandedGroups(p=>({...p, activeProtoId: newProto.id}));
+                                                setExpandedGroups(p => ({ ...p, activeProtoId: newProto.id }));
                                             }} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-6 rounded-lg shadow-sm text-sm transition-colors flex-1 md:flex-none flex items-center justify-center gap-2">
                                                 ➕ New Protocol
                                             </button>
@@ -1230,25 +1231,25 @@ export default function App() {
                                         <div className="flex flex-col md:flex-row gap-3 md:gap-4 items-center">
                                             <div className="flex-1 w-full relative">
                                                 <span className="absolute left-3 top-2.5 text-slate-400">🔍</span>
-                                                <input type="text" placeholder="Search protocols..." value={protoSearch} onChange={e => setExpandedGroups(p=>({...p, protoSearch: e.target.value}))} className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"/>
+                                                <input type="text" placeholder="Search protocols..." value={protoSearch} onChange={e => setExpandedGroups(p => ({ ...p, protoSearch: e.target.value }))} className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
                                             </div>
                                             <div className="w-full md:w-64 flex gap-2">
-                                                <select value={protoCatFilter} onChange={e => setExpandedGroups(p=>({...p, protoCatFilter: e.target.value}))} className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:border-emerald-500 font-semibold text-slate-700 cursor-pointer">
+                                                <select value={protoCatFilter} onChange={e => setExpandedGroups(p => ({ ...p, protoCatFilter: e.target.value }))} className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:border-emerald-500 font-semibold text-slate-700 cursor-pointer">
                                                     <option value="ALL">All Categories</option>
                                                     {protocolCategories.map(c => <option key={c} value={c}>{c}</option>)}
                                                 </select>
-                                                <button onClick={() => setExpandedGroups(p=>({...p, showProtoCatMgr: !showProtoCatMgr}))} className={`px-3 py-2 border rounded-lg text-sm font-bold transition-colors shadow-sm ${showProtoCatMgr ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100'}`} title="Manage Categories">⚙️</button>
+                                                <button onClick={() => setExpandedGroups(p => ({ ...p, showProtoCatMgr: !showProtoCatMgr }))} className={`px-3 py-2 border rounded-lg text-sm font-bold transition-colors shadow-sm ${showProtoCatMgr ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100'}`} title="Manage Categories">⚙️</button>
                                             </div>
                                         </div>
                                         {showProtoCatMgr && (
                                             <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 flex flex-col gap-3">
                                                 <h4 className="text-xs font-bold text-slate-500 uppercase">Manage Protocol Categories</h4>
                                                 <div className="flex flex-col md:flex-row gap-2">
-                                                    <input type="text" placeholder="New category name..." value={newProtoCatInput} onChange={e => setExpandedGroups(p=>({...p, newProtoCatInput: e.target.value}))} className="flex-1 border border-slate-300 rounded px-3 py-2 text-sm outline-none focus:border-emerald-500"/>
+                                                    <input type="text" placeholder="New category name..." value={newProtoCatInput} onChange={e => setExpandedGroups(p => ({ ...p, newProtoCatInput: e.target.value }))} className="flex-1 border border-slate-300 rounded px-3 py-2 text-sm outline-none focus:border-emerald-500" />
                                                     <button onClick={() => {
                                                         const v = newProtoCatInput.trim();
-                                                        if(v && !protocolCategories.includes(v)) {
-                                                            setProtocolCategories([...protocolCategories, v]); setExpandedGroups(p=>({...p, newProtoCatInput: ''}));
+                                                        if (v && !protocolCategories.includes(v)) {
+                                                            setProtocolCategories([...protocolCategories, v]); setExpandedGroups(p => ({ ...p, newProtoCatInput: '' }));
                                                         }
                                                     }} className="bg-emerald-600 text-white font-bold px-4 py-2 rounded text-sm shadow-sm hover:bg-emerald-700 transition-colors">Add</button>
                                                 </div>
@@ -1268,15 +1269,15 @@ export default function App() {
                                         ) : (
                                             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                                                 {filteredProtocols.map(proto => (
-                                                    <div key={proto.id} className="bg-white border border-slate-200 rounded-xl p-4 md:p-5 shadow-sm hover:shadow-md hover:border-emerald-400 cursor-pointer transition-all flex flex-col group relative" onClick={() => setExpandedGroups(p=>({...p, activeProtoId: proto.id}))}>
+                                                    <div key={proto.id} className="bg-white border border-slate-200 rounded-xl p-4 md:p-5 shadow-sm hover:shadow-md hover:border-emerald-400 cursor-pointer transition-all flex flex-col group relative" onClick={() => setExpandedGroups(p => ({ ...p, activeProtoId: proto.id }))}>
                                                         <button onClick={(e) => {
                                                             e.stopPropagation();
-                                                            if(confirm("Delete this protocol?")) { setDatasetProtocols(datasetProtocols.filter(p => p.id !== proto.id)); }
+                                                            if (confirm("Delete this protocol?")) { setDatasetProtocols(datasetProtocols.filter(p => p.id !== proto.id)); }
                                                         }} className="absolute top-3 right-3 text-slate-300 hover:text-red-500 text-lg md:opacity-0 group-hover:opacity-100 transition-opacity no-print" title="Delete Protocol">&times;</button>
                                                         <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded self-start mb-3 border border-emerald-200">{proto.category}</span>
                                                         <h3 className="font-bold text-slate-800 text-lg truncate pr-6">{proto.title}</h3>
                                                         <div className="mt-4 pt-4 border-t border-slate-100 flex gap-4 text-xs font-bold text-slate-500">
-                                                            <span className="flex items-center gap-1">🔗 {(proto.links||[]).length} Links</span>
+                                                            <span className="flex items-center gap-1">🔗 {(proto.links || []).length} Links</span>
                                                             <span className="flex items-center gap-1">📝 {proto.content ? 'Has Content' : 'Empty'}</span>
                                                         </div>
                                                     </div>
@@ -1293,11 +1294,11 @@ export default function App() {
                             if (!activeTest) return <div className="p-6">Test not found.</div>;
                             const updateActiveTest = (updates) => { setTests(prev => prev.map(t => t.id === activeTestId ? { ...t, ...updates } : t)); };
                             const isBox = activeTest.type === 'plate-9x9box';
-                            const siblingTests = isBox ? [] : tests.filter(t => t.name === activeTest.name && t.name.trim() !== '').sort((a,b) => (a.date||'').localeCompare(b.date||''));
+                            const siblingTests = isBox ? [] : tests.filter(t => t.name === activeTest.name && t.name.trim() !== '').sort((a, b) => (a.date || '').localeCompare(b.date || ''));
                             const jumpToProtocolFn = (id) => { setExpandedGroups(p => ({ ...p, activeProtoId: id })); setCurrentModule('protocols'); };
                             const handleDuplicateInstance = () => {
                                 const id = 't' + Date.now();
-                                const newTest = JSON.parse(JSON.stringify(activeTest)); 
+                                const newTest = JSON.parse(JSON.stringify(activeTest));
                                 newTest.id = id; newTest.date = new Date().toISOString().split('T')[0];
                                 newTest.instanceName = 'New Instance'; newTest.comments = ''; newTest.images = []; newTest.documents = [];
                                 if (newTest.type.startsWith('plate-') && newTest.type !== 'plate-9x9box') {
@@ -1318,7 +1319,7 @@ export default function App() {
                                                 }
                                             }} className="text-slate-400 hover:text-blue-600 transition-colors bg-slate-50 hover:bg-blue-50 p-2 rounded-lg shadow-sm border border-slate-200 self-start md:self-auto">◀ Back</button>
                                             <div className="flex-1 w-full">
-                                                <input value={activeTest.name} onChange={e=>updateActiveTest({name: e.target.value})} className="text-xl font-black text-slate-800 bg-transparent border-none outline-none focus:ring-1 focus:ring-blue-500 rounded px-1 w-full md:w-64" placeholder="Test Name"/>
+                                                <input value={activeTest.name} onChange={e => updateActiveTest({ name: e.target.value })} className="text-xl font-black text-slate-800 bg-transparent border-none outline-none focus:ring-1 focus:ring-blue-500 rounded px-1 w-full md:w-64" placeholder="Test Name" />
                                                 <div className="text-xs text-slate-500 font-medium px-1 mt-1 flex items-center gap-2">
                                                     <span className="uppercase text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">{activeTest.testCategory}</span>
                                                     <span className="uppercase text-slate-600 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">{activeTest.type.replace('plate-', '')}</span>
@@ -1326,24 +1327,24 @@ export default function App() {
                                             </div>
                                         </div>
                                         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full lg:w-auto">
-                                            <button 
+                                            <button
                                                 onClick={() => {
                                                     if (window.confirm("Sei sicuro di voler eliminare definitivamente questo test?")) {
                                                         setTests(prev => prev.filter(t => t.id !== activeTest.id));
                                                         setCurrentModule('tests');
                                                     }
-                                                }} 
+                                                }}
                                                 className="bg-red-50 text-red-600 hover:bg-red-100 hover:border-red-300 font-bold py-2 px-3 rounded-lg text-xs transition-colors border border-red-200 shadow-sm"
                                             >
                                                 🗑️ Elimina
                                             </button>
                                             <div className="flex flex-col flex-1 w-full sm:w-auto">
                                                 <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Instance</label>
-                                                <input type="text" value={activeTest.instanceName || ''} onChange={e=>updateActiveTest({instanceName: e.target.value})} className="bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-lg outline-none focus:border-blue-500 w-full sm:w-32" placeholder="e.g. 24h / Rep 1"/>
+                                                <input type="text" value={activeTest.instanceName || ''} onChange={e => updateActiveTest({ instanceName: e.target.value })} className="bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-lg outline-none focus:border-blue-500 w-full sm:w-32" placeholder="e.g. 24h / Rep 1" />
                                             </div>
                                             <div className="flex flex-col flex-1 w-full sm:w-auto">
                                                 <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Date</label>
-                                                <input type="date" value={activeTest.date} onChange={e=>updateActiveTest({date: e.target.value})} className="bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-lg outline-none focus:border-blue-500 w-full"/>
+                                                <input type="date" value={activeTest.date} onChange={e => updateActiveTest({ date: e.target.value })} className="bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-lg outline-none focus:border-blue-500 w-full" />
                                             </div>
                                         </div>
                                     </div>
@@ -1352,11 +1353,11 @@ export default function App() {
                                             <span className="text-[10px] font-bold text-blue-800 uppercase tracking-wide mr-2 shrink-0">⏱️ Instances:</span>
                                             {siblingTests.map((t, idx) => (
                                                 <button key={t.id} onClick={() => setActiveTestId(t.id)} className={`shrink-0 px-3 py-1.5 md:py-1 text-xs font-bold rounded-full transition-colors flex items-center gap-1.5 shadow-sm group ${activeTestId === t.id ? 'bg-blue-600 text-white' : 'bg-white text-blue-700 border border-blue-300 hover:bg-blue-100'}`}>
-                                                    📅 {t.instanceName || t.date || `Inst ${idx+1}`}
+                                                    📅 {t.instanceName || t.date || `Inst ${idx + 1}`}
                                                     {siblingTests.length > 1 && (
                                                         <span onClick={(e) => {
                                                             e.stopPropagation();
-                                                            if(confirm(`Delete instance ${t.instanceName || t.date}?`)) {
+                                                            if (confirm(`Delete instance ${t.instanceName || t.date}?`)) {
                                                                 setTests(prev => {
                                                                     const next = prev.filter(test => test.id !== t.id);
                                                                     if (activeTestId === t.id) setActiveTestId(next.find(x => x.name === t.name)?.id || next[0]?.id);
@@ -1374,43 +1375,56 @@ export default function App() {
                                     )}
                                 </div>
                             );
-
                             if (activeTest.type === 'nmr') {
-                                return <NMRTestRenderer activeTest={activeTest} updateActiveTest={updateActiveTest} TestHeader={TestHeader} datasetProtocols={datasetProtocols} jumpToProtocol={jumpToProtocolFn} />;
-                            }
-                            
-                            if (activeTest.type === 'cd') {
-                                return <CDTestRenderer 
-                                    activeTest={activeTest} 
-                                    updateActiveTest={updateActiveTest} 
-                                    appClipboard={appClipboard} 
-                                    setAppClipboard={setAppClipboard}
-                                    TestHeader={TestHeader} 
-                                    datasetProtocols={datasetProtocols} 
-                                    jumpToProtocol={jumpToProtocolFn} 
+                                return <NMRTestRenderer
+                                    activeTest={activeTest}
+                                    updateActiveTest={updateActiveTest}
+                                    TestHeader={TestHeader}
+                                    datasetProtocols={datasetProtocols}
+                                    jumpToProtocol={jumpToProtocolFn}
+                                    allCmpds={[...new Set([...DEF_COMPOUNDS, ...customCmpds])]}
+                                    allCellLines={[...new Set([...DEF_CELL_LINES, ...customCellLines])]}
+                                    customFields={customFields}
                                 />;
                             }
-
+                            if (activeTest.type === 'cd') {
+                                return <CDTestRenderer
+                                    activeTest={activeTest}
+                                    updateActiveTest={updateActiveTest}
+                                    appClipboard={appClipboard}
+                                    setAppClipboard={setAppClipboard}
+                                    TestHeader={TestHeader}
+                                    datasetProtocols={datasetProtocols}
+                                    jumpToProtocol={jumpToProtocolFn}
+                                    allCmpds={[...new Set([...DEF_COMPOUNDS, ...customCmpds])]}
+                                    allCellLines={[...new Set([...DEF_CELL_LINES, ...customCellLines])]}
+                                    customFields={customFields}
+                                />;
+                            }
                             if (activeTest.type === 'plate-9x9box') {
-                                return <BoxDetail 
-                                    activeTest={activeTest} updateActiveTest={updateActiveTest} 
+                                return <BoxDetail
+                                    activeTest={activeTest} updateActiveTest={updateActiveTest}
                                     storages={storages} expandedGroups={expandedGroups} setExpandedGroups={setExpandedGroups}
                                     customCmpds={customCmpds} jumpToTest={jumpToTest} setMoveModal={setMoveModal}
                                     TestHeader={TestHeader}
                                 />;
                             }
-                            
                             if (activeTest.type.startsWith('plate-') && activeTest.type !== 'plate-9x9box') {
                                 return (
-                                    <PlateTestRenderer 
-                                        activeTest={activeTest} updateActiveTest={updateActiveTest} 
+                                    <PlateTestRenderer
+                                        activeTest={activeTest} updateActiveTest={updateActiveTest}
                                         appClipboard={appClipboard} setAppClipboard={setAppClipboard}
                                         customCmpds={customCmpds} setCustomCmpds={setCustomCmpds}
                                         customConc={customConc} setCustomConc={setCustomConc}
                                         cmpColors={cmpColors} setCmpColors={setCmpColors}
                                         allCmpds={[...new Set([...DEF_COMPOUNDS, ...customCmpds])]}
-                                        jumpToTest={(id) => { setActiveTestId(id); setCurrentModule('active-test'); }} TestHeader={TestHeader}
-                                        datasetProtocols={datasetProtocols} jumpToProtocol={jumpToProtocolFn}
+                                        allCellLines={[...new Set([...DEF_CELL_LINES, ...customCellLines])]}
+                                        customFields={customFields}
+                                        testCategories={testCategories}
+                                        jumpToTest={(id) => { setActiveTestId(id); setCurrentModule('active-test'); }}
+                                        TestHeader={TestHeader}
+                                        datasetProtocols={datasetProtocols}
+                                        jumpToProtocol={jumpToProtocolFn}
                                     />
                                 );
                             }
@@ -1421,7 +1435,7 @@ export default function App() {
                             const getVal = (key, def) => expandedGroups[key] !== undefined ? expandedGroups[key] : def;
                             const notebookSearch = getVal('notebookSearch', '');
                             const filteredTests = tests.filter(t => {
-                                if(!notebookSearch) return true;
+                                if (!notebookSearch) return true;
                                 const query = notebookSearch.toLowerCase();
                                 return JSON.stringify(t).toLowerCase().includes(query);
                             });
@@ -1430,14 +1444,23 @@ export default function App() {
                                     <div className="bg-white p-3 md:p-4 border-b border-slate-200 shadow-sm flex flex-col md:flex-row items-center justify-between no-print shrink-0 gap-3">
                                         <div className="w-full md:flex-1 md:max-w-md relative">
                                             <span className="absolute left-3 top-2.5 text-slate-400">🔍</span>
-                                            <input type="text" placeholder="Generic search in test data..." value={notebookSearch} onChange={e => setExpandedGroups(p => ({...p, notebookSearch: e.target.value}))} className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-500"/>
+                                            <input type="text" placeholder="Generic search in test data..." value={notebookSearch} onChange={e => setExpandedGroups(p => ({ ...p, notebookSearch: e.target.value }))} className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-500" />
                                         </div>
                                         <button onClick={handlePrint} className="w-full md:w-auto bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 shadow-sm">
                                             🖨️ Print / Save PDF
                                         </button>
                                     </div>
                                     <div className="flex-1 overflow-hidden relative">
-                                        <LabNotebook tests={filteredTests} allCellLines={[...new Set([...DEF_CELL_LINES, ...customCellLines])]} testCategories={testCategories} jumpToTest={(id) => { setActiveTestId(id); setCurrentModule('active-test'); }} customConc={customConc} cmpColors={cmpColors} allCmpds={[...new Set([...DEF_COMPOUNDS, ...customCmpds])]} />
+                                        <LabNotebook
+                                            tests={filteredTests}
+                                            allCellLines={[...new Set([...DEF_CELL_LINES, ...customCellLines])]}
+                                            testCategories={testCategories}
+                                            jumpToTest={(id) => { setActiveTestId(id); setCurrentModule('active-test'); }}
+                                            customConc={customConc}
+                                            cmpColors={cmpColors}
+                                            allCmpds={[...new Set([...DEF_COMPOUNDS, ...customCmpds])]}
+                                            customFields={customFields}
+                                        />
                                     </div>
                                 </div>
                             );
