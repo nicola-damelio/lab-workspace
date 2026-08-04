@@ -4012,6 +4012,7 @@ const toggleCompound = (cmp) => {
                     isPolymer ? activeTest.proteinSequence || 'N/A' : parsedSeq[0]?.name || 'N/A'
                   }</span></p>`;
                 }
+
 if (cbFormula && structure) {
     try {
         const svgStr = ensureSvgSize(elementsToSVG(structure, 300), 1200);
