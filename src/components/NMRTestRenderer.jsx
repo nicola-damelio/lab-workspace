@@ -910,6 +910,7 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
             <div className="grid grid-cols-1 gap-4">
               <RangeBarChart title="Theoretical ¹H Ranges" ranges={ranges1H} domain={[0, 11]} ticks={Array.from({ length: 12 }, (_, i) => i)} xAxisLabel="¹H (ppm)" rowCount={visibleTypes.length} rowLabels={visibleTypes.map(c => DB[c]?.code3 || c)} />
               <RangeBarChart title="Theoretical ¹³C Ranges" ranges={ranges13C} domain={[0, 190]} ticks={Array.from({ length: 20 }, (_, i) => i * 10)} xAxisLabel="¹³C (ppm)" rowCount={visibleTypes.length} rowLabels={visibleTypes.map(c => DB[c]?.code3 || c)} />
+
 {/* Numerical Reference Values Table */}
 <div className="bg-white rounded-xl border border-slate-200 p-4">
   <h4 className="text-md font-bold text-slate-700 mb-4 border-b pb-2">Numerical Reference Values</h4>
