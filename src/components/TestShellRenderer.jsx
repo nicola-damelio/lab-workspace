@@ -6,7 +6,7 @@ TestShellRenderer — shared shell for Plate / NMR / CD tabs.
 
 It renders common sections:
 - Classification
-- Compounds / samples
+- Compounds / biological models
 - Experimental conditions
 - Linked protocols
 - Agenda
@@ -44,8 +44,11 @@ export const CollapsibleSection = ({
   const [isOpen, setIsOpen] = useState(defaultOpen);
 
   return (
-    <div className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-6 break-inside-avoid ${className}`}>
+    <div
+      className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-6 break-inside-avoid ${className}`}
+    >
       <button
+        type="button"
         onClick={() => setIsOpen(!isOpen)}
         className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left ${
           isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'
@@ -60,7 +63,9 @@ export const CollapsibleSection = ({
           {headerExtra && <div onClick={(e) => e.stopPropagation()}>{headerExtra}</div>}
 
           <svg
-            className={`w-5 h-5 text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
+            className={`w-5 h-5 text-slate-500 transition-transform duration-200 ${
+              isOpen ? 'rotate-180' : ''
+            }`}
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -83,25 +88,71 @@ export const MultiSelectDropdown = ({
   onToggle,
   onClear,
   placeholder = 'Select…',
-  emptyHint = 'No options defined. Add them in Definitions & Labels.'
+  emptyHint = 'No options defined. Add them in Definitions & Labels.',
+  accent = 'blue'
 }) => {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
   useEffect(() => {
-    const h = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    const handler = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) {
+        setOpen(false);
+      }
     };
 
-    document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  const optionsSafe = Array.isArray(options) ? options : [];
+  const selectedSafe = Array.isArray(selected) ? selected : [];
+
+  const emerald = accent === 'emerald';
+
+  const boxCls = emerald
+    ? 'bg-emerald-50 border-emerald-200'
+    : 'bg-blue-50 border-blue-200';
+
+  const labelCls = emerald ? 'text-emerald-800' : 'text-blue-800';
+
+  const badgeCls = emerald
+    ? 'bg-emerald-200 text-emerald-800'
+    : 'bg-blue-200 text-blue-800';
+
+  const buttonCls = emerald
+    ? 'border-emerald-300 focus:border-emerald-500'
+    : 'border-blue-300 focus:border-blue-500';
+
+  const selectedTextCls = emerald
+    ? 'font-bold text-emerald-900'
+    : 'font-bold text-blue-900';
+
+  const arrowCls = emerald ? 'text-emerald-700' : 'text-blue-700';
+
+  const menuCls = emerald ? 'border-emerald-200' : 'border-blue-200';
+
+  const optionHoverCls = emerald ? 'hover:bg-emerald-50' : 'hover:bg-blue-50';
+
+  const optionSelectedCls = emerald
+    ? 'font-bold text-emerald-800'
+    : 'font-bold text-blue-800';
+
+  const chipCls = emerald
+    ? 'bg-emerald-100 border-emerald-300 text-emerald-900'
+    : 'bg-blue-100 border-blue-300 text-blue-900';
+
+  const chipRemoveCls = emerald
+    ? 'text-emerald-500 hover:text-red-600'
+    : 'text-blue-500 hover:text-red-600';
+
+  const checkboxCls = emerald ? 'accent-emerald-600' : 'accent-blue-600';
+
   return (
-    <div ref={ref} className="relative flex flex-col gap-1 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-      <label className="text-xs font-bold text-blue-800 uppercase flex items-center justify-between mb-2">
+    <div ref={ref} className={`relative flex flex-col gap-1 p-3 border rounded-lg ${boxCls}`}>
+      <label className={`text-xs font-bold uppercase flex items-center justify-between mb-2 ${labelCls}`}>
         <span>{label}</span>
-        <span className="text-[9px] bg-blue-200 text-blue-800 px-2 py-0.5 rounded">
+        <span className={`text-[9px] px-2 py-0.5 rounded ${badgeCls}`}>
           Dropdown • Multiple selection
         </span>
       </label>
@@ -109,31 +160,37 @@ export const MultiSelectDropdown = ({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full border border-blue-300 rounded-md p-2 text-sm bg-white outline-none focus:border-blue-500 flex items-center justify-between gap-3 shadow-sm"
+        className={`w-full border rounded-md p-2 text-sm bg-white outline-none flex items-center justify-between gap-3 shadow-sm ${buttonCls}`}
       >
-        <span className={`truncate ${selected.length ? 'font-bold text-blue-900' : 'text-slate-400'}`}>
-          {selected.length ? selected.join(', ') : placeholder}
+        <span className={`truncate ${selectedSafe.length ? selectedTextCls : 'text-slate-400'}`}>
+          {selectedSafe.length ? selectedSafe.join(', ') : placeholder}
         </span>
-        <span className="text-blue-700 font-bold">▾</span>
+        <span className={`font-bold ${arrowCls}`}>▾</span>
       </button>
 
       {open && (
-        <div className="absolute top-full left-3 right-3 mt-1 z-50 bg-white border border-blue-200 rounded-lg shadow-xl max-h-56 overflow-y-auto custom-scrollbar">
-          {options.length === 0 ? (
+        <div
+          className={`absolute top-full left-3 right-3 mt-1 z-50 bg-white border rounded-lg shadow-xl max-h-56 overflow-y-auto custom-scrollbar ${menuCls}`}
+        >
+          {optionsSafe.length === 0 ? (
             <div className="p-3 text-sm text-slate-400 italic">{emptyHint}</div>
           ) : (
-            options.map((opt) => (
+            optionsSafe.map((opt) => (
               <label
                 key={opt}
-                className="flex items-center gap-2 px-3 py-2 hover:bg-blue-50 cursor-pointer border-b border-slate-100 last:border-b-0"
+                className={`flex items-center gap-2 px-3 py-2 cursor-pointer border-b border-slate-100 last:border-b-0 ${optionHoverCls}`}
               >
                 <input
                   type="checkbox"
-                  checked={selected.includes(opt)}
+                  checked={selectedSafe.includes(opt)}
                   onChange={() => onToggle(opt)}
-                  className="w-4 h-4 accent-blue-600"
+                  className={`w-4 h-4 ${checkboxCls}`}
                 />
-                <span className={`text-sm ${selected.includes(opt) ? 'font-bold text-blue-800' : 'text-slate-700'}`}>
+                <span
+                  className={`text-sm ${
+                    selectedSafe.includes(opt) ? optionSelectedCls : 'text-slate-700'
+                  }`}
+                >
                   {opt}
                 </span>
               </label>
@@ -142,18 +199,18 @@ export const MultiSelectDropdown = ({
         </div>
       )}
 
-      {selected.length > 0 && (
+      {selectedSafe.length > 0 && (
         <div className="flex flex-wrap gap-2 mt-2">
-          {selected.map((s) => (
+          {selectedSafe.map((s) => (
             <span
               key={s}
-              className="inline-flex items-center gap-1 bg-blue-100 border border-blue-300 text-blue-900 px-2 py-1 rounded-lg text-xs font-bold"
+              className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold border ${chipCls}`}
             >
               {s}
               <button
                 type="button"
                 onClick={() => onToggle(s)}
-                className="text-blue-500 hover:text-red-600 font-black"
+                className={`font-black ${chipRemoveCls}`}
                 title={`Remove ${s}`}
               >
                 ×
@@ -207,6 +264,7 @@ const normalizeImageCandidates = (url) => {
   return [u];
 };
 
+// ================= SMART IMAGE =================
 export const SmartImage = ({ src, alt, style }) => {
   const cands = React.useMemo(() => normalizeImageCandidates(src), [src]);
   const [idx, setIdx] = useState(0);
@@ -244,9 +302,9 @@ export const SmartImage = ({ src, alt, style }) => {
 
 // ================= MAIN SHELL =================
 export const TestShellRenderer = ({
-  config,
+  config = {},
   custom = {},
-  activeTest,
+  activeTest = {},
   updateActiveTest,
   TestHeader,
   datasetProtocols,
@@ -257,30 +315,66 @@ export const TestShellRenderer = ({
   testCategories,
   ...rest
 }) => {
-  const update = (u) => updateActiveTest(u);
+  const update = (u) => {
+    if (updateActiveTest) updateActiveTest(u);
+  };
 
+  const t = activeTest || {};
+  const samplesCfg = config.samples || {};
   const imagesKey = config.imagesKey || 'images';
+  const typeKey = config.typeKey || 'test';
 
-  const compound = activeTest.compound || '';
-  const comments = activeTest.comments || '';
-  const images = activeTest[imagesKey] || [];
-  const documents = activeTest.documents || [];
-  const linkedProtocolId = activeTest.linkedProtocolId || '';
+  const compound = t.compound || '';
+  const comments = t.comments || '';
+  const images = t[imagesKey] || [];
+  const documents = t.documents || [];
+  const linkedProtocolId = t.linkedProtocolId || '';
 
-  const cellLines = activeTest.cellLines || [];
+  const cellLines = t.cellLines || [];
   const categories = config.categories || testCategories || ['Activity'];
-  const testCategory = activeTest.testCategory || categories[0] || 'Activity';
-  const customFieldValues = activeTest.customFieldValues || {};
-  const experimentPlan = activeTest.plan || [];
+  const testCategory = t.testCategory || categories[0] || 'Activity';
+  const customFieldValues = t.customFieldValues || {};
+  const experimentPlan = t.plan || [];
 
   const [zoomImage, setZoomImage] = useState(null);
 
-  const showCompounds = config.samples?.compounds !== false;
-  const showCellLines = config.samples?.cellLines !== false;
+  const showCompounds = samplesCfg.compounds !== false;
+  const showCellLines = samplesCfg.cellLines !== false;
+  const showCompoundsSection = showCompounds || showCellLines;
 
-  // ---- multi-protocol ----
-  const linkedProtocolIds =
-    activeTest.linkedProtocolIds || (linkedProtocolId ? [linkedProtocolId] : []);
+  const compoundLabel =
+    samplesCfg.compoundLabel || config.samplesLabel || 'Compound / Sample Label(s)';
+
+  const cellLineLabel =
+    samplesCfg.cellLineLabel || 'Cell Lines / Biological Models';
+
+  // Compound selection.
+  // For plates, activeTest.compounds is used as the plate column assignment array,
+  // so we intentionally avoid falling back to activeTest.compounds when typeKey === 'plate'.
+  const selectedCompounds = (() => {
+    if (Array.isArray(t.selectedCompounds)) {
+      return t.selectedCompounds.filter(Boolean);
+    }
+
+    if (Array.isArray(t.compoundsSelected)) {
+      return t.compoundsSelected.filter(Boolean);
+    }
+
+    if (typeKey !== 'plate' && Array.isArray(t.compounds)) {
+      return t.compounds.filter(Boolean);
+    }
+
+    if (compound) {
+      return String(compound)
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+
+    return [];
+  })();
+
+  const linkedProtocolIds = t.linkedProtocolIds || (linkedProtocolId ? [linkedProtocolId] : []);
 
   const addLinkedProtocol = (id) => {
     if (!id || linkedProtocolIds.includes(id)) return;
@@ -293,28 +387,40 @@ export const TestShellRenderer = ({
     update({ linkedProtocolIds: upd, linkedProtocolId: upd[0] || '' });
   };
 
-  // ---- compounds ----
-  const selectedCompounds = Array.isArray(activeTest.selectedCompounds)
-    ? activeTest.selectedCompounds
-    : Array.isArray(activeTest.compoundsSelected)
-      ? activeTest.compoundsSelected
-      : compound
-        ? [compound]
-        : [];
-
   const toggleCompound = (cmp) => {
     const upd = selectedCompounds.includes(cmp)
       ? selectedCompounds.filter((c) => c !== cmp)
       : [...selectedCompounds, cmp];
 
-    update({
+    const payload = {
       selectedCompounds: upd,
-      compounds: upd,
+      compoundsSelected: upd,
       compound: upd.length > 0 ? upd[0] : ''
-    });
+    };
+
+    // For plates, do not overwrite activeTest.compounds,
+    // because it stores the plate column compound assignment.
+    if (typeKey !== 'plate') {
+      payload.compounds = upd;
+    }
+
+    update(payload);
   };
 
-  // ---- cell lines ----
+  const clearCompounds = () => {
+    const payload = {
+      selectedCompounds: [],
+      compoundsSelected: [],
+      compound: ''
+    };
+
+    if (typeKey !== 'plate') {
+      payload.compounds = [];
+    }
+
+    update(payload);
+  };
+
   const toggleCellLine = (cl) => {
     const upd = cellLines.includes(cl)
       ? cellLines.filter((c) => c !== cl)
@@ -323,30 +429,34 @@ export const TestShellRenderer = ({
     update({ cellLines: upd });
   };
 
-  // ---- custom metadata ----
   const handleCustomFieldChange = (fieldName, value) => {
-    update({ customFieldValues: { ...customFieldValues, [fieldName]: value } });
+    update({
+      customFieldValues: {
+        ...customFieldValues,
+        [fieldName]: value
+      }
+    });
   };
 
-  // ---- escape closes zoom ----
   useEffect(() => {
-    const h = (e) => {
+    const handler = (e) => {
       if (e.key === 'Escape') setZoomImage(null);
     };
 
-    document.addEventListener('keydown', h);
-    return () => document.removeEventListener('keydown', h);
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
   }, []);
 
-  // ---- condition field renderer ----
   const renderConditionField = (f) => {
-    const val = activeTest[f.key] ?? '';
+    const val = t[f.key] !== undefined && t[f.key] !== null ? t[f.key] : '';
     const cls =
       'w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500';
 
     return (
       <div key={f.key}>
-        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">{f.label}</label>
+        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+          {f.label}
+        </label>
 
         {f.type === 'date' ? (
           <input
@@ -377,6 +487,14 @@ export const TestShellRenderer = ({
               </option>
             ))}
           </select>
+        ) : f.type === 'textarea' ? (
+          <textarea
+            value={val}
+            onChange={(e) => update({ [f.key]: e.target.value })}
+            className={cls}
+            placeholder={f.placeholder}
+            rows={3}
+          />
         ) : (
           <input
             type="text"
@@ -390,9 +508,8 @@ export const TestShellRenderer = ({
     );
   };
 
-  // ---- context handed to custom sections ----
   const ctx = {
-    activeTest,
+    activeTest: t,
     updateActiveTest,
     allCmpds,
     allCellLines,
@@ -405,7 +522,6 @@ export const TestShellRenderer = ({
     ...rest
   };
 
-  // ---- lab notebook ----
   const notebookChecks =
     config.notebookChecks ||
     [
@@ -417,36 +533,43 @@ export const TestShellRenderer = ({
     const checked = {};
 
     notebookChecks.forEach((c) => {
-      checked[c.id] = document.getElementById(`nb-${config.typeKey}-${c.id}`)?.checked;
+      const el = document.getElementById(`nb-${typeKey}-${c.id}`);
+      checked[c.id] = el ? el.checked : false;
     });
 
     let html =
       '<div style="background-color: #f8fafc; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0; margin-top: 15px; font-family: sans-serif;">';
 
-    html += `<h4 style="color: #1e40af; margin-top: 0; margin-bottom: 12px; font-size: 14px; border-bottom: 2px solid #bfdbfe; padding-bottom: 4px;">📊 ${config.typeLabel} Summary</h4>`;
+    html += `<h4 style="color: #1e40af; margin-top: 0; margin-bottom: 12px; font-size: 14px; border-bottom: 2px solid #bfdbfe; padding-bottom: 4px;">📊 ${
+      config.typeLabel || 'Experiment'
+    } Summary</h4>`;
 
     const builder = custom.buildNotebookHtml || config.buildNotebookHtml;
 
     if (builder) {
       html += builder(checked, ctx);
     } else if (checked.cond) {
+      const sample = selectedCompounds.length > 0 ? selectedCompounds.join(', ') : compound || 'N/A';
+      const cells = cellLines.length > 0 ? cellLines.join(', ') : 'N/A';
+
       const conditionPairs = (config.conditionFields || [])
-        .map((f) => `<b>${f.label}:</b> ${activeTest[f.key] || 'N/A'}`)
+        .map((f) => `<b>${f.label}:</b> ${t[f.key] || 'N/A'}`)
         .join(' | ');
 
-      html += `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;">${conditionPairs}</p>`;
+      html += `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;">
+        <b>Sample:</b> ${sample} | <b>Cell lines:</b> ${cells} | ${conditionPairs}
+      </p>`;
     }
 
     html += '</div>';
 
-    updateActiveTest({
+    update({
       comments: comments + (comments ? '<br/>' : '') + html
     });
 
     alert('Data appended successfully to the notes! They will now be visible in the Lab Notebook.');
   };
 
-  // ---- custom sections ----
   const CustomToolbar = custom.Toolbar || null;
   const CustomAll = custom.All || null;
 
@@ -478,44 +601,13 @@ export const TestShellRenderer = ({
                   onChange={(e) => update({ testCategory: e.target.value })}
                   className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
                 >
-                  {categories.map((cat) => (
+                  {(categories || []).map((cat) => (
                     <option key={cat} value={cat}>
                       {cat}
                     </option>
                   ))}
                 </select>
               </div>
-
-              {showCellLines && (
-                <div>
-                  <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
-                    Cell Lines / Biological Models
-                  </label>
-
-                  <div className="flex flex-wrap gap-2">
-                    {(allCellLines || []).map((cl) => (
-                      <button
-                        key={cl}
-                        onClick={() => toggleCellLine(cl)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
-                          cellLines.includes(cl)
-                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
-                            : 'bg-white text-slate-600 border-slate-300 hover:border-emerald-400 hover:bg-emerald-50'
-                        }`}
-                      >
-                        {cellLines.includes(cl) ? '✓ ' : ''}
-                        {cl}
-                      </button>
-                    ))}
-
-                    {(allCellLines || []).length === 0 && (
-                      <span className="text-sm text-slate-400 italic">
-                        No cell lines defined. Add them in Definitions & Labels.
-                      </span>
-                    )}
-                  </div>
-                </div>
-              )}
             </div>
 
             <div className="flex flex-col gap-3">
@@ -558,6 +650,14 @@ export const TestShellRenderer = ({
                         onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
                         className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
                       />
+                    ) : field.type === 'textarea' ? (
+                      <textarea
+                        value={customFieldValues[field.name] || ''}
+                        onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
+                        className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
+                        placeholder="Enter value..."
+                        rows={3}
+                      />
                     ) : (
                       <input
                         type="text"
@@ -574,17 +674,36 @@ export const TestShellRenderer = ({
           </div>
         </CollapsibleSection>
 
-        {/* ===== COMPOUNDS & SAMPLES ===== */}
-        {showCompounds && (
-          <CollapsibleSection title="Compounds & Samples" icon="🧪">
-            <MultiSelectDropdown
-              label={config.samples?.compoundLabel || config.samplesLabel || 'Compound / Sample Label(s)'}
-              options={allCmpds || []}
-              selected={selectedCompounds}
-              onToggle={toggleCompound}
-              onClear={() => update({ selectedCompounds: [], compounds: [], compound: '' })}
-              placeholder="Select compound(s)..."
-            />
+        {/* ===== COMPOUNDS & BIOLOGICAL MODELS ===== */}
+        {showCompoundsSection && (
+          <CollapsibleSection title="Compounds & Biological Models" icon="🧪">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {showCompounds && (
+                <MultiSelectDropdown
+                  label={compoundLabel}
+                  accent="blue"
+                  options={allCmpds || []}
+                  selected={selectedCompounds}
+                  onToggle={toggleCompound}
+                  onClear={clearCompounds}
+                  placeholder="Select compound(s)..."
+                  emptyHint="No compounds defined. Add them in Definitions & Labels."
+                />
+              )}
+
+              {showCellLines && (
+                <MultiSelectDropdown
+                  label={cellLineLabel}
+                  accent="emerald"
+                  options={allCellLines || []}
+                  selected={cellLines}
+                  onToggle={toggleCellLine}
+                  onClear={() => update({ cellLines: [] })}
+                  placeholder="Select cell line(s)..."
+                  emptyHint="No cell lines defined. Add them in Definitions & Labels."
+                />
+              )}
+            </div>
           </CollapsibleSection>
         )}
 
@@ -620,6 +739,7 @@ export const TestShellRenderer = ({
                       </span>
 
                       <button
+                        type="button"
                         onClick={() => jumpToProtocol && jumpToProtocol(pid)}
                         className="text-[10px] font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-2 py-0.5 rounded transition-colors"
                         title="Open this protocol"
@@ -628,6 +748,7 @@ export const TestShellRenderer = ({
                       </button>
 
                       <button
+                        type="button"
                         onClick={() => removeLinkedProtocol(pid)}
                         className="text-slate-400 hover:text-red-500 font-bold px-1"
                         title="Unlink"
@@ -665,13 +786,14 @@ export const TestShellRenderer = ({
             <div className="flex gap-2">
               <input
                 type="date"
-                id={`plan-date-${activeTest.id}`}
+                id={`plan-date-${t.id}`}
                 className="border border-slate-300 px-2 py-1 text-xs rounded bg-white text-slate-800 outline-none focus:border-blue-500"
               />
 
               <button
+                type="button"
                 onClick={() => {
-                  const el = document.getElementById(`plan-date-${activeTest.id}`);
+                  const el = document.getElementById(`plan-date-${t.id}`);
                   const d = el ? el.value : '';
 
                   if (d) {
@@ -716,6 +838,7 @@ export const TestShellRenderer = ({
                 />
 
                 <button
+                  type="button"
                   onClick={() => update({ plan: experimentPlan.filter((p) => p.id !== item.id) })}
                   className="text-slate-400 hover:text-red-500 text-[10px] font-bold px-2 transition"
                 >
@@ -755,9 +878,9 @@ export const TestShellRenderer = ({
                     </span>
                   )}
 
-                  {documents.map((doc) => (
+                  {documents.map((doc, idx) => (
                     <div
-                      key={doc.id}
+                      key={doc.id || idx}
                       className="flex items-center justify-between bg-slate-50 border border-slate-200 p-1.5 rounded-lg shadow-sm group"
                     >
                       <div
@@ -780,6 +903,7 @@ export const TestShellRenderer = ({
                       </div>
 
                       <button
+                        type="button"
                         onClick={() => update({ documents: documents.filter((d) => d.id !== doc.id) })}
                         className="text-slate-400 hover:text-red-500 font-bold px-1 opacity-0 group-hover:opacity-100"
                       >
@@ -789,7 +913,8 @@ export const TestShellRenderer = ({
                   ))}
                 </div>
 
-                <label
+                <button
+                  type="button"
                   className="cursor-pointer text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 hover:bg-blue-100 px-3 py-1.5 rounded-lg shadow-sm transition-colors w-full text-center"
                   onClick={() => {
                     const urlsText = prompt(
@@ -822,7 +947,7 @@ export const TestShellRenderer = ({
                   }}
                 >
                   + Add Document Link(s)
-                </label>
+                </button>
               </div>
             </div>
           </div>
@@ -836,9 +961,12 @@ export const TestShellRenderer = ({
             </p>
 
             <button
+              type="button"
               onClick={() => {
                 const url = prompt('Paste image link (Google Drive, Dropbox, or direct URL):');
-                if (url && url.trim()) update({ [imagesKey]: [...images, url.trim()] });
+                if (url && url.trim()) {
+                  update({ [imagesKey]: [...images, url.trim()] });
+                }
               }}
               className="bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 font-bold px-3 py-1.5 rounded transition-colors shadow-sm text-xs"
             >
@@ -861,6 +989,7 @@ export const TestShellRenderer = ({
                     <span className="text-xs font-bold text-slate-500">Image {idx + 1}</span>
 
                     <button
+                      type="button"
                       onClick={() => update({ [imagesKey]: images.filter((_, i) => i !== idx) })}
                       className="bg-red-50 hover:bg-red-100 text-red-500 hover:text-red-700 rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold transition-colors border border-red-200"
                     >
@@ -896,6 +1025,7 @@ export const TestShellRenderer = ({
         ) : (
           <>
             {SetupSection && <SetupSection ctx={ctx} />}
+
             {DataSection && <DataSection ctx={ctx} />}
 
             {FittingSection ? (
@@ -945,7 +1075,7 @@ export const TestShellRenderer = ({
                   >
                     <input
                       type="checkbox"
-                      id={`nb-${config.typeKey}-${c.id}`}
+                      id={`nb-${typeKey}-${c.id}`}
                       defaultChecked
                       className="w-4 h-4 accent-blue-600 cursor-pointer"
                     />
@@ -955,6 +1085,7 @@ export const TestShellRenderer = ({
               </div>
 
               <button
+                type="button"
                 onClick={appendToNotebook}
                 className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-6 rounded-lg transition-all shadow-sm w-fit border border-indigo-700 flex items-center gap-2"
               >
@@ -979,6 +1110,7 @@ export const TestShellRenderer = ({
             />
 
             <button
+              type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 setZoomImage(null);

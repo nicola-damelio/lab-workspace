@@ -319,7 +319,18 @@ export function RegionCharts({ regionName, regionData, config }) {
     return () => {
       if (drChart.current) drChart.current.destroy();
     };
-  }, [regionData, hiddenCmpds, showExcl, eScale, chartCfg, fitIC50, fsPanel, activePlateDim, cellConfig, unit]);
+  }, [
+    regionData,
+    hiddenCmpds,
+    showExcl,
+    eScale,
+    chartCfg,
+    fitIC50,
+    fsPanel,
+    activePlateDim,
+    cellConfig,
+    unit
+  ]);
 
   useEffect(() => {
     if (!ic50Ref.current || !fitIC50) return;
@@ -568,7 +579,7 @@ export const All = ({ ctx }) => {
     ctrlODStr,
     bgType,
     bgManualStr,
-    unit,
+    unit = 'µM',
     manualErrors = {},
     topConcStr,
     dilFactorStr,
@@ -623,10 +634,12 @@ export const All = ({ ctx }) => {
   });
 
   const activePlateDim = PLATES_DEF[plateType] || PLATES_DEF['96'];
+
   const ROWS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'].slice(
     0,
     activePlateDim.rows
   );
+
   const COLS = Array.from({ length: activePlateDim.cols }, (_, i) => i + 1);
 
   const tConc = parseFloat(String(topConcStr).replace(',', '.')) || 0;
@@ -1229,7 +1242,10 @@ export const All = ({ ctx }) => {
     plotCmps,
     allCmpds,
     cmpColors,
-    plateType
+    plateType,
+    tConc,
+    dFact,
+    customConc
   ]);
 
   const model = useMemo(
@@ -2323,197 +2339,374 @@ export const All = ({ ctx }) => {
         </button>
       </div>
 
-      {/* EXPERIMENT SETUP */}
+      {/* ================= EXPERIMENT SETUP ================= */}
       <CollapsibleSection title="Experiment Setup" icon="⚙️" defaultOpen={true}>
-        <div className="flex flex-wrap gap-4 items-stretch">
-          <div className="border border-slate-200 bg-slate-50 rounded-lg p-3 flex flex-col gap-2 flex-1 w-full md:min-w-[350px]">
-            <div className="text-[10px] uppercase font-bold text-slate-500 mb-1">
-              Format, Dose & Units
+        <div className="flex flex-col gap-6">
+          {/* Format / Dose / Units / Custom concentrations */}
+          <div className="flex flex-wrap gap-4 items-stretch">
+            <div className="border border-slate-200 bg-slate-50 rounded-lg p-3 flex flex-col gap-2 flex-1 w-full md:min-w-[350px]">
+              <div className="text-[10px] uppercase font-bold text-slate-500 mb-1">
+                Format, Dose & Units
+              </div>
+
+              <div className="flex flex-wrap gap-3 items-end">
+                <div>
+                  <label className="block text-[10px] font-medium text-slate-600 mb-0.5">
+                    Plate Format
+                  </label>
+
+                  <select
+                    value={plateType}
+                    onChange={(e) => {
+                      const dim = PLATES_DEF[e.target.value] || PLATES_DEF['96'];
+
+                      const nGrid = Array(dim.rows)
+                        .fill(null)
+                        .map((_, r) =>
+                          Array(dim.cols)
+                            .fill(null)
+                            .map((_, c) => grid?.[r]?.[c] || '')
+                        );
+
+                      const nCell = Array(dim.rows)
+                        .fill(null)
+                        .map((_, r) =>
+                          Array(dim.cols)
+                            .fill(null)
+                            .map(
+                              (_, c) =>
+                                cellConfig?.[r]?.[c] || {
+                                  excluded: false,
+                                  role: null,
+                                  conc: null,
+                                  region: 'Primary',
+                                  manualOverride: false
+                                }
+                            )
+                        );
+
+                      updatePlate({
+                        plateType: e.target.value,
+                        grid: nGrid,
+                        cellConfig: nCell
+                      });
+                    }}
+                    className="border border-blue-300 text-blue-700 font-bold rounded-lg p-1.5 w-32 text-xs bg-blue-50 cursor-pointer outline-none"
+                  >
+                    <option value="96">96-well Plate</option>
+                    <option value="48">48-well Plate</option>
+                    <option value="24">24-well Plate</option>
+                    <option value="12">12-well Plate</option>
+                    <option value="6">6-well Plate</option>
+                    <option value="1">1 Petri Dish</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Unit</label>
+
+                  <select
+                    value={unit || 'µM'}
+                    onChange={(e) => updatePlate({ unit: e.target.value })}
+                    className="border border-slate-300 rounded-lg p-1.5 w-20 text-xs bg-white font-bold text-slate-800 outline-none"
+                  >
+                    <option value="µM">µM</option>
+                    <option value="µg/mL">µg/mL</option>
+                    <option value="nM">nM</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Max Conc</label>
+
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={topConcStr}
+                    onChange={(e) => updatePlate({ topConcStr: e.target.value })}
+                    className="border border-slate-300 rounded-lg p-1.5 w-20 text-xs outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Dil. Factor</label>
+
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={dilFactorStr}
+                    onChange={(e) => updatePlate({ dilFactorStr: e.target.value })}
+                    className="border border-slate-300 rounded-lg p-1.5 w-16 text-xs outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
             </div>
 
-            <div className="flex flex-wrap gap-3 items-end">
-              <div>
-                <label className="block text-[10px] font-medium text-slate-600 mb-0.5">
-                  Plate Format
-                </label>
+            <div className="border border-slate-200 bg-slate-50 rounded-lg p-3 flex flex-col gap-2 flex-1 w-full md:min-w-[350px]">
+              <div className="text-[10px] uppercase font-bold text-slate-500 mb-1">
+                Custom Concentrations
+              </div>
 
+              <div className="flex flex-wrap gap-2 items-center">
                 <select
-                  value={plateType}
-                  onChange={(e) => {
-                    const dim = PLATES_DEF[e.target.value] || PLATES_DEF['96'];
+                  id={`cc-sel-${activeTest.id}`}
+                  className="border border-slate-300 rounded-lg p-1.5 text-xs w-28 bg-white outline-none"
+                >
+                  <option value="">Compound…</option>
+                  {allCmpds.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
 
-                    const nGrid = Array(dim.rows)
-                      .fill(null)
-                      .map((_, r) =>
-                        Array(dim.cols)
-                          .fill(null)
-                          .map((_, c) => grid?.[r]?.[c] || '')
-                      );
+                <input
+                  type="number"
+                  id={`cc-top-${activeTest.id}`}
+                  className="border border-slate-300 rounded-lg p-1.5 w-20 text-xs outline-none"
+                  placeholder="Top µM"
+                />
 
-                    const nCell = Array(dim.rows)
-                      .fill(null)
-                      .map((_, r) =>
-                        Array(dim.cols)
-                          .fill(null)
-                          .map(
-                            (_, c) =>
-                              cellConfig?.[r]?.[c] || {
-                                excluded: false,
-                                role: null,
-                                conc: null,
-                                region: 'Primary',
-                                manualOverride: false
-                              }
-                          )
-                      );
+                <input
+                  type="number"
+                  id={`cc-dil-${activeTest.id}`}
+                  className="border border-slate-300 rounded-lg p-1.5 w-16 text-xs outline-none"
+                  placeholder="Dil"
+                  defaultValue={dFact}
+                />
 
-                    updatePlate({
-                      plateType: e.target.value,
-                      grid: nGrid,
-                      cellConfig: nCell
-                    });
+                <button
+                  onClick={() => {
+                    const c = document.getElementById(`cc-sel-${activeTest.id}`).value;
+                    const t = parseFloat(document.getElementById(`cc-top-${activeTest.id}`).value);
+                    const d =
+                      parseFloat(document.getElementById(`cc-dil-${activeTest.id}`).value) || dFact;
+
+                    if (c && !isNaN(t) && t > 0 && d > 0) {
+                      setCustomConc({
+                        ...customConc,
+                        [c]: { top: t, dil: d }
+                      });
+
+                      document.getElementById(`cc-top-${activeTest.id}`).value = '';
+                    }
                   }}
-                  className="border border-blue-300 text-blue-700 font-bold rounded-lg p-1.5 w-32 text-xs bg-blue-50 cursor-pointer outline-none"
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm"
                 >
-                  <option value="96">96-well Plate</option>
-                  <option value="48">48-well Plate</option>
-                  <option value="24">24-well Plate</option>
-                  <option value="12">12-well Plate</option>
-                  <option value="6">6-well Plate</option>
-                  <option value="1">1 Petri Dish</option>
-                </select>
+                  Set
+                </button>
               </div>
 
-              <div>
-                <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Unit</label>
+              {Object.keys(customConc).length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {Object.entries(customConc).map(([c, s]) => (
+                    <span
+                      key={c}
+                      className="bg-indigo-50 border border-indigo-200 text-indigo-800 text-[10px] px-2 py-0.5 rounded-md flex items-center gap-1 font-bold shadow-sm"
+                    >
+                      {c}: {s.top}µM ÷ {s.dil}
 
-                <select
-                  value={unit || 'µM'}
-                  onChange={(e) => updatePlate({ unit: e.target.value })}
-                  className="border border-slate-300 rounded-lg p-1.5 w-20 text-xs bg-white font-bold text-slate-800 outline-none"
-                >
-                  <option value="µM">µM</option>
-                  <option value="µg/mL">µg/mL</option>
-                  <option value="nM">nM</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Max Conc</label>
-
-                <input
-                  type="number"
-                  step="0.1"
-                  value={topConcStr}
-                  onChange={(e) => updatePlate({ topConcStr: e.target.value })}
-                  className="border border-slate-300 rounded-lg p-1.5 w-20 text-xs outline-none focus:border-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Dil. Factor</label>
-
-                <input
-                  type="number"
-                  step="0.1"
-                  value={dilFactorStr}
-                  onChange={(e) => updatePlate({ dilFactorStr: e.target.value })}
-                  className="border border-slate-300 rounded-lg p-1.5 w-16 text-xs outline-none focus:border-blue-500"
-                />
-              </div>
+                      <button
+                        onClick={() => {
+                          const n = { ...customConc };
+                          delete n[c];
+                          setCustomConc(n);
+                        }}
+                        className="text-red-500 hover:text-red-700 font-black"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
-          <div className="border border-slate-200 bg-slate-50 rounded-lg p-3 flex flex-col gap-2 flex-1 w-full md:min-w-[350px]">
-            <div className="text-[10px] uppercase font-bold text-slate-500 mb-1">
-              Custom Concentrations
-            </div>
+          {/* ================= VISUAL PLATE MAP MOVED HERE ================= */}
+          <div className="relative">
+            {fsPanel === 'map' && (
+              <div className={OVERLAY_CLASSES} onClick={() => toggleFs('map')}></div>
+            )}
 
-            <div className="flex flex-wrap gap-2 items-center">
-              <select
-                id={`cc-sel-${activeTest.id}`}
-                className="border border-slate-300 rounded-lg p-1.5 text-xs w-28 bg-white outline-none"
-              >
-                <option value="">Compound…</option>
-                {allCmpds.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
+            <div
+              className={`bg-slate-50 border border-slate-200 p-4 min-w-0 flex flex-col ${
+                fsPanel === 'map' ? FS_CLASSES : 'rounded-xl w-full'
+              }`}
+            >
+              <div className="flex justify-between items-start mb-2 gap-2">
+                <div className="min-w-0">
+                  <h2 className="text-sm lg:text-base font-bold text-slate-800 truncate">
+                    Visual Plate Map
+                  </h2>
 
-              <input
-                type="number"
-                id={`cc-top-${activeTest.id}`}
-                className="border border-slate-300 rounded-lg p-1.5 w-20 text-xs outline-none"
-                placeholder="Top µM"
-              />
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    Shows compound & exact concentration assigned.
+                  </p>
+                </div>
 
-              <input
-                type="number"
-                id={`cc-dil-${activeTest.id}`}
-                className="border border-slate-300 rounded-lg p-1.5 w-16 text-xs outline-none"
-                placeholder="Dil"
-                defaultValue={dFact}
-              />
+                <div className="flex items-center shrink-0">
+                  <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1 shadow-sm mr-4">
+                    <span className="text-[10px] text-slate-500 font-bold">A</span>
 
-              <button
-                onClick={() => {
-                  const c = document.getElementById(`cc-sel-${activeTest.id}`).value;
-                  const t = parseFloat(document.getElementById(`cc-top-${activeTest.id}`).value);
-                  const d =
-                    parseFloat(document.getElementById(`cc-dil-${activeTest.id}`).value) || dFact;
+                    <input
+                      type="range"
+                      min="4"
+                      max="24"
+                      value={mapFontSize}
+                      onChange={(e) => setMapFontSize(Number(e.target.value))}
+                      className="w-16 accent-blue-600"
+                    />
 
-                  if (c && !isNaN(t) && t > 0 && d > 0) {
-                    setCustomConc({
-                      ...customConc,
-                      [c]: { top: t, dil: d }
-                    });
+                    <span className="text-[12px] text-slate-500 font-bold">A</span>
+                  </div>
 
-                    document.getElementById(`cc-top-${activeTest.id}`).value = '';
-                  }
-                }}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm"
-              >
-                Set
-              </button>
-            </div>
-
-            {Object.keys(customConc).length > 0 && (
-              <div className="flex flex-wrap gap-1 mt-1">
-                {Object.entries(customConc).map(([c, s]) => (
-                  <span
-                    key={c}
-                    className="bg-indigo-50 border border-indigo-200 text-indigo-800 text-[10px] px-2 py-0.5 rounded-md flex items-center gap-1 font-bold shadow-sm"
+                  <button
+                    onClick={() => toggleFs('map')}
+                    className="text-slate-400 hover:text-blue-600 bg-slate-100 hover:bg-blue-100 rounded p-1 transition-colors"
                   >
-                    {c}: {s.top}µM ÷ {s.dil}
+                    {fsPanel === 'map' ? '↙️' : '↗️'}
+                  </button>
+                </div>
+              </div>
 
-                    <button
-                      onClick={() => {
-                        const n = { ...customConc };
-                        delete n[c];
-                        setCustomConc(n);
-                      }}
-                      className="text-red-500 hover:text-red-700 font-black"
+              <div
+                className={`bg-white p-4 rounded-xl border border-slate-200 flex flex-col justify-evenly gap-1 shadow-sm overflow-auto ${
+                  fsPanel === 'map' ? 'flex-1' : ''
+                }`}
+                style={{ minHeight: fsPanel === 'map' ? 0 : '320px' }}
+              >
+                <div className="flex w-full mb-1">
+                  <div className="w-4 lg:w-6" />
+
+                  {COLS.map((c) => (
+                    <div
+                      key={c}
+                      className="flex-1 text-center text-[10px] lg:text-xs font-black text-slate-400"
                     >
-                      ×
-                    </button>
-                  </span>
+                      {c}
+                    </div>
+                  ))}
+                </div>
+
+                {ROWS.map((rl, r) => (
+                  <div
+                    key={rl}
+                    className={`flex items-center w-full ${fsPanel === 'map' ? 'flex-1 min-h-[30px]' : ''}`}
+                  >
+                    <div className="w-4 lg:w-6 text-[10px] lg:text-xs font-black text-slate-400 text-center">
+                      {rl}
+                    </div>
+
+                    {COLS.map((col, c) => {
+                      const cfg = cellConfig[r]?.[c] || {};
+                      const role = getRole(r, c);
+                      const { bg, dark } = wellColor(r, c);
+                      const conc = concOf(r, c, role);
+
+                      const tc = dark ? 'text-slate-900' : 'text-white';
+
+                      const fSize1 = fsPanel === 'map' ? mapFontSize * 1.5 : mapFontSize;
+                      const fSize2 = fsPanel === 'map' ? (mapFontSize - 1) * 1.5 : mapFontSize - 1;
+
+                      const reg = cfg.region || 'Primary';
+                      const regColor = getRegionColor(reg);
+                      const hasCustomReg = reg !== 'Primary';
+
+                      let bTop =
+                        r === 0 ||
+                        (cellConfig[r - 1] && (cellConfig[r - 1][c].region || 'Primary') !== reg);
+
+                      let bBottom =
+                        r === activePlateDim.rows - 1 ||
+                        (cellConfig[r + 1] &&
+                          (cellConfig[r + 1][c].region || 'Primary') !== reg);
+
+                      let bLeft =
+                        c === 0 ||
+                        (cellConfig[r] && (cellConfig[r][c - 1].region || 'Primary') !== reg);
+
+                      let bRight =
+                        c === activePlateDim.cols - 1 ||
+                        (cellConfig[r] && (cellConfig[r][c + 1].region || 'Primary') !== reg);
+
+                      const shadows = [];
+
+                      if (hasCustomReg) {
+                        if (bTop) shadows.push(`inset 0 3px 0 0 ${regColor}`);
+                        if (bBottom) shadows.push(`inset 0 -3px 0 0 ${regColor}`);
+                        if (bLeft) shadows.push(`inset 3px 0 0 0 ${regColor}`);
+                        if (bRight) shadows.push(`inset -3px 0 0 0 ${regColor}`);
+                      }
+
+                      const boxSh = shadows.length > 0 ? shadows.join(', ') : 'none';
+
+                      return (
+                        <div
+                          key={col}
+                          className="flex-1 flex justify-center items-center relative py-1 h-full"
+                          style={{
+                            backgroundColor: hasCustomReg ? regColor + '1a' : 'transparent',
+                            boxShadow: boxSh
+                          }}
+                        >
+                          <div
+                            className="z-10 rounded-full border border-black/10 flex flex-col items-center justify-center shadow-sm overflow-hidden"
+                            style={{
+                              backgroundColor: bg,
+                              width: mapBadgePx,
+                              height: mapBadgePx
+                            }}
+                          >
+                            <span
+                              style={{ fontSize: fSize1 + 'px' }}
+                              className={`font-bold leading-tight truncate max-w-full text-center px-0.5 ${tc}`}
+                            >
+                              {role || '–'}
+                            </span>
+
+                            {role && !['cells', 'pbs', 'medium'].includes(role.toLowerCase()) && (
+                              <span
+                                style={{ fontSize: fSize2 + 'px' }}
+                                className={`font-bold truncate max-w-full px-0.5 opacity-90 ${tc}`}
+                              >
+                                {formatConc(conc)}
+                              </span>
+                            )}
+                          </div>
+
+                          {hasCustomReg && bTop && bLeft && (
+                            <span
+                              className="absolute top-[2px] left-[3px] text-[9px] font-black z-20 px-1 rounded shadow-sm whitespace-nowrap"
+                              style={{
+                                color: '#fff',
+                                backgroundColor: regColor
+                              }}
+                            >
+                              {reg}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 ))}
               </div>
-            )}
+            </div>
           </div>
         </div>
       </CollapsibleSection>
 
-      {/* DATA GRID & VISUAL PLATE MAP */}
-      <CollapsibleSection title="Data" icon="🧫" defaultOpen={true}>
-        <div className="flex flex-col xl:flex-row gap-6">
-          {fsPanel === 'data' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('data')}></div>}
+      {/* ================= DATA GRID ================= */}
+      <CollapsibleSection title="Data" icon="🔢" defaultOpen={true}>
+        <div className="relative">
+          {fsPanel === 'data' && (
+            <div className={OVERLAY_CLASSES} onClick={() => toggleFs('data')}></div>
+          )}
 
           <div
             className={`bg-slate-50 border border-slate-200 p-4 min-w-0 flex flex-col ${
-              fsPanel === 'data' ? FS_CLASSES : 'rounded-xl xl:w-1/2'
+              fsPanel === 'data' ? FS_CLASSES : 'rounded-xl w-full'
             }`}
           >
             <div className="flex justify-between items-start mb-2 gap-2">
@@ -2728,10 +2921,14 @@ export const All = ({ ctx }) => {
                         const shadows = [];
 
                         if (isSelBox) {
-                          if (r === currentSelectionBox.minR) shadows.push('inset 0 2px 0 0 #2563eb');
-                          if (r === currentSelectionBox.maxR) shadows.push('inset 0 -2px 0 0 #2563eb');
-                          if (c === currentSelectionBox.minC) shadows.push('inset 2px 0 0 0 #2563eb');
-                          if (c === currentSelectionBox.maxC) shadows.push('inset -2px 0 0 0 #2563eb');
+                          if (r === currentSelectionBox.minR)
+                            shadows.push('inset 0 2px 0 0 #2563eb');
+                          if (r === currentSelectionBox.maxR)
+                            shadows.push('inset 0 -2px 0 0 #2563eb');
+                          if (c === currentSelectionBox.minC)
+                            shadows.push('inset 2px 0 0 0 #2563eb');
+                          if (c === currentSelectionBox.maxC)
+                            shadows.push('inset -2px 0 0 0 #2563eb');
                         }
 
                         if (isFillBox) {
@@ -2910,178 +3107,18 @@ export const All = ({ ctx }) => {
               </table>
             </div>
           </div>
-
-          {fsPanel === 'map' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('map')}></div>}
-
-          <div
-            className={`bg-slate-50 border border-slate-200 p-4 min-w-0 flex flex-col ${
-              fsPanel === 'map' ? FS_CLASSES : 'rounded-xl xl:w-1/2'
-            }`}
-          >
-            <div className="flex justify-between items-start mb-2 gap-2">
-              <div className="min-w-0">
-                <h2 className="text-sm lg:text-base font-bold text-slate-800 truncate">
-                  Visual Plate Map
-                </h2>
-
-                <p className="text-[10px] text-slate-500 mt-0.5">
-                  Shows compound & exact concentration assigned.
-                </p>
-              </div>
-
-              <div className="flex items-center shrink-0">
-                <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1 shadow-sm mr-4">
-                  <span className="text-[10px] text-slate-500 font-bold">A</span>
-
-                  <input
-                    type="range"
-                    min="4"
-                    max="24"
-                    value={mapFontSize}
-                    onChange={(e) => setMapFontSize(Number(e.target.value))}
-                    className="w-16 accent-blue-600"
-                  />
-
-                  <span className="text-[12px] text-slate-500 font-bold">A</span>
-                </div>
-
-                <button
-                  onClick={() => toggleFs('map')}
-                  className="text-slate-400 hover:text-blue-600 bg-slate-100 hover:bg-blue-100 rounded p-1 transition-colors"
-                >
-                  {fsPanel === 'map' ? '↙️' : '↗️'}
-                </button>
-              </div>
-            </div>
-
-            <div
-              className={`bg-white p-4 rounded-xl border border-slate-200 flex flex-col justify-evenly gap-1 shadow-sm overflow-auto ${
-                fsPanel === 'map' ? 'flex-1' : ''
-              }`}
-            >
-              <div className="flex w-full mb-1">
-                <div className="w-4 lg:w-6" />
-
-                {COLS.map((c) => (
-                  <div key={c} className="flex-1 text-center text-[10px] lg:text-xs font-black text-slate-400">
-                    {c}
-                  </div>
-                ))}
-              </div>
-
-              {ROWS.map((rl, r) => (
-                <div
-                  key={rl}
-                  className={`flex items-center w-full ${fsPanel === 'map' ? 'flex-1 min-h-[30px]' : ''}`}
-                >
-                  <div className="w-4 lg:w-6 text-[10px] lg:text-xs font-black text-slate-400 text-center">
-                    {rl}
-                  </div>
-
-                  {COLS.map((col, c) => {
-                    const cfg = cellConfig[r]?.[c] || {};
-                    const role = getRole(r, c);
-                    const { bg, dark } = wellColor(r, c);
-                    const conc = concOf(r, c, role);
-
-                    const tc = dark ? 'text-slate-900' : 'text-white';
-
-                    const fSize1 = fsPanel === 'map' ? mapFontSize * 1.5 : mapFontSize;
-                    const fSize2 = fsPanel === 'map' ? (mapFontSize - 1) * 1.5 : mapFontSize - 1;
-
-                    const reg = cfg.region || 'Primary';
-                    const regColor = getRegionColor(reg);
-                    const hasCustomReg = reg !== 'Primary';
-
-                    let bTop =
-                      r === 0 ||
-                      (cellConfig[r - 1] && (cellConfig[r - 1][c].region || 'Primary') !== reg);
-
-                    let bBottom =
-                      r === activePlateDim.rows - 1 ||
-                      (cellConfig[r + 1] && (cellConfig[r + 1][c].region || 'Primary') !== reg);
-
-                    let bLeft =
-                      c === 0 ||
-                      (cellConfig[r] && (cellConfig[r][c - 1].region || 'Primary') !== reg);
-
-                    let bRight =
-                      c === activePlateDim.cols - 1 ||
-                      (cellConfig[r] && (cellConfig[r][c + 1].region || 'Primary') !== reg);
-
-                    const shadows = [];
-
-                    if (hasCustomReg) {
-                      if (bTop) shadows.push(`inset 0 3px 0 0 ${regColor}`);
-                      if (bBottom) shadows.push(`inset 0 -3px 0 0 ${regColor}`);
-                      if (bLeft) shadows.push(`inset 3px 0 0 0 ${regColor}`);
-                      if (bRight) shadows.push(`inset -3px 0 0 0 ${regColor}`);
-                    }
-
-                    const boxSh = shadows.length > 0 ? shadows.join(', ') : 'none';
-
-                    return (
-                      <div
-                        key={col}
-                        className="flex-1 flex justify-center items-center relative py-1 h-full"
-                        style={{
-                          backgroundColor: hasCustomReg ? regColor + '1a' : 'transparent',
-                          boxShadow: boxSh
-                        }}
-                      >
-                        <div
-                          className="z-10 rounded-full border border-black/10 flex flex-col items-center justify-center shadow-sm overflow-hidden"
-                          style={{
-                            backgroundColor: bg,
-                            width: mapBadgePx,
-                            height: mapBadgePx
-                          }}
-                        >
-                          <span
-                            style={{ fontSize: fSize1 + 'px' }}
-                            className={`font-bold leading-tight truncate max-w-full text-center px-0.5 ${tc}`}
-                          >
-                            {role || '–'}
-                          </span>
-
-                          {role && !['cells', 'pbs', 'medium'].includes(role.toLowerCase()) && (
-                            <span
-                              style={{ fontSize: fSize2 + 'px' }}
-                              className={`font-bold truncate max-w-full px-0.5 opacity-90 ${tc}`}
-                            >
-                              {formatConc(conc)}
-                            </span>
-                          )}
-                        </div>
-
-                        {hasCustomReg && bTop && bLeft && (
-                          <span
-                            className="absolute top-[2px] left-[3px] text-[9px] font-black z-20 px-1 rounded shadow-sm whitespace-nowrap"
-                            style={{
-                              color: '#fff',
-                              backgroundColor: regColor
-                            }}
-                          >
-                            {reg}
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
       </CollapsibleSection>
 
-      {/* FITTING */}
+      {/* ================= FITTING ================= */}
       <CollapsibleSection title="Fitting" icon="📐" defaultOpen={true}>
         <div className="flex flex-col gap-6">
           <CollapsibleSection title="Error Management" icon="⚠️" defaultOpen={false}>
             <div className="flex flex-wrap gap-4 items-stretch">
               <div className="border border-slate-200 bg-slate-50 rounded-lg p-4 flex flex-col gap-3 flex-1 min-w-[300px]">
-                <div className="text-[10px] uppercase font-bold text-slate-500">Data Normalization</div>
+                <div className="text-[10px] uppercase font-bold text-slate-500">
+                  Data Normalization
+                </div>
 
                 <div className="grid grid-cols-2 gap-3 items-center">
                   <div className="flex flex-col gap-1">
@@ -3940,3 +3977,5 @@ export const All = ({ ctx }) => {
     </div>
   );
 };
+
+export default All;
