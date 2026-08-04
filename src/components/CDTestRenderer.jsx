@@ -526,6 +526,902 @@ const ProteinCDMixer = () => {
   );
 };
 
+// ================= DNA / GQ CD REFERENCE + LIBRARY SIMULATOR =================
+const FS_CLASSES =
+  'fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col';
+
+const OVERLAY_CLASSES =
+  'fixed top-0 left-0 w-screen h-screen bg-slate-900/50 backdrop-blur-sm z-[999990]';
+
+const bDnaKnots = [
+  { x: 180, y: -10 },
+  { x: 184, y: 30 },
+  { x: 187, y: 65 },
+  { x: 192, y: 40 },
+  { x: 195, y: 15 },
+  { x: 200, y: -5 },
+  { x: 205, y: -10 },
+  { x: 210, y: -12 },
+  { x: 215, y: -8 },
+  { x: 220, y: -2 },
+  { x: 230, y: 0 },
+  { x: 240, y: -2 },
+  { x: 250, y: -6 },
+  { x: 260, y: -2 },
+  { x: 275, y: 5 },
+  { x: 290, y: 2 },
+  { x: 300, y: 0 },
+  { x: 320, y: 0 }
+];
+
+const aDnaKnots = [
+  { x: 180, y: -15 },
+  { x: 185, y: 40 },
+  { x: 190, y: 81 },
+  { x: 195, y: 50 },
+  { x: 200, y: 0 },
+  { x: 205, y: -25 },
+  { x: 210, y: -30 },
+  { x: 215, y: -20 },
+  { x: 220, y: -10 },
+  { x: 225, y: -6 },
+  { x: 230, y: -5 },
+  { x: 240, y: -5 },
+  { x: 250, y: 0 },
+  { x: 265, y: 9 },
+  { x: 280, y: 5 },
+  { x: 300, y: 0 },
+  { x: 320, y: 0 }
+];
+
+const zDnaKnots = [
+  { x: 180, y: 30 },
+  { x: 183, y: 76 },
+  { x: 186, y: 40 },
+  { x: 188, y: 20 },
+  { x: 190, y: -10 },
+  { x: 195, y: -48 },
+  { x: 200, y: -40 },
+  { x: 205, y: -30 },
+  { x: 210, y: -22 },
+  { x: 220, y: -5 },
+  { x: 230, y: 2 },
+  { x: 240, y: 2 },
+  { x: 250, y: 4 },
+  { x: 260, y: 4 },
+  { x: 280, y: -5 },
+  { x: 295, y: -6 },
+  { x: 310, y: 0 },
+  { x: 320, y: 0 }
+];
+
+const gqParallelKnots = [
+  { x: 220, y: 40 },
+  { x: 225, y: 0 },
+  { x: 230, y: -50 },
+  { x: 235, y: -100 },
+  { x: 240, y: -115 },
+  { x: 245, y: -80 },
+  { x: 250, y: 50 },
+  { x: 255, y: 300 },
+  { x: 262, y: 475 },
+  { x: 270, y: 350 },
+  { x: 280, y: 80 },
+  { x: 290, y: 30 },
+  { x: 300, y: 25 },
+  { x: 310, y: 0 },
+  { x: 320, y: 0 }
+];
+
+const gqHybridKnots = [
+  { x: 220, y: 110 },
+  { x: 225, y: 50 },
+  { x: 230, y: 0 },
+  { x: 236, y: -32 },
+  { x: 245, y: 0 },
+  { x: 250, y: 40 },
+  { x: 260, y: 110 },
+  { x: 270, y: 142 },
+  { x: 280, y: 160 },
+  { x: 288, y: 190 },
+  { x: 300, y: 140 },
+  { x: 310, y: 20 },
+  { x: 320, y: 5 }
+];
+
+const gqAntiparallelKnots = [
+  { x: 220, y: 65 },
+  { x: 225, y: 30 },
+  { x: 233, y: 4 },
+  { x: 240, y: 25 },
+  { x: 248, y: 50 },
+  { x: 255, y: 0 },
+  { x: 260, y: -50 },
+  { x: 265, y: -70 },
+  { x: 272, y: -30 },
+  { x: 280, y: 0 },
+  { x: 290, y: 60 },
+  { x: 297, y: 78 },
+  { x: 305, y: 50 },
+  { x: 315, y: 0 },
+  { x: 320, y: -4 }
+];
+
+const splineADNA = new NaturalCubicSpline(
+  aDnaKnots.map((p) => p.x),
+  aDnaKnots.map((p) => p.y)
+);
+
+const splineBDNA = new NaturalCubicSpline(
+  bDnaKnots.map((p) => p.x),
+  bDnaKnots.map((p) => p.y)
+);
+
+const splineZDNA = new NaturalCubicSpline(
+  zDnaKnots.map((p) => p.x),
+  zDnaKnots.map((p) => p.y)
+);
+
+const splineGQP = new NaturalCubicSpline(
+  gqParallelKnots.map((p) => p.x),
+  gqParallelKnots.map((p) => p.y)
+);
+
+const splineGQH = new NaturalCubicSpline(
+  gqHybridKnots.map((p) => p.x),
+  gqHybridKnots.map((p) => p.y)
+);
+
+const splineGQA = new NaturalCubicSpline(
+  gqAntiparallelKnots.map((p) => p.x),
+  gqAntiparallelKnots.map((p) => p.y)
+);
+
+const CD_LIBRARY_TABS = [
+  { id: 'protein', label: 'Protein Structures' },
+  { id: 'dna', label: 'DNA Helices' },
+  { id: 'gq', label: 'G-Quadruplexes' },
+  { id: 'dnaPepAlpha', label: 'DNA+Pep (Alpha)' },
+  { id: 'dnaPepBeta', label: 'DNA+Pep (Beta)' },
+  { id: 'dnaPepAlphaZ', label: 'DNA+Pep (Alpha+Z)' },
+  { id: 'dnaPepBetaZ', label: 'DNA+Pep (Beta+Z)' },
+  { id: 'pepDnaAlpha', label: 'Pep+DNA (Alpha)' },
+  { id: 'pepDnaBeta', label: 'Pep+DNA (Beta)' },
+  { id: 'pepDnaAlphaZ', label: 'Pep+DNA (Alpha+Z)' },
+  { id: 'pepDnaBetaZ', label: 'Pep+DNA (Beta+Z)' }
+];
+
+const CD_SIM_INFO = {
+  dnaPepAlpha: {
+    ratioLabel: 'Peptide:DNA Ratio',
+    description:
+      'Simulation (Alpha Binding): DNA remains B-form. Ratio 0-1: peptide binds as α-helix. Ratio >1: excess peptide is Random Coil.'
+  },
+  dnaPepBeta: {
+    ratioLabel: 'Peptide:DNA Ratio',
+    description:
+      'Simulation (Beta Binding): DNA remains B-form. Ratio 0-1: peptide binds as β-sheet. Ratio >1: excess peptide is Random Coil.'
+  },
+  dnaPepAlphaZ: {
+    ratioLabel: 'Peptide:DNA Ratio',
+    description:
+      'Simulation (Alpha + Z-Switch): DNA switches from B to Z form. Ratio 0-1: DNA B → Z transition; peptide binds as α-helix. Ratio >1: DNA is Z-form; excess peptide is Random Coil.'
+  },
+  dnaPepBetaZ: {
+    ratioLabel: 'Peptide:DNA Ratio',
+    description:
+      'Simulation (Beta + Z-Switch): DNA switches from B to Z form. Ratio 0-1: DNA B → Z transition; peptide binds as β-sheet. Ratio >1: DNA is Z-form; excess peptide is Random Coil.'
+  },
+  pepDnaAlpha: {
+    ratioLabel: 'DNA:Peptide Ratio',
+    description:
+      'Simulation (Peptide + DNA [Alpha]): Titration of peptide solution with B-DNA. Ratio 0-1: free peptide is Random Coil, bound peptide is α-helix. Ratio >1: peptide fully bound as α-helix; excess DNA is B-form.'
+  },
+  pepDnaBeta: {
+    ratioLabel: 'DNA:Peptide Ratio',
+    description:
+      'Simulation (Peptide + DNA [Beta]): Titration of peptide solution with B-DNA. Ratio 0-1: free peptide is Random Coil, bound peptide is β-sheet. Ratio >1: peptide fully bound as β-sheet; excess DNA is B-form.'
+  },
+  pepDnaAlphaZ: {
+    ratioLabel: 'DNA:Peptide Ratio',
+    description:
+      'Simulation (Peptide + DNA [Alpha+Z]): DNA assumes Z-form when bound. Ratio 0-1: peptide excess forces added DNA into Z-form; bound peptide is α-helix. Ratio >1: excess unbound DNA is B-form; bound DNA is Z-form.'
+  },
+  pepDnaBetaZ: {
+    ratioLabel: 'DNA:Peptide Ratio',
+    description:
+      'Simulation (Peptide + DNA [Beta+Z]): DNA assumes Z-form when bound. Ratio 0-1: peptide excess forces added DNA into Z-form; bound peptide is β-sheet. Ratio >1: excess unbound DNA is B-form; bound DNA is Z-form.'
+  }
+};
+
+const CD_REF_TYPES = {
+  'Alpha-helix': {
+    spline: splineAlpha,
+    start: 176,
+    end: 260,
+    color: '#3b82f6',
+    group: 'protein'
+  },
+  'Beta-sheet': {
+    spline: splineBeta,
+    start: 176,
+    end: 260,
+    color: '#ef4444',
+    group: 'protein'
+  },
+  Turn: {
+    spline: splineTurn,
+    start: 176,
+    end: 260,
+    color: '#f59e0b',
+    group: 'protein'
+  },
+  'Random Coil': {
+    spline: splineCoil,
+    start: 176,
+    end: 260,
+    color: '#94a3b8',
+    group: 'protein'
+  },
+  'A-DNA': {
+    spline: splineADNA,
+    start: 180,
+    end: 320,
+    color: '#8b5cf6',
+    group: 'dna'
+  },
+  'B-DNA': {
+    spline: splineBDNA,
+    start: 180,
+    end: 320,
+    color: '#10b981',
+    group: 'dna'
+  },
+  'Z-DNA': {
+    spline: splineZDNA,
+    start: 180,
+    end: 320,
+    color: '#f97316',
+    group: 'dna'
+  },
+  'G-Quad (Parallel)': {
+    spline: splineGQP,
+    start: 220,
+    end: 320,
+    color: '#ec4899',
+    group: 'gq'
+  },
+  'G-Quad (Hybrid)': {
+    spline: splineGQH,
+    start: 220,
+    end: 320,
+    color: '#14b8a6',
+    group: 'gq'
+  },
+  'G-Quad (Antiparallel)': {
+    spline: splineGQA,
+    start: 220,
+    end: 320,
+    color: '#6366f1',
+    group: 'gq'
+  }
+};
+
+const CD_LIBRARY_SCALE = 10000;
+
+const niceCdStep = (range, targetTicks = 6) => {
+  if (!Number.isFinite(range) || range <= 0) return 1;
+
+  const raw = range / targetTicks;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const norm = raw / mag;
+
+  let nice;
+  if (norm >= 7.5) nice = 10;
+  else if (norm >= 3.5) nice = 5;
+  else if (norm >= 1.5) nice = 2;
+  else nice = 1;
+
+  return nice * mag;
+};
+
+const getScaledCdSpectrum = (key, xs) => {
+  const def = CD_REF_TYPES[key];
+  if (!def) return xs.map(() => 0);
+
+  const raw = xs.map((x) => {
+    const xx = Math.min(Math.max(x, def.start), def.end);
+    return def.spline.at(xx);
+  });
+
+  const maxAbs = Math.max(1e-6, ...raw.map((v) => Math.abs(v)));
+  return raw.map((v) => (v / maxAbs) * CD_LIBRARY_SCALE);
+};
+
+const normalizeCdSeries = (series) => {
+  if (!series.length) return series;
+
+  const allValues = series.flatMap((s) => s.values);
+  const maxAbs = Math.max(1e-6, ...allValues.map((v) => Math.abs(v)));
+
+  return series.map((s) => ({
+    ...s,
+    values: s.values.map((v) => (v / maxAbs) * 100)
+  }));
+};
+
+const buildCdLibraryData = ({
+  tab,
+  selectedProtein,
+  selectedDna,
+  selectedGq,
+  ratio,
+  normalize
+}) => {
+  let domain = { min: 176, max: 260 };
+
+  if (tab === 'dna') {
+    domain = { min: 180, max: 320 };
+  } else if (tab === 'gq') {
+    domain = { min: 220, max: 320 };
+  } else if (tab.startsWith('dnaPep') || tab.startsWith('pepDna')) {
+    domain = { min: 180, max: 320 };
+  }
+
+  const xs = [];
+  for (let x = domain.min; x <= domain.max; x += 1) xs.push(x);
+
+  let series = [];
+
+  if (tab === 'protein') {
+    series = selectedProtein.map((key) => ({
+      label: key,
+      color: CD_REF_TYPES[key]?.color || '#3b82f6',
+      values: getScaledCdSpectrum(key, xs)
+    }));
+  } else if (tab === 'dna') {
+    series = selectedDna.map((key) => ({
+      label: key,
+      color: CD_REF_TYPES[key]?.color || '#8b5cf6',
+      values: getScaledCdSpectrum(key, xs)
+    }));
+  } else if (tab === 'gq') {
+    series = selectedGq.map((key) => ({
+      label: key,
+      color: CD_REF_TYPES[key]?.color || '#ec4899',
+      values: getScaledCdSpectrum(key, xs)
+    }));
+  } else {
+    const r = Math.max(0, Math.min(10, Number(ratio) || 0));
+
+    const B = getScaledCdSpectrum('B-DNA', xs);
+    const Z = getScaledCdSpectrum('Z-DNA', xs);
+    const alpha = getScaledCdSpectrum('Alpha-helix', xs);
+    const beta = getScaledCdSpectrum('Beta-sheet', xs);
+    const coil = getScaledCdSpectrum('Random Coil', xs);
+
+    const mix = (parts) =>
+      xs.map((_, i) =>
+        parts.reduce((sum, [arr, weight]) => sum + (arr[i] || 0) * (weight || 0), 0)
+      );
+
+    const bound01 = Math.min(r, 1);
+    const excess = Math.max(r - 1, 0);
+    const free = Math.max(1 - r, 0);
+
+    let values = [];
+    let label = '';
+
+    switch (tab) {
+      case 'dnaPepAlpha':
+        values = mix([
+          [B, 1],
+          [alpha, bound01],
+          [coil, excess]
+        ]);
+        label = `DNA + α-peptide (P/D ${r.toFixed(1)})`;
+        break;
+
+      case 'dnaPepBeta':
+        values = mix([
+          [B, 1],
+          [beta, bound01],
+          [coil, excess]
+        ]);
+        label = `DNA + β-peptide (P/D ${r.toFixed(1)})`;
+        break;
+
+      case 'dnaPepAlphaZ':
+        values = mix([
+          [B, 1 - bound01],
+          [Z, bound01],
+          [alpha, bound01],
+          [coil, excess]
+        ]);
+        label = `DNA B→Z + α-peptide (P/D ${r.toFixed(1)})`;
+        break;
+
+      case 'dnaPepBetaZ':
+        values = mix([
+          [B, 1 - bound01],
+          [Z, bound01],
+          [beta, bound01],
+          [coil, excess]
+        ]);
+        label = `DNA B→Z + β-peptide (P/D ${r.toFixed(1)})`;
+        break;
+
+      case 'pepDnaAlpha':
+        values = mix([
+          [alpha, bound01],
+          [coil, free],
+          [B, r]
+        ]);
+        label = `Peptide + B-DNA (D/P ${r.toFixed(1)})`;
+        break;
+
+      case 'pepDnaBeta':
+        values = mix([
+          [beta, bound01],
+          [coil, free],
+          [B, r]
+        ]);
+        label = `Peptide + B-DNA (D/P ${r.toFixed(1)})`;
+        break;
+
+      case 'pepDnaAlphaZ':
+        values = mix([
+          [alpha, bound01],
+          [coil, free],
+          [Z, bound01],
+          [B, Math.max(r - 1, 0)]
+        ]);
+        label = `Peptide + Z-DNA/B-DNA (D/P ${r.toFixed(1)})`;
+        break;
+
+      case 'pepDnaBetaZ':
+        values = mix([
+          [beta, bound01],
+          [coil, free],
+          [Z, bound01],
+          [B, Math.max(r - 1, 0)]
+        ]);
+        label = `Peptide + Z-DNA/B-DNA (D/P ${r.toFixed(1)})`;
+        break;
+
+      default:
+        values = xs.map(() => 0);
+        label = 'Unknown simulation';
+    }
+
+    series = [{ label, color: '#7c3aed', values }];
+  }
+
+  if (normalize) series = normalizeCdSeries(series);
+
+  return { xs, series, domain };
+};
+
+const CDSpectraLibrary = () => {
+  const canvasRef = useRef(null);
+  const wrapRef = useRef(null);
+  const { width, height } = useElementSize(wrapRef);
+
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [tab, setTab] = useState('protein');
+  const [selectedProtein, setSelectedProtein] = useState([
+    'Alpha-helix',
+    'Beta-sheet',
+    'Random Coil'
+  ]);
+  const [selectedDna, setSelectedDna] = useState(['B-DNA']);
+  const [selectedGq, setSelectedGq] = useState(['G-Quad (Parallel)']);
+  const [ratio, setRatio] = useState(0);
+  const [normalize, setNormalize] = useState(true);
+
+  const proteinTypes = ['Alpha-helix', 'Beta-sheet', 'Turn', 'Random Coil'];
+  const dnaTypes = ['A-DNA', 'B-DNA', 'Z-DNA'];
+  const gqTypes = [
+    'G-Quad (Parallel)',
+    'G-Quad (Hybrid)',
+    'G-Quad (Antiparallel)'
+  ];
+
+  const isSim = Boolean(CD_SIM_INFO[tab]);
+
+  const plotData = useMemo(() => {
+    return buildCdLibraryData({
+      tab,
+      selectedProtein,
+      selectedDna,
+      selectedGq,
+      ratio,
+      normalize
+    });
+  }, [tab, selectedProtein, selectedDna, selectedGq, ratio, normalize]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || width < 80 || height < 80) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const W = width;
+    const H = height;
+
+    const pad = { top: 20, right: 20, bottom: 40, left: 60 };
+    const plotW = W - pad.left - pad.right;
+    const plotH = H - pad.top - pad.bottom;
+
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(0, 0, W, H);
+
+    if (!plotData.series.length || !plotData.xs.length) {
+      ctx.fillStyle = '#64748b';
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Select at least one spectrum', W / 2, H / 2);
+      return;
+    }
+
+    const allValues = plotData.series.flatMap((s) => s.values);
+
+    if (!allValues.length) {
+      ctx.fillStyle = '#64748b';
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('No data available', W / 2, H / 2);
+      return;
+    }
+
+    let yMin = Math.min(...allValues);
+    let yMax = Math.max(...allValues);
+
+    if (!Number.isFinite(yMin) || !Number.isFinite(yMax)) {
+      yMin = -1;
+      yMax = 1;
+    }
+
+    if (yMin === yMax) {
+      yMin -= 1;
+      yMax += 1;
+    }
+
+    const yMargin = (yMax - yMin) * 0.1;
+    yMin -= yMargin;
+    yMax += yMargin;
+
+    const xMin = plotData.domain.min;
+    const xMax = plotData.domain.max;
+
+    const xTickStep = xMax - xMin > 100 ? 20 : 10;
+    const yTickStep = niceCdStep(yMax - yMin);
+
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.lineWidth = 0.5;
+
+    for (
+      let x = Math.ceil(xMin / xTickStep) * xTickStep;
+      x <= xMax;
+      x += xTickStep
+    ) {
+      const px = pad.left + ((x - xMin) / (xMax - xMin)) * plotW;
+      ctx.beginPath();
+      ctx.moveTo(px, pad.top);
+      ctx.lineTo(px, pad.top + plotH);
+      ctx.stroke();
+    }
+
+    for (
+      let y = Math.ceil(yMin / yTickStep) * yTickStep;
+      y <= yMax;
+      y += yTickStep
+    ) {
+      const py = pad.top + plotH - ((y - yMin) / (yMax - yMin)) * plotH;
+      ctx.beginPath();
+      ctx.moveTo(pad.left, py);
+      ctx.lineTo(pad.left + plotW, py);
+      ctx.stroke();
+    }
+
+    if (yMin < 0 && yMax > 0) {
+      const zeroY = pad.top + plotH - ((0 - yMin) / (yMax - yMin)) * plotH;
+      ctx.strokeStyle = '#94a3b8';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(pad.left, zeroY);
+      ctx.lineTo(pad.left + plotW, zeroY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(pad.left, pad.top, plotW, plotH);
+    ctx.clip();
+
+    plotData.series.forEach((s) => {
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+
+      plotData.xs.forEach((x, i) => {
+        const px = pad.left + ((x - xMin) / (xMax - xMin)) * plotW;
+        const py =
+          pad.top + plotH - ((s.values[i] - yMin) / (yMax - yMin)) * plotH;
+
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      });
+
+      ctx.stroke();
+    });
+
+    ctx.restore();
+
+    ctx.font = '10px sans-serif';
+    plotData.series.forEach((s, idx) => {
+      const lx = pad.left + 10;
+      const ly = pad.top + 15 + idx * 14;
+
+      ctx.fillStyle = s.color;
+      ctx.fillRect(lx, ly - 6, 12, 3);
+
+      ctx.fillStyle = '#334155';
+      ctx.textAlign = 'left';
+      ctx.fillText(s.label, lx + 16, ly - 2);
+    });
+
+    ctx.fillStyle = '#64748b';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+
+    for (
+      let x = Math.ceil(xMin / xTickStep) * xTickStep;
+      x <= xMax;
+      x += xTickStep
+    ) {
+      const px = pad.left + ((x - xMin) / (xMax - xMin)) * plotW;
+      ctx.fillText(x.toString(), px, pad.top + plotH + 15);
+    }
+
+    ctx.fillText('Wavelength (nm)', pad.left + plotW / 2, H - 5);
+
+    const fmtY = (v) => {
+      if (Math.abs(v) >= 1000) {
+        return `${(v / 1000).toFixed(1).replace(/\.0$/, '')}k`;
+      }
+      return `${Math.round(v)}`;
+    };
+
+    ctx.textAlign = 'right';
+
+    for (
+      let y = Math.ceil(yMin / yTickStep) * yTickStep;
+      y <= yMax;
+      y += yTickStep
+    ) {
+      const py = pad.top + plotH - ((y - yMin) / (yMax - yMin)) * plotH;
+      ctx.fillText(fmtY(y), pad.left - 5, py + 4);
+    }
+
+    ctx.save();
+    ctx.translate(12, pad.top + plotH / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.textAlign = 'center';
+    ctx.fillText(normalize ? 'Normalized CD (a.u.)' : 'CD (a.u.)', 0, 0);
+    ctx.restore();
+  }, [plotData, width, height, normalize]);
+
+  const toggleInArray = (setter, value) => {
+    setter((prev) =>
+      prev.includes(value) ? prev.filter((x) => x !== value) : [...prev, value]
+    );
+  };
+
+  return (
+    <>
+      {isExpanded && (
+        <div className={OVERLAY_CLASSES} onClick={() => setIsExpanded(false)} />
+      )}
+
+      <div
+        className={`bg-white border border-slate-200 rounded-xl shadow-sm flex flex-col ${
+          isExpanded ? `${FS_CLASSES} p-6` : 'break-inside-avoid p-4'
+        }`}
+      >
+        <div className="flex justify-between items-center mb-3 border-b pb-2 shrink-0">
+          <h4 className="font-bold text-slate-700 flex items-center gap-2">
+            <span>📚</span> CD Spectra Reference Library & Simulator
+          </h4>
+
+          <button
+            type="button"
+            onClick={() => setIsExpanded((v) => !v)}
+            className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors"
+          >
+            {isExpanded ? '↙️' : '↗️'}
+          </button>
+        </div>
+
+        <div className="flex flex-col xl:flex-row gap-4 flex-1 min-h-0">
+          <div className="flex-1 flex flex-col min-h-0">
+            <div className="flex flex-wrap gap-1 mb-2">
+              {CD_LIBRARY_TABS.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => {
+                    setTab(t.id);
+                    if (CD_SIM_INFO[t.id]) setRatio(0);
+                  }}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-colors ${
+                    tab === t.id
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            <div
+              ref={wrapRef}
+              className={`relative rounded-lg border border-slate-200 bg-slate-50 overflow-hidden ${
+                isExpanded ? 'flex-1 min-h-0' : 'h-[380px]'
+              }`}
+            >
+              <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
+            </div>
+          </div>
+
+          <div className="w-full xl:w-72 flex flex-col gap-3 shrink-0 overflow-y-auto custom-scrollbar">
+            <label className="flex items-center gap-2 text-[11px] font-bold text-slate-600 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={normalize}
+                onChange={(e) => setNormalize(e.target.checked)}
+                className="w-3.5 h-3.5 accent-blue-600"
+              />
+              Normalize spectra for display
+            </label>
+
+            {tab === 'protein' && (
+              <div className="flex flex-col gap-1">
+                <div className="text-[10px] uppercase font-bold text-slate-500">
+                  Protein Structures
+                </div>
+
+                {proteinTypes.map((t) => (
+                  <label
+                    key={t}
+                    className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 p-1 rounded"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedProtein.includes(t)}
+                      onChange={() => toggleInArray(setSelectedProtein, t)}
+                      className="w-3 h-3 accent-blue-600"
+                    />
+                    <span
+                      className="w-3 h-2 rounded-sm"
+                      style={{ backgroundColor: CD_REF_TYPES[t]?.color }}
+                    />
+                    <span className="text-xs font-medium text-slate-700">{t}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+
+            {tab === 'dna' && (
+              <div className="flex flex-col gap-1">
+                <div className="text-[10px] uppercase font-bold text-slate-500">
+                  DNA Helices
+                </div>
+
+                {dnaTypes.map((t) => (
+                  <label
+                    key={t}
+                    className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 p-1 rounded"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedDna.includes(t)}
+                      onChange={() => toggleInArray(setSelectedDna, t)}
+                      className="w-3 h-3 accent-purple-600"
+                    />
+                    <span
+                      className="w-3 h-2 rounded-sm"
+                      style={{ backgroundColor: CD_REF_TYPES[t]?.color }}
+                    />
+                    <span className="text-xs font-medium text-slate-700">{t}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+
+            {tab === 'gq' && (
+              <div className="flex flex-col gap-1">
+                <div className="text-[10px] uppercase font-bold text-slate-500">
+                  G-Quadruplexes
+                </div>
+
+                {gqTypes.map((t) => (
+                  <label
+                    key={t}
+                    className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 p-1 rounded"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedGq.includes(t)}
+                      onChange={() => toggleInArray(setSelectedGq, t)}
+                      className="w-3 h-3 accent-pink-600"
+                    />
+                    <span
+                      className="w-3 h-2 rounded-sm"
+                      style={{ backgroundColor: CD_REF_TYPES[t]?.color }}
+                    />
+                    <span className="text-xs font-medium text-slate-700">{t}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+
+            {isSim && (
+              <div className="flex flex-col gap-2 border-t border-slate-200 pt-3">
+                <div className="text-[10px] uppercase font-bold text-slate-500">
+                  {CD_SIM_INFO[tab].ratioLabel}
+                </div>
+
+                <div className="flex justify-between text-xs font-bold text-slate-700">
+                  <span>Ratio</span>
+                  <span className="font-mono">{ratio.toFixed(1)}</span>
+                </div>
+
+                <input
+                  type="range"
+                  min="0"
+                  max="10"
+                  step="0.1"
+                  value={ratio}
+                  onChange={(e) => setRatio(parseFloat(e.target.value))}
+                  className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                />
+
+                <p className="text-[10px] leading-4 text-slate-500">
+                  {CD_SIM_INFO[tab].description}
+                </p>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedProtein(['Alpha-helix', 'Beta-sheet', 'Random Coil']);
+                setSelectedDna(['B-DNA']);
+                setSelectedGq(['G-Quad (Parallel)']);
+                setRatio(0);
+                setNormalize(true);
+              }}
+              className="mt-2 text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-1.5 rounded transition-colors"
+            >
+              Reset Selection
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+};
+
 // ================= CD SPECIFIC CONTENT =================
 const CDAll = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
@@ -1590,11 +2486,15 @@ const CDAll = ({ ctx }) => {
         </div>
       </CollapsibleSection>
 
-      {/* Simulations */}
-      <CollapsibleSection title="Simulations" icon="🧬" defaultOpen={false}>
-        <ProteinCDMixer />
-      </CollapsibleSection>
-    </div>
+
+{/* Simulations */}
+<CollapsibleSection title="Simulations" icon="🧬" defaultOpen={false}>
+  <div className="flex flex-col gap-6">
+    <ProteinCDMixer />
+    <CDSpectraLibrary />
+  </div>
+</CollapsibleSection>
+          </div>
   );
 };
 
