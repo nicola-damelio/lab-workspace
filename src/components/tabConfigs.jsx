@@ -1,7 +1,4 @@
-// tabConfigs.jsx
-// Per-page declarative configuration for TestShellRenderer.
-// Edit these objects to change fields, categories, sample visibility,
-// condition fields, notebook export options, etc.
+// Per-tab declarative configuration for TestShellRenderer.
 
 export const CD_TAB_CONFIG = {
   typeKey: 'cd',
@@ -69,7 +66,13 @@ export const PLATE_TAB_CONFIG = {
   conditionFields: [
     { key: 'experimentDate', label: 'Experiment Date', type: 'date' },
     { key: 'cellsSeeded', label: 'Cells per Well', type: 'number', placeholder: 'e.g. 5000' },
-    { key: 'timeBeforeRevelation', label: 'Time Before Revelation (h)', type: 'number', step: '0.5', placeholder: 'e.g. 72' },
+    {
+      key: 'timeBeforeRevelation',
+      label: 'Time Before Revelation (h)',
+      type: 'number',
+      step: '0.5',
+      placeholder: 'e.g. 72'
+    },
     { key: 'temperature', label: 'Temperature', type: 'text', placeholder: 'e.g. 37°C, 5% CO₂' },
     { key: 'otherConditions', label: 'Other Conditions', type: 'text', placeholder: 'e.g. Serum-free medium' }
   ],
@@ -97,12 +100,11 @@ export const NMR_TAB_CONFIG = {
 
   samples: {
     compounds: true,
-    cellLines: false,
+    cellLines: true,
     compoundLabel: 'Compound / Molecule Label(s)',
     cellLineLabel: 'Cell Lines / Biological Models'
   },
 
-  // Important: legacy NMR images are stored in nmrSpectraImages.
   imagesKey: 'nmrSpectraImages',
 
   conditionFields: [

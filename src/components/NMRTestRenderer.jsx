@@ -1,24 +1,32 @@
 import React from 'react';
-import TestShellRenderer, { CollapsibleSection } from './TestShellRenderer';
+
+import TestShellRenderer from './TestShellRenderer';
 import { NMR_TAB_CONFIG } from './tabConfigs';
 import * as NMRSections from './NMRSections';
 
-/* ============================================================================
-NMR renderer using the shared shell.
+/**
+NMR tab — thin wrapper around the shared shell.
+
 Common sections come from TestShellRenderer.
 NMR-specific sections come from NMRSections.
-========================================================================== */
+*/
 
 const buildNmrNotebookHtml = (checked, ctx) => {
   const t = ctx.activeTest || {};
+
   let html = '';
 
   if (checked.cond) {
+    const sample =
+      (ctx.selectedCompounds && ctx.selectedCompounds.length
+        ? ctx.selectedCompounds.join(', ')
+        : t.compound) || 'N/A';
+
     html += `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;">
-      <b>Compound:</b> ${t.compound || 'N/A'} |
+      <b>Sample:</b> ${sample} |
       <b>Solvent:</b> ${t.solvent || 'N/A'} |
-      <b>Temperature:</b> ${t.temperature || 'N/A'} |
-      <b>Concentration:</b> ${t.concentration || 'N/A'} |
+      <b>Temp:</b> ${t.temperature || 'N/A'} |
+      <b>Conc:</b> ${t.concentration || 'N/A'} |
       <b>Salt:</b> ${t.saltConcentration || 'N/A'} |
       <b>pH:</b> ${t.ph || 'N/A'} |
       <b>Other molecule:</b> ${t.otherMolecule || 'N/A'} |
@@ -75,7 +83,6 @@ const buildNmrNotebookHtml = (checked, ctx) => {
   }
 
   // Formula export is intentionally left empty in this minimal version.
-  // It can be re-added later from the legacy NMR exporter.
   if (checked.formula) {
     html += '';
   }
@@ -83,36 +90,9 @@ const buildNmrNotebookHtml = (checked, ctx) => {
   return html;
 };
 
-const NMRAll = ({ ctx }) => {
-  return (
-    <div className="flex flex-col gap-6">
-      <NMRSections.Toolbar ctx={ctx} />
-
-      <CollapsibleSection title="Sequence & Configuration" icon="🧬">
-        <NMRSections.Setup ctx={ctx} />
-      </CollapsibleSection>
-
-      <CollapsibleSection title="Assignment Data" icon="📋">
-        <NMRSections.Data ctx={ctx} />
-      </CollapsibleSection>
-
-      <CollapsibleSection title="Fitting" icon="📐">
-        <div className="flex flex-col gap-6">
-          <CollapsibleSection title="Error Management" icon="⚠️" defaultOpen={false}>
-            <NMRSections.FittingErrors ctx={ctx} />
-          </CollapsibleSection>
-
-          <CollapsibleSection title="Graphical Parameters" icon="🎨" defaultOpen={false}>
-            <NMRSections.FittingGraphics ctx={ctx} />
-          </CollapsibleSection>
-        </div>
-      </CollapsibleSection>
-
-      <CollapsibleSection title="Simulations" icon="🧬" defaultOpen={false}>
-        <NMRSections.Simulations ctx={ctx} />
-      </CollapsibleSection>
-    </div>
-  );
+const NMR_CUSTOM = {
+  ...NMRSections,
+  buildNotebookHtml: buildNmrNotebookHtml
 };
 
 export const NMRTestRenderer = (props) => {
@@ -120,14 +100,10 @@ export const NMRTestRenderer = (props) => {
     <TestShellRenderer
       {...props}
       config={NMR_TAB_CONFIG}
-      custom={{
-        All: NMRAll,
-        buildNotebookHtml: buildNmrNotebookHtml
-      }}
-      testCategories={NMR_TAB_CONFIG.categories}
+      custom={NMR_CUSTOM}
+      testCategories={props.testCategories || NMR_TAB_CONFIG.categories}
     />
   );
 };
 
 export default NMRTestRenderer;
-

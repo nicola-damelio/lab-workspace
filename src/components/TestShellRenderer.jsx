@@ -2,7 +2,34 @@ import React, { useState, useEffect, useRef } from 'react';
 import { RichTextEditor } from './RichTextEditor';
 
 /* ============================================================================
-TestShellRenderer — SHARED SHELL for CD / Plate / NMR tabs
+TestShellRenderer — shared shell for Plate / NMR / CD tabs.
+
+It renders common sections:
+- Classification
+- Compounds / samples
+- Experimental conditions
+- Linked protocols
+- Agenda
+- Comments & attachments
+- Images
+- Lab notebook export
+
+Type-specific content is injected with the `custom` prop:
+
+custom = {
+  Toolbar,
+  All,
+  Setup,
+  Data,
+  Fitting,
+  FittingErrors,
+  FittingGraphics,
+  Simulations,
+  buildNotebookHtml
+}
+
+If custom.All exists, it is rendered as one block.
+Otherwise Setup/Data/Fitting/Simulations are rendered separately.
 ========================================================================== */
 
 // ================= COLLAPSIBLE SECTION =================
@@ -31,6 +58,7 @@ export const CollapsibleSection = ({
 
         <div className="flex items-center gap-3 shrink-0">
           {headerExtra && <div onClick={(e) => e.stopPropagation()}>{headerExtra}</div>}
+
           <svg
             className={`w-5 h-5 text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
             fill="none"
@@ -64,6 +92,7 @@ export const MultiSelectDropdown = ({
     const h = (e) => {
       if (ref.current && !ref.current.contains(e.target)) setOpen(false);
     };
+
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, []);
@@ -246,6 +275,9 @@ export const TestShellRenderer = ({
 
   const [zoomImage, setZoomImage] = useState(null);
 
+  const showCompounds = config.samples?.compounds !== false;
+  const showCellLines = config.samples?.cellLines !== false;
+
   // ---- multi-protocol ----
   const linkedProtocolIds =
     activeTest.linkedProtocolIds || (linkedProtocolId ? [linkedProtocolId] : []);
@@ -264,8 +296,8 @@ export const TestShellRenderer = ({
   // ---- compounds ----
   const selectedCompounds = Array.isArray(activeTest.selectedCompounds)
     ? activeTest.selectedCompounds
-    : Array.isArray(activeTest.compounds)
-      ? activeTest.compounds.filter(Boolean)
+    : Array.isArray(activeTest.compoundsSelected)
+      ? activeTest.compoundsSelected
       : compound
         ? [compound]
         : [];
@@ -301,6 +333,7 @@ export const TestShellRenderer = ({
     const h = (e) => {
       if (e.key === 'Escape') setZoomImage(null);
     };
+
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
   }, []);
@@ -308,7 +341,8 @@ export const TestShellRenderer = ({
   // ---- condition field renderer ----
   const renderConditionField = (f) => {
     const val = activeTest[f.key] ?? '';
-    const cls = 'w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500';
+    const cls =
+      'w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500';
 
     return (
       <div key={f.key}>
@@ -395,14 +429,12 @@ export const TestShellRenderer = ({
 
     if (builder) {
       html += builder(checked, ctx);
-    } else {
-      if (checked.cond) {
-        const conditionPairs = (config.conditionFields || [])
-          .map((f) => `<b>${f.label}:</b> ${activeTest[f.key] || 'N/A'}`)
-          .join(' | ');
+    } else if (checked.cond) {
+      const conditionPairs = (config.conditionFields || [])
+        .map((f) => `<b>${f.label}:</b> ${activeTest[f.key] || 'N/A'}`)
+        .join(' | ');
 
-        html += `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;">${conditionPairs}</p>`;
-      }
+      html += `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;">${conditionPairs}</p>`;
     }
 
     html += '</div>';
@@ -414,16 +446,24 @@ export const TestShellRenderer = ({
     alert('Data appended successfully to the notes! They will now be visible in the Lab Notebook.');
   };
 
-  const CustomAll = custom.All || null;
+  // ---- custom sections ----
   const CustomToolbar = custom.Toolbar || null;
+  const CustomAll = custom.All || null;
+
+  const SetupSection = config.SetupSection || custom.Setup || null;
+  const DataSection = config.DataSection || custom.Data || null;
+  const FittingSection = config.FittingSection || custom.Fitting || null;
+  const FittingErrors = custom.FittingErrors || null;
+  const FittingGraphics = custom.FittingGraphics || null;
+  const SimulationsSection = config.SimulationsSection || custom.Simulations || null;
 
   return (
     <div className="flex flex-col h-full overflow-hidden relative">
       {TestHeader}
 
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
-        {CustomToolbar && <CustomToolbar ctx={ctx} />}
+      {CustomToolbar && <CustomToolbar ctx={ctx} />}
 
+      <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
         {/* ===== CLASSIFICATION ===== */}
         <CollapsibleSection title="Classification" icon="🏷️">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -445,6 +485,37 @@ export const TestShellRenderer = ({
                   ))}
                 </select>
               </div>
+
+              {showCellLines && (
+                <div>
+                  <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
+                    Cell Lines / Biological Models
+                  </label>
+
+                  <div className="flex flex-wrap gap-2">
+                    {(allCellLines || []).map((cl) => (
+                      <button
+                        key={cl}
+                        onClick={() => toggleCellLine(cl)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
+                          cellLines.includes(cl)
+                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                            : 'bg-white text-slate-600 border-slate-300 hover:border-emerald-400 hover:bg-emerald-50'
+                        }`}
+                      >
+                        {cellLines.includes(cl) ? '✓ ' : ''}
+                        {cl}
+                      </button>
+                    ))}
+
+                    {(allCellLines || []).length === 0 && (
+                      <span className="text-sm text-slate-400 italic">
+                        No cell lines defined. Add them in Definitions & Labels.
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex flex-col gap-3">
@@ -503,32 +574,17 @@ export const TestShellRenderer = ({
           </div>
         </CollapsibleSection>
 
-        {/* ===== COMPOUNDS / BIOLOGICAL MODELS ===== */}
-        {(config.samples?.compounds !== false || config.samples?.cellLines === true) && (
-          <CollapsibleSection title="Compounds & Biological Models" icon="🧪">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {config.samples?.compounds !== false && (
-                <MultiSelectDropdown
-                  label={config.samples?.compoundLabel || 'Compound / Sample Label(s)'}
-                  options={allCmpds || []}
-                  selected={selectedCompounds}
-                  onToggle={toggleCompound}
-                  onClear={() => update({ selectedCompounds: [], compounds: [], compound: '' })}
-                  placeholder="Select compound(s)..."
-                />
-              )}
-
-              {config.samples?.cellLines === true && (
-                <MultiSelectDropdown
-                  label={config.samples?.cellLineLabel || 'Cell Lines / Biological Models'}
-                  options={allCellLines || []}
-                  selected={cellLines}
-                  onToggle={toggleCellLine}
-                  onClear={() => update({ cellLines: [] })}
-                  placeholder="Select cell line(s)..."
-                />
-              )}
-            </div>
+        {/* ===== COMPOUNDS & SAMPLES ===== */}
+        {showCompounds && (
+          <CollapsibleSection title="Compounds & Samples" icon="🧪">
+            <MultiSelectDropdown
+              label={config.samples?.compoundLabel || config.samplesLabel || 'Compound / Sample Label(s)'}
+              options={allCmpds || []}
+              selected={selectedCompounds}
+              onToggle={toggleCompound}
+              onClear={() => update({ selectedCompounds: [], compounds: [], compound: '' })}
+              placeholder="Select compound(s)..."
+            />
           </CollapsibleSection>
         )}
 
@@ -602,73 +658,71 @@ export const TestShellRenderer = ({
         </CollapsibleSection>
 
         {/* ===== AGENDA ===== */}
-        <CollapsibleSection title="Agenda / Planning" icon="📅">
-          <div className="max-w-2xl">
-            <h3 className="text-[11px] font-bold text-slate-600 mb-2 flex justify-between items-center">
-              <span>Schedule / Planning (This Item)</span>
+        <CollapsibleSection title="Agenda" icon="📅" defaultOpen={false}>
+          <h3 className="text-[11px] font-bold text-slate-600 mb-2 flex justify-between items-center">
+            <span>📅 Schedule / Planning (This Item)</span>
 
-              <div className="flex gap-2">
+            <div className="flex gap-2">
+              <input
+                type="date"
+                id={`plan-date-${activeTest.id}`}
+                className="border border-slate-300 px-2 py-1 text-xs rounded bg-white text-slate-800 outline-none focus:border-blue-500"
+              />
+
+              <button
+                onClick={() => {
+                  const el = document.getElementById(`plan-date-${activeTest.id}`);
+                  const d = el ? el.value : '';
+
+                  if (d) {
+                    update({
+                      plan: [...experimentPlan, { id: Date.now(), date: d, task: '' }].sort((a, b) =>
+                        a.date.localeCompare(b.date)
+                      )
+                    });
+                  }
+                }}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs font-bold transition shadow-sm"
+              >
+                Add Task
+              </button>
+            </div>
+          </h3>
+
+          <div className="flex flex-col gap-2 max-h-40 overflow-y-auto custom-scrollbar pr-2">
+            {experimentPlan.length === 0 && (
+              <span className="text-xs text-slate-400 italic">No tasks planned yet.</span>
+            )}
+
+            {experimentPlan.map((item) => (
+              <div
+                key={item.id}
+                className="flex gap-2 items-center bg-slate-50 border border-slate-200 p-1.5 rounded-lg shadow-sm"
+              >
+                <span className="text-[10px] font-bold w-20 text-slate-600 pl-2">{item.date}</span>
+
                 <input
-                  type="date"
-                  id={`plan-date-${activeTest.id}`}
-                  className="border border-slate-300 px-2 py-1 text-xs rounded bg-white text-slate-800 outline-none focus:border-blue-500"
+                  type="text"
+                  value={item.task}
+                  onChange={(e) =>
+                    update({
+                      plan: experimentPlan.map((p) =>
+                        p.id === item.id ? { ...p, task: e.target.value } : p
+                      )
+                    })
+                  }
+                  className="bg-transparent border-none focus:outline-none focus:bg-white focus:ring-1 focus:ring-blue-500 p-1 text-xs flex-1 text-slate-700 rounded transition-all"
+                  placeholder="Task description..."
                 />
 
                 <button
-                  onClick={() => {
-                    const el = document.getElementById(`plan-date-${activeTest.id}`);
-                    const d = el ? el.value : '';
-
-                    if (d) {
-                      update({
-                        plan: [...experimentPlan, { id: Date.now(), date: d, task: '' }].sort((a, b) =>
-                          a.date.localeCompare(b.date)
-                        )
-                      });
-                    }
-                  }}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs font-bold transition shadow-sm"
+                  onClick={() => update({ plan: experimentPlan.filter((p) => p.id !== item.id) })}
+                  className="text-slate-400 hover:text-red-500 text-[10px] font-bold px-2 transition"
                 >
-                  Add Task
+                  ×
                 </button>
               </div>
-            </h3>
-
-            <div className="flex flex-col gap-2 max-h-40 overflow-y-auto custom-scrollbar pr-2">
-              {experimentPlan.length === 0 && (
-                <span className="text-xs text-slate-400 italic">No tasks planned yet.</span>
-              )}
-
-              {experimentPlan.map((item) => (
-                <div
-                  key={item.id}
-                  className="flex gap-2 items-center bg-slate-50 border border-slate-200 p-1.5 rounded-lg shadow-sm"
-                >
-                  <span className="text-[10px] font-bold w-20 text-slate-600 pl-2">{item.date}</span>
-
-                  <input
-                    type="text"
-                    value={item.task}
-                    onChange={(e) =>
-                      update({
-                        plan: experimentPlan.map((p) =>
-                          p.id === item.id ? { ...p, task: e.target.value } : p
-                        )
-                      })
-                    }
-                    className="bg-transparent border-none focus:outline-none focus:bg-white focus:ring-1 focus:ring-blue-500 p-1 text-xs flex-1 text-slate-700 rounded transition-all"
-                    placeholder="Task description..."
-                  />
-
-                  <button
-                    onClick={() => update({ plan: experimentPlan.filter((p) => p.id !== item.id) })}
-                    className="text-slate-400 hover:text-red-500 text-[10px] font-bold px-2 transition"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
+            ))}
           </div>
         </CollapsibleSection>
 
@@ -676,9 +730,7 @@ export const TestShellRenderer = ({
         <CollapsibleSection title="Comments & Attachments" icon="📝">
           <div className="flex flex-col lg:flex-row gap-6">
             <div className="flex-1 flex flex-col h-full min-h-[160px]">
-              <label className="text-xs font-bold text-slate-600 mb-2">
-                Comments & Notes (what you did)
-              </label>
+              <label className="text-xs font-bold text-slate-600 mb-2">Comments & Notes</label>
 
               <RichTextEditor
                 value={comments}
@@ -728,9 +780,7 @@ export const TestShellRenderer = ({
                       </div>
 
                       <button
-                        onClick={() =>
-                          update({ documents: documents.filter((d) => d.id !== doc.id) })
-                        }
+                        onClick={() => update({ documents: documents.filter((d) => d.id !== doc.id) })}
                         className="text-slate-400 hover:text-red-500 font-bold px-1 opacity-0 group-hover:opacity-100"
                       >
                         ×
@@ -742,31 +792,36 @@ export const TestShellRenderer = ({
                 <label
                   className="cursor-pointer text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 hover:bg-blue-100 px-3 py-1.5 rounded-lg shadow-sm transition-colors w-full text-center"
                   onClick={() => {
-                    const url = prompt('Paste external link (Drive, PDF, Image URL):');
+                    const urlsText = prompt(
+                      'Paste external link(s) separated by commas (Drive, PDF, Image URL):'
+                    );
 
-                    if (url && url.trim()) {
-                      let name = url;
+                    if (urlsText && urlsText.trim()) {
+                      const urls = urlsText
+                        .split(',')
+                        .map((s) => s.trim())
+                        .filter(Boolean);
 
-                      try {
-                        const p = new URL(url);
-                        name = p.hostname;
-                      } catch (e) {}
+                      const newDocs = urls.map((url, i) => {
+                        let name = url;
 
-                      update({
-                        documents: [
-                          ...documents,
-                          {
-                            id: Date.now().toString(),
-                            name,
-                            type: 'link',
-                            data: url.trim()
-                          }
-                        ]
+                        try {
+                          name = new URL(url).hostname;
+                        } catch (e) {}
+
+                        return {
+                          id: Date.now().toString() + i + Math.random(),
+                          name,
+                          type: 'link',
+                          data: url
+                        };
                       });
+
+                      update({ documents: [...documents, ...newDocs] });
                     }
                   }}
                 >
-                  + Add Document Link
+                  + Add Document Link(s)
                 </label>
               </div>
             </div>
@@ -783,10 +838,7 @@ export const TestShellRenderer = ({
             <button
               onClick={() => {
                 const url = prompt('Paste image link (Google Drive, Dropbox, or direct URL):');
-
-                if (url && url.trim()) {
-                  update({ [imagesKey]: [...images, url.trim()] });
-                }
+                if (url && url.trim()) update({ [imagesKey]: [...images, url.trim()] });
               }}
               className="bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 font-bold px-3 py-1.5 rounded transition-colors shadow-sm text-xs"
             >
@@ -838,41 +890,79 @@ export const TestShellRenderer = ({
           </div>
         </CollapsibleSection>
 
-        {/* ===== CUSTOM TYPE-SPECIFIC CONTENT ===== */}
-        {CustomAll && <CustomAll ctx={ctx} />}
+        {/* ===== TYPE-SPECIFIC CONTENT ===== */}
+        {CustomAll ? (
+          <CustomAll ctx={ctx} />
+        ) : (
+          <>
+            {SetupSection && <SetupSection ctx={ctx} />}
+            {DataSection && <DataSection ctx={ctx} />}
+
+            {FittingSection ? (
+              <FittingSection ctx={ctx} />
+            ) : (
+              (FittingErrors || FittingGraphics) && (
+                <CollapsibleSection title="Fitting" icon="📐">
+                  <div className="flex flex-col gap-6">
+                    {FittingErrors && (
+                      <CollapsibleSection title="Error Management" icon="⚠️" defaultOpen={false}>
+                        <FittingErrors ctx={ctx} />
+                      </CollapsibleSection>
+                    )}
+
+                    {FittingGraphics && (
+                      <CollapsibleSection title="Graphical Parameters" icon="🎨" defaultOpen={false}>
+                        <FittingGraphics ctx={ctx} />
+                      </CollapsibleSection>
+                    )}
+                  </div>
+                </CollapsibleSection>
+              )
+            )}
+
+            {SimulationsSection && <SimulationsSection ctx={ctx} />}
+          </>
+        )}
 
         {/* ===== LAB NOTEBOOK EXPORT ===== */}
-        <CollapsibleSection title="Lab Notebook Export" icon="📓" defaultOpen={false} className="no-print">
-          <div className="flex flex-col gap-4">
-            <p className="text-sm text-slate-600">
-              Select the data to format and append to the General Comments (Lab Notebook entry).
-            </p>
+        {!config.hideNotebook && notebookChecks.length > 0 && (
+          <CollapsibleSection
+            title="Lab Notebook Export"
+            icon="📓"
+            defaultOpen={false}
+            className="no-print"
+          >
+            <div className="flex flex-col gap-4">
+              <p className="text-sm text-slate-600">
+                Select the data to format and append to the General Comments (Lab Notebook entry).
+              </p>
 
-            <div className="flex flex-wrap gap-4 border border-slate-200 p-4 rounded-lg bg-white shadow-sm">
-              {notebookChecks.map((c) => (
-                <label
-                  key={c.id}
-                  className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600"
-                >
-                  <input
-                    type="checkbox"
-                    id={`nb-${config.typeKey}-${c.id}`}
-                    defaultChecked
-                    className="w-4 h-4 accent-blue-600 cursor-pointer"
-                  />
-                  {c.label}
-                </label>
-              ))}
+              <div className="flex flex-wrap gap-4 border border-slate-200 p-4 rounded-lg bg-white shadow-sm">
+                {notebookChecks.map((c) => (
+                  <label
+                    key={c.id}
+                    className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600"
+                  >
+                    <input
+                      type="checkbox"
+                      id={`nb-${config.typeKey}-${c.id}`}
+                      defaultChecked
+                      className="w-4 h-4 accent-blue-600 cursor-pointer"
+                    />
+                    {c.label}
+                  </label>
+                ))}
+              </div>
+
+              <button
+                onClick={appendToNotebook}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-6 rounded-lg transition-all shadow-sm w-fit border border-indigo-700 flex items-center gap-2"
+              >
+                <span>+</span> Append Data to Lab Notebook
+              </button>
             </div>
-
-            <button
-              onClick={appendToNotebook}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-6 rounded-lg transition-all shadow-sm w-fit border border-indigo-700 flex items-center gap-2"
-            >
-              <span>+</span> Append Data to Lab Notebook
-            </button>
-          </div>
-        </CollapsibleSection>
+          </CollapsibleSection>
+        )}
       </div>
 
       {/* ===== ZOOM IMAGE MODAL ===== */}
