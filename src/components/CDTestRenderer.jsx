@@ -11,9 +11,10 @@ This version:
 • Classification reads testCategories from App.jsx (Definitions & Labels).
 • Experimental Setup defines "Report Metrics" (e.g. CD Intensity at 222 nm).
 • AUTO metrics are READ from the uploaded spectra: each titration point links
-  to a spectrum, and the metric value is interpolated at the metric wavelength
-  (baseline-offset corrected). No manual value entry for AUTO metrics.
-• Report Graph plots the selected metric vs any experimental variable.
+  to a spectrum and the value is interpolated at the metric wavelength
+  (baseline-offset corrected). No manual entry for AUTO metrics.
+• The Report Graph is fully customizable (axes, fonts, line, points, color,
+  grid) and shows a live data preview so you see exactly what gets plotted.
 ========================================================================== */
 
 const SPECTRA_PALETTE = [
@@ -48,6 +49,20 @@ const makeMetric = (name, { wavelength = '', unit = 'mdeg', mode } = {}) => {
 };
 
 const parseNum = (v) => parseFloat(String(v ?? '').replace(',', '.'));
+
+// Accepts plain numbers AND ratio strings like "1:2" -> 0.5, "3:1" -> 3
+const parseXValue = (v) => {
+  if (v === null || v === undefined) return NaN;
+  const s = String(v).trim();
+  if (s === '') return NaN;
+  const ratio = s.match(/^(-?\d+(?:[.,]\d+)?)\s*:\s*(-?\d+(?:[.,]\d+)?)$/);
+  if (ratio) {
+    const a = parseFloat(ratio[1].replace(',', '.'));
+    const b = parseFloat(ratio[2].replace(',', '.'));
+    if (!isNaN(a) && !isNaN(b) && b !== 0) return a / b;
+  }
+  return parseFloat(s.replace(',', '.'));
+};
 
 // ================= SPLINE + CD REFERENCE =================
 class NaturalCubicSpline {
@@ -1387,7 +1402,25 @@ const CDAll = ({ ctx }) => {
     });
   };
 
-  // ===== REPORT GRAPH (metric vs variable) =====
+  // ===== REPORT GRAPH CONFIG (persistent, mirrors the CD chart config) =====
+  const reportChartCfg = {
+    xMin: '',
+    xMax: '',
+    yMin: '',
+    yMax: '',
+    fontSize: 12,
+    lineWidth: 2,
+    pointSize: 4,
+    pointStyle: 'circle',
+    showLine: true,
+    showGrid: true,
+    lineColor: '#7c3aed',
+    ...(activeTest.reportChartCfg || {})
+  };
+  const updateReportCfg = (updates) =>
+    update({ reportChartCfg: { ...reportChartCfg, ...updates } });
+
+  // ===== REPORT GRAPH DATA (single source of truth) =====
   const [reportXVar, setReportXVar] = useState('');
   const [reportYMetricId, setReportYMetricId] = useState('');
   const reportChartRef = useRef(null);
@@ -1397,18 +1430,34 @@ const CDAll = ({ ctx }) => {
   const reportYMetric =
     reportMetrics.find((m) => m.id === reportYMetricId) || reportMetrics[0] || null;
 
-  const reportPoints = useMemo(() => {
-    if (!reportXVarEff || !reportYMetric) return [];
-    return titrationRows
-      .map((row, idx) => {
-        const x = parseNum((row.values || {})[reportXVarEff]);
-        const y = parseNum(getRowMetricValue(row, reportYMetric));
-        return { x, y, rowIdx: idx + 1, notes: row.notes || '' };
-      })
-      .filter((p) => !isNaN(p.x) && !isNaN(p.y))
-      .sort((a, b) => a.x - b.x);
+  const reportRowStatus = useMemo(() => {
+    if (!reportYMetric) return [];
+    return titrationRows.map((row, idx) => {
+      const x = parseXValue((row.values || {})[reportXVarEff]);
+      const y = parseNum(getRowMetricValue(row, reportYMetric));
+      const spectrum = parsedSpectra.find((s) => s.id === row.spectrumId);
+      let status = 'ok';
+      let reason = '';
+      if (!reportXVarEff || isNaN(x)) {
+        status = 'skip';
+        reason = reportXVarEff ? `Invalid ${reportXVarEff}` : 'No X variable';
+      } else if (isNaN(y)) {
+        status = 'skip';
+        reason = reportYMetric.mode === 'auto'
+          ? (spectrum ? `No data at ${reportYMetric.wavelength} nm` : 'No spectrum linked')
+          : 'No value entered';
+      }
+      return { idx: idx + 1, x, y, spectrumTitle: spectrum ? spectrum.title : '—', status, reason };
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [titrationRows, reportXVarEff, reportYMetric, parsedSpectra, parsedWavelengths, gOff]);
+
+  const reportPoints = useMemo(() => {
+    return reportRowStatus
+      .filter((r) => r.status === 'ok')
+      .map((r) => ({ x: r.x, y: r.y, rowIdx: r.idx }))
+      .sort((a, b) => a.x - b.x);
+  }, [reportRowStatus]);
 
   // ===== CHARTS =====
   const cdChartRef = useRef(null);
@@ -1483,8 +1532,8 @@ const CDAll = ({ ctx }) => {
           },
           tooltip: {
             callbacks: {
-              title: (ctx) => `${ctx[0].parsed.x.toFixed(1)} nm`,
-              label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(3)} mdeg`
+              title: (c) => `${c[0].parsed.x.toFixed(1)} nm`,
+              label: (c) => `${c.dataset.label}: ${c.parsed.y.toFixed(3)} mdeg`
             }
           }
         }
@@ -1518,7 +1567,7 @@ const CDAll = ({ ctx }) => {
           },
           tooltip: {
             callbacks: {
-              label: (ctx) => `${ctx.label}: ${ctx.parsed.toFixed(1)}%`
+              label: (c) => `${c.label}: ${c.parsed.toFixed(1)}%`
             }
           }
         }
@@ -1529,65 +1578,75 @@ const CDAll = ({ ctx }) => {
     };
   }, [structureComposition]);
 
-  // ===== REPORT GRAPH CHART =====
+  // ===== REPORT GRAPH CHART (fully customizable) =====
   useEffect(() => {
     if (!reportChartRef.current) return;
     if (reportChart.current) reportChart.current.destroy();
+    reportChart.current = null;
     if (!reportYMetric) return;
+
+    const fontSize = parseFloat(reportChartCfg.fontSize) || 12;
+    const lineWidth = parseFloat(reportChartCfg.lineWidth) || 2;
+    const pointSize = parseFloat(reportChartCfg.pointSize) || 4;
+    const pointStyle = reportChartCfg.pointStyle || 'circle';
+    const showLine = reportChartCfg.showLine !== false;
+    const showGrid = reportChartCfg.showGrid !== false;
+    const color = reportChartCfg.lineColor || '#7c3aed';
+    const num = (v) => (v !== '' && v !== undefined && !isNaN(parseFloat(v)) ? parseFloat(v) : undefined);
 
     reportChart.current = new Chart(reportChartRef.current, {
       type: 'line',
       data: {
-        datasets: [
-          {
-            label: reportYMetric.name,
-            data: reportPoints,
-            borderColor: '#7c3aed',
-            backgroundColor: '#7c3aed33',
-            pointBackgroundColor: '#7c3aed',
-            pointRadius: 4,
-            pointHoverRadius: 6,
-            showLine: reportPoints.length > 1,
-            tension: 0.2
-          }
-        ]
+        datasets: [{
+          label: reportYMetric.name,
+          data: reportPoints,
+          borderColor: color,
+          backgroundColor: color + '33',
+          pointBackgroundColor: color,
+          pointBorderColor: '#ffffff',
+          pointBorderWidth: 1,
+          pointStyle,
+          pointRadius: pointSize,
+          pointHoverRadius: pointSize + 2,
+          showLine: showLine && reportPoints.length > 1,
+          borderWidth: lineWidth,
+          tension: 0.15,
+          fill: false
+        }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
+        interaction: { mode: 'nearest', intersect: false },
         scales: {
           x: {
             type: 'linear',
-            title: {
-              display: true,
-              text: reportXVarEff,
-              font: { size: (chartCfg.fontSize || 12) + 1, weight: 'bold' },
-              color: '#334155'
-            },
-            ticks: { font: { size: chartCfg.fontSize || 12 }, color: '#64748b' },
-            grid: { color: '#f1f5f9' }
+            min: num(reportChartCfg.xMin),
+            max: num(reportChartCfg.xMax),
+            title: { display: true, text: reportXVarEff, font: { size: fontSize + 2, weight: 'bold' }, color: '#334155' },
+            ticks: { font: { size: fontSize }, color: '#64748b' },
+            grid: { color: showGrid ? '#f1f5f9' : 'rgba(0,0,0,0)' }
           },
           y: {
+            min: num(reportChartCfg.yMin),
+            max: num(reportChartCfg.yMax),
             title: {
               display: true,
               text: `${reportYMetric.name}${reportYMetric.unit ? ` (${reportYMetric.unit})` : ''}`,
-              font: { size: (chartCfg.fontSize || 12) + 1, weight: 'bold' },
+              font: { size: fontSize + 2, weight: 'bold' },
               color: '#334155'
             },
-            ticks: { font: { size: chartCfg.fontSize || 12 }, color: '#64748b' },
-            grid: { color: '#f1f5f9' }
+            ticks: { font: { size: fontSize }, color: '#64748b' },
+            grid: { color: showGrid ? '#f1f5f9' : 'rgba(0,0,0,0)' }
           }
         },
         plugins: {
-          legend: {
-            position: 'top',
-            labels: { font: { size: chartCfg.fontSize || 12, weight: 'bold' }, usePointStyle: true }
-          },
+          legend: { position: 'top', labels: { font: { size: fontSize, weight: 'bold' }, usePointStyle: true } },
           tooltip: {
             callbacks: {
-              title: (ctx) => `Point ${ctx[0].raw.rowIdx}`,
-              label: (ctx) =>
-                `${reportXVarEff} = ${ctx.parsed.x} → ${reportYMetric.name} = ${ctx.parsed.y} ${reportYMetric.unit || ''}`.trim()
+              title: (c) => `Point ${c[0].raw.rowIdx}`,
+              label: (c) =>
+                `${reportXVarEff} = ${c.parsed.x} → ${reportYMetric.name} = ${c.parsed.y} ${reportYMetric.unit || ''}`.trim()
             }
           }
         }
@@ -1597,7 +1656,7 @@ const CDAll = ({ ctx }) => {
     return () => {
       if (reportChart.current) reportChart.current.destroy();
     };
-  }, [reportPoints, reportXVarEff, reportYMetric, chartCfg.fontSize]);
+  }, [reportPoints, reportXVarEff, reportYMetric, reportChartCfg]);
 
   // ===== EXPORT =====
   const exportXLS = () => {
@@ -2212,53 +2271,191 @@ const CDAll = ({ ctx }) => {
           </CollapsibleSection>
 
           <CollapsibleSection title="Graphical Parameters" icon="🎨" defaultOpen={false}>
-            {/* ===== REPORT GRAPH ===== */}
-            <div className="border border-purple-200 bg-white rounded-lg p-4 flex flex-col mb-6">
-              <div className="flex flex-wrap items-center gap-3 mb-3">
-                <h2 className="text-sm font-bold text-purple-700 uppercase tracking-widest">
-                  📌 Report Graph (Setup-defined readout)
-                </h2>
-                <div className="flex items-center gap-2">
-                  <label className="text-xs font-bold text-slate-600">X axis:</label>
+            {/* ===== REPORT GRAPH — Titration / Melting Curve ===== */}
+            <div className="border border-purple-200 bg-white rounded-xl p-5 flex flex-col mb-6 shadow-sm">
+              {/* Header */}
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-4 border-b border-purple-100 pb-3">
+                <div className="flex items-start gap-2">
+                  <span className="text-xl">📌</span>
+                  <div>
+                    <h2 className="text-sm font-bold text-purple-700 uppercase tracking-widest">
+                      Report Graph — Titration / Melting Curve
+                    </h2>
+                    <p className="text-[11px] text-slate-500 max-w-xl mt-0.5">
+                      Plots a Setup-defined readout (e.g. CD intensity at 222 nm) against an experimental
+                      variable (e.g. Temperature). Y values are read automatically from the linked spectra.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => updateReportCfg({ xMin: '', xMax: '', yMin: '', yMax: '' })}
+                  className="text-[10px] font-bold text-slate-500 hover:text-purple-700 bg-slate-50 hover:bg-purple-50 border border-slate-200 px-2.5 py-1.5 rounded-lg transition-colors"
+                >
+                  ⟳ Reset axes
+                </button>
+              </div>
+
+              {/* Axis selectors + color */}
+              <div className="flex flex-wrap items-end gap-4 mb-4">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase">X axis — Experimental variable</label>
                   <select
                     value={reportXVarEff}
                     onChange={(e) => setReportXVar(e.target.value)}
-                    className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white outline-none focus:border-purple-500"
+                    className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-purple-500 font-semibold min-w-[160px]"
                   >
                     {titrationVariables.length === 0 && <option value="">No variables</option>}
-                    {titrationVariables.map((v) => (
-                      <option key={v} value={v}>{v}</option>
-                    ))}
+                    {titrationVariables.map((v) => <option key={v} value={v}>{v}</option>)}
                   </select>
                 </div>
-                <div className="flex items-center gap-2">
-                  <label className="text-xs font-bold text-slate-600">Y axis:</label>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase">Y axis — Reported metric</label>
                   <select
                     value={reportYMetric ? reportYMetric.id : ''}
                     onChange={(e) => setReportYMetricId(e.target.value)}
-                    className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white outline-none focus:border-purple-500"
+                    className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-purple-500 font-semibold min-w-[200px]"
                   >
-                    {reportMetrics.length === 0 && <option value="">No metrics</option>}
+                    {reportMetrics.length === 0 && <option value="">No metrics — add one in Setup</option>}
                     {reportMetrics.map((m) => (
                       <option key={m.id} value={m.id}>
-                        {m.name}{m.unit ? ` (${m.unit})` : ''}{m.mode === 'auto' ? ' [auto]' : ''}
+                        {m.name}{m.unit ? ` (${m.unit})` : ''}{m.mode === 'auto' ? ' • auto' : ' • manual'}
                       </option>
                     ))}
                   </select>
                 </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase">Line / point color</label>
+                  <input
+                    type="color"
+                    value={reportChartCfg.lineColor || '#7c3aed'}
+                    onChange={(e) => updateReportCfg({ lineColor: e.target.value })}
+                    className="w-12 h-9 rounded border border-slate-300 cursor-pointer bg-white"
+                  />
+                </div>
               </div>
-              <div className="relative" style={{ minHeight: '320px' }}>
+
+              {/* Customization panel */}
+              <div className="border border-purple-100 bg-purple-50/40 rounded-lg p-3 mb-4">
+                <div className="text-[10px] font-bold text-purple-700 uppercase mb-2">Chart customization</div>
+                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
+                  {[
+                    ['X min', 'xMin'], ['X max', 'xMax'], ['Y min', 'yMin'], ['Y max', 'yMax'],
+                    ['Font size', 'fontSize'], ['Line width', 'lineWidth'], ['Point size', 'pointSize']
+                  ].map(([lbl, k]) => (
+                    <div key={k} className="flex flex-col gap-1">
+                      <label className="text-[9px] font-bold text-slate-500 uppercase">{lbl}</label>
+                      <input
+                        type="number"
+                        placeholder={k === 'fontSize' ? '12' : k === 'lineWidth' ? '2' : k === 'pointSize' ? '4' : 'Auto'}
+                        value={reportChartCfg[k]}
+                        onChange={(e) => updateReportCfg({ [k]: e.target.value })}
+                        className="border border-slate-300 rounded-md px-2 py-1.5 text-xs outline-none focus:border-purple-500 bg-white w-full"
+                      />
+                    </div>
+                  ))}
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[9px] font-bold text-slate-500 uppercase">Point style</label>
+                    <select
+                      value={reportChartCfg.pointStyle}
+                      onChange={(e) => updateReportCfg({ pointStyle: e.target.value })}
+                      className="border border-slate-300 rounded-md px-2 py-1.5 text-xs bg-white outline-none focus:border-purple-500"
+                    >
+                      {['circle', 'rect', 'rectRot', 'triangle', 'star', 'cross'].map((s) => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-4 mt-3">
+                  <label className="flex items-center gap-2 text-xs font-semibold text-slate-600 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={reportChartCfg.showLine !== false}
+                      onChange={(e) => updateReportCfg({ showLine: e.target.checked })}
+                      className="w-3.5 h-3.5 accent-purple-600"
+                    />
+                    Connect with line
+                  </label>
+                  <label className="flex items-center gap-2 text-xs font-semibold text-slate-600 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={reportChartCfg.showGrid !== false}
+                      onChange={(e) => updateReportCfg({ showGrid: e.target.checked })}
+                      className="w-3.5 h-3.5 accent-purple-600"
+                    />
+                    Show grid
+                  </label>
+                </div>
+              </div>
+
+              {/* Data preview */}
+              <div className="border border-slate-200 rounded-lg overflow-hidden mb-4">
+                <div className="bg-slate-100 px-3 py-2 flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-slate-600 uppercase">
+                    Data preview — {reportPoints.length} point{reportPoints.length === 1 ? '' : 's'} plotted
+                  </span>
+                  {reportRowStatus.some((r) => r.status === 'skip') && (
+                    <span className="text-[10px] font-bold text-amber-600">
+                      ⚠️ {reportRowStatus.filter((r) => r.status === 'skip').length} skipped
+                    </span>
+                  )}
+                </div>
+                <div className="max-h-40 overflow-y-auto custom-scrollbar">
+                  <table className="w-full text-xs text-left">
+                    <thead className="text-[9px] text-slate-400 uppercase bg-slate-50 sticky top-0">
+                      <tr>
+                        <th className="px-3 py-1.5">#</th>
+                        <th className="px-3 py-1.5">{reportXVarEff || 'X'}</th>
+                        <th className="px-3 py-1.5">{reportYMetric ? reportYMetric.name : 'Y'}</th>
+                        <th className="px-3 py-1.5">Linked spectrum</th>
+                        <th className="px-3 py-1.5">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {reportRowStatus.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="px-3 py-4 text-center text-slate-400 italic">
+                            Add a metric and titration points to see data here.
+                          </td>
+                        </tr>
+                      ) : (
+                        reportRowStatus.map((r) => (
+                          <tr key={r.idx} className={r.status === 'skip' ? 'bg-amber-50/50' : 'bg-white'}>
+                            <td className="px-3 py-1.5 font-bold text-slate-400">{r.idx}</td>
+                            <td className="px-3 py-1.5 font-mono">
+                              {isNaN(r.x) ? <span className="text-slate-300">—</span> : r.x}
+                            </td>
+                            <td className="px-3 py-1.5 font-mono">
+                              {isNaN(r.y) ? <span className="text-slate-300">—</span> : r.y}
+                            </td>
+                            <td className="px-3 py-1.5 text-slate-500">{r.spectrumTitle}</td>
+                            <td className="px-3 py-1.5">
+                              {r.status === 'ok'
+                                ? <span className="text-emerald-600 font-bold">✓ plotted</span>
+                                : <span className="text-amber-600 font-bold" title={r.reason}>⚠ {r.reason}</span>}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Chart */}
+              <div className="relative flex-1" style={{ minHeight: '360px' }}>
                 <canvas ref={reportChartRef}></canvas>
               </div>
               {(reportPoints.length === 0 || !reportYMetric) && (
-                <p className="text-xs text-slate-400 italic mt-2">
-                  Define a report metric in Experiment Setup, link each titration point to its spectrum (or use
-                  “Auto-Link Spectra to Points”), and the values will be read automatically from the uploaded data.
-                  X values like ratios must be numeric (e.g. 0.5 instead of 1:2).
+                <p className="text-xs text-slate-400 italic mt-2 text-center">
+                  No points to plot yet. Define a metric in Experiment Setup, link each titration point to a
+                  spectrum, and enter numeric X values (ratios like “1:2” are converted automatically).
                 </p>
               )}
             </div>
 
+            {/* CD spectra chart config */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               {[
                 ['X Min (nm)', 'xMin'],
