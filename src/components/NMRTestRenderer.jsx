@@ -1,15 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
-  ScatterChart,
-  Scatter,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  ReferenceArea,
-  BarChart,
-  Bar
+  ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  ReferenceArea, BarChart, Bar
 } from 'recharts';
 import { RichTextEditor } from './RichTextEditor';
 
@@ -22,354 +14,164 @@ const MANUAL_COLOR = '#16a34a';
 // ================= DATABASES =================
 const AMINO_ACID_DB = {
   A: {
-    name: 'Alanine',
-    code3: 'Ala',
-    atoms: ['HN', 'Hα', 'Hβ'],
+    name: 'Alanine', code3: 'Ala', atoms: ['HN', 'Hα', 'Hβ'],
     ranges: { HN: { min: 7.8, max: 8.6 }, Hα: { min: 4.0, max: 4.5 }, Hβ: { min: 1.2, max: 1.5 } },
-    cosy: [['HN', 'Hα'], ['Hα', 'Hβ']],
-    spinSystems: [['HN', 'Hα', 'Hβ']]
+    cosy: [['HN', 'Hα'], ['Hα', 'Hβ']], spinSystems: [['HN', 'Hα', 'Hβ']]
   },
   C: {
-    name: 'Cysteine',
-    code3: 'Cys',
-    atoms: ['HN', 'Hα', 'Hβ1', 'Hβ2'],
-    ranges: {
-      HN: { min: 7.9, max: 8.7 },
-      Hα: { min: 4.4, max: 4.8 },
-      Hβ1: { min: 2.8, max: 3.3 },
-      Hβ2: { min: 2.8, max: 3.3 }
-    },
+    name: 'Cysteine', code3: 'Cys', atoms: ['HN', 'Hα', 'Hβ1', 'Hβ2'],
+    ranges: { HN: { min: 7.9, max: 8.7 }, Hα: { min: 4.4, max: 4.8 }, Hβ1: { min: 2.8, max: 3.3 }, Hβ2: { min: 2.8, max: 3.3 } },
     cosy: [['HN', 'Hα'], ['Hα', 'Hβ1'], ['Hα', 'Hβ2'], ['Hβ1', 'Hβ2']],
     spinSystems: [['HN', 'Hα', 'Hβ1', 'Hβ2']]
   },
   D: {
-    name: 'Aspartic Acid',
-    code3: 'Asp',
-    atoms: ['HN', 'Hα', 'Hβ1', 'Hβ2'],
-    ranges: {
-      HN: { min: 8.0, max: 8.8 },
-      Hα: { min: 4.4, max: 4.9 },
-      Hβ1: { min: 2.5, max: 2.9 },
-      Hβ2: { min: 2.5, max: 2.9 }
-    },
+    name: 'Aspartic Acid', code3: 'Asp', atoms: ['HN', 'Hα', 'Hβ1', 'Hβ2'],
+    ranges: { HN: { min: 8.0, max: 8.8 }, Hα: { min: 4.4, max: 4.9 }, Hβ1: { min: 2.5, max: 2.9 }, Hβ2: { min: 2.5, max: 2.9 } },
     cosy: [['HN', 'Hα'], ['Hα', 'Hβ1'], ['Hα', 'Hβ2'], ['Hβ1', 'Hβ2']],
     spinSystems: [['HN', 'Hα', 'Hβ1', 'Hβ2']]
   },
   E: {
-    name: 'Glutamic Acid',
-    code3: 'Glu',
-    atoms: ['HN', 'Hα', 'Hβ', 'Hγ'],
-    ranges: {
-      HN: { min: 8.0, max: 8.7 },
-      Hα: { min: 4.1, max: 4.5 },
-      Hβ: { min: 1.9, max: 2.3 },
-      Hγ: { min: 2.1, max: 2.5 }
-    },
-    cosy: [['HN', 'Hα'], ['Hα', 'Hβ'], ['Hβ', 'Hγ']],
-    spinSystems: [['HN', 'Hα', 'Hβ', 'Hγ']]
+    name: 'Glutamic Acid', code3: 'Glu', atoms: ['HN', 'Hα', 'Hβ', 'Hγ'],
+    ranges: { HN: { min: 8.0, max: 8.7 }, Hα: { min: 4.1, max: 4.5 }, Hβ: { min: 1.9, max: 2.3 }, Hγ: { min: 2.1, max: 2.5 } },
+    cosy: [['HN', 'Hα'], ['Hα', 'Hβ'], ['Hβ', 'Hγ']], spinSystems: [['HN', 'Hα', 'Hβ', 'Hγ']]
   },
   F: {
-    name: 'Phenylalanine',
-    code3: 'Phe',
-    atoms: ['HN', 'Hα', 'Hβ1', 'Hβ2', 'Hδ', 'Hε', 'Hζ'],
+    name: 'Phenylalanine', code3: 'Phe', atoms: ['HN', 'Hα', 'Hβ1', 'Hβ2', 'Hδ', 'Hε', 'Hζ'],
     ranges: {
-      HN: { min: 8.0, max: 8.8 },
-      Hα: { min: 4.4, max: 4.9 },
-      Hβ1: { min: 2.9, max: 3.3 },
-      Hβ2: { min: 2.9, max: 3.3 },
-      Hδ: { min: 7.1, max: 7.4 },
-      Hε: { min: 7.2, max: 7.5 },
-      Hζ: { min: 7.1, max: 7.4 }
+      HN: { min: 8.0, max: 8.8 }, Hα: { min: 4.4, max: 4.9 }, Hβ1: { min: 2.9, max: 3.3 }, Hβ2: { min: 2.9, max: 3.3 },
+      Hδ: { min: 7.1, max: 7.4 }, Hε: { min: 7.2, max: 7.5 }, Hζ: { min: 7.1, max: 7.4 }
     },
-    cosy: [
-      ['HN', 'Hα'],
-      ['Hα', 'Hβ1'],
-      ['Hα', 'Hβ2'],
-      ['Hβ1', 'Hβ2'],
-      ['Hδ', 'Hε'],
-      ['Hε', 'Hζ']
-    ],
-    spinSystems: [
-      ['HN', 'Hα', 'Hβ1', 'Hβ2'],
-      ['Hδ', 'Hε', 'Hζ']
-    ]
+    cosy: [['HN', 'Hα'], ['Hα', 'Hβ1'], ['Hα', 'Hβ2'], ['Hβ1', 'Hβ2'], ['Hδ', 'Hε'], ['Hε', 'Hζ']],
+    spinSystems: [['HN', 'Hα', 'Hβ1', 'Hβ2'], ['Hδ', 'Hε', 'Hζ']]
   },
   G: {
-    name: 'Glycine',
-    code3: 'Gly',
-    atoms: ['HN', 'Hα1', 'Hα2'],
+    name: 'Glycine', code3: 'Gly', atoms: ['HN', 'Hα1', 'Hα2'],
     ranges: { HN: { min: 8.0, max: 8.8 }, Hα1: { min: 3.8, max: 4.1 }, Hα2: { min: 3.8, max: 4.1 } },
-    cosy: [['HN', 'Hα1'], ['HN', 'Hα2'], ['Hα1', 'Hα2']],
-    spinSystems: [['HN', 'Hα1', 'Hα2']]
+    cosy: [['HN', 'Hα1'], ['HN', 'Hα2'], ['Hα1', 'Hα2']], spinSystems: [['HN', 'Hα1', 'Hα2']]
   },
   H: {
-    name: 'Histidine',
-    code3: 'His',
-    atoms: ['HN', 'Hα', 'Hβ1', 'Hβ2', 'Hδ2', 'Hε1'],
+    name: 'Histidine', code3: 'His', atoms: ['HN', 'Hα', 'Hβ1', 'Hβ2', 'Hδ2', 'Hε1'],
     ranges: {
-      HN: { min: 8.0, max: 8.8 },
-      Hα: { min: 4.5, max: 5.0 },
-      Hβ1: { min: 3.0, max: 3.4 },
-      Hβ2: { min: 3.0, max: 3.4 },
-      Hδ2: { min: 6.9, max: 7.3 },
-      Hε1: { min: 7.6, max: 8.1 }
+      HN: { min: 8.0, max: 8.8 }, Hα: { min: 4.5, max: 5.0 }, Hβ1: { min: 3.0, max: 3.4 }, Hβ2: { min: 3.0, max: 3.4 },
+      Hδ2: { min: 6.9, max: 7.3 }, Hε1: { min: 7.6, max: 8.1 }
     },
-    cosy: [
-      ['HN', 'Hα'],
-      ['Hα', 'Hβ1'],
-      ['Hα', 'Hβ2'],
-      ['Hβ1', 'Hβ2'],
-      ['Hδ2', 'Hε1']
-    ],
-    spinSystems: [
-      ['HN', 'Hα', 'Hβ1', 'Hβ2'],
-      ['Hδ2', 'Hε1']
-    ]
+    cosy: [['HN', 'Hα'], ['Hα', 'Hβ1'], ['Hα', 'Hβ2'], ['Hβ1', 'Hβ2'], ['Hδ2', 'Hε1']],
+    spinSystems: [['HN', 'Hα', 'Hβ1', 'Hβ2'], ['Hδ2', 'Hε1']]
   },
   I: {
-    name: 'Isoleucine',
-    code3: 'Ile',
-    atoms: ['HN', 'Hα', 'Hβ', 'Hγ1', 'Hγ2', 'Hδ1'],
+    name: 'Isoleucine', code3: 'Ile', atoms: ['HN', 'Hα', 'Hβ', 'Hγ1', 'Hγ2', 'Hδ1'],
     ranges: {
-      HN: { min: 7.7, max: 8.5 },
-      Hα: { min: 4.0, max: 4.4 },
-      Hβ: { min: 1.7, max: 2.0 },
-      Hγ1: { min: 1.1, max: 1.6 },
-      Hγ2: { min: 0.8, max: 1.1 },
-      Hδ1: { min: 0.7, max: 1.0 }
+      HN: { min: 7.7, max: 8.5 }, Hα: { min: 4.0, max: 4.4 }, Hβ: { min: 1.7, max: 2.0 },
+      Hγ1: { min: 1.1, max: 1.6 }, Hγ2: { min: 0.8, max: 1.1 }, Hδ1: { min: 0.7, max: 1.0 }
     },
-    cosy: [
-      ['HN', 'Hα'],
-      ['Hα', 'Hβ'],
-      ['Hβ', 'Hγ1'],
-      ['Hβ', 'Hγ2'],
-      ['Hγ1', 'Hδ1']
-    ],
+    cosy: [['HN', 'Hα'], ['Hα', 'Hβ'], ['Hβ', 'Hγ1'], ['Hβ', 'Hγ2'], ['Hγ1', 'Hδ1']],
     spinSystems: [['HN', 'Hα', 'Hβ', 'Hγ1', 'Hγ2', 'Hδ1']]
   },
   K: {
-    name: 'Lysine',
-    code3: 'Lys',
-    atoms: ['HN', 'Hα', 'Hβ', 'Hγ', 'Hδ', 'Hε', 'Hζ(NH3)'],
+    name: 'Lysine', code3: 'Lys', atoms: ['HN', 'Hα', 'Hβ', 'Hγ', 'Hδ', 'Hε', 'Hζ(NH3)'],
     ranges: {
-      HN: { min: 7.9, max: 8.6 },
-      Hα: { min: 4.1, max: 4.5 },
-      Hβ: { min: 1.6, max: 1.9 },
-      Hγ: { min: 1.3, max: 1.6 },
-      Hδ: { min: 1.5, max: 1.8 },
-      Hε: { min: 2.8, max: 3.2 },
-      'Hζ(NH3)': { min: 7.2, max: 7.6 }
+      HN: { min: 7.9, max: 8.6 }, Hα: { min: 4.1, max: 4.5 }, Hβ: { min: 1.6, max: 1.9 }, Hγ: { min: 1.3, max: 1.6 },
+      Hδ: { min: 1.5, max: 1.8 }, Hε: { min: 2.8, max: 3.2 }, 'Hζ(NH3)': { min: 7.2, max: 7.6 }
     },
-    cosy: [
-      ['HN', 'Hα'],
-      ['Hα', 'Hβ'],
-      ['Hβ', 'Hγ'],
-      ['Hγ', 'Hδ'],
-      ['Hδ', 'Hε'],
-      ['Hε', 'Hζ(NH3)']
-    ],
-    spinSystems: [
-      ['HN', 'Hα', 'Hβ', 'Hγ', 'Hδ', 'Hε'],
-      ['Hζ(NH3)']
-    ]
+    cosy: [['HN', 'Hα'], ['Hα', 'Hβ'], ['Hβ', 'Hγ'], ['Hγ', 'Hδ'], ['Hδ', 'Hε'], ['Hε', 'Hζ(NH3)']],
+    spinSystems: [['HN', 'Hα', 'Hβ', 'Hγ', 'Hδ', 'Hε'], ['Hζ(NH3)']]
   },
   L: {
-    name: 'Leucine',
-    code3: 'Leu',
-    atoms: ['HN', 'Hα', 'Hβ', 'Hγ', 'Hδ1', 'Hδ2'],
+    name: 'Leucine', code3: 'Leu', atoms: ['HN', 'Hα', 'Hβ', 'Hγ', 'Hδ1', 'Hδ2'],
     ranges: {
-      HN: { min: 7.9, max: 8.5 },
-      Hα: { min: 4.2, max: 4.7 },
-      Hβ: { min: 1.5, max: 1.9 },
-      Hγ: { min: 1.4, max: 1.8 },
-      Hδ1: { min: 0.8, max: 1.0 },
-      Hδ2: { min: 0.8, max: 1.0 }
+      HN: { min: 7.9, max: 8.5 }, Hα: { min: 4.2, max: 4.7 }, Hβ: { min: 1.5, max: 1.9 }, Hγ: { min: 1.4, max: 1.8 },
+      Hδ1: { min: 0.8, max: 1.0 }, Hδ2: { min: 0.8, max: 1.0 }
     },
-    cosy: [
-      ['HN', 'Hα'],
-      ['Hα', 'Hβ'],
-      ['Hβ', 'Hγ'],
-      ['Hγ', 'Hδ1'],
-      ['Hγ', 'Hδ2']
-    ],
+    cosy: [['HN', 'Hα'], ['Hα', 'Hβ'], ['Hβ', 'Hγ'], ['Hγ', 'Hδ1'], ['Hγ', 'Hδ2']],
     spinSystems: [['HN', 'Hα', 'Hβ', 'Hγ', 'Hδ1', 'Hδ2']]
   },
   M: {
-    name: 'Methionine',
-    code3: 'Met',
-    atoms: ['HN', 'Hα', 'Hβ', 'Hγ', 'Hε(CH3)'],
+    name: 'Methionine', code3: 'Met', atoms: ['HN', 'Hα', 'Hβ', 'Hγ', 'Hε(CH3)'],
     ranges: {
-      HN: { min: 7.9, max: 8.6 },
-      Hα: { min: 4.3, max: 4.7 },
-      Hβ: { min: 1.9, max: 2.3 },
-      Hγ: { min: 2.4, max: 2.7 },
-      'Hε(CH3)': { min: 2.0, max: 2.2 }
+      HN: { min: 7.9, max: 8.6 }, Hα: { min: 4.3, max: 4.7 }, Hβ: { min: 1.9, max: 2.3 },
+      Hγ: { min: 2.4, max: 2.7 }, 'Hε(CH3)': { min: 2.0, max: 2.2 }
     },
     cosy: [['HN', 'Hα'], ['Hα', 'Hβ'], ['Hβ', 'Hγ']],
     spinSystems: [['HN', 'Hα', 'Hβ', 'Hγ'], ['Hε(CH3)']]
   },
   N: {
-    name: 'Asparagine',
-    code3: 'Asn',
-    atoms: ['HN', 'Hα', 'Hβ1', 'Hβ2', 'Hδ21', 'Hδ22'],
+    name: 'Asparagine', code3: 'Asn', atoms: ['HN', 'Hα', 'Hβ1', 'Hβ2', 'Hδ21', 'Hδ22'],
     ranges: {
-      HN: { min: 8.0, max: 8.8 },
-      Hα: { min: 4.4, max: 4.9 },
-      Hβ1: { min: 2.6, max: 3.0 },
-      Hβ2: { min: 2.6, max: 3.0 },
-      Hδ21: { min: 6.8, max: 7.2 },
-      Hδ22: { min: 7.4, max: 7.8 }
+      HN: { min: 8.0, max: 8.8 }, Hα: { min: 4.4, max: 4.9 }, Hβ1: { min: 2.6, max: 3.0 }, Hβ2: { min: 2.6, max: 3.0 },
+      Hδ21: { min: 6.8, max: 7.2 }, Hδ22: { min: 7.4, max: 7.8 }
     },
-    cosy: [
-      ['HN', 'Hα'],
-      ['Hα', 'Hβ1'],
-      ['Hα', 'Hβ2'],
-      ['Hβ1', 'Hβ2'],
-      ['Hδ21', 'Hδ22']
-    ],
-    spinSystems: [
-      ['HN', 'Hα', 'Hβ1', 'Hβ2'],
-      ['Hδ21', 'Hδ22']
-    ]
+    cosy: [['HN', 'Hα'], ['Hα', 'Hβ1'], ['Hα', 'Hβ2'], ['Hβ1', 'Hβ2'], ['Hδ21', 'Hδ22']],
+    spinSystems: [['HN', 'Hα', 'Hβ1', 'Hβ2'], ['Hδ21', 'Hδ22']]
   },
   P: {
-    name: 'Proline',
-    code3: 'Pro',
-    atoms: ['Hα', 'Hβ1', 'Hβ2', 'Hγ1', 'Hγ2', 'Hδ1', 'Hδ2'],
+    name: 'Proline', code3: 'Pro', atoms: ['Hα', 'Hβ1', 'Hβ2', 'Hγ1', 'Hγ2', 'Hδ1', 'Hδ2'],
     ranges: {
-      Hα: { min: 4.2, max: 4.6 },
-      Hβ1: { min: 1.8, max: 2.4 },
-      Hβ2: { min: 1.8, max: 2.4 },
-      Hγ1: { min: 1.8, max: 2.1 },
-      Hγ2: { min: 1.8, max: 2.1 },
-      Hδ1: { min: 3.4, max: 3.8 },
-      Hδ2: { min: 3.4, max: 3.8 }
+      Hα: { min: 4.2, max: 4.6 }, Hβ1: { min: 1.8, max: 2.4 }, Hβ2: { min: 1.8, max: 2.4 },
+      Hγ1: { min: 1.8, max: 2.1 }, Hγ2: { min: 1.8, max: 2.1 }, Hδ1: { min: 3.4, max: 3.8 }, Hδ2: { min: 3.4, max: 3.8 }
     },
     cosy: [
-      ['Hα', 'Hβ1'],
-      ['Hα', 'Hβ2'],
-      ['Hβ1', 'Hβ2'],
-      ['Hβ1', 'Hγ1'],
-      ['Hβ2', 'Hγ2'],
-      ['Hγ1', 'Hγ2'],
-      ['Hγ1', 'Hδ1'],
-      ['Hγ2', 'Hδ2'],
-      ['Hδ1', 'Hδ2']
+      ['Hα', 'Hβ1'], ['Hα', 'Hβ2'], ['Hβ1', 'Hβ2'], ['Hβ1', 'Hγ1'], ['Hβ2', 'Hγ2'],
+      ['Hγ1', 'Hγ2'], ['Hγ1', 'Hδ1'], ['Hγ2', 'Hδ2'], ['Hδ1', 'Hδ2']
     ],
     spinSystems: [['Hα', 'Hβ1', 'Hβ2', 'Hγ1', 'Hγ2', 'Hδ1', 'Hδ2']]
   },
   Q: {
-    name: 'Glutamine',
-    code3: 'Gln',
-    atoms: ['HN', 'Hα', 'Hβ', 'Hγ', 'Hε21', 'Hε22'],
+    name: 'Glutamine', code3: 'Gln', atoms: ['HN', 'Hα', 'Hβ', 'Hγ', 'Hε21', 'Hε22'],
     ranges: {
-      HN: { min: 8.0, max: 8.6 },
-      Hα: { min: 4.1, max: 4.5 },
-      Hβ: { min: 1.9, max: 2.3 },
-      Hγ: { min: 2.2, max: 2.6 },
-      Hε21: { min: 6.7, max: 7.1 },
-      Hε22: { min: 7.3, max: 7.7 }
+      HN: { min: 8.0, max: 8.6 }, Hα: { min: 4.1, max: 4.5 }, Hβ: { min: 1.9, max: 2.3 },
+      Hγ: { min: 2.2, max: 2.6 }, Hε21: { min: 6.7, max: 7.1 }, Hε22: { min: 7.3, max: 7.7 }
     },
     cosy: [['HN', 'Hα'], ['Hα', 'Hβ'], ['Hβ', 'Hγ'], ['Hε21', 'Hε22']],
     spinSystems: [['HN', 'Hα', 'Hβ', 'Hγ'], ['Hε21', 'Hε22']]
   },
   R: {
-    name: 'Arginine',
-    code3: 'Arg',
-    atoms: ['HN', 'Hα', 'Hβ', 'Hγ', 'Hδ', 'Hε'],
+    name: 'Arginine', code3: 'Arg', atoms: ['HN', 'Hα', 'Hβ', 'Hγ', 'Hδ', 'Hε'],
     ranges: {
-      HN: { min: 8.0, max: 8.6 },
-      Hα: { min: 4.1, max: 4.5 },
-      Hβ: { min: 1.6, max: 2.0 },
-      Hγ: { min: 1.4, max: 1.8 },
-      Hδ: { min: 3.0, max: 3.3 },
-      Hε: { min: 7.0, max: 7.4 }
+      HN: { min: 8.0, max: 8.6 }, Hα: { min: 4.1, max: 4.5 }, Hβ: { min: 1.6, max: 2.0 },
+      Hγ: { min: 1.4, max: 1.8 }, Hδ: { min: 3.0, max: 3.3 }, Hε: { min: 7.0, max: 7.4 }
     },
     cosy: [['HN', 'Hα'], ['Hα', 'Hβ'], ['Hβ', 'Hγ'], ['Hγ', 'Hδ'], ['Hδ', 'Hε']],
     spinSystems: [['HN', 'Hα', 'Hβ', 'Hγ', 'Hδ'], ['Hε']]
   },
   S: {
-    name: 'Serine',
-    code3: 'Ser',
-    atoms: ['HN', 'Hα', 'Hβ1', 'Hβ2'],
-    ranges: {
-      HN: { min: 8.0, max: 8.6 },
-      Hα: { min: 4.3, max: 4.8 },
-      Hβ1: { min: 3.7, max: 4.0 },
-      Hβ2: { min: 3.7, max: 4.0 }
-    },
+    name: 'Serine', code3: 'Ser', atoms: ['HN', 'Hα', 'Hβ1', 'Hβ2'],
+    ranges: { HN: { min: 8.0, max: 8.6 }, Hα: { min: 4.3, max: 4.8 }, Hβ1: { min: 3.7, max: 4.0 }, Hβ2: { min: 3.7, max: 4.0 } },
     cosy: [['HN', 'Hα'], ['Hα', 'Hβ1'], ['Hα', 'Hβ2'], ['Hβ1', 'Hβ2']],
     spinSystems: [['HN', 'Hα', 'Hβ1', 'Hβ2']]
   },
   T: {
-    name: 'Threonine',
-    code3: 'Thr',
-    atoms: ['HN', 'Hα', 'Hβ', 'Hγ2'],
-    ranges: {
-      HN: { min: 7.8, max: 8.5 },
-      Hα: { min: 4.2, max: 4.6 },
-      Hβ: { min: 4.0, max: 4.4 },
-      Hγ2: { min: 1.0, max: 1.3 }
-    },
+    name: 'Threonine', code3: 'Thr', atoms: ['HN', 'Hα', 'Hβ', 'Hγ2'],
+    ranges: { HN: { min: 7.8, max: 8.5 }, Hα: { min: 4.2, max: 4.6 }, Hβ: { min: 4.0, max: 4.4 }, Hγ2: { min: 1.0, max: 1.3 } },
     cosy: [['HN', 'Hα'], ['Hα', 'Hβ'], ['Hβ', 'Hγ2']],
     spinSystems: [['HN', 'Hα', 'Hβ', 'Hγ2']]
   },
   V: {
-    name: 'Valine',
-    code3: 'Val',
-    atoms: ['HN', 'Hα', 'Hβ', 'Hγ1', 'Hγ2'],
+    name: 'Valine', code3: 'Val', atoms: ['HN', 'Hα', 'Hβ', 'Hγ1', 'Hγ2'],
     ranges: {
-      HN: { min: 7.8, max: 8.5 },
-      Hα: { min: 4.0, max: 4.4 },
-      Hβ: { min: 1.9, max: 2.3 },
-      Hγ1: { min: 0.8, max: 1.1 },
-      Hγ2: { min: 0.8, max: 1.1 }
+      HN: { min: 7.8, max: 8.5 }, Hα: { min: 4.0, max: 4.4 }, Hβ: { min: 1.9, max: 2.3 },
+      Hγ1: { min: 0.8, max: 1.1 }, Hγ2: { min: 0.8, max: 1.1 }
     },
     cosy: [['HN', 'Hα'], ['Hα', 'Hβ'], ['Hβ', 'Hγ1'], ['Hβ', 'Hγ2']],
     spinSystems: [['HN', 'Hα', 'Hβ', 'Hγ1', 'Hγ2']]
   },
   W: {
-    name: 'Tryptophan',
-    code3: 'Trp',
-    atoms: ['HN', 'Hα', 'Hβ1', 'Hβ2', 'Hδ1', 'Hε3', 'Hζ2', 'Hη2', 'Hζ3'],
+    name: 'Tryptophan', code3: 'Trp', atoms: ['HN', 'Hα', 'Hβ1', 'Hβ2', 'Hδ1', 'Hε3', 'Hζ2', 'Hη2', 'Hζ3'],
     ranges: {
-      HN: { min: 7.9, max: 8.7 },
-      Hα: { min: 4.5, max: 5.0 },
-      Hβ1: { min: 3.1, max: 3.5 },
-      Hβ2: { min: 3.1, max: 3.5 },
-      Hδ1: { min: 10.0, max: 10.5 },
-      Hε3: { min: 7.4, max: 7.7 },
-      Hζ2: { min: 7.3, max: 7.6 },
-      Hη2: { min: 7.0, max: 7.3 },
-      Hζ3: { min: 6.9, max: 7.2 }
+      HN: { min: 7.9, max: 8.7 }, Hα: { min: 4.5, max: 5.0 }, Hβ1: { min: 3.1, max: 3.5 }, Hβ2: { min: 3.1, max: 3.5 },
+      Hδ1: { min: 10.0, max: 10.5 }, Hε3: { min: 7.4, max: 7.7 }, Hζ2: { min: 7.3, max: 7.6 },
+      Hη2: { min: 7.0, max: 7.3 }, Hζ3: { min: 6.9, max: 7.2 }
     },
     cosy: [
-      ['HN', 'Hα'],
-      ['Hα', 'Hβ1'],
-      ['Hα', 'Hβ2'],
-      ['Hβ1', 'Hβ2'],
-      ['Hδ1', 'Hε3'],
-      ['Hε3', 'Hζ3'],
-      ['Hζ3', 'Hη2'],
-      ['Hη2', 'Hζ2']
+      ['HN', 'Hα'], ['Hα', 'Hβ1'], ['Hα', 'Hβ2'], ['Hβ1', 'Hβ2'],
+      ['Hδ1', 'Hε3'], ['Hε3', 'Hζ3'], ['Hζ3', 'Hη2'], ['Hη2', 'Hζ2']
     ],
-    spinSystems: [
-      ['HN', 'Hα', 'Hβ1', 'Hβ2'],
-      ['Hδ1'],
-      ['Hε3', 'Hζ3', 'Hη2', 'Hζ2']
-    ]
+    spinSystems: [['HN', 'Hα', 'Hβ1', 'Hβ2'], ['Hδ1'], ['Hε3', 'Hζ3', 'Hη2', 'Hζ2']]
   },
   Y: {
-    name: 'Tyrosine',
-    code3: 'Tyr',
-    atoms: ['HN', 'Hα', 'Hβ1', 'Hβ2', 'Hδ', 'Hε'],
+    name: 'Tyrosine', code3: 'Tyr', atoms: ['HN', 'Hα', 'Hβ1', 'Hβ2', 'Hδ', 'Hε'],
     ranges: {
-      HN: { min: 7.9, max: 8.7 },
-      Hα: { min: 4.4, max: 4.9 },
-      Hβ1: { min: 2.8, max: 3.2 },
-      Hβ2: { min: 2.8, max: 3.2 },
-      Hδ: { min: 6.9, max: 7.2 },
-      Hε: { min: 6.6, max: 6.9 }
+      HN: { min: 7.9, max: 8.7 }, Hα: { min: 4.4, max: 4.9 }, Hβ1: { min: 2.8, max: 3.2 }, Hβ2: { min: 2.8, max: 3.2 },
+      Hδ: { min: 6.9, max: 7.2 }, Hε: { min: 6.6, max: 6.9 }
     },
     cosy: [['HN', 'Hα'], ['Hα', 'Hβ1'], ['Hα', 'Hβ2'], ['Hβ1', 'Hβ2'], ['Hδ', 'Hε']],
     spinSystems: [['HN', 'Hα', 'Hβ1', 'Hβ2'], ['Hδ', 'Hε']]
@@ -379,313 +181,142 @@ const AMINO_ACID_DB = {
 const NUCLEOTIDE_DB = {
   DNA: {
     A: {
-      name: 'Deoxyadenosine',
-      code3: 'dA',
-      base: 'purine',
-      atoms: ['H8', 'H2', "H1'", "H2'", "H2''", "H3'", "H4'", "H5'", "H5''"],
+      name: 'Deoxyadenosine', code3: 'dA', base: 'purine',
+      atoms: ['H8', 'H2', "H1' ", "H2' ", "H2'' ", "H3' ", "H4' ", "H5' ", "H5'' "],
       ranges: {
-        H8: { min: 7.9, max: 8.4 },
-        H2: { min: 7.7, max: 8.3 },
-        "H1'": { min: 5.9, max: 6.4 },
-        "H2'": { min: 2.2, max: 2.8 },
-        "H2''": { min: 2.5, max: 2.9 },
-        "H3'": { min: 4.7, max: 5.1 },
-        "H4'": { min: 4.1, max: 4.5 },
-        "H5'": { min: 3.8, max: 4.3 },
-        "H5''": { min: 3.7, max: 4.2 }
+        H8: { min: 7.9, max: 8.4 }, H2: { min: 7.7, max: 8.3 }, "H1' ": { min: 5.9, max: 6.4 },
+        "H2' ": { min: 2.2, max: 2.8 }, "H2'' ": { min: 2.5, max: 2.9 }, "H3' ": { min: 4.7, max: 5.1 },
+        "H4' ": { min: 4.1, max: 4.5 }, "H5' ": { min: 3.8, max: 4.3 }, "H5'' ": { min: 3.7, max: 4.2 }
       },
-      cosy: [
-        ["H1'", "H2'"],
-        ["H1'", "H2''"],
-        ["H2'", "H3'"],
-        ["H3'", "H4'"],
-        ["H4'", "H5'"],
-        ["H4'", "H5''"],
-        ["H5'", "H5''"]
-      ],
-      spinSystems: [["H1'", "H2'", "H2''", "H3'", "H4'", "H5'", "H5''"]]
+      cosy: [["H1' ", "H2' "], ["H1' ", "H2'' "], ["H2' ", "H3' "], ["H3' ", "H4' "], ["H4' ", "H5' "], ["H4' ", "H5'' "], ["H5' ", "H5'' "]],
+      spinSystems: [["H1' ", "H2' ", "H2'' ", "H3' ", "H4' ", "H5' ", "H5'' "]]
     },
     G: {
-      name: 'Deoxyguanosine',
-      code3: 'dG',
-      base: 'purine',
-      atoms: ['H8', "H1'", "H2'", "H2''", "H3'", "H4'", "H5'", "H5''"],
+      name: 'Deoxyguanosine', code3: 'dG', base: 'purine',
+      atoms: ['H8', "H1' ", "H2' ", "H2'' ", "H3' ", "H4' ", "H5' ", "H5'' "],
       ranges: {
-        H8: { min: 7.6, max: 8.2 },
-        "H1'": { min: 5.6, max: 6.2 },
-        "H2'": { min: 2.2, max: 2.8 },
-        "H2''": { min: 2.5, max: 3.0 },
-        "H3'": { min: 4.7, max: 5.1 },
-        "H4'": { min: 4.0, max: 4.5 },
-        "H5'": { min: 3.8, max: 4.3 },
-        "H5''": { min: 3.7, max: 4.2 }
+        H8: { min: 7.6, max: 8.2 }, "H1' ": { min: 5.6, max: 6.2 }, "H2' ": { min: 2.2, max: 2.8 },
+        "H2'' ": { min: 2.5, max: 3.0 }, "H3' ": { min: 4.7, max: 5.1 }, "H4' ": { min: 4.0, max: 4.5 },
+        "H5' ": { min: 3.8, max: 4.3 }, "H5'' ": { min: 3.7, max: 4.2 }
       },
-      cosy: [
-        ["H1'", "H2'"],
-        ["H1'", "H2''"],
-        ["H2'", "H3'"],
-        ["H3'", "H4'"],
-        ["H4'", "H5'"],
-        ["H4'", "H5''"],
-        ["H5'", "H5''"]
-      ],
-      spinSystems: [["H1'", "H2'", "H2''", "H3'", "H4'", "H5'", "H5''"]]
+      cosy: [["H1' ", "H2' "], ["H1' ", "H2'' "], ["H2' ", "H3' "], ["H3' ", "H4' "], ["H4' ", "H5' "], ["H4' ", "H5'' "], ["H5' ", "H5'' "]],
+      spinSystems: [["H1' ", "H2' ", "H2'' ", "H3' ", "H4' ", "H5' ", "H5'' "]]
     },
     C: {
-      name: 'Deoxycytidine',
-      code3: 'dC',
-      base: 'pyrimidine',
-      atoms: ['H6', 'H5', "H1'", "H2'", "H2''", "H3'", "H4'", "H5'", "H5''"],
+      name: 'Deoxycytidine', code3: 'dC', base: 'pyrimidine',
+      atoms: ['H6', 'H5', "H1' ", "H2' ", "H2'' ", "H3' ", "H4' ", "H5' ", "H5'' "],
       ranges: {
-        H6: { min: 7.3, max: 8.0 },
-        H5: { min: 5.2, max: 5.9 },
-        "H1'": { min: 5.8, max: 6.4 },
-        "H2'": { min: 2.0, max: 2.7 },
-        "H2''": { min: 2.2, max: 2.9 },
-        "H3'": { min: 4.7, max: 5.1 },
-        "H4'": { min: 4.0, max: 4.5 },
-        "H5'": { min: 3.8, max: 4.3 },
-        "H5''": { min: 3.6, max: 4.2 }
+        H6: { min: 7.3, max: 8.0 }, H5: { min: 5.2, max: 5.9 }, "H1' ": { min: 5.8, max: 6.4 },
+        "H2' ": { min: 2.0, max: 2.7 }, "H2'' ": { min: 2.2, max: 2.9 }, "H3' ": { min: 4.7, max: 5.1 },
+        "H4' ": { min: 4.0, max: 4.5 }, "H5' ": { min: 3.8, max: 4.3 }, "H5'' ": { min: 3.6, max: 4.2 }
       },
-      cosy: [
-        ['H5', 'H6'],
-        ["H1'", "H2'"],
-        ["H1'", "H2''"],
-        ["H2'", "H3'"],
-        ["H3'", "H4'"],
-        ["H4'", "H5'"],
-        ["H4'", "H5''"],
-        ["H5'", "H5''"]
-      ],
-      spinSystems: [
-        ["H1'", "H2'", "H2''", "H3'", "H4'", "H5'", "H5''"],
-        ['H5', 'H6']
-      ]
+      cosy: [['H5', 'H6'], ["H1' ", "H2' "], ["H1' ", "H2'' "], ["H2' ", "H3' "], ["H3' ", "H4' "], ["H4' ", "H5' "], ["H4' ", "H5'' "], ["H5' ", "H5'' "]],
+      spinSystems: [["H1' ", "H2' ", "H2'' ", "H3' ", "H4' ", "H5' ", "H5'' "], ['H5', 'H6']]
     },
     T: {
-      name: 'Thymidine',
-      code3: 'T',
-      base: 'pyrimidine',
-      atoms: ['H6', 'H7(CH3)', "H1'", "H2'", "H2''", "H3'", "H4'", "H5'", "H5''"],
+      name: 'Thymidine', code3: 'T', base: 'pyrimidine',
+      atoms: ['H6', 'H7(CH3)', "H1' ", "H2' ", "H2'' ", "H3' ", "H4' ", "H5' ", "H5'' "],
       ranges: {
-        H6: { min: 7.2, max: 7.9 },
-        'H7(CH3)': { min: 1.6, max: 2.0 },
-        "H1'": { min: 5.9, max: 6.4 },
-        "H2'": { min: 1.9, max: 2.5 },
-        "H2''": { min: 2.1, max: 2.7 },
-        "H3'": { min: 4.7, max: 5.1 },
-        "H4'": { min: 4.0, max: 4.5 },
-        "H5'": { min: 3.8, max: 4.3 },
-        "H5''": { min: 3.6, max: 4.2 }
+        H6: { min: 7.2, max: 7.9 }, 'H7(CH3)': { min: 1.6, max: 2.0 }, "H1' ": { min: 5.9, max: 6.4 },
+        "H2' ": { min: 1.9, max: 2.5 }, "H2'' ": { min: 2.1, max: 2.7 }, "H3' ": { min: 4.7, max: 5.1 },
+        "H4' ": { min: 4.0, max: 4.5 }, "H5' ": { min: 3.8, max: 4.3 }, "H5'' ": { min: 3.6, max: 4.2 }
       },
-      cosy: [
-        ["H1'", "H2'"],
-        ["H1'", "H2''"],
-        ["H2'", "H3'"],
-        ["H3'", "H4'"],
-        ["H4'", "H5'"],
-        ["H4'", "H5''"],
-        ["H5'", "H5''"]
-      ],
-      spinSystems: [
-        ["H1'", "H2'", "H2''", "H3'", "H4'", "H5'", "H5''"],
-        ['H7(CH3)']
-      ]
+      cosy: [["H1' ", "H2' "], ["H1' ", "H2'' "], ["H2' ", "H3' "], ["H3' ", "H4' "], ["H4' ", "H5' "], ["H4' ", "H5'' "], ["H5' ", "H5'' "]],
+      spinSystems: [["H1' ", "H2' ", "H2'' ", "H3' ", "H4' ", "H5' ", "H5'' "], ['H7(CH3)']]
     }
   },
   RNA: {
     A: {
-      name: 'Adenosine',
-      code3: 'A',
-      base: 'purine',
-      atoms: ['H8', 'H2', "H1'", "H2'", "OH2'", "H3'", "H4'", "H5'", "H5''"],
+      name: 'Adenosine', code3: 'A', base: 'purine',
+      atoms: ['H8', 'H2', "H1' ", "H2' ", "OH2' ", "H3' ", "H4' ", "H5' ", "H5'' "],
       ranges: {
-        H8: { min: 7.9, max: 8.5 },
-        H2: { min: 7.8, max: 8.4 },
-        "H1'": { min: 5.7, max: 6.2 },
-        "H2'": { min: 4.4, max: 4.9 },
-        "OH2'": { min: 5.0, max: 5.6 },
-        "H3'": { min: 4.2, max: 4.7 },
-        "H4'": { min: 4.1, max: 4.6 },
-        "H5'": { min: 3.9, max: 4.4 },
-        "H5''": { min: 3.8, max: 4.3 }
+        H8: { min: 7.9, max: 8.5 }, H2: { min: 7.8, max: 8.4 }, "H1' ": { min: 5.7, max: 6.2 },
+        "H2' ": { min: 4.4, max: 4.9 }, "OH2' ": { min: 5.0, max: 5.6 }, "H3' ": { min: 4.2, max: 4.7 },
+        "H4' ": { min: 4.1, max: 4.6 }, "H5' ": { min: 3.9, max: 4.4 }, "H5'' ": { min: 3.8, max: 4.3 }
       },
-      cosy: [
-        ["H1'", "H2'"],
-        ["H2'", "H3'"],
-        ["H3'", "H4'"],
-        ["H4'", "H5'"],
-        ["H4'", "H5''"],
-        ["H5'", "H5''"]
-      ],
-      spinSystems: [["H1'", "H2'", "H3'", "H4'", "H5'", "H5''"]]
+      cosy: [["H1' ", "H2' "], ["H2' ", "H3' "], ["H3' ", "H4' "], ["H4' ", "H5' "], ["H4' ", "H5'' "], ["H5' ", "H5'' "]],
+      spinSystems: [["H1' ", "H2' ", "H3' ", "H4' ", "H5' ", "H5'' "]]
     },
     G: {
-      name: 'Guanosine',
-      code3: 'G',
-      base: 'purine',
-      atoms: ['H8', "H1'", "H2'", "OH2'", "H3'", "H4'", "H5'", "H5''"],
+      name: 'Guanosine', code3: 'G', base: 'purine',
+      atoms: ['H8', "H1' ", "H2' ", "OH2' ", "H3' ", "H4' ", "H5' ", "H5'' "],
       ranges: {
-        H8: { min: 7.6, max: 8.3 },
-        "H1'": { min: 5.5, max: 6.1 },
-        "H2'": { min: 4.3, max: 4.9 },
-        "OH2'": { min: 5.0, max: 5.6 },
-        "H3'": { min: 4.2, max: 4.7 },
-        "H4'": { min: 4.0, max: 4.6 },
-        "H5'": { min: 3.9, max: 4.4 },
-        "H5''": { min: 3.8, max: 4.3 }
+        H8: { min: 7.6, max: 8.3 }, "H1' ": { min: 5.5, max: 6.1 }, "H2' ": { min: 4.3, max: 4.9 },
+        "OH2' ": { min: 5.0, max: 5.6 }, "H3' ": { min: 4.2, max: 4.7 }, "H4' ": { min: 4.0, max: 4.6 },
+        "H5' ": { min: 3.9, max: 4.4 }, "H5'' ": { min: 3.8, max: 4.3 }
       },
-      cosy: [
-        ["H1'", "H2'"],
-        ["H2'", "H3'"],
-        ["H3'", "H4'"],
-        ["H4'", "H5'"],
-        ["H4'", "H5''"],
-        ["H5'", "H5''"]
-      ],
-      spinSystems: [["H1'", "H2'", "H3'", "H4'", "H5'", "H5''"]]
+      cosy: [["H1' ", "H2' "], ["H2' ", "H3' "], ["H3' ", "H4' "], ["H4' ", "H5' "], ["H4' ", "H5'' "], ["H5' ", "H5'' "]],
+      spinSystems: [["H1' ", "H2' ", "H3' ", "H4' ", "H5' ", "H5'' "]]
     },
     C: {
-      name: 'Cytidine',
-      code3: 'C',
-      base: 'pyrimidine',
-      atoms: ['H6', 'H5', "H1'", "H2'", "OH2'", "H3'", "H4'", "H5'", "H5''"],
+      name: 'Cytidine', code3: 'C', base: 'pyrimidine',
+      atoms: ['H6', 'H5', "H1' ", "H2' ", "OH2' ", "H3' ", "H4' ", "H5' ", "H5'' "],
       ranges: {
-        H6: { min: 7.4, max: 8.1 },
-        H5: { min: 5.3, max: 6.0 },
-        "H1'": { min: 5.6, max: 6.2 },
-        "H2'": { min: 4.1, max: 4.7 },
-        "OH2'": { min: 5.0, max: 5.6 },
-        "H3'": { min: 4.2, max: 4.7 },
-        "H4'": { min: 4.0, max: 4.5 },
-        "H5'": { min: 3.8, max: 4.4 },
-        "H5''": { min: 3.7, max: 4.3 }
+        H6: { min: 7.4, max: 8.1 }, H5: { min: 5.3, max: 6.0 }, "H1' ": { min: 5.6, max: 6.2 },
+        "H2' ": { min: 4.1, max: 4.7 }, "OH2' ": { min: 5.0, max: 5.6 }, "H3' ": { min: 4.2, max: 4.7 },
+        "H4' ": { min: 4.0, max: 4.5 }, "H5' ": { min: 3.8, max: 4.4 }, "H5'' ": { min: 3.7, max: 4.3 }
       },
-      cosy: [
-        ['H5', 'H6'],
-        ["H1'", "H2'"],
-        ["H2'", "H3'"],
-        ["H3'", "H4'"],
-        ["H4'", "H5'"],
-        ["H4'", "H5''"],
-        ["H5'", "H5''"]
-      ],
-      spinSystems: [
-        ["H1'", "H2'", "H3'", "H4'", "H5'", "H5''"],
-        ['H5', 'H6']
-      ]
+      cosy: [['H5', 'H6'], ["H1' ", "H2' "], ["H2' ", "H3' "], ["H3' ", "H4' "], ["H4' ", "H5' "], ["H4' ", "H5'' "], ["H5' ", "H5'' "]],
+      spinSystems: [["H1' ", "H2' ", "H3' ", "H4' ", "H5' ", "H5'' "], ['H5', 'H6']]
     },
     U: {
-      name: 'Uridine',
-      code3: 'U',
-      base: 'pyrimidine',
-      atoms: ['H6', 'H5', "H1'", "H2'", "OH2'", "H3'", "H4'", "H5'", "H5''"],
+      name: 'Uridine', code3: 'U', base: 'pyrimidine',
+      atoms: ['H6', 'H5', "H1' ", "H2' ", "OH2' ", "H3' ", "H4' ", "H5' ", "H5'' "],
       ranges: {
-        H6: { min: 7.4, max: 8.1 },
-        H5: { min: 5.3, max: 6.0 },
-        "H1'": { min: 5.4, max: 6.0 },
-        "H2'": { min: 4.1, max: 4.7 },
-        "OH2'": { min: 5.0, max: 5.6 },
-        "H3'": { min: 4.1, max: 4.7 },
-        "H4'": { min: 4.0, max: 4.5 },
-        "H5'": { min: 3.8, max: 4.4 },
-        "H5''": { min: 3.7, max: 4.3 }
+        H6: { min: 7.4, max: 8.1 }, H5: { min: 5.3, max: 6.0 }, "H1' ": { min: 5.4, max: 6.0 },
+        "H2' ": { min: 4.1, max: 4.7 }, "OH2' ": { min: 5.0, max: 5.6 }, "H3' ": { min: 4.1, max: 4.7 },
+        "H4' ": { min: 4.0, max: 4.5 }, "H5' ": { min: 3.8, max: 4.4 }, "H5'' ": { min: 3.7, max: 4.3 }
       },
-      cosy: [
-        ['H5', 'H6'],
-        ["H1'", "H2'"],
-        ["H2'", "H3'"],
-        ["H3'", "H4'"],
-        ["H4'", "H5'"],
-        ["H4'", "H5''"],
-        ["H5'", "H5''"]
-      ],
-      spinSystems: [
-        ["H1'", "H2'", "H3'", "H4'", "H5'", "H5''"],
-        ['H5', 'H6']
-      ]
+      cosy: [['H5', 'H6'], ["H1' ", "H2' "], ["H2' ", "H3' "], ["H3' ", "H4' "], ["H4' ", "H5' "], ["H4' ", "H5'' "], ["H5' ", "H5'' "]],
+      spinSystems: [["H1' ", "H2' ", "H3' ", "H4' ", "H5' ", "H5'' "], ['H5', 'H6']]
     }
   }
 };
 
 const SUGAR_DB = {
   GLC: {
-    name: 'D-Glucose',
-    code3: 'Glc',
-    atoms: ['H1', 'H2', 'H3', 'H4', 'H5', 'H6a', 'H6b'],
+    name: 'D-Glucose', code3: 'Glc', atoms: ['H1', 'H2', 'H3', 'H4', 'H5', 'H6a', 'H6b'],
     ranges: {
-      H1: { min: 4.55, max: 5.25 },
-      H2: { min: 3.4, max: 3.7 },
-      H3: { min: 3.6, max: 3.9 },
-      H4: { min: 3.35, max: 3.65 },
-      H5: { min: 3.55, max: 3.85 },
-      H6a: { min: 3.65, max: 3.95 },
-      H6b: { min: 3.7, max: 4.0 }
+      H1: { min: 4.55, max: 5.25 }, H2: { min: 3.4, max: 3.7 }, H3: { min: 3.6, max: 3.9 },
+      H4: { min: 3.35, max: 3.65 }, H5: { min: 3.55, max: 3.85 }, H6a: { min: 3.65, max: 3.95 }, H6b: { min: 3.7, max: 4.0 }
     },
     cosy: [['H1', 'H2'], ['H2', 'H3'], ['H3', 'H4'], ['H4', 'H5'], ['H5', 'H6a'], ['H5', 'H6b'], ['H6a', 'H6b']],
     spinSystems: [['H1', 'H2', 'H3', 'H4', 'H5', 'H6a', 'H6b']]
   },
   GAL: {
-    name: 'D-Galactose',
-    code3: 'Gal',
-    atoms: ['H1', 'H2', 'H3', 'H4', 'H5', 'H6a', 'H6b'],
+    name: 'D-Galactose', code3: 'Gal', atoms: ['H1', 'H2', 'H3', 'H4', 'H5', 'H6a', 'H6b'],
     ranges: {
-      H1: { min: 4.55, max: 5.25 },
-      H2: { min: 3.5, max: 3.85 },
-      H3: { min: 3.6, max: 3.95 },
-      H4: { min: 3.85, max: 4.15 },
-      H5: { min: 3.7, max: 4.0 },
-      H6a: { min: 3.6, max: 3.9 },
-      H6b: { min: 3.65, max: 3.95 }
+      H1: { min: 4.55, max: 5.25 }, H2: { min: 3.5, max: 3.85 }, H3: { min: 3.6, max: 3.95 },
+      H4: { min: 3.85, max: 4.15 }, H5: { min: 3.7, max: 4.0 }, H6a: { min: 3.6, max: 3.9 }, H6b: { min: 3.65, max: 3.95 }
     },
     cosy: [['H1', 'H2'], ['H2', 'H3'], ['H3', 'H4'], ['H4', 'H5'], ['H5', 'H6a'], ['H5', 'H6b'], ['H6a', 'H6b']],
     spinSystems: [['H1', 'H2', 'H3', 'H4', 'H5', 'H6a', 'H6b']]
   },
   MAN: {
-    name: 'D-Mannose',
-    code3: 'Man',
-    atoms: ['H1', 'H2', 'H3', 'H4', 'H5', 'H6a', 'H6b'],
+    name: 'D-Mannose', code3: 'Man', atoms: ['H1', 'H2', 'H3', 'H4', 'H5', 'H6a', 'H6b'],
     ranges: {
-      H1: { min: 4.7, max: 5.2 },
-      H2: { min: 3.7, max: 4.0 },
-      H3: { min: 3.6, max: 3.9 },
-      H4: { min: 3.55, max: 3.85 },
-      H5: { min: 3.6, max: 3.95 },
-      H6a: { min: 3.6, max: 3.95 },
-      H6b: { min: 3.65, max: 4.0 }
+      H1: { min: 4.7, max: 5.2 }, H2: { min: 3.7, max: 4.0 }, H3: { min: 3.6, max: 3.9 },
+      H4: { min: 3.55, max: 3.85 }, H5: { min: 3.6, max: 3.95 }, H6a: { min: 3.6, max: 3.95 }, H6b: { min: 3.65, max: 4.0 }
     },
     cosy: [['H1', 'H2'], ['H2', 'H3'], ['H3', 'H4'], ['H4', 'H5'], ['H5', 'H6a'], ['H5', 'H6b'], ['H6a', 'H6b']],
     spinSystems: [['H1', 'H2', 'H3', 'H4', 'H5', 'H6a', 'H6b']]
   },
   FUC: {
-    name: 'L-Fucose',
-    code3: 'Fuc',
-    atoms: ['H1', 'H2', 'H3', 'H4', 'H5', 'H6'],
+    name: 'L-Fucose', code3: 'Fuc', atoms: ['H1', 'H2', 'H3', 'H4', 'H5', 'H6'],
     ranges: {
-      H1: { min: 4.7, max: 5.2 },
-      H2: { min: 3.6, max: 3.95 },
-      H3: { min: 3.65, max: 4.0 },
-      H4: { min: 3.7, max: 4.05 },
-      H5: { min: 3.6, max: 3.95 },
-      H6: { min: 1.1, max: 1.3 }
+      H1: { min: 4.7, max: 5.2 }, H2: { min: 3.6, max: 3.95 }, H3: { min: 3.65, max: 4.0 },
+      H4: { min: 3.7, max: 4.05 }, H5: { min: 3.6, max: 3.95 }, H6: { min: 1.1, max: 1.3 }
     },
     cosy: [['H1', 'H2'], ['H2', 'H3'], ['H3', 'H4'], ['H4', 'H5'], ['H5', 'H6']],
     spinSystems: [['H1', 'H2', 'H3', 'H4', 'H5', 'H6']]
   },
   NAG: {
-    name: 'N-Acetylglucosamine',
-    code3: 'GlcNAc',
+    name: 'N-Acetylglucosamine', code3: 'GlcNAc',
     atoms: ['H1', 'H2', 'H3', 'H4', 'H5', 'H6a', 'H6b', 'NHAc', 'AcCH3'],
     ranges: {
-      H1: { min: 4.6, max: 5.2 },
-      H2: { min: 3.7, max: 4.05 },
-      H3: { min: 3.6, max: 3.9 },
-      H4: { min: 3.4, max: 3.7 },
-      H5: { min: 3.6, max: 3.9 },
-      H6a: { min: 3.65, max: 3.95 },
-      H6b: { min: 3.7, max: 4.0 },
-      NHAc: { min: 7.5, max: 8.2 },
-      AcCH3: { min: 1.9, max: 2.1 }
+      H1: { min: 4.6, max: 5.2 }, H2: { min: 3.7, max: 4.05 }, H3: { min: 3.6, max: 3.9 },
+      H4: { min: 3.4, max: 3.7 }, H5: { min: 3.6, max: 3.9 }, H6a: { min: 3.65, max: 3.95 }, H6b: { min: 3.7, max: 4.0 },
+      NHAc: { min: 7.5, max: 8.2 }, AcCH3: { min: 1.9, max: 2.1 }
     },
     cosy: [['H1', 'H2'], ['H2', 'H3'], ['H3', 'H4'], ['H4', 'H5'], ['H5', 'H6a'], ['H5', 'H6b'], ['H6a', 'H6b']],
     spinSystems: [['H1', 'H2', 'H3', 'H4', 'H5', 'H6a', 'H6b'], ['NHAc'], ['AcCH3']]
@@ -694,34 +325,20 @@ const SUGAR_DB = {
 
 const LIPID_DB = {
   POPC: {
-    name: 'POPC',
-    head: 'PC',
-    headLabel: 'N(CH₃)₃⁺',
+    name: 'POPC', head: 'PC', headLabel: 'N(CH₃)₃⁺',
     atoms: [
       'Hsn1a', 'Hsn1b', 'Hsn2', 'Hsn3a', 'Hsn3b', 'H2-sn1', 'H3-sn1', 'H4-sn1', 'H16-sn1',
       'H2-sn2', 'H3-sn2', 'H4-sn2', 'Hall-sn2', 'H9-sn2', 'H10-sn2', 'H11-sn2', 'H18-sn2',
       'HCH2N', 'HNMe3'
     ],
     ranges: {
-      Hsn1a: { min: 4.15, max: 4.45 },
-      Hsn1b: { min: 4.15, max: 4.45 },
-      Hsn2: { min: 5.15, max: 5.35 },
-      Hsn3a: { min: 3.95, max: 4.35 },
-      Hsn3b: { min: 3.95, max: 4.35 },
-      'H2-sn1': { min: 2.25, max: 2.4 },
-      'H3-sn1': { min: 1.55, max: 1.7 },
-      'H4-sn1': { min: 1.2, max: 1.35 },
-      'H16-sn1': { min: 0.82, max: 0.92 },
-      'H2-sn2': { min: 2.25, max: 2.4 },
-      'H3-sn2': { min: 1.55, max: 1.7 },
-      'H4-sn2': { min: 1.2, max: 1.35 },
-      'Hall-sn2': { min: 1.95, max: 2.1 },
-      'H9-sn2': { min: 5.3, max: 5.4 },
-      'H10-sn2': { min: 5.3, max: 5.4 },
-      'H11-sn2': { min: 1.95, max: 2.1 },
-      'H18-sn2': { min: 0.82, max: 0.92 },
-      HCH2N: { min: 3.6, max: 3.8 },
-      HNMe3: { min: 3.18, max: 3.28 }
+      Hsn1a: { min: 4.15, max: 4.45 }, Hsn1b: { min: 4.15, max: 4.45 }, Hsn2: { min: 5.15, max: 5.35 },
+      Hsn3a: { min: 3.95, max: 4.35 }, Hsn3b: { min: 3.95, max: 4.35 }, 'H2-sn1': { min: 2.25, max: 2.4 },
+      'H3-sn1': { min: 1.55, max: 1.7 }, 'H4-sn1': { min: 1.2, max: 1.35 }, 'H16-sn1': { min: 0.82, max: 0.92 },
+      'H2-sn2': { min: 2.25, max: 2.4 }, 'H3-sn2': { min: 1.55, max: 1.7 }, 'H4-sn2': { min: 1.2, max: 1.35 },
+      'Hall-sn2': { min: 1.95, max: 2.1 }, 'H9-sn2': { min: 5.3, max: 5.4 }, 'H10-sn2': { min: 5.3, max: 5.4 },
+      'H11-sn2': { min: 1.95, max: 2.1 }, 'H18-sn2': { min: 0.82, max: 0.92 },
+      HCH2N: { min: 3.6, max: 3.8 }, HNMe3: { min: 3.18, max: 3.28 }
     },
     cosy: [
       ['Hsn1a', 'Hsn2'], ['Hsn1b', 'Hsn2'], ['Hsn2', 'Hsn3a'], ['Hsn2', 'Hsn3b'],
@@ -736,34 +353,20 @@ const LIPID_DB = {
     ]
   },
   POPE: {
-    name: 'POPE',
-    head: 'PE',
-    headLabel: 'NH₃⁺',
+    name: 'POPE', head: 'PE', headLabel: 'NH₃⁺',
     atoms: [
       'Hsn1a', 'Hsn1b', 'Hsn2', 'Hsn3a', 'Hsn3b', 'H2-sn1', 'H3-sn1', 'H4-sn1', 'H16-sn1',
       'H2-sn2', 'H3-sn2', 'H4-sn2', 'Hall-sn2', 'H9-sn2', 'H10-sn2', 'H11-sn2', 'H18-sn2',
       'HCH2N', 'HNH3'
     ],
     ranges: {
-      Hsn1a: { min: 4.15, max: 4.45 },
-      Hsn1b: { min: 4.15, max: 4.45 },
-      Hsn2: { min: 5.15, max: 5.35 },
-      Hsn3a: { min: 3.95, max: 4.35 },
-      Hsn3b: { min: 3.95, max: 4.35 },
-      'H2-sn1': { min: 2.25, max: 2.4 },
-      'H3-sn1': { min: 1.55, max: 1.7 },
-      'H4-sn1': { min: 1.2, max: 1.35 },
-      'H16-sn1': { min: 0.82, max: 0.92 },
-      'H2-sn2': { min: 2.25, max: 2.4 },
-      'H3-sn2': { min: 1.55, max: 1.7 },
-      'H4-sn2': { min: 1.2, max: 1.35 },
-      'Hall-sn2': { min: 1.95, max: 2.1 },
-      'H9-sn2': { min: 5.3, max: 5.4 },
-      'H10-sn2': { min: 5.3, max: 5.4 },
-      'H11-sn2': { min: 1.95, max: 2.1 },
-      'H18-sn2': { min: 0.82, max: 0.92 },
-      HCH2N: { min: 3.1, max: 3.3 },
-      HNH3: { min: 7.5, max: 8.5 }
+      Hsn1a: { min: 4.15, max: 4.45 }, Hsn1b: { min: 4.15, max: 4.45 }, Hsn2: { min: 5.15, max: 5.35 },
+      Hsn3a: { min: 3.95, max: 4.35 }, Hsn3b: { min: 3.95, max: 4.35 }, 'H2-sn1': { min: 2.25, max: 2.4 },
+      'H3-sn1': { min: 1.55, max: 1.7 }, 'H4-sn1': { min: 1.2, max: 1.35 }, 'H16-sn1': { min: 0.82, max: 0.92 },
+      'H2-sn2': { min: 2.25, max: 2.4 }, 'H3-sn2': { min: 1.55, max: 1.7 }, 'H4-sn2': { min: 1.2, max: 1.35 },
+      'Hall-sn2': { min: 1.95, max: 2.1 }, 'H9-sn2': { min: 5.3, max: 5.4 }, 'H10-sn2': { min: 5.3, max: 5.4 },
+      'H11-sn2': { min: 1.95, max: 2.1 }, 'H18-sn2': { min: 0.82, max: 0.92 },
+      HCH2N: { min: 3.1, max: 3.3 }, HNH3: { min: 7.5, max: 8.5 }
     },
     cosy: [
       ['Hsn1a', 'Hsn2'], ['Hsn1b', 'Hsn2'], ['Hsn2', 'Hsn3a'], ['Hsn2', 'Hsn3b'],
@@ -778,36 +381,20 @@ const LIPID_DB = {
     ]
   },
   POPS: {
-    name: 'POPS',
-    head: 'PS',
-    headLabel: 'Ser',
+    name: 'POPS', head: 'PS', headLabel: 'Ser',
     atoms: [
       'Hsn1a', 'Hsn1b', 'Hsn2', 'Hsn3a', 'Hsn3b', 'H2-sn1', 'H3-sn1', 'H4-sn1', 'H16-sn1',
       'H2-sn2', 'H3-sn2', 'H4-sn2', 'Hall-sn2', 'H9-sn2', 'H10-sn2', 'H11-sn2', 'H18-sn2',
       'HαS', 'HβS1', 'HβS2', 'HNH3'
     ],
     ranges: {
-      Hsn1a: { min: 4.15, max: 4.45 },
-      Hsn1b: { min: 4.15, max: 4.45 },
-      Hsn2: { min: 5.15, max: 5.35 },
-      Hsn3a: { min: 3.95, max: 4.35 },
-      Hsn3b: { min: 3.95, max: 4.35 },
-      'H2-sn1': { min: 2.25, max: 2.4 },
-      'H3-sn1': { min: 1.55, max: 1.7 },
-      'H4-sn1': { min: 1.2, max: 1.35 },
-      'H16-sn1': { min: 0.82, max: 0.92 },
-      'H2-sn2': { min: 2.25, max: 2.4 },
-      'H3-sn2': { min: 1.55, max: 1.7 },
-      'H4-sn2': { min: 1.2, max: 1.35 },
-      'Hall-sn2': { min: 1.95, max: 2.1 },
-      'H9-sn2': { min: 5.3, max: 5.4 },
-      'H10-sn2': { min: 5.3, max: 5.4 },
-      'H11-sn2': { min: 1.95, max: 2.1 },
-      'H18-sn2': { min: 0.82, max: 0.92 },
-      HαS: { min: 4.0, max: 4.3 },
-      HβS1: { min: 3.75, max: 4.05 },
-      HβS2: { min: 3.75, max: 4.05 },
-      HNH3: { min: 7.5, max: 8.5 }
+      Hsn1a: { min: 4.15, max: 4.45 }, Hsn1b: { min: 4.15, max: 4.45 }, Hsn2: { min: 5.15, max: 5.35 },
+      Hsn3a: { min: 3.95, max: 4.35 }, Hsn3b: { min: 3.95, max: 4.35 }, 'H2-sn1': { min: 2.25, max: 2.4 },
+      'H3-sn1': { min: 1.55, max: 1.7 }, 'H4-sn1': { min: 1.2, max: 1.35 }, 'H16-sn1': { min: 0.82, max: 0.92 },
+      'H2-sn2': { min: 2.25, max: 2.4 }, 'H3-sn2': { min: 1.55, max: 1.7 }, 'H4-sn2': { min: 1.2, max: 1.35 },
+      'Hall-sn2': { min: 1.95, max: 2.1 }, 'H9-sn2': { min: 5.3, max: 5.4 }, 'H10-sn2': { min: 5.3, max: 5.4 },
+      'H11-sn2': { min: 1.95, max: 2.1 }, 'H18-sn2': { min: 0.82, max: 0.92 },
+      HαS: { min: 4.0, max: 4.3 }, HβS1: { min: 3.75, max: 4.05 }, HβS2: { min: 3.75, max: 4.05 }, HNH3: { min: 7.5, max: 8.5 }
     },
     cosy: [
       ['Hsn1a', 'Hsn2'], ['Hsn1b', 'Hsn2'], ['Hsn2', 'Hsn3a'], ['Hsn2', 'Hsn3b'],
@@ -823,34 +410,20 @@ const LIPID_DB = {
     ]
   },
   POPG: {
-    name: 'POPG',
-    head: 'PG',
-    headLabel: 'Gly',
+    name: 'POPG', head: 'PG', headLabel: 'Gly',
     atoms: [
       'Hsn1a', 'Hsn1b', 'Hsn2', 'Hsn3a', 'Hsn3b', 'H2-sn1', 'H3-sn1', 'H4-sn1', 'H16-sn1',
       'H2-sn2', 'H3-sn2', 'H4-sn2', 'Hall-sn2', 'H9-sn2', 'H10-sn2', 'H11-sn2', 'H18-sn2',
       'HCH2OH', 'HCHOH'
     ],
     ranges: {
-      Hsn1a: { min: 4.15, max: 4.45 },
-      Hsn1b: { min: 4.15, max: 4.45 },
-      Hsn2: { min: 5.15, max: 5.35 },
-      Hsn3a: { min: 3.95, max: 4.35 },
-      Hsn3b: { min: 3.95, max: 4.35 },
-      'H2-sn1': { min: 2.25, max: 2.4 },
-      'H3-sn1': { min: 1.55, max: 1.7 },
-      'H4-sn1': { min: 1.2, max: 1.35 },
-      'H16-sn1': { min: 0.82, max: 0.92 },
-      'H2-sn2': { min: 2.25, max: 2.4 },
-      'H3-sn2': { min: 1.55, max: 1.7 },
-      'H4-sn2': { min: 1.2, max: 1.35 },
-      'Hall-sn2': { min: 1.95, max: 2.1 },
-      'H9-sn2': { min: 5.3, max: 5.4 },
-      'H10-sn2': { min: 5.3, max: 5.4 },
-      'H11-sn2': { min: 1.95, max: 2.1 },
-      'H18-sn2': { min: 0.82, max: 0.92 },
-      HCH2OH: { min: 3.45, max: 3.75 },
-      HCHOH: { min: 3.65, max: 3.9 }
+      Hsn1a: { min: 4.15, max: 4.45 }, Hsn1b: { min: 4.15, max: 4.45 }, Hsn2: { min: 5.15, max: 5.35 },
+      Hsn3a: { min: 3.95, max: 4.35 }, Hsn3b: { min: 3.95, max: 4.35 }, 'H2-sn1': { min: 2.25, max: 2.4 },
+      'H3-sn1': { min: 1.55, max: 1.7 }, 'H4-sn1': { min: 1.2, max: 1.35 }, 'H16-sn1': { min: 0.82, max: 0.92 },
+      'H2-sn2': { min: 2.25, max: 2.4 }, 'H3-sn2': { min: 1.55, max: 1.7 }, 'H4-sn2': { min: 1.2, max: 1.35 },
+      'Hall-sn2': { min: 1.95, max: 2.1 }, 'H9-sn2': { min: 5.3, max: 5.4 }, 'H10-sn2': { min: 5.3, max: 5.4 },
+      'H11-sn2': { min: 1.95, max: 2.1 }, 'H18-sn2': { min: 0.82, max: 0.92 },
+      HCH2OH: { min: 3.45, max: 3.75 }, HCHOH: { min: 3.65, max: 3.9 }
     },
     cosy: [
       ['Hsn1a', 'Hsn2'], ['Hsn1b', 'Hsn2'], ['Hsn2', 'Hsn3a'], ['Hsn2', 'Hsn3b'],
@@ -893,23 +466,37 @@ const SS_CORRECTIONS = {
   coil: { h: {}, c: {} },
   helix: {
     h: { HN: -0.45, Hα: -0.35, Hα1: -0.35, Hα2: -0.35, other: -0.05 },
-    c: { Cα: 2.8, Cβ: -1.5, "C'": -1.3, N: -2.5 }
+    c: { Cα: 2.8, Cβ: -1.5, "C' ": -1.3, N: -2.5 }
   },
   sheet: {
     h: { HN: 0.4, Hα: 0.3, Hα1: 0.3, Hα2: 0.3, other: 0.05 },
-    c: { Cα: -1.6, Cβ: 1.4, "C'": 1.5, N: 2.0 }
+    c: { Cα: -1.6, Cβ: 1.4, "C' ": 1.5, N: 2.0 }
   }
 };
+
 const SS_META = {
   C: { label: 'Random coil', color: '#64748b' },
   H: { label: 'α-Helix', color: '#8b5cf6' },
   E: { label: 'β-Sheet', color: '#f59e0b' }
 };
-const DNA_FORM_OFFSETS = {
-  B: { "H1'": 0, "H2'": 0, "H3'": 0, "H2''": 0 },
-  A: { "H1'": 0.2, "H2'": -0.3, "H3'": 0.15, "H2''": -0.25 },
-  Z: { "H1'": -0.15, "H2'": 0.25, "H3'": -0.1, "H2''": 0.2 }
+
+const FORM_META = {
+  A: { label: 'A-form', color: '#0ea5e9' },
+  B: { label: 'B-form', color: '#22c55e' },
+  Z: { label: 'Z-form', color: '#f43f5e' }
 };
+
+const DNA_FORM_OFFSETS = {
+  B: { "H1' ": 0, "H2' ": 0, "H3' ": 0, "H2'' ": 0 },
+  A: { "H1' ": 0.2, "H2' ": -0.3, "H3' ": 0.15, "H2'' ": -0.25 },
+  Z: { "H1' ": -0.15, "H2' ": 0.25, "H3' ": -0.1, "H2'' ": 0.2 }
+};
+
+const SUGAR_ANOMER_OFFSETS = {
+  alpha: { H1: 0.25 },
+  beta: { H1: -0.15 }
+};
+
 const RESIDUE_COLORS = ['#3b82f6', '#8b5cf6', '#d946ef', '#ec4899', '#f43f5e', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#6366f1'];
 const TICKS_1H = Array.from({ length: 111 }, (_, i) => parseFloat((i / 10).toFixed(1)));
 const TICKS_13C = Array.from({ length: 281 }, (_, i) => parseFloat((10 + i * 0.5).toFixed(1)));
@@ -922,6 +509,7 @@ const parseManual = (v) => {
   const n = parseFloat(String(v).replace(',', '.'));
   return Number.isFinite(n) ? n : null;
 };
+
 const getNMRFillColor = (entry) => {
   if (entry.colorClass === 'cosy') return '#22c55e';
   if (entry.colorClass === 'tocsyDirect') return '#1e3a8a';
@@ -933,18 +521,13 @@ const getNMRFillColor = (entry) => {
   if (entry.colorClass === 'p31') return '#0d9488';
   return '#cbd5e1';
 };
+
 const getCarbonName = (molType, char, atom) => {
   if (!atom) return null;
   if (
-    atom.startsWith('HN') ||
-    atom.startsWith('NH') ||
-    atom.startsWith('OH') ||
-    atom.startsWith('NHAc') ||
-    atom.startsWith('Ac') ||
-    atom.includes('NH3')
-  ) {
-    return null;
-  }
+    atom.startsWith('HN') || atom.startsWith('NH') || atom.startsWith('OH') ||
+    atom.startsWith('NHAc') || atom.startsWith('Ac') || atom.includes('NH3')
+  ) return null;
   if (molType === 'protein') {
     if (atom === 'Hε' && char === 'R') return null;
     if (char === 'W' && atom === 'Hδ1') return null;
@@ -959,41 +542,23 @@ const getCarbonName = (molType, char, atom) => {
   }
   if (molType === 'dna' || molType === 'rna') {
     if (atom.includes('CH3')) return atom.replace('H', 'C');
-    return atom.replace('H', 'C').replace(/''/g, "'");
+    return atom.replace('H', 'C').replace(/''/g, "' ");
   }
   if (molType === 'sugar') return atom.replace('H', 'C').replace(/[ab]$/, '');
   if (molType === 'lipid') {
     const map = {
-      Hsn1a: 'Csn1',
-      Hsn1b: 'Csn1',
-      Hsn2: 'Csn2',
-      Hsn3a: 'Csn3',
-      Hsn3b: 'Csn3',
-      'H2-sn1': 'C2-sn1',
-      'H3-sn1': 'C3-sn1',
-      'H4-sn1': 'C4-sn1',
-      'H16-sn1': 'C16-sn1',
-      'H2-sn2': 'C2-sn2',
-      'H3-sn2': 'C3-sn2',
-      'H4-sn2': 'C4-sn2',
-      'Hall-sn2': 'Call-sn2',
-      'H9-sn2': 'C9-sn2',
-      'H10-sn2': 'C10-sn2',
-      'H11-sn2': 'C11-sn2',
-      'H18-sn2': 'C18-sn2',
-      HCH2N: 'CCH2N',
-      HNMe3: 'CNMe3',
-      HNH3: null,
-      HαS: 'CαS',
-      HβS1: 'CβS',
-      HβS2: 'CβS',
-      HCH2OH: 'CCH2OH',
-      HCHOH: 'CCHOH'
+      Hsn1a: 'Csn1', Hsn1b: 'Csn1', Hsn2: 'Csn2', Hsn3a: 'Csn3', Hsn3b: 'Csn3',
+      'H2-sn1': 'C2-sn1', 'H3-sn1': 'C3-sn1', 'H4-sn1': 'C4-sn1', 'H16-sn1': 'C16-sn1',
+      'H2-sn2': 'C2-sn2', 'H3-sn2': 'C3-sn2', 'H4-sn2': 'C4-sn2', 'Hall-sn2': 'Call-sn2',
+      'H9-sn2': 'C9-sn2', 'H10-sn2': 'C10-sn2', 'H11-sn2': 'C11-sn2', 'H18-sn2': 'C18-sn2',
+      HCH2N: 'CCH2N', HNMe3: 'CNMe3', HNH3: null, HαS: 'CαS', HβS1: 'CβS', HβS2: 'CβS',
+      HCH2OH: 'CCH2OH', HCHOH: 'CCHOH'
     };
     return map[atom] !== undefined ? map[atom] : atom.replace('H', 'C');
   }
   return atom.replace('H', 'C');
 };
+
 const buildKeys = (ri, tokens, molType, char) => {
   const set = new Set();
   (tokens || []).forEach((tok) => {
@@ -1013,6 +578,7 @@ const buildKeys = (ri, tokens, molType, char) => {
   });
   return [...set];
 };
+
 const getProtonCountEx = (molType, res, atom) => {
   if (molType === 'protein') {
     const char = res.char;
@@ -1027,20 +593,12 @@ const getProtonCountEx = (molType, res, atom) => {
   if (molType === 'dna' || molType === 'rna') return atom.includes('CH3') ? 3 : 1;
   if (molType === 'sugar') return atom === 'AcCH3' ? 3 : 1;
   if (molType === 'lipid') {
-    const map = {
-      'H4-sn1': 20,
-      'H4-sn2': 12,
-      'Hall-sn2': 4,
-      HNMe3: 9,
-      HCH2N: 2,
-      HCH2OH: 2,
-      'H16-sn1': 3,
-      'H18-sn2': 3
-    };
+    const map = { 'H4-sn1': 20, 'H4-sn2': 12, 'Hall-sn2': 4, HNMe3: 9, HCH2N: 2, HCH2OH: 2, 'H16-sn1': 3, 'H18-sn2': 3 };
     return map[atom] ?? 1;
   }
   return 1;
 };
+
 const getPascalRow = (n) => {
   if (n === 0) return [1];
   let row = [1];
@@ -1052,20 +610,21 @@ const getPascalRow = (n) => {
   }
   return row;
 };
+
 const getCarbonRangeFor = (molType, char, cName) => {
   if (!cName) return { min: 40, max: 50 };
   if (molType === 'protein') {
-    if (cName === "C'") return { min: 171, max: 178 };
+    if (cName === "C' ") return { min: 171, max: 178 };
     const r = CARBON_RANGE_DB[char]?.[cName];
     if (r) return { min: r[0], max: r[1] };
     return { min: 40, max: 60 };
   }
   if (molType === 'dna' || molType === 'rna') {
-    if (cName.includes("C1'")) return { min: 80, max: 90 };
-    if (cName.includes("C2'")) return molType === 'dna' ? { min: 35, max: 42 } : { min: 68, max: 77 };
-    if (cName.includes("C3'")) return { min: 68, max: 77 };
-    if (cName.includes("C4'")) return { min: 78, max: 87 };
-    if (cName.includes("C5'")) return { min: 59, max: 67 };
+    if (cName.includes("C1' ")) return { min: 80, max: 90 };
+    if (cName.includes("C2' ")) return molType === 'dna' ? { min: 35, max: 42 } : { min: 68, max: 77 };
+    if (cName.includes("C3' ")) return { min: 68, max: 77 };
+    if (cName.includes("C4' ")) return { min: 78, max: 87 };
+    if (cName.includes("C5' ")) return { min: 59, max: 67 };
     if (cName === 'C8' || cName === 'C6') return { min: 134, max: 146 };
     if (cName === 'C2') return { min: 147, max: 156 };
     if (cName === 'C5') return { min: 98, max: 108 };
@@ -1091,6 +650,7 @@ const getCarbonRangeFor = (molType, char, cName) => {
   }
   return { min: 40, max: 60 };
 };
+
 const getHexagon = (cx, cy, r, dir) => {
   const pts = [];
   const baseAngle = dir === 1 ? -Math.PI / 2 : Math.PI / 2;
@@ -1100,6 +660,7 @@ const getHexagon = (cx, cy, r, dir) => {
   }
   return pts;
 };
+
 const getPentagon = (cx, cy, r, dir) => {
   const pts = [];
   const baseAngle = dir === 1 ? -Math.PI / 2 : Math.PI / 2;
@@ -1109,6 +670,7 @@ const getPentagon = (cx, cy, r, dir) => {
   }
   return pts;
 };
+
 const hexAt = (cx, cy, r, deg0) => {
   const pts = [];
   for (let i = 0; i < 6; i++) {
@@ -1117,6 +679,7 @@ const hexAt = (cx, cy, r, deg0) => {
   }
   return pts;
 };
+
 const fusePentagon = (A, B, nx, ny) => {
   const mx = (A.x + B.x) / 2, my = (A.y + B.y) / 2;
   const L = Math.hypot(B.x - A.x, B.y - A.y) || 1;
@@ -1254,8 +817,8 @@ const buildProteinStructure = (sequence) => {
     addText(c.nX, c.nY, isFirst ? (char === 'P' ? 'H₂N⁺' : 'H₃N⁺') : 'N', color, 13, 'middle', nAtoms);
     addAtomCircle(c.caX, c.caY, 13, color, char === 'G' ? ['Cα', 'Hα1', 'Hα2'] : ['Cα', 'Hα']);
     addText(c.caX, c.caY, 'Cα', color, 13, 'middle', char === 'G' ? ['Cα', 'Hα1', 'Hα2'] : ['Cα', 'Hα']);
-    addAtomCircle(c.cX, c.cY, 13, color, ["C'"]);
-    addText(c.cX, c.cY, 'C', color, 13, 'middle', ["C'"]);
+    addAtomCircle(c.cX, c.cY, 13, color, ["C' "]);
+    addText(c.cX, c.cY, 'C', color, 13, 'middle', ["C' "]);
     addText(c.cX, c.cY + c.oDir * 35, 'O', '#ef4444', 13, 'middle', null);
     if (isLast) {
       addAtomCircle(c.nextNX, c.nextNY, 13, color, null);
@@ -1444,7 +1007,7 @@ const buildProteinStructure = (sequence) => {
   return b.finish();
 };
 
-// ---------- NUCLEIC STRUCTURE (vertical backbone) ----------
+// ---------- NUCLEIC STRUCTURE ----------
 const buildNucleicStructure = (sequence, molType) => {
   const b = makeBuilder();
   const isDNA = molType === 'dna';
@@ -1482,31 +1045,28 @@ const buildNucleicStructure = (sequence, molType) => {
     b.addPolygon(sPts, color);
     b.addLine(C2.x, C2.y, C3.x, C3.y, color, false, 6);
     addText(O4.x, O4.y, 'O', color, 9, 'middle', null);
-    dot(C1.x, C1.y, color, ["H1'", "C1'"]);
-    dot(C2.x, C2.y, color, isDNA ? ["H2'", "H2''", "C2'"] : ["H2'", "OH2'", "C2'"]);
-    dot(C3.x, C3.y, color, ["H3'", "C3'"]);
-    dot(C4.x, C4.y, color, ["H4'", "C4'"]);
-    if (!isDNA) { b.addLine(C2.x, C2.y, C2.x + 14, C2.y + 12, color); addText(C2.x + 22, C2.y + 16, 'OH', color, 8, 'start', ["OH2'"]); }
+    dot(C1.x, C1.y, color, ["H1' ", "C1' "]);
+    dot(C2.x, C2.y, color, isDNA ? ["H2' ", "H2'' ", "C2' "] : ["H2' ", "OH2' ", "C2' "]);
+    dot(C3.x, C3.y, color, ["H3' ", "C3' "]);
+    dot(C4.x, C4.y, color, ["H4' ", "C4' "]);
+    if (!isDNA) { b.addLine(C2.x, C2.y, C2.x + 14, C2.y + 12, color); addText(C2.x + 22, C2.y + 16, 'OH', color, 8, 'start', ["OH2' "]); }
     const c5p = { x: C4.x - 20, y: C4.y - 16 };
     b.addLine(C4.x, C4.y, c5p.x, c5p.y, color);
-    dot(c5p.x, c5p.y, color, ["H5'", "H5''", "C5'"]);
-    // phosphate above (5' terminus or junction)
+    dot(c5p.x, c5p.y, color, ["H5' ", "H5'' ", "C5' "]);
     const py = sy - 100;
     drawP(xP, py, i, i === 0);
     addText(xP + 30, py + 26, 'O', BB, 9, 'middle', null);
     if (i > 0) b.addLine(xP + 22, py - 18, xP + 9, py - 9, BB);
     b.addLine(xP + 9, py + 9, xP + 22, py + 20, BB);
     b.addLine(xP + 38, py + 30, c5p.x - 4, c5p.y - 4, BB);
-    // 3' side
     if (i < sequence.length - 1) {
       const py2 = sy + 150;
       b.addLine(C3.x, C3.y, xP + 20, py2 - 20, color);
       addText(xP + 28, py2 - 26, 'O', BB, 9, 'middle', null);
     } else {
       b.addLine(C3.x, C3.y, C3.x - 12, C3.y + 26, color);
-      addText(C3.x - 16, C3.y + 36, 'OH', color, 9, 'end', ["H3'"]);
+      addText(C3.x - 16, C3.y + 36, 'OH', color, 9, 'end', ["H3' "]);
     }
-    // ----- base on the right -----
     const isPur = res.base === 'purine';
     if (!isPur) {
       const cx = xS + 105, cy = sy;
@@ -1556,8 +1116,8 @@ const buildNucleicStructure = (sequence, molType) => {
   return b.finish();
 };
 
-// ---------- SUGAR STRUCTURE (chair like reference image) ----------
-const buildSugarStructure = (res, conformation) => {
+// ---------- SUGAR STRUCTURE (chair / inverted chair + alpha / beta) ----------
+const buildSugarStructure = (res, conformation, anomer) => {
   const b = makeBuilder();
   const curRi = 0, curChar = res.char, c = res.color;
   const addText = (x, y, text, color, fontSize = 11, align = 'middle', atoms = null) => {
@@ -1569,54 +1129,55 @@ const buildSugarStructure = (res, conformation) => {
     });
   };
   const dot = (x, y, atoms) => b.addDot(x, y, c, { ri: curRi, atoms, keys: buildKeys(curRi, atoms, 'sugar', curChar) });
-  const chair = conformation !== 'boat';
-  const P = chair
-    ? { C4: { x: 150, y: 120 }, C5: { x: 250, y: 140 }, O: { x: 340, y: 108 }, C1: { x: 400, y: 168 }, C2: { x: 308, y: 196 }, C3: { x: 205, y: 190 } }
-    : { C4: { x: 150, y: 130 }, C5: { x: 250, y: 118 }, O: { x: 340, y: 118 }, C1: { x: 400, y: 160 }, C2: { x: 310, y: 200 }, C3: { x: 200, y: 200 } };
+  const chair = conformation !== 'invChair';
+  const dir = chair ? 1 : -1;
+  const base = { C4: { x: 150, y: 120 }, C5: { x: 250, y: 140 }, O: { x: 340, y: 108 }, C1: { x: 400, y: 168 }, C2: { x: 308, y: 196 }, C3: { x: 205, y: 190 } };
+  const P = chair ? base : Object.fromEntries(Object.entries(base).map(([k, p]) => [k, { x: p.x, y: 330 - p.y }]));
+  const anomLabel = anomer === 'beta' ? 'β' : 'α';
   b.addLine(P.C3.x, P.C3.y, P.C2.x, P.C2.y, c, false, 6);
   b.addLine(P.C2.x, P.C2.y, P.C1.x, P.C1.y, c, false, 6);
   b.addLine(P.C1.x, P.C1.y, P.O.x, P.O.y, c);
   b.addLine(P.O.x, P.O.y, P.C5.x, P.C5.y, c);
   b.addLine(P.C5.x, P.C5.y, P.C4.x, P.C4.y, c);
   b.addLine(P.C4.x, P.C4.y, P.C3.x, P.C3.y, c);
-  addText(P.O.x, P.O.y - 14, 'O', c, 12, 'middle', null);
+  addText(P.O.x, P.O.y - 14 * dir, 'O', c, 12, 'middle', null);
   dot(P.C1.x, P.C1.y, ['H1', 'C1']); dot(P.C2.x, P.C2.y, ['H2', 'C2']); dot(P.C3.x, P.C3.y, ['H3', 'C3']);
   dot(P.C4.x, P.C4.y, ['H4', 'C4']); dot(P.C5.x, P.C5.y, ['H5', 'C5']);
-  b.addLine(P.C1.x, P.C1.y, P.C1.x + 34, P.C1.y - 8, c);
-  addText(P.C1.x + 50, P.C1.y - 10, 'OH', c, 12, 'start', ['H1', 'C1']);
+  b.addLine(P.C1.x, P.C1.y, P.C1.x + 34, P.C1.y - 8 * dir, c);
+  addText(P.C1.x + 50, P.C1.y - 10 * dir, `OH (${anomLabel})`, c, 12, 'start', ['H1', 'C1']);
   if (curChar === 'NAG') {
-    b.addLine(P.C2.x, P.C2.y, P.C2.x + 16, P.C2.y + 34, c);
-    addText(P.C2.x + 26, P.C2.y + 46, 'NH', c, 12, 'start', ['NHAc']);
-    const cC = { x: P.C2.x + 6, y: P.C2.y + 96 };
-    b.addLine(P.C2.x + 30, P.C2.y + 56, cC.x, cC.y, c);
-    b.addLine(cC.x, cC.y, cC.x - 34, cC.y - 6, c, true);
-    addText(cC.x - 44, cC.y - 8, 'O', c, 12, 'middle', null);
-    b.addLine(cC.x, cC.y, cC.x + 18, cC.y + 34, c);
-    addText(cC.x + 26, cC.y + 46, 'CH₃', c, 12, 'start', ['AcCH3']);
+    b.addLine(P.C2.x, P.C2.y, P.C2.x + 16, P.C2.y + 34 * dir, c);
+    addText(P.C2.x + 26, P.C2.y + 46 * dir, 'NH', c, 12, 'start', ['NHAc']);
+    const cC = { x: P.C2.x + 6, y: P.C2.y + 96 * dir };
+    b.addLine(P.C2.x + 30, P.C2.y + 56 * dir, cC.x, cC.y, c);
+    b.addLine(cC.x, cC.y, cC.x - 34, cC.y - 6 * dir, c, true);
+    addText(cC.x - 44, cC.y - 8 * dir, 'O', c, 12, 'middle', null);
+    b.addLine(cC.x, cC.y, cC.x + 18, cC.y + 34 * dir, c);
+    addText(cC.x + 26, cC.y + 46 * dir, 'CH₃', c, 12, 'start', ['AcCH3']);
   } else {
-    b.addLine(P.C2.x, P.C2.y, P.C2.x + 14, P.C2.y + 30, c);
-    addText(P.C2.x + 22, P.C2.y + 42, 'OH', c, 12, 'start', ['H2', 'C2']);
+    b.addLine(P.C2.x, P.C2.y, P.C2.x + 14, P.C2.y + 30 * dir, c);
+    addText(P.C2.x + 22, P.C2.y + 42 * dir, 'OH', c, 12, 'start', ['H2', 'C2']);
   }
-  b.addLine(P.C3.x, P.C3.y, P.C3.x - 34, P.C3.y + 6, c);
-  addText(P.C3.x - 46, P.C3.y + 8, 'HO', c, 12, 'end', ['H3', 'C3']);
-  b.addLine(P.C4.x, P.C4.y, P.C4.x - 36, P.C4.y - 10, c);
-  addText(P.C4.x - 48, P.C4.y - 12, 'HO', c, 12, 'end', ['H4', 'C4']);
-  const c6 = { x: P.C5.x + 18, y: P.C5.y - 52 };
+  b.addLine(P.C3.x, P.C3.y, P.C3.x - 34, P.C3.y + 6 * dir, c);
+  addText(P.C3.x - 46, P.C3.y + 8 * dir, 'HO', c, 12, 'end', ['H3', 'C3']);
+  b.addLine(P.C4.x, P.C4.y, P.C4.x - 36, P.C4.y - 10 * dir, c);
+  addText(P.C4.x - 48, P.C4.y - 12 * dir, 'HO', c, 12, 'end', ['H4', 'C4']);
+  const c6 = { x: P.C5.x + 18, y: P.C5.y - 52 * dir };
   b.addLine(P.C5.x, P.C5.y, c6.x, c6.y, c);
   if (curChar === 'FUC') {
     dot(c6.x, c6.y, ['H6', 'C6']);
-    addText(c6.x + 8, c6.y - 12, 'CH₃', c, 12, 'start', ['H6', 'C6']);
+    addText(c6.x + 8, c6.y - 12 * dir, 'CH₃', c, 12, 'start', ['H6', 'C6']);
   } else {
     dot(c6.x, c6.y, ['H6a', 'H6b', 'C6']);
-    b.addLine(c6.x, c6.y, c6.x - 14, c6.y - 30, c);
-    addText(c6.x - 18, c6.y - 40, 'OH', c, 12, 'middle', ['H6a', 'H6b', 'C6']);
+    b.addLine(c6.x, c6.y, c6.x - 14, c6.y - 30 * dir, c);
+    addText(c6.x - 18, c6.y - 40 * dir, 'OH', c, 12, 'middle', ['H6a', 'H6b', 'C6']);
   }
-  addText(275, 365, `${res.name} (${chair ? 'chair' : 'boat'})`, c, 13, 'middle', null);
+  addText(275, 365, `${res.name} (${anomLabel}, ${chair ? 'chair' : 'inverted chair'})`, c, 13, 'middle', null);
   return b.finish();
 };
 
-// ---------- LIPID STRUCTURE (zig-zag chains like reference image) ----------
-const buildLipidStructure = (res) => {
+// ---------- LIPID STRUCTURE (cis/trans double bond) ----------
+const buildLipidStructure = (res, db) => {
   const b = makeBuilder();
   const curRi = 0, curChar = res.char, c = res.color;
   const addText = (x, y, text, color, fontSize = 10, align = 'middle', atoms = null) => {
@@ -1633,7 +1194,6 @@ const buildLipidStructure = (res) => {
     return pts;
   };
   const chain = (pts, dblIdx) => { for (let k = 0; k < pts.length - 1; k++) b.addLine(pts[k].x, pts[k].y, pts[k + 1].x, pts[k + 1].y, c, k === dblIdx, 1.6); };
-  // glycerol
   const g1 = { x: 640, y: 96 }, g2 = { x: 640, y: 140 }, g3 = { x: 640, y: 184 };
   b.addLine(g1.x, g1.y, g2.x, g2.y, c); b.addLine(g2.x, g2.y, g3.x, g3.y, c);
   addText(g1.x, g1.y, 'CH₂', c, 9, 'middle', ['Hsn1a', 'Hsn1b']);
@@ -1641,7 +1201,6 @@ const buildLipidStructure = (res) => {
   b.addLine(g2.x + 10, g2.y + 2, g2.x + 24, g2.y + 6, c, false, 1.2);
   addText(g2.x + 30, g2.y + 8, 'H', c, 8, 'start', null);
   addText(g3.x, g3.y, 'CH₂', c, 9, 'middle', ['Hsn3a', 'Hsn3b']);
-  // sn-1 ester + chain (top)
   addText(600, 76, 'O', c, 9, 'middle', null);
   b.addLine(g1.x - 8, g1.y - 6, 608, 78, c); b.addLine(592, 76, 568, 76, c);
   b.addLine(560, 70, 560, 50, c, true); addText(560, 42, 'O', c, 9, 'middle', null);
@@ -1652,11 +1211,15 @@ const buildLipidStructure = (res) => {
   addText(sn1[2].x, sn1[2].y + 18, 'C3', c, 8, 'middle', ['H3-sn1']);
   addText(sn1[4].x, sn1[4].y - 16, '(CH₂)ₙ', c, 8, 'middle', ['H4-sn1']);
   addText(sn1[9].x - 14, sn1[9].y, 'CH₃', c, 9, 'end', ['H16-sn1']);
-  // sn-2 ester + chain (bottom, cis double bond)
   addText(600, 150, 'O', c, 9, 'middle', null);
   b.addLine(g2.x - 10, g2.y, 608, 150, c); b.addLine(592, 152, 568, 166, c);
   b.addLine(560, 172, 560, 192, c, true); addText(560, 202, 'O', c, 9, 'middle', null);
   const sn2 = zig(520, 190, 9, 44, 13, 1);
+  if (db === 'trans') {
+    const a = sn2[4], d = sn2[7];
+    sn2[5] = { x: a.x + (d.x - a.x) / 3, y: a.y + (d.y - a.y) / 3 };
+    sn2[6] = { x: a.x + (2 * (d.x - a.x)) / 3, y: a.y + (2 * (d.y - a.y)) / 3 };
+  }
   b.addLine(560, 170, sn2[0].x, sn2[0].y, c);
   chain(sn2, 5);
   addText(sn2[1].x, sn2[1].y + 18, 'C2', c, 8, 'middle', ['H2-sn2']);
@@ -1665,7 +1228,6 @@ const buildLipidStructure = (res) => {
   addText(sn2[6].x, sn2[6].y - 16, 'C10', c, 8, 'middle', ['H10-sn2']);
   addText(sn2[7].x, sn2[7].y + 18, 'CH₂', c, 8, 'middle', ['H11-sn2']);
   addText(sn2[9].x - 14, sn2[9].y, 'CH₃', c, 9, 'end', ['H18-sn2']);
-  // sn-3 -> phosphate
   b.addLine(g3.x + 10, g3.y, 674, 184, c);
   addText(680, 184, 'O', c, 9, 'middle', null);
   b.addLine(688, 184, 703, 184, c);
@@ -1674,7 +1236,6 @@ const buildLipidStructure = (res) => {
   b.addLine(716, 171, 716, 158, c, true); addText(716, 150, 'O', c, 9, 'middle', null);
   b.addLine(716, 197, 716, 210, c); addText(716, 220, 'O⁻', c, 9, 'middle', null);
   b.addLine(729, 184, 744, 184, c); addText(752, 184, 'O', c, 9, 'middle', null);
-  // headgroup
   const h1 = { x: 796, y: 172 }, h2 = { x: 832, y: 188 };
   b.addLine(760, 184, h1.x, h1.y, c); b.addLine(h1.x, h1.y, h2.x, h2.y, c);
   if (res.head === 'PC') {
@@ -1697,7 +1258,7 @@ const buildLipidStructure = (res) => {
     addText(h1.x, h1.y - 14, 'CH₂OH', c, 8, 'middle', ['HCH2OH']);
     addText(h2.x, h2.y + 16, 'CHOH', c, 8, 'middle', ['HCHOH']);
   }
-  addText(450, 268, res.name, c, 13, 'middle', null);
+  addText(450, 268, `${res.name} (${db} Δ9)`, c, 13, 'middle', null);
   return b.finish();
 };
 
@@ -1718,16 +1279,9 @@ const elementsToSVG = (structure, height = 320) => {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${structure.viewBox}" style="height:${height}px;max-width:100%;font-family:sans-serif;background:white;">${inner}</svg>`;
 };
 
-// ---------- STRUCTURE VIEW (with top-most hit layer) ----------
+// ---------- STRUCTURE VIEW ----------
 const StructureSVGView = ({
-  structure,
-  minWidth,
-  isExpanded,
-  onToggleExpand,
-  selectedKeys,
-  manualKeys = [],
-  onAtomClick,
-  height = '300px'
+  structure, minWidth, isExpanded, onToggleExpand, selectedKeys, manualKeys = [], onAtomClick, height = '300px'
 }) => {
   const clickables = structure.elements.filter(
     (e) => (e.type === 'circle' || e.type === 'text') && e.ri != null && e.keys && e.keys.length && onAtomClick
@@ -1786,7 +1340,6 @@ const StructureSVGView = ({
                 </g>
               );
             })}
-            {/* TOP-MOST HIT LAYER: guarantees every atom (incl. circled ones) is clickable */}
             {clickables.map((el, idx) => {
               const r = el.type === 'circle' ? Math.max(el.r + 4, 10) : el.text.length * (el.fontSize || 11) * 0.34 + 7;
               return (
@@ -1817,9 +1370,7 @@ export const CollapsibleSection = ({ title, icon, defaultOpen = true, children, 
     <div className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-6 break-inside-avoid ${className}`}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left ${
-          isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'
-        }`}
+        className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left ${isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'}`}
       >
         <div className="flex items-center gap-2 overflow-hidden">
           {icon && <span className="text-xl shrink-0">{icon}</span>}
@@ -1827,12 +1378,7 @@ export const CollapsibleSection = ({ title, icon, defaultOpen = true, children, 
         </div>
         <div className="flex items-center gap-3 shrink-0">
           {headerExtra && <div onClick={(e) => e.stopPropagation()}>{headerExtra}</div>}
-          <svg
-            className={`w-5 h-5 text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
+          <svg className={`w-5 h-5 text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
           </svg>
         </div>
@@ -1859,6 +1405,7 @@ const CustomXTick1H = ({ x, y, payload, isZoomed }) => {
     </g>
   );
 };
+
 const CustomYTick1H = ({ x, y, payload, isZoomed }) => {
   const numVal = Number(payload.value);
   const isInt = Number.isInteger(numVal);
@@ -1875,6 +1422,7 @@ const CustomYTick1H = ({ x, y, payload, isZoomed }) => {
     </g>
   );
 };
+
 const CustomXTick13C = ({ x, y, payload, isZoomed }) => {
   const numVal = Number(payload.value);
   const isTen = numVal % 10 === 0;
@@ -1890,6 +1438,7 @@ const CustomXTick13C = ({ x, y, payload, isZoomed }) => {
     </g>
   );
 };
+
 const CustomYTick13C = ({ x, y, payload, isZoomed }) => {
   const numVal = Number(payload.value);
   const isTen = numVal % 10 === 0;
@@ -1905,6 +1454,7 @@ const CustomYTick13C = ({ x, y, payload, isZoomed }) => {
     </g>
   );
 };
+
 const NMRTooltip = ({ active, payload, diagonalColor, selectedKeys }) => {
   if (active && payload && payload.length) {
     const data = payload[0].payload;
@@ -1997,9 +1547,7 @@ const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, row
           <g key={`tick-${t}`}>
             <line x1={xScale(t)} y1={margin.top} x2={xScale(t)} y2={axisY} stroke="#e2e8f0" strokeWidth={1} />
             <line x1={xScale(t)} y1={axisY} x2={xScale(t)} y2={axisY + 5} stroke="#94a3b8" strokeWidth={1} />
-            <text x={xScale(t)} y={axisY + 16} textAnchor="middle" fontSize={10} fill="#64748b">
-              {t}
-            </text>
+            <text x={xScale(t)} y={axisY + 16} textAnchor="middle" fontSize={10} fill="#64748b">{t}</text>
           </g>
         ))}
         <line x1={margin.left} y1={axisY} x2={margin.left + plotW} y2={axisY} stroke="#cbd5e1" strokeWidth={1} />
@@ -2030,9 +1578,7 @@ const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, row
             />
           );
         })}
-        <text x={margin.left + plotW / 2} y={svgHeight - 6} textAnchor="middle" fontSize={11} fill="#64748b">
-          {xAxisLabel}
-        </text>
+        <text x={margin.left + plotW / 2} y={svgHeight - 6} textAnchor="middle" fontSize={11} fill="#64748b">{xAxisLabel}</text>
       </svg>
       {hover && ranges[hover.idx] && (
         <div
@@ -2040,9 +1586,7 @@ const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, row
           style={{ left: hover.x + 12, top: Math.max(0, hover.y - 44) }}
         >
           <p className="font-bold text-slate-800">{ranges[hover.idx].res} - {ranges[hover.idx].atom}</p>
-          <p className="text-slate-500">
-            Theoretical Range: {ranges[hover.idx].min.toFixed(2)} - {ranges[hover.idx].max.toFixed(2)} ppm
-          </p>
+          <p className="text-slate-500">Theoretical Range: {ranges[hover.idx].min.toFixed(2)} - {ranges[hover.idx].max.toFixed(2)} ppm</p>
         </div>
       )}
     </div>
@@ -2105,9 +1649,7 @@ const OneDSpectrumPlot = ({
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)} />}
       <div
-        className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${
-          isExpanded ? FS_CLASSES + ' p-6' : 'h-[400px] break-inside-avoid'
-        }`}
+        className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'h-[400px] break-inside-avoid'}`}
       >
         <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
           <div className="flex items-center gap-4">
@@ -2274,9 +1816,7 @@ const SpectrumPlot = ({
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)} />}
       <div
-        className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${
-          isExpanded ? FS_CLASSES + ' p-6' : 'h-[400px] break-inside-avoid'
-        }`}
+        className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'h-[400px] break-inside-avoid'}`}
       >
         <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
           <div className="flex items-center gap-4">
@@ -2422,9 +1962,7 @@ const HSQCPlot = ({
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)} />}
       <div
-        className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${
-          isExpanded ? FS_CLASSES + ' p-6' : 'h-[400px] lg:col-span-2 break-inside-avoid'
-        }`}
+        className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'h-[400px] lg:col-span-2 break-inside-avoid'}`}
       >
         <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
           <div className="flex items-center gap-4">
@@ -2537,6 +2075,7 @@ const normalizeImageCandidates = (url) => {
   }
   return [u];
 };
+
 const SmartImage = ({ src, alt }) => {
   const cands = useMemo(() => normalizeImageCandidates(src), [src]);
   const [idx, setIdx] = useState(0);
@@ -2568,14 +2107,14 @@ const SmartImage = ({ src, alt }) => {
 
 // ================= MAIN COMPONENT =================
 export const NMRTestRenderer = ({
-    activeTest,
-    updateActiveTest,
-    TestHeader,
-    datasetProtocols,
-    jumpToProtocol,
-    allCmpds,
-    allCellLines,
-    customFields
+  activeTest,
+  updateActiveTest,
+  TestHeader,
+  datasetProtocols,
+  jumpToProtocol,
+  allCmpds,
+  allCellLines,
+  customFields
 }) => {
   const moleculeType = activeTest.moleculeType || 'protein';
   const rawSeq = (activeTest.proteinSequence || '').toUpperCase();
@@ -2583,10 +2122,10 @@ export const NMRTestRenderer = ({
     moleculeType === 'protein'
       ? 'ACDEFGHIKLMNPQRSTVWY'
       : moleculeType === 'dna'
-      ? 'ACGT'
-      : moleculeType === 'rna'
-      ? 'ACGU'
-      : '';
+        ? 'ACGT'
+        : moleculeType === 'rna'
+          ? 'ACGU'
+          : '';
   const seq =
     moleculeType === 'protein' || moleculeType === 'dna' || moleculeType === 'rna'
       ? rawSeq.replace(new RegExp(`[^${validChars}]`, 'g'), '')
@@ -2594,66 +2133,93 @@ export const NMRTestRenderer = ({
   const selNuc = activeTest.selectedNuclei || ['H', 'N', 'C'];
   const shifts = activeTest.chemicalShifts || {};
   const images = activeTest.nmrSpectraImages || [];
-  const linkedProtocolId = activeTest.linkedProtocolId || '';
-  const dnaForm = activeTest.dnaForm || 'B';
   const experimentPlan = activeTest.plan || [];
   const [tableMode, setTableMode] = useState(activeTest.tableMode || 'backbone');
   const [expandedPanel, setExpandedPanel] = useState(null);
   const [focusIdx, setFocusIdx] = useState('ALL');
   const [selected, setSelected] = useState(null);
-  const [sugarConf, setSugarConf] = useState('chair');
+
+  // ===== PAINTING STATE =====
+  const [ssBrush, setSSBrush] = useState('H');
+  const [formBrush, setFormBrush] = useState(activeTest.dnaForm || 'B');
+  const [isPaintingSS, setIsPaintingSS] = useState(false);
+  const [isPaintingForm, setIsPaintingForm] = useState(false);
+
+  useEffect(() => {
+    const up = () => { setIsPaintingSS(false); setIsPaintingForm(false); };
+    window.addEventListener('mouseup', up);
+    return () => window.removeEventListener('mouseup', up);
+  }, []);
+
   const isPolymer = moleculeType === 'protein' || moleculeType === 'dna' || moleculeType === 'rna';
   const hasPhosphorus = moleculeType === 'dna' || moleculeType === 'rna' || moleculeType === 'lipid';
-    // ===== LABELS & CLASSIFICATION STATE =====
-    const cellLines = activeTest.cellLines || [];
-    const testCategory = activeTest.testCategory || 'Activity';
-    const customFieldValues = activeTest.customFieldValues || {};
-    const selectedCompounds = activeTest.compounds || (activeTest.compound ? [activeTest.compound] : []);
 
-    const toggleCellLine = (cl) => {
-        const updated = cellLines.includes(cl)
-            ? cellLines.filter((c) => c !== cl)
-            : [...cellLines, cl];
-        updateActiveTest({ cellLines: updated });
-    };
+  // ===== LABELS & CLASSIFICATION STATE =====
+  const cellLines = activeTest.cellLines || [];
+  const testCategory = activeTest.testCategory || 'Activity';
+  const customFieldValues = activeTest.customFieldValues || {};
+  const selectedCompounds = activeTest.compounds || (activeTest.compound ? [activeTest.compound] : []);
 
-    const toggleCompound = (cmp) => {
-        const updated = selectedCompounds.includes(cmp)
-            ? selectedCompounds.filter((c) => c !== cmp)
-            : [...selectedCompounds, cmp];
-        updateActiveTest({
-            compounds: updated,
-            compound: updated.length > 0 ? updated[0] : ''
-        });
-    };
+  // ===== MULTI-PROTOCOL =====
+  const linkedProtocolIds = activeTest.linkedProtocolIds || (activeTest.linkedProtocolId ? [activeTest.linkedProtocolId] : []);
+  const addLinkedProtocol = (id) => {
+    if (!id || linkedProtocolIds.includes(id)) return;
+    const upd = [...linkedProtocolIds, id];
+    updateActiveTest({ linkedProtocolIds: upd, linkedProtocolId: upd[0] });
+  };
+  const removeLinkedProtocol = (id) => {
+    const upd = linkedProtocolIds.filter((p) => p !== id);
+    updateActiveTest({ linkedProtocolIds: upd, linkedProtocolId: upd[0] || '' });
+  };
 
-    const handleCustomFieldChange = (fieldName, value) => {
-        updateActiveTest({
-            customFieldValues: { ...customFieldValues, [fieldName]: value }
-        });
-    };
+  const toggleCellLine = (cl) => {
+    const updated = cellLines.includes(cl) ? cellLines.filter((c) => c !== cl) : [...cellLines, cl];
+    updateActiveTest({ cellLines: updated });
+  };
+  const toggleCompound = (cmp) => {
+    const updated = selectedCompounds.includes(cmp)
+      ? selectedCompounds.filter((c) => c !== cmp)
+      : [...selectedCompounds, cmp];
+    updateActiveTest({ compounds: updated, compound: updated.length > 0 ? updated[0] : '' });
+  };
+  const handleCustomFieldChange = (fieldName, value) => {
+    updateActiveTest({ customFieldValues: { ...customFieldValues, [fieldName]: value } });
+  };
+
   const DB =
     moleculeType === 'protein'
       ? AMINO_ACID_DB
       : moleculeType === 'dna'
-      ? NUCLEOTIDE_DB.DNA
-      : moleculeType === 'rna'
-      ? NUCLEOTIDE_DB.RNA
-      : moleculeType === 'sugar'
-      ? SUGAR_DB
-      : LIPID_DB;
+        ? NUCLEOTIDE_DB.DNA
+        : moleculeType === 'rna'
+          ? NUCLEOTIDE_DB.RNA
+          : moleculeType === 'sugar'
+            ? SUGAR_DB
+            : LIPID_DB;
+
   const ssRaw = activeTest.secondaryStructure || '';
   const getSSAt = (i) => (ssRaw[i] && 'HES'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
+
+  const formsRaw = activeTest.nucleicForms || '';
+  const dnaFormDefault = activeTest.dnaForm || 'B';
+  const getFormAt = (i) => (formsRaw[i] && 'ABZ'.includes(formsRaw[i]) ? formsRaw[i] : dnaFormDefault);
+
+  const sugarConf = activeTest.sugarConf || 'chair';
+  const sugarAnomer = activeTest.sugarAnomer || 'alpha';
+  const lipidDB = activeTest.lipidDB || 'cis';
+
   const effTableMode = moleculeType === 'sugar' || moleculeType === 'lipid' ? 'all' : tableMode;
   const nucDefs =
     moleculeType === 'protein'
-      ? { H: ['HN', 'Hα', 'Hβ'], N: ['N'], C: ['Cα', 'Cβ', "C'"] }
+      ? { H: ['HN', 'Hα', 'Hβ'], N: ['N'], C: ['Cα', 'Cβ', "C' "] }
       : moleculeType === 'dna' || moleculeType === 'rna'
-      ? { H: ["H1'", "H2'", "H3'"], N: [], C: ["C1'", "C2'", "C3'"] }
-      : { H: [], N: [], C: [] };
+        ? { H: ["H1' ", "H2' ", "H3' "], N: [], C: ["C1' ", "C2' ", "C3' "] }
+        : { H: [], N: [], C: [] };
+
   const handleShiftChange = (resIdx, atom, val) => {
     updateActiveTest({ chemicalShifts: { ...shifts, [`${resIdx}-${atom}`]: val } });
   };
+
   const selectedKeys = selected ? selected.keys : null;
   const manualKeys = useMemo(() => {
     const out = new Set();
@@ -2667,19 +2233,28 @@ export const NMRTestRenderer = ({
     });
     return [...out];
   }, [shifts]);
+
   const handleAtomClick = (ri, keys) => {
     if (ri === null || !keys) return;
     setSelected((prev) => (prev && prev.ri === ri && prev.keys.join('|') === keys.join('|') ? null : { ri, keys }));
   };
   const cellIsSelected = (idx, atom) => selectedKeys && selectedKeys.includes(`${idx}-${atom}`);
-  const cycleSS = (i) => {
-    const cur = getSSAt(i);
-    const next = cur === 'C' ? 'H' : cur === 'H' ? 'E' : 'C';
+
+  // ===== PAINT HANDLERS =====
+  const paintSSAt = (i, letter) => {
     const arr = seq.split('').map((_, j) => getSSAt(j));
-    arr[i] = next;
+    arr[i] = letter;
     updateActiveTest({ secondaryStructure: arr.join('') });
   };
   const setAllSS = (letter) => updateActiveTest({ secondaryStructure: seq.split('').map(() => letter).join('') });
+
+  const paintFormAt = (i, letter) => {
+    const arr = seq.split('').map((_, j) => getFormAt(j));
+    arr[i] = letter;
+    updateActiveTest({ nucleicForms: arr.join('') });
+  };
+  const setAllForms = (letter) => updateActiveTest({ nucleicForms: seq.split('').map(() => letter).join(''), dnaForm: letter });
+
   const parsedSeq = useMemo(() => {
     let chars = [];
     if (isPolymer) {
@@ -2729,9 +2304,9 @@ export const NMRTestRenderer = ({
         const backboneRand =
           moleculeType === 'protein'
             ? {
-                N: parseFloat((117 + Math.random() * 8).toFixed(1)),
-                CP: parseFloat((172 + Math.random() * 5).toFixed(1))
-              }
+              N: parseFloat((117 + Math.random() * 8).toFixed(1)),
+              CP: parseFloat((172 + Math.random() * 5).toFixed(1))
+            }
             : null;
         const p31 = hasPhosphorus ? parseFloat((-2 + Math.random() * 3).toFixed(2)) : null;
         return {
@@ -2748,14 +2323,17 @@ export const NMRTestRenderer = ({
       })
       .filter(Boolean);
   }, [seq, moleculeType, activeTest.sugarChoice, activeTest.lipidChoice]);
+
   useEffect(() => {
     if (focusIdx !== 'ALL' && focusIdx >= parsedSeq.length) setFocusIdx('ALL');
     setSelected(null);
   }, [parsedSeq.length]);
+
   useEffect(() => {
     setFocusIdx('ALL');
     setSelected(null);
   }, [moleculeType]);
+
   const estSeq = useMemo(
     () =>
       parsedSeq.map((res, idx) => {
@@ -2769,8 +2347,13 @@ export const NMRTestRenderer = ({
             const h = corr.h;
             v += h[a] !== undefined ? h[a] : h.other || 0;
           }
-          if (moleculeType === 'dna' && DNA_FORM_OFFSETS[dnaForm] && DNA_FORM_OFFSETS[dnaForm][a] !== undefined) {
-            v += DNA_FORM_OFFSETS[dnaForm][a];
+          if (moleculeType === 'dna' || moleculeType === 'rna') {
+            const f = getFormAt(idx);
+            if (DNA_FORM_OFFSETS[f] && DNA_FORM_OFFSETS[f][a] !== undefined) v += DNA_FORM_OFFSETS[f][a];
+          }
+          if (moleculeType === 'sugar') {
+            const off = SUGAR_ANOMER_OFFSETS[sugarAnomer];
+            if (off && off[a] !== undefined) v += off[a];
           }
           estShifts[a] = +v.toFixed(2);
         });
@@ -2791,12 +2374,13 @@ export const NMRTestRenderer = ({
         let estCP = null;
         if (moleculeType === 'protein' && res.backboneRand) {
           estN = +(res.backboneRand.N + (ssKey !== 'coil' ? corr.c['N'] || 0 : 0)).toFixed(2);
-          estCP = +(res.backboneRand.CP + (ssKey !== 'coil' ? corr.c["C'"] || 0 : 0)).toFixed(2);
+          estCP = +(res.backboneRand.CP + (ssKey !== 'coil' ? corr.c["C' "] || 0 : 0)).toFixed(2);
         }
-        return { ...res, estShifts, estUniqueC, estShifts13C, estN, estCP, ssLetter };
+        return { ...res, estShifts, estUniqueC, estShifts13C, estN, estCP, ssLetter, formLetter: getFormAt(idx) };
       }),
-    [parsedSeq, moleculeType, ssRaw, dnaForm]
+    [parsedSeq, moleculeType, ssRaw, formsRaw, dnaFormDefault, sugarAnomer]
   );
+
   const simSeq = useMemo(() => {
     const getMan = (idx, name) => {
       const candidates = [
@@ -2829,8 +2413,10 @@ export const NMRTestRenderer = ({
       return { ...res, simShifts, simUniqueC, simShifts13C };
     });
   }, [estSeq, shifts, moleculeType]);
+
   const uniqueTypes = useMemo(() => [...new Set(parsedSeq.map((r) => r.char))], [parsedSeq]);
   const visibleTypes = focusIdx === 'ALL' ? uniqueTypes : uniqueTypes.filter((t) => t === parsedSeq[focusIdx]?.char);
+
   const { ranges1H, ranges13C } = useMemo(() => {
     const r1 = [];
     const r13 = [];
@@ -2850,7 +2436,7 @@ export const NMRTestRenderer = ({
         const cn = getCarbonName(moleculeType, char, atom);
         if (cn) cNames.add(cn);
       });
-      if (moleculeType === 'protein') cNames.add("C'");
+      if (moleculeType === 'protein') cNames.add("C' ");
       let cIdx = 0;
       cNames.forEach((cn) => {
         const rg = getCarbonRangeFor(moleculeType, char, cn);
@@ -2859,6 +2445,7 @@ export const NMRTestRenderer = ({
     });
     return { ranges1H: r1, ranges13C: r13 };
   }, [visibleTypes, moleculeType]);
+
   const peaks = useMemo(() => {
     let diag = [];
     let cosy = [];
@@ -3066,14 +2653,16 @@ export const NMRTestRenderer = ({
       p31Data: p31
     };
   }, [simSeq, moleculeType, hasPhosphorus]);
+
   const structure = useMemo(() => {
     if (parsedSeq.length === 0) return null;
     if (moleculeType === 'protein') return buildProteinStructure(parsedSeq);
     if (moleculeType === 'dna' || moleculeType === 'rna') return buildNucleicStructure(parsedSeq, moleculeType);
-    if (moleculeType === 'sugar') return buildSugarStructure(parsedSeq[0], sugarConf);
-    if (moleculeType === 'lipid') return buildLipidStructure(parsedSeq[0]);
+    if (moleculeType === 'sugar') return buildSugarStructure(parsedSeq[0], sugarConf, sugarAnomer);
+    if (moleculeType === 'lipid') return buildLipidStructure(parsedSeq[0], lipidDB);
     return null;
-  }, [parsedSeq, moleculeType, sugarConf]);
+  }, [parsedSeq, moleculeType, sugarConf, sugarAnomer, lipidDB]);
+
   const fillEstimated = () => {
     const newShifts = { ...shifts };
     estSeq.forEach((res, idx) => {
@@ -3088,16 +2677,62 @@ export const NMRTestRenderer = ({
     });
     updateActiveTest({ chemicalShifts: newShifts });
   };
+
+  // ===== CSV EXPORT (Excel / Google Sheets) =====
+  const exportCSV = () => {
+    const rows = [['Residue', 'Nucleus', 'Atom', 'Manual Shift (ppm)', 'Estimated (ppm)']];
+    estSeq.forEach((res, idx) => {
+      if (selNuc.includes('H')) {
+        Object.keys(res.estShifts || {}).forEach((a) => {
+          rows.push([res.id, '1H', a, shifts[`${idx}-${a}`] || '', res.estShifts[a]]);
+        });
+      }
+      if (moleculeType === 'protein') {
+        if (selNuc.includes('N') && res.estN !== null) rows.push([res.id, '15N', 'N', shifts[`${idx}-N`] || '', res.estN]);
+        if (selNuc.includes('C')) {
+          Object.keys(res.estUniqueC || {}).forEach((cn) => rows.push([res.id, '13C', cn, shifts[`${idx}-${cn}`] || '', res.estUniqueC[cn]]));
+          if (res.estCP !== null) rows.push([res.id, '13C', "C'", shifts[`${idx}-C' `] || shifts[`${idx}-C'`] || '', res.estCP]);
+        }
+      } else if (selNuc.includes('C')) {
+        Object.keys(res.estUniqueC || {}).forEach((cn) => rows.push([res.id, '13C', cn, shifts[`${idx}-${cn}`] || '', res.estUniqueC[cn]]));
+      }
+      if (hasPhosphorus && selNuc.includes('P') && res.p31 !== null) rows.push([res.id, '31P', 'P', shifts[`${idx}-P`] || '', res.p31]);
+    });
+    const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'nmr_assignment.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // ===== FORMULA -> LAB NOTEBOOK =====
+  const exportFormulaToNotebook = () => {
+    if (!structure) return;
+    const html =
+      `<div style="margin-top:10px;"><h5 style="color:#1e40af;font-size:12px;margin-bottom:6px;">🔬 Chemical Formula (${typeLabel}):</h5>` +
+      elementsToSVG(structure, 300) +
+      `</div>`;
+    const currentComments = activeTest.comments || '';
+    updateActiveTest({ comments: currentComments + (currentComments ? '<br/>' : '') + html });
+    alert('Chemical formula appended to the Lab Notebook notes.');
+  };
+
   const typeLabel =
     moleculeType === 'protein'
       ? 'Protein'
       : moleculeType === 'dna'
-      ? 'DNA'
-      : moleculeType === 'rna'
-      ? 'RNA'
-      : moleculeType === 'sugar'
-      ? 'Sugar'
-      : 'Phospholipid';
+        ? 'DNA'
+        : moleculeType === 'rna'
+          ? 'RNA'
+          : moleculeType === 'sugar'
+            ? 'Sugar'
+            : 'Phospholipid';
+
   return (
     <div className="flex flex-col h-full overflow-hidden bg-slate-50 relative">
       {TestHeader}
@@ -3105,64 +2740,84 @@ export const NMRTestRenderer = ({
         {/* EXPERIMENTAL CONDITIONS */}
         <CollapsibleSection title="Experimental Conditions" icon="🧪" defaultOpen={true}>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-<div className="flex flex-col gap-1 col-span-1 md:col-span-2 lg:col-span-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-    <label className="text-xs font-bold text-blue-800 uppercase flex items-center justify-between mb-2">
-        <span>Compound / Molecule Label(s)</span>
-        <span className="text-[9px] bg-blue-200 text-blue-800 px-2 py-0.5 rounded">Used for Lab Notebook filtering • Multiple selection allowed</span>
-    </label>
-    <div className="flex flex-wrap gap-2">
-        {(allCmpds || []).map((cmp) => (
-            <button
-                key={cmp}
-                onClick={() => toggleCompound(cmp)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
-                    selectedCompounds.includes(cmp)
+            <div className="flex flex-col gap-1 col-span-1 md:col-span-2 lg:col-span-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <label className="text-xs font-bold text-blue-800 uppercase flex items-center justify-between mb-2">
+                <span>Compound / Molecule Label(s)</span>
+                <span className="text-[9px] bg-blue-200 text-blue-800 px-2 py-0.5 rounded">Used for Lab Notebook filtering • Multiple selection allowed</span>
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {(allCmpds || []).map((cmp) => (
+                  <button
+                    key={cmp}
+                    onClick={() => toggleCompound(cmp)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
+                      selectedCompounds.includes(cmp)
                         ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
                         : 'bg-white text-slate-600 border-slate-300 hover:border-blue-400 hover:bg-blue-50'
-                }`}
-            >
-                {selectedCompounds.includes(cmp) ? '✓ ' : ''}{cmp}
-            </button>
-        ))}
-        {(allCmpds || []).length === 0 && (
-            <span className="text-sm text-slate-400 italic">
-                No compounds defined. Add them in Definitions & Labels.
-            </span>
-        )}
-    </div>
-    {selectedCompounds.length > 0 && (
-        <p className="text-[10px] text-blue-600 mt-2 font-bold">
-            Selected: {selectedCompounds.join(', ')}
-        </p>
-    )}
-</div>
+                    }`}
+                  >
+                    {selectedCompounds.includes(cmp) ? '✓ ' : ''}{cmp}
+                  </button>
+                ))}
+                {(allCmpds || []).length === 0 && (
+                  <span className="text-sm text-slate-400 italic">No compounds defined. Add them in Definitions & Labels.</span>
+                )}
+              </div>
+              {selectedCompounds.length > 0 && (
+                <p className="text-[10px] text-blue-600 mt-2 font-bold">Selected: {selectedCompounds.join(', ')}</p>
+              )}
+            </div>
+
+            {/* MULTIPLE LINKED PROTOCOLS */}
             <div className="flex flex-col gap-1 col-span-1 md:col-span-2 lg:col-span-4 p-3 bg-indigo-50 border border-indigo-200 rounded-lg">
               <label className="text-xs font-bold text-indigo-800 uppercase flex items-center justify-between mb-2">
-                <span>📋 Linked Protocol</span>
+                <span>📋 Linked Protocols</span>
+                <span className="text-[9px] bg-indigo-200 text-indigo-800 px-2 py-0.5 rounded">Multiple protocols allowed</span>
               </label>
-              <div className="flex flex-col sm:flex-row items-center gap-4">
-                <select
-                  value={linkedProtocolId}
-                  onChange={(e) => updateActiveTest({ linkedProtocolId: e.target.value })}
-                  className="border border-indigo-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-indigo-500 flex-1 w-full cursor-pointer font-semibold text-indigo-900"
-                >
-                  <option value="">-- No Protocol Linked --</option>
-                  {(datasetProtocols || []).map((p) => (
+              {linkedProtocolIds.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {linkedProtocolIds.map((pid) => {
+                    const prot = (datasetProtocols || []).find((p) => p.id === pid);
+                    return (
+                      <div key={pid} className="flex items-center gap-1 bg-white border border-indigo-300 rounded-lg px-2 py-1 shadow-sm">
+                        <span className="text-xs font-bold text-indigo-900 max-w-[220px] truncate">
+                          {prot ? `${prot.title} (${prot.category})` : pid}
+                        </span>
+                        <button
+                          onClick={() => jumpToProtocol && jumpToProtocol(pid)}
+                          className="text-[10px] font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-2 py-0.5 rounded transition-colors"
+                          title="Open this protocol"
+                        >
+                          📖 Open
+                        </button>
+                        <button
+                          onClick={() => removeLinkedProtocol(pid)}
+                          className="text-slate-400 hover:text-red-500 font-bold px-1"
+                          title="Unlink"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <select
+                value=""
+                onChange={(e) => addLinkedProtocol(e.target.value)}
+                className="border border-indigo-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-indigo-500 w-full cursor-pointer font-semibold text-indigo-900"
+              >
+                <option value="">-- Add a protocol to link --</option>
+                {(datasetProtocols || [])
+                  .filter((p) => !linkedProtocolIds.includes(p.id))
+                  .map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.title} ({p.category})
                     </option>
                   ))}
-                </select>
-                {linkedProtocolId && (
-                  <button
-                    onClick={() => jumpToProtocol && jumpToProtocol(linkedProtocolId)}
-                    className="text-sm text-white font-bold bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg shadow-sm transition-colors flex items-center justify-center gap-2 w-full sm:w-auto"
-                  >
-                    📖 Open Protocol
-                  </button>
-                )}
-              </div>
+              </select>
             </div>
+
             <div>
               <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Experiment Date</label>
               <input
@@ -3237,7 +2892,7 @@ export const NMRTestRenderer = ({
             <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Experiment Comments</label>
             <RichTextEditor value={activeTest.comments || ''} onChange={(html) => updateActiveTest({ comments: html })} />
           </div>
-          {/* AGENDA / PLANNING (as in PlateTestRenderer) */}
+          {/* AGENDA / PLANNING */}
           <div className="mt-4 pt-4 border-t border-slate-100">
             <h3 className="text-[11px] font-bold text-slate-600 mb-2 flex justify-between items-center">
               <span>📅 Schedule / Planning (This Item)</span>
@@ -3287,6 +2942,7 @@ export const NMRTestRenderer = ({
             </div>
           </div>
         </CollapsibleSection>
+
         {/* SEQUENCE & CONFIGURATION */}
         <CollapsibleSection title="Sequence & Configuration" icon="🧬" defaultOpen={true}>
           <div className="flex flex-wrap gap-2 mb-4">
@@ -3388,41 +3044,56 @@ export const NMRTestRenderer = ({
             </div>
           </div>
         </CollapsibleSection>
-        {/* SECONDARY STRUCTURE */}
+
+        {/* SECONDARY STRUCTURE — PROTEIN PAINTING */}
         {moleculeType === 'protein' && parsedSeq.length > 0 && (
-          <CollapsibleSection title="Secondary Structure — Coil / α-Helix / β-Sheet" icon="🧠" defaultOpen={true}>
-            <div className="flex flex-wrap gap-2 mb-4">
-              <button onClick={() => setAllSS('C')} className="px-3 py-1 rounded-lg text-xs font-bold bg-slate-100 border border-slate-300 text-slate-600 hover:bg-slate-200">
-                All Coil
-              </button>
-              <button onClick={() => setAllSS('H')} className="px-3 py-1 rounded-lg text-xs font-bold bg-violet-100 border border-violet-300 text-violet-700 hover:bg-violet-200">
-                All α-Helix
-              </button>
-              <button onClick={() => setAllSS('E')} className="px-3 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-300 text-amber-700 hover:bg-amber-200">
-                All β-Sheet
-              </button>
-              <span className="text-xs text-slate-400 self-center ml-2">Click a residue chip to cycle Coil → Helix → Sheet</span>
+          <CollapsibleSection title="Secondary Structure — Paint Coil / α-Helix / β-Sheet (drag)" icon="🧠" defaultOpen={true}>
+            <div className="flex flex-wrap gap-2 mb-4 items-center">
+              <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
+              {['C', 'H', 'E'].map((l) => (
+                <button
+                  key={l}
+                  onClick={() => setSSBrush(l)}
+                  className={`px-3 py-1 rounded-lg text-xs font-black border transition-all ${
+                    ssBrush === l ? 'text-white shadow scale-105' : 'bg-white text-slate-600'
+                  }`}
+                  style={{
+                    backgroundColor: ssBrush === l ? SS_META[l].color : undefined,
+                    borderColor: SS_META[l].color,
+                    color: ssBrush === l ? 'white' : SS_META[l].color
+                  }}
+                >
+                  {SS_META[l].label}
+                </button>
+              ))}
+              <span className="mx-2 text-slate-300">|</span>
+              <button onClick={() => setAllSS('C')} className="px-3 py-1 rounded-lg text-xs font-bold bg-slate-100 border border-slate-300 text-slate-600 hover:bg-slate-200">All Coil</button>
+              <button onClick={() => setAllSS('H')} className="px-3 py-1 rounded-lg text-xs font-bold bg-violet-100 border border-violet-300 text-violet-700 hover:bg-violet-200">All α-Helix</button>
+              <button onClick={() => setAllSS('E')} className="px-3 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-300 text-amber-700 hover:bg-amber-200">All β-Sheet</button>
             </div>
-            <div className="flex flex-wrap gap-1.5 mb-4">
+            <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint secondary structure.</p>
+            <div className="flex flex-wrap gap-1.5 mb-4 select-none">
               {parsedSeq.map((r, i) => {
                 const l = getSSAt(i);
                 const meta = SS_META[l];
                 return (
                   <button
                     key={i}
-                    onClick={() => cycleSS(i)}
+                    draggable={false}
+                    onDragStart={(e) => e.preventDefault()}
+                    onMouseDown={(e) => { e.preventDefault(); setIsPaintingSS(true); paintSSAt(i, ssBrush); }}
+                    onMouseEnter={() => { if (isPaintingSS) paintSSAt(i, ssBrush); }}
                     title={`${r.id}: ${meta.label}`}
-                    className="w-10 py-1 rounded-md border text-center leading-tight transition-all"
+                    className="w-11 py-1 rounded-md border text-center leading-tight transition-all"
                     style={{
                       backgroundColor: meta.color + '22',
                       borderColor: meta.color,
                       opacity: focusIdx !== 'ALL' && focusIdx !== i ? 0.35 : 1
                     }}
                   >
-                    <div className="text-[9px] text-slate-500 font-bold">{i + 1}</div>
-                    <div className="text-sm font-black" style={{ color: meta.color }}>
-                      {l}
-                    </div>
+                    <div className="text-[8px] text-slate-500 font-bold">{i + 1}</div>
+                    <div className="text-sm font-black text-slate-800">{r.char}</div>
+                    <div className="text-[10px] font-black" style={{ color: meta.color }}>{l}</div>
                   </button>
                 );
               })}
@@ -3432,7 +3103,67 @@ export const NMRTestRenderer = ({
             </p>
           </CollapsibleSection>
         )}
-        {/* 2D CHEMICAL STRUCTURE (Focus lives here) */}
+
+        {/* NUCLEIC FORM PAINTING — DNA / RNA */}
+        {(moleculeType === 'dna' || moleculeType === 'rna') && parsedSeq.length > 0 && (
+          <CollapsibleSection title="Nucleic Acid Form — Paint A / B / Z (drag)" icon="🧠" defaultOpen={true}>
+            <div className="flex flex-wrap gap-2 mb-4 items-center">
+              <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
+              {['A', 'B', 'Z'].map((l) => (
+                <button
+                  key={l}
+                  onClick={() => setFormBrush(l)}
+                  className={`px-3 py-1 rounded-lg text-xs font-black border transition-all ${
+                    formBrush === l ? 'text-white shadow scale-105' : 'bg-white'
+                  }`}
+                  style={{
+                    backgroundColor: formBrush === l ? FORM_META[l].color : undefined,
+                    borderColor: FORM_META[l].color,
+                    color: formBrush === l ? 'white' : FORM_META[l].color
+                  }}
+                >
+                  {FORM_META[l].label}
+                </button>
+              ))}
+              <span className="mx-2 text-slate-300">|</span>
+              <button onClick={() => setAllForms('A')} className="px-3 py-1 rounded-lg text-xs font-bold bg-sky-100 border border-sky-300 text-sky-700 hover:bg-sky-200">All A</button>
+              <button onClick={() => setAllForms('B')} className="px-3 py-1 rounded-lg text-xs font-bold bg-green-100 border border-green-300 text-green-700 hover:bg-green-200">All B</button>
+              <button onClick={() => setAllForms('Z')} className="px-3 py-1 rounded-lg text-xs font-bold bg-rose-100 border border-rose-300 text-rose-700 hover:bg-rose-200">All Z</button>
+            </div>
+            <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint the nucleic acid form per residue.</p>
+            <div className="flex flex-wrap gap-1.5 mb-4 select-none">
+              {parsedSeq.map((r, i) => {
+                const f = getFormAt(i);
+                const meta = FORM_META[f];
+                return (
+                  <button
+                    key={i}
+                    draggable={false}
+                    onDragStart={(e) => e.preventDefault()}
+                    onMouseDown={(e) => { e.preventDefault(); setIsPaintingForm(true); paintFormAt(i, formBrush); }}
+                    onMouseEnter={() => { if (isPaintingForm) paintFormAt(i, formBrush); }}
+                    title={`${r.id}: ${meta.label}`}
+                    className="w-11 py-1 rounded-md border text-center leading-tight transition-all"
+                    style={{
+                      backgroundColor: meta.color + '22',
+                      borderColor: meta.color,
+                      opacity: focusIdx !== 'ALL' && focusIdx !== i ? 0.35 : 1
+                    }}
+                  >
+                    <div className="text-[8px] text-slate-500 font-bold">{i + 1}</div>
+                    <div className="text-sm font-black text-slate-800">{r.char}</div>
+                    <div className="text-[10px] font-black" style={{ color: meta.color }}>{f}</div>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-xs text-slate-400 mt-2">
+              Estimated ¹H shifts are corrected per-residue according to the painted A/B/Z form.
+            </p>
+          </CollapsibleSection>
+        )}
+
+        {/* 2D CHEMICAL STRUCTURE */}
         {structure && (
           <CollapsibleSection
             title={`2D Chemical Structure (${typeLabel})`}
@@ -3441,18 +3172,46 @@ export const NMRTestRenderer = ({
             headerExtra={
               <div className="flex items-center gap-2 flex-wrap">
                 {moleculeType === 'sugar' && (
-                  <div className="flex bg-slate-200 p-1 rounded-lg">
+                  <div className="flex bg-slate-200 p-1 rounded-lg gap-1">
                     <button
-                      onClick={() => setSugarConf('chair')}
-                      className={`px-3 py-1 text-xs font-bold rounded-md ${sugarConf === 'chair' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'}`}
+                      onClick={() => updateActiveTest({ sugarAnomer: 'alpha' })}
+                      className={`px-3 py-1 text-xs font-bold rounded-md ${sugarAnomer === 'alpha' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'}`}
                     >
-                      Sedia
+                      α-anomer
                     </button>
                     <button
-                      onClick={() => setSugarConf('boat')}
-                      className={`px-3 py-1 text-xs font-bold rounded-md ${sugarConf === 'boat' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'}`}
+                      onClick={() => updateActiveTest({ sugarAnomer: 'beta' })}
+                      className={`px-3 py-1 text-xs font-bold rounded-md ${sugarAnomer === 'beta' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'}`}
                     >
-                      Barca
+                      β-anomer
+                    </button>
+                    <button
+                      onClick={() => updateActiveTest({ sugarConf: 'chair' })}
+                      className={`px-3 py-1 text-xs font-bold rounded-md ${sugarConf === 'chair' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'}`}
+                    >
+                      Chair
+                    </button>
+                    <button
+                      onClick={() => updateActiveTest({ sugarConf: 'invChair' })}
+                      className={`px-3 py-1 text-xs font-bold rounded-md ${sugarConf === 'invChair' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'}`}
+                    >
+                      Inv. Chair
+                    </button>
+                  </div>
+                )}
+                {moleculeType === 'lipid' && (
+                  <div className="flex bg-slate-200 p-1 rounded-lg gap-1">
+                    <button
+                      onClick={() => updateActiveTest({ lipidDB: 'cis' })}
+                      className={`px-3 py-1 text-xs font-bold rounded-md ${lipidDB === 'cis' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'}`}
+                    >
+                      cis Δ9
+                    </button>
+                    <button
+                      onClick={() => updateActiveTest({ lipidDB: 'trans' })}
+                      className={`px-3 py-1 text-xs font-bold rounded-md ${lipidDB === 'trans' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'}`}
+                    >
+                      trans Δ9
                     </button>
                   </div>
                 )}
@@ -3469,17 +3228,6 @@ export const NMRTestRenderer = ({
                     </option>
                   ))}
                 </select>
-                {moleculeType === 'dna' && (
-                  <select
-                    value={dnaForm}
-                    onChange={(e) => updateActiveTest({ dnaForm: e.target.value })}
-                    className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500"
-                  >
-                    <option value="B">B-form</option>
-                    <option value="A">A-form</option>
-                    <option value="Z">Z-form</option>
-                  </select>
-                )}
                 {selected && (
                   <button
                     onClick={() => setSelected(null)}
@@ -3488,6 +3236,13 @@ export const NMRTestRenderer = ({
                     ✖ Deseleziona atomo
                   </button>
                 )}
+                <button
+                  onClick={exportFormulaToNotebook}
+                  className="px-2 py-1 rounded-lg text-xs font-bold bg-indigo-50 border border-indigo-300 text-indigo-700 hover:bg-indigo-100"
+                  title="Append this formula (SVG) to the Lab Notebook notes"
+                >
+                  📓 Formula → Notebook
+                </button>
               </div>
             }
           >
@@ -3508,6 +3263,7 @@ export const NMRTestRenderer = ({
             />
           </CollapsibleSection>
         )}
+
         {/* THEORETICAL RANGES */}
         {visibleTypes.length > 0 && (
           <CollapsibleSection title="Theoretical Chemical Shift Ranges" icon="📊" defaultOpen={true}>
@@ -3532,705 +3288,804 @@ export const NMRTestRenderer = ({
               />
               <div className="bg-white rounded-xl border border-slate-200 p-4">
                 <h4 className="text-md font-bold text-slate-700 mb-4 border-b pb-2">Numerical Reference Values</h4>
-            <div className="overflow-x-auto">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm text-left">
+                    <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200">
+                      <tr>
+                        <th className="px-4 py-2 font-bold">Residue</th>
+                        <th className="px-4 py-2 font-bold text-blue-700">¹H Atoms</th>
+                        <th className="px-4 py-2 font-bold text-blue-700">¹H Range (ppm)</th>
+                        <th className="px-4 py-2 font-bold text-purple-700">¹³C Atoms</th>
+                        <th className="px-4 py-2 font-bold text-purple-700">¹³C Range (ppm)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {visibleTypes.map((char) => {
+                        const db = DB[char];
+                        if (!db) return null;
+                        const hAtoms = Object.keys(db.ranges);
+                        const cAtoms = [...new Set(hAtoms.map((k) => getCarbonName(moleculeType, char, k)).filter(Boolean))];
+                        if (moleculeType === 'protein') cAtoms.push("C' ");
+                        return (
+                          <tr key={char} className="hover:bg-slate-50">
+                            <td className="px-4 py-2 font-bold text-slate-700">{db.name} ({db.code3 || char})</td>
+                            <td className="px-4 py-2 text-blue-800 text-xs">{hAtoms.join(', ')}</td>
+                            <td className="px-4 py-2 font-mono text-xs text-slate-600">
+                              {hAtoms.map((k) => `${k}: ${db.ranges[k].min}-${db.ranges[k].max}`).join('; ')}
+                            </td>
+                            <td className="px-4 py-2 text-purple-800 text-xs">{cAtoms.join(', ')}</td>
+                            <td className="px-4 py-2 font-mono text-xs text-slate-600">
+                              {cAtoms
+                                .map((cName) => {
+                                  const cRange = getCarbonRangeFor(moleculeType, char, cName);
+                                  return `${cName}: ${cRange.min}-${cRange.max}`;
+                                })
+                                .join('; ')}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </CollapsibleSection>
+        )}
+
+        {/* ASSIGNMENT TABLE */}
+        <CollapsibleSection
+          title="Assignment Table"
+          icon="📋"
+          defaultOpen={true}
+          headerExtra={
+            <div className="flex items-center gap-2 flex-wrap">
+              {parsedSeq.length > 0 && moleculeType !== 'sugar' && moleculeType !== 'lipid' && (
+                <div className="flex bg-slate-200 p-1 rounded-lg">
+                  <button
+                    onClick={() => { setTableMode('backbone'); updateActiveTest({ tableMode: 'backbone' }); }}
+                    className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${
+                      tableMode === 'backbone' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    Backbone
+                  </button>
+                  <button
+                    onClick={() => { setTableMode('all'); updateActiveTest({ tableMode: 'all' }); }}
+                    className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${
+                      tableMode === 'all' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    All Atoms
+                  </button>
+                  <button
+                    onClick={() => { setTableMode('unified'); updateActiveTest({ tableMode: 'unified' }); }}
+                    className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${
+                      tableMode === 'unified' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    Unified
+                  </button>
+                </div>
+              )}
+              <button
+                onClick={fillEstimated}
+                className="px-2 py-1 rounded-lg text-xs font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100"
+              >
+                🪄 Fill with estimated
+              </button>
+              <button
+                onClick={() => updateActiveTest({ chemicalShifts: {} })}
+                className="px-2 py-1 rounded-lg text-xs font-bold bg-red-50 border border-red-200 text-red-600 hover:bg-red-100"
+              >
+                🧹 Clear manual
+              </button>
+              <button
+                onClick={exportCSV}
+                className="px-2 py-1 rounded-lg text-xs font-bold bg-emerald-50 border border-emerald-300 text-emerald-700 hover:bg-emerald-100"
+                title="Download CSV (opens in Excel / Google Sheets)"
+              >
+                ⬇ Export CSV (Excel/Sheets)
+              </button>
+              {manualKeys.length > 0 && (
+                <span className="text-[10px] font-bold text-green-700 bg-green-50 border border-green-300 rounded-lg px-2 py-1">
+                  🟩 {manualKeys.length} manual
+                </span>
+              )}
+            </div>
+          }
+        >
+          {parsedSeq.length === 0 ? (
+            <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">
+              Enter a sequence / select a molecule to generate the table.
+            </div>
+          ) : effTableMode === 'backbone' ? (
+            <div className="overflow-x-auto custom-scrollbar border border-slate-200 rounded-lg max-h-[500px]">
               <table className="w-full text-sm text-left">
-                <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200">
+                <thead className="text-xs text-slate-500 uppercase bg-slate-100 sticky top-0 z-10 shadow-sm">
                   <tr>
-                    <th className="px-4 py-2 font-bold">Residue</th>
-                    <th className="px-4 py-2 font-bold text-blue-700">¹H Atoms</th>
-                    <th className="px-4 py-2 font-bold text-blue-700">¹H Range (ppm)</th>
-                    <th className="px-4 py-2 font-bold text-purple-700">¹³C Atoms</th>
-                    <th className="px-4 py-2 font-bold text-purple-700">¹³C Range (ppm)</th>
+                    <th className="px-4 py-3 font-black border-b border-slate-200 w-20 text-center">Res</th>
+                    {moleculeType === 'protein' && (
+                      <th className="px-2 py-2 font-bold border-b border-slate-200 text-center">SS</th>
+                    )}
+                    {selNuc.includes('H') &&
+                      nucDefs.H.map((a) => (
+                        <th key={a} className="px-3 py-2 font-bold text-blue-700 border-b border-slate-200 bg-blue-50/50">
+                          {a} (ppm)
+                        </th>
+                      ))}
+                    {selNuc.includes('N') &&
+                      nucDefs.N.map((a) => (
+                        <th key={a} className="px-3 py-2 font-bold text-emerald-700 border-b border-slate-200 bg-emerald-50/50">
+                          {a} (ppm)
+                        </th>
+                      ))}
+                    {selNuc.includes('C') &&
+                      nucDefs.C.map((a) => (
+                        <th key={a} className="px-3 py-2 font-bold text-purple-700 border-b border-slate-200 bg-purple-50/50">
+                          {a} (ppm)
+                        </th>
+                      ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {visibleTypes.map((char) => {
-                    const db = DB[char];
-                    if (!db) return null;
-                    const hAtoms = Object.keys(db.ranges);
-                    const cAtoms = [...new Set(hAtoms.map((k) => getCarbonName(moleculeType, char, k)).filter(Boolean))];
-                    if (moleculeType === 'protein') cAtoms.push("C'");
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {estSeq.map((res, idx) => {
+                    if (focusIdx !== 'ALL' && focusIdx !== idx) return null;
                     return (
-                      <tr key={char} className="hover:bg-slate-50">
-                        <td className="px-4 py-2 font-bold text-slate-700">{db.name} ({db.code3 || char})</td>
-                        <td className="px-4 py-2 text-blue-800 text-xs">{hAtoms.join(', ')}</td>
-                        <td className="px-4 py-2 font-mono text-xs text-slate-600">
-                          {hAtoms.map((k) => `${k}: ${db.ranges[k].min}-${db.ranges[k].max}`).join('; ')}
+                      <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                        <td className="px-4 py-2 font-black text-slate-700 text-center bg-slate-50 border-r border-slate-100">
+                          {res.id}
                         </td>
-                        <td className="px-4 py-2 text-purple-800 text-xs">{cAtoms.join(', ')}</td>
-                        <td className="px-4 py-2 font-mono text-xs text-slate-600">
-                          {cAtoms
-                            .map((cName) => {
-                              const cRange = getCarbonRangeFor(moleculeType, char, cName);
-                              return `${cName}: ${cRange.min}-${cRange.max}`;
-                            })
-                            .join('; ')}
-                        </td>
+                        {moleculeType === 'protein' && (
+                          <td className="px-2 py-1 text-center">
+                            <span
+                              className="inline-block w-6 h-6 leading-6 rounded-full text-xs font-black text-white"
+                              style={{ backgroundColor: SS_META[res.ssLetter].color }}
+                            >
+                              {res.ssLetter}
+                            </span>
+                          </td>
+                        )}
+                        {selNuc.includes('H') &&
+                          nucDefs.H.map((a) => {
+                            const isMan = parseManual(shifts[`${idx}-${a}`]) !== null;
+                            const isSel = cellIsSelected(idx, a);
+                            const est = res.estShifts?.[a];
+                            return (
+                              <td
+                                key={a}
+                                className={`px-3 py-1 ${isSel ? 'bg-amber-50 ring-2 ring-amber-400' : isMan ? 'bg-green-50' : ''}`}
+                              >
+                                <input
+                                  type="text"
+                                  value={shifts[`${idx}-${a}`] || ''}
+                                  onChange={(e) => handleShiftChange(idx, a, e.target.value)}
+                                  className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${
+                                    isMan
+                                      ? 'border-green-400 bg-green-50 text-green-700 font-bold'
+                                      : 'border-slate-200 focus:border-blue-500'
+                                  }`}
+                                  placeholder="—"
+                                />
+                                {est !== undefined && (
+                                  <div className="text-[13px] font-bold text-blue-600 text-center mt-0.5">≈ {est.toFixed(2)}</div>
+                                )}
+                              </td>
+                            );
+                          })}
+                        {selNuc.includes('N') &&
+                          nucDefs.N.map((a) => {
+                            const isMan = parseManual(shifts[`${idx}-${a}`]) !== null;
+                            const isSel = cellIsSelected(idx, a);
+                            return (
+                              <td
+                                key={a}
+                                className={`px-3 py-1 ${isSel ? 'bg-amber-50 ring-2 ring-amber-400' : isMan ? 'bg-green-50' : ''}`}
+                              >
+                                <input
+                                  type="text"
+                                  value={shifts[`${idx}-${a}`] || ''}
+                                  onChange={(e) => handleShiftChange(idx, a, e.target.value)}
+                                  className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${
+                                    isMan
+                                      ? 'border-green-400 bg-green-50 text-green-700 font-bold'
+                                      : 'border-slate-200 focus:border-emerald-500'
+                                  }`}
+                                  placeholder="—"
+                                />
+                                {res.estN !== null && (
+                                  <div className="text-[13px] font-bold text-emerald-600 text-center mt-0.5">≈ {res.estN.toFixed(2)}</div>
+                                )}
+                              </td>
+                            );
+                          })}
+                        {selNuc.includes('C') &&
+                          nucDefs.C.map((a) => {
+                            const isMan = parseManual(shifts[`${idx}-${a}`]) !== null;
+                            const isSel = cellIsSelected(idx, a);
+                            const est = a === "C' " ? res.estCP : res.estUniqueC?.[a];
+                            return (
+                              <td
+                                key={a}
+                                className={`px-3 py-1 ${isSel ? 'bg-amber-50 ring-2 ring-amber-400' : isMan ? 'bg-green-50' : ''}`}
+                              >
+                                <input
+                                  type="text"
+                                  value={shifts[`${idx}-${a}`] || ''}
+                                  onChange={(e) => handleShiftChange(idx, a, e.target.value)}
+                                  className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${
+                                    isMan
+                                      ? 'border-green-400 bg-green-50 text-green-700 font-bold'
+                                      : 'border-slate-200 focus:border-purple-500'
+                                  }`}
+                                  placeholder="—"
+                                />
+                                {est !== undefined && est !== null && (
+                                  <div className="text-[13px] font-bold text-purple-600 text-center mt-0.5">≈ {est.toFixed(2)}</div>
+                                )}
+                              </td>
+                            );
+                          })}
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
             </div>
-          </div>
-        </div>
-      </CollapsibleSection>
-    )}
-    {/* ASSIGNMENT TABLE (Fill/Clear commands live here) */}
-    <CollapsibleSection
-      title="Assignment Table"
-      icon="📋"
-      defaultOpen={true}
-      headerExtra={
-        <div className="flex items-center gap-2 flex-wrap">
-          {parsedSeq.length > 0 && moleculeType !== 'sugar' && moleculeType !== 'lipid' && (
-            <div className="flex bg-slate-200 p-1 rounded-lg">
-              <button
-                onClick={() => {
-                  setTableMode('backbone');
-                  updateActiveTest({ tableMode: 'backbone' });
-                }}
-                className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${
-                  tableMode === 'backbone' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                Backbone
-              </button>
-              <button
-                onClick={() => {
-                  setTableMode('all');
-                  updateActiveTest({ tableMode: 'all' });
-                }}
-                className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${
-                  tableMode === 'all' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                All Atoms
-              </button>
-            </div>
-          )}
-          <button
-            onClick={fillEstimated}
-            className="px-2 py-1 rounded-lg text-xs font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100"
-          >
-            🪄 Fill with estimated
-          </button>
-          <button
-            onClick={() => updateActiveTest({ chemicalShifts: {} })}
-            className="px-2 py-1 rounded-lg text-xs font-bold bg-red-50 border border-red-200 text-red-600 hover:bg-red-100"
-          >
-            🧹 Clear manual
-          </button>
-          {manualKeys.length > 0 && (
-            <span className="text-[10px] font-bold text-green-700 bg-green-50 border border-green-300 rounded-lg px-2 py-1">
-              🟩 {manualKeys.length} manual
-            </span>
-          )}
-        </div>
-      }
-    >
-      {parsedSeq.length === 0 ? (
-        <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">
-          Enter a sequence / select a molecule to generate the table.
-        </div>
-      ) : effTableMode === 'backbone' ? (
-        <div className="overflow-x-auto custom-scrollbar border border-slate-200 rounded-lg max-h-[500px]">
-          <table className="w-full text-sm text-left">
-            <thead className="text-xs text-slate-500 uppercase bg-slate-100 sticky top-0 z-10 shadow-sm">
-              <tr>
-                <th className="px-4 py-3 font-black border-b border-slate-200 w-20 text-center">Res</th>
-                {moleculeType === 'protein' && (
-                  <th className="px-2 py-2 font-bold border-b border-slate-200 text-center">SS</th>
-                )}
-                {selNuc.includes('H') &&
-                  nucDefs.H.map((a) => (
-                    <th key={a} className="px-3 py-2 font-bold text-blue-700 border-b border-slate-200 bg-blue-50/50">
-                      {a} (ppm)
-                    </th>
-                  ))}
-                {selNuc.includes('N') &&
-                  nucDefs.N.map((a) => (
-                    <th key={a} className="px-3 py-2 font-bold text-emerald-700 border-b border-slate-200 bg-emerald-50/50">
-                      {a} (ppm)
-                    </th>
-                  ))}
-                {selNuc.includes('C') &&
-                  nucDefs.C.map((a) => (
-                    <th key={a} className="px-3 py-2 font-bold text-purple-700 border-b border-slate-200 bg-purple-50/50">
-                      {a} (ppm)
-                    </th>
-                  ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 bg-white">
-              {estSeq.map((res, idx) => {
-                if (focusIdx !== 'ALL' && focusIdx !== idx) return null;
-                return (
-                  <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-4 py-2 font-black text-slate-700 text-center bg-slate-50 border-r border-slate-100">
-                      {res.id}
-                    </td>
-                    {moleculeType === 'protein' && (
-                      <td className="px-2 py-1 text-center">
-                        <span
-                          className="inline-block w-6 h-6 leading-6 rounded-full text-xs font-black text-white"
-                          style={{ backgroundColor: SS_META[res.ssLetter].color }}
-                        >
-                          {res.ssLetter}
-                        </span>
-                      </td>
-                    )}
-                    {selNuc.includes('H') &&
-                      nucDefs.H.map((a) => {
-                        const isMan = parseManual(shifts[`${idx}-${a}`]) !== null;
-                        const isSel = cellIsSelected(idx, a);
-                        const est = res.estShifts?.[a];
-                        return (
-                          <td
-                            key={a}
-                            className={`px-3 py-1 ${isSel ? 'bg-amber-50 ring-2 ring-amber-400' : isMan ? 'bg-green-50' : ''}`}
-                          >
+          ) : effTableMode === 'unified' ? (
+            <div className="overflow-x-auto custom-scrollbar border border-slate-200 rounded-lg max-h-[560px]">
+              <table className="w-full text-sm text-left">
+                <thead className="text-xs text-slate-500 uppercase bg-slate-100 sticky top-0 z-10 shadow-sm">
+                  <tr>
+                    <th className="px-4 py-3 font-black border-b border-slate-200 w-24 text-center">Res</th>
+                    {moleculeType === 'protein' && <th className="px-2 py-2 font-bold border-b border-slate-200 text-center">SS</th>}
+                    <th className="px-3 py-2 font-bold border-b border-slate-200">Nucleus</th>
+                    <th className="px-3 py-2 font-bold border-b border-slate-200">Atom</th>
+                    <th className="px-3 py-2 font-bold border-b border-slate-200 text-blue-700 bg-blue-50/50">Shift (ppm)</th>
+                    <th className="px-3 py-2 font-bold border-b border-slate-200">Estimated (ppm)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {estSeq.map((res, idx) => {
+                    if (focusIdx !== 'ALL' && focusIdx !== idx) return null;
+                    const rows = [];
+                    if (selNuc.includes('H')) {
+                      Object.keys(res.estShifts || {}).forEach((a) => rows.push({ nuc: '¹H', atom: a, est: res.estShifts[a].toFixed(2) }));
+                    }
+                    if (moleculeType === 'protein' && selNuc.includes('N') && res.estN !== null) {
+                      rows.push({ nuc: '¹⁵N', atom: 'N', est: res.estN.toFixed(2) });
+                    }
+                    if (selNuc.includes('C')) {
+                      Object.keys(res.estUniqueC || {}).forEach((cn) => rows.push({ nuc: '¹³C', atom: cn, est: res.estUniqueC[cn].toFixed(2) }));
+                      if (moleculeType === 'protein' && res.estCP !== null) rows.push({ nuc: '¹³C', atom: "C' ", est: res.estCP.toFixed(2) });
+                    }
+                    if (hasPhosphorus && selNuc.includes('P') && res.p31 !== null) {
+                      rows.push({ nuc: '³¹P', atom: 'P', est: res.p31.toFixed(2) });
+                    }
+                    if (rows.length === 0) return null;
+                    return rows.map((row, ri) => {
+                      const key = `${idx}-${row.atom}`;
+                      const isMan = parseManual(shifts[key]) !== null;
+                      const isSel = selectedKeys && selectedKeys.includes(key);
+                      return (
+                        <tr key={`${idx}-${ri}`} className={`hover:bg-slate-50 ${isSel ? 'bg-amber-50' : isMan ? 'bg-green-50' : ''}`}>
+                          {ri === 0 && (
+                            <td rowSpan={rows.length} className="px-4 py-2 font-black text-slate-700 text-center bg-slate-50 border-r border-slate-100 align-top">
+                              {res.id}
+                            </td>
+                          )}
+                          {ri === 0 && moleculeType === 'protein' && (
+                            <td rowSpan={rows.length} className="px-2 py-2 text-center align-top">
+                              <span
+                                className="inline-block w-6 h-6 leading-6 rounded-full text-xs font-black text-white"
+                                style={{ backgroundColor: SS_META[res.ssLetter].color }}
+                              >
+                                {res.ssLetter}
+                              </span>
+                            </td>
+                          )}
+                          <td className="px-3 py-1 font-bold text-slate-600 whitespace-nowrap">{row.nuc}</td>
+                          <td className={`px-3 py-1 font-medium whitespace-nowrap ${isSel ? 'text-amber-700 font-bold' : isMan ? 'text-green-700 font-bold' : 'text-slate-700'}`}>
+                            {row.atom}
+                          </td>
+                          <td className={`px-3 py-1 text-center ${isSel ? 'ring-2 ring-amber-400' : ''}`}>
                             <input
                               type="text"
-                              value={shifts[`${idx}-${a}`] || ''}
-                              onChange={(e) => handleShiftChange(idx, a, e.target.value)}
-                              className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${
+                              value={shifts[key] || ''}
+                              onChange={(e) => handleShiftChange(idx, row.atom, e.target.value)}
+                              className={`w-24 text-center border rounded px-2 py-1 outline-none text-xs font-mono ${
                                 isMan
                                   ? 'border-green-400 bg-green-50 text-green-700 font-bold'
                                   : 'border-slate-200 focus:border-blue-500'
                               }`}
                               placeholder="—"
                             />
-                            {est !== undefined && (
-                              <div className="text-[13px] font-bold text-blue-600 text-center mt-0.5">≈ {est.toFixed(2)}</div>
-                            )}
                           </td>
-                        );
-                      })}
-                    {selNuc.includes('N') &&
-                      nucDefs.N.map((a) => {
-                        const isMan = parseManual(shifts[`${idx}-${a}`]) !== null;
-                        const isSel = cellIsSelected(idx, a);
-                        return (
-                          <td
-                            key={a}
-                            className={`px-3 py-1 ${isSel ? 'bg-amber-50 ring-2 ring-amber-400' : isMan ? 'bg-green-50' : ''}`}
-                          >
-                            <input
-                              type="text"
-                              value={shifts[`${idx}-${a}`] || ''}
-                              onChange={(e) => handleShiftChange(idx, a, e.target.value)}
-                              className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${
-                                isMan
-                                  ? 'border-green-400 bg-green-50 text-green-700 font-bold'
-                                  : 'border-slate-200 focus:border-emerald-500'
-                              }`}
-                              placeholder="—"
-                            />
-                            {res.estN !== null && (
-                              <div className="text-[13px] font-bold text-emerald-600 text-center mt-0.5">≈ {res.estN.toFixed(2)}</div>
-                            )}
-                          </td>
-                        );
-                      })}
-                    {selNuc.includes('C') &&
-                      nucDefs.C.map((a) => {
-                        const isMan = parseManual(shifts[`${idx}-${a}`]) !== null;
-                        const isSel = cellIsSelected(idx, a);
-                        const est = a === "C'" ? res.estCP : res.estUniqueC?.[a];
-                        return (
-                          <td
-                            key={a}
-                            className={`px-3 py-1 ${isSel ? 'bg-amber-50 ring-2 ring-amber-400' : isMan ? 'bg-green-50' : ''}`}
-                          >
-                            <input
-                              type="text"
-                              value={shifts[`${idx}-${a}`] || ''}
-                              onChange={(e) => handleShiftChange(idx, a, e.target.value)}
-                              className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${
-                                isMan
-                                  ? 'border-green-400 bg-green-50 text-green-700 font-bold'
-                                  : 'border-slate-200 focus:border-purple-500'
-                              }`}
-                              placeholder="—"
-                            />
-                            {est !== undefined && est !== null && (
-                              <div className="text-[13px] font-bold text-purple-600 text-center mt-0.5">≈ {est.toFixed(2)}</div>
-                            )}
-                          </td>
-                        );
-                      })}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-6 max-h-[600px] overflow-y-auto custom-scrollbar pr-2">
-          <h4 className="text-md font-bold text-blue-700 border-b-2 border-blue-100 inline-block pr-4 pb-1">¹H Assignment</h4>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {estSeq.map((res, resIdx) => {
-              if (focusIdx !== 'ALL' && focusIdx !== resIdx) return null;
-              return (
-                <div key={`1h-${resIdx}`} className="border border-slate-200 rounded-lg overflow-hidden shadow-sm h-fit">
-                  <div
-                    className="py-2 text-center font-bold text-sm"
-                    style={{ backgroundColor: `${res.color}15`, color: res.color, borderBottom: `1px solid ${res.color}30` }}
-                  >
-                    {res.name} ({res.id})
-                  </div>
-                  <table className="w-full text-sm text-left bg-white">
-                    <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200">
-                      <tr>
-                        <th className="px-3 py-2 font-semibold">Atom</th>
-                        <th className="px-3 py-2 font-semibold text-center">Shift (ppm)</th>
-                      </tr>
-                    </thead>
-                    <tbody className="text-slate-700 divide-y divide-slate-100">
-                      {res.atoms.map((atom) => {
-                        const isMan = parseManual(shifts[`${resIdx}-${atom}`]) !== null;
-                        const isSel = cellIsSelected(resIdx, atom);
-                        return (
-                          <tr key={atom} className={`hover:bg-slate-50 ${isSel ? 'bg-amber-50' : isMan ? 'bg-green-50' : ''}`}>
-                            <td className={`px-3 py-1 font-medium ${isSel ? 'text-amber-700 font-bold' : isMan ? 'text-green-700 font-bold' : ''}`}>
-                              {atom}
-                            </td>
-                            <td className={`px-3 py-1 text-center border-l border-slate-100 font-mono ${isSel ? 'ring-2 ring-amber-400' : ''}`}>
-                              <div className="flex items-center justify-center gap-2 flex-wrap">
-                                <input
-                                  type="text"
-                                  value={shifts[`${resIdx}-${atom}`] || ''}
-                                  onChange={(e) => handleShiftChange(resIdx, atom, e.target.value)}
-                                  className={`w-16 text-center border rounded py-0.5 outline-none text-xs ${
-                                    isMan
-                                      ? 'border-green-400 bg-green-50 text-green-700 font-bold'
-                                      : 'border-slate-300 focus:border-blue-500'
-                                  }`}
-                                  placeholder="—"
-                                />
-                                {res.estShifts[atom] !== undefined && (
-                                  <span className="text-[13px] font-bold text-blue-600">≈ {res.estShifts[atom].toFixed(2)}</span>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              );
-            })}
-          </div>
-          <h4 className="text-md font-bold text-purple-700 border-b-2 border-purple-100 inline-block pr-4 pb-1 mt-4">¹³C Assignment</h4>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-4">
-            {estSeq.map((res, resIdx) => {
-              if (focusIdx !== 'ALL' && focusIdx !== resIdx) return null;
-              return (
-                <div key={`13c-${resIdx}`} className="border border-slate-200 rounded-lg overflow-hidden shadow-sm h-fit">
-                  <div
-                    className="py-2 text-center font-bold text-sm"
-                    style={{ backgroundColor: `${res.color}15`, color: res.color, borderBottom: `1px solid ${res.color}30` }}
-                  >
-                    {res.name} ({res.id})
-                  </div>
-                  <table className="w-full text-sm text-left bg-white">
-                    <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200">
-                      <tr>
-                        <th className="px-3 py-2 font-semibold">Atom</th>
-                        <th className="px-3 py-2 font-semibold text-center">Shift (ppm)</th>
-                      </tr>
-                    </thead>
-                    <tbody className="text-slate-700 divide-y divide-slate-100">
-                      {Object.keys(res.estUniqueC || {}).map((cName) => {
-                        const isMan = parseManual(shifts[`${resIdx}-${cName}`]) !== null;
-                        const isSel = cellIsSelected(resIdx, cName);
-                        return (
-                          <tr key={cName} className={`hover:bg-slate-50 ${isSel ? 'bg-amber-50' : isMan ? 'bg-green-50' : ''}`}>
-                            <td className={`px-3 py-1 font-medium ${isSel ? 'text-amber-700 font-bold' : 'text-purple-800'}`}>{cName}</td>
-                            <td className={`px-3 py-1 text-center border-l border-slate-100 font-mono ${isSel ? 'ring-2 ring-amber-400' : ''}`}>
-                              <div className="flex items-center justify-center gap-2 flex-wrap">
-                                <input
-                                  type="text"
-                                  value={shifts[`${resIdx}-${cName}`] || ''}
-                                  onChange={(e) => handleShiftChange(resIdx, cName, e.target.value)}
-                                  className={`w-16 text-center border rounded py-0.5 outline-none text-xs ${
-                                    isMan
-                                      ? 'border-green-400 bg-green-50 text-green-700 font-bold'
-                                      : 'border-slate-300 focus:border-purple-500'
-                                  }`}
-                                  placeholder="—"
-                                />
-                                <span className="text-[13px] font-bold text-purple-600">≈ {res.estUniqueC[cName].toFixed(1)}</span>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              );
-            })}
-          </div>
-          {hasPhosphorus && selNuc.includes('P') && (
-            <>
-              <h4 className="text-md font-bold text-teal-700 border-b-2 border-teal-100 inline-block pr-4 pb-1 mt-4">³¹P Assignment</h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-4">
+                          <td className="px-3 py-1 text-center text-[13px] font-bold text-blue-600">≈ {row.est}</td>
+                        </tr>
+                      );
+                    });
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-6 max-h-[600px] overflow-y-auto custom-scrollbar pr-2">
+              <h4 className="text-md font-bold text-blue-700 border-b-2 border-blue-100 inline-block pr-4 pb-1">¹H Assignment</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {estSeq.map((res, resIdx) => {
                   if (focusIdx !== 'ALL' && focusIdx !== resIdx) return null;
-                  if (res.p31 === null) return null;
-                  const isMan = parseManual(shifts[`${resIdx}-P`]) !== null;
-                  const isSel = cellIsSelected(resIdx, 'P');
                   return (
-                    <div key={`p-${resIdx}`} className="border border-slate-200 rounded-lg overflow-hidden shadow-sm h-fit">
+                    <div key={`1h-${resIdx}`} className="border border-slate-200 rounded-lg overflow-hidden shadow-sm h-fit">
                       <div
                         className="py-2 text-center font-bold text-sm"
                         style={{ backgroundColor: `${res.color}15`, color: res.color, borderBottom: `1px solid ${res.color}30` }}
                       >
                         {res.name} ({res.id})
                       </div>
-                      <div className={`p-3 flex items-center justify-center gap-3 ${isSel ? 'bg-amber-50 ring-2 ring-amber-400' : isMan ? 'bg-green-50' : ''}`}>
-                        <span className="font-bold text-teal-700">P</span>
-                        <input
-                          type="text"
-                          value={shifts[`${resIdx}-P`] || ''}
-                          onChange={(e) => handleShiftChange(resIdx, 'P', e.target.value)}
-                          className={`w-16 text-center border rounded py-0.5 outline-none text-xs font-mono ${
-                            isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-300 focus:border-teal-500'
-                          }`}
-                          placeholder="—"
-                        />
-                        <span className="text-[13px] font-bold text-teal-600">≈ {res.p31.toFixed(2)}</span>
-                      </div>
+                      <table className="w-full text-sm text-left bg-white">
+                        <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200">
+                          <tr>
+                            <th className="px-3 py-2 font-semibold">Atom</th>
+                            <th className="px-3 py-2 font-semibold text-center">Shift (ppm)</th>
+                          </tr>
+                        </thead>
+                        <tbody className="text-slate-700 divide-y divide-slate-100">
+                          {res.atoms.map((atom) => {
+                            const isMan = parseManual(shifts[`${resIdx}-${atom}`]) !== null;
+                            const isSel = cellIsSelected(resIdx, atom);
+                            return (
+                              <tr key={atom} className={`hover:bg-slate-50 ${isSel ? 'bg-amber-50' : isMan ? 'bg-green-50' : ''}`}>
+                                <td className={`px-3 py-1 font-medium ${isSel ? 'text-amber-700 font-bold' : isMan ? 'text-green-700 font-bold' : ''}`}>
+                                  {atom}
+                                </td>
+                                <td className={`px-3 py-1 text-center border-l border-slate-100 font-mono ${isSel ? 'ring-2 ring-amber-400' : ''}`}>
+                                  <div className="flex items-center justify-center gap-2 flex-wrap">
+                                    <input
+                                      type="text"
+                                      value={shifts[`${resIdx}-${atom}`] || ''}
+                                      onChange={(e) => handleShiftChange(resIdx, atom, e.target.value)}
+                                      className={`w-16 text-center border rounded py-0.5 outline-none text-xs ${
+                                        isMan
+                                          ? 'border-green-400 bg-green-50 text-green-700 font-bold'
+                                          : 'border-slate-300 focus:border-blue-500'
+                                      }`}
+                                      placeholder="—"
+                                    />
+                                    {res.estShifts[atom] !== undefined && (
+                                      <span className="text-[13px] font-bold text-blue-600">≈ {res.estShifts[atom].toFixed(2)}</span>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
                   );
                 })}
               </div>
-            </>
-          )}
-        </div>
-      )}
-    </CollapsibleSection>
-    {/* SPECTRA IMAGES */}
-    <CollapsibleSection title="Spectra Images" icon="🖼️" defaultOpen={true}>
-      <div className="flex justify-between items-center mb-4 flex-wrap gap-3">
-        <p className="text-sm text-slate-500">Attach image links (Google Drive/Dropbox supported) for your experimental spectra.</p>
-        <button
-          onClick={() => {
-            const url = prompt('Paste image link (Google Drive, Dropbox, or direct URL):');
-            if (url && url.trim()) updateActiveTest({ nmrSpectraImages: [...images, url.trim()] });
-          }}
-          className="bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 font-bold px-3 py-1.5 rounded transition-colors shadow-sm text-xs"
-        >
-          + Add Link
-        </button>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {images.length === 0 ? (
-          <div className="col-span-full text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">
-            No spectra images attached.
-          </div>
-        ) : (
-          images.map((imgSrc, idx) => (
-            <div key={idx} className="relative group bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold text-slate-500">Spectrum {idx + 1}</span>
-                <button
-                  onClick={() => updateActiveTest({ nmrSpectraImages: images.filter((_, i) => i !== idx) })}
-                  className="bg-red-50 hover:bg-red-100 text-red-500 hover:text-red-700 rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold transition-colors border border-red-200"
-                >
-                  &times;
-                </button>
+              <h4 className="text-md font-bold text-purple-700 border-b-2 border-purple-100 inline-block pr-4 pb-1 mt-4">¹³C Assignment</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-4">
+                {estSeq.map((res, resIdx) => {
+                  if (focusIdx !== 'ALL' && focusIdx !== resIdx) return null;
+                  return (
+                    <div key={`13c-${resIdx}`} className="border border-slate-200 rounded-lg overflow-hidden shadow-sm h-fit">
+                      <div
+                        className="py-2 text-center font-bold text-sm"
+                        style={{ backgroundColor: `${res.color}15`, color: res.color, borderBottom: `1px solid ${res.color}30` }}
+                      >
+                        {res.name} ({res.id})
+                      </div>
+                      <table className="w-full text-sm text-left bg-white">
+                        <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200">
+                          <tr>
+                            <th className="px-3 py-2 font-semibold">Atom</th>
+                            <th className="px-3 py-2 font-semibold text-center">Shift (ppm)</th>
+                          </tr>
+                        </thead>
+                        <tbody className="text-slate-700 divide-y divide-slate-100">
+                          {Object.keys(res.estUniqueC || {}).map((cName) => {
+                            const isMan = parseManual(shifts[`${resIdx}-${cName}`]) !== null;
+                            const isSel = cellIsSelected(resIdx, cName);
+                            return (
+                              <tr key={cName} className={`hover:bg-slate-50 ${isSel ? 'bg-amber-50' : isMan ? 'bg-green-50' : ''}`}>
+                                <td className={`px-3 py-1 font-medium ${isSel ? 'text-amber-700 font-bold' : 'text-purple-800'}`}>{cName}</td>
+                                <td className={`px-3 py-1 text-center border-l border-slate-100 font-mono ${isSel ? 'ring-2 ring-amber-400' : ''}`}>
+                                  <div className="flex items-center justify-center gap-2 flex-wrap">
+                                    <input
+                                      type="text"
+                                      value={shifts[`${resIdx}-${cName}`] || ''}
+                                      onChange={(e) => handleShiftChange(resIdx, cName, e.target.value)}
+                                      className={`w-16 text-center border rounded py-0.5 outline-none text-xs ${
+                                        isMan
+                                          ? 'border-green-400 bg-green-50 text-green-700 font-bold'
+                                          : 'border-slate-300 focus:border-purple-500'
+                                      }`}
+                                      placeholder="—"
+                                    />
+                                    <span className="text-[13px] font-bold text-purple-600">≈ {res.estUniqueC[cName].toFixed(1)}</span>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })}
               </div>
-              <div className="bg-slate-50 rounded-lg p-2 border border-slate-100">
-                <SmartImage src={imgSrc} alt={`Spectrum ${idx + 1}`} />
-              </div>
-              <a
-                href={imgSrc}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-2 text-xs text-blue-500 hover:text-blue-700 font-medium flex items-center gap-1"
-              >
-                🔗 Open original link
-              </a>
+              {hasPhosphorus && selNuc.includes('P') && (
+                <>
+                  <h4 className="text-md font-bold text-teal-700 border-b-2 border-teal-100 inline-block pr-4 pb-1 mt-4">³¹P Assignment</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-4">
+                    {estSeq.map((res, resIdx) => {
+                      if (focusIdx !== 'ALL' && focusIdx !== resIdx) return null;
+                      if (res.p31 === null) return null;
+                      const isMan = parseManual(shifts[`${resIdx}-P`]) !== null;
+                      const isSel = cellIsSelected(resIdx, 'P');
+                      return (
+                        <div key={`p-${resIdx}`} className="border border-slate-200 rounded-lg overflow-hidden shadow-sm h-fit">
+                          <div
+                            className="py-2 text-center font-bold text-sm"
+                            style={{ backgroundColor: `${res.color}15`, color: res.color, borderBottom: `1px solid ${res.color}30` }}
+                          >
+                            {res.name} ({res.id})
+                          </div>
+                          <div className={`p-3 flex items-center justify-center gap-3 ${isSel ? 'bg-amber-50 ring-2 ring-amber-400' : isMan ? 'bg-green-50' : ''}`}>
+                            <span className="font-bold text-teal-700">P</span>
+                            <input
+                              type="text"
+                              value={shifts[`${resIdx}-P`] || ''}
+                              onChange={(e) => handleShiftChange(resIdx, 'P', e.target.value)}
+                              className={`w-16 text-center border rounded py-0.5 outline-none text-xs font-mono ${
+                                isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-300 focus:border-teal-500'
+                              }`}
+                              placeholder="—"
+                            />
+                            <span className="text-[13px] font-bold text-teal-600">≈ {res.p31.toFixed(2)}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
             </div>
-          ))
-        )}
-      </div>
-    </CollapsibleSection>
-    {/* SIMULATED SPECTRA */}
-    {parsedSeq.length > 0 && (
-      <CollapsibleSection title="Simulated Spectra (Drag to Zoom)" icon="📈" defaultOpen={false}>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <OneDSpectrumPlot
-            title="Simulated ¹H 1D Spectrum"
-            data={peaks.data1H}
-            fullDomain={[0, 11]}
-            ticks={TICKS_1H}
-            TickComponent={CustomXTick1H}
-            xLabel="¹H (ppm)"
-            panelId="1D_1H"
-            expandedPanel={expandedPanel}
-            setExpandedPanel={setExpandedPanel}
-            selectedKeys={selectedKeys}
-            manualKeys={manualKeys}
-          />
-          <OneDSpectrumPlot
-            title="Simulated ¹³C 1D Spectrum"
-            data={peaks.data13C}
-            fullDomain={[0, 190]}
-            ticks={TICKS_13C}
-            TickComponent={CustomXTick13C}
-            xLabel="¹³C (ppm)"
-            panelId="1D_13C"
-            expandedPanel={expandedPanel}
-            setExpandedPanel={setExpandedPanel}
-            selectedKeys={selectedKeys}
-            manualKeys={manualKeys}
-          />
-          {hasPhosphorus && selNuc.includes('P') && peaks.p31Data.length > 0 && (
-            <OneDSpectrumPlot
-              title="Simulated ³¹P 1D Spectrum"
-              data={peaks.p31Data}
-              fullDomain={[-5, 5]}
-              ticks={Array.from({ length: 11 }, (_, i) => i - 5)}
-              TickComponent={CustomXTick1H}
-              xLabel="³¹P (ppm)"
-              panelId="1D_31P"
-              expandedPanel={expandedPanel}
-              setExpandedPanel={setExpandedPanel}
-              selectedKeys={selectedKeys}
-              manualKeys={manualKeys}
-            />
           )}
-          <SpectrumPlot
-            title="Simulated COSY Spectrum"
-            diagonalData={peaks.diagonalData}
-            crossPeakData={peaks.cosyPeaks}
-            expandedPanel={expandedPanel}
-            setExpandedPanel={setExpandedPanel}
-            panelId="cosy"
-            diagonalColor="#22c55e"
-            selectedKeys={selectedKeys}
-            manualKeys={manualKeys}
-          />
-          <SpectrumPlot
-            title="Simulated NOESY Spectrum"
-            diagonalData={peaks.diagonalData}
-            crossPeakData={peaks.noesyPeaks}
-            expandedPanel={expandedPanel}
-            setExpandedPanel={setExpandedPanel}
-            panelId="noesy"
-            diagonalColor="#ef4444"
-            selectedKeys={selectedKeys}
-            manualKeys={manualKeys}
-          />
-          <SpectrumPlot
-            title="Simulated TOCSY Spectrum"
-            diagonalData={peaks.diagonalData}
-            crossPeakData={peaks.tocsyPeaks}
-            expandedPanel={expandedPanel}
-            setExpandedPanel={setExpandedPanel}
-            panelId="tocsy"
-            diagonalColor="#1e3a8a"
-            selectedKeys={selectedKeys}
-            manualKeys={manualKeys}
-          />
-          <HSQCPlot
-            title="Simulated ¹H-¹³C HSQC Spectrum"
-            crossPeakData={peaks.hsqcPeaks}
-            expandedPanel={expandedPanel}
-            setExpandedPanel={setExpandedPanel}
-            panelId="hsqc"
-            selectedKeys={selectedKeys}
-            manualKeys={manualKeys}
-          />
-        </div>
-      </CollapsibleSection>
-    )}
-    {/* LAB NOTEBOOK EXPORT */}
-    <CollapsibleSection title="Lab Notebook Export" icon="📓" defaultOpen={false} className="no-print">
-      <div className="flex flex-col gap-4">
-        <p className="text-sm text-slate-600">
-          Select the NMR data to format and append to the General Comments (which acts as the Lab Notebook entry).
-        </p>
-        <div className="flex flex-wrap gap-4 border border-slate-200 p-4 rounded-lg bg-white shadow-sm">
-          <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600">
-            <input type="checkbox" id="nb-cond" defaultChecked className="w-4 h-4 accent-blue-600 cursor-pointer" />
-            Experimental Conditions
-          </label>
-          <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600">
-            <input type="checkbox" id="nb-seq" defaultChecked className="w-4 h-4 accent-blue-600 cursor-pointer" />
-            Sequence
-          </label>
-          <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600">
-            <input type="checkbox" id="nb-table" defaultChecked className="w-4 h-4 accent-blue-600 cursor-pointer" />
-            Shifts Table
-          </label>
-          <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600">
-            <input type="checkbox" id="nb-formula" defaultChecked className="w-4 h-4 accent-blue-600 cursor-pointer" />
-            Chemical Formula
-          </label>
-          <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600">
-            <input type="checkbox" id="nb-images" defaultChecked className="w-4 h-4 accent-blue-600 cursor-pointer" />
-            Spectra Images
-          </label>
-        </div>
-        <button
-          onClick={() => {
-            let html =
-              '<div style="background-color: #f8fafc; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0; margin-top: 15px; font-family: sans-serif;">';
-            html +=
-              '<h4 style="color: #1e40af; margin-top: 0; margin-bottom: 12px; font-size: 14px; border-bottom: 2px solid #bfdbfe; padding-bottom: 4px;">📊 NMR Data Summary</h4>';
-            const cbCond = document.getElementById('nb-cond')?.checked;
-            const cbSeq = document.getElementById('nb-seq')?.checked;
-            const cbTable = document.getElementById('nb-table')?.checked;
-            const cbFormula = document.getElementById('nb-formula')?.checked;
-            const cbImages = document.getElementById('nb-images')?.checked;
-            if (cbCond) {
-              html += `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;"><b>Compound:</b> ${
-                activeTest.compound || 'N/A'
-              } | <b>Solvent:</b> ${activeTest.solvent || 'N/A'} | <b>Temp:</b> ${activeTest.temperature || 'N/A'} | <b>Conc:</b> ${
-                activeTest.concentration || 'N/A'
-              }${moleculeType === 'dna' ? ` | <b>DNA form:</b> ${dnaForm}` : ''}</p>`;
-            }
-            if (cbSeq) {
-              html += `<p style="font-size: 12px; color: #475569; margin-bottom: 12px;"><b>${typeLabel}:</b> <span style="font-family: monospace; background: #e2e8f0; padding: 2px 4px; border-radius: 4px;">${
-                isPolymer ? activeTest.proteinSequence || 'N/A' : parsedSeq[0]?.name || 'N/A'
-              }</span></p>`;
-            }
-            if (cbFormula && structure) {
-              html += `<div style="margin-bottom: 12px;">${elementsToSVG(structure, 300)}</div>`;
-            }
-            if (cbTable && Object.keys(shifts).length > 0) {
-              html += `<table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; text-align: left; background: white;"><tr style="background-color: #f1f5f9;"><th style="padding: 6px; border: 1px solid #cbd5e1;">Residue</th><th style="padding: 6px; border: 1px solid #cbd5e1;">Atom</th><th style="padding: 6px; border: 1px solid #cbd5e1;">Shift (ppm)</th></tr>`;
-              Object.keys(shifts).forEach((key) => {
-                const parts = key.split('-');
-                const resIdx = parts[0];
-                const atom = parts.slice(1).join('-');
-                const res = parsedSeq[resIdx];
-                if (res && shifts[key]) {
-                  html += `<tr><td style="padding: 6px; border: 1px solid #e2e8f0; color: #334155;"><b>${res.name} (${res.id})</b></td><td style="padding: 6px; border: 1px solid #e2e8f0; color: #334155;">${atom}</td><td style="padding: 6px; border: 1px solid #e2e8f0; color: #334155; font-family: monospace;">${shifts[key]}</td></tr>`;
+        </CollapsibleSection>
+
+        {/* SPECTRA IMAGES */}
+        <CollapsibleSection title="Spectra Images" icon="🖼️" defaultOpen={true}>
+          <div className="flex justify-between items-center mb-4 flex-wrap gap-3">
+            <p className="text-sm text-slate-500">Attach image links (Google Drive/Dropbox supported) for your experimental spectra.</p>
+            <button
+              onClick={() => {
+                const url = prompt('Paste image link (Google Drive, Dropbox, or direct URL):');
+                if (url && url.trim()) updateActiveTest({ nmrSpectraImages: [...images, url.trim()] });
+              }}
+              className="bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 font-bold px-3 py-1.5 rounded transition-colors shadow-sm text-xs"
+            >
+              + Add Link
+            </button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {images.length === 0 ? (
+              <div className="col-span-full text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">
+                No spectra images attached.
+              </div>
+            ) : (
+              images.map((imgSrc, idx) => (
+                <div key={idx} className="relative group bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-slate-500">Spectrum {idx + 1}</span>
+                    <button
+                      onClick={() => updateActiveTest({ nmrSpectraImages: images.filter((_, i) => i !== idx) })}
+                      className="bg-red-50 hover:bg-red-100 text-red-500 hover:text-red-700 rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold transition-colors border border-red-200"
+                    >
+                      &times;
+                    </button>
+                  </div>
+                  <div className="bg-slate-50 rounded-lg p-2 border border-slate-100">
+                    <SmartImage src={imgSrc} alt={`Spectrum ${idx + 1}`} />
+                  </div>
+                  <a
+                    href={imgSrc}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-2 text-xs text-blue-500 hover:text-blue-700 font-medium flex items-center gap-1"
+                  >
+                    🔗 Open original link
+                  </a>
+                </div>
+              ))
+            )}
+          </div>
+        </CollapsibleSection>
+
+        {/* SIMULATED SPECTRA */}
+        {parsedSeq.length > 0 && (
+          <CollapsibleSection title="Simulated Spectra (Drag to Zoom)" icon="📈" defaultOpen={false}>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <OneDSpectrumPlot
+                title="Simulated ¹H 1D Spectrum"
+                data={peaks.data1H}
+                fullDomain={[0, 11]}
+                ticks={TICKS_1H}
+                TickComponent={CustomXTick1H}
+                xLabel="¹H (ppm)"
+                panelId="1D_1H"
+                expandedPanel={expandedPanel}
+                setExpandedPanel={setExpandedPanel}
+                selectedKeys={selectedKeys}
+                manualKeys={manualKeys}
+              />
+              <OneDSpectrumPlot
+                title="Simulated ¹³C 1D Spectrum"
+                data={peaks.data13C}
+                fullDomain={[0, 190]}
+                ticks={TICKS_13C}
+                TickComponent={CustomXTick13C}
+                xLabel="¹³C (ppm)"
+                panelId="1D_13C"
+                expandedPanel={expandedPanel}
+                setExpandedPanel={setExpandedPanel}
+                selectedKeys={selectedKeys}
+                manualKeys={manualKeys}
+              />
+              {hasPhosphorus && selNuc.includes('P') && peaks.p31Data.length > 0 && (
+                <OneDSpectrumPlot
+                  title="Simulated ³¹P 1D Spectrum"
+                  data={peaks.p31Data}
+                  fullDomain={[-5, 5]}
+                  ticks={Array.from({ length: 11 }, (_, i) => i - 5)}
+                  TickComponent={CustomXTick1H}
+                  xLabel="³¹P (ppm)"
+                  panelId="1D_31P"
+                  expandedPanel={expandedPanel}
+                  setExpandedPanel={setExpandedPanel}
+                  selectedKeys={selectedKeys}
+                  manualKeys={manualKeys}
+                />
+              )}
+              <SpectrumPlot
+                title="Simulated COSY Spectrum"
+                diagonalData={peaks.diagonalData}
+                crossPeakData={peaks.cosyPeaks}
+                expandedPanel={expandedPanel}
+                setExpandedPanel={setExpandedPanel}
+                panelId="cosy"
+                diagonalColor="#22c55e"
+                selectedKeys={selectedKeys}
+                manualKeys={manualKeys}
+              />
+              <SpectrumPlot
+                title="Simulated NOESY Spectrum"
+                diagonalData={peaks.diagonalData}
+                crossPeakData={peaks.noesyPeaks}
+                expandedPanel={expandedPanel}
+                setExpandedPanel={setExpandedPanel}
+                panelId="noesy"
+                diagonalColor="#ef4444"
+                selectedKeys={selectedKeys}
+                manualKeys={manualKeys}
+              />
+              <SpectrumPlot
+                title="Simulated TOCSY Spectrum"
+                diagonalData={peaks.diagonalData}
+                crossPeakData={peaks.tocsyPeaks}
+                expandedPanel={expandedPanel}
+                setExpandedPanel={setExpandedPanel}
+                panelId="tocsy"
+                diagonalColor="#1e3a8a"
+                selectedKeys={selectedKeys}
+                manualKeys={manualKeys}
+              />
+              <HSQCPlot
+                title="Simulated ¹H-¹³C HSQC Spectrum"
+                crossPeakData={peaks.hsqcPeaks}
+                expandedPanel={expandedPanel}
+                setExpandedPanel={setExpandedPanel}
+                panelId="hsqc"
+                selectedKeys={selectedKeys}
+                manualKeys={manualKeys}
+              />
+            </div>
+          </CollapsibleSection>
+        )}
+
+        {/* LAB NOTEBOOK EXPORT */}
+        <CollapsibleSection title="Lab Notebook Export" icon="📓" defaultOpen={false} className="no-print">
+          <div className="flex flex-col gap-4">
+            <p className="text-sm text-slate-600">
+              Select the NMR data to format and append to the General Comments (which acts as the Lab Notebook entry).
+            </p>
+            <div className="flex flex-wrap gap-4 border border-slate-200 p-4 rounded-lg bg-white shadow-sm">
+              <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600">
+                <input type="checkbox" id="nb-cond" defaultChecked className="w-4 h-4 accent-blue-600 cursor-pointer" />
+                Experimental Conditions
+              </label>
+              <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600">
+                <input type="checkbox" id="nb-seq" defaultChecked className="w-4 h-4 accent-blue-600 cursor-pointer" />
+                Sequence
+              </label>
+              <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600">
+                <input type="checkbox" id="nb-table" defaultChecked className="w-4 h-4 accent-blue-600 cursor-pointer" />
+                Shifts Table
+              </label>
+              <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600">
+                <input type="checkbox" id="nb-formula" defaultChecked className="w-4 h-4 accent-blue-600 cursor-pointer" />
+                Chemical Formula
+              </label>
+              <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600">
+                <input type="checkbox" id="nb-images" defaultChecked className="w-4 h-4 accent-blue-600 cursor-pointer" />
+                Spectra Images
+              </label>
+            </div>
+            <button
+              onClick={() => {
+                let html =
+                  '<div style="background-color: #f8fafc; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0; margin-top: 15px; font-family: sans-serif;">';
+                html +=
+                  '<h4 style="color: #1e40af; margin-top: 0; margin-bottom: 12px; font-size: 14px; border-bottom: 2px solid #bfdbfe; padding-bottom: 4px;">📊 NMR Data Summary</h4>';
+                const cbCond = document.getElementById('nb-cond')?.checked;
+                const cbSeq = document.getElementById('nb-seq')?.checked;
+                const cbTable = document.getElementById('nb-table')?.checked;
+                const cbFormula = document.getElementById('nb-formula')?.checked;
+                const cbImages = document.getElementById('nb-images')?.checked;
+                if (cbCond) {
+                  const protTitles =
+                    linkedProtocolIds
+                      .map((id) => (datasetProtocols || []).find((p) => p.id === id)?.title)
+                      .filter(Boolean)
+                      .join(', ') || 'N/A';
+                  html += `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;"><b>Compound:</b> ${
+                    selectedCompounds.join(', ') || activeTest.compound || 'N/A'
+                  } | <b>Solvent:</b> ${activeTest.solvent || 'N/A'} | <b>Temp:</b> ${activeTest.temperature || 'N/A'} | <b>Conc:</b> ${
+                    activeTest.concentration || 'N/A'
+                  } | <b>Protocols:</b> ${protTitles}${
+                    moleculeType === 'dna' || moleculeType === 'rna' ? ` | <b>Default form:</b> ${dnaFormDefault}` : ''
+                  }${moleculeType === 'sugar' ? ` | <b>Anomer:</b> ${sugarAnomer} | <b>Conf:</b> ${sugarConf === 'invChair' ? 'inverted chair' : 'chair'}` : ''}${
+                    moleculeType === 'lipid' ? ` | <b>Δ9:</b> ${lipidDB}` : ''
+                  }</p>`;
                 }
-              });
-              html += `</table>`;
-            }
-            if (cbImages && images.length > 0) {
-              html += `<div style="margin-top: 15px;"><h5 style="color: #1e40af; font-size: 12px; margin-bottom: 8px;">📷 Spectra Images:</h5>`;
-              images.forEach((imgSrc, idx) => {
-                const cands = normalizeImageCandidates(imgSrc);
-                html += `<div style="margin-bottom: 10px;"><img src="${cands[0]}" alt="Spectrum ${
-                  idx + 1
-                }" style="max-width: 100%; height: auto; border: 1px solid #e2e8f0; border-radius: 4px;" /><p style="font-size: 10px; color: #64748b; margin-top: 4px;">Image ${idx + 1}</p></div>`;
-              });
-              html += `</div>`;
-            }
-            html += '</div>';
-            const currentComments = activeTest.comments || '';
-            updateActiveTest({ comments: currentComments + (currentComments ? '<br/>' : '') + html });
-            alert('Data appended successfully to the notes! They will now be visible in the Lab Notebook.');
-          }}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-6 rounded-lg transition-all shadow-sm w-fit border border-indigo-700 flex items-center gap-2"
-        >
-          <span>+</span> Append Data to Lab Notebook
-        </button>
-      </div>
-    </CollapsibleSection>
-{/* ===== LABELS & CLASSIFICATION ===== */}
-<CollapsibleSection title="Labels & Classification" icon="🏷️" defaultOpen={true}>
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="flex flex-col gap-4">
-            <div>
+                if (cbSeq) {
+                  html += `<p style="font-size: 12px; color: #475569; margin-bottom: 12px;"><b>${typeLabel}:</b> <span style="font-family: monospace; background: #e2e8f0; padding: 2px 4px; border-radius: 4px;">${
+                    isPolymer ? activeTest.proteinSequence || 'N/A' : parsedSeq[0]?.name || 'N/A'
+                  }</span></p>`;
+                }
+                if (cbFormula && structure) {
+                  html += `<div style="margin-bottom: 12px;">${elementsToSVG(structure, 300)}</div>`;
+                }
+                if (cbTable && Object.keys(shifts).length > 0) {
+                  html += `<table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; text-align: left; background: white;"><tr style="background-color: #f1f5f9;"><th style="padding: 6px; border: 1px solid #cbd5e1;">Residue</th><th style="padding: 6px; border: 1px solid #cbd5e1;">Atom</th><th style="padding: 6px; border: 1px solid #cbd5e1;">Shift (ppm)</th></tr>`;
+                  Object.keys(shifts).forEach((key) => {
+                    const parts = key.split('-');
+                    const resIdx = parts[0];
+                    const atom = parts.slice(1).join('-');
+                    const res = parsedSeq[resIdx];
+                    if (res && shifts[key]) {
+                      html += `<tr><td style="padding: 6px; border: 1px solid #e2e8f0; color: #334155;"><b>${res.name} (${res.id})</b></td><td style="padding: 6px; border: 1px solid #e2e8f0; color: #334155;">${atom}</td><td style="padding: 6px; border: 1px solid #e2e8f0; color: #334155; font-family: monospace;">${shifts[key]}</td></tr>`;
+                    }
+                  });
+                  html += `</table>`;
+                }
+                if (cbImages && images.length > 0) {
+                  html += `<div style="margin-top: 15px;"><h5 style="color: #1e40af; font-size: 12px; margin-bottom: 8px;">📷 Spectra Images:</h5>`;
+                  images.forEach((imgSrc, idx) => {
+                    const cands = normalizeImageCandidates(imgSrc);
+                    html += `<div style="margin-bottom: 10px;"><img src="${cands[0]}" alt="Spectrum ${
+                      idx + 1
+                    }" style="max-width: 100%; height: auto; border: 1px solid #e2e8f0; border-radius: 4px;"/><p style="font-size: 10px; color: #64748b; margin-top: 4px;">Image ${idx + 1}</p></div>`;
+                  });
+                  html += `</div>`;
+                }
+                html += '</div>';
+                const currentComments = activeTest.comments || '';
+                updateActiveTest({ comments: currentComments + (currentComments ? '<br/>' : '') + html });
+                alert('Data appended successfully to the notes! They will now be visible in the Lab Notebook.');
+              }}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-6 rounded-lg transition-all shadow-sm w-fit border border-indigo-700 flex items-center gap-2"
+            >
+              <span>+</span> Append Data to Lab Notebook
+            </button>
+          </div>
+        </CollapsibleSection>
+
+        {/* ===== LABELS & CLASSIFICATION ===== */}
+        <CollapsibleSection title="Labels & Classification" icon="🏷️" defaultOpen={true}>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="flex flex-col gap-4">
+              <div>
                 <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">Test Category</label>
                 <select
-                    value={testCategory}
-                    onChange={(e) => updateActiveTest({ testCategory: e.target.value })}
-                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
+                  value={testCategory}
+                  onChange={(e) => updateActiveTest({ testCategory: e.target.value })}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
                 >
-                    {["Activity", "Toxicity", "Structure", "Binding", "Characterization", "Kinetics"].map((cat) => (
-                        <option key={cat} value={cat}>{cat}</option>
-                    ))}
+                  {["Activity", "Toxicity", "Structure", "Binding", "Characterization", "Kinetics"].map((cat) => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
                 </select>
-            </div>
-            <div>
+              </div>
+              <div>
                 <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">Cell Lines / Biological Models</label>
                 <div className="flex flex-wrap gap-2">
-                    {(allCellLines || []).map((cl) => (
-                        <button
-                            key={cl}
-                            onClick={() => toggleCellLine(cl)}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
-                                cellLines.includes(cl)
-                                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
-                                    : 'bg-white text-slate-600 border-slate-300 hover:border-emerald-400 hover:bg-emerald-50'
-                            }`}
-                        >
-                            {cellLines.includes(cl) ? '✓ ' : ''}{cl}
-                        </button>
-                    ))}
-                    {(allCellLines || []).length === 0 && (
-                        <span className="text-sm text-slate-400 italic">
-                            No cell lines defined. Add them in Definitions & Labels.
-                        </span>
-                    )}
+                  {(allCellLines || []).map((cl) => (
+                    <button
+                      key={cl}
+                      onClick={() => toggleCellLine(cl)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
+                        cellLines.includes(cl)
+                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                          : 'bg-white text-slate-600 border-slate-300 hover:border-emerald-400 hover:bg-emerald-50'
+                      }`}
+                    >
+                      {cellLines.includes(cl) ? '✓ ' : ''}{cl}
+                    </button>
+                  ))}
+                  {(allCellLines || []).length === 0 && (
+                    <span className="text-sm text-slate-400 italic">No cell lines defined. Add them in Definitions & Labels.</span>
+                  )}
                 </div>
+              </div>
             </div>
-        </div>
-        <div className="flex flex-col gap-3">
-            <label className="text-xs font-bold text-slate-600 uppercase">Custom Metadata</label>
-            {(customFields || []).length === 0 ? (
+            <div className="flex flex-col gap-3">
+              <label className="text-xs font-bold text-slate-600 uppercase">Custom Metadata</label>
+              {(customFields || []).length === 0 ? (
                 <p className="text-sm text-slate-400 italic bg-slate-50 p-3 rounded-lg border border-dashed border-slate-300">
-                    No custom fields defined. Configure them in Definitions & Labels.
+                  No custom fields defined. Configure them in Definitions & Labels.
                 </p>
-            ) : (
+              ) : (
                 (customFields || []).map((field) => (
-                    <div key={field.id} className="flex flex-col gap-1">
-                        <label className="text-xs font-bold text-slate-500">{field.name}</label>
-                        {field.type === 'select' ? (
-                            <select
-                                value={customFieldValues[field.name] || ''}
-                                onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
-                                className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
-                            >
-                                <option value="">-- Select --</option>
-                                {field.options.map((opt) => (
-                                    <option key={opt} value={opt}>{opt}</option>
-                                ))}
-                            </select>
-                        ) : field.type === 'number' ? (
-                            <input
-                                type="number"
-                                value={customFieldValues[field.name] || ''}
-                                onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
-                                className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
-                                placeholder="Enter value..."
-                            />
-                        ) : field.type === 'date' ? (
-                            <input
-                                type="date"
-                                value={customFieldValues[field.name] || ''}
-                                onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
-                                className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
-                            />
-                        ) : (
-                            <input
-                                type="text"
-                                value={customFieldValues[field.name] || ''}
-                                onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
-                                className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
-                                placeholder="Enter value..."
-                            />
-                        )}
-                    </div>
+                  <div key={field.id} className="flex flex-col gap-1">
+                    <label className="text-xs font-bold text-slate-500">{field.name}</label>
+                    {field.type === 'select' ? (
+                      <select
+                        value={customFieldValues[field.name] || ''}
+                        onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
+                        className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
+                      >
+                        <option value="">-- Select --</option>
+                        {field.options.map((opt) => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                    ) : field.type === 'number' ? (
+                      <input
+                        type="number"
+                        value={customFieldValues[field.name] || ''}
+                        onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
+                        className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
+                        placeholder="Enter value..."
+                      />
+                    ) : field.type === 'date' ? (
+                      <input
+                        type="date"
+                        value={customFieldValues[field.name] || ''}
+                        onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
+                        className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
+                      />
+                    ) : (
+                      <input
+                        type="text"
+                        value={customFieldValues[field.name] || ''}
+                        onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
+                        className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
+                        placeholder="Enter value..."
+                      />
+                    )}
+                  </div>
                 ))
-            )}
-        </div>
+              )}
+            </div>
+          </div>
+        </CollapsibleSection>
+      </div>
     </div>
-</CollapsibleSection>
-  </div>
-</div>
-);
+  );
 };
+
 export default NMRTestRenderer;

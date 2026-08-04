@@ -247,36 +247,48 @@ export const LabNotebook = ({ tests, allCellLines, testCategories, jumpToTest, c
     }
   };
 
-  const filtered = tests.filter(t => {
+const filtered = tests.filter(t => {
     if (filterType !== 'ALL' && t.testCategory !== filterType) return false;
     if (filterCell !== 'ALL' && (!t.cellLines || !t.cellLines.includes(filterCell))) return false;
     if (dateFrom && t.date < dateFrom) return false;
     if (dateTo && t.date > dateTo) return false;
+
     if (filterCmpd !== 'ALL') {
-      let found = false;
-      if (t.type && t.type.startsWith('plate-') && t.type !== 'plate-9x9box') {
-        if ((t.compounds || []).includes(filterCmpd)) found = true;
-        else if ((t.rowCompounds || []).includes(filterCmpd)) found = true;
-        else if (t.cellConfig) {
-          t.cellConfig.forEach(row => row.forEach(cell => {
-            if (cell.role === filterCmpd) found = true;
-          }));
+        let found = false;
+
+        if (Array.isArray(t.selectedCompounds) && t.selectedCompounds.includes(filterCmpd)) {
+            found = true;
         }
-      } else if (t.type === 'plate-9x9box' && t.grid) {
-        t.grid.forEach(row => row.forEach(cellStr => {
-          try {
-            if (typeof cellStr === 'string' && cellStr.startsWith('{')) {
-              if (JSON.parse(cellStr).compound === filterCmpd) found = true;
+
+        if (!found && t.compound === filterCmpd) {
+            found = true;
+        }
+
+        if (!found && t.type && t.type.startsWith('plate-') && t.type !== 'plate-9x9box') {
+            if ((t.compounds || []).includes(filterCmpd)) found = true;
+            else if ((t.rowCompounds || []).includes(filterCmpd)) found = true;
+            else if (t.cellConfig) {
+                t.cellConfig.forEach(row => row.forEach(cell => {
+                    if (cell.role === filterCmpd) found = true;
+                }));
             }
-          } catch (e) { }
-        }));
-      } else if (t.type === 'nmr' || t.type === 'cd') {
-        if (t.compound === filterCmpd) found = true;
-      }
-      if (!found) return false;
+        } else if (!found && t.type === 'plate-9x9box' && t.grid) {
+            t.grid.forEach(row => row.forEach(cellStr => {
+                try {
+                    if (typeof cellStr === 'string' && cellStr.startsWith('{')) {
+                        if (JSON.parse(cellStr).compound === filterCmpd) found = true;
+                    }
+                } catch (e) { }
+            }));
+        } else if (!found && (t.type === 'nmr' || t.type === 'cd')) {
+            if (Array.isArray(t.compounds) && t.compounds.includes(filterCmpd)) found = true;
+        }
+
+        if (!found) return false;
     }
+
     return true;
-  });
+});
 
   const sorted = filtered.sort((a, b) => {
     if (sortBy === 'date_desc') return b.date.localeCompare(a.date);
@@ -286,7 +298,16 @@ export const LabNotebook = ({ tests, allCellLines, testCategories, jumpToTest, c
   });
 
   return (
+return (
     <div className="p-6 h-full overflow-y-auto custom-scrollbar flex flex-col bg-slate-50">
+        <style>{`
+            #notebook-report-container svg,
+            #notebook-report-container img {
+                max-width: 100%;
+                height: auto;
+                background: white;
+            }
+        `}</style>
       <div className="mb-6 flex justify-between items-end">
         <div>
           <h2 className="text-3xl font-black text-slate-800 tracking-tight">Lab Notebook</h2>

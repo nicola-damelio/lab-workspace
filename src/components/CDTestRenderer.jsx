@@ -1097,6 +1097,23 @@ export const CDTestRenderer = ({
             : [...cellLines, cl];
         updatePlate({ cellLines: updated });
     };
+const selectedCompounds = Array.isArray(activeTest.selectedCompounds)
+    ? activeTest.selectedCompounds
+    : compound
+        ? [compound]
+        : [];
+
+const toggleCompound = (cmp) => {
+    const updated = selectedCompounds.includes(cmp)
+        ? selectedCompounds.filter((c) => c !== cmp)
+        : [...selectedCompounds, cmp];
+
+    updatePlate({
+        selectedCompounds: updated,
+        compounds: updated,
+        compound: updated.length > 0 ? updated[0] : ''
+    });
+};
 
     const parsedWavelengths = useMemo(() => {
         if (!wavelengthData) return [];
@@ -1624,19 +1641,40 @@ export const CDTestRenderer = ({
                 <CollapsibleSection title="Experimental Conditions" icon="🧪">
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
                         <div className="flex flex-col gap-1 col-span-1 md:col-span-2 lg:col-span-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                            <label className="text-xs font-bold text-blue-800 uppercase">Compound / Sample Label</label>
-                            <input
-                                type="text"
-                                list="cd-compound-suggestions"
-                                value={compound}
-                                onChange={(e) => updatePlate({ compound: e.target.value })}
-                                className="w-full border border-blue-300 rounded-md p-2 text-sm outline-none focus:border-blue-500 font-bold text-blue-900"
-                                placeholder="Start typing to see suggestions..."
-                            />
-                            <datalist id="cd-compound-suggestions">
-                                {(allCmpds || []).map((c) => <option key={c} value={c} />)}
-                            </datalist>
-                        </div>
+    <label className="text-xs font-bold text-blue-800 uppercase flex items-center justify-between mb-2">
+        <span>Compound / Sample Label(s)</span>
+        <span className="text-[9px] bg-blue-200 text-blue-800 px-2 py-0.5 rounded">Multiple selection allowed</span>
+    </label>
+
+    <div className="flex flex-wrap gap-2">
+        {(allCmpds || []).map((cmp) => (
+            <button
+                key={cmp}
+                type="button"
+                onClick={() => toggleCompound(cmp)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
+                    selectedCompounds.includes(cmp)
+                        ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                        : 'bg-white text-slate-600 border-slate-300 hover:border-blue-400 hover:bg-blue-50'
+                }`}
+            >
+                {selectedCompounds.includes(cmp) ? '✓ ' : ''}{cmp}
+            </button>
+        ))}
+
+        {(allCmpds || []).length === 0 && (
+            <span className="text-sm text-slate-400 italic">
+                No compounds defined. Add them in Definitions & Labels.
+            </span>
+        )}
+    </div>
+
+    {selectedCompounds.length > 0 && (
+        <p className="text-[10px] text-blue-600 mt-2 font-bold">
+            Selected: {selectedCompounds.join(', ')}
+        </p>
+    )}
+</div>
                         <div>
                             <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Experiment Date</label>
                             <input
@@ -2096,7 +2134,7 @@ export const CDTestRenderer = ({
                                 const cbSpectra = document.getElementById('cd-nb-spectra')?.checked;
                                 if (cbCond) {
                                     html += `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;">
-                                        <b>Sample:</b> ${compound || 'N/A'} |
+                                        <b>Sample:</b> ${(selectedCompounds.length ? selectedCompounds.join(', ') : compound) || 'N/A'} |
                                         <b>Conc:</b> ${concentration || 'N/A'} |
                                         <b>Buffer:</b> ${buffer || solvent || 'N/A'} |
                                         <b>Temp:</b> ${temperature || 'N/A'} |
