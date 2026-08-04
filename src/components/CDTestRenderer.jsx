@@ -2574,15 +2574,23 @@ const buildCdNotebookHtml = (checked, ctx) => {
 
 // ================= MAIN CD RENDERER =================
 export const CDTestRenderer = (props) => {
+  // 1) Categories defined in App → Definitions & Labels take priority
+  const appCategories =
+    Array.isArray(props.testCategories) && props.testCategories.length
+      ? props.testCategories
+      : CD_TAB_CONFIG.categories || [
+          'Activity', 'Toxicity', 'Structure', 'Binding', 'Characterization'
+        ];
+
+  // 2) Also inject them into the config, in case the shell reads config.categories
+  const config = { ...CD_TAB_CONFIG, categories: appCategories };
+
   return (
     <TestShellRenderer
       {...props}
-      config={CD_TAB_CONFIG}
-      custom={{
-        All: CDAll,
-        buildNotebookHtml: buildCdNotebookHtml
-      }}
-      testCategories={CD_TAB_CONFIG.categories}
+      config={config}
+      custom={{ All: CDAll, buildNotebookHtml: buildCdNotebookHtml }}
+      testCategories={appCategories}
     />
   );
 };
