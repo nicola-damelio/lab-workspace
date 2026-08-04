@@ -5,6 +5,22 @@ import {
 } from 'recharts';
 import { RichTextEditor } from './RichTextEditor';
 
+/* ============================================================================
+   NMRTestRenderer — FULL REWRITE (single file, drop-in replacement)
+   ----------------------------------------------------------------------------
+   Changes vs. previous version (all requested features are NOW implemented):
+   • Multiple linked protocols (linkedProtocolIds) with add/remove/open.
+   • Protein secondary structure painted by CLICK & DRAG; sequence chips show
+     position + ONE-LETTER CODE + SS letter.
+   • DNA/RNA form painted per-residue by CLICK & DRAG (A / B / Z).
+   • Sugars painted α/β (anomeric) + chair / inverted-chair brushes.
+   • Lipids painted cis / trans (Δ9) brush.
+   • Assignment table: Backbone / All Atoms / UNIFIED modes.
+   • Export CSV button (Excel / Google Sheets compatible, BOM for UTF-8).
+   • "Formula → Notebook" button (2D structure SVG appended to Lab Notebook).
+   • Compound selection is a compact DROPDOWN multi-select.
+   ========================================================================== */
+
 const FS_CLASSES =
   'fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col';
 const OVERLAY_CLASSES = 'fixed top-0 left-0 w-screen h-screen bg-slate-900/50 backdrop-blur-sm z-[999990]';
@@ -182,93 +198,93 @@ const NUCLEOTIDE_DB = {
   DNA: {
     A: {
       name: 'Deoxyadenosine', code3: 'dA', base: 'purine',
-      atoms: ['H8', 'H2', "H1' ", "H2' ", "H2'' ", "H3' ", "H4' ", "H5' ", "H5'' "],
+      atoms: ['H8', 'H2', "H1'", "H2'", "H2''", "H3'", "H4'", "H5'", "H5''"],
       ranges: {
-        H8: { min: 7.9, max: 8.4 }, H2: { min: 7.7, max: 8.3 }, "H1' ": { min: 5.9, max: 6.4 },
-        "H2' ": { min: 2.2, max: 2.8 }, "H2'' ": { min: 2.5, max: 2.9 }, "H3' ": { min: 4.7, max: 5.1 },
-        "H4' ": { min: 4.1, max: 4.5 }, "H5' ": { min: 3.8, max: 4.3 }, "H5'' ": { min: 3.7, max: 4.2 }
+        H8: { min: 7.9, max: 8.4 }, H2: { min: 7.7, max: 8.3 }, "H1'": { min: 5.9, max: 6.4 },
+        "H2'": { min: 2.2, max: 2.8 }, "H2''": { min: 2.5, max: 2.9 }, "H3'": { min: 4.7, max: 5.1 },
+        "H4'": { min: 4.1, max: 4.5 }, "H5'": { min: 3.8, max: 4.3 }, "H5''": { min: 3.7, max: 4.2 }
       },
-      cosy: [["H1' ", "H2' "], ["H1' ", "H2'' "], ["H2' ", "H3' "], ["H3' ", "H4' "], ["H4' ", "H5' "], ["H4' ", "H5'' "], ["H5' ", "H5'' "]],
-      spinSystems: [["H1' ", "H2' ", "H2'' ", "H3' ", "H4' ", "H5' ", "H5'' "]]
+      cosy: [["H1'", "H2'"], ["H1'", "H2''"], ["H2'", "H3'"], ["H3'", "H4'"], ["H4'", "H5'"], ["H4'", "H5''"], ["H5'", "H5''"]],
+      spinSystems: [["H1'", "H2'", "H2''", "H3'", "H4'", "H5'", "H5''"]]
     },
     G: {
       name: 'Deoxyguanosine', code3: 'dG', base: 'purine',
-      atoms: ['H8', "H1' ", "H2' ", "H2'' ", "H3' ", "H4' ", "H5' ", "H5'' "],
+      atoms: ['H8', "H1'", "H2'", "H2''", "H3'", "H4'", "H5'", "H5''"],
       ranges: {
-        H8: { min: 7.6, max: 8.2 }, "H1' ": { min: 5.6, max: 6.2 }, "H2' ": { min: 2.2, max: 2.8 },
-        "H2'' ": { min: 2.5, max: 3.0 }, "H3' ": { min: 4.7, max: 5.1 }, "H4' ": { min: 4.0, max: 4.5 },
-        "H5' ": { min: 3.8, max: 4.3 }, "H5'' ": { min: 3.7, max: 4.2 }
+        H8: { min: 7.6, max: 8.2 }, "H1'": { min: 5.6, max: 6.2 }, "H2'": { min: 2.2, max: 2.8 },
+        "H2''": { min: 2.5, max: 3.0 }, "H3'": { min: 4.7, max: 5.1 }, "H4'": { min: 4.0, max: 4.5 },
+        "H5'": { min: 3.8, max: 4.3 }, "H5''": { min: 3.7, max: 4.2 }
       },
-      cosy: [["H1' ", "H2' "], ["H1' ", "H2'' "], ["H2' ", "H3' "], ["H3' ", "H4' "], ["H4' ", "H5' "], ["H4' ", "H5'' "], ["H5' ", "H5'' "]],
-      spinSystems: [["H1' ", "H2' ", "H2'' ", "H3' ", "H4' ", "H5' ", "H5'' "]]
+      cosy: [["H1'", "H2'"], ["H1'", "H2''"], ["H2'", "H3'"], ["H3'", "H4'"], ["H4'", "H5'"], ["H4'", "H5''"], ["H5'", "H5''"]],
+      spinSystems: [["H1'", "H2'", "H2''", "H3'", "H4'", "H5'", "H5''"]]
     },
     C: {
       name: 'Deoxycytidine', code3: 'dC', base: 'pyrimidine',
-      atoms: ['H6', 'H5', "H1' ", "H2' ", "H2'' ", "H3' ", "H4' ", "H5' ", "H5'' "],
+      atoms: ['H6', 'H5', "H1'", "H2'", "H2''", "H3'", "H4'", "H5'", "H5''"],
       ranges: {
-        H6: { min: 7.3, max: 8.0 }, H5: { min: 5.2, max: 5.9 }, "H1' ": { min: 5.8, max: 6.4 },
-        "H2' ": { min: 2.0, max: 2.7 }, "H2'' ": { min: 2.2, max: 2.9 }, "H3' ": { min: 4.7, max: 5.1 },
-        "H4' ": { min: 4.0, max: 4.5 }, "H5' ": { min: 3.8, max: 4.3 }, "H5'' ": { min: 3.6, max: 4.2 }
+        H6: { min: 7.3, max: 8.0 }, H5: { min: 5.2, max: 5.9 }, "H1'": { min: 5.8, max: 6.4 },
+        "H2'": { min: 2.0, max: 2.7 }, "H2''": { min: 2.2, max: 2.9 }, "H3'": { min: 4.7, max: 5.1 },
+        "H4'": { min: 4.0, max: 4.5 }, "H5'": { min: 3.8, max: 4.3 }, "H5''": { min: 3.6, max: 4.2 }
       },
-      cosy: [['H5', 'H6'], ["H1' ", "H2' "], ["H1' ", "H2'' "], ["H2' ", "H3' "], ["H3' ", "H4' "], ["H4' ", "H5' "], ["H4' ", "H5'' "], ["H5' ", "H5'' "]],
-      spinSystems: [["H1' ", "H2' ", "H2'' ", "H3' ", "H4' ", "H5' ", "H5'' "], ['H5', 'H6']]
+      cosy: [['H5', 'H6'], ["H1'", "H2'"], ["H1'", "H2''"], ["H2'", "H3'"], ["H3'", "H4'"], ["H4'", "H5'"], ["H4'", "H5''"], ["H5'", "H5''"]],
+      spinSystems: [["H1'", "H2'", "H2''", "H3'", "H4'", "H5'", "H5''"], ['H5', 'H6']]
     },
     T: {
       name: 'Thymidine', code3: 'T', base: 'pyrimidine',
-      atoms: ['H6', 'H7(CH3)', "H1' ", "H2' ", "H2'' ", "H3' ", "H4' ", "H5' ", "H5'' "],
+      atoms: ['H6', 'H7(CH3)', "H1'", "H2'", "H2''", "H3'", "H4'", "H5'", "H5''"],
       ranges: {
-        H6: { min: 7.2, max: 7.9 }, 'H7(CH3)': { min: 1.6, max: 2.0 }, "H1' ": { min: 5.9, max: 6.4 },
-        "H2' ": { min: 1.9, max: 2.5 }, "H2'' ": { min: 2.1, max: 2.7 }, "H3' ": { min: 4.7, max: 5.1 },
-        "H4' ": { min: 4.0, max: 4.5 }, "H5' ": { min: 3.8, max: 4.3 }, "H5'' ": { min: 3.6, max: 4.2 }
+        H6: { min: 7.2, max: 7.9 }, 'H7(CH3)': { min: 1.6, max: 2.0 }, "H1'": { min: 5.9, max: 6.4 },
+        "H2'": { min: 1.9, max: 2.5 }, "H2''": { min: 2.1, max: 2.7 }, "H3'": { min: 4.7, max: 5.1 },
+        "H4'": { min: 4.0, max: 4.5 }, "H5'": { min: 3.8, max: 4.3 }, "H5''": { min: 3.6, max: 4.2 }
       },
-      cosy: [["H1' ", "H2' "], ["H1' ", "H2'' "], ["H2' ", "H3' "], ["H3' ", "H4' "], ["H4' ", "H5' "], ["H4' ", "H5'' "], ["H5' ", "H5'' "]],
-      spinSystems: [["H1' ", "H2' ", "H2'' ", "H3' ", "H4' ", "H5' ", "H5'' "], ['H7(CH3)']]
+      cosy: [["H1'", "H2'"], ["H1'", "H2''"], ["H2'", "H3'"], ["H3'", "H4'"], ["H4'", "H5'"], ["H4'", "H5''"], ["H5'", "H5''"]],
+      spinSystems: [["H1'", "H2'", "H2''", "H3'", "H4'", "H5'", "H5''"], ['H7(CH3)']]
     }
   },
   RNA: {
     A: {
       name: 'Adenosine', code3: 'A', base: 'purine',
-      atoms: ['H8', 'H2', "H1' ", "H2' ", "OH2' ", "H3' ", "H4' ", "H5' ", "H5'' "],
+      atoms: ['H8', 'H2', "H1'", "H2'", "OH2'", "H3'", "H4'", "H5'", "H5''"],
       ranges: {
-        H8: { min: 7.9, max: 8.5 }, H2: { min: 7.8, max: 8.4 }, "H1' ": { min: 5.7, max: 6.2 },
-        "H2' ": { min: 4.4, max: 4.9 }, "OH2' ": { min: 5.0, max: 5.6 }, "H3' ": { min: 4.2, max: 4.7 },
-        "H4' ": { min: 4.1, max: 4.6 }, "H5' ": { min: 3.9, max: 4.4 }, "H5'' ": { min: 3.8, max: 4.3 }
+        H8: { min: 7.9, max: 8.5 }, H2: { min: 7.8, max: 8.4 }, "H1'": { min: 5.7, max: 6.2 },
+        "H2'": { min: 4.4, max: 4.9 }, "OH2'": { min: 5.0, max: 5.6 }, "H3'": { min: 4.2, max: 4.7 },
+        "H4'": { min: 4.1, max: 4.6 }, "H5'": { min: 3.9, max: 4.4 }, "H5''": { min: 3.8, max: 4.3 }
       },
-      cosy: [["H1' ", "H2' "], ["H2' ", "H3' "], ["H3' ", "H4' "], ["H4' ", "H5' "], ["H4' ", "H5'' "], ["H5' ", "H5'' "]],
-      spinSystems: [["H1' ", "H2' ", "H3' ", "H4' ", "H5' ", "H5'' "]]
+      cosy: [["H1'", "H2'"], ["H2'", "H3'"], ["H3'", "H4'"], ["H4'", "H5'"], ["H4'", "H5''"], ["H5'", "H5''"]],
+      spinSystems: [["H1'", "H2'", "H3'", "H4'", "H5'", "H5''"]]
     },
     G: {
       name: 'Guanosine', code3: 'G', base: 'purine',
-      atoms: ['H8', "H1' ", "H2' ", "OH2' ", "H3' ", "H4' ", "H5' ", "H5'' "],
+      atoms: ['H8', "H1'", "H2'", "OH2'", "H3'", "H4'", "H5'", "H5''"],
       ranges: {
-        H8: { min: 7.6, max: 8.3 }, "H1' ": { min: 5.5, max: 6.1 }, "H2' ": { min: 4.3, max: 4.9 },
-        "OH2' ": { min: 5.0, max: 5.6 }, "H3' ": { min: 4.2, max: 4.7 }, "H4' ": { min: 4.0, max: 4.6 },
-        "H5' ": { min: 3.9, max: 4.4 }, "H5'' ": { min: 3.8, max: 4.3 }
+        H8: { min: 7.6, max: 8.3 }, "H1'": { min: 5.5, max: 6.1 }, "H2'": { min: 4.3, max: 4.9 },
+        "OH2'": { min: 5.0, max: 5.6 }, "H3'": { min: 4.2, max: 4.7 }, "H4'": { min: 4.0, max: 4.6 },
+        "H5'": { min: 3.9, max: 4.4 }, "H5''": { min: 3.8, max: 4.3 }
       },
-      cosy: [["H1' ", "H2' "], ["H2' ", "H3' "], ["H3' ", "H4' "], ["H4' ", "H5' "], ["H4' ", "H5'' "], ["H5' ", "H5'' "]],
-      spinSystems: [["H1' ", "H2' ", "H3' ", "H4' ", "H5' ", "H5'' "]]
+      cosy: [["H1'", "H2'"], ["H2'", "H3'"], ["H3'", "H4'"], ["H4'", "H5'"], ["H4'", "H5''"], ["H5'", "H5''"]],
+      spinSystems: [["H1'", "H2'", "H3'", "H4'", "H5'", "H5''"]]
     },
     C: {
       name: 'Cytidine', code3: 'C', base: 'pyrimidine',
-      atoms: ['H6', 'H5', "H1' ", "H2' ", "OH2' ", "H3' ", "H4' ", "H5' ", "H5'' "],
+      atoms: ['H6', 'H5', "H1'", "H2'", "OH2'", "H3'", "H4'", "H5'", "H5''"],
       ranges: {
-        H6: { min: 7.4, max: 8.1 }, H5: { min: 5.3, max: 6.0 }, "H1' ": { min: 5.6, max: 6.2 },
-        "H2' ": { min: 4.1, max: 4.7 }, "OH2' ": { min: 5.0, max: 5.6 }, "H3' ": { min: 4.2, max: 4.7 },
-        "H4' ": { min: 4.0, max: 4.5 }, "H5' ": { min: 3.8, max: 4.4 }, "H5'' ": { min: 3.7, max: 4.3 }
+        H6: { min: 7.4, max: 8.1 }, H5: { min: 5.3, max: 6.0 }, "H1'": { min: 5.6, max: 6.2 },
+        "H2'": { min: 4.1, max: 4.7 }, "OH2'": { min: 5.0, max: 5.6 }, "H3'": { min: 4.2, max: 4.7 },
+        "H4'": { min: 4.0, max: 4.5 }, "H5'": { min: 3.8, max: 4.4 }, "H5''": { min: 3.7, max: 4.3 }
       },
-      cosy: [['H5', 'H6'], ["H1' ", "H2' "], ["H2' ", "H3' "], ["H3' ", "H4' "], ["H4' ", "H5' "], ["H4' ", "H5'' "], ["H5' ", "H5'' "]],
-      spinSystems: [["H1' ", "H2' ", "H3' ", "H4' ", "H5' ", "H5'' "], ['H5', 'H6']]
+      cosy: [['H5', 'H6'], ["H1'", "H2'"], ["H2'", "H3'"], ["H3'", "H4'"], ["H4'", "H5'"], ["H4'", "H5''"], ["H5'", "H5''"]],
+      spinSystems: [["H1'", "H2'", "H3'", "H4'", "H5'", "H5''"], ['H5', 'H6']]
     },
     U: {
       name: 'Uridine', code3: 'U', base: 'pyrimidine',
-      atoms: ['H6', 'H5', "H1' ", "H2' ", "OH2' ", "H3' ", "H4' ", "H5' ", "H5'' "],
+      atoms: ['H6', 'H5', "H1'", "H2'", "OH2'", "H3'", "H4'", "H5'", "H5''"],
       ranges: {
-        H6: { min: 7.4, max: 8.1 }, H5: { min: 5.3, max: 6.0 }, "H1' ": { min: 5.4, max: 6.0 },
-        "H2' ": { min: 4.1, max: 4.7 }, "OH2' ": { min: 5.0, max: 5.6 }, "H3' ": { min: 4.1, max: 4.7 },
-        "H4' ": { min: 4.0, max: 4.5 }, "H5' ": { min: 3.8, max: 4.4 }, "H5'' ": { min: 3.7, max: 4.3 }
+        H6: { min: 7.4, max: 8.1 }, H5: { min: 5.3, max: 6.0 }, "H1'": { min: 5.4, max: 6.0 },
+        "H2'": { min: 4.1, max: 4.7 }, "OH2'": { min: 5.0, max: 5.6 }, "H3'": { min: 4.1, max: 4.7 },
+        "H4'": { min: 4.0, max: 4.5 }, "H5'": { min: 3.8, max: 4.4 }, "H5''": { min: 3.7, max: 4.3 }
       },
-      cosy: [['H5', 'H6'], ["H1' ", "H2' "], ["H2' ", "H3' "], ["H3' ", "H4' "], ["H4' ", "H5' "], ["H4' ", "H5'' "], ["H5' ", "H5'' "]],
-      spinSystems: [["H1' ", "H2' ", "H3' ", "H4' ", "H5' ", "H5'' "], ['H5', 'H6']]
+      cosy: [['H5', 'H6'], ["H1'", "H2'"], ["H2'", "H3'"], ["H3'", "H4'"], ["H4'", "H5'"], ["H4'", "H5''"], ["H5'", "H5''"]],
+      spinSystems: [["H1'", "H2'", "H3'", "H4'", "H5'", "H5''"], ['H5', 'H6']]
     }
   }
 };
@@ -466,11 +482,11 @@ const SS_CORRECTIONS = {
   coil: { h: {}, c: {} },
   helix: {
     h: { HN: -0.45, Hα: -0.35, Hα1: -0.35, Hα2: -0.35, other: -0.05 },
-    c: { Cα: 2.8, Cβ: -1.5, "C' ": -1.3, N: -2.5 }
+    c: { Cα: 2.8, Cβ: -1.5, "C'": -1.3, N: -2.5 }
   },
   sheet: {
     h: { HN: 0.4, Hα: 0.3, Hα1: 0.3, Hα2: 0.3, other: 0.05 },
-    c: { Cα: -1.6, Cβ: 1.4, "C' ": 1.5, N: 2.0 }
+    c: { Cα: -1.6, Cβ: 1.4, "C'": 1.5, N: 2.0 }
   }
 };
 
@@ -487,9 +503,9 @@ const FORM_META = {
 };
 
 const DNA_FORM_OFFSETS = {
-  B: { "H1' ": 0, "H2' ": 0, "H3' ": 0, "H2'' ": 0 },
-  A: { "H1' ": 0.2, "H2' ": -0.3, "H3' ": 0.15, "H2'' ": -0.25 },
-  Z: { "H1' ": -0.15, "H2' ": 0.25, "H3' ": -0.1, "H2'' ": 0.2 }
+  B: { "H1'": 0, "H2'": 0, "H3'": 0, "H2''": 0 },
+  A: { "H1'": 0.2, "H2'": -0.3, "H3'": 0.15, "H2''": -0.25 },
+  Z: { "H1'": -0.15, "H2'": 0.25, "H3'": -0.1, "H2''": 0.2 }
 };
 
 const SUGAR_ANOMER_OFFSETS = {
@@ -542,7 +558,7 @@ const getCarbonName = (molType, char, atom) => {
   }
   if (molType === 'dna' || molType === 'rna') {
     if (atom.includes('CH3')) return atom.replace('H', 'C');
-    return atom.replace('H', 'C').replace(/''/g, "' ");
+    return atom.replace('H', 'C');
   }
   if (molType === 'sugar') return atom.replace('H', 'C').replace(/[ab]$/, '');
   if (molType === 'lipid') {
@@ -614,17 +630,17 @@ const getPascalRow = (n) => {
 const getCarbonRangeFor = (molType, char, cName) => {
   if (!cName) return { min: 40, max: 50 };
   if (molType === 'protein') {
-    if (cName === "C' ") return { min: 171, max: 178 };
+    if (cName === "C'") return { min: 171, max: 178 };
     const r = CARBON_RANGE_DB[char]?.[cName];
     if (r) return { min: r[0], max: r[1] };
     return { min: 40, max: 60 };
   }
   if (molType === 'dna' || molType === 'rna') {
-    if (cName.includes("C1' ")) return { min: 80, max: 90 };
-    if (cName.includes("C2' ")) return molType === 'dna' ? { min: 35, max: 42 } : { min: 68, max: 77 };
-    if (cName.includes("C3' ")) return { min: 68, max: 77 };
-    if (cName.includes("C4' ")) return { min: 78, max: 87 };
-    if (cName.includes("C5' ")) return { min: 59, max: 67 };
+    if (cName.includes("C1'")) return { min: 80, max: 90 };
+    if (cName.includes("C2'")) return molType === 'dna' ? { min: 35, max: 42 } : { min: 68, max: 77 };
+    if (cName.includes("C3'")) return { min: 68, max: 77 };
+    if (cName.includes("C4'")) return { min: 78, max: 87 };
+    if (cName.includes("C5'")) return { min: 59, max: 67 };
     if (cName === 'C8' || cName === 'C6') return { min: 134, max: 146 };
     if (cName === 'C2') return { min: 147, max: 156 };
     if (cName === 'C5') return { min: 98, max: 108 };
@@ -817,8 +833,8 @@ const buildProteinStructure = (sequence) => {
     addText(c.nX, c.nY, isFirst ? (char === 'P' ? 'H₂N⁺' : 'H₃N⁺') : 'N', color, 13, 'middle', nAtoms);
     addAtomCircle(c.caX, c.caY, 13, color, char === 'G' ? ['Cα', 'Hα1', 'Hα2'] : ['Cα', 'Hα']);
     addText(c.caX, c.caY, 'Cα', color, 13, 'middle', char === 'G' ? ['Cα', 'Hα1', 'Hα2'] : ['Cα', 'Hα']);
-    addAtomCircle(c.cX, c.cY, 13, color, ["C' "]);
-    addText(c.cX, c.cY, 'C', color, 13, 'middle', ["C' "]);
+    addAtomCircle(c.cX, c.cY, 13, color, ["C'"]);
+    addText(c.cX, c.cY, 'C', color, 13, 'middle', ["C'"]);
     addText(c.cX, c.cY + c.oDir * 35, 'O', '#ef4444', 13, 'middle', null);
     if (isLast) {
       addAtomCircle(c.nextNX, c.nextNY, 13, color, null);
@@ -1041,18 +1057,18 @@ const buildNucleicStructure = (sequence, molType) => {
     const color = res.color;
     const sy = y0 + i * RH;
     const sPts = getPentagon(xS, sy, 26, 1);
-    const [O4, C1, C2, C3, C4] = sPts;
+    const [O4, C1, C2s, C3s, C4s] = sPts;
     b.addPolygon(sPts, color);
-    b.addLine(C2.x, C2.y, C3.x, C3.y, color, false, 6);
+    b.addLine(C2s.x, C2s.y, C3s.x, C3s.y, color, false, 6);
     addText(O4.x, O4.y, 'O', color, 9, 'middle', null);
-    dot(C1.x, C1.y, color, ["H1' ", "C1' "]);
-    dot(C2.x, C2.y, color, isDNA ? ["H2' ", "H2'' ", "C2' "] : ["H2' ", "OH2' ", "C2' "]);
-    dot(C3.x, C3.y, color, ["H3' ", "C3' "]);
-    dot(C4.x, C4.y, color, ["H4' ", "C4' "]);
-    if (!isDNA) { b.addLine(C2.x, C2.y, C2.x + 14, C2.y + 12, color); addText(C2.x + 22, C2.y + 16, 'OH', color, 8, 'start', ["OH2' "]); }
-    const c5p = { x: C4.x - 20, y: C4.y - 16 };
-    b.addLine(C4.x, C4.y, c5p.x, c5p.y, color);
-    dot(c5p.x, c5p.y, color, ["H5' ", "H5'' ", "C5' "]);
+    dot(C1.x, C1.y, color, ["H1'", "C1'"]);
+    dot(C2s.x, C2s.y, color, isDNA ? ["H2'", "H2''", "C2'"] : ["H2'", "OH2'", "C2'"]);
+    dot(C3s.x, C3s.y, color, ["H3'", "C3'"]);
+    dot(C4s.x, C4s.y, color, ["H4'", "C4'"]);
+    if (!isDNA) { b.addLine(C2s.x, C2s.y, C2s.x + 14, C2s.y + 12, color); addText(C2s.x + 22, C2s.y + 16, 'OH', color, 8, 'start', ["OH2'"]); }
+    const c5p = { x: C4s.x - 20, y: C4s.y - 16 };
+    b.addLine(C4s.x, C4s.y, c5p.x, c5p.y, color);
+    dot(c5p.x, c5p.y, color, ["H5'", "H5''", "C5'"]);
     const py = sy - 100;
     drawP(xP, py, i, i === 0);
     addText(xP + 30, py + 26, 'O', BB, 9, 'middle', null);
@@ -1061,51 +1077,51 @@ const buildNucleicStructure = (sequence, molType) => {
     b.addLine(xP + 38, py + 30, c5p.x - 4, c5p.y - 4, BB);
     if (i < sequence.length - 1) {
       const py2 = sy + 150;
-      b.addLine(C3.x, C3.y, xP + 20, py2 - 20, color);
+      b.addLine(C3s.x, C3s.y, xP + 20, py2 - 20, color);
       addText(xP + 28, py2 - 26, 'O', BB, 9, 'middle', null);
     } else {
-      b.addLine(C3.x, C3.y, C3.x - 12, C3.y + 26, color);
-      addText(C3.x - 16, C3.y + 36, 'OH', color, 9, 'end', ["H3' "]);
+      b.addLine(C3s.x, C3s.y, C3s.x - 12, C3s.y + 26, color);
+      addText(C3s.x - 16, C3s.y + 36, 'OH', color, 9, 'end', ["H3'"]);
     }
     const isPur = res.base === 'purine';
     if (!isPur) {
       const cx = xS + 105, cy = sy;
       const h = hexAt(cx, cy, 26, 180);
-      const [N1, C2, N3, C4, C5, C6] = h;
+      const [N1, C2b, N3, C4b, C5b, C6] = h;
       b.addLine(C1.x, C1.y, N1.x, N1.y, color);
       b.addPolygon(h, color);
       b.addCircle(cx, cy, 13, color, 'none', 1);
       ringAtom(N1.x, N1.y, 'N1', color); ringAtom(N3.x, N3.y, 'N3', color);
-      ringAtom(C2.x, C2.y, 'C2', color); ringAtom(C4.x, C4.y, 'C4', color);
-      ringAtom(C5.x, C5.y, 'C5', color); ringAtom(C6.x, C6.y, 'C6', color);
-      b.addLine(C2.x, C2.y, C2.x - 10, C2.y - 18, color, true);
-      addText(C2.x - 14, C2.y - 26, 'O', color, 9, 'middle', null);
-      b.addLine(C4.x, C4.y, C4.x + 16, C4.y, color, res.char === 'C' ? false : true);
-      addText(C4.x + 28, C4.y, res.char === 'C' ? 'NH₂' : 'O', color, 9, 'middle', null);
-      if (res.char === 'T') { b.addLine(C5.x, C5.y, C5.x + 10, C5.y + 18, color); addText(C5.x + 16, C5.y + 28, 'CH₃', color, 9, 'start', ['H7(CH3)']); }
-      else addText(C5.x + 14, C5.y + 12, 'H', color, 8, 'start', ['H5']);
+      ringAtom(C2b.x, C2b.y, 'C2', color); ringAtom(C4b.x, C4b.y, 'C4', color);
+      ringAtom(C5b.x, C5b.y, 'C5', color); ringAtom(C6.x, C6.y, 'C6', color);
+      b.addLine(C2b.x, C2b.y, C2b.x - 10, C2b.y - 18, color, true);
+      addText(C2b.x - 14, C2b.y - 26, 'O', color, 9, 'middle', null);
+      b.addLine(C4b.x, C4b.y, C4b.x + 16, C4b.y, color, res.char === 'C' ? false : true);
+      addText(C4b.x + 28, C4b.y, res.char === 'C' ? 'NH₂' : 'O', color, 9, 'middle', null);
+      if (res.char === 'T') { b.addLine(C5b.x, C5b.y, C5b.x + 10, C5b.y + 18, color); addText(C5b.x + 16, C5b.y + 28, 'CH₃', color, 9, 'start', ['H7(CH3)']); }
+      else addText(C5b.x + 14, C5b.y + 12, 'H', color, 8, 'start', ['H5']);
       addText(C6.x - 10, C6.y + 14, 'H', color, 8, 'middle', ['H6']);
     } else {
       const cx = xS + 135, cy = sy;
       const h = hexAt(cx, cy, 26, 150);
-      const [C4, C5, C6, N1, C2, N3] = h;
-      const { V1, V2, V3 } = fusePentagon(C5, C4, -1, 0);
+      const [C4b, C5b, C6, N1, C2b, N3] = h;
+      const { V1, V2, V3 } = fusePentagon(C5b, C4b, -1, 0);
       b.addLine(C1.x, C1.y, V3.x, V3.y, color);
       b.addPolygon(h, color);
-      b.addPolygon([C5, V1, V2, V3, C4], color);
+      b.addPolygon([C5b, V1, V2, V3, C4b], color);
       b.addCircle(cx, cy, 12, color, 'none', 1);
-      ringAtom(N1.x, N1.y, 'N1', color); ringAtom(C2.x, C2.y, 'C2', color); ringAtom(N3.x, N3.y, 'N3', color);
-      ringAtom(C4.x, C4.y, 'C4', color); ringAtom(C5.x, C5.y, 'C5', color); ringAtom(C6.x, C6.y, 'C6', color);
+      ringAtom(N1.x, N1.y, 'N1', color); ringAtom(C2b.x, C2b.y, 'C2', color); ringAtom(N3.x, N3.y, 'N3', color);
+      ringAtom(C4b.x, C4b.y, 'C4', color); ringAtom(C5b.x, C5b.y, 'C5', color); ringAtom(C6.x, C6.y, 'C6', color);
       ringAtom(V1.x, V1.y, 'N7', color); ringAtom(V2.x, V2.y, 'C8', color, ['H8']); ringAtom(V3.x, V3.y, 'N9', color);
       if (res.char === 'A') {
         b.addLine(C6.x, C6.y, C6.x, C6.y - 16, color);
         addText(C6.x, C6.y - 26, 'NH₂', color, 9, 'middle', null);
-        addText(C2.x + 16, C2.y + 10, 'H2', color, 8, 'start', ['H2']);
+        addText(C2b.x + 16, C2b.y + 10, 'H2', color, 8, 'start', ['H2']);
       } else {
         b.addLine(C6.x, C6.y, C6.x, C6.y - 16, color, true);
         addText(C6.x, C6.y - 26, 'O', color, 9, 'middle', null);
-        b.addLine(C2.x, C2.y, C2.x + 14, C2.y + 10, color);
-        addText(C2.x + 26, C2.y + 14, 'NH₂', color, 9, 'start', null);
+        b.addLine(C2b.x, C2b.y, C2b.x + 14, C2b.y + 10, color);
+        addText(C2b.x + 26, C2b.y + 14, 'NH₂', color, 9, 'start', null);
       }
     }
     addText(560, sy, `${res.name} ${res.char}`, '#1d4ed8', 13, 'start', null);
@@ -1189,11 +1205,18 @@ const buildLipidStructure = (res, db) => {
     });
   };
   const zig = (x0, y0, n, L, amp, dir0) => {
-    const pts = [{ x: x0, y: y0 }]; let dir = dir0;
-    for (let k = 0; k < n; k++) { const p = pts[pts.length - 1]; pts.push({ x: p.x - L, y: p.y + dir * amp }); dir *= -1; }
+    const pts = [{ x: x0, y: y0 }];
+    let dir = dir0;
+    for (let k = 0; k < n; k++) {
+      const p = pts[pts.length - 1];
+      pts.push({ x: p.x - L, y: p.y + dir * amp });
+      dir *= -1;
+    }
     return pts;
   };
-  const chain = (pts, dblIdx) => { for (let k = 0; k < pts.length - 1; k++) b.addLine(pts[k].x, pts[k].y, pts[k + 1].x, pts[k + 1].y, c, k === dblIdx, 1.6); };
+  const chain = (pts, dblIdx) => {
+    for (let k = 0; k < pts.length - 1; k++) b.addLine(pts[k].x, pts[k].y, pts[k + 1].x, pts[k + 1].y, c, k === dblIdx, 1.6);
+  };
   const g1 = { x: 640, y: 96 }, g2 = { x: 640, y: 140 }, g3 = { x: 640, y: 184 };
   b.addLine(g1.x, g1.y, g2.x, g2.y, c); b.addLine(g2.x, g2.y, g3.x, g3.y, c);
   addText(g1.x, g1.y, 'CH₂', c, 9, 'middle', ['Hsn1a', 'Hsn1b']);
@@ -1278,6 +1301,40 @@ const elementsToSVG = (structure, height = 320) => {
   });
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${structure.viewBox}" style="height:${height}px;max-width:100%;font-family:sans-serif;background:white;">${inner}</svg>`;
 };
+
+const ensureSvgSize = (svgStr, width = 1200) => {
+  const m = svgStr.match(/viewBox="([^"]+)"/);
+  if (!m) return svgStr;
+  const parts = m[1].trim().split(/\s+/).map(Number);
+  const vw = parts[2] || 1;
+  const vh = parts[3] || 1;
+  const height = Math.max(1, Math.round((vh / vw) * width));
+  return svgStr.replace('<svg ', `<svg width="${width}" height="${height}" `);
+};
+
+const svgToPngDataUrl = (svgStr, width = 1200) => new Promise((resolve, reject) => {
+  const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const img = new Image();
+  img.onload = () => {
+    const w = width;
+    const h = img.height || width;
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    URL.revokeObjectURL(url);
+    resolve(canvas.toDataURL('image/png'));
+  };
+  img.onerror = (err) => {
+    URL.revokeObjectURL(url);
+    reject(err);
+  };
+  img.src = url;
+});
 
 // ---------- STRUCTURE VIEW ----------
 const StructureSVGView = ({
@@ -1384,6 +1441,80 @@ export const CollapsibleSection = ({ title, icon, defaultOpen = true, children, 
         </div>
       </button>
       {isOpen && <div className="p-6">{children}</div>}
+    </div>
+  );
+};
+
+// ================= MULTI-SELECT DROPDOWN (compounds) =================
+const MultiSelectDropdown = ({ options, selected, onToggle, placeholder }) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    const handler = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between border border-blue-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 cursor-pointer font-semibold text-slate-700 hover:bg-blue-50/50 transition-colors"
+      >
+        <span className="truncate">
+          {selected.length === 0 ? placeholder : `${selected.length} compound${selected.length > 1 ? 's' : ''} selected`}
+        </span>
+        <span className="text-slate-400">▾</span>
+      </button>
+      {open && (
+        <div className="absolute z-[200] mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-xl max-h-56 overflow-y-auto custom-scrollbar">
+          {options.length === 0 && (
+            <div className="px-3 py-2 text-xs text-slate-400 italic">No compounds defined. Add them in Definitions &amp; Labels.</div>
+          )}
+          {options.map((opt) => (
+            <label key={opt} className="flex items-center gap-2 px-3 py-2 hover:bg-blue-50 cursor-pointer text-xs font-semibold text-slate-700 border-b border-slate-50 last:border-0">
+              <input type="checkbox" checked={selected.includes(opt)} onChange={() => onToggle(opt)} className="w-3.5 h-3.5 accent-blue-600 cursor-pointer" />
+              <span className="truncate">{opt}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ================= PAINT STRIP (drag painting, reusable) =================
+const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusIdx, charLabel }) => {
+  const [painting, setPainting] = useState(false);
+  useEffect(() => {
+    const up = () => setPainting(false);
+    window.addEventListener('mouseup', up);
+    return () => window.removeEventListener('mouseup', up);
+  }, []);
+  return (
+    <div className="flex flex-wrap gap-1.5 select-none">
+      {residues.map((r, i) => {
+        const l = getLetter(i);
+        const m = meta[l] || { label: String(l), color: '#64748b' };
+        const dim = focusIdx !== 'ALL' && focusIdx !== i;
+        return (
+          <button
+            key={i}
+            draggable={false}
+            onDragStart={(e) => e.preventDefault()}
+            onMouseDown={(e) => { e.preventDefault(); setPainting(true); onApply(i); }}
+            onMouseEnter={() => { if (painting) onApply(i); }}
+            title={`${r.id}: ${m.label}`}
+            className="w-11 py-1 rounded-md border text-center leading-tight transition-all"
+            style={{ backgroundColor: m.color + '22', borderColor: m.color, opacity: dim ? 0.35 : 1 }}
+          >
+            <div className="text-[8px] text-slate-500 font-bold">{i + 1}</div>
+            <div className="text-sm font-black text-slate-800">{charLabel ? charLabel(r) : r.char}</div>
+            <div className="text-[10px] font-black" style={{ color: m.color }}>{l}</div>
+          </button>
+        );
+      })}
     </div>
   );
 };
@@ -2052,7 +2183,7 @@ const HSQCPlot = ({
 // ================= IMAGE URL NORMALIZATION =================
 const normalizeImageCandidates = (url) => {
   const u = (url || '').trim();
-  let m = u.match(/drive.google.com\/file\/d\/([^/?]+)/);
+  let m = u.match(/drive\.google\.com\/file\/d\/([^/?]+)/);
   if (m) {
     const id = m[1];
     return [
@@ -2061,7 +2192,7 @@ const normalizeImageCandidates = (url) => {
       `https://drive.google.com/uc?export=view&id=${id}`
     ];
   }
-  m = u.match(/drive.google.com\/(?:open|uc)[^#]*[?&]id=([^&#]+)/);
+  m = u.match(/drive\.google\.com\/(?:open|uc)[^#]*[?&]id=([^&#]+)/);
   if (m) {
     const id = m[1];
     return [
@@ -2122,10 +2253,10 @@ export const NMRTestRenderer = ({
     moleculeType === 'protein'
       ? 'ACDEFGHIKLMNPQRSTVWY'
       : moleculeType === 'dna'
-        ? 'ACGT'
-        : moleculeType === 'rna'
-          ? 'ACGU'
-          : '';
+      ? 'ACGT'
+      : moleculeType === 'rna'
+      ? 'ACGU'
+      : '';
   const seq =
     moleculeType === 'protein' || moleculeType === 'dna' || moleculeType === 'rna'
       ? rawSeq.replace(new RegExp(`[^${validChars}]`, 'g'), '')
@@ -2139,17 +2270,12 @@ export const NMRTestRenderer = ({
   const [focusIdx, setFocusIdx] = useState('ALL');
   const [selected, setSelected] = useState(null);
 
-  // ===== PAINTING STATE =====
+  // ===== PAINTING BRUSHES =====
   const [ssBrush, setSSBrush] = useState('H');
   const [formBrush, setFormBrush] = useState(activeTest.dnaForm || 'B');
-  const [isPaintingSS, setIsPaintingSS] = useState(false);
-  const [isPaintingForm, setIsPaintingForm] = useState(false);
-
-  useEffect(() => {
-    const up = () => { setIsPaintingSS(false); setIsPaintingForm(false); };
-    window.addEventListener('mouseup', up);
-    return () => window.removeEventListener('mouseup', up);
-  }, []);
+  const [sugarBrushAnomer, setSugarBrushAnomer] = useState(activeTest.sugarAnomer || 'alpha');
+  const [sugarBrushConf, setSugarBrushConf] = useState(activeTest.sugarConf || 'chair');
+  const [lipidBrush, setLipidBrush] = useState(activeTest.lipidDB || 'cis');
 
   const isPolymer = moleculeType === 'protein' || moleculeType === 'dna' || moleculeType === 'rna';
   const hasPhosphorus = moleculeType === 'dna' || moleculeType === 'rna' || moleculeType === 'lipid';
@@ -2158,7 +2284,13 @@ export const NMRTestRenderer = ({
   const cellLines = activeTest.cellLines || [];
   const testCategory = activeTest.testCategory || 'Activity';
   const customFieldValues = activeTest.customFieldValues || {};
-  const selectedCompounds = activeTest.compounds || (activeTest.compound ? [activeTest.compound] : []);
+  const selectedCompounds = Array.isArray(activeTest.selectedCompounds)
+    ? activeTest.selectedCompounds
+    : Array.isArray(activeTest.compounds)
+    ? activeTest.compounds.filter(Boolean)
+    : activeTest.compound
+    ? [activeTest.compound]
+    : [];
 
   // ===== MULTI-PROTOCOL =====
   const linkedProtocolIds = activeTest.linkedProtocolIds || (activeTest.linkedProtocolId ? [activeTest.linkedProtocolId] : []);
@@ -2180,7 +2312,11 @@ export const NMRTestRenderer = ({
     const updated = selectedCompounds.includes(cmp)
       ? selectedCompounds.filter((c) => c !== cmp)
       : [...selectedCompounds, cmp];
-    updateActiveTest({ compounds: updated, compound: updated.length > 0 ? updated[0] : '' });
+    updateActiveTest({
+      selectedCompounds: updated,
+      compounds: updated,
+      compound: updated.length > 0 ? updated[0] : ''
+    });
   };
   const handleCustomFieldChange = (fieldName, value) => {
     updateActiveTest({ customFieldValues: { ...customFieldValues, [fieldName]: value } });
@@ -2190,31 +2326,40 @@ export const NMRTestRenderer = ({
     moleculeType === 'protein'
       ? AMINO_ACID_DB
       : moleculeType === 'dna'
-        ? NUCLEOTIDE_DB.DNA
-        : moleculeType === 'rna'
-          ? NUCLEOTIDE_DB.RNA
-          : moleculeType === 'sugar'
-            ? SUGAR_DB
-            : LIPID_DB;
+      ? NUCLEOTIDE_DB.DNA
+      : moleculeType === 'rna'
+      ? NUCLEOTIDE_DB.RNA
+      : moleculeType === 'sugar'
+      ? SUGAR_DB
+      : LIPID_DB;
 
   const ssRaw = activeTest.secondaryStructure || '';
   const getSSAt = (i) => (ssRaw[i] && 'HES'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
-
   const formsRaw = activeTest.nucleicForms || '';
   const dnaFormDefault = activeTest.dnaForm || 'B';
   const getFormAt = (i) => (formsRaw[i] && 'ABZ'.includes(formsRaw[i]) ? formsRaw[i] : dnaFormDefault);
-
   const sugarConf = activeTest.sugarConf || 'chair';
   const sugarAnomer = activeTest.sugarAnomer || 'alpha';
   const lipidDB = activeTest.lipidDB || 'cis';
-
   const effTableMode = moleculeType === 'sugar' || moleculeType === 'lipid' ? 'all' : tableMode;
+
   const nucDefs =
     moleculeType === 'protein'
-      ? { H: ['HN', 'Hα', 'Hβ'], N: ['N'], C: ['Cα', 'Cβ', "C' "] }
+      ? { H: ['HN', 'Hα', 'Hβ'], N: ['N'], C: ['Cα', 'Cβ', "C'"] }
       : moleculeType === 'dna' || moleculeType === 'rna'
-        ? { H: ["H1' ", "H2' ", "H3' "], N: [], C: ["C1' ", "C2' ", "C3' "] }
-        : { H: [], N: [], C: [] };
+      ? { H: ["H1'", "H2'", "H3'"], N: [], C: ["C1'", "C2'", "C3'"] }
+      : { H: [], N: [], C: [] };
+
+  const typeLabel =
+    moleculeType === 'protein'
+      ? 'Protein'
+      : moleculeType === 'dna'
+      ? 'DNA'
+      : moleculeType === 'rna'
+      ? 'RNA'
+      : moleculeType === 'sugar'
+      ? 'Sugar'
+      : 'Phospholipid';
 
   const handleShiftChange = (resIdx, atom, val) => {
     updateActiveTest({ chemicalShifts: { ...shifts, [`${resIdx}-${atom}`]: val } });
@@ -2247,7 +2392,6 @@ export const NMRTestRenderer = ({
     updateActiveTest({ secondaryStructure: arr.join('') });
   };
   const setAllSS = (letter) => updateActiveTest({ secondaryStructure: seq.split('').map(() => letter).join('') });
-
   const paintFormAt = (i, letter) => {
     const arr = seq.split('').map((_, j) => getFormAt(j));
     arr[i] = letter;
@@ -2304,9 +2448,9 @@ export const NMRTestRenderer = ({
         const backboneRand =
           moleculeType === 'protein'
             ? {
-              N: parseFloat((117 + Math.random() * 8).toFixed(1)),
-              CP: parseFloat((172 + Math.random() * 5).toFixed(1))
-            }
+                N: parseFloat((117 + Math.random() * 8).toFixed(1)),
+                CP: parseFloat((172 + Math.random() * 5).toFixed(1))
+              }
             : null;
         const p31 = hasPhosphorus ? parseFloat((-2 + Math.random() * 3).toFixed(2)) : null;
         return {
@@ -2374,7 +2518,7 @@ export const NMRTestRenderer = ({
         let estCP = null;
         if (moleculeType === 'protein' && res.backboneRand) {
           estN = +(res.backboneRand.N + (ssKey !== 'coil' ? corr.c['N'] || 0 : 0)).toFixed(2);
-          estCP = +(res.backboneRand.CP + (ssKey !== 'coil' ? corr.c["C' "] || 0 : 0)).toFixed(2);
+          estCP = +(res.backboneRand.CP + (ssKey !== 'coil' ? corr.c["C'"] || 0 : 0)).toFixed(2);
         }
         return { ...res, estShifts, estUniqueC, estShifts13C, estN, estCP, ssLetter, formLetter: getFormAt(idx) };
       }),
@@ -2436,7 +2580,7 @@ export const NMRTestRenderer = ({
         const cn = getCarbonName(moleculeType, char, atom);
         if (cn) cNames.add(cn);
       });
-      if (moleculeType === 'protein') cNames.add("C' ");
+      if (moleculeType === 'protein') cNames.add("C'");
       let cIdx = 0;
       cNames.forEach((cn) => {
         const rg = getCarbonRangeFor(moleculeType, char, cn);
@@ -2691,7 +2835,7 @@ export const NMRTestRenderer = ({
         if (selNuc.includes('N') && res.estN !== null) rows.push([res.id, '15N', 'N', shifts[`${idx}-N`] || '', res.estN]);
         if (selNuc.includes('C')) {
           Object.keys(res.estUniqueC || {}).forEach((cn) => rows.push([res.id, '13C', cn, shifts[`${idx}-${cn}`] || '', res.estUniqueC[cn]]));
-          if (res.estCP !== null) rows.push([res.id, '13C', "C'", shifts[`${idx}-C' `] || shifts[`${idx}-C'`] || '', res.estCP]);
+          if (res.estCP !== null) rows.push([res.id, '13C', "C'", shifts[`${idx}-C'`] || '', res.estCP]);
         }
       } else if (selNuc.includes('C')) {
         Object.keys(res.estUniqueC || {}).forEach((cn) => rows.push([res.id, '13C', cn, shifts[`${idx}-${cn}`] || '', res.estUniqueC[cn]]));
@@ -2722,17 +2866,6 @@ export const NMRTestRenderer = ({
     alert('Chemical formula appended to the Lab Notebook notes.');
   };
 
-  const typeLabel =
-    moleculeType === 'protein'
-      ? 'Protein'
-      : moleculeType === 'dna'
-        ? 'DNA'
-        : moleculeType === 'rna'
-          ? 'RNA'
-          : moleculeType === 'sugar'
-            ? 'Sugar'
-            : 'Phospholipid';
-
   return (
     <div className="flex flex-col h-full overflow-hidden bg-slate-50 relative">
       {TestHeader}
@@ -2740,31 +2873,27 @@ export const NMRTestRenderer = ({
         {/* EXPERIMENTAL CONDITIONS */}
         <CollapsibleSection title="Experimental Conditions" icon="🧪" defaultOpen={true}>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            {/* COMPOUNDS — DROPDOWN MULTI-SELECT */}
             <div className="flex flex-col gap-1 col-span-1 md:col-span-2 lg:col-span-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
               <label className="text-xs font-bold text-blue-800 uppercase flex items-center justify-between mb-2">
                 <span>Compound / Molecule Label(s)</span>
-                <span className="text-[9px] bg-blue-200 text-blue-800 px-2 py-0.5 rounded">Used for Lab Notebook filtering • Multiple selection allowed</span>
+                <span className="text-[9px] bg-blue-200 text-blue-800 px-2 py-0.5 rounded">Dropdown multi-select • Used for Lab Notebook filtering</span>
               </label>
-              <div className="flex flex-wrap gap-2">
-                {(allCmpds || []).map((cmp) => (
-                  <button
-                    key={cmp}
-                    onClick={() => toggleCompound(cmp)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
-                      selectedCompounds.includes(cmp)
-                        ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                        : 'bg-white text-slate-600 border-slate-300 hover:border-blue-400 hover:bg-blue-50'
-                    }`}
-                  >
-                    {selectedCompounds.includes(cmp) ? '✓ ' : ''}{cmp}
-                  </button>
-                ))}
-                {(allCmpds || []).length === 0 && (
-                  <span className="text-sm text-slate-400 italic">No compounds defined. Add them in Definitions & Labels.</span>
-                )}
-              </div>
+              <MultiSelectDropdown
+                options={allCmpds || []}
+                selected={selectedCompounds}
+                onToggle={toggleCompound}
+                placeholder="-- Select compounds --"
+              />
               {selectedCompounds.length > 0 && (
-                <p className="text-[10px] text-blue-600 mt-2 font-bold">Selected: {selectedCompounds.join(', ')}</p>
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {selectedCompounds.map((cmp) => (
+                    <span key={cmp} className="inline-flex items-center gap-1 bg-blue-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                      {cmp}
+                      <button onClick={() => toggleCompound(cmp)} className="hover:text-red-200 font-black" title="Remove">×</button>
+                    </span>
+                  ))}
+                </div>
               )}
             </div>
 
@@ -3045,7 +3174,7 @@ export const NMRTestRenderer = ({
           </div>
         </CollapsibleSection>
 
-        {/* SECONDARY STRUCTURE — PROTEIN PAINTING */}
+        {/* SECONDARY STRUCTURE — PROTEIN PAINTING (DRAG) */}
         {moleculeType === 'protein' && parsedSeq.length > 0 && (
           <CollapsibleSection title="Secondary Structure — Paint Coil / α-Helix / β-Sheet (drag)" icon="🧠" defaultOpen={true}>
             <div className="flex flex-wrap gap-2 mb-4 items-center">
@@ -3054,13 +3183,13 @@ export const NMRTestRenderer = ({
                 <button
                   key={l}
                   onClick={() => setSSBrush(l)}
-                  className={`px-3 py-1 rounded-lg text-xs font-black border transition-all ${
-                    ssBrush === l ? 'text-white shadow scale-105' : 'bg-white text-slate-600'
-                  }`}
+                  className="px-3 py-1 rounded-lg text-xs font-black border transition-all"
                   style={{
-                    backgroundColor: ssBrush === l ? SS_META[l].color : undefined,
+                    backgroundColor: ssBrush === l ? SS_META[l].color : 'white',
                     borderColor: SS_META[l].color,
-                    color: ssBrush === l ? 'white' : SS_META[l].color
+                    color: ssBrush === l ? 'white' : SS_META[l].color,
+                    transform: ssBrush === l ? 'scale(1.05)' : undefined,
+                    boxShadow: ssBrush === l ? '0 1px 4px rgba(0,0,0,0.15)' : undefined
                   }}
                 >
                   {SS_META[l].label}
@@ -3071,40 +3200,23 @@ export const NMRTestRenderer = ({
               <button onClick={() => setAllSS('H')} className="px-3 py-1 rounded-lg text-xs font-bold bg-violet-100 border border-violet-300 text-violet-700 hover:bg-violet-200">All α-Helix</button>
               <button onClick={() => setAllSS('E')} className="px-3 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-300 text-amber-700 hover:bg-amber-200">All β-Sheet</button>
             </div>
-            <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint secondary structure.</p>
-            <div className="flex flex-wrap gap-1.5 mb-4 select-none">
-              {parsedSeq.map((r, i) => {
-                const l = getSSAt(i);
-                const meta = SS_META[l];
-                return (
-                  <button
-                    key={i}
-                    draggable={false}
-                    onDragStart={(e) => e.preventDefault()}
-                    onMouseDown={(e) => { e.preventDefault(); setIsPaintingSS(true); paintSSAt(i, ssBrush); }}
-                    onMouseEnter={() => { if (isPaintingSS) paintSSAt(i, ssBrush); }}
-                    title={`${r.id}: ${meta.label}`}
-                    className="w-11 py-1 rounded-md border text-center leading-tight transition-all"
-                    style={{
-                      backgroundColor: meta.color + '22',
-                      borderColor: meta.color,
-                      opacity: focusIdx !== 'ALL' && focusIdx !== i ? 0.35 : 1
-                    }}
-                  >
-                    <div className="text-[8px] text-slate-500 font-bold">{i + 1}</div>
-                    <div className="text-sm font-black text-slate-800">{r.char}</div>
-                    <div className="text-[10px] font-black" style={{ color: meta.color }}>{l}</div>
-                  </button>
-                );
-              })}
-            </div>
+            <p className="text-xs text-slate-400 mb-3">
+              💡 Select a brush, then click or drag across the sequence chips to paint secondary structure. Each chip shows: position, one-letter code, assigned SS.
+            </p>
+            <SequencePaintStrip
+              residues={parsedSeq}
+              getLetter={(i) => getSSAt(i)}
+              meta={SS_META}
+              onApply={(i) => paintSSAt(i, ssBrush)}
+              focusIdx={focusIdx}
+            />
             <p className="text-xs text-slate-400 mt-2">
               Estimated values and simulated spectra are corrected according to the painted secondary structure.
             </p>
           </CollapsibleSection>
         )}
 
-        {/* NUCLEIC FORM PAINTING — DNA / RNA */}
+        {/* NUCLEIC FORM PAINTING — DNA / RNA (DRAG) */}
         {(moleculeType === 'dna' || moleculeType === 'rna') && parsedSeq.length > 0 && (
           <CollapsibleSection title="Nucleic Acid Form — Paint A / B / Z (drag)" icon="🧠" defaultOpen={true}>
             <div className="flex flex-wrap gap-2 mb-4 items-center">
@@ -3113,13 +3225,13 @@ export const NMRTestRenderer = ({
                 <button
                   key={l}
                   onClick={() => setFormBrush(l)}
-                  className={`px-3 py-1 rounded-lg text-xs font-black border transition-all ${
-                    formBrush === l ? 'text-white shadow scale-105' : 'bg-white'
-                  }`}
+                  className="px-3 py-1 rounded-lg text-xs font-black border transition-all"
                   style={{
-                    backgroundColor: formBrush === l ? FORM_META[l].color : undefined,
+                    backgroundColor: formBrush === l ? FORM_META[l].color : 'white',
                     borderColor: FORM_META[l].color,
-                    color: formBrush === l ? 'white' : FORM_META[l].color
+                    color: formBrush === l ? 'white' : FORM_META[l].color,
+                    transform: formBrush === l ? 'scale(1.05)' : undefined,
+                    boxShadow: formBrush === l ? '0 1px 4px rgba(0,0,0,0.15)' : undefined
                   }}
                 >
                   {FORM_META[l].label}
@@ -3130,36 +3242,113 @@ export const NMRTestRenderer = ({
               <button onClick={() => setAllForms('B')} className="px-3 py-1 rounded-lg text-xs font-bold bg-green-100 border border-green-300 text-green-700 hover:bg-green-200">All B</button>
               <button onClick={() => setAllForms('Z')} className="px-3 py-1 rounded-lg text-xs font-bold bg-rose-100 border border-rose-300 text-rose-700 hover:bg-rose-200">All Z</button>
             </div>
-            <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint the nucleic acid form per residue.</p>
-            <div className="flex flex-wrap gap-1.5 mb-4 select-none">
-              {parsedSeq.map((r, i) => {
-                const f = getFormAt(i);
-                const meta = FORM_META[f];
-                return (
-                  <button
-                    key={i}
-                    draggable={false}
-                    onDragStart={(e) => e.preventDefault()}
-                    onMouseDown={(e) => { e.preventDefault(); setIsPaintingForm(true); paintFormAt(i, formBrush); }}
-                    onMouseEnter={() => { if (isPaintingForm) paintFormAt(i, formBrush); }}
-                    title={`${r.id}: ${meta.label}`}
-                    className="w-11 py-1 rounded-md border text-center leading-tight transition-all"
-                    style={{
-                      backgroundColor: meta.color + '22',
-                      borderColor: meta.color,
-                      opacity: focusIdx !== 'ALL' && focusIdx !== i ? 0.35 : 1
-                    }}
-                  >
-                    <div className="text-[8px] text-slate-500 font-bold">{i + 1}</div>
-                    <div className="text-sm font-black text-slate-800">{r.char}</div>
-                    <div className="text-[10px] font-black" style={{ color: meta.color }}>{f}</div>
-                  </button>
-                );
-              })}
-            </div>
+            <p className="text-xs text-slate-400 mb-3">
+              💡 Select a brush, then click or drag across the sequence chips to paint the nucleic acid form per residue.
+            </p>
+            <SequencePaintStrip
+              residues={parsedSeq}
+              getLetter={(i) => getFormAt(i)}
+              meta={FORM_META}
+              onApply={(i) => paintFormAt(i, formBrush)}
+              focusIdx={focusIdx}
+            />
             <p className="text-xs text-slate-400 mt-2">
               Estimated ¹H shifts are corrected per-residue according to the painted A/B/Z form.
             </p>
+          </CollapsibleSection>
+        )}
+
+        {/* SUGAR CONFIGURATION PAINTING (α/β + chair) */}
+        {moleculeType === 'sugar' && parsedSeq.length > 0 && (
+          <CollapsibleSection title="Sugar Configuration — Paint α/β anomer & chair conformation" icon="🍬" defaultOpen={true}>
+            <div className="flex flex-wrap gap-2 mb-4 items-center">
+              <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Anomer brush:</span>
+              {[['alpha', 'α-anomer', '#0ea5e9'], ['beta', 'β-anomer', '#f97316']].map(([val, lab, col]) => (
+                <button
+                  key={val}
+                  onClick={() => setSugarBrushAnomer(val)}
+                  className="px-3 py-1 rounded-lg text-xs font-black border transition-all"
+                  style={{
+                    backgroundColor: sugarBrushAnomer === val ? col : 'white',
+                    borderColor: col,
+                    color: sugarBrushAnomer === val ? 'white' : col,
+                    transform: sugarBrushAnomer === val ? 'scale(1.05)' : undefined,
+                    boxShadow: sugarBrushAnomer === val ? '0 1px 4px rgba(0,0,0,0.15)' : undefined
+                  }}
+                >
+                  {lab}
+                </button>
+              ))}
+              <span className="mx-2 text-slate-300">|</span>
+              <span className="text-xs font-bold text-slate-500 uppercase mr-1">Chair brush:</span>
+              {[['chair', 'Chair (⁴C₁)', '#22c55e'], ['invChair', 'Inverted chair (¹C₄)', '#a855f7']].map(([val, lab, col]) => (
+                <button
+                  key={val}
+                  onClick={() => setSugarBrushConf(val)}
+                  className="px-3 py-1 rounded-lg text-xs font-black border transition-all"
+                  style={{
+                    backgroundColor: sugarBrushConf === val ? col : 'white',
+                    borderColor: col,
+                    color: sugarBrushConf === val ? 'white' : col,
+                    transform: sugarBrushConf === val ? 'scale(1.05)' : undefined,
+                    boxShadow: sugarBrushConf === val ? '0 1px 4px rgba(0,0,0,0.15)' : undefined
+                  }}
+                >
+                  {lab}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-slate-400 mb-3">
+              💡 Select the anomer brush (α/β for the anomeric center) and the ring-conformation brush, then click the sugar chip to apply. Structure and estimated ¹H shifts update accordingly.
+            </p>
+            <SequencePaintStrip
+              residues={parsedSeq}
+              getLetter={() => (sugarAnomer === 'beta' ? 'β' : 'α')}
+              meta={{ β: { label: 'β-anomer', color: '#f97316' }, α: { label: 'α-anomer', color: '#0ea5e9' } }}
+              onApply={() => updateActiveTest({ sugarAnomer: sugarBrushAnomer, sugarConf: sugarBrushConf })}
+              focusIdx={focusIdx}
+              charLabel={(r) => r.code3 || r.char}
+            />
+            <p className="text-xs text-slate-400 mt-2">
+              Current: {sugarAnomer === 'beta' ? 'β' : 'α'}-anomer, {sugarConf === 'invChair' ? 'inverted chair' : 'chair'} conformation.
+            </p>
+          </CollapsibleSection>
+        )}
+
+        {/* LIPID DOUBLE BOND PAINTING (cis/trans) */}
+        {moleculeType === 'lipid' && parsedSeq.length > 0 && (
+          <CollapsibleSection title="Lipid Double Bond — Paint cis / trans (Δ9)" icon="🫧" defaultOpen={true}>
+            <div className="flex flex-wrap gap-2 mb-4 items-center">
+              <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
+              {[['cis', 'cis Δ9', '#0ea5e9'], ['trans', 'trans Δ9', '#f43f5e']].map(([val, lab, col]) => (
+                <button
+                  key={val}
+                  onClick={() => setLipidBrush(val)}
+                  className="px-3 py-1 rounded-lg text-xs font-black border transition-all"
+                  style={{
+                    backgroundColor: lipidBrush === val ? col : 'white',
+                    borderColor: col,
+                    color: lipidBrush === val ? 'white' : col,
+                    transform: lipidBrush === val ? 'scale(1.05)' : undefined,
+                    boxShadow: lipidBrush === val ? '0 1px 4px rgba(0,0,0,0.15)' : undefined
+                  }}
+                >
+                  {lab}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-slate-400 mb-3">
+              💡 Select the cis/trans brush, then click the lipid chip to set the geometry of the Δ9 double bond in the sn-2 chain.
+            </p>
+            <SequencePaintStrip
+              residues={parsedSeq}
+              getLetter={() => lipidDB}
+              meta={{ cis: { label: 'cis Δ9', color: '#0ea5e9' }, trans: { label: 'trans Δ9', color: '#f43f5e' } }}
+              onApply={() => updateActiveTest({ lipidDB: lipidBrush })}
+              focusIdx={focusIdx}
+              charLabel={(r) => r.char}
+            />
+            <p className="text-xs text-slate-400 mt-2">Current geometry: {lipidDB} Δ9.</p>
           </CollapsibleSection>
         )}
 
@@ -3174,25 +3363,25 @@ export const NMRTestRenderer = ({
                 {moleculeType === 'sugar' && (
                   <div className="flex bg-slate-200 p-1 rounded-lg gap-1">
                     <button
-                      onClick={() => updateActiveTest({ sugarAnomer: 'alpha' })}
+                      onClick={() => { updateActiveTest({ sugarAnomer: 'alpha' }); setSugarBrushAnomer('alpha'); }}
                       className={`px-3 py-1 text-xs font-bold rounded-md ${sugarAnomer === 'alpha' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'}`}
                     >
                       α-anomer
                     </button>
                     <button
-                      onClick={() => updateActiveTest({ sugarAnomer: 'beta' })}
+                      onClick={() => { updateActiveTest({ sugarAnomer: 'beta' }); setSugarBrushAnomer('beta'); }}
                       className={`px-3 py-1 text-xs font-bold rounded-md ${sugarAnomer === 'beta' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'}`}
                     >
                       β-anomer
                     </button>
                     <button
-                      onClick={() => updateActiveTest({ sugarConf: 'chair' })}
+                      onClick={() => { updateActiveTest({ sugarConf: 'chair' }); setSugarBrushConf('chair'); }}
                       className={`px-3 py-1 text-xs font-bold rounded-md ${sugarConf === 'chair' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'}`}
                     >
                       Chair
                     </button>
                     <button
-                      onClick={() => updateActiveTest({ sugarConf: 'invChair' })}
+                      onClick={() => { updateActiveTest({ sugarConf: 'invChair' }); setSugarBrushConf('invChair'); }}
                       className={`px-3 py-1 text-xs font-bold rounded-md ${sugarConf === 'invChair' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'}`}
                     >
                       Inv. Chair
@@ -3202,13 +3391,13 @@ export const NMRTestRenderer = ({
                 {moleculeType === 'lipid' && (
                   <div className="flex bg-slate-200 p-1 rounded-lg gap-1">
                     <button
-                      onClick={() => updateActiveTest({ lipidDB: 'cis' })}
+                      onClick={() => { updateActiveTest({ lipidDB: 'cis' }); setLipidBrush('cis'); }}
                       className={`px-3 py-1 text-xs font-bold rounded-md ${lipidDB === 'cis' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'}`}
                     >
                       cis Δ9
                     </button>
                     <button
-                      onClick={() => updateActiveTest({ lipidDB: 'trans' })}
+                      onClick={() => { updateActiveTest({ lipidDB: 'trans' }); setLipidBrush('trans'); }}
                       className={`px-3 py-1 text-xs font-bold rounded-md ${lipidDB === 'trans' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'}`}
                     >
                       trans Δ9
@@ -3305,7 +3494,7 @@ export const NMRTestRenderer = ({
                         if (!db) return null;
                         const hAtoms = Object.keys(db.ranges);
                         const cAtoms = [...new Set(hAtoms.map((k) => getCarbonName(moleculeType, char, k)).filter(Boolean))];
-                        if (moleculeType === 'protein') cAtoms.push("C' ");
+                        if (moleculeType === 'protein') cAtoms.push("C'");
                         return (
                           <tr key={char} className="hover:bg-slate-50">
                             <td className="px-4 py-2 font-bold text-slate-700">{db.name} ({db.code3 || char})</td>
@@ -3503,7 +3692,7 @@ export const NMRTestRenderer = ({
                           nucDefs.C.map((a) => {
                             const isMan = parseManual(shifts[`${idx}-${a}`]) !== null;
                             const isSel = cellIsSelected(idx, a);
-                            const est = a === "C' " ? res.estCP : res.estUniqueC?.[a];
+                            const est = a === "C'" ? res.estCP : res.estUniqueC?.[a];
                             return (
                               <td
                                 key={a}
@@ -3557,7 +3746,7 @@ export const NMRTestRenderer = ({
                     }
                     if (selNuc.includes('C')) {
                       Object.keys(res.estUniqueC || {}).forEach((cn) => rows.push({ nuc: '¹³C', atom: cn, est: res.estUniqueC[cn].toFixed(2) }));
-                      if (moleculeType === 'protein' && res.estCP !== null) rows.push({ nuc: '¹³C', atom: "C' ", est: res.estCP.toFixed(2) });
+                      if (moleculeType === 'protein' && res.estCP !== null) rows.push({ nuc: '¹³C', atom: "C'", est: res.estCP.toFixed(2) });
                     }
                     if (hasPhosphorus && selNuc.includes('P') && res.p31 !== null) {
                       rows.push({ nuc: '³¹P', atom: 'P', est: res.p31.toFixed(2) });
@@ -3925,7 +4114,7 @@ export const NMRTestRenderer = ({
               </label>
             </div>
             <button
-              onClick={() => {
+              onClick={async () => {
                 let html =
                   '<div style="background-color: #f8fafc; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0; margin-top: 15px; font-family: sans-serif;">';
                 html +=
@@ -3957,7 +4146,13 @@ export const NMRTestRenderer = ({
                   }</span></p>`;
                 }
                 if (cbFormula && structure) {
-                  html += `<div style="margin-bottom: 12px;">${elementsToSVG(structure, 300)}</div>`;
+                  try {
+                    const svgStr = ensureSvgSize(elementsToSVG(structure, 300), 1200);
+                    const png = await svgToPngDataUrl(svgStr, 1200);
+                    html += `<div style="margin-bottom: 12px;"><img src="${png}" alt="Chemical formula" style="max-width: 100%; height: auto; background: white; border: 1px solid #e2e8f0; border-radius: 4px;"/></div>`;
+                  } catch (err) {
+                    html += `<div style="margin-bottom: 12px;">${elementsToSVG(structure, 300)}</div>`;
+                  }
                 }
                 if (cbTable && Object.keys(shifts).length > 0) {
                   html += `<table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; text-align: left; background: white;"><tr style="background-color: #f1f5f9;"><th style="padding: 6px; border: 1px solid #cbd5e1;">Residue</th><th style="padding: 6px; border: 1px solid #cbd5e1;">Atom</th><th style="padding: 6px; border: 1px solid #cbd5e1;">Shift (ppm)</th></tr>`;
@@ -3976,9 +4171,7 @@ export const NMRTestRenderer = ({
                   html += `<div style="margin-top: 15px;"><h5 style="color: #1e40af; font-size: 12px; margin-bottom: 8px;">📷 Spectra Images:</h5>`;
                   images.forEach((imgSrc, idx) => {
                     const cands = normalizeImageCandidates(imgSrc);
-                    html += `<div style="margin-bottom: 10px;"><img src="${cands[0]}" alt="Spectrum ${
-                      idx + 1
-                    }" style="max-width: 100%; height: auto; border: 1px solid #e2e8f0; border-radius: 4px;"/><p style="font-size: 10px; color: #64748b; margin-top: 4px;">Image ${idx + 1}</p></div>`;
+                    html += `<div style="margin-bottom: 10px;"><img src="${cands[0]}" alt="Spectrum ${idx + 1}" style="max-width: 100%; height: auto; border: 1px solid #e2e8f0; border-radius: 4px;"/><p style="font-size: 10px; color: #64748b; margin-top: 4px;">Image ${idx + 1}</p></div>`;
                   });
                   html += `</div>`;
                 }
@@ -4027,7 +4220,7 @@ export const NMRTestRenderer = ({
                     </button>
                   ))}
                   {(allCellLines || []).length === 0 && (
-                    <span className="text-sm text-slate-400 italic">No cell lines defined. Add them in Definitions & Labels.</span>
+                    <span className="text-sm text-slate-400 italic">No cell lines defined. Add them in Definitions &amp; Labels.</span>
                   )}
                 </div>
               </div>
@@ -4036,7 +4229,7 @@ export const NMRTestRenderer = ({
               <label className="text-xs font-bold text-slate-600 uppercase">Custom Metadata</label>
               {(customFields || []).length === 0 ? (
                 <p className="text-sm text-slate-400 italic bg-slate-50 p-3 rounded-lg border border-dashed border-slate-300">
-                  No custom fields defined. Configure them in Definitions & Labels.
+                  No custom fields defined. Configure them in Definitions &amp; Labels.
                 </p>
               ) : (
                 (customFields || []).map((field) => (
