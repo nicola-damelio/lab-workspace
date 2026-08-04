@@ -3,9 +3,7 @@ import Chart from 'chart.js/auto';
 import * as XLSX from 'xlsx';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
-
 import { CollapsibleSection } from './TestShellRenderer';
-
 import {
   PLATES_DEF,
   formatConc,
@@ -22,18 +20,15 @@ import {
 
 const FS_CLASSES =
   'fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col';
-
 const OVERLAY_CLASSES =
   'fixed top-0 left-0 w-screen h-screen bg-slate-900/50 backdrop-blur-sm z-[999990]';
 
 // ================= ERROR INPUT =================
 export const ErrInput = ({ label, value, sdRaw, isOverridden, onSave, onReset }) => {
   const [tempVal, setTempVal] = useState(value !== undefined ? value : '');
-
   useEffect(() => {
     setTempVal(value !== undefined ? value : '');
   }, [value]);
-
   return (
     <div
       className={`flex flex-col gap-1 p-1.5 rounded border ${
@@ -41,7 +36,6 @@ export const ErrInput = ({ label, value, sdRaw, isOverridden, onSave, onReset })
       }`}
     >
       <span className="text-[9px] font-bold text-slate-500">{label}</span>
-
       <div className="flex gap-1 items-center">
         <input
           type="number"
@@ -51,7 +45,6 @@ export const ErrInput = ({ label, value, sdRaw, isOverridden, onSave, onReset })
           onBlur={() => onSave(parseFloat(tempVal) || 0)}
           className="w-12 text-xs border border-slate-300 rounded p-0.5 outline-none focus:border-orange-500 text-center"
         />
-
         {isOverridden && (
           <button
             onClick={onReset}
@@ -89,13 +82,11 @@ export function RegionCharts({ regionName, regionData, config }) {
   const ic50Ref = useRef(null);
   const drChart = useRef(null);
   const ic50Chart = useRef(null);
-
   const isDrFs = fsPanel === `dr_${regionName}`;
   const isIc50Fs = fsPanel === `ic50_${regionName}`;
 
   useEffect(() => {
     if (!drRef.current) return;
-
     const ds = [];
     const map = [];
 
@@ -104,24 +95,19 @@ export function RegionCharts({ regionName, regionData, config }) {
 
       if (cd.fit) {
         const lbl = `${cd.name} (IC50:${cd.fit.ic50.toFixed(2)}±${(cd.fit.se * eScale).toFixed(2)} ${unit})`;
-
         const minL = Math.min(...cd.vPts.map((p) => p.x)) - 0.2;
         const maxL = Math.max(...cd.vPts.map((p) => p.x)) + 0.2;
-
         const curve = [];
         const step = (maxL - minL) / 60;
-
         for (let v = minL; v <= maxL + step * 0.5; v += step) {
           curve.push({
             x: v,
             y: 100 / (1 + Math.pow(Math.pow(10, v) / cd.fit.ic50, cd.fit.hill))
           });
         }
-
         let borderDash = [];
         if (chartCfg.lineStyle === 'dashed') borderDash = [5, 5];
         if (chartCfg.lineStyle === 'dotted') borderDash = [2, 3];
-
         ds.push({
           label: lbl,
           data: curve,
@@ -135,7 +121,6 @@ export function RegionCharts({ regionName, regionData, config }) {
           tension: 0,
           showLine: true
         });
-
         map.push(null);
       }
 
@@ -154,7 +139,6 @@ export function RegionCharts({ regionName, regionData, config }) {
           type: 'scatter',
           showLine: false
         });
-
         map.push({ name: cd.name, excl: false });
       }
 
@@ -171,13 +155,11 @@ export function RegionCharts({ regionName, regionData, config }) {
           type: 'scatter',
           showLine: false
         });
-
         map.push({ name: cd.name, excl: true });
       }
     });
 
     if (drChart.current) drChart.current.destroy();
-
     drChart.current = new Chart(drRef.current, {
       type: 'line',
       data: { datasets: ds },
@@ -190,24 +172,19 @@ export function RegionCharts({ regionName, regionData, config }) {
           if (els.length > 0) {
             const m = map[els[0].datasetIndex];
             if (!m) return;
-
             const pd = chart.data.datasets[els[0].datasetIndex].data[els[0].index];
-
             if (pd && pd.pts) {
               pd.pts.forEach((p) => {
                 nc[p.r][p.c].excluded = !m.excl;
                 nc[p.r][p.c].manualOverride = true;
               });
-
               changed = true;
             }
           } else {
             const pos = Chart.helpers.getRelativePosition(evt, chart);
             const dx = chart.scales.x.getValueForPixel(pos.x);
-
             let md = Infinity;
             let tx = null;
-
             regionData.forEach((cd) =>
               [...cd.vPts, ...cd.ePts].forEach((p) => {
                 const d = Math.abs(p.x - dx);
@@ -217,16 +194,12 @@ export function RegionCharts({ regionName, regionData, config }) {
                 }
               })
             );
-
             if (tx !== null && md < 0.2) {
               for (let r = 0; r < activePlateDim.rows; r++) {
                 for (let c = 0; c < activePlateDim.cols; c++) {
                   const cfg = nc[r][c];
-
                   if ((cfg.region || 'Primary') !== regionName) continue;
-
                   const xc = Number(cfg.conc) || 0;
-
                   if (xc > 0 && Math.abs(Math.log10(xc) - tx) < 0.05 && cfg.excluded) {
                     cfg.excluded = false;
                     cfg.manualOverride = true;
@@ -296,18 +269,15 @@ export function RegionCharts({ regionName, regionData, config }) {
                 const logX = ctx[0].parsed.x;
                 const realX =
                   ctx[0].raw && ctx[0].raw.realX ? ctx[0].raw.realX : Math.pow(10, logX);
-
                 return `Conc: ${formatConc(realX)} ${unit} (log: ${logX.toFixed(2)})`;
               },
               label: (ctx) => {
                 const lbl = ctx.dataset.label.replace(' [pts]', '');
                 const y = ctx.parsed.y.toFixed(2);
-
                 if (ctx.dataset.type === 'scatter') {
                   const sd = ctx.raw.sd ? ctx.raw.sd.toFixed(2) : '0.00';
                   return `${lbl}: ${y}% ± ${(sd * eScale).toFixed(2)}`;
                 }
-
                 return `${lbl}: ${y}%`;
               }
             }
@@ -315,7 +285,6 @@ export function RegionCharts({ regionName, regionData, config }) {
         }
       }
     });
-
     return () => {
       if (drChart.current) drChart.current.destroy();
     };
@@ -334,7 +303,6 @@ export function RegionCharts({ regionName, regionData, config }) {
 
   useEffect(() => {
     if (!ic50Ref.current || !fitIC50) return;
-
     const labels = [];
     const data = [];
     const colors = [];
@@ -342,17 +310,14 @@ export function RegionCharts({ regionName, regionData, config }) {
 
     regionData.forEach((cd) => {
       if (hiddenCmpds[cd.name] || !cd.fit || !isFinite(cd.fit.ic50)) return;
-
       labels.push(cd.name);
       data.push(cd.fit.ic50);
       colors.push(cd.color);
-
       const se = Math.min(cd.fit.se, cd.fit.ic50 * 2) * eScale;
       ebars.push({ plus: se, minus: se });
     });
 
     if (ic50Chart.current) ic50Chart.current.destroy();
-
     ic50Chart.current = new Chart(ic50Ref.current, {
       type: 'bar',
       data: {
@@ -408,7 +373,6 @@ export function RegionCharts({ regionName, regionData, config }) {
         }
       }
     });
-
     return () => {
       if (ic50Chart.current) ic50Chart.current.destroy();
     };
@@ -417,8 +381,9 @@ export function RegionCharts({ regionName, regionData, config }) {
   return (
     <CollapsibleSection title={`Region: ${regionName}`} icon="📍" defaultOpen={true}>
       <div className="flex flex-col lg:flex-row gap-6 relative">
-        {isDrFs && <div className={OVERLAY_CLASSES} onClick={() => toggleFs(`dr_${regionName}`)}></div>}
-
+        {isDrFs && (
+          <div className={OVERLAY_CLASSES} onClick={() => toggleFs(`dr_${regionName}`)}></div>
+        )}
         <div
           className={`flex flex-col ${isDrFs ? FS_CLASSES + ' p-6' : 'min-w-0'}`}
           style={!isDrFs ? { width: fitIC50 ? `${drWidth}%` : '100%', flexShrink: 0 } : {}}
@@ -427,7 +392,6 @@ export function RegionCharts({ regionName, regionData, config }) {
             <h2 className="text-sm font-bold text-slate-600 uppercase tracking-widest">
               Dose-Response Plot
             </h2>
-
             <div className="flex items-center gap-1 no-print">
               {renameRegion && (
                 <button
@@ -438,7 +402,6 @@ export function RegionCharts({ regionName, regionData, config }) {
                   ✏️
                 </button>
               )}
-
               <button
                 onClick={() => toggleFs(`dr_${regionName}`)}
                 className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors"
@@ -447,7 +410,6 @@ export function RegionCharts({ regionName, regionData, config }) {
               </button>
             </div>
           </div>
-
           <div
             className="flex-1 relative min-h-0"
             style={{ minHeight: isDrFs ? '0' : `${chartH}px` }}
@@ -455,19 +417,19 @@ export function RegionCharts({ regionName, regionData, config }) {
             <canvas ref={drRef}></canvas>
           </div>
         </div>
-
         {fitIC50 && (
           <>
             {isIc50Fs && (
-              <div className={OVERLAY_CLASSES} onClick={() => toggleFs(`ic50_${regionName}`)}></div>
+              <div
+                className={OVERLAY_CLASSES}
+                onClick={() => toggleFs(`ic50_${regionName}`)}
+              ></div>
             )}
-
             <div className={`flex flex-col ${isIc50Fs ? FS_CLASSES + ' p-6' : 'flex-1 min-w-0'}`}>
               <div className="flex justify-between items-start mb-4">
                 <h2 className="text-sm font-bold text-slate-600 uppercase tracking-widest">
                   IC50 Comparison
                 </h2>
-
                 <button
                   onClick={() => toggleFs(`ic50_${regionName}`)}
                   className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors"
@@ -475,7 +437,6 @@ export function RegionCharts({ regionName, regionData, config }) {
                   {isIc50Fs ? '↙️' : '↗️'}
                 </button>
               </div>
-
               <div
                 className="flex-1 relative min-h-0"
                 style={{ minHeight: isIc50Fs ? '0' : `${chartH}px` }}
@@ -494,7 +455,6 @@ export function RegionCharts({ regionName, regionData, config }) {
 export const buildNotebookHtml = (checked, ctx) => {
   const model = ctx.plateModelRef?.current || {};
   const t = ctx.activeTest || {};
-
   if (!model.processedByRegion) return '';
 
   let html = '';
@@ -504,7 +464,6 @@ export const buildNotebookHtml = (checked, ctx) => {
       (ctx.selectedCompounds && ctx.selectedCompounds.length
         ? ctx.selectedCompounds.join(', ')
         : t.compound) || 'N/A';
-
     html += `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;">
       <b>Sample:</b> ${sample} |
       <b>Format:</b> ${model.activePlateDim?.rows || ''}x${model.activePlateDim?.cols || ''} |
@@ -530,7 +489,6 @@ export const buildNotebookHtml = (checked, ctx) => {
         <th style="padding: 6px; border: 1px solid #cbd5e1;">Compound</th>
         <th style="padding: 6px; border: 1px solid #cbd5e1;">IC50 (${t.unit || 'µM'})</th>
       </tr>`;
-
     Object.entries(model.processedByRegion).forEach(([reg, comps]) => {
       comps.forEach((c) => {
         if (c.fit) {
@@ -544,7 +502,6 @@ export const buildNotebookHtml = (checked, ctx) => {
         }
       });
     });
-
     html += `</table>`;
   }
 
@@ -609,7 +566,6 @@ export const All = ({ ctx }) => {
     ...(activeTest.chartCfg || {})
   };
 
-  const [tableView, setTableView] = useState('od');
   const [drWidth, setDrWidth] = useState(55);
   const [chartH, setChartH] = useState(530);
   const [mapFontSize, setMapFontSize] = useState(9);
@@ -633,13 +589,16 @@ export const All = ({ ctx }) => {
     currentC: -1
   });
 
-  const activePlateDim = PLATES_DEF[plateType] || PLATES_DEF['96'];
+  /* ===== NEW STATE for interactive plate map ===== */
+  const [mapMode, setMapMode] = useState('view');
+  const [paintCompound, setPaintCompound] = useState('');
+  const [mapPainting, setMapPainting] = useState(false);
 
+  const activePlateDim = PLATES_DEF[plateType] || PLATES_DEF['96'];
   const ROWS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'].slice(
     0,
     activePlateDim.rows
   );
-
   const COLS = Array.from({ length: activePlateDim.cols }, (_, i) => i + 1);
 
   const tConc = parseFloat(String(topConcStr).replace(',', '.')) || 0;
@@ -677,48 +636,38 @@ export const All = ({ ctx }) => {
         maxC: Math.max(dragState.startC, dragState.currentC)
       };
     }
-
     return activeSel;
   }, [dragState, activeSel]);
 
   const selectedRegionName = useMemo(() => {
     if (!activeSel) return null;
-
     const names = new Set();
-
     for (let r = activeSel.minR; r <= activeSel.maxR; r++) {
       for (let c = activeSel.minC; c <= activeSel.maxC; c++) {
         const reg = cellConfig[r]?.[c]?.region;
         if (reg && reg !== 'Primary') names.add(reg);
       }
     }
-
     return names.size === 1 ? Array.from(names)[0] : null;
   }, [activeSel, cellConfig]);
 
   const selectedRegionComplete = useMemo(() => {
     if (!activeSel || !selectedRegionName) return false;
-
     let hasRegionCell = false;
-
     for (let r = 0; r < activePlateDim.rows; r++) {
       for (let c = 0; c < activePlateDim.cols; c++) {
         const reg = cellConfig[r]?.[c]?.region;
-
         if (reg === selectedRegionName) {
           hasRegionCell = true;
-
           const insideSelection =
             r >= activeSel.minR &&
             r <= activeSel.maxR &&
             c >= activeSel.minC &&
             c <= activeSel.maxC;
-
           if (!insideSelection) return false;
         }
       }
     }
-
     return hasRegionCell;
   }, [activeSel, selectedRegionName, cellConfig, activePlateDim]);
 
@@ -745,21 +694,15 @@ export const All = ({ ctx }) => {
   const getRole = (r, c) => {
     const cfg = cellConfig[r]?.[c];
     if (!cfg) return null;
-
     if (cfg.role !== null && cfg.role !== undefined) return cfg.role;
-
     const rCmp = rowCompounds[r];
     const cCmp = compounds[c];
-
     if (rCmp && !cCmp) return rCmp;
     if (cCmp && !rCmp) return cCmp;
     if (!rCmp && !cCmp) return null;
-
     const isCtrl = (x) => ['cells', 'medium', 'pbs'].includes(String(x).toLowerCase());
-
     if (isCtrl(rCmp) && !isCtrl(cCmp)) return rCmp;
     if (isCtrl(cCmp) && !isCtrl(rCmp)) return cCmp;
-
     return rCmp;
   };
 
@@ -775,11 +718,9 @@ export const All = ({ ctx }) => {
 
   const concOf = (r, c, role) => {
     const rl = role !== undefined ? role : getRole(r, c);
-
     if (!rl || ['cells', 'medium', 'pbs'].includes(String(rl).toLowerCase())) return 0;
 
     const cfg = cellConfig?.[r]?.[c];
-
     if (cfg && cfg.conc !== null && cfg.conc !== undefined) {
       return Number(cfg.conc);
     }
@@ -793,7 +734,6 @@ export const All = ({ ctx }) => {
 
     let isHoriz = false;
     let step = 0;
-
     if (rowCompounds[r] === rl) isHoriz = true;
     else if (compounds[c] === rl) isHoriz = false;
     else if (rowCompounds.includes(rl)) isHoriz = true;
@@ -813,17 +753,14 @@ export const All = ({ ctx }) => {
 
   const cmpColor = (name, autoIdx) => {
     const stored = cmpColors[name];
-
     if (stored && /^#[0-9a-f]{6}$/i.test(stored)) {
       return stored.toLowerCase();
     }
-
     return toHex(PALETTE[autoIdx % PALETTE.length]);
   };
 
   const plotCmps = useMemo(() => {
     const s = new Set();
-
     compounds.forEach((c, i) => {
       if (
         i < activePlateDim.cols &&
@@ -833,7 +770,6 @@ export const All = ({ ctx }) => {
         s.add(c);
       }
     });
-
     rowCompounds.forEach((c, i) => {
       if (
         i < activePlateDim.rows &&
@@ -843,32 +779,25 @@ export const All = ({ ctx }) => {
         s.add(c);
       }
     });
-
     (grid || []).forEach((row, r) =>
       (row || []).forEach((_, c) => {
         if (r >= activePlateDim.rows || c >= activePlateDim.cols) return;
-
         const role = getRole(r, c);
-
         if (role && !['cells', 'medium', 'pbs'].includes(String(role).toLowerCase())) {
           s.add(role);
         }
       })
     );
-
     return Array.from(s);
   }, [cellConfig, activePlateDim, grid, compounds, rowCompounds]);
 
   const cmpStats = useMemo(() => {
     const stats = {};
-
     (grid || []).forEach((row, r) =>
       (row || []).forEach((_, c) => {
         if (r >= activePlateDim.rows || c >= activePlateDim.cols) return;
-
         const role = getRole(r, c);
         const conc = concOf(r, c, role);
-
         if (role && conc > 0) {
           if (!stats[role]) stats[role] = { min: conc, max: conc };
           else {
@@ -878,36 +807,28 @@ export const All = ({ ctx }) => {
         }
       })
     );
-
     return stats;
   }, [cellConfig, activePlateDim, grid, compounds, rowCompounds, tConc, dFact, customConc]);
 
   const [bgOD, setBgOD] = useState(0);
-
   useEffect(() => {
     if (bgType === 'none') {
       setBgOD(0);
       return;
     }
-
     if (bgType === 'manual') {
       setBgOD(bgMan);
       return;
     }
-
     let s = 0;
     let n = 0;
-
     (grid || []).forEach((row, r) =>
       (row || []).forEach((_, c) => {
         if (r >= activePlateDim.rows || c >= activePlateDim.cols) return;
-
         const cfg = cellConfig[r]?.[c];
         if (!cfg || cfg.excluded) return;
-
         if (getRole(r, c) === bgType) {
           const v = rawOD(r, c);
-
           if (!isNaN(v)) {
             s += v;
             n++;
@@ -915,26 +836,20 @@ export const All = ({ ctx }) => {
         }
       })
     );
-
     setBgOD(n > 0 ? s / n : 0);
   }, [grid, cellConfig, bgType, bgMan, gOff, activePlateDim]);
 
   useEffect(() => {
     if (ctrlType === 'none') return;
-
     let s = 0;
     let n = 0;
-
     (grid || []).forEach((row, r) =>
       (row || []).forEach((_, c) => {
         if (r >= activePlateDim.rows || c >= activePlateDim.cols) return;
-
         const cfg = cellConfig[r]?.[c];
         if (!cfg || cfg.excluded) return;
-
         if (getRole(r, c) === ctrlType) {
           const v = rawOD(r, c);
-
           if (!isNaN(v)) {
             s += v;
             n++;
@@ -942,88 +857,67 @@ export const All = ({ ctx }) => {
         }
       })
     );
-
     if (n > 0) updatePlate({ ctrlODStr: (s / n).toFixed(4) });
   }, [grid, cellConfig, ctrlType, gOff, activePlateDim]);
 
   const viability = (raw) => {
     const net = raw - bgOD;
     const ctrl = cOD - bgOD;
-
     return Math.abs(ctrl) < 1e-6 ? 0 : (net / ctrl) * 100;
   };
 
   const wellColor = (r, c) => {
     const role = getRole(r, c);
-
     if (!role) return { bg: '#ffffff', dark: true };
 
     const rl = String(role).toLowerCase();
-
     if (rl === 'medium') return { bg: '#ff4d6d', dark: false };
     if (rl === 'pbs') return { bg: '#e5e7eb', dark: true };
     if (rl === 'cells') return { bg: '#fef08a', dark: true };
 
     const idx = allCmpds.indexOf(role);
     const base = cmpColor(role, idx !== -1 ? idx : 0);
-
     const conc = concOf(r, c, role);
-
     if (conc <= 0) return { bg: base, dark: needsDarkText(base) };
 
     const st = cmpStats[role];
-
     if (!st || st.min === st.max) return { bg: base, dark: needsDarkText(base) };
 
     const lc = Math.log10(conc);
     const lx = Math.log10(st.max);
     const ln = Math.log10(st.min);
-
     const frac = lx > ln ? (lc - ln) / (lx - ln) : 0;
-
     const bg =
       frac > 0.5 ? darken(base, (frac - 0.5) * 1.0) : lighten(base, (0.5 - frac) * 0.9);
-
     return { bg, dark: needsDarkText(bg) };
   };
 
   const heatColor = (r, c) => {
     const cfg = cellConfig[r]?.[c];
     if (!cfg || cfg.excluded) return 'transparent';
-
     const v = rawOD(r, c);
     if (isNaN(v)) return 'transparent';
-
     const role = getRole(r, c);
     if (!role) return 'transparent';
-
     const rl = String(role).toLowerCase();
-
     if (rl === 'medium') return '#ffe4e6';
     if (rl === 'pbs') return '#f3f4f6';
     if (rl === 'cells') return '#fef9c3';
-
     const idx = allCmpds.indexOf(role);
     const base = cmpColor(role, idx !== -1 ? idx : 0);
-
     const vb = Math.max(0, Math.min(100, viability(v)));
-
     return lighten(base, 0.25 + (vb / 100) * 0.55);
   };
 
   const displayVal = (r, c) => {
     const n = rawOD(r, c);
-
     if (isNaN(n)) return grid?.[r]?.[c] === '' ? '' : grid?.[r]?.[c];
-
     return showViab ? viability(n).toFixed(1) + '%' : n.toFixed(3);
   };
 
   const getManual = (name, realX) =>
     manualErrors[name] ? manualErrors[name][concKey(realX)] : undefined;
-
   const hasManual = (name, realX) => typeof getManual(name, realX) === 'number';
-
   const effectiveSD = (name, realX, computedSD) => {
     const m = getManual(name, realX);
     return typeof m === 'number' ? m : computedSD;
@@ -1032,99 +926,78 @@ export const All = ({ ctx }) => {
   const storeManual = (name, realX, val) => {
     const inner = { ...(manualErrors[name] || {}) };
     inner[concKey(realX)] = val;
-
     updatePlate({ manualErrors: { ...manualErrors, [name]: inner } });
   };
 
   const clearManual = (name, realX) => {
     const inner = { ...(manualErrors[name] || {}) };
     delete inner[concKey(realX)];
-
     const next = { ...manualErrors };
-
     if (Object.keys(inner).length === 0) delete next[name];
     else next[name] = inner;
-
     updatePlate({ manualErrors: next });
   };
 
   const clearAllManual = (name) => {
     const next = { ...manualErrors };
     delete next[name];
-
     updatePlate({ manualErrors: next });
   };
 
   const autoCalcControl = () => {
     let sumOD = 0;
     let count = 0;
-
     allCmpds.forEach((cmp) => {
       if (['cells', 'medium', 'pbs'].includes(String(cmp).toLowerCase())) return;
-
       const pts = [];
-
       (grid || []).forEach((row, r) =>
         (row || []).forEach((_, c) => {
           if (getRole(r, c) === cmp && !cellConfig[r]?.[c]?.excluded) {
             const conc = concOf(r, c, cmp);
             const n = rawOD(r, c);
-
             if (!isNaN(n) && conc > 0) pts.push({ conc, od: n });
           }
         })
       );
-
       if (pts.length > 0) {
         const minConc = Math.min(...pts.map((p) => p.conc));
         const lowPts = pts.filter((p) => p.conc === minConc);
-
         lowPts.forEach((p) => {
           sumOD += p.od;
           count++;
         });
       }
     });
-
     if (count > 0) updatePlate({ ctrlType: 'none', ctrlODStr: (sumOD / count).toFixed(4) });
   };
 
   const processedByRegion = useMemo(() => {
     const byReg = {};
-
     if (plateType === '9x9box') return {};
 
     (grid || []).forEach((row, r) =>
       (row || []).forEach((_, c) => {
         if (r >= activePlateDim.rows || c >= activePlateDim.cols) return;
-
         const reg = cellConfig[r]?.[c]?.region || 'Primary';
         if (!byReg[reg]) byReg[reg] = [];
       })
     );
 
     const result = {};
-
     Object.keys(byReg).forEach((reg) => {
       const comps = plotCmps
         .map((name) => {
           const pts = [];
-
           (grid || []).forEach((row, r) =>
             (row || []).forEach((_, c) => {
               if (r >= activePlateDim.rows || c >= activePlateDim.cols) return;
-
               const cfg = cellConfig[r]?.[c];
               if (!cfg) return;
-
               if ((cfg.region || 'Primary') !== reg || getRole(r, c) !== name) return;
-
               const n = rawOD(r, c);
               if (isNaN(n)) return;
-
               const xc = concOf(r, c, name);
               if (!(xc > 0)) return;
-
               pts.push({
                 realX: xc,
                 logX: Math.log10(xc),
@@ -1137,32 +1010,24 @@ export const All = ({ ctx }) => {
           );
 
           const byX = {};
-
           pts.forEach((p) => {
             const k = concKey(p.realX);
-
             if (!byX[k]) byX[k] = { inc: [], excl: [] };
-
             (p.excl ? byX[k].excl : byX[k].inc).push(p);
           });
 
           const vPts = [];
           const ePts = [];
-
           Object.keys(byX).forEach((ks) => {
             const g = byX[ks];
-
             if (g.inc.length === 0 && g.excl.length === 0) return;
-
             const rep = g.inc[0] || g.excl[0];
             const xr = rep.realX;
             const xl = rep.logX;
 
             if (g.inc.length > 0) {
               const mean = g.inc.reduce((s, p) => s + p.val, 0) / g.inc.length;
-
               let sd = 0;
-
               if (useFixedSD) sd = fSD;
               else if (g.inc.length > 1) {
                 sd = Math.sqrt(
@@ -1170,7 +1035,6 @@ export const All = ({ ctx }) => {
                     (g.inc.length - 1)
                 );
               }
-
               vPts.push({
                 x: xl,
                 realX: xr,
@@ -1197,16 +1061,12 @@ export const All = ({ ctx }) => {
           if (vPts.length === 0 && ePts.length === 0) return null;
 
           const color = cmpColor(name, allCmpds.indexOf(name));
-
           let fit = null;
-
           if (fitIC50 && vPts.length >= 3) {
             let sumW = 0;
-
             const fitData = vPts.map((p) => {
               const w = p.sd > 0 ? 1 / (p.sd * p.sd) : 1;
               sumW += w;
-
               return {
                 x: p.realX,
                 y: p.y,
@@ -1214,9 +1074,7 @@ export const All = ({ ctx }) => {
                 sd: p.sd
               };
             });
-
             if (sumW > 0) fitData.forEach((p) => (p.w = (p.w / sumW) * fitData.length));
-
             fit = fit4PL(fitData);
           }
 
@@ -1266,49 +1124,36 @@ export const All = ({ ctx }) => {
 
   const autoTouchSD = (region, name) => {
     const compData = (processedByRegion[region] || []).find((c) => c.name === name);
-
     if (!compData || !compData.fit) return;
 
     let maxRes = 0;
-
     compData.vPts.forEach((pt) => {
       const yFit = 100 / (1 + Math.pow(pt.realX / compData.fit.ic50, compData.fit.hill));
       const res = Math.abs(pt.y - yFit);
-
       if (res > maxRes) maxRes = res;
     });
-
     const newSD = Math.ceil((maxRes * 1.02 + 0.01) * 100) / 100;
 
     const inner = { ...(manualErrors[name] || {}) };
-
     compData.vPts.forEach((pt) => {
       inner[concKey(pt.realX)] = newSD;
     });
-
     updatePlate({ manualErrors: { ...manualErrors, [name]: inner } });
   };
 
   const autoTouchAll = () => {
     let updates = {};
-
     Object.entries(processedByRegion).forEach(([reg, comps]) => {
       comps.forEach((c) => {
         if (!c.fit) return;
-
         let maxRes = 0;
-
         c.vPts.forEach((pt) => {
           const yFit = 100 / (1 + Math.pow(pt.realX / c.fit.ic50, c.fit.hill));
           const res = Math.abs(pt.y - yFit);
-
           if (res > maxRes) maxRes = res;
         });
-
         const newSD = Math.ceil((maxRes * 1.02 + 0.01) * 100) / 100;
-
         if (!updates[c.name]) updates[c.name] = {};
-
         c.vPts.forEach((pt) => {
           updates[c.name][concKey(pt.realX)] = newSD;
         });
@@ -1316,11 +1161,9 @@ export const All = ({ ctx }) => {
     });
 
     const next = { ...manualErrors };
-
     Object.keys(updates).forEach((cmp) => {
       next[cmp] = { ...(next[cmp] || {}), ...updates[cmp] };
     });
-
     updatePlate({ manualErrors: next, useFixedSD: true });
   };
 
@@ -1329,104 +1172,12 @@ export const All = ({ ctx }) => {
   const updateCell = (r, c, v) => {
     const ng = grid.map((row) => [...row]);
     ng[r][c] = v;
-
     updatePlate({ grid: ng });
-  };
-
-  const updateCmp = (c, v) => {
-    const role = v;
-
-    const nc = cellConfig.map((row) => row.map((cell) => ({ ...cell })));
-    const oldRole = compounds[c];
-
-    const isCtrl = role && ['cells', 'medium', 'pbs'].includes(role.toLowerCase());
-
-    if (!role) {
-      for (let r = 0; r < activePlateDim.rows; r++) {
-        if (nc[r][c].role === oldRole) {
-          nc[r][c].role = null;
-          nc[r][c].conc = null;
-        }
-      }
-    } else {
-      let step = 0;
-
-      for (let r = 0; r < activePlateDim.rows; r++) {
-        if (!nc[r][c].role || nc[r][c].role === oldRole) {
-          nc[r][c].role = role;
-
-          if (isCtrl) nc[r][c].conc = 0;
-          else {
-            const s = customConc[role] || { top: tConc, dil: dFact };
-            nc[r][c].conc = s.top / Math.pow(s.dil, step);
-          }
-
-          step++;
-        }
-      }
-    }
-
-    const ncc = [...compounds];
-    ncc[c] = role;
-
-    updatePlate({ cellConfig: nc, compounds: ncc });
-
-    const t = v.trim();
-
-    if (t && !allCmpds.includes(t) && setCustomCmpds) {
-      setCustomCmpds((p) => [...(Array.isArray(p) ? p : []), t]);
-    }
-  };
-
-  const updateRowCmp = (r, v) => {
-    const role = v;
-
-    const nc = cellConfig.map((row) => row.map((cell) => ({ ...cell })));
-    const oldRole = rowCompounds[r];
-
-    const isCtrl = role && ['cells', 'medium', 'pbs'].includes(role.toLowerCase());
-
-    if (!role) {
-      for (let c = 0; c < activePlateDim.cols; c++) {
-        if (nc[r][c].role === oldRole) {
-          nc[r][c].role = null;
-          nc[r][c].conc = null;
-        }
-      }
-    } else {
-      let step = 0;
-
-      for (let c = 0; c < activePlateDim.cols; c++) {
-        if (!nc[r][c].role || nc[r][c].role === oldRole) {
-          nc[r][c].role = role;
-
-          if (isCtrl) nc[r][c].conc = 0;
-          else {
-            const s = customConc[role] || { top: tConc, dil: dFact };
-            nc[r][c].conc = s.top / Math.pow(s.dil, step);
-          }
-
-          step++;
-        }
-      }
-    }
-
-    const nrc = [...rowCompounds];
-    nrc[r] = role;
-
-    updatePlate({ cellConfig: nc, rowCompounds: nrc });
-
-    const t = v.trim();
-
-    if (t && !allCmpds.includes(t) && setCustomCmpds) {
-      setCustomCmpds((p) => [...(Array.isArray(p) ? p : []), t]);
-    }
   };
 
   const updateCellCfg = (r, c, upd) => {
     const nc = cellConfig.map((row) => row.map((cell) => ({ ...cell })));
     nc[r][c] = { ...nc[r][c], ...upd };
-
     updatePlate({ cellConfig: nc });
   };
 
@@ -1438,14 +1189,11 @@ export const All = ({ ctx }) => {
       for (let it = 0; it < 20; it++) {
         const pts = [];
         const byC = {};
-
         (grid || []).forEach((_, r) =>
           (grid[r] || []).forEach((_, c) => {
             if (r >= activePlateDim.rows || c >= activePlateDim.cols) return;
-
             const cfg = nc[r][c];
             const role = getRole(r, c);
-
             if (
               (cfg.region || 'Primary') === reg &&
               role === cmp.name &&
@@ -1454,13 +1202,10 @@ export const All = ({ ctx }) => {
             ) {
               const n = rawOD(r, c);
               const xc = concOf(r, c, role);
-
               if (!isNaN(n) && xc > 0) {
                 const val = viability(n);
                 const k = concKey(xc);
-
                 if (!byC[k]) byC[k] = [];
-
                 byC[k].push({
                   r,
                   c,
@@ -1476,14 +1221,11 @@ export const All = ({ ctx }) => {
 
         Object.values(byC).forEach((cps) => {
           const mean = cps.reduce((s, p) => s + p.y, 0) / cps.length;
-
           let sd = 0;
-
           if (useFixedSD) sd = fSD;
           else if (cps.length > 1) {
             sd = Math.sqrt(cps.reduce((s, p) => s + Math.pow(p.y - mean, 2), 0) / (cps.length - 1));
           }
-
           cps.forEach((p) => {
             p.computedSD = sd;
             p.effectiveSD = effectiveSD(cmp.name, p.realX, sd);
@@ -1492,20 +1234,16 @@ export const All = ({ ctx }) => {
         });
 
         if (pts.length < 4) break;
-
         const ft = fit4PL(pts);
         if (!ft) break;
 
         let worst = null;
         let maxRatio = 0;
-
         pts.forEach((p) => {
           const pred = 100 / (1 + Math.pow(p.realX / ft.ic50, ft.hill));
           const residual = Math.abs(p.y - pred);
-
           const err = p.effectiveSD > 0 ? p.effectiveSD : fSD > 0 ? fSD : 1;
           const ratio = residual / err;
-
           if (ratio > outlierThresh) {
             if (ratio > maxRatio) {
               maxRatio = ratio;
@@ -1542,7 +1280,6 @@ export const All = ({ ctx }) => {
         manualOverride: false
       }))
     );
-
     updatePlate({ cellConfig: nc });
   };
 
@@ -1551,7 +1288,6 @@ export const All = ({ ctx }) => {
       const wb = XLSX.utils.book_new();
 
       const rawAoa = [['', ...COLS]];
-
       ROWS.forEach((rl, r) => {
         rawAoa.push([
           rl,
@@ -1561,11 +1297,9 @@ export const All = ({ ctx }) => {
           })
         ]);
       });
-
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rawAoa), 'Raw OD');
 
       const viabAoa = [['', ...COLS]];
-
       ROWS.forEach((rl, r) => {
         viabAoa.push([
           rl,
@@ -1576,24 +1310,20 @@ export const All = ({ ctx }) => {
           })
         ]);
       });
-
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(viabAoa), 'Viability %');
 
       const mapAoa = [['', ...COLS]];
-
       ROWS.forEach((rl, r) => {
         mapAoa.push([
           rl,
           ...COLS.map((_, c) => {
             const role = getRole(r, c);
             if (!role) return '';
-
             const conc = concOf(r, c, role);
             return conc > 0 ? `${role} @ ${formatConc(conc)} ${unit}` : role;
           })
         ]);
       });
-
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(mapAoa), 'Well Map');
 
       const drAoa = [
@@ -1607,7 +1337,6 @@ export const All = ({ ctx }) => {
           'N'
         ]
       ];
-
       Object.entries(processedByRegion).forEach(([reg, comps]) => {
         comps.forEach((cd) => {
           cd.vPts.forEach((pt) => {
@@ -1623,11 +1352,9 @@ export const All = ({ ctx }) => {
           });
         });
       });
-
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(drAoa), 'Dose-Response Data');
 
       const summaryAoa = [['Region', 'Compound', `IC50 (${unit})`, 'Hill Slope', `SE (${unit})`]];
-
       Object.entries(processedByRegion).forEach(([reg, comps]) => {
         comps.forEach((cd) => {
           if (cd.fit) {
@@ -1641,7 +1368,6 @@ export const All = ({ ctx }) => {
           }
         });
       });
-
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summaryAoa), 'IC50 Summary');
 
       const fname = `${(activeTest.name || 'test').replace(/[^a-z0-9]+/gi, '_')}.xlsx`;
@@ -1662,13 +1388,11 @@ export const All = ({ ctx }) => {
 
     const loader = document.getElementById('loader');
     const loaderText = document.getElementById('loader-text');
-
     if (loader) loader.style.display = 'flex';
     if (loaderText) loaderText.innerText = 'Generating PDF...';
 
     const fixedEls = document.querySelectorAll('.fixed, [style*="position: fixed"]');
     fixedEls.forEach((x) => (x.style.display = 'none'));
-
     const noPrintEls = el.querySelectorAll('.no-print');
     noPrintEls.forEach((e) => (e.style.display = 'none'));
 
@@ -1679,7 +1403,6 @@ export const All = ({ ctx }) => {
 
     el.classList.add('pdf-mode');
     window.scrollTo(0, 0);
-
     await new Promise((r) => setTimeout(r, 800));
 
     try {
@@ -1697,19 +1420,15 @@ export const All = ({ ctx }) => {
 
       const imgData = canvas.toDataURL('image/jpeg', 0.92);
       const pdf = new jsPDF('p', 'pt', 'a4');
-
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
-
       const imgWidth = pageWidth;
       const imgHeight = (canvas.height * imgWidth) / canvas.width;
-
       let heightLeft = imgHeight;
       let position = 0;
 
       pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
       heightLeft -= pageHeight;
-
       while (heightLeft > 0) {
         position = heightLeft - imgHeight;
         pdf.addPage();
@@ -1725,12 +1444,10 @@ export const All = ({ ctx }) => {
       el.classList.remove('pdf-mode');
       fixedEls.forEach((x) => (x.style.display = ''));
       noPrintEls.forEach((e) => (e.style.display = ''));
-
       if (scrollParent) {
         scrollParent.style.overflow = originalOverflow;
         scrollParent.style.height = originalHeight;
       }
-
       if (loader) loader.style.display = 'none';
     }
   };
@@ -1741,11 +1458,76 @@ export const All = ({ ctx }) => {
     return () => document.removeEventListener('click', h);
   }, []);
 
+  /* ===== NEW: plate-map compound assignment helpers ===== */
+  const assignCompoundToCell = (r, c, name) => {
+    const nc = cellConfig.map((row) => row.map((cell) => ({ ...cell })));
+    if (!name) {
+      nc[r][c].role = null;
+      nc[r][c].conc = null;
+      nc[r][c].manualOverride = false;
+    } else {
+      nc[r][c].role = name;
+      nc[r][c].manualOverride = true;
+      if (['cells', 'medium', 'pbs'].includes(String(name).toLowerCase())) {
+        nc[r][c].conc = 0;
+      } else {
+        let step = 0;
+        for (let i = 0; i < c; i++) {
+          if (nc[r][i].role === name) step++;
+        }
+        const s = customConc[name] || { top: tConc, dil: dFact };
+        nc[r][c].conc = s.top / Math.pow(s.dil, step);
+      }
+    }
+    updatePlate({ cellConfig: nc });
+
+    const t = (name || '').trim();
+    if (t && !allCmpds.includes(t) && setCustomCmpds) {
+      setCustomCmpds((p) => [...(Array.isArray(p) ? p : []), t]);
+    }
+  };
+
+  const handleMapMouseDown = (e, r, c) => {
+    if (e.button !== 0) return;
+    if (mapMode === 'paint' && paintCompound) {
+      assignCompoundToCell(r, c, paintCompound);
+      setMapPainting(true);
+    } else if (mapMode === 'region') {
+      e.preventDefault();
+      setDragState({
+        active: true,
+        startR: r,
+        startC: c,
+        currentR: r,
+        currentC: c
+      });
+    } else {
+      setSelStart({ r, c });
+      setSelEnd({ r, c });
+      setDragMode('selecting');
+    }
+  };
+
+  const handleMapMouseEnter = (r, c) => {
+    if (mapMode === 'paint' && paintCompound && mapPainting) {
+      assignCompoundToCell(r, c, paintCompound);
+    } else if (mapMode === 'region' && dragState.active) {
+      setDragState((prev) => ({ ...prev, currentR: r, currentC: c }));
+    } else if (mapMode === 'view' && dragMode === 'selecting') {
+      setSelEnd({ r, c });
+    }
+  };
+
   useEffect(() => {
     const handleMouseUpGlobal = () => {
+      /* NEW: stop plate-map painting */
+      if (mapPainting) {
+        setMapPainting(false);
+        return;
+      }
+
       if (dragState.active) {
         const { startR, startC, currentR, currentC } = dragState;
-
         setDragState({
           active: false,
           startR: -1,
@@ -1786,13 +1568,11 @@ export const All = ({ ctx }) => {
           maxR: Math.max(activeSel.minR, fillEnd.r),
           maxC: Math.max(activeSel.minC, fillEnd.c)
         };
-
         const nc = cellConfig.map((row) =>
           row.map((cell) =>
             cell.region === selectedRegionName ? { ...cell, region: 'Primary' } : cell
           )
         );
-
         for (let r = rect.minR; r <= rect.maxR; r++) {
           for (let c = rect.minC; c <= rect.maxC; c++) {
             if (
@@ -1808,44 +1588,28 @@ export const All = ({ ctx }) => {
             }
           }
         }
-
         updatePlate({ cellConfig: nc });
-
         setSelStart({ r: rect.minR, c: rect.minC });
         setSelEnd({ r: rect.maxR, c: rect.maxC });
         setDragMode('none');
         setFillEnd(null);
-
         return;
       }
 
-      if (dragMode === 'selecting' && tableView === 'region' && activeSel) {
-        setRegionModal({
-          minR: activeSel.minR,
-          maxR: activeSel.maxR,
-          minC: activeSel.minC,
-          maxC: activeSel.maxC,
-          defaultName: 'Region ' + (Object.keys(processedByRegion).length + 1)
-        });
-      } else if (dragMode === 'filling' && activeFill && activeSel) {
+      if (dragMode === 'filling' && activeFill && activeSel) {
         const nGrid = grid.map((row) => [...row]);
         const nCell = cellConfig.map((row) => row.map((cell) => ({ ...cell })));
-
         for (let r = activeFill.minR; r <= activeFill.maxR; r++) {
           for (let c = activeFill.minC; c <= activeFill.maxC; c++) {
             const srcR =
               activeSel.minR + ((r - activeSel.minR) % (activeSel.maxR - activeSel.minR + 1));
-
             const srcC =
               activeSel.minC + ((c - activeSel.minC) % (activeSel.maxC - activeSel.minC + 1));
-
             nGrid[r][c] = grid[srcR][srcC];
             nCell[r][c] = { ...cellConfig[srcR][srcC] };
           }
         }
-
         updatePlate({ grid: nGrid, cellConfig: nCell });
-
         setSelStart({ r: activeFill.minR, c: activeFill.minC });
         setSelEnd({ r: activeFill.maxR, c: activeFill.maxC });
       }
@@ -1864,11 +1628,11 @@ export const All = ({ ctx }) => {
     fillEnd,
     grid,
     cellConfig,
-    tableView,
     selectedRegionComplete,
     selectedRegionName,
     activePlateDim,
-    processedByRegion
+    processedByRegion,
+    mapPainting
   ]);
 
   useEffect(() => {
@@ -1883,20 +1647,14 @@ export const All = ({ ctx }) => {
 
         const nGrid = grid.map((row) => [...row]);
         const nCell = cellConfig.map((row) => row.map((cell) => ({ ...cell })));
-
         let changed = false;
 
         for (let r = activeSel.minR; r <= activeSel.maxR; r++) {
           for (let c = activeSel.minC; c <= activeSel.maxC; c++) {
-            if (tableView === 'region') {
-              nCell[r][c].region = 'Primary';
-            } else {
-              nGrid[r][c] = '';
-              nCell[r][c].role = null;
-              nCell[r][c].conc = null;
-              nCell[r][c].manualOverride = false;
-            }
-
+            nGrid[r][c] = '';
+            nCell[r][c].role = null;
+            nCell[r][c].conc = null;
+            nCell[r][c].manualOverride = false;
             changed = true;
           }
         }
@@ -1907,89 +1665,37 @@ export const All = ({ ctx }) => {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeSel, grid, cellConfig, tableView]);
+  }, [activeSel, grid, cellConfig]);
 
   const onMouseDownCell = (e, r, c) => {
     if (e.button !== 0) return;
-
     if (
       e.target.classList.contains('fill-handle') ||
       e.target.classList.contains('drag-handle')
     ) {
       return;
     }
-
-    if (tableView === 'region') {
-      e.preventDefault();
-
-      setDragState({
-        active: true,
-        startR: r,
-        startC: c,
-        currentR: r,
-        currentC: c
-      });
-    } else {
-      setSelStart({ r, c });
-      setSelEnd({ r, c });
-      setDragMode('selecting');
-    }
+    setSelStart({ r, c });
+    setSelEnd({ r, c });
+    setDragMode('selecting');
   };
 
   const onMouseEnterCell = (r, c) => {
-    if (dragState.active && tableView === 'region') {
-      setDragState((prev) => ({ ...prev, currentR: r, currentC: c }));
-    } else if (dragMode === 'selecting') {
+    if (dragMode === 'selecting') {
       setSelEnd({ r, c });
     } else if (dragMode === 'filling') {
       setFillEnd({ r, c });
-    } else if (dragMode === 'resizingRegion') {
-      setFillEnd({ r, c });
     }
-  };
-
-  const onDoubleClickCell = (r, c) => {
-    if (tableView !== 'region') return;
-
-    const reg = cellConfig[r]?.[c]?.region;
-    if (!reg || reg === 'Primary') return;
-
-    let minR = r;
-    let maxR = r;
-    let minC = c;
-    let maxC = c;
-
-    grid.forEach((row, ir) =>
-      row.forEach((_, ic) => {
-        if (cellConfig[ir]?.[ic]?.region === reg) {
-          if (ir < minR) minR = ir;
-          if (ir > maxR) maxR = ir;
-          if (ic < minC) minC = ic;
-          if (ic > maxC) maxC = ic;
-        }
-      })
-    );
-
-    setSelStart({ r: minR, c: minC });
-    setSelEnd({ r: maxR, c: maxC });
-    setDragMode('none');
   };
 
   const onMouseDownFillHandle = (e) => {
     e.stopPropagation();
-
-    if (tableView === 'region') {
-      setDragMode('resizingRegion');
-    } else {
-      setDragMode('filling');
-    }
-
+    setDragMode('filling');
     setFillEnd(selEnd);
   };
 
   const handleDrop = (e, r, c) => {
     e.preventDefault();
-
     try {
       const data = JSON.parse(e.dataTransfer.getData('text/plain'));
       if (data.action !== 'copy' || !data.sel) return;
@@ -1997,21 +1703,18 @@ export const All = ({ ctx }) => {
       const src = data.sel;
       const rOffset = r - src.minR;
       const cOffset = c - src.minC;
-
       const isMove =
         !e.ctrlKey && !e.metaKey && !e.shiftKey && data.sourcePlate === activeTest.id;
 
       if (data.regionMode && Array.isArray(data.regions)) {
         const nc = cellConfig.map((row) => row.map((cell) => ({ ...cell })));
         const mappings = [];
-
         data.regions.forEach((rowArr, i) => {
           rowArr.forEach((reg, j) => {
             const sr = src.minR + i;
             const sc = src.minC + j;
             const dr = sr + rOffset;
             const dc = sc + cOffset;
-
             if (
               reg &&
               reg !== 'Primary' &&
@@ -2043,17 +1746,14 @@ export const All = ({ ctx }) => {
         });
 
         updatePlate({ cellConfig: nc });
-
         setSelStart({
           r: Math.max(0, src.minR + rOffset),
           c: Math.max(0, src.minC + cOffset)
         });
-
         setSelEnd({
           r: Math.min(activePlateDim.rows - 1, src.maxR + rOffset),
           c: Math.min(activePlateDim.cols - 1, src.maxC + cOffset)
         });
-
         return;
       }
 
@@ -2088,7 +1788,6 @@ export const All = ({ ctx }) => {
         for (let sc = src.minC; sc <= src.maxC; sc++) {
           const dr = sr + rOffset;
           const dc = sc + cOffset;
-
           if (
             dr >= 0 &&
             dr < activePlateDim.rows &&
@@ -2102,12 +1801,10 @@ export const All = ({ ctx }) => {
       }
 
       updatePlate({ grid: nGrid, cellConfig: nCell });
-
       setSelStart({
         r: Math.max(0, src.minR + rOffset),
         c: Math.max(0, src.minC + cOffset)
       });
-
       setSelEnd({
         r: Math.min(activePlateDim.rows - 1, src.maxR + rOffset),
         c: Math.min(activePlateDim.cols - 1, src.maxC + cOffset)
@@ -2119,7 +1816,6 @@ export const All = ({ ctx }) => {
 
   const handlePasteSpecial = (mode) => {
     if (!appClipboard) return;
-
     const src = appClipboard.sel;
     const srcGrid = appClipboard.grid;
     const srcCell = appClipboard.cellConfig;
@@ -2129,14 +1825,12 @@ export const All = ({ ctx }) => {
 
     const startR = activeSel ? activeSel.minR : ctxMenu.r;
     const startC = activeSel ? activeSel.minC : ctxMenu.c;
-
     let changed = false;
 
     for (let r = src.minR; r <= src.maxR; r++) {
       for (let c = src.minC; c <= src.maxC; c++) {
         const dr = startR + (r - src.minR);
         const dc = startC + (c - src.minC);
-
         if (
           dr >= 0 &&
           dr < activePlateDim.rows &&
@@ -2147,18 +1841,14 @@ export const All = ({ ctx }) => {
           if (mode === 'all' || mode === 'compound') nCell[dr][dc].role = srcCell[r][c].role;
           if (mode === 'all' || mode === 'conc') nCell[dr][dc].conc = srcCell[r][c].conc;
           if (mode === 'all' || mode === 'region') nCell[dr][dc].region = srcCell[r][c].region;
-
           changed = true;
         }
       }
     }
 
     if (changed) updatePlate({ grid: nGrid, cellConfig: nCell });
-
     setCtxMenu(null);
-
     setSelStart({ r: startR, c: startC });
-
     setSelEnd({
       r: Math.min(activePlateDim.rows - 1, startR + (src.maxR - src.minR)),
       c: Math.min(activePlateDim.cols - 1, startC + (src.maxC - src.minC))
@@ -2172,7 +1862,6 @@ export const All = ({ ctx }) => {
 
   const handlePaste = (ev, r, c) => {
     ev.preventDefault();
-
     const text = (ev.clipboardData || window.clipboardData).getData('text');
     if (!text) return;
 
@@ -2180,16 +1869,13 @@ export const All = ({ ctx }) => {
     while (lines.length && lines[lines.length - 1] === '') lines.pop();
 
     const ng = grid.map((row) => [...row]);
-
     let changed = false;
 
     lines.forEach((line, i) => {
       const cells = line.split('\t');
-
       cells.forEach((val, j) => {
         const tr = r + i;
         const tc = c + j;
-
         if (
           tr >= 0 &&
           tr < activePlateDim.rows &&
@@ -2233,18 +1919,14 @@ export const All = ({ ctx }) => {
 
   const confirmRegion = (name) => {
     const finalName = name.trim() || 'Primary';
-
     if (regionModal) {
       const { minR, maxR, minC, maxC } = regionModal;
-
       const nc = cellConfig.map((row) => row.map((c) => ({ ...c })));
-
       for (let r = minR; r <= maxR; r++) {
         for (let c = minC; c <= maxC; c++) {
           nc[r][c].region = finalName;
         }
       }
-
       updatePlate({ cellConfig: nc });
       setRegionModal(null);
     } else {
@@ -2261,24 +1943,20 @@ export const All = ({ ctx }) => {
 
   const confirmRenameRegion = (rawName) => {
     if (!renameRegionModal) return;
-
     const newName = (rawName || '').trim();
     const oldName = renameRegionModal.oldName;
 
     if (!newName) return;
-
     if (newName.toLowerCase() === 'primary') {
       alert('"Primary" is reserved and cannot be used as a custom region name.');
       return;
     }
-
     if (newName === oldName) {
       setRenameRegionModal(null);
       return;
     }
 
     const alreadyExists = cellConfig.some((row) => row.some((cell) => cell.region === newName));
-
     if (alreadyExists) {
       alert(`Region "${newName}" already exists. Please choose a unique name.`);
       return;
@@ -2287,14 +1965,12 @@ export const All = ({ ctx }) => {
     const nc = cellConfig.map((row) =>
       row.map((cell) => (cell.region === oldName ? { ...cell, region: newName } : cell))
     );
-
     updatePlate({ cellConfig: nc });
     setRenameRegionModal(null);
   };
 
   const selectRegionByName = (name) => {
     if (!name || name === 'Primary') return;
-
     let minR = activePlateDim.rows;
     let maxR = -1;
     let minC = activePlateDim.cols;
@@ -2303,7 +1979,6 @@ export const All = ({ ctx }) => {
     for (let r = 0; r < activePlateDim.rows; r++) {
       for (let c = 0; c < activePlateDim.cols; c++) {
         const reg = cellConfig[r]?.[c]?.region;
-
         if (reg === name) {
           minR = Math.min(minR, r);
           maxR = Math.max(maxR, r);
@@ -2330,7 +2005,6 @@ export const All = ({ ctx }) => {
         >
           📊 Export XLS
         </button>
-
         <button
           onClick={exportPDF}
           className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold py-1.5 px-3 rounded text-xs flex items-center gap-1 shadow-sm transition-colors"
@@ -2348,18 +2022,15 @@ export const All = ({ ctx }) => {
               <div className="text-[10px] uppercase font-bold text-slate-500 mb-1">
                 Format, Dose & Units
               </div>
-
               <div className="flex flex-wrap gap-3 items-end">
                 <div>
                   <label className="block text-[10px] font-medium text-slate-600 mb-0.5">
                     Plate Format
                   </label>
-
                   <select
                     value={plateType}
                     onChange={(e) => {
                       const dim = PLATES_DEF[e.target.value] || PLATES_DEF['96'];
-
                       const nGrid = Array(dim.rows)
                         .fill(null)
                         .map((_, r) =>
@@ -2367,7 +2038,6 @@ export const All = ({ ctx }) => {
                             .fill(null)
                             .map((_, c) => grid?.[r]?.[c] || '')
                         );
-
                       const nCell = Array(dim.rows)
                         .fill(null)
                         .map((_, r) =>
@@ -2384,7 +2054,6 @@ export const All = ({ ctx }) => {
                                 }
                             )
                         );
-
                       updatePlate({
                         plateType: e.target.value,
                         grid: nGrid,
@@ -2401,10 +2070,8 @@ export const All = ({ ctx }) => {
                     <option value="1">1 Petri Dish</option>
                   </select>
                 </div>
-
                 <div>
                   <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Unit</label>
-
                   <select
                     value={unit || 'µM'}
                     onChange={(e) => updatePlate({ unit: e.target.value })}
@@ -2415,10 +2082,8 @@ export const All = ({ ctx }) => {
                     <option value="nM">nM</option>
                   </select>
                 </div>
-
                 <div>
                   <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Max Conc</label>
-
                   <input
                     type="number"
                     step="0.1"
@@ -2427,10 +2092,8 @@ export const All = ({ ctx }) => {
                     className="border border-slate-300 rounded-lg p-1.5 w-20 text-xs outline-none focus:border-blue-500"
                   />
                 </div>
-
                 <div>
                   <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Dil. Factor</label>
-
                   <input
                     type="number"
                     step="0.1"
@@ -2446,7 +2109,6 @@ export const All = ({ ctx }) => {
               <div className="text-[10px] uppercase font-bold text-slate-500 mb-1">
                 Custom Concentrations
               </div>
-
               <div className="flex flex-wrap gap-2 items-center">
                 <select
                   id={`cc-sel-${activeTest.id}`}
@@ -2459,14 +2121,12 @@ export const All = ({ ctx }) => {
                     </option>
                   ))}
                 </select>
-
                 <input
                   type="number"
                   id={`cc-top-${activeTest.id}`}
                   className="border border-slate-300 rounded-lg p-1.5 w-20 text-xs outline-none"
                   placeholder="Top µM"
                 />
-
                 <input
                   type="number"
                   id={`cc-dil-${activeTest.id}`}
@@ -2474,20 +2134,17 @@ export const All = ({ ctx }) => {
                   placeholder="Dil"
                   defaultValue={dFact}
                 />
-
                 <button
                   onClick={() => {
                     const c = document.getElementById(`cc-sel-${activeTest.id}`).value;
                     const t = parseFloat(document.getElementById(`cc-top-${activeTest.id}`).value);
                     const d =
                       parseFloat(document.getElementById(`cc-dil-${activeTest.id}`).value) || dFact;
-
                     if (c && !isNaN(t) && t > 0 && d > 0) {
                       setCustomConc({
                         ...customConc,
                         [c]: { top: t, dil: d }
                       });
-
                       document.getElementById(`cc-top-${activeTest.id}`).value = '';
                     }
                   }}
@@ -2496,7 +2153,6 @@ export const All = ({ ctx }) => {
                   Set
                 </button>
               </div>
-
               {Object.keys(customConc).length > 0 && (
                 <div className="flex flex-wrap gap-1 mt-1">
                   {Object.entries(customConc).map(([c, s]) => (
@@ -2505,7 +2161,6 @@ export const All = ({ ctx }) => {
                       className="bg-indigo-50 border border-indigo-200 text-indigo-800 text-[10px] px-2 py-0.5 rounded-md flex items-center gap-1 font-bold shadow-sm"
                     >
                       {c}: {s.top}µM ÷ {s.dil}
-
                       <button
                         onClick={() => {
                           const n = { ...customConc };
@@ -2523,12 +2178,11 @@ export const All = ({ ctx }) => {
             </div>
           </div>
 
-          {/* ================= VISUAL PLATE MAP MOVED HERE ================= */}
+          {/* ================= INTERACTIVE VISUAL PLATE MAP ================= */}
           <div className="relative">
             {fsPanel === 'map' && (
               <div className={OVERLAY_CLASSES} onClick={() => toggleFs('map')}></div>
             )}
-
             <div
               className={`bg-slate-50 border border-slate-200 p-4 min-w-0 flex flex-col ${
                 fsPanel === 'map' ? FS_CLASSES : 'rounded-xl w-full'
@@ -2539,16 +2193,13 @@ export const All = ({ ctx }) => {
                   <h2 className="text-sm lg:text-base font-bold text-slate-800 truncate">
                     Visual Plate Map
                   </h2>
-
                   <p className="text-[10px] text-slate-500 mt-0.5">
-                    Shows compound & exact concentration assigned.
+                    Assign compounds & regions here. Data table is OD-only.
                   </p>
                 </div>
-
                 <div className="flex items-center shrink-0">
                   <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1 shadow-sm mr-4">
                     <span className="text-[10px] text-slate-500 font-bold">A</span>
-
                     <input
                       type="range"
                       min="4"
@@ -2557,10 +2208,8 @@ export const All = ({ ctx }) => {
                       onChange={(e) => setMapFontSize(Number(e.target.value))}
                       className="w-16 accent-blue-600"
                     />
-
                     <span className="text-[12px] text-slate-500 font-bold">A</span>
                   </div>
-
                   <button
                     onClick={() => toggleFs('map')}
                     className="text-slate-400 hover:text-blue-600 bg-slate-100 hover:bg-blue-100 rounded p-1 transition-colors"
@@ -2570,15 +2219,96 @@ export const All = ({ ctx }) => {
                 </div>
               </div>
 
+              {/* ===== MAP TOOLBAR ===== */}
+              <div className="flex flex-wrap items-center gap-3 mb-3 no-print">
+                <div className="flex bg-slate-200 p-1 rounded-lg shadow-inner">
+                  {[
+                    ['view', '👁️ View'],
+                    ['paint', '🖌️ Paint'],
+                    ['region', '📦 Region']
+                  ].map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      onClick={() => {
+                        setMapMode(mode);
+                        setDragMode('none');
+                        setMapPainting(false);
+                      }}
+                      className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${
+                        mapMode === mode
+                          ? 'bg-white text-blue-700 shadow-sm'
+                          : 'text-slate-500 hover:text-slate-700'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {mapMode === 'paint' && (
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={paintCompound}
+                      onChange={(e) => setPaintCompound(e.target.value)}
+                      className="border border-blue-300 rounded-lg p-1.5 text-xs bg-white outline-none focus:border-blue-500 min-w-[140px]"
+                    >
+                      <option value="">— Select compound —</option>
+                      {allCmpds.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                    {paintCompound && (
+                      <span
+                        className="w-4 h-4 rounded-full border border-slate-300 inline-block"
+                        style={{
+                          backgroundColor: cmpColor(paintCompound, allCmpds.indexOf(paintCompound))
+                        }}
+                      />
+                    )}
+                    <button
+                      onClick={() => setPaintCompound('')}
+                      className="text-[10px] text-slate-500 underline hover:text-slate-700"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                )}
+
+                {mapMode === 'region' && (
+                  <span className="text-[10px] text-slate-500 italic">
+                    Drag across wells to define a region
+                  </span>
+                )}
+
+                {activeSel && mapMode === 'view' && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-1 rounded border border-blue-200">
+                      Selected: {activeSel.maxR - activeSel.minR + 1}×{activeSel.maxC - activeSel.minC + 1}
+                    </span>
+                    <button
+                      onClick={() => {
+                        setSelStart(null);
+                        setSelEnd(null);
+                      }}
+                      className="text-[10px] text-slate-500 underline hover:text-slate-700"
+                    >
+                      Deselect
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* ===== PLATE GRID ===== */}
               <div
-                className={`bg-white p-4 rounded-xl border border-slate-200 flex flex-col justify-evenly gap-1 shadow-sm overflow-auto ${
+                className={`bg-white p-4 rounded-xl border border-slate-200 flex flex-col justify-evenly gap-1 shadow-sm overflow-auto select-none ${
                   fsPanel === 'map' ? 'flex-1' : ''
                 }`}
                 style={{ minHeight: fsPanel === 'map' ? 0 : '320px' }}
               >
                 <div className="flex w-full mb-1">
                   <div className="w-4 lg:w-6" />
-
                   {COLS.map((c) => (
                     <div
                       key={c}
@@ -2588,7 +2318,6 @@ export const All = ({ ctx }) => {
                     </div>
                   ))}
                 </div>
-
                 {ROWS.map((rl, r) => (
                   <div
                     key={rl}
@@ -2597,61 +2326,81 @@ export const All = ({ ctx }) => {
                     <div className="w-4 lg:w-6 text-[10px] lg:text-xs font-black text-slate-400 text-center">
                       {rl}
                     </div>
-
                     {COLS.map((col, c) => {
                       const cfg = cellConfig[r]?.[c] || {};
                       const role = getRole(r, c);
                       const { bg, dark } = wellColor(r, c);
                       const conc = concOf(r, c, role);
-
                       const tc = dark ? 'text-slate-900' : 'text-white';
-
                       const fSize1 = fsPanel === 'map' ? mapFontSize * 1.5 : mapFontSize;
                       const fSize2 = fsPanel === 'map' ? (mapFontSize - 1) * 1.5 : mapFontSize - 1;
-
                       const reg = cfg.region || 'Primary';
                       const regColor = getRegionColor(reg);
                       const hasCustomReg = reg !== 'Primary';
 
+                      const isSel =
+                        activeSel &&
+                        r >= activeSel.minR &&
+                        r <= activeSel.maxR &&
+                        c >= activeSel.minC &&
+                        c <= activeSel.maxC;
+
+                      const isDragSel =
+                        dragState.active &&
+                        r >= Math.min(dragState.startR, dragState.currentR) &&
+                        r <= Math.max(dragState.startR, dragState.currentR) &&
+                        c >= Math.min(dragState.startC, dragState.currentC) &&
+                        c <= Math.max(dragState.startC, dragState.currentC);
+
                       let bTop =
                         r === 0 ||
                         (cellConfig[r - 1] && (cellConfig[r - 1][c].region || 'Primary') !== reg);
-
                       let bBottom =
                         r === activePlateDim.rows - 1 ||
                         (cellConfig[r + 1] &&
                           (cellConfig[r + 1][c].region || 'Primary') !== reg);
-
                       let bLeft =
                         c === 0 ||
                         (cellConfig[r] && (cellConfig[r][c - 1].region || 'Primary') !== reg);
-
                       let bRight =
                         c === activePlateDim.cols - 1 ||
                         (cellConfig[r] && (cellConfig[r][c + 1].region || 'Primary') !== reg);
 
                       const shadows = [];
-
                       if (hasCustomReg) {
                         if (bTop) shadows.push(`inset 0 3px 0 0 ${regColor}`);
                         if (bBottom) shadows.push(`inset 0 -3px 0 0 ${regColor}`);
                         if (bLeft) shadows.push(`inset 3px 0 0 0 ${regColor}`);
                         if (bRight) shadows.push(`inset -3px 0 0 0 ${regColor}`);
                       }
-
                       const boxSh = shadows.length > 0 ? shadows.join(', ') : 'none';
 
                       return (
                         <div
                           key={col}
-                          className="flex-1 flex justify-center items-center relative py-1 h-full"
+                          className={`flex-1 flex justify-center items-center relative py-1 h-full ${
+                            mapMode === 'paint'
+                              ? 'cursor-crosshair'
+                              : mapMode === 'region'
+                              ? 'cursor-crosshair'
+                              : 'cursor-pointer'
+                          }`}
+                          onMouseDown={(e) => handleMapMouseDown(e, r, c)}
+                          onMouseEnter={() => handleMapMouseEnter(r, c)}
+                          onContextMenu={(e) => handleContextMenu(e, r, c)}
                           style={{
                             backgroundColor: hasCustomReg ? regColor + '1a' : 'transparent',
                             boxShadow: boxSh
                           }}
                         >
                           <div
-                            className="z-10 rounded-full border border-black/10 flex flex-col items-center justify-center shadow-sm overflow-hidden"
+                            className={`z-10 rounded-full border flex flex-col items-center justify-center shadow-sm overflow-hidden transition-all ${
+                              isSel || isDragSel
+                                ? 'border-blue-600 ring-2 ring-blue-400'
+                                : cfg.excluded
+                                ? 'border-red-300 opacity-40'
+                                : 'border-black/10'
+                            }`}
                             style={{
                               backgroundColor: bg,
                               width: mapBadgePx,
@@ -2664,7 +2413,6 @@ export const All = ({ ctx }) => {
                             >
                               {role || '–'}
                             </span>
-
                             {role && !['cells', 'pbs', 'medium'].includes(role.toLowerCase()) && (
                               <span
                                 style={{ fontSize: fSize2 + 'px' }}
@@ -2674,7 +2422,6 @@ export const All = ({ ctx }) => {
                               </span>
                             )}
                           </div>
-
                           {hasCustomReg && bTop && bLeft && (
                             <span
                               className="absolute top-[2px] left-[3px] text-[9px] font-black z-20 px-1 rounded shadow-sm whitespace-nowrap"
@@ -2697,13 +2444,12 @@ export const All = ({ ctx }) => {
         </div>
       </CollapsibleSection>
 
-      {/* ================= DATA GRID ================= */}
+      {/* ================= DATA GRID (OD ONLY) ================= */}
       <CollapsibleSection title="Data" icon="🔢" defaultOpen={true}>
         <div className="relative">
           {fsPanel === 'data' && (
             <div className={OVERLAY_CLASSES} onClick={() => toggleFs('data')}></div>
           )}
-
           <div
             className={`bg-slate-50 border border-slate-200 p-4 min-w-0 flex flex-col ${
               fsPanel === 'data' ? FS_CLASSES : 'rounded-xl w-full'
@@ -2712,92 +2458,19 @@ export const All = ({ ctx }) => {
             <div className="flex justify-between items-start mb-2 gap-2">
               <div className="min-w-0">
                 <h2 className="text-sm lg:text-base font-bold text-slate-800 truncate">
-                  {`Data Grid (${activePlateDim.rows}x${activePlateDim.cols})`}
+                  {`Raw OD Data (${activePlateDim.rows}×${activePlateDim.cols})`}
                 </h2>
+                <p className="text-[10px] text-slate-500 mt-0.5">
+                  Input raw OD values. Right-click a well to exclude it. Compound & region
+                  assignment is done in the Plate Map.
+                </p>
               </div>
-
-              <div className="flex items-center shrink-0">
-                <div className="flex bg-slate-200 p-1 rounded-lg shadow-inner mr-4">
-                  <button
-                    onClick={() => setTableView('od')}
-                    className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${
-                      tableView === 'od'
-                        ? 'bg-white text-blue-700 shadow-sm'
-                        : 'text-slate-500 hover:text-slate-700'
-                    }`}
-                  >
-                    Raw OD
-                  </button>
-
-                  <button
-                    onClick={() => setTableView('conc')}
-                    className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${
-                      tableView === 'conc'
-                        ? 'bg-white text-blue-700 shadow-sm'
-                        : 'text-slate-500 hover:text-slate-700'
-                    }`}
-                  >
-                    Concentrations
-                  </button>
-
-                  <button
-                    onClick={() => setTableView('region')}
-                    className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${
-                      tableView === 'region'
-                        ? 'bg-white text-blue-700 shadow-sm'
-                        : 'text-slate-500 hover:text-slate-700'
-                    }`}
-                  >
-                    Regions
-                  </button>
-                </div>
-
-                <button
-                  onClick={() => toggleFs('data')}
-                  className="text-slate-400 hover:text-blue-600 bg-slate-100 hover:bg-blue-100 rounded p-1 transition-colors"
-                >
-                  {fsPanel === 'data' ? '↙️' : '↗️'}
-                </button>
-              </div>
-            </div>
-
-            <div className="text-[10px] text-slate-500 mb-3 italic px-1 flex justify-between items-center gap-2">
-              <span>
-                {tableView === 'od' && 'Input raw ODs. Right-click to exclude points or override.'}
-                {tableView === 'conc' && 'Manually override concentrations per well.'}
-                {tableView === 'region' &&
-                  'Assign regions for independent IC50 plots. Double-click a region to select it.'}
-              </span>
-
-              <div className="flex items-center gap-2 no-print">
-                {tableView === 'region' && selectedRegionName && (
-                  <>
-                    <span className="text-blue-700 font-bold bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
-                      Selected: {selectedRegionName}
-                    </span>
-
-                    <button
-                      onClick={() => openRenameRegion(selectedRegionName)}
-                      className="text-blue-700 bg-blue-100 hover:bg-blue-200 px-1.5 py-0.5 rounded font-bold transition-colors"
-                    >
-                      Rename
-                    </button>
-
-                    <button
-                      onClick={() => selectRegionByName(selectedRegionName)}
-                      className="text-slate-700 bg-slate-100 hover:bg-slate-200 px-1.5 py-0.5 rounded font-bold transition-colors"
-                    >
-                      Reselect
-                    </button>
-                  </>
-                )}
-
-                {activeSel && (
-                  <span className="text-red-500 font-bold bg-red-50 px-1.5 py-0.5 rounded border border-red-100">
-                    Del/Backspace to Clear
-                  </span>
-                )}
-              </div>
+              <button
+                onClick={() => toggleFs('data')}
+                className="text-slate-400 hover:text-blue-600 bg-slate-100 hover:bg-blue-100 rounded p-1 transition-colors"
+              >
+                {fsPanel === 'data' ? '↙️' : '↗️'}
+              </button>
             </div>
 
             <div
@@ -2811,78 +2484,34 @@ export const All = ({ ctx }) => {
                     <th className="bg-slate-200 border border-slate-300 p-1 text-xs text-slate-600 w-8">
                       R\C
                     </th>
-
-                    <th className="bg-slate-100 border border-slate-300 p-1 text-[10px] text-slate-600 w-28">
-                      Row Cmpd →
-                    </th>
-
-                    {COLS.map((col, c) => (
+                    {COLS.map((col) => (
                       <th key={col} className="bg-slate-50 border border-slate-300 p-1">
                         <div className="text-[11px] text-slate-500 font-black">{col}</div>
-
-                        <select
-                          value={compounds[c]}
-                          onChange={(e) => updateCmp(c, e.target.value)}
-                          className="w-full text-center border border-slate-300 rounded p-0.5 font-bold text-blue-800 text-[10px] h-6 bg-white cursor-pointer outline-none focus:ring-1 focus:ring-blue-500"
-                        >
-                          <option value="">Col Cmpd ↓</option>
-                          {allCmpds.map((o) => (
-                            <option key={o} value={o}>
-                              {o}
-                            </option>
-                          ))}
-                        </select>
                       </th>
                     ))}
                   </tr>
                 </thead>
-
                 <tbody>
                   {ROWS.map((rl, r) => (
                     <tr key={rl}>
                       <td className="bg-slate-100 border border-slate-300 font-black text-center text-xs text-slate-700">
                         {rl}
                       </td>
-
-                      <td className="bg-slate-50 border border-slate-300 p-1 align-middle">
-                        <select
-                          value={rowCompounds[r]}
-                          onChange={(e) => updateRowCmp(r, e.target.value)}
-                          className="w-full text-center border border-slate-300 rounded p-0.5 font-bold text-blue-800 text-[10px] h-6 bg-white cursor-pointer outline-none focus:ring-1 focus:ring-blue-500"
-                        >
-                          <option value="">Row Cmpd →</option>
-                          {allCmpds.map((o) => (
-                            <option key={o} value={o}>
-                              {o}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-
                       {COLS.map((col, c) => {
                         const cfg = cellConfig[r]?.[c] || {};
+                        const val =
+                          grid?.[r]?.[c] === ''
+                            ? ''
+                            : focusedCell && focusedCell.r === r && focusedCell.c === c
+                            ? grid[r][c]
+                            : displayVal(r, c);
 
-                        let val = '';
-
-                        if (tableView === 'od') {
-                          val =
-                            grid?.[r]?.[c] === ''
-                              ? ''
-                              : focusedCell && focusedCell.r === r && focusedCell.c === c
-                              ? grid[r][c]
-                              : displayVal(r, c);
-                        } else if (tableView === 'conc') {
-                          val = cfg.conc !== null && cfg.conc !== undefined ? cfg.conc : '';
-                        } else if (tableView === 'region') {
-                          val = cfg.region || 'Primary';
-                        }
-
-                        const isSelBox =
-                          currentSelectionBox &&
-                          r >= currentSelectionBox.minR &&
-                          r <= currentSelectionBox.maxR &&
-                          c >= currentSelectionBox.minC &&
-                          c <= currentSelectionBox.maxC;
+                        const isSel =
+                          activeSel &&
+                          r >= activeSel.minR &&
+                          r <= activeSel.maxR &&
+                          c >= activeSel.minC &&
+                          c <= activeSel.maxC;
 
                         const isFillBox =
                           activeFill &&
@@ -2890,211 +2519,95 @@ export const All = ({ ctx }) => {
                           r <= activeFill.maxR &&
                           c >= activeFill.minC &&
                           c <= activeFill.maxC &&
-                          !isSelBox;
-
-                        const isResizeBox =
-                          activeResize &&
-                          r >= activeResize.minR &&
-                          r <= activeResize.maxR &&
-                          c >= activeResize.minC &&
-                          c <= activeResize.maxC;
+                          !isSel;
 
                         let cellStyle = {};
+                        if (isSel) cellStyle.backgroundColor = '#eff6ff';
+                        if (isFillBox) cellStyle.backgroundColor = '#f0fdf4';
 
-                        if (tableView === 'region') {
-                          const rColor = getRegionColor(cfg.region);
-
-                          if (isResizeBox) {
-                            cellStyle.backgroundColor = '#fde68a';
-                          } else if (isSelBox) {
-                            cellStyle.backgroundColor = '#bfdbfe';
-                          } else if (isFillBox) {
-                            cellStyle.backgroundColor = '#bbf7d0';
-                          } else if (rColor !== 'transparent') {
-                            cellStyle.backgroundColor = rColor + '33';
-                          }
-                        } else {
-                          if (isSelBox) cellStyle.backgroundColor = '#eff6ff';
-                          if (isFillBox) cellStyle.backgroundColor = '#f0fdf4';
+                        if (isSel && activeSel) {
+                          const shadows = [];
+                          if (r === activeSel.minR) shadows.push('inset 0 2px 0 0 #2563eb');
+                          if (r === activeSel.maxR) shadows.push('inset 0 -2px 0 0 #2563eb');
+                          if (c === activeSel.minC) shadows.push('inset 2px 0 0 0 #2563eb');
+                          if (c === activeSel.maxC) shadows.push('inset -2px 0 0 0 #2563eb');
+                          if (shadows.length > 0) cellStyle.boxShadow = shadows.join(', ');
                         }
-
-                        const shadows = [];
-
-                        if (isSelBox) {
-                          if (r === currentSelectionBox.minR)
-                            shadows.push('inset 0 2px 0 0 #2563eb');
-                          if (r === currentSelectionBox.maxR)
-                            shadows.push('inset 0 -2px 0 0 #2563eb');
-                          if (c === currentSelectionBox.minC)
-                            shadows.push('inset 2px 0 0 0 #2563eb');
-                          if (c === currentSelectionBox.maxC)
-                            shadows.push('inset -2px 0 0 0 #2563eb');
-                        }
-
-                        if (isFillBox) {
-                          if (r === activeFill.minR && r < currentSelectionBox.minR)
-                            shadows.push('inset 0 2px 0 0 #16a34a');
-
-                          if (r === activeFill.maxR && r > currentSelectionBox.maxR)
-                            shadows.push('inset 0 -2px 0 0 #16a34a');
-
-                          if (c === activeFill.minC && c < currentSelectionBox.minC)
-                            shadows.push('inset 2px 0 0 0 #16a34a');
-
-                          if (c === activeFill.maxC && c > currentSelectionBox.maxC)
-                            shadows.push('inset -2px 0 0 0 #16a34a');
-                        }
-
-                        if (isResizeBox) {
-                          if (r === activeResize.minR) shadows.push('inset 0 2px 0 0 #d97706');
-                          if (r === activeResize.maxR) shadows.push('inset 0 -2px 0 0 #d97706');
-                          if (c === activeResize.minC) shadows.push('inset 2px 0 0 0 #d97706');
-                          if (c === activeResize.maxC) shadows.push('inset -2px 0 0 0 #d97706');
-                        }
-
-                        if (shadows.length > 0) cellStyle.boxShadow = shadows.join(', ');
 
                         return (
                           <td
                             key={col}
                             className={`border p-0 relative align-middle ${
                               cfg.excluded ? 'border-slate-300' : 'border-slate-200'
-                            } ${tableView === 'region' ? 'cursor-crosshair' : ''} ${
-                              fsPanel === 'data' ? 'h-12' : 'h-9'
-                            }`}
+                            } ${fsPanel === 'data' ? 'h-12' : 'h-9'}`}
                             onContextMenu={(e) => handleContextMenu(e, r, c)}
                             onMouseDown={(e) => onMouseDownCell(e, r, c)}
                             onMouseEnter={() => onMouseEnterCell(r, c)}
-                            onDoubleClick={() => onDoubleClickCell(r, c)}
                             onDragOver={(e) => e.preventDefault()}
                             onDrop={(e) => handleDrop(e, r, c)}
                             style={cellStyle}
                           >
-                            {!cfg.excluded && tableView === 'od' && !isSelBox && !isFillBox && (
+                            {!cfg.excluded && !isSel && !isFillBox && (
                               <div
                                 className="absolute inset-0 pointer-events-none z-0"
                                 style={{ backgroundColor: heatColor(r, c) }}
                               />
                             )}
 
-                            {isSelBox &&
-                              r === currentSelectionBox.maxR &&
-                              c === currentSelectionBox.maxC &&
-                              (tableView !== 'region' || selectedRegionComplete) && (
+                            {isSel &&
+                              r === activeSel.maxR &&
+                              c === activeSel.maxC && (
                                 <div
                                   className="fill-handle absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-blue-600 border border-white cursor-crosshair z-40 rounded-sm no-print"
                                   onMouseDown={onMouseDownFillHandle}
-                                  title={
-                                    tableView === 'region'
-                                      ? 'Drag to resize region'
-                                      : 'Drag to fill'
-                                  }
+                                  title="Drag to fill"
                                 />
                               )}
 
-                            {isSelBox &&
-                              r === currentSelectionBox.minR &&
-                              c === currentSelectionBox.minC && (
+                            {isSel &&
+                              r === activeSel.minR &&
+                              c === activeSel.minC && (
                                 <div
                                   draggable={true}
                                   onDragStart={(e) => {
                                     const payload = {
                                       action: 'copy',
-                                      sel: currentSelectionBox,
+                                      sel: activeSel,
                                       sourcePlate: activeTest.id,
-                                      tableView
+                                      grid,
+                                      cellConfig
                                     };
-
-                                    if (tableView === 'region') {
-                                      payload.regionMode = true;
-                                      payload.regions = [];
-
-                                      for (
-                                        let rr = currentSelectionBox.minR;
-                                        rr <= currentSelectionBox.maxR;
-                                        rr++
-                                      ) {
-                                        const row = [];
-
-                                        for (
-                                          let cc = currentSelectionBox.minC;
-                                          cc <= currentSelectionBox.maxC;
-                                          cc++
-                                        ) {
-                                          row.push(cellConfig[rr]?.[cc]?.region || 'Primary');
-                                        }
-
-                                        payload.regions.push(row);
-                                      }
-                                    } else {
-                                      payload.grid = grid;
-                                      payload.cellConfig = cellConfig;
-                                    }
-
                                     e.dataTransfer.setData('text/plain', JSON.stringify(payload));
                                   }}
                                   className="drag-handle absolute -top-2 -left-2 w-4 h-4 bg-blue-600 text-white rounded shadow cursor-grab z-40 flex items-center justify-center text-[10px] no-print"
-                                  title={
-                                    tableView === 'region'
-                                      ? 'Drag to move region'
-                                      : 'Drag to move/copy cells'
-                                  }
+                                  title="Drag to move/copy cells"
                                 >
                                   ✥
                                 </div>
                               )}
 
-                            {tableView === 'region' ? (
-                              <div
-                                className={`w-full h-full flex items-center justify-center select-none text-[10px] font-bold ${
-                                  cfg.region && cfg.region !== 'Primary'
-                                    ? 'text-slate-800'
-                                    : 'text-slate-400'
-                                }`}
-                              >
-                                {cfg.region || 'Primary'}
-                              </div>
-                            ) : (
-                              <input
-                                type="text"
-                                value={val}
-                                onFocus={() => {
-                                  if (!cfg.excluded && tableView === 'od') {
-                                    setFocusedCell({ r, c });
-                                  }
-                                }}
-                                onBlur={() => setFocusedCell(null)}
-                                onChange={(ev) => {
-                                  if (cfg.excluded) return;
+                            <input
+                              type="text"
+                              value={val}
+                              onFocus={() => {
+                                if (!cfg.excluded) setFocusedCell({ r, c });
+                              }}
+                              onBlur={() => setFocusedCell(null)}
+                              onChange={(ev) => {
+                                if (cfg.excluded) return;
+                                updateCell(r, c, ev.target.value);
+                              }}
+                              onPaste={(ev) => {
+                                if (!cfg.excluded) handlePaste(ev, r, c);
+                              }}
+                              readOnly={cfg.excluded}
+                              className={`grid-input relative z-10 pt-3 pb-0.5 font-medium ${
+                                cfg.excluded ? 'line-through text-slate-400' : 'text-slate-900'
+                              } ${fsPanel === 'data' ? 'text-sm pt-4' : 'text-[0.75rem]'}`}
+                            />
 
-                                  if (tableView === 'od') {
-                                    updateCell(r, c, ev.target.value);
-                                  } else if (tableView === 'conc') {
-                                    updateCellCfg(r, c, {
-                                      conc: ev.target.value
-                                    });
-                                  }
-                                }}
-                                onPaste={(ev) => {
-                                  if (!cfg.excluded && tableView === 'od') {
-                                    handlePaste(ev, r, c);
-                                  }
-                                }}
-                                readOnly={cfg.excluded}
-                                className={`grid-input relative z-10 pt-3 pb-0.5 font-medium ${
-                                  cfg.excluded ? 'line-through text-slate-400' : 'text-slate-900'
-                                } ${fsPanel === 'data' ? 'text-sm pt-4' : 'text-[0.75rem]'}`}
-                              />
-                            )}
-
-                            {cfg.role && !cfg.excluded && tableView === 'od' && (
+                            {cfg.role && !cfg.excluded && (
                               <div className="absolute top-0 left-0 max-w-[85%] truncate text-[6.5px] sm:text-[7.5px] leading-tight font-bold bg-blue-500 text-white px-1 py-0.5 rounded-br pointer-events-none z-20 shadow-sm">
-                                {cfg.role}
-                              </div>
-                            )}
-
-                            {cfg.role && tableView === 'conc' && (
-                              <div className="absolute top-0 left-0 max-w-[85%] truncate text-[6.5px] sm:text-[7.5px] leading-tight font-bold bg-slate-300 text-slate-800 px-1 py-0.5 rounded-br pointer-events-none z-20">
                                 {cfg.role}
                               </div>
                             )}
@@ -3110,529 +2623,562 @@ export const All = ({ ctx }) => {
         </div>
       </CollapsibleSection>
 
-{/* ================= FITTING ================= */}
-<CollapsibleSection title="Fitting" icon="📐" defaultOpen={true}>
-  <div className="flex flex-col gap-6">
+      {/* ================= FITTING ================= */}
+      <CollapsibleSection title="Fitting" icon="📐" defaultOpen={true}>
+        <div className="flex flex-col gap-6">
+          {/* ===== ERROR MANAGEMENT (now contains Manual SD) ===== */}
+          <CollapsibleSection title="Error Management" icon="⚠️" defaultOpen={false}>
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-wrap gap-4 items-stretch">
+                {/* Data Normalization */}
+                <div className="border border-slate-200 bg-slate-50 rounded-lg p-4 flex flex-col gap-3 flex-1 min-w-[300px]">
+                  <div className="text-[10px] uppercase font-bold text-slate-500">
+                    Data Normalization
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 items-center">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[11px] font-bold text-slate-600">100% Control:</label>
+                      <div className="flex items-center gap-1">
+                        <select
+                          value={ctrlType}
+                          onChange={(e) => updatePlate({ ctrlType: e.target.value })}
+                          className="border border-slate-300 rounded-md p-1.5 text-xs bg-white w-full outline-none"
+                        >
+                          <option value="none">Manual</option>
+                          {allCmpds.map((c) => (
+                            <option key={c} value={c}>
+                              {c}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={autoCalcControl}
+                          className="text-[10px] font-bold bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-2 py-1.5 rounded-md shadow-sm transition whitespace-nowrap"
+                        >
+                          🎯 Auto
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[11px] font-bold text-slate-600">Control OD:</label>
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={ctrlODStr}
+                          onChange={(e) => updatePlate({ ctrlODStr: e.target.value })}
+                          className={`border border-slate-300 rounded-md p-1.5 w-full text-xs font-bold outline-none ${
+                            ctrlType !== 'none'
+                              ? 'bg-slate-200 text-slate-500'
+                              : 'text-emerald-700'
+                          }`}
+                          readOnly={ctrlType !== 'none'}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[11px] font-bold text-slate-600">Subtract Blank:</label>
+                      <select
+                        value={bgType}
+                        onChange={(e) => updatePlate({ bgType: e.target.value })}
+                        className="border border-slate-300 rounded-md p-1.5 text-xs bg-white w-full outline-none"
+                      >
+                        <option value="none">None</option>
+                        <option value="manual">Manual</option>
+                        {allCmpds.map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[11px] font-bold text-slate-600">Calc/Man Blank OD:</label>
+                      {bgType === 'manual' ? (
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={bgManualStr}
+                          onChange={(e) => updatePlate({ bgManualStr: e.target.value })}
+                          className="border border-slate-300 rounded-md p-1.5 w-full text-xs font-bold text-red-600 outline-none"
+                        />
+                      ) : bgType !== 'none' ? (
+                        <span className="text-xs font-bold text-red-600 bg-white border border-slate-200 px-3 py-1.5 rounded-md w-full">
+                          {bgOD.toFixed(4)}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-slate-400 bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-md w-full">
+                          —
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
 
-    {/* ===== ERROR MANAGEMENT (now contains Manual SD) ===== */}
-    <CollapsibleSection title="Error Management" icon="⚠️" defaultOpen={false}>
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-wrap gap-4 items-stretch">
+                {/* Errors, Outliers & Fitting + Manual SD button */}
+                <div className="border border-slate-200 bg-slate-50 rounded-lg p-4 flex flex-col gap-3 flex-[2] min-w-[350px]">
+                  <div className="text-[10px] uppercase font-bold text-slate-500">
+                    Errors, Outliers & Fitting
+                  </div>
+                  <div className="flex flex-wrap items-center gap-4 bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs font-bold text-slate-700 flex items-center gap-2 cursor-pointer hover:text-blue-600">
+                        <input
+                          type="checkbox"
+                          checked={useFixedSD}
+                          onChange={(e) => updatePlate({ useFixedSD: e.target.checked })}
+                          className="cursor-pointer w-4 h-4 accent-blue-600"
+                        />
+                        Fixed SD ±:
+                      </label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        value={fixedSDStr}
+                        onChange={(e) => updatePlate({ fixedSDStr: e.target.value })}
+                        disabled={!useFixedSD}
+                        className={`border border-slate-300 rounded-md p-1.5 w-16 text-xs outline-none ${
+                          !useFixedSD
+                            ? 'bg-slate-100 text-slate-400'
+                            : 'bg-white font-bold text-blue-700'
+                        }`}
+                      />
+                    </div>
+                    <div className="w-px h-8 bg-slate-200 hidden sm:block"></div>
+                    <div className="flex flex-col gap-1">
+                      <button
+                        onClick={autoTouchAll}
+                        className="text-[10px] uppercase tracking-wider bg-amber-100 hover:bg-amber-200 text-amber-800 font-bold py-1.5 px-3 rounded-md shadow-sm flex items-center justify-center gap-1 transition-colors"
+                      >
+                        🎯 Auto-Touch All SD
+                      </button>
+                      <button
+                        onClick={revertNormalSD}
+                        className="text-[9px] uppercase tracking-wider bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-1 px-3 rounded-md shadow-sm flex items-center justify-center gap-1 transition-colors"
+                      >
+                        🔄 Revert Normal SD
+                      </button>
+                    </div>
+                    <div className="w-px h-8 bg-slate-200 hidden md:block"></div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs font-bold text-slate-600">
+                        Outlier Threshold (×Err):
+                      </label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0.1"
+                        value={outlierThreshStr}
+                        onChange={(e) => updatePlate({ outlierThreshStr: e.target.value })}
+                        className="border border-slate-300 rounded-md p-1.5 w-16 text-xs outline-none"
+                      />
+                    </div>
+                    <button
+                      onClick={() => cleanOutliers()}
+                      className="bg-yellow-400 hover:bg-yellow-500 text-slate-900 font-black py-2 px-4 rounded-lg text-xs shadow-sm ml-auto"
+                    >
+                      🧹 Clean Outliers
+                    </button>
 
-          {/* Data Normalization */}
-          <div className="border border-slate-200 bg-slate-50 rounded-lg p-4 flex flex-col gap-3 flex-1 min-w-[300px]">
-            <div className="text-[10px] uppercase font-bold text-slate-500">
-              Data Normalization
-            </div>
-            <div className="grid grid-cols-2 gap-3 items-center">
-              <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-bold text-slate-600">100% Control:</label>
-                <div className="flex items-center gap-1">
-                  <select
-                    value={ctrlType}
-                    onChange={(e) => updatePlate({ ctrlType: e.target.value })}
-                    className="border border-slate-300 rounded-md p-1.5 text-xs bg-white w-full outline-none"
-                  >
-                    <option value="none">Manual</option>
-                    {allCmpds.map((c) => (
-                      <option key={c} value={c}>{c}</option>
+                    {/* ✅ Manual SD button moved here */}
+                    <button
+                      onClick={() => setShowErrPanel(!showErrPanel)}
+                      className={`font-bold py-2 px-4 rounded-lg text-xs transition-colors shadow-sm ${
+                        showErrPanel
+                          ? 'bg-orange-100 border border-orange-400 text-orange-800'
+                          : 'bg-white hover:bg-orange-50 text-orange-700 border border-orange-300'
+                      }`}
+                    >
+                      ⚠️ Manual SD
+                    </button>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-4 mt-1">
+                    <label className="flex items-center gap-2 bg-blue-50 border border-blue-200 hover:bg-blue-100 rounded-md px-3 py-1.5 cursor-pointer transition-colors shadow-sm">
+                      <span className="text-xs font-bold text-blue-800">Fit IC50 (4PL)</span>
+                      <input
+                        type="checkbox"
+                        checked={fitIC50}
+                        onChange={(e) => updatePlate({ fitIC50: e.target.checked })}
+                        className="w-4 h-4 cursor-pointer accent-blue-600"
+                      />
+                    </label>
+                    <label className="flex items-center gap-2 bg-slate-100 border border-slate-200 hover:bg-slate-200 rounded-md px-3 py-1.5 cursor-pointer transition-colors shadow-sm">
+                      <span className="text-xs font-bold text-slate-700">Show Excl. Points</span>
+                      <input
+                        type="checkbox"
+                        checked={showExcl}
+                        onChange={(e) => updatePlate({ showExcl: e.target.checked })}
+                        className="w-4 h-4 cursor-pointer accent-slate-600"
+                      />
+                    </label>
+                    <button
+                      onClick={restoreAll}
+                      className="text-xs bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 font-bold py-1.5 px-3 rounded-md ml-auto shadow-sm transition-colors"
+                    >
+                      ↩️ Restore All Excluded
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* ✅ Manual SD panel moved here (inside Error Management) */}
+              {showErrPanel && (
+                <div className="p-5 bg-orange-50 border border-orange-200 rounded-xl shadow-sm mt-4">
+                  <h3 className="text-sm font-black text-orange-800 mb-4">
+                    Manual SD Overrides (Weighted Fit)
+                  </h3>
+                  <div className="flex flex-col gap-4">
+                    {Object.entries(processedByRegion).map(([reg, comps]) => (
+                      <div
+                        key={reg}
+                        className="bg-white rounded-lg border border-orange-200 p-4 shadow-sm"
+                      >
+                        <h4 className="text-xs font-black text-slate-500 uppercase mb-3 border-b border-slate-100 pb-2">
+                          Region: {reg}
+                        </h4>
+                        <div className="flex flex-col gap-4">
+                          {comps
+                            .filter((d) => !hiddenCmpds[d.name] && d.vPts.length > 0)
+                            .map((comp) => (
+                              <div key={comp.name} className="flex flex-col gap-2">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    <div
+                                      className="w-3 h-3 rounded-full"
+                                      style={{ backgroundColor: comp.color }}
+                                    />
+                                    <span className="text-sm font-bold text-slate-800">
+                                      {comp.name}
+                                    </span>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={() => {
+                                        autoTouchSD(reg, comp.name);
+                                        updatePlate({ useFixedSD: true });
+                                      }}
+                                      className="text-xs text-orange-700 bg-orange-100 hover:bg-orange-200 px-2 py-1 rounded font-bold shadow-sm"
+                                    >
+                                      🎯 Auto-Touch
+                                    </button>
+                                    <button
+                                      onClick={() => cleanOutliers(reg, comp.name)}
+                                      className="text-xs text-yellow-800 bg-yellow-100 hover:bg-yellow-200 px-2 py-1 rounded font-bold shadow-sm"
+                                    >
+                                      🧹 Clean Outliers
+                                    </button>
+                                    <button
+                                      onClick={() => clearAllManual(comp.name)}
+                                      className="text-xs text-orange-600 hover:underline font-bold"
+                                    >
+                                      🔄 Reset
+                                    </button>
+                                  </div>
+                                </div>
+                                <div className="flex flex-wrap gap-3 p-3 bg-slate-50 rounded-lg border border-slate-100">
+                                  {comp.vPts.map((pt) => {
+                                    const isOverridden = hasManual(comp.name, pt.realX);
+                                    return (
+                                      <ErrInput
+                                        key={`${comp.name}-${concKey(pt.realX)}`}
+                                        label={`${formatConc(pt.realX)} µM`}
+                                        value={
+                                          isOverridden
+                                            ? getManual(comp.name, pt.realX)
+                                            : pt.sdRaw
+                                        }
+                                        sdRaw={pt.sdRaw}
+                                        isOverridden={isOverridden}
+                                        onSave={(v) => storeManual(comp.name, pt.realX, v)}
+                                        onReset={() => clearManual(comp.name, pt.realX)}
+                                      />
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ))}
+                        </div>
+                      </div>
                     ))}
-                  </select>
+                  </div>
+                </div>
+              )}
+            </div>
+          </CollapsibleSection>
+
+          {/* ===== GRAPHICAL PARAMETERS (Manual SD removed) ===== */}
+          <CollapsibleSection title="Graphical Parameters" icon="🎨" defaultOpen={false}>
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+                {plotCmps.length > 0 && (
+                  <div className="flex-1">
+                    <span className="text-xs font-black text-slate-500 uppercase tracking-wide block mb-2">
+                      Filter & Color Series
+                    </span>
+                    <div className="flex flex-wrap gap-3">
+                      {plotCmps.map((cmp) => {
+                        const hex = cmpColor(cmp, allCmpds.indexOf(cmp));
+                        return (
+                          <div
+                            key={cmp}
+                            className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={!hiddenCmpds[cmp]}
+                              onChange={(e) =>
+                                setHiddenCmpds((p) => ({
+                                  ...p,
+                                  [cmp]: !e.target.checked
+                                }))
+                              }
+                              className="w-4 h-4 cursor-pointer accent-blue-600"
+                            />
+                            <label
+                              style={{
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                position: 'relative'
+                              }}
+                            >
+                              <span
+                                style={{
+                                  width: 14,
+                                  height: 14,
+                                  borderRadius: 9999,
+                                  backgroundColor: hex,
+                                  display: 'inline-block',
+                                  border: '1px solid rgba(15,23,42,0.15)'
+                                }}
+                              />
+                              <input
+                                type="color"
+                                value={hex}
+                                style={{
+                                  position: 'absolute',
+                                  opacity: 0,
+                                  cursor: 'pointer',
+                                  width: 0,
+                                  height: 0
+                                }}
+                                onChange={(e) =>
+                                  setCmpColors({
+                                    ...cmpColors,
+                                    [cmp]: e.target.value
+                                  })
+                                }
+                              />
+                            </label>
+                            <span
+                              className="text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600"
+                              onClick={() => setHiddenCmpds((p) => ({ ...p, [cmp]: !p[cmp] }))}
+                            >
+                              {cmp}
+                            </span>
+                            <button
+                              onClick={() => {
+                                const newHidden = {};
+                                plotCmps.forEach((c) => {
+                                  if (c !== cmp) newHidden[c] = true;
+                                });
+                                setHiddenCmpds(newHidden);
+                              }}
+                              className="text-[10px] bg-blue-100 text-blue-800 hover:bg-blue-200 px-2 py-0.5 rounded-md transition-colors ml-1 font-bold"
+                            >
+                              Solo
+                            </button>
+                          </div>
+                        );
+                      })}
+                      <button
+                        onClick={() => setHiddenCmpds({})}
+                        className="text-xs font-bold text-slate-500 underline hover:text-slate-800 ml-2"
+                      >
+                        Show All
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <div className="flex gap-3">
+                  {/* ✅ Only Chart Config remains here */}
                   <button
-                    onClick={autoCalcControl}
-                    className="text-[10px] font-bold bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-2 py-1.5 rounded-md shadow-sm transition whitespace-nowrap"
+                    onClick={() => setShowChartCfg(!showChartCfg)}
+                    className={`font-bold py-2 px-4 rounded-lg text-xs transition-colors shadow-sm ${
+                      showChartCfg
+                        ? 'bg-slate-200 border border-slate-400 text-slate-900'
+                        : 'bg-white hover:bg-slate-50 text-slate-800 border border-slate-300'
+                    }`}
                   >
-                    🎯 Auto
+                    ⚙️ Chart Config
                   </button>
                 </div>
               </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-bold text-slate-600">Control OD:</label>
-                <div className="flex items-center gap-1">
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={ctrlODStr}
-                    onChange={(e) => updatePlate({ ctrlODStr: e.target.value })}
-                    className={`border border-slate-300 rounded-md p-1.5 w-full text-xs font-bold outline-none ${
-                      ctrlType !== 'none' ? 'bg-slate-200 text-slate-500' : 'text-emerald-700'
-                    }`}
-                    readOnly={ctrlType !== 'none'}
-                  />
-                </div>
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-bold text-slate-600">Subtract Blank:</label>
-                <select
-                  value={bgType}
-                  onChange={(e) => updatePlate({ bgType: e.target.value })}
-                  className="border border-slate-300 rounded-md p-1.5 text-xs bg-white w-full outline-none"
-                >
-                  <option value="none">None</option>
-                  <option value="manual">Manual</option>
-                  {allCmpds.map((c) => (
-                    <option key={c} value={c}>{c}</option>
+
+              {showChartCfg && (
+                <div className="p-5 bg-white border border-slate-300 rounded-xl grid grid-cols-2 lg:grid-cols-4 gap-4 shadow-sm">
+                  {[
+                    ['X Min', 'xMin'],
+                    ['X Max', 'xMax'],
+                    ['Y Min', 'yMin'],
+                    ['Y Max', 'yMax']
+                  ].map(([lbl, k]) => (
+                    <div key={k} className="flex flex-col gap-1">
+                      <label className="text-xs font-bold text-slate-600">{lbl}</label>
+                      <input
+                        type="number"
+                        placeholder="Auto"
+                        value={chartCfg[k]}
+                        onChange={(e) =>
+                          updatePlate({ chartCfg: { ...chartCfg, [k]: e.target.value } })
+                        }
+                        className="border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500"
+                      />
+                    </div>
                   ))}
-                </select>
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-bold text-slate-600">Calc/Man Blank OD:</label>
-                {bgType === 'manual' ? (
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={bgManualStr}
-                    onChange={(e) => updatePlate({ bgManualStr: e.target.value })}
-                    className="border border-slate-300 rounded-md p-1.5 w-full text-xs font-bold text-red-600 outline-none"
-                  />
-                ) : bgType !== 'none' ? (
-                  <span className="text-xs font-bold text-red-600 bg-white border border-slate-200 px-3 py-1.5 rounded-md w-full">
-                    {bgOD.toFixed(4)}
-                  </span>
-                ) : (
-                  <span className="text-xs text-slate-400 bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-md w-full">
-                    —
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Errors, Outliers & Fitting + Manual SD button */}
-          <div className="border border-slate-200 bg-slate-50 rounded-lg p-4 flex flex-col gap-3 flex-[2] min-w-[350px]">
-            <div className="text-[10px] uppercase font-bold text-slate-500">
-              Errors, Outliers & Fitting
-            </div>
-            <div className="flex flex-wrap items-center gap-4 bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
-              <div className="flex items-center gap-2">
-                <label className="text-xs font-bold text-slate-700 flex items-center gap-2 cursor-pointer hover:text-blue-600">
-                  <input
-                    type="checkbox"
-                    checked={useFixedSD}
-                    onChange={(e) => updatePlate({ useFixedSD: e.target.checked })}
-                    className="cursor-pointer w-4 h-4 accent-blue-600"
-                  />
-                  Fixed SD ±:
-                </label>
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  value={fixedSDStr}
-                  onChange={(e) => updatePlate({ fixedSDStr: e.target.value })}
-                  disabled={!useFixedSD}
-                  className={`border border-slate-300 rounded-md p-1.5 w-16 text-xs outline-none ${
-                    !useFixedSD
-                      ? 'bg-slate-100 text-slate-400'
-                      : 'bg-white font-bold text-blue-700'
-                  }`}
-                />
-              </div>
-              <div className="w-px h-8 bg-slate-200 hidden sm:block"></div>
-              <div className="flex flex-col gap-1">
-                <button
-                  onClick={autoTouchAll}
-                  className="text-[10px] uppercase tracking-wider bg-amber-100 hover:bg-amber-200 text-amber-800 font-bold py-1.5 px-3 rounded-md shadow-sm flex items-center justify-center gap-1 transition-colors"
-                >
-                  🎯 Auto-Touch All SD
-                </button>
-                <button
-                  onClick={revertNormalSD}
-                  className="text-[9px] uppercase tracking-wider bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-1 px-3 rounded-md shadow-sm flex items-center justify-center gap-1 transition-colors"
-                >
-                  🔄 Revert Normal SD
-                </button>
-              </div>
-              <div className="w-px h-8 bg-slate-200 hidden md:block"></div>
-              <div className="flex items-center gap-2">
-                <label className="text-xs font-bold text-slate-600">Outlier Threshold (×Err):</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0.1"
-                  value={outlierThreshStr}
-                  onChange={(e) => updatePlate({ outlierThreshStr: e.target.value })}
-                  className="border border-slate-300 rounded-md p-1.5 w-16 text-xs outline-none"
-                />
-              </div>
-              <button
-                onClick={() => cleanOutliers()}
-                className="bg-yellow-400 hover:bg-yellow-500 text-slate-900 font-black py-2 px-4 rounded-lg text-xs shadow-sm ml-auto"
-              >
-                🧹 Clean Outliers
-              </button>
-
-              {/* ✅ Manual SD button moved here */}
-              <button
-                onClick={() => setShowErrPanel(!showErrPanel)}
-                className={`font-bold py-2 px-4 rounded-lg text-xs transition-colors shadow-sm ${
-                  showErrPanel
-                    ? 'bg-orange-100 border border-orange-400 text-orange-800'
-                    : 'bg-white hover:bg-orange-50 text-orange-700 border border-orange-300'
-                }`}
-              >
-                ⚠️ Manual SD
-              </button>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-4 mt-1">
-              <label className="flex items-center gap-2 bg-blue-50 border border-blue-200 hover:bg-blue-100 rounded-md px-3 py-1.5 cursor-pointer transition-colors shadow-sm">
-                <span className="text-xs font-bold text-blue-800">Fit IC50 (4PL)</span>
-                <input
-                  type="checkbox"
-                  checked={fitIC50}
-                  onChange={(e) => updatePlate({ fitIC50: e.target.checked })}
-                  className="w-4 h-4 cursor-pointer accent-blue-600"
-                />
-              </label>
-              <label className="flex items-center gap-2 bg-slate-100 border border-slate-200 hover:bg-slate-200 rounded-md px-3 py-1.5 cursor-pointer transition-colors shadow-sm">
-                <span className="text-xs font-bold text-slate-700">Show Excl. Points</span>
-                <input
-                  type="checkbox"
-                  checked={showExcl}
-                  onChange={(e) => updatePlate({ showExcl: e.target.checked })}
-                  className="w-4 h-4 cursor-pointer accent-slate-600"
-                />
-              </label>
-              <button
-                onClick={restoreAll}
-                className="text-xs bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 font-bold py-1.5 px-3 rounded-md ml-auto shadow-sm transition-colors"
-              >
-                ↩️ Restore All Excluded
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* ✅ Manual SD panel moved here (inside Error Management) */}
-        {showErrPanel && (
-          <div className="p-5 bg-orange-50 border border-orange-200 rounded-xl shadow-sm mt-4">
-            <h3 className="text-sm font-black text-orange-800 mb-4">
-              Manual SD Overrides (Weighted Fit)
-            </h3>
-            <div className="flex flex-col gap-4">
-              {Object.entries(processedByRegion).map(([reg, comps]) => (
-                <div key={reg} className="bg-white rounded-lg border border-orange-200 p-4 shadow-sm">
-                  <h4 className="text-xs font-black text-slate-500 uppercase mb-3 border-b border-slate-100 pb-2">
-                    Region: {reg}
-                  </h4>
-                  <div className="flex flex-col gap-4">
-                    {comps
-                      .filter((d) => !hiddenCmpds[d.name] && d.vPts.length > 0)
-                      .map((comp) => (
-                        <div key={comp.name} className="flex flex-col gap-2">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <div
-                                className="w-3 h-3 rounded-full"
-                                style={{ backgroundColor: comp.color }}
-                              />
-                              <span className="text-sm font-bold text-slate-800">{comp.name}</span>
-                            </div>
-                            <div className="flex gap-2">
-                              <button
-                                onClick={() => {
-                                  autoTouchSD(reg, comp.name);
-                                  updatePlate({ useFixedSD: true });
-                                }}
-                                className="text-xs text-orange-700 bg-orange-100 hover:bg-orange-200 px-2 py-1 rounded font-bold shadow-sm"
-                              >
-                                🎯 Auto-Touch
-                              </button>
-                              <button
-                                onClick={() => cleanOutliers(reg, comp.name)}
-                                className="text-xs text-yellow-800 bg-yellow-100 hover:bg-yellow-200 px-2 py-1 rounded font-bold shadow-sm"
-                              >
-                                🧹 Clean Outliers
-                              </button>
-                              <button
-                                onClick={() => clearAllManual(comp.name)}
-                                className="text-xs text-orange-600 hover:underline font-bold"
-                              >
-                                🔄 Reset
-                              </button>
-                            </div>
-                          </div>
-                          <div className="flex flex-wrap gap-3 p-3 bg-slate-50 rounded-lg border border-slate-100">
-                            {comp.vPts.map((pt) => {
-                              const isOverridden = hasManual(comp.name, pt.realX);
-                              return (
-                                <ErrInput
-                                  key={`${comp.name}-${concKey(pt.realX)}`}
-                                  label={`${formatConc(pt.realX)} µM`}
-                                  value={
-                                    isOverridden ? getManual(comp.name, pt.realX) : pt.sdRaw
-                                  }
-                                  sdRaw={pt.sdRaw}
-                                  isOverridden={isOverridden}
-                                  onSave={(v) => storeManual(comp.name, pt.realX, v)}
-                                  onReset={() => clearManual(comp.name, pt.realX)}
-                                />
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ))}
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs font-bold text-slate-600">X Axis Label</label>
+                    <input
+                      type="text"
+                      placeholder={`Log₁₀ [Conc. (${unit})]`}
+                      value={chartCfg.xAxisLabel}
+                      onChange={(e) =>
+                        updatePlate({ chartCfg: { ...chartCfg, xAxisLabel: e.target.value } })
+                      }
+                      className="border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs font-bold text-slate-600">Font Size</label>
+                    <input
+                      type="number"
+                      value={chartCfg.fontSize}
+                      onChange={(e) =>
+                        updatePlate({
+                          chartCfg: { ...chartCfg, fontSize: parseFloat(e.target.value) || 12 }
+                        })
+                      }
+                      className="border border-slate-300 rounded-md p-2 text-sm outline-none"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs font-bold text-slate-600">Point Style</label>
+                    <select
+                      value={chartCfg.ptStyle}
+                      onChange={(e) =>
+                        updatePlate({ chartCfg: { ...chartCfg, ptStyle: e.target.value } })
+                      }
+                      className="border border-slate-300 rounded-md p-2 text-sm bg-white outline-none"
+                    >
+                      {['circle', 'triangle', 'rect', 'rectRot', 'cross', 'crossRot', 'star'].map(
+                        (s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        )
+                      )}
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs font-bold text-slate-600">Point Size</label>
+                    <input
+                      type="number"
+                      value={chartCfg.ptSize}
+                      onChange={(e) =>
+                        updatePlate({
+                          chartCfg: { ...chartCfg, ptSize: parseFloat(e.target.value) || 1 }
+                        })
+                      }
+                      className="border border-slate-300 rounded-md p-2 text-sm outline-none"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs font-bold text-slate-600">Line Style / Thick.</label>
+                    <div className="flex gap-2">
+                      <select
+                        value={chartCfg.lineStyle}
+                        onChange={(e) =>
+                          updatePlate({ chartCfg: { ...chartCfg, lineStyle: e.target.value } })
+                        }
+                        className="border border-slate-300 rounded-md p-2 text-sm bg-white flex-1 outline-none"
+                      >
+                        <option value="solid">Solid</option>
+                        <option value="dashed">Dashed</option>
+                        <option value="dotted">Dotted</option>
+                      </select>
+                      <input
+                        type="number"
+                        value={chartCfg.lineThickness}
+                        onChange={(e) =>
+                          updatePlate({
+                            chartCfg: {
+                              ...chartCfg,
+                              lineThickness: parseFloat(e.target.value) || 2
+                            }
+                          })
+                        }
+                        className="border border-slate-300 rounded-md p-2 text-sm w-16 outline-none"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs font-bold text-slate-600">Chart Split (DR Width %)</label>
+                    <input
+                      type="range"
+                      min="20"
+                      max="80"
+                      step="5"
+                      value={drWidth}
+                      onChange={(e) => setDrWidth(parseInt(e.target.value))}
+                      className="accent-blue-600 mt-2"
+                      disabled={!fitIC50}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs font-bold text-slate-600">Chart Height (px)</label>
+                    <input
+                      type="range"
+                      min="200"
+                      max="1000"
+                      step="25"
+                      value={chartH}
+                      onChange={(e) => setChartH(parseInt(e.target.value))}
+                      className="accent-blue-600 mt-2"
+                    />
                   </div>
                 </div>
-              ))}
+              )}
             </div>
-          </div>
-        )}
-      </div>
-    </CollapsibleSection>
+          </CollapsibleSection>
 
-    {/* ===== GRAPHICAL PARAMETERS (Manual SD removed) ===== */}
-    <CollapsibleSection title="Graphical Parameters" icon="🎨" defaultOpen={false}>
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
-          {plotCmps.length > 0 && (
-            <div className="flex-1">
-              <span className="text-xs font-black text-slate-500 uppercase tracking-wide block mb-2">
-                Filter & Color Series
-              </span>
-              <div className="flex flex-wrap gap-3">
-                {plotCmps.map((cmp) => {
-                  const hex = cmpColor(cmp, allCmpds.indexOf(cmp));
-                  return (
-                    <div
-                      key={cmp}
-                      className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={!hiddenCmpds[cmp]}
-                        onChange={(e) =>
-                          setHiddenCmpds((p) => ({ ...p, [cmp]: !e.target.checked }))
-                        }
-                        className="w-4 h-4 cursor-pointer accent-blue-600"
-                      />
-                      <label
-                        style={{
-                          cursor: 'pointer',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          position: 'relative'
-                        }}
-                      >
-                        <span
-                          style={{
-                            width: 14,
-                            height: 14,
-                            borderRadius: 9999,
-                            backgroundColor: hex,
-                            display: 'inline-block',
-                            border: '1px solid rgba(15,23,42,0.15)'
-                          }}
-                        />
-                        <input
-                          type="color"
-                          value={hex}
-                          style={{
-                            position: 'absolute',
-                            opacity: 0,
-                            cursor: 'pointer',
-                            width: 0,
-                            height: 0
-                          }}
-                          onChange={(e) =>
-                            setCmpColors({ ...cmpColors, [cmp]: e.target.value })
-                          }
-                        />
-                      </label>
-                      <span
-                        className="text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600"
-                        onClick={() => setHiddenCmpds((p) => ({ ...p, [cmp]: !p[cmp] }))}
-                      >
-                        {cmp}
-                      </span>
-                      <button
-                        onClick={() => {
-                          const newHidden = {};
-                          plotCmps.forEach((c) => {
-                            if (c !== cmp) newHidden[c] = true;
-                          });
-                          setHiddenCmpds(newHidden);
-                        }}
-                        className="text-[10px] bg-blue-100 text-blue-800 hover:bg-blue-200 px-2 py-0.5 rounded-md transition-colors ml-1 font-bold"
-                      >
-                        Solo
-                      </button>
-                    </div>
-                  );
-                })}
-                <button
-                  onClick={() => setHiddenCmpds({})}
-                  className="text-xs font-bold text-slate-500 underline hover:text-slate-800 ml-2"
-                >
-                  Show All
-                </button>
-              </div>
-            </div>
-          )}
-          <div className="flex gap-3">
-            {/* ✅ Only Chart Config remains here */}
-            <button
-              onClick={() => setShowChartCfg(!showChartCfg)}
-              className={`font-bold py-2 px-4 rounded-lg text-xs transition-colors shadow-sm ${
-                showChartCfg
-                  ? 'bg-slate-200 border border-slate-400 text-slate-900'
-                  : 'bg-white hover:bg-slate-50 text-slate-800 border border-slate-300'
-              }`}
-            >
-              ⚙️ Chart Config
-            </button>
-          </div>
+          {/* REGION CHARTS */}
+          {Object.entries(processedByRegion).map(([reg, comps]) => (
+            <RegionCharts
+              key={reg}
+              regionName={reg}
+              regionData={comps}
+              config={{
+                chartCfg,
+                fitIC50,
+                showExcl,
+                eScale,
+                fsPanel,
+                chartH,
+                drWidth,
+                hiddenCmpds,
+                unit,
+                cellConfig,
+                setCellConfig: (cfg) => updatePlate({ cellConfig: cfg }),
+                activePlateDim,
+                toggleFs,
+                renameRegion: openRenameRegion
+              }}
+            />
+          ))}
         </div>
-        {showChartCfg && (
-          <div className="p-5 bg-white border border-slate-300 rounded-xl grid grid-cols-2 lg:grid-cols-4 gap-4 shadow-sm">
-            {[
-              ['X Min', 'xMin'],
-              ['X Max', 'xMax'],
-              ['Y Min', 'yMin'],
-              ['Y Max', 'yMax']
-            ].map(([lbl, k]) => (
-              <div key={k} className="flex flex-col gap-1">
-                <label className="text-xs font-bold text-slate-600">{lbl}</label>
-                <input
-                  type="number"
-                  placeholder="Auto"
-                  value={chartCfg[k]}
-                  onChange={(e) => updatePlate({ chartCfg: { ...chartCfg, [k]: e.target.value } })}
-                  className="border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500"
-                />
-              </div>
-            ))}
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-bold text-slate-600">X Axis Label</label>
-              <input
-                type="text"
-                placeholder={`Log₁₀ [Conc. (${unit})]`}
-                value={chartCfg.xAxisLabel}
-                onChange={(e) =>
-                  updatePlate({ chartCfg: { ...chartCfg, xAxisLabel: e.target.value } })
-                }
-                className="border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500"
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-bold text-slate-600">Font Size</label>
-              <input
-                type="number"
-                value={chartCfg.fontSize}
-                onChange={(e) =>
-                  updatePlate({
-                    chartCfg: { ...chartCfg, fontSize: parseFloat(e.target.value) || 12 }
-                  })
-                }
-                className="border border-slate-300 rounded-md p-2 text-sm outline-none"
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-bold text-slate-600">Point Style</label>
-              <select
-                value={chartCfg.ptStyle}
-                onChange={(e) => updatePlate({ chartCfg: { ...chartCfg, ptStyle: e.target.value } })}
-                className="border border-slate-300 rounded-md p-2 text-sm bg-white outline-none"
-              >
-                {['circle', 'triangle', 'rect', 'rectRot', 'cross', 'crossRot', 'star'].map((s) => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-bold text-slate-600">Point Size</label>
-              <input
-                type="number"
-                value={chartCfg.ptSize}
-                onChange={(e) =>
-                  updatePlate({
-                    chartCfg: { ...chartCfg, ptSize: parseFloat(e.target.value) || 1 }
-                  })
-                }
-                className="border border-slate-300 rounded-md p-2 text-sm outline-none"
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-bold text-slate-600">Line Style / Thick.</label>
-              <div className="flex gap-2">
-                <select
-                  value={chartCfg.lineStyle}
-                  onChange={(e) => updatePlate({ chartCfg: { ...chartCfg, lineStyle: e.target.value } })}
-                  className="border border-slate-300 rounded-md p-2 text-sm bg-white flex-1 outline-none"
-                >
-                  <option value="solid">Solid</option>
-                  <option value="dashed">Dashed</option>
-                  <option value="dotted">Dotted</option>
-                </select>
-                <input
-                  type="number"
-                  value={chartCfg.lineThickness}
-                  onChange={(e) =>
-                    updatePlate({
-                      chartCfg: { ...chartCfg, lineThickness: parseFloat(e.target.value) || 2 }
-                    })
-                  }
-                  className="border border-slate-300 rounded-md p-2 text-sm w-16 outline-none"
-                />
-              </div>
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-bold text-slate-600">Chart Split (DR Width %)</label>
-              <input
-                type="range"
-                min="20"
-                max="80"
-                step="5"
-                value={drWidth}
-                onChange={(e) => setDrWidth(parseInt(e.target.value))}
-                className="accent-blue-600 mt-2"
-                disabled={!fitIC50}
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-bold text-slate-600">Chart Height (px)</label>
-              <input
-                type="range"
-                min="200"
-                max="1000"
-                step="25"
-                value={chartH}
-                onChange={(e) => setChartH(parseInt(e.target.value))}
-                className="accent-blue-600 mt-2"
-              />
-            </div>
-          </div>
-        )}
-      </div>
-    </CollapsibleSection>
-
-    {/* REGION CHARTS */}
-    {Object.entries(processedByRegion).map(([reg, comps]) => (
-      <RegionCharts
-        key={reg}
-        regionName={reg}
-        regionData={comps}
-        config={{
-          chartCfg,
-          fitIC50,
-          showExcl,
-          eScale,
-          fsPanel,
-          chartH,
-          drWidth,
-          hiddenCmpds,
-          unit,
-          cellConfig,
-          setCellConfig: (cfg) => updatePlate({ cellConfig: cfg }),
-          activePlateDim,
-          toggleFs,
-          renameRegion: openRenameRegion
-        }}
-      />
-    ))}
-  </div>
-</CollapsibleSection>
+      </CollapsibleSection>
 
       {/* CONTEXT MENU */}
       {ctxMenu && (
@@ -3659,11 +3205,9 @@ export const All = ({ ctx }) => {
             </button>
 
             <div className="border-t border-slate-100 my-1" />
-
             <div className="px-4 py-1 text-[10px] text-slate-400 uppercase font-black tracking-wider">
               Assign Compound
             </div>
-
             <div className="max-h-40 overflow-y-auto custom-scrollbar">
               {allCmpds.map((o) => (
                 <button
@@ -3681,7 +3225,6 @@ export const All = ({ ctx }) => {
             </div>
 
             <div className="border-t border-slate-100 my-1" />
-
             <button
               className="w-full text-left px-4 py-1.5 hover:bg-slate-50 text-slate-500 italic"
               onClick={() => {
@@ -3695,11 +3238,9 @@ export const All = ({ ctx }) => {
             </button>
 
             <div className="border-t border-slate-100 my-1" />
-
             <div className="px-4 py-1 text-[10px] text-slate-400 uppercase font-black tracking-wider">
               Set Region
             </div>
-
             <div className="px-3 pb-2">
               <input
                 type="text"
@@ -3712,7 +3253,6 @@ export const All = ({ ctx }) => {
                 }}
               />
             </div>
-
             <button
               className="w-full text-left px-4 py-1.5 hover:bg-slate-50 text-slate-500 italic"
               onClick={() => confirmRegion('Primary')}
@@ -3722,13 +3262,10 @@ export const All = ({ ctx }) => {
 
             {(() => {
               const reg = cellConfig[ctxMenu.r]?.[ctxMenu.c]?.region;
-
               if (!reg || reg === 'Primary') return null;
-
               return (
                 <>
                   <div className="border-t border-slate-100 my-1" />
-
                   <button
                     className="w-full text-left px-4 py-1.5 hover:bg-slate-50 text-slate-700 font-medium"
                     onClick={() => {
@@ -3738,7 +3275,6 @@ export const All = ({ ctx }) => {
                   >
                     Select Region "{reg}"
                   </button>
-
                   <button
                     className="w-full text-left px-4 py-1.5 hover:bg-slate-50 text-slate-700 font-medium"
                     onClick={() => {
@@ -3753,11 +3289,9 @@ export const All = ({ ctx }) => {
             })()}
 
             <div className="border-t border-slate-100 my-1" />
-
             <div className="px-4 py-1 text-[10px] text-blue-500 uppercase font-black tracking-wider">
               Copy / Paste
             </div>
-
             <button
               className="w-full text-left px-4 py-1.5 hover:bg-blue-50 text-blue-700 font-bold flex items-center justify-between"
               onClick={() => {
@@ -3775,7 +3309,6 @@ export const All = ({ ctx }) => {
                     cellConfig
                   });
                 }
-
                 setCtxMenu(null);
               }}
             >
@@ -3784,7 +3317,6 @@ export const All = ({ ctx }) => {
                 Ctrl+C
               </span>
             </button>
-
             {appClipboard && (
               <>
                 <button
@@ -3793,14 +3325,12 @@ export const All = ({ ctx }) => {
                 >
                   Paste All
                 </button>
-
                 <button
                   className="w-full text-left px-4 py-1.5 hover:bg-emerald-50 text-emerald-700 font-medium"
                   onClick={() => handlePasteSpecial('od')}
                 >
                   Paste OD Only
                 </button>
-
                 <button
                   className="w-full text-left px-4 py-1.5 hover:bg-emerald-50 text-emerald-700 font-medium"
                   onClick={() => handlePasteSpecial('compound')}
@@ -3824,11 +3354,9 @@ export const All = ({ ctx }) => {
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-lg font-black text-slate-800 mb-2">Define Region</h3>
-
             <p className="text-xs text-slate-500 mb-4">
               Name this block of wells to analyze it independently.
             </p>
-
             <input
               type="text"
               id="region-name-input"
@@ -3840,7 +3368,6 @@ export const All = ({ ctx }) => {
                 if (e.key === 'Escape') setRegionModal(null);
               }}
             />
-
             <div className="flex justify-between items-center">
               <button
                 onClick={() => confirmRegion('Primary')}
@@ -3848,7 +3375,6 @@ export const All = ({ ctx }) => {
               >
                 Clear
               </button>
-
               <div className="flex gap-2">
                 <button
                   onClick={() => setRegionModal(null)}
@@ -3856,7 +3382,6 @@ export const All = ({ ctx }) => {
                 >
                   Cancel
                 </button>
-
                 <button
                   onClick={() => confirmRegion(document.getElementById('region-name-input').value)}
                   className="px-4 py-2 text-xs bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-sm transition-colors"
@@ -3880,9 +3405,7 @@ export const All = ({ ctx }) => {
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-lg font-black text-slate-800 mb-2">Rename Region</h3>
-
             <p className="text-xs text-slate-500 mb-4">Rename "{renameRegionModal.oldName}".</p>
-
             <input
               type="text"
               id="rename-region-input"
@@ -3894,7 +3417,6 @@ export const All = ({ ctx }) => {
                 if (e.key === 'Escape') setRenameRegionModal(null);
               }}
             />
-
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setRenameRegionModal(null)}
@@ -3902,9 +3424,10 @@ export const All = ({ ctx }) => {
               >
                 Cancel
               </button>
-
               <button
-                onClick={() => confirmRenameRegion(document.getElementById('rename-region-input')?.value)}
+                onClick={() =>
+                  confirmRenameRegion(document.getElementById('rename-region-input')?.value)
+                }
                 className="px-4 py-2 text-xs bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-sm transition-colors"
               >
                 Save
