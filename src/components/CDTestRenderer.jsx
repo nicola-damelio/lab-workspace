@@ -165,7 +165,7 @@ const parseJascoCDText = (text) => {
       return;
     }
 
-    const m = line.match(/^([A-Za-z0-9/.-() ]{2,60}?)\s+(.*)$/);
+    const m = line.match(/^([A-Za-z0-9/.()\- ]{2,60}?)\s+(.*)$/);
     if (m && !/^\d/.test(m[1])) meta[m[1].trim()] = m[2].trim();
   };
 
