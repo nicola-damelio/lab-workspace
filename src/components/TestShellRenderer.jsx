@@ -62,6 +62,7 @@ export const CollapsibleSection = ({
 
         <div className="flex items-center gap-3 shrink-0">
           {headerExtra && <div onClick={(e) => e.stopPropagation()}>{headerExtra}</div>}
+
           <svg
             className={`w-5 h-5 text-slate-500 transition-transform duration-200 ${
               isOpen ? 'rotate-180' : ''
@@ -383,6 +384,7 @@ export const TestShellRenderer = ({
 
   const addLinkedProtocol = (id) => {
     if (!id || linkedProtocolIds.includes(id)) return;
+
     const upd = [...linkedProtocolIds, id];
     update({ linkedProtocolIds: upd, linkedProtocolId: upd[0] });
   };
@@ -466,7 +468,7 @@ export const TestShellRenderer = ({
   //
   // If no scope is provided, the field is shown everywhere.
   // ------------------------------------------------------------
-  const normalizeScopeValue = (v) => String(v || '').toLowerCase();
+  const normalizeScopeValue = (value) => String(value || '').toLowerCase();
 
   const currentTabKey = normalizeScopeValue(config.typeKey || t.type || 'test');
   const currentTestType = normalizeScopeValue(t.type || currentTabKey);
@@ -476,13 +478,13 @@ export const TestShellRenderer = ({
 
     const scopes = [];
 
-    const addScopes = (val) => {
-      if (!val) return;
+    const addScopes = (value) => {
+      if (!value) return;
 
-      if (Array.isArray(val)) {
-        val.forEach(addScopes);
+      if (Array.isArray(value)) {
+        value.forEach(addScopes);
       } else {
-        scopes.push(normalizeScopeValue(val));
+        scopes.push(normalizeScopeValue(value));
       }
     };
 

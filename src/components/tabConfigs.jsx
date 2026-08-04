@@ -2,8 +2,9 @@
 //
 // IMPORTANT:
 // `fallbackCategories` are only used when no categories are provided
-// by Definitions & Labels. The categories defined in Definitions & Labels
-// should be the primary source.
+// by Definitions & Labels.
+//
+// The categories defined in Definitions & Labels should be the primary source.
 
 export const CD_TAB_CONFIG = {
   typeKey: 'cd',

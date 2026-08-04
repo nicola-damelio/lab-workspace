@@ -716,40 +716,53 @@ export const All = ({ ctx }) => {
     return isNaN(n) ? NaN : n - gOff;
   };
 
-  const concOf = (r, c, role) => {
-    const rl = role !== undefined ? role : getRole(r, c);
-    if (!rl || ['cells', 'medium', 'pbs'].includes(String(rl).toLowerCase())) return 0;
+const concOf = (r, c, role) => {
+  const rl = role !== undefined ? role : getRole(r, c);
+  if (!rl || ['cells', 'medium', 'pbs'].includes(String(rl).toLowerCase())) return 0;
 
-    const cfg = cellConfig?.[r]?.[c];
-    if (cfg && cfg.conc !== null && cfg.conc !== undefined) {
-      return Number(cfg.conc);
-    }
+  // If user manually overrode concentration, respect it
+  const cfg = cellConfig?.[r]?.[c];
+  if (cfg && cfg.conc !== null && cfg.conc !== undefined) {
+    return Number(cfg.conc);
+  }
 
-    const s = customConc[rl]
-      ? {
-          top: parseFloat(customConc[rl].top) || 0,
-          dil: parseFloat(customConc[rl].dil) || 1
-        }
-      : { top: tConc, dil: dFact };
-
-    let isHoriz = false;
-    let step = 0;
-    if (rowCompounds[r] === rl) isHoriz = true;
-    else if (compounds[c] === rl) isHoriz = false;
-    else if (rowCompounds.includes(rl)) isHoriz = true;
-
-    if (isHoriz) {
-      for (let i = 0; i < c; i++) {
-        if (getRole(r, i) === rl) step++;
+  const s = customConc[rl]
+    ? {
+        top: parseFloat(customConc[rl].top) || 0,
+        dil: parseFloat(customConc[rl].dil) || 1
       }
-    } else {
-      for (let i = 0; i < r; i++) {
-        if (getRole(i, c) === rl) step++;
-      }
-    }
+    : { top: tConc, dil: dFact };
 
+  let isHoriz = false;
+  let step = 0;
+
+  if (rowCompounds[r] === rl) {
+    isHoriz = true;
+  } else if (compounds[c] === rl) {
+    isHoriz = false;
+  } else if (rowCompounds.includes(rl)) {
+    isHoriz = true;
+  } else {
+    // ─── NEW: compound assigned via paint tool (not in row/column arrays) ───
+    // Count preceding wells with the same compound in the same row → horizontal dilution
+    for (let i = 0; i < c; i++) {
+      if (getRole(r, i) === rl) step++;
+    }
     return s.top / Math.pow(s.dil, step);
-  };
+  }
+
+  if (isHoriz) {
+    for (let i = 0; i < c; i++) {
+      if (getRole(r, i) === rl) step++;
+    }
+  } else {
+    for (let i = 0; i < r; i++) {
+      if (getRole(i, c) === rl) step++;
+    }
+  }
+
+  return s.top / Math.pow(s.dil, step);
+};
 
   const cmpColor = (name, autoIdx) => {
     const stored = cmpColors[name];
@@ -1459,33 +1472,24 @@ export const All = ({ ctx }) => {
   }, []);
 
   /* ===== NEW: plate-map compound assignment helpers ===== */
-  const assignCompoundToCell = (r, c, name) => {
-    const nc = cellConfig.map((row) => row.map((cell) => ({ ...cell })));
-    if (!name) {
-      nc[r][c].role = null;
-      nc[r][c].conc = null;
-      nc[r][c].manualOverride = false;
-    } else {
-      nc[r][c].role = name;
-      nc[r][c].manualOverride = true;
-      if (['cells', 'medium', 'pbs'].includes(String(name).toLowerCase())) {
-        nc[r][c].conc = 0;
-      } else {
-        let step = 0;
-        for (let i = 0; i < c; i++) {
-          if (nc[r][i].role === name) step++;
-        }
-        const s = customConc[name] || { top: tConc, dil: dFact };
-        nc[r][c].conc = s.top / Math.pow(s.dil, step);
-      }
-    }
-    updatePlate({ cellConfig: nc });
+const assignCompoundToCell = (r, c, name) => {
+  const nc = cellConfig.map((row) => row.map((cell) => ({ ...cell })));
+  if (!name) {
+    nc[r][c].role = null;
+    nc[r][c].conc = null;          // clear so concOf recalculates
+    nc[r][c].manualOverride = false;
+  } else {
+    nc[r][c].role = name;
+    nc[r][c].manualOverride = true;
+    nc[r][c].conc = null;          // ← KEY: leave null so concOf calculates dynamically
+  }
+  updatePlate({ cellConfig: nc });
 
-    const t = (name || '').trim();
-    if (t && !allCmpds.includes(t) && setCustomCmpds) {
-      setCustomCmpds((p) => [...(Array.isArray(p) ? p : []), t]);
-    }
-  };
+  const t = (name || '').trim();
+  if (t && !allCmpds.includes(t) && setCustomCmpds) {
+    setCustomCmpds((p) => [...(Array.isArray(p) ? p : []), t]);
+  }
+};
 
   const handleMapMouseDown = (e, r, c) => {
     if (e.button !== 0) return;
