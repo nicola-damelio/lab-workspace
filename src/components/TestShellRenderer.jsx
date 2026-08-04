@@ -5,14 +5,15 @@ import { RichTextEditor } from './RichTextEditor';
 TestShellRenderer — shared shell for Plate / NMR / CD tabs.
 
 It renders common sections:
-- Classification
-- Compounds / biological models
-- Experimental conditions
-- Linked protocols
-- Agenda
-- Comments & attachments
-- Images
-- Lab notebook export
+
+Classification
+Compounds / biological models
+Experimental conditions
+Linked protocols
+Agenda
+Comments & attachments
+Images
+Lab notebook export
 
 Type-specific content is injected with the `custom` prop:
 
@@ -61,7 +62,6 @@ export const CollapsibleSection = ({
 
         <div className="flex items-center gap-3 shrink-0">
           {headerExtra && <div onClick={(e) => e.stopPropagation()}>{headerExtra}</div>}
-
           <svg
             className={`w-5 h-5 text-slate-500 transition-transform duration-200 ${
               isOpen ? 'rotate-180' : ''
@@ -110,42 +110,23 @@ export const MultiSelectDropdown = ({
 
   const emerald = accent === 'emerald';
 
-  const boxCls = emerald
-    ? 'bg-emerald-50 border-emerald-200'
-    : 'bg-blue-50 border-blue-200';
-
+  const boxCls = emerald ? 'bg-emerald-50 border-emerald-200' : 'bg-blue-50 border-blue-200';
   const labelCls = emerald ? 'text-emerald-800' : 'text-blue-800';
-
-  const badgeCls = emerald
-    ? 'bg-emerald-200 text-emerald-800'
-    : 'bg-blue-200 text-blue-800';
-
+  const badgeCls = emerald ? 'bg-emerald-200 text-emerald-800' : 'bg-blue-200 text-blue-800';
   const buttonCls = emerald
     ? 'border-emerald-300 focus:border-emerald-500'
     : 'border-blue-300 focus:border-blue-500';
-
-  const selectedTextCls = emerald
-    ? 'font-bold text-emerald-900'
-    : 'font-bold text-blue-900';
-
+  const selectedTextCls = emerald ? 'font-bold text-emerald-900' : 'font-bold text-blue-900';
   const arrowCls = emerald ? 'text-emerald-700' : 'text-blue-700';
-
   const menuCls = emerald ? 'border-emerald-200' : 'border-blue-200';
-
   const optionHoverCls = emerald ? 'hover:bg-emerald-50' : 'hover:bg-blue-50';
-
-  const optionSelectedCls = emerald
-    ? 'font-bold text-emerald-800'
-    : 'font-bold text-blue-800';
-
+  const optionSelectedCls = emerald ? 'font-bold text-emerald-800' : 'font-bold text-blue-800';
   const chipCls = emerald
     ? 'bg-emerald-100 border-emerald-300 text-emerald-900'
     : 'bg-blue-100 border-blue-300 text-blue-900';
-
   const chipRemoveCls = emerald
     ? 'text-emerald-500 hover:text-red-600'
     : 'text-blue-500 hover:text-red-600';
-
   const checkboxCls = emerald ? 'accent-emerald-600' : 'accent-blue-600';
 
   return (
@@ -258,7 +239,10 @@ const normalizeImageCandidates = (url) => {
   }
 
   if (u.includes('dropbox.com')) {
-    return [u.replace(/[?&]dl=0/g, '') + (u.includes('?') ? '&raw=1' : '?raw=1'), u];
+    return [
+      u.replace(/[?&]dl=0/g, '') + (u.includes('?') ? '&raw=1' : '?raw=1'),
+      u
+    ];
   }
 
   return [u];
@@ -320,6 +304,7 @@ export const TestShellRenderer = ({
   };
 
   const t = activeTest || {};
+
   const samplesCfg = config.samples || {};
   const imagesKey = config.imagesKey || 'images';
   const typeKey = config.typeKey || 'test';
@@ -329,14 +314,31 @@ export const TestShellRenderer = ({
   const images = t[imagesKey] || [];
   const documents = t.documents || [];
   const linkedProtocolId = t.linkedProtocolId || '';
-
   const cellLines = t.cellLines || [];
-  const categories = config.categories || testCategories || ['Activity'];
-  const testCategory = t.testCategory || categories[0] || 'Activity';
   const customFieldValues = t.customFieldValues || {};
   const experimentPlan = t.plan || [];
 
   const [zoomImage, setZoomImage] = useState(null);
+
+  // ------------------------------------------------------------
+  // Classification categories:
+  // Definitions & Labels categories are now the primary source.
+  // ------------------------------------------------------------
+  const definitionCategories = Array.isArray(testCategories)
+    ? testCategories.filter(Boolean)
+    : [];
+
+  const fallbackCategories =
+    config.fallbackCategories || config.categories || ['Activity'];
+
+  const baseCategories =
+    definitionCategories.length > 0 ? definitionCategories : fallbackCategories;
+
+  const testCategory = t.testCategory || baseCategories[0] || 'Activity';
+
+  const categories = [
+    ...new Set([...baseCategories, testCategory].filter(Boolean))
+  ];
 
   const showCompounds = samplesCfg.compounds !== false;
   const showCellLines = samplesCfg.cellLines !== false;
@@ -348,9 +350,11 @@ export const TestShellRenderer = ({
   const cellLineLabel =
     samplesCfg.cellLineLabel || 'Cell Lines / Biological Models';
 
+  // ------------------------------------------------------------
   // Compound selection.
   // For plates, activeTest.compounds is used as the plate column assignment array,
   // so we intentionally avoid falling back to activeTest.compounds when typeKey === 'plate'.
+  // ------------------------------------------------------------
   const selectedCompounds = (() => {
     if (Array.isArray(t.selectedCompounds)) {
       return t.selectedCompounds.filter(Boolean);
@@ -374,7 +378,8 @@ export const TestShellRenderer = ({
     return [];
   })();
 
-  const linkedProtocolIds = t.linkedProtocolIds || (linkedProtocolId ? [linkedProtocolId] : []);
+  const linkedProtocolIds =
+    t.linkedProtocolIds || (linkedProtocolId ? [linkedProtocolId] : []);
 
   const addLinkedProtocol = (id) => {
     if (!id || linkedProtocolIds.includes(id)) return;
@@ -447,8 +452,70 @@ export const TestShellRenderer = ({
     return () => document.removeEventListener('keydown', handler);
   }, []);
 
+  // ------------------------------------------------------------
+  // Custom metadata filtering by tab type.
+  //
+  // Supported field scopes:
+  // appliesTo: 'all' | 'plate' | 'nmr' | 'cd'
+  // appliesTo: ['plate', 'cd']
+  // types: ['plate']
+  // tabs: ['nmr']
+  // scope: 'cd'
+  // tab: 'plate'
+  // testType: 'plate-96'
+  //
+  // If no scope is provided, the field is shown everywhere.
+  // ------------------------------------------------------------
+  const normalizeScopeValue = (v) => String(v || '').toLowerCase();
+
+  const currentTabKey = normalizeScopeValue(config.typeKey || t.type || 'test');
+  const currentTestType = normalizeScopeValue(t.type || currentTabKey);
+
+  const customFieldMatchesTab = (field) => {
+    if (!field) return false;
+
+    const scopes = [];
+
+    const addScopes = (val) => {
+      if (!val) return;
+
+      if (Array.isArray(val)) {
+        val.forEach(addScopes);
+      } else {
+        scopes.push(normalizeScopeValue(val));
+      }
+    };
+
+    addScopes(field.appliesTo);
+    addScopes(field.applyTo);
+    addScopes(field.scope);
+    addScopes(field.tab);
+    addScopes(field.tabs);
+    addScopes(field.testType);
+    addScopes(field.types);
+
+    if (scopes.length === 0) return true;
+    if (scopes.includes('all') || scopes.includes('*')) return true;
+
+    return scopes.some((scope) => {
+      if (!scope) return false;
+
+      if (scope === currentTabKey || scope === currentTestType) return true;
+
+      // Plate types can be plate-96, plate-384, plate-9x9box, etc.
+      if (scope === 'plate') {
+        return currentTabKey === 'plate' || currentTestType.startsWith('plate');
+      }
+
+      return false;
+    });
+  };
+
+  const typeCustomFields = (customFields || []).filter(customFieldMatchesTab);
+
   const renderConditionField = (f) => {
     const val = t[f.key] !== undefined && t[f.key] !== null ? t[f.key] : '';
+
     const cls =
       'w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500';
 
@@ -508,12 +575,78 @@ export const TestShellRenderer = ({
     );
   };
 
+  const renderCustomMetadataField = (field) => {
+    const val =
+      customFieldValues[field.name] !== undefined &&
+      customFieldValues[field.name] !== null
+        ? customFieldValues[field.name]
+        : '';
+
+    const cls =
+      'w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500';
+
+    return (
+      <div key={field.id || field.name}>
+        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+          {field.name}
+        </label>
+
+        {field.type === 'date' ? (
+          <input
+            type="date"
+            value={val}
+            onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
+            className={cls}
+          />
+        ) : field.type === 'number' ? (
+          <input
+            type="number"
+            value={val}
+            onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
+            className={cls}
+            placeholder="Enter value..."
+          />
+        ) : field.type === 'select' ? (
+          <select
+            value={val}
+            onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
+            className={cls}
+          >
+            <option value="">-- Select --</option>
+            {(field.options || []).map((opt) => (
+              <option key={opt} value={opt}>
+                {opt}
+              </option>
+            ))}
+          </select>
+        ) : field.type === 'textarea' ? (
+          <textarea
+            value={val}
+            onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
+            className={cls}
+            placeholder="Enter value..."
+            rows={3}
+          />
+        ) : (
+          <input
+            type="text"
+            value={val}
+            onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
+            className={cls}
+            placeholder="Enter value..."
+          />
+        )}
+      </div>
+    );
+  };
+
   const ctx = {
     activeTest: t,
     updateActiveTest,
     allCmpds,
     allCellLines,
     customFields,
+    typeCustomFields,
     testCategories: categories,
     datasetProtocols,
     jumpToProtocol,
@@ -549,16 +682,30 @@ export const TestShellRenderer = ({
     if (builder) {
       html += builder(checked, ctx);
     } else if (checked.cond) {
-      const sample = selectedCompounds.length > 0 ? selectedCompounds.join(', ') : compound || 'N/A';
-      const cells = cellLines.length > 0 ? cellLines.join(', ') : 'N/A';
+      const sample =
+        selectedCompounds.length > 0 ? selectedCompounds.join(', ') : compound || 'N/A';
+
+      const cells =
+        cellLines.length > 0 ? cellLines.join(', ') : 'N/A';
 
       const conditionPairs = (config.conditionFields || [])
         .map((f) => `<b>${f.label}:</b> ${t[f.key] || 'N/A'}`)
         .join(' | ');
 
-      html += `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;">
-        <b>Sample:</b> ${sample} | <b>Cell lines:</b> ${cells} | ${conditionPairs}
-      </p>`;
+      const customPairs = typeCustomFields
+        .map((f) => `<b>${f.name}:</b> ${customFieldValues[f.name] || 'N/A'}`)
+        .join(' | ');
+
+      const details = [
+        sample ? `<b>Sample:</b> ${sample}` : '',
+        cells ? `<b>Cell lines:</b> ${cells}` : '',
+        conditionPairs,
+        customPairs
+      ]
+        .filter(Boolean)
+        .join(' | ');
+
+      html += `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;">${details}</p>`;
     }
 
     html += '</div>';
@@ -589,88 +736,22 @@ export const TestShellRenderer = ({
       <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
         {/* ===== CLASSIFICATION ===== */}
         <CollapsibleSection title="Classification" icon="🏷️">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="flex flex-col gap-4">
-              <div>
-                <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
-                  Experiment Type / Test Category
-                </label>
+          <div className="max-w-xl">
+            <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
+              Experiment Type / Test Category
+            </label>
 
-                <select
-                  value={testCategory}
-                  onChange={(e) => update({ testCategory: e.target.value })}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
-                >
-                  {(categories || []).map((cat) => (
-                    <option key={cat} value={cat}>
-                      {cat}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-3">
-              <label className="text-xs font-bold text-slate-600 uppercase">Custom Metadata</label>
-
-              {(customFields || []).length === 0 ? (
-                <p className="text-sm text-slate-400 italic bg-slate-50 p-3 rounded-lg border border-dashed border-slate-300">
-                  No custom fields defined. Configure them in Definitions & Labels.
-                </p>
-              ) : (
-                (customFields || []).map((field) => (
-                  <div key={field.id} className="flex flex-col gap-1">
-                    <label className="text-xs font-bold text-slate-500">{field.name}</label>
-
-                    {field.type === 'select' ? (
-                      <select
-                        value={customFieldValues[field.name] || ''}
-                        onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
-                        className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
-                      >
-                        <option value="">-- Select --</option>
-                        {(field.options || []).map((opt) => (
-                          <option key={opt} value={opt}>
-                            {opt}
-                          </option>
-                        ))}
-                      </select>
-                    ) : field.type === 'number' ? (
-                      <input
-                        type="number"
-                        value={customFieldValues[field.name] || ''}
-                        onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
-                        className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
-                        placeholder="Enter value..."
-                      />
-                    ) : field.type === 'date' ? (
-                      <input
-                        type="date"
-                        value={customFieldValues[field.name] || ''}
-                        onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
-                        className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
-                      />
-                    ) : field.type === 'textarea' ? (
-                      <textarea
-                        value={customFieldValues[field.name] || ''}
-                        onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
-                        className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
-                        placeholder="Enter value..."
-                        rows={3}
-                      />
-                    ) : (
-                      <input
-                        type="text"
-                        value={customFieldValues[field.name] || ''}
-                        onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
-                        className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
-                        placeholder="Enter value..."
-                      />
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
+            <select
+              value={testCategory}
+              onChange={(e) => update({ testCategory: e.target.value })}
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
+            >
+              {(categories || []).map((cat) => (
+                <option key={cat} value={cat}>
+                  {cat}
+                </option>
+              ))}
+            </select>
           </div>
         </CollapsibleSection>
 
@@ -711,6 +792,14 @@ export const TestShellRenderer = ({
         <CollapsibleSection title="Experimental Conditions" icon="🌡️">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {(config.conditionFields || []).map(renderConditionField)}
+
+            {typeCustomFields.length > 0 && (
+              <div className="col-span-full text-xs font-bold text-slate-400 uppercase pt-2 border-t border-slate-100">
+                Custom Metadata
+              </div>
+            )}
+
+            {typeCustomFields.map(renderCustomMetadataField)}
           </div>
         </CollapsibleSection>
 
@@ -887,6 +976,7 @@ export const TestShellRenderer = ({
                         className="flex items-center gap-2 truncate flex-1 cursor-pointer"
                         onClick={() => {
                           const nn = prompt('Rename document:', doc.name);
+
                           if (nn) {
                             update({
                               documents: documents.map((d) =>
@@ -964,6 +1054,7 @@ export const TestShellRenderer = ({
               type="button"
               onClick={() => {
                 const url = prompt('Paste image link (Google Drive, Dropbox, or direct URL):');
+
                 if (url && url.trim()) {
                   update({ [imagesKey]: [...images, url.trim()] });
                 }
@@ -1025,7 +1116,6 @@ export const TestShellRenderer = ({
         ) : (
           <>
             {SetupSection && <SetupSection ctx={ctx} />}
-
             {DataSection && <DataSection ctx={ctx} />}
 
             {FittingSection ? (
