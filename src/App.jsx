@@ -1376,17 +1376,18 @@ export default function App() {
                                 </div>
                             );
                             if (activeTest.type === 'nmr') {
-                                return <NMRTestRenderer
-                                    activeTest={activeTest}
-                                    updateActiveTest={updateActiveTest}
-                                    TestHeader={TestHeader}
-                                    datasetProtocols={datasetProtocols}
-                                    jumpToProtocol={jumpToProtocolFn}
-                                    allCmpds={[...new Set([...DEF_COMPOUNDS, ...customCmpds])]}
-                                    allCellLines={[...new Set([...DEF_CELL_LINES, ...customCellLines])]}
-                                    customFields={customFields}
-                                />;
-                            }
+                               return (
+    <NMRTestRenderer
+        activeTest={activeTest}
+        updateActiveTest={updateActiveTest}
+        TestHeader={TestHeader}
+        datasetProtocols={datasetProtocols}
+        jumpToProtocol={jumpToProtocolFn}
+        allCmpds={[...new Set([...DEF_COMPOUNDS, ...customCmpds])]}
+        allCellLines={[...new Set([...DEF_CELL_LINES, ...customCellLines])]}
+        customFields={customFields}
+    />
+);                            }
                             if (activeTest.type === 'cd') {
                                 return <CDTestRenderer
                                     activeTest={activeTest}

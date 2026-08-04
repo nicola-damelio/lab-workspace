@@ -2567,7 +2567,16 @@ const SmartImage = ({ src, alt }) => {
 };
 
 // ================= MAIN COMPONENT =================
-export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, datasetProtocols, jumpToProtocol }) => {
+export const NMRTestRenderer = ({
+    activeTest,
+    updateActiveTest,
+    TestHeader,
+    datasetProtocols,
+    jumpToProtocol,
+    allCmpds,
+    allCellLines,
+    customFields
+}) => {
   const moleculeType = activeTest.moleculeType || 'protein';
   const rawSeq = (activeTest.proteinSequence || '').toUpperCase();
   const validChars =
@@ -2595,6 +2604,34 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
   const [sugarConf, setSugarConf] = useState('chair');
   const isPolymer = moleculeType === 'protein' || moleculeType === 'dna' || moleculeType === 'rna';
   const hasPhosphorus = moleculeType === 'dna' || moleculeType === 'rna' || moleculeType === 'lipid';
+    // ===== LABELS & CLASSIFICATION STATE =====
+    const cellLines = activeTest.cellLines || [];
+    const testCategory = activeTest.testCategory || 'Activity';
+    const customFieldValues = activeTest.customFieldValues || {};
+    const selectedCompounds = activeTest.compounds || (activeTest.compound ? [activeTest.compound] : []);
+
+    const toggleCellLine = (cl) => {
+        const updated = cellLines.includes(cl)
+            ? cellLines.filter((c) => c !== cl)
+            : [...cellLines, cl];
+        updateActiveTest({ cellLines: updated });
+    };
+
+    const toggleCompound = (cmp) => {
+        const updated = selectedCompounds.includes(cmp)
+            ? selectedCompounds.filter((c) => c !== cmp)
+            : [...selectedCompounds, cmp];
+        updateActiveTest({
+            compounds: updated,
+            compound: updated.length > 0 ? updated[0] : ''
+        });
+    };
+
+    const handleCustomFieldChange = (fieldName, value) => {
+        updateActiveTest({
+            customFieldValues: { ...customFieldValues, [fieldName]: value }
+        });
+    };
   const DB =
     moleculeType === 'protein'
       ? AMINO_ACID_DB
@@ -3068,19 +3105,37 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
         {/* EXPERIMENTAL CONDITIONS */}
         <CollapsibleSection title="Experimental Conditions" icon="🧪" defaultOpen={true}>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <div className="flex flex-col gap-1 col-span-1 md:col-span-2 lg:col-span-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-              <label className="text-xs font-bold text-blue-800 uppercase flex items-center justify-between">
-                <span>Compound / Molecule Label</span>
-                <span className="text-[9px] bg-blue-200 text-blue-800 px-2 py-0.5 rounded">Used for Lab Notebook filtering</span>
-              </label>
-              <input
-                type="text"
-                value={activeTest.compound || ''}
-                onChange={(e) => updateActiveTest({ compound: e.target.value, compounds: [e.target.value] })}
-                className="w-full border border-blue-300 rounded-md p-2 text-sm outline-none focus:border-blue-500 font-bold text-blue-900"
-                placeholder="e.g. Compound A"
-              />
-            </div>
+<div className="flex flex-col gap-1 col-span-1 md:col-span-2 lg:col-span-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+    <label className="text-xs font-bold text-blue-800 uppercase flex items-center justify-between mb-2">
+        <span>Compound / Molecule Label(s)</span>
+        <span className="text-[9px] bg-blue-200 text-blue-800 px-2 py-0.5 rounded">Used for Lab Notebook filtering • Multiple selection allowed</span>
+    </label>
+    <div className="flex flex-wrap gap-2">
+        {(allCmpds || []).map((cmp) => (
+            <button
+                key={cmp}
+                onClick={() => toggleCompound(cmp)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
+                    selectedCompounds.includes(cmp)
+                        ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                        : 'bg-white text-slate-600 border-slate-300 hover:border-blue-400 hover:bg-blue-50'
+                }`}
+            >
+                {selectedCompounds.includes(cmp) ? '✓ ' : ''}{cmp}
+            </button>
+        ))}
+        {(allCmpds || []).length === 0 && (
+            <span className="text-sm text-slate-400 italic">
+                No compounds defined. Add them in Definitions & Labels.
+            </span>
+        )}
+    </div>
+    {selectedCompounds.length > 0 && (
+        <p className="text-[10px] text-blue-600 mt-2 font-bold">
+            Selected: {selectedCompounds.join(', ')}
+        </p>
+    )}
+</div>
             <div className="flex flex-col gap-1 col-span-1 md:col-span-2 lg:col-span-4 p-3 bg-indigo-50 border border-indigo-200 rounded-lg">
               <label className="text-xs font-bold text-indigo-800 uppercase flex items-center justify-between mb-2">
                 <span>📋 Linked Protocol</span>
@@ -4083,6 +4138,97 @@ export const NMRTestRenderer = ({ activeTest, updateActiveTest, TestHeader, data
         </button>
       </div>
     </CollapsibleSection>
+{/* ===== LABELS & CLASSIFICATION ===== */}
+<CollapsibleSection title="Labels & Classification" icon="🏷️" defaultOpen={true}>
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="flex flex-col gap-4">
+            <div>
+                <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">Test Category</label>
+                <select
+                    value={testCategory}
+                    onChange={(e) => updateActiveTest({ testCategory: e.target.value })}
+                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
+                >
+                    {["Activity", "Toxicity", "Structure", "Binding", "Characterization", "Kinetics"].map((cat) => (
+                        <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                </select>
+            </div>
+            <div>
+                <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">Cell Lines / Biological Models</label>
+                <div className="flex flex-wrap gap-2">
+                    {(allCellLines || []).map((cl) => (
+                        <button
+                            key={cl}
+                            onClick={() => toggleCellLine(cl)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
+                                cellLines.includes(cl)
+                                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                                    : 'bg-white text-slate-600 border-slate-300 hover:border-emerald-400 hover:bg-emerald-50'
+                            }`}
+                        >
+                            {cellLines.includes(cl) ? '✓ ' : ''}{cl}
+                        </button>
+                    ))}
+                    {(allCellLines || []).length === 0 && (
+                        <span className="text-sm text-slate-400 italic">
+                            No cell lines defined. Add them in Definitions & Labels.
+                        </span>
+                    )}
+                </div>
+            </div>
+        </div>
+        <div className="flex flex-col gap-3">
+            <label className="text-xs font-bold text-slate-600 uppercase">Custom Metadata</label>
+            {(customFields || []).length === 0 ? (
+                <p className="text-sm text-slate-400 italic bg-slate-50 p-3 rounded-lg border border-dashed border-slate-300">
+                    No custom fields defined. Configure them in Definitions & Labels.
+                </p>
+            ) : (
+                (customFields || []).map((field) => (
+                    <div key={field.id} className="flex flex-col gap-1">
+                        <label className="text-xs font-bold text-slate-500">{field.name}</label>
+                        {field.type === 'select' ? (
+                            <select
+                                value={customFieldValues[field.name] || ''}
+                                onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
+                                className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
+                            >
+                                <option value="">-- Select --</option>
+                                {field.options.map((opt) => (
+                                    <option key={opt} value={opt}>{opt}</option>
+                                ))}
+                            </select>
+                        ) : field.type === 'number' ? (
+                            <input
+                                type="number"
+                                value={customFieldValues[field.name] || ''}
+                                onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
+                                className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
+                                placeholder="Enter value..."
+                            />
+                        ) : field.type === 'date' ? (
+                            <input
+                                type="date"
+                                value={customFieldValues[field.name] || ''}
+                                onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
+                                className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
+                            />
+                        ) : (
+                            <input
+                                type="text"
+                                value={customFieldValues[field.name] || ''}
+                                onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
+                                className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
+                                placeholder="Enter value..."
+                            />
+                        )}
+                    </div>
+                ))
+            )}
+        </div>
+    </div>
+</CollapsibleSection>
   </div>
 </div>
 );
