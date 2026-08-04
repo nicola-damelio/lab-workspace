@@ -66,6 +66,252 @@ const normalizeCustomFields = (fields) => {
   });
 };
 
+const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => {
+  const [draft, setDraft] = useState({
+    name: '',
+    type: 'text',
+    options: '',
+    appliesTo: 'all'
+  });
+
+  const addField = () => {
+    const name = draft.name.trim();
+
+    if (!name) {
+      alert('Please enter a field name.');
+      return;
+    }
+
+    const options =
+      draft.type === 'select'
+        ? draft.options
+            .split(',')
+            .map((opt) => opt.trim())
+            .filter(Boolean)
+        : [];
+
+    const newField = {
+      id: `custom_field_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      name,
+      type: draft.type,
+      options,
+      appliesTo: draft.appliesTo || 'all'
+    };
+
+    setCustomFields((prev) => [...(Array.isArray(prev) ? prev : []), newField]);
+
+    setDraft({
+      name: '',
+      type: 'text',
+      options: '',
+      appliesTo: 'all'
+    });
+  };
+
+  const updateField = (id, patch) => {
+    setCustomFields((prev) =>
+      (Array.isArray(prev) ? prev : []).map((field) =>
+        field.id === id ? { ...field, ...patch } : field
+      )
+    );
+  };
+
+  const removeField = (id) => {
+    setCustomFields((prev) =>
+      (Array.isArray(prev) ? prev : []).filter((field) => field.id !== id)
+    );
+  };
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+      <h3 className="text-sm font-bold text-slate-700 uppercase mb-3">
+        Custom Metadata Fields
+      </h3>
+
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-3 mb-4">
+        <div className="md:col-span-3">
+          <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+            Field Name
+          </label>
+
+          <input
+            type="text"
+            value={draft.name}
+            onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
+            placeholder="e.g. Instrument"
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
+          />
+        </div>
+
+        <div className="md:col-span-2">
+          <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+            Type
+          </label>
+
+          <select
+            value={draft.type}
+            onChange={(e) => setDraft((prev) => ({ ...prev, type: e.target.value }))}
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
+          >
+            <option value="text">Text</option>
+            <option value="number">Number</option>
+            <option value="date">Date</option>
+            <option value="textarea">Textarea</option>
+            <option value="select">Select</option>
+          </select>
+        </div>
+
+        <div className="md:col-span-3">
+          <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+            Options, comma separated
+          </label>
+
+          <input
+            type="text"
+            value={draft.options}
+            onChange={(e) => setDraft((prev) => ({ ...prev, options: e.target.value }))}
+            disabled={draft.type !== 'select'}
+            placeholder={draft.type === 'select' ? 'e.g. Low, Medium, High' : 'N/A'}
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 disabled:bg-slate-50 disabled:text-slate-400"
+          />
+        </div>
+
+        <div className="md:col-span-2">
+          <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+            Tab Type
+          </label>
+
+          <select
+            value={draft.appliesTo}
+            onChange={(e) => setDraft((prev) => ({ ...prev, appliesTo: e.target.value }))}
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
+          >
+            {CUSTOM_FIELD_TAB_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="md:col-span-2 flex items-end">
+          <button
+            type="button"
+            onClick={addField}
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm shadow-sm transition-colors"
+          >
+            Add Field
+          </button>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-3">
+        {(Array.isArray(customFields) ? customFields : []).length === 0 ? (
+          <div className="text-sm text-slate-400 italic bg-slate-50 border border-dashed border-slate-300 rounded-lg p-4">
+            No custom metadata fields defined.
+          </div>
+        ) : (
+          (Array.isArray(customFields) ? customFields : []).map((field) => {
+            const scopeValue = Array.isArray(field.appliesTo)
+              ? field.appliesTo[0] || 'all'
+              : field.appliesTo || 'all';
+
+            return (
+              <div
+                key={field.id || field.name}
+                className="border border-slate-200 rounded-lg p-3 bg-slate-50"
+              >
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
+                  <div className="md:col-span-3">
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
+                      Field Name
+                    </label>
+
+                    <input
+                      type="text"
+                      value={field.name || ''}
+                      onChange={(e) => updateField(field.id, { name: e.target.value })}
+                      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white"
+                    />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
+                      Type
+                    </label>
+
+                    <select
+                      value={field.type || 'text'}
+                      onChange={(e) => updateField(field.id, { type: e.target.value })}
+                      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
+                    >
+                      <option value="text">Text</option>
+                      <option value="number">Number</option>
+                      <option value="date">Date</option>
+                      <option value="textarea">Textarea</option>
+                      <option value="select">Select</option>
+                    </select>
+                  </div>
+
+                  <div className="md:col-span-3">
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
+                      Options
+                    </label>
+
+                    <input
+                      type="text"
+                      value={(field.options || []).join(', ')}
+                      onChange={(e) =>
+                        updateField(field.id, {
+                          options: e.target.value
+                            .split(',')
+                            .map((opt) => opt.trim())
+                            .filter(Boolean)
+                        })
+                      }
+                      disabled={field.type !== 'select'}
+                      placeholder={field.type === 'select' ? 'Comma separated options' : 'N/A'}
+                      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white disabled:bg-slate-100 disabled:text-slate-400"
+                    />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
+                      Tab Type
+                    </label>
+
+                    <select
+                      value={scopeValue}
+                      onChange={(e) => updateField(field.id, { appliesTo: e.target.value })}
+                      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
+                    >
+                      {CUSTOM_FIELD_TAB_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="md:col-span-2 flex items-end justify-end">
+                    <button
+                      type="button"
+                      onClick={() => removeField(field.id)}
+                      className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold py-2 px-4 rounded-lg text-sm transition-colors"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+};
+
 const migrateLoadedDataset = (s) => {
   const rawTests = (s && (s.tests || s.plates)) || [];
 
@@ -2070,22 +2316,29 @@ export default function App() {
             )}
 
             {currentModule === 'definitions' && (
-              <DefinitionsPanel
-                customCmpds={customCmpds}
-                setCustomCmpds={setCustomCmpds}
-                customCellLines={customCellLines}
-                setCustomCellLines={setCustomCellLines}
-                testCategories={testCategories}
-                setTestCategories={setTestCategories}
-                protocolCategories={protocolCategories}
-                setProtocolCategories={setProtocolCategories}
-                customFields={customFields}
-                setCustomFields={handleSetCustomFields}
-                customFieldTabOptions={CUSTOM_FIELD_TAB_OPTIONS}
-                cmpColors={cmpColors}
-                setCmpColors={setCmpColors}
-                handlePrint={handlePrint}
-              />
+              <div className="h-full overflow-y-auto custom-scrollbar p-4 md:p-6 flex flex-col gap-6">
+                <CustomMetadataFieldsManager
+                  customFields={customFields}
+                  setCustomFields={handleSetCustomFields}
+                />
+
+                <DefinitionsPanel
+                  customCmpds={customCmpds}
+                  setCustomCmpds={setCustomCmpds}
+                  customCellLines={customCellLines}
+                  setCustomCellLines={setCustomCellLines}
+                  testCategories={testCategories}
+                  setTestCategories={setTestCategories}
+                  protocolCategories={protocolCategories}
+                  setProtocolCategories={setProtocolCategories}
+                  customFields={customFields}
+                  setCustomFields={handleSetCustomFields}
+                  customFieldTabOptions={CUSTOM_FIELD_TAB_OPTIONS}
+                  cmpColors={cmpColors}
+                  setCmpColors={setCmpColors}
+                  handlePrint={handlePrint}
+                />
+              </div>
             )}
 
             {currentModule === 'agenda' && (
@@ -2722,7 +2975,7 @@ export default function App() {
                                               links: p.links.filter((l) => l.id !== link.id)
                                             }
                                           : p
-                                    )
+                                      )
                                     )
                                   }
                                   className="text-slate-400 hover:text-red-500 font-bold px-2 py-1 transition-opacity"
