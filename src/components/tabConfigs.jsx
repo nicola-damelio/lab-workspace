@@ -1,15 +1,30 @@
-// Per-tab declarative configuration for TestShellRenderer.
+// tabConfigs.jsx
+// Per-page declarative configuration for TestShellRenderer.
+// Edit these objects to change fields, categories, sample visibility,
+// condition fields, notebook export options, etc.
+
 export const CD_TAB_CONFIG = {
   typeKey: 'cd',
   typeLabel: 'Circular Dichroism',
   icon: '🌀',
-  categories: ['Activity', 'Toxicity', 'Structure', 'Binding', 'Characterization'],
+
+  categories: [
+    'Activity',
+    'Toxicity',
+    'Structure',
+    'Binding',
+    'Characterization'
+  ],
+
   samples: {
     compounds: true,
     cellLines: true,
     compoundLabel: 'Compound / Sample Label(s)',
     cellLineLabel: 'Cell Lines / Biological Models'
   },
+
+  imagesKey: 'images',
+
   conditionFields: [
     { key: 'experimentDate', label: 'Experiment Date', type: 'date' },
     { key: 'concentration', label: 'Concentration', type: 'text', placeholder: 'e.g. 0.1 mg/mL' },
@@ -22,7 +37,9 @@ export const CD_TAB_CONFIG = {
     { key: 'otherMolecule', label: 'Other Molecule / Ligand', type: 'text', placeholder: 'e.g. Ligand X' },
     { key: 'ratio', label: 'Molar Ratio', type: 'text', placeholder: 'e.g. 1:5' }
   ],
-  extraNotebookChecks: [
+
+  notebookChecks: [
+    { id: 'cond', label: 'Experimental Conditions' },
     { id: 'struct', label: 'Structure Composition' },
     { id: 'spectra', label: 'Spectra Summary' }
   ]
@@ -32,13 +49,23 @@ export const PLATE_TAB_CONFIG = {
   typeKey: 'plate',
   typeLabel: 'Plate Assay',
   icon: '🧫',
-  categories: ['Activity', 'Toxicity', 'Binding', 'Characterization'],
+
+  categories: [
+    'Activity',
+    'Toxicity',
+    'Binding',
+    'Characterization'
+  ],
+
   samples: {
     compounds: true,
     cellLines: true,
     compoundLabel: 'Compound / Sample Label(s)',
     cellLineLabel: 'Cell Lines / Biological Models'
   },
+
+  imagesKey: 'images',
+
   conditionFields: [
     { key: 'experimentDate', label: 'Experiment Date', type: 'date' },
     { key: 'cellsSeeded', label: 'Cells per Well', type: 'number', placeholder: 'e.g. 5000' },
@@ -46,7 +73,9 @@ export const PLATE_TAB_CONFIG = {
     { key: 'temperature', label: 'Temperature', type: 'text', placeholder: 'e.g. 37°C, 5% CO₂' },
     { key: 'otherConditions', label: 'Other Conditions', type: 'text', placeholder: 'e.g. Serum-free medium' }
   ],
-  extraNotebookChecks: [
+
+  notebookChecks: [
+    { id: 'cond', label: 'Experimental Conditions' },
     { id: 'map', label: 'Plate Map Summary' },
     { id: 'ic50', label: 'IC50 Results' }
   ]
@@ -56,13 +85,26 @@ export const NMR_TAB_CONFIG = {
   typeKey: 'nmr',
   typeLabel: 'NMR',
   icon: '🧲',
-  categories: ['Activity', 'Toxicity', 'Structure', 'Binding', 'Characterization', 'Kinetics'],
+
+  categories: [
+    'Activity',
+    'Toxicity',
+    'Structure',
+    'Binding',
+    'Characterization',
+    'Kinetics'
+  ],
+
   samples: {
     compounds: true,
-    cellLines: true,
+    cellLines: false,
     compoundLabel: 'Compound / Molecule Label(s)',
     cellLineLabel: 'Cell Lines / Biological Models'
   },
+
+  // Important: legacy NMR images are stored in nmrSpectraImages.
+  imagesKey: 'nmrSpectraImages',
+
   conditionFields: [
     { key: 'experimentDate', label: 'Experiment Date', type: 'date' },
     { key: 'concentration', label: 'Concentration', type: 'text', placeholder: 'e.g. 1 mM' },
@@ -73,7 +115,9 @@ export const NMR_TAB_CONFIG = {
     { key: 'otherMolecule', label: 'Other Molecule', type: 'text', placeholder: 'e.g. Ligand X' },
     { key: 'ratio', label: 'Ratio', type: 'text', placeholder: 'e.g. 1:5' }
   ],
-  extraNotebookChecks: [
+
+  notebookChecks: [
+    { id: 'cond', label: 'Experimental Conditions' },
     { id: 'seq', label: 'Sequence' },
     { id: 'table', label: 'Shifts Table' },
     { id: 'formula', label: 'Chemical Formula' },

@@ -3,29 +3,7 @@ import { RichTextEditor } from './RichTextEditor';
 
 /* ============================================================================
 TestShellRenderer — SHARED SHELL for CD / Plate / NMR tabs
-Each test type supplies a `config` object (see contract below). The shell
-renders all common sections; type-specific sections are injected via config.
-
-CONFIG CONTRACT (each sections file exports this shape):
-{
-  typeKey:            'plate' | 'nmr' | 'cd',
-  typeLabel:          string,                      // e.g. "Plate Assay"
-  conditionFields:    [ {key, label, type, placeholder, colSpan?} ],
-  SetupSection:       React.Component | null,      // receives { ctx }
-  DataSection:        React.Component | null,      // receives { ctx }
-  FittingSection:     React.Component | null,      // receives { ctx }
-  SimulationsSection: React.Component | null,      // receives { ctx }
-  notebookChecks:     [ {id, label} ],             // lab notebook checkboxes
-  buildNotebookHtml:  (checked, ctx) => string,    // custom notebook content
-}
-`ctx` passed to custom sections:
-{ activeTest, updateActiveTest, allCmpds, allCellLines, customFields,
-  testCategories, datasetProtocols, jumpToProtocol, ...rest }
 ========================================================================== */
-
-const FS_CLASSES =
-  'fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col';
-const OVERLAY_CLASSES = 'fixed top-0 left-0 w-screen h-screen bg-slate-900/50 backdrop-blur-sm z-[999990]';
 
 // ================= COLLAPSIBLE SECTION =================
 export const CollapsibleSection = ({
@@ -37,6 +15,7 @@ export const CollapsibleSection = ({
   className = ''
 }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
+
   return (
     <div className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-6 break-inside-avoid ${className}`}>
       <button
@@ -49,6 +28,7 @@ export const CollapsibleSection = ({
           {icon && <span className="text-xl shrink-0">{icon}</span>}
           <h3 className="text-lg font-bold text-slate-800 truncate">{title}</h3>
         </div>
+
         <div className="flex items-center gap-3 shrink-0">
           {headerExtra && <div onClick={(e) => e.stopPropagation()}>{headerExtra}</div>}
           <svg
@@ -61,12 +41,13 @@ export const CollapsibleSection = ({
           </svg>
         </div>
       </button>
+
       {isOpen && <div className="p-6">{children}</div>}
     </div>
   );
 };
 
-// ================= MULTI-SELECT DROPDOWN (compounds / cell lines) =================
+// ================= MULTI-SELECT DROPDOWN =================
 export const MultiSelectDropdown = ({
   label,
   options = [],
@@ -78,6 +59,7 @@ export const MultiSelectDropdown = ({
 }) => {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
+
   useEffect(() => {
     const h = (e) => {
       if (ref.current && !ref.current.contains(e.target)) setOpen(false);
@@ -85,12 +67,16 @@ export const MultiSelectDropdown = ({
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, []);
+
   return (
     <div ref={ref} className="relative flex flex-col gap-1 p-3 bg-blue-50 border border-blue-200 rounded-lg">
       <label className="text-xs font-bold text-blue-800 uppercase flex items-center justify-between mb-2">
         <span>{label}</span>
-        <span className="text-[9px] bg-blue-200 text-blue-800 px-2 py-0.5 rounded">Dropdown • Multiple selection</span>
+        <span className="text-[9px] bg-blue-200 text-blue-800 px-2 py-0.5 rounded">
+          Dropdown • Multiple selection
+        </span>
       </label>
+
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -101,6 +87,7 @@ export const MultiSelectDropdown = ({
         </span>
         <span className="text-blue-700 font-bold">▾</span>
       </button>
+
       {open && (
         <div className="absolute top-full left-3 right-3 mt-1 z-50 bg-white border border-blue-200 rounded-lg shadow-xl max-h-56 overflow-y-auto custom-scrollbar">
           {options.length === 0 ? (
@@ -125,6 +112,7 @@ export const MultiSelectDropdown = ({
           )}
         </div>
       )}
+
       {selected.length > 0 && (
         <div className="flex flex-wrap gap-2 mt-2">
           {selected.map((s) => (
@@ -143,13 +131,16 @@ export const MultiSelectDropdown = ({
               </button>
             </span>
           ))}
-          <button
-            type="button"
-            onClick={onClear}
-            className="text-xs font-bold text-red-500 hover:text-red-700 underline"
-          >
-            Clear all
-          </button>
+
+          {onClear && (
+            <button
+              type="button"
+              onClick={onClear}
+              className="text-xs font-bold text-red-500 hover:text-red-700 underline"
+            >
+              Clear all
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -159,6 +150,7 @@ export const MultiSelectDropdown = ({
 // ================= IMAGE URL NORMALIZATION =================
 const normalizeImageCandidates = (url) => {
   const u = (url || '').trim();
+
   let m = u.match(/drive\.google\.com\/file\/d\/([^/?]+)/);
   if (m) {
     const id = m[1];
@@ -168,6 +160,7 @@ const normalizeImageCandidates = (url) => {
       `https://drive.google.com/uc?export=view&id=${id}`
     ];
   }
+
   m = u.match(/drive\.google\.com\/(?:open|uc)[^#]*[?&]id=([^&#]+)/);
   if (m) {
     const id = m[1];
@@ -177,9 +170,11 @@ const normalizeImageCandidates = (url) => {
       `https://drive.google.com/uc?export=view&id=${id}`
     ];
   }
+
   if (u.includes('dropbox.com')) {
     return [u.replace(/[?&]dl=0/g, '') + (u.includes('?') ? '&raw=1' : '?raw=1'), u];
   }
+
   return [u];
 };
 
@@ -187,20 +182,23 @@ export const SmartImage = ({ src, alt, style }) => {
   const cands = React.useMemo(() => normalizeImageCandidates(src), [src]);
   const [idx, setIdx] = useState(0);
   const [failed, setFailed] = useState(false);
+
   useEffect(() => {
     setIdx(0);
     setFailed(false);
   }, [src]);
+
   if (failed) {
     return (
       <div
         className="w-full flex flex-col items-center justify-center bg-slate-50 border border-dashed border-slate-300 rounded text-slate-400 text-xs text-center px-4 py-6"
         style={style || { minHeight: '150px', maxHeight: '400px' }}
       >
-        ⚠️ Preview not available. If the file is private, set it to "Anyone with the link can view".
+        ⚠️ Preview not available. If the file is private, set it to “Anyone with the link can view”.
       </div>
     );
   }
+
   return (
     <img
       src={cands[Math.min(idx, cands.length - 1)]}
@@ -218,6 +216,7 @@ export const SmartImage = ({ src, alt, style }) => {
 // ================= MAIN SHELL =================
 export const TestShellRenderer = ({
   config,
+  custom = {},
   activeTest,
   updateActiveTest,
   TestHeader,
@@ -231,16 +230,17 @@ export const TestShellRenderer = ({
 }) => {
   const update = (u) => updateActiveTest(u);
 
-  const {
-    compound = '',
-    comments = '',
-    images = [],
-    documents = [],
-    linkedProtocolId = ''
-  } = activeTest;
+  const imagesKey = config.imagesKey || 'images';
+
+  const compound = activeTest.compound || '';
+  const comments = activeTest.comments || '';
+  const images = activeTest[imagesKey] || [];
+  const documents = activeTest.documents || [];
+  const linkedProtocolId = activeTest.linkedProtocolId || '';
 
   const cellLines = activeTest.cellLines || [];
-  const testCategory = activeTest.testCategory || (testCategories && testCategories[0]) || 'Activity';
+  const categories = config.categories || testCategories || ['Activity'];
+  const testCategory = activeTest.testCategory || categories[0] || 'Activity';
   const customFieldValues = activeTest.customFieldValues || {};
   const experimentPlan = activeTest.plan || [];
 
@@ -249,11 +249,13 @@ export const TestShellRenderer = ({
   // ---- multi-protocol ----
   const linkedProtocolIds =
     activeTest.linkedProtocolIds || (linkedProtocolId ? [linkedProtocolId] : []);
+
   const addLinkedProtocol = (id) => {
     if (!id || linkedProtocolIds.includes(id)) return;
     const upd = [...linkedProtocolIds, id];
     update({ linkedProtocolIds: upd, linkedProtocolId: upd[0] });
   };
+
   const removeLinkedProtocol = (id) => {
     const upd = linkedProtocolIds.filter((p) => p !== id);
     update({ linkedProtocolIds: upd, linkedProtocolId: upd[0] || '' });
@@ -263,20 +265,29 @@ export const TestShellRenderer = ({
   const selectedCompounds = Array.isArray(activeTest.selectedCompounds)
     ? activeTest.selectedCompounds
     : Array.isArray(activeTest.compounds)
-    ? activeTest.compounds.filter(Boolean)
-    : compound
-    ? [compound]
-    : [];
+      ? activeTest.compounds.filter(Boolean)
+      : compound
+        ? [compound]
+        : [];
+
   const toggleCompound = (cmp) => {
     const upd = selectedCompounds.includes(cmp)
       ? selectedCompounds.filter((c) => c !== cmp)
       : [...selectedCompounds, cmp];
-    update({ selectedCompounds: upd, compounds: upd, compound: upd.length > 0 ? upd[0] : '' });
+
+    update({
+      selectedCompounds: upd,
+      compounds: upd,
+      compound: upd.length > 0 ? upd[0] : ''
+    });
   };
 
   // ---- cell lines ----
   const toggleCellLine = (cl) => {
-    const upd = cellLines.includes(cl) ? cellLines.filter((c) => c !== cl) : [...cellLines, cl];
+    const upd = cellLines.includes(cl)
+      ? cellLines.filter((c) => c !== cl)
+      : [...cellLines, cl];
+
     update({ cellLines: upd });
   };
 
@@ -297,13 +308,19 @@ export const TestShellRenderer = ({
   // ---- condition field renderer ----
   const renderConditionField = (f) => {
     const val = activeTest[f.key] ?? '';
-    const cls =
-      'w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500';
+    const cls = 'w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500';
+
     return (
-      <div key={f.key} className={f.colSpan ? `col-span-1 md:col-span-2 ${f.colSpan}` : ''}>
+      <div key={f.key}>
         <label className="block text-xs font-bold text-slate-500 uppercase mb-1">{f.label}</label>
+
         {f.type === 'date' ? (
-          <input type="date" value={val} onChange={(e) => update({ [f.key]: e.target.value })} className={cls} />
+          <input
+            type="date"
+            value={val}
+            onChange={(e) => update({ [f.key]: e.target.value })}
+            className={cls}
+          />
         ) : f.type === 'number' ? (
           <input
             type="number"
@@ -314,10 +331,16 @@ export const TestShellRenderer = ({
             placeholder={f.placeholder}
           />
         ) : f.type === 'select' ? (
-          <select value={val} onChange={(e) => update({ [f.key]: e.target.value })} className={cls}>
+          <select
+            value={val}
+            onChange={(e) => update({ [f.key]: e.target.value })}
+            className={cls}
+          >
             <option value="">{f.placeholder || '-- Select --'}</option>
             {(f.options || []).map((o) => (
-              <option key={o} value={o}>{o}</option>
+              <option key={o} value={o}>
+                {o}
+              </option>
             ))}
           </select>
         ) : (
@@ -340,7 +363,7 @@ export const TestShellRenderer = ({
     allCmpds,
     allCellLines,
     customFields,
-    testCategories,
+    testCategories: categories,
     datasetProtocols,
     jumpToProtocol,
     selectedCompounds,
@@ -349,71 +372,84 @@ export const TestShellRenderer = ({
   };
 
   // ---- lab notebook ----
-  const notebookChecks = config.notebookChecks || [];
+  const notebookChecks =
+    config.notebookChecks ||
+    [
+      { id: 'cond', label: 'Experimental Conditions' },
+      ...(config.extraNotebookChecks || [])
+    ];
+
   const appendToNotebook = () => {
     const checked = {};
+
     notebookChecks.forEach((c) => {
       checked[c.id] = document.getElementById(`nb-${config.typeKey}-${c.id}`)?.checked;
     });
+
     let html =
       '<div style="background-color: #f8fafc; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0; margin-top: 15px; font-family: sans-serif;">';
+
     html += `<h4 style="color: #1e40af; margin-top: 0; margin-bottom: 12px; font-size: 14px; border-bottom: 2px solid #bfdbfe; padding-bottom: 4px;">📊 ${config.typeLabel} Summary</h4>`;
-    if (config.buildNotebookHtml) {
-      html += config.buildNotebookHtml(checked, ctx);
+
+    const builder = custom.buildNotebookHtml || config.buildNotebookHtml;
+
+    if (builder) {
+      html += builder(checked, ctx);
+    } else {
+      if (checked.cond) {
+        const conditionPairs = (config.conditionFields || [])
+          .map((f) => `<b>${f.label}:</b> ${activeTest[f.key] || 'N/A'}`)
+          .join(' | ');
+
+        html += `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;">${conditionPairs}</p>`;
+      }
     }
+
     html += '</div>';
-    updateActiveTest({ comments: comments + (comments ? '<br/>' : '') + html });
+
+    updateActiveTest({
+      comments: comments + (comments ? '<br/>' : '') + html
+    });
+
     alert('Data appended successfully to the notes! They will now be visible in the Lab Notebook.');
   };
+
+  const CustomAll = custom.All || null;
+  const CustomToolbar = custom.Toolbar || null;
 
   return (
     <div className="flex flex-col h-full overflow-hidden relative">
       {TestHeader}
+
       <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+        {CustomToolbar && <CustomToolbar ctx={ctx} />}
+
         {/* ===== CLASSIFICATION ===== */}
         <CollapsibleSection title="Classification" icon="🏷️">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="flex flex-col gap-4">
               <div>
-                <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">Test Category</label>
+                <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
+                  Experiment Type / Test Category
+                </label>
+
                 <select
                   value={testCategory}
                   onChange={(e) => update({ testCategory: e.target.value })}
                   className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
                 >
-                  {(testCategories && testCategories.length ? testCategories : ['Activity']).map((cat) => (
-                    <option key={cat} value={cat}>{cat}</option>
+                  {categories.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
                   ))}
                 </select>
               </div>
-              <div>
-                <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
-                  Cell Lines / Biological Models
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  {(allCellLines || []).map((cl) => (
-                    <button
-                      key={cl}
-                      onClick={() => toggleCellLine(cl)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
-                        cellLines.includes(cl)
-                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
-                          : 'bg-white text-slate-600 border-slate-300 hover:border-emerald-400 hover:bg-emerald-50'
-                      }`}
-                    >
-                      {cellLines.includes(cl) ? '✓ ' : ''}{cl}
-                    </button>
-                  ))}
-                  {(allCellLines || []).length === 0 && (
-                    <span className="text-sm text-slate-400 italic">
-                      No cell lines defined. Add them in Definitions & Labels.
-                    </span>
-                  )}
-                </div>
-              </div>
             </div>
+
             <div className="flex flex-col gap-3">
               <label className="text-xs font-bold text-slate-600 uppercase">Custom Metadata</label>
+
               {(customFields || []).length === 0 ? (
                 <p className="text-sm text-slate-400 italic bg-slate-50 p-3 rounded-lg border border-dashed border-slate-300">
                   No custom fields defined. Configure them in Definitions & Labels.
@@ -422,6 +458,7 @@ export const TestShellRenderer = ({
                 (customFields || []).map((field) => (
                   <div key={field.id} className="flex flex-col gap-1">
                     <label className="text-xs font-bold text-slate-500">{field.name}</label>
+
                     {field.type === 'select' ? (
                       <select
                         value={customFieldValues[field.name] || ''}
@@ -430,7 +467,9 @@ export const TestShellRenderer = ({
                       >
                         <option value="">-- Select --</option>
                         {(field.options || []).map((opt) => (
-                          <option key={opt} value={opt}>{opt}</option>
+                          <option key={opt} value={opt}>
+                            {opt}
+                          </option>
                         ))}
                       </select>
                     ) : field.type === 'number' ? (
@@ -464,19 +503,36 @@ export const TestShellRenderer = ({
           </div>
         </CollapsibleSection>
 
-        {/* ===== COMPOUNDS & SAMPLES ===== */}
-        <CollapsibleSection title="Compounds & Samples" icon="🧪">
-          <MultiSelectDropdown
-            label={config.samplesLabel || 'Compound / Sample Label(s)'}
-            options={allCmpds || []}
-            selected={selectedCompounds}
-            onToggle={toggleCompound}
-            onClear={() => update({ selectedCompounds: [], compounds: [], compound: '' })}
-            placeholder="Select compound(s)..."
-          />
-        </CollapsibleSection>
+        {/* ===== COMPOUNDS / BIOLOGICAL MODELS ===== */}
+        {(config.samples?.compounds !== false || config.samples?.cellLines === true) && (
+          <CollapsibleSection title="Compounds & Biological Models" icon="🧪">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {config.samples?.compounds !== false && (
+                <MultiSelectDropdown
+                  label={config.samples?.compoundLabel || 'Compound / Sample Label(s)'}
+                  options={allCmpds || []}
+                  selected={selectedCompounds}
+                  onToggle={toggleCompound}
+                  onClear={() => update({ selectedCompounds: [], compounds: [], compound: '' })}
+                  placeholder="Select compound(s)..."
+                />
+              )}
 
-        {/* ===== EXPERIMENTAL CONDITIONS (config-driven) ===== */}
+              {config.samples?.cellLines === true && (
+                <MultiSelectDropdown
+                  label={config.samples?.cellLineLabel || 'Cell Lines / Biological Models'}
+                  options={allCellLines || []}
+                  selected={cellLines}
+                  onToggle={toggleCellLine}
+                  onClear={() => update({ cellLines: [] })}
+                  placeholder="Select cell line(s)..."
+                />
+              )}
+            </div>
+          </CollapsibleSection>
+        )}
+
+        {/* ===== EXPERIMENTAL CONDITIONS ===== */}
         <CollapsibleSection title="Experimental Conditions" icon="🌡️">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {(config.conditionFields || []).map(renderConditionField)}
@@ -488,17 +544,25 @@ export const TestShellRenderer = ({
           <div className="flex flex-col gap-1 p-3 bg-indigo-50 border border-indigo-200 rounded-lg">
             <label className="text-xs font-bold text-indigo-800 uppercase flex items-center justify-between mb-2">
               <span>📋 Linked Protocols</span>
-              <span className="text-[9px] bg-indigo-200 text-indigo-800 px-2 py-0.5 rounded">Multiple protocols allowed</span>
+              <span className="text-[9px] bg-indigo-200 text-indigo-800 px-2 py-0.5 rounded">
+                Multiple protocols allowed
+              </span>
             </label>
+
             {linkedProtocolIds.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-2">
                 {linkedProtocolIds.map((pid) => {
                   const prot = (datasetProtocols || []).find((p) => p.id === pid);
+
                   return (
-                    <div key={pid} className="flex items-center gap-1 bg-white border border-indigo-300 rounded-lg px-2 py-1 shadow-sm">
+                    <div
+                      key={pid}
+                      className="flex items-center gap-1 bg-white border border-indigo-300 rounded-lg px-2 py-1 shadow-sm"
+                    >
                       <span className="text-xs font-bold text-indigo-900 max-w-[220px] truncate">
                         {prot ? `${prot.title} (${prot.category})` : pid}
                       </span>
+
                       <button
                         onClick={() => jumpToProtocol && jumpToProtocol(pid)}
                         className="text-[10px] font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-2 py-0.5 rounded transition-colors"
@@ -506,6 +570,7 @@ export const TestShellRenderer = ({
                       >
                         📖 Open
                       </button>
+
                       <button
                         onClick={() => removeLinkedProtocol(pid)}
                         className="text-slate-400 hover:text-red-500 font-bold px-1"
@@ -518,6 +583,7 @@ export const TestShellRenderer = ({
                 })}
               </div>
             )}
+
             <select
               value=""
               onChange={(e) => addLinkedProtocol(e.target.value)}
@@ -536,57 +602,73 @@ export const TestShellRenderer = ({
         </CollapsibleSection>
 
         {/* ===== AGENDA ===== */}
-        <CollapsibleSection title="Agenda" icon="📅" defaultOpen={false}>
-          <h3 className="text-[11px] font-bold text-slate-600 mb-2 flex justify-between items-center">
-            <span>📅 Schedule / Planning (This Item)</span>
-            <div className="flex gap-2">
-              <input
-                type="date"
-                id={`plan-date-${activeTest.id}`}
-                className="border border-slate-300 px-2 py-1 text-xs rounded bg-white text-slate-800 outline-none focus:border-blue-500"
-              />
-              <button
-                onClick={() => {
-                  const el = document.getElementById(`plan-date-${activeTest.id}`);
-                  const d = el ? el.value : '';
-                  if (d) {
-                    update({
-                      plan: [...experimentPlan, { id: Date.now(), date: d, task: '' }].sort((a, b) =>
-                        a.date.localeCompare(b.date)
-                      )
-                    });
-                  }
-                }}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs font-bold transition shadow-sm"
-              >
-                Add Task
-              </button>
-            </div>
-          </h3>
-          <div className="flex flex-col gap-2 max-h-40 overflow-y-auto custom-scrollbar pr-2">
-            {experimentPlan.length === 0 && (
-              <span className="text-xs text-slate-400 italic">No tasks planned yet.</span>
-            )}
-            {experimentPlan.map((item) => (
-              <div key={item.id} className="flex gap-2 items-center bg-slate-50 border border-slate-200 p-1.5 rounded-lg shadow-sm">
-                <span className="text-[10px] font-bold w-20 text-slate-600 pl-2">{item.date}</span>
+        <CollapsibleSection title="Agenda / Planning" icon="📅">
+          <div className="max-w-2xl">
+            <h3 className="text-[11px] font-bold text-slate-600 mb-2 flex justify-between items-center">
+              <span>Schedule / Planning (This Item)</span>
+
+              <div className="flex gap-2">
                 <input
-                  type="text"
-                  value={item.task}
-                  onChange={(e) =>
-                    update({ plan: experimentPlan.map((p) => (p.id === item.id ? { ...p, task: e.target.value } : p)) })
-                  }
-                  className="bg-transparent border-none focus:outline-none focus:bg-white focus:ring-1 focus:ring-blue-500 p-1 text-xs flex-1 text-slate-700 rounded transition-all"
-                  placeholder="Task description..."
+                  type="date"
+                  id={`plan-date-${activeTest.id}`}
+                  className="border border-slate-300 px-2 py-1 text-xs rounded bg-white text-slate-800 outline-none focus:border-blue-500"
                 />
+
                 <button
-                  onClick={() => update({ plan: experimentPlan.filter((p) => p.id !== item.id) })}
-                  className="text-slate-400 hover:text-red-500 text-[10px] font-bold px-2 transition"
+                  onClick={() => {
+                    const el = document.getElementById(`plan-date-${activeTest.id}`);
+                    const d = el ? el.value : '';
+
+                    if (d) {
+                      update({
+                        plan: [...experimentPlan, { id: Date.now(), date: d, task: '' }].sort((a, b) =>
+                          a.date.localeCompare(b.date)
+                        )
+                      });
+                    }
+                  }}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs font-bold transition shadow-sm"
                 >
-                  ×
+                  Add Task
                 </button>
               </div>
-            ))}
+            </h3>
+
+            <div className="flex flex-col gap-2 max-h-40 overflow-y-auto custom-scrollbar pr-2">
+              {experimentPlan.length === 0 && (
+                <span className="text-xs text-slate-400 italic">No tasks planned yet.</span>
+              )}
+
+              {experimentPlan.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex gap-2 items-center bg-slate-50 border border-slate-200 p-1.5 rounded-lg shadow-sm"
+                >
+                  <span className="text-[10px] font-bold w-20 text-slate-600 pl-2">{item.date}</span>
+
+                  <input
+                    type="text"
+                    value={item.task}
+                    onChange={(e) =>
+                      update({
+                        plan: experimentPlan.map((p) =>
+                          p.id === item.id ? { ...p, task: e.target.value } : p
+                        )
+                      })
+                    }
+                    className="bg-transparent border-none focus:outline-none focus:bg-white focus:ring-1 focus:ring-blue-500 p-1 text-xs flex-1 text-slate-700 rounded transition-all"
+                    placeholder="Task description..."
+                  />
+
+                  <button
+                    onClick={() => update({ plan: experimentPlan.filter((p) => p.id !== item.id) })}
+                    className="text-slate-400 hover:text-red-500 text-[10px] font-bold px-2 transition"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
         </CollapsibleSection>
 
@@ -594,20 +676,33 @@ export const TestShellRenderer = ({
         <CollapsibleSection title="Comments & Attachments" icon="📝">
           <div className="flex flex-col lg:flex-row gap-6">
             <div className="flex-1 flex flex-col h-full min-h-[160px]">
-              <label className="text-xs font-bold text-slate-600 mb-2">Comments & Notes</label>
+              <label className="text-xs font-bold text-slate-600 mb-2">
+                Comments & Notes (what you did)
+              </label>
+
               <RichTextEditor
                 value={comments}
                 onChange={(val) => update({ comments: val })}
                 placeholder="Enter your experiment notes, observations, etc..."
               />
             </div>
-            <div className="flex-shrink-0 flex flex-col justify-start gap-4" style={{ maxWidth: '300px', minWidth: '180px' }}>
+
+            <div
+              className="flex-shrink-0 flex flex-col justify-start gap-4"
+              style={{ maxWidth: '300px', minWidth: '180px' }}
+            >
               <div className="w-full flex flex-col items-end border-t border-slate-200 pt-3">
-                <label className="text-xs font-bold text-slate-600 mb-2 w-full text-right">🔗 Document Links</label>
+                <label className="text-xs font-bold text-slate-600 mb-2 w-full text-right">
+                  🔗 Document Links
+                </label>
+
                 <div className="flex flex-col gap-1 w-full mb-3 max-h-[140px] overflow-y-auto custom-scrollbar">
                   {documents.length === 0 && (
-                    <span className="text-[10px] text-slate-400 italic text-right w-full">No documents attached.</span>
+                    <span className="text-[10px] text-slate-400 italic text-right w-full">
+                      No documents attached.
+                    </span>
                   )}
+
                   {documents.map((doc) => (
                     <div
                       key={doc.id}
@@ -618,15 +713,24 @@ export const TestShellRenderer = ({
                         onClick={() => {
                           const nn = prompt('Rename document:', doc.name);
                           if (nn) {
-                            update({ documents: documents.map((d) => (d.id === doc.id ? { ...d, name: nn.trim() } : d)) });
+                            update({
+                              documents: documents.map((d) =>
+                                d.id === doc.id ? { ...d, name: nn.trim() } : d
+                              )
+                            });
                           }
                         }}
                       >
                         <span className="text-sm">🔗</span>
-                        <span className="text-[10px] font-bold text-slate-700 truncate group-hover:text-blue-600">{doc.name}</span>
+                        <span className="text-[10px] font-bold text-slate-700 truncate group-hover:text-blue-600">
+                          {doc.name}
+                        </span>
                       </div>
+
                       <button
-                        onClick={() => update({ documents: documents.filter((d) => d.id !== doc.id) })}
+                        onClick={() =>
+                          update({ documents: documents.filter((d) => d.id !== doc.id) })
+                        }
                         className="text-slate-400 hover:text-red-500 font-bold px-1 opacity-0 group-hover:opacity-100"
                       >
                         ×
@@ -634,24 +738,35 @@ export const TestShellRenderer = ({
                     </div>
                   ))}
                 </div>
+
                 <label
                   className="cursor-pointer text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 hover:bg-blue-100 px-3 py-1.5 rounded-lg shadow-sm transition-colors w-full text-center"
                   onClick={() => {
-                    const urlsText = prompt('Paste external link(s) separated by commas (Drive, PDF, Image URL):');
-                    if (urlsText && urlsText.trim()) {
-                      const urls = urlsText.split(',').map((s) => s.trim()).filter(Boolean);
-                      const newDocs = urls.map((url, i) => {
-                        let name = url;
-                        try {
-                          name = new URL(url).hostname;
-                        } catch (e) {}
-                        return { id: Date.now().toString() + i + Math.random(), name, type: 'link', data: url };
+                    const url = prompt('Paste external link (Drive, PDF, Image URL):');
+
+                    if (url && url.trim()) {
+                      let name = url;
+
+                      try {
+                        const p = new URL(url);
+                        name = p.hostname;
+                      } catch (e) {}
+
+                      update({
+                        documents: [
+                          ...documents,
+                          {
+                            id: Date.now().toString(),
+                            name,
+                            type: 'link',
+                            data: url.trim()
+                          }
+                        ]
                       });
-                      update({ documents: [...documents, ...newDocs] });
                     }
                   }}
                 >
-                  + Add Document Link(s)
+                  + Add Document Link
                 </label>
               </div>
             </div>
@@ -661,17 +776,24 @@ export const TestShellRenderer = ({
         {/* ===== IMAGES ===== */}
         <CollapsibleSection title="Images" icon="🖼️">
           <div className="flex justify-between items-center mb-4 flex-wrap gap-3">
-            <p className="text-sm text-slate-500">Attach image links (Google Drive/Dropbox supported).</p>
+            <p className="text-sm text-slate-500">
+              Attach image links (Google Drive/Dropbox supported).
+            </p>
+
             <button
               onClick={() => {
                 const url = prompt('Paste image link (Google Drive, Dropbox, or direct URL):');
-                if (url && url.trim()) update({ images: [...images, url.trim()] });
+
+                if (url && url.trim()) {
+                  update({ [imagesKey]: [...images, url.trim()] });
+                }
               }}
               className="bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 font-bold px-3 py-1.5 rounded transition-colors shadow-sm text-xs"
             >
               + Add Link
             </button>
           </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {images.length === 0 ? (
               <div className="col-span-full text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">
@@ -679,16 +801,21 @@ export const TestShellRenderer = ({
               </div>
             ) : (
               images.map((imgSrc, idx) => (
-                <div key={idx} className="relative group bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
+                <div
+                  key={idx}
+                  className="relative group bg-white p-3 rounded-xl border border-slate-200 shadow-sm"
+                >
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-xs font-bold text-slate-500">Image {idx + 1}</span>
+
                     <button
-                      onClick={() => update({ images: images.filter((_, i) => i !== idx) })}
+                      onClick={() => update({ [imagesKey]: images.filter((_, i) => i !== idx) })}
                       className="bg-red-50 hover:bg-red-100 text-red-500 hover:text-red-700 rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold transition-colors border border-red-200"
                     >
                       ×
                     </button>
                   </div>
+
                   <div
                     className="bg-slate-50 rounded-lg p-2 border border-slate-100 cursor-pointer"
                     onClick={() => setZoomImage(normalizeImageCandidates(imgSrc)[0])}
@@ -696,6 +823,7 @@ export const TestShellRenderer = ({
                   >
                     <SmartImage src={imgSrc} alt={`Image ${idx + 1}`} />
                   </div>
+
                   <a
                     href={imgSrc}
                     target="_blank"
@@ -710,11 +838,8 @@ export const TestShellRenderer = ({
           </div>
         </CollapsibleSection>
 
-        {/* ===== TYPE-SPECIFIC SECTIONS (injected via config) ===== */}
-        {config.SetupSection && <config.SetupSection ctx={ctx} />}
-        {config.DataSection && <config.DataSection ctx={ctx} />}
-        {config.FittingSection && <config.FittingSection ctx={ctx} />}
-        {config.SimulationsSection && <config.SimulationsSection ctx={ctx} />}
+        {/* ===== CUSTOM TYPE-SPECIFIC CONTENT ===== */}
+        {CustomAll && <CustomAll ctx={ctx} />}
 
         {/* ===== LAB NOTEBOOK EXPORT ===== */}
         <CollapsibleSection title="Lab Notebook Export" icon="📓" defaultOpen={false} className="no-print">
@@ -722,9 +847,13 @@ export const TestShellRenderer = ({
             <p className="text-sm text-slate-600">
               Select the data to format and append to the General Comments (Lab Notebook entry).
             </p>
+
             <div className="flex flex-wrap gap-4 border border-slate-200 p-4 rounded-lg bg-white shadow-sm">
               {notebookChecks.map((c) => (
-                <label key={c.id} className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600">
+                <label
+                  key={c.id}
+                  className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600"
+                >
                   <input
                     type="checkbox"
                     id={`nb-${config.typeKey}-${c.id}`}
@@ -735,6 +864,7 @@ export const TestShellRenderer = ({
                 </label>
               ))}
             </div>
+
             <button
               onClick={appendToNotebook}
               className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-6 rounded-lg transition-all shadow-sm w-fit border border-indigo-700 flex items-center gap-2"
@@ -752,7 +882,12 @@ export const TestShellRenderer = ({
           onClick={() => setZoomImage(null)}
         >
           <div className="relative" style={{ maxWidth: '90vw', maxHeight: '90vh' }}>
-            <img src={zoomImage} alt="Zoomed" className="max-w-full max-h-[90vh] object-contain rounded-xl shadow-2xl" />
+            <img
+              src={zoomImage}
+              alt="Zoomed"
+              className="max-w-full max-h-[90vh] object-contain rounded-xl shadow-2xl"
+            />
+
             <button
               onClick={(e) => {
                 e.stopPropagation();
