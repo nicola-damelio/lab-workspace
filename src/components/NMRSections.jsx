@@ -1,41 +1,29 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  ReferenceArea, BarChart, Bar, LineChart, Line, Legend
+  ReferenceArea, BarChart, Bar, LineChart, Line, Legend, ErrorBar
 } from 'recharts';
 
 /* ============================================================================
-NMRSections — NMR-specific content (fixed schematic structure, CD-style):
-  1. ⚙️ Experiment Setup  (molecule definition, painting, 2D formula)
-  2. 🔢 Data              (INSTANCES + MULTI-LAYER assignment table + EXPORT)
-  3. 📐 Fitting           (CONDITION PLOTTING: parameter of atom vs condition)
-  4. 🧪 Simulations       (1D/2D simulated spectra incl. ¹H–¹⁵N HSQC)
-
-NEW FEATURES:
-  • Multiple named INSTANCES (conditions). Each instance stores its own data.
-  • MULTI-LAYERED assignment table: built-in "Chemical Shift" layer plus
-    user-defined layers (T1, Peak Intensity, …) switched via buttons.
-  • CONDITION PLOTTER (Fitting): pick a parameter layer + one or more atoms,
-    and plot the value as a function of the instance (condition) names.
+NMRSections — struttura fissa: Experiment Setup → Data → Fitting → Simulations
+NEW: istanze/condizioni + layer parametri + condition plotting (fit & errori)
++ select-all/salvataggio selezioni atomi + ranges e parametri grafici nelle
+Simulations (13C fino a 220 ppm, HSQC side-by-side, 2D quadrati).
 ========================================================================== */
-
 const FS_CLASSES =
   'fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col';
 const OVERLAY_CLASSES = 'fixed top-0 left-0 w-screen h-screen bg-slate-900/50 backdrop-blur-sm z-[999990]';
 const SELECT_COLOR = '#f59e0b';
 const MANUAL_COLOR = '#16a34a';
 const LINE_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16'];
+const HAS_ERRORBAR = typeof ErrorBar !== 'undefined';
 
-// ================= COLLAPSIBLE SECTION (local, self-contained) =================
 const CollapsibleSection = ({ title, icon, defaultOpen = true, children, headerExtra, className = '' }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   return (
     <div className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-6 break-inside-avoid ${className}`}>
-      <button
-        type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left ${isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'}`}
-      >
+      <button type="button" onClick={() => setIsOpen(!isOpen)}
+        className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left ${isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'}`}>
         <div className="flex items-center gap-2 overflow-hidden">
           {icon && <span className="text-xl shrink-0">{icon}</span>}
           <h3 className="text-lg font-bold text-slate-800 truncate">{title}</h3>
@@ -75,7 +63,6 @@ const AMINO_ACID_DB = {
   W: { name: 'Tryptophan', code3: 'Trp', atoms: ['HN', 'Hα', 'Hβ1', 'Hβ2', 'Hδ1', 'Hε3', 'Hζ2', 'Hη2', 'Hζ3'], ranges: { HN: { min: 7.9, max: 8.7 }, Hα: { min: 4.5, max: 5.0 }, Hβ1: { min: 3.1, max: 3.5 }, Hβ2: { min: 3.1, max: 3.5 }, Hδ1: { min: 10.0, max: 10.5 }, Hε3: { min: 7.4, max: 7.7 }, Hζ2: { min: 7.3, max: 7.6 }, Hη2: { min: 7.0, max: 7.3 }, Hζ3: { min: 6.9, max: 7.2 } }, cosy: [['HN', 'Hα'], ['Hα', 'Hβ1'], ['Hα', 'Hβ2'], ['Hβ1', 'Hβ2'], ['Hδ1', 'Hε3'], ['Hε3', 'Hζ3'], ['Hζ3', 'Hη2'], ['Hη2', 'Hζ2']], spinSystems: [['HN', 'Hα', 'Hβ1', 'Hβ2'], ['Hδ1'], ['Hε3', 'Hζ3', 'Hη2', 'Hζ2']] },
   Y: { name: 'Tyrosine', code3: 'Tyr', atoms: ['HN', 'Hα', 'Hβ1', 'Hβ2', 'Hδ', 'Hε'], ranges: { HN: { min: 7.9, max: 8.7 }, Hα: { min: 4.4, max: 4.9 }, Hβ1: { min: 2.8, max: 3.2 }, Hβ2: { min: 2.8, max: 3.2 }, Hδ: { min: 6.9, max: 7.2 }, Hε: { min: 6.6, max: 6.9 } }, cosy: [['HN', 'Hα'], ['Hα', 'Hβ1'], ['Hα', 'Hβ2'], ['Hβ1', 'Hβ2'], ['Hδ', 'Hε']], spinSystems: [['HN', 'Hα', 'Hβ1', 'Hβ2'], ['Hδ', 'Hε']] }
 };
-
 const NUCLEOTIDE_DB = {
   DNA: {
     A: { name: 'Deoxyadenosine', code3: 'dA', base: 'purine', atoms: ['H8', 'H2', "H1'", "H2'", "H2''", "H3'", "H4'", "H5'", "H5''"], ranges: { H8: { min: 7.9, max: 8.4 }, H2: { min: 7.7, max: 8.3 }, "H1'": { min: 5.9, max: 6.4 }, "H2'": { min: 2.2, max: 2.8 }, "H2''": { min: 2.5, max: 2.9 }, "H3'": { min: 4.7, max: 5.1 }, "H4'": { min: 4.1, max: 4.5 }, "H5'": { min: 3.8, max: 4.3 }, "H5''": { min: 3.7, max: 4.2 } }, cosy: [["H1'", "H2'"], ["H1'", "H2''"], ["H2'", "H3'"], ["H3'", "H4'"], ["H4'", "H5'"], ["H4'", "H5''"], ["H5'", "H5''"]], spinSystems: [["H1'", "H2'", "H2''", "H3'", "H4'", "H5'", "H5''"]] },
@@ -90,7 +77,6 @@ const NUCLEOTIDE_DB = {
     U: { name: 'Uridine', code3: 'U', base: 'pyrimidine', atoms: ['H6', 'H5', "H1'", "H2'", "OH2'", "H3'", "H4'", "H5'", "H5''"], ranges: { H6: { min: 7.4, max: 8.1 }, H5: { min: 5.3, max: 6.0 }, "H1'": { min: 5.4, max: 6.0 }, "H2'": { min: 4.1, max: 4.7 }, "OH2'": { min: 5.0, max: 5.6 }, "H3'": { min: 4.1, max: 4.7 }, "H4'": { min: 4.0, max: 4.5 }, "H5'": { min: 3.8, max: 4.4 }, "H5''": { min: 3.7, max: 4.3 } }, cosy: [['H5', 'H6'], ["H1'", "H2'"], ["H2'", "H3'"], ["H3'", "H4'"], ["H4'", "H5'"], ["H4'", "H5''"], ["H5'", "H5''"]], spinSystems: [["H1'", "H2'", "H3'", "H4'", "H5'", "H5''"], ['H5', 'H6']] }
   }
 };
-
 const SUGAR_DB = {
   GLC: { name: 'D-Glucose', code3: 'Glc', atoms: ['H1', 'H2', 'H3', 'H4', 'H5', 'H6a', 'H6b'], ranges: { H1: { min: 4.55, max: 5.25 }, H2: { min: 3.4, max: 3.7 }, H3: { min: 3.6, max: 3.9 }, H4: { min: 3.35, max: 3.65 }, H5: { min: 3.55, max: 3.85 }, H6a: { min: 3.65, max: 3.95 }, H6b: { min: 3.7, max: 4.0 } }, cosy: [['H1', 'H2'], ['H2', 'H3'], ['H3', 'H4'], ['H4', 'H5'], ['H5', 'H6a'], ['H5', 'H6b'], ['H6a', 'H6b']], spinSystems: [['H1', 'H2', 'H3', 'H4', 'H5', 'H6a', 'H6b']] },
   GAL: { name: 'D-Galactose', code3: 'Gal', atoms: ['H1', 'H2', 'H3', 'H4', 'H5', 'H6a', 'H6b'], ranges: { H1: { min: 4.55, max: 5.25 }, H2: { min: 3.5, max: 3.85 }, H3: { min: 3.6, max: 3.95 }, H4: { min: 3.85, max: 4.15 }, H5: { min: 3.7, max: 4.0 }, H6a: { min: 3.6, max: 3.9 }, H6b: { min: 3.65, max: 3.95 } }, cosy: [['H1', 'H2'], ['H2', 'H3'], ['H3', 'H4'], ['H4', 'H5'], ['H5', 'H6a'], ['H5', 'H6b'], ['H6a', 'H6b']], spinSystems: [['H1', 'H2', 'H3', 'H4', 'H5', 'H6a', 'H6b']] },
@@ -98,14 +84,12 @@ const SUGAR_DB = {
   FUC: { name: 'L-Fucose', code3: 'Fuc', atoms: ['H1', 'H2', 'H3', 'H4', 'H5', 'H6'], ranges: { H1: { min: 4.7, max: 5.2 }, H2: { min: 3.6, max: 3.95 }, H3: { min: 3.65, max: 4.0 }, H4: { min: 3.7, max: 4.05 }, H5: { min: 3.6, max: 3.95 }, H6: { min: 1.1, max: 1.3 } }, cosy: [['H1', 'H2'], ['H2', 'H3'], ['H3', 'H4'], ['H4', 'H5'], ['H5', 'H6']], spinSystems: [['H1', 'H2', 'H3', 'H4', 'H5', 'H6']] },
   NAG: { name: 'N-Acetylglucosamine', code3: 'GlcNAc', atoms: ['H1', 'H2', 'H3', 'H4', 'H5', 'H6a', 'H6b', 'NHAc', 'AcCH3'], ranges: { H1: { min: 4.6, max: 5.2 }, H2: { min: 3.7, max: 4.05 }, H3: { min: 3.6, max: 3.9 }, H4: { min: 3.4, max: 3.7 }, H5: { min: 3.6, max: 3.9 }, H6a: { min: 3.65, max: 3.95 }, H6b: { min: 3.7, max: 4.0 }, NHAc: { min: 7.5, max: 8.2 }, AcCH3: { min: 1.9, max: 2.1 } }, cosy: [['H1', 'H2'], ['H2', 'H3'], ['H3', 'H4'], ['H4', 'H5'], ['H5', 'H6a'], ['H5', 'H6b'], ['H6a', 'H6b']], spinSystems: [['H1', 'H2', 'H3', 'H4', 'H5', 'H6a', 'H6b'], ['NHAc'], ['AcCH3']] }
 };
-
 const LIPID_DB = {
   POPC: { name: 'POPC', head: 'PC', headLabel: 'N(CH₃)₃⁺', atoms: ['Hsn1a', 'Hsn1b', 'Hsn2', 'Hsn3a', 'Hsn3b', 'H2-sn1', 'H3-sn1', 'H4-sn1', 'H16-sn1', 'H2-sn2', 'H3-sn2', 'H4-sn2', 'Hall-sn2', 'H9-sn2', 'H10-sn2', 'H11-sn2', 'H18-sn2', 'HCH2N', 'HNMe3'], ranges: { Hsn1a: { min: 4.15, max: 4.45 }, Hsn1b: { min: 4.15, max: 4.45 }, Hsn2: { min: 5.15, max: 5.35 }, Hsn3a: { min: 3.95, max: 4.35 }, Hsn3b: { min: 3.95, max: 4.35 }, 'H2-sn1': { min: 2.25, max: 2.4 }, 'H3-sn1': { min: 1.55, max: 1.7 }, 'H4-sn1': { min: 1.2, max: 1.35 }, 'H16-sn1': { min: 0.82, max: 0.92 }, 'H2-sn2': { min: 2.25, max: 2.4 }, 'H3-sn2': { min: 1.55, max: 1.7 }, 'H4-sn2': { min: 1.2, max: 1.35 }, 'Hall-sn2': { min: 1.95, max: 2.1 }, 'H9-sn2': { min: 5.3, max: 5.4 }, 'H10-sn2': { min: 5.3, max: 5.4 }, 'H11-sn2': { min: 1.95, max: 2.1 }, 'H18-sn2': { min: 0.82, max: 0.92 }, HCH2N: { min: 3.6, max: 3.8 }, HNMe3: { min: 3.18, max: 3.28 } }, cosy: [['Hsn1a', 'Hsn2'], ['Hsn1b', 'Hsn2'], ['Hsn2', 'Hsn3a'], ['Hsn2', 'Hsn3b'], ['H2-sn1', 'H3-sn1'], ['H3-sn1', 'H4-sn1'], ['H2-sn2', 'H3-sn2'], ['H3-sn2', 'H4-sn2'], ['Hall-sn2', 'H9-sn2'], ['H9-sn2', 'H10-sn2'], ['H10-sn2', 'H11-sn2'], ['HCH2N', 'HNMe3']], spinSystems: [['Hsn1a', 'Hsn1b', 'Hsn2', 'Hsn3a', 'Hsn3b'], ['H2-sn1', 'H3-sn1', 'H4-sn1', 'H16-sn1'], ['H2-sn2', 'H3-sn2', 'H4-sn2', 'Hall-sn2', 'H9-sn2', 'H10-sn2', 'H11-sn2', 'H18-sn2'], ['HCH2N', 'HNMe3']] },
   POPE: { name: 'POPE', head: 'PE', headLabel: 'NH₃⁺', atoms: ['Hsn1a', 'Hsn1b', 'Hsn2', 'Hsn3a', 'Hsn3b', 'H2-sn1', 'H3-sn1', 'H4-sn1', 'H16-sn1', 'H2-sn2', 'H3-sn2', 'H4-sn2', 'Hall-sn2', 'H9-sn2', 'H10-sn2', 'H11-sn2', 'H18-sn2', 'HCH2N', 'HNH3'], ranges: { Hsn1a: { min: 4.15, max: 4.45 }, Hsn1b: { min: 4.15, max: 4.45 }, Hsn2: { min: 5.15, max: 5.35 }, Hsn3a: { min: 3.95, max: 4.35 }, Hsn3b: { min: 3.95, max: 4.35 }, 'H2-sn1': { min: 2.25, max: 2.4 }, 'H3-sn1': { min: 1.55, max: 1.7 }, 'H4-sn1': { min: 1.2, max: 1.35 }, 'H16-sn1': { min: 0.82, max: 0.92 }, 'H2-sn2': { min: 2.25, max: 2.4 }, 'H3-sn2': { min: 1.55, max: 1.7 }, 'H4-sn2': { min: 1.2, max: 1.35 }, 'Hall-sn2': { min: 1.95, max: 2.1 }, 'H9-sn2': { min: 5.3, max: 5.4 }, 'H10-sn2': { min: 5.3, max: 5.4 }, 'H11-sn2': { min: 1.95, max: 2.1 }, 'H18-sn2': { min: 0.82, max: 0.92 }, HCH2N: { min: 3.1, max: 3.3 }, HNH3: { min: 7.5, max: 8.5 } }, cosy: [['Hsn1a', 'Hsn2'], ['Hsn1b', 'Hsn2'], ['Hsn2', 'Hsn3a'], ['Hsn2', 'Hsn3b'], ['H2-sn1', 'H3-sn1'], ['H3-sn1', 'H4-sn1'], ['H2-sn2', 'H3-sn2'], ['H3-sn2', 'H4-sn2'], ['Hall-sn2', 'H9-sn2'], ['H9-sn2', 'H10-sn2'], ['H10-sn2', 'H11-sn2']], spinSystems: [['Hsn1a', 'Hsn1b', 'Hsn2', 'Hsn3a', 'Hsn3b'], ['H2-sn1', 'H3-sn1', 'H4-sn1', 'H16-sn1'], ['H2-sn2', 'H3-sn2', 'H4-sn2', 'Hall-sn2', 'H9-sn2', 'H10-sn2', 'H11-sn2', 'H18-sn2'], ['HCH2N', 'HNH3']] },
   POPS: { name: 'POPS', head: 'PS', headLabel: 'Ser', atoms: ['Hsn1a', 'Hsn1b', 'Hsn2', 'Hsn3a', 'Hsn3b', 'H2-sn1', 'H3-sn1', 'H4-sn1', 'H16-sn1', 'H2-sn2', 'H3-sn2', 'H4-sn2', 'Hall-sn2', 'H9-sn2', 'H10-sn2', 'H11-sn2', 'H18-sn2', 'HαS', 'HβS1', 'HβS2', 'HNH3'], ranges: { Hsn1a: { min: 4.15, max: 4.45 }, Hsn1b: { min: 4.15, max: 4.45 }, Hsn2: { min: 5.15, max: 5.35 }, Hsn3a: { min: 3.95, max: 4.35 }, Hsn3b: { min: 3.95, max: 4.35 }, 'H2-sn1': { min: 2.25, max: 2.4 }, 'H3-sn1': { min: 1.55, max: 1.7 }, 'H4-sn1': { min: 1.2, max: 1.35 }, 'H16-sn1': { min: 0.82, max: 0.92 }, 'H2-sn2': { min: 2.25, max: 2.4 }, 'H3-sn2': { min: 1.55, max: 1.7 }, 'H4-sn2': { min: 1.2, max: 1.35 }, 'Hall-sn2': { min: 1.95, max: 2.1 }, 'H9-sn2': { min: 5.3, max: 5.4 }, 'H10-sn2': { min: 5.3, max: 5.4 }, 'H11-sn2': { min: 1.95, max: 2.1 }, 'H18-sn2': { min: 0.82, max: 0.92 }, HαS: { min: 4.0, max: 4.3 }, HβS1: { min: 3.75, max: 4.05 }, HβS2: { min: 3.75, max: 4.05 }, HNH3: { min: 7.5, max: 8.5 } }, cosy: [['Hsn1a', 'Hsn2'], ['Hsn1b', 'Hsn2'], ['Hsn2', 'Hsn3a'], ['Hsn2', 'Hsn3b'], ['H2-sn1', 'H3-sn1'], ['H3-sn1', 'H4-sn1'], ['H2-sn2', 'H3-sn2'], ['H3-sn2', 'H4-sn2'], ['Hall-sn2', 'H9-sn2'], ['H9-sn2', 'H10-sn2'], ['H10-sn2', 'H11-sn2'], ['HαS', 'HβS1'], ['HαS', 'HβS2']], spinSystems: [['Hsn1a', 'Hsn1b', 'Hsn2', 'Hsn3a', 'Hsn3b'], ['H2-sn1', 'H3-sn1', 'H4-sn1', 'H16-sn1'], ['H2-sn2', 'H3-sn2', 'H4-sn2', 'Hall-sn2', 'H9-sn2', 'H10-sn2', 'H11-sn2', 'H18-sn2'], ['HαS', 'HβS1', 'HβS2', 'HNH3']] },
   POPG: { name: 'POPG', head: 'PG', headLabel: 'Gly', atoms: ['Hsn1a', 'Hsn1b', 'Hsn2', 'Hsn3a', 'Hsn3b', 'H2-sn1', 'H3-sn1', 'H4-sn1', 'H16-sn1', 'H2-sn2', 'H3-sn2', 'H4-sn2', 'Hall-sn2', 'H9-sn2', 'H10-sn2', 'H11-sn2', 'H18-sn2', 'HCH2OH', 'HCHOH'], ranges: { Hsn1a: { min: 4.15, max: 4.45 }, Hsn1b: { min: 4.15, max: 4.45 }, Hsn2: { min: 5.15, max: 5.35 }, Hsn3a: { min: 3.95, max: 4.35 }, Hsn3b: { min: 3.95, max: 4.35 }, 'H2-sn1': { min: 2.25, max: 2.4 }, 'H3-sn1': { min: 1.55, max: 1.7 }, 'H4-sn1': { min: 1.2, max: 1.35 }, 'H16-sn1': { min: 0.82, max: 0.92 }, 'H2-sn2': { min: 2.25, max: 2.4 }, 'H3-sn2': { min: 1.55, max: 1.7 }, 'H4-sn2': { min: 1.2, max: 1.35 }, 'Hall-sn2': { min: 1.95, max: 2.1 }, 'H9-sn2': { min: 5.3, max: 5.4 }, 'H10-sn2': { min: 5.3, max: 5.4 }, 'H11-sn2': { min: 1.95, max: 2.1 }, 'H18-sn2': { min: 0.82, max: 0.92 }, HCH2OH: { min: 3.45, max: 3.75 }, HCHOH: { min: 3.65, max: 3.9 } }, cosy: [['Hsn1a', 'Hsn2'], ['Hsn1b', 'Hsn2'], ['Hsn2', 'Hsn3a'], ['Hsn2', 'Hsn3b'], ['H2-sn1', 'H3-sn1'], ['H3-sn1', 'H4-sn1'], ['H2-sn2', 'H3-sn2'], ['H3-sn2', 'H4-sn2'], ['Hall-sn2', 'H9-sn2'], ['H9-sn2', 'H10-sn2'], ['H10-sn2', 'H11-sn2'], ['HCH2OH', 'HCHOH']], spinSystems: [['Hsn1a', 'Hsn1b', 'Hsn2', 'Hsn3a', 'Hsn3b'], ['H2-sn1', 'H3-sn1', 'H4-sn1', 'H16-sn1'], ['H2-sn2', 'H3-sn2', 'H4-sn2', 'Hall-sn2', 'H9-sn2', 'H10-sn2', 'H11-sn2', 'H18-sn2'], ['HCH2OH', 'HCHOH']] }
 };
-
 const CARBON_RANGE_DB = {
   A: { Cα: [49.5, 53.5], Cβ: [15.5, 20.5] }, C: { Cα: [54.5, 60], Cβ: [26, 32] }, D: { Cα: [50, 55], Cβ: [37, 42], Cγ: [173, 178] }, E: { Cα: [53, 58], Cβ: [26, 31], Cγ: [32, 37], Cδ: [176, 181] },
   F: { Cα: [53, 58.5], Cβ: [35, 41], Cγ: [133, 139], Cδ: [126.5, 132], Cε: [126, 131.5], Cζ: [124, 129.5] }, G: { Cα: [41, 46] }, H: { Cα: [51.5, 57], Cβ: [27, 33], Cδ2: [114, 120], Cε1: [131, 138] },
@@ -116,7 +100,6 @@ const CARBON_RANGE_DB = {
   V: { Cα: [57.5, 64], Cβ: [28.5, 34.5], Cγ1: [16.5, 22.5], Cγ2: [16.5, 22.5] }, W: { Cα: [53.5, 59], Cβ: [25.5, 32], Cδ1: [119, 126], Cε3: [115, 121], Cζ2: [115, 122], Cη2: [117, 124], Cζ3: [115, 122] },
   Y: { Cα: [53, 58.5], Cβ: [34.5, 41], Cγ: [125.5, 131.5], Cδ: [128, 134], Cε: [112.5, 118.5], Cζ: [151, 158] }
 };
-
 const SS_CORRECTIONS = {
   coil: { h: {}, c: {} },
   helix: { h: { HN: -0.45, Hα: -0.35, Hα1: -0.35, Hα2: -0.35, other: -0.05 }, c: { Cα: 2.8, Cβ: -1.5, "C'": -1.3, N: -2.5 } },
@@ -128,7 +111,7 @@ const DNA_FORM_OFFSETS = { B: { "H1'": 0, "H2'": 0, "H3'": 0, "H2''": 0 }, A: { 
 const SUGAR_ANOMER_OFFSETS = { alpha: { H1: 0.25 }, beta: { H1: -0.15 } };
 const RESIDUE_COLORS = ['#3b82f6', '#8b5cf6', '#d946ef', '#ec4899', '#f43f5e', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#6366f1'];
 const TICKS_1H = Array.from({ length: 111 }, (_, i) => parseFloat((i / 10).toFixed(1)));
-const TICKS_13C = Array.from({ length: 281 }, (_, i) => parseFloat((10 + i * 0.5).toFixed(1)));
+const TICKS_13C = Array.from({ length: 421 }, (_, i) => parseFloat((10 + i * 0.5).toFixed(1))); // 10 → 220 ppm
 const TICKS_15N = Array.from({ length: 81 }, (_, i) => parseFloat((95 + i * 0.5).toFixed(1)));
 const CHART_MARGIN = { top: 20, right: 20, bottom: 45, left: 50 };
 const CHART_MARGIN_1D = { top: 10, right: 15, bottom: 45, left: 15 };
@@ -139,7 +122,6 @@ const parseManual = (v) => {
   const n = parseFloat(String(v).replace(',', '.'));
   return Number.isFinite(n) ? n : null;
 };
-
 const getNMRFillColor = (entry) => {
   if (entry.colorClass === 'cosy') return '#22c55e';
   if (entry.colorClass === 'tocsyDirect') return '#1e3a8a';
@@ -152,7 +134,6 @@ const getNMRFillColor = (entry) => {
   if (entry.colorClass === 'p31') return '#0d9488';
   return '#cbd5e1';
 };
-
 const getCarbonName = (molType, char, atom) => {
   if (!atom) return null;
   if (atom.startsWith('HN') || atom.startsWith('NH') || atom.startsWith('OH') || atom.startsWith('NHAc') || atom.startsWith('Ac') || atom.includes('NH3')) return null;
@@ -177,7 +158,6 @@ const getCarbonName = (molType, char, atom) => {
   }
   return atom.replace('H', 'C');
 };
-
 const buildKeys = (ri, tokens, molType, char) => {
   const set = new Set();
   (tokens || []).forEach((tok) => {
@@ -197,7 +177,6 @@ const buildKeys = (ri, tokens, molType, char) => {
   });
   return [...set];
 };
-
 const getProtonCountEx = (molType, res, atom) => {
   if (molType === 'protein') {
     const char = res.char;
@@ -217,7 +196,6 @@ const getProtonCountEx = (molType, res, atom) => {
   }
   return 1;
 };
-
 const getPascalRow = (n) => {
   if (n === 0) return [1];
   let row = [1];
@@ -229,7 +207,6 @@ const getPascalRow = (n) => {
   }
   return row;
 };
-
 const getCarbonRangeFor = (molType, char, cName) => {
   if (!cName) return { min: 40, max: 50 };
   if (molType === 'protein') {
@@ -270,32 +247,21 @@ const getCarbonRangeFor = (molType, char, cName) => {
   return { min: 40, max: 60 };
 };
 
-// ============================================================================
-// INSTANCES & PARAMETER LAYERS — core multi-condition / multi-layer model
-// ============================================================================
+// ================= INSTANCES (CONDITIONS) & PARAMETER LAYERS =================
 const CHEMICAL_SHIFT_LAYER = { key: 'cs', label: 'Chemical Shift', unit: 'ppm', builtin: true };
 const makeInstanceId = () => `inst_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-
+const makeLayerId = () => `layer_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 const getInstances = (activeTest) => {
   if (Array.isArray(activeTest.instances) && activeTest.instances.length) return activeTest.instances;
-  // Backward-compat: migrate legacy chemicalShifts into a single default instance.
   return [{ id: 'inst_default', name: 'Condition 1', values: { cs: activeTest.chemicalShifts || {} } }];
 };
-
 const getActiveInstance = (activeTest) => {
   const insts = getInstances(activeTest);
   return insts.find((i) => i.id === activeTest.activeInstanceId) || insts[0] || null;
 };
-
-const getLayers = (activeTest) => {
-  const user = Array.isArray(activeTest.parameterLayers) ? activeTest.parameterLayers : [];
-  return [CHEMICAL_SHIFT_LAYER, ...user];
-};
-
+const getLayers = (activeTest) => [CHEMICAL_SHIFT_LAYER, ...(Array.isArray(activeTest.parameterLayers) ? activeTest.parameterLayers : [])];
 const getActiveLayerKey = (activeTest) => activeTest.activeLayerKey || 'cs';
 const getLayerValues = (instance, layerKey) => (instance && instance.values && instance.values[layerKey]) || {};
-
-// Write a single value into a specific instance + layer.
 const writeInstanceValue = (activeTest, updateActiveTest, instanceId, layerKey, atomKey, value) => {
   const instances = getInstances(activeTest).map((inst) => {
     if (inst.id !== instanceId) return inst;
@@ -306,10 +272,9 @@ const writeInstanceValue = (activeTest, updateActiveTest, instanceId, layerKey, 
   updateActiveTest({ instances });
 };
 
-// Selection helpers (cross-highlight state lives in activeTest.selectedAtomKeys)
+// ================= SELECTION HELPERS =================
 const getSelectedKeys = (activeTest) =>
   Array.isArray(activeTest.selectedAtomKeys) && activeTest.selectedAtomKeys.length ? activeTest.selectedAtomKeys : null;
-
 const selectionLabel = (d, selectedKeys) => {
   if (!selectedKeys || !selectedKeys.length) return '';
   const ri = parseInt(selectedKeys[0].split('-')[0], 10);
@@ -317,7 +282,6 @@ const selectionLabel = (d, selectedKeys) => {
   const atoms = [...new Set(selectedKeys.map((k) => k.split('-').slice(1).join('-')))];
   return `${res ? res.id : `#${ri + 1}`}: ${atoms.join(', ')}`;
 };
-
 const getManualKeys = (values) => {
   const out = new Set();
   Object.entries(values || {}).forEach(([k, v]) => {
@@ -331,33 +295,127 @@ const getManualKeys = (values) => {
   return [...out];
 };
 
-// ================= GEOMETRY =================
-const getHexagon = (cx, cy, r, dir) => {
-  const pts = [];
-  const baseAngle = dir === 1 ? -Math.PI / 2 : Math.PI / 2;
-  for (let i = 0; i < 6; i++) {
-    const a = baseAngle + i * (Math.PI / 3) * dir;
-    pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
+// ================= FITTING HELPERS (Plate-inspired) =================
+const solveLin4 = (A, b) => {
+  const M = A.map((row, i) => [...row, b[i]]);
+  for (let c = 0; c < 4; c++) {
+    let p = c;
+    for (let r = c + 1; r < 4; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+    if (Math.abs(M[p][c]) < 1e-12) return null;
+    [M[c], M[p]] = [M[p], M[c]];
+    for (let r = 0; r < 4; r++) {
+      if (r === c) continue;
+      const f = M[r][c] / M[c][c];
+      for (let k = c; k < 5; k++) M[r][k] -= f * M[c][k];
+    }
   }
-  return pts;
+  return M.map((row, i) => row[4] / row[i][i]);
 };
-const getPentagon = (cx, cy, r, dir) => {
-  const pts = [];
-  const baseAngle = dir === 1 ? -Math.PI / 2 : Math.PI / 2;
-  for (let i = 0; i < 5; i++) {
-    const a = baseAngle + i * ((2 * Math.PI) / 5) * dir;
-    pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
+const fitLinear = (pts) => {
+  const n = pts.length;
+  if (n < 2) return null;
+  let sw = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+  pts.forEach((p) => { const w = p.w || 1; sw += w; sx += w * p.x; sy += w * p.y; sxx += w * p.x * p.x; sxy += w * p.x * p.y; });
+  const den = sw * sxx - sx * sx;
+  if (Math.abs(den) < 1e-12) return null;
+  const slope = (sw * sxy - sx * sy) / den;
+  const intercept = (sy - slope * sx) / sw;
+  const mean = sy / sw;
+  let ssr = 0, sst = 0;
+  pts.forEach((p) => { const f = slope * p.x + intercept; ssr += (p.y - f) ** 2; sst += (p.y - mean) ** 2; });
+  const r2 = sst > 0 ? 1 - ssr / sst : 1;
+  const se = n > 2 ? Math.sqrt(ssr / (n - 2)) : 0;
+  return { slope, intercept, r2, se, f: (x) => slope * x + intercept };
+};
+const fit4PL = (pts) => {
+  const n = pts.length;
+  if (n < 4) return null;
+  const ys = pts.map((p) => p.y);
+  const xs = pts.map((p) => p.x);
+  const top0 = Math.max(...ys), bottom0 = Math.min(...ys);
+  if (top0 - bottom0 < 1e-9) return null;
+  const model = (x, Q) => {
+    const [T, B, I, H] = Q;
+    if (!(x > 0) || !(I > 0)) return B;
+    return B + (T - B) / (1 + Math.pow(x / I, H));
+  };
+  let P = [top0, bottom0, xs.reduce((a, b) => a + b, 0) / n, 1];
+  for (let it = 0; it < 60; it++) {
+    const J = [], R = [];
+    let bad = false;
+    pts.forEach((p) => {
+      const y0 = model(p.x, P);
+      if (!Number.isFinite(y0)) { bad = true; return; }
+      R.push(p.y - y0);
+      const row = [];
+      for (let k = 0; k < 4; k++) {
+        const Q2 = P.slice();
+        const step = Math.max(Math.abs(P[k]) * 1e-4, 1e-6);
+        Q2[k] += step;
+        row.push((model(p.x, Q2) - y0) / step);
+      }
+      J.push(row);
+    });
+    if (bad || J.length < n) break;
+    const A = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]];
+    const b = [0, 0, 0, 0];
+    for (let i = 0; i < n; i++) {
+      const w = pts[i].w || 1;
+      for (let a = 0; a < 4; a++) {
+        b[a] += w * J[i][a] * R[i];
+        for (let c2 = 0; c2 < 4; c2++) A[a][c2] += w * J[i][a] * J[i][c2];
+      }
+    }
+    const d = solveLin4(A, b);
+    if (!d) break;
+    const delta = Math.abs(d[0]) + Math.abs(d[1]) + Math.abs(d[2]) + Math.abs(d[3]);
+    P = P.map((v, k) => v + d[k]);
+    if (!P.every((v) => Number.isFinite(v))) return null;
+    if (delta < 1e-8) break;
   }
-  return pts;
+  const [T, B, I, H] = P;
+  if (![T, B, I, H].every((v) => Number.isFinite(v))) return null;
+  let ssr = 0;
+  pts.forEach((p) => { const r0 = p.y - model(p.x, P); ssr += r0 * r0; });
+  const se = n > 4 ? Math.sqrt(ssr / (n - 4)) : Math.sqrt(ssr || 0);
+  return { top: T, bottom: B, ic50: I, hill: H, se, f: (x) => model(x, P) };
 };
-const hexAt = (cx, cy, r, deg0) => {
-  const pts = [];
-  for (let i = 0; i < 6; i++) {
-    const a = ((deg0 + i * 60) * Math.PI) / 180;
-    pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
-  }
-  return pts;
+const lineDash = (style) => (style === 'dashed' ? '7 5' : style === 'dotted' ? '2 3' : undefined);
+const FIT_DEFAULT_CHART_CFG = {
+  height: 380, ptSize: 5, ptStyle: 'circle', lineStyle: 'solid', lineThickness: 2,
+  fontSize: 12, legend: 'top', xMin: '', xMax: '', yMin: '', yMax: '', xAxisLabel: '', yAxisLabel: ''
 };
+const makePlotId = () => `cp_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+const defaultPlotCfg = (n) => ({
+  id: makePlotId(), title: `Condition Plot ${n}`, layerKey: 'cs', atoms: [],
+  xMode: 'category', fitEnabled: false, fitModel: 'linear',
+  showPoints: true, showErrors: true, showFit: true,
+  useFixedSD: false, fixedSDStr: '', outlierThreshStr: '2.5',
+  hiddenSeries: {}, excluded: {}, manualSD: {},
+  chartCfg: { ...FIT_DEFAULT_CHART_CFG }
+});
+
+// ================= MEASURE WIDTH (per spettri 2D quadrati) =================
+const useMeasureWidth = () => {
+  const ref = useRef(null);
+  const [w, setW] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const u = () => setW(el.clientWidth);
+    u();
+    let ro = null;
+    if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(u); ro.observe(el); }
+    window.addEventListener('resize', u);
+    return () => { if (ro) ro.disconnect(); window.removeEventListener('resize', u); };
+  }, []);
+  return [ref, w];
+};
+
+// ================= GEOMETRY & STRUCTURES =================
+const getHexagon = (cx, cy, r, dir) => { const pts = []; const b = dir === 1 ? -Math.PI / 2 : Math.PI / 2; for (let i = 0; i < 6; i++) { const a = b + i * (Math.PI / 3) * dir; pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) }); } return pts; };
+const getPentagon = (cx, cy, r, dir) => { const pts = []; const b = dir === 1 ? -Math.PI / 2 : Math.PI / 2; for (let i = 0; i < 5; i++) { const a = b + i * ((2 * Math.PI) / 5) * dir; pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) }); } return pts; };
+const hexAt = (cx, cy, r, deg0) => { const pts = []; for (let i = 0; i < 6; i++) { const a = ((deg0 + i * 60) * Math.PI) / 180; pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) }); } return pts; };
 const fusePentagon = (A, B, nx, ny) => {
   const mx = (A.x + B.x) / 2, my = (A.y + B.y) / 2;
   const L = Math.hypot(B.x - A.x, B.y - A.y) || 1;
@@ -370,43 +428,26 @@ const fusePentagon = (A, B, nx, ny) => {
   const dir = Math.hypot(mk(1, 4).x - B.x, mk(1, 4).y - B.y) < Math.hypot(mk(-1, 4).x - B.x, mk(-1, 4).y - B.y) ? 1 : -1;
   return { V1: mk(dir, 1), V2: mk(dir, 2), V3: mk(dir, 3), c };
 };
-
-// ================= STRUCTURE ELEMENT BUILDER FACTORY =================
 const makeBuilder = () => {
   const elements = [];
   let minX = 0, maxX = 0, minY = 0, maxY = 0;
   let first = true;
-  const ub = (x, y) => {
-    if (first) { minX = maxX = x; minY = maxY = y; first = false; }
-    else { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
-  };
+  const ub = (x, y) => { if (first) { minX = maxX = x; minY = maxY = y; first = false; } else { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; } };
   const addLine = (x1, y1, x2, y2, color, isDouble = false, width = 1.8) => {
     ub(x1, y1); ub(x2, y2);
     if (isDouble) {
-      const dx = x2 - x1, dy = y2 - y1;
-      const len = Math.hypot(dx, dy) || 1;
+      const dx = x2 - x1, dy = y2 - y1; const len = Math.hypot(dx, dy) || 1;
       const nx = (-dy / len) * 2.6, ny = (dx / len) * 2.6;
       elements.push({ type: 'line', x1: x1 + nx, y1: y1 + ny, x2: x2 + nx, y2: y2 + ny, color, width });
       elements.push({ type: 'line', x1: x1 - nx, y1: y1 - ny, x2: x2 - nx, y2: y2 - ny, color, width });
     } else elements.push({ type: 'line', x1, y1, x2, y2, color, width });
   };
-  const addPolygon = (pts, color) => {
-    pts.forEach((p) => ub(p.x, p.y));
-    elements.push({ type: 'polygon', points: pts.map((p) => `${p.x},${p.y}`).join(' '), color });
-  };
-  const addCircle = (x, y, r, color, fill = 'white', strokeWidth, meta = null) => {
-    ub(x, y);
-    elements.push({ type: 'circle', x, y, r, color, fill, strokeWidth, ri: meta?.ri ?? null, atoms: meta?.atoms ?? null, keys: meta?.keys ?? null });
-  };
-  const addDot = (x, y, color, meta = null) => {
-    ub(x, y);
-    elements.push({ type: 'circle', x, y, r: 2.4, color, fill: color, strokeWidth: 0, ri: meta?.ri ?? null, atoms: meta?.atoms ?? null, keys: meta?.keys ?? null });
-  };
+  const addPolygon = (pts, color) => { pts.forEach((p) => ub(p.x, p.y)); elements.push({ type: 'polygon', points: pts.map((p) => `${p.x},${p.y}`).join(' '), color }); };
+  const addCircle = (x, y, r, color, fill = 'white', strokeWidth, meta = null) => { ub(x, y); elements.push({ type: 'circle', x, y, r, color, fill, strokeWidth, ri: meta?.ri ?? null, atoms: meta?.atoms ?? null, keys: meta?.keys ?? null }); };
+  const addDot = (x, y, color, meta = null) => { ub(x, y); elements.push({ type: 'circle', x, y, r: 2.4, color, fill: color, strokeWidth: 0, ri: meta?.ri ?? null, atoms: meta?.atoms ?? null, keys: meta?.keys ?? null }); };
   const finish = (pad = 15) => ({ elements, viewBox: `${minX - pad} ${minY - pad} ${maxX - minX + 2 * pad} ${maxY - minY + 2 * pad}` });
   return { elements, ub, addLine, addPolygon, addCircle, addDot, finish };
 };
-
-// ---------- PROTEIN STRUCTURE ----------
 const buildProteinStructure = (sequence) => {
   const b = makeBuilder();
   let curRi = null;
@@ -414,20 +455,11 @@ const buildProteinStructure = (sequence) => {
     b.ub(x, y - 15); b.ub(x, y + 15); b.ub(x - 30, y); b.ub(x + 30, y);
     b.elements.push({ type: 'text', x, y, text, color, fontSize, align, ri: curRi, atoms, keys: atoms ? buildKeys(curRi, atoms, 'protein', sequence[curRi]?.char) : null });
   };
-  const addAtomCircle = (x, y, r, color, atoms = null) => {
-    const keys = atoms ? buildKeys(curRi, atoms, 'protein', sequence[curRi]?.char) : null;
-    b.addCircle(x, y, r, color, 'white', 1.5, { ri: curRi, atoms, keys });
-  };
-  const addRingHeteroatom = (x, y, text, color, atoms = null) => {
-    const keys = atoms ? buildKeys(curRi, atoms, 'protein', sequence[curRi]?.char) : null;
-    b.addCircle(x, y, 12, color, 'white', 1.6, { ri: curRi, atoms, keys });
-    addText(x, y, text, color, 11, 'middle', atoms);
-  };
+  const addAtomCircle = (x, y, r, color, atoms = null) => { const keys = atoms ? buildKeys(curRi, atoms, 'protein', sequence[curRi]?.char) : null; b.addCircle(x, y, r, color, 'white', 1.5, { ri: curRi, atoms, keys }); };
+  const addRingHeteroatom = (x, y, text, color, atoms = null) => { const keys = atoms ? buildKeys(curRi, atoms, 'protein', sequence[curRi]?.char) : null; b.addCircle(x, y, 12, color, 'white', 1.6, { ri: curRi, atoms, keys }); addText(x, y, text, color, 11, 'middle', atoms); };
   const placeRadialLabel = (cx, cy, pt, text, color, atoms = null) => {
-    const angle = Math.atan2(pt.y - cy, pt.x - cx);
-    const dist = 18;
-    const lx = pt.x + dist * Math.cos(angle);
-    const ly = pt.y + dist * Math.sin(angle);
+    const angle = Math.atan2(pt.y - cy, pt.x - cx); const dist = 18;
+    const lx = pt.x + dist * Math.cos(angle); const ly = pt.y + dist * Math.sin(angle);
     let anchor = 'middle';
     if (Math.abs(angle) < Math.PI / 3) anchor = 'start';
     else if (Math.abs(angle) > (2 * Math.PI) / 3) anchor = 'end';
@@ -437,23 +469,18 @@ const buildProteinStructure = (sequence) => {
   const coords = [];
   let cx = 100, cy = 200, slope = -1;
   for (let i = 0; i < sequence.length; i++) {
-    const nX = cx, nY = cy;
+    const nX = cx, nY = cy; cx += dx; cy += slope * dy;
+    const caX = cx, caY = cy, scDir = slope; slope *= -1;
     cx += dx; cy += slope * dy;
-    const caX = cx, caY = cy, scDir = slope;
-    slope *= -1;
+    const cX = cx, cY = cy, oDir = slope; slope *= -1;
     cx += dx; cy += slope * dy;
-    const cX = cx, cY = cy, oDir = slope;
-    slope *= -1;
-    cx += dx; cy += slope * dy;
-    const nextNX = cx, nextNY = cy;
-    slope *= -1;
+    const nextNX = cx, nextNY = cy; slope *= -1;
     coords.push({ nX, nY, caX, caY, cX, cY, nextNX, nextNY, scDir, oDir, res: sequence[i] });
   }
   coords.forEach((c, i) => {
     curRi = i;
     const color = c.res.color;
-    const isFirst = i === 0;
-    const isLast = i === sequence.length - 1;
+    const isFirst = i === 0; const isLast = i === sequence.length - 1;
     const char = c.res.char;
     if (!isFirst) b.addLine(coords[i - 1].cX, coords[i - 1].cY, c.nX, c.nY, coords[i - 1].res.color);
     b.addLine(c.nX, c.nY, c.caX, c.caY, color);
@@ -470,10 +497,8 @@ const buildProteinStructure = (sequence) => {
       b.addLine(c.caX, c.caY, c.caX, c.caY + haDir * 15, color);
       addText(c.caX, c.caY + haDir * 25, 'Hα', color, 11, 'middle', ['Hα']);
     } else {
-      b.addLine(c.caX, c.caY, c.caX, c.caY - 15, color);
-      addText(c.caX, c.caY - 25, 'Hα1', color, 11, 'middle', ['Hα1']);
-      b.addLine(c.caX, c.caY, c.caX, c.caY + 15, color);
-      addText(c.caX, c.caY + 25, 'Hα2', color, 11, 'middle', ['Hα2']);
+      b.addLine(c.caX, c.caY, c.caX, c.caY - 15, color); addText(c.caX, c.caY - 25, 'Hα1', color, 11, 'middle', ['Hα1']);
+      b.addLine(c.caX, c.caY, c.caX, c.caY + 15, color); addText(c.caX, c.caY + 25, 'Hα2', color, 11, 'middle', ['Hα2']);
     }
     if (char === 'P') {
       b.elements.push({ type: 'path', d: `M ${c.nX} ${c.nY} Q ${c.caX} ${c.caY + c.scDir * 40} ${c.caX} ${c.caY + c.scDir * 25}`, color });
@@ -487,10 +512,7 @@ const buildProteinStructure = (sequence) => {
     addAtomCircle(c.cX, c.cY, 13, color, ["C'"]);
     addText(c.cX, c.cY, 'C', color, 13, 'middle', ["C'"]);
     addText(c.cX, c.cY + c.oDir * 35, 'O', '#ef4444', 13, 'middle', null);
-    if (isLast) {
-      addAtomCircle(c.nextNX, c.nextNY, 13, color, null);
-      addText(c.nextNX, c.nextNY, 'O⁻', '#ef4444', 13, 'middle', null);
-    }
+    if (isLast) { addAtomCircle(c.nextNX, c.nextNY, 13, color, null); addText(c.nextNX, c.nextNY, 'O⁻', '#ef4444', 13, 'middle', null); }
     const vNode = (lvl, text, atoms) => {
       if (lvl > 0) b.addLine(c.caX, c.caY + c.scDir * (lvl - 1) * S, c.caX, c.caY + c.scDir * lvl * S, color);
       addText(c.caX, c.caY + c.scDir * (lvl * S + (c.scDir === 1 ? 10 : -10)), text, color, 11, 'middle', atoms);
@@ -536,39 +558,29 @@ const buildProteinStructure = (sequence) => {
       case 'M': vNode(2, 'CH₂ (Hγ)', ['Hγ']); vNode(3, 'S', null); vNode(4, 'CH₃ (Hε)', ['Hε(CH3)']); break;
       case 'D':
         vNode(2, 'C', null);
-        b.addLine(c.caX, c.caY + c.scDir * 2 * S, c.caX - 20, c.caY + c.scDir * 2.8 * S, color);
-        addText(c.caX - 20, c.caY + c.scDir * (2.8 * S + 10), 'O⁻', color);
-        b.addLine(c.caX, c.caY + c.scDir * 2 * S, c.caX + 20, c.caY + c.scDir * 2.8 * S, color, true);
-        addText(c.caX + 20, c.caY + c.scDir * (2.8 * S + 10), 'O', color);
+        b.addLine(c.caX, c.caY + c.scDir * 2 * S, c.caX - 20, c.caY + c.scDir * 2.8 * S, color); addText(c.caX - 20, c.caY + c.scDir * (2.8 * S + 10), 'O⁻', color);
+        b.addLine(c.caX, c.caY + c.scDir * 2 * S, c.caX + 20, c.caY + c.scDir * 2.8 * S, color, true); addText(c.caX + 20, c.caY + c.scDir * (2.8 * S + 10), 'O', color);
         break;
       case 'N':
         vNode(2, 'C', null);
-        b.addLine(c.caX, c.caY + c.scDir * 2 * S, c.caX - 20, c.caY + c.scDir * 2.8 * S, color);
-        addText(c.caX - 20, c.caY + c.scDir * (2.8 * S + 10), 'NH₂ (Hδ2)', color, 11, 'middle', ['Hδ21', 'Hδ22']);
-        b.addLine(c.caX, c.caY + c.scDir * 2 * S, c.caX + 20, c.caY + c.scDir * 2.8 * S, color, true);
-        addText(c.caX + 20, c.caY + c.scDir * (2.8 * S + 10), 'O', color);
+        b.addLine(c.caX, c.caY + c.scDir * 2 * S, c.caX - 20, c.caY + c.scDir * 2.8 * S, color); addText(c.caX - 20, c.caY + c.scDir * (2.8 * S + 10), 'NH₂ (Hδ2)', color, 11, 'middle', ['Hδ21', 'Hδ22']);
+        b.addLine(c.caX, c.caY + c.scDir * 2 * S, c.caX + 20, c.caY + c.scDir * 2.8 * S, color, true); addText(c.caX + 20, c.caY + c.scDir * (2.8 * S + 10), 'O', color);
         break;
       case 'E':
         vNode(2, 'CH₂ (Hγ)', ['Hγ']); vNode(3, 'C', null);
-        b.addLine(c.caX, c.caY + c.scDir * 3 * S, c.caX - 20, c.caY + c.scDir * 3.8 * S, color);
-        addText(c.caX - 20, c.caY + c.scDir * (3.8 * S + 10), 'O⁻', color);
-        b.addLine(c.caX, c.caY + c.scDir * 3 * S, c.caX + 20, c.caY + c.scDir * 3.8 * S, color, true);
-        addText(c.caX + 20, c.caY + c.scDir * (3.8 * S + 10), 'O', color);
+        b.addLine(c.caX, c.caY + c.scDir * 3 * S, c.caX - 20, c.caY + c.scDir * 3.8 * S, color); addText(c.caX - 20, c.caY + c.scDir * (3.8 * S + 10), 'O⁻', color);
+        b.addLine(c.caX, c.caY + c.scDir * 3 * S, c.caX + 20, c.caY + c.scDir * 3.8 * S, color, true); addText(c.caX + 20, c.caY + c.scDir * (3.8 * S + 10), 'O', color);
         break;
       case 'Q':
         vNode(2, 'CH₂ (Hγ)', ['Hγ']); vNode(3, 'C', null);
-        b.addLine(c.caX, c.caY + c.scDir * 3 * S, c.caX - 20, c.caY + c.scDir * 3.8 * S, color);
-        addText(c.caX - 20, c.caY + c.scDir * (3.8 * S + 10), 'NH₂ (Hε2)', color, 11, 'middle', ['Hε21', 'Hε22']);
-        b.addLine(c.caX, c.caY + c.scDir * 3 * S, c.caX + 20, c.caY + c.scDir * 3.8 * S, color, true);
-        addText(c.caX + 20, c.caY + c.scDir * (3.8 * S + 10), 'O', color);
+        b.addLine(c.caX, c.caY + c.scDir * 3 * S, c.caX - 20, c.caY + c.scDir * 3.8 * S, color); addText(c.caX - 20, c.caY + c.scDir * (3.8 * S + 10), 'NH₂ (Hε2)', color, 11, 'middle', ['Hε21', 'Hε22']);
+        b.addLine(c.caX, c.caY + c.scDir * 3 * S, c.caX + 20, c.caY + c.scDir * 3.8 * S, color, true); addText(c.caX + 20, c.caY + c.scDir * (3.8 * S + 10), 'O', color);
         break;
       case 'K': vNode(2, 'CH₂ (Hγ)', ['Hγ']); vNode(3, 'CH₂ (Hδ)', ['Hδ']); vNode(4, 'CH₂ (Hε)', ['Hε']); vNode(5, 'NH₃⁺ (Hζ)', ['Hζ(NH3)']); break;
       case 'R':
         vNode(2, 'CH₂ (Hγ)', ['Hγ']); vNode(3, 'CH₂ (Hδ)', ['Hδ']); vNode(4, 'NH (Hε)', ['Hε']); vNode(5, 'C', null);
-        b.addLine(c.caX, c.caY + c.scDir * 5 * S, c.caX - 20, c.caY + c.scDir * 5.8 * S, color);
-        addText(c.caX - 20, c.caY + c.scDir * (5.8 * S + 10), 'NH₂', color);
-        b.addLine(c.caX, c.caY + c.scDir * 5 * S, c.caX + 20, c.caY + c.scDir * 5.8 * S, color, true);
-        addText(c.caX + 20, c.caY + c.scDir * (5.8 * S + 10), 'NH₂⁺', color);
+        b.addLine(c.caX, c.caY + c.scDir * 5 * S, c.caX - 20, c.caY + c.scDir * 5.8 * S, color); addText(c.caX - 20, c.caY + c.scDir * (5.8 * S + 10), 'NH₂', color);
+        b.addLine(c.caX, c.caY + c.scDir * 5 * S, c.caX + 20, c.caY + c.scDir * 5.8 * S, color, true); addText(c.caX + 20, c.caY + c.scDir * (5.8 * S + 10), 'NH₂⁺', color);
         break;
       case 'F':
       case 'Y': {
@@ -584,8 +596,7 @@ const buildProteinStructure = (sequence) => {
         placeRadialLabel(hcx, hcy, hPts[4], 'CH (Hε1)', color, ['Hε']);
         if (char === 'Y') {
           const angleZ = Math.atan2(hPts[3].y - hcy, hPts[3].x - hcx);
-          const ohX = hPts[3].x + S * Math.cos(angleZ);
-          const ohY = hPts[3].y + S * Math.sin(angleZ);
+          const ohX = hPts[3].x + S * Math.cos(angleZ); const ohY = hPts[3].y + S * Math.sin(angleZ);
           b.addLine(hPts[3].x, hPts[3].y, ohX, ohY, color);
           addText(ohX + 12 * Math.cos(angleZ), ohY + 12 * Math.sin(angleZ), 'OH', color, 11, 'middle', null);
         } else placeRadialLabel(hcx, hcy, hPts[3], 'CH (Hζ)', color, ['Hζ']);
@@ -614,16 +625,12 @@ const buildProteinStructure = (sequence) => {
         const ce2 = pPts[3]; const cd2 = pPts[4];
         const mx = (ce2.x + cd2.x) / 2; const my = (ce2.y + cd2.y) / 2;
         const midA = Math.atan2(my - pcy, mx - pcx);
-        const hcx = mx + (Math.cos(midA) * S * Math.sqrt(3)) / 2;
-        const hcy = my + (Math.sin(midA) * S * Math.sqrt(3)) / 2;
+        const hcx = mx + (Math.cos(midA) * S * Math.sqrt(3)) / 2; const hcy = my + (Math.sin(midA) * S * Math.sqrt(3)) / 2;
         const startA = Math.atan2(ce2.y - hcy, ce2.x - hcx);
         const testA = startA + Math.PI / 3;
         const sign = Math.hypot(hcx + S * Math.cos(testA) - cd2.x, hcy + S * Math.sin(testA) - cd2.y) < 0.1 ? 1 : -1;
         const hPts = [];
-        for (let j = 0; j < 6; j++) {
-          const a = startA + j * sign * (Math.PI / 3);
-          hPts.push({ x: hcx + S * Math.cos(a), y: hcy + S * Math.sin(a) });
-        }
+        for (let j = 0; j < 6; j++) { const a = startA + j * sign * (Math.PI / 3); hPts.push({ x: hcx + S * Math.cos(a), y: hcy + S * Math.sin(a) }); }
         b.addPolygon(hPts, color);
         b.addCircle(hcx, hcy, S * 0.6, color, 'none');
         addRingHeteroatom(pPts[2].x, pPts[2].y, 'NH', color, ['Hδ1']);
@@ -641,8 +648,6 @@ const buildProteinStructure = (sequence) => {
   });
   return b.finish();
 };
-
-// ---------- NUCLEIC STRUCTURE ----------
 const buildNucleicStructure = (sequence, molType) => {
   const b = makeBuilder();
   const isDNA = molType === 'dna';
@@ -651,10 +656,7 @@ const buildNucleicStructure = (sequence, molType) => {
     b.ub(x - 30, y); b.ub(x + 30, y); b.ub(x, y - 12); b.ub(x, y + 12);
     b.elements.push({ type: 'text', x, y, text, color, fontSize, align, ri: curRi, atoms, keys: atoms ? buildKeys(curRi, atoms, molType, curChar) : null });
   };
-  const ringAtom = (x, y, text, color, atoms = null) => {
-    b.addCircle(x, y, 9, color, 'white', 1.2, { ri: curRi, atoms, keys: atoms ? buildKeys(curRi, atoms, molType, curChar) : null });
-    addText(x, y, text, color, 8, 'middle', atoms);
-  };
+  const ringAtom = (x, y, text, color, atoms = null) => { b.addCircle(x, y, 9, color, 'white', 1.2, { ri: curRi, atoms, keys: atoms ? buildKeys(curRi, atoms, molType, curChar) : null }); addText(x, y, text, color, 8, 'middle', atoms); };
   const dot = (x, y, color, atoms) => b.addDot(x, y, color, { ri: curRi, atoms, keys: buildKeys(curRi, atoms, molType, curChar) });
   const RH = 250, xP = 110, xS = 235, y0 = 150;
   const BB = '#475569';
@@ -746,8 +748,6 @@ const buildNucleicStructure = (sequence, molType) => {
   addText(20, y0 + RH / 2 + 14, 'backbone', '#64748b', 10, 'start', null);
   return b.finish();
 };
-
-// ---------- SUGAR STRUCTURE ----------
 const buildSugarStructure = (res, conformation, anomer) => {
   const b = makeBuilder();
   const curRi = 0, curChar = res.char, c = res.color;
@@ -802,8 +802,6 @@ const buildSugarStructure = (res, conformation, anomer) => {
   addText(275, 365, `${res.name} (${anomLabel}, ${chair ? 'chair' : 'inverted chair'})`, c, 13, 'middle', null);
   return b.finish();
 };
-
-// ---------- LIPID STRUCTURE ----------
 const buildLipidStructure = (res, db) => {
   const b = makeBuilder();
   const curRi = 0, curChar = res.char, c = res.color;
@@ -811,19 +809,8 @@ const buildLipidStructure = (res, db) => {
     b.ub(x - 30, y); b.ub(x + 30, y); b.ub(x, y - 12); b.ub(x, y + 12);
     b.elements.push({ type: 'text', x, y, text, color, fontSize, align, ri: curRi, atoms, keys: atoms ? buildKeys(curRi, atoms, 'lipid', curChar) : null });
   };
-  const zig = (x0, y0, n, L, amp, dir0) => {
-    const pts = [{ x: x0, y: y0 }];
-    let dir = dir0;
-    for (let k = 0; k < n; k++) {
-      const p = pts[pts.length - 1];
-      pts.push({ x: p.x - L, y: p.y + dir * amp });
-      dir *= -1;
-    }
-    return pts;
-  };
-  const chain = (pts, dblIdx) => {
-    for (let k = 0; k < pts.length - 1; k++) b.addLine(pts[k].x, pts[k].y, pts[k + 1].x, pts[k + 1].y, c, k === dblIdx, 1.6);
-  };
+  const zig = (x0, y0, n, L, amp, dir0) => { const pts = [{ x: x0, y: y0 }]; let dir = dir0; for (let k = 0; k < n; k++) { const p = pts[pts.length - 1]; pts.push({ x: p.x - L, y: p.y + dir * amp }); dir *= -1; } return pts; };
+  const chain = (pts, dblIdx) => { for (let k = 0; k < pts.length - 1; k++) b.addLine(pts[k].x, pts[k].y, pts[k + 1].x, pts[k + 1].y, c, k === dblIdx, 1.6); };
   const g1 = { x: 640, y: 96 }, g2 = { x: 640, y: 140 }, g3 = { x: 640, y: 184 };
   b.addLine(g1.x, g1.y, g2.x, g2.y, c); b.addLine(g2.x, g2.y, g3.x, g3.y, c);
   addText(g1.x, g1.y, 'CH₂', c, 9, 'middle', ['Hsn1a', 'Hsn1b']);
@@ -891,8 +878,6 @@ const buildLipidStructure = (res, db) => {
   addText(450, 268, `${res.name} (${db} Δ9)`, c, 13, 'middle', null);
   return b.finish();
 };
-
-// ================= SVG EXPORT =================
 const elementsToSVG = (structure, height = 320) => {
   let inner = '';
   structure.elements.forEach((el) => {
@@ -908,45 +893,29 @@ const elementsToSVG = (structure, height = 320) => {
   });
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${structure.viewBox}" style="height:${height}px;max-width:100%;font-family:sans-serif;background:white;">${inner}</svg>`;
 };
-
-// ================= IMAGE URL NORMALIZATION =================
 const normalizeImageCandidates = (url) => {
   const u = (url || '').trim();
   let m = u.match(/drive.google.com\/file\/d\/([^/?]+)/);
-  if (m) {
-    const id = m[1];
-    return [`https://lh3.googleusercontent.com/d/${id}`, `https://drive.google.com/thumbnail?id=${id}&sz=w1600`, `https://drive.google.com/uc?export=view&id=${id}`];
-  }
+  if (m) { const id = m[1]; return [`https://lh3.googleusercontent.com/d/${id}`, `https://drive.google.com/thumbnail?id=${id}&sz=w1600`, `https://drive.google.com/uc?export=view&id=${id}`]; }
   m = u.match(/drive.google.com\/(?:open|uc)[^#]*[?&]id=([^&#]+)/);
-  if (m) {
-    const id = m[1];
-    return [`https://lh3.googleusercontent.com/d/${id}`, `https://drive.google.com/thumbnail?id=${id}&sz=w1600`, `https://drive.google.com/uc?export=view&id=${id}`];
-  }
+  if (m) { const id = m[1]; return [`https://lh3.googleusercontent.com/d/${id}`, `https://drive.google.com/thumbnail?id=${id}&sz=w1600`, `https://drive.google.com/uc?export=view&id=${id}`]; }
   if (u.includes('dropbox.com')) return [u.replace(/[?&]dl=0/g, '') + (u.includes('?') ? '&raw=1' : '?raw=1'), u];
   return [u];
 };
 
-// ---------- STRUCTURE VIEW ----------
+// ================= STRUCTURE VIEW =================
 const StructureSVGView = ({ structure, minWidth, isExpanded, onToggleExpand, selectedKeys, manualKeys = [], onAtomClick, height = '300px' }) => {
   const clickables = structure.elements.filter((e) => (e.type === 'circle' || e.type === 'text') && e.ri != null && e.keys && e.keys.length && onAtomClick);
   return (
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={onToggleExpand} />}
       <div className={isExpanded ? FS_CLASSES + ' p-4 md:p-6 items-center justify-center' : 'flex flex-col bg-white p-4 rounded-xl shadow-sm w-full h-full items-center justify-center relative border border-slate-200 break-inside-avoid'}>
-        <button onClick={onToggleExpand} className="absolute top-3 right-3 z-[110] flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 w-8 h-8 justify-center rounded-lg text-lg font-bold transition-all shadow-sm">
-          {isExpanded ? '↙️' : '↗️'}
-        </button>
+        <button onClick={onToggleExpand} className="absolute top-3 right-3 z-[110] flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 w-8 h-8 justify-center rounded-lg text-lg font-bold transition-all shadow-sm">{isExpanded ? '↙️' : '↗️'}</button>
         <div className="w-full flex-grow flex items-center justify-start overflow-x-auto overflow-y-hidden custom-scrollbar min-h-0 relative">
           <svg viewBox={structure.viewBox} className="font-sans" style={{ height: isExpanded ? '80vh' : height, minWidth }}>
-            {structure.elements.filter((e) => e.type === 'line').map((el, idx) => (
-              <line key={`l${idx}`} x1={el.x1} y1={el.y1} x2={el.x2} y2={el.y2} stroke={el.color} strokeWidth={el.width || 1.8} pointerEvents="none" />
-            ))}
-            {structure.elements.filter((e) => e.type === 'path').map((el, idx) => (
-              <path key={`pa${idx}`} d={el.d} fill="none" stroke={el.color} strokeWidth={el.width || 1.8} pointerEvents="none" />
-            ))}
-            {structure.elements.filter((e) => e.type === 'polygon').map((el, idx) => (
-              <polygon key={`po${idx}`} points={el.points} fill="white" stroke={el.color} strokeWidth={el.width || 1.8} pointerEvents="none" />
-            ))}
+            {structure.elements.filter((e) => e.type === 'line').map((el, idx) => (<line key={`l${idx}`} x1={el.x1} y1={el.y1} x2={el.x2} y2={el.y2} stroke={el.color} strokeWidth={el.width || 1.8} pointerEvents="none" />))}
+            {structure.elements.filter((e) => e.type === 'path').map((el, idx) => (<path key={`pa${idx}`} d={el.d} fill="none" stroke={el.color} strokeWidth={el.width || 1.8} pointerEvents="none" />))}
+            {structure.elements.filter((e) => e.type === 'polygon').map((el, idx) => (<polygon key={`po${idx}`} points={el.points} fill="white" stroke={el.color} strokeWidth={el.width || 1.8} pointerEvents="none" />))}
             {structure.elements.filter((e) => e.type === 'circle').map((el, idx) => {
               const isSel = selectedKeys && el.keys && el.keys.some((k) => selectedKeys.includes(k));
               const isMan = manualKeys && el.keys && el.keys.some((k) => manualKeys.includes(k));
@@ -985,7 +954,7 @@ const StructureSVGView = ({ structure, minWidth, isExpanded, onToggleExpand, sel
   );
 };
 
-// ================= SEQUENCE PAINT STRIP =================
+// ================= PAINT STRIP / TICKS / TOOLTIP =================
 const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusIdx, charLabel }) => {
   const [painting, setPainting] = useState(false);
   useEffect(() => {
@@ -1010,9 +979,7 @@ const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusIdx, char
     </div>
   );
 };
-
-// ================= CUSTOM TICKS / TOOLTIP =================
-const CustomXTick1H = ({ x, y, payload, isZoomed }) => {
+const CustomXTick1H = ({ x, y, payload, isZoomed, fs = 11 }) => {
   const numVal = Number(payload.value);
   const isInt = Number.isInteger(numVal);
   const isHalf = numVal % 0.5 === 0;
@@ -1021,14 +988,14 @@ const CustomXTick1H = ({ x, y, payload, isZoomed }) => {
     <g transform={`translate(${x || 0},${y || 0})`}>
       <line x1={0} y1={0} x2={0} y2={tickLength} stroke="#94a3b8" strokeWidth={1} />
       {(isZoomed || isInt) && (
-        <text x={0} y={tickLength + 12} textAnchor="middle" fill="#64748b" fontSize={isZoomed ? 10 : 11} fontWeight={isInt && !isZoomed ? 'bold' : 'normal'}>
+        <text x={0} y={tickLength + 12} textAnchor="middle" fill="#64748b" fontSize={isZoomed ? fs - 1 : fs} fontWeight={isInt && !isZoomed ? 'bold' : 'normal'}>
           {isZoomed ? numVal.toFixed(2) : numVal}
         </text>
       )}
     </g>
   );
 };
-const CustomYTick1H = ({ x, y, payload, isZoomed }) => {
+const CustomYTick1H = ({ x, y, payload, isZoomed, fs = 11 }) => {
   const numVal = Number(payload.value);
   const isInt = Number.isInteger(numVal);
   const isHalf = numVal % 0.5 === 0;
@@ -1037,14 +1004,14 @@ const CustomYTick1H = ({ x, y, payload, isZoomed }) => {
     <g transform={`translate(${x || 0},${y || 0})`}>
       <line x1={0} y1={0} x2={-tickLength} y2={0} stroke="#94a3b8" strokeWidth={1} />
       {(isZoomed || isInt) && (
-        <text x={-(tickLength + 4)} y={0} dy={4} textAnchor="end" fill="#64748b" fontSize={isZoomed ? 10 : 11} fontWeight={isInt && !isZoomed ? 'bold' : 'normal'}>
+        <text x={-(tickLength + 4)} y={0} dy={4} textAnchor="end" fill="#64748b" fontSize={isZoomed ? fs - 1 : fs} fontWeight={isInt && !isZoomed ? 'bold' : 'normal'}>
           {isZoomed ? numVal.toFixed(2) : numVal}
         </text>
       )}
     </g>
   );
 };
-const CustomXTick13C = ({ x, y, payload, isZoomed }) => {
+const CustomXTick13C = ({ x, y, payload, isZoomed, fs = 11 }) => {
   const numVal = Number(payload.value);
   const isTen = numVal % 10 === 0;
   const tickLength = isZoomed ? 5 : isTen ? 8 : 4;
@@ -1052,14 +1019,14 @@ const CustomXTick13C = ({ x, y, payload, isZoomed }) => {
     <g transform={`translate(${x || 0},${y || 0})`}>
       <line x1={0} y1={0} x2={0} y2={tickLength} stroke="#94a3b8" strokeWidth={1} />
       {(isZoomed || isTen) && (
-        <text x={0} y={tickLength + 12} textAnchor="middle" fill="#64748b" fontSize={isZoomed ? 10 : 11} fontWeight={isTen && !isZoomed ? 'bold' : 'normal'}>
+        <text x={0} y={tickLength + 12} textAnchor="middle" fill="#64748b" fontSize={isZoomed ? fs - 1 : fs} fontWeight={isTen && !isZoomed ? 'bold' : 'normal'}>
           {isZoomed ? numVal.toFixed(1) : numVal}
         </text>
       )}
     </g>
   );
 };
-const CustomYTick13C = ({ x, y, payload, isZoomed }) => {
+const CustomYTick13C = ({ x, y, payload, isZoomed, fs = 11 }) => {
   const numVal = Number(payload.value);
   const isTen = numVal % 10 === 0;
   const tickLength = isZoomed ? 5 : isTen ? 10 : 4;
@@ -1067,7 +1034,7 @@ const CustomYTick13C = ({ x, y, payload, isZoomed }) => {
     <g transform={`translate(${x || 0},${y || 0})`}>
       <line x1={0} y1={0} x2={-tickLength} y2={0} stroke="#94a3b8" strokeWidth={1} />
       {(isZoomed || isTen) && (
-        <text x={-(tickLength + 5)} y={0} dy={4} textAnchor="end" fill="#64748b" fontSize={isZoomed ? 10 : 11} fontWeight={isTen && !isZoomed ? 'bold' : 'normal'}>
+        <text x={-(tickLength + 5)} y={0} dy={4} textAnchor="end" fill="#64748b" fontSize={isZoomed ? fs - 1 : fs} fontWeight={isTen && !isZoomed ? 'bold' : 'normal'}>
           {isZoomed ? numVal.toFixed(1) : numVal}
         </text>
       )}
@@ -1089,10 +1056,7 @@ const NMRTooltip = ({ active, payload, diagonalColor, selectedKeys }) => {
     if (data.type === '1D') {
       return (
         <div className="bg-white p-2 border border-slate-200 shadow-md rounded text-xs z-50">
-          <p className="font-bold text-slate-800">
-            {data.label}
-            {isSel && <span style={{ color: SELECT_COLOR }}> ● selected</span>}
-          </p>
+          <p className="font-bold text-slate-800">{data.label}{isSel && <span style={{ color: SELECT_COLOR }}> ● selected</span>}</p>
           <p className="text-slate-500">{data.x.toFixed(3)} ppm</p>
           {data.multiplet && <p className="text-slate-400 text-[10px]">Multiplicity: {data.multiplet}</p>}
         </div>
@@ -1100,14 +1064,9 @@ const NMRTooltip = ({ active, payload, diagonalColor, selectedKeys }) => {
     }
     return (
       <div className="bg-white p-3 border border-slate-200 shadow-xl rounded text-sm z-50">
-        <p className="font-bold text-slate-800">
-          {data.label}
-          {isSel && <span style={{ color: SELECT_COLOR }}> ● selected</span>}
-        </p>
+        <p className="font-bold text-slate-800">{data.label}{isSel && <span style={{ color: SELECT_COLOR }}> ● selected</span>}</p>
         <p className="font-semibold" style={{ color: data.type === 'Diagonal' ? diagonalColor : getNMRFillColor(data) }}>{data.type}</p>
-        <p className="text-slate-500 text-xs mt-1">
-          F2: {Number(data.x).toFixed(2)} ppm<br />F1: {Number(data.y).toFixed(2)} ppm
-        </p>
+        <p className="text-slate-500 text-xs mt-1">F2: {Number(data.x).toFixed(2)} ppm<br />F1: {Number(data.y).toFixed(2)} ppm</p>
       </div>
     );
   }
@@ -1158,12 +1117,13 @@ const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, row
         <line x1={margin.left} y1={axisY} x2={margin.left + plotW} y2={axisY} stroke="#cbd5e1" strokeWidth={1} />
         {ranges.map((r, i) => {
           const row = nRows - 1 - r.y;
-          const x1 = xScale(r.max);
-          const x2 = xScale(r.min);
+          const x1 = xScale(r.max); const x2 = xScale(r.min);
           const cy = yCenter(row);
           const isHov = hover && hover.idx === i;
           return (
-            <rect key={`range-${i}`} x={x1} y={cy - 5} width={Math.max(2, x2 - x1)} height={10} rx={3} fill={r.color} fillOpacity={isHov ? 1 : 0.75} stroke={r.color} strokeWidth={1} style={{ cursor: 'pointer' }} onMouseMove={(e) => { const crect = containerRef.current.getBoundingClientRect(); setHover({ idx: i, x: e.clientX - crect.left, y: e.clientY - crect.top }); }} onMouseLeave={() => setHover(null)} />
+            <rect key={`range-${i}`} x={x1} y={cy - 5} width={Math.max(2, x2 - x1)} height={10} rx={3} fill={r.color} fillOpacity={isHov ? 1 : 0.75} stroke={r.color} strokeWidth={1} style={{ cursor: 'pointer' }}
+              onMouseMove={(e) => { const crect = containerRef.current.getBoundingClientRect(); setHover({ idx: i, x: e.clientX - crect.left, y: e.clientY - crect.top }); }}
+              onMouseLeave={() => setHover(null)} />
           );
         })}
         <text x={margin.left + plotW / 2} y={svgHeight - 6} textAnchor="middle" fontSize={11} fill="#64748b">{xAxisLabel}</text>
@@ -1179,7 +1139,7 @@ const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, row
 };
 
 // ================= ZOOMABLE PLOTS =================
-const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel, selectedKeys, manualKeys = [], heightPx = 400 }) => {
+const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel, selectedKeys, manualKeys = [], heightPx = 300, fs = 11 }) => {
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState(fullDomain);
   const [refAreaLeft, setRefAreaLeft] = useState(null);
@@ -1229,7 +1189,7 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={data} margin={CHART_MARGIN_1D}>
               <CartesianGrid strokeDasharray="3 3" vertical={true} horizontal={false} stroke="#f1f5f9" />
-              <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : ticks} interval={0} tickLine={false} tick={<TickComponent isZoomed={isZoomed} />} label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b' }} axisLine={{ stroke: '#cbd5e1' }} />
+              <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : ticks} interval={0} tickLine={false} tick={<TickComponent isZoomed={isZoomed} fs={fs} />} label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} axisLine={{ stroke: '#cbd5e1' }} />
               <YAxis type="number" dataKey="y" domain={[0, 'auto']} hide={true} />
               <Tooltip cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} content={<NMRTooltip selectedKeys={selectedKeys} />} />
               <Bar dataKey="y" barSize={2} shape={(props) => {
@@ -1249,7 +1209,8 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
   );
 };
 
-const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setExpandedPanel, panelId, diagonalColor, selectedKeys, manualKeys = [], heightPx = 400 }) => {
+// 2D spectrum — QUADRATO (aspect ratio configurabile)
+const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setExpandedPanel, panelId, diagonalColor, selectedKeys, manualKeys = [], aspect = 1, fs = 11 }) => {
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState([0, 11]);
   const [yDomain, setYDomain] = useState([0, 11]);
@@ -1258,6 +1219,7 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
   const [refAreaTop, setRefAreaTop] = useState(null);
   const [refAreaBottom, setRefAreaBottom] = useState(null);
   const chartRef = useRef(null);
+  const [boxRef, boxW] = useMeasureWidth();
   const isDragging = useRef(false);
   const isZoomed = xDomain[0] !== 0 || xDomain[1] !== 11 || yDomain[0] !== 0 || yDomain[1] !== 11;
   const getPlotCoords = (clientX, clientY) => {
@@ -1312,7 +1274,7 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
   return (
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)} />}
-      <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'break-inside-avoid'}`} style={!isExpanded ? { height: `${heightPx}px` } : undefined}>
+      <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'break-inside-avoid'}`}>
         <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
           <div className="flex items-center gap-4">
             <h4 className="font-bold text-slate-700">{title}</h4>
@@ -1320,12 +1282,12 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
           </div>
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
         </div>
-        <div className="flex-1 min-h-0 select-none relative" ref={chartRef} onMouseDown={handleMouseDown}>
+        <div ref={boxRef} className="select-none relative" style={isExpanded ? { flex: 1, minHeight: 0 } : { height: Math.max(280, Math.round((boxW || 380) * aspect)) }} onMouseDown={handleMouseDown}>
           <ResponsiveContainer width="100%" height="100%">
             <ScatterChart margin={CHART_MARGIN}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-              <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b' }} />
-              <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomYTick1H isZoomed={isZoomed} />} label={{ value: '¹H F1 (ppm)', angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b' }} />
+              <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} />
+              <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomYTick1H isZoomed={isZoomed} fs={fs} />} label={{ value: '¹H F1 (ppm)', angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fs + 1 }} />
               <Tooltip content={<NMRTooltip diagonalColor={diagonalColor} selectedKeys={selectedKeys} />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
               <Scatter name="Diagonal" data={[{ x: 0, y: 0 }, { x: 11, y: 11 }]} line={{ stroke: '#cbd5e1', strokeWidth: 1 }} shape={<circle r={0} />} legendType="none" isAnimationActive={false} />
               <Scatter data={diagonalData} fill={diagonalColor} shape={shape} isAnimationActive={false} />
@@ -1339,7 +1301,7 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
   );
 };
 
-const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panelId, selectedKeys, manualKeys = [], yAxisLabel = '¹³C F1 (ppm)', yDomainInit = [10, 150], yTicks = TICKS_13C, heightPx = 400 }) => {
+const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panelId, selectedKeys, manualKeys = [], yAxisLabel = '¹³C F1 (ppm)', yDomainInit = [0, 220], yTicks = TICKS_13C, aspect = 1, fs = 11 }) => {
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState([0, 11]);
   const [yDomain, setYDomain] = useState(yDomainInit);
@@ -1348,6 +1310,7 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
   const [refAreaTop, setRefAreaTop] = useState(null);
   const [refAreaBottom, setRefAreaBottom] = useState(null);
   const chartRef = useRef(null);
+  const [boxRef, boxW] = useMeasureWidth();
   const isDragging = useRef(false);
   const isZoomed = xDomain[0] !== 0 || xDomain[1] !== 11 || yDomain[0] !== yDomainInit[0] || yDomain[1] !== yDomainInit[1];
   const getPlotCoords = (clientX, clientY) => {
@@ -1388,7 +1351,7 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
   return (
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)} />}
-      <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'break-inside-avoid lg:col-span-2'}`} style={!isExpanded ? { height: `${heightPx}px` } : undefined}>
+      <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'break-inside-avoid'}`}>
         <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
           <div className="flex items-center gap-4">
             <h4 className="font-bold text-slate-700">{title}</h4>
@@ -1396,12 +1359,12 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
           </div>
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
         </div>
-        <div className="flex-1 min-h-0 select-none relative" ref={chartRef} onMouseDown={handleMouseDown}>
+        <div ref={boxRef} className="select-none relative" style={isExpanded ? { flex: 1, minHeight: 0 } : { height: Math.max(280, Math.round((boxW || 380) * aspect)) }} onMouseDown={handleMouseDown}>
           <ResponsiveContainer width="100%" height="100%">
             <ScatterChart margin={CHART_MARGIN}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-              <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b' }} />
-              <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : yTicks} interval={0} tickLine={false} tick={<CustomYTick13C isZoomed={isZoomed} />} label={{ value: yAxisLabel, angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b' }} />
+              <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} />
+              <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : yTicks} interval={0} tickLine={false} tick={<CustomYTick13C isZoomed={isZoomed} fs={fs} />} label={{ value: yAxisLabel, angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fs + 1 }} />
               <Tooltip content={<NMRTooltip diagonalColor="#8b5cf6" selectedKeys={selectedKeys} />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
               <Scatter data={crossPeakData} shape={(props) => {
                 const { cx, cy, payload } = props;
@@ -1426,61 +1389,23 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
   );
 };
 
-// ============================================================================
-// CONDITION PLOT — parameter of chosen atom(s) as a function of instance
-// ============================================================================
-const ConditionPlot = ({ data, series, yLabel, xLabel }) => {
-  if (!data || data.length === 0 || series.length === 0) {
-    return <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">Select at least one atom to plot.</div>;
-  }
-  return (
-    <div className="bg-white border border-slate-200 rounded-xl p-4" style={{ height: 420 }}>
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 20, right: 30, bottom: 40, left: 30 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-          <XAxis dataKey="__condition" tick={{ fontSize: 11, fill: '#475569' }} label={{ value: xLabel, position: 'insideBottom', offset: -20, fill: '#64748b' }} />
-          <YAxis tick={{ fontSize: 11, fill: '#475569' }} label={{ value: yLabel, angle: -90, position: 'insideLeft', offset: -10, fill: '#64748b' }} domain={['auto', 'auto']} />
-          <Tooltip />
-          <Legend />
-          {series.map((s, i) => (
-            <Line key={s.key} type="monotone" dataKey={s.key} name={s.label} stroke={LINE_COLORS[i % LINE_COLORS.length]} strokeWidth={2} dot={{ r: 4 }} connectNulls />
-          ))}
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
-  );
-};
-
-// ============================================================================
-// SHARED DERIVED DATA HOOK (now instance/layer aware)
-// ============================================================================
+// ================= SHARED DERIVED DATA HOOK =================
 const useNmrDerived = (activeTest) => {
   const moleculeType = activeTest.moleculeType || 'protein';
   const rawSeq = (activeTest.proteinSequence || '').toUpperCase();
-  const validChars =
-    moleculeType === 'protein' ? 'ACDEFGHIKLMNPQRSTVWY' :
-    moleculeType === 'dna' ? 'ACGT' :
-    moleculeType === 'rna' ? 'ACGU' : '';
-  const seq = moleculeType === 'protein' || moleculeType === 'dna' || moleculeType === 'rna'
-    ? rawSeq.replace(new RegExp(`[^${validChars}]`, 'g'), '') : '';
+  const validChars = moleculeType === 'protein' ? 'ACDEFGHIKLMNPQRSTVWY' : moleculeType === 'dna' ? 'ACGT' : moleculeType === 'rna' ? 'ACGU' : '';
+  const seq = moleculeType === 'protein' || moleculeType === 'dna' || moleculeType === 'rna' ? rawSeq.replace(new RegExp(`[^${validChars}]`, 'g'), '') : '';
   const selNuc = activeTest.selectedNuclei || ['H', 'N', 'C'];
   const images = activeTest.nmrSpectraImages || [];
   const isPolymer = moleculeType === 'protein' || moleculeType === 'dna' || moleculeType === 'rna';
   const hasPhosphorus = moleculeType === 'dna' || moleculeType === 'rna' || moleculeType === 'lipid';
-  const DB =
-    moleculeType === 'protein' ? AMINO_ACID_DB :
-    moleculeType === 'dna' ? NUCLEOTIDE_DB.DNA :
-    moleculeType === 'rna' ? NUCLEOTIDE_DB.RNA :
-    moleculeType === 'sugar' ? SUGAR_DB : LIPID_DB;
-
-  // ---- instances & layers ----
+  const DB = moleculeType === 'protein' ? AMINO_ACID_DB : moleculeType === 'dna' ? NUCLEOTIDE_DB.DNA : moleculeType === 'rna' ? NUCLEOTIDE_DB.RNA : moleculeType === 'sugar' ? SUGAR_DB : LIPID_DB;
   const instances = getInstances(activeTest);
   const activeInstance = getActiveInstance(activeTest);
   const layers = getLayers(activeTest);
   const activeLayerKey = getActiveLayerKey(activeTest);
-  const activeValues = getLayerValues(activeInstance, activeLayerKey);   // values shown in the table
-  const shifts = getLayerValues(activeInstance, 'cs');                     // chemical shifts drive spectra
-
+  const shifts = getLayerValues(activeInstance, 'cs');
+  const activeValues = getLayerValues(activeInstance, activeLayerKey);
   const ssRaw = activeTest.secondaryStructure || '';
   const getSSAt = (i) => (ssRaw[i] && 'HES'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
   const formsRaw = activeTest.nucleicForms || '';
@@ -1489,16 +1414,8 @@ const useNmrDerived = (activeTest) => {
   const sugarConf = activeTest.sugarConf || 'chair';
   const sugarAnomer = activeTest.sugarAnomer || 'alpha';
   const lipidDB = activeTest.lipidDB || 'cis';
-  const typeLabel =
-    moleculeType === 'protein' ? 'Protein' :
-    moleculeType === 'dna' ? 'DNA' :
-    moleculeType === 'rna' ? 'RNA' :
-    moleculeType === 'sugar' ? 'Sugar' : 'Phospholipid';
-  const nucDefs =
-    moleculeType === 'protein' ? { H: ['HN', 'Hα', 'Hβ'], N: ['N'], C: ['Cα', 'Cβ', "C'"] } :
-    moleculeType === 'dna' || moleculeType === 'rna' ? { H: ["H1'", "H2'", "H3'"], N: [], C: ["C1'", "C2'", "C3'"] } :
-    { H: [], N: [], C: [] };
-
+  const typeLabel = moleculeType === 'protein' ? 'Protein' : moleculeType === 'dna' ? 'DNA' : moleculeType === 'rna' ? 'RNA' : moleculeType === 'sugar' ? 'Sugar' : 'Phospholipid';
+  const nucDefs = moleculeType === 'protein' ? { H: ['HN', 'Hα', 'Hβ'], N: ['N'], C: ['Cα', 'Cβ', "C'"] } : moleculeType === 'dna' || moleculeType === 'rna' ? { H: ["H1'", "H2'", "H3'"], N: [], C: ["C1'", "C2'", "C3'"] } : { H: [], N: [], C: [] };
   const parsedSeq = useMemo(() => {
     let chars = [];
     if (isPolymer) { if (!seq) return []; chars = seq.split(''); }
@@ -1537,7 +1454,6 @@ const useNmrDerived = (activeTest) => {
       return { ...entry, id: `${entry.code3 || char}${index + 1}`, char, color: RESIDUE_COLORS[index % RESIDUE_COLORS.length], shifts: generatedShifts, shifts13C: generatedShifts13C, uniqueCShifts: { ...cShifts }, backboneRand, p31 };
     }).filter(Boolean);
   }, [seq, moleculeType, activeTest.sugarChoice, activeTest.lipidChoice]);
-
   const estSeq = useMemo(() => parsedSeq.map((res, idx) => {
     const ssLetter = moleculeType === 'protein' ? getSSAt(idx) : 'C';
     const ssKey = { C: 'coil', H: 'helix', E: 'sheet' }[ssLetter];
@@ -1568,7 +1484,6 @@ const useNmrDerived = (activeTest) => {
     }
     return { ...res, estShifts, estUniqueC, estShifts13C, estN, estCP, ssLetter, formLetter: getFormAt(idx) };
   }), [parsedSeq, moleculeType, ssRaw, formsRaw, dnaFormDefault, sugarAnomer]);
-
   const simSeq = useMemo(() => {
     const getMan = (idx, name) => {
       const candidates = [`${idx}-${name}`, `${idx}-${String(name).trim()}`, `${idx}-${String(name).replace(/\s+/g, '')}`];
@@ -1589,7 +1504,6 @@ const useNmrDerived = (activeTest) => {
       return { ...res, simShifts, simUniqueC, simShifts13C, simN, simCP };
     });
   }, [estSeq, shifts, moleculeType]);
-
   const structure = useMemo(() => {
     if (parsedSeq.length === 0) return null;
     if (moleculeType === 'protein') return buildProteinStructure(parsedSeq);
@@ -1598,9 +1512,8 @@ const useNmrDerived = (activeTest) => {
     if (moleculeType === 'lipid') return buildLipidStructure(parsedSeq[0], lipidDB);
     return null;
   }, [parsedSeq, moleculeType, sugarConf, sugarAnomer, lipidDB]);
-
   const peaks = useMemo(() => {
-    let diag = []; let cosy = []; let tocsy = []; let noesy = []; let hsqc = []; let hsqc15n = []; let d1H = []; let d13C = []; let p31 = [];
+    let diag = [], cosy = [], tocsy = [], noesy = [], hsqc = [], hsqc15n = [], d1H = [], d13C = [], p31 = [];
     const addPair = (arr, x, y, label, type, colorClass, size, keys) => {
       arr.push({ x, y, label, type, colorClass, size, keys });
       arr.push({ x: y, y: x, label, type, colorClass, size, keys });
@@ -1652,45 +1565,33 @@ const useNmrDerived = (activeTest) => {
       Object.keys(res.simShifts).forEach((atom) => {
         diag.push({ x: res.simShifts[atom], y: res.simShifts[atom], label: `${res.id} ${atom}`, type: 'Diagonal', size: 4, keys: buildKeys(index, [atom], moleculeType, res.char) });
       });
-      if (res.cosy) {
-        res.cosy.forEach(([a1, a2]) => {
-          if (res.simShifts[a1] !== undefined && res.simShifts[a2] !== undefined) addPair(cosy, res.simShifts[a1], res.simShifts[a2], res.id, `${a1}-${a2} (COSY)`, 'cosy', 4, buildKeys(index, [a1, a2], moleculeType, res.char));
-        });
-      }
-      if (res.spinSystems) {
-        res.spinSystems.forEach((sys) => {
-          for (let i = 0; i < sys.length; i++) {
-            for (let j = i + 1; j < sys.length; j++) {
-              if (res.simShifts[sys[i]] !== undefined && res.simShifts[sys[j]] !== undefined) {
-                const isDirect = res.cosy && res.cosy.some((c) => (c[0] === sys[i] && c[1] === sys[j]) || (c[0] === sys[j] && c[1] === sys[i]));
-                addPair(tocsy, res.simShifts[sys[i]], res.simShifts[sys[j]], res.id, `${sys[i]}-${sys[j]} (${isDirect ? 'Direct' : 'Relay'})`, isDirect ? 'tocsyDirect' : 'tocsyRelay', 4, buildKeys(index, [sys[i], sys[j]], moleculeType, res.char));
-              }
-            }
-          }
-        });
-      }
-      const adj = {};
-      if (res.cosy) { res.cosy.forEach(([u, v]) => { if (!adj[u]) adj[u] = []; if (!adj[v]) adj[v] = []; adj[u].push(v); adj[v].push(u); }); }
-      const seenPairs = new Set();
-      if (res.cosy) {
-        res.cosy.forEach(([a1, a2]) => {
-          seenPairs.add([a1, a2].sort().join('-'));
-          if (res.simShifts[a1] !== undefined && res.simShifts[a2] !== undefined) addPair(noesy, res.simShifts[a1], res.simShifts[a2], res.id, `${a1}-${a2} (NOE Intra)`, 'noesyIntra', 4, buildKeys(index, [a1, a2], moleculeType, res.char));
-        });
-      }
-      Object.keys(adj).forEach((u) => {
-        adj[u].forEach((v) => {
-          adj[v].forEach((w) => {
-            if (u !== w) {
-              const pk = [u, w].sort().join('-');
-              if (!seenPairs.has(pk)) {
-                seenPairs.add(pk);
-                if (res.simShifts[u] !== undefined && res.simShifts[w] !== undefined) addPair(noesy, res.simShifts[u], res.simShifts[w], res.id, `${u}-${w} (NOE 4-bond)`, 'noesyIntra4', 3, buildKeys(index, [u, w], moleculeType, res.char));
-              }
-            }
-          });
-        });
+      if (res.cosy) res.cosy.forEach(([a1, a2]) => {
+        if (res.simShifts[a1] !== undefined && res.simShifts[a2] !== undefined) addPair(cosy, res.simShifts[a1], res.simShifts[a2], res.id, `${a1}-${a2} (COSY)`, 'cosy', 4, buildKeys(index, [a1, a2], moleculeType, res.char));
       });
+      if (res.spinSystems) res.spinSystems.forEach((sys) => {
+        for (let i = 0; i < sys.length; i++) for (let j = i + 1; j < sys.length; j++) {
+          if (res.simShifts[sys[i]] !== undefined && res.simShifts[sys[j]] !== undefined) {
+            const isDirect = res.cosy && res.cosy.some((c) => (c[0] === sys[i] && c[1] === sys[j]) || (c[0] === sys[j] && c[1] === sys[i]));
+            addPair(tocsy, res.simShifts[sys[i]], res.simShifts[sys[j]], res.id, `${sys[i]}-${sys[j]} (${isDirect ? 'Direct' : 'Relay'})`, isDirect ? 'tocsyDirect' : 'tocsyRelay', 4, buildKeys(index, [sys[i], sys[j]], moleculeType, res.char));
+          }
+        }
+      });
+      const adj = {};
+      if (res.cosy) res.cosy.forEach(([u, v]) => { if (!adj[u]) adj[u] = []; if (!adj[v]) adj[v] = []; adj[u].push(v); adj[v].push(u); });
+      const seenPairs = new Set();
+      if (res.cosy) res.cosy.forEach(([a1, a2]) => {
+        seenPairs.add([a1, a2].sort().join('-'));
+        if (res.simShifts[a1] !== undefined && res.simShifts[a2] !== undefined) addPair(noesy, res.simShifts[a1], res.simShifts[a2], res.id, `${a1}-${a2} (NOE Intra)`, 'noesyIntra', 4, buildKeys(index, [a1, a2], moleculeType, res.char));
+      });
+      Object.keys(adj).forEach((u) => adj[u].forEach((v) => adj[v].forEach((w) => {
+        if (u !== w) {
+          const pk = [u, w].sort().join('-');
+          if (!seenPairs.has(pk)) {
+            seenPairs.add(pk);
+            if (res.simShifts[u] !== undefined && res.simShifts[w] !== undefined) addPair(noesy, res.simShifts[u], res.simShifts[w], res.id, `${u}-${w} (NOE 4-bond)`, 'noesyIntra4', 3, buildKeys(index, [u, w], moleculeType, res.char));
+          }
+        }
+      })));
       if (index < simSeq.length - 1 && moleculeType === 'protein') {
         const nextRes = simSeq[index + 1];
         if (res.simShifts['HN'] !== undefined && nextRes.simShifts['HN'] !== undefined) {
@@ -1712,7 +1613,6 @@ const useNmrDerived = (activeTest) => {
     });
     return { diagonalData: diag, cosyPeaks: cosy, tocsyPeaks: tocsy, noesyPeaks: noesy, hsqcPeaks: hsqc, hsqc15NPeaks: hsqc15n, data1H: d1H, data13C: d13C, p31Data: p31 };
   }, [simSeq, moleculeType, hasPhosphorus]);
-
   const uniqueTypes = useMemo(() => [...new Set(parsedSeq.map((r) => r.char))], [parsedSeq]);
   const ranges = useMemo(() => {
     const r1 = []; const r13 = [];
@@ -1738,8 +1638,6 @@ const useNmrDerived = (activeTest) => {
     });
     return { ranges1H: r1, ranges13C: r13 };
   }, [uniqueTypes, moleculeType]);
-
-  // Build the list of selectable atom-parameters (for the condition plotter).
   const atomOptions = useMemo(() => {
     const opts = [];
     estSeq.forEach((res, idx) => {
@@ -1751,19 +1649,13 @@ const useNmrDerived = (activeTest) => {
     });
     return opts;
   }, [estSeq, moleculeType, hasPhosphorus]);
-
   return {
-    moleculeType, seq, validChars, isPolymer, hasPhosphorus, DB, selNuc, images,
-    instances, activeInstance, layers, activeLayerKey, activeValues, shifts,
+    moleculeType, seq, validChars, isPolymer, hasPhosphorus, DB, selNuc, shifts, images,
+    instances, activeInstance, layers, activeLayerKey, activeValues, atomOptions,
     getSSAt, getFormAt, sugarConf, sugarAnomer, lipidDB, dnaFormDefault, typeLabel, nucDefs,
-    parsedSeq, estSeq, simSeq, structure, peaks, uniqueTypes, ranges, atomOptions
+    parsedSeq, estSeq, simSeq, structure, peaks, uniqueTypes, ranges
   };
 };
-
-/* ============================================================================
-SECTION COMPONENTS — FIXED SCHEMATIC STRUCTURE (same order as CD):
-Experiment Setup → Data → Fitting → Simulations
-========================================================================== */
 
 // ================= 1) EXPERIMENT SETUP =================
 const ExperimentSetupSection = ({ ctx }) => {
@@ -1778,24 +1670,15 @@ const ExperimentSetupSection = ({ ctx }) => {
   const [lipidBrush, setLipidBrush] = useState(activeTest.lipidDB || 'cis');
   const selectedKeys = getSelectedKeys(activeTest);
   const manualKeys = useMemo(() => getManualKeys(d.shifts), [d.shifts]);
-
   const handleAtomClick = (ri, keys) => {
     if (ri === null || !keys) return;
     const cur = getSelectedKeys(activeTest);
     if (cur && cur.join('|') === keys.join('|')) updateActiveTest({ selectedAtomKeys: [] });
     else updateActiveTest({ selectedAtomKeys: keys });
   };
-  const paintSSAt = (i, letter) => {
-    const arr = d.seq.split('').map((_, j) => d.getSSAt(j));
-    arr[i] = letter;
-    updateActiveTest({ secondaryStructure: arr.join('') });
-  };
+  const paintSSAt = (i, letter) => { const arr = d.seq.split('').map((_, j) => d.getSSAt(j)); arr[i] = letter; updateActiveTest({ secondaryStructure: arr.join('') }); };
   const setAllSS = (letter) => updateActiveTest({ secondaryStructure: d.seq.split('').map(() => letter).join('') });
-  const paintFormAt = (i, letter) => {
-    const arr = d.seq.split('').map((_, j) => d.getFormAt(j));
-    arr[i] = letter;
-    updateActiveTest({ nucleicForms: arr.join('') });
-  };
+  const paintFormAt = (i, letter) => { const arr = d.seq.split('').map((_, j) => d.getFormAt(j)); arr[i] = letter; updateActiveTest({ nucleicForms: arr.join('') }); };
   const setAllForms = (letter) => updateActiveTest({ nucleicForms: d.seq.split('').map(() => letter).join(''), dnaForm: letter });
   const exportFormulaToNotebook = () => {
     if (!d.structure) return;
@@ -1804,7 +1687,6 @@ const ExperimentSetupSection = ({ ctx }) => {
     updateActiveTest({ comments: currentComments + (currentComments ? '<br/>' : '') + html });
     alert('Chemical formula appended to the Lab Notebook notes.');
   };
-
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap gap-2 mb-2">
@@ -1850,7 +1732,6 @@ const ExperimentSetupSection = ({ ctx }) => {
           </div>
         </div>
       </div>
-
       {d.moleculeType === 'protein' && d.parsedSeq.length > 0 && (
         <div>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
@@ -1867,7 +1748,6 @@ const ExperimentSetupSection = ({ ctx }) => {
           <SequencePaintStrip residues={d.parsedSeq} getLetter={(i) => d.getSSAt(i)} meta={SS_META} onApply={(i) => paintSSAt(i, ssBrush)} focusIdx={focusIdx} />
         </div>
       )}
-
       {(d.moleculeType === 'dna' || d.moleculeType === 'rna') && d.parsedSeq.length > 0 && (
         <div>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
@@ -1884,7 +1764,6 @@ const ExperimentSetupSection = ({ ctx }) => {
           <SequencePaintStrip residues={d.parsedSeq} getLetter={(i) => d.getFormAt(i)} meta={FORM_META} onApply={(i) => paintFormAt(i, formBrush)} focusIdx={focusIdx} />
         </div>
       )}
-
       {d.moleculeType === 'sugar' && d.parsedSeq.length > 0 && (
         <div>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
@@ -1902,7 +1781,6 @@ const ExperimentSetupSection = ({ ctx }) => {
           <SequencePaintStrip residues={d.parsedSeq} getLetter={() => (d.sugarAnomer === 'beta' ? 'β' : 'α')} meta={{ β: { label: 'β-anomer', color: '#f97316' }, α: { label: 'α-anomer', color: '#0ea5e9' } }} onApply={() => updateActiveTest({ sugarAnomer: sugarBrushAnomer, sugarConf: sugarBrushConf })} focusIdx={focusIdx} charLabel={(r) => r.code3 || r.char} />
         </div>
       )}
-
       {d.moleculeType === 'lipid' && d.parsedSeq.length > 0 && (
         <div>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
@@ -1915,7 +1793,6 @@ const ExperimentSetupSection = ({ ctx }) => {
           <SequencePaintStrip residues={d.parsedSeq} getLetter={() => d.lipidDB} meta={{ cis: { label: 'cis Δ9', color: '#0ea5e9' }, trans: { label: 'trans Δ9', color: '#f43f5e' } }} onApply={() => updateActiveTest({ lipidDB: lipidBrush })} focusIdx={focusIdx} charLabel={(r) => r.char} />
         </div>
       )}
-
       {d.structure && (
         <div>
           <div className="flex items-center gap-2 flex-wrap mb-2 justify-end">
@@ -1937,9 +1814,7 @@ const ExperimentSetupSection = ({ ctx }) => {
   );
 };
 
-// ============================================================================
-// 2) DATA — INSTANCES (conditions) + MULTI-LAYER assignment table + EXPORT
-// ============================================================================
+// ================= 2) DATA (instances + layers + assignment table + EXPORT) =================
 const DataSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useNmrDerived(activeTest);
@@ -1948,14 +1823,11 @@ const DataSection = ({ ctx }) => {
   const [newInstanceName, setNewInstanceName] = useState('');
   const [newLayerName, setNewLayerName] = useState('');
   const [newLayerUnit, setNewLayerUnit] = useState('');
-
   const effTableMode = d.moleculeType === 'sugar' || d.moleculeType === 'lipid' ? 'all' : tableMode;
   const selectedKeys = getSelectedKeys(activeTest);
   const isCS = d.activeLayerKey === 'cs';
-  const manualKeys = useMemo(() => getManualKeys(d.activeValues), [d.activeValues]);
   const activeLayer = d.layers.find((l) => l.key === d.activeLayerKey) || CHEMICAL_SHIFT_LAYER;
-
-  // ---- instance management ----
+  const manualKeys = useMemo(() => getManualKeys(d.activeValues), [d.activeValues]);
   const addInstance = () => {
     const name = newInstanceName.trim() || `Condition ${d.instances.length + 1}`;
     const inst = { id: makeInstanceId(), name, values: {} };
@@ -1965,25 +1837,22 @@ const DataSection = ({ ctx }) => {
   const removeInstance = (id) => {
     if (d.instances.length <= 1) { alert('At least one instance (condition) is required.'); return; }
     const upd = d.instances.filter((i) => i.id !== id);
-    updateActiveTest({ instances: upd, activeInstanceId: d.activeInstance?.id === id ? upd[0].id : activeTest.activeInstanceId });
+    updateActiveTest({ instances: upd, activeInstanceId: d.activeInstance && d.activeInstance.id === id ? upd[0].id : activeTest.activeInstanceId });
   };
   const renameInstance = (id) => {
     const inst = d.instances.find((i) => i.id === id);
-    const nn = prompt('Rename condition:', inst?.name || '');
+    const nn = window.prompt('Rename condition:', inst ? inst.name : '');
     if (nn && nn.trim()) updateActiveTest({ instances: d.instances.map((i) => (i.id === id ? { ...i, name: nn.trim() } : i)) });
   };
   const duplicateInstance = (inst) => {
     const copy = { id: makeInstanceId(), name: `${inst.name} (copy)`, values: JSON.parse(JSON.stringify(inst.values || {})) };
     updateActiveTest({ instances: [...d.instances, copy], activeInstanceId: copy.id });
   };
-
-  // ---- parameter layer management ----
   const addLayer = () => {
     const label = newLayerName.trim();
     if (!label) return;
-    const key = `layer_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-    const layer = { key, label, unit: newLayerUnit.trim() || '' };
-    updateActiveTest({ parameterLayers: [...(activeTest.parameterLayers || []), layer], activeLayerKey: key });
+    const layer = { key: makeLayerId(), label, unit: newLayerUnit.trim() || '' };
+    updateActiveTest({ parameterLayers: [...(activeTest.parameterLayers || []), layer], activeLayerKey: layer.key });
     setNewLayerName(''); setNewLayerUnit('');
   };
   const removeLayer = (key) => {
@@ -1991,9 +1860,7 @@ const DataSection = ({ ctx }) => {
     const upd = (activeTest.parameterLayers || []).filter((l) => l.key !== key);
     updateActiveTest({ parameterLayers: upd, activeLayerKey: d.activeLayerKey === key ? 'cs' : d.activeLayerKey });
   };
-
-  // ---- value editing (active instance + active layer) ----
-  const handleValueChange = (resIdx, atom, val) => {
+  const handleShiftChange = (resIdx, atom, val) => {
     if (!d.activeInstance) return;
     writeInstanceValue(activeTest, updateActiveTest, d.activeInstance.id, d.activeLayerKey, `${resIdx}-${atom}`, val);
   };
@@ -2005,62 +1872,50 @@ const DataSection = ({ ctx }) => {
     else updateActiveTest({ selectedAtomKeys: keys });
   };
   const cellIsSelected = (idx, atom) => Boolean(selectedKeys && selectedKeys.includes(`${idx}-${atom}`));
-
   const fillEstimated = () => {
     if (!isCS || !d.activeInstance) return;
-    const inst = d.activeInstance;
-    const cs = { ...(inst.values || {}).cs };
+    const cs = {};
     d.estSeq.forEach((res, idx) => {
       Object.entries(res.estShifts || {}).forEach(([a, v]) => { cs[`${idx}-${a}`] = String(v); });
       Object.entries(res.estUniqueC || {}).forEach(([cn, v]) => { cs[`${idx}-${cn}`] = String(v); });
       if (res.estN !== null) cs[`${idx}-N`] = String(res.estN);
       if (res.estCP !== null) cs[`${idx}-C'`] = String(res.estCP);
     });
-    updateActiveTest({ instances: d.instances.map((i) => (i.id === inst.id ? { ...i, values: { ...(i.values || {}), cs } } : i)) });
+    updateActiveTest({ instances: d.instances.map((i) => (i.id === d.activeInstance.id ? { ...i, values: { ...(i.values || {}), cs } } : i)) });
   };
   const clearLayer = () => {
     if (!d.activeInstance) return;
-    const inst = d.activeInstance;
-    updateActiveTest({ instances: d.instances.map((i) => (i.id === inst.id ? { ...i, values: { ...(i.values || {}), [d.activeLayerKey]: {} } } : i)) });
+    updateActiveTest({ instances: d.instances.map((i) => (i.id === d.activeInstance.id ? { ...i, values: { ...(i.values || {}), [d.activeLayerKey]: {} } } : i)) });
   };
-
-  // ---- EXPORT CSV (active instance + active layer) ----
   const exportCSV = () => {
     const rows = [['Instance (Condition)', 'Parameter', 'Residue', 'Nucleus', 'Atom', 'Value', 'Estimated (ppm)']];
     d.estSeq.forEach((res, idx) => {
-      if (d.selNuc.includes('H')) {
-        Object.keys(res.estShifts || {}).forEach((a) => {
-          rows.push([d.activeInstance?.name || '', activeLayer.label, res.id, '1H', a, d.activeValues[`${idx}-${a}`] || '', isCS ? res.estShifts[a] : '']);
-        });
-      }
+      if (d.selNuc.includes('H')) Object.keys(res.estShifts || {}).forEach((a) => rows.push([d.activeInstance ? d.activeInstance.name : '', activeLayer.label, res.id, '1H', a, d.activeValues[`${idx}-${a}`] || '', isCS ? res.estShifts[a] : '']));
       if (d.moleculeType === 'protein') {
-        if (d.selNuc.includes('N') && res.estN !== null) rows.push([d.activeInstance?.name || '', activeLayer.label, res.id, '15N', 'N', d.activeValues[`${idx}-N`] || '', isCS ? res.estN : '']);
+        if (d.selNuc.includes('N') && res.estN !== null) rows.push([d.activeInstance ? d.activeInstance.name : '', activeLayer.label, res.id, '15N', 'N', d.activeValues[`${idx}-N`] || '', isCS ? res.estN : '']);
         if (d.selNuc.includes('C')) {
-          Object.keys(res.estUniqueC || {}).forEach((cn) => rows.push([d.activeInstance?.name || '', activeLayer.label, res.id, '13C', cn, d.activeValues[`${idx}-${cn}`] || '', isCS ? res.estUniqueC[cn] : '']));
-          if (res.estCP !== null) rows.push([d.activeInstance?.name || '', activeLayer.label, res.id, '13C', "C'", d.activeValues[`${idx}-C'`] || '', isCS ? res.estCP : '']);
+          Object.keys(res.estUniqueC || {}).forEach((cn) => rows.push([d.activeInstance ? d.activeInstance.name : '', activeLayer.label, res.id, '13C', cn, d.activeValues[`${idx}-${cn}`] || '', isCS ? res.estUniqueC[cn] : '']));
+          if (res.estCP !== null) rows.push([d.activeInstance ? d.activeInstance.name : '', activeLayer.label, res.id, '13C', "C'", d.activeValues[`${idx}-C'`] || '', isCS ? res.estCP : '']);
         }
       } else if (d.selNuc.includes('C')) {
-        Object.keys(res.estUniqueC || {}).forEach((cn) => rows.push([d.activeInstance?.name || '', activeLayer.label, res.id, '13C', cn, d.activeValues[`${idx}-${cn}`] || '', isCS ? res.estUniqueC[cn] : '']));
+        Object.keys(res.estUniqueC || {}).forEach((cn) => rows.push([d.activeInstance ? d.activeInstance.name : '', activeLayer.label, res.id, '13C', cn, d.activeValues[`${idx}-${cn}`] || '', isCS ? res.estUniqueC[cn] : '']));
       }
-      if (d.hasPhosphorus && d.selNuc.includes('P') && res.p31 !== null) rows.push([d.activeInstance?.name || '', activeLayer.label, res.id, '31P', 'P', d.activeValues[`${idx}-P`] || '', isCS ? res.p31 : '']);
+      if (d.hasPhosphorus && d.selNuc.includes('P') && res.p31 !== null) rows.push([d.activeInstance ? d.activeInstance.name : '', activeLayer.label, res.id, '31P', 'P', d.activeValues[`${idx}-P`] || '', isCS ? res.p31 : '']);
     });
     const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
     const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `NMR_${(d.activeInstance?.name || 'data').replace(/[^a-z0-9]+/gi, '_')}_${activeLayer.label.replace(/[^a-z0-9]+/gi, '_')}.csv`;
+    a.download = `NMR_${(d.activeInstance ? d.activeInstance.name : 'data').replace(/[^a-z0-9]+/gi, '_')}_${activeLayer.label.replace(/[^a-z0-9]+/gi, '_')}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
-
   const selTdCls = (isMan, isSel) => `px-3 py-1 cursor-pointer transition-colors ${isSel ? 'bg-amber-100 ring-2 ring-inset ring-amber-400' : isMan ? 'bg-green-50' : 'hover:bg-slate-50'}`;
-
   return (
     <div className="flex flex-col gap-6">
-      {/* ---------- INSTANCE (CONDITION) MANAGER ---------- */}
       <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4">
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <label className="text-xs font-bold text-indigo-800 uppercase">🧩 Instances / Conditions</label>
@@ -2068,12 +1923,10 @@ const DataSection = ({ ctx }) => {
         </div>
         <div className="flex flex-wrap gap-2 mb-3">
           {d.instances.map((inst) => {
-            const isActive = d.activeInstance?.id === inst.id;
+            const isActive = d.activeInstance && d.activeInstance.id === inst.id;
             return (
               <div key={inst.id} className={`flex items-center gap-1 rounded-lg px-2 py-1 border shadow-sm transition-colors ${isActive ? 'bg-indigo-600 border-indigo-700 text-white' : 'bg-white border-indigo-300 text-indigo-900'}`}>
-                <button type="button" onClick={() => updateActiveTest({ activeInstanceId: inst.id })} className="text-xs font-bold max-w-[180px] truncate" title="Set as active condition">
-                  {inst.name}
-                </button>
+                <button type="button" onClick={() => updateActiveTest({ activeInstanceId: inst.id })} className="text-xs font-bold max-w-[180px] truncate" title="Set as active condition">{inst.name}</button>
                 <button type="button" onClick={() => renameInstance(inst.id)} className={`text-[10px] font-bold ${isActive ? 'text-indigo-200 hover:text-white' : 'text-slate-400 hover:text-blue-600'}`} title="Rename">✎</button>
                 <button type="button" onClick={() => duplicateInstance(inst)} className={`text-[10px] font-bold ${isActive ? 'text-indigo-200 hover:text-white' : 'text-slate-400 hover:text-blue-600'}`} title="Duplicate">⧉</button>
                 <button type="button" onClick={() => removeInstance(inst.id)} className={`text-[10px] font-bold ${isActive ? 'text-indigo-200 hover:text-red-300' : 'text-slate-400 hover:text-red-500'}`} title="Remove">×</button>
@@ -2081,13 +1934,17 @@ const DataSection = ({ ctx }) => {
             );
           })}
         </div>
+        {d.activeInstance && (
+          <div className="flex items-center gap-2 mb-3 flex-wrap">
+            <label className="text-[10px] font-bold text-indigo-700 uppercase">X value of “{d.activeInstance.name}” (numeric — used for fitting & numeric axis):</label>
+            <input type="text" value={d.activeInstance.xValue || ''} onChange={(e) => updateActiveTest({ instances: d.instances.map((i) => (i.id === d.activeInstance.id ? { ...i, xValue: e.target.value } : i)) })} className="border border-indigo-300 rounded-lg px-2 py-1 text-xs w-28 bg-white outline-none focus:border-indigo-500 font-mono" placeholder="e.g. 298 / 0.5" />
+          </div>
+        )}
         <div className="flex gap-2">
           <input type="text" value={newInstanceName} onChange={(e) => setNewInstanceName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addInstance(); } }} placeholder="New condition name (e.g. pH 5.0, +ligand 1:5)" className="flex-1 border border-indigo-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-indigo-500" />
           <button type="button" onClick={addInstance} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm">+ Add Instance</button>
         </div>
       </div>
-
-      {/* ---------- PARAMETER LAYER SWITCHER ---------- */}
       <div className="bg-white border border-slate-200 rounded-xl p-4">
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <label className="text-xs font-bold text-slate-600 uppercase">🗂️ Parameter Layer (assignment table data type)</label>
@@ -2096,13 +1953,12 @@ const DataSection = ({ ctx }) => {
         <div className="flex flex-wrap gap-2 items-center mb-3">
           {d.layers.map((l) => (
             <div key={l.key} className="inline-flex items-center">
-              <button type="button" onClick={() => updateActiveTest({ activeLayerKey: l.key })} className={`px-3 py-1.5 rounded-l-lg text-xs font-bold border transition-colors ${d.activeLayerKey === l.key ? 'bg-blue-600 border-blue-700 text-white' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
-                {l.label}{l.unit ? ` (${l.unit})` : ''}
-              </button>
-              {!l.builtin && (
+              <button type="button" onClick={() => updateActiveTest({ activeLayerKey: l.key })} className={`px-3 py-1.5 rounded-l-lg text-xs font-bold border transition-colors ${d.activeLayerKey === l.key ? 'bg-blue-600 border-blue-700 text-white' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}`}>{l.label}{l.unit ? ` (${l.unit})` : ''}</button>
+              {!l.builtin ? (
                 <button type="button" onClick={() => removeLayer(l.key)} className={`px-2 py-1.5 rounded-r-lg border border-l-0 text-xs font-black ${d.activeLayerKey === l.key ? 'bg-blue-600 border-blue-700 text-blue-200 hover:text-white' : 'bg-white border-slate-300 text-slate-400 hover:text-red-500'}`} title="Delete parameter">×</button>
+              ) : (
+                <span className="px-2 py-1.5 rounded-r-lg border border-l-0 bg-slate-100 border-slate-300 text-slate-400 text-xs">🔒</span>
               )}
-              {l.builtin && <span className="px-2 py-1.5 rounded-r-lg border border-l-0 bg-slate-100 border-slate-300 text-slate-400 text-xs">🔒</span>}
             </div>
           ))}
         </div>
@@ -2118,29 +1974,16 @@ const DataSection = ({ ctx }) => {
           <button type="button" onClick={addLayer} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm h-fit">+ Add Parameter Layer</button>
         </div>
       </div>
-
-      {/* ---------- EXPORT / TOOLS BAR ---------- */}
       <div className="bg-white border border-slate-200 rounded-xl shadow-sm px-4 py-3 flex items-center justify-end gap-3 no-print flex-wrap">
-        <span className="text-xs font-bold text-slate-500 mr-auto">
-          Active: <span className="text-indigo-700">{d.activeInstance?.name}</span> · <span className="text-blue-700">{activeLayer.label}</span>
-        </span>
+        <span className="text-xs font-bold text-slate-500 mr-auto">Active: <span className="text-indigo-700">{d.activeInstance ? d.activeInstance.name : '—'}</span> · <span className="text-blue-700">{activeLayer.label}</span></span>
         <button onClick={exportCSV} className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1.5 px-3 rounded text-xs flex items-center gap-1 shadow-sm transition-colors">📊 Export XLS (CSV)</button>
       </div>
-
       {selectedKeys && (
         <div className="flex items-center gap-2 bg-amber-50 border border-amber-300 rounded-lg px-3 py-1.5 text-xs font-bold text-amber-800 w-fit">
           🎯 Selected: {selectionLabel(d, selectedKeys)}
           <button onClick={() => updateActiveTest({ selectedAtomKeys: [] })} className="ml-1 text-amber-600 hover:text-red-600 font-black" title="Clear selection">✕</button>
         </div>
       )}
-
-      {d.uniqueTypes.length > 0 && isCS && (
-        <div className="grid grid-cols-1 gap-4">
-          <RangeBarChart title="Theoretical ¹H Ranges" ranges={d.ranges.ranges1H} domain={[0, 11]} ticks={Array.from({ length: 12 }, (_, i) => i)} xAxisLabel="¹H (ppm)" rowCount={d.uniqueTypes.length} rowLabels={d.uniqueTypes.map((c) => d.DB[c]?.code3 || c)} />
-          <RangeBarChart title="Theoretical ¹³C Ranges" ranges={d.ranges.ranges13C} domain={[0, 190]} ticks={Array.from({ length: 20 }, (_, i) => i * 10)} xAxisLabel="¹³C (ppm)" rowCount={d.uniqueTypes.length} rowLabels={d.uniqueTypes.map((c) => d.DB[c]?.code3 || c)} />
-        </div>
-      )}
-
       <div className="flex items-center gap-2 flex-wrap">
         {d.parsedSeq.length > 0 && d.moleculeType !== 'sugar' && d.moleculeType !== 'lipid' && (
           <div className="flex bg-slate-200 p-1 rounded-lg">
@@ -2149,15 +1992,10 @@ const DataSection = ({ ctx }) => {
             <button onClick={() => { setTableMode('unified'); updateActiveTest({ tableMode: 'unified' }); }} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${effTableMode === 'unified' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Unified</button>
           </div>
         )}
-        {isCS && (
-          <button onClick={fillEstimated} className="px-2 py-1 rounded-lg text-xs font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100">🪄 Fill with estimated</button>
-        )}
+        {isCS && <button onClick={fillEstimated} className="px-2 py-1 rounded-lg text-xs font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100">🪄 Fill with estimated</button>}
         <button onClick={clearLayer} className="px-2 py-1 rounded-lg text-xs font-bold bg-red-50 border border-red-200 text-red-600 hover:bg-red-100">🧹 Clear {activeLayer.label}</button>
-        {manualKeys.length > 0 && (
-          <span className="text-[10px] font-bold text-green-700 bg-green-50 border border-green-300 rounded-lg px-2 py-1">🟩 {manualKeys.length} filled</span>
-        )}
+        {manualKeys.length > 0 && <span className="text-[10px] font-bold text-green-700 bg-green-50 border border-green-300 rounded-lg px-2 py-1">🟩 {manualKeys.length} filled</span>}
       </div>
-
       {d.parsedSeq.length === 0 ? (
         <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">Enter a sequence / select a molecule (in Experiment Setup) to generate the table.</div>
       ) : effTableMode === 'backbone' ? (
@@ -2179,9 +2017,7 @@ const DataSection = ({ ctx }) => {
                   <tr key={idx} className="hover:bg-slate-50 transition-colors">
                     <td className="px-4 py-2 font-black text-slate-700 text-center bg-slate-50 border-r border-slate-100">{res.id}</td>
                     {d.moleculeType === 'protein' && (
-                      <td className="px-2 py-1 text-center">
-                        <span className="inline-block w-6 h-6 leading-6 rounded-full text-xs font-black text-white" style={{ backgroundColor: SS_META[res.ssLetter].color }}>{res.ssLetter}</span>
-                      </td>
+                      <td className="px-2 py-1 text-center"><span className="inline-block w-6 h-6 leading-6 rounded-full text-xs font-black text-white" style={{ backgroundColor: SS_META[res.ssLetter].color }}>{res.ssLetter}</span></td>
                     )}
                     {d.selNuc.includes('H') && d.nucDefs.H.map((a) => {
                       const isMan = parseManual(d.activeValues[`${idx}-${a}`]) !== null;
@@ -2189,7 +2025,7 @@ const DataSection = ({ ctx }) => {
                       const est = res.estShifts?.[a];
                       return (
                         <td key={a} className={selTdCls(isMan, isSel)} onClick={(e) => handleCellClick(e, idx, a)} title="Click to highlight this atom everywhere">
-                          <input type="text" value={d.activeValues[`${idx}-${a}`] || ''} onChange={(e) => handleValueChange(idx, a, e.target.value)} className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-200 focus:border-blue-500'}`} placeholder="—" />
+                          <input type="text" value={d.activeValues[`${idx}-${a}`] || ''} onChange={(e) => handleShiftChange(idx, a, e.target.value)} className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-200 focus:border-blue-500'}`} placeholder="—" />
                           {isCS && est !== undefined && <div className="text-[13px] font-bold text-blue-600 text-center mt-0.5">≈ {est.toFixed(2)}</div>}
                         </td>
                       );
@@ -2199,7 +2035,7 @@ const DataSection = ({ ctx }) => {
                       const isSel = cellIsSelected(idx, a);
                       return (
                         <td key={a} className={selTdCls(isMan, isSel)} onClick={(e) => handleCellClick(e, idx, a)} title="Click to highlight this atom everywhere">
-                          <input type="text" value={d.activeValues[`${idx}-${a}`] || ''} onChange={(e) => handleValueChange(idx, a, e.target.value)} className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-200 focus:border-emerald-500'}`} placeholder="—" />
+                          <input type="text" value={d.activeValues[`${idx}-${a}`] || ''} onChange={(e) => handleShiftChange(idx, a, e.target.value)} className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-200 focus:border-emerald-500'}`} placeholder="—" />
                           {isCS && res.estN !== null && <div className="text-[13px] font-bold text-emerald-600 text-center mt-0.5">≈ {res.estN.toFixed(2)}</div>}
                         </td>
                       );
@@ -2210,7 +2046,7 @@ const DataSection = ({ ctx }) => {
                       const est = a === "C'" ? res.estCP : res.estUniqueC?.[a];
                       return (
                         <td key={a} className={selTdCls(isMan, isSel)} onClick={(e) => handleCellClick(e, idx, a)} title="Click to highlight this atom everywhere">
-                          <input type="text" value={d.activeValues[`${idx}-${a}`] || ''} onChange={(e) => handleValueChange(idx, a, e.target.value)} className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-200 focus:border-purple-500'}`} placeholder="—" />
+                          <input type="text" value={d.activeValues[`${idx}-${a}`] || ''} onChange={(e) => handleShiftChange(idx, a, e.target.value)} className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-200 focus:border-purple-500'}`} placeholder="—" />
                           {isCS && est !== undefined && est !== null && <div className="text-[13px] font-bold text-purple-600 text-center mt-0.5">≈ {est.toFixed(2)}</div>}
                         </td>
                       );
@@ -2254,14 +2090,12 @@ const DataSection = ({ ctx }) => {
                     <tr key={`${idx}-${ri}`} onClick={(e) => handleCellClick(e, idx, row.atom)} className={`cursor-pointer transition-colors ${isSel ? 'bg-amber-100' : isMan ? 'bg-green-50' : 'hover:bg-slate-50'}`} title="Click to highlight this atom everywhere">
                       {ri === 0 && <td rowSpan={rows.length} className="px-4 py-2 font-black text-slate-700 text-center bg-slate-50 border-r border-slate-100 align-top">{res.id}</td>}
                       {ri === 0 && d.moleculeType === 'protein' && (
-                        <td rowSpan={rows.length} className="px-2 py-2 text-center align-top">
-                          <span className="inline-block w-6 h-6 leading-6 rounded-full text-xs font-black text-white" style={{ backgroundColor: SS_META[res.ssLetter].color }}>{res.ssLetter}</span>
-                        </td>
+                        <td rowSpan={rows.length} className="px-2 py-2 text-center align-top"><span className="inline-block w-6 h-6 leading-6 rounded-full text-xs font-black text-white" style={{ backgroundColor: SS_META[res.ssLetter].color }}>{res.ssLetter}</span></td>
                       )}
                       <td className="px-3 py-1 font-bold text-slate-600 whitespace-nowrap">{row.nuc}</td>
                       <td className={`px-3 py-1 font-medium whitespace-nowrap ${isMan ? 'text-green-700 font-bold' : 'text-slate-700'}`}>{row.atom}</td>
                       <td className="px-3 py-1 text-center">
-                        <input type="text" value={d.activeValues[key] || ''} onChange={(e) => handleValueChange(idx, row.atom, e.target.value)} className={`w-24 text-center border rounded px-2 py-1 outline-none text-xs font-mono ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-200 focus:border-blue-500'}`} placeholder="—" />
+                        <input type="text" value={d.activeValues[key] || ''} onChange={(e) => handleShiftChange(idx, row.atom, e.target.value)} className={`w-24 text-center border rounded px-2 py-1 outline-none text-xs font-mono ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-200 focus:border-blue-500'}`} placeholder="—" />
                       </td>
                       {isCS && <td className="px-3 py-1 text-center text-[13px] font-bold text-blue-600">≈ {row.est}</td>}
                     </tr>
@@ -2281,9 +2115,7 @@ const DataSection = ({ ctx }) => {
                 <div key={`1h-${resIdx}`} className="border border-slate-200 rounded-lg overflow-hidden shadow-sm h-fit">
                   <div className="py-2 text-center font-bold text-sm" style={{ backgroundColor: `${res.color}15`, color: res.color, borderBottom: `1px solid ${res.color}30` }}>{res.name} ({res.id})</div>
                   <table className="w-full text-sm text-left bg-white">
-                    <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200">
-                      <tr><th className="px-3 py-2 font-semibold">Atom</th><th className="px-3 py-2 font-semibold text-center">Value</th></tr>
-                    </thead>
+                    <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200"><tr><th className="px-3 py-2 font-semibold">Atom</th><th className="px-3 py-2 font-semibold text-center">Value</th></tr></thead>
                     <tbody className="text-slate-700 divide-y divide-slate-100">
                       {res.atoms.map((atom) => {
                         const isMan = parseManual(d.activeValues[`${resIdx}-${atom}`]) !== null;
@@ -2293,7 +2125,7 @@ const DataSection = ({ ctx }) => {
                             <td className={`px-3 py-1 font-medium ${isMan ? 'text-green-700 font-bold' : ''}`}>{atom}</td>
                             <td className="px-3 py-1 text-center border-l border-slate-100 font-mono">
                               <div className="flex items-center justify-center gap-2 flex-wrap">
-                                <input type="text" value={d.activeValues[`${resIdx}-${atom}`] || ''} onChange={(e) => handleValueChange(resIdx, atom, e.target.value)} className={`w-16 text-center border rounded py-0.5 outline-none text-xs ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-300 focus:border-blue-500'}`} placeholder="—" />
+                                <input type="text" value={d.activeValues[`${resIdx}-${atom}`] || ''} onChange={(e) => handleShiftChange(resIdx, atom, e.target.value)} className={`w-16 text-center border rounded py-0.5 outline-none text-xs ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-300 focus:border-blue-500'}`} placeholder="—" />
                                 {isCS && res.estShifts[atom] !== undefined && <span className="text-[13px] font-bold text-blue-600">≈ {res.estShifts[atom].toFixed(2)}</span>}
                               </div>
                             </td>
@@ -2314,9 +2146,7 @@ const DataSection = ({ ctx }) => {
                 <div key={`13c-${resIdx}`} className="border border-slate-200 rounded-lg overflow-hidden shadow-sm h-fit">
                   <div className="py-2 text-center font-bold text-sm" style={{ backgroundColor: `${res.color}15`, color: res.color, borderBottom: `1px solid ${res.color}30` }}>{res.name} ({res.id})</div>
                   <table className="w-full text-sm text-left bg-white">
-                    <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200">
-                      <tr><th className="px-3 py-2 font-semibold">Atom</th><th className="px-3 py-2 font-semibold text-center">Value</th></tr>
-                    </thead>
+                    <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200"><tr><th className="px-3 py-2 font-semibold">Atom</th><th className="px-3 py-2 font-semibold text-center">Value</th></tr></thead>
                     <tbody className="text-slate-700 divide-y divide-slate-100">
                       {Object.keys(res.estUniqueC || {}).map((cName) => {
                         const isMan = parseManual(d.activeValues[`${resIdx}-${cName}`]) !== null;
@@ -2326,7 +2156,7 @@ const DataSection = ({ ctx }) => {
                             <td className={`px-3 py-1 font-medium ${isMan ? 'text-green-700 font-bold' : 'text-purple-800'}`}>{cName}</td>
                             <td className="px-3 py-1 text-center border-l border-slate-100 font-mono">
                               <div className="flex items-center justify-center gap-2 flex-wrap">
-                                <input type="text" value={d.activeValues[`${resIdx}-${cName}`] || ''} onChange={(e) => handleValueChange(resIdx, cName, e.target.value)} className={`w-16 text-center border rounded py-0.5 outline-none text-xs ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-300 focus:border-purple-500'}`} placeholder="—" />
+                                <input type="text" value={d.activeValues[`${resIdx}-${cName}`] || ''} onChange={(e) => handleShiftChange(resIdx, cName, e.target.value)} className={`w-16 text-center border rounded py-0.5 outline-none text-xs ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-300 focus:border-purple-500'}`} placeholder="—" />
                                 {isCS && <span className="text-[13px] font-bold text-purple-600">≈ {res.estUniqueC[cName].toFixed(1)}</span>}
                               </div>
                             </td>
@@ -2353,7 +2183,7 @@ const DataSection = ({ ctx }) => {
                       <div className="py-2 text-center font-bold text-sm" style={{ backgroundColor: `${res.color}15`, color: res.color, borderBottom: `1px solid ${res.color}30` }}>{res.name} ({res.id})</div>
                       <div className={`p-3 flex items-center justify-center gap-3 cursor-pointer ${isSel ? 'bg-amber-100' : isMan ? 'bg-green-50' : ''}`} onClick={(e) => handleCellClick(e, resIdx, 'P')} title="Click to highlight this atom everywhere">
                         <span className="font-bold text-teal-700">P</span>
-                        <input type="text" value={d.activeValues[`${resIdx}-P`] || ''} onChange={(e) => handleValueChange(resIdx, 'P', e.target.value)} className={`w-16 text-center border rounded py-0.5 outline-none text-xs font-mono ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-300 focus:border-teal-500'}`} placeholder="—" />
+                        <input type="text" value={d.activeValues[`${resIdx}-P`] || ''} onChange={(e) => handleShiftChange(resIdx, 'P', e.target.value)} className={`w-16 text-center border rounded py-0.5 outline-none text-xs font-mono ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-300 focus:border-teal-500'}`} placeholder="—" />
                         {isCS && <span className="text-[13px] font-bold text-teal-600">≈ {res.p31.toFixed(2)}</span>}
                       </div>
                     </div>
@@ -2368,112 +2198,528 @@ const DataSection = ({ ctx }) => {
   );
 };
 
-// ============================================================================
-// 3) FITTING — CONDITION PLOTTING (parameter of atom vs instance/condition)
-// ============================================================================
-const FittingSection = ({ ctx }) => {
+// ================= 3) FITTING — CONDITION PLOTS (fit + errori) + VARIABLE PARAMETERS =================
+const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlot }) => {
   const { activeTest, updateActiveTest } = ctx;
-  const d = useNmrDerived(activeTest);
-  const plotCfg = activeTest.conditionPlot || {};
+  const cfg = { ...FIT_DEFAULT_CHART_CFG, ...(plot.chartCfg || {}) };
   const [atomSearch, setAtomSearch] = useState('');
-  const plotLayerKey = plotCfg.layerKey || 'cs';
-  const selectedPlotAtoms = Array.isArray(plotCfg.atoms) ? plotCfg.atoms : [];
-  const heightPx = activeTest.nmrChartHeight || 400;
-
-  const plotLayer = d.layers.find((l) => l.key === plotLayerKey) || CHEMICAL_SHIFT_LAYER;
-
-  const setPlotCfg = (patch) => updateActiveTest({ conditionPlot: { ...plotCfg, ...patch } });
-  const togglePlotAtom = (key) => {
-    const upd = selectedPlotAtoms.includes(key) ? selectedPlotAtoms.filter((k) => k !== key) : [...selectedPlotAtoms, key];
-    setPlotCfg({ atoms: upd });
+  const [presetName, setPresetName] = useState('');
+  const [showErr, setShowErr] = useState(false);
+  const [showCfg, setShowCfg] = useState(false);
+  const set = (patch) => updatePlot(plot.id, patch);
+  const setCfg = (patch) => updatePlot(plot.id, { chartCfg: { ...cfg, ...patch } });
+  const plotLayer = d.layers.find((l) => l.key === plot.layerKey) || d.layers[0];
+  const filtered = d.atomOptions.filter((o) => !atomSearch.trim() || o.label.toLowerCase().includes(atomSearch.toLowerCase()));
+  const toggleAtom = (key) => set({ atoms: plot.atoms.includes(key) ? plot.atoms.filter((k) => k !== key) : [...plot.atoms, key] });
+  const selectAllFiltered = () => set({ atoms: Array.from(new Set([...plot.atoms, ...filtered.map((o) => o.key)])) });
+  const presets = Array.isArray(activeTest.atomSelectionPresets) ? activeTest.atomSelectionPresets : [];
+  const savePreset = () => {
+    const name = presetName.trim();
+    if (!name || plot.atoms.length === 0) return;
+    updateActiveTest({ atomSelectionPresets: [...presets, { id: makePlotId(), name, atoms: [...plot.atoms] }] });
+    setPresetName('');
   };
-
-  const filteredAtomOptions = d.atomOptions.filter((o) =>
-    !atomSearch.trim() || o.label.toLowerCase().includes(atomSearch.toLowerCase())
-  );
-
-  // Build chart data: one row per instance (condition), one column per selected atom.
-  const chartData = useMemo(() => {
-    return d.instances.map((inst) => {
-      const vals = getLayerValues(inst, plotLayerKey);
-      const point = { __condition: inst.name };
-      selectedPlotAtoms.forEach((ak) => {
-        const v = parseFloat(String(vals[ak] || '').replace(',', '.'));
-        point[ak] = Number.isFinite(v) ? v : null;
-      });
-      return point;
+  const applyPreset = (id) => { const p = presets.find((x) => x.id === id); if (p) set({ atoms: [...(p.atoms || [])] }); };
+  const deletePreset = (id) => updateActiveTest({ atomSelectionPresets: presets.filter((x) => x.id !== id) });
+  const series = useMemo(() => plot.atoms.map((ak) => {
+    const opt = d.atomOptions.find((o) => o.key === ak);
+    const pts = [];
+    d.instances.forEach((inst) => {
+      const v = parseManual(getLayerValues(inst, plot.layerKey)[ak]);
+      if (v === null) return;
+      pts.push({ instId: inst.id, name: inst.name, x: parseManual(inst.xValue), y: v, excluded: !!(plot.excluded[ak] && plot.excluded[ak][inst.id]) });
     });
-  }, [d.instances, plotLayerKey, selectedPlotAtoms]);
-
-  const series = useMemo(() =>
-    selectedPlotAtoms.map((ak) => {
-      const opt = d.atomOptions.find((o) => o.key === ak);
-      return { key: ak, label: opt ? opt.label : ak };
-    }), [selectedPlotAtoms, d.atomOptions]);
-
+    return { key: ak, label: opt ? opt.label : ak, pts };
+  }), [plot.atoms, plot.layerKey, d.instances, d.atomOptions, plot.excluded]);
+  const colorOf = (s) => LINE_COLORS[Math.max(0, series.findIndex((q) => q.key === s.key)) % LINE_COLORS.length];
+  const includedPts = (s) => s.pts.filter((p) => !p.excluded);
+  const effSD = (sKey, p) => {
+    const man = (plot.manualSD[sKey] || {})[p.instId];
+    if (typeof man === 'number' && Number.isFinite(man)) return man;
+    if (plot.useFixedSD) { const f = parseManual(plot.fixedSDStr); if (f !== null) return f; }
+    return null;
+  };
+  const fitOf = (s) => {
+    if (!plot.fitEnabled || plot.xMode !== 'numeric') return null;
+    const wpts = includedPts(s).filter((p) => p.x !== null).map((p) => {
+      const sd = effSD(s.key, p);
+      return { x: p.x, y: p.y, w: sd && sd > 0 ? 1 / (sd * sd) : 1 };
+    });
+    return plot.fitModel === 'linear' ? fitLinear(wpts) : fit4PL(wpts);
+  };
+  const fits = useMemo(() => {
+    const out = {};
+    series.forEach((s) => { out[s.key] = fitOf(s); });
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [series, plot.fitEnabled, plot.fitModel, plot.xMode, plot.manualSD, plot.useFixedSD, plot.fixedSDStr]);
+  const setManualSD = (sKey, instId, val) => {
+    const inner = { ...(plot.manualSD[sKey] || {}) };
+    const n = parseManual(val);
+    if (n === null) delete inner[instId]; else inner[instId] = n;
+    set({ manualSD: { ...plot.manualSD, [sKey]: inner } });
+  };
+  const toggleExclude = (sKey, instId) => {
+    const inner = { ...(plot.excluded[sKey] || {}) };
+    if (inner[instId]) delete inner[instId]; else inner[instId] = true;
+    set({ excluded: { ...plot.excluded, [sKey]: inner } });
+  };
+  const autoTouch = (s) => {
+    const fit = fits[s.key] || fitOf(s);
+    if (!fit || !fit.f) return;
+    const inner = { ...(plot.manualSD[s.key] || {}) };
+    includedPts(s).forEach((p) => {
+      if (p.x === null) return;
+      inner[p.instId] = Math.ceil((Math.abs(p.y - fit.f(p.x)) * 1.02 + 0.01) * 100) / 100;
+    });
+    set({ manualSD: { ...plot.manualSD, [s.key]: inner } });
+  };
+  const resetSD = (sKey) => { const next = { ...plot.manualSD }; delete next[sKey]; set({ manualSD: next }); };
+  const cleanOutliers = (target) => {
+    const thresh = parseManual(plot.outlierThreshStr) || 2.5;
+    const excluded = JSON.parse(JSON.stringify(plot.excluded || {}));
+    const proc = (s) => {
+      for (let it = 0; it < 20; it++) {
+        const pts = s.pts.filter((p) => !((excluded[s.key] || {})[p.instId]) && p.x !== null);
+        if (pts.length < 4) break;
+        const wpts = pts.map((p) => { const sd = effSD(s.key, p); return { x: p.x, y: p.y, w: sd && sd > 0 ? 1 / (sd * sd) : 1, p }; });
+        const fit = plot.fitModel === 'linear' ? fitLinear(wpts) : fit4PL(wpts);
+        if (!fit || !fit.f) break;
+        let worst = null, maxR = 0;
+        wpts.forEach((q) => {
+          const sd = effSD(s.key, q.p);
+          const err = sd && sd > 0 ? sd : 1;
+          const ratio = Math.abs(q.p.y - fit.f(q.p.x)) / err;
+          if (ratio > thresh && ratio > maxR) { maxR = ratio; worst = q.p; }
+        });
+        if (!worst) break;
+        excluded[s.key] = { ...(excluded[s.key] || {}), [worst.instId]: true };
+      }
+    };
+    (target ? [target] : series).forEach(proc);
+    set({ excluded });
+  };
+  const restoreExcluded = () => set({ excluded: {} });
+  const catData = useMemo(() => {
+    if (plot.xMode !== 'category') return [];
+    return d.instances.map((inst) => {
+      const row = { __condition: inst.name };
+      series.forEach((s) => {
+        const p = s.pts.find((q) => q.instId === inst.id);
+        if (p && !p.excluded) { row[s.key] = p.y; row[`${s.key}__sd`] = effSD(s.key, p); }
+        else { row[s.key] = null; row[`${s.key}__sd`] = null; }
+      });
+      return row;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [d.instances, series, plot.xMode, plot.manualSD, plot.useFixedSD, plot.fixedSDStr, plot.excluded]);
+  const numData = (s) => includedPts(s).filter((p) => p.x !== null).map((p) => ({ x: p.x, y: p.y, sd: effSD(s.key, p), name: p.name }));
+  const fitData = (s) => {
+    const fit = fits[s.key];
+    if (!fit || !fit.f) return [];
+    const xs = includedPts(s).filter((p) => p.x !== null).map((p) => p.x);
+    if (xs.length < 2) return [];
+    const mn = Math.min(...xs), mx = Math.max(...xs);
+    if (!(mx > mn)) return [];
+    const out = [];
+    for (let i = 0; i <= 60; i++) { const x = mn + ((mx - mn) * i) / 60; out.push({ x, y: fit.f(x) }); }
+    return out;
+  };
+  const makeDot = (color, s) => (props) => {
+    const { cx, cy, index } = props;
+    if (cx == null || cy == null) return <g key={`d-${s.key}-${index}`} />;
+    const r = cfg.ptSize || 5;
+    let el;
+    if (cfg.ptStyle === 'square') el = <rect x={cx - r} y={cy - r} width={2 * r} height={2 * r} fill={color} />;
+    else if (cfg.ptStyle === 'triangle') el = <polygon points={`${cx},${cy - r} ${cx - r},${cy + r} ${cx + r},${cy + r}`} fill={color} />;
+    else if (cfg.ptStyle === 'cross') el = <g><line x1={cx - r} y1={cy - r} x2={cx + r} y2={cy + r} stroke={color} strokeWidth={2} /><line x1={cx - r} y1={cy + r} x2={cx + r} y2={cy - r} stroke={color} strokeWidth={2} /></g>;
+    else el = <circle cx={cx} cy={cy} r={r} fill={color} />;
+    return <g key={`d-${s.key}-${index}`}>{el}</g>;
+  };
+  const visibleSeries = series.filter((s) => !plot.hiddenSeries[s.key]);
+  const xLab = cfg.xAxisLabel || (plot.xMode === 'numeric' ? 'Condition value (X)' : 'Condition (instance)');
+  const yLab = cfg.yAxisLabel || `${plotLayer.label}${plotLayer.unit ? ` (${plotLayer.unit})` : ''}`;
+  const dom = (v) => (v === '' || v == null || parseManual(v) === null ? undefined : parseManual(v));
   return (
-    <div className="flex flex-col gap-6">
-      <CollapsibleSection title="Condition Plotting" icon="📈" defaultOpen={true}>
-        <p className="text-sm text-slate-500 mb-4">
-          Plot a <b>parameter of one or more atoms</b> (Chemical Shift, T1, Peak Intensity, …) as a function of the
-          different <b>instances / conditions</b> defined in the Data section. Values are read from each instance's
-          assignment table for the selected parameter layer.
-        </p>
-        <div className="flex flex-col lg:flex-row gap-6">
-          {/* Controls */}
-          <div className="w-full lg:w-80 flex flex-col gap-4 shrink-0">
+    <CollapsibleSection title={plot.title} icon="📈" defaultOpen={true}
+      headerExtra={
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={() => { const nn = window.prompt('Rename plot:', plot.title); if (nn && nn.trim()) set({ title: nn.trim() }); }} className="text-slate-400 hover:text-blue-600" title="Rename">✏️</button>
+          <button type="button" onClick={() => duplicatePlot(plot)} className="text-slate-400 hover:text-blue-600" title="Duplicate">⧉</button>
+          <button type="button" onClick={() => removePlot(plot.id)} className="text-slate-400 hover:text-red-500" title="Remove">×</button>
+        </div>
+      }>
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-wrap gap-3 items-end bg-slate-50 border border-slate-200 rounded-lg p-3">
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">Parameter (Y)</label>
+            <select value={plot.layerKey} onChange={(e) => set({ layerKey: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
+              {d.layers.map((l) => <option key={l.key} value={l.key}>{l.label}{l.unit ? ` (${l.unit})` : ''}</option>)}
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">X axis</label>
+            <select value={plot.xMode} onChange={(e) => set({ xMode: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
+              <option value="category">Instance name (category)</option>
+              <option value="numeric">Numeric X (instance X value)</option>
+            </select>
+          </div>
+          <label className="flex items-center gap-2 text-xs font-bold text-slate-700 pb-1.5 cursor-pointer">
+            <input type="checkbox" checked={plot.fitEnabled} onChange={(e) => set({ fitEnabled: e.target.checked })} className="w-4 h-4 accent-blue-600" /> Fit curve
+          </label>
+          {plot.fitEnabled && (
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-bold text-slate-600 uppercase">Parameter (Y-axis)</label>
-              <select value={plotLayerKey} onChange={(e) => setPlotCfg({ layerKey: e.target.value })} className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold">
-                {d.layers.map((l) => <option key={l.key} value={l.key}>{l.label}{l.unit ? ` (${l.unit})` : ''}</option>)}
+              <label className="text-[10px] font-bold text-slate-500 uppercase">Model</label>
+              <select value={plot.fitModel} onChange={(e) => set({ fitModel: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
+                <option value="linear">Linear (weighted)</option>
+                <option value="4pl">4PL logistic (weighted)</option>
               </select>
             </div>
-            <div className="flex flex-col gap-1">
+          )}
+          <div className="ml-auto flex gap-2">
+            <button type="button" onClick={() => setShowErr(!showErr)} className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${showErr ? 'bg-orange-100 border-orange-400 text-orange-800' : 'bg-white border-orange-300 text-orange-700 hover:bg-orange-50'}`}>⚠️ Error Management</button>
+            <button type="button" onClick={() => setShowCfg(!showCfg)} className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${showCfg ? 'bg-slate-200 border-slate-400 text-slate-900' : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'}`}>🎨 Graphical Parameters</button>
+          </div>
+        </div>
+        <div className="flex flex-col lg:flex-row gap-6">
+          <div className="w-full lg:w-80 flex flex-col gap-2 shrink-0">
+            <div className="flex items-center gap-2 flex-wrap">
               <label className="text-xs font-bold text-slate-600 uppercase">Atom(s) to plot</label>
-              <input type="text" value={atomSearch} onChange={(e) => setAtomSearch(e.target.value)} placeholder="Search atom (e.g. Ala3 HN)…" className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white" />
-              <div className="border border-slate-200 rounded-lg max-h-56 overflow-y-auto custom-scrollbar bg-white mt-1">
-                {filteredAtomOptions.length === 0 && <div className="p-3 text-xs text-slate-400 italic">No atoms (enter a sequence first).</div>}
-                {filteredAtomOptions.map((o) => (
-                  <label key={o.key} className="flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-blue-50 border-b border-slate-50 last:border-0">
-                    <input type="checkbox" checked={selectedPlotAtoms.includes(o.key)} onChange={() => togglePlotAtom(o.key)} className="w-3.5 h-3.5 accent-blue-600" />
-                    <span className="text-xs text-slate-700">{o.label}</span>
-                  </label>
-                ))}
-              </div>
+              <button type="button" onClick={selectAllFiltered} className="text-[10px] font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100 px-2 py-0.5 rounded">☑ Select all (filtered)</button>
+              <button type="button" onClick={() => set({ atoms: [] })} className="text-[10px] font-bold text-red-500 hover:text-red-700 underline">Clear</button>
             </div>
-            {selectedPlotAtoms.length > 0 && (
+            <input type="text" value={atomSearch} onChange={(e) => setAtomSearch(e.target.value)} placeholder="Search atom (e.g. Ala3 HN)…" className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white" />
+            <div className="border border-slate-200 rounded-lg max-h-52 overflow-y-auto custom-scrollbar bg-white">
+              {filtered.length === 0 && <div className="p-3 text-xs text-slate-400 italic">No atoms (enter a sequence first).</div>}
+              {filtered.map((o) => (
+                <label key={o.key} className="flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-blue-50 border-b border-slate-50 last:border-0">
+                  <input type="checkbox" checked={plot.atoms.includes(o.key)} onChange={() => toggleAtom(o.key)} className="w-3.5 h-3.5 accent-blue-600" />
+                  <span className="text-xs text-slate-700">{o.label}</span>
+                </label>
+              ))}
+            </div>
+            {plot.atoms.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
-                {series.map((s, i) => (
-                  <span key={s.key} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold text-white" style={{ backgroundColor: LINE_COLORS[i % LINE_COLORS.length] }}>
+                {series.map((s) => (
+                  <span key={s.key} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold text-white" style={{ backgroundColor: colorOf(s) }}>
                     {s.label}
-                    <button onClick={() => togglePlotAtom(s.key)} className="hover:text-red-200 font-black">×</button>
+                    <button type="button" onClick={() => toggleAtom(s.key)} className="hover:text-red-200 font-black">×</button>
                   </span>
                 ))}
               </div>
             )}
-            <button type="button" onClick={() => setPlotCfg({ atoms: [] })} className="text-xs font-bold text-red-500 hover:text-red-700 underline w-fit">Clear selected atoms</button>
+            <div className="flex flex-wrap gap-2 items-end pt-1 border-t border-slate-100">
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">Save current selection as</label>
+                <div className="flex gap-1">
+                  <input type="text" value={presetName} onChange={(e) => setPresetName(e.target.value)} placeholder="Selection name" className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs w-36 outline-none focus:border-blue-500 bg-white" />
+                  <button type="button" onClick={savePreset} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-2 py-1.5 rounded-lg text-xs">💾 Save</button>
+                </div>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">Load saved selection</label>
+                <select value="" onChange={(e) => { if (e.target.value) applyPreset(e.target.value); }} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 max-w-[180px]">
+                  <option value="">-- Select --</option>
+                  {presets.map((p) => <option key={p.id} value={p.id}>{p.name} ({(p.atoms || []).length})</option>)}
+                </select>
+              </div>
+            </div>
+            {presets.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {presets.map((p) => (
+                  <span key={p.id} className="inline-flex items-center gap-1 bg-indigo-50 border border-indigo-200 text-indigo-800 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                    {p.name}
+                    <button type="button" onClick={() => deletePreset(p.id)} className="text-indigo-400 hover:text-red-600 font-black" title="Delete preset">×</button>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
-          {/* Chart */}
-          <div className="flex-1 min-w-0">
-            <ConditionPlot data={chartData} series={series} yLabel={`${plotLayer.label}${plotLayer.unit ? ` (${plotLayer.unit})` : ''}`} xLabel="Condition (instance)" />
-            <p className="text-[11px] text-slate-400 mt-2">
-              X-axis shows each instance name (condition). Each colored line is one atom-parameter. Missing values are skipped.
-            </p>
+          <div className="flex-1 min-w-0 flex flex-col gap-3">
+            {visibleSeries.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {series.map((s) => (
+                  <label key={s.key} className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-2 py-1 rounded-lg text-xs font-bold text-slate-700 cursor-pointer">
+                    <input type="checkbox" checked={!plot.hiddenSeries[s.key]} onChange={() => set({ hiddenSeries: { ...plot.hiddenSeries, [s.key]: !plot.hiddenSeries[s.key] } })} className="w-3.5 h-3.5 accent-blue-600" />
+                    <span className="w-3 h-3 rounded-full inline-block" style={{ backgroundColor: colorOf(s) }} />
+                    {s.label}
+                  </label>
+                ))}
+              </div>
+            )}
+            {series.length === 0 ? (
+              <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">Select at least one atom to plot.</div>
+            ) : (
+              <div style={{ height: cfg.height }} className="bg-white border border-slate-200 rounded-xl p-3">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={plot.xMode === 'category' ? catData : undefined} margin={{ top: 8, right: 16, bottom: 30, left: 12 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    {plot.xMode === 'category' ? (
+                      <XAxis dataKey="__condition" tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} tickMargin={10} label={{ value: xLab, position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                    ) : (
+                      <XAxis type="number" dataKey="x" domain={[dom(cfg.xMin) ?? 'auto', dom(cfg.xMax) ?? 'auto']} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} tickMargin={10} label={{ value: xLab, position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                    )}
+                    <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={{ value: yLab, angle: -90, position: 'insideLeft', offset: 6, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                    <Tooltip />
+                    {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 10 }} />}
+                    {visibleSeries.map((s) => {
+                      const color = colorOf(s);
+                      return (
+                        <React.Fragment key={s.key}>
+                          <Line data={plot.xMode === 'numeric' ? numData(s) : undefined} type="monotone" dataKey="y" name={s.label} stroke={color} strokeWidth={cfg.lineThickness || 2} strokeDasharray={lineDash(cfg.lineStyle)} dot={plot.showPoints ? makeDot(color, s) : false} connectNulls isAnimationActive={false}>
+                            {HAS_ERRORBAR && plot.showErrors && <ErrorBar dataKey={plot.xMode === 'category' ? `${s.key}__sd` : 'sd'} width={4} strokeWidth={1} direction="y" color={color} />}
+                          </Line>
+                          {plot.xMode === 'numeric' && plot.fitEnabled && plot.showFit && fits[s.key] && (
+                            <Line data={fitData(s)} type="monotone" dataKey="y" name={`${s.label} (fit)`} stroke={color} strokeWidth={1.5} strokeDasharray="8 4" dot={false} legendType="none" isAnimationActive={false} />
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+            {plot.fitEnabled && plot.xMode !== 'numeric' && (
+              <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">⚠️ Fitting requires X axis = “Numeric X”. Set numeric X values for the instances in the Data section.</p>
+            )}
+            {plot.fitEnabled && plot.xMode === 'numeric' && series.length > 0 && (
+              <div className="overflow-x-auto border border-slate-200 rounded-lg">
+                <table className="w-full text-xs text-left bg-white">
+                  <thead className="bg-slate-100 text-slate-500 uppercase">
+                    <tr><th className="px-3 py-2">Series</th><th className="px-3 py-2">Model</th><th className="px-3 py-2">Parameters (weighted)</th><th className="px-3 py-2">SE</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {series.map((s) => {
+                      const f = fits[s.key];
+                      return (
+                        <tr key={s.key}>
+                          <td className="px-3 py-1.5 font-bold text-slate-700">{s.label}</td>
+                          <td className="px-3 py-1.5">{f ? (plot.fitModel === 'linear' ? 'Linear' : '4PL') : '—'}</td>
+                          <td className="px-3 py-1.5 font-mono text-slate-600">
+                            {f ? (plot.fitModel === 'linear' ? `slope=${f.slope.toFixed(4)}; intercept=${f.intercept.toFixed(4)}; R²=${f.r2.toFixed(3)}` : `Top=${f.top.toFixed(3)}; Bottom=${f.bottom.toFixed(3)}; EC50=${f.ic50.toFixed(3)}; Hill=${f.hill.toFixed(3)}`) : 'not enough points / missing X'}
+                          </td>
+                          <td className="px-3 py-1.5 font-mono text-slate-600">{f ? (f.se ?? 0).toFixed(3) : '—'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
-      </CollapsibleSection>
-
-      <CollapsibleSection title="Graphical Parameters" icon="🎨" defaultOpen={false}>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-bold text-slate-600">Simulated spectrum panel height (px): {heightPx}</label>
-            <input type="range" min="250" max="700" step="25" value={heightPx} onChange={(e) => updateActiveTest({ nmrChartHeight: parseInt(e.target.value, 10) })} className="accent-blue-600 mt-2" />
-            <p className="text-[10px] text-slate-400 mt-1">Controls the height of every simulated-spectrum panel in the Simulations section.</p>
+        {showErr && (
+          <div className="p-4 bg-orange-50 border border-orange-200 rounded-xl flex flex-col gap-4">
+            <div className="flex flex-wrap items-center gap-4">
+              <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
+                <input type="checkbox" checked={plot.useFixedSD} onChange={(e) => set({ useFixedSD: e.target.checked })} className="w-4 h-4 accent-blue-600" /> Fixed SD ±
+              </label>
+              <input type="number" step="0.1" min="0" value={plot.fixedSDStr} onChange={(e) => set({ fixedSDStr: e.target.value })} disabled={!plot.useFixedSD} className={`border border-slate-300 rounded-md p-1.5 w-16 text-xs outline-none ${plot.useFixedSD ? 'bg-white font-bold text-blue-700' : 'bg-slate-100 text-slate-400'}`} />
+              <label className="text-xs font-bold text-slate-600">Outlier threshold (×SD):</label>
+              <input type="number" step="0.1" min="0.1" value={plot.outlierThreshStr} onChange={(e) => set({ outlierThreshStr: e.target.value })} className="border border-slate-300 rounded-md p-1.5 w-16 text-xs outline-none" />
+              <button type="button" onClick={() => cleanOutliers(null)} className="bg-yellow-400 hover:bg-yellow-500 text-slate-900 font-black py-1.5 px-3 rounded-lg text-xs shadow-sm">🧹 Clean Outliers (all)</button>
+              <button type="button" onClick={restoreExcluded} className="text-xs bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 font-bold py-1.5 px-3 rounded-md shadow-sm">↩️ Restore excluded</button>
+            </div>
+            {series.map((s) => (
+              <div key={s.key} className="bg-white rounded-lg border border-orange-200 p-3">
+                <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                  <span className="text-sm font-bold text-slate-800">{s.label}</span>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => autoTouch(s)} className="text-xs text-orange-700 bg-orange-100 hover:bg-orange-200 px-2 py-1 rounded font-bold shadow-sm">🎯 Auto-Touch SD</button>
+                    <button type="button" onClick={() => cleanOutliers(s)} className="text-xs text-yellow-800 bg-yellow-100 hover:bg-yellow-200 px-2 py-1 rounded font-bold shadow-sm">🧹 Clean</button>
+                    <button type="button" onClick={() => resetSD(s.key)} className="text-xs text-orange-600 hover:underline font-bold">🔄 Reset SD</button>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {s.pts.length === 0 && <span className="text-xs text-slate-400 italic">No values for this atom.</span>}
+                  {s.pts.map((p) => {
+                    const sd = effSD(s.key, p);
+                    return (
+                      <div key={p.instId} className={`flex flex-col gap-1 p-1.5 rounded border ${p.excluded ? 'border-red-300 bg-red-50' : 'border-slate-200 bg-white'}`}>
+                        <span className="text-[9px] font-bold text-slate-500">{p.name}{p.x !== null ? ` (x=${p.x})` : ''}</span>
+                        <div className="flex items-center gap-1">
+                          <span className={`text-[10px] font-mono ${p.excluded ? 'line-through text-slate-400' : 'text-slate-700'}`}>{p.y}</span>
+                          <input type="number" step="0.01" value={(plot.manualSD[s.key] || {})[p.instId] ?? ''} onChange={(e) => setManualSD(s.key, p.instId, e.target.value)} placeholder="±SD" className="w-14 text-[10px] border border-slate-300 rounded p-0.5 text-center outline-none focus:border-orange-500" />
+                          <button type="button" onClick={() => toggleExclude(s.key, p.instId)} className={`text-[10px] font-black px-1 ${p.excluded ? 'text-red-600' : 'text-slate-400 hover:text-red-500'}`} title="Exclude / include point">{p.excluded ? 'EXCL' : '×'}</button>
+                        </div>
+                        {sd != null && <span className="text-[9px] text-orange-700 font-bold">± {sd}</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
-          <div className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-3">
-            All simulated spectra support <b>drag-to-zoom</b> with a “Reset Zoom” button. Manually-filled values are
-            highlighted in <span style={{ color: MANUAL_COLOR }}>green</span> and the selected atom in{' '}
-            <span style={{ color: SELECT_COLOR }}>amber</span> (click an atom in the formula or a table cell).
+        )}
+        {showCfg && (
+          <div className="p-4 bg-white border border-slate-300 rounded-xl grid grid-cols-2 lg:grid-cols-4 gap-3 shadow-sm">
+            <div className="flex flex-col gap-1"><label className="text-[10px] font-bold text-slate-600">Chart height (px)</label>
+              <input type="range" min="220" max="800" step="20" value={cfg.height} onChange={(e) => setCfg({ height: parseInt(e.target.value, 10) })} className="accent-blue-600 mt-2" /></div>
+            <div className="flex flex-col gap-1"><label className="text-[10px] font-bold text-slate-600">Point size</label>
+              <input type="number" value={cfg.ptSize} onChange={(e) => setCfg({ ptSize: parseFloat(e.target.value) || 4 })} className="border border-slate-300 rounded-md p-1.5 text-xs outline-none" /></div>
+            <div className="flex flex-col gap-1"><label className="text-[10px] font-bold text-slate-600">Point style</label>
+              <select value={cfg.ptStyle} onChange={(e) => setCfg({ ptStyle: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs bg-white outline-none">
+                {['circle', 'square', 'triangle', 'cross'].map((s2) => <option key={s2} value={s2}>{s2}</option>)}
+              </select></div>
+            <div className="flex flex-col gap-1"><label className="text-[10px] font-bold text-slate-600">Line style</label>
+              <select value={cfg.lineStyle} onChange={(e) => setCfg({ lineStyle: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs bg-white outline-none">
+                <option value="solid">Solid</option><option value="dashed">Dashed</option><option value="dotted">Dotted</option>
+              </select></div>
+            <div className="flex flex-col gap-1"><label className="text-[10px] font-bold text-slate-600">Line thickness</label>
+              <input type="number" value={cfg.lineThickness} onChange={(e) => setCfg({ lineThickness: parseFloat(e.target.value) || 2 })} className="border border-slate-300 rounded-md p-1.5 text-xs outline-none" /></div>
+            <div className="flex flex-col gap-1"><label className="text-[10px] font-bold text-slate-600">Font size</label>
+              <input type="number" value={cfg.fontSize} onChange={(e) => setCfg({ fontSize: parseFloat(e.target.value) || 12 })} className="border border-slate-300 rounded-md p-1.5 text-xs outline-none" /></div>
+            <div className="flex flex-col gap-1"><label className="text-[10px] font-bold text-slate-600">Legend</label>
+              <select value={cfg.legend} onChange={(e) => setCfg({ legend: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs bg-white outline-none">
+                <option value="top">Top</option><option value="bottom">Bottom</option><option value="none">None</option>
+              </select></div>
+            <div className="flex flex-col gap-1"><label className="text-[10px] font-bold text-slate-600">Show</label>
+              <div className="flex gap-2 text-[10px] font-bold text-slate-700">
+                <label className="flex items-center gap-1"><input type="checkbox" checked={plot.showPoints} onChange={(e) => set({ showPoints: e.target.checked })} className="accent-blue-600" />Pts</label>
+                <label className="flex items-center gap-1"><input type="checkbox" checked={plot.showErrors} onChange={(e) => set({ showErrors: e.target.checked })} className="accent-blue-600" />±SD</label>
+                <label className="flex items-center gap-1"><input type="checkbox" checked={plot.showFit} onChange={(e) => set({ showFit: e.target.checked })} className="accent-blue-600" />Fit</label>
+              </div></div>
+            <div className="flex flex-col gap-1"><label className="text-[10px] font-bold text-slate-600">X Min / Max</label>
+              <div className="flex gap-1">
+                <input type="number" placeholder="auto" value={cfg.xMin} onChange={(e) => setCfg({ xMin: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none" />
+                <input type="number" placeholder="auto" value={cfg.xMax} onChange={(e) => setCfg({ xMax: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none" />
+              </div></div>
+            <div className="flex flex-col gap-1"><label className="text-[10px] font-bold text-slate-600">Y Min / Max</label>
+              <div className="flex gap-1">
+                <input type="number" placeholder="auto" value={cfg.yMin} onChange={(e) => setCfg({ yMin: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none" />
+                <input type="number" placeholder="auto" value={cfg.yMax} onChange={(e) => setCfg({ yMax: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none" />
+              </div></div>
+            <div className="flex flex-col gap-1"><label className="text-[10px] font-bold text-slate-600">X axis label</label>
+              <input type="text" value={cfg.xAxisLabel} onChange={(e) => setCfg({ xAxisLabel: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs outline-none" /></div>
+            <div className="flex flex-col gap-1"><label className="text-[10px] font-bold text-slate-600">Y axis label</label>
+              <input type="text" value={cfg.yAxisLabel} onChange={(e) => setCfg({ yAxisLabel: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs outline-none" /></div>
+          </div>
+        )}
+      </div>
+    </CollapsibleSection>
+  );
+};
+
+const FittingSection = ({ ctx }) => {
+  const { activeTest, updateActiveTest } = ctx;
+  const d = useNmrDerived(activeTest);
+  const [newVariable, setNewVariable] = useState('');
+  const plots = Array.isArray(activeTest.conditionPlots) && activeTest.conditionPlots.length ? activeTest.conditionPlots : [defaultPlotCfg(1)];
+  const updatePlot = (id, patch) => updateActiveTest({ conditionPlots: plots.map((p) => (p.id === id ? { ...p, ...patch } : p)) });
+  const addPlot = () => updateActiveTest({ conditionPlots: [...plots, defaultPlotCfg(plots.length + 1)] });
+  const removePlot = (id) => {
+    if (plots.length <= 1) { alert('At least one condition plot is required.'); return; }
+    updateActiveTest({ conditionPlots: plots.filter((p) => p.id !== id) });
+  };
+  const duplicatePlot = (p) => updateActiveTest({ conditionPlots: [...plots, { ...JSON.parse(JSON.stringify(p)), id: makePlotId(), title: `${p.title} (copy)` }] });
+  const variables = Array.isArray(activeTest.variableParameters) ? activeTest.variableParameters : ['Temperature', 'pH', 'Concentration', 'Ratio'];
+  const rows = activeTest.variableRows || [];
+  const makeId = () => `nvr_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  const addVariable = () => {
+    const name = newVariable.trim();
+    if (!name || variables.includes(name)) return;
+    updateActiveTest({ variableParameters: [...variables, name] });
+    setNewVariable('');
+  };
+  const removeVariable = (name) => {
+    updateActiveTest({
+      variableParameters: variables.filter((v) => v !== name),
+      variableRows: rows.map((row) => { const values = { ...(row.values || {}) }; delete values[name]; return { ...row, values }; })
+    });
+  };
+  const addRow = () => {
+    const values = {};
+    variables.forEach((v) => { values[v] = ''; });
+    updateActiveTest({ variableParameters: variables, variableRows: [...rows, { id: makeId(), values, notes: '' }] });
+  };
+  const addRowFromCurrent = () => {
+    const values = {};
+    variables.forEach((v) => {
+      const key = v.toLowerCase();
+      if (key.includes('temp')) values[v] = activeTest.temperature || '';
+      else if (key.includes('ph')) values[v] = activeTest.ph || '';
+      else if (key.includes('conc')) values[v] = activeTest.concentration || '';
+      else if (key.includes('ratio')) values[v] = activeTest.ratio || '';
+      else if (key.includes('salt')) values[v] = activeTest.saltConcentration || '';
+      else if (key.includes('solve') || key.includes('buffer')) values[v] = activeTest.solvent || '';
+      else if (key.includes('other') || key.includes('ligand') || key.includes('molecule')) values[v] = activeTest.otherMolecule || '';
+      else values[v] = '';
+    });
+    updateActiveTest({ variableParameters: variables, variableRows: [...rows, { id: makeId(), values, notes: '' }] });
+  };
+  const updateRowValue = (id, variable, value) => updateActiveTest({ variableRows: rows.map((row) => (row.id === id ? { ...row, values: { ...(row.values || {}), [variable]: value } } : row)) });
+  const updateRowNotes = (id, notes) => updateActiveTest({ variableRows: rows.map((row) => (row.id === id ? { ...row, notes } : row)) });
+  const duplicateRow = (row) => updateActiveTest({ variableRows: [...rows, { ...row, id: makeId() }] });
+  const removeRow = (id) => updateActiveTest({ variableRows: rows.filter((row) => row.id !== id) });
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <span className="text-xs font-bold text-slate-500 uppercase">Condition plots — each one has its own parameter, atoms, fit, errors and graphical settings</span>
+        <button type="button" onClick={addPlot} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm">+ Add Condition Plot</button>
+      </div>
+      {plots.map((p) => (
+        <ConditionPlotPanel key={p.id} ctx={ctx} d={d} plot={p} updatePlot={updatePlot} removePlot={removePlot} duplicatePlot={duplicatePlot} />
+      ))}
+      <CollapsibleSection title="Variable Parameters" icon="🎛️" defaultOpen={false}>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col lg:flex-row gap-3 lg:items-end justify-between bg-slate-50 border border-slate-200 rounded-lg p-4">
+            <div className="flex flex-col md:flex-row gap-2 w-full lg:w-auto">
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">New Experimental Variable</label>
+                <input type="text" value={newVariable} onChange={(e) => setNewVariable(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addVariable(); } }} placeholder="e.g. Temperature, pH, Ligand ratio" className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-full md:w-72 bg-white" />
+              </div>
+              <button type="button" onClick={addVariable} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm h-fit">+ Add Variable</button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={addRowFromCurrent} className="bg-white border border-blue-300 hover:bg-blue-50 text-blue-700 font-bold px-4 py-2 rounded-lg text-sm shadow-sm">+ Add Point from Current Conditions</button>
+              <button type="button" onClick={addRow} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm">+ Empty Point</button>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {variables.length === 0 && <span className="text-sm text-slate-400 italic">No variables defined.</span>}
+            {variables.map((v) => (
+              <span key={v} className="inline-flex items-center gap-2 bg-white border border-slate-300 px-2.5 py-1 rounded-lg text-xs font-bold text-slate-700 shadow-sm">
+                {v}
+                <button type="button" onClick={() => removeVariable(v)} className="text-slate-400 hover:text-red-500 font-black" title={`Remove variable ${v}`}>×</button>
+              </span>
+            ))}
+          </div>
+          <div className="overflow-x-auto custom-scrollbar border border-slate-200 rounded-lg">
+            <table className="w-full text-sm text-left min-w-[700px]">
+              <thead className="text-xs text-slate-500 uppercase bg-slate-100 sticky top-0 z-10">
+                <tr>
+                  <th className="px-3 py-2 w-12 border-b border-slate-200">#</th>
+                  {variables.map((v) => <th key={v} className="px-3 py-2 font-bold text-blue-700 whitespace-nowrap border-b border-slate-200">{v}</th>)}
+                  <th className="px-3 py-2 min-w-[180px] border-b border-slate-200">Notes</th>
+                  <th className="px-3 py-2 w-32 border-b border-slate-200">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 bg-white">
+                {rows.length === 0 ? (
+                  <tr><td colSpan={variables.length + 3} className="px-3 py-10 text-center text-slate-400 italic">No condition points defined yet.</td></tr>
+                ) : (
+                  rows.map((row, idx) => (
+                    <tr key={row.id} className="hover:bg-slate-50">
+                      <td className="px-3 py-2 font-bold text-slate-500">{idx + 1}</td>
+                      {variables.map((v) => (
+                        <td key={v} className="px-3 py-2">
+                          <input type="text" value={(row.values || {})[v] || ''} onChange={(e) => updateRowValue(row.id, v, e.target.value)} className="w-full min-w-[90px] border border-slate-300 rounded-md px-2 py-1.5 text-sm outline-none focus:border-blue-500" placeholder={v} />
+                        </td>
+                      ))}
+                      <td className="px-3 py-2">
+                        <input type="text" value={row.notes || ''} onChange={(e) => updateRowNotes(row.id, e.target.value)} className="w-full min-w-[180px] border border-slate-300 rounded-md px-2 py-1.5 text-sm outline-none focus:border-blue-500" placeholder="Notes..." />
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <div className="flex items-center gap-2">
+                          <button type="button" onClick={() => duplicateRow(row)} className="text-xs font-bold text-blue-600 hover:text-blue-800">Duplicate</button>
+                          <button type="button" onClick={() => removeRow(row.id)} className="text-xs font-bold text-red-500 hover:text-red-700">Delete</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       </CollapsibleSection>
@@ -2481,70 +2727,96 @@ const FittingSection = ({ ctx }) => {
   );
 };
 
-// ================= 4) SIMULATIONS =================
+// ================= 4) SIMULATIONS (+ ranges + parametri grafici) =================
 const SimulationsSection = ({ ctx }) => {
-  const { activeTest } = ctx;
+  const { activeTest, updateActiveTest } = ctx;
   const d = useNmrDerived(activeTest);
   const [expandedPanel, setExpandedPanel] = useState(null);
+  const [showCfg, setShowCfg] = useState(false);
   const selectedKeys = getSelectedKeys(activeTest);
   const manualKeys = useMemo(() => getManualKeys(d.shifts), [d.shifts]);
-  const heightPx = activeTest.nmrChartHeight || 400;
-
+  const simCfg = { fontSize: 11, h1D: 300, aspect2D: 1, ...(activeTest.simChartCfg || {}) };
+  const setCfg = (patch) => updateActiveTest({ simChartCfg: { ...simCfg, ...patch } });
   if (d.parsedSeq.length === 0) {
     return <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">Enter a sequence / select a molecule (in Experiment Setup) to generate simulated spectra.</div>;
   }
   return (
     <div className="flex flex-col gap-4">
-      <div className="text-xs font-bold text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 w-fit">
-        Spectra are simulated from the <span className="text-indigo-700">{d.activeInstance?.name}</span> instance's Chemical Shift layer.
+      <div className="flex items-center gap-3 flex-wrap bg-white border border-slate-200 rounded-lg px-3 py-2 w-fit">
+        <button type="button" onClick={() => setShowCfg(!showCfg)} className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${showCfg ? 'bg-slate-200 border-slate-400 text-slate-900' : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'}`}>⚙️ Chart Parameters</button>
+        <span className="text-[10px] text-slate-400">13C axis: 0–220 ppm · 2D spectra: square (aspect {simCfg.aspect2D}) · HSQC side by side</span>
       </div>
+      {showCfg && (
+        <div className="p-4 bg-white border border-slate-300 rounded-xl grid grid-cols-1 md:grid-cols-3 gap-4 shadow-sm">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-bold text-slate-600">Font size (ticks & labels): {simCfg.fontSize}</label>
+            <input type="range" min="8" max="18" step="1" value={simCfg.fontSize} onChange={(e) => setCfg({ fontSize: parseInt(e.target.value, 10) })} className="accent-blue-600 mt-2" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-bold text-slate-600">1D spectra height (px): {simCfg.h1D}</label>
+            <input type="range" min="200" max="600" step="20" value={simCfg.h1D} onChange={(e) => setCfg({ h1D: parseInt(e.target.value, 10) })} className="accent-blue-600 mt-2" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-bold text-slate-600">2D aspect ratio (H/W): {simCfg.aspect2D} (1 = square)</label>
+            <input type="range" min="0.5" max="1.5" step="0.05" value={simCfg.aspect2D} onChange={(e) => setCfg({ aspect2D: parseFloat(e.target.value) })} className="accent-blue-600 mt-2" />
+            <button type="button" onClick={() => setCfg({ aspect2D: 1 })} className="text-[10px] font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100 px-2 py-1 rounded w-fit">⬛ Make 2D square</button>
+          </div>
+        </div>
+      )}
       {selectedKeys && (
         <span className="text-xs font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded-lg px-3 py-1.5 w-fit">🎯 Highlighting: {selectionLabel(d, selectedKeys)}</span>
       )}
+      <div className="text-xs font-bold text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 w-fit">
+        Spectra are simulated from the <span className="text-indigo-700">{d.activeInstance ? d.activeInstance.name : '—'}</span> instance's Chemical Shift layer.
+      </div>
+      {/* Theoretical ranges — moved here from Data */}
+      <div className="grid grid-cols-1 gap-4">
+        <RangeBarChart title="Theoretical ¹H Ranges" ranges={d.ranges.ranges1H} domain={[0, 11]} ticks={Array.from({ length: 12 }, (_, i) => i)} xAxisLabel="¹H (ppm)" rowCount={d.uniqueTypes.length} rowLabels={d.uniqueTypes.map((c) => d.DB[c]?.code3 || c)} />
+        <RangeBarChart title="Theoretical ¹³C Ranges" ranges={d.ranges.ranges13C} domain={[0, 220]} ticks={Array.from({ length: 23 }, (_, i) => i * 10)} xAxisLabel="¹³C (ppm)" rowCount={d.uniqueTypes.length} rowLabels={d.uniqueTypes.map((c) => d.DB[c]?.code3 || c)} />
+      </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <OneDSpectrumPlot title="Simulated ¹H 1D Spectrum" data={d.peaks.data1H} fullDomain={[0, 11]} ticks={TICKS_1H} TickComponent={CustomXTick1H} xLabel="¹H (ppm)" panelId="1D_1H" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={heightPx} />
-        <OneDSpectrumPlot title="Simulated ¹³C 1D Spectrum" data={d.peaks.data13C} fullDomain={[0, 190]} ticks={TICKS_13C} TickComponent={CustomXTick13C} xLabel="¹³C (ppm)" panelId="1D_13C" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={heightPx} />
+        <OneDSpectrumPlot title="Simulated ¹H 1D Spectrum" data={d.peaks.data1H} fullDomain={[0, 11]} ticks={TICKS_1H} TickComponent={CustomXTick1H} xLabel="¹H (ppm)" panelId="1D_1H" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} />
+        <OneDSpectrumPlot title="Simulated ¹³C 1D Spectrum" data={d.peaks.data13C} fullDomain={[0, 220]} ticks={TICKS_13C} TickComponent={CustomXTick13C} xLabel="¹³C (ppm)" panelId="1D_13C" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} />
         {d.hasPhosphorus && d.selNuc.includes('P') && d.peaks.p31Data.length > 0 && (
-          <OneDSpectrumPlot title="Simulated ³¹P 1D Spectrum" data={d.peaks.p31Data} fullDomain={[-5, 5]} ticks={Array.from({ length: 11 }, (_, i) => i - 5)} TickComponent={CustomXTick1H} xLabel="³¹P (ppm)" panelId="1D_31P" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={heightPx} />
+          <OneDSpectrumPlot title="Simulated ³¹P 1D Spectrum" data={d.peaks.p31Data} fullDomain={[-5, 5]} ticks={Array.from({ length: 11 }, (_, i) => i - 5)} TickComponent={CustomXTick1H} xLabel="³¹P (ppm)" panelId="1D_31P" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} />
         )}
-        <SpectrumPlot title="Simulated COSY Spectrum" diagonalData={d.peaks.diagonalData} crossPeakData={d.peaks.cosyPeaks} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="cosy" diagonalColor="#22c55e" selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={heightPx} />
-        <SpectrumPlot title="Simulated NOESY Spectrum" diagonalData={d.peaks.diagonalData} crossPeakData={d.peaks.noesyPeaks} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="noesy" diagonalColor="#ef4444" selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={heightPx} />
-        <SpectrumPlot title="Simulated TOCSY Spectrum" diagonalData={d.peaks.diagonalData} crossPeakData={d.peaks.tocsyPeaks} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="tocsy" diagonalColor="#1e3a8a" selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={heightPx} />
-        <HSQCPlot title="Simulated ¹H-¹³C HSQC Spectrum" crossPeakData={d.peaks.hsqcPeaks} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="hsqc" selectedKeys={selectedKeys} manualKeys={manualKeys} yAxisLabel="¹³C F1 (ppm)" yDomainInit={[10, 150]} yTicks={TICKS_13C} heightPx={heightPx} />
+        <SpectrumPlot title="Simulated COSY Spectrum" diagonalData={d.peaks.diagonalData} crossPeakData={d.peaks.cosyPeaks} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="cosy" diagonalColor="#22c55e" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} />
+        <SpectrumPlot title="Simulated NOESY Spectrum" diagonalData={d.peaks.diagonalData} crossPeakData={d.peaks.noesyPeaks} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="noesy" diagonalColor="#ef4444" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} />
+        <SpectrumPlot title="Simulated TOCSY Spectrum" diagonalData={d.peaks.diagonalData} crossPeakData={d.peaks.tocsyPeaks} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="tocsy" diagonalColor="#1e3a8a" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} />
+      </div>
+      {/* HSQC side by side */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <HSQCPlot title="Simulated ¹H-¹³C HSQC Spectrum" crossPeakData={d.peaks.hsqcPeaks} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="hsqc" selectedKeys={selectedKeys} manualKeys={manualKeys} yAxisLabel="¹³C F1 (ppm)" yDomainInit={[0, 220]} yTicks={TICKS_13C} aspect={simCfg.aspect2D} fs={simCfg.fontSize} />
         {d.moleculeType === 'protein' && d.selNuc.includes('N') && d.peaks.hsqc15NPeaks.length > 0 && (
-          <HSQCPlot title="Simulated ¹H-¹⁵N HSQC Spectrum" crossPeakData={d.peaks.hsqc15NPeaks} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="hsqc15n" selectedKeys={selectedKeys} manualKeys={manualKeys} yAxisLabel="¹⁵N F1 (ppm)" yDomainInit={[95, 135]} yTicks={TICKS_15N} heightPx={heightPx} />
+          <HSQCPlot title="Simulated ¹H-¹⁵N HSQC Spectrum" crossPeakData={d.peaks.hsqc15NPeaks} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="hsqc15n" selectedKeys={selectedKeys} manualKeys={manualKeys} yAxisLabel="¹⁵N F1 (ppm)" yDomainInit={[95, 135]} yTicks={TICKS_15N} aspect={simCfg.aspect2D} fs={simCfg.fontSize} />
         )}
       </div>
     </div>
   );
 };
 
-// ================= ALL — fixed schematic structure (same as CD) =================
+// ================= ALL =================
 export const All = ({ ctx }) => {
   return (
     <div className="flex flex-col gap-6">
-      <CollapsibleSection title="Experiment Setup" icon="⚙️">
-        <ExperimentSetupSection ctx={ctx} />
-      </CollapsibleSection>
-      <CollapsibleSection title="Data" icon="🔢">
-        <DataSection ctx={ctx} />
-      </CollapsibleSection>
-      <CollapsibleSection title="Fitting" icon="📐">
-        <FittingSection ctx={ctx} />
-      </CollapsibleSection>
-      <CollapsibleSection title="Simulations" icon="🧪" defaultOpen={false}>
-        <SimulationsSection ctx={ctx} />
-      </CollapsibleSection>
+      <CollapsibleSection title="Experiment Setup" icon="⚙️"><ExperimentSetupSection ctx={ctx} /></CollapsibleSection>
+      <CollapsibleSection title="Data" icon="🔢"><DataSection ctx={ctx} /></CollapsibleSection>
+      <CollapsibleSection title="Fitting" icon="📐"><FittingSection ctx={ctx} /></CollapsibleSection>
+      <CollapsibleSection title="Simulations" icon="🧪" defaultOpen={false}><SimulationsSection ctx={ctx} /></CollapsibleSection>
     </div>
   );
 };
+export const Setup = ExperimentSetupSection;
+export const Data = DataSection;
+export const Fitting = FittingSection;
+export const Simulations = SimulationsSection;
 
 // ================= NOTEBOOK EXTRA =================
 export const NotebookExtra = ({ ctx, checkId }) => {
   const { activeTest } = ctx;
   const d = useNmrDerived(activeTest);
   if (checkId === 'cond') {
-    return `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;"><b>Condition:</b> ${d.activeInstance?.name || 'N/A'} | <b>Solvent:</b> ${activeTest.solvent || 'N/A'} | <b>Temp:</b> ${activeTest.temperature || 'N/A'} | <b>Conc:</b> ${activeTest.concentration || 'N/A'} | <b>Salt:</b> ${activeTest.saltConcentration || 'N/A'}</p>`;
+    return `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;"><b>Condition:</b> ${d.activeInstance ? d.activeInstance.name : 'N/A'} | <b>Solvent:</b> ${activeTest.solvent || 'N/A'} | <b>Temp:</b> ${activeTest.temperature || 'N/A'} | <b>Conc:</b> ${activeTest.concentration || 'N/A'} | <b>Salt:</b> ${activeTest.saltConcentration || 'N/A'}</p>`;
   }
   if (checkId === 'seq') {
     return `<p style="font-size: 12px; color: #475569; margin-bottom: 12px;"><b>${d.typeLabel}:</b> <span style="font-family: monospace; background: #e2e8f0; padding: 2px 4px; border-radius: 4px;">${d.isPolymer ? activeTest.proteinSequence || 'N/A' : d.parsedSeq[0]?.name || 'N/A'}</span></p>`;
