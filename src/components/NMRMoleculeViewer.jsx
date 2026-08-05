@@ -93,6 +93,7 @@ const NMRMoleculeViewer = ({
   const stageRef = useRef(null);
   const highlightCompRef = useRef(null);
   const labelCompRef = useRef(null);
+  const sidechainCompRef = useRef(null); // Reference for side chain representation
   
   const [file, setFile] = useState(null);
   const [pdbId, setPdbId] = useState('');
@@ -100,10 +101,11 @@ const NMRMoleculeViewer = ({
   const [errorMsg, setErrorMsg] = useState('');
   const [hoverInfo, setHoverInfo] = useState(null);
   const [showLabels, setShowLabels] = useState(false);
+  const [sidechainStyle, setSidechainStyle] = useState('licorice'); // State for side chain mode
 
   const componentRef = useRef(null);
 
-  // 🔥 FIX 1: Use refs to prevent infinite reload loops when parent re-renders
+  // Use refs to prevent infinite reload loops when parent re-renders
   const parsedSeqRef = useRef(parsedSeq);
   const moleculeTypeRef = useRef(moleculeType);
   const onAtomClickRef = useRef(onAtomClick);
@@ -114,7 +116,7 @@ const NMRMoleculeViewer = ({
     onAtomClickRef.current = onAtomClick;
   }, [parsedSeq, moleculeType, onAtomClick]);
 
-  // 🔥 FIX 2: Main load effect ONLY depends on file/pdbId changes
+  // Main load effect ONLY depends on file/pdbId changes
   useEffect(() => {
     if (!file && !pdbId.trim()) return;
     if (!containerRef.current) return;
@@ -128,6 +130,7 @@ const NMRMoleculeViewer = ({
     componentRef.current = null;
     highlightCompRef.current = null;
     labelCompRef.current = null;
+    sidechainCompRef.current = null;
     
     setStatus('loading');
     setErrorMsg('');
@@ -152,7 +155,7 @@ const NMRMoleculeViewer = ({
         if (cancelled) return;
         componentRef.current = component;
 
-        // 🔥 FIX 3: Robust representations (residueindex is safe for AlphaFold models)
+        // Robust representations (residueindex is safe for AlphaFold models)
         try {
           component.addRepresentation('cartoon', {
             color: 'residueindex', 
@@ -166,14 +169,6 @@ const NMRMoleculeViewer = ({
             aspectRatio: 1.1,
           });
         } catch (e) { console.warn('Ball+stick rep failed', e); }
-
-        try {
-          component.addRepresentation('line', {
-            sele: 'not hetero',
-            color: 'element',
-            opacity: 0.15,
-          });
-        } catch (e) { console.warn('Line rep failed', e); }
 
         component.autoView();
 
@@ -233,52 +228,74 @@ const NMRMoleculeViewer = ({
       componentRef.current = null;
       highlightCompRef.current = null;
       labelCompRef.current = null;
+      sidechainCompRef.current = null;
     };
-  }, [file, pdbId]); // 🔥 Removed parsedSeq, moleculeType, onAtomClick, showLabels
+  }, [file, pdbId]);
 
-// 🔥 FIX 4: Separate effect for labels to avoid reloading the whole PDB
-useEffect(() => {
-  const component = componentRef.current;
-  if (!component || status !== 'ready') return;
+  // Separate effect for labels to avoid reloading the whole PDB
+  useEffect(() => {
+    const component = componentRef.current;
+    if (!component || status !== 'ready') return;
 
-  const clearLabels = () => {
-    if (labelCompRef.current) {
+    const clearLabels = () => {
+      if (labelCompRef.current) {
+        try {
+          component.removeRepresentation(labelCompRef.current);
+        } catch (e) {}
+        labelCompRef.current = null;
+      }
+    };
+
+    // Always remove old labels before adding new ones
+    clearLabels();
+
+    if (showLabels) {
       try {
-        component.removeRepresentation(labelCompRef.current);
+        labelCompRef.current = component.addRepresentation('label', {
+          sele: 'protein and sidechain and not hydrogen',
+          labelType: 'atomname',
+          labelGrouping: 'atom',
+          color: 0x111827,
+          radius: 1.0,
+          opacity: 1,
+          depthTest: false,
+        });
+      } catch (e) {
+        console.warn('Label rep failed', e);
+      }
+    }
+
+    return clearLabels;
+  }, [showLabels, status]);
+
+  // Dynamic Side Chain Representation
+  useEffect(() => {
+    const component = componentRef.current;
+    if (!component || status !== 'ready') return;
+
+    // Clear existing side chain representation
+    if (sidechainCompRef.current) {
+      try {
+        component.removeRepresentation(sidechainCompRef.current);
       } catch (e) {}
-      labelCompRef.current = null;
+      sidechainCompRef.current = null;
     }
-  };
 
-  // Always remove old labels before adding new ones
-  clearLabels();
-
-  if (showLabels) {
-    try {
-      labelCompRef.current = component.addRepresentation('label', {
-        // Side-chain atom names only:
-        sele: 'protein and sidechain and not hydrogen',
-
-        // If you want ALL non-hydrogen atom names instead, use:
-        // sele: 'not hydrogen',
-
-        // If you also want ligand atom names:
-        // sele: '(protein and sidechain and not hydrogen) or (hetero and not water and not hydrogen)',
-
-        labelType: 'atomname',
-        labelGrouping: 'atom',
-        color: 0x111827,
-        radius: 1.0,
-        opacity: 1,
-        depthTest: false,
-      });
-    } catch (e) {
-      console.warn('Label rep failed', e);
+    // Add new representation if not hidden
+    if (sidechainStyle !== 'none') {
+      try {
+        sidechainCompRef.current = component.addRepresentation(sidechainStyle, {
+          sele: 'protein and sidechain',
+          color: 'element',
+          multipleBond: true,
+          radiusType: 'size',
+          scale: sidechainStyle === 'licorice' ? 0.3 : 1.0
+        });
+      } catch (e) {
+        console.warn('Sidechain rep failed', e);
+      }
     }
-  }
-
-  return clearLabels;
-}, [showLabels, status]);
+  }, [sidechainStyle, status]);
 
   // Highlight selected / manual atoms
   useEffect(() => {
@@ -286,7 +303,7 @@ useEffect(() => {
     const component = componentRef.current;
     if (!stage || !component || status !== 'ready') return;
 
-    // 🔥 FIX 5: Correct removal method (removeRepresentation, not removeComponent)
+    // Correct removal method
     if (highlightCompRef.current) {
       try { component.removeRepresentation(highlightCompRef.current); } catch (e) {}
       highlightCompRef.current = null;
@@ -380,10 +397,25 @@ useEffect(() => {
 
         <div className="flex flex-col gap-1">
           <label className="text-[10px] font-bold text-slate-500 uppercase">Labels</label>
-          <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
+          <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer h-8">
             <input type="checkbox" checked={showLabels} onChange={(e) => setShowLabels(e.target.checked)} className="w-4 h-4 accent-blue-600" />
             Show atom names
           </label>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">Side Chains</label>
+          <select
+            value={sidechainStyle}
+            onChange={(e) => setSidechainStyle(e.target.value)}
+            className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 h-8"
+          >
+            <option value="none">Hidden</option>
+            <option value="line">Lines (Thin)</option>
+            <option value="licorice">Licorice (Thick)</option>
+            <option value="ball+stick">Ball & Stick</option>
+            <option value="spacefill">Spacefill</option>
+          </select>
         </div>
       </div>
 
