@@ -1675,6 +1675,52 @@ const ExperimentSetupSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useNmrDerived(activeTest);
 const structureMode = activeTest.structureMode || '2d';
+const atomLabelMode = activeTest.atomLabelMode || 'selected';
+const residueOffset = activeTest.residueOffset || 0;
+
+const atomNameMap = useMemo(() => {
+  try {
+    return activeTest.atomNameMap ? JSON.parse(activeTest.atomNameMap) : {};
+  } catch {
+    return {};
+  }
+}, [activeTest.atomNameMap]);
+
+const structureSrc = useMemo(() => {
+  const raw = (activeTest.structureSrc || activeTest.pdbId || '').trim();
+
+  if (!raw) {
+    // Optional defaults. Remove them if you do not want automatic examples.
+    if (d.moleculeType === 'protein') return 'https://models.rcsb.org/1UBQ.mmtf';
+    if (d.moleculeType === 'dna') return 'https://models.rcsb.org/1BNA.mmtf';
+    if (d.moleculeType === 'rna') return 'https://models.rcsb.org/1EHZ.mmtf';
+    if (d.moleculeType === 'lipid') {
+      return `/structures/${(activeTest.lipidChoice || 'POPC').toUpperCase()}.pdb`;
+    }
+    if (d.moleculeType === 'sugar') {
+      return `/structures/${activeTest.sugarChoice || 'GLC'}.sdf`;
+    }
+    return '';
+  }
+
+  // Direct URL or local/public file
+  if (/^https?:\/\//i.test(raw) || raw.startsWith('/') || raw.startsWith('./')) {
+    return raw;
+  }
+
+  // If it looks like a PDB ID, load from RCSB as MMTF
+  if (/^[0-9][A-Za-z0-9]{3}$/.test(raw)) {
+    return `https://models.rcsb.org/${raw.toUpperCase()}.mmtf`;
+  }
+
+  return raw;
+}, [
+  activeTest.structureSrc,
+  activeTest.pdbId,
+  d.moleculeType,
+  activeTest.lipidChoice,
+  activeTest.sugarChoice
+]);
   const [focusIdx, setFocusIdx] = useState('ALL');
   const [expandedPanel, setExpandedPanel] = useState(null);
   const [ssBrush, setSSBrush] = useState('H');
