@@ -3048,7 +3048,7 @@ const SimulationsSection = ({ ctx }) => {
   const d = useNmrDerived(activeTest);
   const [expandedPanel, setExpandedPanel] = useState(null);
   const [showCfg, setShowCfg] = useState(false);
-  const [focusIdx, setFocusIdx] = useState('ALL'); // Added local focus state
+  const [focusIdx, setFocusIdx] = useState('ALL');
   
   const selectedKeys = getSelectedKeys(activeTest);
   const manualKeys = useMemo(() => getManualKeys(d.shifts), [d.shifts]);
@@ -3059,16 +3059,19 @@ const SimulationsSection = ({ ctx }) => {
     return <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">Enter a sequence / select a molecule (in Experiment Setup) to generate simulated spectra.</div>;
   }
 
-  // Filter and safely sort peaks to avoid Recharts errors
+  // Robust filter: matches the exact residue ID in the label/type or via keys.
   const fP = (arr) => {
-    if (!arr) return [];
-    let res = arr;
-    if (focusIdx !== 'ALL') {
-      const target = String(focusIdx);
-      res = arr.filter(p => p.keys && p.keys.some(k => String(k).split('-')[0] === target));
-    }
-    // Sort by x ascending for Recharts BarChart compatibility
-    return [...res].sort((a, b) => a.x - b.x);
+    if (focusIdx === 'ALL' || !arr) return arr || [];
+    const targetRes = d.parsedSeq[focusIdx];
+    if (!targetRes) return arr;
+    const resId = targetRes.id;
+    
+    return arr.filter(p => {
+       if (p.label && p.label.includes(resId)) return true;
+       if (p.type && typeof p.type === 'string' && p.type.includes(resId)) return true;
+       if (p.keys && p.keys.some(k => String(k).split('-')[0] === String(focusIdx))) return true;
+       return false;
+    }).sort((a, b) => a.x - b.x); // Sort for BarChart safety
   };
   
   return (
@@ -3119,21 +3122,21 @@ const SimulationsSection = ({ ctx }) => {
       </div>
       
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <OneDSpectrumPlot title="Simulated ¹H 1D Spectrum" data={fP(d.peaks.data1H)} fullDomain={[0, 11]} ticks={TICKS_1H} TickComponent={CustomXTick1H} xLabel="¹H (ppm)" panelId="1D_1H" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} />
-        <OneDSpectrumPlot title="Simulated ¹³C 1D Spectrum" data={fP(d.peaks.data13C)} fullDomain={[0, 220]} ticks={TICKS_13C} TickComponent={CustomXTick13C} xLabel="¹³C (ppm)" panelId="1D_13C" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} />
+        <OneDSpectrumPlot key={`1d1h-${focusIdx}`} title="Simulated ¹H 1D Spectrum" data={fP(d.peaks.data1H)} fullDomain={[0, 11]} ticks={TICKS_1H} TickComponent={CustomXTick1H} xLabel="¹H (ppm)" panelId="1D_1H" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} />
+        <OneDSpectrumPlot key={`1d13c-${focusIdx}`} title="Simulated ¹³C 1D Spectrum" data={fP(d.peaks.data13C)} fullDomain={[0, 220]} ticks={TICKS_13C} TickComponent={CustomXTick13C} xLabel="¹³C (ppm)" panelId="1D_13C" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} />
         {d.hasPhosphorus && d.selNuc.includes('P') && fP(d.peaks.p31Data).length > 0 && (
-          <OneDSpectrumPlot title="Simulated ³¹P 1D Spectrum" data={fP(d.peaks.p31Data)} fullDomain={[-5, 5]} ticks={Array.from({ length: 11 }, (_, i) => i - 5)} TickComponent={CustomXTick1H} xLabel="³¹P (ppm)" panelId="1D_31P" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} />
+          <OneDSpectrumPlot key={`1dp31-${focusIdx}`} title="Simulated ³¹P 1D Spectrum" data={fP(d.peaks.p31Data)} fullDomain={[-5, 5]} ticks={Array.from({ length: 11 }, (_, i) => i - 5)} TickComponent={CustomXTick1H} xLabel="³¹P (ppm)" panelId="1D_31P" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} />
         )}
-        <SpectrumPlot title="Simulated COSY Spectrum" diagonalData={fP(d.peaks.diagonalData)} crossPeakData={fP(d.peaks.cosyPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="cosy" diagonalColor="#22c55e" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} />
-        <SpectrumPlot title="Simulated NOESY Spectrum" diagonalData={fP(d.peaks.diagonalData)} crossPeakData={fP(d.peaks.noesyPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="noesy" diagonalColor="#ef4444" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} />
-        <SpectrumPlot title="Simulated TOCSY Spectrum" diagonalData={fP(d.peaks.diagonalData)} crossPeakData={fP(d.peaks.tocsyPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="tocsy" diagonalColor="#1e3a8a" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} />
+        <SpectrumPlot key={`cosy-${focusIdx}`} title="Simulated COSY Spectrum" diagonalData={fP(d.peaks.diagonalData)} crossPeakData={fP(d.peaks.cosyPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="cosy" diagonalColor="#22c55e" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} />
+        <SpectrumPlot key={`noesy-${focusIdx}`} title="Simulated NOESY Spectrum" diagonalData={fP(d.peaks.diagonalData)} crossPeakData={fP(d.peaks.noesyPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="noesy" diagonalColor="#ef4444" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} />
+        <SpectrumPlot key={`tocsy-${focusIdx}`} title="Simulated TOCSY Spectrum" diagonalData={fP(d.peaks.diagonalData)} crossPeakData={fP(d.peaks.tocsyPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="tocsy" diagonalColor="#1e3a8a" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} />
       </div>
       
       {/* HSQC side by side */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <HSQCPlot title="Simulated ¹H-¹³C HSQC Spectrum" crossPeakData={fP(d.peaks.hsqcPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="hsqc" selectedKeys={selectedKeys} manualKeys={manualKeys} yAxisLabel="¹³C F1 (ppm)" yDomainInit={[0, 220]} yTicks={TICKS_13C} aspect={simCfg.aspect2D} fs={simCfg.fontSize} />
+        <HSQCPlot key={`hsqc-${focusIdx}`} title="Simulated ¹H-¹³C HSQC Spectrum" crossPeakData={fP(d.peaks.hsqcPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="hsqc" selectedKeys={selectedKeys} manualKeys={manualKeys} yAxisLabel="¹³C F1 (ppm)" yDomainInit={[0, 220]} yTicks={TICKS_13C} aspect={simCfg.aspect2D} fs={simCfg.fontSize} />
         {d.moleculeType === 'protein' && d.selNuc.includes('N') && fP(d.peaks.hsqc15NPeaks).length > 0 && (
-          <HSQCPlot title="Simulated ¹H-¹⁵N HSQC Spectrum" crossPeakData={fP(d.peaks.hsqc15NPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="hsqc15n" selectedKeys={selectedKeys} manualKeys={manualKeys} yAxisLabel="¹⁵N F1 (ppm)" yDomainInit={[95, 135]} yTicks={TICKS_15N} aspect={simCfg.aspect2D} fs={simCfg.fontSize} />
+          <HSQCPlot key={`hsqc15n-${focusIdx}`} title="Simulated ¹H-¹⁵N HSQC Spectrum" crossPeakData={fP(d.peaks.hsqc15NPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="hsqc15n" selectedKeys={selectedKeys} manualKeys={manualKeys} yAxisLabel="¹⁵N F1 (ppm)" yDomainInit={[95, 135]} yTicks={TICKS_15N} aspect={simCfg.aspect2D} fs={simCfg.fontSize} />
         )}
       </div>
     </div>
