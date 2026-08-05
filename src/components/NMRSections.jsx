@@ -1992,22 +1992,20 @@ const structureSrc = useMemo(() => {
     </p>
 
     {structureMode === '3d' ? (
-      <NMRMoleculeViewer
-        src={structureSrc}
-        moleculeType={d.moleculeType}
-        parsedSeq={d.parsedSeq}
-        selectedKeys={selectedKeys}
-        manualKeys={manualKeys}
-        onAtomClick={handleAtomClick}
-        residueOffset={residueOffset}
-        atomNameMap={atomNameMap}
-        labelMode={atomLabelMode}
-        height={
-          d.moleculeType === 'dna' || d.moleculeType === 'rna'
-            ? '620px'
-            : '520px'
-        }
-      />
+<NmrMoleculeViewer
+  parsedSeq={d.parsedSeq}
+  moleculeType={d.moleculeType}
+  selectedKeys={selectedKeys}
+  manualKeys={manualKeys}
+  onAtomClick={handleAtomClick}
+  labelMode={atomLabelMode}
+  height={
+    d.moleculeType === 'dna' || d.moleculeType === 'rna'
+      ? '600px'
+      : '500px'
+  }
+/>
+
     ) : (
       <StructureSVGView
         structure={d.structure}
