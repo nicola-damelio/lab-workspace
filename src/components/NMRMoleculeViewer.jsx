@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 const SELECT_COLOR_HEX = 0xf59e0b;
 const MANUAL_COLOR_HEX = 0x16a34a;
 
-// ---- PDB atom name → NMR Greek-letter name mapping ----
+// ---- PDB atom name → NMR Greek-letter name mapping (Hydrogens) ----
 const PDB_TO_NMR = {
   'H': 'HN', 'HN': 'HN', 'H1': 'HN', 'H2': 'HN', 'H3': 'HN',
   'HA': 'Hα', 'HA1': 'Hα1', 'HA2': 'Hα2', 'HA3': 'Hα2',
@@ -20,6 +20,10 @@ const PDB_TO_NMR = {
   'HH': 'Hη2', 'HH11': 'Hη2', 'HH12': 'Hη2', 'HH2': 'Hη2',
   'HH21': 'Hη2', 'HH22': 'Hη2',
 };
+
+// Maps PDB letters (A, B, G, D, E, Z, H) to Greek characters for heavy atoms
+const GREEK_MAP = { 'A': 'α', 'B': 'β', 'G': 'γ', 'D': 'δ', 'E': 'ε', 'Z': 'ζ', 'H': 'η' };
+const REVERSE_GREEK = { 'α': 'A', 'β': 'B', 'γ': 'G', 'δ': 'D', 'ε': 'E', 'ζ': 'Z', 'η': 'H' };
 
 const getCarbonName = (molType, char, atom) => {
   if (!atom) return null;
@@ -66,16 +70,28 @@ const mapPdbAtomToNmrKeys = (atomname, resno, parsedSeq, moleculeType) => {
   const res = parsedSeq[ri];
   if (!res) return null;
   const upper = (atomname || '').trim().toUpperCase();
-  const nmrAtom = PDB_TO_NMR[upper];
-  if (nmrAtom) {
-    const keys = buildKeys(ri, [nmrAtom], moleculeType, res.char);
-    return { ri, keys, label: `${res.id || res.char}${resno} ${nmrAtom}`, nmrAtom };
+  
+  let nmrAtom = PDB_TO_NMR[upper];
+  
+  if (!nmrAtom) {
+    if (upper === 'N') nmrAtom = 'N';
+    else if (upper === 'CA') nmrAtom = 'Cα';
+    else if (upper === 'C') nmrAtom = "C'";
+    else if (upper === 'CB') nmrAtom = 'Cβ';
+    else if (upper === 'O') nmrAtom = 'O';
+    else {
+      // Dynamically map heavy side-chain atoms (e.g., CG1 -> Cγ1, ND2 -> Nδ2)
+      const match = upper.match(/^([CNO])([ABGDEZH])(\d*)$/);
+      if (match) {
+        nmrAtom = `${match[1]}${GREEK_MAP[match[2]]}${match[3]}`;
+      } else {
+        nmrAtom = upper; // Final fallback
+      }
+    }
   }
-  if (upper === 'N') return { ri, keys: [`${ri}-N`], label: `${res.id || res.char}${resno} N`, nmrAtom: 'N' };
-  if (upper === 'CA') return { ri, keys: [`${ri}-Cα`], label: `${res.id || res.char}${resno} Cα`, nmrAtom: 'Cα' };
-  if (upper === 'C') return { ri, keys: [`${ri}-C'`], label: `${res.id || res.char}${resno} C'`, nmrAtom: "C'" };
-  if (upper === 'CB') return { ri, keys: [`${ri}-Cβ`], label: `${res.id || res.char}${resno} Cβ`, nmrAtom: 'Cβ' };
-  return null;
+  
+  const keys = buildKeys(ri, [nmrAtom], moleculeType, res.char);
+  return { ri, keys, label: `${res.id || res.char}${resno} ${nmrAtom}`, nmrAtom };
 };
 
 // ============================================================================
@@ -93,7 +109,7 @@ const NMRMoleculeViewer = ({
   const stageRef = useRef(null);
   const highlightCompRef = useRef(null);
   const labelCompRef = useRef(null);
-  const sidechainCompRef = useRef(null); // Reference for side chain representation
+  const sidechainCompRef = useRef(null); 
   
   const [file, setFile] = useState(null);
   const [pdbId, setPdbId] = useState('');
@@ -101,11 +117,10 @@ const NMRMoleculeViewer = ({
   const [errorMsg, setErrorMsg] = useState('');
   const [hoverInfo, setHoverInfo] = useState(null);
   const [showLabels, setShowLabels] = useState(false);
-  const [sidechainStyle, setSidechainStyle] = useState('licorice'); // State for side chain mode
+  const [sidechainStyle, setSidechainStyle] = useState('licorice'); 
 
   const componentRef = useRef(null);
 
-  // Use refs to prevent infinite reload loops when parent re-renders
   const parsedSeqRef = useRef(parsedSeq);
   const moleculeTypeRef = useRef(moleculeType);
   const onAtomClickRef = useRef(onAtomClick);
@@ -116,7 +131,6 @@ const NMRMoleculeViewer = ({
     onAtomClickRef.current = onAtomClick;
   }, [parsedSeq, moleculeType, onAtomClick]);
 
-  // Main load effect ONLY depends on file/pdbId changes
   useEffect(() => {
     if (!file && !pdbId.trim()) return;
     if (!containerRef.current) return;
@@ -155,7 +169,6 @@ const NMRMoleculeViewer = ({
         if (cancelled) return;
         componentRef.current = component;
 
-        // Robust representations (residueindex is safe for AlphaFold models)
         try {
           component.addRepresentation('cartoon', {
             color: 'residueindex', 
@@ -172,7 +185,6 @@ const NMRMoleculeViewer = ({
 
         component.autoView();
 
-        // Click handler
         stage.signals.clicked.add((pickingProxy) => {
           if (!pickingProxy || !pickingProxy.atom) return;
           const atom = pickingProxy.atom;
@@ -184,7 +196,6 @@ const NMRMoleculeViewer = ({
           }
         });
 
-        // Hover handler
         let lastHover = null;
         stage.signals.hovered.add((pickingProxy) => {
           if (!pickingProxy || !pickingProxy.atom) {
@@ -232,7 +243,6 @@ const NMRMoleculeViewer = ({
     };
   }, [file, pdbId]);
 
-  // Separate effect for labels to avoid reloading the whole PDB
   useEffect(() => {
     const component = componentRef.current;
     if (!component || status !== 'ready') return;
@@ -246,7 +256,6 @@ const NMRMoleculeViewer = ({
       }
     };
 
-    // Always remove old labels before adding new ones
     clearLabels();
 
     if (showLabels) {
@@ -273,7 +282,6 @@ const NMRMoleculeViewer = ({
     const component = componentRef.current;
     if (!component || status !== 'ready') return;
 
-    // Clear existing side chain representation
     if (sidechainCompRef.current) {
       try {
         component.removeRepresentation(sidechainCompRef.current);
@@ -281,15 +289,14 @@ const NMRMoleculeViewer = ({
       sidechainCompRef.current = null;
     }
 
-    // Add new representation if not hidden
     if (sidechainStyle !== 'none') {
       try {
         sidechainCompRef.current = component.addRepresentation(sidechainStyle, {
-          sele: 'protein and sidechain',
+          // Explicit grouping ensures NGL draws the CA-CB bond correctly
+          sele: '(protein and sidechain) or (protein and .CA)', 
           color: 'element',
           multipleBond: true,
-          radiusType: 'size',
-          scale: sidechainStyle === 'licorice' ? 0.3 : 1.0
+          radiusSize: sidechainStyle === 'licorice' ? 0.25 : undefined,
         });
       } catch (e) {
         console.warn('Sidechain rep failed', e);
@@ -303,7 +310,6 @@ const NMRMoleculeViewer = ({
     const component = componentRef.current;
     if (!stage || !component || status !== 'ready') return;
 
-    // Correct removal method
     if (highlightCompRef.current) {
       try { component.removeRepresentation(highlightCompRef.current); } catch (e) {}
       highlightCompRef.current = null;
@@ -322,13 +328,26 @@ const NMRMoleculeViewer = ({
         const atomName = k.substring(dashIdx + 1);
         const resno = ri + 1;
         const pdbNames = [];
+        
         Object.entries(PDB_TO_NMR).forEach(([pdb, nmr]) => {
           if (nmr === atomName) pdbNames.push(pdb);
         });
+        
         if (atomName === 'N') pdbNames.push('N');
-        if (atomName === 'Cα') pdbNames.push('CA');
-        if (atomName === 'Cβ') pdbNames.push('CB');
-        if (atomName === "C'") pdbNames.push('C');
+        else if (atomName === 'Cα') pdbNames.push('CA');
+        else if (atomName === 'Cβ') pdbNames.push('CB');
+        else if (atomName === "C'") pdbNames.push('C');
+        else if (atomName === 'O') pdbNames.push('O');
+        else {
+          // Dynamically translate Greek back to PDB heavy atoms for highlighting
+          const match = atomName.match(/^([CNO])([αβγδεζη])(\d*)$/);
+          if (match) {
+            pdbNames.push(`${match[1]}${REVERSE_GREEK[match[2]]}${match[3]}`);
+          }
+        }
+        
+        if (pdbNames.length === 0) pdbNames.push(atomName); 
+        
         pdbNames.forEach((pn) => parts.push(`${resno} and .${pn}`));
       });
       return parts.length > 0 ? parts.join(' or ') : null;

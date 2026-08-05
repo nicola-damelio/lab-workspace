@@ -3048,7 +3048,7 @@ const SimulationsSection = ({ ctx }) => {
   const d = useNmrDerived(activeTest);
   const [expandedPanel, setExpandedPanel] = useState(null);
   const [showCfg, setShowCfg] = useState(false);
-  const [focusIdx, setFocusIdx] = useState('ALL'); // <-- Added local focus state
+  const [focusIdx, setFocusIdx] = useState('ALL');
   
   const selectedKeys = getSelectedKeys(activeTest);
   const manualKeys = useMemo(() => getManualKeys(d.shifts), [d.shifts]);
@@ -3059,10 +3059,11 @@ const SimulationsSection = ({ ctx }) => {
     return <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">Enter a sequence / select a molecule (in Experiment Setup) to generate simulated spectra.</div>;
   }
 
-  // Helper to filter peaks by the focused residue
+  // FIXED: Split the key string by '-' and match the exact index to avoid the prefix bug (e.g., '1-' matching '10-').
   const fP = (arr) => {
     if (focusIdx === 'ALL' || !arr) return arr || [];
-    return arr.filter(p => p.keys && p.keys.some(k => String(k).startsWith(`${focusIdx}-`)));
+    const target = String(focusIdx);
+    return arr.filter(p => p.keys && p.keys.some(k => String(k).split('-')[0] === target));
   };
   
   return (
