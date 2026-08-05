@@ -97,7 +97,7 @@ const NMRMoleculeViewer = ({
   const containerRef = useRef(null);
   const stageRef = useRef(null);
   const highlightCompRef = useRef(null);
-  
+  const labelCompRef = useRef(null);
   const [file, setFile] = useState(null);
   const [pdbIdInput, setPdbIdInput] = useState('');     // Bound to the text input
   const [activePdbId, setActivePdbId] = useState('');   // Triggers the useEffect
@@ -183,16 +183,15 @@ const NMRMoleculeViewer = ({
           }
         });
 
-        if (showLabels) {
-          component.addRepresentation('label', {
-            sele: '.CA or .N or .C',
-            labelType: 'atomname',
-            labelGrouping: 'residue',
-            color: 0x334155,
-            radius: 0.6,
-          });
-        }
-
+ if (showLabels) {
+       component.addRepresentation('label', {
+         sele: '.CA', // <-- CHANGED: Only C-alpha for global labels to prevent freezing
+         labelType: 'atomname',
+         labelGrouping: 'residue',
+         color: 0x334155,
+         radius: 0.6,
+       });
+     }
         setStatus('ready');
       } catch (err) {
         console.error('NMRMoleculeViewer error:', err);
@@ -222,16 +221,22 @@ const NMRMoleculeViewer = ({
     const component = componentRef.current;
     if (!stage || !component || status !== 'ready') return;
 
+    // Remove previous highlight AND dynamic labels
     if (highlightCompRef.current) {
       stage.removeComponent(highlightCompRef.current);
       highlightCompRef.current = null;
     }
+    if (labelCompRef.current) {
+      stage.removeComponent(labelCompRef.current);
+      labelCompRef.current = null;
+    }
 
     const sel = Array.isArray(selectedKeys) ? selectedKeys : [];
     const man = Array.isArray(manualKeys) ? manualKeys.filter((k) => !sel.includes(k)) : [];
-
+    
     if (sel.length === 0 && man.length === 0) return;
 
+    // Build a selection string from the keys
     const buildSele = (keys) => {
       const parts = [];
       keys.forEach((k) => {
@@ -240,12 +245,11 @@ const NMRMoleculeViewer = ({
         const ri = parseInt(k.substring(0, dashIdx), 10);
         const atomName = k.substring(dashIdx + 1);
         const resno = ri + 1;
-        const pdbNames = [];
         
+        const pdbNames = [];
         Object.entries(PDB_TO_NMR).forEach(([pdb, nmr]) => {
           if (nmr === atomName) pdbNames.push(pdb);
         });
-        
         if (atomName === 'N') pdbNames.push('N');
         if (atomName === 'Cα') pdbNames.push('CA');
         if (atomName === 'Cβ') pdbNames.push('CB');
@@ -260,7 +264,10 @@ const NMRMoleculeViewer = ({
 
     try {
       const selSele = buildSele(sel);
+      const manSele = buildSele(man);
+      
       if (selSele) {
+        // 1. Add Ball+Stick highlight
         const selComp = component.addRepresentation('ball+stick', {
           sele: selSele,
           color: SELECT_COLOR_HEX,
@@ -268,11 +275,35 @@ const NMRMoleculeViewer = ({
           radius: 0.4,
         });
         highlightCompRef.current = selComp;
+
+        // ✨ MAGIC FIX: Show sidechain labels ONLY for the selected atoms
+        if (showLabels) {
+          const lblComp = component.addRepresentation('label', {
+            sele: selSele,
+            labelType: 'atomname',
+            color: 0x0f172a, // Dark slate text
+            radius: 0.8,
+            showBackground: true,
+            backgroundColor: 0xffffff, // White background box for readability
+            backgroundMargin: 0.2,
+            backgroundOpacity: 0.9,
+          });
+          labelCompRef.current = lblComp;
+        }
+      }
+      
+      if (manSele) {
+         component.addRepresentation('ball+stick', {
+           sele: manSele,
+           color: MANUAL_COLOR_HEX,
+           aspectRatio: 1.5,
+           radius: 0.4,
+         });
       }
     } catch (e) {
       console.warn('Highlight error:', e);
     }
-  }, [selectedKeys, manualKeys, status]);
+  }, [selectedKeys, manualKeys, status, showLabels]); // <-- Added showLabels to dependencies
 
   // ---- Handle file selection ----
   const handleFileChange = useCallback((e) => {
