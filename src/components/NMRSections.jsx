@@ -2,8 +2,12 @@ import NMRMoleculeViewer from './NMRMoleculeViewer';
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  ReferenceArea, BarChart, Bar, LineChart, Line, Legend, ErrorBar
+  ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar
 } from 'recharts';
+
+const HAS_EB = typeof ErrorBar !== 'undefined';
+const LINE_COLORS = ['#3b82f6','#ef4444','#22c55e','#f59e0b','#8b5cf6','#ec4899','#14b8a6','#f97316','#6366f1','#84cc16'];
+const TICKS_13C = Array.from({length:421},(_,i)=>parseFloat((10+i*0.5).toFixed(1))); // 10→220 ppm
 
 /* ============================================================================
 NMRSections — struttura fissa: Experiment Setup → Data → Fitting → Simulations
@@ -16,8 +20,6 @@ const FS_CLASSES =
 const OVERLAY_CLASSES = 'fixed top-0 left-0 w-screen h-screen bg-slate-900/50 backdrop-blur-sm z-[999990]';
 const SELECT_COLOR = '#f59e0b';
 const MANUAL_COLOR = '#16a34a';
-const LINE_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16'];
-const HAS_ERRORBAR = typeof ErrorBar !== 'undefined';
 
 const CollapsibleSection = ({ title, icon, defaultOpen = true, children, headerExtra, className = '' }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
@@ -112,10 +114,25 @@ const DNA_FORM_OFFSETS = { B: { "H1'": 0, "H2'": 0, "H3'": 0, "H2''": 0 }, A: { 
 const SUGAR_ANOMER_OFFSETS = { alpha: { H1: 0.25 }, beta: { H1: -0.15 } };
 const RESIDUE_COLORS = ['#3b82f6', '#8b5cf6', '#d946ef', '#ec4899', '#f43f5e', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#6366f1'];
 const TICKS_1H = Array.from({ length: 111 }, (_, i) => parseFloat((i / 10).toFixed(1)));
-const TICKS_13C = Array.from({ length: 421 }, (_, i) => parseFloat((10 + i * 0.5).toFixed(1))); // 10 → 220 ppm
-const TICKS_15N = Array.from({ length: 81 }, (_, i) => parseFloat((95 + i * 0.5).toFixed(1)));
 const CHART_MARGIN = { top: 20, right: 20, bottom: 45, left: 50 };
 const CHART_MARGIN_1D = { top: 10, right: 15, bottom: 45, left: 15 };
+
+// ================= MEASURE WIDTH (per spettri 2D quadrati) =================
+const useMeasureWidth = () => {
+  const ref = useRef(null);
+  const [w, setW] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const u = () => setW(el.clientWidth);
+    u();
+    let ro = null;
+    if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(u); ro.observe(el); }
+    window.addEventListener('resize', u);
+    return () => { if (ro) ro.disconnect(); window.removeEventListener('resize', u); };
+  }, []);
+  return [ref, w];
+};
 
 // ================= HELPERS =================
 const parseManual = (v) => {
@@ -296,91 +313,23 @@ const getManualKeys = (values) => {
   return [...out];
 };
 
-// ================= FITTING HELPERS (Plate-inspired) =================
-const solveLin4 = (A, b) => {
-  const M = A.map((row, i) => [...row, b[i]]);
-  for (let c = 0; c < 4; c++) {
-    let p = c;
-    for (let r = c + 1; r < 4; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
-    if (Math.abs(M[p][c]) < 1e-12) return null;
-    [M[c], M[p]] = [M[p], M[c]];
-    for (let r = 0; r < 4; r++) {
-      if (r === c) continue;
-      const f = M[r][c] / M[c][c];
-      for (let k = c; k < 5; k++) M[r][k] -= f * M[c][k];
-    }
-  }
-  return M.map((row, i) => row[4] / row[i][i]);
-};
-const fitLinear = (pts) => {
-  const n = pts.length;
-  if (n < 2) return null;
-  let sw = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
-  pts.forEach((p) => { const w = p.w || 1; sw += w; sx += w * p.x; sy += w * p.y; sxx += w * p.x * p.x; sxy += w * p.x * p.y; });
-  const den = sw * sxx - sx * sx;
-  if (Math.abs(den) < 1e-12) return null;
-  const slope = (sw * sxy - sx * sy) / den;
-  const intercept = (sy - slope * sx) / sw;
-  const mean = sy / sw;
-  let ssr = 0, sst = 0;
-  pts.forEach((p) => { const f = slope * p.x + intercept; ssr += (p.y - f) ** 2; sst += (p.y - mean) ** 2; });
-  const r2 = sst > 0 ? 1 - ssr / sst : 1;
-  const se = n > 2 ? Math.sqrt(ssr / (n - 2)) : 0;
-  return { slope, intercept, r2, se, f: (x) => slope * x + intercept };
-};
-const fit4PL = (pts) => {
-  const n = pts.length;
-  if (n < 4) return null;
-  const ys = pts.map((p) => p.y);
-  const xs = pts.map((p) => p.x);
-  const top0 = Math.max(...ys), bottom0 = Math.min(...ys);
-  if (top0 - bottom0 < 1e-9) return null;
-  const model = (x, Q) => {
-    const [T, B, I, H] = Q;
-    if (!(x > 0) || !(I > 0)) return B;
-    return B + (T - B) / (1 + Math.pow(x / I, H));
-  };
-  let P = [top0, bottom0, xs.reduce((a, b) => a + b, 0) / n, 1];
-  for (let it = 0; it < 60; it++) {
-    const J = [], R = [];
-    let bad = false;
-    pts.forEach((p) => {
-      const y0 = model(p.x, P);
-      if (!Number.isFinite(y0)) { bad = true; return; }
-      R.push(p.y - y0);
-      const row = [];
-      for (let k = 0; k < 4; k++) {
-        const Q2 = P.slice();
-        const step = Math.max(Math.abs(P[k]) * 1e-4, 1e-6);
-        Q2[k] += step;
-        row.push((model(p.x, Q2) - y0) / step);
-      }
-      J.push(row);
-    });
-    if (bad || J.length < n) break;
-    const A = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]];
-    const b = [0, 0, 0, 0];
-    for (let i = 0; i < n; i++) {
-      const w = pts[i].w || 1;
-      for (let a = 0; a < 4; a++) {
-        b[a] += w * J[i][a] * R[i];
-        for (let c2 = 0; c2 < 4; c2++) A[a][c2] += w * J[i][a] * J[i][c2];
-      }
-    }
-    const d = solveLin4(A, b);
-    if (!d) break;
-    const delta = Math.abs(d[0]) + Math.abs(d[1]) + Math.abs(d[2]) + Math.abs(d[3]);
-    P = P.map((v, k) => v + d[k]);
-    if (!P.every((v) => Number.isFinite(v))) return null;
-    if (delta < 1e-8) break;
-  }
-  const [T, B, I, H] = P;
-  if (![T, B, I, H].every((v) => Number.isFinite(v))) return null;
-  let ssr = 0;
-  pts.forEach((p) => { const r0 = p.y - model(p.x, P); ssr += r0 * r0; });
-  const se = n > 4 ? Math.sqrt(ssr / (n - 4)) : Math.sqrt(ssr || 0);
-  return { top: T, bottom: B, ic50: I, hill: H, se, f: (x) => model(x, P) };
-};
+// ================= FITTING HELPERS =================
+const gaussSolve=(A,b)=>{const n=b.length;const M=A.map((r,i)=>[...r,b[i]]);for(let c=0;c<n;c++){let p=c;for(let r=c+1;r<n;r++)if(Math.abs(M[r][c])>Math.abs(M[p][c]))p=r;if(Math.abs(M[p][c])<1e-12)return null;[M[c],M[p]]=[M[p],M[c]];for(let r=0;r<n;r++){if(r===c)continue;const f=M[r][c]/M[c][c];for(let k=c;k<=n;k++)M[r][k]-=f*M[c][k];}}return M.map((r,i)=>r[n]/r[i][i]);};
+const tokenizeExpr=(s)=>{const t=[];let i=0;const D=c=>/[0-9.]/.test(c),A=c=>/[a-zA-Z_]/.test(c);while(i<s.length){const c=s[i];if(c===' '||c==='\t'){i++;continue;}if(D(c)){let j=i;while(j<s.length&&D(s[j]))j++;t.push({t:'num',v:parseFloat(s.slice(i,j))});i=j;continue;}if(A(c)){let j=i;while(j<s.length&&(A(s[j])||/[0-9]/.test(s[j])))j++;t.push({t:'id',v:s.slice(i,j)});i=j;continue;}if('+-*/^(),'.includes(c)){t.push({t:c});i++;continue;}throw new Error('bad');}return t;};
+const parseExpression=(src)=>{const tk=tokenizeExpr(src);let p=0;const pk=()=>tk[p];const eat=t=>{if(!tk[p]||tk[p].t!==t)throw new Error('exp');return tk[p++];};
+const add=()=>{let n=mul();while(pk()&&(pk().t==='+'||pk().t==='-')){const o=eat(pk().t).t;n={type:'bin',op:o,l:n,r:mul()};}return n;};
+const mul=()=>{let n=un();while(pk()&&(pk().t==='*'||pk().t==='/')){const o=eat(pk().t).t;n={type:'bin',op:o,l:n,r:un()};}return n;};
+const un=()=>{if(pk()&&pk().t==='-'){eat('-');return{type:'un',a:un()};}if(pk()&&pk().t==='+'){eat('+');return un();}return pw();};
+const pw=()=>{let n=pr();if(pk()&&pk().t==='^'){eat('^');n={type:'bin',op:'^',l:n,r:un()};}return n;};
+const pr=()=>{const t=pk();if(!t)throw new Error('exp');if(t.t==='num'){eat('num');return{type:'num',v:t.v};}if(t.t==='id'){eat('id');if(pk()&&pk().t==='('){eat('(');const a=[add()];while(pk()&&pk().t===','){eat(',');a.push(add());}eat(')');return{type:'call',name:t.v,args:a};}return{type:'sym',name:t.v};}if(t.t==='('){eat('(');const n=add();eat(')');return n;}throw new Error('exp');};
+const ast=add();if(p<tk.length)throw new Error('trail');return ast;};
+const evalAST=(n,s)=>{switch(n.type){case'num':return n.v;case'sym':return n.name==='x'?s.x:n.name==='pi'?Math.PI:n.name==='e'?Math.E:s[n.name];case'un':return -evalAST(n.a,s);case'bin':{const a=evalAST(n.l,s),b=evalAST(n.r,s);return n.op==='+'?a+b:n.op==='-'?a-b:n.op==='*'?a*b:n.op==='/'?a/b:Math.pow(a,b);}case'call':{const a=n.args.map(x=>evalAST(x,s));switch(n.name){case'exp':return Math.exp(a[0]);case'log':return Math.log10(a[0]);case'ln':return Math.log(a[0]);case'sqrt':return Math.sqrt(a[0]);case'sin':return Math.sin(a[0]);case'cos':return Math.cos(a[0]);case'tan':return Math.tan(a[0]);case'abs':return Math.abs(a[0]);case'pow':return Math.pow(a[0],a[1]);case'min':return Math.min(...a);case'max':return Math.max(...a);} } }return NaN;};
+const collectParams=(ast)=>{const s=new Set();(function w(n){if(!n)return;if(n.type==='sym'){if(n.name!=='x'&&n.name!=='pi'&&n.name!=='e')s.add(n.name);}if(n.type==='bin'){w(n.l);w(n.r);}if(n.type==='un')w(n.a);if(n.type==='call')n.args.forEach(w);})(ast);return[...s];};
+const fitGeneric=(pts,f0,P0)=>{let P=[...P0];const f=(x,Pv)=>f0(x,Pv);const ssr=Pv=>{let s=0;for(const p of pts){const v=f(p.x,Pv);if(!isFinite(v))return Infinity;const w=p.w||1;s+=w*(p.y-v)**2;}return s;};let lam=1e-3,cur=ssr(P);for(let it=0;it<120&&isFinite(cur);it++){const J=pts.map(p=>{const y0=f(p.x,P);const row=[];for(let k=0;k<P.length;k++){const h=Math.max(1e-6,Math.abs(P[k])*1e-4);row.push((f(p.x,P.map((v,i)=>i===k?v+h:v))-y0)/h);}return row;});const A=P.map(()=>new Array(P.length).fill(0)),g=P.map(()=>0);pts.forEach((p,i)=>{const w=p.w||1;const r=p.y-f(p.x,P);for(let a=0;a<P.length;a++){g[a]+=w*J[i][a]*r;for(let b=0;b<P.length;b++)A[a][b]+=w*J[i][a]*J[i][b];}});for(let a=0;a<P.length;a++)A[a][a]*=(1+lam);const d=gaussSolve(A,g);if(!d){lam*=4;if(lam>1e7)break;continue;}const P2=P.map((v,k)=>v+d[k]);const s2=ssr(P2);if(isFinite(s2)&&s2<cur){const pv=cur;P=P2;cur=s2;lam=Math.max(1e-8,lam/2);if(Math.abs(pv-cur)<1e-10)break;}else{lam*=3;if(lam>1e7)break;}}if(!P.every(isFinite))return null;let sst=0;const m=pts.reduce((s,p)=>s+p.y,0)/pts.length;pts.forEach(p=>sst+=(p.y-m)**2);const r2=sst>0?1-cur/sst:1;const se=pts.length>P.length?Math.sqrt(cur/(pts.length-P.length)):Math.sqrt(cur||0);return{params:P,r2,se,f:(x)=>f(x,P)};};
+const fitLinear=(pts)=>fitGeneric(pts,(x,P)=>P[0]+P[1]*x,[0,1]);
+const fit4PL=(pts)=>{const ys=pts.map(p=>p.y);const t=Math.max(...ys),b=Math.min(...ys);return fitGeneric(pts,(x,P)=>P[1]+(P[0]-P[1])/(1+Math.pow(x/P[2],P[3])),[t,b,pts.reduce((s,p)=>s+p.x,0)/Math.max(1,pts.length),1]);};
+const fitCustomEquation=(expr,pts)=>{let ast,par;try{ast=parseExpression(expr);par=collectParams(ast);}catch(e){return null;}if(!par.length||pts.length<par.length+1)return null;const init=par.map((_,i)=>i===0?(pts.reduce((s,p)=>s+p.y,0)/Math.max(1,pts.length)):1);const res=fitGeneric(pts,(x,P)=>{const s={x};par.forEach((n,i)=>s[n]=P[i]);return evalAST(ast,s);},init);if(!res)return null;res.params=Object.fromEntries(par.map((n,i)=>[n,res.params[i]]));return res;};
+
 const lineDash = (style) => (style === 'dashed' ? '7 5' : style === 'dotted' ? '2 3' : undefined);
 const FIT_DEFAULT_CHART_CFG = {
   height: 380, ptSize: 5, ptStyle: 'circle', lineStyle: 'solid', lineThickness: 2,
@@ -395,23 +344,6 @@ const defaultPlotCfg = (n) => ({
   hiddenSeries: {}, excluded: {}, manualSD: {},
   chartCfg: { ...FIT_DEFAULT_CHART_CFG }
 });
-
-// ================= MEASURE WIDTH (per spettri 2D quadrati) =================
-const useMeasureWidth = () => {
-  const ref = useRef(null);
-  const [w, setW] = useState(0);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const u = () => setW(el.clientWidth);
-    u();
-    let ro = null;
-    if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(u); ro.observe(el); }
-    window.addEventListener('resize', u);
-    return () => { if (ro) ro.disconnect(); window.removeEventListener('resize', u); };
-  }, []);
-  return [ref, w];
-};
 
 // ================= GEOMETRY & STRUCTURES =================
 const getHexagon = (cx, cy, r, dir) => { const pts = []; const b = dir === 1 ? -Math.PI / 2 : Math.PI / 2; for (let i = 0; i < 6; i++) { const a = b + i * (Math.PI / 3) * dir; pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) }); } return pts; };
@@ -1140,12 +1072,13 @@ const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, row
 };
 
 // ================= ZOOMABLE PLOTS =================
-const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel, selectedKeys, manualKeys = [], heightPx = 300, fs = 11 }) => {
+const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel, selectedKeys, manualKeys = [], heightPx = 300, fs = 11, aspect = null }) => {
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState(fullDomain);
   const [refAreaLeft, setRefAreaLeft] = useState(null);
   const [refAreaRight, setRefAreaRight] = useState(null);
   const chartRef = useRef(null);
+  const [boxRef, boxW] = useMeasureWidth();
   const isDragging = useRef(false);
   const isZoomed = xDomain[0] !== fullDomain[0] || xDomain[1] !== fullDomain[1];
   const getXVal = (clientX) => {
@@ -1169,7 +1102,7 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
     };
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
-    return () => { window.removeEventListener('mousemove', handleMouseMove); window.removeEventListener('mouseup', handleMouseUp); };
+    return () => { window.removeEventListener('mousemove', handleMouseMove); window.removeEventListener('mousemove', handleMouseUp); };
   }, [refAreaLeft, refAreaRight]);
   const handleMouseDown = (e) => {
     const xVal = getXVal(e.clientX);
@@ -1178,7 +1111,7 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
   return (
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)} />}
-      <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'break-inside-avoid'}`} style={!isExpanded ? { height: `${heightPx}px` } : undefined}>
+      <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'break-inside-avoid'}`} style={!isExpanded ? { height: aspect ? Math.max(260, Math.round((boxW||400)*aspect)) : `${heightPx}px` } : undefined}>
         <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
           <div className="flex items-center gap-4">
             <h4 className="font-bold text-slate-700">{title}</h4>
@@ -1186,7 +1119,7 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
           </div>
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
         </div>
-        <div className="flex-1 min-h-0 select-none relative" ref={chartRef} onMouseDown={handleMouseDown}>
+        <div className="flex-1 min-h-0 select-none relative" ref={(n) => { chartRef.current = n; boxRef.current = n; }} onMouseDown={handleMouseDown}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={data} margin={CHART_MARGIN_1D}>
               <CartesianGrid strokeDasharray="3 3" vertical={true} horizontal={false} stroke="#f1f5f9" />
@@ -1275,7 +1208,7 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
   return (
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)} />}
-      <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'break-inside-avoid'}`}>
+      <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'break-inside-avoid'}`} style={!isExpanded ? { height: aspect ? Math.max(260, Math.round((boxW||400)*aspect)) : '300px' } : undefined}>
         <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
           <div className="flex items-center gap-4">
             <h4 className="font-bold text-slate-700">{title}</h4>
@@ -1283,7 +1216,7 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
           </div>
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
         </div>
-        <div ref={boxRef} className="select-none relative" style={isExpanded ? { flex: 1, minHeight: 0 } : { height: Math.max(280, Math.round((boxW || 380) * aspect)) }} onMouseDown={handleMouseDown}>
+        <div ref={(n) => { chartRef.current = n; boxRef.current = n; }} className="select-none relative flex-1 min-h-0" onMouseDown={handleMouseDown}>
           <ResponsiveContainer width="100%" height="100%">
             <ScatterChart margin={CHART_MARGIN}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
@@ -1352,7 +1285,7 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
   return (
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)} />}
-      <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'break-inside-avoid'}`}>
+      <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'break-inside-avoid'}`} style={!isExpanded ? { height: aspect ? Math.max(260, Math.round((boxW||400)*aspect)) : '300px' } : undefined}>
         <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
           <div className="flex items-center gap-4">
             <h4 className="font-bold text-slate-700">{title}</h4>
@@ -1360,7 +1293,7 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
           </div>
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
         </div>
-        <div ref={boxRef} className="select-none relative" style={isExpanded ? { flex: 1, minHeight: 0 } : { height: Math.max(280, Math.round((boxW || 380) * aspect)) }} onMouseDown={handleMouseDown}>
+        <div ref={(n) => { chartRef.current = n; boxRef.current = n; }} className="select-none relative flex-1 min-h-0" onMouseDown={handleMouseDown}>
           <ResponsiveContainer width="100%" height="100%">
             <ScatterChart margin={CHART_MARGIN}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
@@ -1960,80 +1893,80 @@ const structureSrc = useMemo(() => {
           <input
             type="number"
             value={residueOffset}
-            onChange={(e) =>
-              updateActiveTest({
-                residueOffset: Number(e.target.value) || 0
-              })
-            }
-            className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500"
-          />
-        </div>
+                    onChange={(e) =>
+                      updateActiveTest({
+                        residueOffset: Number(e.target.value) || 0
+                      })
+                    }
+                    className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500"
+                  />
+                </div>
 
-        <div className="flex flex-col gap-1">
-          <label className="text-[10px] font-bold text-slate-500 uppercase">
-            Atom-name map JSON
-          </label>
-          <input
-            type="text"
-            value={activeTest.atomNameMap || ''}
-            onChange={(e) =>
-              updateActiveTest({ atomNameMap: e.target.value })
-            }
-            placeholder='{"HA":"Hα","HB1":"Hβ1"}'
-            className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-mono"
-          />
-        </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase">
+                    Atom-name map JSON
+                  </label>
+                  <input
+                    type="text"
+                    value={activeTest.atomNameMap || ''}
+                    onChange={(e) =>
+                      updateActiveTest({ atomNameMap: e.target.value })
+                    }
+                    placeholder='{"HA":"Hα","HB1":"Hβ1"}'
+                    className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-mono"
+                  />
+                </div>
+              </div>
+            )}
+
+            <p className="text-xs text-slate-400 mb-2">
+              💡 Click an atom in the {structureMode === '2d' ? 'formula' : '3D viewer'} to
+              highlight its cell in the assignment table and its peaks in the spectra.
+            </p>
+
+            {structureMode === '3d' ? (
+              <NMRMoleculeViewer
+                src={structureSrc}
+                moleculeType={d.moleculeType}
+                parsedSeq={d.parsedSeq}
+                selectedKeys={selectedKeys}
+                manualKeys={manualKeys}
+                onAtomClick={handleAtomClick}
+                residueOffset={residueOffset}
+                atomNameMap={atomNameMap}
+                labelMode={atomLabelMode}
+                height={
+                  d.moleculeType === 'dna' || d.moleculeType === 'rna'
+                    ? '620px'
+                    : '520px'
+                }
+              />
+            ) : (
+              <StructureSVGView
+                structure={d.structure}
+                minWidth={
+                  d.moleculeType === 'protein' && d.parsedSeq.length > 3
+                    ? `${d.parsedSeq.length * 120}px`
+                    : '100%'
+                }
+                isExpanded={expandedPanel === 'formula'}
+                onToggleExpand={() =>
+                  setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')
+                }
+                selectedKeys={selectedKeys}
+                manualKeys={manualKeys}
+                onAtomClick={handleAtomClick}
+                height={
+                  d.moleculeType === 'dna' || d.moleculeType === 'rna'
+                    ? `${Math.max(360, d.parsedSeq.length * 250 + 120)}px`
+                    : '300px'
+                }
+              />
+            )}
+          </div>
+        )}
       </div>
-    )}
-
-    <p className="text-xs text-slate-400 mb-2">
-      💡 Click an atom in the {structureMode === '2d' ? 'formula' : '3D viewer'} to
-      highlight its cell in the assignment table and its peaks in the spectra.
-    </p>
-
-    {structureMode === '3d' ? (
-      <NMRMoleculeViewer
-        src={structureSrc}
-        moleculeType={d.moleculeType}
-        parsedSeq={d.parsedSeq}
-        selectedKeys={selectedKeys}
-        manualKeys={manualKeys}
-        onAtomClick={handleAtomClick}
-        residueOffset={residueOffset}
-        atomNameMap={atomNameMap}
-        labelMode={atomLabelMode}
-        height={
-          d.moleculeType === 'dna' || d.moleculeType === 'rna'
-            ? '620px'
-            : '520px'
-        }
-      />
-    ) : (
-      <StructureSVGView
-        structure={d.structure}
-        minWidth={
-          d.moleculeType === 'protein' && d.parsedSeq.length > 3
-            ? `${d.parsedSeq.length * 120}px`
-            : '100%'
-        }
-        isExpanded={expandedPanel === 'formula'}
-        onToggleExpand={() =>
-          setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')
-        }
-        selectedKeys={selectedKeys}
-        manualKeys={manualKeys}
-        onAtomClick={handleAtomClick}
-        height={
-          d.moleculeType === 'dna' || d.moleculeType === 'rna'
-            ? `${Math.max(360, d.parsedSeq.length * 250 + 120)}px`
-            : '300px'
-        }
-      />
-    )}
-  </div>
-)}
-    </div>
-  );
+    );
 };
 
 // ================= 2) DATA (instances + layers + assignment table + EXPORT) =================
@@ -2050,6 +1983,7 @@ const DataSection = ({ ctx }) => {
   const isCS = d.activeLayerKey === 'cs';
   const activeLayer = d.layers.find((l) => l.key === d.activeLayerKey) || CHEMICAL_SHIFT_LAYER;
   const manualKeys = useMemo(() => getManualKeys(d.activeValues), [d.activeValues]);
+  
   const addInstance = () => {
     const name = newInstanceName.trim() || `Condition ${d.instances.length + 1}`;
     const inst = { id: makeInstanceId(), name, values: {} };
@@ -2136,6 +2070,7 @@ const DataSection = ({ ctx }) => {
     URL.revokeObjectURL(url);
   };
   const selTdCls = (isMan, isSel) => `px-3 py-1 cursor-pointer transition-colors ${isSel ? 'bg-amber-100 ring-2 ring-inset ring-amber-400' : isMan ? 'bg-green-50' : 'hover:bg-slate-50'}`;
+  
   return (
     <div className="flex flex-col gap-6">
       <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4">
@@ -2167,6 +2102,7 @@ const DataSection = ({ ctx }) => {
           <button type="button" onClick={addInstance} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm">+ Add Instance</button>
         </div>
       </div>
+      
       <div className="bg-white border border-slate-200 rounded-xl p-4">
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <label className="text-xs font-bold text-slate-600 uppercase">🗂️ Parameter Layer (assignment table data type)</label>
@@ -2196,16 +2132,19 @@ const DataSection = ({ ctx }) => {
           <button type="button" onClick={addLayer} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm h-fit">+ Add Parameter Layer</button>
         </div>
       </div>
+      
       <div className="bg-white border border-slate-200 rounded-xl shadow-sm px-4 py-3 flex items-center justify-end gap-3 no-print flex-wrap">
         <span className="text-xs font-bold text-slate-500 mr-auto">Active: <span className="text-indigo-700">{d.activeInstance ? d.activeInstance.name : '—'}</span> · <span className="text-blue-700">{activeLayer.label}</span></span>
         <button onClick={exportCSV} className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1.5 px-3 rounded text-xs flex items-center gap-1 shadow-sm transition-colors">📊 Export XLS (CSV)</button>
       </div>
+      
       {selectedKeys && (
         <div className="flex items-center gap-2 bg-amber-50 border border-amber-300 rounded-lg px-3 py-1.5 text-xs font-bold text-amber-800 w-fit">
           🎯 Selected: {selectionLabel(d, selectedKeys)}
           <button onClick={() => updateActiveTest({ selectedAtomKeys: [] })} className="ml-1 text-amber-600 hover:text-red-600 font-black" title="Clear selection">✕</button>
         </div>
       )}
+      
       <div className="flex items-center gap-2 flex-wrap">
         {d.parsedSeq.length > 0 && d.moleculeType !== 'sugar' && d.moleculeType !== 'lipid' && (
           <div className="flex bg-slate-200 p-1 rounded-lg">
@@ -2218,6 +2157,7 @@ const DataSection = ({ ctx }) => {
         <button onClick={clearLayer} className="px-2 py-1 rounded-lg text-xs font-bold bg-red-50 border border-red-200 text-red-600 hover:bg-red-100">🧹 Clear {activeLayer.label}</button>
         {manualKeys.length > 0 && <span className="text-[10px] font-bold text-green-700 bg-green-50 border border-green-300 rounded-lg px-2 py-1">🟩 {manualKeys.length} filled</span>}
       </div>
+      
       {d.parsedSeq.length === 0 ? (
         <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">Enter a sequence / select a molecule (in Experiment Setup) to generate the table.</div>
       ) : effTableMode === 'backbone' ? (
@@ -2420,6 +2360,55 @@ const DataSection = ({ ctx }) => {
   );
 };
 
+// ================= SECONDARY CHEMICAL SHIFTS =================
+const RANDOM_COIL_DB={A:{HA:4.35,CA:52.5,CB:19.1,CO:177.8},C:{HA:4.55,CA:58.2,CB:28.0,CO:175.9},D:{HA:4.76,CA:54.5,CB:40.8,CO:177.5},E:{HA:4.37,CA:56.9,CB:29.8,CO:177.6},F:{HA:4.66,CA:57.9,CB:39.8,CO:177.4},G:{HA:3.96,CA:45.2,CB:null,CO:174.6},H:{HA:4.76,CA:55.3,CB:31.3,CO:175.3},I:{HA:4.20,CA:61.3,CB:38.3,CO:177.8},K:{HA:4.38,CA:56.6,CB:32.4,CO:177.9},L:{HA:4.47,CA:55.4,CB:41.9,CO:178.9},M:{HA:4.52,CA:55.5,CB:32.6,CO:177.5},N:{HA:4.75,CA:53.3,CB:38.6,CO:176.6},P:{HA:4.44,CA:63.1,CB:31.9,CO:178.1},Q:{HA:4.39,CA:56.2,CB:29.5,CO:177.2},R:{HA:4.51,CA:56.5,CB:30.4,CO:177.2},S:{HA:4.51,CA:58.4,CB:63.6,CO:175.6},T:{HA:4.39,CA:62.0,CB:69.6,CO:175.7},V:{HA:4.16,CA:62.1,CB:32.1,CO:177.4},W:{HA:4.70,CA:57.4,CB:29.5,CO:177.2},Y:{HA:4.66,CA:57.9,CB:38.9,CO:177.2}};
+const SCSBarChart=({title,data,color})=>{
+  const[ref,w]=useMeasureWidth();
+  const m={l:34,r:8,t:8,b:18};
+  const pw=Math.max(10,(w||400)-m.l-m.r);
+  const vals=data.map(d=>d.v).filter(v=>v!==null);
+  const mx=vals.length?Math.max(...vals.map(v=>Math.abs(v)),0.5):0.5;
+  const H=110;
+  const zero=m.t+H/2;
+  const bw=Math.max(3,(pw/Math.max(1,data.length))*0.6);
+  return(
+    <div ref={ref} className="bg-white rounded-lg border border-slate-200 p-2">
+      <h5 className="text-[11px] font-bold text-slate-600 mb-1">{title}</h5>
+      <svg width="100%" height={H+m.t+m.b}>
+        <line x1={m.l} y1={zero} x2={m.l+pw} y2={zero} stroke="#94a3b8"/>
+        {data.map((d,i)=>{
+          if(d.v===null)return null;
+          const x=m.l+(i+0.5)*(pw/data.length)-bw/2;
+          const h=(Math.abs(d.v)/mx)*(H/2);
+          const y=d.v>=0?zero-h:zero;
+          return(<rect key={i} x={x} y={y} width={bw} height={Math.max(1,h)} fill={d.v>=0?color:'#ef4444'}><title>{`${d.label}: ${d.v.toFixed(2)}`}</title></rect>);
+        })}
+      </svg>
+    </div>
+  );
+};
+const SecondaryShiftsSection=({ctx})=>{
+  const{activeTest}=ctx;
+  const d=useNmrDerived(activeTest);
+  if(d.moleculeType!=='protein'||!d.parsedSeq.length) return(<div className="text-center py-8 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed">SCS requires a protein sequence.</div>);
+  const cs=getLayerValues(d.activeInstance,'cs');
+  const rows=d.estSeq.map((res,idx)=>{
+    const rc=RANDOM_COIL_DB[res.char]||{};
+    const g=(k,fb)=>{const m=parseManual(cs[`${idx}-${k}`]);return m!==null?m:fb;};
+    const HA=g('Hα',res.estShifts?.['Hα']),CA=g('Cα',res.estUniqueC?.['Cα']),CB=g('Cβ',res.estUniqueC?.['Cβ']),CO=g("C'",res.estCP);
+    return{label:res.id,HA:HA!=null&&rc.HA!=null?HA-rc.HA:null,CA:CA!=null&&rc.CA!=null?CA-rc.CA:null,CB:CB!=null&&rc.CB!=null?CB-rc.CB:null,CO:CO!=null&&rc.CO!=null?CO-rc.CO:null};
+  });
+  const mk=k=>rows.map(r=>({label:r.label,v:r[k]}));
+  return(
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <SCSBarChart title="ΔHα (HA)" data={mk('HA')} color="#3b82f6"/>
+      <SCSBarChart title="ΔCα (CA)" data={mk('CA')} color="#8b5cf6"/>
+      <SCSBarChart title="ΔCβ (CB)" data={mk('CB')} color="#f59e0b"/>
+      <SCSBarChart title="ΔC′ (CO)" data={mk('CO')} color="#22c55e"/>
+    </div>
+  );
+};
+
 // ================= 3) FITTING — CONDITION PLOTS (fit + errori) + VARIABLE PARAMETERS =================
 const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlot }) => {
   const { activeTest, updateActiveTest } = ctx;
@@ -2428,6 +2417,11 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
   const [presetName, setPresetName] = useState('');
   const [showErr, setShowErr] = useState(false);
   const [showCfg, setShowCfg] = useState(false);
+
+  const [hVal, setHVal] = useState('');
+  const [hLab, setHLab] = useState('');
+  const isHist = (plot.chartType || 'line') === 'hist';
+
   const set = (patch) => updatePlot(plot.id, patch);
   const setCfg = (patch) => updatePlot(plot.id, { chartCfg: { ...cfg, ...patch } });
   const plotLayer = d.layers.find((l) => l.key === plot.layerKey) || d.layers[0];
@@ -2435,6 +2429,7 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
   const toggleAtom = (key) => set({ atoms: plot.atoms.includes(key) ? plot.atoms.filter((k) => k !== key) : [...plot.atoms, key] });
   const selectAllFiltered = () => set({ atoms: Array.from(new Set([...plot.atoms, ...filtered.map((o) => o.key)])) });
   const presets = Array.isArray(activeTest.atomSelectionPresets) ? activeTest.atomSelectionPresets : [];
+  
   const savePreset = () => {
     const name = presetName.trim();
     if (!name || plot.atoms.length === 0) return;
@@ -2443,6 +2438,7 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
   };
   const applyPreset = (id) => { const p = presets.find((x) => x.id === id); if (p) set({ atoms: [...(p.atoms || [])] }); };
   const deletePreset = (id) => updateActiveTest({ atomSelectionPresets: presets.filter((x) => x.id !== id) });
+  
   const series = useMemo(() => plot.atoms.map((ak) => {
     const opt = d.atomOptions.find((o) => o.key === ak);
     const pts = [];
@@ -2453,8 +2449,12 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
     });
     return { key: ak, label: opt ? opt.label : ak, pts };
   }), [plot.atoms, plot.layerKey, d.instances, d.atomOptions, plot.excluded]);
+  
   const colorOf = (s) => LINE_COLORS[Math.max(0, series.findIndex((q) => q.key === s.key)) % LINE_COLORS.length];
   const includedPts = (s) => s.pts.filter((p) => !p.excluded);
+
+  const maxOf = (s) => { const v = includedPts(s).map(p => p.y); return v.length ? Math.max(...v) : null; };
+
   const effSD = (sKey, p) => {
     const man = (plot.manualSD[sKey] || {})[p.instId];
     if (typeof man === 'number' && Number.isFinite(man)) return man;
@@ -2467,14 +2467,18 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
       const sd = effSD(s.key, p);
       return { x: p.x, y: p.y, w: sd && sd > 0 ? 1 / (sd * sd) : 1 };
     });
-    return plot.fitModel === 'linear' ? fitLinear(wpts) : fit4PL(wpts);
+    if (plot.fitModel === 'linear') return fitLinear(wpts);
+    if (plot.fitModel === '4pl') return fit4PL(wpts);
+    if (plot.fitModel === 'custom' && plot.customExpr) return fitCustomEquation(plot.customExpr, wpts);
+    return null;
   };
   const fits = useMemo(() => {
     const out = {};
     series.forEach((s) => { out[s.key] = fitOf(s); });
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [series, plot.fitEnabled, plot.fitModel, plot.xMode, plot.manualSD, plot.useFixedSD, plot.fixedSDStr]);
+  }, [series, plot.fitEnabled, plot.fitModel, plot.customExpr, plot.xMode, plot.manualSD, plot.useFixedSD, plot.fixedSDStr]);
+  
   const setManualSD = (sKey, instId, val) => {
     const inner = { ...(plot.manualSD[sKey] || {}) };
     const n = parseManual(val);
@@ -2505,7 +2509,7 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
         const pts = s.pts.filter((p) => !((excluded[s.key] || {})[p.instId]) && p.x !== null);
         if (pts.length < 4) break;
         const wpts = pts.map((p) => { const sd = effSD(s.key, p); return { x: p.x, y: p.y, w: sd && sd > 0 ? 1 / (sd * sd) : 1, p }; });
-        const fit = plot.fitModel === 'linear' ? fitLinear(wpts) : fit4PL(wpts);
+        const fit = plot.fitModel === 'linear' ? fitLinear(wpts) : plot.fitModel === '4pl' ? fit4PL(wpts) : fitCustomEquation(plot.customExpr, wpts);
         if (!fit || !fit.f) break;
         let worst = null, maxR = 0;
         wpts.forEach((q) => {
@@ -2562,6 +2566,27 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
   const xLab = cfg.xAxisLabel || (plot.xMode === 'numeric' ? 'Condition value (X)' : 'Condition (instance)');
   const yLab = cfg.yAxisLabel || `${plotLayer.label}${plotLayer.unit ? ` (${plotLayer.unit})` : ''}`;
   const dom = (v) => (v === '' || v == null || parseManual(v) === null ? undefined : parseManual(v));
+
+  const refLines = (
+    <>
+      {plot.showMaxLines && visibleSeries.map(s => {
+        const m = maxOf(s);
+        if (m === null) return null;
+        const c = colorOf(s);
+        return (
+          <ReferenceLine key={`mx-${s.key}`} y={m} stroke={c} strokeDasharray="6 4" ifOverflow="extendDomain" label={{value:`max ${s.label}=${m.toFixed(2)}`,fill:c,fontSize:Math.max(9,cfg.fontSize-1),position:'insideTopRight'}}/>
+        );
+      })}
+      {(plot.hLines || []).map(h => {
+        const v = parseManual(h.value);
+        if (v === null) return null;
+        return (
+          <ReferenceLine key={h.id} y={v} stroke={h.color || '#64748b'} strokeDasharray="4 4" ifOverflow="extendDomain" label={{value:h.label||`y=${v}`,fill:h.color||'#64748b',fontSize:Math.max(9,cfg.fontSize-1),position:'insideTopRight'}}/>
+        );
+      })}
+    </>
+  );
+
   return (
     <CollapsibleSection title={plot.title} icon="📈" defaultOpen={true}
       headerExtra={
@@ -2586,16 +2611,29 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
               <option value="numeric">Numeric X (instance X value)</option>
             </select>
           </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">Type</label>
+            <select value={plot.chartType || 'line'} onChange={(e) => set({ chartType: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
+              <option value="line">Line / Scatter</option>
+              <option value="hist">Histogram</option>
+            </select>
+          </div>
           <label className="flex items-center gap-2 text-xs font-bold text-slate-700 pb-1.5 cursor-pointer">
             <input type="checkbox" checked={plot.fitEnabled} onChange={(e) => set({ fitEnabled: e.target.checked })} className="w-4 h-4 accent-blue-600" /> Fit curve
           </label>
           {plot.fitEnabled && (
             <div className="flex flex-col gap-1">
               <label className="text-[10px] font-bold text-slate-500 uppercase">Model</label>
-              <select value={plot.fitModel} onChange={(e) => set({ fitModel: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
-                <option value="linear">Linear (weighted)</option>
-                <option value="4pl">4PL logistic (weighted)</option>
-              </select>
+              <div className="flex gap-2 items-center">
+                <select value={plot.fitModel} onChange={(e) => set({ fitModel: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
+                  <option value="linear">Linear (weighted)</option>
+                  <option value="4pl">4PL logistic (weighted)</option>
+                  <option value="custom">Custom Equation</option>
+                </select>
+                {plot.fitModel === 'custom' && (
+                  <input type="text" value={plot.customExpr || ''} onChange={(e) => set({ customExpr: e.target.value })} placeholder="e.g. a*x^2 + b" className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-500 w-32 bg-white" />
+                )}
+              </div>
             </div>
           )}
           <div className="ml-auto flex gap-2">
@@ -2674,30 +2712,54 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
             ) : (
               <div style={{ height: cfg.height }} className="bg-white border border-slate-200 rounded-xl p-3">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={plot.xMode === 'category' ? catData : undefined} margin={{ top: 8, right: 16, bottom: 30, left: 12 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    {plot.xMode === 'category' ? (
-                      <XAxis dataKey="__condition" tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} tickMargin={10} label={{ value: xLab, position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
-                    ) : (
-                      <XAxis type="number" dataKey="x" domain={[dom(cfg.xMin) ?? 'auto', dom(cfg.xMax) ?? 'auto']} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} tickMargin={10} label={{ value: xLab, position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
-                    )}
-                    <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={{ value: yLab, angle: -90, position: 'insideLeft', offset: 6, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
-                    <Tooltip />
-                    {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 10 }} />}
-                    {visibleSeries.map((s) => {
-                      const color = colorOf(s);
-                      return (
-                        <React.Fragment key={s.key}>
-                          <Line data={plot.xMode === 'numeric' ? numData(s) : undefined} type="monotone" dataKey="y" name={s.label} stroke={color} strokeWidth={cfg.lineThickness || 2} strokeDasharray={lineDash(cfg.lineStyle)} dot={plot.showPoints ? makeDot(color, s) : false} connectNulls isAnimationActive={false}>
-                            {HAS_ERRORBAR && plot.showErrors && <ErrorBar dataKey={plot.xMode === 'category' ? `${s.key}__sd` : 'sd'} width={4} strokeWidth={1} direction="y" color={color} />}
-                          </Line>
-                          {plot.xMode === 'numeric' && plot.fitEnabled && plot.showFit && fits[s.key] && (
-                            <Line data={fitData(s)} type="monotone" dataKey="y" name={`${s.label} (fit)`} stroke={color} strokeWidth={1.5} strokeDasharray="8 4" dot={false} legendType="none" isAnimationActive={false} />
-                          )}
-                        </React.Fragment>
-                      );
-                    })}
-                  </LineChart>
+                  {isHist ? (
+                    <BarChart data={plot.xMode === 'category' ? catData : numData(series[0])} margin={{ top: 8, right: 16, bottom: 30, left: 12 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                      {plot.xMode === 'category' ? (
+                        <XAxis dataKey="__condition" tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} tickMargin={10} label={{ value: xLab, position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                      ) : (
+                        <XAxis type="number" dataKey="x" domain={[dom(cfg.xMin) ?? 'auto', dom(cfg.xMax) ?? 'auto']} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} tickMargin={10} label={{ value: xLab, position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                      )}
+                      <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={{ value: yLab, angle: -90, position: 'insideLeft', offset: 6, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                      <Tooltip />
+                      {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 10 }} />}
+                      {refLines}
+                      {visibleSeries.map((s) => {
+                        const color = colorOf(s);
+                        return (
+                          <Bar key={s.key} dataKey={plot.xMode === 'category' ? s.key : 'y'} name={s.label} fill={color} radius={[3, 3, 0, 0]} isAnimationActive={false}>
+                            {HAS_EB && plot.showErrors && <ErrorBar dataKey={plot.xMode === 'category' ? `${s.key}__sd` : 'sd'} width={4} strokeWidth={1} direction="y" color={color} />}
+                          </Bar>
+                        );
+                      })}
+                    </BarChart>
+                  ) : (
+                    <LineChart data={plot.xMode === 'category' ? catData : undefined} margin={{ top: 8, right: 16, bottom: 30, left: 12 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                      {plot.xMode === 'category' ? (
+                        <XAxis dataKey="__condition" tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} tickMargin={10} label={{ value: xLab, position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                      ) : (
+                        <XAxis type="number" dataKey="x" domain={[dom(cfg.xMin) ?? 'auto', dom(cfg.xMax) ?? 'auto']} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} tickMargin={10} label={{ value: xLab, position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                      )}
+                      <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={{ value: yLab, angle: -90, position: 'insideLeft', offset: 6, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                      <Tooltip />
+                      {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 10 }} />}
+                      {refLines}
+                      {visibleSeries.map((s) => {
+                        const color = colorOf(s);
+                        return (
+                          <React.Fragment key={s.key}>
+                            <Line data={plot.xMode === 'numeric' ? numData(s) : undefined} type="monotone" dataKey="y" name={s.label} stroke={color} strokeWidth={cfg.lineThickness || 2} strokeDasharray={lineDash(cfg.lineStyle)} dot={plot.showPoints ? makeDot(color, s) : false} connectNulls isAnimationActive={false}>
+                              {HAS_EB && plot.showErrors && <ErrorBar dataKey={plot.xMode === 'category' ? `${s.key}__sd` : 'sd'} width={4} strokeWidth={1} direction="y" color={color} />}
+                            </Line>
+                            {plot.xMode === 'numeric' && plot.fitEnabled && plot.showFit && fits[s.key] && (
+                              <Line data={fitData(s)} type="monotone" dataKey="y" name={`${s.label} (fit)`} stroke={color} strokeWidth={1.5} strokeDasharray="8 4" dot={false} legendType="none" isAnimationActive={false} />
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
+                    </LineChart>
+                  )}
                 </ResponsiveContainer>
               </div>
             )}
@@ -2716,9 +2778,9 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
                       return (
                         <tr key={s.key}>
                           <td className="px-3 py-1.5 font-bold text-slate-700">{s.label}</td>
-                          <td className="px-3 py-1.5">{f ? (plot.fitModel === 'linear' ? 'Linear' : '4PL') : '—'}</td>
+                          <td className="px-3 py-1.5">{f ? (plot.fitModel === 'linear' ? 'Linear' : plot.fitModel === '4pl' ? '4PL' : 'Custom') : '—'}</td>
                           <td className="px-3 py-1.5 font-mono text-slate-600">
-                            {f ? (plot.fitModel === 'linear' ? `slope=${f.slope.toFixed(4)}; intercept=${f.intercept.toFixed(4)}; R²=${f.r2.toFixed(3)}` : `Top=${f.top.toFixed(3)}; Bottom=${f.bottom.toFixed(3)}; EC50=${f.ic50.toFixed(3)}; Hill=${f.hill.toFixed(3)}`) : 'not enough points / missing X'}
+                            {f ? (plot.fitModel === 'linear' ? `slope=${f.slope.toFixed(4)}; intercept=${f.intercept.toFixed(4)}; R²=${f.r2.toFixed(3)}` : plot.fitModel === '4pl' ? `Top=${f.top.toFixed(3)}; Bottom=${f.bottom.toFixed(3)}; EC50=${f.ic50.toFixed(3)}; Hill=${f.hill.toFixed(3)}` : Object.entries(f.params || {}).map(([k,v])=>`${k}=${v.toFixed(4)}`).join('; ') + `; R²=${f.r2.toFixed(3)}`) : 'not enough points / missing X'}
                           </td>
                           <td className="px-3 py-1.5 font-mono text-slate-600">{f ? (f.se ?? 0).toFixed(3) : '—'}</td>
                         </tr>
@@ -2815,6 +2877,35 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
               <input type="text" value={cfg.xAxisLabel} onChange={(e) => setCfg({ xAxisLabel: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs outline-none" /></div>
             <div className="flex flex-col gap-1"><label className="text-[10px] font-bold text-slate-600">Y axis label</label>
               <input type="text" value={cfg.yAxisLabel} onChange={(e) => setCfg({ yAxisLabel: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs outline-none" /></div>
+            
+            <div className="col-span-2 lg:col-span-4 flex flex-col gap-2 mt-2 pt-3 border-t border-slate-100">
+              <label className="text-[10px] font-bold text-slate-600 uppercase">Horizontal Lines</label>
+              <div className="flex flex-wrap items-center gap-4">
+                <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
+                  <input type="checkbox" checked={plot.showMaxLines || false} onChange={(e) => set({ showMaxLines: e.target.checked })} className="accent-blue-600" />
+                  Auto-show Max Y
+                </label>
+                <div className="flex items-center gap-2">
+                  <input type="number" step="any" placeholder="Value (Y)" value={hVal} onChange={(e) => setHVal(e.target.value)} className="border border-slate-300 rounded-md p-1.5 text-xs outline-none w-20" />
+                  <input type="text" placeholder="Label (optional)" value={hLab} onChange={(e) => setHLab(e.target.value)} className="border border-slate-300 rounded-md p-1.5 text-xs outline-none w-32" />
+                  <button type="button" onClick={() => {
+                    if (parseManual(hVal) === null) return;
+                    set({ hLines: [...(plot.hLines || []), { id: makePlotId(), value: parseManual(hVal), label: hLab || `y=${hVal}`, color: LINE_COLORS[(plot.hLines || []).length % 10] }] });
+                    setHVal(''); setHLab('');
+                  }} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold px-2 py-1.5 rounded-md">Add Line</button>
+                </div>
+              </div>
+              {(plot.hLines || []).length > 0 && (
+                <div className="flex flex-wrap gap-2 mt-1">
+                  {(plot.hLines || []).map(h => (
+                    <span key={h.id} className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full text-white" style={{ backgroundColor: h.color }}>
+                      {h.label} ({h.value})
+                      <button type="button" onClick={() => set({ hLines: plot.hLines.filter(x => x.id !== h.id) })} className="hover:text-red-200 font-black ml-1">×</button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -2959,9 +3050,11 @@ const SimulationsSection = ({ ctx }) => {
   const manualKeys = useMemo(() => getManualKeys(d.shifts), [d.shifts]);
   const simCfg = { fontSize: 11, h1D: 300, aspect2D: 1, ...(activeTest.simChartCfg || {}) };
   const setCfg = (patch) => updateActiveTest({ simChartCfg: { ...simCfg, ...patch } });
+  
   if (d.parsedSeq.length === 0) {
     return <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">Enter a sequence / select a molecule (in Experiment Setup) to generate simulated spectra.</div>;
   }
+  
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center gap-3 flex-wrap bg-white border border-slate-200 rounded-lg px-3 py-2 w-fit">
@@ -2991,11 +3084,13 @@ const SimulationsSection = ({ ctx }) => {
       <div className="text-xs font-bold text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 w-fit">
         Spectra are simulated from the <span className="text-indigo-700">{d.activeInstance ? d.activeInstance.name : '—'}</span> instance's Chemical Shift layer.
       </div>
-      {/* Theoretical ranges — moved here from Data */}
+      
+      {/* Theoretical ranges */}
       <div className="grid grid-cols-1 gap-4">
         <RangeBarChart title="Theoretical ¹H Ranges" ranges={d.ranges.ranges1H} domain={[0, 11]} ticks={Array.from({ length: 12 }, (_, i) => i)} xAxisLabel="¹H (ppm)" rowCount={d.uniqueTypes.length} rowLabels={d.uniqueTypes.map((c) => d.DB[c]?.code3 || c)} />
         <RangeBarChart title="Theoretical ¹³C Ranges" ranges={d.ranges.ranges13C} domain={[0, 220]} ticks={Array.from({ length: 23 }, (_, i) => i * 10)} xAxisLabel="¹³C (ppm)" rowCount={d.uniqueTypes.length} rowLabels={d.uniqueTypes.map((c) => d.DB[c]?.code3 || c)} />
       </div>
+      
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <OneDSpectrumPlot title="Simulated ¹H 1D Spectrum" data={d.peaks.data1H} fullDomain={[0, 11]} ticks={TICKS_1H} TickComponent={CustomXTick1H} xLabel="¹H (ppm)" panelId="1D_1H" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} />
         <OneDSpectrumPlot title="Simulated ¹³C 1D Spectrum" data={d.peaks.data13C} fullDomain={[0, 220]} ticks={TICKS_13C} TickComponent={CustomXTick13C} xLabel="¹³C (ppm)" panelId="1D_13C" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} />
@@ -3006,6 +3101,7 @@ const SimulationsSection = ({ ctx }) => {
         <SpectrumPlot title="Simulated NOESY Spectrum" diagonalData={d.peaks.diagonalData} crossPeakData={d.peaks.noesyPeaks} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="noesy" diagonalColor="#ef4444" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} />
         <SpectrumPlot title="Simulated TOCSY Spectrum" diagonalData={d.peaks.diagonalData} crossPeakData={d.peaks.tocsyPeaks} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="tocsy" diagonalColor="#1e3a8a" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} />
       </div>
+      
       {/* HSQC side by side */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <HSQCPlot title="Simulated ¹H-¹³C HSQC Spectrum" crossPeakData={d.peaks.hsqcPeaks} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="hsqc" selectedKeys={selectedKeys} manualKeys={manualKeys} yAxisLabel="¹³C F1 (ppm)" yDomainInit={[0, 220]} yTicks={TICKS_13C} aspect={simCfg.aspect2D} fs={simCfg.fontSize} />
@@ -3023,6 +3119,7 @@ export const All = ({ ctx }) => {
     <div className="flex flex-col gap-6">
       <CollapsibleSection title="Experiment Setup" icon="⚙️"><ExperimentSetupSection ctx={ctx} /></CollapsibleSection>
       <CollapsibleSection title="Data" icon="🔢"><DataSection ctx={ctx} /></CollapsibleSection>
+      <CollapsibleSection title="Secondary Chemical Shifts (SCS)" icon="📉" defaultOpen={false}><SecondaryShiftsSection ctx={ctx} /></CollapsibleSection>
       <CollapsibleSection title="Fitting" icon="📐"><FittingSection ctx={ctx} /></CollapsibleSection>
       <CollapsibleSection title="Simulations" icon="🧪" defaultOpen={false}><SimulationsSection ctx={ctx} /></CollapsibleSection>
     </div>
