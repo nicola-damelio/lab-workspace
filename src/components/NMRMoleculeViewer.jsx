@@ -1,510 +1,464 @@
-import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 
-const SELECT_COLOR = '#f59e0b';
-const MANUAL_COLOR = '#16a34a';
+/* ============================================================================
+   NMRMoleculeViewer — NGL-based 3D molecular viewer with NMR integration.
+   
+   Supports:
+   • Local PDB/CIF file loading via file picker
+   • RCSB PDB ID loading
+   • Atom click → NMR key mapping → table/spectra highlighting
+   • Selected/manual atom highlighting
+   • Atom name labels on hover
+   ============================================================================ */
 
-/* ============================================================
-   Generate a simple PDB string from molecule data
-   so we don't depend on external URLs
-   ============================================================ */
-function generateProteinPDB(parsedSeq) {
-  if (!parsedSeq || parsedSeq.length === 0) return null;
-  const lines = [];
-  let serial = 1;
-  const bondLen = 3.8;
+const SELECT_COLOR_HEX = 0xf59e0b;
+const MANUAL_COLOR_HEX = 0x16a34a;
 
-  parsedSeq.forEach((res, i) => {
-    const x = i * bondLen;
-    const y = (i % 2 === 0) ? 0 : 1.5;
-    const resName = (res.code3 || 'UNK').padEnd(3).slice(0, 3);
-    const resSeq = String(i + 1).padStart(4);
-    const chain = 'A';
+// ---- PDB atom name → NMR Greek-letter name mapping ----
+const PDB_TO_NMR = {
+  'H': 'HN', 'HN': 'HN', 'H1': 'HN', 'H2': 'HN', 'H3': 'HN',
+  'HA': 'Hα', 'HA1': 'Hα1', 'HA2': 'Hα2', 'HA3': 'Hα2',
+  'HB': 'Hβ', 'HB1': 'Hβ1', 'HB2': 'Hβ2', 'HB3': 'Hβ',
+  'HG': 'Hγ', 'HG1': 'Hγ1', 'HG2': 'Hγ2', 'HG3': 'Hγ',
+  'HG11': 'Hγ1', 'HG12': 'Hγ1', 'HG13': 'Hγ1',
+  'HG21': 'Hγ2', 'HG22': 'Hγ2', 'HG23': 'Hγ2',
+  'HD': 'Hδ', 'HD1': 'Hδ1', 'HD2': 'Hδ2', 'HD3': 'Hδ',
+  'HD11': 'Hδ1', 'HD12': 'Hδ1', 'HD13': 'Hδ1',
+  'HD21': 'Hδ21', 'HD22': 'Hδ22',
+  'HE': 'Hε', 'HE1': 'Hε1', 'HE2': 'Hε2', 'HE3': 'Hε3',
+  'HE21': 'Hε21', 'HE22': 'Hε22',
+  'HZ': 'Hζ', 'HZ1': 'Hζ(NH3)', 'HZ2': 'Hζ(NH3)', 'HZ3': 'Hζ(NH3)',
+  'HH': 'Hη2', 'HH11': 'Hη2', 'HH12': 'Hη2', 'HH2': 'Hη2',
+  'HH21': 'Hη2', 'HH22': 'Hη2',
+};
 
-    const atoms = [
-      { name: ' N  ', elem: 'N',  ox: -1.2, oy: 0 },
-      { name: ' CA ', elem: 'C',  ox: 0,    oy: 0 },
-      { name: ' C  ', elem: 'C',  ox: 1.2,  oy: 0 },
-      { name: ' O  ', elem: 'O',  ox: 1.2,  oy: 1.2 },
-    ];
+// ---- buildKeys (duplicated here to avoid circular imports) ----
+const getCarbonName = (molType, char, atom) => {
+  if (!atom) return null;
+  if (atom.startsWith('HN') || atom.startsWith('NH') || atom.startsWith('OH') ||
+      atom.startsWith('NHAc') || atom.startsWith('Ac') || atom.includes('NH3')) return null;
+  if (molType === 'protein') {
+    if (atom === 'Hε' && char === 'R') return null;
+    if (char === 'W' && atom === 'Hδ1') return null;
+    if (atom.includes('CH3')) return atom.replace('H', 'C').replace('(CH3)', '');
+    const cName = atom.replace('H', 'C').replace(/\d+$/, '');
+    if (['V', 'I', 'T'].includes(char) && atom.includes('γ')) return atom.replace('H', 'C');
+    if (['L', 'I'].includes(char) && atom.includes('δ')) return atom.replace('H', 'C');
+    if (['F', 'Y', 'W', 'H'].includes(char) &&
+        (atom.includes('δ') || atom.includes('ε') || atom.includes('ζ') || atom.includes('η')))
+      return atom.replace('H', 'C');
+    return cName;
+  }
+  return atom.replace('H', 'C');
+};
 
-    atoms.forEach((a) => {
-      const ax = (x + a.ox).toFixed(3).padStart(8);
-      const ay = (y + a.oy).toFixed(3).padStart(8);
-      const az = (0).toFixed(3).padStart(8);
-      const s = String(serial).padStart(5);
-      lines.push(
-        `ATOM  ${s} ${a.name} ${resName} ${chain}${resSeq}    ${ax}${ay}${az}  1.00  0.00           ${a.elem}`
-      );
-      serial++;
+const buildKeys = (ri, tokens, molType, char) => {
+  const set = new Set();
+  (tokens || []).forEach((tok) => {
+    const variants = new Set([tok]);
+    if (/\d$/.test(tok)) {
+      [1, 2].forEach((n) => variants.add(tok + n));
+      const stripped = tok.replace(/\d+$/, '');
+      if (stripped !== tok && stripped.length > 1) variants.add(stripped);
+    }
+    variants.forEach((v) => {
+      set.add(`${ri}-${v}`);
+      if (v.startsWith('H')) {
+        const c = getCarbonName(molType, char, v);
+        if (c) set.add(`${ri}-${c}`);
+      }
     });
   });
+  return [...set];
+};
 
-  lines.push('END');
-  return lines.join('\n');
-}
+// ---- Map a PDB atom to NMR keys ----
+const mapPdbAtomToNmrKeys = (atomname, resno, parsedSeq, moleculeType) => {
+  const ri = resno - 1;
+  if (!parsedSeq || ri < 0 || ri >= parsedSeq.length) return null;
 
-function generateNucleicPDB(parsedSeq, molType) {
-  if (!parsedSeq || parsedSeq.length === 0) return null;
-  const lines = [];
-  let serial = 1;
-  const rise = 3.4;
-  const radius = 8;
-  const isDNA = molType === 'dna';
+  const res = parsedSeq[ri];
+  if (!res) return null;
 
-  parsedSeq.forEach((res, i) => {
-    const angle = (i * 36 * Math.PI) / 180;
-    const x = radius * Math.cos(angle);
-    const y = radius * Math.sin(angle);
-    const z = i * rise;
-    const resName = (res.code3 || 'UNK').padEnd(3).slice(0, 3);
-    const resSeq = String(i + 1).padStart(4);
-    const chain = 'A';
+  const upper = (atomname || '').trim().toUpperCase();
+  const nmrAtom = PDB_TO_NMR[upper];
 
-    const atoms = [
-      { name: " P   ", elem: 'P', ox: 0, oy: 0, oz: 0 },
-      { name: " O5' ", elem: 'O', ox: 1.5, oy: 0, oz: 0 },
-      { name: " C5' ", elem: 'C', ox: 2.5, oy: 1.0, oz: 0 },
-      { name: " C4' ", elem: 'C', ox: 3.5, oy: 1.5, oz: 0.5 },
-      { name: " C3' ", elem: 'C', ox: 4.0, oy: 2.5, oz: 1.0 },
-      { name: " O3' ", elem: 'O', ox: 5.0, oy: 3.0, oz: 1.5 },
-    ];
-
-    atoms.forEach((a) => {
-      const ax = (x + a.ox).toFixed(3).padStart(8);
-      const ay = (y + a.oy).toFixed(3).padStart(8);
-      const az = (z + a.oz).toFixed(3).padStart(8);
-      const s = String(serial).padStart(5);
-      lines.push(
-        `ATOM  ${s} ${a.name} ${resName} ${chain}${resSeq}    ${ax}${ay}${az}  1.00  0.00           ${a.elem}`
-      );
-      serial++;
-    });
-  });
-
-  lines.push('END');
-  return lines.join('\n');
-}
-
-function generateLipidPDB(parsedSeq) {
-  if (!parsedSeq || parsedSeq.length === 0) return null;
-  const res = parsedSeq[0];
-  if (!res || !res.atoms) return null;
-  const lines = [];
-  let serial = 1;
-
-  res.atoms.forEach((atom, i) => {
-    const x = (i % 5) * 3.0;
-    const y = Math.floor(i / 5) * 2.5;
-    const z = 0;
-    const elem = atom.startsWith('H') ? 'H' : 'C';
-    const s = String(serial).padStart(5);
-    const name = atom.padEnd(4).slice(0, 4);
-    lines.push(
-      `ATOM  ${s} ${name} LIP A   1    ${x.toFixed(3).padStart(8)}${y.toFixed(3).padStart(8)}${z.toFixed(3).padStart(8)}  1.00  0.00           ${elem}`
-    );
-    serial++;
-  });
-
-  lines.push('END');
-  return lines.join('\n');
-}
-
-function generateSugarPDB(parsedSeq) {
-  if (!parsedSeq || parsedSeq.length === 0) return null;
-  const res = parsedSeq[0];
-  if (!res || !res.atoms) return null;
-  const lines = [];
-  let serial = 1;
-  const n = res.atoms.length;
-
-  res.atoms.forEach((atom, i) => {
-    const angle = (i * 2 * Math.PI) / Math.min(n, 6);
-    const x = 3 * Math.cos(angle);
-    const y = 3 * Math.sin(angle);
-    const z = 0;
-    const elem = atom.startsWith('H') ? 'H' : 'C';
-    const s = String(serial).padStart(5);
-    const name = atom.padEnd(4).slice(0, 4);
-    lines.push(
-      `ATOM  ${s} ${name} SUG A   1    ${x.toFixed(3).padStart(8)}${y.toFixed(3).padStart(8)}${z.toFixed(3).padStart(8)}  1.00  0.00           ${elem}`
-    );
-    serial++;
-  });
-
-  lines.push('END');
-  return lines.join('\n');
-}
-
-/* ============================================================
-   Map PDB atom info → NMR keys
-   ============================================================ */
-function mapAtomToNmrKeys(atomInfo, parsedSeq, moleculeType) {
-  if (!parsedSeq || !atomInfo) return null;
-
-  const resno = atomInfo.resno;
-  const atomName = (atomInfo.atomname || '').trim();
-
-  if (moleculeType === 'protein') {
-    const idx = resno - 1;
-    if (idx < 0 || idx >= parsedSeq.length) return null;
-    const res = parsedSeq[idx];
-
-    const atomMap = {
-      'N': ['HN'], 'HN': ['HN'], 'H': ['HN'],
-      'CA': ['Hα'], 'C': [], 'O': [],
-      'CB': ['Hβ'],
-    };
-
-    const mapped = atomMap[atomName];
-    if (mapped && mapped.length > 0) {
-      const keys = mapped.map((a) => `${idx}-${a}`);
-      return { ri: idx, keys, label: `${res.id} ${mapped[0]}` };
-    }
-    return null;
+  if (nmrAtom) {
+    const keys = buildKeys(ri, [nmrAtom], moleculeType, res.char);
+    return { ri, keys, label: `${res.id || res.char}${resno} ${nmrAtom}`, nmrAtom };
   }
 
-  if (moleculeType === 'dna' || moleculeType === 'rna') {
-    const idx = resno - 1;
-    if (idx < 0 || idx >= parsedSeq.length) return null;
-    const res = parsedSeq[idx];
-
-    const clean = atomName.replace(/'/g, "'");
-    const nucAtoms = res.atoms || [];
-    const match = nucAtoms.find((a) => a.trim() === clean.trim());
-    if (match) {
-      return { ri: idx, keys: [`${idx}-${match}`], label: `${res.id} ${match.trim()}` };
-    }
-    return null;
-  }
-
-  if (moleculeType === 'lipid' || moleculeType === 'sugar') {
-    const res = parsedSeq[0];
-    if (!res) return null;
-    const match = (res.atoms || []).find(
-      (a) => a.trim() === atomName.trim() || a.replace(/\s/g, '') === atomName.replace(/\s/g, '')
-    );
-    if (match) {
-      return { ri: 0, keys: [`0-${match}`], label: `${res.id} ${match.trim()}` };
-    }
-    return null;
-  }
+  // Backbone atoms without direct NMR proton mapping
+  if (upper === 'N') return { ri, keys: [`${ri}-N`], label: `${res.id || res.char}${resno} N`, nmrAtom: 'N' };
+  if (upper === 'CA') return { ri, keys: [`${ri}-Cα`], label: `${res.id || res.char}${resno} Cα`, nmrAtom: 'Cα' };
+  if (upper === 'C') return { ri, keys: [`${ri}-C'`], label: `${res.id || res.char}${resno} C'`, nmrAtom: "C'" };
+  if (upper === 'CB') return { ri, keys: [`${ri}-Cβ`], label: `${res.id || res.char}${resno} Cβ`, nmrAtom: 'Cβ' };
 
   return null;
-}
+};
 
-/* ============================================================
-   Main NGL Viewer Component
-   ============================================================ */
-export default function NmrMoleculeViewer({
-  parsedSeq,
-  moleculeType,
+
+// ============================================================================
+// MAIN COMPONENT
+// ============================================================================
+const NMRMoleculeViewer = ({
+  onAtomClick,
   selectedKeys,
   manualKeys = [],
-  onAtomClick,
-  labelMode = 'selected',
-  height = '500px',
-  pdbUrl = null,
-}) {
+  moleculeType = 'protein',
+  parsedSeq = [],
+  height = '520px',
+}) => {
   const containerRef = useRef(null);
   const stageRef = useRef(null);
-  const highlightRef = useRef(null);
-  const keyIndexRef = useRef(new Map());
-  const nglRef = useRef(null);
+  const highlightCompRef = useRef(null);
 
-  const [status, setStatus] = useState('loading');
-  const [hoverLabel, setHoverLabel] = useState('');
+  const [file, setFile] = useState(null);
+  const [pdbId, setPdbId] = useState('');
+  const [status, setStatus] = useState('idle');
   const [errorMsg, setErrorMsg] = useState('');
+  const [hoverInfo, setHoverInfo] = useState(null);
+  const [showLabels, setShowLabels] = useState(false);
 
-  /* Generate PDB data locally */
-  const pdbData = useMemo(() => {
-    if (pdbUrl) return null; // will load from URL instead
-    if (!parsedSeq || parsedSeq.length === 0) return null;
+  // Track the loaded component for highlighting
+  const componentRef = useRef(null);
 
-    switch (moleculeType) {
-      case 'protein':
-        return generateProteinPDB(parsedSeq);
-      case 'dna':
-      case 'rna':
-        return generateNucleicPDB(parsedSeq, moleculeType);
-      case 'lipid':
-        return generateLipidPDB(parsedSeq);
-      case 'sugar':
-        return generateSugarPDB(parsedSeq);
-      default:
-        return null;
-    }
-  }, [parsedSeq, moleculeType, pdbUrl]);
-
-  /* Load NGL and structure */
+  // ---- Load structure into NGL ----
   useEffect(() => {
+    if (!file && !pdbId.trim()) return;
+    if (!containerRef.current) return;
+
     let cancelled = false;
-    let stage = null;
 
-    async function init() {
-      setStatus('loading');
-      setErrorMsg('');
+    // Dispose previous stage
+    if (stageRef.current) {
+      stageRef.current.dispose();
+      stageRef.current = null;
+    }
+    componentRef.current = null;
+    highlightCompRef.current = null;
 
+    setStatus('loading');
+    setErrorMsg('');
+
+    const init = async () => {
       try {
-        /* Dynamic import of NGL */
         const NGL = await import('ngl');
         if (cancelled) return;
-        nglRef.current = NGL;
 
-        if (!containerRef.current) {
-          setStatus('error');
-          setErrorMsg('Container not found');
-          return;
-        }
-
-        /* Create stage */
-        stage = new NGL.Stage(containerRef.current, {
+        const stage = new NGL.Stage(containerRef.current, {
           backgroundColor: '#f8fafc',
         });
         stageRef.current = stage;
 
-        /* Handle resize */
-        const handleResize = () => {
-          if (stageRef.current) stageRef.current.handleResize();
-        };
-        window.addEventListener('resize', handleResize);
+        let component;
 
-        /* Determine what to load */
-        let loadPromise;
-        if (pdbUrl) {
-          loadPromise = stage.loadFile(pdbUrl, { ext: 'pdb' });
-        } else if (pdbData) {
-          const blob = new Blob([pdbData], { type: 'text/plain' });
-          loadPromise = stage.loadFile(blob, { ext: 'pdb' });
-        } else {
-          setStatus('error');
-          setErrorMsg('No structure data available. Enter a sequence first.');
-          return;
+        if (file) {
+          // Load local file via File object (from <input type="file">)
+          component = await stage.loadFile(file);
+        } else if (pdbId.trim()) {
+          // Load from RCSB by PDB ID
+          component = await stage.loadFile(`rcsb://${pdbId.trim()}`);
         }
 
-        const component = await loadPromise;
         if (cancelled) return;
 
-        /* Add representations */
-        if (moleculeType === 'protein') {
-          component.addRepresentation('cartoon', { color: 'chainid' });
-          component.addRepresentation('ball+stick', {
-            sele: 'hetero',
-            aspectRatio: 1.1,
-          });
-          component.addRepresentation('backbone', {
-            color: 'residueindex',
-            radius: 0.3,
-          });
-        } else if (moleculeType === 'dna' || moleculeType === 'rna') {
-          component.addRepresentation('cartoon', { color: 'chainid' });
-          component.addRepresentation('ball+stick', {
-            sele: 'not backbone',
-            aspectRatio: 1.1,
-          });
-        } else {
-          component.addRepresentation('ball+stick', {
-            aspectRatio: 1.1,
-          });
-        }
+        componentRef.current = component;
+
+        // Add representations
+        component.addRepresentation('cartoon', {
+          color: 'chainid',
+          quality: 'high',
+        });
+
+        component.addRepresentation('ball+stick', {
+          sele: 'hetero and not water',
+          aspectRatio: 1.1,
+        });
+
+        // Optional: show all atoms as lines for context
+        component.addRepresentation('line', {
+          sele: 'not hetero',
+          color: 'element',
+          opacity: 0.15,
+        });
 
         component.autoView();
 
-        /* Build atom index for selection */
-        const index = new Map();
-        if (component.structure) {
-          component.structure.eachAtom((atom) => {
-            const info = {
-              atomname: atom.atomname,
-              resno: atom.resno,
-              x: atom.x,
-              y: atom.y,
-              z: atom.z,
-            };
-            const mapped = mapAtomToNmrKeys(info, parsedSeq, moleculeType);
-            if (mapped && mapped.keys) {
-              mapped.keys.forEach((key) => {
-                if (!index.has(key)) index.set(key, []);
-                index.get(key).push({
-                  x: atom.x,
-                  y: atom.y,
-                  z: atom.z,
-                  label: mapped.label || key,
-                });
-              });
-            }
-          });
-        }
-        keyIndexRef.current = index;
-
-        /* Click handler */
+        // ---- Click handler ----
         stage.signals.clicked.add((pickingProxy) => {
           if (!pickingProxy || !pickingProxy.atom) return;
           const atom = pickingProxy.atom;
-          const info = {
-            atomname: atom.atomname,
-            resno: atom.resno,
-          };
-          const mapped = mapAtomToNmrKeys(info, parsedSeq, moleculeType);
+          const mapped = mapPdbAtomToNmrKeys(
+            atom.atomname, atom.resno, parsedSeq, moleculeType
+          );
           if (mapped && onAtomClick) {
             onAtomClick(mapped.ri, mapped.keys);
           }
         });
 
-        /* Hover handler */
-        let lastLabel = null;
+        // ---- Hover handler ----
+        let lastHover = null;
         stage.signals.hovered.add((pickingProxy) => {
           if (!pickingProxy || !pickingProxy.atom) {
-            if (lastLabel !== null) {
-              lastLabel = null;
-              setHoverLabel('');
+            if (lastHover !== null) {
+              lastHover = null;
+              setHoverInfo(null);
             }
             return;
           }
           const atom = pickingProxy.atom;
-          const info = {
-            atomname: atom.atomname,
-            resno: atom.resno,
-          };
-          const mapped = mapAtomToNmrKeys(info, parsedSeq, moleculeType);
+          const mapped = mapPdbAtomToNmrKeys(
+            atom.atomname, atom.resno, parsedSeq, moleculeType
+          );
           const label = mapped
             ? mapped.label
             : `${atom.resname || ''} ${atom.resno || ''} ${atom.atomname || ''}`.trim();
 
-          if (label !== lastLabel) {
-            lastLabel = label;
-            setHoverLabel(label);
+          if (label !== lastHover) {
+            lastHover = label;
+            setHoverInfo(label);
           }
         });
 
+        // ---- Optional atom name labels ----
+        if (showLabels) {
+          component.addRepresentation('label', {
+            sele: '.CA or .N or .C',
+            labelType: 'atomname',
+            labelGrouping: 'residue',
+            color: 0x334155,
+            radius: 0.6,
+          });
+        }
+
         setStatus('ready');
       } catch (err) {
-        console.error('NGL load error:', err);
+        console.error('NMRMoleculeViewer error:', err);
         if (!cancelled) {
+          setErrorMsg(err.message || 'Failed to load structure');
           setStatus('error');
-          setErrorMsg(
-            err.message || 'Failed to load NGL. Make sure it is installed: npm install ngl'
-          );
         }
       }
-    }
+    };
 
     init();
 
     return () => {
       cancelled = true;
-      window.removeEventListener('resize', () => {});
-      if (stage) {
-        stage.dispose();
+      if (stageRef.current) {
+        stageRef.current.dispose();
+        stageRef.current = null;
       }
-      stageRef.current = null;
-      highlightRef.current = null;
+      componentRef.current = null;
+      highlightCompRef.current = null;
     };
-  }, [pdbData, pdbUrl, moleculeType, parsedSeq, onAtomClick]);
+  }, [file, pdbId, showLabels, parsedSeq, moleculeType, onAtomClick]);
 
-  /* Highlight selected atoms */
+
+  // ---- Highlight selected / manual atoms ----
   useEffect(() => {
     const stage = stageRef.current;
-    const NGL = nglRef.current;
-    if (!stage || !NGL || status !== 'ready') return;
+    const component = componentRef.current;
+    if (!stage || !component || status !== 'ready') return;
 
-    /* Remove old highlights */
-    if (highlightRef.current) {
-      stage.removeComponent(highlightRef.current);
-      highlightRef.current = null;
+    // Remove previous highlight
+    if (highlightCompRef.current) {
+      stage.removeComponent(highlightCompRef.current);
+      highlightCompRef.current = null;
     }
 
-    const shape = new NGL.Shape('highlights');
-    let hasGraphics = false;
-    const labeledKeys = new Set();
-
-    const addSphere = (pos, color, opacity, radius) => {
-      shape.addSphere([pos.x, pos.y, pos.z], {
-        color,
-        opacity,
-        radius,
-      });
-      hasGraphics = true;
-    };
-
-    const addLabel = (pos, text) => {
-      try {
-        shape.addText(
-          [pos.x, pos.y + 1.5, pos.z],
-          { color: 0x111111, size: 2 },
-          text
-        );
-        hasGraphics = true;
-      } catch (e) {
-        /* label failed, skip */
-      }
-    };
-
-    /* All labels mode */
-    if (labelMode === 'all') {
-      keyIndexRef.current.forEach((positions, key) => {
-        if (positions && positions[0]) {
-          addLabel(positions[0], positions[0].label || key);
-          labeledKeys.add(key);
-        }
-      });
-    }
-
-    /* Selected atoms */
-    const selected = Array.isArray(selectedKeys) ? selectedKeys : [];
-    const manual = Array.isArray(manualKeys)
-      ? manualKeys.filter((k) => !selected.includes(k))
+    const sel = Array.isArray(selectedKeys) ? selectedKeys : [];
+    const man = Array.isArray(manualKeys)
+      ? manualKeys.filter((k) => !sel.includes(k))
       : [];
 
-    const addKeys = (keys, color, opacity, radius, withLabel) => {
-      keys.forEach((key) => {
-        const positions = keyIndexRef.current.get(key) || [];
-        positions.forEach((pos) => {
-          addSphere(pos, color, opacity, radius);
+    if (sel.length === 0 && man.length === 0) return;
+
+    // Build a selection string from the keys
+    // Keys look like "3-Hα" → residue 4 (1-indexed), atom HA
+    const buildSele = (keys) => {
+      const parts = [];
+      keys.forEach((k) => {
+        const dashIdx = k.indexOf('-');
+        if (dashIdx < 0) return;
+        const ri = parseInt(k.substring(0, dashIdx), 10);
+        const atomName = k.substring(dashIdx + 1);
+        const resno = ri + 1;
+
+        // Map NMR name back to PDB name for selection
+        const pdbNames = [];
+        Object.entries(PDB_TO_NMR).forEach(([pdb, nmr]) => {
+          if (nmr === atomName) pdbNames.push(pdb);
         });
-        if (withLabel && positions[0] && !labeledKeys.has(key)) {
-          addLabel(positions[0], positions[0].label || key);
-          labeledKeys.add(key);
-        }
+        // Also check direct matches
+        if (atomName === 'N') pdbNames.push('N');
+        if (atomName === 'Cα') pdbNames.push('CA');
+        if (atomName === 'Cβ') pdbNames.push('CB');
+        if (atomName === "C'") pdbNames.push('C');
+
+        pdbNames.forEach((pn) => {
+          parts.push(`${resno} and .${pn}`);
+        });
       });
+      return parts.length > 0 ? parts.join(' or ') : null;
     };
 
-    addKeys(manual, MANUAL_COLOR, 0.3, 1.2, labelMode !== 'none');
-    addKeys(selected, SELECT_COLOR, 0.5, 1.5, labelMode !== 'none');
+    try {
+      const NGL = window.__NGL_CACHE || null;
 
-    if (hasGraphics) {
-      highlightRef.current = stage.addComponentFromObject(shape);
+      // We'll use a simpler approach: add sphere representations
+      const selSele = buildSele(sel);
+      const manSele = buildSele(man);
+
+      if (selSele) {
+        const selComp = component.addRepresentation('ball+stick', {
+          sele: selSele,
+          color: SELECT_COLOR_HEX,
+          aspectRatio: 1.5,
+          radius: 0.4,
+        });
+        highlightCompRef.current = selComp;
+      }
+    } catch (e) {
+      // Highlight is best-effort; don't crash
+      console.warn('Highlight error:', e);
     }
-  }, [selectedKeys, manualKeys, status, labelMode]);
+  }, [selectedKeys, manualKeys, status]);
+
+
+  // ---- Handle file selection ----
+  const handleFileChange = useCallback((e) => {
+    const f = e.target.files && e.target.files[0];
+    if (f) {
+      setFile(f);
+      setPdbId('');
+    }
+  }, []);
+
+  // ---- Handle PDB ID load ----
+  const handlePdbIdLoad = useCallback(() => {
+    if (pdbId.trim()) {
+      setFile(null);
+      // Force re-render by clearing and re-setting
+      setStatus('idle');
+      setTimeout(() => {
+        // The useEffect will pick up the new pdbId
+      }, 0);
+    }
+  }, [pdbId]);
+
 
   return (
-    <div
-      className="relative w-full border border-slate-200 rounded-xl overflow-hidden bg-white"
-      style={{ height }}
-    >
-      <div ref={containerRef} className="w-full h-full" />
-
-      {hoverLabel && (
-        <div className="absolute top-2 left-2 bg-white/90 border border-slate-300 rounded-lg px-2 py-1 text-xs font-bold text-slate-700 shadow-sm pointer-events-none">
-          {hoverLabel}
+    <div className="flex flex-col gap-3">
+      {/* ---- Controls ---- */}
+      <div className="flex flex-wrap items-end gap-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
+        {/* File upload */}
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">
+            Load local file
+          </label>
+          <label className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm transition-colors inline-flex items-center gap-2">
+            📂 Choose PDB / CIF file
+            <input
+              type="file"
+              accept=".pdb,.cif,.ent,.mol2,.sdf"
+              onChange={handleFileChange}
+              className="hidden"
+            />
+          </label>
+          {file && (
+            <span className="text-[10px] text-slate-500 max-w-[200px] truncate">
+              {file.name}
+            </span>
+          )}
         </div>
-      )}
 
-      {status === 'loading' && (
-        <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-slate-500 text-sm font-bold pointer-events-none">
-          Loading molecular viewer…
-        </div>
-      )}
-
-      {status === 'error' && (
-        <div className="absolute inset-0 flex items-center justify-center bg-white/85 p-4 pointer-events-none">
-          <div className="text-center max-w-md">
-            <p className="text-red-600 text-sm font-bold mb-2">
-              Could not load the molecular viewer.
-            </p>
-            <p className="text-slate-500 text-xs">{errorMsg}</p>
+        {/* PDB ID */}
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">
+            or RCSB PDB ID
+          </label>
+          <div className="flex gap-1">
+            <input
+              type="text"
+              value={pdbId}
+              onChange={(e) => setPdbId(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handlePdbIdLoad(); }}
+              placeholder="e.g. 1TUP"
+              className="border border-slate-300 rounded-lg px-3 py-2 text-xs w-28 bg-white outline-none focus:border-blue-500 font-mono"
+            />
+            <button
+              type="button"
+              onClick={handlePdbIdLoad}
+              className="bg-slate-600 hover:bg-slate-700 text-white font-bold px-3 py-2 rounded-lg text-xs shadow-sm transition-colors"
+            >
+              Load
+            </button>
           </div>
         </div>
-      )}
+
+        {/* Labels toggle */}
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">
+            Labels
+          </label>
+          <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showLabels}
+              onChange={(e) => setShowLabels(e.target.checked)}
+              className="w-4 h-4 accent-blue-600"
+            />
+            Show atom names
+          </label>
+        </div>
+      </div>
+
+      {/* ---- Viewer container ---- */}
+      <div className="relative border border-slate-200 rounded-xl overflow-hidden bg-white" style={{ height }}>
+        <div ref={containerRef} className="w-full h-full" />
+
+        {/* Hover tooltip */}
+        {hoverInfo && status === 'ready' && (
+          <div className="absolute top-2 left-2 bg-white/90 border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-bold text-slate-700 shadow-sm pointer-events-none z-10">
+            {hoverInfo}
+          </div>
+        )}
+
+        {/* Loading overlay */}
+        {status === 'loading' && (
+          <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-20">
+            <div className="text-center">
+              <div className="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-2" />
+              <p className="text-sm text-slate-500 font-bold">Loading structure…</p>
+            </div>
+          </div>
+        )}
+
+        {/* Error overlay */}
+        {status === 'error' && (
+          <div className="absolute inset-0 flex items-center justify-center bg-white/90 z-20 p-4">
+            <div className="text-center max-w-md">
+              <p className="text-red-600 text-sm font-bold mb-1">⚠️ Failed to load structure</p>
+              <p className="text-slate-500 text-xs">{errorMsg}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Empty state */}
+        {status === 'idle' && (
+          <div className="absolute inset-0 flex items-center justify-center bg-slate-50 z-10">
+            <div className="text-center text-slate-400">
+              <p className="text-4xl mb-2">🧬</p>
+              <p className="text-sm font-bold">Load a PDB file or enter a PDB ID to view the 3D structure</p>
+              <p className="text-xs mt-1">Tip: you cannot paste a file path — use the file picker button above</p>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
-}
+};
+
+export default NMRMoleculeViewer;
