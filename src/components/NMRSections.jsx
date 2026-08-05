@@ -1674,6 +1674,7 @@ const atomNameMap = useMemo(() => {
 const ExperimentSetupSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useNmrDerived(activeTest);
+const structureMode = activeTest.structureMode || '2d';
   const [focusIdx, setFocusIdx] = useState('ALL');
   const [expandedPanel, setExpandedPanel] = useState(null);
   const [ssBrush, setSSBrush] = useState('H');
