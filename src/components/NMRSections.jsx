@@ -1609,325 +1609,766 @@ const atomNameMap = useMemo(() => {
 const ExperimentSetupSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useNmrDerived(activeTest);
-const structureMode = activeTest.structureMode || '2d';
-const atomLabelMode = activeTest.atomLabelMode || 'selected';
-const residueOffset = activeTest.residueOffset || 0;
 
-const atomNameMap = useMemo(() => {
-  try {
-    return activeTest.atomNameMap ? JSON.parse(activeTest.atomNameMap) : {};
-  } catch {
-    return {};
-  }
-}, [activeTest.atomNameMap]);
+  const structureMode = activeTest.structureMode || '2d';
+  const atomLabelMode = activeTest.atomLabelMode || 'selected';
+  const residueOffset = activeTest.residueOffset || 0;
 
-const structureSrc = useMemo(() => {
-  const raw = (activeTest.structureSrc || activeTest.pdbId || '').trim();
-
-  if (!raw) {
-    // Optional defaults. Remove them if you do not want automatic examples.
-    if (d.moleculeType === 'protein') return 'https://models.rcsb.org/1UBQ.mmtf';
-    if (d.moleculeType === 'dna') return 'https://models.rcsb.org/1BNA.mmtf';
-    if (d.moleculeType === 'rna') return 'https://models.rcsb.org/1EHZ.mmtf';
-    if (d.moleculeType === 'lipid') {
-      return `/structures/${(activeTest.lipidChoice || 'POPC').toUpperCase()}.pdb`;
+  const atomNameMap = useMemo(() => {
+    try {
+      return activeTest.atomNameMap ? JSON.parse(activeTest.atomNameMap) : {};
+    } catch {
+      return {};
     }
-    if (d.moleculeType === 'sugar') {
-      return `/structures/${activeTest.sugarChoice || 'GLC'}.sdf`;
-    }
-    return '';
-  }
+  }, [activeTest.atomNameMap]);
 
-  // Direct URL or local/public file
-  if (/^https?:\/\//i.test(raw) || raw.startsWith('/') || raw.startsWith('./')) {
+  /*
+    Persist structure source + view mode inside this browser tab.
+    sessionStorage is used because you asked to save it "in the tab".
+    If you prefer persistence across browser tabs, change sessionStorage to localStorage.
+  */
+  const storageId =
+    activeTest?.id || activeTest?._id || activeTest?.testId || 'default';
+
+  const srcStorageKey = `NMR_STRUCTURE_SRC_${storageId}`;
+  const modeStorageKey = `NMR_STRUCTURE_MODE_${storageId}`;
+
+  /*
+    This is the key fix:
+    Once the 3D viewer has been opened, keep it mounted forever.
+    Switching to 2D will only hide it, not unmount it.
+  */
+  const [hasOpened3D, setHasOpened3D] = useState(structureMode === '3d');
+
+  // Restore saved source/mode once per tab/session storage key.
+  useEffect(() => {
+    try {
+      const savedSrc = window.sessionStorage.getItem(srcStorageKey);
+      const savedMode = window.sessionStorage.getItem(modeStorageKey);
+
+      const patch = {};
+
+      if (savedSrc && !activeTest.structureSrc && !activeTest.pdbId) {
+        patch.structureSrc = savedSrc;
+      }
+
+      if (
+        savedMode &&
+        (savedMode === '2d' || savedMode === '3d') &&
+        !activeTest.structureMode
+      ) {
+        patch.structureMode = savedMode;
+      }
+
+      if (Object.keys(patch).length) {
+        updateActiveTest(patch);
+      }
+    } catch (e) {
+      // Ignore storage errors (private mode, quota, etc.)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [srcStorageKey, modeStorageKey]);
+
+  // Remember mode.
+  useEffect(() => {
+    if (structureMode === '3d') {
+      setHasOpened3D(true);
+    }
+
+    try {
+      window.sessionStorage.setItem(modeStorageKey, structureMode);
+    } catch (e) {
+      // Ignore
+    }
+  }, [structureMode, modeStorageKey]);
+
+  // Remember source.
+  useEffect(() => {
+    try {
+      const src = activeTest.structureSrc || '';
+
+      // Avoid trying to persist extremely large data URLs / file contents.
+      // The in-memory React state will still keep it while the app is open.
+      if (src && src.length < 4_000_000) {
+        window.sessionStorage.setItem(srcStorageKey, src);
+      } else if (!src) {
+        window.sessionStorage.removeItem(srcStorageKey);
+      }
+    } catch (e) {
+      // Ignore storage quota errors.
+    }
+  }, [activeTest.structureSrc, srcStorageKey]);
+
+  // Help WebGL/3D viewers recalculate size when visibility changes.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      window.dispatchEvent(new Event('resize'));
+    }, 100);
+
+    return () => clearTimeout(t);
+  }, [structureMode, hasOpened3D]);
+
+  const structureSrc = useMemo(() => {
+    const raw = (activeTest.structureSrc || activeTest.pdbId || '').trim();
+
+    if (!raw) {
+      // Optional defaults. Remove them if you do not want automatic examples.
+      if (d.moleculeType === 'protein') return 'https://models.rcsb.org/1UBQ.mmtf';
+      if (d.moleculeType === 'dna') return 'https://models.rcsb.org/1BNA.mmtf';
+      if (d.moleculeType === 'rna') return 'https://models.rcsb.org/1EHZ.mmtf';
+
+      if (d.moleculeType === 'lipid') {
+        return `/structures/${(activeTest.lipidChoice || 'POPC').toUpperCase()}.pdb`;
+      }
+
+      if (d.moleculeType === 'sugar') {
+        return `/structures/${activeTest.sugarChoice || 'GLC'}.sdf`;
+      }
+
+      return '';
+    }
+
+    // Direct URL, blob URL, data URL, local/public file.
+    if (
+      /^(https?:|blob:|data:)/i.test(raw) ||
+      raw.startsWith('/') ||
+      raw.startsWith('./')
+    ) {
+      return raw;
+    }
+
+    // If it looks like a PDB ID, load from RCSB as MMTF.
+    if (/^[0-9][A-Za-z0-9]{3}$/.test(raw)) {
+      return `https://models.rcsb.org/${raw.toUpperCase()}.mmtf`;
+    }
+
     return raw;
-  }
+  }, [
+    activeTest.structureSrc,
+    activeTest.pdbId,
+    d.moleculeType,
+    activeTest.lipidChoice,
+    activeTest.sugarChoice
+  ]);
 
-  // If it looks like a PDB ID, load from RCSB as MMTF
-  if (/^[0-9][A-Za-z0-9]{3}$/.test(raw)) {
-    return `https://models.rcsb.org/${raw.toUpperCase()}.mmtf`;
-  }
-
-  return raw;
-}, [
-  activeTest.structureSrc,
-  activeTest.pdbId,
-  d.moleculeType,
-  activeTest.lipidChoice,
-  activeTest.sugarChoice
-]);
   const [focusIdx, setFocusIdx] = useState('ALL');
   const [expandedPanel, setExpandedPanel] = useState(null);
+
   const [ssBrush, setSSBrush] = useState('H');
   const [formBrush, setFormBrush] = useState(activeTest.dnaForm || 'B');
-  const [sugarBrushAnomer, setSugarBrushAnomer] = useState(activeTest.sugarAnomer || 'alpha');
-  const [sugarBrushConf, setSugarBrushConf] = useState(activeTest.sugarConf || 'chair');
+  const [sugarBrushAnomer, setSugarBrushAnomer] = useState(
+    activeTest.sugarAnomer || 'alpha'
+  );
+  const [sugarBrushConf, setSugarBrushConf] = useState(
+    activeTest.sugarConf || 'chair'
+  );
   const [lipidBrush, setLipidBrush] = useState(activeTest.lipidDB || 'cis');
+
   const selectedKeys = getSelectedKeys(activeTest);
   const manualKeys = useMemo(() => getManualKeys(d.shifts), [d.shifts]);
+
   const handleAtomClick = (ri, keys) => {
     if (ri === null || !keys) return;
+
     const cur = getSelectedKeys(activeTest);
-    if (cur && cur.join('|') === keys.join('|')) updateActiveTest({ selectedAtomKeys: [] });
-    else updateActiveTest({ selectedAtomKeys: keys });
+
+    if (cur && cur.join('|') === keys.join('|')) {
+      updateActiveTest({ selectedAtomKeys: [] });
+    } else {
+      updateActiveTest({ selectedAtomKeys: keys });
+    }
   };
-  const paintSSAt = (i, letter) => { const arr = d.seq.split('').map((_, j) => d.getSSAt(j)); arr[i] = letter; updateActiveTest({ secondaryStructure: arr.join('') }); };
-  const setAllSS = (letter) => updateActiveTest({ secondaryStructure: d.seq.split('').map(() => letter).join('') });
-  const paintFormAt = (i, letter) => { const arr = d.seq.split('').map((_, j) => d.getFormAt(j)); arr[i] = letter; updateActiveTest({ nucleicForms: arr.join('') }); };
-  const setAllForms = (letter) => updateActiveTest({ nucleicForms: d.seq.split('').map(() => letter).join(''), dnaForm: letter });
+
+  const paintSSAt = (i, letter) => {
+    const arr = d.seq.split('').map((_, j) => d.getSSAt(j));
+    arr[i] = letter;
+    updateActiveTest({ secondaryStructure: arr.join('') });
+  };
+
+  const setAllSS = (letter) => {
+    updateActiveTest({
+      secondaryStructure: d.seq
+        .split('')
+        .map(() => letter)
+        .join('')
+    });
+  };
+
+  const paintFormAt = (i, letter) => {
+    const arr = d.seq.split('').map((_, j) => d.getFormAt(j));
+    arr[i] = letter;
+    updateActiveTest({ nucleicForms: arr.join('') });
+  };
+
+  const setAllForms = (letter) => {
+    updateActiveTest({
+      nucleicForms: d.seq
+        .split('')
+        .map(() => letter)
+        .join(''),
+      dnaForm: letter
+    });
+  };
+
   const exportFormulaToNotebook = () => {
     if (!d.structure) return;
-    const html = `<div style="margin-top:10px;"><h5 style="color:#1e40af;font-size:12px;margin-bottom:6px;">🔬 Chemical Formula (${d.typeLabel}):</h5>` + elementsToSVG(d.structure, 300) + `</div>`;
+
+    const html =
+      `<div style="margin-top:10px;">` +
+      `<h5 style="color:#1e40af;font-size:12px;margin-bottom:6px;">🔬 Chemical Formula (${d.typeLabel}):</h5>` +
+      elementsToSVG(d.structure, 300) +
+      `</div>`;
+
     const currentComments = activeTest.comments || '';
-    updateActiveTest({ comments: currentComments + (currentComments ? '<br/>' : '') + html });
+
+    updateActiveTest({
+      comments: currentComments + (currentComments ? ' <br/>' : '') + html
+    });
+
     alert('Chemical formula appended to the Lab Notebook notes.');
   };
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap gap-2 mb-2">
-        {[['protein', '🧬 Protein'], ['dna', '🧬 DNA'], ['rna', '🧬 RNA'], ['sugar', '🍬 Sugars'], ['lipid', '🫧 Phospholipids']].map(([val, lab]) => (
-          <button key={val} onClick={() => updateActiveTest({ moleculeType: val })} className={`px-3 py-1.5 rounded-lg text-sm font-bold border transition-colors ${d.moleculeType === val ? 'bg-blue-600 border-blue-700 text-white shadow' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}`}>{lab}</button>
+        {[
+          ['protein', '🧬 Protein'],
+          ['dna', '🧬 DNA'],
+          ['rna', '🧬 RNA'],
+          ['sugar', '🍬 Sugars'],
+          ['lipid', '🫧 Phospholipids']
+        ].map(([val, lab]) => (
+          <button
+            key={val}
+            onClick={() => updateActiveTest({ moleculeType: val })}
+            className={`px-3 py-1.5 rounded-lg text-sm font-bold border transition-colors ${
+              d.moleculeType === val
+                ? 'bg-blue-600 border-blue-700 text-white shadow'
+                : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            {lab}
+          </button>
         ))}
       </div>
+
       <div className="flex flex-col md:flex-row gap-6 items-start">
         <div className="flex-1 w-full">
           {d.isPolymer ? (
             <>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-2">{d.typeLabel} Sequence (1-letter code)</label>
-              <textarea value={activeTest.proteinSequence || ''} onChange={(e) => updateActiveTest({ proteinSequence: e.target.value })} className="w-full border border-slate-300 rounded-lg p-3 font-mono text-sm tracking-widest outline-none focus:border-blue-500 uppercase h-24 custom-scrollbar shadow-inner" placeholder={d.moleculeType === 'protein' ? 'e.g. MKWVTFISLL...' : d.moleculeType === 'dna' ? 'e.g. ATGCGTAC...' : 'e.g. AUGCGUAC...'} />
-              <p className="text-[10px] text-slate-400 mt-1 font-bold">Length: {d.seq.length} {d.moleculeType === 'protein' ? 'residues' : 'nucleotides'} (valid: {d.validChars.split('').join(' ')})</p>
+              <label className="block text-xs font-bold text-slate-500 uppercase mb-2">
+                {d.typeLabel} Sequence (1-letter code)
+              </label>
+
+              <textarea
+                value={activeTest.proteinSequence || ''}
+                onChange={(e) =>
+                  updateActiveTest({ proteinSequence: e.target.value })
+                }
+                className="w-full border border-slate-300 rounded-lg p-3 font-mono text-sm tracking-widest outline-none focus:border-blue-500 uppercase h-24 custom-scrollbar shadow-inner"
+                placeholder={
+                  d.moleculeType === 'protein'
+                    ? 'e.g. MKWVTFISLL...'
+                    : d.moleculeType === 'dna'
+                    ? 'e.g. ATGCGTAC...'
+                    : 'e.g. AUGCGUAC...'
+                }
+              />
+
+              <p className="text-[10px] text-slate-400 mt-1 font-bold">
+                Length: {d.seq.length}{' '}
+                {d.moleculeType === 'protein' ? 'residues' : 'nucleotides'}{' '}
+                (valid: {d.validChars.split('').join(' ')})
+              </p>
             </>
           ) : d.moleculeType === 'sugar' ? (
             <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Select Sugar</label>
-              <select value={activeTest.sugarChoice || 'GLC'} onChange={(e) => updateActiveTest({ sugarChoice: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2.5 text-sm bg-white outline-none focus:border-blue-500 font-semibold">
-                {Object.entries(SUGAR_DB).map(([k, v]) => <option key={k} value={k}>{v.name} ({v.code3})</option>)}
+              <label className="block text-xs font-bold text-slate-500 uppercase mb-2">
+                Select Sugar
+              </label>
+
+              <select
+                value={activeTest.sugarChoice || 'GLC'}
+                onChange={(e) =>
+                  updateActiveTest({ sugarChoice: e.target.value })
+                }
+                className="w-full border border-slate-300 rounded-lg p-2.5 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
+              >
+                {Object.entries(SUGAR_DB).map(([k, v]) => (
+                  <option key={k} value={k}>
+                    {v.name} ({v.code3})
+                  </option>
+                ))}
               </select>
             </div>
           ) : (
             <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Select Phospholipid</label>
-              <select value={activeTest.lipidChoice || 'POPC'} onChange={(e) => updateActiveTest({ lipidChoice: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2.5 text-sm bg-white outline-none focus:border-blue-500 font-semibold">
-                {Object.entries(LIPID_DB).map(([k, v]) => <option key={k} value={k}>{k} — {v.name}</option>)}
+              <label className="block text-xs font-bold text-slate-500 uppercase mb-2">
+                Select Phospholipid
+              </label>
+
+              <select
+                value={activeTest.lipidChoice || 'POPC'}
+                onChange={(e) =>
+                  updateActiveTest({ lipidChoice: e.target.value })
+                }
+                className="w-full border border-slate-300 rounded-lg p-2.5 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
+              >
+                {Object.entries(LIPID_DB).map(([k, v]) => (
+                  <option key={k} value={k}>
+                    {k} — {v.name}
+                  </option>
+                ))}
               </select>
             </div>
           )}
         </div>
+
         <div className="w-full md:w-64 flex flex-col gap-4">
           <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
-            <label className="block text-xs font-bold text-slate-500 uppercase mb-3">Target Nuclei</label>
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-3">
+              Target Nuclei
+            </label>
+
             <div className="flex flex-col gap-2">
               {['H', 'N', 'C', ...(d.hasPhosphorus ? ['P'] : [])].map((n) => (
-                <label key={n} className="flex items-center gap-3 cursor-pointer bg-white border border-slate-200 p-2 rounded shadow-sm hover:border-blue-300 transition-colors">
-                  <input type="checkbox" checked={d.selNuc.includes(n)} onChange={() => updateActiveTest({ selectedNuclei: d.selNuc.includes(n) ? d.selNuc.filter((x) => x !== n) : [...d.selNuc, n] })} className="w-4 h-4 cursor-pointer accent-blue-600" />
-                  <span className="font-bold text-slate-700">{n === 'H' ? '¹H' : n === 'N' ? '¹⁵N' : n === 'C' ? '¹³C' : '³¹P'}</span>
+                <label
+                  key={n}
+                  className="flex items-center gap-3 cursor-pointer bg-white border border-slate-200 p-2 rounded shadow-sm hover:border-blue-300 transition-colors"
+                >
+                  <input
+                    type="checkbox"
+                    checked={d.selNuc.includes(n)}
+                    onChange={() =>
+                      updateActiveTest({
+                        selectedNuclei: d.selNuc.includes(n)
+                          ? d.selNuc.filter((x) => x !== n)
+                          : [...d.selNuc, n]
+                      })
+                    }
+                    className="w-4 h-4 cursor-pointer accent-blue-600"
+                  />
+
+                  <span className="font-bold text-slate-700">
+                    {n === 'H'
+                      ? '¹H'
+                      : n === 'N'
+                      ? '¹⁵N'
+                      : n === 'C'
+                      ? '¹³C'
+                      : '³¹P'}
+                  </span>
                 </label>
               ))}
             </div>
           </div>
         </div>
       </div>
+
       {d.moleculeType === 'protein' && d.parsedSeq.length > 0 && (
         <div>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
-            <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
+            <span className="text-xs font-bold text-slate-500 uppercase mr-1">
+              🖌️ Brush:
+            </span>
+
             {['C', 'H', 'E'].map((l) => (
-              <button key={l} onClick={() => setSSBrush(l)} className="px-3 py-1 rounded-lg text-xs font-black border transition-all" style={{ backgroundColor: ssBrush === l ? SS_META[l].color : 'white', borderColor: SS_META[l].color, color: ssBrush === l ? 'white' : SS_META[l].color }}>{SS_META[l].label}</button>
+              <button
+                key={l}
+                onClick={() => setSSBrush(l)}
+                className="px-3 py-1 rounded-lg text-xs font-black border transition-all"
+                style={{
+                  backgroundColor:
+                    ssBrush === l ? SS_META[l].color : 'white',
+                  borderColor: SS_META[l].color,
+                  color: ssBrush === l ? 'white' : SS_META[l].color
+                }}
+              >
+                {SS_META[l].label}
+              </button>
             ))}
+
             <span className="mx-2 text-slate-300">|</span>
-            <button onClick={() => setAllSS('C')} className="px-3 py-1 rounded-lg text-xs font-bold bg-slate-100 border border-slate-300 text-slate-600 hover:bg-slate-200">All Coil</button>
-            <button onClick={() => setAllSS('H')} className="px-3 py-1 rounded-lg text-xs font-bold bg-violet-100 border border-violet-300 text-violet-700 hover:bg-violet-200">All α-Helix</button>
-            <button onClick={() => setAllSS('E')} className="px-3 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-300 text-amber-700 hover:bg-amber-200">All β-Sheet</button>
+
+            <button
+              onClick={() => setAllSS('C')}
+              className="px-3 py-1 rounded-lg text-xs font-bold bg-slate-100 border border-slate-300 text-slate-600 hover:bg-slate-200"
+            >
+              All Coil
+            </button>
+
+            <button
+              onClick={() => setAllSS('H')}
+              className="px-3 py-1 rounded-lg text-xs font-bold bg-violet-100 border border-violet-300 text-violet-700 hover:bg-violet-200"
+            >
+              All α-Helix
+            </button>
+
+            <button
+              onClick={() => setAllSS('E')}
+              className="px-3 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-300 text-amber-700 hover:bg-amber-200"
+            >
+              All β-Sheet
+            </button>
           </div>
-          <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint secondary structure.</p>
-          <SequencePaintStrip residues={d.parsedSeq} getLetter={(i) => d.getSSAt(i)} meta={SS_META} onApply={(i) => paintSSAt(i, ssBrush)} focusIdx={focusIdx} />
+
+          <p className="text-xs text-slate-400 mb-3">
+            💡 Select a brush, then click or drag across the sequence chips to
+            paint secondary structure.
+          </p>
+
+          <SequencePaintStrip
+            residues={d.parsedSeq}
+            getLetter={(i) => d.getSSAt(i)}
+            meta={SS_META}
+            onApply={(i) => paintSSAt(i, ssBrush)}
+            focusIdx={focusIdx}
+          />
         </div>
       )}
-      {(d.moleculeType === 'dna' || d.moleculeType === 'rna') && d.parsedSeq.length > 0 && (
-        <div>
-          <div className="flex flex-wrap gap-2 mb-3 items-center">
-            <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
-            {['A', 'B', 'Z'].map((l) => (
-              <button key={l} onClick={() => setFormBrush(l)} className="px-3 py-1 rounded-lg text-xs font-black border transition-all" style={{ backgroundColor: formBrush === l ? FORM_META[l].color : 'white', borderColor: FORM_META[l].color, color: formBrush === l ? 'white' : FORM_META[l].color }}>{FORM_META[l].label}</button>
-            ))}
-            <span className="mx-2 text-slate-300">|</span>
-            <button onClick={() => setAllForms('A')} className="px-3 py-1 rounded-lg text-xs font-bold bg-sky-100 border border-sky-300 text-sky-700 hover:bg-sky-200">All A</button>
-            <button onClick={() => setAllForms('B')} className="px-3 py-1 rounded-lg text-xs font-bold bg-green-100 border border-green-300 text-green-700 hover:bg-green-200">All B</button>
-            <button onClick={() => setAllForms('Z')} className="px-3 py-1 rounded-lg text-xs font-bold bg-rose-100 border border-rose-300 text-rose-700 hover:bg-rose-200">All Z</button>
+
+      {(d.moleculeType === 'dna' || d.moleculeType === 'rna') &&
+        d.parsedSeq.length > 0 && (
+          <div>
+            <div className="flex flex-wrap gap-2 mb-3 items-center">
+              <span className="text-xs font-bold text-slate-500 uppercase mr-1">
+                🖌️ Brush:
+              </span>
+
+              {['A', 'B', 'Z'].map((l) => (
+                <button
+                  key={l}
+                  onClick={() => setFormBrush(l)}
+                  className="px-3 py-1 rounded-lg text-xs font-black border transition-all"
+                  style={{
+                    backgroundColor:
+                      formBrush === l ? FORM_META[l].color : 'white',
+                    borderColor: FORM_META[l].color,
+                    color: formBrush === l ? 'white' : FORM_META[l].color
+                  }}
+                >
+                  {FORM_META[l].label}
+                </button>
+              ))}
+
+              <span className="mx-2 text-slate-300">|</span>
+
+              <button
+                onClick={() => setAllForms('A')}
+                className="px-3 py-1 rounded-lg text-xs font-bold bg-sky-100 border border-sky-300 text-sky-700 hover:bg-sky-200"
+              >
+                All A
+              </button>
+
+              <button
+                onClick={() => setAllForms('B')}
+                className="px-3 py-1 rounded-lg text-xs font-bold bg-green-100 border border-green-300 text-green-700 hover:bg-green-200"
+              >
+                All B
+              </button>
+
+              <button
+                onClick={() => setAllForms('Z')}
+                className="px-3 py-1 rounded-lg text-xs font-bold bg-rose-100 border border-rose-300 text-rose-700 hover:bg-rose-200"
+              >
+                All Z
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400 mb-3">
+              💡 Select a brush, then click or drag across the sequence chips
+              to paint the nucleic acid form per residue.
+            </p>
+
+            <SequencePaintStrip
+              residues={d.parsedSeq}
+              getLetter={(i) => d.getFormAt(i)}
+              meta={FORM_META}
+              onApply={(i) => paintFormAt(i, formBrush)}
+              focusIdx={focusIdx}
+            />
           </div>
-          <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint the nucleic acid form per residue.</p>
-          <SequencePaintStrip residues={d.parsedSeq} getLetter={(i) => d.getFormAt(i)} meta={FORM_META} onApply={(i) => paintFormAt(i, formBrush)} focusIdx={focusIdx} />
-        </div>
-      )}
+        )}
+
       {d.moleculeType === 'sugar' && d.parsedSeq.length > 0 && (
         <div>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
-            <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Anomer brush:</span>
-            {[['alpha', 'α-anomer', '#0ea5e9'], ['beta', 'β-anomer', '#f97316']].map(([val, lab, col]) => (
-              <button key={val} onClick={() => setSugarBrushAnomer(val)} className="px-3 py-1 rounded-lg text-xs font-black border" style={{ backgroundColor: sugarBrushAnomer === val ? col : 'white', borderColor: col, color: sugarBrushAnomer === val ? 'white' : col }}>{lab}</button>
+            <span className="text-xs font-bold text-slate-500 uppercase mr-1">
+              🖌️ Anomer brush:
+            </span>
+
+            {[
+              ['alpha', 'α-anomer', '#0ea5e9'],
+              ['beta', 'β-anomer', '#f97316']
+            ].map(([val, lab, col]) => (
+              <button
+                key={val}
+                onClick={() => setSugarBrushAnomer(val)}
+                className="px-3 py-1 rounded-lg text-xs font-black border"
+                style={{
+                  backgroundColor: sugarBrushAnomer === val ? col : 'white',
+                  borderColor: col,
+                  color: sugarBrushAnomer === val ? 'white' : col
+                }}
+              >
+                {lab}
+              </button>
             ))}
+
             <span className="mx-2 text-slate-300">|</span>
-            <span className="text-xs font-bold text-slate-500 uppercase mr-1">Chair brush:</span>
-            {[['chair', 'Chair (⁴C₁)', '#22c55e'], ['invChair', 'Inverted chair (¹C₄)', '#a855f7']].map(([val, lab, col]) => (
-              <button key={val} onClick={() => setSugarBrushConf(val)} className="px-3 py-1 rounded-lg text-xs font-black border" style={{ backgroundColor: sugarBrushConf === val ? col : 'white', borderColor: col, color: sugarBrushConf === val ? 'white' : col }}>{lab}</button>
+
+            <span className="text-xs font-bold text-slate-500 uppercase mr-1">
+              Chair brush:
+            </span>
+
+            {[
+              ['chair', 'Chair (⁴C₁)', '#22c55e'],
+              ['invChair', 'Inverted chair (¹C₄)', '#a855f7']
+            ].map(([val, lab, col]) => (
+              <button
+                key={val}
+                onClick={() => setSugarBrushConf(val)}
+                className="px-3 py-1 rounded-lg text-xs font-black border"
+                style={{
+                  backgroundColor: sugarBrushConf === val ? col : 'white',
+                  borderColor: col,
+                  color: sugarBrushConf === val ? 'white' : col
+                }}
+              >
+                {lab}
+              </button>
             ))}
           </div>
-          <p className="text-xs text-slate-400 mb-3">💡 Select the anomer brush (α/β) and the ring-conformation brush, then click the sugar chip to apply.</p>
-          <SequencePaintStrip residues={d.parsedSeq} getLetter={() => (d.sugarAnomer === 'beta' ? 'β' : 'α')} meta={{ β: { label: 'β-anomer', color: '#f97316' }, α: { label: 'α-anomer', color: '#0ea5e9' } }} onApply={() => updateActiveTest({ sugarAnomer: sugarBrushAnomer, sugarConf: sugarBrushConf })} focusIdx={focusIdx} charLabel={(r) => r.code3 || r.char} />
+
+          <p className="text-xs text-slate-400 mb-3">
+            💡 Select the anomer brush (α/β) and the ring-conformation brush,
+            then click the sugar chip to apply.
+          </p>
+
+          <SequencePaintStrip
+            residues={d.parsedSeq}
+            getLetter={() => (d.sugarAnomer === 'beta' ? 'β' : 'α')}
+            meta={{
+              β: { label: 'β-anomer', color: '#f97316' },
+              α: { label: 'α-anomer', color: '#0ea5e9' }
+            }}
+            onApply={() =>
+              updateActiveTest({
+                sugarAnomer: sugarBrushAnomer,
+                sugarConf: sugarBrushConf
+              })
+            }
+            focusIdx={focusIdx}
+            charLabel={(r) => r.code3 || r.char}
+          />
         </div>
       )}
+
       {d.moleculeType === 'lipid' && d.parsedSeq.length > 0 && (
         <div>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
-            <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
-            {[['cis', 'cis Δ9', '#0ea5e9'], ['trans', 'trans Δ9', '#f43f5e']].map(([val, lab, col]) => (
-              <button key={val} onClick={() => setLipidBrush(val)} className="px-3 py-1 rounded-lg text-xs font-black border" style={{ backgroundColor: lipidBrush === val ? col : 'white', borderColor: col, color: lipidBrush === val ? 'white' : col }}>{lab}</button>
+            <span className="text-xs font-bold text-slate-500 uppercase mr-1">
+              🖌️ Brush:
+            </span>
+
+            {[
+              ['cis', 'cis Δ9', '#0ea5e9'],
+              ['trans', 'trans Δ9', '#f43f5e']
+            ].map(([val, lab, col]) => (
+              <button
+                key={val}
+                onClick={() => setLipidBrush(val)}
+                className="px-3 py-1 rounded-lg text-xs font-black border"
+                style={{
+                  backgroundColor: lipidBrush === val ? col : 'white',
+                  borderColor: col,
+                  color: lipidBrush === val ? 'white' : col
+                }}
+              >
+                {lab}
+              </button>
             ))}
           </div>
-          <p className="text-xs text-slate-400 mb-3">💡 Select the cis/trans brush, then click the lipid chip to set the geometry of the Δ9 double bond.</p>
-          <SequencePaintStrip residues={d.parsedSeq} getLetter={() => d.lipidDB} meta={{ cis: { label: 'cis Δ9', color: '#0ea5e9' }, trans: { label: 'trans Δ9', color: '#f43f5e' } }} onApply={() => updateActiveTest({ lipidDB: lipidBrush })} focusIdx={focusIdx} charLabel={(r) => r.char} />
-        </div>
-      )}
-{d.structure && (
-  <div>
-    <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-      <div className="flex bg-slate-200 p-1 rounded-lg">
-        <button
-          onClick={() => updateActiveTest({ structureMode: '2d' })}
-          className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${
-            structureMode === '2d'
-              ? 'bg-white text-blue-700 shadow-sm'
-              : 'text-slate-500 hover:text-slate-700'
-          }`}
-        >
-          2D Formula
-        </button>
 
-        <button
-          onClick={() => updateActiveTest({ structureMode: '3d' })}
-          className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${
-            structureMode === '3d'
-              ? 'bg-white text-blue-700 shadow-sm'
-              : 'text-slate-500 hover:text-slate-700'
-          }`}
-        >
-          3D Viewer
-        </button>
-      </div>
+          <p className="text-xs text-slate-400 mb-3">
+            💡 Select the cis/trans brush, then click the lipid chip to set the
+            geometry of the Δ9 double bond.
+          </p>
 
-      <div className="flex items-center gap-2 flex-wrap justify-end">
-        <label className="text-[10px] font-bold text-slate-500 uppercase">
-          🔍 Focus
-        </label>
-
-        <select
-          value={focusIdx}
-          onChange={(e) =>
-            setFocusIdx(e.target.value === 'ALL' ? 'ALL' : Number(e.target.value))
-          }
-          className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 max-w-[180px]"
-        >
-          <option value="ALL">All residues</option>
-          {d.parsedSeq.map((r, i) => (
-            <option key={i} value={i}>
-              {r.id} — {r.name}
-            </option>
-          ))}
-        </select>
-
-        {selectedKeys && (
-          <button
-            onClick={() => updateActiveTest({ selectedAtomKeys: [] })}
-            className="px-2 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-400 text-amber-800"
-          >
-            ✖ Deselect ({selectionLabel(d, selectedKeys)})
-          </button>
-        )}
-
-        <button
-          onClick={exportFormulaToNotebook}
-          className="px-2 py-1 rounded-lg text-xs font-bold bg-indigo-50 border border-indigo-300 text-indigo-700 hover:bg-indigo-100"
-          title="Append this formula (SVG) to the Lab Notebook notes"
-        >
-          📓 Formula → Notebook
-        </button>
-      </div>
-    </div>
-
-    {structureMode === '3d' && (
-      <div className="mb-3 grid grid-cols-1 md:grid-cols-4 gap-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
-        <div className="flex flex-col gap-1">
-          <label className="text-[10px] font-bold text-slate-500 uppercase">
-            PDB ID / URL / local file
-          </label>
-          <input
-            type="text"
-            value={activeTest.structureSrc || ''}
-            onChange={(e) =>
-              updateActiveTest({ structureSrc: e.target.value })
-            }
-            placeholder="e.g. 1UBQ or /structures/POPC.pdb"
-            className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500"
+          <SequencePaintStrip
+            residues={d.parsedSeq}
+            getLetter={() => d.lipidDB}
+            meta={{
+              cis: { label: 'cis Δ9', color: '#0ea5e9' },
+              trans: { label: 'trans Δ9', color: '#f43f5e' }
+            }}
+            onApply={() => updateActiveTest({ lipidDB: lipidBrush })}
+            focusIdx={focusIdx}
+            charLabel={(r) => r.char}
           />
         </div>
+      )}
 
-        <div className="flex flex-col gap-1">
-          <label className="text-[10px] font-bold text-slate-500 uppercase">
-            Atom labels
-          </label>
-          <select
-            value={atomLabelMode}
-            onChange={(e) =>
-              updateActiveTest({ atomLabelMode: e.target.value })
-            }
-            className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500"
-          >
-            <option value="none">No labels</option>
-            <option value="selected">Selected labels</option>
-            <option value="all">All labels</option>
-          </select>
-        </div>
+      {d.structure && (
+        <div>
+          <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+            <div className="flex bg-slate-200 p-1 rounded-lg">
+              <button
+                onClick={() => updateActiveTest({ structureMode: '2d' })}
+                className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${
+                  structureMode === '2d'
+                    ? 'bg-white text-blue-700 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                2D Formula
+              </button>
 
-        <div className="flex flex-col gap-1">
-          <label className="text-[10px] font-bold text-slate-500 uppercase">
-            Residue offset
-          </label>
-          <input
-            type="number"
-            value={residueOffset}
-                    onChange={(e) =>
-                      updateActiveTest({
-                        residueOffset: Number(e.target.value) || 0
-                      })
-                    }
-                    className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500"
-                  />
-                </div>
+              <button
+                onClick={() => updateActiveTest({ structureMode: '3d' })}
+                className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${
+                  structureMode === '3d'
+                    ? 'bg-white text-blue-700 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                3D Viewer
+              </button>
+            </div>
 
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase">
-                    Atom-name map JSON
-                  </label>
-                  <input
-                    type="text"
-                    value={activeTest.atomNameMap || ''}
-                    onChange={(e) =>
-                      updateActiveTest({ atomNameMap: e.target.value })
-                    }
-                    placeholder='{"HA":"Hα","HB1":"Hβ1"}'
-                    className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-mono"
-                  />
-                </div>
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              <label className="text-[10px] font-bold text-slate-500 uppercase">
+                🔍 Focus
+              </label>
+
+              <select
+                value={focusIdx}
+                onChange={(e) =>
+                  setFocusIdx(
+                    e.target.value === 'ALL' ? 'ALL' : Number(e.target.value)
+                  )
+                }
+                className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 max-w-[180px]"
+              >
+                <option value="ALL">All residues</option>
+
+                {d.parsedSeq.map((r, i) => (
+                  <option key={i} value={i}>
+                    {r.id} — {r.name}
+                  </option>
+                ))}
+              </select>
+
+              {selectedKeys && (
+                <button
+                  onClick={() => updateActiveTest({ selectedAtomKeys: [] })}
+                  className="px-2 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-400 text-amber-800"
+                >
+                  ✖ Deselect ({selectionLabel(d, selectedKeys)})
+                </button>
+              )}
+
+              <button
+                onClick={exportFormulaToNotebook}
+                className="px-2 py-1 rounded-lg text-xs font-bold bg-indigo-50 border border-indigo-300 text-indigo-700 hover:bg-indigo-100"
+                title="Append this formula (SVG) to the Lab Notebook notes"
+              >
+                📓 Formula → Notebook
+              </button>
+            </div>
+          </div>
+
+          {structureMode === '3d' && (
+            <div className="mb-3 grid grid-cols-1 md:grid-cols-4 gap-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">
+                  PDB ID / URL / local file
+                </label>
+
+                <input
+                  type="text"
+                  value={activeTest.structureSrc || ''}
+                  onChange={(e) =>
+                    updateActiveTest({ structureSrc: e.target.value })
+                  }
+                  placeholder="e.g. 1UBQ or /structures/POPC.pdb"
+                  className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500"
+                />
               </div>
-            )}
 
-            <p className="text-xs text-slate-400 mb-2">
-              💡 Click an atom in the {structureMode === '2d' ? 'formula' : '3D viewer'} to
-              highlight its cell in the assignment table and its peaks in the spectra.
-            </p>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">
+                  Atom labels
+                </label>
 
-            {structureMode === '3d' ? (
+                <select
+                  value={atomLabelMode}
+                  onChange={(e) =>
+                    updateActiveTest({ atomLabelMode: e.target.value })
+                  }
+                  className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500"
+                >
+                  <option value="none">No labels</option>
+                  <option value="selected">Selected labels</option>
+                  <option value="all">All labels</option>
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">
+                  Residue offset
+                </label>
+
+                <input
+                  type="number"
+                  value={residueOffset}
+                  onChange={(e) =>
+                    updateActiveTest({
+                      residueOffset: Number(e.target.value) || 0
+                    })
+                  }
+                  className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">
+                  Atom-name map JSON
+                </label>
+
+                <input
+                  type="text"
+                  value={activeTest.atomNameMap || ''}
+                  onChange={(e) =>
+                    updateActiveTest({ atomNameMap: e.target.value })
+                  }
+                  placeholder='{"HA":"Hα","HB1":"Hβ1"}'
+                  className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-mono"
+                />
+              </div>
+            </div>
+          )}
+
+          <p className="text-xs text-slate-400 mb-2">
+            💡 Click an atom in the{' '}
+            {structureMode === '2d' ? 'formula' : '3D viewer'} to highlight its
+            cell in the assignment table and its peaks in the spectra.
+          </p>
+
+          {/*
+            IMPORTANT FIX:
+            The 3D viewer is kept mounted once opened.
+            Switching to 2D only hides it with CSS.
+          */}
+          <div
+            style={{
+              display: structureMode === '3d' ? 'block' : 'none'
+            }}
+            aria-hidden={structureMode !== '3d'}
+          >
+            {hasOpened3D && (
               <NMRMoleculeViewer
+                key={structureSrc || 'no-structure-src'}
                 src={structureSrc}
                 moleculeType={d.moleculeType}
                 parsedSeq={d.parsedSeq}
@@ -1943,32 +2384,46 @@ const structureSrc = useMemo(() => {
                     : '520px'
                 }
               />
-            ) : (
-              <StructureSVGView
-                structure={d.structure}
-                minWidth={
-                  d.moleculeType === 'protein' && d.parsedSeq.length > 3
-                    ? `${d.parsedSeq.length * 120}px`
-                    : '100%'
-                }
-                isExpanded={expandedPanel === 'formula'}
-                onToggleExpand={() =>
-                  setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')
-                }
-                selectedKeys={selectedKeys}
-                manualKeys={manualKeys}
-                onAtomClick={handleAtomClick}
-                height={
-                  d.moleculeType === 'dna' || d.moleculeType === 'rna'
-                    ? `${Math.max(360, d.parsedSeq.length * 250 + 120)}px`
-                    : '300px'
-                }
-              />
             )}
           </div>
-        )}
-      </div>
-    );
+
+          {/*
+            2D view can remain mounted too.
+            This also helps when switching back and forth.
+          */}
+          <div
+            style={{
+              display: structureMode === '2d' ? 'block' : 'none'
+            }}
+            aria-hidden={structureMode !== '2d'}
+          >
+            <StructureSVGView
+              structure={d.structure}
+              minWidth={
+                d.moleculeType === 'protein' && d.parsedSeq.length > 3
+                  ? `${d.parsedSeq.length * 120}px`
+                  : '100%'
+              }
+              isExpanded={expandedPanel === 'formula'}
+              onToggleExpand={() =>
+                setExpandedPanel(
+                  expandedPanel === 'formula' ? null : 'formula'
+                )
+              }
+              selectedKeys={selectedKeys}
+              manualKeys={manualKeys}
+              onAtomClick={handleAtomClick}
+              height={
+                d.moleculeType === 'dna' || d.moleculeType === 'rna'
+                  ? `${Math.max(360, d.parsedSeq.length * 250 + 120)}px`
+                  : '300px'
+              }
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
 };
 
 // ================= 2) DATA (instances + layers + assignment table + EXPORT) =================
