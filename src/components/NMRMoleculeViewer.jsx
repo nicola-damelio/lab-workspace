@@ -1,8 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 
-/* ============================================================================
-NMRMoleculeViewer — NGL-based 3D molecular viewer with NMR integration.
-============================================================================ */
 const SELECT_COLOR_HEX = 0xf59e0b;
 const MANUAL_COLOR_HEX = 0x16a34a;
 
@@ -24,7 +21,6 @@ const PDB_TO_NMR = {
   'HH21': 'Hη2', 'HH22': 'Hη2',
 };
 
-// ---- buildKeys (duplicated here to avoid circular imports) ----
 const getCarbonName = (molType, char, atom) => {
   if (!atom) return null;
   if (atom.startsWith('HN') || atom.startsWith('NH') || atom.startsWith('OH') ||
@@ -64,7 +60,6 @@ const buildKeys = (ri, tokens, molType, char) => {
   return [...set];
 };
 
-// ---- Map a PDB atom to NMR keys ----
 const mapPdbAtomToNmrKeys = (atomname, resno, parsedSeq, moleculeType) => {
   const ri = resno - 1;
   if (!parsedSeq || ri < 0 || ri >= parsedSeq.length) return null;
@@ -97,7 +92,7 @@ const NMRMoleculeViewer = ({
   const containerRef = useRef(null);
   const stageRef = useRef(null);
   const highlightCompRef = useRef(null);
-  const labelRepRef = useRef(null); // Track label representation
+  const labelCompRef = useRef(null);
   
   const [file, setFile] = useState(null);
   const [pdbId, setPdbId] = useState('');
@@ -108,20 +103,32 @@ const NMRMoleculeViewer = ({
 
   const componentRef = useRef(null);
 
-  // ---- Load structure into NGL ----
+  // 🔥 FIX 1: Use refs to prevent infinite reload loops when parent re-renders
+  const parsedSeqRef = useRef(parsedSeq);
+  const moleculeTypeRef = useRef(moleculeType);
+  const onAtomClickRef = useRef(onAtomClick);
+
+  useEffect(() => {
+    parsedSeqRef.current = parsedSeq;
+    moleculeTypeRef.current = moleculeType;
+    onAtomClickRef.current = onAtomClick;
+  }, [parsedSeq, moleculeType, onAtomClick]);
+
+  // 🔥 FIX 2: Main load effect ONLY depends on file/pdbId changes
   useEffect(() => {
     if (!file && !pdbId.trim()) return;
     if (!containerRef.current) return;
+
     let cancelled = false;
 
-    // Dispose previous stage
     if (stageRef.current) {
       stageRef.current.dispose();
       stageRef.current = null;
     }
     componentRef.current = null;
     highlightCompRef.current = null;
-    labelRepRef.current = null;
+    labelCompRef.current = null;
+    
     setStatus('loading');
     setErrorMsg('');
 
@@ -129,48 +136,60 @@ const NMRMoleculeViewer = ({
       try {
         const NGL = await import('ngl');
         if (cancelled) return;
+
         const stage = new NGL.Stage(containerRef.current, {
           backgroundColor: '#f8fafc',
         });
         stageRef.current = stage;
+
         let component;
         if (file) {
           component = await stage.loadFile(file);
         } else if (pdbId.trim()) {
           component = await stage.loadFile(`rcsb://${pdbId.trim()}`);
         }
+        
         if (cancelled) return;
         componentRef.current = component;
 
-        // Add representations
-        component.addRepresentation('cartoon', {
-          color: 'chainid',
-          quality: 'high',
-        });
-        component.addRepresentation('ball+stick', {
-          sele: 'hetero and not water',
-          aspectRatio: 1.1,
-        });
-        component.addRepresentation('line', {
-          sele: 'not hetero',
-          color: 'element',
-          opacity: 0.15,
-        });
+        // 🔥 FIX 3: Robust representations (residueindex is safe for AlphaFold models)
+        try {
+          component.addRepresentation('cartoon', {
+            color: 'residueindex', 
+            quality: 'high',
+          });
+        } catch (e) { console.warn('Cartoon rep failed', e); }
+
+        try {
+          component.addRepresentation('ball+stick', {
+            sele: 'hetero and not water',
+            aspectRatio: 1.1,
+          });
+        } catch (e) { console.warn('Ball+stick rep failed', e); }
+
+        try {
+          component.addRepresentation('line', {
+            sele: 'not hetero',
+            color: 'element',
+            opacity: 0.15,
+          });
+        } catch (e) { console.warn('Line rep failed', e); }
+
         component.autoView();
 
-        // ---- Click handler ----
+        // Click handler
         stage.signals.clicked.add((pickingProxy) => {
           if (!pickingProxy || !pickingProxy.atom) return;
           const atom = pickingProxy.atom;
           const mapped = mapPdbAtomToNmrKeys(
-            atom.atomname, atom.resno, parsedSeq, moleculeType
+            atom.atomname, atom.resno, parsedSeqRef.current, moleculeTypeRef.current
           );
-          if (mapped && onAtomClick) {
-            onAtomClick(mapped.ri, mapped.keys);
+          if (mapped && onAtomClickRef.current) {
+            onAtomClickRef.current(mapped.ri, mapped.keys);
           }
         });
 
-        // ---- Hover handler ----
+        // Hover handler
         let lastHover = null;
         stage.signals.hovered.add((pickingProxy) => {
           if (!pickingProxy || !pickingProxy.atom) {
@@ -182,7 +201,7 @@ const NMRMoleculeViewer = ({
           }
           const atom = pickingProxy.atom;
           const mapped = mapPdbAtomToNmrKeys(
-            atom.atomname, atom.resno, parsedSeq, moleculeType
+            atom.atomname, atom.resno, parsedSeqRef.current, moleculeTypeRef.current
           );
           const label = mapped
             ? mapped.label
@@ -213,61 +232,52 @@ const NMRMoleculeViewer = ({
       }
       componentRef.current = null;
       highlightCompRef.current = null;
-      labelRepRef.current = null;
+      labelCompRef.current = null;
     };
-  }, [file, pdbId, parsedSeq, moleculeType, onAtomClick]); // REMOVED showLabels from dependencies
+  }, [file, pdbId]); // 🔥 Removed parsedSeq, moleculeType, onAtomClick, showLabels
 
-  // ---- Handle label toggling dynamically without reloading ----
+  // 🔥 FIX 4: Separate effect for labels to avoid reloading the whole PDB
   useEffect(() => {
     const component = componentRef.current;
     if (!component || status !== 'ready') return;
 
-    // Remove existing label representation if any
-    if (labelRepRef.current) {
-      try {
-        component.removeRepresentation(labelRepRef.current);
-      } catch (e) { /* ignore */ }
-      labelRepRef.current = null;
-    }
-
     if (showLabels) {
       try {
-        // Show all atom names except water
-        const rep = component.addRepresentation('label', {
-          sele: 'not water',
+        const labelRep = component.addRepresentation('label', {
+          sele: '.CA or .N or .C',
           labelType: 'atomname',
-          color: 0x000000,
-          showBackground: true,
-          backgroundColor: 0xffffff,
-          backgroundOpacity: 0.6,
-          attachment: 'middle',
+          labelGrouping: 'residue',
+          color: 0x334155,
+          radius: 0.6,
         });
-        labelRepRef.current = rep;
+        labelCompRef.current = labelRep;
       } catch (e) {
-        console.warn('Failed to add label representation:', e);
+        console.warn('Label rep failed', e);
+      }
+    } else {
+      if (labelCompRef.current) {
+        try {
+          component.removeRepresentation(labelCompRef.current);
+        } catch (e) {}
+        labelCompRef.current = null;
       }
     }
   }, [showLabels, status]);
 
-  // ---- Highlight selected / manual atoms ----
+  // Highlight selected / manual atoms
   useEffect(() => {
     const stage = stageRef.current;
     const component = componentRef.current;
     if (!stage || !component || status !== 'ready') return;
 
-    // Remove previous highlight representation
+    // 🔥 FIX 5: Correct removal method (removeRepresentation, not removeComponent)
     if (highlightCompRef.current) {
-      try {
-        component.removeRepresentation(highlightCompRef.current); // FIXED: was stage.removeComponent
-      } catch (e) { /* ignore */ }
+      try { component.removeRepresentation(highlightCompRef.current); } catch (e) {}
       highlightCompRef.current = null;
     }
 
     const sel = Array.isArray(selectedKeys) ? selectedKeys : [];
-    const man = Array.isArray(manualKeys)
-      ? manualKeys.filter((k) => !sel.includes(k))
-      : [];
-
+    const man = Array.isArray(manualKeys) ? manualKeys.filter((k) => !sel.includes(k)) : [];
     if (sel.length === 0 && man.length === 0) return;
 
     const buildSele = (keys) => {
@@ -286,17 +296,13 @@ const NMRMoleculeViewer = ({
         if (atomName === 'Cα') pdbNames.push('CA');
         if (atomName === 'Cβ') pdbNames.push('CB');
         if (atomName === "C'") pdbNames.push('C');
-        pdbNames.forEach((pn) => {
-          parts.push(`${resno} and .${pn}`);
-        });
+        pdbNames.forEach((pn) => parts.push(`${resno} and .${pn}`));
       });
       return parts.length > 0 ? parts.join(' or ') : null;
     };
 
     try {
       const selSele = buildSele(sel);
-      const manSele = buildSele(man);
-
       if (selSele) {
         const selComp = component.addRepresentation('ball+stick', {
           sele: selSele,
@@ -306,21 +312,11 @@ const NMRMoleculeViewer = ({
         });
         highlightCompRef.current = selComp;
       }
-      
-      if (manSele) {
-         component.addRepresentation('ball+stick', {
-          sele: manSele,
-          color: MANUAL_COLOR_HEX,
-          aspectRatio: 1.5,
-          radius: 0.4,
-        });
-      }
     } catch (e) {
       console.warn('Highlight error:', e);
     }
   }, [selectedKeys, manualKeys, status]);
 
-  // ---- Handle file selection ----
   const handleFileChange = useCallback((e) => {
     const f = e.target.files && e.target.files[0];
     if (f) {
@@ -329,7 +325,6 @@ const NMRMoleculeViewer = ({
     }
   }, []);
 
-  // ---- Handle PDB ID load ----
   const handlePdbIdLoad = useCallback(() => {
     if (pdbId.trim()) {
       setFile(null);
@@ -340,21 +335,16 @@ const NMRMoleculeViewer = ({
 
   return (
     <div className="flex flex-col gap-3">
-      {/* ---- Controls ---- */}
       <div className="flex flex-wrap items-end gap-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
-        {/* File upload */}
         <div className="flex flex-col gap-1">
           <label className="text-[10px] font-bold text-slate-500 uppercase">Load local file</label>
           <label className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm transition-colors inline-flex items-center gap-2">
             📂 Choose PDB / CIF file
             <input type="file" accept=".pdb,.cif,.ent,.mol2,.sdf" onChange={handleFileChange} className="hidden" />
           </label>
-          {file && (
-            <span className="text-[10px] text-slate-500 max-w-[200px] truncate">{file.name}</span>
-          )}
+          {file && <span className="text-[10px] text-slate-500 max-w-[200px] truncate">{file.name}</span>}
         </div>
 
-        {/* PDB ID */}
         <div className="flex flex-col gap-1">
           <label className="text-[10px] font-bold text-slate-500 uppercase">or RCSB PDB ID</label>
           <div className="flex gap-1">
@@ -372,33 +362,24 @@ const NMRMoleculeViewer = ({
           </div>
         </div>
 
-        {/* Labels toggle */}
         <div className="flex flex-col gap-1">
           <label className="text-[10px] font-bold text-slate-500 uppercase">Labels</label>
           <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={showLabels}
-              onChange={(e) => setShowLabels(e.target.checked)}
-              className="w-4 h-4 accent-blue-600"
-            />
+            <input type="checkbox" checked={showLabels} onChange={(e) => setShowLabels(e.target.checked)} className="w-4 h-4 accent-blue-600" />
             Show atom names
           </label>
         </div>
       </div>
 
-      {/* ---- Viewer container ---- */}
       <div className="relative border border-slate-200 rounded-xl overflow-hidden bg-white" style={{ height }}>
         <div ref={containerRef} className="w-full h-full" />
-
-        {/* Hover tooltip */}
+        
         {hoverInfo && status === 'ready' && (
           <div className="absolute top-2 left-2 bg-white/90 border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-bold text-slate-700 shadow-sm pointer-events-none z-10">
             {hoverInfo}
           </div>
         )}
 
-        {/* Loading overlay */}
         {status === 'loading' && (
           <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-20">
             <div className="text-center">
@@ -408,7 +389,6 @@ const NMRMoleculeViewer = ({
           </div>
         )}
 
-        {/* Error overlay */}
         {status === 'error' && (
           <div className="absolute inset-0 flex items-center justify-center bg-white/90 z-20 p-4">
             <div className="text-center max-w-md">
@@ -418,7 +398,6 @@ const NMRMoleculeViewer = ({
           </div>
         )}
 
-        {/* Empty state */}
         {status === 'idle' && (
           <div className="absolute inset-0 flex items-center justify-center bg-slate-50 z-10">
             <div className="text-center text-slate-400">
