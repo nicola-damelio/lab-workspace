@@ -1,3 +1,4 @@
+import NMRMoleculeViewer from './NMRMoleculeViewer';
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -1391,6 +1392,18 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
 
 // ================= SHARED DERIVED DATA HOOK =================
 const useNmrDerived = (activeTest) => {
+const structureMode = activeTest.structureMode || '2d';
+const structureSrc = activeTest.structureSrc || activeTest.pdbId || '';
+const atomLabelMode = activeTest.atomLabelMode || 'selected';
+const residueOffset = activeTest.residueOffset || 0;
+
+const atomNameMap = useMemo(() => {
+  try {
+    return activeTest.atomNameMap ? JSON.parse(activeTest.atomNameMap) : {};
+  } catch {
+    return {};
+  }
+}, [activeTest.atomNameMap]);
   const moleculeType = activeTest.moleculeType || 'protein';
   const rawSeq = (activeTest.proteinSequence || '').toUpperCase();
   const validChars = moleculeType === 'protein' ? 'ACDEFGHIKLMNPQRSTVWY' : moleculeType === 'dna' ? 'ACGT' : moleculeType === 'rna' ? 'ACGU' : '';
@@ -1793,23 +1806,185 @@ const ExperimentSetupSection = ({ ctx }) => {
           <SequencePaintStrip residues={d.parsedSeq} getLetter={() => d.lipidDB} meta={{ cis: { label: 'cis Δ9', color: '#0ea5e9' }, trans: { label: 'trans Δ9', color: '#f43f5e' } }} onApply={() => updateActiveTest({ lipidDB: lipidBrush })} focusIdx={focusIdx} charLabel={(r) => r.char} />
         </div>
       )}
-      {d.structure && (
-        <div>
-          <div className="flex items-center gap-2 flex-wrap mb-2 justify-end">
-            <label className="text-[10px] font-bold text-slate-500 uppercase">🔍 Focus</label>
-            <select value={focusIdx} onChange={(e) => setFocusIdx(e.target.value === 'ALL' ? 'ALL' : Number(e.target.value))} className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 max-w-[180px]">
-              <option value="ALL">All residues</option>
-              {d.parsedSeq.map((r, i) => <option key={i} value={i}>{r.id} — {r.name}</option>)}
-            </select>
-            {selectedKeys && (
-              <button onClick={() => updateActiveTest({ selectedAtomKeys: [] })} className="px-2 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-400 text-amber-800">✖ Deselect ({selectionLabel(d, selectedKeys)})</button>
-            )}
-            <button onClick={exportFormulaToNotebook} className="px-2 py-1 rounded-lg text-xs font-bold bg-indigo-50 border border-indigo-300 text-indigo-700 hover:bg-indigo-100" title="Append this formula (SVG) to the Lab Notebook notes">📓 Formula → Notebook</button>
-          </div>
-          <p className="text-xs text-slate-400 mb-2">💡 Click an atom in the formula to highlight its cell in the assignment table and its peaks in the spectra.</p>
-          <StructureSVGView structure={d.structure} minWidth={d.moleculeType === 'protein' && d.parsedSeq.length > 3 ? `${d.parsedSeq.length * 120}px` : '100%'} isExpanded={expandedPanel === 'formula'} onToggleExpand={() => setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? `${Math.max(360, d.parsedSeq.length * 250 + 120)}px` : '300px'} />
+{d.structure && (
+  <div>
+    <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+      <div className="flex bg-slate-200 p-1 rounded-lg">
+        <button
+          onClick={() => updateActiveTest({ structureMode: '2d' })}
+          className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${
+            structureMode === '2d'
+              ? 'bg-white text-blue-700 shadow-sm'
+              : 'text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          2D Formula
+        </button>
+
+        <button
+          onClick={() => updateActiveTest({ structureMode: '3d' })}
+          className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${
+            structureMode === '3d'
+              ? 'bg-white text-blue-700 shadow-sm'
+              : 'text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          3D Viewer
+        </button>
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap justify-end">
+        <label className="text-[10px] font-bold text-slate-500 uppercase">
+          🔍 Focus
+        </label>
+
+        <select
+          value={focusIdx}
+          onChange={(e) =>
+            setFocusIdx(e.target.value === 'ALL' ? 'ALL' : Number(e.target.value))
+          }
+          className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 max-w-[180px]"
+        >
+          <option value="ALL">All residues</option>
+          {d.parsedSeq.map((r, i) => (
+            <option key={i} value={i}>
+              {r.id} — {r.name}
+            </option>
+          ))}
+        </select>
+
+        {selectedKeys && (
+          <button
+            onClick={() => updateActiveTest({ selectedAtomKeys: [] })}
+            className="px-2 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-400 text-amber-800"
+          >
+            ✖ Deselect ({selectionLabel(d, selectedKeys)})
+          </button>
+        )}
+
+        <button
+          onClick={exportFormulaToNotebook}
+          className="px-2 py-1 rounded-lg text-xs font-bold bg-indigo-50 border border-indigo-300 text-indigo-700 hover:bg-indigo-100"
+          title="Append this formula (SVG) to the Lab Notebook notes"
+        >
+          📓 Formula → Notebook
+        </button>
+      </div>
+    </div>
+
+    {structureMode === '3d' && (
+      <div className="mb-3 grid grid-cols-1 md:grid-cols-4 gap-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">
+            PDB ID / URL / local file
+          </label>
+          <input
+            type="text"
+            value={activeTest.structureSrc || ''}
+            onChange={(e) =>
+              updateActiveTest({ structureSrc: e.target.value })
+            }
+            placeholder="e.g. 1UBQ or /structures/POPC.pdb"
+            className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500"
+          />
         </div>
-      )}
+
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">
+            Atom labels
+          </label>
+          <select
+            value={atomLabelMode}
+            onChange={(e) =>
+              updateActiveTest({ atomLabelMode: e.target.value })
+            }
+            className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500"
+          >
+            <option value="none">No labels</option>
+            <option value="selected">Selected labels</option>
+            <option value="all">All labels</option>
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">
+            Residue offset
+          </label>
+          <input
+            type="number"
+            value={residueOffset}
+            onChange={(e) =>
+              updateActiveTest({
+                residueOffset: Number(e.target.value) || 0
+              })
+            }
+            className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500"
+          />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">
+            Atom-name map JSON
+          </label>
+          <input
+            type="text"
+            value={activeTest.atomNameMap || ''}
+            onChange={(e) =>
+              updateActiveTest({ atomNameMap: e.target.value })
+            }
+            placeholder='{"HA":"Hα","HB1":"Hβ1"}'
+            className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-mono"
+          />
+        </div>
+      </div>
+    )}
+
+    <p className="text-xs text-slate-400 mb-2">
+      💡 Click an atom in the {structureMode === '2d' ? 'formula' : '3D viewer'} to
+      highlight its cell in the assignment table and its peaks in the spectra.
+    </p>
+
+    {structureMode === '3d' ? (
+      <NMRMoleculeViewer
+        src={structureSrc}
+        moleculeType={d.moleculeType}
+        parsedSeq={d.parsedSeq}
+        selectedKeys={selectedKeys}
+        manualKeys={manualKeys}
+        onAtomClick={handleAtomClick}
+        residueOffset={residueOffset}
+        atomNameMap={atomNameMap}
+        labelMode={atomLabelMode}
+        height={
+          d.moleculeType === 'dna' || d.moleculeType === 'rna'
+            ? '620px'
+            : '520px'
+        }
+      />
+    ) : (
+      <StructureSVGView
+        structure={d.structure}
+        minWidth={
+          d.moleculeType === 'protein' && d.parsedSeq.length > 3
+            ? `${d.parsedSeq.length * 120}px`
+            : '100%'
+        }
+        isExpanded={expandedPanel === 'formula'}
+        onToggleExpand={() =>
+          setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')
+        }
+        selectedKeys={selectedKeys}
+        manualKeys={manualKeys}
+        onAtomClick={handleAtomClick}
+        height={
+          d.moleculeType === 'dna' || d.moleculeType === 'rna'
+            ? `${Math.max(360, d.parsedSeq.length * 250 + 120)}px`
+            : '300px'
+        }
+      />
+    )}
+  </div>
+)}
     </div>
   );
 };

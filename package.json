@@ -31,5 +31,11 @@
     "postcss": "^8.5.25",
     "tailwindcss": "^4.3.3",
     "vite": "^8.2.0"
+  },
+  "allowScripts": {
+    "@firebase/util@1.15.2": true,
+    "@scarf/scarf@1.4.0": true,
+    "core-js@3.49.0": true,
+    "protobufjs@7.6.5": true
   }
 }

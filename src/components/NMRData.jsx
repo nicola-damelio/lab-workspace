@@ -1,21 +1,24 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  ReferenceArea, BarChart, Bar
+  ReferenceArea, BarChart, Bar, LineChart, Line, Legend
 } from 'recharts';
 
 /* ============================================================================
-NMRData — shared NMR building blocks imported by NMRSections.jsx
-Contains: constants, databases, helpers, 2D structure builders + SVG export,
-interactive structure view, paint strip, dropdowns, chart components, plots,
-and image helpers. No React component here owns test state.
+   NMRData — shared NMR building blocks imported by NMRSections.jsx
+   Contains: constants, databases, helpers, 2D structure builders + SVG export,
+   interactive structure view, paint strip, dropdowns, chart components, plots,
+   condition plot, instance/layer model helpers, and image helpers.
+   No React component here owns test state.
 ========================================================================== */
 
+// ================= LAYOUT CONSTANTS =================
 export const FS_CLASSES =
   'fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col';
 export const OVERLAY_CLASSES = 'fixed top-0 left-0 w-screen h-screen bg-slate-900/50 backdrop-blur-sm z-[999990]';
 export const SELECT_COLOR = '#f59e0b';
 export const MANUAL_COLOR = '#16a34a';
+export const LINE_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16'];
 
 // ================= DATABASES =================
 export const AMINO_ACID_DB = {
@@ -506,6 +509,7 @@ export const SUGAR_ANOMER_OFFSETS = {
 export const RESIDUE_COLORS = ['#3b82f6', '#8b5cf6', '#d946ef', '#ec4899', '#f43f5e', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#6366f1'];
 export const TICKS_1H = Array.from({ length: 111 }, (_, i) => parseFloat((i / 10).toFixed(1)));
 export const TICKS_13C = Array.from({ length: 281 }, (_, i) => parseFloat((10 + i * 0.5).toFixed(1)));
+export const TICKS_15N = Array.from({ length: 81 }, (_, i) => parseFloat((95 + i * 0.5).toFixed(1)));
 export const CHART_MARGIN = { top: 20, right: 20, bottom: 45, left: 50 };
 export const CHART_MARGIN_1D = { top: 10, right: 15, bottom: 45, left: 15 };
 
@@ -524,6 +528,7 @@ export const getNMRFillColor = (entry) => {
   if (entry.colorClass === 'noesyIntra4') return '#fca5a5';
   if (entry.colorClass === 'noesySeq') return '#991b1b';
   if (entry.colorClass === 'hsqc') return '#8b5cf6';
+  if (entry.colorClass === 'hsqc15n') return '#0ea5e9';
   if (entry.colorClass === 'p31') return '#0d9488';
   return '#cbd5e1';
 };
@@ -1300,7 +1305,7 @@ export const ensureSvgSize = (svgStr, width = 1200) => {
   const vw = parts[2] || 1;
   const vh = parts[3] || 1;
   const height = Math.max(1, Math.round((vh / vw) * width));
-  return svgStr.replace('<svg ', `<svg width="${width}" height="${height}" `);
+  return svgStr.replace('<svg ', `<svg width="${width}" height="${height}"`);
 };
 
 export const svgToPngDataUrl = (svgStr, width = 1200) => new Promise((resolve, reject) => {
@@ -1327,7 +1332,60 @@ export const svgToPngDataUrl = (svgStr, width = 1200) => new Promise((resolve, r
   img.src = url;
 });
 
-// ---------- STRUCTURE VIEW ----------
+// ================= INSTANCE / LAYER MODEL HELPERS =================
+export const CHEMICAL_SHIFT_LAYER = { key: 'cs', label: 'Chemical Shift', unit: 'ppm', builtin: true };
+export const makeInstanceId = () => `inst_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+export const makeLayerId = () => `layer_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+export const getInstances = (activeTest) => {
+  if (Array.isArray(activeTest.instances) && activeTest.instances.length) return activeTest.instances;
+  return [{ id: 'inst_default', name: 'Condition 1', values: { cs: activeTest.chemicalShifts || {} } }];
+};
+
+export const getActiveInstance = (activeTest) => {
+  const insts = getInstances(activeTest);
+  return insts.find((i) => i.id === activeTest.activeInstanceId) || insts[0] || null;
+};
+
+export const getLayers = (activeTest) => [CHEMICAL_SHIFT_LAYER, ...(Array.isArray(activeTest.parameterLayers) ? activeTest.parameterLayers : [])];
+export const getActiveLayerKey = (activeTest) => activeTest.activeLayerKey || 'cs';
+export const getLayerValues = (instance, layerKey) => (instance && instance.values && instance.values[layerKey]) || {};
+
+export const writeInstanceValue = (activeTest, updateActiveTest, instanceId, layerKey, atomKey, value) => {
+  const instances = getInstances(activeTest).map((inst) => {
+    if (inst.id !== instanceId) return inst;
+    const values = { ...(inst.values || {}) };
+    values[layerKey] = { ...(values[layerKey] || {}), [atomKey]: value };
+    return { ...inst, values };
+  });
+  updateActiveTest({ instances });
+};
+
+export const getSelectedKeys = (activeTest) =>
+  Array.isArray(activeTest.selectedAtomKeys) && activeTest.selectedAtomKeys.length ? activeTest.selectedAtomKeys : null;
+
+export const selectionLabel = (d, selectedKeys) => {
+  if (!selectedKeys || !selectedKeys.length) return '';
+  const ri = parseInt(selectedKeys[0].split('-')[0], 10);
+  const res = d.parsedSeq[ri];
+  const atoms = [...new Set(selectedKeys.map((k) => k.split('-').slice(1).join('-')))];
+  return `${res ? res.id : `#${ri + 1}`}: ${atoms.join(', ')}`;
+};
+
+export const getManualKeys = (values) => {
+  const out = new Set();
+  Object.entries(values || {}).forEach(([k, v]) => {
+    if (parseManual(v) === null) return;
+    out.add(k);
+    const idx = k.split('-')[0];
+    const atom = k.slice(idx.length + 1);
+    out.add(`${idx}-${atom.trim()}`);
+    out.add(`${idx}-${atom.replace(/\s+/g, '')}`);
+  });
+  return [...out];
+};
+
+// ================= STRUCTURE VIEW =================
 export const StructureSVGView = ({
   structure, minWidth, isExpanded, onToggleExpand, selectedKeys, manualKeys = [], onAtomClick, height = '300px'
 }) => {
@@ -1717,7 +1775,7 @@ export const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCou
 
 // ================= ZOOMABLE PLOTS =================
 export const OneDSpectrumPlot = ({
-  title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel, selectedKeys, manualKeys = []
+  title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel, selectedKeys, manualKeys = [], heightPx = 400
 }) => {
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState(fullDomain);
@@ -1770,9 +1828,7 @@ export const OneDSpectrumPlot = ({
   return (
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)} />}
-      <div
-        className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'h-[400px] break-inside-avoid'}`}
-      >
+      <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'break-inside-avoid'}`} style={!isExpanded ? { height: `${heightPx}px` } : undefined}>
         <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
           <div className="flex items-center gap-4">
             <h4 className="font-bold text-slate-700">{title}</h4>
@@ -1843,7 +1899,7 @@ export const OneDSpectrumPlot = ({
 };
 
 export const SpectrumPlot = ({
-  title, diagonalData, crossPeakData, expandedPanel, setExpandedPanel, panelId, diagonalColor, selectedKeys, manualKeys = []
+  title, diagonalData, crossPeakData, expandedPanel, setExpandedPanel, panelId, diagonalColor, selectedKeys, manualKeys = [], heightPx = 400
 }) => {
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState([0, 11]);
@@ -1937,9 +1993,7 @@ export const SpectrumPlot = ({
   return (
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)} />}
-      <div
-        className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'h-[400px] break-inside-avoid'}`}
-      >
+      <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'break-inside-avoid'}`} style={!isExpanded ? { height: `${heightPx}px` } : undefined}>
         <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
           <div className="flex items-center gap-4">
             <h4 className="font-bold text-slate-700">{title}</h4>
@@ -2010,7 +2064,7 @@ export const SpectrumPlot = ({
 };
 
 export const HSQCPlot = ({
-  title, crossPeakData, expandedPanel, setExpandedPanel, panelId, selectedKeys, manualKeys = [], yAxisLabel = '¹³C F1 (ppm)', yDomainInit = [10, 150]
+  title, crossPeakData, expandedPanel, setExpandedPanel, panelId, selectedKeys, manualKeys = [], yAxisLabel = '¹³C F1 (ppm)', yDomainInit = [10, 150], yTicks = TICKS_13C, heightPx = 400
 }) => {
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState([0, 11]);
@@ -2083,9 +2137,7 @@ export const HSQCPlot = ({
   return (
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)} />}
-      <div
-        className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'h-[400px] lg:col-span-2 break-inside-avoid'}`}
-      >
+      <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'break-inside-avoid lg:col-span-2'}`} style={!isExpanded ? { height: `${heightPx}px` } : undefined}>
         <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
           <div className="flex items-center gap-4">
             <h4 className="font-bold text-slate-700">{title}</h4>
@@ -2127,7 +2179,7 @@ export const HSQCPlot = ({
                 domain={yDomain}
                 allowDataOverflow
                 reversed={true}
-                ticks={isZoomed ? undefined : TICKS_13C}
+                ticks={isZoomed ? undefined : yTicks}
                 interval={0}
                 tickLine={false}
                 tick={<CustomYTick13C isZoomed={isZoomed} />}
@@ -2171,10 +2223,33 @@ export const HSQCPlot = ({
   );
 };
 
+// ================= CONDITION PLOT =================
+export const ConditionPlot = ({ data, series, yLabel, xLabel }) => {
+  if (!data || data.length === 0 || series.length === 0) {
+    return <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">Select at least one atom to plot.</div>;
+  }
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-4" style={{ height: 420 }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data} margin={{ top: 20, right: 30, bottom: 40, left: 30 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+          <XAxis dataKey="__condition" tick={{ fontSize: 11, fill: '#475569' }} label={{ value: xLabel, position: 'insideBottom', offset: -20, fill: '#64748b' }} />
+          <YAxis tick={{ fontSize: 11, fill: '#475569' }} label={{ value: yLabel, angle: -90, position: 'insideLeft', offset: -10, fill: '#64748b' }} domain={['auto', 'auto']} />
+          <Tooltip />
+          <Legend />
+          {series.map((s, i) => (
+            <Line key={s.key} type="monotone" dataKey={s.key} name={s.label} stroke={LINE_COLORS[i % LINE_COLORS.length]} strokeWidth={2} dot={{ r: 4 }} connectNulls />
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+};
+
 // ================= IMAGE URL NORMALIZATION =================
 export const normalizeImageCandidates = (url) => {
   const u = (url || '').trim();
-  let m = u.match(/drive\.google\.com\/file\/d\/([^/?]+)/);
+  let m = u.match(/drive.google.com\/file\/d\/([^/?]+)/);
   if (m) {
     const id = m[1];
     return [
@@ -2183,7 +2258,7 @@ export const normalizeImageCandidates = (url) => {
       `https://drive.google.com/uc?export=view&id=${id}`
     ];
   }
-  m = u.match(/drive\.google\.com\/(?:open|uc)[^#]*[?&]id=([^&#]+)/);
+  m = u.match(/drive.google.com\/(?:open|uc)[^#]*[?&]id=([^&#]+)/);
   if (m) {
     const id = m[1];
     return [
@@ -2230,13 +2305,18 @@ export const SmartImage = ({ src, alt }) => {
 export default {
   AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, CARBON_RANGE_DB,
   SS_CORRECTIONS, SS_META, FORM_META, DNA_FORM_OFFSETS, SUGAR_ANOMER_OFFSETS,
-  RESIDUE_COLORS, TICKS_1H, TICKS_13C, CHART_MARGIN, CHART_MARGIN_1D,
+  RESIDUE_COLORS, TICKS_1H, TICKS_13C, TICKS_15N, CHART_MARGIN, CHART_MARGIN_1D, LINE_COLORS,
+  FS_CLASSES, OVERLAY_CLASSES, SELECT_COLOR, MANUAL_COLOR,
   parseManual, getNMRFillColor, getCarbonName, buildKeys, getProtonCountEx, getPascalRow, getCarbonRangeFor,
+  getHexagon, getPentagon, hexAt, fusePentagon, makeBuilder,
   buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure,
   elementsToSVG, ensureSvgSize, svgToPngDataUrl,
   StructureSVGView, CollapsibleSection, MultiSelectDropdown, SequencePaintStrip,
   CustomXTick1H, CustomYTick1H, CustomXTick13C, CustomYTick13C, NMRTooltip, RangeBarChart,
-  OneDSpectrumPlot, SpectrumPlot, HSQCPlot,
-  normalizeImageCandidates, SmartImage,
-  FS_CLASSES, OVERLAY_CLASSES, SELECT_COLOR, MANUAL_COLOR
+  OneDSpectrumPlot, SpectrumPlot, HSQCPlot, ConditionPlot,
+  CHEMICAL_SHIFT_LAYER, makeInstanceId, makeLayerId,
+  getInstances, getActiveInstance, getLayers, getActiveLayerKey, getLayerValues, writeInstanceValue,
+  getSelectedKeys, selectionLabel, getManualKeys,
+  normalizeImageCandidates, SmartImage
 };
+
