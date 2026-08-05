@@ -2,15 +2,16 @@ import React from 'react';
 import TestShellRenderer from './TestShellRenderer';
 import { NMR_TAB_CONFIG } from './tabConfigs';
 import * as NMRSections from './NMRSections';
+/* ============================================================================
+   NMR tab — thin wrapper around the shared shell.
+   FIXED SCHEMATIC STRUCTURE (same as the CD tab):
+     • Classification / Compounds & Biological Models / Experimental Conditions
+       / Linked Protocols / Agenda / Comments / Images  → TestShellRenderer
+     • Experiment Setup → Data → Fitting → Simulations  → NMRSections.All
+       (each one a collapsible CollapsibleSection, in this exact order)
+   The Export button lives INSIDE the Data section (like CD).
+========================================================================== */
 
-/**
- * NMR tab — thin wrapper around the shared shell.
- * Common sections come from TestShellRenderer.
- * NMR-specific sections come from NMRSections:
- *   Toolbar, Compounds (sequence + formula), Data (ranges + assignment table),
- *   Fitting (variable parameters + graphical parameters), Simulations (incl. 1H-15N HSQC).
- * Cross-highlighting is stored in activeTest.selectedAtomKeys.
- */
 const buildNmrNotebookHtml = (checked, ctx) => {
   const t = ctx.activeTest || {};
   let html = '';
@@ -70,14 +71,15 @@ const buildNmrNotebookHtml = (checked, ctx) => {
     }
   }
   if (checked.formula) {
-    // Formula export is handled by NotebookExtra / the "Formula → Notebook" button.
+    // Formula export is handled by the "Formula → Notebook" button in Experiment Setup.
     html += '';
   }
   return html;
 };
 
 const NMR_CUSTOM = {
-  ...NMRSections,
+  All: NMRSections.All,
+  NotebookExtra: NMRSections.NotebookExtra,
   buildNotebookHtml: buildNmrNotebookHtml
 };
 

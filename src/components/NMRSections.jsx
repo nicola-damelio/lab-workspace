@@ -3,13 +3,15 @@ import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   ReferenceArea, BarChart, Bar
 } from 'recharts';
-
 /* ============================================================================
-   NMRSections — NMR-specific sections rendered by TestShellRenderer:
-   Toolbar, Compounds, Data, Fitting, Simulations, NotebookExtra.
+   NMRSections — NMR-specific content, following the FIXED SCHEMATIC STRUCTURE
+   used by the CD tab. Rendered as ONE block via `custom.All`:
+     1. 🧬 Experiment Setup   (molecule definition, painting, 2D formula)
+     2. 🔢 Data               (theoretical ranges + assignment table + EXPORT)
+     3. 📐 Fitting            (Variable Parameters + Graphical Parameters)
+     4. 🧪 Simulations        (1D/2D simulated spectra incl. ¹H–¹⁵N HSQC)
    Cross-highlighting: selection is stored in activeTest.selectedAtomKeys and
-   shared by the formula (Compounds), the assignment table (Data) and all
-   simulated spectra (Simulations).
+   shared by formula ↔ assignment table ↔ all spectra.
 ========================================================================== */
 
 const FS_CLASSES =
@@ -17,6 +19,35 @@ const FS_CLASSES =
 const OVERLAY_CLASSES = 'fixed top-0 left-0 w-screen h-screen bg-slate-900/50 backdrop-blur-sm z-[999990]';
 const SELECT_COLOR = '#f59e0b';
 const MANUAL_COLOR = '#16a34a';
+
+// ================= COLLAPSIBLE SECTION (local copy, self-contained) =================
+const CollapsibleSection = ({ title, icon, defaultOpen = true, children, headerExtra, className = '' }) => {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
+  return (
+    <div className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-6 break-inside-avoid ${className}`}>
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left ${isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'}`}
+      >
+        <div className="flex items-center gap-2 overflow-hidden">
+          {icon && <span className="text-xl shrink-0">{icon}</span>}
+          <h3 className="text-lg font-bold text-slate-800 truncate">{title}</h3>
+        </div>
+        <div className="flex items-center gap-3 shrink-0">
+          {headerExtra && <div onClick={(e) => e.stopPropagation()}>{headerExtra}</div>}
+          <svg
+            className={`w-5 h-5 text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </div>
+      </button>
+      {isOpen && <div className="p-6">{children}</div>}
+    </div>
+  );
+};
 
 // ================= DATABASES =================
 const AMINO_ACID_DB = {
@@ -480,7 +511,6 @@ const SS_CORRECTIONS = {
     c: { Cα: -1.6, Cβ: 1.4, "C'": 1.5, N: 2.0 }
   }
 };
-
 const SS_META = {
   C: { label: 'Random coil', color: '#64748b' },
   H: { label: 'α-Helix', color: '#8b5cf6' },
@@ -2320,7 +2350,7 @@ const useNmrDerived = (activeTest) => {
         const cn = getCarbonName(moleculeType, res.char, a);
         if (cn) simShifts13C[a] = simUniqueC[cn];
       });
-      // simulated backbone 15N (protein), manual override via `${idx}-N`
+      // simulated backbone 15N / carbonyl 13C (protein), manual override via `${idx}-N` / `${idx}-C'`
       let simN = null;
       if (moleculeType === 'protein' && res.estN !== null && res.estN !== undefined) {
         const mN = getMan(idx, 'N');
@@ -2617,59 +2647,13 @@ const useNmrDerived = (activeTest) => {
   };
 };
 
-// ============================================================================
-// SECTION COMPONENTS (rendered by TestShellRenderer)
-// ============================================================================
+/* ============================================================================
+   SECTION COMPONENTS — FIXED SCHEMATIC STRUCTURE (same order as CD):
+   Experiment Setup → Data → Fitting → Simulations
+========================================================================== */
 
-// ================= TOOLBAR (CSV export) =================
-export const Toolbar = ({ ctx }) => {
-  const { activeTest } = ctx;
-  const d = useNmrDerived(activeTest);
-  const exportCSV = () => {
-    const rows = [['Residue', 'Nucleus', 'Atom', 'Manual Shift (ppm)', 'Estimated (ppm)']];
-    d.estSeq.forEach((res, idx) => {
-      if (d.selNuc.includes('H')) {
-        Object.keys(res.estShifts || {}).forEach((a) => {
-          rows.push([res.id, '1H', a, d.shifts[`${idx}-${a}`] || '', res.estShifts[a]]);
-        });
-      }
-      if (d.moleculeType === 'protein') {
-        if (d.selNuc.includes('N') && res.estN !== null) rows.push([res.id, '15N', 'N', d.shifts[`${idx}-N`] || '', res.estN]);
-        if (d.selNuc.includes('C')) {
-          Object.keys(res.estUniqueC || {}).forEach((cn) => rows.push([res.id, '13C', cn, d.shifts[`${idx}-${cn}`] || '', res.estUniqueC[cn]]));
-          if (res.estCP !== null) rows.push([res.id, '13C', "C'", d.shifts[`${idx}-C'`] || '', res.estCP]);
-        }
-      } else if (d.selNuc.includes('C')) {
-        Object.keys(res.estUniqueC || {}).forEach((cn) => rows.push([res.id, '13C', cn, d.shifts[`${idx}-${cn}`] || '', res.estUniqueC[cn]]));
-      }
-      if (d.hasPhosphorus && d.selNuc.includes('P') && res.p31 !== null) rows.push([res.id, '31P', 'P', d.shifts[`${idx}-P`] || '', res.p31]);
-    });
-    const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
-    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'nmr_assignment.csv';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-  return (
-    <div className="bg-white border-b border-slate-200 px-6 py-2 flex items-center justify-end gap-3 shrink-0 z-10 shadow-sm no-print">
-      <button
-        onClick={exportCSV}
-        className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1.5 px-3 rounded text-xs flex items-center gap-1 shadow-sm transition-colors"
-      >
-        ⬇ Export CSV (Excel/Sheets)
-      </button>
-    </div>
-  );
-};
-
-// ================= COMPOUNDS (molecule definition + sequence + painting + 2D formula) =================
-// Rendered by TestShellRenderer inside "Compounds & Biological Models" via custom.Compounds.
-export const Compounds = ({ ctx }) => {
+// ================= 1) EXPERIMENT SETUP =================
+const ExperimentSetupSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useNmrDerived(activeTest);
   const [focusIdx, setFocusIdx] = useState('ALL');
@@ -2716,9 +2700,6 @@ export const Compounds = ({ ctx }) => {
 
   return (
     <div className="flex flex-col gap-6">
-      <h4 className="text-sm font-bold text-slate-700 uppercase tracking-widest flex items-center gap-2">
-        🧬 Molecule Definition & Chemical Formula
-      </h4>
       <div className="flex flex-wrap gap-2 mb-2">
         {[
           ['protein', '🧬 Protein'],
@@ -3002,8 +2983,8 @@ export const Compounds = ({ ctx }) => {
   );
 };
 
-// ================= DATA (theoretical ranges + assignment table) =================
-export const Data = ({ ctx }) => {
+// ================= 2) DATA (ranges + assignment table + EXPORT) =================
+const DataSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useNmrDerived(activeTest);
   const [tableMode, setTableMode] = useState(activeTest.tableMode || 'backbone');
@@ -3036,26 +3017,65 @@ export const Data = ({ ctx }) => {
     updateActiveTest({ chemicalShifts: newShifts });
   };
 
+  // ---------- EXPORT (lives inside the Data section, like CD) ----------
+  const exportCSV = () => {
+    const rows = [['Residue', 'Nucleus', 'Atom', 'Manual Shift (ppm)', 'Estimated (ppm)']];
+    d.estSeq.forEach((res, idx) => {
+      if (d.selNuc.includes('H')) {
+        Object.keys(res.estShifts || {}).forEach((a) => {
+          rows.push([res.id, '1H', a, d.shifts[`${idx}-${a}`] || '', res.estShifts[a]]);
+        });
+      }
+      if (d.moleculeType === 'protein') {
+        if (d.selNuc.includes('N') && res.estN !== null) rows.push([res.id, '15N', 'N', d.shifts[`${idx}-N`] || '', res.estN]);
+        if (d.selNuc.includes('C')) {
+          Object.keys(res.estUniqueC || {}).forEach((cn) => rows.push([res.id, '13C', cn, d.shifts[`${idx}-${cn}`] || '', res.estUniqueC[cn]]));
+          if (res.estCP !== null) rows.push([res.id, '13C', "C'", d.shifts[`${idx}-C'`] || '', res.estCP]);
+        }
+      } else if (d.selNuc.includes('C')) {
+        Object.keys(res.estUniqueC || {}).forEach((cn) => rows.push([res.id, '13C', cn, d.shifts[`${idx}-${cn}`] || '', res.estUniqueC[cn]]));
+      }
+      if (d.hasPhosphorus && d.selNuc.includes('P') && res.p31 !== null) rows.push([res.id, '31P', 'P', d.shifts[`${idx}-P`] || '', res.p31]);
+    });
+    const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `NMR_${(activeTest.compound || 'assignment').replace(/[^a-z0-9]+/gi, '_')}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const selTdCls = (isMan, isSel) =>
     `px-3 py-1 cursor-pointer transition-colors ${isSel ? 'bg-amber-100 ring-2 ring-inset ring-amber-400' : isMan ? 'bg-green-50' : 'hover:bg-slate-50'}`;
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h4 className="text-sm font-bold text-slate-700 uppercase tracking-widest">📊 NMR Data — Ranges & Assignment</h4>
-        {selectedKeys && (
-          <div className="flex items-center gap-2 bg-amber-50 border border-amber-300 rounded-lg px-3 py-1.5 text-xs font-bold text-amber-800">
-            🎯 Selected: {selectionLabel(d, selectedKeys)}
-            <button
-              onClick={() => updateActiveTest({ selectedAtomKeys: [] })}
-              className="ml-1 text-amber-600 hover:text-red-600 font-black"
-              title="Clear selection"
-            >
-              ✕
-            </button>
-          </div>
-        )}
+      {/* Export bar — inside the Data section */}
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm px-4 py-3 flex items-center justify-end gap-3 no-print">
+        <button
+          onClick={exportCSV}
+          className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1.5 px-3 rounded text-xs flex items-center gap-1 shadow-sm transition-colors"
+        >
+          📊 Export XLS (CSV)
+        </button>
       </div>
+
+      {selectedKeys && (
+        <div className="flex items-center gap-2 bg-amber-50 border border-amber-300 rounded-lg px-3 py-1.5 text-xs font-bold text-amber-800 w-fit">
+          🎯 Selected: {selectionLabel(d, selectedKeys)}
+          <button
+            onClick={() => updateActiveTest({ selectedAtomKeys: [] })}
+            className="ml-1 text-amber-600 hover:text-red-600 font-black"
+            title="Clear selection"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {d.uniqueTypes.length > 0 && (
         <div className="grid grid-cols-1 gap-4">
@@ -3124,7 +3144,7 @@ export const Data = ({ ctx }) => {
 
       {d.parsedSeq.length === 0 ? (
         <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">
-          Enter a sequence / select a molecule (in Compounds & Biological Models) to generate the table.
+          Enter a sequence / select a molecule (in Experiment Setup) to generate the table.
         </div>
       ) : effTableMode === 'backbone' ? (
         <div className="overflow-x-auto custom-scrollbar border border-slate-200 rounded-lg max-h-[500px]">
@@ -3458,8 +3478,8 @@ export const Data = ({ ctx }) => {
   );
 };
 
-// ================= FITTING — VARIABLE PARAMETERS (CD-inspired) + GRAPHICAL PARAMETERS =================
-export const Fitting = ({ ctx }) => {
+// ================= 3) FITTING — VARIABLE PARAMETERS (CD-inspired) + GRAPHICAL PARAMETERS =================
+const FittingSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const [newVariable, setNewVariable] = useState('');
 
@@ -3531,9 +3551,9 @@ export const Fitting = ({ ctx }) => {
   };
 
   return (
-    <>
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 break-inside-avoid p-6">
-        <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-4">🎛️ Variable Parameters</h3>
+    <div className="flex flex-col gap-6">
+      {/* Variable Parameters */}
+      <CollapsibleSection title="Variable Parameters" icon="🎛️" defaultOpen={false}>
         <div className="flex flex-col gap-4">
           <div className="flex flex-col lg:flex-row gap-3 lg:items-end justify-between bg-slate-50 border border-slate-200 rounded-lg p-4">
             <div className="flex flex-col md:flex-row gap-2 w-full lg:w-auto">
@@ -3661,10 +3681,10 @@ export const Fitting = ({ ctx }) => {
             </table>
           </div>
         </div>
-      </div>
+      </CollapsibleSection>
 
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 break-inside-avoid p-6">
-        <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-4">🎨 Graphical Parameters</h3>
+      {/* Graphical Parameters */}
+      <CollapsibleSection title="Graphical Parameters" icon="🎨" defaultOpen={false}>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="flex flex-col gap-1">
             <label className="text-xs font-bold text-slate-600">Simulated spectrum panel height (px): {heightPx}</label>
@@ -3687,13 +3707,13 @@ export const Fitting = ({ ctx }) => {
             <span style={{ color: SELECT_COLOR }}>amber</span> (click an atom in the formula or a table cell).
           </div>
         </div>
-      </div>
-    </>
+      </CollapsibleSection>
+    </div>
   );
 };
 
-// ================= SIMULATIONS =================
-export const Simulations = ({ ctx }) => {
+// ================= 4) SIMULATIONS =================
+const SimulationsSection = ({ ctx }) => {
   const { activeTest } = ctx;
   const d = useNmrDerived(activeTest);
   const [expandedPanel, setExpandedPanel] = useState(null);
@@ -3704,20 +3724,17 @@ export const Simulations = ({ ctx }) => {
   if (d.parsedSeq.length === 0) {
     return (
       <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">
-        Enter a sequence / select a molecule (in Compounds & Biological Models) to generate simulated spectra.
+        Enter a sequence / select a molecule (in Experiment Setup) to generate simulated spectra.
       </div>
     );
   }
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h4 className="text-sm font-bold text-slate-700 uppercase tracking-widest">🧪 Simulated Spectra</h4>
-        {selectedKeys && (
-          <span className="text-xs font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded-lg px-3 py-1.5">
-            🎯 Highlighting: {selectionLabel(d, selectedKeys)}
-          </span>
-        )}
-      </div>
+      {selectedKeys && (
+        <span className="text-xs font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded-lg px-3 py-1.5 w-fit">
+          🎯 Highlighting: {selectionLabel(d, selectedKeys)}
+        </span>
+      )}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <OneDSpectrumPlot
           title="Simulated ¹H 1D Spectrum"
@@ -3828,6 +3845,33 @@ export const Simulations = ({ ctx }) => {
           />
         )}
       </div>
+    </div>
+  );
+};
+
+// ================= ALL — fixed schematic structure (same as CD) =================
+export const All = ({ ctx }) => {
+  return (
+    <div className="flex flex-col gap-6">
+      {/* Experiment Setup */}
+      <CollapsibleSection title="Experiment Setup" icon="⚙️">
+        <ExperimentSetupSection ctx={ctx} />
+      </CollapsibleSection>
+
+      {/* Data */}
+      <CollapsibleSection title="Data" icon="🔢">
+        <DataSection ctx={ctx} />
+      </CollapsibleSection>
+
+      {/* Fitting (Variable Parameters + Graphical Parameters) */}
+      <CollapsibleSection title="Fitting" icon="📐">
+        <FittingSection ctx={ctx} />
+      </CollapsibleSection>
+
+      {/* Simulations */}
+      <CollapsibleSection title="Simulations" icon="🧪" defaultOpen={false}>
+        <SimulationsSection ctx={ctx} />
+      </CollapsibleSection>
     </div>
   );
 };
