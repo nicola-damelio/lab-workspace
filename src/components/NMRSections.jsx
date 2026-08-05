@@ -3048,7 +3048,7 @@ const SimulationsSection = ({ ctx }) => {
   const d = useNmrDerived(activeTest);
   const [expandedPanel, setExpandedPanel] = useState(null);
   const [showCfg, setShowCfg] = useState(false);
-  const [focusIdx, setFocusIdx] = useState('ALL');
+  const [focusIdx, setFocusIdx] = useState('ALL'); // Added local focus state
   
   const selectedKeys = getSelectedKeys(activeTest);
   const manualKeys = useMemo(() => getManualKeys(d.shifts), [d.shifts]);
@@ -3059,11 +3059,16 @@ const SimulationsSection = ({ ctx }) => {
     return <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">Enter a sequence / select a molecule (in Experiment Setup) to generate simulated spectra.</div>;
   }
 
-  // FIXED: Split the key string by '-' and match the exact index to avoid the prefix bug (e.g., '1-' matching '10-').
+  // Filter and safely sort peaks to avoid Recharts errors
   const fP = (arr) => {
-    if (focusIdx === 'ALL' || !arr) return arr || [];
-    const target = String(focusIdx);
-    return arr.filter(p => p.keys && p.keys.some(k => String(k).split('-')[0] === target));
+    if (!arr) return [];
+    let res = arr;
+    if (focusIdx !== 'ALL') {
+      const target = String(focusIdx);
+      res = arr.filter(p => p.keys && p.keys.some(k => String(k).split('-')[0] === target));
+    }
+    // Sort by x ascending for Recharts BarChart compatibility
+    return [...res].sort((a, b) => a.x - b.x);
   };
   
   return (
@@ -3134,7 +3139,6 @@ const SimulationsSection = ({ ctx }) => {
     </div>
   );
 };
-
 // ================= ALL =================
 export const All = ({ ctx }) => {
   return (
