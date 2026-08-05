@@ -236,33 +236,49 @@ const NMRMoleculeViewer = ({
     };
   }, [file, pdbId]); // 🔥 Removed parsedSeq, moleculeType, onAtomClick, showLabels
 
-  // 🔥 FIX 4: Separate effect for labels to avoid reloading the whole PDB
-  useEffect(() => {
-    const component = componentRef.current;
-    if (!component || status !== 'ready') return;
+// 🔥 FIX 4: Separate effect for labels to avoid reloading the whole PDB
+useEffect(() => {
+  const component = componentRef.current;
+  if (!component || status !== 'ready') return;
 
-    if (showLabels) {
+  const clearLabels = () => {
+    if (labelCompRef.current) {
       try {
-        const labelRep = component.addRepresentation('label', {
-          sele: '.CA or .N or .C',
-          labelType: 'atomname',
-          labelGrouping: 'residue',
-          color: 0x334155,
-          radius: 0.6,
-        });
-        labelCompRef.current = labelRep;
-      } catch (e) {
-        console.warn('Label rep failed', e);
-      }
-    } else {
-      if (labelCompRef.current) {
-        try {
-          component.removeRepresentation(labelCompRef.current);
-        } catch (e) {}
-        labelCompRef.current = null;
-      }
+        component.removeRepresentation(labelCompRef.current);
+      } catch (e) {}
+      labelCompRef.current = null;
     }
-  }, [showLabels, status]);
+  };
+
+  // Always remove old labels before adding new ones
+  clearLabels();
+
+  if (showLabels) {
+    try {
+      labelCompRef.current = component.addRepresentation('label', {
+        // Side-chain atom names only:
+        sele: 'protein and sidechain and not hydrogen',
+
+        // If you want ALL non-hydrogen atom names instead, use:
+        // sele: 'not hydrogen',
+
+        // If you also want ligand atom names:
+        // sele: '(protein and sidechain and not hydrogen) or (hetero and not water and not hydrogen)',
+
+        labelType: 'atomname',
+        labelGrouping: 'atom',
+        color: 0x111827,
+        radius: 1.0,
+        opacity: 1,
+        depthTest: false,
+      });
+    } catch (e) {
+      console.warn('Label rep failed', e);
+    }
+  }
+
+  return clearLabels;
+}, [showLabels, status]);
 
   // Highlight selected / manual atoms
   useEffect(() => {
