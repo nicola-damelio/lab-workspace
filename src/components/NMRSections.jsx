@@ -248,84 +248,85 @@ const getCarbonRangeFor = (molType, char, cName) => {
     if (cName === 'Csn1' || cName === 'Csn2' || cName === 'Csn3') return { min: 61, max: 68 };
     return { min: 28, max: 32 };
   }
-  return { min: 40, max: 50 };
+  return { min: 40, max: 60 };
 };
 
-// ================= TOP-LEVEL INSTANCES (conditions managed at the top of the page) =================
-const EXP_FIELD_ALIASES = {
-  Temperature: ['temperature', 'temp', 'Temperature'],
-  pH: ['ph', 'pH'],
-  Concentration: ['concentration', 'conc', 'Concentration'],
-  Ratio: ['ratio', 'Ratio'],
-  Salt: ['saltconcentration', 'salt', 'Salt'],
-  Solvent: ['solvent', 'buffer', 'Solvent'],
-  Ligand: ['othermolecule', 'ligand', 'molecule', 'Ligand']
-};
-const normalizeTopInstance = (raw, idx) => {
-  if (!raw) return null;
-  const id = String(raw.id ?? raw.instanceId ?? raw.key ?? `top_${idx}`);
-  const name = raw.name || raw.label || raw.title || `Condition ${idx + 1}`;
-  const exp = {};
-  const srcExp = (raw.exp && typeof raw.exp === 'object') ? raw.exp : (raw.expValues && typeof raw.expValues === 'object') ? raw.expValues : {};
-  Object.keys(EXP_FIELD_ALIASES).forEach((param) => {
-    if (srcExp[param] !== undefined && srcExp[param] !== '') { exp[param] = srcExp[param]; return; }
-    for (const f of EXP_FIELD_ALIASES[param]) {
-      const v = raw[f] !== undefined ? raw[f] : srcExp[f];
-      if (v !== undefined && v !== '') { exp[param] = v; return; }
-    }
+// ================= INSTANCES (the tests with the same name at the top of the page) =================
+/* The fields of the "Experimental Condition" section of each instance, exactly as shown in the UI */
+const EXPERIMENTAL_CONDITION_FIELDS = [
+  { key: 'temperature', label: 'Temperature' },
+  { key: 'ph', label: 'pH' },
+  { key: 'concentration', label: 'Concentration' },
+  { key: 'ratio', label: 'Ratio' },
+  { key: 'saltConcentration', label: 'Salt Concentration' },
+  { key: 'solvent', label: 'Solvent' },
+  { key: 'otherMolecule', label: 'Other Molecule' }
+];
+const getExperimentalFields = (ctx) => {
+  const merged = [...EXPERIMENTAL_CONDITION_FIELDS];
+  const extra = Array.isArray(ctx?.experimentalFields) ? ctx.experimentalFields : [];
+  extra.forEach((f) => {
+    const item = typeof f === 'string' ? { key: f, label: f } : f;
+    if (item && item.key && !merged.some((m) => m.key === item.key)) merged.push(item);
   });
-  Object.entries(srcExp).forEach(([k, v]) => { if (exp[k] === undefined) exp[k] = v; });
-  const values = raw.values || raw.nmrValues || raw.data || (raw.chemicalShifts ? { cs: raw.chemicalShifts } : {});
-  return { id, name, exp, values: values || {}, raw };
+  return merged;
 };
-const getTopInstances = (ctx, activeTest) => {
+const getExpValue = (inst, key) => {
+  const t = inst?.test || {};
+  if (t[key] !== undefined && t[key] !== '') return t[key];
+  if (t.exp && t.exp[key] !== undefined && t.exp[key] !== '') return t.exp[key];
+  if (t.expValues && t.expValues[key] !== undefined && t.expValues[key] !== '') return t.expValues[key];
+  return '';
+};
+const normalizeInstance = (t, idx) => ({
+  id: t.id || `inst_${idx}`,
+  name: t.instanceName || t.name || `Instance ${idx + 1}`,
+  test: t
+});
+/* Instances = the tests sharing the same name (the instances shown at the top of the page).
+   The host should expose them via ctx.instances / ctx.siblings / ctx.tests / ctx.getInstances(). */
+const getInstances = (ctx, activeTest) => {
   let list = null;
   if (ctx) {
     if (typeof ctx.getInstances === 'function') { try { list = ctx.getInstances(); } catch { list = null; } }
     if (!list && Array.isArray(ctx.instances) && ctx.instances.length) list = ctx.instances;
-    if (!list && Array.isArray(ctx.allTests) && ctx.allTests.length) list = ctx.allTests;
-    if (!list && Array.isArray(ctx.tests) && ctx.tests.length) list = ctx.tests;
+    if (!list && Array.isArray(ctx.siblings) && ctx.siblings.length) list = ctx.siblings;
+    if (!list && (Array.isArray(ctx.tests) || Array.isArray(ctx.allTests))) {
+      const all = ctx.tests || ctx.allTests;
+      list = activeTest.name ? all.filter((t) => t && t.name === activeTest.name) : all;
+    }
   }
-  if (!list && Array.isArray(activeTest.topInstances) && activeTest.topInstances.length) list = activeTest.topInstances;
-  const norm = (list || []).map(normalizeTopInstance).filter(Boolean);
-  if (norm.length) return norm;
-  return [normalizeTopInstance({ id: 'top_0', name: activeTest.name || 'Condition 1', ...activeTest }, 0)];
+  if (!list || !list.length) list = [activeTest];
+  let insts = list.filter(Boolean).map(normalizeInstance);
+  insts = insts.map((inst) => (inst.id === activeTest.id ? normalizeInstance(activeTest, 0) : inst));
+  if (!insts.some((i) => i.id === activeTest.id)) insts.unshift(normalizeInstance(activeTest, 0));
+  insts.sort((a, b) => String(a.test.date || '').localeCompare(String(b.test.date || '')));
+  return insts;
 };
-const getActiveInstanceId = (ctx, activeTest, instances) => {
-  const wanted = ctx?.activeInstanceId ?? activeTest.activeInstanceId ?? ctx?.activeInstance?.id ?? activeTest.instanceId;
-  if (wanted != null) {
-    const hit = instances.find((i) => i.id === String(wanted)) || instances.find((i) => i.name === wanted);
-    if (hit) return hit.id;
-  }
-  return instances[0]?.id || null;
+const CHEMICAL_SHIFT_LAYER = { key: 'cs', label: 'Chemical Shift', unit: 'ppm', builtin: true };
+const makeLayerId = () => `layer_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+const getLayers = (activeTest) => [CHEMICAL_SHIFT_LAYER, ...(Array.isArray(activeTest.parameterLayers) ? activeTest.parameterLayers : [])];
+const getActiveLayerKey = (activeTest) => activeTest.activeLayerKey || 'cs';
+const instanceLayerValues = (inst, layerKey) => {
+  const t = inst?.test || {};
+  const nv = t.nmrValues || t.values;
+  if (nv && nv[layerKey]) return nv[layerKey];
+  if (layerKey === 'cs') return t.chemicalShifts || {};
+  return {};
 };
-const getLayerValues = (instance, layerKey) => (instance && instance.values && instance.values[layerKey]) || {};
 const getInstanceValues = (inst, isActive, activeTest, layerKey) => {
-  const base = getLayerValues(inst, layerKey);
-  if (!isActive) return base;
-  const overlay = (activeTest.nmrValues || {})[layerKey] || {};
-  return { ...base, ...overlay };
+  let base = instanceLayerValues(inst, layerKey);
+  if (isActive) {
+    const overlay = (activeTest.nmrValues || {})[layerKey];
+    if (overlay) base = { ...base, ...overlay };
+  }
+  return base;
 };
 const writeCellValue = (activeTest, updateActiveTest, layerKey, atomKey, value) => {
   const nv = { ...(activeTest.nmrValues || {}) };
   nv[layerKey] = { ...(nv[layerKey] || {}), [atomKey]: value };
   updateActiveTest({ nmrValues: nv });
 };
-const CHEMICAL_SHIFT_LAYER = { key: 'cs', label: 'Chemical Shift', unit: 'ppm', builtin: true };
-const makeLayerId = () => `layer_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-const getLayers = (activeTest) => [CHEMICAL_SHIFT_LAYER, ...(Array.isArray(activeTest.parameterLayers) ? activeTest.parameterLayers : [])];
-const getActiveLayerKey = (activeTest) => activeTest.activeLayerKey || 'cs';
-const DEFAULT_EXP_PARAMS = [
-  { key: 'Temperature', unit: 'K', numeric: true },
-  { key: 'pH', unit: '', numeric: true },
-  { key: 'Concentration', unit: 'mM', numeric: true },
-  { key: 'Ratio', unit: '', numeric: true },
-  { key: 'Salt', unit: 'mM', numeric: true },
-  { key: 'Solvent', unit: '', numeric: false },
-  { key: 'Ligand', unit: '', numeric: false }
-];
-const getExpParams = (activeTest) => (Array.isArray(activeTest.expParams) && activeTest.expParams.length ? activeTest.expParams : DEFAULT_EXP_PARAMS);
-/* Creates (if missing) parameter layers such as "Peak Intensity" / "Peak Integral" and returns a map wantedKey → real layer key */
 const ensureLayers = (activeTest, updateActiveTest, wanted) => {
   const layers = [...(activeTest.parameterLayers || [])];
   const map = {};
@@ -359,6 +360,7 @@ const getManualKeys = (values) => {
   });
   return [...out];
 };
+const opLabel = (op) => (typeof op === 'string' ? op : `${op?.name || ''} ${op?.surname || ''}`.trim());
 
 // ================= FITTING ENGINE =================
 const gaussSolve = (A, b) => {
@@ -527,7 +529,7 @@ const extractFitParam = (fit, model, param) => {
   return fit.params?.[param] ?? null;
 };
 
-// ================= SHARED CHART STYLE + ZOOM HOOKS =================
+// ================= SHARED CHART STYLE + ZOOM =================
 const DEFAULT_CHART_STYLE = {
   height: 380, aspect: 1.8, fontSize: 12, tickStep: '', tickAngle: 0,
   pointStyle: 'circle', ptSize: 5, lineStyle: 'solid', lineThickness: 2,
@@ -1417,7 +1419,7 @@ const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, row
   );
 };
 
-// ================= ZOOMABLE PLOTS (1D / 2D / HSQC) =================
+// ================= ZOOMABLE PLOTS =================
 const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel, selectedKeys, manualKeys = [], heightPx = 300, fs = 11, aspect = null }) => {
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState(fullDomain);
@@ -1665,13 +1667,11 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
     </>
   );
 };
-
-// ================= 3D SCATTER (zoomable) =================
 const ThreeDScatter = ({ seriesList, cfg, xLabel, yLabel, zLabel }) => {
   const [zoom, setZoom] = useState(1);
   const fs = cfg.fontSize || 11;
   const all = seriesList.flatMap((s) => s.pts);
-  if (!all.length) return <div className="text-xs text-slate-400 italic p-6 text-center bg-slate-50 rounded-lg border border-dashed">No 3D data — both selected condition parameters must be numeric.</div>;
+  if (!all.length) return <div className="text-xs text-slate-400 italic p-6 text-center bg-slate-50 rounded-lg border border-dashed">No 3D data — both selected experimental-condition fields must be numeric.</div>;
   const rng = (vals) => { let mn = Math.min(...vals), mx = Math.max(...vals); if (mx - mn < 1e-12) { mn -= 0.5; mx += 0.5; } return [mn, mx]; };
   const [x0, x1] = rng(all.map((p) => p.x));
   const [y0, y1] = rng(all.map((p) => p.y));
@@ -1735,14 +1735,14 @@ const useNmrDerived = (activeTest, ctx = {}) => {
   const isPolymer = moleculeType === 'protein' || moleculeType === 'dna' || moleculeType === 'rna';
   const hasPhosphorus = moleculeType === 'dna' || moleculeType === 'rna' || moleculeType === 'lipid';
   const DB = moleculeType === 'protein' ? AMINO_ACID_DB : moleculeType === 'dna' ? NUCLEOTIDE_DB.DNA : moleculeType === 'rna' ? NUCLEOTIDE_DB.RNA : moleculeType === 'sugar' ? SUGAR_DB : LIPID_DB;
-  const expParams = getExpParams(activeTest);
-  const instances = getTopInstances(ctx, activeTest);
-  const activeInstanceId = getActiveInstanceId(ctx, activeTest, instances);
+  const fields = getExperimentalFields(ctx);
+  const instances = getInstances(ctx, activeTest);
+  const activeInstanceId = ctx?.activeInstanceId || activeTest.id;
   const activeInstance = instances.find((i) => i.id === activeInstanceId) || instances[0] || null;
   const layers = getLayers(activeTest);
   const activeLayerKey = getActiveLayerKey(activeTest);
-  const shifts = activeInstance ? getInstanceValues(activeInstance, true, activeTest, 'cs') : {};
-  const activeValues = activeInstance ? getInstanceValues(activeInstance, true, activeTest, activeLayerKey) : {};
+  const shifts = getInstanceValues(activeInstance, true, activeTest, 'cs');
+  const activeValues = getInstanceValues(activeInstance, true, activeTest, activeLayerKey);
   const ssRaw = activeTest.secondaryStructure || '';
   const getSSAt = (i) => (ssRaw[i] && 'HES'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
   const formsRaw = activeTest.nucleicForms || '';
@@ -2005,7 +2005,7 @@ const useNmrDerived = (activeTest, ctx = {}) => {
   }, [estSeq, moleculeType, hasPhosphorus]);
   return {
     moleculeType, seq, validChars, isPolymer, hasPhosphorus, DB, selNuc, shifts, images,
-    expParams, instances, activeInstanceId, activeInstance, layers, activeLayerKey, activeValues, atomOptions,
+    fields, instances, activeInstanceId, activeInstance, layers, activeLayerKey, activeValues, atomOptions,
     getSSAt, getFormAt, sugarConf, sugarAnomer, lipidDB, dnaFormDefault, typeLabel, nucDefs,
     parsedSeq, estSeq, simSeq, structure, peaks, uniqueTypes, ranges
   };
@@ -2081,7 +2081,6 @@ const remapAtomKeys = (values, parsedSeq, nameMap = {}) => {
   });
   return out;
 };
-/* ---------- SPARKY ---------- */
 const detectSparkyFormat = (text) => {
   if (/^\s*VARS/im.test(text) || /^\s*FORMAT/im.test(text) || /^\s*S\s+[\d-]/im.test(text)) return 'peaklist';
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
@@ -2194,8 +2193,6 @@ const ExperimentSetupSection = ({ ctx }) => {
   const [sugarBrushAnomer, setSugarBrushAnomer] = useState(activeTest.sugarAnomer || 'alpha');
   const [sugarBrushConf, setSugarBrushConf] = useState(activeTest.sugarConf || 'chair');
   const [lipidBrush, setLipidBrush] = useState(activeTest.lipidDB || 'cis');
-  const [newParamName, setNewParamName] = useState('');
-  const [newParamUnit, setNewParamUnit] = useState('');
   const selectedKeys = getSelectedKeys(activeTest);
   const manualKeys = useMemo(() => getManualKeys(d.shifts), [d.shifts]);
   const handleAtomClick = (ri, keys) => {
@@ -2208,14 +2205,6 @@ const ExperimentSetupSection = ({ ctx }) => {
   const setAllSS = (letter) => updateActiveTest({ secondaryStructure: d.seq.split('').map(() => letter).join('') });
   const paintFormAt = (i, letter) => { const arr = d.seq.split('').map((_, j) => d.getFormAt(j)); arr[i] = letter; updateActiveTest({ nucleicForms: arr.join('') }); };
   const setAllForms = (letter) => updateActiveTest({ nucleicForms: d.seq.split('').map(() => letter).join(''), dnaForm: letter });
-  const addExpParam = () => {
-    const name = newParamName.trim();
-    if (!name || d.expParams.some((p) => p.key.toLowerCase() === name.toLowerCase())) return;
-    updateActiveTest({ expParams: [...d.expParams, { key: name, unit: newParamUnit.trim(), numeric: true }] });
-    setNewParamName(''); setNewParamUnit('');
-  };
-  const removeExpParam = (key) => updateActiveTest({ expParams: d.expParams.filter((p) => p.key !== key) });
-  const toggleParamNumeric = (key) => updateActiveTest({ expParams: d.expParams.map((p) => (p.key === key ? { ...p, numeric: !p.numeric } : p)) });
   const exportFormulaToNotebook = () => {
     if (!d.structure) return;
     const html = `<div style="margin-top:10px;"><h5 style="color:#1e40af;font-size:12px;margin-bottom:6px;">🔬 Chemical Formula (${d.typeLabel}):</h5>` + elementsToSVG(d.structure, 300) + `</div>`;
@@ -2273,30 +2262,6 @@ const ExperimentSetupSection = ({ ctx }) => {
               ))}
             </div>
           </div>
-        </div>
-      </div>
-      <div className="bg-sky-50 border border-sky-200 rounded-xl p-4">
-        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-          <label className="text-xs font-bold text-sky-800 uppercase">🧪 Experimental Parameters (fields of the top-of-page instances)</label>
-          <span className="text-[9px] bg-sky-200 text-sky-800 px-2 py-0.5 rounded">Used as X axis (and 2nd axis for 3D) in Fitting & Atom Profiles — values are read from each condition instance</span>
-        </div>
-        <div className="flex flex-wrap gap-2 mb-3">
-          {d.expParams.map((p) => (
-            <span key={p.key} className="inline-flex items-center gap-2 bg-white border border-sky-300 px-2.5 py-1 rounded-lg text-xs font-bold text-slate-700 shadow-sm">
-              {p.key}{p.unit ? ` (${p.unit})` : ''}
-              <button type="button" onClick={() => toggleParamNumeric(p.key)} title="Toggle numeric (only numeric params can be used as axes)"
-                className={`text-[9px] font-black px-1.5 py-0.5 rounded ${p.numeric ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>
-                {p.numeric ? 'NUM' : 'TXT'}
-              </button>
-              <button type="button" onClick={() => removeExpParam(p.key)} className="text-slate-400 hover:text-red-500 font-black" title="Remove parameter">×</button>
-            </span>
-          ))}
-        </div>
-        <div className="flex flex-wrap gap-2 items-end">
-          <input type="text" value={newParamName} onChange={(e) => setNewParamName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addExpParam(); } }}
-            placeholder="New parameter (e.g. Pressure)" className="border border-sky-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-sky-500 w-56" />
-          <input type="text" value={newParamUnit} onChange={(e) => setNewParamUnit(e.target.value)} placeholder="Unit (e.g. bar)" className="border border-sky-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-sky-500 w-32" />
-          <button type="button" onClick={addExpParam} className="bg-sky-600 hover:bg-sky-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm">+ Add Parameter</button>
         </div>
       </div>
       {d.moleculeType === 'protein' && d.parsedSeq.length > 0 && (
@@ -2439,7 +2404,7 @@ const ExperimentSetupSection = ({ ctx }) => {
   );
 };
 
-// ================= 2) DATA (assignment table + layers + IMPORT incl. SPARKY + EXPORT) =================
+// ================= 2) DATA =================
 const ImportPanel = ({ ctx, d }) => {
   const { activeTest, updateActiveTest } = ctx;
   const [mode, setMode] = useState('file');
@@ -2501,11 +2466,10 @@ const ImportPanel = ({ ctx, d }) => {
   const importFromInstance = () => {
     const src = d.instances.find((c) => c.id === copyFromId);
     if (!src) return;
-    const vals = getLayerValues(src, layerKey);
+    const vals = getInstanceValues(src, src.id === d.activeInstanceId, activeTest, layerKey);
     applyValues(vals);
     setReport({ ok: Object.keys(vals).length, missed: 0 });
   };
-  /* ---------- SPARKY import ---------- */
   const handleSparkyText = (text) => {
     if (!text || !text.trim()) return;
     const fmt = sparkyFmt === 'auto' ? detectSparkyFormat(text) : sparkyFmt;
@@ -2546,7 +2510,6 @@ const ImportPanel = ({ ctx, d }) => {
       if (importCS) {
         if (kX && p.x !== null) csVals[kX] = String(p.x);
         if (kY && p.y !== null) csVals[kY] = String(p.y);
-        if (!kX && !kY && p.x === null && p.y !== null) { /* nothing to attach */ }
       }
       const storeKey = kX || kY;
       if (storeKey) {
@@ -2574,12 +2537,12 @@ const ImportPanel = ({ ctx, d }) => {
   return (
     <div className="mt-3 p-4 bg-sky-50 border border-sky-200 rounded-xl flex flex-col gap-3">
       <div className="flex items-center gap-3 flex-wrap">
-        <span className="text-xs font-bold text-sky-800 uppercase">Import into “{d.activeInstance ? d.activeInstance.name : 'active condition'}”</span>
+        <span className="text-xs font-bold text-sky-800 uppercase">Import into “{d.activeInstance ? d.activeInstance.name : 'active instance'}”</span>
         <select value={layerKey} onChange={(e) => setLayerKey(e.target.value)} className="border border-sky-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-sky-500 font-semibold">
           {d.layers.map((l) => <option key={l.key} value={l.key}>{l.label}</option>)}
         </select>
         <div className="flex bg-white border border-sky-300 p-1 rounded-lg flex-wrap">
-          {[['file', '📄 File'], ['paste', '📋 Paste'], ['sparky', '✨ Sparky'], ['tab', '🗂️ Another tab'], ['cond', '⧉ Condition']].map(([m, lab]) => (
+          {[['file', '📄 File'], ['paste', '📋 Paste'], ['sparky', '✨ Sparky'], ['tab', '🗂️ Another tab'], ['cond', '⧉ Instance']].map(([m, lab]) => (
             <button key={m} type="button" onClick={() => setMode(m)} className={`px-2.5 py-1 text-xs font-bold rounded-md ${mode === m ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-sky-100'}`}>{lab}</button>
           ))}
         </div>
@@ -2600,7 +2563,7 @@ const ImportPanel = ({ ctx, d }) => {
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-end gap-3">
             <SelField label="Format" value={sparkyFmt} onChange={setSparkyFmt}
-              options={[['auto', 'Auto-detect'], ['peaklist', 'Sparky peak list (.list / .peaks)'], ['assignments', 'Sparky assignment file (.assign)']]} />
+              options={[['auto', 'Auto-detect'], ['peaklist', 'Sparky peak list (.list)'], ['assignments', 'Sparky assignment file (.assign)']]} />
             <div className="flex flex-col gap-1">
               <label className="text-[10px] font-bold text-slate-500">Import (peak list)</label>
               <div className="flex gap-3 text-[10px] font-bold text-slate-700">
@@ -2641,7 +2604,7 @@ const ImportPanel = ({ ctx, d }) => {
           <div className="flex flex-col gap-1">
             <label className="text-[10px] font-bold text-slate-500">Copy layer values from (top-of-page instance)</label>
             <select value={copyFromId} onChange={(e) => setCopyFromId(e.target.value)} className="border border-sky-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none">
-              <option value="">-- select condition --</option>
+              <option value="">-- select instance --</option>
               {d.instances.filter((c) => c.id !== d.activeInstanceId).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
@@ -2703,8 +2666,8 @@ const DataSection = ({ ctx }) => {
   };
   const clearLayer = () => updateActiveTest({ nmrValues: { ...(activeTest.nmrValues || {}), [d.activeLayerKey]: {} } });
   const exportCSV = () => {
-    const rows = [['Condition', ...d.expParams.map((p) => `${p.key}${p.unit ? ` (${p.unit})` : ''}`), 'Parameter', 'Residue', 'Nucleus', 'Atom', 'Value', 'Estimated (ppm)']];
-    const expVals = d.expParams.map((p) => (d.activeInstance?.exp?.[p.key] ?? ''));
+    const rows = [['Instance', ...d.fields.map((f) => f.label), 'Parameter', 'Residue', 'Nucleus', 'Atom', 'Value', 'Estimated (ppm)']];
+    const expVals = d.fields.map((f) => getExpValue(d.activeInstance, f.key));
     d.estSeq.forEach((res, idx) => {
       const base = [d.activeInstance ? d.activeInstance.name : '', ...expVals, activeLayer.label, res.id];
       if (d.selNuc.includes('H')) Object.keys(res.estShifts || {}).forEach((a) => rows.push([...base, '1H', a, d.activeValues[`${idx}-${a}`] || '', isCS ? res.estShifts[a] : '']));
@@ -2733,13 +2696,14 @@ const DataSection = ({ ctx }) => {
   const selTdCls = (isMan, isSel) => `px-3 py-1 cursor-pointer transition-colors ${isSel ? 'bg-amber-100 ring-2 ring-inset ring-amber-400' : isMan ? 'bg-green-50' : 'hover:bg-slate-50'}`;
   return (
     <div className="flex flex-col gap-6">
+      {/* read-only summary of the experimental condition of the active instance */}
       <div className="bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 flex flex-wrap items-center gap-2">
-        <span className="text-xs font-bold text-indigo-800 uppercase">Active condition (from the page-level instances):</span>
+        <span className="text-xs font-bold text-indigo-800 uppercase">Active instance (from the top of the page):</span>
         <span className="text-sm font-black text-indigo-900">{d.activeInstance ? d.activeInstance.name : '—'}</span>
-        {d.expParams.map((p) => {
-          const v = d.activeInstance?.exp?.[p.key];
-          if (v === undefined || v === '') return null;
-          return <span key={p.key} className="text-[10px] font-bold bg-white border border-indigo-200 text-indigo-700 px-2 py-0.5 rounded-full">{p.key}: {v}{p.unit ? ` ${p.unit}` : ''}</span>;
+        {d.fields.map((f) => {
+          const v = getExpValue(d.activeInstance, f.key);
+          if (v === '') return null;
+          return <span key={f.key} className="text-[10px] font-bold bg-white border border-indigo-200 text-indigo-700 px-2 py-0.5 rounded-full">{f.label}: {v}</span>;
         })}
         <span className="text-[9px] text-indigo-400 ml-auto">Add / switch instances at the top of the page (main program).</span>
       </div>
@@ -2976,7 +2940,7 @@ const DataSection = ({ ctx }) => {
   );
 };
 
-// ================= SECONDARY CHEMICAL SHIFTS (zoomable + customizable) =================
+// ================= SECONDARY CHEMICAL SHIFTS =================
 const SCSPlot = ({ title, data, color, cfg }) => {
   const [refAreaLeft, setRefAreaLeft] = useState(null);
   const [refAreaRight, setRefAreaRight] = useState(null);
@@ -3028,9 +2992,9 @@ const SCSPlot = ({ title, data, color, cfg }) => {
       </div>
       <div className="flex-1 w-full" style={{ aspectRatio: String(aspect) }}>
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 15, right: 20, left: 0, bottom: 25 }}>
+          <BarChart data={data} margin={{ top: 15, right: 20, left: 0, bottom: 20 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis type="number" dataKey="idx" domain={xDomain} allowDataOverflow tickFormatter={(val) => data[val]?.label || ''} tick={<AngledTick angle={cfg.tickAngle || 0} fontSize={fSize} />} label={{ value: xLab, position: 'insideBottom', offset: -14, fontSize: fSize + 1, fill: '#64748b' }} />
+            <XAxis type="number" dataKey="idx" domain={xDomain} allowDataOverflow tickFormatter={(val) => data[val]?.label || ''} tick={{ fontSize: fSize }} label={{ value: xLab, position: 'insideBottom', offset: -10, fontSize: fSize + 1 }} />
             <YAxis tick={{ fontSize: fSize }} label={{ value: yLab, angle: -90, position: 'insideLeft', offset: 10, fontSize: fSize + 1 }} />
             <Tooltip content={({ active, payload }) => {
               if (active && payload && payload.length) {
@@ -3062,7 +3026,7 @@ const SecondaryShiftsSection = ({ ctx }) => {
   const d = useNmrDerived(activeTest, ctx);
   const scsCfg = activeTest.scsCfg || {
     fontSize: 11, barColorHA: '#3b82f6', barColorCA: '#8b5cf6', barColorCB: '#f59e0b', barColorCO: '#22c55e', negColor: '#ef4444',
-    showHLine: true, hLineVal: 1.5, aspect: 2.5, tickAngle: 0, xAxisTitle: 'Residues', yAxisTitle: 'Δδ (ppm)'
+    showHLine: true, hLineVal: 1.5, aspect: 2.5, xAxisTitle: 'Residues', yAxisTitle: 'Δδ (ppm)'
   };
   const setCfg = (patch) => updateActiveTest({ scsCfg: { ...scsCfg, ...patch } });
   const [showConfig, setShowConfig] = useState(false);
@@ -3091,14 +3055,11 @@ const SecondaryShiftsSection = ({ ctx }) => {
     <div className="flex flex-col gap-4">
       <div className="flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-lg p-2 w-fit">
         <button onClick={() => setShowConfig(!showConfig)} className="text-xs bg-white border border-slate-300 px-3 py-1.5 rounded shadow-sm font-bold text-slate-700 hover:bg-slate-100">⚙️ Customize SCS Graphs</button>
-        <span className="text-[10px] text-slate-400">Drag on any graph to zoom · Reset Zoom to restore</span>
       </div>
       {showConfig && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-white p-4 rounded-xl border border-slate-300 shadow-sm">
           <NumField label="Font size" value={scsCfg.fontSize} onChange={(v) => setCfg({ fontSize: v || 11 })} />
-          <NumField label="Aspect ratio (W/H) — rectangularity" step={0.1} value={scsCfg.aspect} onChange={(v) => setCfg({ aspect: v || 2.5 })} />
-          <SelField label="Tick label angle" value={String(scsCfg.tickAngle || 0)} onChange={(v) => setCfg({ tickAngle: Number(v) })}
-            options={[['0', '0°'], ['-30', '-30°'], ['-45', '-45°'], ['-60', '-60°'], ['-90', '-90°'], ['45', '45°'], ['90', '90°']]} />
+          <NumField label="Aspect ratio (W/H)" step={0.1} value={scsCfg.aspect} onChange={(v) => setCfg({ aspect: v || 2.5 })} />
           <TxtField label="X axis title" value={scsCfg.xAxisTitle} onChange={(v) => setCfg({ xAxisTitle: v })} />
           <TxtField label="Y axis title" value={scsCfg.yAxisTitle} onChange={(v) => setCfg({ yAxisTitle: v })} />
           <div className="flex flex-col gap-1">
@@ -3128,7 +3089,7 @@ const SecondaryShiftsSection = ({ ctx }) => {
 const makePlotId = () => `cp_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 const defaultPlotCfg = (n) => ({
   id: makePlotId(), title: `Condition Plot ${n}`, layerKey: 'cs', atoms: [],
-  xParam: '', yParam: '', chartType: 'line',
+  xField: 'temperature', yField: '', chartType: 'line',
   fitEnabled: false, fitModel: 'linear', customExpr: '',
   showPoints: true, showErrors: true, showFit: true,
   useFixedSD: false, fixedSDStr: '', outlierThreshStr: '2.5',
@@ -3145,14 +3106,14 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
   const [hVal, setHVal] = useState('');
   const [hLab, setHLab] = useState('');
   const chartRef = useRef(null);
-  const isHist = plot.chartType === 'hist';
+  const isHist = (plot.chartType || 'line') === 'hist';
   const is3D = plot.chartType === '3d';
   const set = (patch) => updatePlot(plot.id, patch);
   const setCfg = (patch) => updatePlot(plot.id, { style: { ...cfg, ...patch } });
   const plotLayer = d.layers.find((l) => l.key === plot.layerKey) || d.layers[0];
-  const numericParams = d.expParams.filter((p) => p.numeric);
-  const effXParam = plot.xParam || (numericParams[0]?.key || '');
-  const xUnit = d.expParams.find((p) => p.key === effXParam)?.unit || '';
+  const fields = d.fields;
+  const effXField = fields.some((f) => f.key === plot.xField) ? plot.xField : (fields[0]?.key || 'temperature');
+  const xFieldLabel = fields.find((f) => f.key === effXField)?.label || effXField;
   const filtered = d.atomOptions.filter((o) => !atomSearch.trim() || o.label.toLowerCase().includes(atomSearch.toLowerCase()));
   const toggleAtom = (key) => set({ atoms: plot.atoms.includes(key) ? plot.atoms.filter((k) => k !== key) : [...plot.atoms, key] });
   const selectAllFiltered = () => set({ atoms: Array.from(new Set([...plot.atoms, ...filtered.map((o) => o.key)])) });
@@ -3167,6 +3128,8 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
   const deletePreset = (id) => updateActiveTest({ atomSelectionPresets: presets.filter((x) => x.id !== id) });
   const used = plot.usedInstances || {};
   const toggleInstance = (iid) => set({ usedInstances: { ...used, [iid]: used[iid] === false ? undefined : false } });
+  /* One point per top-of-page instance:
+     X = the value of the selected Experimental-Condition field read from THAT instance */
   const series = useMemo(() => plot.atoms.map((ak) => {
     const opt = d.atomOptions.find((o) => o.key === ak);
     const pts = [];
@@ -3177,15 +3140,14 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
       if (v === null) return;
       pts.push({
         instId: inst.id, name: inst.name,
-        x: effXParam ? parseManual(inst.exp?.[effXParam]) : null,
+        x: parseManual(getExpValue(inst, effXField)),
         y: v,
-        y2: plot.yParam ? parseManual(inst.exp?.[plot.yParam]) : null,
+        y2: plot.yField ? parseManual(getExpValue(inst, plot.yField)) : null,
         excluded: !!((plot.excluded[ak] || {})[inst.id])
       });
     });
     return { key: ak, label: opt ? opt.label : ak, pts };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-}), [plot.atoms, plot.layerKey, d.instances, d.atomOptions, plot.excluded, effXParam, plot.yParam, used, activeTest.nmrValues]);
+  }), [plot.atoms, plot.layerKey, d.instances, d.atomOptions, plot.excluded, effXField, plot.yField, used, activeTest.nmrValues]);
   const colorOf = (s) => seriesColor(cfg, s.key, series.findIndex((q) => q.key === s.key));
   const includedPts = (s) => s.pts.filter((p) => !p.excluded);
   const maxOf = (s) => { const v = includedPts(s).map((p) => p.y); return v.length ? Math.max(...v) : null; };
@@ -3196,7 +3158,7 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
     return null;
   };
   const fitOf = (s) => {
-    if (!plot.fitEnabled || is3D) return null;
+    if (!plot.fitEnabled || is3D || isHist) return null;
     const wpts = includedPts(s).filter((p) => p.x !== null).map((p) => {
       const sd = effSD(s.key, p);
       return { x: p.x, y: p.y, w: sd && sd > 0 ? 1 / (sd * sd) : 1 };
@@ -3273,7 +3235,7 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
       return row;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [d.instances, series, used, plot.manualSD, plot.useFixedSD, plot.fixedSDStr, plot.excluded]);
+  }, [d.instances, series, used, plot.manualSD, plot.useFixedSD, plot.fixedSDStr]);
   const numData = (s) => includedPts(s).filter((p) => p.x !== null).map((p) => ({ x: p.x, y: p.y, sd: effSD(s.key, p), name: p.name }));
   const fitData = (s) => {
     const fit = fits[s.key];
@@ -3295,7 +3257,7 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
     else el = <circle cx={cx} cy={cy} r={r} fill={color} />;
     return <g key={`d-${s.key}-${index}`}>{el}</g>;
   };
-  const xLab = cfg.xAxisLabel || `${effXParam}${xUnit ? ` (${xUnit})` : ''}`;
+  const xLab = cfg.xAxisLabel || `${xFieldLabel} (read from each instance)`;
   const yLab = cfg.yAxisLabel || `${plotLayer.label}${plotLayer.unit ? ` (${plotLayer.unit})` : ''}`;
   const refLines = (
     <>
@@ -3313,9 +3275,9 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
     </>
   );
   const paramKeys = useMemo(() => {
-    if (!plot.fitEnabled || !series.length || is3D) return [];
+    if (!plot.fitEnabled || is3D || isHist || !series.length) return [];
     return fitParamOptions(plot.fitModel, plot.customExpr);
-  }, [plot.fitEnabled, plot.fitModel, plot.customExpr, series, is3D]);
+  }, [plot.fitEnabled, plot.fitModel, plot.customExpr, series, is3D, isHist]);
   const [paramGraphVar, setParamGraphVar] = useState('');
   useEffect(() => { if (!paramKeys.includes(paramGraphVar)) setParamGraphVar(paramKeys[0] || ''); }, [paramKeys, paramGraphVar]);
   const paramData = useMemo(() => {
@@ -3348,34 +3310,34 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
             </select>
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold text-slate-500 uppercase">X axis (read from each condition instance)</label>
-            <select value={effXParam} onChange={(e) => set({ xParam: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
-              {d.expParams.map((p) => <option key={p.key} value={p.key}>{p.key}{p.unit ? ` (${p.unit})` : ''}{p.numeric ? '' : ' ⚠️ non-numeric'}</option>)}
+            <label className="text-[10px] font-bold text-slate-500 uppercase">X axis (Experimental Condition field, read from each instance)</label>
+            <select value={effXField} onChange={(e) => set({ xField: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
+              {fields.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
             </select>
           </div>
           <div className="flex flex-col gap-1">
             <label className="text-[10px] font-bold text-slate-500 uppercase">Type</label>
             <select value={plot.chartType || 'line'} onChange={(e) => set({ chartType: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
               <option value="line">Line / Scatter (zoomable)</option>
-              <option value="hist">Histogram (per condition)</option>
-              <option value="3d">3D (two parameters)</option>
+              <option value="hist">Histogram (per instance)</option>
+              <option value="3d">3D (two condition fields)</option>
             </select>
           </div>
           {is3D && (
             <div className="flex flex-col gap-1">
-              <label className="text-[10px] font-bold text-slate-500 uppercase">2nd parameter (Y of 3D)</label>
-              <select value={plot.yParam || ''} onChange={(e) => set({ yParam: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
+              <label className="text-[10px] font-bold text-slate-500 uppercase">2nd Experimental Condition field (Y of 3D)</label>
+              <select value={plot.yField || ''} onChange={(e) => set({ yField: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
                 <option value="">-- select --</option>
-                {d.expParams.filter((p) => p.key !== effXParam).map((p) => <option key={p.key} value={p.key}>{p.key}{p.unit ? ` (${p.unit})` : ''}</option>)}
+                {fields.filter((f) => f.key !== effXField).map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
               </select>
             </div>
           )}
-          {!is3D && (
+          {!is3D && !isHist && (
             <label className="flex items-center gap-2 text-xs font-bold text-slate-700 pb-1.5 cursor-pointer">
               <input type="checkbox" checked={plot.fitEnabled} onChange={(e) => set({ fitEnabled: e.target.checked })} className="w-4 h-4 accent-blue-600" /> Fit curve
             </label>
           )}
-          {plot.fitEnabled && !is3D && (
+          {plot.fitEnabled && !is3D && !isHist && (
             <div className="flex flex-col gap-1">
               <label className="text-[10px] font-bold text-slate-500 uppercase">Model</label>
               <div className="flex gap-2 items-center">
@@ -3395,13 +3357,14 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
             <button type="button" onClick={() => setShowCfg(!showCfg)} className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${showCfg ? 'bg-slate-200 border-slate-400 text-slate-900' : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'}`}>🎨 Graphical Parameters</button>
           </div>
         </div>
+        {/* instances used (the ones at the top of the page) */}
         <div className="flex flex-wrap items-center gap-2 bg-white border border-slate-200 rounded-lg p-2">
-          <span className="text-[10px] font-bold text-slate-500 uppercase">Condition instances used (from the top of the page):</span>
+          <span className="text-[10px] font-bold text-slate-500 uppercase">Instances used (from the top of the page):</span>
           {d.instances.map((inst) => (
             <label key={inst.id} className={`flex items-center gap-1.5 text-xs font-bold px-2 py-1 rounded-lg border cursor-pointer ${used[inst.id] === false ? 'bg-slate-100 border-slate-200 text-slate-400' : 'bg-blue-50 border-blue-200 text-blue-800'}`}>
               <input type="checkbox" checked={used[inst.id] !== false} onChange={() => toggleInstance(inst.id)} className="w-3.5 h-3.5 accent-blue-600" />
               {inst.name}
-              {effXParam && <span className="text-[9px] font-mono opacity-70">({inst.exp?.[effXParam] ?? '—'})</span>}
+              <span className="text-[9px] font-mono opacity-70">({xFieldLabel}: {getExpValue(inst, effXField) || '—'})</span>
             </label>
           ))}
         </div>
@@ -3475,20 +3438,20 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
               <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">Select at least one atom to plot.</div>
             ) : is3D ? (
               <div className="bg-white border border-slate-200 rounded-xl p-3" style={{ height: Math.max(340, cfg.height) }}>
-                <ThreeDScatter cfg={cfg} xLabel={effXParam} yLabel={plot.yParam || '—'} zLabel={plotLayer.label}
+                <ThreeDScatter cfg={cfg} xLabel={xFieldLabel} yLabel={fields.find((f) => f.key === plot.yField)?.label || '—'} zLabel={plotLayer.label}
                   seriesList={visibleSeries.map((s) => ({ key: s.key, label: s.label, color: colorOf(s), pts: includedPts(s).filter((p) => p.x !== null && p.y2 !== null).map((p) => ({ x: p.x, y: p.y2, z: p.y, name: p.name })) }))} />
               </div>
             ) : (
               <div className="select-none relative">
-                {zoom.isZoomed && (
+                {!isHist && zoom.isZoomed && (
                   <button type="button" onClick={zoom.reset} className="absolute top-2 right-2 z-10 text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>
                 )}
-                <div ref={chartRef} onMouseDown={zoom.onMouseDown} style={chartBoxStyle(cfg)} className="bg-white border border-slate-200 rounded-xl p-3">
+                <div ref={chartRef} onMouseDown={isHist ? undefined : zoom.onMouseDown} style={chartBoxStyle(cfg)} className="bg-white border border-slate-200 rounded-xl p-3">
                   <ResponsiveContainer width="100%" height="100%">
                     {isHist ? (
                       <BarChart data={catData} margin={{ top: 8, right: 16, bottom: 30, left: 12 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                        <XAxis dataKey="__condition" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} />} tickMargin={10} label={{ value: 'Condition', position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                        <XAxis dataKey="__condition" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} />} tickMargin={10} label={{ value: 'Instance', position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
                         <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={{ value: yLab, angle: -90, position: 'insideLeft', offset: 6, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
                         <Tooltip />
                         {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 10 }} />}
@@ -3530,10 +3493,10 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
                     )}
                   </ResponsiveContainer>
                 </div>
-                <p className="text-[10px] text-slate-400 mt-1">💡 Drag with the mouse across the graph to zoom into an X region.</p>
+                {!isHist && <p className="text-[10px] text-slate-400 mt-1">💡 Drag with the mouse across the graph to zoom into an X region.</p>}
               </div>
             )}
-            {plot.fitEnabled && series.length > 0 && !is3D && (
+            {plot.fitEnabled && !is3D && !isHist && series.length > 0 && (
               <div className="flex flex-col gap-4">
                 <div className="overflow-x-auto border border-slate-200 rounded-lg">
                   <table className="w-full text-xs text-left bg-white">
@@ -3567,7 +3530,7 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
                     </div>
                     <div style={{ height: Math.min(280, cfg.height), aspectRatio: String(cfg.aspect || 2) }}>
                       <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={paramData} margin={{ top: 10, right: 10, bottom: 25, left: 10 }}>
+                        <BarChart data={paramData} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} />
                           <XAxis dataKey="name" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={Math.max(9, cfg.fontSize - 2)} />} />
                           <YAxis tick={{ fontSize: Math.max(9, cfg.fontSize - 2) }} label={{ value: paramGraphVar, angle: -90, position: 'insideLeft', fontSize: cfg.fontSize, fill: '#64748b' }} />
@@ -3613,7 +3576,7 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
                     const sd = effSD(s.key, p);
                     return (
                       <div key={p.instId} className={`flex flex-col gap-1 p-1.5 rounded border ${p.excluded ? 'border-red-300 bg-red-50' : 'border-slate-200 bg-white'}`}>
-                        <span className="text-[9px] font-bold text-slate-500">{p.name}{p.x !== null ? ` (${effXParam}=${p.x})` : ' (no X)'}</span>
+                        <span className="text-[9px] font-bold text-slate-500">{p.name}{p.x !== null ? ` (${xFieldLabel}=${p.x})` : ' (no numeric X in this instance)'}</span>
                         <div className="flex items-center gap-1">
                           <span className={`text-[10px] font-mono ${p.excluded ? 'line-through text-slate-400' : 'text-slate-700'}`}>{p.y}</span>
                           <input type="number" step="0.01" value={(plot.manualSD[s.key] || {})[p.instId] ?? ''} onChange={(e) => setManualSD(s.key, p.instId, e.target.value)} placeholder="±SD" className="w-14 text-[10px] border border-slate-300 rounded p-0.5 text-center outline-none focus:border-orange-500" />
@@ -3647,7 +3610,7 @@ const FittingSection = ({ ctx }) => {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <span className="text-xs font-bold text-slate-500 uppercase">Condition plots — X values are read from the condition instances defined at the top of the page · zoomable · aspect ratio adjustable</span>
+        <span className="text-xs font-bold text-slate-500 uppercase">Condition plots — the X axis is an Experimental Condition field: its value is read from each instance at the top of the page · zoomable · aspect ratio adjustable</span>
         <button type="button" onClick={addPlot} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm">+ Add Condition Plot</button>
       </div>
       {plots.map((p) => (
@@ -3657,12 +3620,12 @@ const FittingSection = ({ ctx }) => {
   );
 };
 
-// ================= 4) ATOM PROFILES (zoomable + saved groups + sequence order) =================
+// ================= 4) ATOM PROFILES =================
 const defaultProfileCfg = (n) => ({
   id: makePlotId(), title: `Atom Profile ${n}`, atoms: [], chartType: 'bar', xOrder: 'sequence',
-  y1: { source: 'layer', layerKey: 'cs', xParam: '', fitModel: 'linear', customExpr: '', fitLayerKey: 'cs', param: 'slope' },
+  y1: { source: 'layer', layerKey: 'cs', xField: 'temperature', fitModel: 'linear', customExpr: '', fitLayerKey: 'cs', param: 'slope' },
   useY2: false,
-  y2: { source: 'layer', layerKey: 'cs', xParam: '', fitModel: 'linear', customExpr: '', fitLayerKey: 'cs', param: 'slope' },
+  y2: { source: 'layer', layerKey: 'cs', xField: 'temperature', fitModel: 'linear', customExpr: '', fitLayerKey: 'cs', param: 'slope' },
   style: { ...DEFAULT_CHART_STYLE, aspect: 2.4, height: 400 }
 });
 const AtomProfileCard = ({ ctx, d, prof, updateProf, removeProf, duplicateProf }) => {
@@ -3674,6 +3637,7 @@ const AtomProfileCard = ({ ctx, d, prof, updateProf, removeProf, duplicateProf }
   const set = (patch) => updateProf(prof.id, patch);
   const setCfg = (patch) => updateProf(prof.id, { style: { ...cfg, ...patch } });
   const setY = (which, patch) => set({ [which]: { ...prof[which], ...patch } });
+  const fields = d.fields;
   const filtered = d.atomOptions.filter((o) => !atomSearch.trim() || o.label.toLowerCase().includes(atomSearch.toLowerCase()));
   const toggleAtom = (key) => set({ atoms: prof.atoms.includes(key) ? prof.atoms.filter((k) => k !== key) : [...prof.atoms, key] });
   const presets = Array.isArray(activeTest.atomSelectionPresets) ? activeTest.atomSelectionPresets : [];
@@ -3707,15 +3671,15 @@ const AtomProfileCard = ({ ctx, d, prof, updateProf, removeProf, duplicateProf }
       const l = d.layers.find((x) => x.key === ycfg.layerKey);
       return l ? `${l.label}${l.unit ? ` (${l.unit})` : ''}` : ycfg.layerKey;
     }
-    return `fit ${ycfg.param} vs ${ycfg.xParam || '?'}`;
+    return `fit ${ycfg.param} vs ${fields.find((f) => f.key === ycfg.xField)?.label || ycfg.xField}`;
   };
   const resolveY = (ycfg, atomKey) => {
     if (!ycfg) return null;
     if (ycfg.source === 'layer') return parseManual(getInstanceValues(d.activeInstance, d.activeInstance && d.activeInstance.id === d.activeInstanceId, activeTest, ycfg.layerKey || 'cs')[atomKey]);
-    if (!ycfg.xParam) return null;
+    if (!ycfg.xField) return null;
     const pts = [];
     d.instances.forEach((inst) => {
-      const xv = parseManual(inst.exp?.[ycfg.xParam]);
+      const xv = parseManual(getExpValue(inst, ycfg.xField));
       const vals = getInstanceValues(inst, inst.id === d.activeInstanceId, activeTest, ycfg.fitLayerKey || 'cs');
       const yv = parseManual(vals[atomKey]);
       if (xv !== null && yv !== null) pts.push({ x: xv, y: yv });
@@ -3755,7 +3719,7 @@ const AtomProfileCard = ({ ctx, d, prof, updateProf, removeProf, duplicateProf }
         <label className="text-[9px] font-bold text-slate-500">Source</label>
         <select value={ycfg.source} onChange={(e) => setY(which, { source: e.target.value })} className="border border-slate-300 rounded px-2 py-1 text-xs bg-white">
           <option value="layer">Parameter Layer</option>
-          <option value="fit">Fit result (across conditions)</option>
+          <option value="fit">Fit result (across instances)</option>
         </select>
       </div>
       {ycfg.source === 'layer' ? (
@@ -3774,10 +3738,10 @@ const AtomProfileCard = ({ ctx, d, prof, updateProf, removeProf, duplicateProf }
             </select>
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-[9px] font-bold text-slate-500">Fit X (cond. param)</label>
-            <select value={ycfg.xParam || ''} onChange={(e) => setY(which, { xParam: e.target.value })} className="border border-slate-300 rounded px-2 py-1 text-xs bg-white">
+            <label className="text-[9px] font-bold text-slate-500">Fit X (condition field)</label>
+            <select value={ycfg.xField || ''} onChange={(e) => setY(which, { xField: e.target.value })} className="border border-slate-300 rounded px-2 py-1 text-xs bg-white">
               <option value="">--</option>
-              {d.expParams.filter((p) => p.numeric).map((p) => <option key={p.key} value={p.key}>{p.key}</option>)}
+              {fields.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
             </select>
           </div>
           <div className="flex flex-col gap-1">
@@ -3931,7 +3895,7 @@ const AtomProfilesSection = ({ ctx }) => {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <span className="text-xs font-bold text-slate-500 uppercase">Atom profiles — X = atoms · Y = parameter layer(s) or fitting results across the top-of-page conditions · zoomable · save atom groups · reorder by sequence</span>
+        <span className="text-xs font-bold text-slate-500 uppercase">Atom profiles — X = atoms · Y = parameter layer(s) or fitting results across the top-of-page instances · zoomable · save atom groups · reorder by sequence</span>
         <button type="button" onClick={addProf} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm">+ Add Atom Profile</button>
       </div>
       {profiles.map((p) => (
@@ -4002,7 +3966,7 @@ const SimulationsSection = ({ ctx }) => {
         <span className="text-xs font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded-lg px-3 py-1.5 w-fit">🎯 Highlighting: {selectionLabel(d, selectedKeys)}</span>
       )}
       <div className="text-xs font-bold text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 w-fit">
-        Spectra are simulated from the <span className="text-indigo-700">{d.activeInstance ? d.activeInstance.name : '—'}</span> condition's Chemical Shift layer.
+        Spectra are simulated from the <span className="text-indigo-700">{d.activeInstance ? d.activeInstance.name : '—'}</span> instance's Chemical Shift layer.
       </div>
       <div className="grid grid-cols-1 gap-4">
         <RangeBarChart title="Theoretical ¹H Ranges" ranges={d.ranges.ranges1H} domain={[0, 11]} ticks={Array.from({ length: 12 }, (_, i) => i)} xAxisLabel="¹H (ppm)" rowCount={d.uniqueTypes.length} rowLabels={d.uniqueTypes.map((c) => d.DB[c]?.code3 || c)} />
@@ -4028,15 +3992,115 @@ const SimulationsSection = ({ ctx }) => {
   );
 };
 
+// ================= 6) CLASSIFICATION (multiple classifications + operators from App.jsx) =================
+const ClassificationCard = ({ cls, update, remove, appOperators }) => {
+  const [manualOp, setManualOp] = useState('');
+  const toggleOperator = (name) => {
+    const cur = Array.isArray(cls.operators) ? cls.operators : [];
+    if (cur.includes(name)) update({ operators: cur.filter((o) => o !== name) });
+    else update({ operators: [...cur, name] });
+  };
+  const addManualOperator = () => {
+    const name = manualOp.trim();
+    if (!name) return;
+    const cur = Array.isArray(cls.operators) ? cls.operators : [];
+    if (!cur.includes(name)) update({ operators: [...cur, name] });
+    setManualOp('');
+  };
+  return (
+    <div className="border border-slate-200 rounded-xl p-4 bg-slate-50 flex flex-col gap-3">
+      <div className="flex flex-wrap gap-3 items-end">
+        <div className="flex flex-col gap-1 flex-1 min-w-[180px]">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">Classification type / label</label>
+          <input type="text" value={cls.type || ''} onChange={(e) => update({ type: e.target.value })} placeholder="e.g. Binding site, Folded state, Assigned residues…" className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white" />
+        </div>
+        <div className="flex flex-col gap-1 w-40">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">Date</label>
+          <input type="date" value={cls.date || ''} onChange={(e) => update({ date: e.target.value })} className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white" />
+        </div>
+        <button type="button" onClick={remove} className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold py-2 px-3 rounded-lg text-xs transition-colors">Remove</button>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">Description</label>
+          <textarea value={cls.description || ''} onChange={(e) => update({ description: e.target.value })} placeholder="Details of this classification…" className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white h-20" />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">Residues / atoms involved (optional)</label>
+          <input type="text" value={cls.residues || ''} onChange={(e) => update({ residues: e.target.value })} placeholder="e.g. Ala3–Gly9, HN of Lys12…" className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white" />
+        </div>
+      </div>
+      <div className="flex flex-col gap-2">
+        <label className="text-[10px] font-bold text-slate-500 uppercase">Operator(s) who did the experiment (from App.jsx — one or more)</label>
+        {appOperators.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            {appOperators.map((name) => {
+              const checked = Array.isArray(cls.operators) && cls.operators.includes(name);
+              return (
+                <label key={name} className={`flex items-center gap-1.5 text-xs font-bold px-2.5 py-1.5 rounded-lg border cursor-pointer transition-colors ${checked ? 'bg-blue-600 border-blue-700 text-white' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'}`}>
+                  <input type="checkbox" checked={checked} onChange={() => toggleOperator(name)} className="accent-blue-600" />
+                  {name}
+                </label>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="text-[10px] text-amber-600">⚠️ No operators found in App.jsx (pass them to the NMR page via ctx.operators).</p>
+        )}
+        <div className="flex gap-2 items-center">
+          <input type="text" value={manualOp} onChange={(e) => setManualOp(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addManualOperator(); } }} placeholder="Add operator name manually…" className="border border-slate-300 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-blue-500 bg-white w-56" />
+          <button type="button" onClick={addManualOperator} className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-3 py-1.5 rounded-lg text-xs">+ Add</button>
+        </div>
+        {Array.isArray(cls.operators) && cls.operators.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {cls.operators.map((name) => (
+              <span key={name} className="inline-flex items-center gap-1 bg-blue-50 border border-blue-200 text-blue-800 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                👤 {name}
+                <button type="button" onClick={() => toggleOperator(name)} className="text-blue-400 hover:text-red-600 font-black">×</button>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+export const ClassificationSection = ({ ctx }) => {
+  const { activeTest, updateActiveTest } = ctx;
+  const classifications = Array.isArray(activeTest.classifications) ? activeTest.classifications : [];
+  const appOperators = (Array.isArray(ctx?.operators) ? ctx.operators : []).map(opLabel).filter(Boolean);
+  const setAll = (next) => updateActiveTest({ classifications: next });
+  const addClassification = () => {
+    setAll([...classifications, {
+      id: `cls_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+      type: '', description: '', residues: '', operators: [],
+      date: new Date().toISOString().slice(0, 10)
+    }]);
+  };
+  const update = (id, patch) => setAll(classifications.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+  const remove = (id) => setAll(classifications.filter((c) => c.id !== id));
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <span className="text-xs font-bold text-slate-500 uppercase">More than one classification is allowed — each entry can list one or more operators (defined in App.jsx → Scientists/Operators).</span>
+        <button type="button" onClick={addClassification} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm">+ Add Classification</button>
+      </div>
+      {classifications.length === 0 ? (
+        <div className="text-center py-8 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">No classifications yet — add the first one.</div>
+      ) : (
+        classifications.map((cls) => (
+          <ClassificationCard key={cls.id} cls={cls} update={(patch) => update(cls.id, patch)} remove={() => remove(cls.id)} appOperators={appOperators} />
+        ))
+      )}
+    </div>
+  );
+};
+
 // ================= HELPERS FOR THE MAIN PROGRAM =================
-/* Operator name for the Classification section already present at the beginning of the page (main app).
-   Usage in the main app:  const operator = getOperatorName(ctx);  then store it in the classification record. */
 export const getOperatorName = (ctx) =>
   ctx?.userName || ctx?.user?.name || ctx?.user?.username || ctx?.currentUser ||
   ctx?.appDefinition?.userName || ctx?.settings?.userName || ctx?.definition?.userName || '';
-
-/* Toolbar to insert/manage tables inside the EXISTING "Comments and attachments" section (main app).
-   Place it next to that section's editor: it operates on the currently focused contentEditable. */
+/* Toolbar to insert/manage tables inside the EXISTING "Comments and attachments" section (main app). */
 export const CommentsTableEditor = ({ rows: rowsInit = 3, cols: colsInit = 3 }) => {
   const [rowsN, setRowsN] = useState(rowsInit);
   const [colsN, setColsN] = useState(colsInit);
@@ -4087,7 +4151,7 @@ export const CommentsTableEditor = ({ rows: rowsInit = 3, cols: colsInit = 3 }) 
   );
 };
 
-// ================= ALL (no Classification / Comments sections here) =================
+// ================= ALL =================
 export const All = ({ ctx }) => (
   <div className="flex flex-col gap-6">
     <CollapsibleSection title="Experiment Setup" icon="⚙️"><ExperimentSetupSection ctx={ctx} /></CollapsibleSection>
@@ -4096,6 +4160,7 @@ export const All = ({ ctx }) => (
     <CollapsibleSection title="Fitting" icon="📐"><FittingSection ctx={ctx} /></CollapsibleSection>
     <CollapsibleSection title="Atom Profiles" icon="🧬" defaultOpen={false}><AtomProfilesSection ctx={ctx} /></CollapsibleSection>
     <CollapsibleSection title="Simulations" icon="🧪" defaultOpen={false}><SimulationsSection ctx={ctx} /></CollapsibleSection>
+    <CollapsibleSection title="Classification" icon="🏷️" defaultOpen={false}><ClassificationSection ctx={ctx} /></CollapsibleSection>
   </div>
 );
 export const Setup = ExperimentSetupSection;
@@ -4103,15 +4168,17 @@ export const Data = DataSection;
 export const Fitting = FittingSection;
 export const AtomProfiles = AtomProfilesSection;
 export const Simulations = SimulationsSection;
+export const Classification = ClassificationSection;
 
 // ================= NOTEBOOK EXTRA =================
 export const NotebookExtra = ({ ctx, checkId }) => {
   const { activeTest } = ctx;
   const d = useNmrDerived(activeTest, ctx);
   if (checkId === 'cond') {
-    const exp = d.activeInstance?.exp || {};
-    const expStr = d.expParams.map((p) => (exp[p.key] !== undefined && exp[p.key] !== '' ? `${p.key}: ${exp[p.key]}${p.unit ? ' ' + p.unit : ''}` : '')).filter(Boolean).join(' | ');
-    return `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;"><b>Condition:</b> ${d.activeInstance ? d.activeInstance.name : 'N/A'} | ${expStr || 'No experimental parameters set'}</p>`;
+    const expStr = d.fields
+      .map((f) => { const v = getExpValue(d.activeInstance, f.key); return v !== '' ? `${f.label}: ${v}` : ''; })
+      .filter(Boolean).join(' | ');
+    return `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;"><b>Condition:</b> ${d.activeInstance ? d.activeInstance.name : 'N/A'} | ${expStr || 'No experimental condition values set'}</p>`;
   }
   if (checkId === 'seq') {
     return `<p style="font-size: 12px; color: #475569; margin-bottom: 12px;"><b>${d.typeLabel}:</b> <span style="font-family: monospace; background: #e2e8f0; padding: 2px 4px; border-radius: 4px;">${d.isPolymer ? activeTest.proteinSequence || 'N/A' : d.parsedSeq[0]?.name || 'N/A'}</span></p>`;
