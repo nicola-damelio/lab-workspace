@@ -19,6 +19,7 @@ import { StorageModals, StorageList, StorageDetail, BoxDetail } from './componen
 import { DefinitionsPanel } from './components/DefinitionsPanel';
 import { NMRFittingsTestRenderer } from './components/NMRFittingsTestRenderer';
 import { CloningTestRenderer } from './components/CloningTestRenderer';
+import { ProteinExpressionTestRenderer } from './components/ProteinExpressionTestRenderer';
 // App.jsx
 
 import {
@@ -2266,6 +2267,21 @@ export default function App() {
       };
     }
 
+if (customType === 'protein_expression') {
+      return {
+        ...baseTest,
+        type: 'protein_expression',
+        testCategory: 'Expression Optimization', // Default category
+        yieldData: [],
+        gelImages: [],
+        chromatogramRaw: '',
+        inductionMethod: '',
+        inductionTemp: '',
+        lysisBuffer: '',
+        columnType: ''
+      };
+    }
+
     if (customType === 'nmr-fittings') {
       const rows = 8;
       const cols = 12;
@@ -4465,6 +4481,21 @@ export default function App() {
   + Cloning
 </button>
 
+<button
+  onClick={() => {
+    const id = 't' + Date.now();
+    setTests((prev) => [
+      ...prev,
+      createEmptyTest(id, prev.length + 1, 'protein_expression')
+    ]);
+    setActiveTestId(id);
+    setCurrentModule('active-test');
+  }}
+  className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+>
+  + Protein Exp.
+</button>
+
                       </div>
                     </div>
 
@@ -5475,6 +5506,25 @@ if (activeTest.type === 'cloning') {
     />
   );
 }
+
+if (activeTest.type === 'protein_expression') {
+  return (
+    <ProteinExpressionTestRenderer
+      activeTest={activeTest}
+      updateActiveTest={updateActiveTest}
+      TestHeader={TestHeader}
+      datasetProtocols={datasetProtocols}
+      jumpToProtocol={jumpToProtocolFn}
+      allCmpds={allCmpds}
+      allCellLines={allCellLines}
+      customFields={customFields}
+      testCategories={testCategories}
+      operators={operators}
+      instances={siblingTests}
+    />
+  );
+}
+
                 if (
                   activeTest.type.startsWith('plate-') &&
                   activeTest.type !== 'plate-9x9box'
