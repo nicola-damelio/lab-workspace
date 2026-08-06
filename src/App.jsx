@@ -33,8 +33,267 @@ const CUSTOM_FIELD_TAB_OPTIONS = [
   { value: 'all', label: 'All tabs' },
   { value: 'plate', label: 'Plate' },
   { value: 'nmr', label: 'NMR' },
-  { value: 'cd', label: 'CD' }
+  { value: 'cd', label: 'CD' },
+  { value: 'nmr-fittings', label: 'NMR Fittings' },
+  { value: 'cloning', label: 'Cloning' },
+  { value: 'protein_expression', label: 'Protein Expression' }
 ];
+
+
+/* =========================================================
+   CELL LINE DEFINITION SECTION
+========================================================= */
+const CellLineDefinitionSection = ({
+  cellLineOptions = [],
+  customCellLines = [],
+  setCustomCellLines,
+  cellLineMeta = {},
+  setCellLineMeta,
+  selectedId,
+  onSelect
+}) => {
+  const [selectedName, setSelectedName] = useState('');
+  const [newName, setNewName] = useState('');
+  const [organism, setOrganism] = useState('');
+  const [tissue, setTissue] = useState('');
+  const [cultureMedium, setCultureMedium] = useState('');
+  const [notes, setNotes] = useState('');
+
+  // Sync with external selection from the Library Directory
+  useEffect(() => {
+    if (selectedId) chooseCellLine(selectedId);
+  }, [selectedId]);
+
+  const existingNames = useMemo(() => {
+    const names = new Set([
+      ...cellLineOptions.filter(Boolean),
+      ...Object.keys(cellLineMeta || {})
+    ]);
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [cellLineOptions, cellLineMeta]);
+
+  const chooseCellLine = (name) => {
+    if (!name) {
+      setSelectedName('');
+      setNewName('');
+      return;
+    }
+    const meta = cellLineMeta[name] || {};
+    setSelectedName(name);
+    setNewName('');
+    setOrganism(meta.organism || '');
+    setTissue(meta.tissue || '');
+    setCultureMedium(meta.cultureMedium || '');
+    setNotes(meta.notes || '');
+    if (onSelect) onSelect(name);
+  };
+
+  const saveCellLine = () => {
+    const name = selectedName || newName.trim();
+    if (!name) {
+      alert('Please choose an existing cell line or enter a new name.');
+      return;
+    }
+
+    const meta = {
+      name,
+      organism,
+      tissue,
+      cultureMedium,
+      notes,
+      updatedAt: Date.now()
+    };
+
+    setCellLineMeta((prev) => ({
+      ...prev,
+      [name]: { ...(prev[name] || {}), ...meta }
+    }));
+
+    if (!customCellLines.includes(name)) {
+      setCustomCellLines((prev) => [...prev, name]);
+    }
+    setSelectedName(name);
+  };
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 mb-4">
+        <div className="lg:col-span-6">
+          <label className={CALC_LABEL_CLS}>Existing Cell Line</label>
+          <select value={selectedName} onChange={(e) => chooseCellLine(e.target.value)} className={CALC_INPUT_CLS}>
+            <option value="">New cell line...</option>
+            {existingNames.map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+        </div>
+        <div className="lg:col-span-6">
+          <label className={CALC_LABEL_CLS}>New Cell Line Name</label>
+          <input type="text" value={selectedName ? '' : newName} disabled={!!selectedName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. HEK293T" className={`${CALC_INPUT_CLS} disabled:bg-slate-50`} />
+        </div>
+        <div className="lg:col-span-4">
+          <label className={CALC_LABEL_CLS}>Organism</label>
+          <input type="text" value={organism} onChange={(e) => setOrganism(e.target.value)} placeholder="e.g. Homo sapiens" className={CALC_INPUT_CLS} />
+        </div>
+        <div className="lg:col-span-4">
+          <label className={CALC_LABEL_CLS}>Tissue / Disease</label>
+          <input type="text" value={tissue} onChange={(e) => setTissue(e.target.value)} placeholder="e.g. Kidney / Embryonic" className={CALC_INPUT_CLS} />
+        </div>
+        <div className="lg:col-span-4">
+          <label className={CALC_LABEL_CLS}>Culture Medium</label>
+          <input type="text" value={cultureMedium} onChange={(e) => setCultureMedium(e.target.value)} placeholder="e.g. DMEM + 10% FBS" className={CALC_INPUT_CLS} />
+        </div>
+        <div className="lg:col-span-12">
+          <label className={CALC_LABEL_CLS}>Additional Notes</label>
+          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Growth conditions, morphology, etc." className={`${CALC_INPUT_CLS} h-20`} />
+        </div>
+        <div className="lg:col-span-12 flex justify-end">
+          <button type="button" onClick={saveCellLine} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm shadow-sm transition-colors">
+            Save Cell Line
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* =========================================================
+   PLASMID DEFINITION SECTION
+========================================================= */
+const PlasmidDefinitionSection = ({
+  plasmidMeta = {},
+  setPlasmidMeta,
+  selectedId,
+  onSelect
+}) => {
+  const [selectedName, setSelectedName] = useState('');
+  const [newName, setNewName] = useState('');
+  const [backbone, setBackbone] = useState('');
+  const [promoter, setPromoter] = useState('');
+  const [marker, setMarker] = useState('');
+  const [insertSequence, setInsertSequence] = useState('');
+
+  useEffect(() => {
+    if (selectedId) choosePlasmid(selectedId);
+  }, [selectedId]);
+
+  const existingNames = useMemo(() => Object.keys(plasmidMeta).sort(), [plasmidMeta]);
+
+  const choosePlasmid = (name) => {
+    if (!name) {
+      setSelectedName('');
+      setNewName('');
+      return;
+    }
+    const meta = plasmidMeta[name] || {};
+    setSelectedName(name);
+    setNewName('');
+    setBackbone(meta.backbone || '');
+    setPromoter(meta.promoter || '');
+    setMarker(meta.marker || '');
+    setInsertSequence(meta.insertSequence || '');
+    if (onSelect) onSelect(name);
+  };
+
+  const savePlasmid = () => {
+    const name = selectedName || newName.trim();
+    if (!name) return alert('Please enter a plasmid name.');
+
+    setPlasmidMeta((prev) => ({
+      ...prev,
+      [name]: { name, backbone, promoter, marker, insertSequence, updatedAt: Date.now() }
+    }));
+    setSelectedName(name);
+  };
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 mb-4">
+        <div className="lg:col-span-6">
+          <label className={CALC_LABEL_CLS}>Existing Plasmid</label>
+          <select value={selectedName} onChange={(e) => choosePlasmid(e.target.value)} className={CALC_INPUT_CLS}>
+            <option value="">New plasmid...</option>
+            {existingNames.map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </div>
+        <div className="lg:col-span-6">
+          <label className={CALC_LABEL_CLS}>New Plasmid Name</label>
+          <input type="text" value={selectedName ? '' : newName} disabled={!!selectedName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. pEGFP-C1" className={`${CALC_INPUT_CLS} disabled:bg-slate-50`} />
+        </div>
+        <div className="lg:col-span-4">
+          <label className={CALC_LABEL_CLS}>Backbone</label>
+          <input type="text" value={backbone} onChange={(e) => setBackbone(e.target.value)} placeholder="e.g. pUC19" className={CALC_INPUT_CLS} />
+        </div>
+        <div className="lg:col-span-4">
+          <label className={CALC_LABEL_CLS}>Promoter</label>
+          <input type="text" value={promoter} onChange={(e) => setPromoter(e.target.value)} placeholder="e.g. CMV, T7" className={CALC_INPUT_CLS} />
+        </div>
+        <div className="lg:col-span-4">
+          <label className={CALC_LABEL_CLS}>Resistance Marker</label>
+          <input type="text" value={marker} onChange={(e) => setMarker(e.target.value)} placeholder="e.g. Ampicillin" className={CALC_INPUT_CLS} />
+        </div>
+        <div className="lg:col-span-12">
+          <label className={CALC_LABEL_CLS}>Insert Sequence (DNA)</label>
+          <textarea value={insertSequence} onChange={(e) => setInsertSequence(e.target.value)} placeholder="ATGC..." className={`${CALC_INPUT_CLS} h-24 font-mono`} />
+        </div>
+        <div className="lg:col-span-12 flex justify-end">
+          <button type="button" onClick={savePlasmid} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm shadow-sm transition-colors">
+            Save Plasmid
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* =========================================================
+   LIBRARY DIRECTORY
+========================================================= */
+const LibraryDirectory = ({ compoundMeta, cellLineMeta, plasmidMeta, onSelectResource }) => {
+  const compounds = Object.keys(compoundMeta || {});
+  const cellLines = Object.keys(cellLineMeta || {});
+  const plasmids = Object.keys(plasmidMeta || {});
+
+  const renderBadge = (label, type, onClick) => (
+    <button
+      key={label}
+      onClick={() => onClick(label, type)}
+      className="text-xs bg-slate-100 hover:bg-blue-100 border border-slate-300 text-slate-700 font-semibold px-3 py-1.5 rounded-full transition-colors m-1"
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-4">
+      <h3 className="text-sm font-bold text-slate-700 uppercase mb-2 border-b pb-2">
+        Defined Resources Library
+      </h3>
+      
+      <div>
+        <h4 className="text-xs font-bold text-slate-500 mb-2">Compounds ({compounds.length})</h4>
+        <div className="flex flex-wrap">
+          {compounds.length ? compounds.map(c => renderBadge(c, 'compound', onSelectResource)) : <span className="text-xs text-slate-400 italic">No compounds defined.</span>}
+        </div>
+      </div>
+
+      <div>
+        <h4 className="text-xs font-bold text-slate-500 mb-2 mt-4">Cell Lines ({cellLines.length})</h4>
+        <div className="flex flex-wrap">
+          {cellLines.length ? cellLines.map(c => renderBadge(c, 'cellLine', onSelectResource)) : <span className="text-xs text-slate-400 italic">No cell lines defined.</span>}
+        </div>
+      </div>
+
+      <div>
+        <h4 className="text-xs font-bold text-slate-500 mb-2 mt-4">Plasmids ({plasmids.length})</h4>
+        <div className="flex flex-wrap">
+          {plasmids.length ? plasmids.map(p => renderBadge(p, 'plasmid', onSelectResource)) : <span className="text-xs text-slate-400 italic">No plasmids defined.</span>}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 
 const normalizeCustomFields = (fields) => {
   if (!Array.isArray(fields)) return [];
@@ -2214,7 +2473,19 @@ export default function App() {
         }
       };
     }
-
+if (customType === 'cloning') {
+  return {
+    ...baseTest,
+    type: 'cloning',
+    testCategory: 'Vector Construction',
+    pcrProgram: [],
+    reactionMix: [],
+    dnaQuantification: [],
+    gelImages: [],
+    uvSpectra: [],
+    sim: null
+  };
+}
     if (customType === 'nmr') {
       return {
         ...baseTest,
@@ -2376,6 +2647,9 @@ if (customType === 'protein_expression') {
   const [customFields, setCustomFields] = useState([]);
   const [compoundMeta, setCompoundMeta] = useState({});
   const [calculationEntries, setCalculationEntries] = useState({});
+  const [cellLineMeta, setCellLineMeta] = useState({});
+  const [plasmidMeta, setPlasmidMeta] = useState({});
+  const [activeLibrarySelection, setActiveLibrarySelection] = useState({ type: null, id: null });
   const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth > 768);
   const [storages, setStorages] = useState([]);
   const [activeStorageId, setActiveStorageId] = useState(null);
@@ -4122,67 +4396,61 @@ if (customType === 'protein_expression') {
               </div>
             )}
 
+// PASTE THIS NEW SECTION
             {currentModule === 'definitions' && (
               <div className="h-full min-h-0 overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
                 <div className="max-w-6xl mx-auto flex flex-col gap-4 pb-10">
-                  <CollapsibleSection
-                    title="Scientists / Operators"
-                    subtitle="Add scientist name and surname."
-                    defaultOpen={true}
-                  >
-                    <ScientistsOperatorsManager
-                      operators={operators}
-                      setOperators={setOperators}
+                  
+                  <CollapsibleSection title="Library Directory" subtitle="Click any item to view or edit its full details." defaultOpen={true}>
+                    <LibraryDirectory 
+                      compoundMeta={compoundMeta}
+                      cellLineMeta={cellLineMeta}
+                      plasmidMeta={plasmidMeta}
+                      onSelectResource={(id, type) => setActiveLibrarySelection({ id, type })}
                     />
                   </CollapsibleSection>
 
-                  <CollapsibleSection
-                    title="Compound Sequence / Structure"
-                    subtitle="Define sequence, SMILES, modifications, MW, and DNA generation."
-                    defaultOpen={true}
-                  >
+                  <CollapsibleSection title="Compound Sequence / Structure" subtitle="Define sequence, SMILES, modifications, MW." defaultOpen={activeLibrarySelection.type === 'compound'}>
                     <CompoundDefinitionSection
                       compoundOptions={allCmpds}
                       customCmpds={customCmpds}
                       setCustomCmpds={setCustomCmpds}
                       compoundMeta={compoundMeta}
                       setCompoundMeta={setCompoundMeta}
+                      selectedId={activeLibrarySelection.type === 'compound' ? activeLibrarySelection.id : null}
+                      onSelect={(id) => setActiveLibrarySelection({ id, type: 'compound' })}
                     />
                   </CollapsibleSection>
 
-                  <CollapsibleSection
-                    title="Definitions & Labels"
-                    subtitle="Cell lines, categories, colors, and labels."
-                    defaultOpen={false}
-                  >
-                    <DefinitionsPanel
-                      customCmpds={customCmpds}
-                      setCustomCmpds={setCustomCmpds}
+                  <CollapsibleSection title="Cell Line Definitions" subtitle="Define organism, tissue, and culture medium." defaultOpen={activeLibrarySelection.type === 'cellLine'}>
+                    <CellLineDefinitionSection
+                      cellLineOptions={allCellLines}
                       customCellLines={customCellLines}
                       setCustomCellLines={setCustomCellLines}
-                      testCategories={testCategories}
-                      setTestCategories={setTestCategories}
-                      protocolCategories={protocolCategories}
-                      setProtocolCategories={setProtocolCategories}
-                      customFields={customFields}
-                      setCustomFields={handleSetCustomFields}
-                      customFieldTabOptions={CUSTOM_FIELD_TAB_OPTIONS}
-                      cmpColors={cmpColors}
-                      setCmpColors={setCmpColors}
-                      handlePrint={handlePrint}
+                      cellLineMeta={cellLineMeta}
+                      setCellLineMeta={setCellLineMeta}
+                      selectedId={activeLibrarySelection.type === 'cellLine' ? activeLibrarySelection.id : null}
+                      onSelect={(id) => setActiveLibrarySelection({ id, type: 'cellLine' })}
                     />
                   </CollapsibleSection>
 
-                  <CollapsibleSection
-                    title="Custom Metadata Fields"
-                    subtitle="Collapsed by default. Add custom fields for plate, NMR, CD, or all tabs."
-                    defaultOpen={false}
-                  >
-                    <CustomMetadataFieldsManager
-                      customFields={customFields}
-                      setCustomFields={handleSetCustomFields}
+                  <CollapsibleSection title="Plasmid Definitions" subtitle="Define backbone, promoters, resistance, and sequences." defaultOpen={activeLibrarySelection.type === 'plasmid'}>
+                    <PlasmidDefinitionSection
+                      plasmidMeta={plasmidMeta}
+                      setPlasmidMeta={setPlasmidMeta}
+                      selectedId={activeLibrarySelection.type === 'plasmid' ? activeLibrarySelection.id : null}
+                      onSelect={(id) => setActiveLibrarySelection({ id, type: 'plasmid' })}
                     />
                   </CollapsibleSection>
+
+                  <CollapsibleSection title="Scientists / Operators" subtitle="Add scientist name and surname." defaultOpen={false}>
+                    <ScientistsOperatorsManager operators={operators} setOperators={setOperators} />
+                  </CollapsibleSection>
+
+                  <CollapsibleSection title="Custom Metadata Fields" subtitle="Add custom fields for plate, NMR, CD, Cloning, or all tabs." defaultOpen={false}>
+                    <CustomMetadataFieldsManager customFields={customFields} setCustomFields={handleSetCustomFields} />
+                  </CollapsibleSection>
+
                 </div>
               </div>
             )}
@@ -5484,25 +5752,6 @@ if (activeTest.type === 'nmr-fittings') {
       setAppClipboard={setAppClipboard}
       datasetProtocols={datasetProtocols}
       jumpToProtocol={jumpToProtocolFn}
-    />
-  );
-}
-if (activeTest.type === 'cloning') {
-  return (
-    <TestShellRenderer
-      config={CLONING_TAB_CONFIG}
-      custom={{
-        Data: CloningDataSection
-      }}
-      activeTest={activeTest}
-      updateActiveTest={updateActiveTest}
-      TestHeader={TestHeader}
-      datasetProtocols={datasetProtocols}
-      jumpToProtocol={jumpToProtocolFn}
-      allCmpds={allCmpds}
-      allCellLines={allCellLines}
-      customFields={customFields}
-      testCategories={testCategories}
     />
   );
 }
