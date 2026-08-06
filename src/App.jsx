@@ -768,12 +768,32 @@ const HowManyUlForAllExperiments = ({ mw, data, onChange }) => {
         </CalcField>
       </div>
 
+      <div className="md:col-span-6 flex items-end mt-2">
+        <div className="w-full">
+          <CalcField label="Total Volume Needed">
+            <div className="w-full border border-slate-200 bg-slate-50 rounded-lg px-3 py-2 text-sm font-bold text-slate-700">
+              {calcFmt(totalUl)} µL
+            </div>
+          </CalcField>
+        </div>
+      </div>
+
+      <div className="md:col-span-6 flex items-end mt-2">
+        <div className="w-full">
+          <CalcField label="Total Compound Needed">
+            <div className="w-full border border-slate-200 bg-slate-50 rounded-lg px-3 py-2 text-sm font-bold text-slate-700">
+              {totalMg ? `${calcFmt(totalMg)} mg` : 'MW required'}
+            </div>
+          </CalcField>
+        </div>
+      </div>
+
       <div className="md:col-span-12">
         <CalcResultBox ok={true}>
           Total sample volume = {calcFmt(totalUl)} µL
           {totalMg
             ? `. At the selected concentration, compound needed = ${calcFmt(totalMg)} mg.`
-            : '.'}
+            : '. Provide MW and concentration to calculate milligrams.'}
         </CalcResultBox>
       </div>
     </div>
@@ -1742,23 +1762,16 @@ const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => 
 };
 
 /* =========================================================
-   SCIENTISTS / OPERATORS & MOLECULES MANAGER
+   SCIENTISTS / OPERATORS MANAGER
 ========================================================= */
 
-const NMROperatorsAndMoleculesManager = ({
+const ScientistsOperatorsManager = ({
   operators = [],
-  setOperators,
-  molecules = [],
-  setMolecules
+  setOperators
 }) => {
   const [operatorDraft, setOperatorDraft] = useState({
     name: '',
     surname: ''
-  });
-
-  const [moleculeDraft, setMoleculeDraft] = useState({
-    name: '',
-    atoms: ''
   });
 
   const getOperatorLabel = (op) => {
@@ -1789,48 +1802,6 @@ const NMROperatorsAndMoleculesManager = ({
 
   const removeOperator = (label) => {
     setOperators((prev) => prev.filter((op) => getOperatorLabel(op) !== label));
-  };
-
-  const addMolecule = () => {
-    const name = moleculeDraft.name.trim();
-
-    const atoms = moleculeDraft.atoms
-      .split(',')
-      .map((a) => a.trim())
-      .filter(Boolean);
-
-    if (!name) {
-      alert('Please enter a molecule name.');
-      return;
-    }
-
-    if (atoms.length === 0) {
-      alert('Please enter at least one atom.');
-      return;
-    }
-
-    if (molecules.some((m) => m.name.toLowerCase() === name.toLowerCase())) {
-      alert('A molecule with this name already exists.');
-      return;
-    }
-
-    setMolecules((prev) => [
-      ...prev,
-      {
-        id: `mol_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        name,
-        atoms
-      }
-    ]);
-
-    setMoleculeDraft({
-      name: '',
-      atoms: ''
-    });
-  };
-
-  const removeMolecule = (id) => {
-    setMolecules((prev) => prev.filter((m) => m.id !== id));
   };
 
   return (
@@ -1922,90 +1893,6 @@ const NMROperatorsAndMoleculesManager = ({
                 </span>
               );
             })
-          )}
-        </div>
-      </div>
-
-      <div>
-        <h3 className="text-sm font-bold text-slate-700 uppercase mb-3">
-          Molecules & Atoms
-        </h3>
-
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-3 mb-4">
-          <div className="md:col-span-3">
-            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-              Molecule Name
-            </label>
-
-            <input
-              type="text"
-              value={moleculeDraft.name}
-              onChange={(e) =>
-                setMoleculeDraft((prev) => ({
-                  ...prev,
-                  name: e.target.value
-                }))
-              }
-              placeholder="e.g. Molecule X"
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
-            />
-          </div>
-
-          <div className="md:col-span-6">
-            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-              Atoms, comma separated
-            </label>
-
-            <input
-              type="text"
-              value={moleculeDraft.atoms}
-              onChange={(e) =>
-                setMoleculeDraft((prev) => ({
-                  ...prev,
-                  atoms: e.target.value
-                }))
-              }
-              placeholder="e.g. H1, H2, N-H, C5"
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
-            />
-          </div>
-
-          <div className="md:col-span-3 flex items-end">
-            <button
-              type="button"
-              onClick={addMolecule}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm shadow-sm transition-colors"
-            >
-              Add Molecule
-            </button>
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-3">
-          {molecules.length === 0 ? (
-            <div className="text-sm text-slate-400 italic bg-slate-50 border border-dashed border-slate-300 rounded-lg p-4">
-              No molecules defined.
-            </div>
-          ) : (
-            molecules.map((mol) => (
-              <div
-                key={mol.id}
-                className="border border-slate-200 rounded-lg p-3 bg-slate-50 flex flex-col md:flex-row md:items-center justify-between gap-2"
-              >
-                <div>
-                  <div className="text-sm font-bold text-slate-800">{mol.name}</div>
-                  <div className="text-xs text-slate-500">{mol.atoms.join(', ')}</div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => removeMolecule(mol.id)}
-                  className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold py-2 px-4 rounded-lg text-sm transition-colors"
-                >
-                  Remove
-                </button>
-              </div>
-            ))
           )}
         </div>
       </div>
@@ -4214,9 +4101,34 @@ export default function App() {
               <div className="h-full min-h-0 overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
                 <div className="max-w-6xl mx-auto flex flex-col gap-4 pb-10">
                   <CollapsibleSection
-                    title="Definitions & Labels"
-                    subtitle="Compounds / sample libraries, cell lines, categories, colors, and labels."
+                    title="Scientists / Operators"
+                    subtitle="Add scientist name and surname."
                     defaultOpen={true}
+                  >
+                    <ScientistsOperatorsManager
+                      operators={operators}
+                      setOperators={setOperators}
+                    />
+                  </CollapsibleSection>
+
+                  <CollapsibleSection
+                    title="Compound Sequence / Structure"
+                    subtitle="Define sequence, SMILES, modifications, MW, and DNA generation."
+                    defaultOpen={true}
+                  >
+                    <CompoundDefinitionSection
+                      compoundOptions={allCmpds}
+                      customCmpds={customCmpds}
+                      setCustomCmpds={setCustomCmpds}
+                      compoundMeta={compoundMeta}
+                      setCompoundMeta={setCompoundMeta}
+                    />
+                  </CollapsibleSection>
+
+                  <CollapsibleSection
+                    title="Definitions & Labels"
+                    subtitle="Cell lines, categories, colors, and labels."
+                    defaultOpen={false}
                   >
                     <DefinitionsPanel
                       customCmpds={customCmpds}
@@ -4237,20 +4149,6 @@ export default function App() {
                   </CollapsibleSection>
 
                   <CollapsibleSection
-                    title="Compound Sequence / Structure"
-                    subtitle="Collapsed by default. Define sequence, SMILES, modifications, MW, and DNA generation."
-                    defaultOpen={false}
-                  >
-                    <CompoundDefinitionSection
-                      compoundOptions={allCmpds}
-                      customCmpds={customCmpds}
-                      setCustomCmpds={setCustomCmpds}
-                      compoundMeta={compoundMeta}
-                      setCompoundMeta={setCompoundMeta}
-                    />
-                  </CollapsibleSection>
-
-                  <CollapsibleSection
                     title="Custom Metadata Fields"
                     subtitle="Collapsed by default. Add custom fields for plate, NMR, CD, or all tabs."
                     defaultOpen={false}
@@ -4258,19 +4156,6 @@ export default function App() {
                     <CustomMetadataFieldsManager
                       customFields={customFields}
                       setCustomFields={handleSetCustomFields}
-                    />
-                  </CollapsibleSection>
-
-                  <CollapsibleSection
-                    title="Scientists / Operators & Molecules"
-                    subtitle="Add scientist name and surname, plus molecules/atoms for NMR fittings."
-                    defaultOpen={false}
-                  >
-                    <NMROperatorsAndMoleculesManager
-                      operators={operators}
-                      setOperators={setOperators}
-                      molecules={molecules}
-                      setMolecules={setMolecules}
                     />
                   </CollapsibleSection>
                 </div>
