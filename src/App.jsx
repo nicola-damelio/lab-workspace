@@ -10,7 +10,6 @@ import {
   parsePayload,
   BOX_ROW_LABELS
 } from './data/constants';
-
 import { NMRTestRenderer } from './components/NMRTestRenderer';
 import { PlateTestRenderer } from './components/PlateTestRenderer';
 import { CDTestRenderer } from './components/CDTestRenderer';
@@ -65,6 +64,1346 @@ const normalizeCustomFields = (fields) => {
     };
   });
 };
+
+/* =========================================================
+   MOLECULE / CALCULATION UTILITIES
+   ========================================================= */
+
+const WATER_MASS = 18.01528;
+
+const AA_MASS = {
+  A: 71.0779,
+  R: 156.1857,
+  N: 114.1026,
+  D: 115.0874,
+  C: 103.1429,
+  E: 129.114,
+  Q: 128.1292,
+  G: 57.0513,
+  H: 137.1393,
+  I: 113.1576,
+  L: 113.1576,
+  K: 128.1723,
+  M: 131.1961,
+  F: 147.1739,
+  P: 97.1152,
+  S: 87.0773,
+  T: 101.1039,
+  W: 186.2099,
+  Y: 163.1733,
+  V: 99.1311
+};
+
+const DNA_RESIDUE_MASS = {
+  A: 313.209,
+  T: 304.196,
+  C: 289.183,
+  G: 329.212
+};
+
+const RNA_RESIDUE_MASS = {
+  A: 329.209,
+  U: 306.169,
+  C: 305.183,
+  G: 345.212
+};
+
+const POLY_ONE_LETTER = {
+  G: { label: 'Glucose', mass: 162.1404 },
+  M: { label: 'Mannose', mass: 162.1404 },
+  A: { label: 'Galactose', mass: 162.1404 },
+  F: { label: 'Fucose', mass: 146.1404 },
+  X: { label: 'Xylose', mass: 132.1242 },
+  N: { label: 'HexNAc', mass: 203.19 },
+  S: { label: 'Sialic acid', mass: 291.26 }
+};
+
+const POLY_TOKENS = {
+  GLC: 162.1404,
+  GLUCOSE: 162.1404,
+  MAN: 162.1404,
+  MANNOSE: 162.1404,
+  GAL: 162.1404,
+  GALACTOSE: 162.1404,
+  FUC: 146.1404,
+  FUCOSE: 146.1404,
+  XYL: 132.1242,
+  XYLOSE: 132.1242,
+  HEX: 162.1404,
+  HEXNAC: 203.19,
+  GLCNAC: 203.19,
+  GALNAC: 203.19,
+  NEUAC: 291.26,
+  SIA: 291.26,
+  SIALICACID: 291.26
+};
+
+const MODIFICATIONS = [
+  {
+    id: 'acetylation',
+    label: 'Acetylation',
+    delta: 42.0106,
+    aliases: ['ac', 'acetyl']
+  },
+  {
+    id: 'acylation',
+    label: 'Acylation',
+    delta: 42.0106,
+    aliases: ['acyl'],
+    note: 'Default acetyl-like mass. Replace with specific acyl mass if needed.'
+  },
+  {
+    id: 'phosphorylation',
+    label: 'Phosphorylation',
+    delta: 79.9664,
+    aliases: ['phos', 'p']
+  },
+  {
+    id: 'amidation',
+    label: 'Amidation',
+    delta: -0.984,
+    aliases: ['amide', 'nh2']
+  },
+  {
+    id: 'methylation',
+    label: 'Methylation',
+    delta: 14.0157,
+    aliases: ['me']
+  },
+  {
+    id: 'dimethylation',
+    label: 'Dimethylation',
+    delta: 28.0313,
+    aliases: ['me2']
+  },
+  {
+    id: 'trimethylation',
+    label: 'Trimethylation',
+    delta: 42.047,
+    aliases: ['me3']
+  },
+  {
+    id: 'formylation',
+    label: 'Formylation',
+    delta: 27.9949,
+    aliases: ['formyl']
+  },
+  {
+    id: 'succinylation',
+    label: 'Succinylation',
+    delta: 100.016,
+    aliases: ['succinyl']
+  },
+  {
+    id: 'palmitoylation',
+    label: 'Palmitoylation',
+    delta: 238.2297,
+    aliases: ['palmitoyl']
+  },
+  {
+    id: 'biotinylation',
+    label: 'Biotinylation',
+    delta: 226.0779,
+    aliases: ['biotin']
+  }
+];
+
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+const normalizeKey = (s) => String(s || '').toLowerCase().replace(/[\s_-]+/g, '');
+
+const parseModifications = (input = '') => {
+  if (!input) return [];
+
+  return String(input)
+    .split(/[,;\n]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .flatMap((token) => {
+      const match = token.match(/^(.*?)(?:[:*x](\d+))?$/i);
+      const rawName = (match?.[1] || token).trim();
+      const parsedCount = parseInt(match?.[2] || '1', 10);
+      const count = Number.isFinite(parsedCount) && parsedCount >= 0 ? parsedCount : 1;
+
+      const norm = normalizeKey(rawName);
+
+      const found = MODIFICATIONS.find((m) => {
+        const idNorm = normalizeKey(m.id);
+        const labelNorm = normalizeKey(m.label);
+        const aliasNorms = (m.aliases || []).map(normalizeKey);
+        return idNorm === norm || labelNorm === norm || aliasNorms.includes(norm);
+      });
+
+      return Array.from({ length: count }, () => {
+        if (found) {
+          return {
+            label: found.label,
+            delta: found.delta,
+            known: true
+          };
+        }
+
+        return {
+          label: rawName,
+          delta: 0,
+          known: false
+        };
+      });
+    });
+};
+
+const modificationMass = (mods = []) => {
+  return mods.reduce((sum, m) => sum + (Number(m.delta) || 0), 0);
+};
+
+const calculateSequenceInfo = ({ type = 'protein', sequence = '', modifications = '' }) => {
+  const mods = parseModifications(modifications);
+  const modMass = modificationMass(mods);
+
+  if (type === 'protein') {
+    const clean = String(sequence || '')
+      .toUpperCase()
+      .replace(/\s/g, '');
+
+    const letters = clean.split('').filter(Boolean);
+    const unknown = [];
+
+    let mass = WATER_MASS + modMass;
+
+    letters.forEach((ch) => {
+      if (ch === '*') return;
+      if (AA_MASS[ch]) {
+        mass += AA_MASS[ch];
+      } else {
+        unknown.push(ch);
+      }
+    });
+
+    return {
+      ok: unknown.length === 0,
+      type,
+      length: letters.filter((ch) => ch !== '*').length,
+      molecularWeight: round2(mass),
+      unknown,
+      mods
+    };
+  }
+
+  if (type === 'dna' || type === 'rna') {
+    let clean = String(sequence || '')
+      .toUpperCase()
+      .replace(/[^AGCTU]/g, '');
+
+    if (type === 'dna') {
+      clean = clean.replace(/U/g, 'T');
+    }
+
+    if (type === 'rna') {
+      clean = clean.replace(/T/g, 'U');
+    }
+
+    const table = type === 'dna' ? DNA_RESIDUE_MASS : RNA_RESIDUE_MASS;
+    const unknown = [];
+
+    let mass = WATER_MASS + modMass;
+
+    clean.split('').forEach((ch) => {
+      if (table[ch]) {
+        mass += table[ch];
+      } else {
+        unknown.push(ch);
+      }
+    });
+
+    return {
+      ok: unknown.length === 0,
+      type,
+      length: clean.length,
+      molecularWeight: round2(mass),
+      unknown,
+      mods
+    };
+  }
+
+  if (type === 'polysaccharide') {
+    const raw = String(sequence || '').trim();
+
+    if (!raw) {
+      return {
+        ok: true,
+        type,
+        length: 0,
+        molecularWeight: round2(WATER_MASS + modMass),
+        unknown: [],
+        mods
+      };
+    }
+
+    let tokens = [];
+
+    if (/[-,\s]/.test(raw)) {
+      tokens = raw
+        .split(/[-,\s]+/)
+        .filter(Boolean)
+        .map((t) => t.toUpperCase());
+    } else {
+      tokens = raw.toUpperCase().split('');
+    }
+
+    const unknown = [];
+    let mass = WATER_MASS + modMass;
+
+    tokens.forEach((token) => {
+      const tokenMass =
+        POLY_TOKENS[token] ||
+        (POLY_ONE_LETTER[token] ? POLY_ONE_LETTER[token].mass : null);
+
+      if (tokenMass) {
+        mass += tokenMass;
+      } else {
+        unknown.push(token);
+      }
+    });
+
+    return {
+      ok: unknown.length === 0,
+      type,
+      length: tokens.length,
+      molecularWeight: round2(mass),
+      unknown,
+      mods
+    };
+  }
+
+  return {
+    ok: false,
+    type,
+    length: 0,
+    molecularWeight: 0,
+    unknown: [],
+    mods
+  };
+};
+
+const CODON_TABLES = {
+  bacterial: {
+    A: 'GCG',
+    R: 'CGT',
+    N: 'AAC',
+    D: 'GAT',
+    C: 'TGC',
+    E: 'GAA',
+    Q: 'CAA',
+    G: 'GGC',
+    H: 'CAT',
+    I: 'ATT',
+    L: 'CTG',
+    K: 'AAA',
+    M: 'ATG',
+    F: 'TTT',
+    P: 'CCG',
+    S: 'AGC',
+    T: 'ACC',
+    W: 'TGG',
+    Y: 'TAT',
+    V: 'GTG',
+    '*': 'TAA'
+  },
+  mammalian: {
+    A: 'GCC',
+    R: 'CGG',
+    N: 'AAC',
+    D: 'GAT',
+    C: 'TGC',
+    E: 'GAA',
+    Q: 'CAA',
+    G: 'GGC',
+    H: 'CAT',
+    I: 'ATT',
+    L: 'CTG',
+    K: 'AAA',
+    M: 'ATG',
+    F: 'TTT',
+    P: 'CCC',
+    S: 'TCC',
+    T: 'ACC',
+    W: 'TGG',
+    Y: 'TAT',
+    V: 'GTG',
+    '*': 'TAA'
+  }
+};
+
+const generateDnaFromProtein = (sequence, host = 'bacterial', { addStop = false } = {}) => {
+  const clean = String(sequence || '')
+    .toUpperCase()
+    .replace(/[^A-Z*]/g, '');
+
+  const table = CODON_TABLES[host] || CODON_TABLES.bacterial;
+
+  let dna = clean
+    .split('')
+    .map((aa) => table[aa] || 'NNN')
+    .join('');
+
+  if (addStop && !dna.endsWith('TAA')) {
+    dna += 'TAA';
+  }
+
+  return dna;
+};
+
+let rdkitPromise = null;
+
+async function loadRDKit() {
+  if (typeof window === 'undefined') return null;
+
+  if (window.__RDKit) return window.__RDKit;
+
+  if (!window.initRDKitModule) {
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://unpkg.com/@rdkit/rdkit/dist/RDKit_minimal.js';
+      script.async = true;
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+  }
+
+  window.__RDKit = await window.initRDKitModule();
+  return window.__RDKit;
+}
+
+async function calculateSmilesInfoAsync(smiles) {
+  if (!smiles) return null;
+
+  try {
+    const RDKit = await loadRDKit();
+    if (!RDKit) return null;
+
+    const mol = RDKit.get_mol(smiles);
+    if (!mol) return null;
+
+    let mw = null;
+
+    try {
+      const desc = JSON.parse(mol.get_descriptors());
+      mw = desc.MolWt || desc.AMW || desc.exactmolwt || null;
+    } catch (err) {
+      console.warn('RDKit descriptor parsing failed:', err);
+    }
+
+    if (mol && typeof mol.delete === 'function') {
+      mol.delete();
+    }
+
+    return {
+      type: 'smiles',
+      molecularWeight: mw ? Number(mw) : null,
+      length: null
+    };
+  } catch (err) {
+    console.warn('RDKit unavailable. Falling back to manual MW entry.', err);
+    return null;
+  }
+}
+
+/* =========================================================
+   CALCULATION UI COMPONENTS
+   ========================================================= */
+
+const CALC_INPUT_CLS =
+  'w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white';
+
+const CALC_LABEL_CLS = 'block text-[10px] font-bold text-slate-400 uppercase mb-1';
+
+const CONC_UNITS = [
+  { value: 'nM', factor: 1e-9 },
+  { value: 'µM', factor: 1e-6 },
+  { value: 'mM', factor: 1e-3 },
+  { value: 'M', factor: 1 }
+];
+
+const VOLUME_UNITS = [
+  { value: 'nL', factor: 1e-9 },
+  { value: 'µL', factor: 1e-6 },
+  { value: 'mL', factor: 1e-3 },
+  { value: 'L', factor: 1 }
+];
+
+const MASS_UNITS = [
+  { value: 'µg', factor: 1e-6 },
+  { value: 'mg', factor: 1e-3 },
+  { value: 'g', factor: 1 }
+];
+
+const calcNum = (value) => {
+  const n = parseFloat(String(value).replace(',', '.'));
+  return Number.isFinite(n) ? n : 0;
+};
+
+const calcFmt = (value, digits = 4) => {
+  if (!Number.isFinite(value)) return '—';
+  return Number(value.toFixed(digits)).toLocaleString();
+};
+
+const findUnitFactor = (units, value, defaultUnit) => {
+  const found = units.find((u) => u.value === value);
+  return found ? found.factor : units.find((u) => u.value === defaultUnit)?.factor || 1;
+};
+
+const CalcField = ({ label, children }) => {
+  return (
+    <div>
+      <label className={CALC_LABEL_CLS}>{label}</label>
+      {children}
+    </div>
+  );
+};
+
+const CalcUnitSelect = ({ value, onChange, units }) => {
+  return (
+    <select value={value} onChange={onChange} className={CALC_INPUT_CLS}>
+      {units.map((u) => (
+        <option key={u.value} value={u.value}>
+          {u.value}
+        </option>
+      ))}
+    </select>
+  );
+};
+
+const CalcResultBox = ({ ok, children }) => {
+  return (
+    <div
+      className={`rounded-xl border p-4 text-sm font-bold ${
+        ok
+          ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+          : 'bg-amber-50 border-amber-200 text-amber-800'
+      }`}
+    >
+      {children}
+    </div>
+  );
+};
+
+const HowManyMg = ({ mw }) => {
+  const [conc, setConc] = useState('10');
+  const [concUnit, setConcUnit] = useState('µM');
+  const [volume, setVolume] = useState('1000');
+  const [volumeUnit, setVolumeUnit] = useState('µL');
+
+  const concM = calcNum(conc) * findUnitFactor(CONC_UNITS, concUnit, 'µM');
+  const volumeL = calcNum(volume) * findUnitFactor(VOLUME_UNITS, volumeUnit, 'µL');
+
+  const moles = concM * volumeL;
+  const mg = mw ? moles * mw * 1000 : null;
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+      <div className="md:col-span-3">
+        <CalcField label="Required concentration">
+          <input
+            type="number"
+            value={conc}
+            onChange={(e) => setConc(e.target.value)}
+            className={CALC_INPUT_CLS}
+          />
+        </CalcField>
+      </div>
+
+      <div className="md:col-span-2">
+        <CalcField label="Concentration unit">
+          <CalcUnitSelect
+            value={concUnit}
+            onChange={(e) => setConcUnit(e.target.value)}
+            units={CONC_UNITS}
+          />
+        </CalcField>
+      </div>
+
+      <div className="md:col-span-3">
+        <CalcField label="Final volume">
+          <input
+            type="number"
+            value={volume}
+            onChange={(e) => setVolume(e.target.value)}
+            className={CALC_INPUT_CLS}
+          />
+        </CalcField>
+      </div>
+
+      <div className="md:col-span-2">
+        <CalcField label="Volume unit">
+          <CalcUnitSelect
+            value={volumeUnit}
+            onChange={(e) => setVolumeUnit(e.target.value)}
+            units={VOLUME_UNITS}
+          />
+        </CalcField>
+      </div>
+
+      <div className="md:col-span-2 flex items-end">
+        <div className="w-full border border-slate-200 bg-slate-50 rounded-lg px-3 py-2 text-sm font-bold text-slate-700">
+          {mw ? `${calcFmt(mg)} mg` : 'MW required'}
+        </div>
+      </div>
+
+      <div className="md:col-span-12">
+        <CalcResultBox ok={!!mw}>
+          {mw
+            ? `Amount = ${calcFmt(mg)} mg. Formula: C × V × MW.`
+            : 'Select a compound with known MW or enter a manual MW override.'}
+        </CalcResultBox>
+      </div>
+    </div>
+  );
+};
+
+const HowManyUl = ({ mw }) => {
+  const [mass, setMass] = useState('1');
+  const [massUnit, setMassUnit] = useState('mg');
+  const [conc, setConc] = useState('10');
+  const [concUnit, setConcUnit] = useState('µM');
+
+  const massG = calcNum(mass) * findUnitFactor(MASS_UNITS, massUnit, 'mg');
+  const concM = calcNum(conc) * findUnitFactor(CONC_UNITS, concUnit, 'µM');
+
+  const moles = mw ? massG / mw : 0;
+  const volumeL = mw && concM > 0 ? moles / concM : 0;
+  const ul = volumeL * 1e6;
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+      <div className="md:col-span-3">
+        <CalcField label="Amount of compound">
+          <input
+            type="number"
+            value={mass}
+            onChange={(e) => setMass(e.target.value)}
+            className={CALC_INPUT_CLS}
+          />
+        </CalcField>
+      </div>
+
+      <div className="md:col-span-2">
+        <CalcField label="Mass unit">
+          <CalcUnitSelect
+            value={massUnit}
+            onChange={(e) => setMassUnit(e.target.value)}
+            units={MASS_UNITS}
+          />
+        </CalcField>
+      </div>
+
+      <div className="md:col-span-3">
+        <CalcField label="Desired concentration">
+          <input
+            type="number"
+            value={conc}
+            onChange={(e) => setConc(e.target.value)}
+            className={CALC_INPUT_CLS}
+          />
+        </CalcField>
+      </div>
+
+      <div className="md:col-span-2">
+        <CalcField label="Concentration unit">
+          <CalcUnitSelect
+            value={concUnit}
+            onChange={(e) => setConcUnit(e.target.value)}
+            units={CONC_UNITS}
+          />
+        </CalcField>
+      </div>
+
+      <div className="md:col-span-2 flex items-end">
+        <div className="w-full border border-slate-200 bg-slate-50 rounded-lg px-3 py-2 text-sm font-bold text-slate-700">
+          {mw && concM > 0 ? `${calcFmt(ul)} µL` : 'MW required'}
+        </div>
+      </div>
+
+      <div className="md:col-span-12">
+        <CalcResultBox ok={!!mw && concM > 0}>
+          {mw && concM > 0
+            ? `Solvent/sample volume needed = ${calcFmt(ul)} µL.`
+            : 'Enter MW and a non-zero concentration.'}
+        </CalcResultBox>
+      </div>
+    </div>
+  );
+};
+
+const HowManyMgNeeded = ({ mw }) => {
+  const [volumePerExperiment, setVolumePerExperiment] = useState('20');
+  const [volumeUnit, setVolumeUnit] = useState('µL');
+  const [conc, setConc] = useState('10');
+  const [concUnit, setConcUnit] = useState('µM');
+  const [repetitions, setRepetitions] = useState('3');
+  const [experiments, setExperiments] = useState('1');
+
+  const volFactor = findUnitFactor(VOLUME_UNITS, volumeUnit, 'µL');
+  const concM = calcNum(conc) * findUnitFactor(CONC_UNITS, concUnit, 'µM');
+
+  const totalVolumeL =
+    calcNum(volumePerExperiment) * volFactor * calcNum(repetitions) * calcNum(experiments);
+
+  const totalMg = mw ? totalVolumeL * concM * mw * 1000 : null;
+  const totalUl = totalVolumeL * 1e6;
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+      <div className="md:col-span-2">
+        <CalcField label="µL per experiment">
+          <input
+            type="number"
+            value={volumePerExperiment}
+            onChange={(e) => setVolumePerExperiment(e.target.value)}
+            className={CALC_INPUT_CLS}
+          />
+        </CalcField>
+      </div>
+
+      <div className="md:col-span-2">
+        <CalcField label="Volume unit">
+          <CalcUnitSelect
+            value={volumeUnit}
+            onChange={(e) => setVolumeUnit(e.target.value)}
+            units={VOLUME_UNITS}
+          />
+        </CalcField>
+      </div>
+
+      <div className="md:col-span-2">
+        <CalcField label="Concentration">
+          <input
+            type="number"
+            value={conc}
+            onChange={(e) => setConc(e.target.value)}
+            className={CALC_INPUT_CLS}
+          />
+        </CalcField>
+      </div>
+
+      <div className="md:col-span-2">
+        <CalcField label="Conc. unit">
+          <CalcUnitSelect
+            value={concUnit}
+            onChange={(e) => setConcUnit(e.target.value)}
+            units={CONC_UNITS}
+          />
+        </CalcField>
+      </div>
+
+      <div className="md:col-span-2">
+        <CalcField label="Repetitions">
+          <input
+            type="number"
+            value={repetitions}
+            onChange={(e) => setRepetitions(e.target.value)}
+            className={CALC_INPUT_CLS}
+          />
+        </CalcField>
+      </div>
+
+      <div className="md:col-span-2">
+        <CalcField label="Experiments">
+          <input
+            type="number"
+            value={experiments}
+            onChange={(e) => setExperiments(e.target.value)}
+            className={CALC_INPUT_CLS}
+          />
+        </CalcField>
+      </div>
+
+      <div className="md:col-span-12">
+        <CalcResultBox ok={!!mw}>
+          {mw
+            ? `Total volume = ${calcFmt(totalUl)} µL. Total compound required = ${calcFmt(
+                totalMg
+              )} mg.`
+            : 'Select a compound with known MW or enter a manual MW override.'}
+        </CalcResultBox>
+      </div>
+    </div>
+  );
+};
+
+const HowManyUlNeeded = ({ mw }) => {
+  const [volumePerExperiment, setVolumePerExperiment] = useState('20');
+  const [volumeUnit, setVolumeUnit] = useState('µL');
+  const [repetitions, setRepetitions] = useState('3');
+  const [experiments, setExperiments] = useState('1');
+  const [conc, setConc] = useState('10');
+  const [concUnit, setConcUnit] = useState('µM');
+
+  const volFactor = findUnitFactor(VOLUME_UNITS, volumeUnit, 'µL');
+  const concM = calcNum(conc) * findUnitFactor(CONC_UNITS, concUnit, 'µM');
+
+  const totalSelectedUnits =
+    calcNum(volumePerExperiment) * calcNum(repetitions) * calcNum(experiments);
+
+  const totalL = totalSelectedUnits * volFactor;
+  const totalUl = totalL * 1e6;
+
+  const totalMg = mw ? totalL * concM * mw * 1000 : null;
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+      <div className="md:col-span-2">
+        <CalcField label="Volume per experiment">
+          <input
+            type="number"
+            value={volumePerExperiment}
+            onChange={(e) => setVolumePerExperiment(e.target.value)}
+            className={CALC_INPUT_CLS}
+          />
+        </CalcField>
+      </div>
+
+      <div className="md:col-span-2">
+        <CalcField label="Volume unit">
+          <CalcUnitSelect
+            value={volumeUnit}
+            onChange={(e) => setVolumeUnit(e.target.value)}
+            units={VOLUME_UNITS}
+          />
+        </CalcField>
+      </div>
+
+      <div className="md:col-span-2">
+        <CalcField label="Repetitions">
+          <input
+            type="number"
+            value={repetitions}
+            onChange={(e) => setRepetitions(e.target.value)}
+            className={CALC_INPUT_CLS}
+          />
+        </CalcField>
+      </div>
+
+      <div className="md:col-span-2">
+        <CalcField label="Experiments">
+          <input
+            type="number"
+            value={experiments}
+            onChange={(e) => setExperiments(e.target.value)}
+            className={CALC_INPUT_CLS}
+          />
+        </CalcField>
+      </div>
+
+      <div className="md:col-span-2">
+        <CalcField label="Concentration, optional">
+          <input
+            type="number"
+            value={conc}
+            onChange={(e) => setConc(e.target.value)}
+            className={CALC_INPUT_CLS}
+          />
+        </CalcField>
+      </div>
+
+      <div className="md:col-span-2">
+        <CalcField label="Conc. unit">
+          <CalcUnitSelect
+            value={concUnit}
+            onChange={(e) => setConcUnit(e.target.value)}
+            units={CONC_UNITS}
+          />
+        </CalcField>
+      </div>
+
+      <div className="md:col-span-12">
+        <CalcResultBox ok={true}>
+          Total sample volume = {calcFmt(totalUl)} µL
+          {totalMg
+            ? `. At the selected concentration, compound needed = ${calcFmt(totalMg)} mg.`
+            : '.'}
+        </CalcResultBox>
+      </div>
+    </div>
+  );
+};
+
+const Calculations = ({ compoundOptions = [], compoundMeta = {} }) => {
+  const options = useMemo(() => {
+    return [...new Set(compoundOptions.filter(Boolean))];
+  }, [compoundOptions]);
+
+  const [selectedCompound, setSelectedCompound] = useState(options[0] || '');
+  const [manualMw, setManualMw] = useState('');
+  const [tab, setTab] = useState('mg');
+
+  useEffect(() => {
+    if (!selectedCompound && options.length > 0) {
+      setSelectedCompound(options[0]);
+    }
+  }, [options, selectedCompound]);
+
+  const selectedMw = compoundMeta[selectedCompound]?.molecularWeight;
+
+  const effectiveMw = useMemo(() => {
+    const manual = parseFloat(manualMw);
+
+    if (Number.isFinite(manual) && manual > 0) {
+      return manual;
+    }
+
+    if (selectedMw) {
+      return Number(selectedMw);
+    }
+
+    return null;
+  }, [manualMw, selectedMw]);
+
+  const tabs = [
+    { id: 'mg', label: 'How many mg?' },
+    { id: 'ul-from-mg', label: 'How many µL?' },
+    { id: 'mg-needed', label: 'How many mg do I need?' },
+    { id: 'ul-needed', label: 'How many µL do I need?' }
+  ];
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+        <h2 className="text-lg font-black text-slate-800 mb-1">Calculations</h2>
+        <p className="text-sm text-slate-500 mb-4">
+          Mass and volume calculators using molecular weight from compound definitions.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+          <div className="md:col-span-4">
+            <label className={CALC_LABEL_CLS}>Compound</label>
+            <select
+              value={selectedCompound}
+              onChange={(e) => setSelectedCompound(e.target.value)}
+              className={CALC_INPUT_CLS}
+            >
+              <option value="">Manual only</option>
+              {options.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="md:col-span-3">
+            <label className={CALC_LABEL_CLS}>Manual MW override, Da</label>
+            <input
+              type="number"
+              value={manualMw}
+              onChange={(e) => setManualMw(e.target.value)}
+              placeholder="Optional"
+              className={CALC_INPUT_CLS}
+            />
+          </div>
+
+          <div className="md:col-span-3">
+            <label className={CALC_LABEL_CLS}>Active MW</label>
+            <div className="w-full border border-slate-200 bg-slate-50 rounded-lg px-3 py-2 text-sm font-bold text-slate-700">
+              {effectiveMw ? `${Number(effectiveMw).toLocaleString()} Da` : 'Not set'}
+            </div>
+          </div>
+
+          <div className="md:col-span-2">
+            <label className={CALC_LABEL_CLS}>Source</label>
+            <div className="w-full border border-slate-200 bg-slate-50 rounded-lg px-3 py-2 text-sm font-bold text-slate-700">
+              {manualMw ? 'Manual' : selectedMw ? 'Definition' : 'None'}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+        <div className="flex flex-wrap gap-2 mb-4">
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setTab(t.id)}
+              className={`px-3 py-2 rounded-lg text-sm font-bold border transition-colors ${
+                tab === t.id
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {tab === 'mg' && <HowManyMg mw={effectiveMw} />}
+        {tab === 'ul-from-mg' && <HowManyUl mw={effectiveMw} />}
+        {tab === 'mg-needed' && <HowManyMgNeeded mw={effectiveMw} />}
+        {tab === 'ul-needed' && <HowManyUlNeeded mw={effectiveMw} />}
+      </div>
+    </div>
+  );
+};
+
+/* =========================================================
+   COMPOUND DEFINITION SECTION
+   ========================================================= */
+
+const CompoundDefinitionSection = ({
+  compoundOptions = [],
+  customCmpds = [],
+  setCustomCmpds,
+  compoundMeta = {},
+  setCompoundMeta
+}) => {
+  const [selectedName, setSelectedName] = useState('');
+  const [newName, setNewName] = useState('');
+  const [type, setType] = useState('protein');
+  const [sequence, setSequence] = useState('');
+  const [modText, setModText] = useState('');
+  const [smiles, setSmiles] = useState('');
+  const [host, setHost] = useState('bacterial');
+  const [manualMw, setManualMw] = useState('');
+  const [smilesStatus, setSmilesStatus] = useState('');
+
+  const existingNames = useMemo(() => {
+    const names = new Set([
+      ...compoundOptions.filter(Boolean),
+      ...Object.keys(compoundMeta || {})
+    ]);
+
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [compoundOptions, compoundMeta]);
+
+  const selectedMeta = selectedName ? compoundMeta[selectedName] || {} : {};
+  const selectedMw = selectedMeta.molecularWeight;
+
+  const chooseCompound = (name) => {
+    if (!name) {
+      setSelectedName('');
+      setNewName('');
+      return;
+    }
+
+    const meta = compoundMeta[name] || {};
+
+    setSelectedName(name);
+    setNewName('');
+    setType(meta.type || 'protein');
+    setSequence(meta.sequence || '');
+    setModText(meta.modifications || '');
+    setSmiles(meta.smiles || '');
+    setHost(meta.host || 'bacterial');
+    setManualMw('');
+  };
+
+  const computed = useMemo(() => {
+    if (type === 'smiles') return null;
+    if (!sequence.trim()) return null;
+
+    return calculateSequenceInfo({
+      type,
+      sequence,
+      modifications: modText
+    });
+  }, [type, sequence, modText]);
+
+  const dnaPreview = useMemo(() => {
+    if (type !== 'protein' || !sequence.trim()) return '';
+    return generateDnaFromProtein(sequence, host);
+  }, [type, sequence, host]);
+
+  const effectiveMw = useMemo(() => {
+    const manual = parseFloat(manualMw);
+
+    if (Number.isFinite(manual) && manual > 0) {
+      return manual;
+    }
+
+    if (computed?.molecularWeight) {
+      return Number(computed.molecularWeight);
+    }
+
+    if (selectedMw) {
+      return Number(selectedMw);
+    }
+
+    return null;
+  }, [manualMw, computed, selectedMw]);
+
+  const addQuickModification = (mod) => {
+    setModText((prev) => {
+      if (!prev.trim()) return mod;
+      return `${prev}, ${mod}`;
+    });
+  };
+
+  const computeSmilesMw = async () => {
+    if (!smiles.trim()) {
+      setSmilesStatus('Enter a SMILES string first.');
+      return;
+    }
+
+    setSmilesStatus('Calculating SMILES molecular weight...');
+
+    const result = await calculateSmilesInfoAsync(smiles.trim());
+
+    if (result?.molecularWeight) {
+      setManualMw(String(result.molecularWeight));
+      setSmilesStatus('SMILES MW calculated using RDKit.');
+    } else {
+      setSmilesStatus('RDKit is unavailable. Enter MW manually or load RDKit.');
+    }
+  };
+
+  const saveCompound = () => {
+    const name = selectedName || newName.trim();
+
+    if (!name) {
+      alert('Please choose an existing compound or enter a new compound name.');
+      return;
+    }
+
+    const meta = {
+      name,
+      type,
+      host: type === 'protein' ? host : undefined,
+      sequence: type === 'smiles' ? '' : sequence,
+      modifications: type === 'smiles' ? '' : modText,
+      smiles: type === 'smiles' ? smiles : '',
+      molecularWeight: effectiveMw ?? null,
+      length: computed?.length ?? compoundMeta[name]?.length ?? null,
+      dnaSequence: type === 'protein' ? dnaPreview : compoundMeta[name]?.dnaSequence || '',
+      updatedAt: Date.now()
+    };
+
+    setCompoundMeta((prev) => ({
+      ...prev,
+      [name]: {
+        ...(prev[name] || {}),
+        ...meta
+      }
+    }));
+
+    const alreadyInCustomCompounds = customCmpds.some((c) => {
+      if (typeof c === 'string') return c === name;
+      return c?.name === name;
+    });
+
+    if (!alreadyInCustomCompounds) {
+      setCustomCmpds((prev) => [...prev, name]);
+    }
+  };
+
+  const quickMods = [
+    'Acetylation',
+    'Phosphorylation',
+    'Amidation',
+    'Methylation',
+    'Formylation',
+    'Succinylation',
+    'Palmitoylation'
+  ];
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+      <h3 className="text-sm font-bold text-slate-700 uppercase mb-2">
+        Compound Sequence / Structure
+      </h3>
+
+      <p className="text-xs text-slate-500 mb-4">
+        Define a compound by one-letter sequence, modifications, or SMILES. Molecular weight and
+        length are calculated automatically. For proteins, an optimized DNA sequence can be
+        generated.
+      </p>
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 mb-4">
+        <div className="lg:col-span-3">
+          <label className={CALC_LABEL_CLS}>Existing compound</label>
+          <select
+            value={selectedName}
+            onChange={(e) => chooseCompound(e.target.value)}
+            className={CALC_INPUT_CLS}
+          >
+            <option value="">New compound...</option>
+            {existingNames.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="lg:col-span-3">
+          <label className={CALC_LABEL_CLS}>New compound name</label>
+          <input
+            type="text"
+            value={selectedName ? '' : newName}
+            disabled={!!selectedName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder="e.g. Peptide-01"
+            className={`${CALC_INPUT_CLS} disabled:bg-slate-50 disabled:text-slate-400`}
+          />
+        </div>
+
+        <div className="lg:col-span-3">
+          <label className={CALC_LABEL_CLS}>Molecule type</label>
+          <select value={type} onChange={(e) => setType(e.target.value)} className={CALC_INPUT_CLS}>
+            <option value="protein">Protein / Peptide</option>
+            <option value="dna">DNA</option>
+            <option value="rna">RNA</option>
+            <option value="polysaccharide">Polysaccharide</option>
+            <option value="smiles">SMILES small molecule</option>
+          </select>
+        </div>
+
+        <div className="lg:col-span-3">
+          <label className={CALC_LABEL_CLS}>Codon host</label>
+          <select
+            value={host}
+            onChange={(e) => setHost(e.target.value)}
+            disabled={type !== 'protein'}
+            className={`${CALC_INPUT_CLS} disabled:bg-slate-50 disabled:text-slate-400`}
+          >
+            <option value="bacterial">Bacterial</option>
+            <option value="mammalian">Mammalian</option>
+          </select>
+        </div>
+      </div>
+
+      {type === 'smiles' ? (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 mb-4">
+          <div className="lg:col-span-9">
+            <label className={CALC_LABEL_CLS}>SMILES</label>
+            <input
+              type="text"
+              value={smiles}
+              onChange={(e) => setSmiles(e.target.value)}
+              placeholder="e.g. CC(=O)Oc1ccccc1C(=O)O"
+              className={CALC_INPUT_CLS}
+            />
+          </div>
+
+          <div className="lg:col-span-3 flex items-end">
+            <button
+              type="button"
+              onClick={computeSmilesMw}
+              className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-2 px-4 rounded-lg text-sm shadow-sm transition-colors"
+            >
+              Calculate SMILES MW
+            </button>
+          </div>
+
+          <div className="lg:col-span-12 text-xs text-slate-500">{smilesStatus}</div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 mb-4">
+          <div className="lg:col-span-7">
+            <label className={CALC_LABEL_CLS}>
+              One-letter sequence
+              {type === 'polysaccharide' ? ' or tokens' : ''}
+            </label>
+            <textarea
+              value={sequence}
+              onChange={(e) => setSequence(e.target.value)}
+              placeholder={
+                type === 'protein'
+                  ? 'e.g. MTEYKLVVVGAGGVGKSALTIQLIQNHFVDEYDPTIEDSYRKQVVIDGETCLLDILDTAGQEEYSAMRDQYMRTGEGFLCVFAINNTKSFEDIHQYREQIKRVKDSDDVPMVLVGNKCDLPSRTVDTKQAQDLARSYGIPFIETSAKTRQGVEDAFYTLVREIRQHKLRKLNPPDESGPGCMSCKCVLS'
+                  : type === 'dna'
+                  ? 'e.g. ATGGCTGAC...'
+                  : type === 'rna'
+                  ? 'e.g. AUGGCUGAC...'
+                  : 'e.g. G-M-N-F-S or GMNFS'
+              }
+              className={`${CALC_INPUT_CLS} h-32 font-mono`}
+            />
+          </div>
+
+          <div className="lg:col-span-5">
+            <label className={CALC_LABEL_CLS}>Modifications</label>
+            <textarea
+              value={modText}
+              onChange={(e) => setModText(e.target.value)}
+              placeholder="e.g. Phosphorylation, Acetylation, Amidation:2"
+              className={`${CALC_INPUT_CLS} h-32`}
+            />
+
+            <div className="flex flex-wrap gap-2 mt-2">
+              {quickMods.map((mod) => (
+                <button
+                  key={mod}
+                  type="button"
+                  onClick={() => addQuickModification(mod)}
+                  className="text-xs bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 font-semibold px-2 py-1 rounded transition-colors"
+                >
+                  + {mod}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-3 mb-4">
+        <div className="md:col-span-3">
+          <label className={CALC_LABEL_CLS}>Manual MW override, Da</label>
+          <input
+            type="number"
+            value={manualMw}
+            onChange={(e) => setManualMw(e.target.value)}
+            placeholder="Optional"
+            className={CALC_INPUT_CLS}
+          />
+        </div>
+
+        <div className="md:col-span-3">
+          <label className={CALC_LABEL_CLS}>Calculated MW</label>
+          <div className="w-full border border-slate-200 bg-slate-50 rounded-lg px-3 py-2 text-sm font-bold text-slate-700">
+            {effectiveMw ? `${Number(effectiveMw).toLocaleString()} Da` : 'Not set'}
+          </div>
+        </div>
+
+        <div className="md:col-span-2">
+          <label className={CALC_LABEL_CLS}>Length</label>
+          <div className="w-full border border-slate-200 bg-slate-50 rounded-lg px-3 py-2 text-sm font-bold text-slate-700">
+            {computed?.length ?? selectedMeta?.length ?? '—'}
+          </div>
+        </div>
+
+        <div className="md:col-span-4 flex items-end justify-end">
+          <button
+            type="button"
+            onClick={saveCompound}
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm shadow-sm transition-colors"
+          >
+            Save Compound Definition
+          </button>
+        </div>
+      </div>
+
+      {computed && !computed.ok && computed.unknown?.length > 0 && (
+        <div className="mb-4 text-xs font-semibold text-red-600 bg-red-50 border border-red-200 rounded-lg p-3">
+          Unknown tokens/letters: {computed.unknown.join(', ')}
+        </div>
+      )}
+
+      {type === 'protein' && dnaPreview && (
+        <div>
+          <label className={CALC_LABEL_CLS}>Generated DNA sequence, {host} preferred codons</label>
+          <textarea
+            readOnly
+            value={dnaPreview}
+            className={`${CALC_INPUT_CLS} h-28 font-mono bg-slate-50`}
+          />
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* =========================================================
+   CUSTOM METADATA FIELDS MANAGER
+   ========================================================= */
 
 const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => {
   const [draft, setDraft] = useState({
@@ -133,7 +1472,6 @@ const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => 
           <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
             Field Name
           </label>
-
           <input
             type="text"
             value={draft.name}
@@ -147,7 +1485,6 @@ const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => 
           <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
             Type
           </label>
-
           <select
             value={draft.type}
             onChange={(e) => setDraft((prev) => ({ ...prev, type: e.target.value }))}
@@ -165,7 +1502,6 @@ const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => 
           <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
             Options, comma separated
           </label>
-
           <input
             type="text"
             value={draft.options}
@@ -180,7 +1516,6 @@ const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => 
           <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
             Tab Type
           </label>
-
           <select
             value={draft.appliesTo}
             onChange={(e) => setDraft((prev) => ({ ...prev, appliesTo: e.target.value }))}
@@ -226,7 +1561,6 @@ const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => 
                     <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
                       Field Name
                     </label>
-
                     <input
                       type="text"
                       value={field.name || ''}
@@ -239,7 +1573,6 @@ const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => 
                     <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
                       Type
                     </label>
-
                     <select
                       value={field.type || 'text'}
                       onChange={(e) => updateField(field.id, { type: e.target.value })}
@@ -257,7 +1590,6 @@ const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => 
                     <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
                       Options
                     </label>
-
                     <input
                       type="text"
                       value={(field.options || []).join(', ')}
@@ -279,7 +1611,6 @@ const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => 
                     <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
                       Tab Type
                     </label>
-
                     <select
                       value={scopeValue}
                       onChange={(e) => updateField(field.id, { appliesTo: e.target.value })}
@@ -311,6 +1642,10 @@ const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => 
     </div>
   );
 };
+
+/* =========================================================
+   MIGRATION UTILITIES
+   ========================================================= */
 
 const migrateLoadedDataset = (s) => {
   const rawTests = (s && (s.tests || s.plates)) || [];
@@ -435,7 +1770,6 @@ const migrateLoadedDataset = (s) => {
       : 'Freezer';
 
     const stId = 'st_legacy_' + Date.now().toString(36) + '_' + gi;
-
     const cols = 4;
     const rows = Math.max(5, Math.ceil(group.items.length / cols));
 
@@ -460,6 +1794,10 @@ const migrateLoadedDataset = (s) => {
   };
 };
 
+/* =========================================================
+   FIREBASE SETUP
+   ========================================================= */
+
 const FIREBASE_CONFIG = {
   apiKey: 'AIzaSyCVemPUayc_Q-IsbcQxnFRHg8bBLZFSHfA',
   authDomain: 'cell-experiment-tracker.firebaseapp.com',
@@ -469,7 +1807,10 @@ const FIREBASE_CONFIG = {
   appId: '1:855790481107:web:a566455d3f13a48a20ae26'
 };
 
-let app, auth, db, appId = 'lab-workspace-app';
+let app,
+  auth,
+  db,
+  appId = 'lab-workspace-app';
 
 try {
   if (window.firebase) {
@@ -485,6 +1826,10 @@ try {
 } catch (e) {
   console.error('Firebase init error. Falling back to local storage.', e);
 }
+
+/* =========================================================
+   MAIN APP
+   ========================================================= */
 
 export default function App() {
   const createEmptyTest = (id, num, customType = 'plate-96') => {
@@ -642,7 +1987,6 @@ export default function App() {
   const [dialog, setDialog] = useState(null);
   const [pendingLoad, setPendingLoad] = useState(null);
   const [appClipboard, setAppClipboard] = useState(null);
-
   const [datasetTitle, setDatasetTitle] = useState('');
   const [datasetSubtitle, setDatasetSubtitle] = useState('');
   const [customCmpds, setCustomCmpds] = useState([]);
@@ -650,14 +1994,12 @@ export default function App() {
   const [customConc, setCustomConc] = useState({});
   const [cmpColors, setCmpColors] = useState({});
   const [customFields, setCustomFields] = useState([]);
-
+  const [compoundMeta, setCompoundMeta] = useState({});
   const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth > 768);
-
   const [storages, setStorages] = useState([]);
   const [activeStorageId, setActiveStorageId] = useState(null);
   const [storageModal, setStorageModal] = useState(null);
   const [moveModal, setMoveModal] = useState(null);
-
   const [testCategories, setTestCategories] = useState([
     'Activity',
     'Toxicity',
@@ -665,13 +2007,11 @@ export default function App() {
     'Flow Cytometry',
     'Viability'
   ]);
-
   const [protocolCategories, setProtocolCategories] = useState([
     'Preparation',
     'Measurement',
     'Analysis'
   ]);
-
   const [datasetProtocols, setDatasetProtocols] = useState([]);
 
   const historyRef = useRef([[createEmptyTest('t1', 1, 'plate-96')]]);
@@ -679,6 +2019,15 @@ export default function App() {
   const [reactTests, setReactTests] = useState(historyRef.current[0]);
 
   const tests = reactTests;
+
+  const allCmpds = useMemo(() => {
+    return [...new Set([...DEF_COMPOUNDS, ...customCmpds])];
+  }, [customCmpds]);
+
+  const allCellLines = useMemo(() => {
+    return [...new Set([...DEF_CELL_LINES, ...customCellLines])];
+  }, [customCellLines]);
+
   const [activeTestId, setActiveTestId] = useState('t1');
 
   const setTests = useCallback(
@@ -786,11 +2135,13 @@ export default function App() {
       const unsubscribe = collRef.onSnapshot(
         (snap) => {
           const dsets = [];
+
           snap.forEach((doc) => {
             dsets.push({ id: doc.id, ...doc.data() });
           });
 
           dsets.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+
           setDatasetsList(dsets);
           setIsCloudReady(true);
         },
@@ -843,7 +2194,8 @@ export default function App() {
     protocolCategories,
     datasetProtocols,
     storages,
-    customFields
+    customFields,
+    compoundMeta
   };
 
   const getCompressedPayload = () =>
@@ -928,6 +2280,7 @@ export default function App() {
     protocolCategories,
     datasetProtocols,
     customFields,
+    compoundMeta,
     storages,
     isCloudReady,
     appView,
@@ -948,11 +2301,12 @@ export default function App() {
       };
 
       const clone = document.documentElement.cloneNode(true);
-
       const oldTag = clone.querySelector('#saved-data-blob');
+
       if (oldTag) oldTag.remove();
 
       const oldLoader = clone.querySelector('#loader');
+
       if (oldLoader) oldLoader.style.display = 'none';
 
       const tag = document.createElement('script');
@@ -986,6 +2340,7 @@ export default function App() {
 
   const loadHTML = (e) => {
     const file = e.target.files && e.target.files[0];
+
     if (!file) return;
 
     if (file.size > 900000) {
@@ -1039,6 +2394,7 @@ export default function App() {
         }
 
         const migrated = migrateLoadedDataset(s);
+
         loadedTests = migrated.tests;
         s.storages = migrated.storages;
 
@@ -1053,12 +2409,12 @@ export default function App() {
     };
 
     reader.readAsText(file);
+
     e.target.value = '';
   };
 
   const confirmLoad = (mode) => {
     const { tests: loadedTests, fullState: s } = pendingLoad;
-
     let targetId = currentDatasetId;
 
     if (!targetId || mode === 'replace') {
@@ -1094,6 +2450,10 @@ export default function App() {
 
       if (s.customFields !== undefined) {
         setCustomFields(normalizeCustomFields(s.customFields));
+      }
+
+      if (s.compoundMeta !== undefined) {
+        setCompoundMeta(s.compoundMeta);
       }
     } else if (mode === 'append') {
       const newTests = loadedTests.map((p) => ({
@@ -1132,6 +2492,13 @@ export default function App() {
         });
       }
 
+      if (s.compoundMeta !== undefined) {
+        setCompoundMeta((prev) => ({
+          ...prev,
+          ...s.compoundMeta
+        }));
+      }
+
       if (s.storages !== undefined) {
         setStorages((prev) => {
           const merged = [...prev];
@@ -1158,6 +2525,7 @@ export default function App() {
     const freshTests = [createEmptyTest('t1', 1, 'plate-96')];
 
     setReactTests(freshTests);
+
     historyRef.current = [freshTests];
     setHistoryIndex(0);
     setActiveTestId('t1');
@@ -1169,7 +2537,7 @@ export default function App() {
     setCustomConc({});
     setCmpColors({});
     setCustomFields([]);
-
+    setCompoundMeta({});
     setTestCategories([
       'Activity',
       'Toxicity',
@@ -1177,7 +2545,6 @@ export default function App() {
       'Flow Cytometry',
       'Viability'
     ]);
-
     setProtocolCategories(['Preparation', 'Measurement', 'Analysis']);
     setDatasetProtocols([]);
     setStorages([]);
@@ -1277,6 +2644,7 @@ export default function App() {
 
   const openDataset = (dset) => {
     const s = parsePayload(dset);
+
     if (!s) return;
 
     try {
@@ -1313,7 +2681,7 @@ export default function App() {
       setCustomConc(s.customConc || {});
       setCmpColors(s.cmpColors || {});
       setCustomFields(normalizeCustomFields(s.customFields || []));
-
+      setCompoundMeta(s.compoundMeta || {});
       setTestCategories(
         s.testCategories || [
           'Activity',
@@ -1323,11 +2691,9 @@ export default function App() {
           'Viability'
         ]
       );
-
       setProtocolCategories(
         s.protocolCategories || ['Preparation', 'Measurement', 'Analysis']
       );
-
       setDatasetProtocols(s.datasetProtocols || []);
       setStorages(migrated.storages);
 
@@ -1365,6 +2731,7 @@ export default function App() {
           stored = stored.filter((d) => d.id !== id);
 
           localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
+
           setDatasetsList(stored);
         }
       }
@@ -1442,6 +2809,7 @@ export default function App() {
         title: 'Clean Up',
         message: 'No empty datasets found.'
       });
+
       return;
     }
 
@@ -1465,6 +2833,7 @@ export default function App() {
             await batch.commit();
           } catch (e) {
             console.error('Batch delete failed', e);
+
             setDialog({
               type: 'alert',
               title: 'Error',
@@ -1479,9 +2848,11 @@ export default function App() {
           } catch (e) {}
 
           const emptyIds = emptyDatasets.map((d) => d.id);
+
           stored = stored.filter((d) => !emptyIds.includes(d.id));
 
           localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
+
           setDatasetsList(stored);
         }
       }
@@ -1518,7 +2889,6 @@ export default function App() {
       const catStr = Array.from(catSet).sort().join(', ');
       const cellStr = Array.from(cellSet).sort().join(', ');
       const hasMeta = catStr || cellStr;
-
       const key = hasMeta ? `${catStr}|${cellStr}` : `unclassified_${dset.id}`;
 
       if (!groups[key]) {
@@ -2100,6 +3470,7 @@ export default function App() {
                 { id: 'dashboard', icon: '📊', label: 'Dataset Overview' },
                 { id: 'notebook', icon: '📓', label: 'Lab Notebook' },
                 { id: 'definitions', icon: '🏷️', label: 'Definitions & Labels' },
+                { id: 'calculations', icon: '🧮', label: 'Calculations' },
                 { id: 'tests', icon: '🧪', label: 'Tests & Fittings' },
                 { id: 'agenda', icon: '🗓️', label: 'Agenda (Timeline)' },
                 { id: 'protocols', icon: '📝', label: 'Protocols' },
@@ -2109,7 +3480,6 @@ export default function App() {
                   key={nav.id}
                   onClick={() => {
                     setCurrentModule(nav.id);
-
                     if (window.innerWidth < 768) setIsSidebarOpen(false);
                   }}
                   title={!isSidebarOpen ? nav.label : ''}
@@ -2272,6 +3642,12 @@ export default function App() {
                         desc: 'Manage compounds, cell lines, and metadata fields.'
                       },
                       {
+                        id: 'calculations',
+                        icon: '🧮',
+                        title: 'Calculations',
+                        desc: 'Mass, volume, and preparation calculators.'
+                      },
+                      {
                         id: 'tests',
                         icon: '🧪',
                         title: 'Tests & Assays',
@@ -2317,6 +3693,14 @@ export default function App() {
 
             {currentModule === 'definitions' && (
               <div className="h-full overflow-y-auto custom-scrollbar p-4 md:p-6 flex flex-col gap-6">
+                <CompoundDefinitionSection
+                  compoundOptions={allCmpds}
+                  customCmpds={customCmpds}
+                  setCustomCmpds={setCustomCmpds}
+                  compoundMeta={compoundMeta}
+                  setCompoundMeta={setCompoundMeta}
+                />
+
                 <CustomMetadataFieldsManager
                   customFields={customFields}
                   setCustomFields={handleSetCustomFields}
@@ -2338,6 +3722,12 @@ export default function App() {
                   setCmpColors={setCmpColors}
                   handlePrint={handlePrint}
                 />
+              </div>
+            )}
+
+            {currentModule === 'calculations' && (
+              <div className="h-full overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
+                <Calculations compoundOptions={allCmpds} compoundMeta={compoundMeta} />
               </div>
             )}
 
@@ -2399,7 +3789,6 @@ export default function App() {
                         const day = String(i + 1).padStart(2, '0');
                         const month = String(currentMonth.getMonth() + 1).padStart(2, '0');
                         const dateStr = `${currentMonth.getFullYear()}-${month}-${day}`;
-
                         const hasTask = mergedPlan.some((p) => p.date === dateStr);
                         const isSel = calFilterDate === dateStr;
 
@@ -2632,6 +4021,7 @@ export default function App() {
                             className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:border-blue-500 font-semibold text-slate-700 cursor-pointer"
                           >
                             <option value="ALL">All Categories</option>
+
                             {testCategories.map((c) => (
                               <option key={c} value={c}>
                                 {c}
@@ -3141,6 +4531,7 @@ export default function App() {
                             className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:border-emerald-500 font-semibold text-slate-700 cursor-pointer"
                           >
                             <option value="ALL">All Categories</option>
+
                             {protocolCategories.map((c) => (
                               <option key={c} value={c}>
                                 {c}
@@ -3335,6 +4726,7 @@ export default function App() {
                   }
 
                   setTests((prev) => [...prev, newTest]);
+
                   setActiveTestId(id);
                 };
 
@@ -3495,8 +4887,8 @@ export default function App() {
                       TestHeader={TestHeader}
                       datasetProtocols={datasetProtocols}
                       jumpToProtocol={jumpToProtocolFn}
-                      allCmpds={[...new Set([...DEF_COMPOUNDS, ...customCmpds])]}
-                      allCellLines={[...new Set([...DEF_CELL_LINES, ...customCellLines])]}
+                      allCmpds={allCmpds}
+                      allCellLines={allCellLines}
                       customFields={customFields}
                       testCategories={testCategories}
                     />
@@ -3513,8 +4905,8 @@ export default function App() {
                       TestHeader={TestHeader}
                       datasetProtocols={datasetProtocols}
                       jumpToProtocol={jumpToProtocolFn}
-                      allCmpds={[...new Set([...DEF_COMPOUNDS, ...customCmpds])]}
-                      allCellLines={[...new Set([...DEF_CELL_LINES, ...customCellLines])]}
+                      allCmpds={allCmpds}
+                      allCellLines={allCellLines}
                       customFields={customFields}
                       testCategories={testCategories}
                     />
@@ -3553,8 +4945,8 @@ export default function App() {
                       setCustomConc={setCustomConc}
                       cmpColors={cmpColors}
                       setCmpColors={setCmpColors}
-                      allCmpds={[...new Set([...DEF_COMPOUNDS, ...customCmpds])]}
-                      allCellLines={[...new Set([...DEF_CELL_LINES, ...customCellLines])]}
+                      allCmpds={allCmpds}
+                      allCellLines={allCellLines}
                       customFields={customFields}
                       testCategories={testCategories}
                       jumpToTest={(id) => {
@@ -3582,6 +4974,7 @@ export default function App() {
                   if (!notebookSearch) return true;
 
                   const query = notebookSearch.toLowerCase();
+
                   return JSON.stringify(t).toLowerCase().includes(query);
                 });
 
@@ -3609,7 +5002,7 @@ export default function App() {
                     <div className="flex-1 overflow-hidden relative">
                       <LabNotebook
                         tests={filteredTests}
-                        allCellLines={[...new Set([...DEF_CELL_LINES, ...customCellLines])]}
+                        allCellLines={allCellLines}
                         testCategories={testCategories}
                         jumpToTest={(id) => {
                           setActiveTestId(id);
@@ -3617,7 +5010,7 @@ export default function App() {
                         }}
                         customConc={customConc}
                         cmpColors={cmpColors}
-                        allCmpds={[...new Set([...DEF_COMPOUNDS, ...customCmpds])]}
+                        allCmpds={allCmpds}
                         customFields={customFields}
                       />
                     </div>
