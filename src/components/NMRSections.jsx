@@ -2730,8 +2730,11 @@ const DataSection = ({ ctx }) => {
           <button onClick={() => updateActiveTest({ selectedAtomKeys: [] })} className="ml-1 text-amber-600 hover:text-red-600 font-black" title="Clear selection">✕</button>
         </div>
       )}
-      {d.parsedSeq.length === 0 ? (
-        <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">Enter a sequence / select a molecule (in Experiment Setup) to generate the table.</div>
+
+{d.parsedSeq.length === 0 ? (
+        <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">
+          Enter a sequence / select a molecule (in Experiment Setup) to generate the table.
+        </div>
       ) : effTableMode === 'backbone' ? (
         <div className="overflow-x-auto custom-scrollbar border border-slate-200 rounded-lg max-h-[500px]">
           <table className="w-full text-sm text-left">
@@ -2792,10 +2795,68 @@ const DataSection = ({ ctx }) => {
           </table>
         </div>
       ) : (
-        <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">
-          Use Backbone/Unified table modes for full table rendering (same as previous version).
+        <div className="overflow-x-auto custom-scrollbar border border-slate-200 rounded-lg max-h-[500px]">
+          <table className="w-full text-sm text-left">
+            <thead className="text-xs text-slate-500 uppercase bg-slate-100 sticky top-0 z-10 shadow-sm">
+              <tr>
+                <th className="px-4 py-3 font-black border-b border-slate-200 w-24 text-center">Res</th>
+                <th className="px-3 py-2 font-bold border-b border-slate-200">Nucleus / Atom</th>
+                <th className="px-3 py-2 font-bold border-b border-slate-200">Value {activeLayer.unit ? `(${activeLayer.unit})` : '(ppm)'}</th>
+                {isCS && <th className="px-3 py-2 font-bold border-b border-slate-200">Estimated (ppm)</th>}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 bg-white">
+              {d.estSeq.map((res, idx) => {
+                if (focusIdx !== 'ALL' && focusIdx !== idx) return null;
+
+                // Extract all atoms for this specific residue from the existing atomOptions map
+                const resAtoms = d.atomOptions.filter((opt) => opt.key.startsWith(`${idx}-`));
+
+                return resAtoms.map((opt, aIdx) => {
+                  const atomName = opt.key.slice(String(idx).length + 1);
+                  const isMan = parseManual(d.activeValues[opt.key]) !== null;
+                  const isSel = cellIsSelected(idx, atomName);
+
+                  // Determine estimated value for display based on nucleus type
+                  let est = undefined;
+                  if (opt.label.includes('(¹H)')) est = res.estShifts?.[atomName];
+                  else if (opt.label.includes('(¹³C)')) est = atomName === "C'" ? res.estCP : res.estUniqueC?.[atomName];
+                  else if (opt.label.includes('(¹⁵N)')) est = res.estN;
+                  else if (opt.label.includes('(³¹P)')) est = res.p31;
+
+                  return (
+                    <tr key={opt.key} className="hover:bg-slate-50 transition-colors">
+                      {aIdx === 0 && (
+                        <td rowSpan={resAtoms.length} className="px-4 py-2 font-black text-slate-700 text-center bg-slate-50 border-r border-slate-100 align-top">
+                          {res.id}
+                        </td>
+                      )}
+                      <td className="px-3 py-1.5 font-bold text-slate-600">
+                        {opt.label.replace(`${res.id} `, '')}
+                      </td>
+                      <td className={selTdCls(isMan, isSel)} onClick={(e) => handleCellClick(e, idx, atomName)}>
+                        <input
+                          type="text"
+                          value={d.activeValues[opt.key] || ''}
+                          onChange={(e) => handleShiftChange(idx, atomName, e.target.value)}
+                          className={`w-full border rounded px-2 py-1 outline-none text-xs font-mono max-w-[150px] ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-200 focus:border-blue-500'}`}
+                          placeholder="—"
+                        />
+                      </td>
+                      {isCS && (
+                        <td className="px-3 py-1.5 text-xs font-mono text-slate-500">
+                          {est !== undefined && est !== null ? `≈ ${est.toFixed(2)}` : '—'}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                });
+              })}
+            </tbody>
+          </table>
         </div>
       )}
+
       <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm mt-4">
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <label className="text-xs font-bold text-slate-600 uppercase">🗂️ Parameter Layer (assignment table data type)</label>
