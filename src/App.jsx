@@ -1414,12 +1414,18 @@ const Calculations = ({
    COMPOUND DEFINITION SECTION
 ========================================================= */
 
+/* =========================================================
+   COMPOUND DEFINITION SECTION
+========================================================= */
+
 const CompoundDefinitionSection = ({
   compoundOptions = [],
   customCmpds = [],
   setCustomCmpds,
   compoundMeta = {},
-  setCompoundMeta
+  setCompoundMeta,
+  selectedId, // <-- ADDED
+  onSelect    // <-- ADDED
 }) => {
   const [selectedName, setSelectedName] = useState('');
   const [newName, setNewName] = useState('');
@@ -1430,6 +1436,11 @@ const CompoundDefinitionSection = ({
   const [host, setHost] = useState('bacterial');
   const [manualMw, setManualMw] = useState('');
   const [smilesStatus, setSmilesStatus] = useState('');
+
+  // ADDED: Sync with external selection from the Library Directory
+  useEffect(() => {
+    if (selectedId) chooseCompound(selectedId);
+  }, [selectedId]);
 
   const existingNames = useMemo(() => {
     const names = new Set([
@@ -2169,12 +2180,18 @@ const ScientistsOperatorsManager = ({
   );
 };
 
+
 /* =========================================================
    COLLAPSIBLE SECTION
 ========================================================= */
 
 const CollapsibleSection = ({ title, subtitle, defaultOpen = false, children }) => {
   const [open, setOpen] = useState(defaultOpen);
+
+  // ADDED: Sync the open state when clicking an item in the directory
+  useEffect(() => {
+    setOpen(defaultOpen);
+  }, [defaultOpen]);
 
   return (
     <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-visible">
@@ -2185,10 +2202,8 @@ const CollapsibleSection = ({ title, subtitle, defaultOpen = false, children }) 
       >
         <div>
           <h3 className="text-sm font-bold text-slate-700 uppercase">{title}</h3>
-
           {subtitle && <p className="text-xs text-slate-500 mt-1">{subtitle}</p>}
         </div>
-
         <span className="text-slate-400 text-lg">{open ? '▲' : '▼'}</span>
       </button>
 
