@@ -18,6 +18,7 @@ import { RichTextEditor } from './components/RichTextEditor';
 import { StorageModals, StorageList, StorageDetail, BoxDetail } from './components/Storage';
 import { DefinitionsPanel } from './components/DefinitionsPanel';
 import { NMRFittingsTestRenderer } from './components/NMRFittingsTestRenderer';
+import { CloningTestRenderer } from './components/CloningTestRenderer';
 // App.jsx
 
 import {

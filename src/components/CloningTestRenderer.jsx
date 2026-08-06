@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import TestShellRenderer, { CollapsibleSection, SmartImage } from './TestShellRenderer';
-import { CLONING_TAB_CONFIG } from '../tabConfigs';
+import { CLONING_TAB_CONFIG } from './tabConfigs';
 
 // ================= CLONING SPECIFIC CONTENT =================
 const CloningAll = ({ ctx }) => {
