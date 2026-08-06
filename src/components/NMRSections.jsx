@@ -2,7 +2,7 @@ import NMRMoleculeViewer from './NMRMoleculeViewer';
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar
+  ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar, Cell
 } from 'recharts';
 
 const HAS_EB = typeof ErrorBar !== 'undefined';
@@ -13,9 +13,6 @@ const TICKS_15N = Array.from({ length: 81 }, (_, i) => parseFloat((95 + i * 0.5)
 
 /* ============================================================================
 NMRSections — struttura fissa: Experiment Setup → Data → Fitting → Simulations
-NEW: istanze/condizioni + layer parametri + condition plotting (fit & errori)
-+ select-all/salvataggio selezioni atomi + ranges e parametri grafici nelle
-Simulations (13C fino a 220 ppm, HSQC side-by-side, 2D quadrati).
 ========================================================================== */
 const FS_CLASSES =
   'fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col';
@@ -110,6 +107,7 @@ const SS_CORRECTIONS = {
   helix: { h: { HN: -0.45, Hα: -0.35, Hα1: -0.35, Hα2: -0.35, other: -0.05 }, c: { Cα: 2.8, Cβ: -1.5, "C'": -1.3, N: -2.5 } },
   sheet: { h: { HN: 0.4, Hα: 0.3, Hα1: 0.3, Hα2: 0.3, other: 0.05 }, c: { Cα: -1.6, Cβ: 1.4, "C'": 1.5, N: 2.0 } }
 };
+const RANDOM_COIL_DB={A:{HA:4.35,CA:52.5,CB:19.1,CO:177.8},C:{HA:4.55,CA:58.2,CB:28.0,CO:175.9},D:{HA:4.76,CA:54.5,CB:40.8,CO:177.5},E:{HA:4.37,CA:56.9,CB:29.8,CO:177.6},F:{HA:4.66,CA:57.9,CB:39.8,CO:177.4},G:{HA:3.96,CA:45.2,CB:null,CO:174.6},H:{HA:4.76,CA:55.3,CB:31.3,CO:175.3},I:{HA:4.20,CA:61.3,CB:38.3,CO:177.8},K:{HA:4.38,CA:56.6,CB:32.4,CO:177.9},L:{HA:4.47,CA:55.4,CB:41.9,CO:178.9},M:{HA:4.52,CA:55.5,CB:32.6,CO:177.5},N:{HA:4.75,CA:53.3,CB:38.6,CO:176.6},P:{HA:4.44,CA:63.1,CB:31.9,CO:178.1},Q:{HA:4.39,CA:56.2,CB:29.5,CO:177.2},R:{HA:4.51,CA:56.5,CB:30.4,CO:177.2},S:{HA:4.51,CA:58.4,CB:63.6,CO:175.6},T:{HA:4.39,CA:62.0,CB:69.6,CO:175.7},V:{HA:4.16,CA:62.1,CB:32.1,CO:177.4},W:{HA:4.70,CA:57.4,CB:29.5,CO:177.2},Y:{HA:4.66,CA:57.9,CB:38.9,CO:177.2}};
 const SS_META = { C: { label: 'Random coil', color: '#64748b' }, H: { label: 'α-Helix', color: '#8b5cf6' }, E: { label: 'β-Sheet', color: '#f59e0b' } };
 const FORM_META = { A: { label: 'A-form', color: '#0ea5e9' }, B: { label: 'B-form', color: '#22c55e' }, Z: { label: 'Z-form', color: '#f43f5e' } };
 const DNA_FORM_OFFSETS = { B: { "H1'": 0, "H2'": 0, "H3'": 0, "H2''": 0 }, A: { "H1'": 0.2, "H2'": -0.3, "H3'": 0.15, "H2''": -0.25 }, Z: { "H1'": -0.15, "H2'": 0.25, "H3'": -0.1, "H2''": 0.2 } };
@@ -327,10 +325,39 @@ const pr=()=>{const t=pk();if(!t)throw new Error('exp');if(t.t==='num'){eat('num
 const ast=add();if(p<tk.length)throw new Error('trail');return ast;};
 const evalAST=(n,s)=>{switch(n.type){case'num':return n.v;case'sym':return n.name==='x'?s.x:n.name==='pi'?Math.PI:n.name==='e'?Math.E:s[n.name];case'un':return -evalAST(n.a,s);case'bin':{const a=evalAST(n.l,s),b=evalAST(n.r,s);return n.op==='+'?a+b:n.op==='-'?a-b:n.op==='*'?a*b:n.op==='/'?a/b:Math.pow(a,b);}case'call':{const a=n.args.map(x=>evalAST(x,s));switch(n.name){case'exp':return Math.exp(a[0]);case'log':return Math.log10(a[0]);case'ln':return Math.log(a[0]);case'sqrt':return Math.sqrt(a[0]);case'sin':return Math.sin(a[0]);case'cos':return Math.cos(a[0]);case'tan':return Math.tan(a[0]);case'abs':return Math.abs(a[0]);case'pow':return Math.pow(a[0],a[1]);case'min':return Math.min(...a);case'max':return Math.max(...a);} } }return NaN;};
 const collectParams=(ast)=>{const s=new Set();(function w(n){if(!n)return;if(n.type==='sym'){if(n.name!=='x'&&n.name!=='pi'&&n.name!=='e')s.add(n.name);}if(n.type==='bin'){w(n.l);w(n.r);}if(n.type==='un')w(n.a);if(n.type==='call')n.args.forEach(w);})(ast);return[...s];};
-const fitGeneric=(pts,f0,P0)=>{let P=[...P0];const f=(x,Pv)=>f0(x,Pv);const ssr=Pv=>{let s=0;for(const p of pts){const v=f(p.x,Pv);if(!isFinite(v))return Infinity;const w=p.w||1;s+=w*(p.y-v)**2;}return s;};let lam=1e-3,cur=ssr(P);for(let it=0;it<120&&isFinite(cur);it++){const J=pts.map(p=>{const y0=f(p.x,P);const row=[];for(let k=0;k<P.length;k++){const h=Math.max(1e-6,Math.abs(P[k])*1e-4);row.push((f(p.x,P.map((v,i)=>i===k?v+h:v))-y0)/h);}return row;});const A=P.map(()=>new Array(P.length).fill(0)),g=P.map(()=>0);pts.forEach((p,i)=>{const w=p.w||1;const r=p.y-f(p.x,P);for(let a=0;a<P.length;a++){g[a]+=w*J[i][a]*r;for(let b=0;b<P.length;b++)A[a][b]+=w*J[i][a]*J[i][b];}});for(let a=0;a<P.length;a++)A[a][a]*=(1+lam);const d=gaussSolve(A,g);if(!d){lam*=4;if(lam>1e7)break;continue;}const P2=P.map((v,k)=>v+d[k]);const s2=ssr(P2);if(isFinite(s2)&&s2<cur){const pv=cur;P=P2;cur=s2;lam=Math.max(1e-8,lam/2);if(Math.abs(pv-cur)<1e-10)break;}else{lam*=3;if(lam>1e7)break;}}if(!P.every(isFinite))return null;let sst=0;const m=pts.reduce((s,p)=>s+p.y,0)/pts.length;pts.forEach(p=>sst+=(p.y-m)**2);const r2=sst>0?1-cur/sst:1;const se=pts.length>P.length?Math.sqrt(cur/(pts.length-P.length)):Math.sqrt(cur||0);return{params:P,r2,se,f:(x)=>f(x,P)};};
-const fitLinear=(pts)=>{const r=fitGeneric(pts,(x,P)=>P[0]+P[1]*x,[0,1]); return r ? {...r, intercept: r.params[0], slope: r.params[1]} : null;};
-const fit4PL=(pts)=>{const ys=pts.map(p=>p.y);const t=Math.max(...ys),b=Math.min(...ys);const r=fitGeneric(pts,(x,P)=>P[1]+(P[0]-P[1])/(1+Math.pow(x/P[2],P[3])),[t,b,pts.reduce((s,p)=>s+p.x,0)/Math.max(1,pts.length),1]); return r ? {...r, top: r.params[0], bottom: r.params[1], ic50: r.params[2], hill: r.params[3]} : null;};
-const fitCustomEquation=(expr,pts)=>{let ast,par;try{ast=parseExpression(expr);par=collectParams(ast);}catch(e){return null;}if(!par.length||pts.length<par.length+1)return null;const init=par.map((_,i)=>i===0?(pts.reduce((s,p)=>s+p.y,0)/Math.max(1,pts.length)):1);const res=fitGeneric(pts,(x,P)=>{const s={x};par.forEach((n,i)=>s[n]=P[i]);return evalAST(ast,s);},init);if(!res)return null;res.params=Object.fromEntries(par.map((n,i)=>[n,res.params[i]]));return res;};
+const fitGeneric=(pts,f0,P0)=>{
+  let P=[...P0];const f=(x,Pv)=>f0(x,Pv);
+  const ssr=Pv=>{let s=0;for(const p of pts){const v=f(p.x,Pv);if(!isFinite(v))return Infinity;const w=p.w||1;s+=w*(p.y-v)**2;}return s;};
+  let lam=1e-3,cur=ssr(P);
+  for(let it=0;it<120&&isFinite(cur);it++){
+    const J=pts.map(p=>{const y0=f(p.x,P);const row=[];for(let k=0;k<P.length;k++){const h=Math.max(1e-6,Math.abs(P[k])*1e-4);row.push((f(p.x,P.map((v,i)=>i===k?v+h:v))-y0)/h);}return row;});
+    const A=P.map(()=>new Array(P.length).fill(0)),g=P.map(()=>0);
+    pts.forEach((p,i)=>{const w=p.w||1;const r=p.y-f(p.x,P);for(let a=0;a<P.length;a++){g[a]+=w*J[i][a]*r;for(let b=0;b<P.length;b++)A[a][b]+=w*J[i][a]*J[i][b];}});
+    for(let a=0;a<P.length;a++)A[a][a]*=(1+lam);
+    const d=gaussSolve(A,g);if(!d){lam*=4;if(lam>1e7)break;continue;}
+    const P2=P.map((v,k)=>v+d[k]);const s2=ssr(P2);
+    if(isFinite(s2)&&s2<cur){const pv=cur;P=P2;cur=s2;lam=Math.max(1e-8,lam/2);if(Math.abs(pv-cur)<1e-10)break;}else{lam*=3;if(lam>1e7)break;}
+  }
+  if(!P.every(isFinite))return null;
+  let sst=0;const m=pts.reduce((s,p)=>s+p.y,0)/pts.length;pts.forEach(p=>sst+=(p.y-m)**2);
+  const df=Math.max(1,pts.length-P.length);
+  const r2=sst>0?1-cur/sst:1;const se=Math.sqrt(cur/df);
+  const P_err=P.map(()=>0);
+  try{
+    const J=pts.map(p=>{const y0=f(p.x,P);const row=[];for(let k=0;k<P.length;k++){const h=Math.max(1e-6,Math.abs(P[k])*1e-4);row.push((f(p.x,P.map((v,i)=>i===k?v+h:v))-y0)/h);}return row;});
+    const A=P.map(()=>new Array(P.length).fill(0));
+    pts.forEach((p,i)=>{const w=p.w||1;for(let a=0;a<P.length;a++){for(let b=0;b<P.length;b++)A[a][b]+=w*J[i][a]*J[i][b];}});
+    for(let i=0;i<P.length;i++){
+      const e=P.map((_,j)=>i===j?1:0);
+      const col=gaussSolve(A,e);
+      if(col) P_err[i]=Math.sqrt(Math.max(0,col[i]*(cur/df)));
+    }
+  }catch(err){}
+  return{params:P,paramsErr:P_err,r2,se,f:(x)=>f(x,P)};
+};
+const fitLinear=(pts)=>{const r=fitGeneric(pts,(x,P)=>P[0]+P[1]*x,[0,1]); return r ? {...r, intercept: r.params[0], slope: r.params[1], interceptErr: r.paramsErr[0], slopeErr: r.paramsErr[1]} : null;};
+const fit4PL=(pts)=>{const ys=pts.map(p=>p.y);const t=Math.max(...ys),b=Math.min(...ys);const r=fitGeneric(pts,(x,P)=>P[1]+(P[0]-P[1])/(1+Math.pow(x/P[2],P[3])),[t,b,pts.reduce((s,p)=>s+p.x,0)/Math.max(1,pts.length),1]); return r ? {...r, top: r.params[0], bottom: r.params[1], ic50: r.params[2], hill: r.params[3], topErr: r.paramsErr[0], bottomErr: r.paramsErr[1], ic50Err: r.paramsErr[2], hillErr: r.paramsErr[3]} : null;};
+const fitCustomEquation=(expr,pts)=>{let ast,par;try{ast=parseExpression(expr);par=collectParams(ast);}catch(e){return null;}if(!par.length||pts.length<par.length+1)return null;const init=par.map((_,i)=>i===0?(pts.reduce((s,p)=>s+p.y,0)/Math.max(1,pts.length)):1);const res=fitGeneric(pts,(x,P)=>{const s={x};par.forEach((n,i)=>s[n]=P[i]);return evalAST(ast,s);},init);if(!res)return null;res.params=Object.fromEntries(par.map((n,i)=>[n,res.params[i]])); res.paramsErr=Object.fromEntries(par.map((n,i)=>[n,res.paramsErr[i]])); return res;};
 
 const lineDash = (style) => (style === 'dashed' ? '7 5' : style === 'dotted' ? '2 3' : undefined);
 const FIT_DEFAULT_CHART_CFG = {
@@ -1376,7 +1403,17 @@ const atomNameMap = useMemo(() => {
       const generatedShifts = {};
       Object.keys(entry.ranges).forEach((atom) => {
         const r = entry.ranges[atom];
-        let val = r.min; let success = false; let minDistance = 0.3;
+        let val = r.min;
+        // Fix for SS Deviation logic: Use exact RC values for protein backbone
+        if (moleculeType === 'protein' && RANDOM_COIL_DB[char]) {
+          if (atom === 'Hα' && RANDOM_COIL_DB[char].HA != null) {
+            val = RANDOM_COIL_DB[char].HA;
+            generatedShifts[atom] = parseFloat(val.toFixed(2));
+            assignedShifts.push(val);
+            return;
+          }
+        }
+        let success = false; let minDistance = 0.3;
         while (minDistance >= 0.05 && !success) {
           for (let i = 0; i < 50; i++) {
             const candidate = r.min + Math.random() * (r.max - r.min);
@@ -1392,12 +1429,20 @@ const atomNameMap = useMemo(() => {
         const cName = getCarbonName(moleculeType, char, atom);
         if (!cName) return;
         if (!cShifts[cName]) {
-          const range = getCarbonRangeFor(moleculeType, char, cName);
-          cShifts[cName] = parseFloat((range.min + Math.random() * (range.max - range.min)).toFixed(1));
+          let baseVal;
+          if (moleculeType === 'protein' && RANDOM_COIL_DB[char]) {
+            if (cName === 'Cα' && RANDOM_COIL_DB[char].CA != null) baseVal = RANDOM_COIL_DB[char].CA;
+            else if (cName === 'Cβ' && RANDOM_COIL_DB[char].CB != null) baseVal = RANDOM_COIL_DB[char].CB;
+          }
+          if (baseVal === undefined) {
+            const range = getCarbonRangeFor(moleculeType, char, cName);
+            baseVal = range.min + Math.random() * (range.max - range.min);
+          }
+          cShifts[cName] = parseFloat(baseVal.toFixed(1));
         }
         generatedShifts13C[atom] = cShifts[cName];
       });
-      const backboneRand = moleculeType === 'protein' ? { N: parseFloat((117 + Math.random() * 8).toFixed(1)), CP: parseFloat((172 + Math.random() * 5).toFixed(1)) } : null;
+      const backboneRand = moleculeType === 'protein' ? { N: parseFloat((117 + Math.random() * 8).toFixed(1)), CP: RANDOM_COIL_DB[char]?.CO != null ? RANDOM_COIL_DB[char].CO : parseFloat((172 + Math.random() * 5).toFixed(1)) } : null;
       const p31 = hasPhosphorus ? parseFloat((-2 + Math.random() * 3).toFixed(2)) : null;
       return { ...entry, id: `${entry.code3 || char}${index + 1}`, char, color: RESIDUE_COLORS[index % RESIDUE_COLORS.length], shifts: generatedShifts, shifts13C: generatedShifts13C, uniqueCShifts: { ...cShifts }, backboneRand, p31 };
     }).filter(Boolean);
@@ -1623,88 +1668,24 @@ const ExperimentSetupSection = ({ ctx }) => {
   }, [activeTest.atomNameMap]);
 
   /*
-    Persist structure source + view mode inside this browser tab.
-    sessionStorage is used because you asked to save it "in the tab".
-    If you prefer persistence across browser tabs, change sessionStorage to localStorage.
-  */
-  const storageId =
-    activeTest?.id || activeTest?._id || activeTest?.testId || 'default';
-
-  const srcStorageKey = `NMR_STRUCTURE_SRC_${storageId}`;
-  const modeStorageKey = `NMR_STRUCTURE_MODE_${storageId}`;
-
-  /*
     This is the key fix:
     Once the 3D viewer has been opened, keep it mounted forever.
     Switching to 2D will only hide it, not unmount it.
   */
   const [hasOpened3D, setHasOpened3D] = useState(structureMode === '3d');
 
-  // Restore saved source/mode once per tab/session storage key.
-  useEffect(() => {
-    try {
-      const savedSrc = window.sessionStorage.getItem(srcStorageKey);
-      const savedMode = window.sessionStorage.getItem(modeStorageKey);
-
-      const patch = {};
-
-      if (savedSrc && !activeTest.structureSrc && !activeTest.pdbId) {
-        patch.structureSrc = savedSrc;
-      }
-
-      if (
-        savedMode &&
-        (savedMode === '2d' || savedMode === '3d') &&
-        !activeTest.structureMode
-      ) {
-        patch.structureMode = savedMode;
-      }
-
-      if (Object.keys(patch).length) {
-        updateActiveTest(patch);
-      }
-    } catch (e) {
-      // Ignore storage errors (private mode, quota, etc.)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [srcStorageKey, modeStorageKey]);
-
   // Remember mode.
   useEffect(() => {
     if (structureMode === '3d') {
       setHasOpened3D(true);
     }
-
-    try {
-      window.sessionStorage.setItem(modeStorageKey, structureMode);
-    } catch (e) {
-      // Ignore
-    }
-  }, [structureMode, modeStorageKey]);
-
-  // Remember source.
-  useEffect(() => {
-    try {
-      const src = activeTest.structureSrc || '';
-
-      // Avoid trying to persist extremely large data URLs / file contents.
-      // The in-memory React state will still keep it while the app is open.
-      if (src && src.length < 4_000_000) {
-        window.sessionStorage.setItem(srcStorageKey, src);
-      } else if (!src) {
-        window.sessionStorage.removeItem(srcStorageKey);
-      }
-    } catch (e) {
-      // Ignore storage quota errors.
-    }
-  }, [activeTest.structureSrc, srcStorageKey]);
+  }, [structureMode]);
 
   // Help WebGL/3D viewers recalculate size when visibility changes.
   useEffect(() => {
     const t = setTimeout(() => {
       window.dispatchEvent(new Event('resize'));
     }, 100);
-
     return () => clearTimeout(t);
   }, [structureMode, hasOpened3D]);
 
@@ -1712,36 +1693,16 @@ const ExperimentSetupSection = ({ ctx }) => {
     const raw = (activeTest.structureSrc || activeTest.pdbId || '').trim();
 
     if (!raw) {
-      // Optional defaults. Remove them if you do not want automatic examples.
       if (d.moleculeType === 'protein') return 'https://models.rcsb.org/1UBQ.mmtf';
       if (d.moleculeType === 'dna') return 'https://models.rcsb.org/1BNA.mmtf';
       if (d.moleculeType === 'rna') return 'https://models.rcsb.org/1EHZ.mmtf';
-
-      if (d.moleculeType === 'lipid') {
-        return `/structures/${(activeTest.lipidChoice || 'POPC').toUpperCase()}.pdb`;
-      }
-
-      if (d.moleculeType === 'sugar') {
-        return `/structures/${activeTest.sugarChoice || 'GLC'}.sdf`;
-      }
-
+      if (d.moleculeType === 'lipid') return `/structures/${(activeTest.lipidChoice || 'POPC').toUpperCase()}.pdb`;
+      if (d.moleculeType === 'sugar') return `/structures/${activeTest.sugarChoice || 'GLC'}.sdf`;
       return '';
     }
 
-    // Direct URL, blob URL, data URL, local/public file.
-    if (
-      /^(https?:|blob:|data:)/i.test(raw) ||
-      raw.startsWith('/') ||
-      raw.startsWith('./')
-    ) {
-      return raw;
-    }
-
-    // If it looks like a PDB ID, load from RCSB as MMTF.
-    if (/^[0-9][A-Za-z0-9]{3}$/.test(raw)) {
-      return `https://models.rcsb.org/${raw.toUpperCase()}.mmtf`;
-    }
-
+    if (/^(https?:|blob:|data:)/i.test(raw) || raw.startsWith('/') || raw.startsWith('./')) return raw;
+    if (/^[0-9][A-Za-z0-9]{3}$/.test(raw)) return `https://models.rcsb.org/${raw.toUpperCase()}.mmtf`;
     return raw;
   }, [
     activeTest.structureSrc,
@@ -1751,7 +1712,9 @@ const ExperimentSetupSection = ({ ctx }) => {
     activeTest.sugarChoice
   ]);
 
-  const [focusIdx, setFocusIdx] = useState('ALL');
+  const focusIdx = activeTest.focusIdx !== undefined ? activeTest.focusIdx : 'ALL';
+  const setFocusIdx = (val) => updateActiveTest({ focusIdx: val });
+
   const [expandedPanel, setExpandedPanel] = useState(null);
 
   const [ssBrush, setSSBrush] = useState('H');
@@ -2355,11 +2318,6 @@ const ExperimentSetupSection = ({ ctx }) => {
             cell in the assignment table and its peaks in the spectra.
           </p>
 
-          {/*
-            IMPORTANT FIX:
-            The 3D viewer is kept mounted once opened.
-            Switching to 2D only hides it with CSS.
-          */}
           <div
             style={{
               display: structureMode === '3d' ? 'block' : 'none'
@@ -2387,10 +2345,6 @@ const ExperimentSetupSection = ({ ctx }) => {
             )}
           </div>
 
-          {/*
-            2D view can remain mounted too.
-            This also helps when switching back and forth.
-          */}
           <div
             style={{
               display: structureMode === '2d' ? 'block' : 'none'
@@ -2431,7 +2385,7 @@ const DataSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useNmrDerived(activeTest);
   const [tableMode, setTableMode] = useState(activeTest.tableMode || 'backbone');
-  const [focusIdx, setFocusIdx] = useState('ALL');
+  const focusIdx = activeTest.focusIdx !== undefined ? activeTest.focusIdx : 'ALL';
   const [newInstanceName, setNewInstanceName] = useState('');
   const [newLayerName, setNewLayerName] = useState('');
   const [newLayerUnit, setNewLayerUnit] = useState('');
@@ -2542,7 +2496,15 @@ const DataSection = ({ ctx }) => {
               <div key={inst.id} className={`flex items-center gap-1 rounded-lg px-2 py-1 border shadow-sm transition-colors ${isActive ? 'bg-indigo-600 border-indigo-700 text-white' : 'bg-white border-indigo-300 text-indigo-900'}`}>
                 <button type="button" onClick={() => updateActiveTest({ activeInstanceId: inst.id })} className="text-xs font-bold max-w-[180px] truncate" title="Set as active condition">{inst.name}</button>
                 <button type="button" onClick={() => renameInstance(inst.id)} className={`text-[10px] font-bold ${isActive ? 'text-indigo-200 hover:text-white' : 'text-slate-400 hover:text-blue-600'}`} title="Rename">✎</button>
-                <button type="button" onClick={() => duplicateInstance(inst)} className={`text-[10px] font-bold ${isActive ? 'text-indigo-200 hover:text-white' : 'text-slate-400 hover:text-blue-600'}`} title="Duplicate">⧉</button>
+                <button type="button" onClick={() => duplicateInstance(inst)} className={`text-[10px] font-bold ${isActive ? 'text-indigo-200 hover:text-white' : 'text-slate-400 hover:text-blue-600'}`} title="Duplicate">
+Model 02:49
+ThinkingThoughts
+Expand to view model thoughts
+
+chevron_right
+code
+JavaScript
+⧉</button>
                 <button type="button" onClick={() => removeInstance(inst.id)} className={`text-[10px] font-bold ${isActive ? 'text-indigo-200 hover:text-red-300' : 'text-slate-400 hover:text-red-500'}`} title="Remove">×</button>
               </div>
             );
@@ -2560,39 +2522,20 @@ const DataSection = ({ ctx }) => {
         </div>
       </div>
       
-      <div className="bg-white border border-slate-200 rounded-xl p-4">
-        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-          <label className="text-xs font-bold text-slate-600 uppercase">🗂️ Parameter Layer (assignment table data type)</label>
-          <span className="text-[9px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded">Switch between Chemical Shift & user-defined parameters</span>
-        </div>
-        <div className="flex flex-wrap gap-2 items-center mb-3">
-          {d.layers.map((l) => (
-            <div key={l.key} className="inline-flex items-center">
-              <button type="button" onClick={() => updateActiveTest({ activeLayerKey: l.key })} className={`px-3 py-1.5 rounded-l-lg text-xs font-bold border transition-colors ${d.activeLayerKey === l.key ? 'bg-blue-600 border-blue-700 text-white' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}`}>{l.label}{l.unit ? ` (${l.unit})` : ''}</button>
-              {!l.builtin ? (
-                <button type="button" onClick={() => removeLayer(l.key)} className={`px-2 py-1.5 rounded-r-lg border border-l-0 text-xs font-black ${d.activeLayerKey === l.key ? 'bg-blue-600 border-blue-700 text-blue-200 hover:text-white' : 'bg-white border-slate-300 text-slate-400 hover:text-red-500'}`} title="Delete parameter">×</button>
-              ) : (
-                <span className="px-2 py-1.5 rounded-r-lg border border-l-0 bg-slate-100 border-slate-300 text-slate-400 text-xs">🔒</span>
-              )}
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm px-4 py-3 flex items-center justify-between flex-wrap gap-3 no-print">
+        <span className="text-xs font-bold text-slate-500">Active: <span className="text-indigo-700">{d.activeInstance ? d.activeInstance.name : '—'}</span> · <span className="text-blue-700">{activeLayer.label}</span></span>
+        <div className="flex gap-2 flex-wrap items-center">
+          {d.parsedSeq.length > 0 && d.moleculeType !== 'sugar' && d.moleculeType !== 'lipid' && (
+            <div className="flex bg-slate-200 p-1 rounded-lg mr-2">
+              <button onClick={() => { setTableMode('backbone'); updateActiveTest({ tableMode: 'backbone' }); }} className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${effTableMode === 'backbone' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Backbone</button>
+              <button onClick={() => { setTableMode('all'); updateActiveTest({ tableMode: 'all' }); }} className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${effTableMode === 'all' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>All Atoms</button>
+              <button onClick={() => { setTableMode('unified'); updateActiveTest({ tableMode: 'unified' }); }} className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${effTableMode === 'unified' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Unified</button>
             </div>
-          ))}
+          )}
+          {isCS && <button onClick={fillEstimated} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100">🪄 Fill with estimated</button>}
+          <button onClick={clearLayer} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 border border-red-200 text-red-600 hover:bg-red-100">🧹 Clear {activeLayer.label}</button>
+          <button onClick={exportCSV} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 flex items-center gap-1 shadow-sm">📊 Export XLS (CSV)</button>
         </div>
-        <div className="flex flex-wrap gap-2 items-end">
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold text-slate-500 uppercase">New parameter name</label>
-            <input type="text" value={newLayerName} onChange={(e) => setNewLayerName(e.target.value)} placeholder="e.g. T1 Relaxation, Peak Intensity" className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-56 bg-white" />
-          </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold text-slate-500 uppercase">Unit</label>
-            <input type="text" value={newLayerUnit} onChange={(e) => setNewLayerUnit(e.target.value)} placeholder="e.g. s, a.u." className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-24 bg-white" />
-          </div>
-          <button type="button" onClick={addLayer} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm h-fit">+ Add Parameter Layer</button>
-        </div>
-      </div>
-      
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm px-4 py-3 flex items-center justify-end gap-3 no-print flex-wrap">
-        <span className="text-xs font-bold text-slate-500 mr-auto">Active: <span className="text-indigo-700">{d.activeInstance ? d.activeInstance.name : '—'}</span> · <span className="text-blue-700">{activeLayer.label}</span></span>
-        <button onClick={exportCSV} className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1.5 px-3 rounded text-xs flex items-center gap-1 shadow-sm transition-colors">📊 Export XLS (CSV)</button>
       </div>
       
       {selectedKeys && (
@@ -2601,20 +2544,7 @@ const DataSection = ({ ctx }) => {
           <button onClick={() => updateActiveTest({ selectedAtomKeys: [] })} className="ml-1 text-amber-600 hover:text-red-600 font-black" title="Clear selection">✕</button>
         </div>
       )}
-      
-      <div className="flex items-center gap-2 flex-wrap">
-        {d.parsedSeq.length > 0 && d.moleculeType !== 'sugar' && d.moleculeType !== 'lipid' && (
-          <div className="flex bg-slate-200 p-1 rounded-lg">
-            <button onClick={() => { setTableMode('backbone'); updateActiveTest({ tableMode: 'backbone' }); }} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${effTableMode === 'backbone' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Backbone</button>
-            <button onClick={() => { setTableMode('all'); updateActiveTest({ tableMode: 'all' }); }} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${effTableMode === 'all' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>All Atoms</button>
-            <button onClick={() => { setTableMode('unified'); updateActiveTest({ tableMode: 'unified' }); }} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${effTableMode === 'unified' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Unified</button>
-          </div>
-        )}
-        {isCS && <button onClick={fillEstimated} className="px-2 py-1 rounded-lg text-xs font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100">🪄 Fill with estimated</button>}
-        <button onClick={clearLayer} className="px-2 py-1 rounded-lg text-xs font-bold bg-red-50 border border-red-200 text-red-600 hover:bg-red-100">🧹 Clear {activeLayer.label}</button>
-        {manualKeys.length > 0 && <span className="text-[10px] font-bold text-green-700 bg-green-50 border border-green-300 rounded-lg px-2 py-1">🟩 {manualKeys.length} filled</span>}
-      </div>
-      
+
       {d.parsedSeq.length === 0 ? (
         <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">Enter a sequence / select a molecule (in Experiment Setup) to generate the table.</div>
       ) : effTableMode === 'backbone' ? (
@@ -2737,7 +2667,7 @@ const DataSection = ({ ctx }) => {
                     <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200"><tr><th className="px-3 py-2 font-semibold">Atom</th><th className="px-3 py-2 font-semibold text-center">Value</th></tr></thead>
                     <tbody className="text-slate-700 divide-y divide-slate-100">
                       {res.atoms.map((atom) => {
-                        const isMan = parseManual(d.activeValues[`${resIdx}-${atom}`]) !== null;
+                        const isMan = parseManual(d.activeValues[`resIdx-${atom}`]) !== null || parseManual(d.activeValues[`${resIdx}-${atom}`]) !== null;
                         const isSel = cellIsSelected(resIdx, atom);
                         return (
                           <tr key={atom} onClick={(e) => handleCellClick(e, resIdx, atom)} className={`cursor-pointer transition-colors ${isSel ? 'bg-amber-100' : isMan ? 'bg-green-50' : 'hover:bg-slate-50'}`} title="Click to highlight this atom everywhere">
@@ -2788,80 +2718,228 @@ const DataSection = ({ ctx }) => {
               );
             })}
           </div>
-          {d.hasPhosphorus && d.selNuc.includes('P') && (
-            <>
-              <h4 className="text-md font-bold text-teal-700 border-b-2 border-teal-100 inline-block pr-4 pb-1 mt-4">³¹P Assignment — {activeLayer.label}</h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-4">
-                {d.estSeq.map((res, resIdx) => {
-                  if (focusIdx !== 'ALL' && focusIdx !== resIdx) return null;
-                  if (res.p31 === null) return null;
-                  const isMan = parseManual(d.activeValues[`${resIdx}-P`]) !== null;
-                  const isSel = cellIsSelected(resIdx, 'P');
-                  return (
-                    <div key={`p-${resIdx}`} className="border border-slate-200 rounded-lg overflow-hidden shadow-sm h-fit">
-                      <div className="py-2 text-center font-bold text-sm" style={{ backgroundColor: `${res.color}15`, color: res.color, borderBottom: `1px solid ${res.color}30` }}>{res.name} ({res.id})</div>
-                      <div className={`p-3 flex items-center justify-center gap-3 cursor-pointer ${isSel ? 'bg-amber-100' : isMan ? 'bg-green-50' : ''}`} onClick={(e) => handleCellClick(e, resIdx, 'P')} title="Click to highlight this atom everywhere">
-                        <span className="font-bold text-teal-700">P</span>
-                        <input type="text" value={d.activeValues[`${resIdx}-P`] || ''} onChange={(e) => handleShiftChange(resIdx, 'P', e.target.value)} className={`w-16 text-center border rounded py-0.5 outline-none text-xs font-mono ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-300 focus:border-teal-500'}`} placeholder="—" />
-                        {isCS && <span className="text-[13px] font-bold text-teal-600">≈ {res.p31.toFixed(2)}</span>}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          )}
         </div>
       )}
+
+      {/* Moved Parameter Layer block below tables */}
+      <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm mt-4">
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <label className="text-xs font-bold text-slate-600 uppercase">🗂️ Parameter Layer (assignment table data type)</label>
+          <span className="text-[9px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded">Switch between Chemical Shift & user-defined parameters</span>
+        </div>
+        <div className="flex flex-wrap gap-2 items-center mb-3">
+          {d.layers.map((l) => (
+            <div key={l.key} className="inline-flex items-center">
+              <button type="button" onClick={() => updateActiveTest({ activeLayerKey: l.key })} className={`px-3 py-1.5 rounded-l-lg text-xs font-bold border transition-colors ${d.activeLayerKey === l.key ? 'bg-blue-600 border-blue-700 text-white' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}`}>{l.label}{l.unit ? ` (${l.unit})` : ''}</button>
+              {!l.builtin ? (
+                <button type="button" onClick={() => removeLayer(l.key)} className={`px-2 py-1.5 rounded-r-lg border border-l-0 text-xs font-black ${d.activeLayerKey === l.key ? 'bg-blue-600 border-blue-700 text-blue-200 hover:text-white' : 'bg-white border-slate-300 text-slate-400 hover:text-red-500'}`} title="Delete parameter">×</button>
+              ) : (
+                <span className="px-2 py-1.5 rounded-r-lg border border-l-0 bg-slate-100 border-slate-300 text-slate-400 text-xs">🔒</span>
+              )}
+            </div>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-2 items-end">
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">New parameter name</label>
+            <input type="text" value={newLayerName} onChange={(e) => setNewLayerName(e.target.value)} placeholder="e.g. T1 Relaxation, Peak Intensity" className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-56 bg-white" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">Unit</label>
+            <input type="text" value={newLayerUnit} onChange={(e) => setNewLayerUnit(e.target.value)} placeholder="e.g. s, a.u." className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-24 bg-white" />
+          </div>
+          <button type="button" onClick={addLayer} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm h-fit">+ Add Parameter Layer</button>
+        </div>
+      </div>
+
     </div>
   );
 };
 
 // ================= SECONDARY CHEMICAL SHIFTS =================
-const RANDOM_COIL_DB={A:{HA:4.35,CA:52.5,CB:19.1,CO:177.8},C:{HA:4.55,CA:58.2,CB:28.0,CO:175.9},D:{HA:4.76,CA:54.5,CB:40.8,CO:177.5},E:{HA:4.37,CA:56.9,CB:29.8,CO:177.6},F:{HA:4.66,CA:57.9,CB:39.8,CO:177.4},G:{HA:3.96,CA:45.2,CB:null,CO:174.6},H:{HA:4.76,CA:55.3,CB:31.3,CO:175.3},I:{HA:4.20,CA:61.3,CB:38.3,CO:177.8},K:{HA:4.38,CA:56.6,CB:32.4,CO:177.9},L:{HA:4.47,CA:55.4,CB:41.9,CO:178.9},M:{HA:4.52,CA:55.5,CB:32.6,CO:177.5},N:{HA:4.75,CA:53.3,CB:38.6,CO:176.6},P:{HA:4.44,CA:63.1,CB:31.9,CO:178.1},Q:{HA:4.39,CA:56.2,CB:29.5,CO:177.2},R:{HA:4.51,CA:56.5,CB:30.4,CO:177.2},S:{HA:4.51,CA:58.4,CB:63.6,CO:175.6},T:{HA:4.39,CA:62.0,CB:69.6,CO:175.7},V:{HA:4.16,CA:62.1,CB:32.1,CO:177.4},W:{HA:4.70,CA:57.4,CB:29.5,CO:177.2},Y:{HA:4.66,CA:57.9,CB:38.9,CO:177.2}};
-const SCSBarChart=({title,data,color})=>{
-  const[ref,w]=useMeasureWidth();
-  const m={l:34,r:8,t:8,b:18};
-  const pw=Math.max(10,(w||400)-m.l-m.r);
-  const vals=data.map(d=>d.v).filter(v=>v!==null);
-  const mx=vals.length?Math.max(...vals.map(v=>Math.abs(v)),0.5):0.5;
-  const H=110;
-  const zero=m.t+H/2;
-  const bw=Math.max(3,(pw/Math.max(1,data.length))*0.6);
-  return(
-    <div ref={ref} className="bg-white rounded-lg border border-slate-200 p-2">
-      <h5 className="text-[11px] font-bold text-slate-600 mb-1">{title}</h5>
-      <svg width="100%" height={H+m.t+m.b}>
-        <line x1={m.l} y1={zero} x2={m.l+pw} y2={zero} stroke="#94a3b8"/>
-        {data.map((d,i)=>{
-          if(d.v===null)return null;
-          const x=m.l+(i+0.5)*(pw/data.length)-bw/2;
-          const h=(Math.abs(d.v)/mx)*(H/2);
-          const y=d.v>=0?zero-h:zero;
-          return(<rect key={i} x={x} y={y} width={bw} height={Math.max(1,h)} fill={d.v>=0?color:'#ef4444'}><title>{`${d.label}: ${d.v.toFixed(2)}`}</title></rect>);
-        })}
-      </svg>
+const SCSPlot = ({ title, data, color, cfg }) => {
+  const [refAreaLeft, setRefAreaLeft] = useState(null);
+  const [refAreaRight, setRefAreaRight] = useState(null);
+  const isDragging = useRef(false);
+
+  // Fallbacks per la configurazione custom
+  const fSize = cfg.fontSize || 11;
+  const barC = cfg.barColor || color;
+  const showHLine = !!cfg.showHLine;
+  const hLineVal = parseFloat(cfg.hLineVal) || 0;
+  const aspect = parseFloat(cfg.aspect) || 2;
+  const xLab = cfg.xAxisTitle || 'Residues';
+  const yLab = cfg.yAxisTitle || 'Δδ (ppm)';
+  
+  const initialDomain = [0, Math.max(10, data.length)];
+  const [xDomain, setXDomain] = useState(initialDomain);
+  const isZoomed = xDomain[0] !== initialDomain[0] || xDomain[1] !== initialDomain[1];
+
+  const chartRef = useRef(null);
+
+  const getXVal = (clientX) => {
+    if (!chartRef.current) return null;
+    const wrapper = chartRef.current.querySelector('.recharts-wrapper');
+    if (!wrapper) return null;
+    const rect = wrapper.getBoundingClientRect();
+    const plotW = rect.width - 50 - 20; // Approx margins
+    if (plotW <= 0) return null;
+    const px = clientX - rect.left - 50;
+    const fx = Math.min(1, Math.max(0, px / plotW));
+    return xDomain[0] + fx * (xDomain[1] - xDomain[0]);
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      if (!isDragging.current) return;
+      const xVal = getXVal(e.clientX);
+      if (xVal !== null) setRefAreaRight(xVal);
+    };
+    const handleMouseUp = () => {
+      if (!isDragging.current) return;
+      isDragging.current = false;
+      if (refAreaLeft !== null && refAreaRight !== null && refAreaLeft !== refAreaRight) {
+        setXDomain([Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)]);
+      }
+      setRefAreaLeft(null); setRefAreaRight(null);
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => { window.removeEventListener('mousemove', handleMouseMove); window.removeEventListener('mouseup', handleMouseUp); };
+  }, [refAreaLeft, refAreaRight, xDomain]);
+
+  const handleMouseDown = (e) => {
+    const xVal = getXVal(e.clientX);
+    if (xVal !== null) { isDragging.current = true; setRefAreaLeft(xVal); setRefAreaRight(xVal); }
+  };
+
+  return (
+    <div className="bg-white rounded-lg border border-slate-200 p-2 flex flex-col relative" onMouseDown={handleMouseDown} ref={chartRef}>
+      <div className="flex justify-between items-center mb-1">
+        <h5 className="text-[12px] font-bold text-slate-700">{title}</h5>
+        {isZoomed && <button onClick={() => setXDomain(initialDomain)} className="text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-0.5 rounded z-10">Reset Zoom</button>}
+      </div>
+      <div className="flex-1 w-full" style={{ aspectRatio: aspect }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} margin={{ top: 15, right: 20, left: 0, bottom: 20 }}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis type="number" dataKey="idx" domain={xDomain} allowDataOverflow tickFormatter={(val) => data[val]?.label || ''} tick={{ fontSize: fSize }} label={{ value: xLab, position: 'insideBottom', offset: -10, fontSize: fSize + 1 }} />
+            <YAxis tick={{ fontSize: fSize }} label={{ value: yLab, angle: -90, position: 'insideLeft', offset: 10, fontSize: fSize + 1 }} />
+            <Tooltip content={({ active, payload }) => {
+              if (active && payload && payload.length) {
+                const d = payload[0].payload;
+                return (
+                  <div className="bg-white p-2 shadow rounded border border-slate-200 text-xs">
+                    <p className="font-bold">{d.label}</p>
+                    <p>{yLab}: <span style={{ color: d.v >= 0 ? barC : '#ef4444' }}>{d.v.toFixed(3)}</span></p>
+                  </div>
+                );
+              }
+              return null;
+            }} />
+            <ReferenceLine y={0} stroke="#94a3b8" />
+            {showHLine && <ReferenceLine y={hLineVal} stroke="#eab308" strokeDasharray="4 4" label={{ value: `Max: ${hLineVal}`, fill: '#eab308', fontSize: fSize, position: 'insideTopRight' }} />}
+            {showHLine && <ReferenceLine y={-hLineVal} stroke="#eab308" strokeDasharray="4 4" />}
+            <Bar dataKey="v" isAnimationActive={false}>
+              {data.map((entry, index) => (
+                <Cell key={`cell-${index}`} fill={entry.v >= 0 ? barC : '#ef4444'} />
+              ))}
+            </Bar>
+            {refAreaLeft !== null && refAreaRight !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} strokeOpacity={0.3} fill="#cbd5e1" />}
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 };
-const SecondaryShiftsSection=({ctx})=>{
-  const{activeTest}=ctx;
-  const d=useNmrDerived(activeTest);
-  if(d.moleculeType!=='protein'||!d.parsedSeq.length) return(<div className="text-center py-8 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed">SCS requires a protein sequence.</div>);
-  const cs=getLayerValues(d.activeInstance,'cs');
-  const rows=d.estSeq.map((res,idx)=>{
-    const rc=RANDOM_COIL_DB[res.char]||{};
-    const g=(k,fb)=>{const m=parseManual(cs[`${idx}-${k}`]);return m!==null?m:fb;};
-    const HA=g('Hα',res.estShifts?.['Hα']),CA=g('Cα',res.estUniqueC?.['Cα']),CB=g('Cβ',res.estUniqueC?.['Cβ']),CO=g("C'",res.estCP);
-    return{label:res.id,HA:HA!=null&&rc.HA!=null?HA-rc.HA:null,CA:CA!=null&&rc.CA!=null?CA-rc.CA:null,CB:CB!=null&&rc.CB!=null?CB-rc.CB:null,CO:CO!=null&&rc.CO!=null?CO-rc.CO:null};
-  });
-  const mk=k=>rows.map(r=>({label:r.label,v:r[k]}));
-  return(
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <SCSBarChart title="ΔHα (HA)" data={mk('HA')} color="#3b82f6"/>
-      <SCSBarChart title="ΔCα (CA)" data={mk('CA')} color="#8b5cf6"/>
-      <SCSBarChart title="ΔCβ (CB)" data={mk('CB')} color="#f59e0b"/>
-      <SCSBarChart title="ΔC′ (CO)" data={mk('CO')} color="#22c55e"/>
+
+const SecondaryShiftsSection = ({ ctx }) => {
+  const { activeTest, updateActiveTest } = ctx;
+  const d = useNmrDerived(activeTest);
+  
+  // Customization state
+  const scsCfg = activeTest.scsCfg || {
+    fontSize: 11, barColorHA: '#3b82f6', barColorCA: '#8b5cf6', barColorCB: '#f59e0b', barColorCO: '#22c55e',
+    showHLine: true, hLineVal: 1.5, aspect: 2.5, xAxisTitle: 'Residues', yAxisTitle: 'Δδ (ppm)'
+  };
+  const setCfg = (patch) => updateActiveTest({ scsCfg: { ...scsCfg, ...patch } });
+  const [showConfig, setShowConfig] = useState(false);
+
+  if (d.moleculeType !== 'protein' || !d.parsedSeq.length) return (<div className="text-center py-8 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed">SCS requires a protein sequence.</div>);
+  
+  const cs = getLayerValues(d.activeInstance, 'cs');
+  
+  const rows = d.estSeq.map((res, idx) => {
+    // Focus support: filter if required
+    const rc = RANDOM_COIL_DB[res.char] || {};
+    
+    // We prioritize manually entered values in the table. If missing, we use estimated (which includes SS effects).
+    // This allows seeing the true offset.
+    const getVal = (k, estVal) => {
+      const manual = parseManual(cs[`${idx}-${k}`]);
+      return manual !== null ? manual : estVal;
+    };
+    
+    const HA = getVal('Hα', res.estShifts?.['Hα']);
+    const CA = getVal('Cα', res.estUniqueC?.['Cα']);
+    const CB = getVal('Cβ', res.estUniqueC?.['Cβ']);
+    const CO = getVal("C'", res.estCP);
+
+    return {
+      label: res.id,
+      idx,
+      HA: HA != null && rc.HA != null ? HA - rc.HA : null,
+      CA: CA != null && rc.CA != null ? CA - rc.CA : null,
+      CB: CB != null && rc.CB != null ? CB - rc.CB : null,
+      CO: CO != null && rc.CO != null ? CO - rc.CO : null,
+    };
+  }).filter(r => activeTest.focusIdx === undefined || activeTest.focusIdx === 'ALL' || r.idx === activeTest.focusIdx);
+
+  const mk = (k) => rows.map((r, i) => ({ label: r.label, v: r[k], idx: i })).filter(d => d.v !== null);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-lg p-2 w-fit">
+        <button onClick={() => setShowConfig(!showConfig)} className="text-xs bg-white border border-slate-300 px-3 py-1.5 rounded shadow-sm font-bold text-slate-700 hover:bg-slate-100">
+          ⚙️ Customize SCS Graphs
+        </button>
+      </div>
+      
+      {showConfig && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-white p-4 rounded-xl border border-slate-300 shadow-sm">
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">Font Size</label>
+            <input type="number" value={scsCfg.fontSize} onChange={e => setCfg({ fontSize: Number(e.target.value) })} className="border border-slate-300 rounded px-2 py-1 text-xs" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">Aspect Ratio (W/H)</label>
+            <input type="number" step="0.1" value={scsCfg.aspect} onChange={e => setCfg({ aspect: Number(e.target.value) })} className="border border-slate-300 rounded px-2 py-1 text-xs" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">X Axis Title</label>
+            <input type="text" value={scsCfg.xAxisTitle} onChange={e => setCfg({ xAxisTitle: e.target.value })} className="border border-slate-300 rounded px-2 py-1 text-xs" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">Y Axis Title</label>
+            <input type="text" value={scsCfg.yAxisTitle} onChange={e => setCfg({ yAxisTitle: e.target.value })} className="border border-slate-300 rounded px-2 py-1 text-xs" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">Show Max H-Line</label>
+            <input type="checkbox" checked={scsCfg.showHLine} onChange={e => setCfg({ showHLine: e.target.checked })} className="accent-blue-600 mt-1 h-4 w-4" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">H-Line Value</label>
+            <input type="number" step="0.1" value={scsCfg.hLineVal} onChange={e => setCfg({ hLineVal: Number(e.target.value) })} className="border border-slate-300 rounded px-2 py-1 text-xs" />
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <SCSPlot title="ΔHα (HA)" data={mk('HA')} color={scsCfg.barColorHA} cfg={scsCfg} />
+        <SCSPlot title="ΔCα (CA)" data={mk('CA')} color={scsCfg.barColorCA} cfg={scsCfg} />
+        <SCSPlot title="ΔCβ (CB)" data={mk('CB')} color={scsCfg.barColorCB} cfg={scsCfg} />
+        <SCSPlot title="ΔC′ (CO)" data={mk('CO')} color={scsCfg.barColorCO} cfg={scsCfg} />
+      </div>
     </div>
   );
 };
@@ -3044,6 +3122,46 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
     </>
   );
 
+  // Parameter extraction for the optimized parameters graph
+  const paramKeys = useMemo(() => {
+    if (!plot.fitEnabled || plot.xMode !== 'numeric' || !series.length) return [];
+    if (plot.fitModel === 'linear') return ['slope', 'intercept'];
+    if (plot.fitModel === '4pl') return ['top', 'bottom', 'ic50', 'hill'];
+    if (plot.fitModel === 'custom') {
+      const f = fits[series[0].key];
+      if (f && f.params) return Object.keys(f.params);
+    }
+    return [];
+  }, [plot.fitEnabled, plot.xMode, plot.fitModel, fits, series]);
+
+  const [paramGraphVar, setParamGraphVar] = useState('');
+  useEffect(() => {
+    if (!paramKeys.includes(paramGraphVar)) {
+      setParamGraphVar(paramKeys[0] || '');
+    }
+  }, [paramKeys, paramGraphVar]);
+
+  const paramData = useMemo(() => {
+    if (!paramGraphVar) return [];
+    return series.map(s => {
+      const f = fits[s.key];
+      if (!f) return null;
+      let val, err;
+      if (plot.fitModel === 'linear') {
+        val = f[paramGraphVar];
+        err = f[`${paramGraphVar}Err`];
+      } else if (plot.fitModel === '4pl') {
+        val = f[paramGraphVar];
+        err = f[`${paramGraphVar}Err`];
+      } else {
+        val = f.params?.[paramGraphVar];
+        err = f.paramsErr?.[paramGraphVar];
+      }
+      if (val === undefined) return null;
+      return { name: s.label, val, err: err || 0, fill: colorOf(s) };
+    }).filter(Boolean);
+  }, [series, fits, paramGraphVar, plot.fitModel]);
+
   return (
     <CollapsibleSection title={plot.title} icon="📈" defaultOpen={true}
       headerExtra={
@@ -3224,27 +3342,54 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
               <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">⚠️ Fitting requires X axis = “Numeric X”. Set numeric X values for the instances in the Data section.</p>
             )}
             {plot.fitEnabled && plot.xMode === 'numeric' && series.length > 0 && (
-              <div className="overflow-x-auto border border-slate-200 rounded-lg">
-                <table className="w-full text-xs text-left bg-white">
-                  <thead className="bg-slate-100 text-slate-500 uppercase">
-                    <tr><th className="px-3 py-2">Series</th><th className="px-3 py-2">Model</th><th className="px-3 py-2">Parameters (weighted)</th><th className="px-3 py-2">SE</th></tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {series.map((s) => {
-                      const f = fits[s.key];
-                      return (
-                        <tr key={s.key}>
-                          <td className="px-3 py-1.5 font-bold text-slate-700">{s.label}</td>
-                          <td className="px-3 py-1.5">{f ? (plot.fitModel === 'linear' ? 'Linear' : plot.fitModel === '4pl' ? '4PL' : 'Custom') : '—'}</td>
-                          <td className="px-3 py-1.5 font-mono text-slate-600">
-                            {f ? (plot.fitModel === 'linear' ? `slope=${f.slope.toFixed(4)}; intercept=${f.intercept.toFixed(4)}; R²=${f.r2.toFixed(3)}` : plot.fitModel === '4pl' ? `Top=${f.top.toFixed(3)}; Bottom=${f.bottom.toFixed(3)}; EC50=${f.ic50.toFixed(3)}; Hill=${f.hill.toFixed(3)}` : Object.entries(f.params || {}).map(([k,v])=>`${k}=${v.toFixed(4)}`).join('; ') + `; R²=${f.r2.toFixed(3)}`) : 'not enough points / missing X'}
-                          </td>
-                          <td className="px-3 py-1.5 font-mono text-slate-600">{f ? (f.se ?? 0).toFixed(3) : '—'}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+              <div className="flex flex-col gap-4">
+                <div className="overflow-x-auto border border-slate-200 rounded-lg">
+                  <table className="w-full text-xs text-left bg-white">
+                    <thead className="bg-slate-100 text-slate-500 uppercase">
+                      <tr><th className="px-3 py-2">Series</th><th className="px-3 py-2">Model</th><th className="px-3 py-2">Parameters (weighted)</th><th className="px-3 py-2">SE</th></tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {series.map((s) => {
+                        const f = fits[s.key];
+                        return (
+                          <tr key={s.key}>
+                            <td className="px-3 py-1.5 font-bold text-slate-700">{s.label}</td>
+                            <td className="px-3 py-1.5">{f ? (plot.fitModel === 'linear' ? 'Linear' : plot.fitModel === '4pl' ? '4PL' : 'Custom') : '—'}</td>
+                            <td className="px-3 py-1.5 font-mono text-slate-600">
+                              {f ? (plot.fitModel === 'linear' ? `slope=${f.slope.toFixed(4)}±${(f.slopeErr||0).toFixed(4)}; int=${f.intercept.toFixed(4)}±${(f.interceptErr||0).toFixed(4)}; R²=${f.r2.toFixed(3)}` : plot.fitModel === '4pl' ? `Top=${f.top.toFixed(3)}; Bottom=${f.bottom.toFixed(3)}; EC50=${f.ic50.toFixed(3)}; Hill=${f.hill.toFixed(3)}` : Object.entries(f.params || {}).map(([k,v])=>`${k}=${v.toFixed(4)}`).join('; ') + `; R²=${f.r2.toFixed(3)}`) : 'not enough points / missing X'}
+                            </td>
+                            <td className="px-3 py-1.5 font-mono text-slate-600">{f ? (f.se ?? 0).toFixed(3) : '—'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                
+                {paramKeys.length > 0 && paramData.length > 0 && (
+                  <div className="bg-white border border-slate-200 rounded-lg p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-xs font-bold text-slate-700">Fitted Parameter Chart</label>
+                      <select value={paramGraphVar} onChange={e => setParamGraphVar(e.target.value)} className="border border-slate-300 rounded px-2 py-1 text-xs">
+                        {paramKeys.map(k => <option key={k} value={k}>{k}</option>)}
+                      </select>
+                    </div>
+                    <div style={{ height: 250 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={paramData} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                          <XAxis dataKey="name" tick={{ fontSize: 10 }} />
+                          <YAxis tick={{ fontSize: 10 }} />
+                          <Tooltip />
+                          <Bar dataKey="val" isAnimationActive={false}>
+                            {paramData.map((entry, idx) => <Cell key={idx} fill={entry.fill} />)}
+                            {HAS_EB && <ErrorBar dataKey="err" width={4} strokeWidth={1} color="#333" />}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -3503,7 +3648,10 @@ const SimulationsSection = ({ ctx }) => {
   const d = useNmrDerived(activeTest);
   const [expandedPanel, setExpandedPanel] = useState(null);
   const [showCfg, setShowCfg] = useState(false);
-  const [focusIdx, setFocusIdx] = useState('ALL');
+  
+  // Link FocusIdx state
+  const focusIdx = activeTest.focusIdx !== undefined ? activeTest.focusIdx : 'ALL';
+  const setFocusIdx = (val) => updateActiveTest({ focusIdx: val });
   
   const selectedKeys = getSelectedKeys(activeTest);
   const manualKeys = useMemo(() => getManualKeys(d.shifts), [d.shifts]);
@@ -3597,6 +3745,7 @@ const SimulationsSection = ({ ctx }) => {
     </div>
   );
 };
+
 // ================= ALL =================
 export const All = ({ ctx }) => {
   return (
