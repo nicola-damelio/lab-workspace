@@ -6,6 +6,66 @@
 //
 // The categories defined in Definitions & Labels should be the primary source.
 
+export const CLONING_TAB_CONFIG = {
+  typeKey: 'cloning',
+  typeLabel: 'Cloning & DNA Prep',
+  icon: '🧬',
+
+  fallbackCategories: [
+    'Vector Construction',
+    'Mutagenesis',
+    'Plasmid Prep',
+    'Validation'
+  ],
+
+  samples: {
+    compounds: true, // Can be used for the Gene/Insert name
+    cellLines: true, // Perfect for Bacterial Strains (e.g., DH5a, BL21)
+    compoundLabel: 'Construct / Insert Name',
+    cellLineLabel: 'Bacterial / Host Strain'
+  },
+
+  imagesKey: 'gelImages', // Specifically track gel electrophoresis
+
+  conditionFields: [
+    {
+      key: 'experimentDate',
+      label: 'Experiment Date',
+      type: 'date'
+    },
+    {
+      key: 'vectorBackbone',
+      label: 'Vector Backbone',
+      type: 'text',
+      placeholder: 'e.g. pET-28a(+)'
+    },
+    {
+      key: 'cloningMethod',
+      label: 'Method',
+      type: 'select',
+      options: ['Restriction-Ligation', 'Gibson Assembly', 'Gateway', 'TOPO', 'Site-Directed Mutagenesis']
+    },
+    {
+      key: 'selectionMarker',
+      label: 'Antibiotic Selection',
+      type: 'text',
+      placeholder: 'e.g. Kanamycin 50µg/mL'
+    },
+    {
+      key: 'sequencingStatus',
+      label: 'Sequencing Verification',
+      type: 'select',
+      options: ['Pending', 'Verified (Correct)', 'Failed / Mutated']
+    }
+  ],
+
+  notebookChecks: [
+    { id: 'cond', label: 'Construct Details' },
+    { id: 'quant', label: 'DNA Quantification' },
+    { id: 'gels', label: 'Gel Images' }
+  ]
+};
+
 export const CD_TAB_CONFIG = {
   typeKey: 'cd',
   typeLabel: 'Circular Dichroism',
