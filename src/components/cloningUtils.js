@@ -190,3 +190,101 @@ export const analyzeSpectrum = (spec) => {
     concNgUl: concM != null && mw ? concM * mw * 1000 : null
   };
 };
+/* ==========================================================================
+   CLONING STRATEGY HELPERS (append to cloningUtils.js)
+========================================================================== */
+export const cleanDna = (seq) => String(seq || '').toUpperCase().replace(/[^AGCT]/g, '');
+
+const COMPLEMENT_MAP = { A: 'T', T: 'A', G: 'C', C: 'G', N: 'N' };
+
+export const reverseComplement = (seq) =>
+  cleanDna(seq).split('').reverse().map((c) => COMPLEMENT_MAP[c] || 'N').join('');
+
+export const gcContent = (seq) => {
+  const s = cleanDna(seq);
+  if (!s.length) return null;
+  const gc = (s.match(/[GC]/g) || []).length;
+  return (gc / s.length) * 100;
+};
+
+// Simple Tm estimate (Wallace < 14 nt, salt-corrected formula above)
+export const calcTm = (seq) => {
+  const s = cleanDna(seq);
+  const n = s.length;
+  if (!n) return null;
+  const gc = (s.match(/[GC]/g) || []).length;
+  if (n < 14) return 2 * (n - gc) + 4 * gc;
+  return Math.round((64.9 + (41 * (gc - 16.4)) / n) * 10) / 10;
+};
+
+// Extend annealing region until target Tm is reached
+export const annealToTm = (seq, target = 60, dir = 'fwd', minLen = 18, maxLen = 32) => {
+  const s = cleanDna(seq);
+  if (!s.length) return '';
+  for (let L = minLen; L <= maxLen; L++) {
+    const part = dir === 'fwd' ? s.slice(0, L) : s.slice(-L);
+    if ((calcTm(part) || 0) >= target) return part;
+  }
+  return dir === 'fwd' ? s.slice(0, maxLen) : s.slice(-maxLen);
+};
+
+export const RESTRICTION_ENZYMES = {
+  EcoRI: 'GAATTC', BamHI: 'GGATCC', HindIII: 'AAGCTT', XhoI: 'CTCGAG',
+  NdeI: 'CATATG', NotI: 'GCGGCCGC', NcoI: 'CCATGG', SalI: 'GTCGAC',
+  XbaI: 'TCTAGA', SpeI: 'ACTAGT', PstI: 'CTGCAG', KpnI: 'GGTACC',
+  SacI: 'GAGCTC', ApaI: 'GGGCCC', BglII: 'AGATCT', ClaI: 'ATCGAT',
+  EcoRV: 'GATATC', SmaI: 'CCCGGG', MluI: 'ACGCGT', AgeI: 'ACCGGT',
+  BsaI: 'GGTCTC', SapI: 'GCTCTTC'
+};
+
+export const ENZYME_NAMES = Object.keys(RESTRICTION_ENZYMES);
+
+export const findEnzymeSites = (seq, enzymeName) => {
+  const site = RESTRICTION_ENZYMES[enzymeName];
+  if (!site) return [];
+  const s = cleanDna(seq);
+  if (!s) return [];
+  const hits = new Set();
+  const search = (pat) => {
+    let i = s.indexOf(pat);
+    while (i >= 0) {
+      hits.add(i);
+      i = s.indexOf(pat, i + 1);
+    }
+  };
+  search(site);
+  const rc = reverseComplement(site);
+  if (rc !== site) search(rc);
+  return [...hits].sort((a, b) => a - b);
+};
+
+export const scanAllEnzymes = (seq) => {
+  const out = {};
+  ENZYME_NAMES.forEach((n) => {
+    const sites = findEnzymeSites(seq, n);
+    if (sites.length) out[n] = sites;
+  });
+  return out;
+};
+
+/* Codon optimization (same tables used by App.jsx compound definitions) */
+const CODON_TABLES = {
+  bacterial: {
+    A: 'GCG', R: 'CGT', N: 'AAC', D: 'GAT', C: 'TGC', E: 'GAA',
+    Q: 'CAA', G: 'GGC', H: 'CAT', I: 'ATT', L: 'CTG', K: 'AAA',
+    M: 'ATG', F: 'TTT', P: 'CCG', S: 'AGC', T: 'ACC', W: 'TGG',
+    Y: 'TAT', V: 'GTG', '*': 'TAA'
+  },
+  mammalian: {
+    A: 'GCC', R: 'CGG', N: 'AAC', D: 'GAT', C: 'TGC', E: 'GAA',
+    Q: 'CAA', G: 'GGC', H: 'CAT', I: 'ATT', L: 'CTG', K: 'AAA',
+    M: 'ATG', F: 'TTT', P: 'CCC', S: 'TCC', T: 'ACC', W: 'TGG',
+    Y: 'TAT', V: 'GTG', '*': 'TAA'
+  }
+};
+
+export const codonOptimize = (proteinSeq, host = 'bacterial') => {
+  const clean = String(proteinSeq || '').toUpperCase().replace(/[^A-Z*]/g, '');
+  const table = CODON_TABLES[host] || CODON_TABLES.bacterial;
+  return clean.split('').map((aa) => table[aa] || 'NNN').join('');
+};

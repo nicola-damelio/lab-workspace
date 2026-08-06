@@ -5741,6 +5741,8 @@ if (activeTest.type === 'cloning') {
       testCategories={testCategories}
       operators={operators}
       instances={siblingTests}
+      compoundMeta={compoundMeta}   // ← ADD THIS
+      molecules={molecules}         // ← optional
     />
   );
 }

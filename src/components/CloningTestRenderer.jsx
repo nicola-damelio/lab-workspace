@@ -5,6 +5,13 @@ import { CloningSetupSection } from './CloningSetupSection';
 import { CloningDataSection } from './CloningDataSection';
 import { CloningSimulationsSection } from './CloningSimulationsSection';
 import { analyzeSpectrum, getOperatorLabel } from './cloningUtils';
+import { CloningStrategyPlanner } from './CloningStrategyPlanner';
+const CloningSetupWrapper = ({ ctx }) => (
+  <>
+    <CloningStrategyPlanner ctx={ctx} />
+    <CloningSetupSection ctx={ctx} />
+  </>
+);
 
 /* ============================================================================
    LAB NOTEBOOK EXPORT
@@ -46,6 +53,18 @@ const buildCloningNotebookHtml = (checked, ctx) => {
         <b>Protocols:</b> ${protTitles}
       </p>`;
   }
+
+if (checked.strategy && t.cloningStrategy) {
+  const s = t.cloningStrategy;
+  html += `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;">
+    <b>Cloning Strategy:</b> ${s.method || 'restriction'} |
+    <b>Insert:</b> ${s.insertCompound || '—'} |
+    <b>Vector:</b> ${s.vectorName || '—'} |
+    ${s.method === 'gibson'
+      ? `<b>Overlap:</b> ${s.overlap || 20} bp | <b>Position:</b> ${s.insertionIndex ?? '—'}`
+      : `<b>Enzymes:</b> 5′ ${s.enzyme5 || '—'} / 3′ ${s.enzyme3 || '—'} | <b>MCS:</b> ${s.mcs || '—'}`}
+  </p>`;
+}
 
   if (checked.setup) {
     const program = Array.isArray(t.pcrProgram) ? t.pcrProgram : [];
@@ -173,27 +192,28 @@ export const CloningTestRenderer = (props) => {
 
   const config = {
     ...CLONING_TAB_CONFIG,
-    categories: appCategories,
-    notebookChecks: [
-      { id: 'cond', label: 'Classification & Conditions' },
-      { id: 'setup', label: 'Thermal Cycler & Reaction Mix' },
-      { id: 'quant', label: 'DNA Quantification' },
-      { id: 'uv', label: 'UV Spectra Analysis' },
-      { id: 'gels', label: 'Gel Images' },
-      { id: 'sim', label: 'Simulation Parameters' }
-    ]
-  };
+  categories: appCategories,
+  notebookChecks: [
+    { id: 'cond', label: 'Classification & Conditions' },
+    { id: 'strategy', label: 'Cloning Strategy' },
+    { id: 'setup', label: 'Thermal Cycler & Reaction Mix' },
+    { id: 'quant', label: 'DNA Quantification' },
+    { id: 'uv', label: 'UV Spectra Analysis' },
+    { id: 'gels', label: 'Gel Images' },
+    { id: 'sim', label: 'Simulation Parameters' }
+  ]
+};
 
   return (
     <TestShellRenderer
       {...props}
       config={config}
-      custom={{
-        Setup: CloningSetupSection,
-        Data: CloningDataSection,
-        Simulations: CloningSimulationsSection,
-        buildNotebookHtml: buildCloningNotebookHtml
-      }}
+custom={{
+  Setup: CloningSetupWrapper,   // ← planner + thermal cycler/mix
+  Data: CloningDataSection,
+  Simulations: CloningSimulationsSection,
+  buildNotebookHtml: buildCloningNotebookHtml
+}}
       testCategories={appCategories}
       operators={Array.isArray(props.operators) ? props.operators : []}
     />
