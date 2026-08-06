@@ -5425,6 +5425,8 @@ if (activeTest.type === 'cloning') {
       allCellLines={allCellLines}
       customFields={customFields}
       testCategories={testCategories}
+      operators={operators}
+      instances={siblingTests}
     />
   );
 }

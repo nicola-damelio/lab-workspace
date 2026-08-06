@@ -385,39 +385,76 @@ export const TestShellRenderer = ({
     config.notebookChecks ||
     [{ id: 'cond', label: 'Experimental Conditions' }, ...(config.extraNotebookChecks || [])];
 
-  const appendToNotebook = () => {
-    const checked = {};
-    notebookChecks.forEach((c) => {
-      const el = document.getElementById(`nb-${typeKey}-${c.id}`);
-      checked[c.id] = el ? el.checked : false;
-    });
-    let html =
-      '<div style="background-color: #f8fafc; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0; margin-top: 15px; font-family: sans-serif;">';
-    html += `<h4 style="color: #1e40af; margin-top: 0; margin-bottom: 12px; font-size: 14px; border-bottom: 2px solid #bfdbfe; padding-bottom: 4px;">📊 ${config.typeLabel || 'Experiment'} Summary</h4>`;
-    const builder = custom.buildNotebookHtml || config.buildNotebookHtml;
-    if (builder) {
-      html += builder(checked, ctx);
-    } else if (checked.cond) {
-      const sample = selectedCompounds.length > 0 ? selectedCompounds.join(', ') : compound || 'N/A';
-      const cells = cellLines.length > 0 ? cellLines.join(', ') : 'N/A';
-      const conditionPairs = (config.conditionFields || [])
-        .map((f) => `<b>${f.label}:</b> ${t[f.key] || 'N/A'}`)
-        .join(' | ');
-      const customPairs = typeCustomFields
-        .map((f) => `<b>${f.name}:</b> ${customFieldValues[f.name] || 'N/A'}`)
-        .join(' | ');
-      const details = [
-        sample ? `<b>Sample:</b> ${sample}` : '',
-        cells ? `<b>Cell lines:</b> ${cells}` : '',
-        conditionPairs,
-        customPairs
-      ].filter(Boolean).join(' | ');
-      html += `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;">${details}</p>`;
-    }
-    html += '</div>';
-    update({ comments: comments + (comments ? ' <br/>' : '') + html });
-    alert('Data appended successfully to the notes! They will now be visible in the Lab Notebook.');
-  };
+const appendToNotebook = () => {
+  const checked = {};
+
+  notebookChecks.forEach((c) => {
+    const el = document.getElementById(`nb-${typeKey}-${c.id}`);
+    checked[c.id] = el ? el.checked : false;
+  });
+
+  let html =
+    '<div style="background-color: #f8fafc; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0; margin-top: 15px; font-family: sans-serif;">';
+
+  html += `<h4 style="color: #1e40af; margin-top: 0; margin-bottom: 12px; font-size: 14px; border-bottom: 2px solid #bfdbfe; padding-bottom: 4px;">📊 ${
+    config.typeLabel || 'Experiment'
+  } Summary</h4>`;
+
+  const builder = custom.buildNotebookHtml || config.buildNotebookHtml;
+
+  if (builder) {
+    html += builder(checked, ctx);
+  } else if (checked.cond) {
+    const operatorNames = (Array.isArray(t.operators) ? t.operators : [])
+      .map((op) =>
+        typeof op === 'string'
+          ? op
+          : `${op?.name || ''} ${op?.surname || ''}`.trim()
+      )
+      .filter(Boolean)
+      .join(', ');
+
+    const category = testCategory || 'N/A';
+    const secondary = t.secondaryCategory || '';
+
+    const sample =
+      selectedCompounds.length > 0
+        ? selectedCompounds.join(', ')
+        : compound || 'N/A';
+
+    const cells = cellLines.length > 0 ? cellLines.join(', ') : 'N/A';
+
+    const conditionPairs = (config.conditionFields || [])
+      .map((f) => `<b>${f.label}:</b> ${t[f.key] || 'N/A'}`)
+      .join(' | ');
+
+    const customPairs = typeCustomFields
+      .map((f) => `<b>${f.name}:</b> ${customFieldValues[f.name] || 'N/A'}`)
+      .join(' | ');
+
+    const details = [
+      `<b>Experiment Type:</b> ${category}`,
+      secondary ? `<b>Secondary Classification:</b> ${secondary}` : '',
+      operatorNames ? `<b>Operator(s):</b> ${operatorNames}` : '',
+      sample && sample !== 'N/A' ? `<b>Sample:</b> ${sample}` : '',
+      cells && cells !== 'N/A' ? `<b>Cell lines:</b> ${cells}` : '',
+      conditionPairs,
+      customPairs
+    ]
+      .filter(Boolean)
+      .join(' | ');
+
+    html += `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;">${details}</p>`;
+  }
+
+  html += '</div>';
+
+  update({ comments: comments + (comments ? '<br/>' : '') + html });
+
+  alert(
+    'Data appended successfully to the notes! They will now be visible in the Lab Notebook.'
+  );
+};
 
   const CustomToolbar = custom.Toolbar || null;
   const CustomAll = custom.All || null;
@@ -434,69 +471,125 @@ export const TestShellRenderer = ({
       {TestHeader}
       {CustomToolbar && <CustomToolbar ctx={ctx} />}
       <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
-        {/* ===== CLASSIFICATION ===== */}
-        <CollapsibleSection title="Classification" icon="🏷️">
-          <div className="max-w-xl flex flex-col gap-5">
-            <div>
-              <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
-                Experiment Type / Test Category
-              </label>
-              <select
-                value={testCategory}
-                onChange={(e) => update({ testCategory: e.target.value })}
-                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
-              >
-                {(categories || []).map((cat) => (
-                  <option key={cat} value={cat}>{cat}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
-                Operator(s) / Scientist(s) who performed the experiment
-              </label>
-              {operators.length === 0 ? (
-                <p className="text-sm text-slate-400 italic">
-                  No operators defined. Add them in Definitions &amp; Labels → Scientists / Operators.
-                </p>
-              ) : (
-                <div className="flex flex-wrap gap-2">
-                  {operators.map((op) => {
-                    const checked = testOperators.includes(op);
-                    return (
-                      <label
-                        key={op}
-                        className={`flex items-center gap-1.5 text-xs font-bold px-2.5 py-1.5 rounded-lg border cursor-pointer transition-colors ${
-                          checked
-                            ? 'bg-blue-600 border-blue-700 text-white'
-                            : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => toggleOperator(op)}
-                          className="accent-blue-600"
-                        />
-                        {op}
-                      </label>
-                    );
-                  })}
-                </div>
-              )}
-              {testOperators.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => update({ operators: [] })}
-                  className="mt-2 text-xs font-bold text-red-500 hover:text-red-700 underline"
-                >
-                  Clear all operators
-                </button>
-              )}
-            </div>
-          </div>
-        </CollapsibleSection>
+{/* ===== CLASSIFICATION ===== */}
+<CollapsibleSection title="Classification" icon="🏷️">
+  <div className="max-w-xl flex flex-col gap-5">
+    {/* PRIMARY CLASSIFICATION */}
+    <div>
+      <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
+        Primary Classification / Experiment Type / Test Category
+      </label>
 
+      <select
+        value={testCategory}
+        onChange={(e) => update({ testCategory: e.target.value })}
+        className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
+      >
+        {(categories || []).map((cat) => (
+          <option key={cat} value={cat}>
+            {cat}
+          </option>
+        ))}
+      </select>
+    </div>
+
+    {/* SECONDARY CLASSIFICATION */}
+    <div>
+      <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
+        Secondary Classification / Sub-category
+      </label>
+
+      <select
+        value={t.secondaryCategory || ''}
+        onChange={(e) => update({ secondaryCategory: e.target.value })}
+        className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
+      >
+        <option value="">— None —</option>
+        {(categories || []).map((cat) => (
+          <option key={`secondary-${cat}`} value={cat}>
+            {cat}
+          </option>
+        ))}
+      </select>
+
+      <div className="mt-2 flex items-center gap-3">
+        {t.secondaryCategory ? (
+          <span className="text-xs font-bold text-slate-700 bg-slate-100 border border-slate-200 px-2 py-1 rounded">
+            {t.secondaryCategory}
+          </span>
+        ) : (
+          <span className="text-xs text-slate-400 italic">
+            No secondary classification selected.
+          </span>
+        )}
+
+        {t.secondaryCategory && (
+          <button
+            type="button"
+            onClick={() => update({ secondaryCategory: '' })}
+            className="text-xs font-bold text-red-500 hover:text-red-700 underline"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+
+      <p className="text-xs text-slate-400 mt-1">
+        Secondary classification uses the same category list defined in
+        Definitions & Labels.
+      </p>
+    </div>
+
+    {/* OPERATORS */}
+    <div>
+      <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
+        Operator(s) / Scientist(s) who performed the experiment
+      </label>
+
+      {operators.length === 0 ? (
+        <p className="text-sm text-slate-400 italic">
+          No operators defined. Add them in Definitions & Labels → Scientists /
+          Operators.
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {operators.map((op) => {
+            const checked = testOperators.includes(op);
+
+            return (
+              <label
+                key={op}
+                className={`flex items-center gap-1.5 text-xs font-bold px-2.5 py-1.5 rounded-lg border cursor-pointer transition-colors ${
+                  checked
+                    ? 'bg-blue-600 border-blue-700 text-white'
+                    : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggleOperator(op)}
+                  className="accent-blue-600"
+                />
+                {op}
+              </label>
+            );
+          })}
+        </div>
+      )}
+
+      {testOperators.length > 0 && (
+        <button
+          type="button"
+          onClick={() => update({ operators: [] })}
+          className="mt-2 text-xs font-bold text-red-500 hover:text-red-700 underline"
+        >
+          Clear all operators
+        </button>
+      )}
+    </div>
+  </div>
+</CollapsibleSection>
         {/* ===== COMPOUNDS & BIOLOGICAL MODELS (+ custom.Compounds hook) ===== */}
         {(showCompoundsSection || CompoundsSection) && (
           <CollapsibleSection title="Compounds & Biological Models" icon="🧪">
