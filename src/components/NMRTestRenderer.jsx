@@ -24,15 +24,7 @@ const buildNmrNotebookHtml = (checked, ctx) => {
       (ctx.selectedCompounds && ctx.selectedCompounds.length
         ? ctx.selectedCompounds.join(', ')
         : t.compound) || 'N/A';
-    html += `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;"><b>Sample:</b> ${sample} | <b>Condition:</b> ${instanceName} | <b>Solvent:</b> ${
-      t.solvent || 'N/A'
-    } | <b>Temp:</b> ${t.temperature || 'N/A'} | <b>Conc:</b> ${
-      t.concentration || 'N/A'
-    } | <b>Salt:</b> ${t.saltConcentration || 'N/A'} | <b>pH:</b> ${
-      t.ph || 'N/A'
-    } | <b>Other molecule:</b> ${t.otherMolecule || 'N/A'} | <b>Ratio:</b> ${
-      t.ratio || 'N/A'
-    }</p>`;
+    html += `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;"><b>Sample:</b> ${sample} | <b>Condition:</b> ${instanceName} | <b>Solvent:</b> ${t.solvent || 'N/A'} | <b>Temp:</b> ${t.temperature || 'N/A'} | <b>Conc:</b> ${t.concentration || 'N/A'} | <b>Salt:</b> ${t.saltConcentration || 'N/A'} | <b>pH:</b> ${t.ph || 'N/A'} | <b>Other molecule:</b> ${t.otherMolecule || 'N/A'} | <b>Ratio:</b> ${t.ratio || 'N/A'}</p>`;
   }
   if (checked.seq) {
     html += `<p style="font-size: 12px; color: #475569; margin-bottom: 12px;"><b>Sequence:</b> <span style="font-family: monospace; background: #e2e8f0; padding: 2px 4px; border-radius: 4px;">${t.proteinSequence || 'N/A'}</span></p>`;
@@ -49,11 +41,7 @@ const buildNmrNotebookHtml = (checked, ctx) => {
     if (images.length > 0) {
       html += `<div style="margin-top: 15px;"><h5 style="color: #1e40af; font-size: 12px; margin-bottom: 8px;">📷 Spectra Images:</h5>`;
       images.forEach((imgSrc, idx) => {
-        html += `<div style="margin-bottom: 10px;"><img src="${imgSrc}" alt="Spectrum ${
-          idx + 1
-        }" style="max-width: 100%; height: auto; border: 1px solid #e2e8f0; border-radius: 4px;"/><p style="font-size: 10px; color: #64748b; margin-top: 4px;">Image ${
-          idx + 1
-        }</p></div>`;
+        html += `<div style="margin-bottom: 10px;"><img src="${imgSrc}" alt="Spectrum ${idx + 1}" style="max-width: 100%; height: auto; border: 1px solid #e2e8f0; border-radius: 4px;"/><p style="font-size: 10px; color: #64748b; margin-top: 4px;">Image ${idx + 1}</p></div>`;
       });
       html += `</div>`;
     }
@@ -61,16 +49,14 @@ const buildNmrNotebookHtml = (checked, ctx) => {
   return html;
 };
 
-/* ================= NEW: extra ctx injection ================= */
+// ================= CONTEXT INJECTION =================
 const NmrExtrasContext = React.createContext({ operators: [], instances: [] });
 
-// Wraps each section so that ctx always contains operators + sibling instances,
-// no matter how TestShellRenderer builds its own ctx. Component types are created
-// once at module level, so sections are NOT remounted (local state is preserved).
 const withNmrExtras = (Comp) => {
   if (!Comp) return null;
   const Wrapped = (props) => {
     const extras = useContext(NmrExtrasContext);
+    // Inject instances and operators directly into the ctx object that NMRSections reads
     return <Comp {...props} ctx={{ ...(props.ctx || {}), ...extras }} />;
   };
   Wrapped.displayName = `withNmrExtras(${Comp.displayName || Comp.name || 'Section'})`;
@@ -95,6 +81,7 @@ export const NMRTestRenderer = (props) => {
     }),
     [props.operators, props.instances]
   );
+  
   return (
     <NmrExtrasContext.Provider value={extras}>
       <TestShellRenderer

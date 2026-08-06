@@ -5337,23 +5337,23 @@ export default function App() {
                   </div>
                 );
 
-if (activeTest.type === 'nmr') {
-  return (
-    <NMRTestRenderer
-      activeTest={activeTest}
-      updateActiveTest={updateActiveTest}
-      TestHeader={TestHeader}
-      datasetProtocols={datasetProtocols}
-      jumpToProtocol={jumpToProtocolFn}
-      allCmpds={allCmpds}
-      allCellLines={allCellLines}
-      customFields={customFields}
-      testCategories={testCategories}
-      operators={operators}                                        // ← ADD THIS
-      instances={siblingTests.length ? siblingTests : [activeTest]} // ← ADD THIS
-    />
-  );
-}
+            if (activeTest.type === 'nmr') {
+              return (
+                <NMRTestRenderer
+                  activeTest={activeTest}
+                  updateActiveTest={updateActiveTest}
+                  TestHeader={TestHeader}
+                  datasetProtocols={datasetProtocols}
+                  jumpToProtocol={jumpToProtocolFn}
+                  allCmpds={allCmpds}
+                  allCellLines={allCellLines}
+                  customFields={customFields}
+                  testCategories={testCategories}
+                  instances={siblingTests}   // ← ADD THIS
+                  operators={operators}      // ← ADD THIS
+                />
+              );
+            }
                 if (activeTest.type === 'cd') {
                   return (
                     <CDTestRenderer
