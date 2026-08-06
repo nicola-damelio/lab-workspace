@@ -3185,7 +3185,7 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
     });
     return { key: ak, label: opt ? opt.label : ak, pts };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plot.atoms, plot.layerKey, d.instances, d.atomOptions, plot.excluded, effXParam, plot.yParam, used, activeTest.nmrValues]);
+}), [plot.atoms, plot.layerKey, d.instances, d.atomOptions, plot.excluded, effXParam, plot.yParam, used, activeTest.nmrValues]);
   const colorOf = (s) => seriesColor(cfg, s.key, series.findIndex((q) => q.key === s.key));
   const includedPts = (s) => s.pts.filter((p) => !p.excluded);
   const maxOf = (s) => { const v = includedPts(s).map((p) => p.y); return v.length ? Math.max(...v) : null; };

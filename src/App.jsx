@@ -17,6 +17,235 @@ import { LabNotebook } from './components/LabNotebook';
 import { RichTextEditor } from './components/RichTextEditor';
 import { StorageModals, StorageList, StorageDetail, BoxDetail } from './components/Storage';
 import { DefinitionsPanel } from './components/DefinitionsPanel';
+import { NMRFittingsTestRenderer } from './components/NMRFittingsTestRenderer';
+
+const NMROperatorsAndMoleculesManager = ({
+  operators = [],
+  setOperators,
+  molecules = [],
+  setMolecules
+}) => {
+  const [operatorDraft, setOperatorDraft] = useState('');
+  const [moleculeDraft, setMoleculeDraft] = useState({
+    name: '',
+    atoms: ''
+  });
+
+  const addOperator = () => {
+    const name = operatorDraft.trim();
+    if (!name) {
+      alert('Please enter an operator name.');
+      return;
+    }
+
+    if (operators.some((op) => op.toLowerCase() === name.toLowerCase())) {
+      alert('Operator already exists.');
+      return;
+    }
+
+    setOperators((prev) => [...prev, name].sort());
+    setOperatorDraft('');
+  };
+
+  const removeOperator = (name) => {
+    setOperators((prev) => prev.filter((op) => op !== name));
+  };
+
+  const addMolecule = () => {
+    const name = moleculeDraft.name.trim();
+
+    const atoms = moleculeDraft.atoms
+      .split(',')
+      .map((a) => a.trim())
+      .filter(Boolean);
+
+    if (!name) {
+      alert('Please enter a molecule name.');
+      return;
+    }
+
+    if (atoms.length === 0) {
+      alert('Please enter at least one atom.');
+      return;
+    }
+
+    if (molecules.some((m) => m.name.toLowerCase() === name.toLowerCase())) {
+      alert('A molecule with this name already exists.');
+      return;
+    }
+
+    setMolecules((prev) => [
+      ...prev,
+      {
+        id: `mol_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        name,
+        atoms
+      }
+    ]);
+
+    setMoleculeDraft({
+      name: '',
+      atoms: ''
+    });
+  };
+
+  const removeMolecule = (id) => {
+    setMolecules((prev) => prev.filter((m) => m.id !== id));
+  };
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-6">
+      <div>
+        <h3 className="text-sm font-bold text-slate-700 uppercase mb-3">
+          Operators
+        </h3>
+
+        <div className="flex flex-col md:flex-row gap-3 mb-4">
+          <div className="flex-1">
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+              Operator Name
+            </label>
+
+            <input
+              type="text"
+              value={operatorDraft}
+              onChange={(e) => setOperatorDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') addOperator();
+              }}
+              placeholder="e.g. Marie Curie"
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
+            />
+          </div>
+
+          <div className="flex items-end">
+            <button
+              type="button"
+              onClick={addOperator}
+              className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm shadow-sm transition-colors"
+            >
+              Add Operator
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {operators.length === 0 ? (
+            <div className="text-sm text-slate-400 italic bg-slate-50 border border-dashed border-slate-300 rounded-lg p-4">
+              No operators defined.
+            </div>
+          ) : (
+            operators.map((op) => (
+              <span
+                key={op}
+                className="bg-slate-50 border border-slate-200 text-slate-700 text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-2"
+              >
+                {op}
+
+                <button
+                  onClick={() => removeOperator(op)}
+                  className="text-red-500 hover:text-red-700 font-black"
+                  title="Remove operator"
+                >
+                  ×
+                </button>
+              </span>
+            ))
+          )}
+        </div>
+      </div>
+
+      <div>
+        <h3 className="text-sm font-bold text-slate-700 uppercase mb-3">
+          Molecules & Atoms
+        </h3>
+
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-3 mb-4">
+          <div className="md:col-span-3">
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+              Molecule Name
+            </label>
+
+            <input
+              type="text"
+              value={moleculeDraft.name}
+              onChange={(e) =>
+                setMoleculeDraft((prev) => ({
+                  ...prev,
+                  name: e.target.value
+                }))
+              }
+              placeholder="e.g. Molecule X"
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
+            />
+          </div>
+
+          <div className="md:col-span-6">
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+              Atoms, comma separated
+            </label>
+
+            <input
+              type="text"
+              value={moleculeDraft.atoms}
+              onChange={(e) =>
+                setMoleculeDraft((prev) => ({
+                  ...prev,
+                  atoms: e.target.value
+                }))
+              }
+              placeholder="e.g. H1, H2, N-H, C5"
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
+            />
+          </div>
+
+          <div className="md:col-span-3 flex items-end">
+            <button
+              type="button"
+              onClick={addMolecule}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm shadow-sm transition-colors"
+            >
+              Add Molecule
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-3">
+          {molecules.length === 0 ? (
+            <div className="text-sm text-slate-400 italic bg-slate-50 border border-dashed border-slate-300 rounded-lg p-4">
+              No molecules defined.
+            </div>
+          ) : (
+            molecules.map((mol) => (
+              <div
+                key={mol.id}
+                className="border border-slate-200 rounded-lg p-3 bg-slate-50 flex flex-col md:flex-row md:items-center justify-between gap-2"
+              >
+                <div>
+                  <div className="text-sm font-bold text-slate-800">
+                    {mol.name}
+                  </div>
+
+                  <div className="text-xs text-slate-500">
+                    {mol.atoms.join(', ')}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => removeMolecule(mol.id)}
+                  className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold py-2 px-4 rounded-lg text-sm transition-colors"
+                >
+                  Remove
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const CUSTOM_FIELD_TAB_OPTIONS = [
   { value: 'all', label: 'All tabs' },
@@ -1971,7 +2200,84 @@ export default function App() {
         }
       };
     }
+if (customType === 'nmr-fittings') {
+  const rows = 8;
+  const cols = 12;
 
+  const defGrid = Array.from({ length: rows }, () =>
+    Array(cols).fill('')
+  );
+
+  const defCell = Array.from({ length: rows }, () =>
+    Array(cols)
+      .fill(null)
+      .map(() => ({
+        excluded: false,
+        role: null,
+        conc: null,
+        region: 'Primary',
+        manualOverride: false
+      }))
+  );
+
+  return {
+    ...baseTest,
+    name: `NMR Fitting ${num}`,
+    type: 'nmr-fittings',
+    testCategory: 'NMR Fittings',
+
+    gridPreset: '96',
+    plateType: '96',
+    rows,
+    cols,
+    rowsStr: String(rows),
+    colsStr: String(cols),
+
+    grid: defGrid,
+    cellConfig: defCell,
+
+    compounds: Array(cols).fill(''),
+    rowCompounds: Array(rows).fill(''),
+
+    operator: '',
+    moleculeId: '',
+    moleculeName: '',
+
+    unit: 'µM',
+    valueUnit: 'a.u.',
+
+    topConcStr: '',
+    dilFactorStr: '',
+
+    ctrlType: 'none',
+    ctrlODStr: '',
+    bgType: 'none',
+    bgManualStr: '',
+    manualErrors: {},
+
+    useFixedSD: false,
+    fixedSDStr: '0',
+    showViab: false,
+    fitIC50: false,
+    showExcl: false,
+    outlierThreshStr: '2.0',
+
+    chartCfg: {
+      yMin: '',
+      yMax: '',
+      xMin: '',
+      xMax: '',
+      ptStyle: 'circle',
+      ptSize: 5,
+      fontSize: 16,
+      xPos: 'bottom',
+      yPos: 'left',
+      xAxisLabel: '',
+      lineStyle: 'solid',
+      lineThickness: 2
+    }
+  };
+}
     return baseTest;
   };
 
@@ -1993,6 +2299,8 @@ export default function App() {
   const [customCellLines, setCustomCellLines] = useState([]);
   const [customConc, setCustomConc] = useState({});
   const [cmpColors, setCmpColors] = useState({});
+const [operators, setOperators] = useState([]);
+const [molecules, setMolecules] = useState([]);
   const [customFields, setCustomFields] = useState([]);
   const [compoundMeta, setCompoundMeta] = useState({});
   const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth > 768);
@@ -2182,21 +2490,22 @@ export default function App() {
 
   const latestDataRef = useRef(null);
 
-  latestDataRef.current = {
-    tests,
-    datasetTitle,
-    datasetSubtitle,
-    customCmpds,
-    customCellLines,
-    customConc,
-    cmpColors,
-    testCategories,
-    protocolCategories,
-    datasetProtocols,
-    storages,
-    customFields,
-    compoundMeta
-  };
+latestDataRef.current = {
+  tests,
+  datasetTitle,
+  datasetSubtitle,
+  customCmpds,
+  customCellLines,
+  customConc,
+  cmpColors,
+  testCategories,
+  protocolCategories,
+  datasetProtocols,
+  storages,
+  customFields,
+  operators,
+  molecules
+};
 
   const getCompressedPayload = () =>
     LZString.compressToUTF16(JSON.stringify(latestDataRef.current));
@@ -2447,6 +2756,8 @@ export default function App() {
       if (s.protocolCategories !== undefined) setProtocolCategories(s.protocolCategories);
       if (s.datasetProtocols !== undefined) setDatasetProtocols(s.datasetProtocols);
       if (s.storages !== undefined) setStorages(s.storages);
+if (s.operators !== undefined) setOperators(s.operators);
+if (s.molecules !== undefined) setMolecules(s.molecules);
 
       if (s.customFields !== undefined) {
         setCustomFields(normalizeCustomFields(s.customFields));
@@ -2512,6 +2823,21 @@ export default function App() {
           return merged;
         });
       }
+if (s.operators !== undefined) {
+  setOperators((prev) => [...new Set([...prev, ...s.operators])]);
+}
+
+if (s.molecules !== undefined) {
+  setMolecules((prev) => {
+    const incoming = Array.isArray(s.molecules) ? s.molecules : [];
+    const existingIds = new Set(prev.map((m) => m.id || m.name));
+    const additions = incoming.filter(
+      (m) => !existingIds.has(m.id || m.name)
+    );
+
+    return [...prev, ...additions];
+  });
+}
     }
 
     setPendingLoad(null);
@@ -2538,6 +2864,8 @@ export default function App() {
     setCmpColors({});
     setCustomFields([]);
     setCompoundMeta({});
+setOperators([]);
+setMolecules([]);
     setTestCategories([
       'Activity',
       'Toxicity',
@@ -2700,6 +3028,8 @@ export default function App() {
       setCurrentDatasetId(dset.id);
       setAppView('dataset');
       setCurrentModule('dashboard');
+setOperators(Array.isArray(s.operators) ? s.operators : []);
+setMolecules(Array.isArray(s.molecules) ? s.molecules : []);
 
       window.history.pushState({}, '', '?dataset=' + dset.id);
     } catch (e) {
@@ -3706,22 +4036,29 @@ export default function App() {
                   setCustomFields={handleSetCustomFields}
                 />
 
-                <DefinitionsPanel
-                  customCmpds={customCmpds}
-                  setCustomCmpds={setCustomCmpds}
-                  customCellLines={customCellLines}
-                  setCustomCellLines={setCustomCellLines}
-                  testCategories={testCategories}
-                  setTestCategories={setTestCategories}
-                  protocolCategories={protocolCategories}
-                  setProtocolCategories={setProtocolCategories}
-                  customFields={customFields}
-                  setCustomFields={handleSetCustomFields}
-                  customFieldTabOptions={CUSTOM_FIELD_TAB_OPTIONS}
-                  cmpColors={cmpColors}
-                  setCmpColors={setCmpColors}
-                  handlePrint={handlePrint}
-                />
+    <NMROperatorsAndMoleculesManager
+      operators={operators}
+      setOperators={setOperators}
+      molecules={molecules}
+      setMolecules={setMolecules}
+    />
+
+    <DefinitionsPanel
+      customCmpds={customCmpds}
+      setCustomCmpds={setCustomCmpds}
+      customCellLines={customCellLines}
+      setCustomCellLines={setCustomCellLines}
+      testCategories={testCategories}
+      setTestCategories={setTestCategories}
+      protocolCategories={protocolCategories}
+      setProtocolCategories={setProtocolCategories}
+      customFields={customFields}
+      setCustomFields={handleSetCustomFields}
+      customFieldTabOptions={CUSTOM_FIELD_TAB_OPTIONS}
+      cmpColors={cmpColors}
+      setCmpColors={setCmpColors}
+      handlePrint={handlePrint}
+    />
               </div>
             )}
 
@@ -3996,6 +4333,21 @@ export default function App() {
                       </div>
                     </div>
 
+<button
+  onClick={() => {
+    const id = 't' + Date.now();
+    setTests((prev) => [
+      ...prev,
+      createEmptyTest(id, prev.length + 1, 'nmr-fittings')
+    ]);
+    setActiveTestId(id);
+    setCurrentModule('active-test');
+  }}
+  className="bg-amber-600 hover:bg-amber-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+>
+  + NMR Fittings
+</button>
+
                     <div className="bg-white p-3 md:p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex flex-col gap-4 shrink-0 no-print">
                       <div className="flex flex-col md:flex-row gap-3 md:gap-4 items-center">
                         <div className="flex-1 w-full relative">
@@ -4131,6 +4483,8 @@ export default function App() {
                                   ? '🌀'
                                   : test.type === 'plate-9x9box'
                                   ? '📦'
+: test.type === 'nmr-fittings'
+  ? '🧭'
                                   : '🧫'}
                               </div>
 
@@ -4150,7 +4504,9 @@ export default function App() {
                                 <span>📅 {test.date}</span>
 
                                 <span className="bg-slate-100 px-2 py-0.5 rounded font-bold text-slate-600">
-                                  {test.type.replace('plate-', '').toUpperCase()}
+                                  {test.type === 'nmr-fittings'
+  ? 'NMR FITTINGS'
+  : test.type.replace('plate-', '').toUpperCase()}
                                 </span>
                               </div>
                             </div>
@@ -4682,286 +5038,295 @@ export default function App() {
                 );
               })()}
 
-            {currentModule === 'active-test' &&
-              (() => {
-                const activeTest = tests.find((t) => t.id === activeTestId);
 
-                if (!activeTest) return <div className="p-6">Test not found.</div>;
+        {currentModule === 'active-test' &&
+          (() => {
+            const activeTest = tests.find((t) => t.id === activeTestId);
+            if (!activeTest) return <div className="p-6">Test not found.</div>;
+            const updateActiveTest = (updates) => {
+              setTests((prev) =>
+                prev.map((t) => (t.id === activeTestId ? { ...t, ...updates } : t))
+              );
+            };
+            const isBox = activeTest.type === 'plate-9x9box';
+            const siblingTests = isBox
+              ? []
+              : tests
+                  .filter((t) => t.name === activeTest.name && t.name.trim() !== '')
+                  .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+            const jumpToProtocolFn = (id) => {
+              setExpandedGroups((p) => ({ ...p, activeProtoId: id }));
+              setCurrentModule('protocols');
+            };
+            
+            // 1. Duplicate Instance Logic
 
-                const updateActiveTest = (updates) => {
-                  setTests((prev) =>
-                    prev.map((t) => (t.id === activeTestId ? { ...t, ...updates } : t))
-                  );
-                };
+             const handleDuplicateInstance = () => {
+               const id = 't' + Date.now();
+               const newTest = JSON.parse(JSON.stringify(activeTest));
+               newTest.id = id;
+               newTest.date = new Date().toISOString().split('T')[0];
+               newTest.instanceName = 'New Instance';
+               newTest.comments = '';
+               newTest.images = [];
+               newTest.documents = [];
+               
+               if (
+                 newTest.type.startsWith('plate-') &&
+                 newTest.type !== 'plate-9x9box'
+               ) {
+                 newTest.grid = newTest.grid.map((row) => row.map(() => ''));
+               }
+               if (newTest.type === 'nmr-fittings') {
+                 newTest.grid = newTest.grid.map((row) => row.map(() => ''));
+               }
+               
+               setTests((prev) => [...prev, newTest]);
+               setActiveTestId(id);
+             };
 
-                const isBox = activeTest.type === 'plate-9x9box';
+             const TestHeader = (
+               <div className="flex flex-col shrink-0 z-20 no-print">
+                 <div className="bg-white border-b border-slate-200 px-4 md:px-6 py-4 flex flex-col lg:flex-row justify-between items-start lg:items-center shadow-sm gap-4">
+                   <div className="flex flex-col md:flex-row md:items-center gap-3 md:gap-4 w-full lg:w-auto">
+                     <button
+                       onClick={() => {
+                         if (isBox && activeTest.storageId) {
+                           setActiveStorageId(activeTest.storageId);
+                           setCurrentModule('storage-detail');
+                         } else {
+                           setCurrentModule('tests');
+                         }
+                       }}
+                       className="text-slate-400 hover:text-blue-600 transition-colors bg-slate-50 hover:bg-blue-50 p-2 rounded-lg shadow-sm border border-slate-200 self-start md:self-auto"
+                     >
+                       ◀ Back
+                     </button>
+                     <div className="flex-1 w-full">
+                       <input
+                         value={activeTest.name}
+                         onChange={(e) => updateActiveTest({ name: e.target.value })}
+                         className="text-xl font-black text-slate-800 bg-transparent border-none outline-none focus:ring-1 focus:ring-blue-500 rounded px-1 w-full md:w-64"
+                         placeholder="Test Name"
+                       />
+                       <div className="text-xs text-slate-500 font-medium px-1 mt-1 flex items-center gap-2">
+                         <span className="uppercase text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
+                           {activeTest.testCategory}
+                         </span>
+                         <span className="uppercase text-slate-600 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                           {activeTest.type === 'nmr-fittings' ? 'NMR FITTINGS' : activeTest.type.replace('plate-', '')}
+                         </span>
+                       </div>
+                     </div>
+                   </div>
+                   <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full lg:w-auto">
+                     <button
+                       onClick={() => {
+                         if (
+                           window.confirm(
+                             'Sei sicuro di voler eliminare definitivamente questo test?'
+                           )
+                         ) {
+                           setTests((prev) => prev.filter((t) => t.id !== activeTest.id));
+                           setCurrentModule('tests');
+                         }
+                       }}
+                       className="bg-red-50 text-red-600 hover:bg-red-100 hover:border-red-300 font-bold py-2 px-3 rounded-lg text-xs transition-colors border border-red-200 shadow-sm"
+                     >
+                       🗑️ Elimina
+                     </button>
+                     <div className="flex flex-col flex-1 w-full sm:w-auto">
+                       <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
+                         Instance
+                       </label>
+                       <input
+                         type="text"
+                         value={activeTest.instanceName || ''}
+                         onChange={(e) => updateActiveTest({ instanceName: e.target.value })}
+                         className="bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-lg outline-none focus:border-blue-500 w-full sm:w-32"
+                         placeholder="e.g. 24h / Rep 1"
+                       />
+                     </div>
+                     <div className="flex flex-col flex-1 w-full sm:w-auto">
+                       <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
+                         Date
+                       </label>
+                       <input
+                         type="date"
+                         value={activeTest.date}
+                         onChange={(e) => updateActiveTest({ date: e.target.value })}
+                         className="bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-lg outline-none focus:border-blue-500 w-full"
+                       />
+                     </div>
+                   </div>
+                 </div>
+                 {siblingTests.length > 0 && (
+                   <div className="bg-blue-50 border-b border-blue-200 px-4 md:px-6 py-2 flex items-center overflow-x-auto custom-scrollbar gap-2 shadow-inner">
+                     <span className="text-[10px] font-bold text-blue-800 uppercase tracking-wide mr-2 shrink-0">
+                       ⏱️ Instances:
+                     </span>
+                     {siblingTests.map((t, idx) => (
+                       <button
+                         key={t.id}
+                         onClick={() => setActiveTestId(t.id)}
+                         className={`shrink-0 px-3 py-1.5 md:py-1 text-xs font-bold rounded-full transition-colors flex items-center gap-1.5 shadow-sm group ${
+                           activeTestId === t.id
+                             ? 'bg-blue-600 text-white'
+                             : 'bg-white text-blue-700 border border-blue-300 hover:bg-blue-100'
+                         }`}
+                       >
+                         📅 {t.instanceName || t.date || `Inst ${idx + 1}`}
+                         {siblingTests.length > 1 && (
+                           <span
+                             onClick={(e) => {
+                               e.stopPropagation();
+                               if (
+                                 confirm(
+                                   `Delete instance ${t.instanceName || t.date}?`
+                                 )
+                               ) {
+                                 setTests((prev) => {
+                                   const next = prev.filter((test) => test.id !== t.id);
+                                   if (activeTestId === t.id) {
+                                     setActiveTestId(
+                                       next.find((x) => x.name === t.name)?.id ||
+                                         next[0]?.id
+                                     );
+                                   }
+                                   return next;
+                                 });
+                               }
+                             }}
+                             className={`ml-1 px-1 opacity-100 md:opacity-0 group-hover:opacity-100 ${
+                               activeTestId === t.id
+                                 ? 'text-blue-300 hover:text-white'
+                                 : 'text-red-400 hover:text-red-600'
+                             }`}
+                           >
+                             &times;
+                           </span>
+                         )}
+                       </button>
+                     ))}
+                     <button
+                       onClick={handleDuplicateInstance}
+                       className="shrink-0 px-3 py-1.5 md:py-1 text-[10px] font-bold text-blue-600 border border-dashed border-blue-400 rounded-full hover:bg-blue-100 transition-colors bg-white shadow-sm ml-2"
+                     >
+                       + Add Timepoint/Copy
+                     </button>
+                   </div>
+                 )}
+               </div>
+             );
 
-                const siblingTests = isBox
-                  ? []
-                  : tests
-                      .filter((t) => t.name === activeTest.name && t.name.trim() !== '')
-                      .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+             if (activeTest.type === 'nmr') {
+               return (
+                 <NMRTestRenderer
+                   activeTest={activeTest}
+                   updateActiveTest={updateActiveTest}
+                   TestHeader={TestHeader}
+                   datasetProtocols={datasetProtocols}
+                   jumpToProtocol={jumpToProtocolFn}
+                   allCmpds={allCmpds}
+                   allCellLines={allCellLines}
+                   customFields={customFields}
+                   testCategories={testCategories}
+                 />
+               );
+             }
+             if (activeTest.type === 'cd') {
+               return (
+                 <CDTestRenderer
+                   activeTest={activeTest}
+                   updateActiveTest={updateActiveTest}
+                   appClipboard={appClipboard}
+                   setAppClipboard={setAppClipboard}
+                   TestHeader={TestHeader}
+                   datasetProtocols={datasetProtocols}
+                   jumpToProtocol={jumpToProtocolFn}
+                   allCmpds={allCmpds}
+                   allCellLines={allCellLines}
+                   customFields={customFields}
+                   testCategories={testCategories}
+                 />
+               );
+             }
+             if (activeTest.type === 'plate-9x9box') {
+               return (
+                 <BoxDetail
+                   activeTest={activeTest}
+                   updateActiveTest={updateActiveTest}
+                   storages={storages}
+                   expandedGroups={expandedGroups}
+                   setExpandedGroups={setExpandedGroups}
+                   customCmpds={customCmpds}
+                   jumpToTest={jumpToTest}
+                   setMoveModal={setMoveModal}
+                   TestHeader={TestHeader}
+                 />
+               );
+             }
+             
+             // ✅ CORRECT PLACE FOR NMR FITTINGS RENDERER
+             if (activeTest.type === 'nmr-fittings') {
+               return (
+                 <NMRFittingsTestRenderer
+                   activeTest={activeTest}
+                   updateActiveTest={updateActiveTest}
+                   TestHeader={TestHeader}
+                   operators={operators}
+                   molecules={molecules}
+                   allCmpds={allCmpds}
+                   allCellLines={allCellLines}
+                   customFields={customFields}
+                   testCategories={testCategories}
+                   customConc={customConc}
+                   setCustomConc={setCustomConc}
+                   cmpColors={cmpColors}
+                   setCmpColors={setCmpColors}
+                   customCmpds={customCmpds}
+                   setCustomCmpds={setCustomCmpds}
+                   appClipboard={appClipboard}
+                   setAppClipboard={setAppClipboard}
+                   datasetProtocols={datasetProtocols}
+                   jumpToProtocol={jumpToProtocolFn}
+                 />
+               );
+             }
 
-                const jumpToProtocolFn = (id) => {
-                  setExpandedGroups((p) => ({ ...p, activeProtoId: id }));
-                  setCurrentModule('protocols');
-                };
+             if (
+               activeTest.type.startsWith('plate-') &&
+               activeTest.type !== 'plate-9x9box'
+             ) {
+               return (
+                 <PlateTestRenderer
+                   activeTest={activeTest}
+                   updateActiveTest={updateActiveTest}
+                   appClipboard={appClipboard}
+                   setAppClipboard={setAppClipboard}
+                   customCmpds={customCmpds}
+                   setCustomCmpds={setCustomCmpds}
+                   customConc={customConc}
+                   setCustomConc={setCustomConc}
+                   cmpColors={cmpColors}
+                   setCmpColors={setCmpColors}
+                   allCmpds={allCmpds}
+                   allCellLines={allCellLines}
+                   customFields={customFields}
+                   testCategories={testCategories}
+                   jumpToTest={(id) => {
+                     setActiveTestId(id);
+                     setCurrentModule('active-test');
+                   }}
+                   TestHeader={TestHeader}
+                   datasetProtocols={datasetProtocols}
+                   jumpToProtocol={jumpToProtocolFn}
+                 />
+               );
+             }
+             return <div className="p-6">Unknown test type.</div>;
 
-                const handleDuplicateInstance = () => {
-                  const id = 't' + Date.now();
-                  const newTest = JSON.parse(JSON.stringify(activeTest));
-
-                  newTest.id = id;
-                  newTest.date = new Date().toISOString().split('T')[0];
-                  newTest.instanceName = 'New Instance';
-                  newTest.comments = '';
-                  newTest.images = [];
-                  newTest.documents = [];
-
-                  if (
-                    newTest.type.startsWith('plate-') &&
-                    newTest.type !== 'plate-9x9box'
-                  ) {
-                    newTest.grid = newTest.grid.map((row) => row.map(() => ''));
-                  }
-
-                  setTests((prev) => [...prev, newTest]);
-
-                  setActiveTestId(id);
-                };
-
-                const TestHeader = (
-                  <div className="flex flex-col shrink-0 z-20 no-print">
-                    <div className="bg-white border-b border-slate-200 px-4 md:px-6 py-4 flex flex-col lg:flex-row justify-between items-start lg:items-center shadow-sm gap-4">
-                      <div className="flex flex-col md:flex-row md:items-center gap-3 md:gap-4 w-full lg:w-auto">
-                        <button
-                          onClick={() => {
-                            if (isBox && activeTest.storageId) {
-                              setActiveStorageId(activeTest.storageId);
-                              setCurrentModule('storage-detail');
-                            } else {
-                              setCurrentModule('tests');
-                            }
-                          }}
-                          className="text-slate-400 hover:text-blue-600 transition-colors bg-slate-50 hover:bg-blue-50 p-2 rounded-lg shadow-sm border border-slate-200 self-start md:self-auto"
-                        >
-                          ◀ Back
-                        </button>
-
-                        <div className="flex-1 w-full">
-                          <input
-                            value={activeTest.name}
-                            onChange={(e) => updateActiveTest({ name: e.target.value })}
-                            className="text-xl font-black text-slate-800 bg-transparent border-none outline-none focus:ring-1 focus:ring-blue-500 rounded px-1 w-full md:w-64"
-                            placeholder="Test Name"
-                          />
-
-                          <div className="text-xs text-slate-500 font-medium px-1 mt-1 flex items-center gap-2">
-                            <span className="uppercase text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
-                              {activeTest.testCategory}
-                            </span>
-
-                            <span className="uppercase text-slate-600 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
-                              {activeTest.type.replace('plate-', '')}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full lg:w-auto">
-                        <button
-                          onClick={() => {
-                            if (
-                              window.confirm(
-                                'Sei sicuro di voler eliminare definitivamente questo test?'
-                              )
-                            ) {
-                              setTests((prev) => prev.filter((t) => t.id !== activeTest.id));
-                              setCurrentModule('tests');
-                            }
-                          }}
-                          className="bg-red-50 text-red-600 hover:bg-red-100 hover:border-red-300 font-bold py-2 px-3 rounded-lg text-xs transition-colors border border-red-200 shadow-sm"
-                        >
-                          🗑️ Elimina
-                        </button>
-
-                        <div className="flex flex-col flex-1 w-full sm:w-auto">
-                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
-                            Instance
-                          </label>
-
-                          <input
-                            type="text"
-                            value={activeTest.instanceName || ''}
-                            onChange={(e) => updateActiveTest({ instanceName: e.target.value })}
-                            className="bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-lg outline-none focus:border-blue-500 w-full sm:w-32"
-                            placeholder="e.g. 24h / Rep 1"
-                          />
-                        </div>
-
-                        <div className="flex flex-col flex-1 w-full sm:w-auto">
-                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
-                            Date
-                          </label>
-
-                          <input
-                            type="date"
-                            value={activeTest.date}
-                            onChange={(e) => updateActiveTest({ date: e.target.value })}
-                            className="bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-lg outline-none focus:border-blue-500 w-full"
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    {siblingTests.length > 0 && (
-                      <div className="bg-blue-50 border-b border-blue-200 px-4 md:px-6 py-2 flex items-center overflow-x-auto custom-scrollbar gap-2 shadow-inner">
-                        <span className="text-[10px] font-bold text-blue-800 uppercase tracking-wide mr-2 shrink-0">
-                          ⏱️ Instances:
-                        </span>
-
-                        {siblingTests.map((t, idx) => (
-                          <button
-                            key={t.id}
-                            onClick={() => setActiveTestId(t.id)}
-                            className={`shrink-0 px-3 py-1.5 md:py-1 text-xs font-bold rounded-full transition-colors flex items-center gap-1.5 shadow-sm group ${
-                              activeTestId === t.id
-                                ? 'bg-blue-600 text-white'
-                                : 'bg-white text-blue-700 border border-blue-300 hover:bg-blue-100'
-                            }`}
-                          >
-                            📅 {t.instanceName || t.date || `Inst ${idx + 1}`}
-
-                            {siblingTests.length > 1 && (
-                              <span
-                                onClick={(e) => {
-                                  e.stopPropagation();
-
-                                  if (
-                                    confirm(
-                                      `Delete instance ${t.instanceName || t.date}?`
-                                    )
-                                  ) {
-                                    setTests((prev) => {
-                                      const next = prev.filter((test) => test.id !== t.id);
-
-                                      if (activeTestId === t.id) {
-                                        setActiveTestId(
-                                          next.find((x) => x.name === t.name)?.id ||
-                                            next[0]?.id
-                                        );
-                                      }
-
-                                      return next;
-                                    });
-                                  }
-                                }}
-                                className={`ml-1 px-1 opacity-100 md:opacity-0 group-hover:opacity-100 ${
-                                  activeTestId === t.id
-                                    ? 'text-blue-300 hover:text-white'
-                                    : 'text-red-400 hover:text-red-600'
-                                }`}
-                              >
-                                &times;
-                              </span>
-                            )}
-                          </button>
-                        ))}
-
-                        <button
-                          onClick={handleDuplicateInstance}
-                          className="shrink-0 px-3 py-1.5 md:py-1 text-[10px] font-bold text-blue-600 border border-dashed border-blue-400 rounded-full hover:bg-blue-100 transition-colors bg-white shadow-sm ml-2"
-                        >
-                          + Add Timepoint/Copy
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                );
-
-                if (activeTest.type === 'nmr') {
-                  return (
-                    <NMRTestRenderer
-                      activeTest={activeTest}
-                      updateActiveTest={updateActiveTest}
-                      TestHeader={TestHeader}
-                      datasetProtocols={datasetProtocols}
-                      jumpToProtocol={jumpToProtocolFn}
-                      allCmpds={allCmpds}
-                      allCellLines={allCellLines}
-                      customFields={customFields}
-                      testCategories={testCategories}
-                    />
-                  );
-                }
-
-                if (activeTest.type === 'cd') {
-                  return (
-                    <CDTestRenderer
-                      activeTest={activeTest}
-                      updateActiveTest={updateActiveTest}
-                      appClipboard={appClipboard}
-                      setAppClipboard={setAppClipboard}
-                      TestHeader={TestHeader}
-                      datasetProtocols={datasetProtocols}
-                      jumpToProtocol={jumpToProtocolFn}
-                      allCmpds={allCmpds}
-                      allCellLines={allCellLines}
-                      customFields={customFields}
-                      testCategories={testCategories}
-                    />
-                  );
-                }
-
-                if (activeTest.type === 'plate-9x9box') {
-                  return (
-                    <BoxDetail
-                      activeTest={activeTest}
-                      updateActiveTest={updateActiveTest}
-                      storages={storages}
-                      expandedGroups={expandedGroups}
-                      setExpandedGroups={setExpandedGroups}
-                      customCmpds={customCmpds}
-                      jumpToTest={jumpToTest}
-                      setMoveModal={setMoveModal}
-                      TestHeader={TestHeader}
-                    />
-                  );
-                }
-
-                if (
-                  activeTest.type.startsWith('plate-') &&
-                  activeTest.type !== 'plate-9x9box'
-                ) {
-                  return (
-                    <PlateTestRenderer
-                      activeTest={activeTest}
-                      updateActiveTest={updateActiveTest}
-                      appClipboard={appClipboard}
-                      setAppClipboard={setAppClipboard}
-                      customCmpds={customCmpds}
-                      setCustomCmpds={setCustomCmpds}
-                      customConc={customConc}
-                      setCustomConc={setCustomConc}
-                      cmpColors={cmpColors}
-                      setCmpColors={setCmpColors}
-                      allCmpds={allCmpds}
-                      allCellLines={allCellLines}
-                      customFields={customFields}
-                      testCategories={testCategories}
-                      jumpToTest={(id) => {
-                        setActiveTestId(id);
-                        setCurrentModule('active-test');
-                      }}
-                      TestHeader={TestHeader}
-                      datasetProtocols={datasetProtocols}
-                      jumpToProtocol={jumpToProtocolFn}
-                    />
-                  );
-                }
-
-                return <div className="p-6">Unknown test type.</div>;
-              })()}
+          })()}
 
             {currentModule === 'notebook' &&
               (() => {
