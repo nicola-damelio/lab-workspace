@@ -18,6 +18,14 @@ import { RichTextEditor } from './components/RichTextEditor';
 import { StorageModals, StorageList, StorageDetail, BoxDetail } from './components/Storage';
 import { DefinitionsPanel } from './components/DefinitionsPanel';
 import { NMRFittingsTestRenderer } from './components/NMRFittingsTestRenderer';
+// App.jsx
+
+import {
+CD_TAB_CONFIG,
+PLATE_TAB_CONFIG,
+NMR_TAB_CONFIG,
+CLONING_TAB_CONFIG // <-- Add this import
+} from './components/tabConfigs.jsx';
 
 const CUSTOM_FIELD_TAB_OPTIONS = [
   { value: 'all', label: 'All tabs' },
@@ -5388,32 +5396,51 @@ export default function App() {
                   );
                 }
 
-                if (activeTest.type === 'nmr-fittings') {
-                  return (
-                    <NMRFittingsTestRenderer
-                      activeTest={activeTest}
-                      updateActiveTest={updateActiveTest}
-                      TestHeader={TestHeader}
-                      operators={operators}
-                      molecules={molecules}
-                      allCmpds={allCmpds}
-                      allCellLines={allCellLines}
-                      customFields={customFields}
-                      testCategories={testCategories}
-                      customConc={customConc}
-                      setCustomConc={setCustomConc}
-                      cmpColors={cmpColors}
-                      setCmpColors={setCmpColors}
-                      customCmpds={customCmpds}
-                      setCustomCmpds={setCustomCmpds}
-                      appClipboard={appClipboard}
-                      setAppClipboard={setAppClipboard}
-                      datasetProtocols={datasetProtocols}
-                      jumpToProtocol={jumpToProtocolFn}
-                    />
-                  );
-                }
-
+if (activeTest.type === 'nmr-fittings') {
+  return (
+    <NMRFittingsTestRenderer
+      activeTest={activeTest}
+      updateActiveTest={updateActiveTest}
+      TestHeader={TestHeader}
+      operators={operators}
+      molecules={molecules}
+      compoundMeta={compoundMeta} // <-- AGGIUNGI QUESTA RIGA
+      allCmpds={allCmpds}
+      allCellLines={allCellLines}
+      customFields={customFields}
+      testCategories={testCategories}
+      customConc={customConc}
+      setCustomConc={setCustomConc}
+      cmpColors={cmpColors}
+      setCmpColors={setCmpColors}
+      customCmpds={customCmpds}
+      setCustomCmpds={setCustomCmpds}
+      appClipboard={appClipboard}
+      setAppClipboard={setAppClipboard}
+      datasetProtocols={datasetProtocols}
+      jumpToProtocol={jumpToProtocolFn}
+    />
+  );
+}
+if (activeTest.type === 'cloning') {
+  return (
+    <TestShellRenderer
+      config={CLONING_TAB_CONFIG}
+      custom={{
+        Data: CloningDataSection
+      }}
+      activeTest={activeTest}
+      updateActiveTest={updateActiveTest}
+      TestHeader={TestHeader}
+      datasetProtocols={datasetProtocols}
+      jumpToProtocol={jumpToProtocolFn}
+      allCmpds={allCmpds}
+      allCellLines={allCellLines}
+      customFields={customFields}
+      testCategories={testCategories}
+    />
+  );
+}
                 if (
                   activeTest.type.startsWith('plate-') &&
                   activeTest.type !== 'plate-9x9box'

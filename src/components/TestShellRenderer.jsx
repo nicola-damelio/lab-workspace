@@ -9,7 +9,7 @@ import { RichTextEditor } from './RichTextEditor';
      FittingGraphics, Simulations, buildNotebookHtml
    }
    • custom.Compounds (or config.CompoundsSection) is rendered INSIDE the
-     "Compounds & Biological Models" section (e.g. NMR sequence + formula).
+     "Compounds & Biological Models" section.
    • If custom.All exists it is rendered as one block; otherwise
      Setup/Data/Fitting/Simulations are rendered separately.
 ========================================================================== */
@@ -126,7 +126,7 @@ export const MultiSelectDropdown = ({
 // ================= IMAGE URL NORMALIZATION =================
 const normalizeImageCandidates = (url) => {
   const u = (url || '').trim();
-  let m = u.match(/drive\.google\.com\/file\/d\/([^/?]+)/);
+  let m = u.match(/drive.google.com\/file\/d\/([^/?]+)/);
   if (m) {
     const id = m[1];
     return [
@@ -135,7 +135,7 @@ const normalizeImageCandidates = (url) => {
       `https://drive.google.com/uc?export=view&id=${id}`
     ];
   }
-  m = u.match(/drive\.google\.com\/(?:open|uc)[^#]*[?&]id=([^&#]+)/);
+  m = u.match(/drive.google.com\/(?:open|uc)[^#]*[?&]id=([^&#]+)/);
   if (m) {
     const id = m[1];
     return [
@@ -197,6 +197,7 @@ export const TestShellRenderer = ({
 }) => {
   const update = (u) => { if (updateActiveTest) updateActiveTest(u); };
   const t = activeTest || {};
+
   const samplesCfg = config.samples || {};
   const imagesKey = config.imagesKey || 'images';
   const typeKey = config.typeKey || 'test';
@@ -215,6 +216,19 @@ export const TestShellRenderer = ({
   const baseCategories = definitionCategories.length > 0 ? definitionCategories : fallbackCategories;
   const testCategory = t.testCategory || baseCategories[0] || 'Activity';
   const categories = [...new Set([...baseCategories, testCategory].filter(Boolean))];
+
+  // ===== OPERATORS (from Definitions → Scientists/Operators, passed by the host renderer via props) =====
+  const operatorsRaw = Array.isArray(rest.operators) ? rest.operators : [];
+  const operators = operatorsRaw
+    .map((op) => (typeof op === 'string' ? op : `${op?.name || ''} ${op?.surname || ''}`.trim()))
+    .filter(Boolean);
+  const testOperators = Array.isArray(t.operators) ? t.operators : [];
+  const toggleOperator = (op) => {
+    const upd = testOperators.includes(op)
+      ? testOperators.filter((o) => o !== op)
+      : [...testOperators, op];
+    update({ operators: upd });
+  };
 
   const showCompounds = samplesCfg.compounds !== false;
   const showCellLines = samplesCfg.cellLines !== false;
@@ -401,7 +415,7 @@ export const TestShellRenderer = ({
       html += `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;">${details}</p>`;
     }
     html += '</div>';
-    update({ comments: comments + (comments ? '<br/>' : '') + html });
+    update({ comments: comments + (comments ? ' <br/>' : '') + html });
     alert('Data appended successfully to the notes! They will now be visible in the Lab Notebook.');
   };
 
@@ -422,17 +436,64 @@ export const TestShellRenderer = ({
       <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
         {/* ===== CLASSIFICATION ===== */}
         <CollapsibleSection title="Classification" icon="🏷️">
-          <div className="max-w-xl">
-            <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
-              Experiment Type / Test Category
-            </label>
-            <select
-              value={testCategory}
-              onChange={(e) => update({ testCategory: e.target.value })}
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
-            >
-              {(categories || []).map((cat) => <option key={cat} value={cat}>{cat}</option>)}
-            </select>
+          <div className="max-w-xl flex flex-col gap-5">
+            <div>
+              <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
+                Experiment Type / Test Category
+              </label>
+              <select
+                value={testCategory}
+                onChange={(e) => update({ testCategory: e.target.value })}
+                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
+              >
+                {(categories || []).map((cat) => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
+                Operator(s) / Scientist(s) who performed the experiment
+              </label>
+              {operators.length === 0 ? (
+                <p className="text-sm text-slate-400 italic">
+                  No operators defined. Add them in Definitions &amp; Labels → Scientists / Operators.
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {operators.map((op) => {
+                    const checked = testOperators.includes(op);
+                    return (
+                      <label
+                        key={op}
+                        className={`flex items-center gap-1.5 text-xs font-bold px-2.5 py-1.5 rounded-lg border cursor-pointer transition-colors ${
+                          checked
+                            ? 'bg-blue-600 border-blue-700 text-white'
+                            : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleOperator(op)}
+                          className="accent-blue-600"
+                        />
+                        {op}
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+              {testOperators.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => update({ operators: [] })}
+                  className="mt-2 text-xs font-bold text-red-500 hover:text-red-700 underline"
+                >
+                  Clear all operators
+                </button>
+              )}
+            </div>
           </div>
         </CollapsibleSection>
 

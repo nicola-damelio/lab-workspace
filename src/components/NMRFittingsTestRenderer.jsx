@@ -34,22 +34,6 @@ const rowLabel = (idx) => {
   return label;
 };
 
-const normalizeMoleculeList = (molecules) => {
-  if (!Array.isArray(molecules)) return [];
-  return molecules.map((m, idx) => {
-    if (typeof m === 'string') {
-      return { id: m, name: m, atoms: [] };
-    }
-    return {
-      id: m?.id || `mol_${idx}_${Math.random().toString(36).slice(2, 8)}`,
-      name: m?.name || `Molecule ${idx + 1}`,
-      atoms: Array.isArray(m?.atoms)
-        ? m.atoms.map((a) => String(a).trim()).filter(Boolean)
-        : []
-    };
-  });
-};
-
 const operatorLabel = (op) => {
   if (!op) return '';
   if (typeof op === 'string') return op;
@@ -491,7 +475,7 @@ export const NMRFittingsTestRenderer = ({
   updateActiveTest,
   TestHeader,
   operators = [],
-  molecules = [],
+  compoundMeta = {}, // <-- Aggiunto per leggere le definition
   allCmpds = [],
   customConc = {},
   setCustomConc,
@@ -577,17 +561,29 @@ export const NMRFittingsTestRenderer = ({
     currentC: -1
   });
 
-  // Extract molecule and atoms
-  const moleculeList = useMemo(() => normalizeMoleculeList(molecules), [molecules]);
-  const selectedMolecule =
-    moleculeList.find(
-      (m) =>
-        m.id === activeTest.moleculeId ||
-        m.name === activeTest.moleculeId ||
-        m.name === activeTest.moleculeName
-    ) || null;
-  const atomOptions = selectedMolecule?.atoms || [];
-  const identityOptions = atomOptions.length > 0 ? atomOptions : allCmpds;
+  // Extract molecules from compoundMeta + allCmpds
+  const moleculeOptions = useMemo(() => {
+    return [...new Set([...allCmpds, ...Object.keys(compoundMeta || {})])].sort();
+  }, [allCmpds, compoundMeta]);
+
+  // Generate atoms from sequence or custom list
+  const atomOptions = useMemo(() => {
+    const target = activeTest.moleculeId;
+    const meta = (compoundMeta || {})[target];
+    let atoms = [];
+    if (meta && meta.sequence) {
+      const seq = meta.sequence.replace(/[^a-zA-Z]/g, '').toUpperCase();
+      for (let i = 0; i < seq.length; i++) {
+        atoms.push(`${seq[i]}${i + 1}`);
+      }
+    }
+    const custom = activeTest.customAtoms || [];
+    return [...new Set([...atoms, ...custom])];
+  }, [activeTest.moleculeId, compoundMeta, activeTest.customAtoms]);
+
+  const identityOptions = useMemo(() => {
+    return [...new Set([...atomOptions, ...allCmpds])];
+  }, [atomOptions, allCmpds]);
 
   const setDimensions = (newRows, newCols) => {
     const r = Math.max(1, newRows);
@@ -1588,7 +1584,75 @@ export const NMRFittingsTestRenderer = ({
     setFillEnd(selEnd);
   };
 
-  const handleDrop = (e, r, c) => { /* logic standard maintained */ };
+  const handleDrop = (e, r, c) => {
+    e.preventDefault();
+    try {
+      const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+      if (data.action !== 'copy' || !data.sel) return;
+
+      const src = data.sel;
+      const rOffset = r - src.minR;
+      const cOffset = c - src.minC;
+      const isMove = !e.ctrlKey && !e.metaKey && !e.shiftKey && data.sourcePlate === activeTest.id;
+
+      if (data.regionMode && Array.isArray(data.regions)) {
+        const nc = cellConfig.map((row) => row.map((cell) => ({ ...cell })));
+        const mappings = [];
+        data.regions.forEach((rowArr, i) => {
+          rowArr.forEach((reg, j) => {
+            const sr = src.minR + i;
+            const sc = src.minC + j;
+            const dr = sr + rOffset;
+            const dc = sc + cOffset;
+            if (reg && reg !== 'Primary' && dr >= 0 && dr < activePlateDim.rows && dc >= 0 && dc < activePlateDim.cols) {
+              mappings.push({ sr, sc, dr, dc, reg });
+            }
+          });
+        });
+        if (isMove) {
+          mappings.forEach((m) => {
+            if (m.sr >= 0 && m.sr < activePlateDim.rows && m.sc >= 0 && m.sc < activePlateDim.cols) {
+              nc[m.sr][m.sc].region = 'Primary';
+            }
+          });
+        }
+        mappings.forEach((m) => { nc[m.dr][m.dc].region = m.reg; });
+        updatePlate({ cellConfig: nc });
+        setSelStart({ r: Math.max(0, src.minR + rOffset), c: Math.max(0, src.minC + cOffset) });
+        setSelEnd({ r: Math.min(activePlateDim.rows - 1, src.maxR + rOffset), c: Math.min(activePlateDim.cols - 1, src.maxC + cOffset) });
+        return;
+      }
+
+      if (!data.grid || !data.cellConfig) return;
+      const nGrid = grid.map((row) => [...row]);
+      const nCell = cellConfig.map((row) => row.map((cell) => ({ ...cell })));
+      if (isMove) {
+        for (let sr = src.minR; sr <= src.maxR; sr++) {
+          for (let sc = src.minC; sc <= src.maxC; sc++) {
+            if (sr >= 0 && sr < activePlateDim.rows && sc >= 0 && sc < activePlateDim.cols) {
+              nGrid[sr][sc] = '';
+              nCell[sr][sc] = { excluded: false, role: null, conc: null, region: 'Primary', manualOverride: false };
+            }
+          }
+        }
+      }
+      for (let sr = src.minR; sr <= src.maxR; sr++) {
+        for (let sc = src.minC; sc <= src.maxC; sc++) {
+          const dr = sr + rOffset;
+          const dc = sc + cOffset;
+          if (dr >= 0 && dr < activePlateDim.rows && dc >= 0 && dc < activePlateDim.cols) {
+            nGrid[dr][dc] = data.grid[sr][sc];
+            nCell[dr][dc] = { ...data.cellConfig[sr][sc] };
+          }
+        }
+      }
+      updatePlate({ grid: nGrid, cellConfig: nCell });
+      setSelStart({ r: Math.max(0, src.minR + rOffset), c: Math.max(0, src.minC + cOffset) });
+      setSelEnd({ r: Math.min(activePlateDim.rows - 1, src.maxR + rOffset), c: Math.min(activePlateDim.cols - 1, src.maxC + cOffset) });
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   const handleContextMenu = (e, r, c) => {
     e.preventDefault();
@@ -1628,584 +1692,629 @@ export const NMRFittingsTestRenderer = ({
   };
 
   return (
-    <div id={`nmr-fittings-report-${activeTest.id}`} className="flex flex-col gap-6">
+    <div className="flex flex-col h-full min-h-0">
       {TestHeader}
-      
-      {/* TOOLBAR */}
-      <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 flex items-center justify-end gap-3 no-print">
-        <button
-          onClick={exportXLS}
-          className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1.5 px-3 rounded text-xs flex items-center gap-1 shadow-sm transition-colors"
-        >
-          📊 Export XLS
-        </button>
-      </div>
-
-      {/* CLASSIFICATION */}
-      <CollapsibleSection title="Classification" icon="🏷️" defaultOpen={true}>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="border border-slate-200 bg-slate-50 rounded-lg p-3">
-            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Operator</label>
-            <select
-              value={activeTest.operator || ''}
-              onChange={(e) => updatePlate({ operator: e.target.value })}
-              className="w-full border border-slate-300 rounded-lg p-2 text-xs bg-white outline-none focus:border-blue-500 font-semibold"
+      <div className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-6">
+        <div id={`nmr-fittings-report-${activeTest.id}`} className="flex flex-col gap-6">
+          
+          {/* TOOLBAR */}
+          <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 flex items-center justify-end gap-3 no-print">
+            <button
+              onClick={exportXLS}
+              className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1.5 px-3 rounded text-xs flex items-center gap-1 shadow-sm transition-colors"
             >
-              <option value="">— Select operator —</option>
-              {activeTest.operator && !(operators || []).map(operatorLabel).includes(activeTest.operator) && (
-                <option value={activeTest.operator}>{activeTest.operator}</option>
-              )}
-              {(operators || []).map((op, idx) => {
-                const name = operatorLabel(op);
-                return <option key={`${name}_${idx}`} value={name}>{name}</option>;
-              })}
-            </select>
+              📊 Export XLS
+            </button>
           </div>
-          <div className="border border-slate-200 bg-slate-50 rounded-lg p-3">
-            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Molecule / Compound</label>
-            <select
-              value={selectedMolecule?.id || activeTest.moleculeId || ''}
-              onChange={(e) => {
-                const selected = moleculeList.find((m) => m.id === e.target.value);
-                updatePlate({ moleculeId: selected?.id || '', moleculeName: selected?.name || '' });
-              }}
-              className="w-full border border-slate-300 rounded-lg p-2 text-xs bg-white outline-none focus:border-blue-500 font-semibold"
-            >
-              <option value="">— Select molecule —</option>
-              {moleculeList.map((mol) => <option key={mol.id} value={mol.id}>{mol.name}</option>)}
-            </select>
-            {selectedMolecule && (
-              <div className="text-[10px] text-slate-500 mt-2">
-                Identities (Atoms): {atomOptions.length > 0 ? atomOptions.join(', ') : 'None'}
-              </div>
-            )}
-          </div>
-          <div className="border border-slate-200 bg-slate-50 rounded-lg p-3">
-            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Test Category</label>
-            <input
-              type="text"
-              value={activeTest.testCategory || ''}
-              onChange={(e) => updatePlate({ testCategory: e.target.value })}
-              list={`nmr-fittings-category-options-${activeTest.id}`}
-              className="w-full border border-slate-300 rounded-lg p-2 text-xs bg-white outline-none focus:border-blue-500 font-semibold"
-            />
-            <datalist id={`nmr-fittings-category-options-${activeTest.id}`}>
-              {(testCategories || []).map((cat) => <option key={cat} value={cat} />)}
-            </datalist>
-          </div>
-        </div>
-      </CollapsibleSection>
 
-      {/* ================= EXPERIMENT SETUP ================= */}
-      <CollapsibleSection title="NMR Setup & Grid Formatting" icon="⚙️" defaultOpen={true}>
-        <div className="flex flex-col gap-6">
-          <div className="flex flex-wrap gap-4 items-stretch">
-            <div className="border border-slate-200 bg-slate-50 rounded-lg p-3 flex flex-col gap-2 flex-1 w-full md:min-w-[350px]">
-              <div className="text-[10px] uppercase font-bold text-slate-500 mb-1">Grid Dimensions, Dose & Units</div>
-              <div className="flex flex-wrap gap-3 items-end">
-                <div>
-                  <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Rows</label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={activeTest.rows || 8}
-                    onChange={(e) => setDimensions(Number(e.target.value), cols)}
-                    className="border border-blue-300 text-blue-700 font-bold rounded-lg p-1.5 w-20 text-xs bg-blue-50 outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Cols</label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={activeTest.cols || 12}
-                    onChange={(e) => setDimensions(rows, Number(e.target.value))}
-                    className="border border-blue-300 text-blue-700 font-bold rounded-lg p-1.5 w-20 text-xs bg-blue-50 outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Unit</label>
-                  <select
-                    value={unit || 'µM'}
-                    onChange={(e) => updatePlate({ unit: e.target.value })}
-                    className="border border-slate-300 rounded-lg p-1.5 w-20 text-xs bg-white font-bold text-slate-800 outline-none"
-                  >
-                    <option value="µM">µM</option>
-                    <option value="µg/mL">µg/mL</option>
-                    <option value="nM">nM</option>
-                    <option value="mM">mM</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Max Conc</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={topConcStr || ''}
-                    onChange={(e) => updatePlate({ topConcStr: e.target.value })}
-                    className="border border-slate-300 rounded-lg p-1.5 w-20 text-xs outline-none focus:border-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Dil. Factor</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={dilFactorStr || ''}
-                    onChange={(e) => updatePlate({ dilFactorStr: e.target.value })}
-                    className="border border-slate-300 rounded-lg p-1.5 w-16 text-xs outline-none focus:border-blue-500"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="border border-slate-200 bg-slate-50 rounded-lg p-3 flex flex-col gap-2 flex-1 w-full md:min-w-[350px]">
-              <div className="text-[10px] uppercase font-bold text-slate-500 mb-1">Custom Concentrations</div>
-              <div className="flex flex-wrap gap-2 items-center">
+          {/* CLASSIFICATION */}
+          <CollapsibleSection title="Classification" icon="🏷️" defaultOpen={true}>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-start">
+              <div className="border border-slate-200 bg-slate-50 rounded-lg p-3">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Operator</label>
                 <select
-                  id={`cc-sel-${activeTest.id}`}
-                  className="border border-slate-300 rounded-lg p-1.5 text-xs w-28 bg-white outline-none"
+                  value={activeTest.operator || ''}
+                  onChange={(e) => updatePlate({ operator: e.target.value })}
+                  className="w-full border border-slate-300 rounded-lg p-2 text-xs bg-white outline-none focus:border-blue-500 font-semibold"
                 >
-                  <option value="">Identity…</option>
-                  {identityOptions.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
+                  <option value="">— Select operator —</option>
+                  {activeTest.operator && !(operators || []).map(operatorLabel).includes(activeTest.operator) && (
+                    <option value={activeTest.operator}>{activeTest.operator}</option>
+                  )}
+                  {(operators || []).map((op, idx) => {
+                    const name = operatorLabel(op);
+                    return <option key={`${name}_${idx}`} value={name}>{name}</option>;
+                  })}
                 </select>
-                <input
-                  type="number"
-                  id={`cc-top-${activeTest.id}`}
-                  className="border border-slate-300 rounded-lg p-1.5 w-20 text-xs outline-none"
-                  placeholder="Top"
-                />
-                <input
-                  type="number"
-                  id={`cc-dil-${activeTest.id}`}
-                  className="border border-slate-300 rounded-lg p-1.5 w-16 text-xs outline-none"
-                  placeholder="Dil"
-                  defaultValue={dFact}
-                />
-                <button
-                  onClick={() => {
-                    const c = document.getElementById(`cc-sel-${activeTest.id}`).value;
-                    const t = parseFloat(document.getElementById(`cc-top-${activeTest.id}`).value);
-                    const d = parseFloat(document.getElementById(`cc-dil-${activeTest.id}`).value) || dFact;
-                    if (c && !isNaN(t) && t > 0 && d > 0) {
-                      setCustomConc({ ...customConc, [c]: { top: t, dil: d } });
-                      document.getElementById(`cc-top-${activeTest.id}`).value = '';
-                    }
-                  }}
-                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm"
-                >
-                  Set
-                </button>
               </div>
-              {Object.keys(customConc).length > 0 && (
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {Object.entries(customConc).map(([c, s]) => (
-                    <span key={c} className="bg-indigo-50 border border-indigo-200 text-indigo-800 text-[10px] px-2 py-0.5 rounded-md flex items-center gap-1 font-bold shadow-sm">
-                      {c}: {s.top} {unit} ÷ {s.dil}
-                      <button
-                        onClick={() => {
-                          const n = { ...customConc };
-                          delete n[c];
-                          setCustomConc(n);
-                        }}
-                        className="text-red-500 hover:text-red-700 font-black"
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
 
-          {/* ================= VISUAL PLATE MAP ================= */}
-          <div className="relative">
-            {fsPanel === 'map' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('map')}></div>}
-            <div className={`bg-slate-50 border border-slate-200 p-4 min-w-0 flex flex-col ${fsPanel === 'map' ? FS_CLASSES : 'rounded-xl w-full'}`}>
-              <div className="flex justify-between items-start mb-2 gap-2">
-                <div className="min-w-0">
-                  <h2 className="text-sm lg:text-base font-bold text-slate-800 truncate">Visual Grid Map</h2>
-                  <p className="text-[10px] text-slate-500 mt-0.5">Shows mapped atoms/identities and concentrations.</p>
-                </div>
-                <div className="flex items-center shrink-0">
-                  <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1 shadow-sm mr-4">
-                    <span className="text-[10px] text-slate-500 font-bold">A</span>
-                    <input type="range" min="4" max="24" value={mapFontSize} onChange={(e) => setMapFontSize(Number(e.target.value))} className="w-16 accent-blue-600" />
-                    <span className="text-[12px] text-slate-500 font-bold">A</span>
-                  </div>
-                  <button onClick={() => toggleFs('map')} className="text-slate-400 hover:text-blue-600 bg-slate-100 hover:bg-blue-100 rounded p-1 transition-colors">
-                    {fsPanel === 'map' ? '↙️' : '↗️'}
+              <div className="border border-slate-200 bg-slate-50 rounded-lg p-3">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Molecule / Compound</label>
+                <select
+                  value={activeTest.moleculeId || ''}
+                  onChange={(e) => updatePlate({ moleculeId: e.target.value })}
+                  className="w-full border border-slate-300 rounded-lg p-2 text-xs bg-white outline-none focus:border-blue-500 font-semibold"
+                >
+                  <option value="">— Select target molecule —</option>
+                  {moleculeOptions.map((mol) => <option key={mol} value={mol}>{mol}</option>)}
+                </select>
+              </div>
+
+              <div className="border border-slate-200 bg-slate-50 rounded-lg p-3 md:col-span-2">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Target Atoms of Interest</label>
+                <div className="flex gap-2">
+                  <input 
+                    type="text" 
+                    id={`new-atom-${activeTest.id}`} 
+                    placeholder="e.g. V14-HN" 
+                    className="flex-1 border border-slate-300 rounded-md outline-none text-xs p-1.5 focus:border-blue-500" 
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        const val = e.target.value.trim();
+                        if (val) {
+                          const curr = activeTest.customAtoms || [];
+                          if (!curr.includes(val)) updatePlate({ customAtoms: [...curr, val] });
+                          e.target.value = '';
+                        }
+                      }
+                    }}
+                  />
+                  <button 
+                    onClick={() => {
+                      const input = document.getElementById(`new-atom-${activeTest.id}`);
+                      const val = input.value.trim();
+                      if (val) {
+                        const curr = activeTest.customAtoms || [];
+                        if (!curr.includes(val)) updatePlate({ customAtoms: [...curr, val] });
+                        input.value = '';
+                      }
+                    }} 
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-md text-xs shadow-sm"
+                  >
+                    Add Atom
                   </button>
                 </div>
-              </div>
-              <div className={`bg-white p-4 rounded-xl border border-slate-200 flex flex-col justify-evenly gap-1 shadow-sm overflow-auto ${fsPanel === 'map' ? 'flex-1' : ''}`} style={{ minHeight: fsPanel === 'map' ? 0 : '320px' }}>
-                <div className="flex w-full mb-1">
-                  <div className="w-4 lg:w-6" />
-                  {COLS.map((c) => <div key={c} className="flex-1 text-center text-[10px] lg:text-xs font-black text-slate-400">{c}</div>)}
-                </div>
-                {ROWS.map((rl, r) => (
-                  <div key={rl} className={`flex items-center w-full ${fsPanel === 'map' ? 'flex-1 min-h-[30px]' : ''}`}>
-                    <div className="w-4 lg:w-6 text-[10px] lg:text-xs font-black text-slate-400 text-center">{rl}</div>
-                    {COLS.map((col, c) => {
-                      const cfg = cellConfig[r]?.[c] || {};
-                      const role = getRole(r, c);
-                      const { bg, dark } = wellColor(r, c);
-                      const conc = concOf(r, c, role);
-                      const tc = dark ? 'text-slate-900' : 'text-white';
-                      const fSize1 = fsPanel === 'map' ? mapFontSize * 1.5 : mapFontSize;
-                      const fSize2 = fsPanel === 'map' ? (mapFontSize - 1) * 1.5 : mapFontSize - 1;
-                      const reg = cfg.region || 'Primary';
-                      const regColor = getRegionColor(reg);
-                      const hasCustomReg = reg !== 'Primary';
-
-                      let bTop = r === 0 || (cellConfig[r - 1] && (cellConfig[r - 1][c].region || 'Primary') !== reg);
-                      let bBottom = r === activePlateDim.rows - 1 || (cellConfig[r + 1] && (cellConfig[r + 1][c].region || 'Primary') !== reg);
-                      let bLeft = c === 0 || (cellConfig[r] && (cellConfig[r][c - 1].region || 'Primary') !== reg);
-                      let bRight = c === activePlateDim.cols - 1 || (cellConfig[r] && (cellConfig[r][c + 1].region || 'Primary') !== reg);
-                      const shadows = [];
-                      if (hasCustomReg) {
-                        if (bTop) shadows.push(`inset 0 3px 0 0 ${regColor}`);
-                        if (bBottom) shadows.push(`inset 0 -3px 0 0 ${regColor}`);
-                        if (bLeft) shadows.push(`inset 3px 0 0 0 ${regColor}`);
-                        if (bRight) shadows.push(`inset -3px 0 0 0 ${regColor}`);
-                      }
-                      return (
-                        <div key={col} className="flex-1 flex justify-center items-center relative py-1 h-full" style={{ backgroundColor: hasCustomReg ? regColor + '1a' : 'transparent', boxShadow: shadows.length > 0 ? shadows.join(', ') : 'none' }}>
-                          <div className="z-10 rounded-full border border-black/10 flex flex-col items-center justify-center shadow-sm overflow-hidden" style={{ backgroundColor: bg, width: mapBadgePx, height: mapBadgePx }}>
-                            <span style={{ fontSize: fSize1 + 'px' }} className={`font-bold leading-tight truncate max-w-full text-center px-0.5 ${tc}`}>{role || '–'}</span>
-                            {role && !['cells', 'pbs', 'medium'].includes(String(role).toLowerCase()) && (
-                              <span style={{ fontSize: fSize2 + 'px' }} className={`font-bold truncate max-w-full px-0.5 opacity-90 ${tc}`}>{formatConc(conc)}</span>
-                            )}
-                          </div>
-                          {hasCustomReg && bTop && bLeft && <span className="absolute top-[2px] left-[3px] text-[9px] font-black z-20 px-1 rounded shadow-sm whitespace-nowrap" style={{ color: '#fff', backgroundColor: regColor }}>{reg}</span>}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      </CollapsibleSection>
-
-      {/* ================= DATA GRID ================= */}
-      <CollapsibleSection title="Data" icon="🔢" defaultOpen={true}>
-        <div className="relative">
-          {fsPanel === 'data' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('data')}></div>}
-          <div className={`bg-slate-50 border border-slate-200 p-4 min-w-0 flex flex-col ${fsPanel === 'data' ? FS_CLASSES : 'rounded-xl w-full'}`}>
-            <div className="flex justify-between items-start mb-2 gap-2">
-              <div className="min-w-0">
-                <h2 className="text-sm lg:text-base font-bold text-slate-800 truncate">{`Data Grid (${activePlateDim.rows}x${activePlateDim.cols})`}</h2>
-              </div>
-              <div className="flex items-center shrink-0">
-                <div className="flex bg-slate-200 p-1 rounded-lg shadow-inner mr-4">
-                  <button onClick={() => setTableView('od')} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableView === 'od' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Values</button>
-                  <button onClick={() => setTableView('conc')} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableView === 'conc' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Concs</button>
-                  <button onClick={() => setTableView('region')} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableView === 'region' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Regions</button>
-                </div>
-                <button onClick={() => toggleFs('data')} className="text-slate-400 hover:text-blue-600 bg-slate-100 hover:bg-blue-100 rounded p-1 transition-colors">
-                  {fsPanel === 'data' ? '↙️' : '↗️'}
-                </button>
-              </div>
-            </div>
-
-            <div className="text-[10px] text-slate-500 mb-3 italic px-1 flex justify-between items-center gap-2">
-              <span>
-                {tableView === 'od' && 'Input raw values (intensities, volumes). Right-click to exclude points or override.'}
-                {tableView === 'conc' && 'Manually override concentrations per cell.'}
-                {tableView === 'region' && 'Assign regions for independent fitting curves.'}
-              </span>
-            </div>
-
-            <div className={`border border-slate-300 rounded-lg bg-white select-none relative w-full overflow-auto shadow-sm ${fsPanel === 'data' ? 'flex-1' : ''}`}>
-              <table className="w-full border-collapse table-fixed min-w-[700px] relative z-10">
-                <thead>
-                  <tr>
-                    <th className="bg-slate-200 border border-slate-300 p-1 text-xs text-slate-600 w-8">R\C</th>
-                    <th className="bg-slate-100 border border-slate-300 p-1 text-[10px] text-slate-600 w-28">Row Identity →</th>
-                    {COLS.map((col, c) => (
-                      <th key={col} className="bg-slate-50 border border-slate-300 p-1">
-                        <div className="text-[11px] text-slate-500 font-black">{col}</div>
-                        <select
-                          value={compounds[c]}
-                          onChange={(e) => updateCmp(c, e.target.value)}
-                          className="w-full text-center border border-slate-300 rounded p-0.5 font-bold text-blue-800 text-[10px] h-6 bg-white cursor-pointer outline-none focus:ring-1 focus:ring-blue-500"
-                        >
-                          <option value="">Col Id ↓</option>
-                          {identityOptions.map((o) => <option key={o} value={o}>{o}</option>)}
-                        </select>
-                      </th>
+                {atomOptions.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-2 max-h-16 overflow-y-auto custom-scrollbar">
+                    {atomOptions.map(a => (
+                      <span key={a} className="bg-white border border-slate-300 text-slate-600 text-[10px] px-2 py-0.5 rounded shadow-sm font-bold flex items-center gap-1">
+                        {a}
+                        <button 
+                          className="text-red-400 hover:text-red-600"
+                          onClick={() => {
+                            const curr = activeTest.customAtoms || [];
+                            updatePlate({ customAtoms: curr.filter(ca => ca !== a) });
+                          }}
+                        >×</button>
+                      </span>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {ROWS.map((rl, r) => (
-                    <tr key={rl}>
-                      <td className="bg-slate-100 border border-slate-300 font-black text-center text-xs text-slate-700">{rl}</td>
-                      <td className="bg-slate-50 border border-slate-300 p-1 align-middle">
-                        <select
-                          value={rowCompounds[r]}
-                          onChange={(e) => updateRowCmp(r, e.target.value)}
-                          className="w-full text-center border border-slate-300 rounded p-0.5 font-bold text-blue-800 text-[10px] h-6 bg-white cursor-pointer outline-none focus:ring-1 focus:ring-blue-500"
-                        >
-                          <option value="">Row Id →</option>
-                          {identityOptions.map((o) => <option key={o} value={o}>{o}</option>)}
-                        </select>
-                      </td>
-                      {COLS.map((col, c) => {
-                        const cfg = cellConfig[r]?.[c] || {};
-                        let val = '';
-                        if (tableView === 'od') {
-                          val = grid?.[r]?.[c] === '' ? '' : focusedCell && focusedCell.r === r && focusedCell.c === c ? grid[r][c] : displayVal(r, c);
-                        } else if (tableView === 'conc') {
-                          val = cfg.conc !== null && cfg.conc !== undefined ? cfg.conc : '';
-                        } else if (tableView === 'region') {
-                          val = cfg.region || 'Primary';
-                        }
-                        const isSelBox = currentSelectionBox && r >= currentSelectionBox.minR && r <= currentSelectionBox.maxR && c >= currentSelectionBox.minC && c <= currentSelectionBox.maxC;
-                        const isFillBox = activeFill && r >= activeFill.minR && r <= activeFill.maxR && c >= activeFill.minC && c <= activeFill.maxC && !isSelBox;
-                        let cellStyle = {};
-                        if (isSelBox) cellStyle.backgroundColor = '#eff6ff';
-                        if (isFillBox) cellStyle.backgroundColor = '#f0fdf4';
-                        if (tableView === 'region' && cfg.region && cfg.region !== 'Primary') cellStyle.backgroundColor = getRegionColor(cfg.region) + '33';
-
-                        return (
-                          <td
-                            key={col}
-                            className={`border p-0 relative align-middle ${cfg.excluded ? 'border-slate-300' : 'border-slate-200'} ${tableView === 'region' ? 'cursor-crosshair' : ''} ${fsPanel === 'data' ? 'h-12' : 'h-9'}`}
-                            onContextMenu={(e) => handleContextMenu(e, r, c)}
-                            onMouseDown={(e) => onMouseDownCell(e, r, c)}
-                            onMouseEnter={() => onMouseEnterCell(r, c)}
-                            onDoubleClick={() => onDoubleClickCell(r, c)}
-                            style={cellStyle}
-                          >
-                            {!cfg.excluded && tableView === 'od' && !isSelBox && !isFillBox && (
-                              <div className="absolute inset-0 pointer-events-none z-0" style={{ backgroundColor: heatColor(r, c) }} />
-                            )}
-                            {isSelBox && r === currentSelectionBox.maxR && c === currentSelectionBox.maxC && (
-                              <div className="fill-handle absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-blue-600 border border-white cursor-crosshair z-40 rounded-sm no-print" onMouseDown={onMouseDownFillHandle} />
-                            )}
-                            {tableView === 'region' ? (
-                              <div className={`w-full h-full flex items-center justify-center select-none text-[10px] font-bold ${cfg.region && cfg.region !== 'Primary' ? 'text-slate-800' : 'text-slate-400'}`}>{cfg.region || 'Primary'}</div>
-                            ) : (
-                              <input
-                                type="text"
-                                value={val}
-                                onFocus={() => { if (!cfg.excluded && tableView === 'od') setFocusedCell({ r, c }); }}
-                                onBlur={() => setFocusedCell(null)}
-                                onChange={(ev) => {
-                                  if (cfg.excluded) return;
-                                  if (tableView === 'od') updateCell(r, c, ev.target.value);
-                                  else if (tableView === 'conc') updateCellCfg(r, c, { conc: ev.target.value });
-                                }}
-                                readOnly={cfg.excluded}
-                                className={`grid-input relative z-10 pt-3 pb-0.5 font-medium ${cfg.excluded ? 'line-through text-slate-400' : 'text-slate-900'} ${fsPanel === 'data' ? 'text-sm pt-4' : 'text-[0.75rem]'}`}
-                              />
-                            )}
-                            {cfg.role && !cfg.excluded && tableView === 'od' && (
-                              <div className="absolute top-0 left-0 max-w-[85%] truncate text-[6.5px] sm:text-[7.5px] leading-tight font-bold bg-blue-500 text-white px-1 py-0.5 rounded-br pointer-events-none z-20 shadow-sm">{cfg.role}</div>
-                            )}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      </CollapsibleSection>
-
-      {/* ================= FITTING ================= */}
-      <CollapsibleSection title="Fitting" icon="📐" defaultOpen={true}>
-        <div className="flex flex-col gap-6">
-          <CollapsibleSection title="Error Management" icon="⚠️" defaultOpen={false}>
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-wrap gap-4 items-stretch">
-                <div className="border border-slate-200 bg-slate-50 rounded-lg p-4 flex flex-col gap-3 flex-1 min-w-[300px]">
-                  <div className="text-[10px] uppercase font-bold text-slate-500">Data Normalization</div>
-                  <div className="grid grid-cols-2 gap-3 items-center">
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[11px] font-bold text-slate-600">Normalization Control:</label>
-                      <select value={ctrlType} onChange={(e) => updatePlate({ ctrlType: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs bg-white w-full outline-none">
-                        <option value="none">Manual</option>
-                        {identityOptions.map((c) => <option key={c} value={c}>{c}</option>)}
-                      </select>
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[11px] font-bold text-slate-600">Control Value:</label>
-                      <input type="number" step="0.01" value={ctrlODStr} onChange={(e) => updatePlate({ ctrlODStr: e.target.value })} className={`border border-slate-300 rounded-md p-1.5 w-full text-xs font-bold outline-none ${ctrlType !== 'none' ? 'bg-slate-200 text-slate-500' : 'text-emerald-700'}`} readOnly={ctrlType !== 'none'} />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[11px] font-bold text-slate-600">Subtract Blank:</label>
-                      <select value={bgType} onChange={(e) => updatePlate({ bgType: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs bg-white w-full outline-none">
-                        <option value="none">None</option>
-                        <option value="manual">Manual</option>
-                        {identityOptions.map((c) => <option key={c} value={c}>{c}</option>)}
-                      </select>
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[11px] font-bold text-slate-600">Blank Value:</label>
-                      {bgType === 'manual' ? (
-                        <input type="number" step="0.01" value={bgManualStr} onChange={(e) => updatePlate({ bgManualStr: e.target.value })} className="border border-slate-300 rounded-md p-1.5 w-full text-xs font-bold text-red-600 outline-none" />
-                      ) : bgType !== 'none' ? (
-                        <span className="text-xs font-bold text-red-600 bg-white border border-slate-200 px-3 py-1.5 rounded-md w-full">{bgOD.toFixed(4)}</span>
-                      ) : (
-                        <span className="text-xs text-slate-400 bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-md w-full">—</span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="border border-slate-200 bg-slate-50 rounded-lg p-4 flex flex-col gap-3 flex-[2] min-w-[350px]">
-                  <div className="text-[10px] uppercase font-bold text-slate-500">Errors, Outliers & Fitting</div>
-                  <div className="flex flex-wrap items-center gap-4 bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs font-bold text-slate-700 flex items-center gap-2 cursor-pointer hover:text-blue-600">
-                        <input type="checkbox" checked={useFixedSD} onChange={(e) => updatePlate({ useFixedSD: e.target.checked })} className="cursor-pointer w-4 h-4 accent-blue-600" /> Fixed SD ±:
-                      </label>
-                      <input type="number" step="0.1" min="0" value={fixedSDStr} onChange={(e) => updatePlate({ fixedSDStr: e.target.value })} disabled={!useFixedSD} className={`border border-slate-300 rounded-md p-1.5 w-16 text-xs outline-none ${!useFixedSD ? 'bg-slate-100 text-slate-400' : 'bg-white font-bold text-blue-700'}`} />
-                    </div>
-                    <button onClick={() => setShowErrPanel(!showErrPanel)} className={`font-bold py-2 px-4 rounded-lg text-xs transition-colors shadow-sm ml-auto ${showErrPanel ? 'bg-orange-100 border border-orange-400 text-orange-800' : 'bg-white hover:bg-orange-50 text-orange-700 border border-orange-300'}`}>
-                      ⚠️ Manual SD
-                    </button>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-4 mt-1">
-                    <label className="flex items-center gap-2 bg-blue-50 border border-blue-200 hover:bg-blue-100 rounded-md px-3 py-1.5 cursor-pointer transition-colors shadow-sm">
-                      <span className="text-xs font-bold text-blue-800">Fit Binding/IC50 (4PL)</span>
-                      <input type="checkbox" checked={fitIC50} onChange={(e) => updatePlate({ fitIC50: e.target.checked })} className="w-4 h-4 cursor-pointer accent-blue-600" />
-                    </label>
-                    <label className="flex items-center gap-2 bg-slate-100 border border-slate-200 hover:bg-slate-200 rounded-md px-3 py-1.5 cursor-pointer transition-colors shadow-sm">
-                      <span className="text-xs font-bold text-slate-700">Norm (Control)</span>
-                      <input type="checkbox" checked={showViab} onChange={(e) => updatePlate({ showViab: e.target.checked })} className="w-4 h-4 cursor-pointer accent-slate-600" />
-                    </label>
-                    <button onClick={restoreAll} className="text-xs bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 font-bold py-1.5 px-3 rounded-md ml-auto shadow-sm transition-colors">
-                      ↩️ Restore All Excluded
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </CollapsibleSection>
-
-          <CollapsibleSection title="Graphical Parameters" icon="🎨" defaultOpen={false}>
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
-                {plotCmps.length > 0 && (
-                  <div className="flex-1">
-                    <span className="text-xs font-black text-slate-500 uppercase tracking-wide block mb-2">Filter & Color Series</span>
-                    <div className="flex flex-wrap gap-3">
-                      {plotCmps.map((cmp) => {
-                        const hex = cmpColor(cmp, identityOptions.indexOf(cmp));
-                        return (
-                          <div key={cmp} className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm">
-                            <input type="checkbox" checked={!hiddenCmpds[cmp]} onChange={(e) => setHiddenCmpds((p) => ({ ...p, [cmp]: !e.target.checked }))} className="w-4 h-4 cursor-pointer accent-blue-600" />
-                            <label style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', position: 'relative' }}>
-                              <span style={{ width: 14, height: 14, borderRadius: 9999, backgroundColor: hex, display: 'inline-block', border: '1px solid rgba(15,23,42,0.15)' }} />
-                              <input type="color" value={hex} style={{ position: 'absolute', opacity: 0, cursor: 'pointer', width: 0, height: 0 }} onChange={(e) => setCmpColors({ ...cmpColors, [cmp]: e.target.value })} />
-                            </label>
-                            <span className="text-sm font-bold text-slate-700">{cmp}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
                   </div>
                 )}
-                <div className="flex gap-3">
-                  <button onClick={() => setShowChartCfg(!showChartCfg)} className={`font-bold py-2 px-4 rounded-lg text-xs transition-colors shadow-sm ${showChartCfg ? 'bg-slate-200 border border-slate-400 text-slate-900' : 'bg-white hover:bg-slate-50 text-slate-800 border border-slate-300'}`}>
-                    ⚙️ Chart Config
-                  </button>
-                </div>
               </div>
-              {showChartCfg && (
-                <div className="p-5 bg-white border border-slate-300 rounded-xl grid grid-cols-2 lg:grid-cols-4 gap-4 shadow-sm">
-                  {[['X Min', 'xMin'], ['X Max', 'xMax'], ['Y Min', 'yMin'], ['Y Max', 'yMax']].map(([lbl, k]) => (
-                    <div key={k} className="flex flex-col gap-1">
-                      <label className="text-xs font-bold text-slate-600">{lbl}</label>
-                      <input type="number" placeholder="Auto" value={chartCfg[k]} onChange={(e) => updatePlate({ chartCfg: { ...chartCfg, [k]: e.target.value } })} className="border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-                    </div>
-                  ))}
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-bold text-slate-600">Y Axis Label</label>
-                    <input type="text" placeholder="Value" value={activeTest.valueUnit || ''} onChange={(e) => updatePlate({ valueUnit: e.target.value })} className="border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-                  </div>
-                </div>
-              )}
             </div>
           </CollapsibleSection>
 
-          {Object.entries(processedByRegion).map(([reg, comps]) => (
-            <RegionCharts
-              key={reg}
-              regionName={reg}
-              regionData={comps}
-              config={{
-                chartCfg,
-                fitIC50,
-                showExcl,
-                eScale,
-                fsPanel,
-                chartH,
-                drWidth,
-                hiddenCmpds,
-                unit,
-                cellConfig,
-                setCellConfig: (cfg) => updatePlate({ cellConfig: cfg }),
-                activePlateDim,
-                toggleFs,
-                valueLabel: activeTest.valueUnit || (showViab ? 'Normalized (%)' : 'Value')
-              }}
-            />
-          ))}
-        </div>
-      </CollapsibleSection>
-      
-      {ctxMenu && (
-        <div className="fixed bg-white border border-slate-200 shadow-2xl rounded-lg py-2 z-50 text-sm w-56 flex flex-col" style={{ top: ctxMenu.y, left: ctxMenu.x, maxHeight: '80vh', transform: ctxMenu.y > window.innerHeight / 2 ? 'translateY(-100%)' : 'none' }}>
-          <div className="overflow-y-auto custom-scrollbar flex-1">
-            <button className="w-full text-left px-4 py-1.5 hover:bg-slate-100 font-bold text-red-600" onClick={() => { runCtxAction((nc, ng, r, c) => { nc[r][c].excluded = !nc[r][c].excluded; nc[r][c].manualOverride = true; }); }}>
-              Toggle Exclude Point
-            </button>
-            <div className="border-t border-slate-100 my-1" />
-            <div className="px-4 py-1 text-[10px] text-slate-400 uppercase font-black tracking-wider">Assign Identity</div>
-            <div className="max-h-40 overflow-y-auto custom-scrollbar">
-              {identityOptions.map((o) => (
-                <button key={o} className="w-full text-left px-4 py-1.5 hover:bg-slate-50 font-medium text-slate-700" onClick={() => { runCtxAction((nc, ng, r, c) => { nc[r][c].role = o; }); }}>Set as {o}</button>
-              ))}
-            </div>
-            <div className="border-t border-slate-100 my-1" />
-            <button className="w-full text-left px-4 py-1.5 hover:bg-slate-50 text-slate-500 italic" onClick={() => { runCtxAction((nc, ng, r, c) => { nc[r][c].role = null; nc[r][c].conc = null; }); }}>Clear Identity</button>
-            <div className="border-t border-slate-100 my-1" />
-            <div className="px-4 py-1 text-[10px] text-slate-400 uppercase font-black tracking-wider">Set Region</div>
-            <div className="px-3 pb-2">
-              <input type="text" placeholder="Region Name" className="w-full text-xs border border-slate-300 rounded p-1.5 outline-none focus:border-blue-500" onKeyDown={(e) => { if (e.key === 'Enter') confirmRegion(e.target.value); }} />
-            </div>
-            <button className="w-full text-left px-4 py-1.5 hover:bg-slate-50 text-slate-500 italic" onClick={() => confirmRegion('Primary')}>Clear Region</button>
-          </div>
-        </div>
-      )}
+          {/* ================= EXPERIMENT SETUP ================= */}
+          <CollapsibleSection title="NMR Setup & Grid Formatting" icon="⚙️" defaultOpen={true}>
+            <div className="flex flex-col gap-6">
+              <div className="flex flex-wrap gap-4 items-stretch">
+                <div className="border border-slate-200 bg-slate-50 rounded-lg p-3 flex flex-col gap-2 flex-1 w-full md:min-w-[350px]">
+                  <div className="text-[10px] uppercase font-bold text-slate-500 mb-1">Grid Dimensions, Dose & Units</div>
+                  <div className="flex flex-wrap gap-3 items-end">
+                    <div>
+                      <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Rows</label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={activeTest.rows || 8}
+                        onChange={(e) => setDimensions(Number(e.target.value), cols)}
+                        className="border border-blue-300 text-blue-700 font-bold rounded-lg p-1.5 w-20 text-xs bg-blue-50 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Cols</label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={activeTest.cols || 12}
+                        onChange={(e) => setDimensions(rows, Number(e.target.value))}
+                        className="border border-blue-300 text-blue-700 font-bold rounded-lg p-1.5 w-20 text-xs bg-blue-50 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Unit</label>
+                      <select
+                        value={unit || 'µM'}
+                        onChange={(e) => updatePlate({ unit: e.target.value })}
+                        className="border border-slate-300 rounded-lg p-1.5 w-20 text-xs bg-white font-bold text-slate-800 outline-none"
+                      >
+                        <option value="µM">µM</option>
+                        <option value="µg/mL">µg/mL</option>
+                        <option value="nM">nM</option>
+                        <option value="mM">mM</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Max Conc</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={topConcStr || ''}
+                        onChange={(e) => updatePlate({ topConcStr: e.target.value })}
+                        className="border border-slate-300 rounded-lg p-1.5 w-20 text-xs outline-none focus:border-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Dil. Factor</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={dilFactorStr || ''}
+                        onChange={(e) => updatePlate({ dilFactorStr: e.target.value })}
+                        className="border border-slate-300 rounded-lg p-1.5 w-16 text-xs outline-none focus:border-blue-500"
+                      />
+                    </div>
+                  </div>
+                </div>
 
-      {regionModal && (
-        <div className="fixed inset-0 bg-slate-900/50 z-[99999] flex items-center justify-center backdrop-blur-sm" onClick={() => setRegionModal(null)}>
-          <div className="bg-white p-6 rounded-xl shadow-xl border border-slate-200 w-80" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-black text-slate-800 mb-2">Define Region</h3>
-            <p className="text-xs text-slate-500 mb-4">Name this block of wells to analyze it independently.</p>
-            <input type="text" id="region-name-input" autoFocus defaultValue={regionModal.defaultName} className="border border-slate-300 rounded-lg p-2.5 w-full text-sm mb-6 outline-none focus:border-blue-500" onKeyDown={(e) => { if (e.key === 'Enter') confirmRegion(e.target.value); if (e.key === 'Escape') setRegionModal(null); }} />
-            <div className="flex justify-between items-center">
-              <button onClick={() => confirmRegion('Primary')} className="px-3 py-2 text-xs font-bold text-red-600 hover:bg-red-50 rounded-lg transition-colors">Clear</button>
-              <div className="flex gap-2">
-                <button onClick={() => setRegionModal(null)} className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">Cancel</button>
-                <button onClick={() => confirmRegion(document.getElementById('region-name-input').value)} className="px-4 py-2 text-xs bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-sm transition-colors">Save</button>
+                <div className="border border-slate-200 bg-slate-50 rounded-lg p-3 flex flex-col gap-2 flex-1 w-full md:min-w-[350px]">
+                  <div className="text-[10px] uppercase font-bold text-slate-500 mb-1">Custom Concentrations</div>
+                  <div className="flex flex-wrap gap-2 items-center">
+                    <select
+                      id={`cc-sel-${activeTest.id}`}
+                      className="border border-slate-300 rounded-lg p-1.5 text-xs w-28 bg-white outline-none"
+                    >
+                      <option value="">Identity…</option>
+                      {atomOptions.length > 0 && (
+                        <optgroup label="Target Atoms">
+                          {atomOptions.map((c) => <option key={c} value={c}>{c}</option>)}
+                        </optgroup>
+                      )}
+                      {allCmpds.length > 0 && (
+                        <optgroup label="Compounds (Titrants)">
+                          {allCmpds.map((c) => <option key={c} value={c}>{c}</option>)}
+                        </optgroup>
+                      )}
+                    </select>
+                    <input
+                      type="number"
+                      id={`cc-top-${activeTest.id}`}
+                      className="border border-slate-300 rounded-lg p-1.5 w-20 text-xs outline-none"
+                      placeholder="Top"
+                    />
+                    <input
+                      type="number"
+                      id={`cc-dil-${activeTest.id}`}
+                      className="border border-slate-300 rounded-lg p-1.5 w-16 text-xs outline-none"
+                      placeholder="Dil"
+                      defaultValue={dFact}
+                    />
+                    <button
+                      onClick={() => {
+                        const c = document.getElementById(`cc-sel-${activeTest.id}`).value;
+                        const t = parseFloat(document.getElementById(`cc-top-${activeTest.id}`).value);
+                        const d = parseFloat(document.getElementById(`cc-dil-${activeTest.id}`).value) || dFact;
+                        if (c && !isNaN(t) && t > 0 && d > 0) {
+                          setCustomConc({ ...customConc, [c]: { top: t, dil: d } });
+                          document.getElementById(`cc-top-${activeTest.id}`).value = '';
+                        }
+                      }}
+                      className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm"
+                    >
+                      Set
+                    </button>
+                  </div>
+                  {Object.keys(customConc).length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {Object.entries(customConc).map(([c, s]) => (
+                        <span key={c} className="bg-indigo-50 border border-indigo-200 text-indigo-800 text-[10px] px-2 py-0.5 rounded-md flex items-center gap-1 font-bold shadow-sm">
+                          {c}: {s.top} {unit} ÷ {s.dil}
+                          <button
+                            onClick={() => {
+                              const n = { ...customConc };
+                              delete n[c];
+                              setCustomConc(n);
+                            }}
+                            className="text-red-500 hover:text-red-700 font-black"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* ================= VISUAL PLATE MAP ================= */}
+              <div className="relative">
+                {fsPanel === 'map' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('map')}></div>}
+                <div className={`bg-slate-50 border border-slate-200 p-4 min-w-0 flex flex-col ${fsPanel === 'map' ? FS_CLASSES : 'rounded-xl w-full'}`}>
+                  <div className="flex justify-between items-start mb-2 gap-2">
+                    <div className="min-w-0">
+                      <h2 className="text-sm lg:text-base font-bold text-slate-800 truncate">Visual Grid Map</h2>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Shows mapped atoms/identities and concentrations.</p>
+                    </div>
+                    <div className="flex items-center shrink-0">
+                      <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1 shadow-sm mr-4">
+                        <span className="text-[10px] text-slate-500 font-bold">A</span>
+                        <input type="range" min="4" max="24" value={mapFontSize} onChange={(e) => setMapFontSize(Number(e.target.value))} className="w-16 accent-blue-600" />
+                        <span className="text-[12px] text-slate-500 font-bold">A</span>
+                      </div>
+                      <button onClick={() => toggleFs('map')} className="text-slate-400 hover:text-blue-600 bg-slate-100 hover:bg-blue-100 rounded p-1 transition-colors">
+                        {fsPanel === 'map' ? '↙️' : '↗️'}
+                      </button>
+                    </div>
+                  </div>
+                  <div className={`bg-white p-4 rounded-xl border border-slate-200 flex flex-col justify-evenly gap-1 shadow-sm overflow-auto ${fsPanel === 'map' ? 'flex-1' : ''}`} style={{ minHeight: fsPanel === 'map' ? 0 : '320px' }}>
+                    <div className="flex w-full mb-1">
+                      <div className="w-4 lg:w-6" />
+                      {COLS.map((c) => <div key={c} className="flex-1 text-center text-[10px] lg:text-xs font-black text-slate-400">{c}</div>)}
+                    </div>
+                    {ROWS.map((rl, r) => (
+                      <div key={rl} className={`flex items-center w-full ${fsPanel === 'map' ? 'flex-1 min-h-[30px]' : ''}`}>
+                        <div className="w-4 lg:w-6 text-[10px] lg:text-xs font-black text-slate-400 text-center">{rl}</div>
+                        {COLS.map((col, c) => {
+                          const cfg = cellConfig[r]?.[c] || {};
+                          const role = getRole(r, c);
+                          const { bg, dark } = wellColor(r, c);
+                          const conc = concOf(r, c, role);
+                          const tc = dark ? 'text-slate-900' : 'text-white';
+                          const fSize1 = fsPanel === 'map' ? mapFontSize * 1.5 : mapFontSize;
+                          const fSize2 = fsPanel === 'map' ? (mapFontSize - 1) * 1.5 : mapFontSize - 1;
+                          const reg = cfg.region || 'Primary';
+                          const regColor = getRegionColor(reg);
+                          const hasCustomReg = reg !== 'Primary';
+
+                          let bTop = r === 0 || (cellConfig[r - 1] && (cellConfig[r - 1][c].region || 'Primary') !== reg);
+                          let bBottom = r === activePlateDim.rows - 1 || (cellConfig[r + 1] && (cellConfig[r + 1][c].region || 'Primary') !== reg);
+                          let bLeft = c === 0 || (cellConfig[r] && (cellConfig[r][c - 1].region || 'Primary') !== reg);
+                          let bRight = c === activePlateDim.cols - 1 || (cellConfig[r] && (cellConfig[r][c + 1].region || 'Primary') !== reg);
+                          const shadows = [];
+                          if (hasCustomReg) {
+                            if (bTop) shadows.push(`inset 0 3px 0 0 ${regColor}`);
+                            if (bBottom) shadows.push(`inset 0 -3px 0 0 ${regColor}`);
+                            if (bLeft) shadows.push(`inset 3px 0 0 0 ${regColor}`);
+                            if (bRight) shadows.push(`inset -3px 0 0 0 ${regColor}`);
+                          }
+                          return (
+                            <div key={col} className="flex-1 flex justify-center items-center relative py-1 h-full" style={{ backgroundColor: hasCustomReg ? regColor + '1a' : 'transparent', boxShadow: shadows.length > 0 ? shadows.join(', ') : 'none' }}>
+                              <div className="z-10 rounded-full border border-black/10 flex flex-col items-center justify-center shadow-sm overflow-hidden" style={{ backgroundColor: bg, width: mapBadgePx, height: mapBadgePx }}>
+                                <span style={{ fontSize: fSize1 + 'px' }} className={`font-bold leading-tight truncate max-w-full text-center px-0.5 ${tc}`}>{role || '–'}</span>
+                                {role && !['cells', 'pbs', 'medium'].includes(String(role).toLowerCase()) && (
+                                  <span style={{ fontSize: fSize2 + 'px' }} className={`font-bold truncate max-w-full px-0.5 opacity-90 ${tc}`}>{formatConc(conc)}</span>
+                                )}
+                              </div>
+                              {hasCustomReg && bTop && bLeft && <span className="absolute top-[2px] left-[3px] text-[9px] font-black z-20 px-1 rounded shadow-sm whitespace-nowrap" style={{ color: '#fff', backgroundColor: regColor }}>{reg}</span>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
+          </CollapsibleSection>
+
+          {/* ================= DATA GRID ================= */}
+          <CollapsibleSection title="Data" icon="🔢" defaultOpen={true}>
+            <div className="relative">
+              {fsPanel === 'data' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('data')}></div>}
+              <div className={`bg-slate-50 border border-slate-200 p-4 min-w-0 flex flex-col ${fsPanel === 'data' ? FS_CLASSES : 'rounded-xl w-full'}`}>
+                <div className="flex justify-between items-start mb-2 gap-2">
+                  <div className="min-w-0">
+                    <h2 className="text-sm lg:text-base font-bold text-slate-800 truncate">{`Data Grid (${activePlateDim.rows}x${activePlateDim.cols})`}</h2>
+                  </div>
+                  <div className="flex items-center shrink-0">
+                    <div className="flex bg-slate-200 p-1 rounded-lg shadow-inner mr-4">
+                      <button onClick={() => setTableView('od')} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableView === 'od' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Values</button>
+                      <button onClick={() => setTableView('conc')} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableView === 'conc' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Concs</button>
+                      <button onClick={() => setTableView('region')} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${tableView === 'region' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Regions</button>
+                    </div>
+                    <button onClick={() => toggleFs('data')} className="text-slate-400 hover:text-blue-600 bg-slate-100 hover:bg-blue-100 rounded p-1 transition-colors">
+                      {fsPanel === 'data' ? '↙️' : '↗️'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="text-[10px] text-slate-500 mb-3 italic px-1 flex justify-between items-center gap-2">
+                  <span>
+                    {tableView === 'od' && 'Input raw values (intensities, volumes). Right-click to exclude points or override.'}
+                    {tableView === 'conc' && 'Manually override concentrations per cell.'}
+                    {tableView === 'region' && 'Assign regions for independent fitting curves.'}
+                  </span>
+                </div>
+
+                <div className={`border border-slate-300 rounded-lg bg-white select-none relative w-full overflow-auto shadow-sm ${fsPanel === 'data' ? 'flex-1' : ''}`}>
+                  <table className="w-full border-collapse table-fixed min-w-[700px] relative z-10">
+                    <thead>
+                      <tr>
+                        <th className="bg-slate-200 border border-slate-300 p-1 text-xs text-slate-600 w-8">R\C</th>
+                        <th className="bg-slate-100 border border-slate-300 p-1 text-[10px] text-slate-600 w-28">Row Identity →</th>
+                        {COLS.map((col, c) => (
+                          <th key={col} className="bg-slate-50 border border-slate-300 p-1">
+                            <div className="text-[11px] text-slate-500 font-black">{col}</div>
+                            <select
+                              value={compounds[c]}
+                              onChange={(e) => updateCmp(c, e.target.value)}
+                              className="w-full text-center border border-slate-300 rounded p-0.5 font-bold text-blue-800 text-[10px] h-6 bg-white cursor-pointer outline-none focus:ring-1 focus:ring-blue-500"
+                            >
+                              <option value="">Col Id ↓</option>
+                              {atomOptions.length > 0 && <optgroup label="Target Atoms">{atomOptions.map(o => <option key={o} value={o}>{o}</option>)}</optgroup>}
+                              {allCmpds.length > 0 && <optgroup label="Compounds (Titrants)">{allCmpds.map(o => <option key={o} value={o}>{o}</option>)}</optgroup>}
+                            </select>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ROWS.map((rl, r) => (
+                        <tr key={rl}>
+                          <td className="bg-slate-100 border border-slate-300 font-black text-center text-xs text-slate-700">{rl}</td>
+                          <td className="bg-slate-50 border border-slate-300 p-1 align-middle">
+                            <select
+                              value={rowCompounds[r]}
+                              onChange={(e) => updateRowCmp(r, e.target.value)}
+                              className="w-full text-center border border-slate-300 rounded p-0.5 font-bold text-blue-800 text-[10px] h-6 bg-white cursor-pointer outline-none focus:ring-1 focus:ring-blue-500"
+                            >
+                              <option value="">Row Id →</option>
+                              {atomOptions.length > 0 && <optgroup label="Target Atoms">{atomOptions.map(o => <option key={o} value={o}>{o}</option>)}</optgroup>}
+                              {allCmpds.length > 0 && <optgroup label="Compounds (Titrants)">{allCmpds.map(o => <option key={o} value={o}>{o}</option>)}</optgroup>}
+                            </select>
+                          </td>
+                          {COLS.map((col, c) => {
+                            const cfg = cellConfig[r]?.[c] || {};
+                            let val = '';
+                            if (tableView === 'od') {
+                              val = grid?.[r]?.[c] === '' ? '' : focusedCell && focusedCell.r === r && focusedCell.c === c ? grid[r][c] : displayVal(r, c);
+                            } else if (tableView === 'conc') {
+                              val = cfg.conc !== null && cfg.conc !== undefined ? cfg.conc : '';
+                            } else if (tableView === 'region') {
+                              val = cfg.region || 'Primary';
+                            }
+                            const isSelBox = currentSelectionBox && r >= currentSelectionBox.minR && r <= currentSelectionBox.maxR && c >= currentSelectionBox.minC && c <= currentSelectionBox.maxC;
+                            const isFillBox = activeFill && r >= activeFill.minR && r <= activeFill.maxR && c >= activeFill.minC && c <= activeFill.maxC && !isSelBox;
+                            let cellStyle = {};
+                            if (isSelBox) cellStyle.backgroundColor = '#eff6ff';
+                            if (isFillBox) cellStyle.backgroundColor = '#f0fdf4';
+                            if (tableView === 'region' && cfg.region && cfg.region !== 'Primary') cellStyle.backgroundColor = getRegionColor(cfg.region) + '33';
+
+                            return (
+                              <td
+                                key={col}
+                                className={`border p-0 relative align-middle ${cfg.excluded ? 'border-slate-300' : 'border-slate-200'} ${tableView === 'region' ? 'cursor-crosshair' : ''} ${fsPanel === 'data' ? 'h-12' : 'h-9'}`}
+                                onContextMenu={(e) => handleContextMenu(e, r, c)}
+                                onMouseDown={(e) => onMouseDownCell(e, r, c)}
+                                onMouseEnter={() => onMouseEnterCell(r, c)}
+                                onDoubleClick={() => onDoubleClickCell(r, c)}
+                                style={cellStyle}
+                              >
+                                {!cfg.excluded && tableView === 'od' && !isSelBox && !isFillBox && (
+                                  <div className="absolute inset-0 pointer-events-none z-0" style={{ backgroundColor: heatColor(r, c) }} />
+                                )}
+                                {isSelBox && r === currentSelectionBox.maxR && c === currentSelectionBox.maxC && (
+                                  <div className="fill-handle absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-blue-600 border border-white cursor-crosshair z-40 rounded-sm no-print" onMouseDown={onMouseDownFillHandle} />
+                                )}
+                                {tableView === 'region' ? (
+                                  <div className={`w-full h-full flex items-center justify-center select-none text-[10px] font-bold ${cfg.region && cfg.region !== 'Primary' ? 'text-slate-800' : 'text-slate-400'}`}>{cfg.region || 'Primary'}</div>
+                                ) : (
+                                  <input
+                                    type="text"
+                                    value={val}
+                                    onFocus={() => { if (!cfg.excluded && tableView === 'od') setFocusedCell({ r, c }); }}
+                                    onBlur={() => setFocusedCell(null)}
+                                    onChange={(ev) => {
+                                      if (cfg.excluded) return;
+                                      if (tableView === 'od') updateCell(r, c, ev.target.value);
+                                      else if (tableView === 'conc') updateCellCfg(r, c, { conc: ev.target.value });
+                                    }}
+                                    readOnly={cfg.excluded}
+                                    className={`grid-input relative z-10 pt-3 pb-0.5 font-medium ${cfg.excluded ? 'line-through text-slate-400' : 'text-slate-900'} ${fsPanel === 'data' ? 'text-sm pt-4' : 'text-[0.75rem]'}`}
+                                  />
+                                )}
+                                {cfg.role && !cfg.excluded && tableView === 'od' && (
+                                  <div className="absolute top-0 left-0 max-w-[85%] truncate text-[6.5px] sm:text-[7.5px] leading-tight font-bold bg-blue-500 text-white px-1 py-0.5 rounded-br pointer-events-none z-20 shadow-sm">{cfg.role}</div>
+                                )}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </CollapsibleSection>
+
+          {/* ================= FITTING ================= */}
+          <CollapsibleSection title="Fitting" icon="📐" defaultOpen={true}>
+            <div className="flex flex-col gap-6">
+              <CollapsibleSection title="Error Management" icon="⚠️" defaultOpen={false}>
+                <div className="flex flex-col gap-4">
+                  <div className="flex flex-wrap gap-4 items-stretch">
+                    <div className="border border-slate-200 bg-slate-50 rounded-lg p-4 flex flex-col gap-3 flex-1 min-w-[300px]">
+                      <div className="text-[10px] uppercase font-bold text-slate-500">Data Normalization</div>
+                      <div className="grid grid-cols-2 gap-3 items-center">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[11px] font-bold text-slate-600">Normalization Control:</label>
+                          <select value={ctrlType} onChange={(e) => updatePlate({ ctrlType: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs bg-white w-full outline-none">
+                            <option value="none">Manual</option>
+                            {identityOptions.map((c) => <option key={c} value={c}>{c}</option>)}
+                          </select>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[11px] font-bold text-slate-600">Control Value:</label>
+                          <input type="number" step="0.01" value={ctrlODStr} onChange={(e) => updatePlate({ ctrlODStr: e.target.value })} className={`border border-slate-300 rounded-md p-1.5 w-full text-xs font-bold outline-none ${ctrlType !== 'none' ? 'bg-slate-200 text-slate-500' : 'text-emerald-700'}`} readOnly={ctrlType !== 'none'} />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[11px] font-bold text-slate-600">Subtract Blank:</label>
+                          <select value={bgType} onChange={(e) => updatePlate({ bgType: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs bg-white w-full outline-none">
+                            <option value="none">None</option>
+                            <option value="manual">Manual</option>
+                            {identityOptions.map((c) => <option key={c} value={c}>{c}</option>)}
+                          </select>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[11px] font-bold text-slate-600">Blank Value:</label>
+                          {bgType === 'manual' ? (
+                            <input type="number" step="0.01" value={bgManualStr} onChange={(e) => updatePlate({ bgManualStr: e.target.value })} className="border border-slate-300 rounded-md p-1.5 w-full text-xs font-bold text-red-600 outline-none" />
+                          ) : bgType !== 'none' ? (
+                            <span className="text-xs font-bold text-red-600 bg-white border border-slate-200 px-3 py-1.5 rounded-md w-full">{bgOD.toFixed(4)}</span>
+                          ) : (
+                            <span className="text-xs text-slate-400 bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-md w-full">—</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="border border-slate-200 bg-slate-50 rounded-lg p-4 flex flex-col gap-3 flex-[2] min-w-[350px]">
+                      <div className="text-[10px] uppercase font-bold text-slate-500">Errors, Outliers & Fitting</div>
+                      <div className="flex flex-wrap items-center gap-4 bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
+                        <div className="flex items-center gap-2">
+                          <label className="text-xs font-bold text-slate-700 flex items-center gap-2 cursor-pointer hover:text-blue-600">
+                            <input type="checkbox" checked={useFixedSD} onChange={(e) => updatePlate({ useFixedSD: e.target.checked })} className="cursor-pointer w-4 h-4 accent-blue-600" /> Fixed SD ±:
+                          </label>
+                          <input type="number" step="0.1" min="0" value={fixedSDStr} onChange={(e) => updatePlate({ fixedSDStr: e.target.value })} disabled={!useFixedSD} className={`border border-slate-300 rounded-md p-1.5 w-16 text-xs outline-none ${!useFixedSD ? 'bg-slate-100 text-slate-400' : 'bg-white font-bold text-blue-700'}`} />
+                        </div>
+                        <button onClick={() => setShowErrPanel(!showErrPanel)} className={`font-bold py-2 px-4 rounded-lg text-xs transition-colors shadow-sm ml-auto ${showErrPanel ? 'bg-orange-100 border border-orange-400 text-orange-800' : 'bg-white hover:bg-orange-50 text-orange-700 border border-orange-300'}`}>
+                          ⚠️ Manual SD
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-4 mt-1">
+                        <label className="flex items-center gap-2 bg-blue-50 border border-blue-200 hover:bg-blue-100 rounded-md px-3 py-1.5 cursor-pointer transition-colors shadow-sm">
+                          <span className="text-xs font-bold text-blue-800">Fit Binding/IC50 (4PL)</span>
+                          <input type="checkbox" checked={fitIC50} onChange={(e) => updatePlate({ fitIC50: e.target.checked })} className="w-4 h-4 cursor-pointer accent-blue-600" />
+                        </label>
+                        <label className="flex items-center gap-2 bg-slate-100 border border-slate-200 hover:bg-slate-200 rounded-md px-3 py-1.5 cursor-pointer transition-colors shadow-sm">
+                          <span className="text-xs font-bold text-slate-700">Norm (Control)</span>
+                          <input type="checkbox" checked={showViab} onChange={(e) => updatePlate({ showViab: e.target.checked })} className="w-4 h-4 cursor-pointer accent-slate-600" />
+                        </label>
+                        <button onClick={restoreAll} className="text-xs bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 font-bold py-1.5 px-3 rounded-md ml-auto shadow-sm transition-colors">
+                          ↩️ Restore All Excluded
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </CollapsibleSection>
+
+              <CollapsibleSection title="Graphical Parameters" icon="🎨" defaultOpen={false}>
+                <div className="flex flex-col gap-4">
+                  <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+                    {plotCmps.length > 0 && (
+                      <div className="flex-1">
+                        <span className="text-xs font-black text-slate-500 uppercase tracking-wide block mb-2">Filter & Color Series</span>
+                        <div className="flex flex-wrap gap-3">
+                          {plotCmps.map((cmp) => {
+                            const hex = cmpColor(cmp, identityOptions.indexOf(cmp));
+                            return (
+                              <div key={cmp} className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm">
+                                <input type="checkbox" checked={!hiddenCmpds[cmp]} onChange={(e) => setHiddenCmpds((p) => ({ ...p, [cmp]: !e.target.checked }))} className="w-4 h-4 cursor-pointer accent-blue-600" />
+                                <label style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', position: 'relative' }}>
+                                  <span style={{ width: 14, height: 14, borderRadius: 9999, backgroundColor: hex, display: 'inline-block', border: '1px solid rgba(15,23,42,0.15)' }} />
+                                  <input type="color" value={hex} style={{ position: 'absolute', opacity: 0, cursor: 'pointer', width: 0, height: 0 }} onChange={(e) => setCmpColors({ ...cmpColors, [cmp]: e.target.value })} />
+                                </label>
+                                <span className="text-sm font-bold text-slate-700">{cmp}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex gap-3">
+                      <button onClick={() => setShowChartCfg(!showChartCfg)} className={`font-bold py-2 px-4 rounded-lg text-xs transition-colors shadow-sm ${showChartCfg ? 'bg-slate-200 border border-slate-400 text-slate-900' : 'bg-white hover:bg-slate-50 text-slate-800 border border-slate-300'}`}>
+                        ⚙️ Chart Config
+                      </button>
+                    </div>
+                  </div>
+                  {showChartCfg && (
+                    <div className="p-5 bg-white border border-slate-300 rounded-xl grid grid-cols-2 lg:grid-cols-4 gap-4 shadow-sm">
+                      {[['X Min', 'xMin'], ['X Max', 'xMax'], ['Y Min', 'yMin'], ['Y Max', 'yMax']].map(([lbl, k]) => (
+                        <div key={k} className="flex flex-col gap-1">
+                          <label className="text-xs font-bold text-slate-600">{lbl}</label>
+                          <input type="number" placeholder="Auto" value={chartCfg[k]} onChange={(e) => updatePlate({ chartCfg: { ...chartCfg, [k]: e.target.value } })} className="border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
+                        </div>
+                      ))}
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs font-bold text-slate-600">Y Axis Label</label>
+                        <input type="text" placeholder="Value" value={activeTest.valueUnit || ''} onChange={(e) => updatePlate({ valueUnit: e.target.value })} className="border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </CollapsibleSection>
+
+              {Object.entries(processedByRegion).map(([reg, comps]) => (
+                <RegionCharts
+                  key={reg}
+                  regionName={reg}
+                  regionData={comps}
+                  config={{
+                    chartCfg,
+                    fitIC50,
+                    showExcl,
+                    eScale,
+                    fsPanel,
+                    chartH,
+                    drWidth,
+                    hiddenCmpds,
+                    unit,
+                    cellConfig,
+                    setCellConfig: (cfg) => updatePlate({ cellConfig: cfg }),
+                    activePlateDim,
+                    toggleFs,
+                    valueLabel: activeTest.valueUnit || (showViab ? 'Normalized (%)' : 'Value')
+                  }}
+                />
+              ))}
+            </div>
+          </CollapsibleSection>
+          
+          {ctxMenu && (
+            <div className="fixed bg-white border border-slate-200 shadow-2xl rounded-lg py-2 z-50 text-sm w-56 flex flex-col" style={{ top: ctxMenu.y, left: ctxMenu.x, maxHeight: '80vh', transform: ctxMenu.y > window.innerHeight / 2 ? 'translateY(-100%)' : 'none' }}>
+              <div className="overflow-y-auto custom-scrollbar flex-1">
+                <button className="w-full text-left px-4 py-1.5 hover:bg-slate-100 font-bold text-red-600" onClick={() => { runCtxAction((nc, ng, r, c) => { nc[r][c].excluded = !nc[r][c].excluded; nc[r][c].manualOverride = true; }); }}>
+                  Toggle Exclude Point
+                </button>
+                <div className="border-t border-slate-100 my-1" />
+                <div className="px-4 py-1 text-[10px] text-slate-400 uppercase font-black tracking-wider">Assign Identity</div>
+                <div className="max-h-40 overflow-y-auto custom-scrollbar">
+                  {identityOptions.map((o) => (
+                    <button key={o} className="w-full text-left px-4 py-1.5 hover:bg-slate-50 font-medium text-slate-700" onClick={() => { runCtxAction((nc, ng, r, c) => { nc[r][c].role = o; }); }}>Set as {o}</button>
+                  ))}
+                </div>
+                <div className="border-t border-slate-100 my-1" />
+                <button className="w-full text-left px-4 py-1.5 hover:bg-slate-50 text-slate-500 italic" onClick={() => { runCtxAction((nc, ng, r, c) => { nc[r][c].role = null; nc[r][c].conc = null; }); }}>Clear Identity</button>
+                <div className="border-t border-slate-100 my-1" />
+                <div className="px-4 py-1 text-[10px] text-slate-400 uppercase font-black tracking-wider">Set Region</div>
+                <div className="px-3 pb-2">
+                  <input type="text" placeholder="Region Name" className="w-full text-xs border border-slate-300 rounded p-1.5 outline-none focus:border-blue-500" onKeyDown={(e) => { if (e.key === 'Enter') confirmRegion(e.target.value); }} />
+                </div>
+                <button className="w-full text-left px-4 py-1.5 hover:bg-slate-50 text-slate-500 italic" onClick={() => confirmRegion('Primary')}>Clear Region</button>
+              </div>
+            </div>
+          )}
+
+          {regionModal && (
+            <div className="fixed inset-0 bg-slate-900/50 z-[99999] flex items-center justify-center backdrop-blur-sm" onClick={() => setRegionModal(null)}>
+              <div className="bg-white p-6 rounded-xl shadow-xl border border-slate-200 w-80" onClick={(e) => e.stopPropagation()}>
+                <h3 className="text-lg font-black text-slate-800 mb-2">Define Region</h3>
+                <p className="text-xs text-slate-500 mb-4">Name this block of wells to analyze it independently.</p>
+                <input type="text" id="region-name-input" autoFocus defaultValue={regionModal.defaultName} className="border border-slate-300 rounded-lg p-2.5 w-full text-sm mb-6 outline-none focus:border-blue-500" onKeyDown={(e) => { if (e.key === 'Enter') confirmRegion(e.target.value); if (e.key === 'Escape') setRegionModal(null); }} />
+                <div className="flex justify-between items-center">
+                  <button onClick={() => confirmRegion('Primary')} className="px-3 py-2 text-xs font-bold text-red-600 hover:bg-red-50 rounded-lg transition-colors">Clear</button>
+                  <div className="flex gap-2">
+                    <button onClick={() => setRegionModal(null)} className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">Cancel</button>
+                    <button onClick={() => confirmRegion(document.getElementById('region-name-input').value)} className="px-4 py-2 text-xs bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-sm transition-colors">Save</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 };
