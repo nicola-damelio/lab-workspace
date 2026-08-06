@@ -66,6 +66,69 @@ export const CLONING_TAB_CONFIG = {
   ]
 };
 
+
+export const PROTEIN_EXPRESSION_TAB_CONFIG = {
+  typeKey: 'protein_expression',
+  typeLabel: 'Expression & Purification',
+  icon: '🧫',
+
+  fallbackCategories: [
+    'Expression Optimization',
+    'Affinity Chromatography',
+    'Size Exclusion (SEC)',
+    'Ion Exchange (IEX)',
+    'Refolding'
+  ],
+
+  samples: {
+    compounds: true, 
+    cellLines: true, 
+    compoundLabel: 'Target Protein / Construct',
+    cellLineLabel: 'Expression Host (e.g., BL21(DE3))'
+  },
+
+  imagesKey: 'gelImages', 
+
+  conditionFields: [
+    {
+      key: 'experimentDate',
+      label: 'Experiment Date',
+      type: 'date'
+    },
+    {
+      key: 'inductionMethod',
+      label: 'Induction Method',
+      type: 'text',
+      placeholder: 'e.g., 1mM IPTG or Auto-induction'
+    },
+    {
+      key: 'inductionTemp',
+      label: 'Induction Temperature',
+      type: 'text',
+      placeholder: 'e.g., 18°C overnight'
+    },
+    {
+      key: 'lysisBuffer',
+      label: 'Lysis Buffer',
+      type: 'text',
+      placeholder: 'e.g., 50mM Tris, 300mM NaCl, pH 8.0'
+    },
+    {
+      key: 'columnType',
+      label: 'Chromatography Column',
+      type: 'select',
+      options: ['Ni-NTA', 'GST-Trap', 'Superdex 75', 'Superdex 200', 'Q-Sepharose', 'SP-Sepharose', 'Other']
+    }
+  ],
+
+  notebookChecks: [
+    { id: 'cond', label: 'Conditions & Buffers' },
+    { id: 'yield', label: 'Protein Yield & Quant.' },
+    { id: 'chromatogram', label: 'Chromatogram Summary' },
+    { id: 'gels', label: 'SDS-PAGE Images' }
+  ]
+};
+
 export const CD_TAB_CONFIG = {
   typeKey: 'cd',
   typeLabel: 'Circular Dichroism',
