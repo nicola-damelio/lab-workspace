@@ -4449,6 +4449,21 @@ export default function App() {
                         >
                           + NMR Fittings
                         </button>
+<button
+  onClick={() => {
+    const id = 't' + Date.now();
+    setTests((prev) => [
+      ...prev,
+      createEmptyTest(id, prev.length + 1, 'cloning')
+    ]);
+    setActiveTestId(id);
+    setCurrentModule('active-test');
+  }}
+  className="bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+>
+  + Cloning
+</button>
+
                       </div>
                     </div>
 
@@ -4582,14 +4597,16 @@ export default function App() {
 
                               <div className="absolute top-3 right-3 text-2xl opacity-80 group-hover:scale-110 transition-transform">
                                 {test.type === 'nmr'
-                                  ? '📉'
-                                  : test.type === 'cd'
-                                  ? '🌀'
-                                  : test.type === 'plate-9x9box'
-                                  ? '📦'
-                                  : test.type === 'nmr-fittings'
-                                  ? '🧭'
-                                  : '🧫'}
+  ? '📉'
+  : test.type === 'cd'
+  ? '🌀'
+  : test.type === 'cloning'
+  ? '🧬'  // <-- Aggiunto questo!
+  : test.type === 'plate-9x9box'
+  ? '📦'
+  : test.type === 'nmr-fittings'
+  ? '🧭'
+  : '🧫'}
                               </div>
 
                               <span className="text-[10px] font-black uppercase tracking-wider text-blue-600 bg-blue-50 px-2 py-0.5 rounded self-start mb-2 border border-blue-100">
@@ -5395,7 +5412,21 @@ export default function App() {
                     />
                   );
                 }
-
+if (activeTest.type === 'cloning') {
+  return (
+    <CloningTestRenderer
+      activeTest={activeTest}
+      updateActiveTest={updateActiveTest}
+      TestHeader={TestHeader}
+      datasetProtocols={datasetProtocols}
+      jumpToProtocol={jumpToProtocolFn}
+      allCmpds={allCmpds}
+      allCellLines={allCellLines}
+      customFields={customFields}
+      testCategories={testCategories}
+    />
+  );
+}
 if (activeTest.type === 'nmr-fittings') {
   return (
     <NMRFittingsTestRenderer
