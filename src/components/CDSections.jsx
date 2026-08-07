@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import Chart from 'chart.js/auto';
 import * as XLSX from 'xlsx';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ReferenceLine, Legend, ErrorBar
+  ResponsiveContainer, ReferenceLine, Legend, ErrorBar, Cell
 } from 'recharts';
 
 const HAS_EB = typeof ErrorBar !== 'undefined';
@@ -25,7 +25,9 @@ const LINE_COLORS = [
 ];
 const DEFAULT_CHART_CFG = { yMin: '', yMax: '', xMin: '190', xMax: '260', fontSize: 12, lineWidth: 2 };
 
-// ================= COLLAPSIBLE SECTION =================
+/* ========================================================================
+   COLLAPSIBLE SECTION
+   ======================================================================== */
 const CollapsibleSection = ({ title, icon, defaultOpen = true, children, headerExtra, className = '' }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   return (
@@ -51,7 +53,9 @@ const CollapsibleSection = ({ title, icon, defaultOpen = true, children, headerE
   );
 };
 
-// ================= SPLINE INTERPOLATION =================
+/* ========================================================================
+   NATURAL CUBIC SPLINE
+   ======================================================================== */
 class NaturalCubicSpline {
   constructor(xs, ys) {
     this.xs = xs;
@@ -95,8 +99,7 @@ class NaturalCubicSpline {
     if (x >= this.xs[this.n - 1]) i = this.n - 2;
     else if (x <= this.xs[0]) i = 0;
     else {
-      let low = 0;
-      let high = this.n - 1;
+      let low = 0, high = this.n - 1;
       while (low <= high) {
         const mid = Math.floor((low + high) / 2);
         if (this.xs[mid] < x) low = mid + 1;
@@ -110,7 +113,9 @@ class NaturalCubicSpline {
   }
 }
 
-// ================= CD REFERENCE KNOTS =================
+/* ========================================================================
+   CD REFERENCE KNOTS & SPLINES
+   ======================================================================== */
 const alphaKnots = [{ x: 176, y: 12000 }, { x: 180, y: 22000 }, { x: 185, y: 48000 }, { x: 190, y: 66000 }, { x: 192, y: 65000 }, { x: 195, y: 55000 }, { x: 200, y: 20000 }, { x: 203, y: 0 }, { x: 205, y: -15000 }, { x: 208, y: -32000 }, { x: 215, y: -29000 }, { x: 222, y: -35000 }, { x: 230, y: -20000 }, { x: 240, y: -2000 }, { x: 250, y: 0 }, { x: 260, y: 0 }];
 const betaKnots = [{ x: 176, y: -10000 }, { x: 180, y: -8000 }, { x: 185, y: -4000 }, { x: 190, y: 2000 }, { x: 196, y: 12000 }, { x: 205, y: 4000 }, { x: 210, y: 0 }, { x: 217, y: -5000 }, { x: 225, y: -4000 }, { x: 240, y: -500 }, { x: 260, y: 0 }];
 const turnKnots = [{ x: 176, y: 0 }, { x: 185, y: 10000 }, { x: 193, y: 20000 }, { x: 200, y: 8000 }, { x: 203, y: 0 }, { x: 210, y: -10500 }, { x: 220, y: -8000 }, { x: 230, y: -4000 }, { x: 245, y: 0 }, { x: 260, y: 0 }];
@@ -133,7 +138,9 @@ const splineGQP = new NaturalCubicSpline(gqParallelKnots.map((p) => p.x), gqPara
 const splineGQH = new NaturalCubicSpline(gqHybridKnots.map((p) => p.x), gqHybridKnots.map((p) => p.y));
 const splineGQA = new NaturalCubicSpline(gqAntiparallelKnots.map((p) => p.x), gqAntiparallelKnots.map((p) => p.y));
 
-// ================= JASCO IMPORT PARSER =================
+/* ========================================================================
+   JASCO IMPORT PARSER
+   ======================================================================== */
 const parseJascoDate = (value) => {
   if (!value) return '';
   const s = String(value);
@@ -165,13 +172,13 @@ const parseJascoCDText = (text) => {
       if (key) meta[key] = value;
       return;
     }
-    const m = line.match(/^([A-Za-z0-9/.\-() ]{2,60}?)\s+(.*)$/);
+    const m = line.match(/^([A-Za-z0-9/.()- ]{2,60}?)\s+(.*)$/);
     if (m && !/^\d/.test(m[1])) meta[m[1].trim()] = m[2].trim();
   };
   for (const rawLine of text.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line) continue;
-    if (line.startsWith('### ##')) { inData = false; continue; }
+    if (line.startsWith('#####')) { inData = false; continue; }
     if (line.startsWith('[')) continue;
     if (/^XYDATA/i.test(line)) { inData = true; continue; }
     if (inData) {
@@ -189,7 +196,7 @@ const parseJascoCDText = (text) => {
   const title = meta['Sample name'] || meta['TITLE'] || '';
   const experimentDate = parseJascoDate(meta['Measurement date'] || meta['DATE'] || meta['Creation date'] || '');
   const temperatureRaw = meta['Temperature'] || '';
-  const temperature = temperatureRaw ? temperatureRaw.replace(/\sC\s$/, ' °C') : '';
+  const temperature = temperatureRaw ? temperatureRaw.replace(/\sC\s*$/, ' °C') : '';
   const pathRaw = meta['Cell length'] || '';
   const pathMatch = pathRaw.match(/(-?\d+(?:\.\d+)?)/);
   const pathLength = pathMatch ? pathMatch[1] : pathRaw;
@@ -197,23 +204,41 @@ const parseJascoCDText = (text) => {
   return { xs, ys, meta, title, experimentDate, temperature, pathLength, concentration };
 };
 
-// ================= RESPONSIVE CANVAS HELPER =================
+/* ========================================================================
+   RESPONSIVE CANVAS HELPER  — REQ-5: fix initial rendering
+   ======================================================================== */
 const useElementSize = (ref) => {
   const [size, setSize] = useState({ width: 0, height: 0 });
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const ro = new ResizeObserver((entries) => {
-      const rect = entries[0].contentRect;
-      setSize({ width: rect.width, height: rect.height });
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
+    const update = () => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        setSize({ width: rect.width, height: rect.height });
+      }
+    };
+    update(); // immediate first call
+    let ro = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => update());
+      ro.observe(el);
+    }
+    window.addEventListener('resize', update);
+    // Force a second measurement after paint to fix initial-render bug
+    const t = setTimeout(update, 60);
+    return () => {
+      if (ro) ro.disconnect();
+      window.removeEventListener('resize', update);
+      clearTimeout(t);
+    };
   }, [ref]);
   return size;
 };
 
-// ================= SHARED DATA HELPERS =================
+/* ========================================================================
+   SHARED DATA HELPERS
+   ======================================================================== */
 const computeParsed = (source) => {
   const src = source || {};
   const wavelengthData = src.wavelengthData || '';
@@ -238,7 +263,23 @@ const parseManual = (v) => {
   return Number.isFinite(n) ? n : null;
 };
 
-// ================= FITTING ENGINE =================
+/* REQ-1: parseXValue — mirrors NMR's parseManual but also handles "1:2" ratios */
+const parseXValue = (v) => {
+  if (v === null || v === undefined) return NaN;
+  const s = String(v).trim();
+  if (s === '') return NaN;
+  const ratio = s.match(/^(-?\d+(?:[.,]\d+)?)\s*:\s*(-?\d+(?:[.,]\d+)?)$/);
+  if (ratio) {
+    const a = parseFloat(ratio[1].replace(',', '.'));
+    const b = parseFloat(ratio[2].replace(',', '.'));
+    if (!isNaN(a) && !isNaN(b) && b !== 0) return a / b;
+  }
+  return parseFloat(s.replace(',', '.'));
+};
+
+/* ========================================================================
+   FITTING ENGINE (generic, linear, 4PL, custom)
+   ======================================================================== */
 const gaussSolve = (A, b) => {
   const n = b.length;
   const M = A.map((r, i) => [...r, b[i]]);
@@ -264,20 +305,8 @@ const tokenizeExpr = (s) => {
   while (i < s.length) {
     const c = s[i];
     if (c === ' ' || c === '\t') { i++; continue; }
-    if (D(c)) {
-      let j = i;
-      while (j < s.length && D(s[j])) j++;
-      t.push({ t: 'num', v: parseFloat(s.slice(i, j)) });
-      i = j;
-      continue;
-    }
-    if (A(c)) {
-      let j = i;
-      while (j < s.length && (A(s[j]) || /[0-9]/.test(s[j]))) j++;
-      t.push({ t: 'id', v: s.slice(i, j) });
-      i = j;
-      continue;
-    }
+    if (D(c)) { let j = i; while (j < s.length && D(s[j])) j++; t.push({ t: 'num', v: parseFloat(s.slice(i, j)) }); i = j; continue; }
+    if (A(c)) { let j = i; while (j < s.length && (A(s[j]) || /[0-9]/.test(s[j]))) j++; t.push({ t: 'id', v: s.slice(i, j) }); i = j; continue; }
     if ('+-*/^(),'.includes(c)) { t.push({ t: c }); i++; continue; }
     throw new Error('bad');
   }
@@ -288,36 +317,11 @@ const parseExpression = (src) => {
   const tk = tokenizeExpr(src);
   let p = 0;
   const pk = () => tk[p];
-  const eat = (t) => {
-    if (!tk[p] || tk[p].t !== t) throw new Error('exp');
-    return tk[p++];
-  };
-  const mul = () => {
-    let n = un();
-    while (pk() && (pk().t === '*' || pk().t === '/')) {
-      const o = eat(pk().t).t;
-      n = { type: 'bin', op: o, l: n, r: un() };
-    }
-    return n;
-  };
-  const add = () => {
-    let n = mul();
-    while (pk() && (pk().t === '+' || pk().t === '-')) {
-      const o = eat(pk().t).t;
-      n = { type: 'bin', op: o, l: n, r: mul() };
-    }
-    return n;
-  };
-  const un = () => {
-    if (pk() && pk().t === '-') { eat('-'); return { type: 'un', a: un() }; }
-    if (pk() && pk().t === '+') { eat('+'); return un(); }
-    return pw();
-  };
-  const pw = () => {
-    let n = pr();
-    if (pk() && pk().t === '^') { eat('^'); n = { type: 'bin', op: '^', l: n, r: un() }; }
-    return n;
-  };
+  const eat = (t) => { if (!tk[p] || tk[p].t !== t) throw new Error('exp'); return tk[p++]; };
+  const mul = () => { let n = un(); while (pk() && (pk().t === '*' || pk().t === '/')) { const o = eat(pk().t).t; n = { type: 'bin', op: o, l: n, r: un() }; } return n; };
+  const add = () => { let n = mul(); while (pk() && (pk().t === '+' || pk().t === '-')) { const o = eat(pk().t).t; n = { type: 'bin', op: o, l: n, r: mul() }; } return n; };
+  const un = () => { if (pk() && pk().t === '-') { eat('-'); return { type: 'un', a: un() }; } if (pk() && pk().t === '+') { eat('+'); return un(); } return pw(); };
+  const pw = () => { let n = pr(); if (pk() && pk().t === '^') { eat('^'); n = { type: 'bin', op: '^', l: n, r: un() }; } return n; };
   const pr = () => {
     const t = pk();
     if (!t) throw new Error('exp');
@@ -344,12 +348,10 @@ const parseExpression = (src) => {
 const evalAST = (n, s) => {
   switch (n.type) {
     case 'num': return n.v;
-    case 'sym':
-      return n.name === 'x' ? s.x : n.name === 'pi' ? Math.PI : n.name === 'e' ? Math.E : s[n.name];
+    case 'sym': return n.name === 'x' ? s.x : n.name === 'pi' ? Math.PI : n.name === 'e' ? Math.E : s[n.name];
     case 'un': return -evalAST(n.a, s);
     case 'bin': {
-      const a = evalAST(n.l, s);
-      const b = evalAST(n.r, s);
+      const a = evalAST(n.l, s), b = evalAST(n.r, s);
       if (n.op === '+') return a + b;
       if (n.op === '-') return a - b;
       if (n.op === '*') return a * b;
@@ -381,9 +383,7 @@ const collectParams = (ast) => {
   const s = new Set();
   (function w(n) {
     if (!n) return;
-    if (n.type === 'sym') {
-      if (n.name !== 'x' && n.name !== 'pi' && n.name !== 'e') s.add(n.name);
-    }
+    if (n.type === 'sym') { if (n.name !== 'x' && n.name !== 'pi' && n.name !== 'e') s.add(n.name); }
     if (n.type === 'bin') { w(n.l); w(n.r); }
     if (n.type === 'un') w(n.a);
     if (n.type === 'call') n.args.forEach(w);
@@ -404,8 +404,7 @@ const fitGeneric = (pts, f0, P0) => {
     }
     return s;
   };
-  let lam = 1e-3;
-  let cur = ssr(P);
+  let lam = 1e-3, cur = ssr(P);
   for (let it = 0; it < 120 && isFinite(cur); it++) {
     const J = pts.map((p) => {
       const y0 = f(p.x, P);
@@ -433,8 +432,7 @@ const fitGeneric = (pts, f0, P0) => {
     const s2 = ssr(P2);
     if (isFinite(s2) && s2 < cur) {
       const prev = cur;
-      P = P2;
-      cur = s2;
+      P = P2; cur = s2;
       lam = Math.max(1e-8, lam / 2);
       if (Math.abs(prev - cur) < 1e-10) break;
     } else {
@@ -452,28 +450,23 @@ const fitGeneric = (pts, f0, P0) => {
 };
 
 const fitLinear = (pts) => {
+  if (pts.length < 2) return null;
   const r = fitGeneric(pts, (x, P) => P[0] + P[1] * x, [0, 1]);
   return r ? { ...r, intercept: r.params[0], slope: r.params[1] } : null;
 };
 
 const fit4PL = (pts) => {
+  if (pts.length < 4) return null;
   const ys = pts.map((p) => p.y);
-  const t = Math.max(...ys);
-  const b = Math.min(...ys);
+  const t = Math.max(...ys), b = Math.min(...ys);
   const xMean = pts.reduce((s, p) => s + p.x, 0) / Math.max(1, pts.length);
   const r = fitGeneric(pts, (x, P) => P[1] + (P[0] - P[1]) / (1 + Math.pow(x / P[2], P[3])), [t, b, xMean, 1]);
   return r ? { ...r, top: r.params[0], bottom: r.params[1], ic50: r.params[2], hill: r.params[3] } : null;
 };
 
 const fitCustomEquation = (expr, pts) => {
-  let ast;
-  let par;
-  try {
-    ast = parseExpression(expr);
-    par = collectParams(ast);
-  } catch (e) {
-    return null;
-  }
+  let ast, par;
+  try { ast = parseExpression(expr); par = collectParams(ast); } catch { return null; }
   if (!par.length || pts.length < par.length + 1) return null;
   const init = par.map((_, i) => (i === 0 ? pts.reduce((s, p) => s + p.y, 0) / Math.max(1, pts.length) : 1));
   const res = fitGeneric(pts, (x, P) => {
@@ -497,32 +490,18 @@ const makePlotId = () => `cp_${Date.now()}_${Math.random().toString(16).slice(2)
 const makeInstanceId = () => `inst_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 const makeLayerId = () => `layer_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
-const defaultCdPlotCfg = (n) => ({
-  id: makePlotId(),
-  title: `Condition Plot ${n}`,
-  layerKey: 'cd',
-  seriesKeys: [],
-  xVar: '__category__',
-  chartType: 'line',
-  fitEnabled: false,
-  fitModel: 'linear',
-  customExpr: '',
-  showPoints: true,
-  showErrors: true,
-  showFit: true,
-  showMaxLines: false,
-  hLines: [],
-  useFixedSD: false,
-  fixedSDStr: '',
-  outlierThreshStr: '2.5',
-  hiddenSeries: {},
-  excluded: {},
-  manualSD: {},
-  chartCfg: { ...FIT_DEFAULT_CHART_CFG }
-});
-
-// ================= INSTANCES / LAYERS =================
+/* ========================================================================
+   INSTANCES / LAYERS
+   ======================================================================== */
 const CD_SIGNAL_LAYER = { key: 'cd', label: 'CD Signal', unit: 'mdeg', builtin: true };
+
+/* REQ-2: layers for secondary-structure fitting results */
+const SS_LAYERS = [
+  { key: 'ss_alpha', label: 'α-Helix %', unit: '%' },
+  { key: 'ss_beta', label: 'β-Sheet %', unit: '%' },
+  { key: 'ss_turn', label: 'Turn %', unit: '%' },
+  { key: 'ss_coil', label: 'Random Coil %', unit: '%' }
+];
 
 const getInstances = (activeTest) => {
   if (Array.isArray(activeTest.instances) && activeTest.instances.length) return activeTest.instances;
@@ -537,15 +516,28 @@ const getInstances = (activeTest) => {
   }];
 };
 
-const getLayers = (activeTest) => [
-  CD_SIGNAL_LAYER,
-  ...(Array.isArray(activeTest.parameterLayers) ? activeTest.parameterLayers : [])
-];
+const getLayers = (activeTest) => {
+  const userLayers = Array.isArray(activeTest.parameterLayers) ? activeTest.parameterLayers : [];
+  const ssPresent = userLayers.some((l) => l.key === 'ss_alpha');
+  return [
+    CD_SIGNAL_LAYER,
+    ...(ssPresent ? [] : SS_LAYERS),
+    ...userLayers
+  ];
+};
 
 const getLayerValues = (instance, layerKey) =>
   (instance && instance.values && instance.values[layerKey]) || {};
 
-// Interpolated value of each spectrum of an instance at wavelength lambda
+/* REQ-1: mirror NMR's getExpValue — read a condition value from an instance */
+const getExpValue = (inst, key) => {
+  const c = inst?.conditions || {};
+  if (c[key] !== undefined && c[key] !== '') return c[key];
+  const t = inst?.test || {};
+  if (t[key] !== undefined && t[key] !== '') return t[key];
+  return '';
+};
+
 const extractAtWavelength = (instance, lambda) => {
   const { parsedWavelengths, parsedSpectra } = computeParsed(instance);
   const out = {};
@@ -573,7 +565,103 @@ const extractAtWavelength = (instance, lambda) => {
   return out;
 };
 
-// ================= SHARED DERIVED DATA HOOK =================
+/* ========================================================================
+   REQ-2: CD SPECTRUM FITTING — secondary structure deconvolution
+   ======================================================================== */
+const fitCdSpectrum = (wavelengths, values) => {
+  // Filter to the protein far-UV range
+  const fitPairs = [];
+  for (let i = 0; i < wavelengths.length; i++) {
+    const w = wavelengths[i];
+    const v = values[i];
+    if (w >= 190 && w <= 260 && v !== undefined && Number.isFinite(v)) {
+      fitPairs.push({ w, v });
+    }
+  }
+  if (fitPairs.length < 10) return null;
+
+  // Build reference matrix (4 columns: alpha, beta, turn, coil)
+  const n = fitPairs.length;
+  const A = fitPairs.map(({ w }) => [
+    splineAlpha.at(w),
+    splineBeta.at(w),
+    splineTurn.at(w),
+    splineCoil.at(w)
+  ]);
+  const b = fitPairs.map(({ v }) => v);
+
+  // Normal equations: AtA * c = Atb
+  const AtA = [0, 1, 2, 3].map((i) =>
+    [0, 1, 2, 3].map((j) => A.reduce((sum, row) => sum + row[i] * row[j], 0))
+  );
+  const Atb = [0, 1, 2, 3].map((i) =>
+    A.reduce((sum, row, idx) => sum + row[i] * b[idx], 0)
+  );
+
+  const coeffs = gaussSolve(AtA, Atb);
+  if (!coeffs) return null;
+
+  // Clamp negatives and normalize to 100%
+  const clamped = coeffs.map((c) => Math.max(0, c));
+  const sum = clamped.reduce((a, v) => a + v, 0);
+  if (sum <= 0) return null;
+  const norm = clamped.map((c) => Math.round((c / sum) * 1000) / 10);
+
+  // Absorb rounding error
+  const diff = +(100 - norm.reduce((a, v) => a + v, 0)).toFixed(1);
+  if (diff !== 0) {
+    const maxIdx = norm.indexOf(Math.max(...norm));
+    norm[maxIdx] = +(norm[maxIdx] + diff).toFixed(1);
+  }
+
+  // Compute scaling factor for the fitted curve
+  let scaleK = 1;
+  let num = 0, den = 0;
+  fitPairs.forEach(({ w, v }) => {
+    const t = (splineAlpha.at(w) * (clamped[0] / sum)) +
+              (splineBeta.at(w) * (clamped[1] / sum)) +
+              (splineTurn.at(w) * (clamped[2] / sum)) +
+              (splineCoil.at(w) * (clamped[3] / sum));
+    num += v * t;
+    den += t * t;
+  });
+  if (den > 0) scaleK = num / den;
+
+  // Build fitted curve data
+  const fitCurve = fitPairs.map(({ w }) => ({
+    x: w,
+    y: scaleK * (
+      (splineAlpha.at(w) * (clamped[0] / sum)) +
+      (splineBeta.at(w) * (clamped[1] / sum)) +
+      (splineTurn.at(w) * (clamped[2] / sum)) +
+      (splineCoil.at(w) * (clamped[3] / sum))
+    )
+  }));
+
+  // Compute R²
+  const meanY = b.reduce((a, v) => a + v, 0) / n;
+  let ssRes = 0, ssTot = 0;
+  fitPairs.forEach(({ v }, i) => {
+    ssRes += (v - fitCurve[i].y) ** 2;
+    ssTot += (v - meanY) ** 2;
+  });
+  const r2 = ssTot > 0 ? 1 - ssRes / ssTot : 1;
+
+  return {
+    alpha: norm[0],
+    beta: norm[1],
+    turn: norm[2],
+    coil: norm[3],
+    scaleK,
+    fitCurve,
+    r2,
+    nPoints: n
+  };
+};
+
+/* ========================================================================
+   SHARED DERIVED DATA HOOK
+   ======================================================================== */
 const useCdDerived = (activeTest) => {
   const instances = getInstances(activeTest);
   const activeInstance = instances.find((i) => i.id === activeTest.activeInstanceId) || instances[0] || null;
@@ -581,34 +669,43 @@ const useCdDerived = (activeTest) => {
   const activeLayerKey = activeTest.activeLayerKey || 'cd';
   const activeLayer = layers.find((l) => l.key === activeLayerKey) || CD_SIGNAL_LAYER;
   const activeValues = getLayerValues(activeInstance, activeLayerKey);
-  
   const conditionVariables = activeTest.conditionVariables || ['Temperature', 'Concentration', 'pH'];
-
   const wl = activeInstance ? activeInstance.wavelengthData || '' : '';
   const cols = activeInstance ? activeInstance.spectraColumns || [] : [];
-
   const { parsedWavelengths, parsedSpectra } = useMemo(
     () => computeParsed({ wavelengthData: wl, spectraColumns: cols }),
     [wl, cols]
   );
-
   const seriesOptions = useMemo(
     () => cols.map((c) => ({ key: `spec-${c.id}`, label: c.title || `Spectrum ${c.id}` })),
     [cols]
   );
-
   const selectedKeys =
     Array.isArray(activeTest.selectedSeriesKeys) && activeTest.selectedSeriesKeys.length
       ? activeTest.selectedSeriesKeys
       : null;
 
+  /* REQ-3: SS plot options — one per SS layer per spectrum */
+  const ssPlotOptions = useMemo(() => {
+    const opts = [];
+    SS_LAYERS.forEach((l) => {
+      seriesOptions.forEach((s) => {
+        opts.push({ key: `${l.key}|${s.key}`, label: `${s.label} — ${l.label}` });
+      });
+    });
+    return opts;
+  }, [seriesOptions]);
+
   return {
     instances, activeInstance, layers, activeLayerKey, activeLayer, activeValues,
-    parsedWavelengths, parsedSpectra, seriesOptions, selectedKeys, conditionVariables
+    parsedWavelengths, parsedSpectra, seriesOptions, selectedKeys, conditionVariables,
+    ssPlotOptions
   };
 };
 
-// ================= PROTEIN CD MIXER =================
+/* ========================================================================
+   PROTEIN CD MIXER (simulator)
+   ======================================================================== */
 const ProteinCDMixer = ({ isExpanded, onToggleExpand }) => {
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
@@ -652,33 +749,20 @@ const ProteinCDMixer = ({ isExpanded, onToggleExpand }) => {
     canvas.height = Math.round(height * dpr);
     const ctx = canvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const W = width;
-    const H = height;
-    const wavelengths = [];
-    const values = [];
-    const pA = compositions.helix / 100;
-    const pB = compositions.sheet / 100;
-    const pT = compositions.turn / 100;
-    const pC = compositions.coil / 100;
+    const W = width, H = height;
+    const wavelengths = [], values = [];
+    const pA = compositions.helix / 100, pB = compositions.sheet / 100;
+    const pT = compositions.turn / 100, pC = compositions.coil / 100;
     for (let w = 176; w <= 260; w += 1) {
       wavelengths.push(w);
-      const cd =
-        splineAlpha.at(w) * pA +
-        splineBeta.at(w) * pB +
-        splineTurn.at(w) * pT +
-        splineCoil.at(w) * pC;
-      values.push(cd);
+      values.push(splineAlpha.at(w) * pA + splineBeta.at(w) * pB + splineTurn.at(w) * pT + splineCoil.at(w) * pC);
     }
     const pad = { top: 20, right: 20, bottom: 40, left: 60 };
-    const plotW = W - pad.left - pad.right;
-    const plotH = H - pad.top - pad.bottom;
+    const plotW = W - pad.left - pad.right, plotH = H - pad.top - pad.bottom;
     if (plotW <= 0 || plotH <= 0) return;
-    const xMin = 176;
-    const xMax = 260;
-    const dataMin = Math.min(...values);
-    const dataMax = Math.max(...values);
-    const yMin = Math.min(dataMin, -40000);
-    const yMax = Math.max(dataMax, 80000);
+    const xMin = 176, xMax = 260;
+    const dataMin = Math.min(...values), dataMax = Math.max(...values);
+    const yMin = Math.min(dataMin, -40000), yMax = Math.max(dataMax, 80000);
     ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = '#f8fafc';
     ctx.fillRect(0, 0, W, H);
@@ -696,25 +780,18 @@ const ProteinCDMixer = ({ isExpanded, onToggleExpand }) => {
     }
     if (yMin < 0 && yMax > 0) {
       const zeroY = pad.top + plotH - ((0 - yMin) / (yMax - yMin)) * plotH;
-      ctx.strokeStyle = '#94a3b8';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
       ctx.beginPath(); ctx.moveTo(pad.left, zeroY); ctx.lineTo(pad.left + plotW, zeroY); ctx.stroke();
       ctx.setLineDash([]);
     }
-    ctx.strokeStyle = '#8e44ad';
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
+    ctx.strokeStyle = '#8e44ad'; ctx.lineWidth = 2.5; ctx.beginPath();
     wavelengths.forEach((w, i) => {
       const px = pad.left + ((w - xMin) / (xMax - xMin)) * plotW;
       const py = pad.top + plotH - ((values[i] - yMin) / (yMax - yMin)) * plotH;
-      if (i === 0) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
     });
     ctx.stroke();
-    ctx.fillStyle = '#64748b';
-    ctx.font = '11px sans-serif';
-    ctx.textAlign = 'center';
+    ctx.fillStyle = '#64748b'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
     for (let x = Math.ceil(xMin / 10) * 10; x <= xMax; x += 10) {
       const px = pad.left + ((x - xMin) / (xMax - xMin)) * plotW;
       ctx.fillText(x.toString(), px, pad.top + plotH + 15);
@@ -736,12 +813,8 @@ const ProteinCDMixer = ({ isExpanded, onToggleExpand }) => {
   return (
     <div className={`bg-white border border-slate-200 rounded-xl shadow-sm flex flex-col ${isExpanded ? ` ${FS_CLASSES} p-6` : 'break-inside-avoid p-4'}`}>
       <div className="flex justify-between items-center mb-3 border-b pb-2 shrink-0">
-        <h4 className="font-bold text-slate-700 flex items-center gap-2">
-          <span>🧬</span> Protein Secondary Structure Simulator
-        </h4>
-        <button onClick={onToggleExpand} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors">
-          {isExpanded ? '↙️' : '↗️'}
-        </button>
+        <h4 className="font-bold text-slate-700 flex items-center gap-2"><span>🧬</span> Protein Secondary Structure Simulator</h4>
+        <button onClick={onToggleExpand} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors">{isExpanded ? '↙️' : '↗️'}</button>
       </div>
       <div className="flex flex-col lg:flex-row gap-4 flex-1 min-h-0">
         <div className="flex-1 flex flex-col min-h-0">
@@ -760,15 +833,10 @@ const ProteinCDMixer = ({ isExpanded, onToggleExpand }) => {
                   <span className="text-xs font-bold" style={{ color: colors[key] }}>{labels[key]}</span>
                   <span className="text-xs font-mono font-bold text-slate-700">{val}%</span>
                 </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={val}
+                <input type="range" min="0" max="100" value={val}
                   onChange={(e) => updateComp(key, parseInt(e.target.value, 10))}
                   className="w-full h-2 rounded-lg appearance-none cursor-pointer"
-                  style={{ accentColor: colors[key] }}
-                />
+                  style={{ accentColor: colors[key] }} />
               </div>
             );
           })}
@@ -780,18 +848,11 @@ const ProteinCDMixer = ({ isExpanded, onToggleExpand }) => {
               </span>
             </div>
             <label className="flex items-center gap-2 text-[10px] text-slate-600 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={autoNormalize}
-                onChange={(e) => setAutoNormalize(e.target.checked)}
-                className="w-3 h-3 accent-blue-600"
-              />
+              <input type="checkbox" checked={autoNormalize} onChange={(e) => setAutoNormalize(e.target.checked)} className="w-3 h-3 accent-blue-600" />
               Auto-normalize to 100%
             </label>
-            <button
-              onClick={() => setCompositions({ helix: 0, sheet: 0, turn: 0, coil: 100 })}
-              className="mt-2 w-full text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-1.5 rounded transition-colors"
-            >
+            <button onClick={() => setCompositions({ helix: 0, sheet: 0, turn: 0, coil: 100 })}
+              className="mt-2 w-full text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-1.5 rounded transition-colors">
               Reset to 100% Coil
             </button>
           </div>
@@ -801,7 +862,9 @@ const ProteinCDMixer = ({ isExpanded, onToggleExpand }) => {
   );
 };
 
-// ================= CD LIBRARY =================
+/* ========================================================================
+   CD LIBRARY (simulator)
+   ======================================================================== */
 const CD_LIBRARY_TABS = [
   { id: 'protein', label: 'Protein Structures' },
   { id: 'dna', label: 'DNA Helices' },
@@ -819,8 +882,8 @@ const CD_LIBRARY_TABS = [
 const CD_SIM_INFO = {
   dnaPepAlpha: { ratioLabel: 'Peptide:DNA Ratio', description: 'Simulation (Alpha Binding): DNA remains B-form. Ratio 0-1: peptide binds as α-helix. Ratio >1: excess peptide is Random Coil.' },
   dnaPepBeta: { ratioLabel: 'Peptide:DNA Ratio', description: 'Simulation (Beta Binding): DNA remains B-form. Ratio 0-1: peptide binds as β-sheet. Ratio >1: excess peptide is Random Coil.' },
-  dnaPepAlphaZ: { ratioLabel: 'Peptide:DNA Ratio', description: 'Simulation (Alpha + Z-Switch): DNA switches from B to Z form. Ratio 0-1: DNA B → Z transition; peptide binds as α-helix. Ratio >1: DNA is Z-form; excess peptide is Random Coil.' },
-  dnaPepBetaZ: { ratioLabel: 'Peptide:DNA Ratio', description: 'Simulation (Beta + Z-Switch): DNA switches from B to Z form. Ratio 0-1: DNA B → Z transition; peptide binds as β-sheet. Ratio >1: DNA is Z-form; excess peptide is Random Coil.' },
+  dnaPepAlphaZ: { ratioLabel: 'Peptide:DNA Ratio', description: 'Simulation (Alpha + Z-Switch): DNA switches from B to Z form. Ratio 0-1: DNA B→Z transition; peptide binds as α-helix. Ratio >1: DNA is Z-form; excess peptide is Random Coil.' },
+  dnaPepBetaZ: { ratioLabel: 'Peptide:DNA Ratio', description: 'Simulation (Beta + Z-Switch): DNA switches from B to Z form. Ratio 0-1: DNA B→Z transition; peptide binds as β-sheet. Ratio >1: DNA is Z-form; excess peptide is Random Coil.' },
   pepDnaAlpha: { ratioLabel: 'DNA:Peptide Ratio', description: 'Simulation (Peptide + DNA [Alpha]): Titration of peptide solution with B-DNA. Ratio 0-1: free peptide is Random Coil, bound peptide is α-helix. Ratio >1: peptide fully bound as α-helix; excess DNA is B-form.' },
   pepDnaBeta: { ratioLabel: 'DNA:Peptide Ratio', description: 'Simulation (Peptide + DNA [Beta]): Titration of peptide solution with B-DNA. Ratio 0-1: free peptide is Random Coil, bound peptide is β-sheet. Ratio >1: peptide fully bound as β-sheet; excess DNA is B-form.' },
   pepDnaAlphaZ: { ratioLabel: 'DNA:Peptide Ratio', description: 'Simulation (Peptide + DNA [Alpha+Z]): DNA assumes Z-form when bound. Ratio 0-1: peptide excess forces added DNA into Z-form; bound peptide is α-helix. Ratio >1: excess unbound DNA is B-form; bound DNA is Z-form.' },
@@ -841,7 +904,6 @@ const CD_REF_TYPES = {
 };
 
 const CD_LIBRARY_SCALE = 10000;
-
 const niceCdStep = (range, targetTicks = 6) => {
   if (!Number.isFinite(range) || range <= 0) return 1;
   const raw = range / targetTicks;
@@ -882,23 +944,11 @@ const buildCdLibraryData = ({ tab, selectedProtein, selectedDna, selectedGq, rat
   for (let x = domain.min; x <= domain.max; x += 1) xs.push(x);
   let series = [];
   if (tab === 'protein') {
-    series = selectedProtein.map((key) => ({
-      label: key,
-      color: CD_REF_TYPES[key]?.color || '#3b82f6',
-      values: getScaledCdSpectrum(key, xs)
-    }));
+    series = selectedProtein.map((key) => ({ label: key, color: CD_REF_TYPES[key]?.color || '#3b82f6', values: getScaledCdSpectrum(key, xs) }));
   } else if (tab === 'dna') {
-    series = selectedDna.map((key) => ({
-      label: key,
-      color: CD_REF_TYPES[key]?.color || '#8b5cf6',
-      values: getScaledCdSpectrum(key, xs)
-    }));
+    series = selectedDna.map((key) => ({ label: key, color: CD_REF_TYPES[key]?.color || '#8b5cf6', values: getScaledCdSpectrum(key, xs) }));
   } else if (tab === 'gq') {
-    series = selectedGq.map((key) => ({
-      label: key,
-      color: CD_REF_TYPES[key]?.color || '#ec4899',
-      values: getScaledCdSpectrum(key, xs)
-    }));
+    series = selectedGq.map((key) => ({ label: key, color: CD_REF_TYPES[key]?.color || '#ec4899', values: getScaledCdSpectrum(key, xs) }));
   } else {
     const r = Math.max(0, Math.min(10, Number(ratio) || 0));
     const B = getScaledCdSpectrum('B-DNA', xs);
@@ -907,11 +957,8 @@ const buildCdLibraryData = ({ tab, selectedProtein, selectedDna, selectedGq, rat
     const beta = getScaledCdSpectrum('Beta-sheet', xs);
     const coil = getScaledCdSpectrum('Random Coil', xs);
     const mix = (parts) => xs.map((_, i) => parts.reduce((sum, [arr, weight]) => sum + (arr[i] || 0) * (weight || 0), 0));
-    const bound01 = Math.min(r, 1);
-    const excess = Math.max(r - 1, 0);
-    const free = Math.max(1 - r, 0);
-    let values = [];
-    let label = '';
+    const bound01 = Math.min(r, 1), excess = Math.max(r - 1, 0), free = Math.max(1 - r, 0);
+    let values = [], label = '';
     switch (tab) {
       case 'dnaPepAlpha': values = mix([[B, 1], [alpha, bound01], [coil, excess]]); label = `DNA + α-peptide (P/D ${r.toFixed(1)})`; break;
       case 'dnaPepBeta': values = mix([[B, 1], [beta, bound01], [coil, excess]]); label = `DNA + β-peptide (P/D ${r.toFixed(1)})`; break;
@@ -939,12 +986,10 @@ const CDSpectraLibrary = ({ isExpanded, onToggleExpand }) => {
   const [selectedGq, setSelectedGq] = useState(['G-Quad (Parallel)']);
   const [ratio, setRatio] = useState(0);
   const [normalize, setNormalize] = useState(true);
-
   const proteinTypes = ['Alpha-helix', 'Beta-sheet', 'Turn', 'Random Coil'];
   const dnaTypes = ['A-DNA', 'B-DNA', 'Z-DNA'];
   const gqTypes = ['G-Quad (Parallel)', 'G-Quad (Hybrid)', 'G-Quad (Antiparallel)'];
   const isSim = Boolean(CD_SIM_INFO[tab]);
-
   const plotData = useMemo(
     () => buildCdLibraryData({ tab, selectedProtein, selectedDna, selectedGq, ratio, normalize }),
     [tab, selectedProtein, selectedDna, selectedGq, ratio, normalize]
@@ -958,35 +1003,27 @@ const CDSpectraLibrary = ({ isExpanded, onToggleExpand }) => {
     canvas.height = Math.round(height * dpr);
     const ctx = canvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const W = width;
-    const H = height;
+    const W = width, H = height;
     const pad = { top: 20, right: 20, bottom: 40, left: 60 };
-    const plotW = W - pad.left - pad.right;
-    const plotH = H - pad.top - pad.bottom;
+    const plotW = W - pad.left - pad.right, plotH = H - pad.top - pad.bottom;
     ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = '#f8fafc';
     ctx.fillRect(0, 0, W, H);
     if (!plotData.series.length) {
-      ctx.fillStyle = '#64748b';
-      ctx.font = '12px sans-serif';
-      ctx.textAlign = 'center';
+      ctx.fillStyle = '#64748b'; ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
       ctx.fillText('Select at least one spectrum', W / 2, H / 2);
       return;
     }
     const allValues = plotData.series.flatMap((s) => s.values);
-    let yMin = Math.min(...allValues);
-    let yMax = Math.max(...allValues);
+    let yMin = Math.min(...allValues), yMax = Math.max(...allValues);
     if (!Number.isFinite(yMin) || !Number.isFinite(yMax)) { yMin = -1; yMax = 1; }
     if (yMin === yMax) { yMin -= 1; yMax += 1; }
     const yMargin = (yMax - yMin) * 0.1;
-    yMin -= yMargin;
-    yMax += yMargin;
-    const xMin = plotData.domain.min;
-    const xMax = plotData.domain.max;
+    yMin -= yMargin; yMax += yMargin;
+    const xMin = plotData.domain.min, xMax = plotData.domain.max;
     const xTickStep = xMax - xMin > 100 ? 20 : 10;
     const yTickStep = niceCdStep(yMax - yMin);
-    ctx.strokeStyle = '#e2e8f0';
-    ctx.lineWidth = 0.5;
+    ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 0.5;
     for (let x = Math.ceil(xMin / xTickStep) * xTickStep; x <= xMax; x += xTickStep) {
       const px = pad.left + ((x - xMin) / (xMax - xMin)) * plotW;
       ctx.beginPath(); ctx.moveTo(px, pad.top); ctx.lineTo(px, pad.top + plotH); ctx.stroke();
@@ -997,51 +1034,35 @@ const CDSpectraLibrary = ({ isExpanded, onToggleExpand }) => {
     }
     if (yMin < 0 && yMax > 0) {
       const zeroY = pad.top + plotH - ((0 - yMin) / (yMax - yMin)) * plotH;
-      ctx.strokeStyle = '#94a3b8';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
       ctx.beginPath(); ctx.moveTo(pad.left, zeroY); ctx.lineTo(pad.left + plotW, zeroY); ctx.stroke();
       ctx.setLineDash([]);
     }
     ctx.save();
-    ctx.beginPath();
-    ctx.rect(pad.left, pad.top, plotW, plotH);
-    ctx.clip();
+    ctx.beginPath(); ctx.rect(pad.left, pad.top, plotW, plotH); ctx.clip();
     plotData.series.forEach((s) => {
-      ctx.strokeStyle = s.color;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
+      ctx.strokeStyle = s.color; ctx.lineWidth = 2; ctx.beginPath();
       plotData.xs.forEach((x, i) => {
         const px = pad.left + ((x - xMin) / (xMax - xMin)) * plotW;
         const py = pad.top + plotH - ((s.values[i] - yMin) / (yMax - yMin)) * plotH;
-        if (i === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
       });
       ctx.stroke();
     });
     ctx.restore();
     ctx.font = '10px sans-serif';
     plotData.series.forEach((s, idx) => {
-      const lx = pad.left + 10;
-      const ly = pad.top + 15 + idx * 14;
-      ctx.fillStyle = s.color;
-      ctx.fillRect(lx, ly - 6, 12, 3);
-      ctx.fillStyle = '#334155';
-      ctx.textAlign = 'left';
-      ctx.fillText(s.label, lx + 16, ly - 2);
+      const lx = pad.left + 10, ly = pad.top + 15 + idx * 14;
+      ctx.fillStyle = s.color; ctx.fillRect(lx, ly - 6, 12, 3);
+      ctx.fillStyle = '#334155'; ctx.textAlign = 'left'; ctx.fillText(s.label, lx + 16, ly - 2);
     });
-    ctx.fillStyle = '#64748b';
-    ctx.font = '11px sans-serif';
-    ctx.textAlign = 'center';
+    ctx.fillStyle = '#64748b'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
     for (let x = Math.ceil(xMin / xTickStep) * xTickStep; x <= xMax; x += xTickStep) {
       const px = pad.left + ((x - xMin) / (xMax - xMin)) * plotW;
       ctx.fillText(x.toString(), px, pad.top + plotH + 15);
     }
     ctx.fillText('Wavelength (nm)', pad.left + plotW / 2, H - 5);
-    const fmtY = (v) => {
-      if (Math.abs(v) >= 1000) return `${(v / 1000).toFixed(1).replace(/\.0$/, '')}k`;
-      return `${Math.round(v)}`;
-    };
+    const fmtY = (v) => Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(1).replace(/\.0$/, '')}k` : `${Math.round(v)}`;
     ctx.textAlign = 'right';
     for (let y = Math.ceil(yMin / yTickStep) * yTickStep; y <= yMax; y += yTickStep) {
       const py = pad.top + plotH - ((y - yMin) / (yMax - yMin)) * plotH;
@@ -1062,25 +1083,15 @@ const CDSpectraLibrary = ({ isExpanded, onToggleExpand }) => {
   return (
     <div className={`bg-white border border-slate-200 rounded-xl shadow-sm flex flex-col ${isExpanded ? ` ${FS_CLASSES} p-6` : 'break-inside-avoid p-4'}`}>
       <div className="flex justify-between items-center mb-3 border-b pb-2 shrink-0">
-        <h4 className="font-bold text-slate-700 flex items-center gap-2">
-          <span>📚</span> CD Spectra Reference Library & Simulator
-        </h4>
-        <button onClick={onToggleExpand} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors">
-          {isExpanded ? '↙️' : '↗️'}
-        </button>
+        <h4 className="font-bold text-slate-700 flex items-center gap-2"><span>📚</span> CD Spectra Reference Library & Simulator</h4>
+        <button onClick={onToggleExpand} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors">{isExpanded ? '↙️' : '↗️'}</button>
       </div>
       <div className="flex flex-col xl:flex-row gap-4 flex-1 min-h-0">
         <div className="flex-1 flex flex-col min-h-0">
           <div className="flex flex-wrap gap-1 mb-2">
             {CD_LIBRARY_TABS.map((t) => (
-              <button
-                key={t.id}
-                onClick={() => {
-                  setTab(t.id);
-                  if (CD_SIM_INFO[t.id]) setRatio(0);
-                }}
-                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-colors ${tab === t.id ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}
-              >
+              <button key={t.id} onClick={() => { setTab(t.id); if (CD_SIM_INFO[t.id]) setRatio(0); }}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-colors ${tab === t.id ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
                 {t.label}
               </button>
             ))}
@@ -1134,31 +1145,16 @@ const CDSpectraLibrary = ({ isExpanded, onToggleExpand }) => {
             <div className="flex flex-col gap-2 border-t border-slate-200 pt-3">
               <div className="text-[10px] uppercase font-bold text-slate-500">{CD_SIM_INFO[tab].ratioLabel}</div>
               <div className="flex justify-between text-xs font-bold text-slate-700">
-                <span>Ratio</span>
-                <span className="font-mono">{ratio.toFixed(1)}</span>
+                <span>Ratio</span><span className="font-mono">{ratio.toFixed(1)}</span>
               </div>
-              <input
-                type="range"
-                min="0"
-                max="10"
-                step="0.1"
-                value={ratio}
+              <input type="range" min="0" max="10" step="0.1" value={ratio}
                 onChange={(e) => setRatio(parseFloat(e.target.value))}
-                className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-blue-600"
-              />
+                className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-blue-600" />
               <p className="text-[10px] leading-4 text-slate-500">{CD_SIM_INFO[tab].description}</p>
             </div>
           )}
-          <button
-            onClick={() => {
-              setSelectedProtein(['Alpha-helix', 'Beta-sheet', 'Random Coil']);
-              setSelectedDna(['B-DNA']);
-              setSelectedGq(['G-Quad (Parallel)']);
-              setRatio(0);
-              setNormalize(true);
-            }}
-            className="mt-2 text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-1.5 rounded transition-colors"
-          >
+          <button onClick={() => { setSelectedProtein(['Alpha-helix', 'Beta-sheet', 'Random Coil']); setSelectedDna(['B-DNA']); setSelectedGq(['G-Quad (Parallel)']); setRatio(0); setNormalize(true); }}
+            className="mt-2 text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-1.5 rounded transition-colors">
             Reset Selection
           </button>
         </div>
@@ -1167,9 +1163,602 @@ const CDSpectraLibrary = ({ isExpanded, onToggleExpand }) => {
   );
 };
 
-/* ============================================================================
-CONDITION PLOT PANEL — fitting + errors + graphical parameters (per plot)
-========================================================================== */
+/* ========================================================================
+   REQ-4: MATH OPERATIONS & BLANK SUBTRACTION
+   ======================================================================== */
+const MathOperationsSection = ({ ctx }) => {
+  const { activeTest, updateActiveTest } = ctx;
+  const d = useCdDerived(activeTest);
+  const [opType, setOpType] = useState('subtract');
+  const [srcA, setSrcA] = useState('');
+  const [srcB, setSrcB] = useState('');
+  const [factor, setFactor] = useState('1');
+  const [blankId, setBlankId] = useState('');
+  const [result, setResult] = useState(null);
+
+  const getSpectrumData = (instId) => {
+    const inst = d.instances.find((i) => i.id === instId);
+    if (!inst) return null;
+    return computeParsed(inst);
+  };
+
+  const interpolateToGrid = (parsed, targetXs) => {
+    if (!parsed || !parsed.parsedWavelengths.length || !parsed.parsedSpectra.length) return null;
+    const spec = parsed.parsedSpectra[0];
+    const pairs = parsed.parsedWavelengths
+      .map((x, i) => ({ x, y: spec.values[i] }))
+      .filter((p) => Number.isFinite(p.y))
+      .sort((a, b) => a.x - b.x);
+    if (!pairs.length) return null;
+    return targetXs.map((tx) => {
+      if (tx <= pairs[0].x) return pairs[0].y;
+      if (tx >= pairs[pairs.length - 1].x) return pairs[pairs.length - 1].y;
+      for (let i = 0; i < pairs.length - 1; i++) {
+        if (tx >= pairs[i].x && tx <= pairs[i + 1].x) {
+          const span = pairs[i + 1].x - pairs[i].x || 1;
+          const t = (tx - pairs[i].x) / span;
+          return pairs[i].y + t * (pairs[i + 1].y - pairs[i].y);
+        }
+      }
+      return 0;
+    });
+  };
+
+  const applyOperation = () => {
+    const dataA = getSpectrumData(srcA);
+    if (!dataA || !dataA.parsedWavelengths.length) { setResult({ error: 'Select a valid source A instance.' }); return; }
+    const gridXs = dataA.parsedWavelengths;
+
+    if (opType === 'multiply') {
+      const f = parseManual(factor);
+      if (f === null) { setResult({ error: 'Enter a valid multiplication factor.' }); return; }
+      const vals = dataA.parsedSpectra[0]?.values || [];
+      const newYs = vals.map((v) => Number.isFinite(v) ? v * f : v);
+      const upd = d.instances.map((inst) => {
+        if (inst.id !== srcA) return inst;
+        const cols = (inst.spectraColumns || []).map((c, ci) =>
+          ci === 0 ? { ...c, data: newYs.join('\n') } : c
+        );
+        return { ...inst, spectraColumns: cols };
+      });
+      updateActiveTest({ instances: upd });
+      setResult({ ok: `Multiplied spectrum in "${dataA.parsedSpectra[0]?.title}" by ${f}` });
+      return;
+    }
+
+    const dataB = getSpectrumData(srcB);
+    if (!dataB || !dataB.parsedSpectra.length) { setResult({ error: 'Select a valid source B instance.' }); return; }
+    const ysA = interpolateToGrid(dataA, gridXs);
+    const ysB = interpolateToGrid(dataB, gridXs);
+    if (!ysA || !ysB) { setResult({ error: 'Could not interpolate spectra onto a common grid.' }); return; }
+
+    let newYs;
+    if (opType === 'add') newYs = ysA.map((v, i) => v + ysB[i]);
+    else newYs = ysA.map((v, i) => v - ysB[i]);
+
+    const upd = d.instances.map((inst) => {
+      if (inst.id !== srcA) return inst;
+      const cols = (inst.spectraColumns || []).map((c, ci) =>
+        ci === 0 ? { ...c, data: newYs.map((v) => v.toFixed(6)).join('\n') } : c
+      );
+      return { ...inst, spectraColumns: cols };
+    });
+    updateActiveTest({ instances: upd });
+    setResult({ ok: `${opType === 'add' ? 'Added' : 'Subtracted'} spectrum B ${opType === 'add' ? 'to' : 'from'} spectrum A` });
+  };
+
+  const applyBlankSubtraction = () => {
+    const blankData = getSpectrumData(blankId);
+    if (!blankData || !blankData.parsedSpectra.length) { setResult({ error: 'Select a valid blank instance.' }); return; }
+    const blankXs = blankData.parsedWavelengths;
+    let count = 0;
+    const upd = d.instances.map((inst) => {
+      if (inst.id === blankId) return inst;
+      const instParsed = computeParsed(inst);
+      if (!instParsed.parsedWavelengths.length || !instParsed.parsedSpectra.length) return inst;
+      const gridXs = instParsed.parsedWavelengths;
+      const blankYs = interpolateToGrid(blankData, gridXs);
+      if (!blankYs) return inst;
+      const cols = (inst.spectraColumns || []).map((c, ci) => {
+        if (ci !== 0) return c;
+        const spec = instParsed.parsedSpectra[0];
+        const newYs = (spec.values || []).map((v, i) =>
+          Number.isFinite(v) && Number.isFinite(blankYs[i]) ? v - blankYs[i] : v
+        );
+        return { ...c, data: newYs.map((v) => v.toFixed(6)).join('\n') };
+      });
+      count++;
+      return { ...inst, spectraColumns: cols };
+    });
+    updateActiveTest({ instances: upd });
+    setResult({ ok: `Subtracted blank from ${count} instance(s).` });
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap gap-3 items-end bg-slate-50 border border-slate-200 rounded-lg p-3">
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">Operation</label>
+          <select value={opType} onChange={(e) => setOpType(e.target.value)}
+            className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
+            <option value="subtract">A − B (Subtraction)</option>
+            <option value="add">A + B (Addition)</option>
+            <option value="multiply">A × Factor</option>
+          </select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">Instance A (target)</label>
+          <select value={srcA} onChange={(e) => setSrcA(e.target.value)}
+            className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
+            <option value="">-- select --</option>
+            {d.instances.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+          </select>
+        </div>
+        {opType !== 'multiply' && (
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">Instance B</label>
+            <select value={srcB} onChange={(e) => setSrcB(e.target.value)}
+              className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
+              <option value="">-- select --</option>
+              {d.instances.filter((i) => i.id !== srcA).map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+            </select>
+          </div>
+        )}
+        {opType === 'multiply' && (
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">Factor</label>
+            <input type="number" step="0.1" value={factor} onChange={(e) => setFactor(e.target.value)}
+              className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs w-24 outline-none focus:border-blue-500" />
+          </div>
+        )}
+        <button type="button" onClick={applyOperation}
+          className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm">
+          Apply Operation
+        </button>
+      </div>
+
+      <div className="border-t border-slate-200 pt-4">
+        <h4 className="text-xs font-bold text-slate-600 uppercase mb-2">🧹 Blank Subtraction (subtract one blank from ALL instances)</h4>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">Blank instance</label>
+            <select value={blankId} onChange={(e) => setBlankId(e.target.value)}
+              className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
+              <option value="">-- select blank --</option>
+              {d.instances.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+            </select>
+          </div>
+          <button type="button" onClick={applyBlankSubtraction}
+            className="bg-red-600 hover:bg-red-700 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm">
+            Subtract Blank from All
+          </button>
+        </div>
+      </div>
+
+      {result && (
+        <p className={`text-xs font-bold ${result.error ? 'text-red-600' : 'text-emerald-700'}`}>
+          {result.error ? `⚠️ ${result.error}` : `✅ ${result.ok}`}
+        </p>
+      )}
+    </div>
+  );
+};
+
+/* ========================================================================
+   REQ-2: SPECTRUM FITTING SECTION — secondary structure deconvolution
+   ======================================================================== */
+const SpectrumFittingSection = ({ ctx }) => {
+  const { activeTest, updateActiveTest } = ctx;
+  const d = useCdDerived(activeTest);
+  const chartRef = useRef(null);
+  const chartInstance = useRef(null);
+  const wrapRef = useRef(null);
+  const { width, height } = useElementSize(wrapRef);
+  const [fitResult, setFitResult] = useState(null);
+  const [targetInstId, setTargetInstId] = useState(d.activeInstance?.id || '');
+
+  const effTargetId = targetInstId || d.activeInstance?.id || '';
+  const targetInst = d.instances.find((i) => i.id === effTargetId);
+
+  const runFit = useCallback(() => {
+    if (!targetInst) return;
+    const { parsedWavelengths, parsedSpectra } = computeParsed(targetInst);
+    const spec = parsedSpectra.find((s) => s.visible !== false && s.values.length > 0);
+    if (!spec || !parsedWavelengths.length) {
+      setFitResult(null);
+      return;
+    }
+    const res = fitCdSpectrum(parsedWavelengths, spec.values);
+    setFitResult(res);
+    if (res) {
+      // REQ-2: populate the SS layers for this instance
+      const upd = d.instances.map((inst) => {
+        if (inst.id !== effTargetId) return inst;
+        const vals = { ...(inst.values || {}) };
+        vals['ss_alpha'] = { ...(vals['ss_alpha'] || {}), [`spec-${spec.id}`]: String(res.alpha) };
+        vals['ss_beta'] = { ...(vals['ss_beta'] || {}), [`spec-${spec.id}`]: String(res.beta) };
+        vals['ss_turn'] = { ...(vals['ss_turn'] || {}), [`spec-${spec.id}`]: String(res.turn) };
+        vals['ss_coil'] = { ...(vals['ss_coil'] || {}), [`spec-${spec.id}`]: String(res.coil) };
+        return { ...inst, values: vals };
+      });
+      updateActiveTest({ instances: upd });
+    }
+  }, [targetInst, effTargetId, d.instances, updateActiveTest]);
+
+  /* REQ-2: Visual validation — overlay experimental + fitted curve */
+  useEffect(() => {
+    if (!chartRef.current || width < 80 || height < 80) return;
+    if (chartInstance.current) chartInstance.current.destroy();
+    const datasets = [];
+    if (targetInst) {
+      const { parsedWavelengths, parsedSpectra } = computeParsed(targetInst);
+      const spec = parsedSpectra.find((s) => s.visible !== false && s.values.length > 0);
+      if (spec && parsedWavelengths.length) {
+        const expData = parsedWavelengths
+          .map((w, i) => ({ x: w, y: spec.values[i] }))
+          .filter((p) => Number.isFinite(p.y));
+        datasets.push({
+          label: `${spec.title || 'Experimental'} [${targetInst.name}]`,
+          data: expData,
+          borderColor: '#3b82f6',
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          pointRadius: 0,
+          type: 'line',
+          tension: 0.1
+        });
+      }
+    }
+    if (fitResult && fitResult.fitCurve) {
+      datasets.push({
+        label: `Fitted (R²=${fitResult.r2.toFixed(3)})`,
+        data: fitResult.fitCurve,
+        borderColor: '#ef4444',
+        backgroundColor: 'transparent',
+        borderWidth: 2.5,
+        borderDash: [6, 3],
+        pointRadius: 0,
+        type: 'line',
+        tension: 0.1
+      });
+    }
+    if (!datasets.length) return;
+    chartInstance.current = new Chart(chartRef.current, {
+      type: 'line',
+      data: { datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'nearest', intersect: false },
+        scales: {
+          x: {
+            type: 'linear',
+            title: { display: true, text: 'Wavelength (nm)', font: { size: 13, weight: 'bold' } },
+            ticks: { font: { size: 11 } },
+            grid: { color: '#f1f5f9' }
+          },
+          y: {
+            title: { display: true, text: 'CD Signal', font: { size: 13, weight: 'bold' } },
+            ticks: { font: { size: 11 } },
+            grid: { color: '#f1f5f9' }
+          }
+        },
+        plugins: {
+          legend: { position: 'top', labels: { font: { size: 12, weight: 'bold' }, usePointStyle: true } },
+          tooltip: { callbacks: { title: (c) => `${c[0].parsed.x.toFixed(1)} nm`, label: (c) => `${c.dataset.label}: ${c.parsed.y.toFixed(3)}` } }
+        }
+      }
+    });
+    return () => { if (chartInstance.current) chartInstance.current.destroy(); };
+  }, [fitResult, targetInst, width, height]);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap gap-3 items-end bg-slate-50 border border-slate-200 rounded-lg p-3">
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">Instance to fit</label>
+          <select value={effTargetId} onChange={(e) => setTargetInstId(e.target.value)}
+            className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
+            {d.instances.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+          </select>
+        </div>
+        <button type="button" onClick={runFit}
+          className="bg-purple-600 hover:bg-purple-700 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm">
+          ✨ Fit Secondary Structure
+        </button>
+      </div>
+
+      {fitResult && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {[
+            { label: 'α-Helix', val: fitResult.alpha, color: '#3b82f6' },
+            { label: 'β-Sheet', val: fitResult.beta, color: '#ef4444' },
+            { label: 'Turn', val: fitResult.turn, color: '#f59e0b' },
+            { label: 'Random Coil', val: fitResult.coil, color: '#94a3b8' }
+          ].map((s) => (
+            <div key={s.label} className="bg-white border border-slate-200 rounded-lg p-3 text-center shadow-sm">
+              <div className="text-[10px] font-bold uppercase" style={{ color: s.color }}>{s.label}</div>
+              <div className="text-2xl font-black text-slate-800">{s.val}%</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {fitResult && (
+        <p className="text-xs text-slate-500">
+          Fit quality: <b>R² = {fitResult.r2.toFixed(4)}</b> · {fitResult.nPoints} points used (190–260 nm) · Scale factor: {fitResult.scaleK.toFixed(4)}
+        </p>
+      )}
+
+      {/* REQ-2: Visual validation chart */}
+      <div ref={wrapRef} className="relative rounded-lg border border-slate-200 bg-slate-50 overflow-hidden" style={{ height: '350px' }}>
+        <canvas ref={chartRef} />
+      </div>
+      <p className="text-[10px] text-slate-400">
+        💡 Blue = experimental spectrum · Red dashed = fitted curve from secondary-structure components.
+        A close overlay indicates a reliable fit.
+      </p>
+    </div>
+  );
+};
+
+/* ========================================================================
+   REQ-3 & REQ-5: DATA — CD Spectra Plot (ALL instances overlaid)
+   ======================================================================== */
+export const Data = ({ ctx }) => {
+  const { activeTest } = ctx;
+  const d = useCdDerived(activeTest);
+  const chartCfg = activeTest.chartCfg || DEFAULT_CHART_CFG;
+  const cdChartRef = useRef(null);
+  const cdChartWrapRef = useRef(null);
+  const cdChart = useRef(null);
+  const { width, height } = useElementSize(cdChartWrapRef);
+
+  /* REQ-5: fix initial rendering — also trigger on window load */
+  useEffect(() => {
+    const timer = setTimeout(() => window.dispatchEvent(new Event('resize')), 120);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!cdChartRef.current) return;
+    // Use a fallback size if the container hasn't measured yet
+    const w = width || cdChartWrapRef.current?.clientWidth || 600;
+    const h = height || cdChartWrapRef.current?.clientHeight || 400;
+    if (w < 50 || h < 50) return;
+
+    if (cdChart.current) cdChart.current.destroy();
+    const datasets = [];
+
+    /* REQ-3: overlay ALL instances' spectra */
+    d.instances.forEach((inst) => {
+      const { parsedWavelengths, parsedSpectra } = computeParsed(inst);
+      const isActiveInst = d.activeInstance && d.activeInstance.id === inst.id;
+      parsedSpectra.forEach((s) => {
+        if (s.visible === false || !s.values || s.values.length === 0) return;
+        const data = parsedWavelengths
+          .map((w, i) => ({ x: w, y: s.values[i] !== undefined ? s.values[i] : null }))
+          .filter((p) => p.y !== null);
+        const sk = `spec-${s.id}`;
+        const isSel = isActiveInst && d.selectedKeys && d.selectedKeys.includes(sk);
+        const dimmed = !isActiveInst || (d.selectedKeys && !isSel);
+        datasets.push({
+          label: `${s.title} [${inst.name}]`,
+          data,
+          borderColor: dimmed ? `${s.color}66` : s.color,
+          backgroundColor: `${s.color}20`,
+          borderWidth: isSel ? (chartCfg.lineWidth || 2) + 1.5 : (chartCfg.lineWidth || 2),
+          borderDash: isActiveInst ? [] : [3, 3],
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          fill: false,
+          tension: 0.1,
+          type: 'line'
+        });
+      });
+    });
+
+    /* REQ-2: overlay the theoretical fit curve for the active instance */
+    const targetSpec = d.parsedSpectra.find((s) => s.visible !== false && s.values.length > 0);
+    const activeVals = d.activeInstance?.values || {};
+    const getVal = (layerKey) => parseFloat((activeVals[layerKey] || {})[`spec-${targetSpec?.id}`]) || 0;
+    const pA = getVal('ss_alpha') / 100;
+    const pB = getVal('ss_beta') / 100;
+    const pT = getVal('ss_turn') / 100;
+    const pC = getVal('ss_coil') / 100;
+    if ((pA > 0 || pB > 0 || pT > 0 || pC > 0) && targetSpec) {
+      const shape = d.parsedWavelengths.map((w) => {
+        if (w >= 176 && w <= 260) {
+          return {
+            w,
+            t: (splineAlpha.at(w) * pA) + (splineBeta.at(w) * pB) +
+               (splineTurn.at(w) * pT) + (splineCoil.at(w) * pC)
+          };
+        }
+        return null;
+      }).filter(Boolean);
+      let scaleK = 1;
+      let num = 0, den = 0;
+      shape.forEach((pt) => {
+        const idx = d.parsedWavelengths.indexOf(pt.w);
+        if (idx >= 0 && pt.w >= 190 && pt.w <= 260 && targetSpec.values[idx] !== undefined) {
+          num += targetSpec.values[idx] * pt.t;
+          den += pt.t * pt.t;
+        }
+      });
+      if (den > 0) scaleK = num / den;
+      const ssData = shape.map((pt) => ({ x: pt.w, y: pt.t * scaleK }));
+      if (ssData.length > 0) {
+        datasets.push({
+          label: 'Theoretical Fit (Active Inst.)',
+          data: ssData,
+          borderColor: '#0f172a',
+          backgroundColor: 'transparent',
+          borderWidth: 2.5,
+          borderDash: [5, 5],
+          pointRadius: 0,
+          type: 'line',
+          order: -1
+        });
+      }
+    }
+
+    cdChart.current = new Chart(cdChartRef.current, {
+      type: 'line',
+      data: { datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'nearest', intersect: false },
+        scales: {
+          x: {
+            type: 'linear',
+            min: chartCfg.xMin !== '' ? parseFloat(chartCfg.xMin) : undefined,
+            max: chartCfg.xMax !== '' ? parseFloat(chartCfg.xMax) : undefined,
+            title: { display: true, text: 'Wavelength (nm)', font: { size: (chartCfg.fontSize || 12) + 2, weight: 'bold' }, color: '#334155' },
+            ticks: { font: { size: chartCfg.fontSize || 12 }, color: '#64748b' },
+            grid: { color: '#f1f5f9' }
+          },
+          y: {
+            min: chartCfg.yMin !== '' ? parseFloat(chartCfg.yMin) : undefined,
+            max: chartCfg.yMax !== '' ? parseFloat(chartCfg.yMax) : undefined,
+            title: { display: true, text: 'CD Signal / MRE', font: { size: (chartCfg.fontSize || 12) + 2, weight: 'bold' }, color: '#334155' },
+            ticks: { font: { size: chartCfg.fontSize || 12 }, color: '#64748b' },
+            grid: { color: '#f1f5f9' }
+          }
+        },
+        plugins: {
+          legend: { position: 'top', labels: { font: { size: chartCfg.fontSize || 12, weight: 'bold' }, usePointStyle: true } },
+          tooltip: { callbacks: { title: (c) => `${c[0].parsed.x.toFixed(1)} nm`, label: (c) => `${c.dataset.label}: ${c.parsed.y.toFixed(3)}` } }
+        }
+      }
+    });
+    return () => { if (cdChart.current) cdChart.current.destroy(); };
+  }, [d.instances, d.activeInstance, d.parsedWavelengths, d.parsedSpectra, chartCfg, d.selectedKeys, width, height]);
+
+  return (
+    <CollapsibleSection title="CD Spectra Plot (All Conditions)" icon="📈"
+      headerExtra={<span className="text-[10px] font-bold bg-blue-100 text-blue-700 px-2 py-1 rounded">Active: {d.activeInstance ? d.activeInstance.name : '—'}</span>}>
+      <div ref={cdChartWrapRef} className="flex-1 relative min-h-0 w-full" style={{ height: '450px' }}>
+        <canvas ref={cdChartRef} />
+      </div>
+    </CollapsibleSection>
+  );
+};
+
+/* ========================================================================
+   SETUP INSTANCE EDITOR (conditions / variables)
+   ======================================================================== */
+export const SetupInstanceEditor = ({ ctx }) => {
+  const { activeTest, updateActiveTest } = ctx;
+  const d = useCdDerived(activeTest);
+  const [newVarName, setNewVarName] = useState('');
+
+  const addVariable = () => {
+    const v = newVarName.trim();
+    if (v && !d.conditionVariables.includes(v)) {
+      updateActiveTest({ conditionVariables: [...d.conditionVariables, v] });
+      setNewVarName('');
+    }
+  };
+  const removeVariable = (v) => {
+    updateActiveTest({ conditionVariables: d.conditionVariables.filter((x) => x !== v) });
+  };
+  const updateCondition = (instId, variable, val) => {
+    updateActiveTest({
+      instances: d.instances.map((inst) => {
+        if (inst.id === instId) return { ...inst, conditions: { ...(inst.conditions || {}), [variable]: val } };
+        return inst;
+      })
+    });
+  };
+
+  return (
+    <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 flex flex-col gap-4">
+      <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
+        <label className="text-xs font-bold text-indigo-800 uppercase">🧩 Experimental conditions</label>
+        <span className="text-[9px] bg-indigo-200 text-indigo-800 px-2 py-0.5 rounded">Each instance = one experimental condition</span>
+      </div>
+      <div className="flex flex-wrap gap-2 items-center bg-white p-2 rounded-lg border border-indigo-100 shadow-sm">
+        <label className="text-[10px] font-bold text-indigo-800 uppercase">Variables Setup:</label>
+        {d.conditionVariables.map((v) => (
+          <span key={v} className="bg-indigo-100 text-indigo-800 text-[10px] px-2 py-1 rounded font-bold flex items-center gap-1 border border-indigo-200">
+            {v} <button onClick={() => removeVariable(v)} className="hover:text-red-500 font-black" title={`Remove variable ${v}`}>×</button>
+          </span>
+        ))}
+        <div className="flex items-center gap-1 ml-2">
+          <input type="text" value={newVarName} onChange={(e) => setNewVarName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addVariable(); } }}
+            placeholder="New var (e.g. pH)" className="text-[10px] p-1.5 border border-slate-300 rounded outline-none focus:border-indigo-500 w-28" />
+          <button onClick={addVariable} className="bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] px-2 py-1.5 rounded font-bold">Add</button>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+        {d.instances.map((inst) => {
+          const isActive = d.activeInstance && d.activeInstance.id === inst.id;
+          return (
+            <div key={inst.id} className={`flex flex-col gap-2 rounded-lg p-3 border shadow-sm transition-colors ${isActive ? 'bg-indigo-600 border-indigo-700 text-white' : 'bg-white border-indigo-300 text-indigo-900'}`}>
+              <div className="flex items-center justify-between border-b border-indigo-200 pb-2">
+                <button type="button" onClick={() => updateActiveTest({ activeInstanceId: inst.id })} className="text-sm font-bold truncate flex-1 text-left" title="Set as active condition">{inst.name}</button>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => { const nn = window.prompt('Rename condition:', inst.name); if (nn && nn.trim()) updateActiveTest({ instances: d.instances.map((i) => (i.id === inst.id ? { ...i, name: nn.trim() } : i)) }); }} className={`text-[10px] font-bold ${isActive ? 'text-indigo-200 hover:text-white' : 'text-slate-400 hover:text-blue-600'}`}>✎</button>
+                  <button type="button" onClick={() => { const copy = { ...JSON.parse(JSON.stringify(inst)), id: makeInstanceId(), name: `${inst.name} (copy)` }; updateActiveTest({ instances: [...d.instances, copy], activeInstanceId: copy.id }); }} className={`text-[10px] font-bold ${isActive ? 'text-indigo-200 hover:text-white' : 'text-slate-400 hover:text-blue-600'}`}>⧉</button>
+                  <button type="button" onClick={() => { if (d.instances.length <= 1) { alert('At least one condition is required.'); return; } const upd = d.instances.filter((i) => i.id !== inst.id); updateActiveTest({ instances: upd, activeInstanceId: d.activeInstance && d.activeInstance.id === inst.id ? upd[0].id : activeTest.activeInstanceId }); }} className={`text-[10px] font-bold ${isActive ? 'text-indigo-200 hover:text-red-300' : 'text-slate-400 hover:text-red-500'}`}>×</button>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2 mt-1">
+                {d.conditionVariables.map((v) => (
+                  <div key={v} className="flex flex-col gap-0.5">
+                    <label className={`text-[9px] font-bold uppercase ${isActive ? 'text-indigo-200' : 'text-indigo-700'}`}>{v}</label>
+                    <input type="text" value={(inst.conditions || {})[v] || ''} onChange={(e) => updateCondition(inst.id, v, e.target.value)} placeholder="Value"
+                      className={`border rounded px-2 py-1 text-xs outline-none font-mono ${isActive ? 'bg-indigo-700 border-indigo-500 text-white placeholder-indigo-400' : 'bg-white border-indigo-200 text-indigo-900 focus:border-indigo-500'}`} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex gap-2">
+        <input type="text" id="newInstanceNameInput"
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); const val = e.target.value; const src = d.activeInstance; const cols = (src?.spectraColumns || []).map((c) => ({ ...c, data: '' })); const inst = { id: makeInstanceId(), name: val.trim() || `Condition ${d.instances.length + 1}`, conditions: {}, notes: '', wavelengthData: src?.wavelengthData || '', spectraColumns: cols, values: {} }; updateActiveTest({ instances: [...d.instances, inst], activeInstanceId: inst.id }); e.target.value = ''; } }}
+          placeholder="New condition name (e.g. 25°C, Ratio 1:5, pH 7.4)"
+          className="flex-1 border border-indigo-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-indigo-500" />
+        <button type="button" onClick={() => { const input = document.getElementById('newInstanceNameInput'); const val = input.value; const src = d.activeInstance; const cols = (src?.spectraColumns || []).map((c) => ({ ...c, data: '' })); const inst = { id: makeInstanceId(), name: val.trim() || `Condition ${d.instances.length + 1}`, conditions: {}, notes: '', wavelengthData: src?.wavelengthData || '', spectraColumns: cols, values: {} }; updateActiveTest({ instances: [...d.instances, inst], activeInstanceId: inst.id }); input.value = ''; }}
+          className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm">+ Add Instance</button>
+      </div>
+    </div>
+  );
+};
+
+/* ========================================================================
+   REQ-1 & REQ-3: CONDITION PLOT PANEL — mirrors NMR's comparableInfo
+   ======================================================================== */
+const defaultCdPlotCfg = (n) => ({
+  id: makePlotId(),
+  title: `Condition Plot ${n}`,
+  layerKey: 'cd',
+  seriesKeys: [],
+  xVar: 'category',
+  chartType: 'line',
+  fitEnabled: false,
+  fitModel: 'linear',
+  customExpr: '',
+  showPoints: true,
+  showErrors: true,
+  showFit: true,
+  showMaxLines: false,
+  hLines: [],
+  useFixedSD: false,
+  fixedSDStr: '',
+  outlierThreshStr: '2.5',
+  excludeNonComparable: false,
+  hiddenSeries: {},
+  excluded: {},
+  manualSD: {},
+  usedInstances: {},
+  chartCfg: { ...FIT_DEFAULT_CHART_CFG }
+});
+
 const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlot }) => {
   const { activeTest, updateActiveTest } = ctx;
   const cfg = { ...FIT_DEFAULT_CHART_CFG, ...(plot.chartCfg || {}) };
@@ -1179,11 +1768,12 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
   const [showCfg, setShowCfg] = useState(false);
   const [hVal, setHVal] = useState('');
   const [hLab, setHLab] = useState('');
-
   const isHist = (plot.chartType || 'line') === 'hist';
   const set = (patch) => updatePlot(plot.id, patch);
   const setCfg = (patch) => updatePlot(plot.id, { chartCfg: { ...cfg, ...patch } });
   const plotLayer = d.layers.find((l) => l.key === plot.layerKey) || d.layers[0];
+  const effXVar = d.conditionVariables.includes(plot.xVar) ? plot.xVar : (plot.xVar === 'category' ? 'category' : 'category');
+  const xVarLabel = effXVar === 'category' ? 'Instance name' : effXVar;
 
   const filtered = d.seriesOptions.filter(
     (o) => !seriesSearch.trim() || o.label.toLowerCase().includes(seriesSearch.toLowerCase())
@@ -1197,95 +1787,80 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
   const savePreset = () => {
     const name = presetName.trim();
     if (!name || plot.seriesKeys.length === 0) return;
-    updateActiveTest({
-      seriesSelectionPresets: [...presets, { id: makePlotId(), name, keys: [...plot.seriesKeys] }]
-    });
+    updateActiveTest({ seriesSelectionPresets: [...presets, { id: makePlotId(), name, keys: [...plot.seriesKeys] }] });
     setPresetName('');
   };
-  const applyPreset = (id) => {
-    const p = presets.find((x) => x.id === id);
-    if (p) set({ seriesKeys: [...(p.keys || [])] });
-  };
-  const deletePreset = (id) =>
-    updateActiveTest({ seriesSelectionPresets: presets.filter((x) => x.id !== id) });
+  const applyPreset = (id) => { const p = presets.find((x) => x.id === id); if (p) set({ seriesKeys: [...(p.keys || [])] }); };
+  const deletePreset = (id) => updateActiveTest({ seriesSelectionPresets: presets.filter((x) => x.id !== id) });
 
-  // Mismatches per plot basati sulla variabile selezionata (asse X) e le altre variabili disponibili
-  const mismatches = useMemo(() => {
-    const out = {};
-    if (plot.xVar && plot.xVar !== '__category__') {
-      const otherVars = d.conditionVariables.filter(v => v !== plot.xVar);
-      // Active instances sono quelle in cui esiste un valore per la serie attualmente mostrata
-      const activeInsts = d.instances.filter(inst => 
-        plot.seriesKeys.some(sk => parseManual(getLayerValues(inst, plot.layerKey)[sk]) !== null)
-      );
+  const used = plot.usedInstances || {};
+  const toggleInstance = (iid) => set({ usedInstances: { ...used, [iid]: used[iid] === false ? undefined : false } });
 
-      otherVars.forEach(v => {
-        const counts = {};
-        activeInsts.forEach(inst => {
-          const val = (inst.conditions || {})[v] || '';
-          if (val !== '') counts[val] = (counts[val] || 0) + 1;
-        });
-        const majorityVal = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b, '');
+  /* REQ-1: comparableInfo — mirrors NMR's logic exactly */
+  const comparableInfo = useMemo(() => {
+    if (effXVar === 'category') return { comparableInstIds: new Set(d.instances.map((i) => i.id)), varyingFields: [], nonComparableCount: 0, hasMismatch: false };
+    const groupFields = d.conditionVariables.filter((v) => v !== effXVar);
+    const usedInstances = d.instances.filter((inst) => used[inst.id] !== false);
+    const signatures = usedInstances.map((inst) => ({
+      inst,
+      sig: groupFields.map((f) => String(getExpValue(inst, f) ?? '')).join('|')
+    }));
+    const sigCounts = {};
+    signatures.forEach(({ sig }) => { sigCounts[sig] = (sigCounts[sig] || 0) + 1; });
+    const mostCommonSig = Object.keys(sigCounts).sort((a, b) => sigCounts[b] - sigCounts[a])[0];
+    const comparableInstIds = new Set(signatures.filter((s) => s.sig === mostCommonSig).map((s) => s.inst.id));
+    const varyingFields = groupFields.filter((f) => {
+      const vals = new Set(usedInstances.map((inst) => String(getExpValue(inst, f) ?? '')));
+      return vals.size > 1;
+    });
+    const nonComparableCount = signatures.filter((s) => s.sig !== mostCommonSig).length;
+    return { comparableInstIds, varyingFields, nonComparableCount, hasMismatch: nonComparableCount > 0 };
+  }, [d.instances, used, effXVar, d.conditionVariables]);
 
-        activeInsts.forEach(inst => {
-          const val = (inst.conditions || {})[v] || '';
-          if (val !== '' && majorityVal !== '' && val !== majorityVal) {
-            out[inst.id] = out[inst.id] || [];
-            out[inst.id].push(`${v} (${val} vs ${majorityVal})`);
-          }
-        });
-      });
-    }
-    return out;
-  }, [plot.xVar, plot.seriesKeys, plot.layerKey, d.instances, d.conditionVariables]);
+  const isComparable = (instId) => !plot.excludeNonComparable || comparableInfo.comparableInstIds.has(instId);
 
+  /* REQ-1: series — one point per instance, sorted by X (mirrors NMR) */
   const seriesData = useMemo(() => plot.seriesKeys.map((sk) => {
-    const opt = d.seriesOptions.find((o) => o.key === sk);
+    const opt = d.seriesOptions.find((o) => o.key === sk) ||
+      d.ssPlotOptions.find((o) => o.key === sk);
     const pts = [];
     d.instances.forEach((inst) => {
-      const v = parseManual(getLayerValues(inst, plot.layerKey)[sk]);
+      if (used[inst.id] === false) return;
+      if (!isComparable(inst.id)) return;
+      const vals = getLayerValues(inst, plot.layerKey);
+      const v = parseManual(vals[sk]);
       if (v === null) return;
-      const xValStr = plot.xVar === '__category__' ? null : (inst.conditions || {})[plot.xVar];
+      const xRaw = effXVar === 'category' ? null : getExpValue(inst, effXVar);
       pts.push({
         instId: inst.id,
         name: inst.name,
-        x: plot.xVar === '__category__' ? null : parseManual(xValStr),
+        x: effXVar === 'category' ? null : parseXValue(xRaw),
         y: v,
-        excluded: !!(plot.excluded[sk] && plot.excluded[sk][inst.id]),
-        mismatched: !!mismatches[inst.id],
-        mismatchReason: mismatches[inst.id] ? mismatches[inst.id].join(', ') : ''
+        excluded: !!((plot.excluded[sk] || {})[inst.id])
       });
     });
+    /* REQ-1: sort by X — prevents line from going backwards */
+    pts.sort((a, b) => (a.x ?? 0) - (b.x ?? 0));
     return { key: sk, label: opt ? opt.label : sk, pts };
-  }), [plot.seriesKeys, plot.layerKey, d.instances, d.seriesOptions, plot.excluded, plot.xVar, mismatches]);
+  }), [plot.seriesKeys, plot.layerKey, d.instances, d.seriesOptions, d.ssPlotOptions, plot.excluded, effXVar, used, plot.excludeNonComparable, comparableInfo]);
 
-  const colorOf = (s) =>
-    LINE_COLORS[Math.max(0, seriesData.findIndex((q) => q.key === s.key)) % LINE_COLORS.length];
-  
-  const includedPts = (s) => s.pts.filter((p) => !p.excluded && !p.mismatched);
-  const maxOf = (s) => {
-    const v = includedPts(s).map((p) => p.y);
-    return v.length ? Math.max(...v) : null;
-  };
+  const colorOf = (s) => LINE_COLORS[Math.max(0, seriesData.findIndex((q) => q.key === s.key)) % LINE_COLORS.length];
+  const includedPts = (s) => s.pts.filter((p) => !p.excluded);
+  const maxOf = (s) => { const v = includedPts(s).map((p) => p.y); return v.length ? Math.max(...v) : null; };
 
   const effSD = (sKey, p) => {
     const man = (plot.manualSD[sKey] || {})[p.instId];
     if (typeof man === 'number' && Number.isFinite(man)) return man;
-    if (plot.useFixedSD) {
-      const f = parseManual(plot.fixedSDStr);
-      if (f !== null) return f;
-    }
+    if (plot.useFixedSD) { const f = parseManual(plot.fixedSDStr); if (f !== null) return f; }
     return null;
   };
 
   const fitOf = (s) => {
-    if (!plot.fitEnabled || plot.xVar === '__category__') return null;
-    const wpts = includedPts(s)
-      .filter((p) => p.x !== null)
-      .map((p) => {
-        const sd = effSD(s.key, p);
-        return { x: p.x, y: p.y, w: sd && sd > 0 ? 1 / (sd * sd) : 1 };
-      });
+    if (!plot.fitEnabled || effXVar === 'category') return null;
+    const wpts = includedPts(s).filter((p) => p.x !== null).map((p) => {
+      const sd = effSD(s.key, p);
+      return { x: p.x, y: p.y, w: sd && sd > 0 ? 1 / (sd * sd) : 1 };
+    });
     if (wpts.length < 2) return null;
     if (plot.fitModel === 'linear') return fitLinear(wpts);
     if (plot.fitModel === '4pl') return fit4PL(wpts);
@@ -1297,24 +1872,19 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
     const out = {};
     seriesData.forEach((s) => { out[s.key] = fitOf(s); });
     return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seriesData, plot.fitEnabled, plot.fitModel, plot.customExpr, plot.xVar, plot.manualSD, plot.useFixedSD, plot.fixedSDStr, plot.excluded]);
+  }, [seriesData, plot.fitEnabled, plot.fitModel, plot.customExpr, effXVar, plot.manualSD, plot.useFixedSD, plot.fixedSDStr]);
 
   const setManualSD = (sKey, instId, val) => {
     const inner = { ...(plot.manualSD[sKey] || {}) };
     const n = parseManual(val);
-    if (n === null) delete inner[instId];
-    else inner[instId] = n;
+    if (n === null) delete inner[instId]; else inner[instId] = n;
     set({ manualSD: { ...plot.manualSD, [sKey]: inner } });
   };
-
   const toggleExclude = (sKey, instId) => {
     const inner = { ...(plot.excluded[sKey] || {}) };
-    if (inner[instId]) delete inner[instId];
-    else inner[instId] = true;
+    if (inner[instId]) delete inner[instId]; else inner[instId] = true;
     set({ excluded: { ...plot.excluded, [sKey]: inner } });
   };
-
   const autoTouch = (s) => {
     const fit = fits[s.key] || fitOf(s);
     if (!fit || !fit.f) return;
@@ -1325,31 +1895,18 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
     });
     set({ manualSD: { ...plot.manualSD, [s.key]: inner } });
   };
-
-  const resetSD = (sKey) => {
-    const next = { ...plot.manualSD };
-    delete next[sKey];
-    set({ manualSD: next });
-  };
-
+  const resetSD = (sKey) => { const next = { ...plot.manualSD }; delete next[sKey]; set({ manualSD: next }); };
   const cleanOutliers = (target) => {
     const thresh = parseManual(plot.outlierThreshStr) || 2.5;
     const excluded = JSON.parse(JSON.stringify(plot.excluded || {}));
     const proc = (s) => {
       for (let it = 0; it < 20; it++) {
-        const pts = s.pts.filter((p) => !((excluded[s.key] || {})[p.instId]) && !p.mismatched && p.x !== null);
+        const pts = s.pts.filter((p) => !((excluded[s.key] || {})[p.instId]) && p.x !== null);
         if (pts.length < 4) break;
-        const wpts = pts.map((p) => {
-          const sd = effSD(s.key, p);
-          return { x: p.x, y: p.y, w: sd && sd > 0 ? 1 / (sd * sd) : 1, p };
-        });
-        const fit =
-          plot.fitModel === 'linear' ? fitLinear(wpts)
-            : plot.fitModel === '4pl' ? fit4PL(wpts)
-              : fitCustomEquation(plot.customExpr, wpts);
+        const wpts = pts.map((p) => { const sd = effSD(s.key, p); return { x: p.x, y: p.y, w: sd && sd > 0 ? 1 / (sd * sd) : 1, p }; });
+        const fit = plot.fitModel === 'linear' ? fitLinear(wpts) : plot.fitModel === '4pl' ? fit4PL(wpts) : fitCustomEquation(plot.customExpr, wpts);
         if (!fit || !fit.f) break;
-        let worst = null;
-        let maxR = 0;
+        let worst = null, maxR = 0;
         wpts.forEach((q) => {
           const sd = effSD(s.key, q.p);
           const err = sd && sd > 0 ? sd : 1;
@@ -1363,44 +1920,31 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
     (target ? [target] : seriesData).forEach(proc);
     set({ excluded });
   };
-
   const restoreExcluded = () => set({ excluded: {} });
 
   const catData = useMemo(() => {
-    if (plot.xVar !== '__category__') return [];
-    return d.instances.map((inst) => {
+    if (effXVar !== 'category') return [];
+    return d.instances.filter((inst) => used[inst.id] !== false).map((inst) => {
       const row = { __condition: inst.name };
       seriesData.forEach((s) => {
         const p = s.pts.find((q) => q.instId === inst.id);
-        if (p && !p.excluded && !p.mismatched) {
-          row[s.key] = p.y;
-          row[`${s.key}__sd`] = effSD(s.key, p);
-        } else {
-          row[s.key] = null;
-          row[`${s.key}__sd`] = null;
-        }
+        if (p && !p.excluded) { row[s.key] = p.y; row[`${s.key}__sd`] = effSD(s.key, p); }
+        else { row[s.key] = null; row[`${s.key}__sd`] = null; }
       });
       return row;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [d.instances, seriesData, plot.xVar, plot.manualSD, plot.useFixedSD, plot.fixedSDStr, plot.excluded]);
+  }, [d.instances, seriesData, effXVar, plot.manualSD, plot.useFixedSD, plot.fixedSDStr]);
 
-  const numData = (s) =>
-    includedPts(s).filter((p) => p.x !== null).sort((a, b) => a.x - b.x).map((p) => ({ x: p.x, y: p.y, sd: effSD(s.key, p), name: p.name }));
-
+  const numData = (s) => includedPts(s).filter((p) => p.x !== null).sort((a, b) => a.x - b.x).map((p) => ({ x: p.x, y: p.y, sd: effSD(s.key, p), name: p.name }));
   const fitData = (s) => {
     const fit = fits[s.key];
     if (!fit || !fit.f) return [];
     const xs = includedPts(s).filter((p) => p.x !== null).map((p) => p.x);
     if (xs.length < 2) return [];
-    const mn = Math.min(...xs);
-    const mx = Math.max(...xs);
+    const mn = Math.min(...xs), mx = Math.max(...xs);
     if (!(mx > mn)) return [];
     const out = [];
-    for (let i = 0; i <= 60; i++) {
-      const x = mn + ((mx - mn) * i) / 60;
-      out.push({ x, y: fit.f(x) });
-    }
+    for (let i = 0; i <= 60; i++) { const x = mn + ((mx - mn) * i) / 60; out.push({ x, y: fit.f(x) }); }
     return out;
   };
 
@@ -1411,19 +1955,13 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
     let el;
     if (cfg.ptStyle === 'square') el = <rect x={cx - r} y={cy - r} width={2 * r} height={2 * r} fill={color} />;
     else if (cfg.ptStyle === 'triangle') el = <polygon points={`${cx},${cy - r} ${cx - r},${cy + r} ${cx + r},${cy + r}`} fill={color} />;
-    else if (cfg.ptStyle === 'cross') {
-      el = (
-        <g>
-          <line x1={cx - r} y1={cy - r} x2={cx + r} y2={cy + r} stroke={color} strokeWidth={2} />
-          <line x1={cx - r} y1={cy + r} x2={cx + r} y2={cy - r} stroke={color} strokeWidth={2} />
-        </g>
-      );
-    } else el = <circle cx={cx} cy={cy} r={r} fill={color} />;
+    else if (cfg.ptStyle === 'cross') el = <g><line x1={cx - r} y1={cy - r} x2={cx + r} y2={cy + r} stroke={color} strokeWidth={2} /><line x1={cx - r} y1={cy + r} x2={cx + r} y2={cy - r} stroke={color} strokeWidth={2} /></g>;
+    else el = <circle cx={cx} cy={cy} r={r} fill={color} />;
     return <g key={`d-${s.key}-${index}`}>{el}</g>;
   };
 
   const visibleSeries = seriesData.filter((s) => !plot.hiddenSeries[s.key]);
-  const xLab = cfg.xAxisLabel || (plot.xVar !== '__category__' ? plot.xVar : 'Condition (instance)');
+  const xLab = cfg.xAxisLabel || xVarLabel;
   const yLab = cfg.yAxisLabel || `${plotLayer.label}${plotLayer.unit ? ` (${plotLayer.unit})` : ''}`;
   const dom = (v) => (v === '' || v == null || parseManual(v) === null ? undefined : parseManual(v));
 
@@ -1433,91 +1971,76 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
         const m = maxOf(s);
         if (m === null) return null;
         const c = colorOf(s);
-        return (
-          <ReferenceLine
-            key={`mx-${s.key}`}
-            y={m}
-            stroke={c}
-            strokeDasharray="6 4"
-            ifOverflow="extendDomain"
-            label={{ value: `max ${s.label} = ${m.toFixed(2)}`, fill: c, fontSize: Math.max(9, cfg.fontSize - 1), position: 'insideTopRight' }}
-          />
-        );
+        return <ReferenceLine key={`mx-${s.key}`} y={m} stroke={c} strokeDasharray="6 4" ifOverflow="extendDomain" label={{ value: `max ${s.label} = ${m.toFixed(2)}`, fill: c, fontSize: Math.max(9, cfg.fontSize - 1), position: 'insideTopRight' }} />;
       })}
       {(plot.hLines || []).map((h) => {
         const v = parseManual(h.value);
         if (v === null) return null;
-        return (
-          <ReferenceLine
-            key={h.id}
-            y={v}
-            stroke={h.color || '#64748b'}
-            strokeDasharray="4 4"
-            ifOverflow="extendDomain"
-            label={{ value: h.label || `y=${v}`, fill: h.color || '#64748b', fontSize: Math.max(9, cfg.fontSize - 1), position: 'insideTopRight' }}
-          />
-        );
+        return <ReferenceLine key={h.id} y={v} stroke={h.color || '#64748b'} strokeDasharray="4 4" ifOverflow="extendDomain" label={{ value: h.label || `y=${v}`, fill: h.color || '#64748b', fontSize: Math.max(9, cfg.fontSize - 1), position: 'insideTopRight' }} />;
       })}
     </>
   );
 
+  /* All available series options: spectra + SS layers */
+  const allSeriesOptions = useMemo(() => [...d.seriesOptions, ...d.ssPlotOptions], [d.seriesOptions, d.ssPlotOptions]);
+  const filteredAll = allSeriesOptions.filter(
+    (o) => !seriesSearch.trim() || o.label.toLowerCase().includes(seriesSearch.toLowerCase())
+  );
+
   return (
-    <CollapsibleSection
-      title={plot.title}
-      icon="📈"
-      defaultOpen={true}
+    <CollapsibleSection title={plot.title} icon="📈" defaultOpen={true}
       headerExtra={
         <div className="flex items-center gap-2">
           <button type="button" onClick={() => { const nn = window.prompt('Rename plot:', plot.title); if (nn && nn.trim()) set({ title: nn.trim() }); }} className="text-slate-400 hover:text-blue-600" title="Rename">✏️</button>
           <button type="button" onClick={() => duplicatePlot(plot)} className="text-slate-400 hover:text-blue-600" title="Duplicate">⧉</button>
           <button type="button" onClick={() => removePlot(plot.id)} className="text-slate-400 hover:text-red-500" title="Remove">×</button>
         </div>
-      }
-    >
+      }>
       <div className="flex flex-col gap-4">
-        {/* Plot configuration bar */}
+        {/* Config bar */}
         <div className="flex flex-wrap gap-3 items-end bg-slate-50 border border-slate-200 rounded-lg p-3">
           <div className="flex flex-col gap-1">
             <label className="text-[10px] font-bold text-slate-500 uppercase">Parameter (Y)</label>
-            <select value={plot.layerKey} onChange={(e) => set({ layerKey: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
+            <select value={plot.layerKey} onChange={(e) => set({ layerKey: e.target.value })}
+              className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
               {d.layers.map((l) => <option key={l.key} value={l.key}>{l.label}{l.unit ? ` (${l.unit})` : ''}</option>)}
             </select>
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold text-slate-500 uppercase">X axis</label>
-            <select value={plot.xVar || '__category__'} onChange={(e) => set({ xVar: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
-              <option value="__category__">Instance name (category)</option>
-              {d.conditionVariables.map(v => <option key={v} value={v}>{v} (numeric)</option>)}
+            <label className="text-[10px] font-bold text-slate-500 uppercase">X axis (read from each instance)</label>
+            <select value={effXVar} onChange={(e) => set({ xVar: e.target.value })}
+              className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
+              <option value="category">Instance name (category)</option>
+              {d.conditionVariables.map((v) => <option key={v} value={v}>{v} (numeric)</option>)}
             </select>
           </div>
           <div className="flex flex-col gap-1">
             <label className="text-[10px] font-bold text-slate-500 uppercase">Type</label>
-            <select value={plot.chartType || 'line'} onChange={(e) => set({ chartType: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
+            <select value={plot.chartType || 'line'} onChange={(e) => set({ chartType: e.target.value })}
+              className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
               <option value="line">Line / Scatter</option>
               <option value="hist">Histogram</option>
             </select>
           </div>
-          <label className="flex items-center gap-2 text-xs font-bold text-slate-700 pb-1.5 cursor-pointer">
-            <input type="checkbox" checked={plot.fitEnabled} onChange={(e) => set({ fitEnabled: e.target.checked })} className="w-4 h-4 accent-blue-600" />
-            Fit curve
-          </label>
-          {plot.fitEnabled && (
+          {effXVar !== 'category' && (
+            <label className="flex items-center gap-2 text-xs font-bold text-slate-700 pb-1.5 cursor-pointer">
+              <input type="checkbox" checked={plot.fitEnabled} onChange={(e) => set({ fitEnabled: e.target.checked })} className="w-4 h-4 accent-blue-600" />
+              Fit curve
+            </label>
+          )}
+          {plot.fitEnabled && effXVar !== 'category' && (
             <div className="flex flex-col gap-1">
               <label className="text-[10px] font-bold text-slate-500 uppercase">Model</label>
               <div className="flex gap-2 items-center">
-                <select value={plot.fitModel} onChange={(e) => set({ fitModel: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
+                <select value={plot.fitModel} onChange={(e) => set({ fitModel: e.target.value })}
+                  className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
                   <option value="linear">Linear (weighted)</option>
                   <option value="4pl">4PL logistic (weighted)</option>
                   <option value="custom">Custom Equation</option>
                 </select>
                 {plot.fitModel === 'custom' && (
-                  <input
-                    type="text"
-                    value={plot.customExpr || ''}
-                    onChange={(e) => set({ customExpr: e.target.value })}
-                    placeholder="e.g. a*exp(-b*x) + c"
-                    className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-500 w-44 bg-white"
-                  />
+                  <input type="text" value={plot.customExpr || ''} onChange={(e) => set({ customExpr: e.target.value })}
+                    placeholder="e.g. a*exp(-b*x)+c" className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-500 w-44 bg-white" />
                 )}
               </div>
             </div>
@@ -1528,41 +2051,45 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
           </div>
         </div>
 
-        {Object.keys(mismatches).length > 0 && (
-          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-xs flex flex-col gap-2">
-            <span className="flex items-center gap-2 font-bold uppercase tracking-wide">
-              <span>⚠️</span> Points automatically excluded due to mismatched variables
-            </span>
-            <p className="font-normal opacity-90 leading-tight mb-1">
-              Because you chose "{plot.xVar}" as your X-axis, the system checked all other experimental conditions (like {d.conditionVariables.filter(v => v !== plot.xVar).join(', ')}) to ensure they are constant. The following instances have different conditions from the majority and were excluded:
-            </p>
-            <ul className="list-disc pl-5 font-mono text-[11px] grid grid-cols-1 md:grid-cols-2 gap-x-4">
-                {Object.entries(mismatches).map(([instId, reasons]) => {
-                    const inst = d.instances.find(i => i.id === instId);
-                    return <li key={instId}>{inst?.name}: <span className="text-red-900 font-bold">{reasons.join(', ')}</span></li>;
-                })}
-            </ul>
+        {/* REQ-1: mismatch warning + exclude option (mirrors NMR) */}
+        {comparableInfo.hasMismatch && !isHist && (
+          <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 text-xs text-amber-800 flex flex-col gap-2">
+            <div>
+              ⚠️ These experimental conditions differ between instances: <b>{comparableInfo.varyingFields.join(', ')}</b>.
+              {' '}{comparableInfo.nonComparableCount} point(s) come from instances with different conditions and may not be comparable.
+            </div>
+            <label className="flex items-center gap-2 font-bold cursor-pointer">
+              <input type="checkbox" checked={!!plot.excludeNonComparable} onChange={(e) => set({ excludeNonComparable: e.target.checked })} className="accent-amber-600" />
+              Exclude non-comparable points
+            </label>
           </div>
         )}
+
+        {/* Instances used */}
+        <div className="flex flex-wrap items-center gap-2 bg-white border border-slate-200 rounded-lg p-2">
+          <span className="text-[10px] font-bold text-slate-500 uppercase">Instances used:</span>
+          {d.instances.map((inst) => (
+            <label key={inst.id} className={`flex items-center gap-1.5 text-xs font-bold px-2 py-1 rounded-lg border cursor-pointer ${used[inst.id] === false ? 'bg-slate-100 border-slate-200 text-slate-400' : 'bg-blue-50 border-blue-200 text-blue-800'}`}>
+              <input type="checkbox" checked={used[inst.id] !== false} onChange={() => toggleInstance(inst.id)} className="w-3.5 h-3.5 accent-blue-600" />
+              {inst.name}
+              <span className="text-[9px] font-mono opacity-70">({xVarLabel}: {effXVar === 'category' ? '—' : getExpValue(inst, effXVar) || '—'})</span>
+            </label>
+          ))}
+        </div>
 
         <div className="flex flex-col lg:flex-row gap-6">
           {/* Series selector */}
           <div className="w-full lg:w-80 flex flex-col gap-2 shrink-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <label className="text-xs font-bold text-slate-600 uppercase">Spectra to plot</label>
+              <label className="text-xs font-bold text-slate-600 uppercase">Series to plot</label>
               <button type="button" onClick={selectAllFiltered} className="text-[10px] font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100 px-2 py-0.5 rounded">☑ Select all (filtered)</button>
               <button type="button" onClick={() => set({ seriesKeys: [] })} className="text-[10px] font-bold text-red-500 hover:text-red-700 underline">Clear</button>
             </div>
-            <input
-              type="text"
-              value={seriesSearch}
-              onChange={(e) => setSeriesSearch(e.target.value)}
-              placeholder="Search spectrum (e.g. Spectrum 1)…"
-              className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white"
-            />
+            <input type="text" value={seriesSearch} onChange={(e) => setSeriesSearch(e.target.value)}
+              placeholder="Search series…" className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white" />
             <div className="border border-slate-200 rounded-lg max-h-52 overflow-y-auto custom-scrollbar bg-white">
-              {filtered.length === 0 && <div className="p-3 text-xs text-slate-400 italic">No spectra (add spectra in Setup → CD Data Input).</div>}
-              {filtered.map((o) => (
+              {filteredAll.length === 0 && <div className="p-3 text-xs text-slate-400 italic">No series available.</div>}
+              {filteredAll.map((o) => (
                 <label key={o.key} className="flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-blue-50 border-b border-slate-50 last:border-0">
                   <input type="checkbox" checked={plot.seriesKeys.includes(o.key)} onChange={() => toggleSeries(o.key)} className="w-3.5 h-3.5 accent-blue-600" />
                   <span className="text-xs text-slate-700">{o.label}</span>
@@ -1579,7 +2106,6 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
                 ))}
               </div>
             )}
-            {/* Presets */}
             <div className="flex flex-wrap gap-2 items-end pt-1 border-t border-slate-100">
               <div className="flex flex-col gap-1">
                 <label className="text-[10px] font-bold text-slate-500 uppercase">Save current selection as</label>
@@ -1623,19 +2149,15 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
             )}
             {seriesData.length === 0 ? (
               <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">
-                Select at least one spectrum to plot. Fill its values in Setup → Condition Values.
+                Select at least one series to plot.
               </div>
             ) : (
               <div style={{ height: cfg.height }} className="bg-white border border-slate-200 rounded-xl p-3">
                 <ResponsiveContainer width="100%" height="100%">
                   {isHist ? (
-                    <BarChart data={plot.xVar === '__category__' ? catData : numData(seriesData[0])} margin={{ top: 8, right: 16, bottom: 30, left: 12 }}>
+                    <BarChart data={catData} margin={{ top: 8, right: 16, bottom: 30, left: 12 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                      {plot.xVar === '__category__' ? (
-                        <XAxis dataKey="__condition" tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} tickMargin={10} label={{ value: xLab, position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
-                      ) : (
-                        <XAxis type="number" dataKey="x" domain={[dom(cfg.xMin) ?? 'auto', dom(cfg.xMax) ?? 'auto']} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} tickMargin={10} label={{ value: xLab, position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
-                      )}
+                      <XAxis dataKey="__condition" tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} tickMargin={10} label={{ value: xLab, position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
                       <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={{ value: yLab, angle: -90, position: 'insideLeft', offset: 6, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
                       <Tooltip />
                       {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 10 }} />}
@@ -1643,16 +2165,16 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
                       {visibleSeries.map((s) => {
                         const color = colorOf(s);
                         return (
-                          <Bar key={s.key} dataKey={plot.xVar === '__category__' ? s.key : 'y'} name={s.label} fill={color} radius={[3, 3, 0, 0]} isAnimationActive={false}>
-                            {HAS_EB && plot.showErrors && <ErrorBar dataKey={plot.xVar === '__category__' ? `${s.key}__sd` : 'sd'} width={4} strokeWidth={1} direction="y" color={color} />}
+                          <Bar key={s.key} dataKey={s.key} name={s.label} fill={color} radius={[3, 3, 0, 0]} isAnimationActive={false}>
+                            {HAS_EB && plot.showErrors && <ErrorBar dataKey={`${s.key}__sd`} width={4} strokeWidth={1} direction="y" color={color} />}
                           </Bar>
                         );
                       })}
                     </BarChart>
                   ) : (
-                    <LineChart data={plot.xVar === '__category__' ? catData : undefined} margin={{ top: 8, right: 16, bottom: 30, left: 12 }}>
+                    <LineChart data={effXVar === 'category' ? catData : undefined} margin={{ top: 8, right: 16, bottom: 30, left: 12 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                      {plot.xVar === '__category__' ? (
+                      {effXVar === 'category' ? (
                         <XAxis dataKey="__condition" tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} tickMargin={10} label={{ value: xLab, position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
                       ) : (
                         <XAxis type="number" dataKey="x" domain={[dom(cfg.xMin) ?? 'auto', dom(cfg.xMax) ?? 'auto']} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} tickMargin={10} label={{ value: xLab, position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
@@ -1666,9 +2188,9 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
                         return (
                           <React.Fragment key={s.key}>
                             <Line
-                              data={plot.xVar !== '__category__' ? numData(s) : undefined}
+                              data={effXVar !== 'category' ? numData(s) : undefined}
                               type="monotone"
-                              dataKey={plot.xVar !== '__category__' ? 'y' : s.key}
+                              dataKey={effXVar !== 'category' ? 'y' : s.key}
                               name={s.label}
                               stroke={color}
                               strokeWidth={cfg.lineThickness || 2}
@@ -1677,9 +2199,9 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
                               connectNulls
                               isAnimationActive={false}
                             >
-                              {HAS_EB && plot.showErrors && <ErrorBar dataKey={plot.xVar === '__category__' ? `${s.key}__sd` : 'sd'} width={4} strokeWidth={1} direction="y" color={color} />}
+                              {HAS_EB && plot.showErrors && <ErrorBar dataKey={effXVar === 'category' ? `${s.key}__sd` : 'sd'} width={4} strokeWidth={1} direction="y" color={color} />}
                             </Line>
-                            {plot.xVar !== '__category__' && plot.fitEnabled && plot.showFit && fits[s.key] && (
+                            {effXVar !== 'category' && plot.fitEnabled && plot.showFit && fits[s.key] && (
                               <Line data={fitData(s)} type="monotone" dataKey="y" name={`${s.label} (fit)`} stroke={color} strokeWidth={1.5} strokeDasharray="8 4" dot={false} legendType="none" isAnimationActive={false} />
                             )}
                           </React.Fragment>
@@ -1691,23 +2213,12 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
               </div>
             )}
 
-            {plot.fitEnabled && plot.xVar === '__category__' && (
-              <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">
-                ⚠️ Fitting requires X axis = “Numeric X”. Set numeric X values for the instances in Setup → Conditions / Instances.
-              </p>
-            )}
-
             {/* Fit results table */}
-            {plot.fitEnabled && plot.xVar !== '__category__' && seriesData.length > 0 && (
+            {plot.fitEnabled && effXVar !== 'category' && seriesData.length > 0 && (
               <div className="overflow-x-auto border border-slate-200 rounded-lg">
                 <table className="w-full text-xs text-left bg-white">
                   <thead className="bg-slate-100 text-slate-500 uppercase">
-                    <tr>
-                      <th className="px-3 py-2">Series</th>
-                      <th className="px-3 py-2">Model</th>
-                      <th className="px-3 py-2">Parameters (weighted)</th>
-                      <th className="px-3 py-2">SE</th>
-                    </tr>
+                    <tr><th className="px-3 py-2">Series</th><th className="px-3 py-2">Model</th><th className="px-3 py-2">Parameters (weighted)</th><th className="px-3 py-2">SE</th></tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {seriesData.map((s) => {
@@ -1741,18 +2252,10 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
           <div className="p-4 bg-orange-50 border border-orange-200 rounded-xl flex flex-col gap-4 mt-2">
             <div className="flex flex-wrap items-center gap-4">
               <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
-                <input type="checkbox" checked={plot.useFixedSD} onChange={(e) => set({ useFixedSD: e.target.checked })} className="w-4 h-4 accent-blue-600" />
-                Fixed SD ±
+                <input type="checkbox" checked={plot.useFixedSD} onChange={(e) => set({ useFixedSD: e.target.checked })} className="w-4 h-4 accent-blue-600" /> Fixed SD ±
               </label>
-              <input
-                type="number"
-                step="0.1"
-                min="0"
-                value={plot.fixedSDStr}
-                onChange={(e) => set({ fixedSDStr: e.target.value })}
-                disabled={!plot.useFixedSD}
-                className={`border border-slate-300 rounded-md p-1.5 w-16 text-xs outline-none ${plot.useFixedSD ? 'bg-white font-bold text-blue-700' : 'bg-slate-100 text-slate-400'}`}
-              />
+              <input type="number" step="0.1" min="0" value={plot.fixedSDStr} onChange={(e) => set({ fixedSDStr: e.target.value })} disabled={!plot.useFixedSD}
+                className={`border border-slate-300 rounded-md p-1.5 w-16 text-xs outline-none ${plot.useFixedSD ? 'bg-white font-bold text-blue-700' : 'bg-slate-100 text-slate-400'}`} />
               <label className="text-xs font-bold text-slate-600">Outlier threshold (×SD):</label>
               <input type="number" step="0.1" min="0.1" value={plot.outlierThreshStr} onChange={(e) => set({ outlierThreshStr: e.target.value })} className="border border-slate-300 rounded-md p-1.5 w-16 text-xs outline-none" />
               <button type="button" onClick={() => cleanOutliers(null)} className="bg-yellow-400 hover:bg-yellow-500 text-slate-900 font-black py-1.5 px-3 rounded-lg text-xs shadow-sm">🧹 Clean Outliers (all)</button>
@@ -1769,25 +2272,16 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {s.pts.length === 0 && <span className="text-xs text-slate-400 italic">No values for this spectrum.</span>}
+                  {s.pts.length === 0 && <span className="text-xs text-slate-400 italic">No values for this series.</span>}
                   {s.pts.map((p) => {
                     const sd = effSD(s.key, p);
                     return (
-                      <div key={p.instId} className={`flex flex-col gap-1 p-1.5 rounded border ${p.excluded ? 'border-red-300 bg-red-50' : p.mismatched ? 'border-orange-300 bg-orange-50 opacity-50' : 'border-slate-200 bg-white'}`} title={p.mismatchReason}>
-                        <span className="text-[9px] font-bold text-slate-500">{p.name}{p.x !== null ? ` (x=${p.x})` : ''} {p.mismatched && '⚠️'}</span>
+                      <div key={p.instId} className={`flex flex-col gap-1 p-1.5 rounded border ${p.excluded ? 'border-red-300 bg-red-50' : 'border-slate-200 bg-white'}`}>
+                        <span className="text-[9px] font-bold text-slate-500">{p.name}{p.x !== null ? ` (${xVarLabel}=${p.x})` : ' (no numeric X)'}</span>
                         <div className="flex items-center gap-1">
-                          <span className={`text-[10px] font-mono ${p.excluded || p.mismatched ? 'line-through text-slate-400' : 'text-slate-700'}`}>{p.y}</span>
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={(plot.manualSD[s.key] || {})[p.instId] ?? ''}
-                            onChange={(e) => setManualSD(s.key, p.instId, e.target.value)}
-                            placeholder="±SD"
-                            className="w-14 text-[10px] border border-slate-300 rounded p-0.5 text-center outline-none focus:border-orange-500"
-                          />
-                          <button type="button" onClick={() => toggleExclude(s.key, p.instId)} className={`text-[10px] font-black px-1 ${p.excluded ? 'text-red-600' : 'text-slate-400 hover:text-red-500'}`} title="Exclude / include point">
-                            {p.excluded ? 'EXCL' : '×'}
-                          </button>
+                          <span className={`text-[10px] font-mono ${p.excluded ? 'line-through text-slate-400' : 'text-slate-700'}`}>{p.y}</span>
+                          <input type="number" step="0.01" value={(plot.manualSD[s.key] || {})[p.instId] ?? ''} onChange={(e) => setManualSD(s.key, p.instId, e.target.value)} placeholder="±SD" className="w-14 text-[10px] border border-slate-300 rounded p-0.5 text-center outline-none focus:border-orange-500" />
+                          <button type="button" onClick={() => toggleExclude(s.key, p.instId)} className={`text-[10px] font-black px-1 ${p.excluded ? 'text-red-600' : 'text-slate-400 hover:text-red-500'}`} title="Exclude / include point">{p.excluded ? 'EXCL' : '×'}</button>
                         </div>
                         {sd != null && <span className="text-[9px] text-orange-700 font-bold">± {sd}</span>}
                       </div>
@@ -1880,25 +2374,11 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
                 <div className="flex items-center gap-2">
                   <input type="number" step="any" placeholder="Value (Y)" value={hVal} onChange={(e) => setHVal(e.target.value)} className="border border-slate-300 rounded-md p-1.5 text-xs outline-none w-20" />
                   <input type="text" placeholder="Label (optional)" value={hLab} onChange={(e) => setHLab(e.target.value)} className="border border-slate-300 rounded-md p-1.5 text-xs outline-none w-32" />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (parseManual(hVal) === null) return;
-                      set({
-                        hLines: [...(plot.hLines || []), {
-                          id: makePlotId(),
-                          value: parseManual(hVal),
-                          label: hLab || `y=${hVal}`,
-                          color: LINE_COLORS[(plot.hLines || []).length % 10]
-                        }]
-                      });
-                      setHVal('');
-                      setHLab('');
-                    }}
-                    className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold px-2 py-1.5 rounded-md"
-                  >
-                    Add Line
-                  </button>
+                  <button type="button" onClick={() => {
+                    if (parseManual(hVal) === null) return;
+                    set({ hLines: [...(plot.hLines || []), { id: makePlotId(), value: parseManual(hVal), label: hLab || `y=${hVal}`, color: LINE_COLORS[(plot.hLines || []).length % 10] }] });
+                    setHVal(''); setHLab('');
+                  }} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold px-2 py-1.5 rounded-md">Add Line</button>
                 </div>
               </div>
               {(plot.hLines || []).length > 0 && (
@@ -1919,236 +2399,34 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
   );
 };
 
-// ================= DATA (CD Spectra Plot — All Instances) =================
-export const Data = ({ ctx }) => {
-  const { activeTest } = ctx;
-  const d = useCdDerived(activeTest);
-  const chartCfg = activeTest.chartCfg || DEFAULT_CHART_CFG;
-  const cdChartRef = useRef(null);
-  const cdChartWrapRef = useRef(null);
-  const cdChart = useRef(null);
-  const { width, height } = useElementSize(cdChartWrapRef);
-
-  useEffect(() => {
-    if (!cdChartRef.current || width === 0 || height === 0) return;
-    if (cdChart.current) cdChart.current.destroy();
-
-    const datasets = [];
-
-    // 1. Costruiamo i dataset per TUTTE le istanze
-    d.instances.forEach((inst) => {
-      const { parsedWavelengths, parsedSpectra } = computeParsed(inst);
-      const isActiveInst = d.activeInstance && d.activeInstance.id === inst.id;
-
-      parsedSpectra.forEach((s) => {
-        if (s.visible === false || !s.values || s.values.length === 0) return;
-
-        const data = parsedWavelengths
-          .map((w, i) => ({ x: w, y: s.values[i] !== undefined ? s.values[i] : null }))
-          .filter((p) => p.y !== null);
-
-        const sk = `spec-${s.id}`;
-        const isSel = isActiveInst && d.selectedKeys && d.selectedKeys.includes(sk);
-        
-        // Opacizziamo gli spettri non selezionati (selezioni tabella) o quelli delle istanze inattive
-        const dimmed = !isActiveInst || (d.selectedKeys && !isSel);
-
-        datasets.push({
-          label: `${s.title} [${inst.name}]`,
-          data,
-          borderColor: dimmed ? `${s.color}66` : s.color,
-          backgroundColor: `${s.color}20`,
-          borderWidth: isSel ? (chartCfg.lineWidth || 2) + 1.5 : (chartCfg.lineWidth || 2),
-          // Gli spettri delle istanze inattive vengono resi tratteggiati per distinguerli dal set attivo
-          borderDash: isActiveInst ? [] : [3, 3],
-          pointRadius: 0,
-          pointHoverRadius: 4,
-          fill: false,
-          tension: 0.1,
-          type: 'line'
-        });
-      });
-    });
-
-    // =========================================================================
-    // 2. AGGIUNTA DELLA CURVA TEORICA DI FIT per l'istanza ATTIVA
-    // =========================================================================
-    const targetSpec = d.parsedSpectra.find(s => s.visible !== false && s.values.length > 0);
-    const activeVals = d.activeInstance?.values || {};
-    
-    // Recuperiamo i risultati della deconvoluzione (se effettuata)
-    const getVal = (layerKey) => parseFloat((activeVals[layerKey] || {})[`spec-${targetSpec?.id}`]) || 0;
-    const pA = getVal('ss_alpha') / 100;
-    const pB = getVal('ss_beta') / 100;
-    const pT = getVal('ss_turn') / 100;
-    const pC = getVal('ss_coil') / 100;
-
-    // Plottiamo solo se è stata eseguita una deconvoluzione per questo spettro
-    if (pA > 0 || pB > 0 || pT > 0 || pC > 0) {
-      const shape = d.parsedWavelengths.map(w => {
-         if (w >= 176 && w <= 260) {
-            return {
-               w,
-               t: (splineAlpha.at(w) * pA) + (splineBeta.at(w) * pB) + (splineTurn.at(w) * pT) + (splineCoil.at(w) * pC)
-            };
-         }
-         return null;
-      }).filter(Boolean);
-
-      let scaleK = 1;
-      if (targetSpec) {
-         let num = 0;
-         let den = 0;
-         shape.forEach(pt => {
-            const idx = d.parsedWavelengths.indexOf(pt.w);
-            if (idx >= 0 && pt.w >= 190 && pt.w <= 260 && targetSpec.values[idx] !== undefined) {
-               num += targetSpec.values[idx] * pt.t;
-               den += pt.t * pt.t;
-            }
-         });
-         if (den > 0) scaleK = num / den;
-      }
-
-      const ssData = shape.map(pt => ({ x: pt.w, y: pt.t * scaleK }));
-
-      if (ssData.length > 0) {
-         datasets.push({
-            label: 'Theoretical Fit (Active Inst.)',
-            data: ssData,
-            borderColor: '#0f172a',
-            backgroundColor: 'transparent',
-            borderWidth: 2.5,
-            borderDash: [5, 5],
-            pointRadius: 0,
-            type: 'line',
-            order: -1
-         });
-      }
-    }
-    // =========================================================================
-
-    // 3. Generazione del grafico
-    cdChart.current = new Chart(cdChartRef.current, {
-      type: 'line',
-      data: { datasets },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: 'nearest', intersect: false },
-        scales: {
-          x: {
-            type: 'linear',
-            min: chartCfg.xMin !== '' ? parseFloat(chartCfg.xMin) : undefined,
-            max: chartCfg.xMax !== '' ? parseFloat(chartCfg.xMax) : undefined,
-            title: { display: true, text: 'Wavelength (nm)', font: { size: (chartCfg.fontSize || 12) + 2, weight: 'bold' }, color: '#334155' },
-            ticks: { font: { size: chartCfg.fontSize || 12 }, color: '#64748b' },
-            grid: { color: '#f1f5f9' }
-          },
-          y: {
-            min: chartCfg.yMin !== '' ? parseFloat(chartCfg.yMin) : undefined,
-            max: chartCfg.yMax !== '' ? parseFloat(chartCfg.yMax) : undefined,
-            title: { display: true, text: 'CD Signal / MRE', font: { size: (chartCfg.fontSize || 12) + 2, weight: 'bold' }, color: '#334155' },
-            ticks: { font: { size: chartCfg.fontSize || 12 }, color: '#64748b' },
-            grid: { color: '#f1f5f9' }
-          }
-        },
-        plugins: {
-          legend: { position: 'top', labels: { font: { size: chartCfg.fontSize || 12, weight: 'bold' }, usePointStyle: true } },
-          tooltip: { callbacks: { title: (c) => `${c[0].parsed.x.toFixed(1)} nm`, label: (c) => `${c.dataset.label}: ${c.parsed.y.toFixed(3)}` } }
-        }
-      }
-    });
-    
-    return () => { if (cdChart.current) cdChart.current.destroy(); };
-  }, [d.instances, d.activeInstance, d.parsedWavelengths, d.parsedSpectra, chartCfg, d.selectedKeys, width, height]);
-
-  return (
-    <CollapsibleSection title="CD Spectra Plot (All Conditions)" icon="📈" headerExtra={<span className="text-[10px] font-bold bg-blue-100 text-blue-700 px-2 py-1 rounded">Active: {d.activeInstance ? d.activeInstance.name : '—'}</span>}>
-      <div ref={cdChartWrapRef} className="flex-1 relative min-h-0 w-full" style={{ height: '450px' }}>
-        <canvas ref={cdChartRef}></canvas>
-      </div>
-    </CollapsibleSection>
-  );
-};
-
-export const SetupInstanceEditor = ({ ctx }) => {
+/* ========================================================================
+   FITTING SECTION (condition plots) — Report Metrics removed per user request
+   ======================================================================== */
+export const FittingErrors = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useCdDerived(activeTest);
-  const [newVarName, setNewVarName] = useState('');
-
-  const addVariable = () => {
-    const v = newVarName.trim();
-    if (v && !d.conditionVariables.includes(v)) {
-      updateActiveTest({ conditionVariables: [...d.conditionVariables, v] });
-      setNewVarName('');
-    }
+  const plots = Array.isArray(activeTest.conditionPlots) && activeTest.conditionPlots.length
+    ? activeTest.conditionPlots
+    : [defaultCdPlotCfg(1)];
+  const updatePlot = (id, patch) => updateActiveTest({ conditionPlots: plots.map((p) => (p.id === id ? { ...p, ...patch } : p)) });
+  const addPlot = () => updateActiveTest({ conditionPlots: [...plots, defaultCdPlotCfg(plots.length + 1)] });
+  const removePlot = (id) => {
+    if (plots.length <= 1) { alert('At least one condition plot is required.'); return; }
+    updateActiveTest({ conditionPlots: plots.filter((p) => p.id !== id) });
   };
-
-  const removeVariable = (v) => {
-    updateActiveTest({ conditionVariables: d.conditionVariables.filter(x => x !== v) });
-  };
-
-  const updateCondition = (instId, variable, val) => {
-    updateActiveTest({
-      instances: d.instances.map(inst => {
-        if (inst.id === instId) {
-          return { ...inst, conditions: { ...(inst.conditions || {}), [variable]: val } };
-        }
-        return inst;
-      })
-    });
-  };
+  const duplicatePlot = (p) => updateActiveTest({ conditionPlots: [...plots, { ...JSON.parse(JSON.stringify(p)), id: makePlotId(), title: `${p.title} (copy)` }] });
 
   return (
-    <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 flex flex-col gap-4">
-      <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
-        <label className="text-xs font-bold text-indigo-800 uppercase">🧩 Experimental conditions</label>
-        <span className="text-[9px] bg-indigo-200 text-indigo-800 px-2 py-0.5 rounded">Each instance = one experimental condition</span>
+    <div className="flex flex-col gap-6">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <span className="text-xs font-bold text-slate-500 uppercase">
+          Condition plots — X = experimental condition read from each instance · zoomable · adjustable
+        </span>
+        <button type="button" onClick={addPlot} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm">+ Add Condition Plot</button>
       </div>
-      
-      {/* Variable Management */}
-      <div className="flex flex-wrap gap-2 items-center bg-white p-2 rounded-lg border border-indigo-100 shadow-sm">
-        <label className="text-[10px] font-bold text-indigo-800 uppercase">Variables Setup:</label>
-        {d.conditionVariables.map(v => (
-          <span key={v} className="bg-indigo-100 text-indigo-800 text-[10px] px-2 py-1 rounded font-bold flex items-center gap-1 border border-indigo-200">
-            {v} <button onClick={() => removeVariable(v)} className="hover:text-red-500 font-black" title={`Rimuovi variabile ${v}`}>×</button>
-          </span>
-        ))}
-        <div className="flex items-center gap-1 ml-2">
-            <input type="text" value={newVarName} onChange={e => setNewVarName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addVariable(); } }} placeholder="New var (e.g. pH)" className="text-[10px] p-1.5 border border-slate-300 rounded outline-none focus:border-indigo-500 w-28" />
-            <button onClick={addVariable} className="bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] px-2 py-1.5 rounded font-bold">Add</button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-        {d.instances.map((inst) => {
-          const isActive = d.activeInstance && d.activeInstance.id === inst.id;
-          return (
-            <div key={inst.id} className={`flex flex-col gap-2 rounded-lg p-3 border shadow-sm transition-colors ${isActive ? 'bg-indigo-600 border-indigo-700 text-white' : 'bg-white border-indigo-300 text-indigo-900'}`}>
-              <div className="flex items-center justify-between border-b border-indigo-200 pb-2">
-                <button type="button" onClick={() => updateActiveTest({ activeInstanceId: inst.id })} className="text-sm font-bold truncate flex-1 text-left" title="Set as active condition">{inst.name}</button>
-                <div className="flex gap-2">
-                    <button type="button" onClick={() => { const nn = window.prompt('Rename condition:', inst.name); if (nn && nn.trim()) updateActiveTest({ instances: d.instances.map((i) => (i.id === inst.id ? { ...i, name: nn.trim() } : i)) }); }} className={`text-[10px] font-bold ${isActive ? 'text-indigo-200 hover:text-white' : 'text-slate-400 hover:text-blue-600'}`}>✎</button>
-                    <button type="button" onClick={() => { const copy = { ...JSON.parse(JSON.stringify(inst)), id: makeInstanceId(), name: `${inst.name} (copy)` }; updateActiveTest({ instances: [...d.instances, copy], activeInstanceId: copy.id }); }} className={`text-[10px] font-bold ${isActive ? 'text-indigo-200 hover:text-white' : 'text-slate-400 hover:text-blue-600'}`}>⧉</button>
-                    <button type="button" onClick={() => { if (d.instances.length <= 1) { alert('At least one condition is required.'); return; } const upd = d.instances.filter((i) => i.id !== inst.id); updateActiveTest({ instances: upd, activeInstanceId: d.activeInstance && d.activeInstance.id === inst.id ? upd[0].id : activeTest.activeInstanceId }); }} className={`text-[10px] font-bold ${isActive ? 'text-indigo-200 hover:text-red-300' : 'text-slate-400 hover:text-red-500'}`}>×</button>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2 mt-1">
-                 {d.conditionVariables.map(v => (
-                    <div key={v} className="flex flex-col gap-0.5">
-                       <label className={`text-[9px] font-bold uppercase ${isActive ? 'text-indigo-200' : 'text-indigo-700'}`}>{v}</label>
-                       <input type="text" value={(inst.conditions || {})[v] || ''} onChange={(e) => updateCondition(inst.id, v, e.target.value)} placeholder="Valore" className={`border rounded px-2 py-1 text-xs outline-none font-mono ${isActive ? 'bg-indigo-700 border-indigo-500 text-white placeholder-indigo-400' : 'bg-white border-indigo-200 text-indigo-900 focus:border-indigo-500'}`} />
-                    </div>
-                 ))}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <div className="flex gap-2">
-        <input type="text" id="newInstanceNameInput" onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); const val = e.target.value; const src = d.activeInstance; const cols = (src?.spectraColumns || []).map((c) => ({ ...c, data: '' })); const inst = { id: makeInstanceId(), name: val.trim() || `Condition ${d.instances.length + 1}`, conditions: {}, notes: '', wavelengthData: src?.wavelengthData || '', spectraColumns: cols, values: {} }; updateActiveTest({ instances: [...d.instances, inst], activeInstanceId: inst.id }); e.target.value=''; } }} placeholder="New condition name (e.g. 25°C, Ratio 1:5, pH 7.4)" className="flex-1 border border-indigo-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-indigo-500" />
-        <button type="button" onClick={() => { const input = document.getElementById('newInstanceNameInput'); const val = input.value; const src = d.activeInstance; const cols = (src?.spectraColumns || []).map((c) => ({ ...c, data: '' })); const inst = { id: makeInstanceId(), name: val.trim() || `Condition ${d.instances.length + 1}`, conditions: {}, notes: '', wavelengthData: src?.wavelengthData || '', spectraColumns: cols, values: {} }; updateActiveTest({ instances: [...d.instances, inst], activeInstanceId: inst.id }); input.value=''; }} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm">+ Add Instance</button>
-      </div>
+      {plots.map((p) => (
+        <ConditionPlotPanel key={p.id} ctx={ctx} d={d} plot={p} updatePlot={updatePlot} removePlot={removePlot} duplicatePlot={duplicatePlot} />
+      ))}
     </div>
   );
 };
@@ -2158,40 +2436,28 @@ export const FittingGraphics = ({ ctx }) => {
   const chartCfg = activeTest.chartCfg || DEFAULT_CHART_CFG;
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-      {[
-        ['X Min (nm)', 'xMin'],
-        ['X Max (nm)', 'xMax'],
-        ['Y Min', 'yMin'],
-        ['Y Max', 'yMax']
-      ].map(([lbl, k]) => (
-        <div key={k} className="flex flex-col gap-1">
-          <label className="text-xs font-bold text-slate-600">{lbl}</label>
-          <input
-            type="number"
-            placeholder="Auto"
-            value={chartCfg[k]}
-            onChange={(e) => updateActiveTest({ chartCfg: { ...chartCfg, [k]: e.target.value } })}
-            className="border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500"
-          />
-        </div>
-      ))}
+      {['X Min (nm)', 'X Max (nm)', 'Y Min', 'Y Max'].map((lbl, i) => {
+        const k = ['xMin', 'xMax', 'yMin', 'yMax'][i];
+        return (
+          <div key={k} className="flex flex-col gap-1">
+            <label className="text-xs font-bold text-slate-600">{lbl}</label>
+            <input type="number" placeholder="Auto" value={chartCfg[k]}
+              onChange={(e) => updateActiveTest({ chartCfg: { ...chartCfg, [k]: e.target.value } })}
+              className="border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
+          </div>
+        );
+      })}
       <div className="flex flex-col gap-1">
         <label className="text-xs font-bold text-slate-600">Font Size</label>
-        <input
-          type="number"
-          value={chartCfg.fontSize}
+        <input type="number" value={chartCfg.fontSize}
           onChange={(e) => updateActiveTest({ chartCfg: { ...chartCfg, fontSize: parseFloat(e.target.value) || 12 } })}
-          className="border border-slate-300 rounded-md p-2 text-sm outline-none"
-        />
+          className="border border-slate-300 rounded-md p-2 text-sm outline-none" />
       </div>
       <div className="flex flex-col gap-1">
         <label className="text-xs font-bold text-slate-600">Line Thickness</label>
-        <input
-          type="number"
-          value={chartCfg.lineWidth}
+        <input type="number" value={chartCfg.lineWidth}
           onChange={(e) => updateActiveTest({ chartCfg: { ...chartCfg, lineWidth: parseFloat(e.target.value) || 2 } })}
-          className="border border-slate-300 rounded-md p-2 text-sm outline-none"
-        />
+          className="border border-slate-300 rounded-md p-2 text-sm outline-none" />
       </div>
     </div>
   );
@@ -2202,18 +2468,20 @@ export const Simulations = () => {
   const toggleFs = (id) => setFsPanel((prev) => (prev === id ? null : id));
   return (
     <div className="flex flex-col gap-6">
-      {fsPanel === 'mixer' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('mixer')}></div>}
+      {fsPanel === 'mixer' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('mixer')} />}
       <ProteinCDMixer isExpanded={fsPanel === 'mixer'} onToggleExpand={() => toggleFs('mixer')} />
-      {fsPanel === 'library' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('library')}></div>}
+      {fsPanel === 'library' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('library')} />}
       <CDSpectraLibrary isExpanded={fsPanel === 'library'} onToggleExpand={() => toggleFs('library')} />
     </div>
   );
 };
 
+/* ========================================================================
+   NOTEBOOK EXTRA
+   ======================================================================== */
 export const NotebookExtra = ({ ctx, checkId }) => {
   const { activeTest } = ctx;
   const d = useCdDerived(activeTest);
-
   if (checkId === 'cond') {
     const names = d.instances.map((i) => i.name).join(', ');
     return `<p style="font-size: 12px; color: #475569; margin-top: 10px;"><b>Conditions:</b> ${names || 'N/A'} (${d.instances.length})</p>`;
@@ -2225,18 +2493,18 @@ export const NotebookExtra = ({ ctx, checkId }) => {
     return html;
   }
   if (checkId === 'table') {
-    const layers = activeTest.parameterLayers || [];
-    const ssLayers = layers.filter(l => l.key.startsWith('ss_'));
-    if (!ssLayers.length || !d.activeInstance) return '';
-    
-    let html = `<table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; text-align: left; background: white;"><tr style="background-color: #f1f5f9;"><th style="padding: 6px; border: 1px solid #cbd5e1;">Spectrum ID</th>`;
-    ssLayers.forEach(l => { html += `<th style="padding: 6px; border: 1px solid #cbd5e1;">${l.label}</th>`; });
+    const ssKeys = ['ss_alpha', 'ss_beta', 'ss_turn', 'ss_coil'];
+    const ssLabels = ['α-Helix %', 'β-Sheet %', 'Turn %', 'Random Coil %'];
+    if (!d.activeInstance) return '';
+    const hasData = ssKeys.some((k) => Object.keys(getLayerValues(d.activeInstance, k)).length > 0);
+    if (!hasData) return '';
+    let html = `<table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; text-align: left; background: white;"><tr style="background-color: #f1f5f9;"><th style="padding: 6px; border: 1px solid #cbd5e1;">Spectrum</th>`;
+    ssLabels.forEach((l) => { html += `<th style="padding: 6px; border: 1px solid #cbd5e1;">${l}</th>`; });
     html += `</tr>`;
-    
-    d.seriesOptions.forEach(opt => {
+    d.seriesOptions.forEach((opt) => {
       html += `<tr><td style="padding: 6px; border: 1px solid #e2e8f0; color: #334155;">${opt.label}</td>`;
-      ssLayers.forEach(l => {
-        const val = getLayerValues(d.activeInstance, l.key)[opt.key] || '—';
+      ssKeys.forEach((k) => {
+        const val = getLayerValues(d.activeInstance, k)[opt.key] || '—';
         html += `<td style="padding: 6px; border: 1px solid #e2e8f0;">${val}</td>`;
       });
       html += `</tr>`;
@@ -2244,24 +2512,36 @@ export const NotebookExtra = ({ ctx, checkId }) => {
     html += `</table>`;
     return html;
   }
-
   return '';
 };
 
-// ================= ALL (convenience wrapper) =================
+/* ========================================================================
+   ALL — convenience wrapper (Report Metrics section REMOVED per request)
+   ======================================================================== */
 export const All = ({ ctx }) => (
   <div className="flex flex-col gap-6">
     <CollapsibleSection title="Conditions / Instances" icon="🧩">
-        <SetupInstanceEditor ctx={ctx} />
+      <SetupInstanceEditor ctx={ctx} />
     </CollapsibleSection>
-    <Setup ctx={ctx} />
+
+    <CollapsibleSection title="Math Operations & Blank Subtraction" icon="🔧" defaultOpen={false}>
+      <MathOperationsSection ctx={ctx} />
+    </CollapsibleSection>
+
+    <CollapsibleSection title="Spectrum Fitting & Secondary Structure" icon="🧬" defaultOpen={true}>
+      <SpectrumFittingSection ctx={ctx} />
+    </CollapsibleSection>
+
     <Data ctx={ctx} />
+
     <CollapsibleSection title="Plots & Analysis" icon="📐">
-        <FittingErrors ctx={ctx} />
+      <FittingErrors ctx={ctx} />
     </CollapsibleSection>
+
     <CollapsibleSection title="Chart Parameters (Main Spectra Plot)" icon="🎨" defaultOpen={false}>
       <FittingGraphics ctx={ctx} />
     </CollapsibleSection>
+
     <Simulations />
   </div>
 );
