@@ -325,6 +325,10 @@ const LibraryDirectory = ({ compoundMeta, cellLineMeta, plasmidMeta, onSelectRes
   const cellLines = Object.keys(cellLineMeta || {}).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
   const plasmids = Object.keys(plasmidMeta || {}).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 
+  const peptides = compounds.filter(c => compoundMeta[c]?.type === 'protein');
+  const nucleicAcids = compounds.filter(c => ['dna', 'rna'].includes(compoundMeta[c]?.type));
+  const organics = compounds.filter(c => !['protein', 'dna', 'rna'].includes(compoundMeta[c]?.type));
+
   const renderBadge = (label, type, onClick) => (
     <button
       key={label}
@@ -342,9 +346,23 @@ const LibraryDirectory = ({ compoundMeta, cellLineMeta, plasmidMeta, onSelectRes
       </h3>
       
       <div>
-        <h4 className="text-xs font-bold text-slate-500 mb-2">Compounds ({compounds.length})</h4>
+        <h4 className="text-xs font-bold text-slate-500 mb-2">Peptides / Proteins ({peptides.length})</h4>
         <div className="flex flex-wrap">
-          {compounds.length ? compounds.map(c => renderBadge(c, 'compound', onSelectResource)) : <span className="text-xs text-slate-400 italic">No compounds defined.</span>}
+          {peptides.length ? peptides.map(c => renderBadge(c, 'compound', onSelectResource)) : <span className="text-xs text-slate-400 italic">No peptides defined.</span>}
+        </div>
+      </div>
+
+      <div>
+        <h4 className="text-xs font-bold text-slate-500 mb-2 mt-4">Nucleic Acids ({nucleicAcids.length})</h4>
+        <div className="flex flex-wrap">
+          {nucleicAcids.length ? nucleicAcids.map(c => renderBadge(c, 'compound', onSelectResource)) : <span className="text-xs text-slate-400 italic">No nucleic acids defined.</span>}
+        </div>
+      </div>
+
+      <div>
+        <h4 className="text-xs font-bold text-slate-500 mb-2 mt-4">Organic / Other Molecules ({organics.length})</h4>
+        <div className="flex flex-wrap">
+          {organics.length ? organics.map(c => renderBadge(c, 'compound', onSelectResource)) : <span className="text-xs text-slate-400 italic">No organic molecules defined.</span>}
         </div>
       </div>
 
@@ -4031,6 +4049,7 @@ if (customType === 'protein_expression') {
         setMoveModal={setMoveModal}
         tests={tests}
         setTests={setTests}
+        operators={operators}
       />
 
       {/* ===== EXPLORER VIEW ===== */}
@@ -4708,6 +4727,7 @@ if (customType === 'protein_expression') {
                 setActiveStorageId={setActiveStorageId}
                 setCurrentModule={setCurrentModule}
                 handlePrint={handlePrint}
+                operators={operators}
               />
             )}
 
@@ -4723,6 +4743,7 @@ if (customType === 'protein_expression') {
                 setMoveModal={setMoveModal}
                 createEmptyTest={createEmptyTest}
                 setActiveTestId={setActiveTestId}
+                operators={operators}
               />
             )}
 
@@ -5575,17 +5596,31 @@ if (customType === 'protein_expression') {
                   expandedGroups[key] !== undefined ? expandedGroups[key] : def;
 
                 const notebookSearch = getVal('notebookSearch', '');
+                const notebookCatFilter = getVal('notebookCatFilter', 'ALL');
+                const notebookSecCatFilter = getVal('notebookSecCatFilter', 'ALL');
+                const notebookOpFilter = getVal('notebookOpFilter', 'ALL');
+                const notebookBestOnly = getVal('notebookBestOnly', false);
+
+                const availableSecCats = [...new Set(tests.map(t => t.secondaryCategory).filter(Boolean))].sort();
 
                 const filteredTests = tests.filter((t) => {
-                  if (!notebookSearch) return true;
-                  const query = notebookSearch.toLowerCase();
-                  return JSON.stringify(t).toLowerCase().includes(query);
+                  if (notebookCatFilter !== 'ALL' && t.testCategory !== notebookCatFilter) return false;
+                  if (notebookSecCatFilter !== 'ALL' && t.secondaryCategory !== notebookSecCatFilter) return false;
+                  if (notebookOpFilter !== 'ALL' && t.operator !== notebookOpFilter) return false;
+                  if (notebookBestOnly && !t.bestMeasurement) return false;
+
+                  if (notebookSearch) {
+                    const query = notebookSearch.toLowerCase();
+                    if (!JSON.stringify(t).toLowerCase().includes(query)) return false;
+                  }
+                  
+                  return true;
                 });
 
                 return (
                   <div className="flex flex-col h-full w-full">
-                    <div className="bg-white p-3 md:p-4 border-b border-slate-200 shadow-sm flex flex-col md:flex-row items-center justify-between no-print shrink-0 gap-3">
-                      <div className="w-full md:flex-1 md:max-w-md relative">
+                    <div className="bg-white p-3 md:p-4 border-b border-slate-200 shadow-sm flex flex-col gap-3 no-print shrink-0">
+                      <div className="w-full relative">
                         <span className="absolute left-3 top-2.5 text-slate-400">🔍</span>
                         <input
                           type="text"
@@ -5599,6 +5634,45 @@ if (customType === 'protein_expression') {
                           }
                           className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-500"
                         />
+                      </div>
+                      
+                      <div className="flex flex-wrap items-center gap-3">
+                        <select
+                          value={notebookCatFilter}
+                          onChange={(e) => setExpandedGroups(p => ({ ...p, notebookCatFilter: e.target.value }))}
+                          className="flex-1 min-w-[140px] border border-slate-300 rounded-lg px-3 py-2 text-xs bg-white focus:outline-none focus:border-blue-500 font-semibold text-slate-700 cursor-pointer"
+                        >
+                          <option value="ALL">All Categories</option>
+                          {testCategories.map((c) => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                        
+                        <select
+                          value={notebookSecCatFilter}
+                          onChange={(e) => setExpandedGroups(p => ({ ...p, notebookSecCatFilter: e.target.value }))}
+                          className="flex-1 min-w-[140px] border border-slate-300 rounded-lg px-3 py-2 text-xs bg-white focus:outline-none focus:border-blue-500 font-semibold text-slate-700 cursor-pointer"
+                        >
+                          <option value="ALL">All Sec. Categories</option>
+                          {availableSecCats.map((c) => <option key={c} value={c}>{c}</option>)}
+                        </select>
+
+                        <select
+                          value={notebookOpFilter}
+                          onChange={(e) => setExpandedGroups(p => ({ ...p, notebookOpFilter: e.target.value }))}
+                          className="flex-1 min-w-[140px] border border-slate-300 rounded-lg px-3 py-2 text-xs bg-white focus:outline-none focus:border-blue-500 font-semibold text-slate-700 cursor-pointer"
+                        >
+                          <option value="ALL">All Operators</option>
+                          {operators.map((c) => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                        
+                        <label className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer whitespace-nowrap">
+                          <input
+                            type="checkbox"
+                            checked={notebookBestOnly}
+                            onChange={(e) => setExpandedGroups(p => ({ ...p, notebookBestOnly: e.target.checked }))}
+                            className="rounded text-blue-600 focus:ring-blue-500"
+                          />
+                          ⭐ Best Only
+                        </label>
                       </div>
                     </div>
 
