@@ -217,18 +217,12 @@ export const TestShellRenderer = ({
   const testCategory = t.testCategory || baseCategories[0] || 'Activity';
   const categories = [...new Set([...baseCategories, testCategory].filter(Boolean))];
 
-  // ===== OPERATORS (from Definitions → Scientists/Operators, passed by the host renderer via props) =====
+  // ===== OPERATOR (from Definitions → Scientists/Operators, passed by the host renderer via props) =====
   const operatorsRaw = Array.isArray(rest.operators) ? rest.operators : [];
   const operators = operatorsRaw
     .map((op) => (typeof op === 'string' ? op : `${op?.name || ''} ${op?.surname || ''}`.trim()))
     .filter(Boolean);
-  const testOperators = Array.isArray(t.operators) ? t.operators : [];
-  const toggleOperator = (op) => {
-    const upd = testOperators.includes(op)
-      ? testOperators.filter((o) => o !== op)
-      : [...testOperators, op];
-    update({ operators: upd });
-  };
+  const testOperator = t.operator || '';
 
   const showCompounds = samplesCfg.compounds !== false;
   const showCellLines = samplesCfg.cellLines !== false;
@@ -317,24 +311,39 @@ export const TestShellRenderer = ({
 
   const renderConditionField = (f) => {
     const val = t[f.key] !== undefined && t[f.key] !== null ? t[f.key] : '';
+    const unitVal = t[`${f.key}Unit`] !== undefined && t[`${f.key}Unit`] !== null ? t[`${f.key}Unit`] : (f.units?.[0] || '');
     const cls = 'w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500';
+    const inputCls = f.units ? 'flex-1 border border-slate-300 rounded-l-lg p-2 text-sm outline-none focus:border-blue-500 min-w-0' : cls;
+    
     return (
       <div key={f.key}>
         <label className="block text-xs font-bold text-slate-500 uppercase mb-1">{f.label}</label>
-        {f.type === 'date' ? (
-          <input type="date" value={val} onChange={(e) => update({ [f.key]: e.target.value })} className={cls} />
-        ) : f.type === 'number' ? (
-          <input type="number" step={f.step || '1'} value={val} onChange={(e) => update({ [f.key]: e.target.value })} className={cls} placeholder={f.placeholder} />
-        ) : f.type === 'select' ? (
-          <select value={val} onChange={(e) => update({ [f.key]: e.target.value })} className={cls}>
-            <option value="">{f.placeholder || '-- Select --'}</option>
-            {(f.options || []).map((o) => <option key={o} value={o}>{o}</option>)}
-          </select>
-        ) : f.type === 'textarea' ? (
-          <textarea value={val} onChange={(e) => update({ [f.key]: e.target.value })} className={cls} placeholder={f.placeholder} rows={3} />
-        ) : (
-          <input type="text" value={val} onChange={(e) => update({ [f.key]: e.target.value })} className={cls} placeholder={f.placeholder} />
-        )}
+        <div className={f.units ? "flex" : ""}>
+          {f.type === 'date' ? (
+            <input type="date" value={val} onChange={(e) => update({ [f.key]: e.target.value })} className={inputCls} />
+          ) : f.type === 'number' ? (
+            <input type="number" step={f.step || 'any'} value={val} onChange={(e) => update({ [f.key]: e.target.value })} className={inputCls} placeholder={f.placeholder} />
+          ) : f.type === 'select' ? (
+            <select value={val} onChange={(e) => update({ [f.key]: e.target.value })} className={inputCls}>
+              <option value="">{f.placeholder || '-- Select --'}</option>
+              {(f.options || []).map((o) => <option key={o} value={o}>{o}</option>)}
+            </select>
+          ) : f.type === 'textarea' ? (
+            <textarea value={val} onChange={(e) => update({ [f.key]: e.target.value })} className={inputCls} placeholder={f.placeholder} rows={3} />
+          ) : (
+            <input type="text" value={val} onChange={(e) => update({ [f.key]: e.target.value })} className={inputCls} placeholder={f.placeholder} />
+          )}
+          
+          {f.units && (
+            <select 
+              value={unitVal} 
+              onChange={(e) => update({ [`${f.key}Unit`]: e.target.value })} 
+              className="border border-l-0 border-slate-300 rounded-r-lg px-2 py-2 text-sm bg-slate-50 outline-none focus:border-blue-500 text-slate-700 font-medium"
+            >
+              {f.units.map((u) => <option key={u} value={u}>{u}</option>)}
+            </select>
+          )}
+        </div>
       </div>
     );
   };
@@ -425,7 +434,12 @@ const appendToNotebook = () => {
     const cells = cellLines.length > 0 ? cellLines.join(', ') : 'N/A';
 
     const conditionPairs = (config.conditionFields || [])
-      .map((f) => `<b>${f.label}:</b> ${t[f.key] || 'N/A'}`)
+      .map((f) => {
+        const val = t[f.key];
+        const unit = t[`${f.key}Unit`] || (f.units?.[0] || '');
+        const displayVal = val ? `${val}${unit ? ' ' + unit : ''}` : 'N/A';
+        return `<b>${f.label}:</b> ${displayVal}`;
+      })
       .join(' | ');
 
     const customPairs = typeCustomFields
@@ -435,7 +449,7 @@ const appendToNotebook = () => {
     const details = [
       `<b>Experiment Type:</b> ${category}`,
       secondary ? `<b>Secondary Classification:</b> ${secondary}` : '',
-      operatorNames ? `<b>Operator(s):</b> ${operatorNames}` : '',
+      testOperator ? `<b>Operator:</b> ${testOperator}` : '',
       sample && sample !== 'N/A' ? `<b>Sample:</b> ${sample}` : '',
       cells && cells !== 'N/A' ? `<b>Cell lines:</b> ${cells}` : '',
       conditionPairs,
@@ -543,7 +557,7 @@ const appendToNotebook = () => {
     {/* OPERATORS */}
     <div>
       <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
-        Operator(s) / Scientist(s) who performed the experiment
+        Operator / Scientist who performed the experiment
       </label>
 
       {operators.length === 0 ? (
@@ -552,39 +566,25 @@ const appendToNotebook = () => {
           Operators.
         </p>
       ) : (
-        <div className="flex flex-wrap gap-2">
-          {operators.map((op) => {
-            const checked = testOperators.includes(op);
-
-            return (
-              <label
-                key={op}
-                className={`flex items-center gap-1.5 text-xs font-bold px-2.5 py-1.5 rounded-lg border cursor-pointer transition-colors ${
-                  checked
-                    ? 'bg-blue-600 border-blue-700 text-white'
-                    : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => toggleOperator(op)}
-                  className="accent-blue-600"
-                />
-                {op}
-              </label>
-            );
-          })}
-        </div>
+        <select
+          value={testOperator}
+          onChange={(e) => update({ operator: e.target.value })}
+          className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
+        >
+          <option value="">— Select Operator —</option>
+          {operators.map((op) => (
+            <option key={op} value={op}>{op}</option>
+          ))}
+        </select>
       )}
 
-      {testOperators.length > 0 && (
+      {testOperator && (
         <button
           type="button"
-          onClick={() => update({ operators: [] })}
+          onClick={() => update({ operator: '' })}
           className="mt-2 text-xs font-bold text-red-500 hover:text-red-700 underline"
         >
-          Clear all operators
+          Clear operator
         </button>
       )}
     </div>
@@ -747,8 +747,8 @@ const appendToNotebook = () => {
           </div>
         </CollapsibleSection>
 
-        {/* ===== COMMENTS & ATTACHMENTS ===== */}
-        <CollapsibleSection title="Comments & Attachments" icon="📝">
+        {/* ===== REPORT ===== */}
+        <CollapsibleSection title="Report" icon="📝">
           <div className="flex flex-col lg:flex-row gap-6">
             <div className="flex-1 flex flex-col h-full min-h-[160px]">
               <label className="text-xs font-bold text-slate-600 mb-2">Comments & Notes</label>
@@ -812,8 +812,8 @@ const appendToNotebook = () => {
           </div>
         </CollapsibleSection>
 
-        {/* ===== IMAGES ===== */}
-        <CollapsibleSection title="Images" icon="🖼️">
+        {/* ===== FIGURES ===== */}
+        <CollapsibleSection title="Figures" icon="🖼️">
           <div className="flex justify-between items-center mb-4 flex-wrap gap-3">
             <p className="text-sm text-slate-500">Attach image links (Google Drive/Dropbox supported).</p>
             <button
@@ -877,7 +877,7 @@ const appendToNotebook = () => {
               <FittingSection ctx={ctx} />
             ) : (
               (FittingErrors || FittingGraphics) && (
-                <CollapsibleSection title="Fitting" icon="📐">
+                <CollapsibleSection title="Data interpretation" icon="📐">
                   <div className="flex flex-col gap-6">
                     {FittingErrors && (
                       <CollapsibleSection title="Error Management" icon="⚠️" defaultOpen={false}>

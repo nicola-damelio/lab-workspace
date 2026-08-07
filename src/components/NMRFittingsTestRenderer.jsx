@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import Chart from 'chart.js/auto';
 import * as XLSX from 'xlsx';
-import { CollapsibleSection } from './TestShellRenderer';
+import TestShellRenderer, { CollapsibleSection } from './TestShellRenderer';
+import { NMR_FITTING_TAB_CONFIG } from './tabConfigs';
 import { PALETTE, toHex, errBarPlugin } from '../data/constants';
 
 /* ============================================================================
@@ -303,7 +304,7 @@ function DecayChart({ table, colFits, chartCfg, isFs, onToggleFs }) {
     return () => { if (chartRef.current) chartRef.current.destroy(); };
   }, [table, colFits, chartCfg]);
   return (
-    <div className={`flex flex-col relative ${isFs ? FS_CLASSES + ' p-6' : 'h-[300px]'}`}>
+    <div className={`flex flex-col ${isFs ? FS_CLASSES + ' p-6' : 'relative h-[300px]'}`}>
       <div className="flex justify-between items-start mb-2 z-10">
         <h4 className="text-xs font-bold text-slate-600 uppercase">Decay / Diffusion curves</h4>
         <button onClick={onToggleFs} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors no-print">{isFs ? '↙️' : '↗️'}</button>
@@ -359,7 +360,7 @@ function IndividualDecayChart({ table, colIndex, colFit, chartCfg, isFs, onToggl
 
   const residueName = table.colResidues[colIndex] || `Col ${colIndex + 1}`;
   return (
-    <div className={`flex flex-col relative bg-white ${isFs ? FS_CLASSES + ' p-6' : 'aspect-square p-2 cursor-pointer hover:shadow-lg transition-shadow border border-slate-200 rounded-lg group'}`} onClick={!isFs ? onToggleFs : undefined}>
+    <div className={`flex flex-col bg-white ${isFs ? FS_CLASSES + ' p-6' : 'relative aspect-square p-2 cursor-pointer hover:shadow-lg transition-shadow border border-slate-200 rounded-lg group'}`} onClick={!isFs ? onToggleFs : undefined}>
       <div className="flex justify-between items-start mb-1 z-10">
         <h4 className="text-xs font-bold text-slate-600 uppercase">{residueName}</h4>
         {!isFs && <button className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1 transition-all text-[10px]">↗️</button>}
@@ -401,7 +402,7 @@ function ParameterChart({ table, colFits, chartCfg, isFs, onToggleFs }) {
     return () => { if (chartRef.current) chartRef.current.destroy(); };
   }, [table, colFits, chartCfg]);
   return (
-    <div className={`flex flex-col relative ${isFs ? FS_CLASSES + ' p-6' : 'h-[300px]'}`}>
+    <div className={`flex flex-col ${isFs ? FS_CLASSES + ' p-6' : 'relative h-[300px]'}`}>
       <div className="flex justify-between items-start mb-2 z-10">
         <h4 className="text-xs font-bold text-slate-600 uppercase">Parameter vs Atom</h4>
         <button onClick={onToggleFs} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors no-print">{isFs ? '↙️' : '↗️'}</button>
@@ -644,77 +645,88 @@ export const NMRFittingsTestRenderer = ({ activeTest = {}, updateActiveTest, Tes
     );
   };
 
-  return (
-    <div className="flex flex-col h-full min-h-0">
-      {TestHeader}
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-6">
-        <div className="flex flex-col gap-6">
-
-          <CollapsibleSection title="Setup — Molecule, Sequence & Atoms" icon="🧭" defaultOpen={true}>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Target molecule</label>
-                <select value={moleculeId} onChange={(e) => update({ moleculeId: e.target.value })} className="w-full border border-slate-300 rounded-md p-2 text-sm bg-white outline-none focus:border-blue-500">
-                  <option value="">— select molecule —</option>
-                  {moleculeOptions.map((m) => <option key={m} value={m}>{m}</option>)}
-                </select>
-                {sequence && <p className="text-[10px] text-slate-400 mt-1 break-all">Seq: {sequence}</p>}
-              </div>
-            </div>
-          </CollapsibleSection>
-
-          {/* GLOBAL GRAPHICAL PARAMETERS */}
-          <CollapsibleSection title="Graphical Parameters" icon="🎨" defaultOpen={false}>
-            <div className="flex flex-col gap-4">
-               <div className="flex justify-end">
-                  <button onClick={() => setShowChartCfg(!showChartCfg)} className={`font-bold py-2 px-4 rounded-lg text-xs transition-colors shadow-sm ${showChartCfg ? 'bg-slate-200 border border-slate-400 text-slate-900' : 'bg-white hover:bg-slate-50 text-slate-800 border border-slate-300'}`}>
-                    ⚙️ Chart Config
-                  </button>
-               </div>
-               {showChartCfg && (
-                  <div className="p-5 bg-white border border-slate-300 rounded-xl grid grid-cols-2 lg:grid-cols-4 gap-4 shadow-sm">
-                    {[['X Min', 'xMin'], ['X Max', 'xMax'], ['Y Min', 'yMin'], ['Y Max', 'yMax']].map(([lbl, k]) => (
-                      <div key={k} className="flex flex-col gap-1">
-                        <label className="text-xs font-bold text-slate-600">{lbl}</label>
-                        <input type="number" placeholder="Auto" value={chartCfg[k]} onChange={(e) => update({ chartCfg: { ...chartCfg, [k]: e.target.value } })} className="border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-                      </div>
-                    ))}
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs font-bold text-slate-600">X Axis Label</label>
-                      <input type="text" placeholder="Default" value={chartCfg.xAxisLabel} onChange={(e) => update({ chartCfg: { ...chartCfg, xAxisLabel: e.target.value } })} className="border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs font-bold text-slate-600">Font Size</label>
-                      <input type="number" value={chartCfg.fontSize} onChange={(e) => update({ chartCfg: { ...chartCfg, fontSize: parseFloat(e.target.value) || 12 } })} className="border border-slate-300 rounded-md p-2 text-sm outline-none" />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs font-bold text-slate-600">Point Style</label>
-                      <select value={chartCfg.ptStyle} onChange={(e) => update({ chartCfg: { ...chartCfg, ptStyle: e.target.value } })} className="border border-slate-300 rounded-md p-2 text-sm bg-white outline-none">
-                        {['circle', 'triangle', 'rect', 'rectRot', 'cross', 'crossRot', 'star'].map((s) => (<option key={s} value={s}>{s}</option>))}
-                      </select>
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs font-bold text-slate-600">Line Style / Thick.</label>
-                      <div className="flex gap-2">
-                        <select value={chartCfg.lineStyle} onChange={(e) => update({ chartCfg: { ...chartCfg, lineStyle: e.target.value } })} className="border border-slate-300 rounded-md p-2 text-sm bg-white flex-1 outline-none"><option value="solid">Solid</option><option value="dashed">Dashed</option><option value="dotted">Dotted</option></select>
-                        <input type="number" value={chartCfg.lineThickness} onChange={(e) => update({ chartCfg: { ...chartCfg, lineThickness: parseFloat(e.target.value) || 2 } })} className="border border-slate-300 rounded-md p-2 text-sm w-16 outline-none" />
-                      </div>
-                    </div>
-                  </div>
-               )}
-            </div>
-          </CollapsibleSection>
-
-          <CollapsibleSection title="Relaxation Data Tables" icon="📊" defaultOpen={true}>
-            <div className="flex flex-col gap-6">
-              {tables.map((t, i) => renderTable(t, i))}
-              <button onClick={addTable} className="self-start text-sm bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-md shadow-sm">+ Add relaxation table</button>
-            </div>
-          </CollapsibleSection>
-
+  const SetupSection = () => (
+    <CollapsibleSection title="Experimental setup" icon="🧭" defaultOpen={true}>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div>
+          <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Target molecule</label>
+          <select value={moleculeId} onChange={(e) => update({ moleculeId: e.target.value })} className="w-full border border-slate-300 rounded-md p-2 text-sm bg-white outline-none focus:border-blue-500">
+            <option value="">— select molecule —</option>
+            {moleculeOptions.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+          {sequence && <p className="text-[10px] text-slate-400 mt-1 break-all">Seq: {sequence}</p>}
         </div>
       </div>
-    </div>
+    </CollapsibleSection>
+  );
+
+  const FittingSection = () => (
+    <CollapsibleSection title="Data interpretation" icon="📐" defaultOpen={false}>
+      <div className="flex flex-col gap-4">
+         <div className="flex justify-end">
+            <button onClick={() => setShowChartCfg(!showChartCfg)} className={`font-bold py-2 px-4 rounded-lg text-xs transition-colors shadow-sm ${showChartCfg ? 'bg-slate-200 border border-slate-400 text-slate-900' : 'bg-white hover:bg-slate-50 text-slate-800 border border-slate-300'}`}>
+              ⚙️ Chart Config
+            </button>
+         </div>
+         {showChartCfg && (
+            <div className="p-5 bg-white border border-slate-300 rounded-xl grid grid-cols-2 lg:grid-cols-4 gap-4 shadow-sm">
+              {[['X Min', 'xMin'], ['X Max', 'xMax'], ['Y Min', 'yMin'], ['Y Max', 'yMax']].map(([lbl, k]) => (
+                <div key={k} className="flex flex-col gap-1">
+                  <label className="text-xs font-bold text-slate-600">{lbl}</label>
+                  <input type="number" placeholder="Auto" value={chartCfg[k]} onChange={(e) => update({ chartCfg: { ...chartCfg, [k]: e.target.value } })} className="border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
+                </div>
+              ))}
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-bold text-slate-600">X Axis Label</label>
+                <input type="text" placeholder="Default" value={chartCfg.xAxisLabel} onChange={(e) => update({ chartCfg: { ...chartCfg, xAxisLabel: e.target.value } })} className="border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-bold text-slate-600">Font Size</label>
+                <input type="number" value={chartCfg.fontSize} onChange={(e) => update({ chartCfg: { ...chartCfg, fontSize: parseFloat(e.target.value) || 12 } })} className="border border-slate-300 rounded-md p-2 text-sm outline-none" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-bold text-slate-600">Point Style</label>
+                <select value={chartCfg.ptStyle} onChange={(e) => update({ chartCfg: { ...chartCfg, ptStyle: e.target.value } })} className="border border-slate-300 rounded-md p-2 text-sm bg-white outline-none">
+                  {['circle', 'triangle', 'rect', 'rectRot', 'cross', 'crossRot', 'star'].map((s) => (<option key={s} value={s}>{s}</option>))}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-bold text-slate-600">Line Style / Thick.</label>
+                <div className="flex gap-2">
+                  <select value={chartCfg.lineStyle} onChange={(e) => update({ chartCfg: { ...chartCfg, lineStyle: e.target.value } })} className="border border-slate-300 rounded-md p-2 text-sm bg-white flex-1 outline-none"><option value="solid">Solid</option><option value="dashed">Dashed</option><option value="dotted">Dotted</option></select>
+                  <input type="number" value={chartCfg.lineThickness} onChange={(e) => update({ chartCfg: { ...chartCfg, lineThickness: parseFloat(e.target.value) || 2 } })} className="border border-slate-300 rounded-md p-2 text-sm w-16 outline-none" />
+                </div>
+              </div>
+            </div>
+         )}
+      </div>
+    </CollapsibleSection>
+  );
+
+  const DataSection = () => (
+    <CollapsibleSection title="Data" icon="📊" defaultOpen={true}>
+      <div className="flex flex-col gap-6">
+        {tables.map((t, i) => renderTable(t, i))}
+        <button onClick={addTable} className="self-start text-sm bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-md shadow-sm">+ Add relaxation table</button>
+      </div>
+    </CollapsibleSection>
+  );
+
+  return (
+    <TestShellRenderer
+      config={NMR_FITTING_TAB_CONFIG}
+      custom={{
+        Setup: SetupSection,
+        Data: DataSection,
+        Fitting: FittingSection
+      }}
+      activeTest={activeTest}
+      updateActiveTest={updateActiveTest}
+      TestHeader={TestHeader}
+      compoundMeta={compoundMeta}
+      allCmpds={allCmpds}
+      {...rest}
+    />
   );
 };
 

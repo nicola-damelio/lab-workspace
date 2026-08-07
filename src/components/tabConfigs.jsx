@@ -38,7 +38,7 @@ export const CLONING_TAB_CONFIG = {
         'Site-Directed Mutagenesis'
       ]
     },
-    { key: 'selectionMarker', label: 'Antibiotic Selection', type: 'text', placeholder: 'e.g. Kanamycin 50µg/mL' },
+    { key: 'selectionMarker', label: 'Antibiotic Selection', type: 'text', placeholder: 'e.g. Kanamycin 50' },
     {
       key: 'sequencingStatus',
       label: 'Sequencing Verification',
@@ -78,14 +78,14 @@ export const PROTEIN_EXPRESSION_TAB_CONFIG = {
     { key: 'experimentDate', label: 'Experiment Date', type: 'date' },
 
     // ---- Culture ----
-    { key: 'cultureVolume', label: 'Culture Volume', type: 'text', placeholder: 'e.g. 1 L' },
+    { key: 'cultureVolume', label: 'Culture Volume', type: 'text', placeholder: 'e.g. 1', units: ['L', 'mL', 'µL'] },
     {
       key: 'medium',
       label: 'Medium',
       type: 'select',
       options: ['LB', 'TB', '2xYT', 'M9 minimal', 'Auto-induction medium', 'Other']
     },
-    { key: 'antibiotic', label: 'Antibiotic', type: 'text', placeholder: 'e.g. Kanamycin 50 µg/mL' },
+    { key: 'antibiotic', label: 'Antibiotic', type: 'text', placeholder: 'e.g. Kanamycin 50', units: ['µg/mL', 'mg/mL'] },
 
     // ---- Induction ----
     {
@@ -94,10 +94,10 @@ export const PROTEIN_EXPRESSION_TAB_CONFIG = {
       type: 'select',
       options: ['IPTG', 'Auto-induction', 'Temperature shift', 'L-Arabinose', 'Other']
     },
-    { key: 'iptgConcentration', label: 'IPTG / Inducer Conc.', type: 'text', placeholder: 'e.g. 0.5 mM' },
+    { key: 'iptgConcentration', label: 'IPTG / Inducer Conc.', type: 'text', placeholder: 'e.g. 0.5', units: ['mM', 'µM', 'ng/mL'] },
     { key: 'inductionOD', label: 'OD600 at Induction', type: 'text', placeholder: 'e.g. 0.6' },
-    { key: 'inductionTemp', label: 'Induction Temperature', type: 'text', placeholder: 'e.g. 18 °C' },
-    { key: 'inductionDuration', label: 'Induction Duration', type: 'text', placeholder: 'e.g. 16 h (overnight)' },
+    { key: 'inductionTemp', label: 'Induction Temperature', type: 'text', placeholder: 'e.g. 18', units: ['°C', 'K'] },
+    { key: 'inductionDuration', label: 'Induction Duration', type: 'text', placeholder: 'e.g. 16 (overnight)', units: ['h', 'min', 'days'] },
     { key: 'harvestOD', label: 'OD600 at Harvest', type: 'text', placeholder: 'e.g. 3.2' },
 
     // ---- Lysis ----
@@ -178,13 +178,13 @@ export const CD_TAB_CONFIG = {
   imagesKey: 'images',
   conditionFields: [
     { key: 'experimentDate', label: 'Experiment Date', type: 'date' },
-    { key: 'concentration', label: 'Concentration', type: 'text', placeholder: 'e.g. 0.1 mg/mL' },
+    { key: 'concentration', label: 'Concentration', type: 'text', placeholder: 'e.g. 0.1', units: ['mg/mL', 'µM', 'mM'] },
     { key: 'solvent', label: 'Solvent / Buffer', type: 'text', placeholder: 'e.g. 10 mM Phosphate Buffer' },
     { key: 'buffer', label: 'Buffer', type: 'text', placeholder: 'e.g. 10 mM PBS pH 7.4' },
-    { key: 'saltConcentration', label: 'Salt Concentration', type: 'text', placeholder: 'e.g. 50 mM NaCl' },
+    { key: 'saltConcentration', label: 'Salt Concentration', type: 'text', placeholder: 'e.g. 50', units: ['mM', 'M'] },
     { key: 'ph', label: 'pH', type: 'text', placeholder: 'e.g. 7.4' },
-    { key: 'temperature', label: 'Temperature', type: 'text', placeholder: 'e.g. 25°C' },
-    { key: 'pathLength', label: 'Cuvette Path Length', type: 'text', placeholder: 'e.g. 1 mm' },
+    { key: 'temperature', label: 'Temperature', type: 'text', placeholder: 'e.g. 25', units: ['°C', 'K'] },
+    { key: 'pathLength', label: 'Cuvette Path Length', type: 'text', placeholder: 'e.g. 1', units: ['mm', 'cm'] },
     { key: 'otherMolecule', label: 'Other Molecule / Ligand', type: 'text', placeholder: 'e.g. Ligand X' },
     { key: 'ratio', label: 'Molar Ratio', type: 'text', placeholder: 'e.g. 1:5' }
   ],
@@ -215,8 +215,8 @@ export const PLATE_TAB_CONFIG = {
   conditionFields: [
     { key: 'experimentDate', label: 'Experiment Date', type: 'date' },
     { key: 'cellsSeeded', label: 'Cells per Well', type: 'number', placeholder: 'e.g. 5000' },
-    { key: 'timeBeforeRevelation', label: 'Time Before Revelation (h)', type: 'number', step: '0.5', placeholder: 'e.g. 72' },
-    { key: 'temperature', label: 'Temperature', type: 'text', placeholder: 'e.g. 37°C, 5% CO₂' },
+    { key: 'timeBeforeRevelation', label: 'Time Before Revelation', type: 'number', step: '0.5', placeholder: 'e.g. 72', units: ['h', 'min', 'days'] },
+    { key: 'temperature', label: 'Temperature', type: 'text', placeholder: 'e.g. 37', units: ['°C', 'K'] },
     { key: 'otherConditions', label: 'Other Conditions', type: 'text', placeholder: 'e.g. Serum-free medium' }
   ],
   notebookChecks: [
@@ -247,11 +247,11 @@ export const NMR_TAB_CONFIG = {
   imagesKey: 'nmrSpectraImages',
   conditionFields: [
     { key: 'experimentDate', label: 'Experiment Date', type: 'date' },
-    { key: 'concentration', label: 'Concentration', type: 'text', placeholder: 'e.g. 1 mM' },
+    { key: 'concentration', label: 'Concentration', type: 'text', placeholder: 'e.g. 1', units: ['mM', 'µM', 'mg/mL'] },
     { key: 'solvent', label: 'Solvent', type: 'text', placeholder: 'e.g. 90% H2O / 10% D2O' },
-    { key: 'saltConcentration', label: 'Salt Concentration', type: 'text', placeholder: 'e.g. 50 mM NaCl' },
+    { key: 'saltConcentration', label: 'Salt Concentration', type: 'text', placeholder: 'e.g. 50', units: ['mM', 'M'] },
     { key: 'ph', label: 'pH', type: 'text', placeholder: 'e.g. 6.8' },
-    { key: 'temperature', label: 'Temperature', type: 'text', placeholder: 'e.g. 298 K' },
+    { key: 'temperature', label: 'Temperature', type: 'text', placeholder: 'e.g. 298', units: ['K', '°C'] },
     { key: 'otherMolecule', label: 'Other Molecule', type: 'text', placeholder: 'e.g. Ligand X' },
     { key: 'ratio', label: 'Ratio', type: 'text', placeholder: 'e.g. 1:5' }
   ],
@@ -261,5 +261,34 @@ export const NMR_TAB_CONFIG = {
     { id: 'table', label: 'Shifts Table' },
     { id: 'formula', label: 'Chemical Formula' },
     { id: 'images', label: 'Spectra Images' }
+  ]
+};
+
+export const NMR_FITTING_TAB_CONFIG = {
+  typeKey: 'nmrfitting',
+  typeLabel: 'NMR Fitting',
+  icon: '📈',
+  fallbackCategories: [
+    'Relaxation',
+    'Dynamics',
+    'Diffusion'
+  ],
+  samples: {
+    compounds: true,
+    cellLines: true,
+    compoundLabel: 'Molecule / System Label(s)',
+    cellLineLabel: 'Cell Lines / Biological Models'
+  },
+  imagesKey: 'images',
+  conditionFields: [
+    { key: 'experimentDate', label: 'Experiment Date', type: 'date' },
+    { key: 'spectrometer', label: 'Spectrometer Frequency', type: 'text', placeholder: 'e.g. 600', units: ['MHz'] },
+    { key: 'temperature', label: 'Temperature', type: 'text', placeholder: 'e.g. 298', units: ['K', '°C'] },
+    { key: 'solvent', label: 'Solvent', type: 'text', placeholder: 'e.g. D2O' },
+    { key: 'ph', label: 'pH', type: 'text', placeholder: 'e.g. 6.8' }
+  ],
+  notebookChecks: [
+    { id: 'cond', label: 'Experimental Conditions' },
+    { id: 'fittings', label: 'Fittings Summary' }
   ]
 };
