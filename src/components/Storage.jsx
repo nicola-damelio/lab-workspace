@@ -2,6 +2,16 @@ import React from 'react';
 import { getDirectImageUrl, BOX_ROW_LABELS, DEF_COMPOUNDS } from '../data/constants';
 import { RichTextEditor } from './RichTextEditor';
 
+// Helper to bypass Google Drive CORS blocks
+const getProxiedImage = (url) => {
+    if (!url) return '';
+    const directUrl = getDirectImageUrl(url);
+    if (directUrl.includes('drive.google.com')) {
+        return `https://wsrv.nl/?url=${encodeURIComponent(directUrl)}`;
+    }
+    return directUrl;
+};
+
 // --- MODALS FOR STORAGE & BOX MOVEMENT ---
 export const StorageModals = ({ storageModal, setStorageModal, storages, setStorages, moveModal, setMoveModal, tests, setTests }) => {
     const saveStorage = (e) => {
@@ -49,6 +59,10 @@ export const StorageModals = ({ storageModal, setStorageModal, storages, setStor
                                     <option value="Refrigerator">Refrigerator</option>
                                     <option value="Closet">Closet</option>
                                 </select>
+                            </div>
+                            <div className="flex flex-col gap-1">
+                                <label className="text-xs font-bold text-slate-500 uppercase">Image URL (Optional)</label>
+                                <input name="imageUrl" defaultValue={storageModal.imageUrl} className="border border-slate-300 rounded p-2 text-sm focus:border-blue-500 outline-none" placeholder="https://..."/>
                             </div>
                             <div className="flex gap-4">
                                 <div className="flex flex-col gap-1 flex-1">
@@ -160,8 +174,8 @@ export const StorageList = ({ storages, tests, setStorageModal, setActiveStorage
                         return (
                             <div key={st.id} onClick={() => { setActiveStorageId(st.id); setCurrentModule('storage-detail'); }} className="bg-white border border-slate-200 rounded-xl shadow-sm hover:shadow-lg hover:border-indigo-400 cursor-pointer transition-all overflow-hidden flex flex-col group">
                                 {st.imageUrl ? (
-                                    <div className="h-40 w-full overflow-hidden border-b border-slate-100 relative">
-                                        <img src={getDirectImageUrl(st.imageUrl)} alt={st.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"/>
+                                    <div className="h-40 w-full overflow-hidden border-b border-slate-100 relative bg-slate-100">
+                                        <img src={getProxiedImage(st.imageUrl)} alt={st.name} referrerPolicy="no-referrer" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"/>
                                         <div className="absolute inset-0 bg-gradient-to-t from-slate-900/50 to-transparent"></div>
                                         <span className="absolute bottom-3 left-3 text-3xl drop-shadow-md">{icon}</span>
                                     </div>
@@ -225,8 +239,8 @@ export const StorageDetail = ({ storages, activeStorageId, tests, setTests, setC
                 {st.imageUrl && (
                     <div className="w-full xl:w-1/3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm shrink-0 flex flex-col no-print">
                         <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Reference Image</h3>
-                        <div className="flex-1 rounded-lg overflow-hidden border border-slate-100">
-                            <img src={getDirectImageUrl(st.imageUrl)} alt={st.name} className="w-full h-full object-cover"/>
+                        <div className="flex-1 rounded-lg overflow-hidden border border-slate-100 bg-slate-100">
+                            <img src={getProxiedImage(st.imageUrl)} alt={st.name} referrerPolicy="no-referrer" className="w-full h-full object-cover"/>
                         </div>
                     </div>
                 )}
@@ -286,7 +300,7 @@ export const StorageDetail = ({ storages, activeStorageId, tests, setTests, setC
 };
 
 // --- BOX DETAIL VIEW ---
-export const BoxDetail = ({ activeTest, updateActiveTest, storages, expandedGroups, setExpandedGroups, customCmpds, jumpToTest, setMoveModal, TestHeader }) => {
+export const BoxDetail = ({ activeTest, updateActiveTest, storages, expandedGroups, setExpandedGroups, customCmpds, jumpToTest, setMoveModal, TestHeader, operators = [] }) => {
     const getVal = (key, def) => expandedGroups[key] !== undefined ? expandedGroups[key] : def;
     const setVal = (key, val) => setExpandedGroups(p => {
         let current = p[key];
@@ -306,7 +320,7 @@ export const BoxDetail = ({ activeTest, updateActiveTest, storages, expandedGrou
             const val = activeTest.grid[r]?.[c]; 
             if (typeof val === 'string' && val.startsWith('{')) return JSON.parse(val); 
         } catch(e) {} 
-        return { compound: (activeTest.grid[r]?.[c] || '') + '', solvent: '', concentration: '', concUnit: 'µM', volume: '', volUnit: 'µL', date: '', weight: '', weightUnit: 'mg', description: '' }; 
+        return { compound: (activeTest.grid[r]?.[c] || '') + '', operator: '', solvent: '', concentration: '', concUnit: 'µM', volume: '', volUnit: 'µL', date: '', weight: '', weightUnit: 'mg', description: '' }; 
     };
 
     const updateWellData = (r, c, field, value) => { 
@@ -340,13 +354,13 @@ export const BoxDetail = ({ activeTest, updateActiveTest, storages, expandedGrou
             </style></head><body>
             <h3>Storage: ${safe(storageName)} (Pos: ${posLabel})</h3>
             <p><strong>Box:</strong> ${safe(activeTest.name)}${activeTest.instanceName ? ' - ' + safe(activeTest.instanceName) : ''}</p>
-            <table><tr><th>Pos</th><th>Compound</th><th>Solvent</th><th>Conc.</th><th>Vol.</th><th>Date</th><th>Weight</th><th>Notes</th></tr>`;
+            <table><tr><th>Pos</th><th>Compound</th><th>Operator</th><th>Solvent</th><th>Conc.</th><th>Vol.</th><th>Date</th><th>Weight</th><th>Notes</th></tr>`;
             const sortedWells = [...selectedWells].sort((a, b) => a.r === b.r ? a.c - b.c : a.r - b.r);
             sortedWells.forEach(({ r, c }) => {
                 const d = getWellData(r, c);
                 const rowLabel = (BOX_ROW_LABELS && BOX_ROW_LABELS[r]) ? BOX_ROW_LABELS[r] : String.fromCharCode(65 + r);
                 const pos = `${rowLabel}${c + 1}`;
-                html += `<tr><td>${pos}</td><td>${safe(d.compound)}</td><td>${safe(d.solvent)}</td><td>${safe(d.concentration)} ${safe(d.concUnit || 'µM')}</td><td>${safe(d.volume)} ${safe(d.volUnit || 'µL')}</td><td>${safe(d.date)}</td><td>${safe(d.weight)} ${safe(d.weightUnit || 'mg')}</td><td>${safe(d.description)}</td></tr>`;
+                html += `<tr><td>${pos}</td><td>${safe(d.compound)}</td><td>${safe(d.operator)}</td><td>${safe(d.solvent)}</td><td>${safe(d.concentration)} ${safe(d.concUnit || 'µM')}</td><td>${safe(d.volume)} ${safe(d.volUnit || 'µL')}</td><td>${safe(d.date)}</td><td>${safe(d.weight)} ${safe(d.weightUnit || 'mg')}</td><td>${safe(d.description)}</td></tr>`;
             });
             html += `</table></body></html>`;
             printWin.document.write(html);
@@ -386,7 +400,7 @@ export const BoxDetail = ({ activeTest, updateActiveTest, storages, expandedGrou
                     </div>
                     <div className="flex-1 flex items-center gap-2 min-w-[200px]">
                         <label className="text-xs font-bold text-slate-500 uppercase">Search:</label>
-                        <input type="text" value={boxSearch} onChange={e => setVal('boxSearch', e.target.value)} placeholder="Filter compounds..."
+                        <input type="text" value={boxSearch} onChange={e => setVal('boxSearch', e.target.value)} placeholder="Filter compounds or operators..."
                             className="flex-1 border border-slate-300 rounded px-3 py-1 text-sm outline-none focus:border-blue-500" />
                     </div>
                 </div>
@@ -404,7 +418,7 @@ export const BoxDetail = ({ activeTest, updateActiveTest, storages, expandedGrou
                                         const data = getWellData(r, c);
                                         const hasContent = data.compound.trim().length > 0;
                                         const isSelected = selectedWells.some(w => w.r === r && w.c === c) || (boxDragState.active && r >= Math.min(boxDragState.startR, boxDragState.currentR) && r <= Math.max(boxDragState.startR, boxDragState.currentR) && c >= Math.min(boxDragState.startC, boxDragState.currentC) && c <= Math.max(boxDragState.startC, boxDragState.currentC));
-                                        const isMatch = boxSearch && (String(data.compound || '').toLowerCase().includes(boxSearch.toLowerCase()) || String(data.description || '').toLowerCase().includes(boxSearch.toLowerCase()) || String(data.solvent || '').toLowerCase().includes(boxSearch.toLowerCase()) || String(data.concentration || '').toLowerCase().includes(boxSearch.toLowerCase()));
+                                        const isMatch = boxSearch && (String(data.compound || '').toLowerCase().includes(boxSearch.toLowerCase()) || String(data.operator || '').toLowerCase().includes(boxSearch.toLowerCase()) || String(data.description || '').toLowerCase().includes(boxSearch.toLowerCase()) || String(data.solvent || '').toLowerCase().includes(boxSearch.toLowerCase()) || String(data.concentration || '').toLowerCase().includes(boxSearch.toLowerCase()));
                                         return (
                                             <div key={c} 
                                                 onMouseDown={(e) => {
@@ -421,7 +435,7 @@ export const BoxDetail = ({ activeTest, updateActiveTest, storages, expandedGrou
                                                     }
                                                 }}
                                                 className={`aspect-square w-12 h-12 min-w-[48px] min-h-[48px] shrink-0 rounded-full border-[3px] cursor-pointer flex flex-col items-center justify-center text-xs overflow-hidden shadow-sm transition-all hover:scale-110 ${isSelected ? 'ring-4 ring-blue-500 border-blue-600 bg-blue-50' : isMatch ? 'bg-yellow-100 border-yellow-400 shadow-yellow-400/50 shadow-lg' : hasContent ? 'bg-indigo-50 border-indigo-300 text-indigo-900' : 'bg-white border-slate-200 text-slate-300 hover:border-slate-300'}`}
-                                                title={data.compound || 'Empty Slot'}>
+                                                title={data.compound ? `${data.compound}${data.operator ? ` (${data.operator})` : ''}` : 'Empty Slot'}>
                                                 <div style={{transform: `rotate(-${boxRotation}deg)`}} className="w-full flex items-center justify-center h-full pointer-events-none">
                                                     {hasContent ? ( <span className="font-bold text-[9px] leading-tight px-1 text-center line-clamp-2 truncate w-full" title={data.compound}>{data.compound}</span> ) : ( <span className="opacity-0 hover:opacity-100 text-[10px] font-bold text-slate-400">+</span> )}
                                                 </div>
@@ -448,12 +462,18 @@ export const BoxDetail = ({ activeTest, updateActiveTest, storages, expandedGrou
                         <div className="bg-slate-50 border border-dashed border-slate-300 rounded-xl p-10 text-center text-slate-400 font-bold">No slots selected.</div>
                     ) : (
                         <div className="flex flex-col gap-3 max-h-[400px] overflow-y-auto custom-scrollbar pr-2">
-                            {selectedWells.sort((a,b) => a.r === b.r ? a.c - b.c : a.r - b.r).map(({r, c}) => {
+                            {[...selectedWells].sort((a,b) => a.r === b.r ? a.c - b.c : a.r - b.r).map(({r, c}) => {
                                 const d = getWellData(r, c);
                                 return (
                                     <div key={`${r}-${c}`} className="flex gap-3 items-center bg-slate-50 p-3 border border-slate-200 rounded-lg shadow-sm hover:border-blue-300 transition-colors flex-wrap">
                                         <div className="bg-blue-100 text-blue-800 font-black rounded-md w-12 h-10 flex items-center justify-center shrink-0 border border-blue-200 shadow-sm text-sm">{BOX_ROW_LABELS[r]}{c+1}</div>
                                         <input list="box-cmpd-list" value={d.compound} onChange={e => updateWellData(r, c, 'compound', e.target.value)} placeholder="Compound Name" className="border border-slate-300 rounded-md px-3 py-2 text-sm w-44 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 font-bold text-slate-700"/>
+                                        
+                                        <select value={d.operator || ''} onChange={e => updateWellData(r, c, 'operator', e.target.value)} className="border border-slate-300 rounded-md px-2 py-2 text-sm w-28 outline-none focus:border-blue-500 text-slate-600 font-medium bg-white">
+                                            <option value="">Operator...</option>
+                                            {operators.map(op => <option key={op} value={op}>{op}</option>)}
+                                        </select>
+
                                         <input type="text" value={d.solvent} onChange={e => updateWellData(r, c, 'solvent', e.target.value)} placeholder="Solvent" className="border border-slate-300 rounded-md px-3 py-2 text-sm w-24 outline-none focus:border-blue-500"/>
                                         
                                         <div className="flex items-center">
