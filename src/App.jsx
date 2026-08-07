@@ -3752,22 +3752,24 @@ if (customType === 'protein_expression') {
   });
 
   const [calFilterDate, setCalFilterDate] = useState(null);
+  const [agendaOpFilter, setAgendaOpFilter] = useState('ALL');
 
   const mergedPlan = useMemo(() => {
     const all = [];
 
     tests.forEach((t) => {
       (t.plan || []).forEach((task) => {
-        all.push({ ...task, testName: t.name, testId: t.id });
+        all.push({ ...task, testName: t.name, testId: t.id, testOperator: t.operator || '' });
       });
     });
 
-    const sorted = all.sort((a, b) => a.date.localeCompare(b.date));
+    let sorted = all.sort((a, b) => a.date.localeCompare(b.date));
 
-    if (calFilterDate) return sorted.filter((t) => t.date === calFilterDate);
+    if (calFilterDate) sorted = sorted.filter((t) => t.date === calFilterDate);
+    if (agendaOpFilter !== 'ALL') sorted = sorted.filter((t) => (t.assignedTo || t.testOperator || '') === agendaOpFilter);
 
     return sorted;
-  }, [tests, calFilterDate]);
+  }, [tests, calFilterDate, agendaOpFilter]);
 
   const agendaGrouped = useMemo(() => {
     const sorted = [...mergedPlan].sort((a, b) => a.date.localeCompare(b.date));
@@ -4597,12 +4599,24 @@ if (customType === 'protein_expression') {
                     </p>
                   </div>
 
-                  <button
-                    onClick={handlePrint}
-                    className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center gap-2 shadow-sm no-print w-full md:w-auto justify-center"
-                  >
-                    🖨️ Print / Save PDF
-                  </button>
+                  <div className="flex flex-wrap gap-2 items-center">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Filter by Operator</label>
+                      <select value={agendaOpFilter} onChange={(e) => setAgendaOpFilter(e.target.value)}
+                        className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm bg-white outline-none focus:border-blue-500 font-semibold shadow-sm">
+                        <option value="ALL">All Users</option>
+                        {(operators || []).map((op) => (
+                          <option key={op} value={op}>{op}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <button
+                      onClick={handlePrint}
+                      className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center gap-2 shadow-sm no-print self-end"
+                    >
+                      🖨️ Print / Save PDF
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex flex-col md:flex-row gap-6">
@@ -4707,6 +4721,12 @@ if (customType === 'protein_expression') {
                                   </button>
 
                                   <span className="text-sm text-slate-700 flex-1">{t.task}</span>
+                                  {t.assignedTo && (
+                                    <span className="text-[10px] font-bold bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full whitespace-nowrap">{t.assignedTo}</span>
+                                  )}
+                                  {!t.assignedTo && t.testOperator && (
+                                    <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full whitespace-nowrap">{t.testOperator}</span>
+                                  )}
                                 </div>
                               ))}
                             </div>
@@ -5871,6 +5891,7 @@ if (customType === 'protein_expression') {
                       customFields={customFields}
                       testCategories={testCategories}
                       operators={operators}
+                      instances={siblingTests}
                     />
                   );
                 }

@@ -1,7 +1,7 @@
 import React from 'react';
 import TestShellRenderer from './TestShellRenderer';
 import { CD_TAB_CONFIG } from './tabConfigs';
-import { All, NotebookExtra } from './CDSections';
+import { CDDataSection, MathAndFittingSection, FittingErrors, FittingGraphics, NotebookExtra } from './CDSections';
 
 export const CDTestRenderer = (props) => {
   // Categories defined in App → Definitions & Labels take priority
@@ -19,12 +19,16 @@ export const CDTestRenderer = (props) => {
       {...props}
       config={config}
       custom={{
-        All,
+        Data: (ctxProps) => <CDDataSection {...ctxProps} ctx={{ ...ctxProps.ctx, instances: props.instances || [] }} />,
+        Fitting: (ctxProps) => <MathAndFittingSection {...ctxProps} ctx={{ ...ctxProps.ctx, instances: props.instances || [] }} />,
+        FittingErrors: (ctxProps) => <FittingErrors {...ctxProps} ctx={{ ...ctxProps.ctx, instances: props.instances || [] }} />,
+        FittingGraphics: (ctxProps) => <FittingGraphics {...ctxProps} ctx={{ ...ctxProps.ctx, instances: props.instances || [] }} />,
         buildNotebookHtml: (checked, ctx) => {
           let html = '';
-          if (checked.cond) html += NotebookExtra({ ctx, checkId: 'cond' });
-          if (checked.spectra) html += NotebookExtra({ ctx, checkId: 'spectra' });
-          if (checked.struct) html += NotebookExtra({ ctx, checkId: 'table' });
+          const enhancedCtx = { ...ctx, instances: props.instances || [] };
+          if (checked.cond) html += NotebookExtra({ ctx: enhancedCtx, checkId: 'cond' });
+          if (checked.spectra) html += NotebookExtra({ ctx: enhancedCtx, checkId: 'spectra' });
+          if (checked.struct) html += NotebookExtra({ ctx: enhancedCtx, checkId: 'table' });
           return html;
         }
       }}

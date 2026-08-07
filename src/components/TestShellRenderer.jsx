@@ -722,8 +722,8 @@ const appendToNotebook = () => {
           <div className="flex flex-col gap-2 max-h-40 overflow-y-auto custom-scrollbar pr-2">
             {experimentPlan.length === 0 && <span className="text-xs text-slate-400 italic">No tasks planned yet.</span>}
             {experimentPlan.map((item) => (
-              <div key={item.id} className="flex gap-2 items-center bg-slate-50 border border-slate-200 p-1.5 rounded-lg shadow-sm">
-                <span className="text-[10px] font-bold w-20 text-slate-600 pl-2">{item.date}</span>
+              <div key={item.id} className="flex gap-2 items-start flex-wrap bg-slate-50 border border-slate-200 p-1.5 rounded-lg shadow-sm">
+                <span className="text-[10px] font-bold w-20 text-slate-600 pl-2 mt-1.5">{item.date}</span>
                 <input
                   type="text"
                   value={item.task}
@@ -732,13 +732,26 @@ const appendToNotebook = () => {
                       plan: experimentPlan.map((p) => (p.id === item.id ? { ...p, task: e.target.value } : p))
                     })
                   }
-                  className="bg-transparent border-none focus:outline-none focus:bg-white focus:ring-1 focus:ring-blue-500 p-1 text-xs flex-1 text-slate-700 rounded transition-all"
+                  className="bg-transparent border-none focus:outline-none focus:bg-white focus:ring-1 focus:ring-blue-500 p-1 text-xs flex-1 text-slate-700 rounded transition-all min-w-[120px]"
                   placeholder="Task description..."
                 />
+                {operators.length > 0 && (
+                  <select
+                    value={item.assignedTo || ''}
+                    onChange={(e) => update({ plan: experimentPlan.map((p) => (p.id === item.id ? { ...p, assignedTo: e.target.value } : p)) })}
+                    className="border border-slate-200 rounded px-1.5 py-0.5 text-[10px] bg-white text-slate-700 outline-none focus:border-blue-500 shrink-0"
+                  >
+                    <option value="">Assign to...</option>
+                    {operators.map((op) => <option key={op} value={op}>{op}</option>)}
+                  </select>
+                )}
+                {item.assignedTo && (
+                  <span className="text-[10px] font-bold bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full self-center whitespace-nowrap">{item.assignedTo}</span>
+                )}
                 <button
                   type="button"
                   onClick={() => update({ plan: experimentPlan.filter((p) => p.id !== item.id) })}
-                  className="text-slate-400 hover:text-red-500 text-[10px] font-bold px-2 transition"
+                  className="text-slate-400 hover:text-red-500 text-[10px] font-bold px-2 transition self-center"
                 >
                   ×
                 </button>
