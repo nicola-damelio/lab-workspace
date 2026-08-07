@@ -26,7 +26,7 @@ import {
 CD_TAB_CONFIG,
 PLATE_TAB_CONFIG,
 NMR_TAB_CONFIG,
-CLONING_TAB_CONFIG // <-- Add this import
+CLONING_TAB_CONFIG 
 } from './components/tabConfigs.jsx';
 
 const CUSTOM_FIELD_TAB_OPTIONS = [
@@ -38,6 +38,58 @@ const CUSTOM_FIELD_TAB_OPTIONS = [
   { value: 'cloning', label: 'Cloning' },
   { value: 'protein_expression', label: 'Protein Expression' }
 ];
+
+/* =========================================================
+   LINKS MANAGER UTILITY
+========================================================= */
+const LinksManager = ({ links = [], setLinks }) => {
+  const addLink = () => setLinks([...links, { url: '', description: '' }]);
+  const updateLink = (idx, field, val) => {
+    const newLinks = [...links];
+    newLinks[idx][field] = val;
+    setLinks(newLinks);
+  };
+  const removeLink = (idx) => setLinks(links.filter((_, i) => i !== idx));
+
+  return (
+    <div className="lg:col-span-12 mt-2 border-t border-slate-100 pt-3">
+      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Links & Resources</label>
+      {links.map((link, i) => (
+        <div key={i} className="flex flex-col md:flex-row gap-2 mb-2 items-center">
+          <input 
+            type="text" 
+            placeholder="Description (e.g. Vector Map)" 
+            value={link.description} 
+            onChange={e => updateLink(i, 'description', e.target.value)} 
+            className="w-full md:w-1/3 border border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-blue-500" 
+          />
+          <input 
+            type="text" 
+            placeholder="URL (https://...)" 
+            value={link.url} 
+            onChange={e => updateLink(i, 'url', e.target.value)} 
+            className="w-full md:w-2/3 border border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-blue-500" 
+          />
+          <button 
+            type="button" 
+            onClick={() => removeLink(i)} 
+            className="text-red-500 hover:text-red-700 font-bold px-2 py-1"
+            title="Remove Link"
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <button 
+        type="button" 
+        onClick={addLink} 
+        className="text-xs bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 font-semibold px-3 py-1 rounded transition-colors"
+      >
+        + Add Link
+      </button>
+    </div>
+  );
+};
 
 
 /* =========================================================
@@ -58,6 +110,7 @@ const CellLineDefinitionSection = ({
   const [tissue, setTissue] = useState('');
   const [cultureMedium, setCultureMedium] = useState('');
   const [notes, setNotes] = useState('');
+  const [links, setLinks] = useState([]);
 
   // Sync with external selection from the Library Directory
   useEffect(() => {
@@ -76,6 +129,7 @@ const CellLineDefinitionSection = ({
     if (!name) {
       setSelectedName('');
       setNewName('');
+      setLinks([]);
       return;
     }
     const meta = cellLineMeta[name] || {};
@@ -85,6 +139,7 @@ const CellLineDefinitionSection = ({
     setTissue(meta.tissue || '');
     setCultureMedium(meta.cultureMedium || '');
     setNotes(meta.notes || '');
+    setLinks(meta.links || []);
     if (onSelect) onSelect(name);
   };
 
@@ -101,6 +156,7 @@ const CellLineDefinitionSection = ({
       tissue,
       cultureMedium,
       notes,
+      links,
       updatedAt: Date.now()
     };
 
@@ -147,7 +203,10 @@ const CellLineDefinitionSection = ({
           <label className={CALC_LABEL_CLS}>Additional Notes</label>
           <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Growth conditions, morphology, etc." className={`${CALC_INPUT_CLS} h-20`} />
         </div>
-        <div className="lg:col-span-12 flex justify-end">
+        
+        <LinksManager links={links} setLinks={setLinks} />
+
+        <div className="lg:col-span-12 flex justify-end mt-2">
           <button type="button" onClick={saveCellLine} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm shadow-sm transition-colors">
             Save Cell Line
           </button>
@@ -172,6 +231,8 @@ const PlasmidDefinitionSection = ({
   const [promoter, setPromoter] = useState('');
   const [marker, setMarker] = useState('');
   const [insertSequence, setInsertSequence] = useState('');
+  const [notes, setNotes] = useState('');
+  const [links, setLinks] = useState([]);
 
   useEffect(() => {
     if (selectedId) choosePlasmid(selectedId);
@@ -183,6 +244,7 @@ const PlasmidDefinitionSection = ({
     if (!name) {
       setSelectedName('');
       setNewName('');
+      setLinks([]);
       return;
     }
     const meta = plasmidMeta[name] || {};
@@ -192,6 +254,8 @@ const PlasmidDefinitionSection = ({
     setPromoter(meta.promoter || '');
     setMarker(meta.marker || '');
     setInsertSequence(meta.insertSequence || '');
+    setNotes(meta.notes || '');
+    setLinks(meta.links || []);
     if (onSelect) onSelect(name);
   };
 
@@ -201,7 +265,7 @@ const PlasmidDefinitionSection = ({
 
     setPlasmidMeta((prev) => ({
       ...prev,
-      [name]: { name, backbone, promoter, marker, insertSequence, updatedAt: Date.now() }
+      [name]: { name, backbone, promoter, marker, insertSequence, notes, links, updatedAt: Date.now() }
     }));
     setSelectedName(name);
   };
@@ -236,7 +300,14 @@ const PlasmidDefinitionSection = ({
           <label className={CALC_LABEL_CLS}>Insert Sequence (DNA)</label>
           <textarea value={insertSequence} onChange={(e) => setInsertSequence(e.target.value)} placeholder="ATGC..." className={`${CALC_INPUT_CLS} h-24 font-mono`} />
         </div>
-        <div className="lg:col-span-12 flex justify-end">
+        <div className="lg:col-span-12">
+          <label className={CALC_LABEL_CLS}>Additional Notes</label>
+          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Cloning strategy, usage, etc." className={`${CALC_INPUT_CLS} h-20`} />
+        </div>
+
+        <LinksManager links={links} setLinks={setLinks} />
+
+        <div className="lg:col-span-12 flex justify-end mt-2">
           <button type="button" onClick={savePlasmid} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm shadow-sm transition-colors">
             Save Plasmid
           </button>
@@ -1410,9 +1481,6 @@ const Calculations = ({
   );
 };
 
-/* =========================================================
-   COMPOUND DEFINITION SECTION
-========================================================= */
 
 /* =========================================================
    COMPOUND DEFINITION SECTION
@@ -1424,8 +1492,8 @@ const CompoundDefinitionSection = ({
   setCustomCmpds,
   compoundMeta = {},
   setCompoundMeta,
-  selectedId, // <-- ADDED
-  onSelect    // <-- ADDED
+  selectedId,
+  onSelect    
 }) => {
   const [selectedName, setSelectedName] = useState('');
   const [newName, setNewName] = useState('');
@@ -1436,8 +1504,9 @@ const CompoundDefinitionSection = ({
   const [host, setHost] = useState('bacterial');
   const [manualMw, setManualMw] = useState('');
   const [smilesStatus, setSmilesStatus] = useState('');
+  const [notes, setNotes] = useState('');
+  const [links, setLinks] = useState([]);
 
-  // ADDED: Sync with external selection from the Library Directory
   useEffect(() => {
     if (selectedId) chooseCompound(selectedId);
   }, [selectedId]);
@@ -1458,6 +1527,8 @@ const CompoundDefinitionSection = ({
     if (!name) {
       setSelectedName('');
       setNewName('');
+      setNotes('');
+      setLinks([]);
       return;
     }
 
@@ -1470,6 +1541,8 @@ const CompoundDefinitionSection = ({
     setModText(meta.modifications || '');
     setSmiles(meta.smiles || '');
     setHost(meta.host || 'bacterial');
+    setNotes(meta.notes || '');
+    setLinks(meta.links || []);
     setManualMw('');
   };
 
@@ -1547,6 +1620,8 @@ const CompoundDefinitionSection = ({
       sequence: type === 'smiles' ? '' : sequence,
       modifications: type === 'smiles' ? '' : modText,
       smiles: type === 'smiles' ? smiles : '',
+      notes,
+      links,
       molecularWeight: effectiveMw ?? null,
       length: computed?.length ?? compoundMeta[name]?.length ?? null,
       dnaSequence: type === 'protein' ? dnaPreview : compoundMeta[name]?.dnaSequence || '',
@@ -1727,8 +1802,20 @@ const CompoundDefinitionSection = ({
           </div>
         </div>
       )}
+      
+      <div className="grid grid-cols-1 mb-4">
+        <label className={CALC_LABEL_CLS}>Additional Notes</label>
+        <textarea
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          placeholder="Solubility, handling, properties, etc."
+          className={`${CALC_INPUT_CLS} h-20`}
+        />
+      </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-3 mb-4">
+      <LinksManager links={links} setLinks={setLinks} />
+
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-3 mt-4 mb-4">
         <div className="md:col-span-3">
           <label className={CALC_LABEL_CLS}>Manual MW override, Da</label>
 
@@ -2188,7 +2275,6 @@ const ScientistsOperatorsManager = ({
 const CollapsibleSection = ({ title, subtitle, defaultOpen = false, children }) => {
   const [open, setOpen] = useState(defaultOpen);
 
-  // ADDED: Sync the open state when clicking an item in the directory
   useEffect(() => {
     setOpen(defaultOpen);
   }, [defaultOpen]);
@@ -2408,6 +2494,9 @@ export default function App() {
       date: new Date().toISOString().split('T')[0],
       instanceName: '',
       testCategory: 'Activity',
+      secondaryCategory: '',
+      bestMeasurement: false,
+      operator: '',
       type: customType,
       storageType: '',
       storageLabel: '',
@@ -2557,7 +2646,7 @@ if (customType === 'protein_expression') {
       return {
         ...baseTest,
         type: 'protein_expression',
-        testCategory: 'Expression Optimization', // Default category
+        testCategory: 'Expression Optimization', 
         yieldData: [],
         gelImages: [],
         chromatogramRaw: '',
@@ -2868,7 +2957,9 @@ if (customType === 'protein_expression') {
     operators,
     molecules,
     compoundMeta,
-    calculationEntries
+    calculationEntries,
+    cellLineMeta,
+    plasmidMeta
   };
 
   const getCompressedPayload = () =>
@@ -2957,6 +3048,8 @@ if (customType === 'protein_expression') {
     molecules,
     compoundMeta,
     calculationEntries,
+    cellLineMeta,
+    plasmidMeta,
     storages,
     isCloudReady,
     appView,
@@ -3127,6 +3220,8 @@ if (customType === 'protein_expression') {
       if (s.molecules !== undefined) setMolecules(s.molecules);
       if (s.compoundMeta !== undefined) setCompoundMeta(s.compoundMeta);
       if (s.calculationEntries !== undefined) setCalculationEntries(s.calculationEntries);
+      if (s.cellLineMeta !== undefined) setCellLineMeta(s.cellLineMeta);
+      if (s.plasmidMeta !== undefined) setPlasmidMeta(s.plasmidMeta);
 
       if (s.customFields !== undefined) {
         setCustomFields(normalizeCustomFields(s.customFields));
@@ -3168,12 +3263,9 @@ if (customType === 'protein_expression') {
         });
       }
 
-      if (s.compoundMeta !== undefined) {
-        setCompoundMeta((prev) => ({
-          ...prev,
-          ...s.compoundMeta
-        }));
-      }
+      if (s.compoundMeta !== undefined) setCompoundMeta((prev) => ({ ...prev, ...s.compoundMeta }));
+      if (s.cellLineMeta !== undefined) setCellLineMeta((prev) => ({ ...prev, ...s.cellLineMeta }));
+      if (s.plasmidMeta !== undefined) setPlasmidMeta((prev) => ({ ...prev, ...s.plasmidMeta }));
 
       if (s.calculationEntries !== undefined) {
         setCalculationEntries((prev) => {
@@ -3252,6 +3344,8 @@ if (customType === 'protein_expression') {
     setCalculationEntries({});
     setOperators([]);
     setMolecules([]);
+    setCellLineMeta({});
+    setPlasmidMeta({});
 
     setTestCategories([
       'Activity',
@@ -3401,6 +3495,8 @@ if (customType === 'protein_expression') {
       setCalculationEntries(s.calculationEntries || {});
       setOperators(Array.isArray(s.operators) ? s.operators : []);
       setMolecules(Array.isArray(s.molecules) ? s.molecules : []);
+      setCellLineMeta(s.cellLineMeta || {});
+      setPlasmidMeta(s.plasmidMeta || {});
 
       setTestCategories(
         s.testCategories || [
@@ -4411,7 +4507,6 @@ if (customType === 'protein_expression') {
               </div>
             )}
 
-// PASTE THIS NEW SECTION
             {currentModule === 'definitions' && (
               <div className="h-full min-h-0 overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
                 <div className="max-w-6xl mx-auto flex flex-col gap-4 pb-10">
@@ -4916,7 +5011,7 @@ if (customType === 'protein_expression') {
   : test.type === 'cd'
   ? '🌀'
   : test.type === 'cloning'
-  ? '🧬'  // <-- Aggiunto questo!
+  ? '🧬'  
   : test.type === 'plate-9x9box'
   ? '📦'
   : test.type === 'nmr-fittings'
@@ -4929,7 +5024,7 @@ if (customType === 'protein_expression') {
                               </span>
 
                               <h3 className="font-bold text-slate-800 text-lg truncate pr-8">
-                                {test.name}
+                                {test.name} {test.bestMeasurement && '⭐'}
                               </h3>
 
                               <p className="text-xs text-slate-500 mt-1">
@@ -5552,21 +5647,30 @@ if (customType === 'protein_expression') {
                             placeholder="Test Name"
                           />
 
-                          <div className="text-xs text-slate-500 font-medium px-1 mt-1 flex items-center gap-2">
+                          <div className="text-xs text-slate-500 font-medium px-1 mt-1 flex flex-wrap items-center gap-2">
                             <span className="uppercase text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
                               {activeTest.testCategory}
                             </span>
-
+                            {activeTest.secondaryCategory && (
+                              <span className="uppercase text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+                                {activeTest.secondaryCategory}
+                              </span>
+                            )}
                             <span className="uppercase text-slate-600 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
                               {activeTest.type === 'nmr-fittings'
                                 ? 'NMR FITTINGS'
                                 : activeTest.type.replace('plate-', '')}
                             </span>
+                            {activeTest.bestMeasurement && (
+                              <span className="uppercase text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 font-bold">
+                                ⭐ Best
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>
 
-                      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full lg:w-auto">
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full lg:w-auto flex-wrap">
                         <button
                           onClick={() => {
                             if (
@@ -5582,32 +5686,69 @@ if (customType === 'protein_expression') {
                         >
                           🗑️ Elimina
                         </button>
+                        
+                        <div className="flex flex-col flex-1 min-w-[120px]">
+                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
+                            Operator
+                          </label>
+                          <select
+                            value={activeTest.operator || ''}
+                            onChange={(e) => updateActiveTest({ operator: e.target.value })}
+                            className="bg-slate-50 border border-slate-200 text-xs px-2 py-2 rounded-lg outline-none focus:border-blue-500"
+                          >
+                            <option value="">Select Operator...</option>
+                            {operators.map(op => <option key={op} value={op}>{op}</option>)}
+                          </select>
+                        </div>
 
-                        <div className="flex flex-col flex-1 w-full sm:w-auto">
+                        <div className="flex flex-col flex-1 min-w-[120px]">
+                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
+                            Sec. Category
+                          </label>
+                          <input
+                            type="text"
+                            value={activeTest.secondaryCategory || ''}
+                            onChange={(e) => updateActiveTest({ secondaryCategory: e.target.value })}
+                            className="bg-slate-50 border border-slate-200 text-xs px-2 py-2 rounded-lg outline-none focus:border-blue-500"
+                            placeholder="e.g. Profiling"
+                          />
+                        </div>
+
+                        <div className="flex flex-col flex-1 min-w-[110px]">
                           <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
                             Instance
                           </label>
-
                           <input
                             type="text"
                             value={activeTest.instanceName || ''}
                             onChange={(e) => updateActiveTest({ instanceName: e.target.value })}
-                            className="bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-lg outline-none focus:border-blue-500 w-full sm:w-32"
+                            className="bg-slate-50 border border-slate-200 text-xs px-2 py-2 rounded-lg outline-none focus:border-blue-500"
                             placeholder="e.g. 24h / Rep 1"
                           />
                         </div>
 
-                        <div className="flex flex-col flex-1 w-full sm:w-auto">
+                        <div className="flex flex-col flex-1 min-w-[120px]">
                           <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
                             Date
                           </label>
-
                           <input
                             type="date"
                             value={activeTest.date}
                             onChange={(e) => updateActiveTest({ date: e.target.value })}
-                            className="bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-lg outline-none focus:border-blue-500 w-full"
+                            className="bg-slate-50 border border-slate-200 text-xs px-2 py-2 rounded-lg outline-none focus:border-blue-500"
                           />
+                        </div>
+                        
+                        <div className="flex flex-col items-center justify-center self-end mb-1">
+                          <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600 cursor-pointer hover:text-blue-600 transition-colors">
+                            <input
+                              type="checkbox"
+                              checked={!!activeTest.bestMeasurement}
+                              onChange={(e) => updateActiveTest({ bestMeasurement: e.target.checked })}
+                              className="rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
+                            />
+                            ⭐ Best
+                          </label>
                         </div>
                       </div>
                     </div>
@@ -5689,8 +5830,8 @@ if (customType === 'protein_expression') {
                   allCellLines={allCellLines}
                   customFields={customFields}
                   testCategories={testCategories}
-                  instances={siblingTests}   // ← ADD THIS
-                  operators={operators}      // ← ADD THIS
+                  instances={siblingTests}   
+                  operators={operators}      
                 />
               );
             }
@@ -5741,8 +5882,8 @@ if (activeTest.type === 'cloning') {
       testCategories={testCategories}
       operators={operators}
       instances={siblingTests}
-      compoundMeta={compoundMeta}   // ← ADD THIS
-      molecules={molecules}         // ← optional
+      compoundMeta={compoundMeta}   
+      molecules={molecules}         
     />
   );
 }
@@ -5754,7 +5895,7 @@ if (activeTest.type === 'nmr-fittings') {
       TestHeader={TestHeader}
       operators={operators}
       molecules={molecules}
-      compoundMeta={compoundMeta} // <-- AGGIUNGI QUESTA RIGA
+      compoundMeta={compoundMeta} 
       allCmpds={allCmpds}
       allCellLines={allCellLines}
       customFields={customFields}
@@ -5831,21 +5972,32 @@ if (activeTest.type === 'protein_expression') {
                   expandedGroups[key] !== undefined ? expandedGroups[key] : def;
 
                 const notebookSearch = getVal('notebookSearch', '');
+                const notebookCatFilter = getVal('notebookCatFilter', 'ALL');
+                const notebookSecCatFilter = getVal('notebookSecCatFilter', 'ALL');
+                const notebookOpFilter = getVal('notebookOpFilter', 'ALL');
+                const notebookBestOnly = getVal('notebookBestOnly', false);
+
+                const availableSecCats = [...new Set(tests.map(t => t.secondaryCategory).filter(Boolean))].sort();
 
                 const filteredTests = tests.filter((t) => {
-                  if (!notebookSearch) return true;
+                  if (notebookCatFilter !== 'ALL' && t.testCategory !== notebookCatFilter) return false;
+                  if (notebookSecCatFilter !== 'ALL' && t.secondaryCategory !== notebookSecCatFilter) return false;
+                  if (notebookOpFilter !== 'ALL' && t.operator !== notebookOpFilter) return false;
+                  if (notebookBestOnly && !t.bestMeasurement) return false;
 
-                  const query = notebookSearch.toLowerCase();
-
-                  return JSON.stringify(t).toLowerCase().includes(query);
+                  if (notebookSearch) {
+                    const query = notebookSearch.toLowerCase();
+                    if (!JSON.stringify(t).toLowerCase().includes(query)) return false;
+                  }
+                  
+                  return true;
                 });
 
                 return (
                   <div className="flex flex-col h-full w-full">
-                    <div className="bg-white p-3 md:p-4 border-b border-slate-200 shadow-sm flex flex-col md:flex-row items-center justify-between no-print shrink-0 gap-3">
-                      <div className="w-full md:flex-1 md:max-w-md relative">
+                    <div className="bg-white p-3 md:p-4 border-b border-slate-200 shadow-sm flex flex-col items-center justify-between no-print shrink-0 gap-3">
+                      <div className="w-full relative mb-2">
                         <span className="absolute left-3 top-2.5 text-slate-400">🔍</span>
-
                         <input
                           type="text"
                           placeholder="Generic search in test data..."
@@ -5858,6 +6010,41 @@ if (activeTest.type === 'protein_expression') {
                           }
                           className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-500"
                         />
+                      </div>
+                      <div className="w-full flex flex-wrap items-center gap-3">
+                        <select
+                          value={notebookCatFilter}
+                          onChange={(e) => setExpandedGroups(p => ({ ...p, notebookCatFilter: e.target.value }))}
+                          className="flex-1 min-w-[140px] border border-slate-300 rounded-lg px-3 py-2 text-xs bg-white focus:outline-none focus:border-blue-500 font-semibold text-slate-700 cursor-pointer"
+                        >
+                          <option value="ALL">All Categories</option>
+                          {testCategories.map((c) => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                        <select
+                          value={notebookSecCatFilter}
+                          onChange={(e) => setExpandedGroups(p => ({ ...p, notebookSecCatFilter: e.target.value }))}
+                          className="flex-1 min-w-[140px] border border-slate-300 rounded-lg px-3 py-2 text-xs bg-white focus:outline-none focus:border-blue-500 font-semibold text-slate-700 cursor-pointer"
+                        >
+                          <option value="ALL">All Sec. Categories</option>
+                          {availableSecCats.map((c) => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                        <select
+                          value={notebookOpFilter}
+                          onChange={(e) => setExpandedGroups(p => ({ ...p, notebookOpFilter: e.target.value }))}
+                          className="flex-1 min-w-[140px] border border-slate-300 rounded-lg px-3 py-2 text-xs bg-white focus:outline-none focus:border-blue-500 font-semibold text-slate-700 cursor-pointer"
+                        >
+                          <option value="ALL">All Operators</option>
+                          {operators.map((c) => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                        <label className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={notebookBestOnly}
+                            onChange={(e) => setExpandedGroups(p => ({ ...p, notebookBestOnly: e.target.checked }))}
+                            className="rounded text-blue-600 focus:ring-blue-500"
+                          />
+                          ⭐ Best Only
+                        </label>
                       </div>
                     </div>
 
