@@ -1259,7 +1259,6 @@ const SpectrumFittingSection = ({ ctx }) => {
       <p className="text-[10px] text-slate-400">💡 Blue = experimental spectrum · Red dashed = fitted curve from secondary-structure components.</p>
     </div>
   );
-  );
 };
 
 // ================= INDIVIDUAL SPECTRA CHART =================
