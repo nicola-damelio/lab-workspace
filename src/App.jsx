@@ -5870,6 +5870,7 @@ if (customType === 'protein_expression') {
                       allCellLines={allCellLines}
                       customFields={customFields}
                       testCategories={testCategories}
+                      operators={operators}
                     />
                   );
                 }
@@ -5981,6 +5982,7 @@ if (activeTest.type === 'protein_expression') {
                       TestHeader={TestHeader}
                       datasetProtocols={datasetProtocols}
                       jumpToProtocol={jumpToProtocolFn}
+                      operators={operators}
                     />
                   );
                 }

@@ -420,7 +420,7 @@ const makeTable = (overrides = {}) => ({
 });
 
 /* ========================================================================== */
-export const NMRFittingsTestRenderer = ({ activeTest = {}, updateActiveTest, TestHeader, compoundMeta = {}, allCmpds = [] }) => {
+export const NMRFittingsTestRenderer = ({ activeTest = {}, updateActiveTest, TestHeader, compoundMeta = {}, allCmpds = [], ...rest }) => {
   const update = (u) => { if (updateActiveTest) updateActiveTest(u); };
   const tables = Array.isArray(activeTest.nmrTables) ? activeTest.nmrTables : [];
   
