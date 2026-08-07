@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useRef, useMemo } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer
@@ -10,9 +10,185 @@ import TestShellRenderer, {
 import { PROTEIN_EXPRESSION_TAB_CONFIG } from './tabConfigs';
 
 /* ============================================================================
-   DATA SECTION — YIELD, CHROMATOGRAM & GELS
+   CHROMATOGRAPHY METHOD DEFINITIONS
 ========================================================================== */
+const CHROMATOGRAPHY_METHODS = [
+  'Affinity',
+  'His-Trap',
+  'GST',
+  'Ion Exchange',
+  'Gel Filtration'
+];
 
+const METHOD_BADGE = {
+  'Affinity': 'bg-blue-100 border-blue-300 text-blue-700',
+  'His-Trap': 'bg-teal-100 border-teal-300 text-teal-700',
+  'GST': 'bg-violet-100 border-violet-300 text-violet-700',
+  'Ion Exchange': 'bg-amber-100 border-amber-300 text-amber-700',
+  'Gel Filtration': 'bg-emerald-100 border-emerald-300 text-emerald-700'
+};
+
+const METHOD_STROKE = {
+  'Affinity': '#1e40af',
+  'His-Trap': '#0d9488',
+  'GST': '#7c3aed',
+  'Ion Exchange': '#d97706',
+  'Gel Filtration': '#059669'
+};
+
+const uid = (prefix) =>
+  `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+const parseChromatogram = (raw) => {
+  if (!raw) return [];
+  return String(raw)
+    .split('\n')
+    .map((line) => {
+      const parts = line.split(/[,\t; ]+/).filter(Boolean);
+      if (parts.length >= 2) {
+        const x = parseFloat(parts[0]);
+        const y = parseFloat(parts[1]);
+        if (!isNaN(x) && !isNaN(y)) return { volume: x, absorbance: y };
+      }
+      return null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.volume - b.volume);
+};
+
+/* ============================================================================
+   CHROMATOGRAM CARD (one card = one run, method is mandatory)
+========================================================================== */
+const ChromatogramCard = ({ chr, index, onChange, onRemove }) => {
+  const chartData = useMemo(() => parseChromatogram(chr.rawData), [chr.rawData]);
+  const stroke = METHOD_STROKE[chr.method] || '#1e40af';
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+      {/* header */}
+      <div className="flex justify-between items-center mb-3 flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-black text-slate-500">
+            📈 Chromatogram {index + 1}
+          </span>
+          <span
+            className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+              METHOD_BADGE[chr.method] || 'bg-slate-100 border-slate-300 text-slate-600'
+            }`}
+          >
+            {chr.method}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={onRemove}
+          className="bg-red-50 hover:bg-red-100 text-red-500 font-bold px-3 py-1.5 rounded text-xs border border-red-200"
+        >
+          🗑 Remove
+        </button>
+      </div>
+
+      {/* parameters */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+        <div>
+          <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+            Name / Run ID
+          </label>
+          <input
+            type="text"
+            value={chr.name}
+            onChange={(e) => onChange({ name: e.target.value })}
+            className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500"
+            placeholder="e.g. Ni-NTA elution pool"
+          />
+        </div>
+        <div>
+          <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+            Method type *
+          </label>
+          <select
+            value={chr.method}
+            onChange={(e) => onChange({ method: e.target.value })}
+            className="w-full border border-slate-300 rounded-lg p-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
+          >
+            {CHROMATOGRAPHY_METHODS.map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+            Running Buffer
+          </label>
+          <input
+            type="text"
+            value={chr.buffer}
+            onChange={(e) => onChange({ buffer: e.target.value })}
+            className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500"
+            placeholder="e.g. 50 mM NaPi, 300 mM NaCl"
+          />
+        </div>
+      </div>
+
+      {/* data + chart */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="flex flex-col gap-2">
+          <label className="block text-[10px] font-bold text-slate-500 uppercase">
+            Paste Data (Volume vs Absorbance)
+          </label>
+          <textarea
+            value={chr.rawData}
+            onChange={(e) => onChange({ rawData: e.target.value })}
+            className="w-full h-48 border border-slate-300 rounded-lg p-3 font-mono text-xs outline-none focus:border-blue-500 shadow-inner resize-y"
+            placeholder={'Two columns (Volume mL, Absorbance mAU)\nseparated by tabs, commas or spaces.'}
+          />
+          <p className="text-[10px] text-slate-400">Data points: {chartData.length}</p>
+        </div>
+        <div className="lg:col-span-2 bg-slate-50 p-4 rounded-xl border border-slate-200 min-h-[280px]">
+          <h4 className="text-xs font-bold text-slate-700 uppercase mb-3">Elution Profile</h4>
+          {chartData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={230}>
+              <LineChart data={chartData} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis
+                  dataKey="volume"
+                  type="number"
+                  domain={['auto', 'auto']}
+                  tick={{ fontSize: 11, fill: '#64748b' }}
+                  label={{ value: 'Elution Volume (mL)', position: 'insideBottom', offset: -12, fontSize: 11, fill: '#64748b' }}
+                />
+                <YAxis
+                  tick={{ fontSize: 11, fill: '#64748b' }}
+                  label={{ value: 'Absorbance', angle: -90, position: 'insideLeft', fontSize: 11, fill: '#64748b' }}
+                />
+                <Tooltip
+                  formatter={(value) => Number(value).toFixed(2)}
+                  labelFormatter={(label) => `${label} mL`}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="absorbance"
+                  stroke={stroke}
+                  strokeWidth={2}
+                  dot={false}
+                  isAnimationActive={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex h-full items-center justify-center text-slate-400 italic text-sm">
+              Paste data to view the chromatogram.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* ============================================================================
+   DATA SECTION — YIELD, MULTIPLE CHROMATOGRAMS & SDS-PAGE
+========================================================================== */
 const ProteinDataSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
 
@@ -20,40 +196,52 @@ const ProteinDataSection = ({ ctx }) => {
   const gelImages = Array.isArray(activeTest.gelImages) ? activeTest.gelImages : [];
   const gelImageInputRef = useRef(null);
 
-  // Chromatogram state
-  const [chromatogramRaw, setChromatogramRaw] = useState(activeTest.chromatogramRaw || '');
-
-  // Parse raw text into chart data (Volume vs Absorbance)
-  const chartData = useMemo(() => {
-    if (!chromatogramRaw) return [];
-    return chromatogramRaw
-      .split('\n')
-      .map(line => {
-        const parts = line.split(/[,\t; ]+/).filter(Boolean);
-        if (parts.length >= 2) {
-          const x = parseFloat(parts[0]);
-          const y = parseFloat(parts[1]);
-          if (!isNaN(x) && !isNaN(y)) return { volume: x, absorbance: y };
+  /* -------- chromatograms (multi-run, with legacy migration) -------- */
+  const chromatograms = Array.isArray(activeTest.chromatograms)
+    ? activeTest.chromatograms
+    : activeTest.chromatogramRaw
+    ? [
+        {
+          id: 'chr_legacy',
+          name: 'Chromatogram 1',
+          method: 'Affinity',
+          buffer: '',
+          rawData: activeTest.chromatogramRaw
         }
-        return null;
-      })
-      .filter(Boolean)
-      .sort((a, b) => a.volume - b.volume);
-  }, [chromatogramRaw]);
+      ]
+    : [];
 
-  const handleChromatogramChange = (val) => {
-    setChromatogramRaw(val);
-    updateActiveTest({ chromatogramRaw: val });
-  };
+  const setChromatograms = (next) =>
+    updateActiveTest({ chromatograms: next, chromatogramRaw: '' });
 
-  // Yield Management
+  const addChromatogram = () =>
+    setChromatograms([
+      ...chromatograms,
+      {
+        id: uid('chr'),
+        name: `Chromatogram ${chromatograms.length + 1}`,
+        method: 'Affinity',
+        buffer: '',
+        rawData: ''
+      }
+    ]);
+
+  const updateChromatogram = (id, patch) =>
+    setChromatograms(chromatograms.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+
+  const removeChromatogram = (id) =>
+    setChromatograms(chromatograms.filter((c) => c.id !== id));
+
+  /* -------- yield management -------- */
   const addYieldRow = () => {
     const newRow = {
-      id: `yield_${Date.now()}`,
+      id: uid('yield'),
       fraction: '',
       concentration: '',
       volume: '',
-      totalMass: ''
+      totalMass: '',
+      purity: '',
+      notes: ''
     };
     updateActiveTest({ yieldData: [...yieldData, newRow] });
   };
@@ -75,8 +263,11 @@ const ProteinDataSection = ({ ctx }) => {
     });
   };
 
+  /* -------- gel images -------- */
   const importGelImages = async (fileList) => {
-    const files = Array.from(fileList || []).filter((f) => f.type.startsWith('image/'));
+    const files = Array.from(fileList || []).filter(
+      (f) => f && f.type && f.type.startsWith('image/')
+    );
     if (!files.length) return;
     try {
       const imported = await Promise.all(
@@ -92,180 +283,338 @@ const ProteinDataSection = ({ ctx }) => {
       );
       updateActiveTest({ gelImages: [...gelImages, ...imported] });
     } catch (error) {
+      console.error(error);
       alert('Gel image import failed.');
     }
   };
 
+  const addGelImageLinks = () => {
+    const urlsText = prompt('Paste external link(s) for gel images, separated by commas:');
+    if (!urlsText || !urlsText.trim()) return;
+    const urls = urlsText.split(/[\s,]+/).map((u) => u.trim()).filter(Boolean);
+    updateActiveTest({ gelImages: [...gelImages, ...urls] });
+  };
+
   return (
-    <div className="flex flex-col gap-6">
-      
-      {/* 1. Protein Yield / Quantification */}
-      <CollapsibleSection title="Protein Yield (BCA / Bradford / UV)" icon="💧">
-        <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm">
-          <div className="flex justify-between items-center mb-3">
-            <h3 className="text-xs font-bold text-slate-600 uppercase">Purified Fractions</h3>
+    <CollapsibleSection title="Data" icon="📊">
+      <div className="flex flex-col gap-6">
+        {/* ============ 1. PROTEIN YIELD ============ */}
+        <CollapsibleSection title="Protein Yield (BCA / Bradford / UV)" icon="💧">
+          <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm">
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="text-xs font-bold text-slate-600 uppercase">Purified Fractions</h3>
+              <button
+                type="button"
+                onClick={addYieldRow}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm transition-colors"
+              >
+                + Add Fraction
+              </button>
+            </div>
+            <div className="overflow-x-auto custom-scrollbar border border-slate-200 rounded-lg">
+              <table className="w-full text-sm text-left min-w-[720px]">
+                <thead className="text-xs text-slate-500 uppercase bg-slate-100">
+                  <tr>
+                    <th className="px-3 py-2 border-b">Fraction / Pool</th>
+                    <th className="px-3 py-2 border-b">Conc (mg/mL)</th>
+                    <th className="px-3 py-2 border-b">Volume (mL)</th>
+                    <th className="px-3 py-2 border-b">Total Yield (mg)</th>
+                    <th className="px-3 py-2 border-b">Purity %</th>
+                    <th className="px-3 py-2 border-b">Notes</th>
+                    <th className="px-3 py-2 border-b w-10"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {yieldData.length === 0 && (
+                    <tr>
+                      <td colSpan="7" className="px-3 py-4 text-center text-slate-400 italic">
+                        No fractions added.
+                      </td>
+                    </tr>
+                  )}
+                  {yieldData.map((row) => (
+                    <tr key={row.id} className="hover:bg-slate-50">
+                      <td className="px-3 py-1.5">
+                        <input
+                          type="text"
+                          value={row.fraction}
+                          onChange={(e) => updateYieldRow(row.id, 'fraction', e.target.value)}
+                          className="w-full border border-slate-300 rounded px-2 py-1 text-sm outline-none focus:border-blue-500"
+                          placeholder="e.g. Elution 1"
+                        />
+                      </td>
+                      <td className="px-3 py-1.5">
+                        <input
+                          type="number"
+                          value={row.concentration}
+                          onChange={(e) => updateYieldRow(row.id, 'concentration', e.target.value)}
+                          className="w-full border border-slate-300 rounded px-2 py-1 text-sm outline-none focus:border-blue-500"
+                        />
+                      </td>
+                      <td className="px-3 py-1.5">
+                        <input
+                          type="number"
+                          value={row.volume}
+                          onChange={(e) => updateYieldRow(row.id, 'volume', e.target.value)}
+                          className="w-full border border-slate-300 rounded px-2 py-1 text-sm outline-none focus:border-blue-500"
+                        />
+                      </td>
+                      <td className="px-3 py-1.5 font-bold text-blue-700 font-mono">
+                        {row.totalMass || '—'}
+                      </td>
+                      <td className="px-3 py-1.5">
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={row.purity}
+                          onChange={(e) => updateYieldRow(row.id, 'purity', e.target.value)}
+                          className="w-full border border-slate-300 rounded px-2 py-1 text-sm outline-none focus:border-blue-500"
+                          placeholder="e.g. 95"
+                        />
+                      </td>
+                      <td className="px-3 py-1.5">
+                        <input
+                          type="text"
+                          value={row.notes}
+                          onChange={(e) => updateYieldRow(row.id, 'notes', e.target.value)}
+                          className="w-full border border-slate-300 rounded px-2 py-1 text-sm outline-none focus:border-blue-500"
+                          placeholder="Notes..."
+                        />
+                      </td>
+                      <td className="px-3 py-1.5 text-center">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateActiveTest({ yieldData: yieldData.filter((r) => r.id !== row.id) })
+                          }
+                          className="text-red-400 hover:text-red-600 font-bold"
+                        >
+                          ×
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </CollapsibleSection>
+
+        {/* ============ 2. CHROMATOGRAMS (multiple) ============ */}
+        <CollapsibleSection title="Chromatograms (FPLC / AKTA)" icon="📈">
+          <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
+            <p className="text-xs text-slate-500">
+              Add one chromatogram per purification step and select the method type
+              (Ion Exchange, Affinity, His-Trap, GST, Gel Filtration).
+            </p>
             <button
               type="button"
-              onClick={addYieldRow}
-              className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm transition-colors"
+              onClick={addChromatogram}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm"
             >
-              + Add Fraction
+              + Add Chromatogram
             </button>
           </div>
-          <table className="w-full text-sm text-left">
-            <thead className="text-xs text-slate-500 uppercase bg-slate-100">
-              <tr>
-                <th className="px-3 py-2">Fraction / Pool</th>
-                <th className="px-3 py-2">Conc (mg/mL)</th>
-                <th className="px-3 py-2">Volume (mL)</th>
-                <th className="px-3 py-2">Total Yield (mg)</th>
-                <th className="px-3 py-2 w-10"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {yieldData.length === 0 && (
-                <tr><td colSpan="5" className="px-3 py-4 text-center text-slate-400 italic">No fractions added.</td></tr>
-              )}
-              {yieldData.map((row) => (
-                <tr key={row.id}>
-                  <td className="px-3 py-1.5">
-                    <input type="text" value={row.fraction} onChange={(e) => updateYieldRow(row.id, 'fraction', e.target.value)} className="w-full border rounded px-2 py-1 text-sm outline-none focus:border-blue-500" placeholder="e.g. Elution 1" />
-                  </td>
-                  <td className="px-3 py-1.5">
-                    <input type="number" value={row.concentration} onChange={(e) => updateYieldRow(row.id, 'concentration', e.target.value)} className="w-full border rounded px-2 py-1 text-sm outline-none focus:border-blue-500" />
-                  </td>
-                  <td className="px-3 py-1.5">
-                    <input type="number" value={row.volume} onChange={(e) => updateYieldRow(row.id, 'volume', e.target.value)} className="w-full border rounded px-2 py-1 text-sm outline-none focus:border-blue-500" />
-                  </td>
-                  <td className="px-3 py-1.5 font-bold text-blue-700">{row.totalMass || '—'}</td>
-                  <td className="px-3 py-1.5 text-center">
-                    <button type="button" onClick={() => updateActiveTest({ yieldData: yieldData.filter(r => r.id !== row.id) })} className="text-red-400 hover:text-red-600 font-bold">×</button>
-                  </td>
-                </tr>
+          {chromatograms.length === 0 ? (
+            <div className="text-center py-8 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300 text-sm">
+              No chromatograms recorded. Add your first run above.
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4">
+              {chromatograms.map((chr, idx) => (
+                <ChromatogramCard
+                  key={chr.id}
+                  chr={chr}
+                  index={idx}
+                  onChange={(patch) => updateChromatogram(chr.id, patch)}
+                  onRemove={() => removeChromatogram(chr.id)}
+                />
               ))}
-            </tbody>
-          </table>
-        </div>
-      </CollapsibleSection>
+            </div>
+          )}
+        </CollapsibleSection>
 
-      {/* 2. Chromatogram Upload & Graph */}
-      <CollapsibleSection title="Chromatogram (FPLC/AKTA)" icon="📈">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="flex flex-col gap-2">
-            <label className="text-xs font-bold text-slate-600 uppercase">Paste Data (Volume vs Absorbance)</label>
-            <textarea
-              value={chromatogramRaw}
-              onChange={(e) => handleChromatogramChange(e.target.value)}
-              className="w-full h-48 border border-slate-300 rounded-lg p-3 font-mono text-xs outline-none focus:border-blue-500 shadow-inner"
-              placeholder="Paste two columns (Volume in mL, Absorbance in mAU). Separated by tabs or commas."
+        {/* ============ 3. SDS-PAGE GELS ============ */}
+        <CollapsibleSection title="SDS-PAGE Gels & Blots" icon="🖼️">
+          <div className="border border-slate-200 bg-slate-50 rounded-lg p-4">
+            <input
+              ref={gelImageInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                importGelImages(e.target.files);
+                e.target.value = '';
+              }}
             />
-            <p className="text-[10px] text-slate-400">Data points: {chartData.length}</p>
-          </div>
-          
-          <div className="lg:col-span-2 bg-white p-4 rounded-xl border border-slate-200 shadow-sm min-h-[300px]">
-            <h4 className="text-sm font-bold text-slate-700 uppercase mb-4">Elution Profile</h4>
-            {chartData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={250}>
-                <LineChart data={chartData} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                  <XAxis dataKey="volume" type="number" domain={['auto', 'auto']} tick={{ fontSize: 12 }} label={{ value: 'Elution Volume (mL)', position: 'insideBottom', offset: -15 }} />
-                  <YAxis tick={{ fontSize: 12 }} label={{ value: 'Absorbance (mAU)', angle: -90, position: 'insideLeft' }} />
-                  <Tooltip formatter={(value) => value.toFixed(2)} labelFormatter={(label) => `${label} mL`} />
-                  <Line type="monotone" dataKey="absorbance" stroke="#1e40af" strokeWidth={2} dot={false} isAnimationActive={false} />
-                </LineChart>
-              </ResponsiveContainer>
+            <div className="flex justify-between items-center mb-3 flex-wrap gap-2">
+              <label className="text-xs font-bold text-slate-600 uppercase">Gel Images</label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => gelImageInputRef.current?.click()}
+                  className="bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 font-bold px-3 py-1.5 rounded text-xs shadow-sm"
+                >
+                  📁 Upload Images
+                </button>
+                <button
+                  type="button"
+                  onClick={addGelImageLinks}
+                  className="bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-600 font-bold px-3 py-1.5 rounded text-xs shadow-sm"
+                >
+                  🔗 Add Links
+                </button>
+              </div>
+            </div>
+            {gelImages.length === 0 ? (
+              <p className="text-xs text-slate-400 italic">No gel images attached.</p>
             ) : (
-              <div className="flex h-full items-center justify-center text-slate-400 italic text-sm">
-                Paste data to view chromatogram
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mt-4">
+                {gelImages.map((imgSrc, idx) => (
+                  <div
+                    key={idx}
+                    className="relative group bg-white p-3 rounded-xl border border-slate-200 shadow-sm"
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-bold text-slate-500">Gel {idx + 1}</span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateActiveTest({ gelImages: gelImages.filter((_, i) => i !== idx) })
+                        }
+                        className="bg-red-50 hover:bg-red-100 text-red-500 rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold border border-red-200"
+                      >
+                        ×
+                      </button>
+                    </div>
+                    <div className="bg-slate-50 rounded-lg p-2 border border-slate-100">
+                      <SmartImage
+                        src={imgSrc}
+                        alt={`Gel image ${idx + 1}`}
+                        style={{ maxHeight: '260px', minHeight: '120px' }}
+                      />
+                    </div>
+                    {!String(imgSrc).startsWith('data:') && (
+                      <a
+                        href={imgSrc}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-2 text-xs text-blue-500 hover:text-blue-700 font-medium flex items-center gap-1"
+                      >
+                        🔗 Open original
+                      </a>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
           </div>
-        </div>
-      </CollapsibleSection>
-
-      {/* 3. SDS-PAGE Gels */}
-      <CollapsibleSection title="SDS-PAGE Gels & Blots" icon="🖼️">
-        <div className="border border-slate-200 bg-slate-50 rounded-lg p-4">
-          <input
-            ref={gelImageInputRef}
-            type="file"
-            accept="image/*"
-            multiple
-            className="hidden"
-            onChange={(e) => { importGelImages(e.target.files); e.target.value = ''; }}
-          />
-          <div className="flex justify-between items-center mb-3">
-            <label className="text-xs font-bold text-slate-600 uppercase">Gel Images</label>
-            <button
-              type="button"
-              onClick={() => gelImageInputRef.current?.click()}
-              className="bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 font-bold px-3 py-1.5 rounded text-xs shadow-sm"
-            >
-              📁 Upload Images
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {gelImages.map((imgSrc, idx) => (
-              <div key={idx} className="relative group bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
-                <div className="flex justify-between mb-2">
-                  <span className="text-xs font-bold text-slate-500">Gel {idx + 1}</span>
-                  <button type="button" onClick={() => updateActiveTest({ gelImages: gelImages.filter((_, i) => i !== idx) })} className="bg-red-50 text-red-500 rounded-full w-6 h-6 flex items-center justify-center">×</button>
-                </div>
-                <div className="bg-slate-50 rounded-lg p-2 border border-slate-100">
-                  <SmartImage src={imgSrc} alt={`Gel image ${idx + 1}`} style={{ maxHeight: '260px', minHeight: '120px' }} />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </CollapsibleSection>
-    </div>
+        </CollapsibleSection>
+      </div>
+    </CollapsibleSection>
   );
 };
 
 /* ============================================================================
    NOTEBOOK EXPORT
 ========================================================================== */
-
 const buildProteinNotebookHtml = (checked, ctx) => {
   const t = ctx.activeTest || {};
+
+  const operatorNames = (Array.isArray(t.operators) ? t.operators : [])
+    .map((op) =>
+      typeof op === 'string' ? op : `${op?.name || ''} ${op?.surname || ''}`.trim()
+    )
+    .filter(Boolean)
+    .join(', ');
+
+  const samples =
+    Array.isArray(ctx.selectedCompounds) && ctx.selectedCompounds.length
+      ? ctx.selectedCompounds.join(', ')
+      : 'N/A';
+  const hosts =
+    Array.isArray(ctx.cellLines) && ctx.cellLines.length
+      ? ctx.cellLines.join(', ')
+      : 'N/A';
+
   let html = '';
 
   if (checked.cond) {
     html += `
       <p style="font-size: 12px; color: #475569; margin-bottom: 8px;">
-        <b>Induction:</b> ${t.inductionMethod || 'N/A'} @ ${t.inductionTemp || 'N/A'} |
-        <b>Lysis:</b> ${t.lysisBuffer || 'N/A'} |
-        <b>Column:</b> ${t.columnType || 'N/A'}
+        <b>Experiment Type:</b> ${t.testCategory || 'N/A'} |
+        <b>Operator(s):</b> ${operatorNames || 'N/A'} |
+        <b>Construct:</b> ${samples} |
+        <b>Host:</b> ${hosts}
       </p>
-    `;
+      <p style="font-size: 12px; color: #475569; margin-bottom: 8px;">
+        <b>Culture:</b> ${t.cultureVolume || '—'} in ${t.medium || '—'} (${t.antibiotic || '—'}) |
+        <b>Induction:</b> ${t.inductionMethod || '—'} ${t.iptgConcentration ? `(${t.iptgConcentration})` : ''}
+        at OD ${t.inductionOD || '—'}, ${t.inductionTemp || '—'} for ${t.inductionDuration || '—'}
+        (harvest OD ${t.harvestOD || '—'}) |
+        <b>Lysis:</b> ${t.lysisMethod || '—'} in ${t.lysisBuffer || '—'}
+        ${t.proteaseInhibitors ? `(+inhibitors: ${t.proteaseInhibitors})` : ''}
+      </p>
+      <p style="font-size: 12px; color: #475569; margin-bottom: 8px;">
+        <b>Tag:</b> ${t.proteinTag || '—'} |
+        <b>Protease:</b> ${t.cleavageProtease || '—'} |
+        <b>Column:</b> ${t.columnType || '—'} |
+        <b>Elution:</b> ${t.elutionConditions || '—'} |
+        <b>Storage buffer:</b> ${t.storageBuffer || '—'}
+      </p>`;
   }
 
   if (checked.yield && Array.isArray(t.yieldData) && t.yieldData.length > 0) {
-    html += `
-      <h4 style="font-size: 12px; color: #334155; margin-bottom: 4px; border-bottom: 1px solid #cbd5e1; padding-bottom: 2px;">Purification Yield</h4>
-      <table style="width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 11px; text-align: left; background: white;">
-        <tr style="background-color: #f1f5f9;">
-          <th style="padding: 6px; border: 1px solid #cbd5e1;">Fraction</th>
-          <th style="padding: 6px; border: 1px solid #cbd5e1;">Conc (mg/mL)</th>
-          <th style="padding: 6px; border: 1px solid #cbd5e1;">Vol (mL)</th>
-          <th style="padding: 6px; border: 1px solid #cbd5e1;">Total (mg)</th>
-        </tr>
-    `;
+    html += `<h4 style="font-size: 12px; color: #334155; margin-bottom: 4px; border-bottom: 1px solid #cbd5e1; padding-bottom: 2px;">Purification Yield</h4>
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 11px; text-align: left; background: white;">
+      <tr style="background-color: #f1f5f9;">
+        <th style="padding: 6px; border: 1px solid #cbd5e1;">Fraction</th>
+        <th style="padding: 6px; border: 1px solid #cbd5e1;">Conc (mg/mL)</th>
+        <th style="padding: 6px; border: 1px solid #cbd5e1;">Vol (mL)</th>
+        <th style="padding: 6px; border: 1px solid #cbd5e1;">Total (mg)</th>
+        <th style="padding: 6px; border: 1px solid #cbd5e1;">Purity %</th>
+        <th style="padding: 6px; border: 1px solid #cbd5e1;">Notes</th>
+      </tr>`;
     t.yieldData.forEach((row) => {
       html += `<tr>
         <td style="padding: 6px; border: 1px solid #e2e8f0;"><b>${row.fraction || '—'}</b></td>
         <td style="padding: 6px; border: 1px solid #e2e8f0;">${row.concentration || '—'}</td>
         <td style="padding: 6px; border: 1px solid #e2e8f0;">${row.volume || '—'}</td>
         <td style="padding: 6px; border: 1px solid #e2e8f0; color: #1d4ed8;"><b>${row.totalMass || '—'}</b></td>
+        <td style="padding: 6px; border: 1px solid #e2e8f0;">${row.purity || '—'}</td>
+        <td style="padding: 6px; border: 1px solid #e2e8f0;">${row.notes || '—'}</td>
       </tr>`;
     });
     html += `</table>`;
   }
 
-  if (checked.chromatogram && t.chromatogramRaw) {
-    html += `<p style="font-size: 11px; color: #64748b;">Chromatogram data attached to original record.</p>`;
+  if (checked.chromatogram) {
+    const chromatograms = Array.isArray(t.chromatograms)
+      ? t.chromatograms
+      : t.chromatogramRaw
+      ? [{ id: 'chr_legacy', name: 'Chromatogram 1', method: 'Affinity', buffer: '', rawData: t.chromatogramRaw }]
+      : [];
+    if (chromatograms.length > 0) {
+      html += `<h4 style="font-size: 12px; color: #334155; margin-bottom: 4px; border-bottom: 1px solid #cbd5e1; padding-bottom: 2px;">Chromatograms</h4>
+      <table style="width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 11px; text-align: left; background: white;">
+        <tr style="background-color: #f1f5f9;">
+          <th style="padding: 6px; border: 1px solid #cbd5e1;">Run</th>
+          <th style="padding: 6px; border: 1px solid #cbd5e1;">Method</th>
+          <th style="padding: 6px; border: 1px solid #cbd5e1;">Buffer</th>
+          <th style="padding: 6px; border: 1px solid #cbd5e1;">Data points</th>
+        </tr>`;
+      chromatograms.forEach((chr) => {
+        const nPoints = parseChromatogram(chr.rawData).length;
+        html += `<tr>
+          <td style="padding: 6px; border: 1px solid #e2e8f0;"><b>${chr.name || '—'}</b></td>
+          <td style="padding: 6px; border: 1px solid #e2e8f0;">${chr.method || '—'}</td>
+          <td style="padding: 6px; border: 1px solid #e2e8f0;">${chr.buffer || '—'}</td>
+          <td style="padding: 6px; border: 1px solid #e2e8f0;">${nPoints}</td>
+        </tr>`;
+      });
+      html += `</table>`;
+    }
   }
 
   if (checked.gels && Array.isArray(t.gelImages) && t.gelImages.length > 0) {
@@ -278,7 +627,6 @@ const buildProteinNotebookHtml = (checked, ctx) => {
 /* ============================================================================
    MAIN RENDERER
 ========================================================================== */
-
 export const ProteinExpressionTestRenderer = (props) => {
   const appCategories =
     Array.isArray(props.testCategories) && props.testCategories.length
@@ -299,6 +647,7 @@ export const ProteinExpressionTestRenderer = (props) => {
         buildNotebookHtml: buildProteinNotebookHtml
       }}
       testCategories={appCategories}
+      operators={Array.isArray(props.operators) ? props.operators : []}
     />
   );
 };

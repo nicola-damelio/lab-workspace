@@ -5,21 +5,10 @@ import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ReferenceLine, Legend, ErrorBar
+  ResponsiveContainer, ReferenceLine, Legend, ErrorBar, ScatterChart, Scatter, Cell, ReferenceArea
 } from 'recharts';
 
 const HAS_EB = typeof ErrorBar !== 'undefined';
-
-/* ============================================================================
-CDSections — REWRITTEN
-Now includes (ported from NMRSections.jsx):
-  • Multiple experimental conditions / instances (each with own spectra + values)
-  • Parameter layers (built-in CD Signal + user layers)
-  • Condition plots with weighted fitting: Linear / 4PL / Custom Equation
-  • Error management: fixed SD, manual SD, outlier exclusion, auto-touch SD
-  • Per-plot graphical parameters + horizontal reference lines
-  • Selection presets for plotted spectra
-========================================================================== */
 
 const FS_CLASSES =
   'fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col';
@@ -307,7 +296,7 @@ const parseManual = (v) => {
   return Number.isFinite(n) ? n : null;
 };
 
-// ================= FITTING ENGINE (ported from NMRSections) =================
+// ================= FITTING ENGINE =================
 const gaussSolve = (A, b) => {
   const n = b.length;
   const M = A.map((r, i) => [...r, b[i]]);
@@ -590,7 +579,7 @@ const defaultCdPlotCfg = (n) => ({
   chartCfg: { ...FIT_DEFAULT_CHART_CFG }
 });
 
-// ================= INSTANCES / LAYERS (ported concept from NMRSections) =================
+// ================= INSTANCES / LAYERS =================
 const CD_SIGNAL_LAYER = { key: 'cd', label: 'CD Signal', unit: 'mdeg', builtin: true };
 
 const getInstances = (activeTest) => {
@@ -884,38 +873,14 @@ const CD_LIBRARY_TABS = [
 ];
 
 const CD_SIM_INFO = {
-  dnaPepAlpha: {
-    ratioLabel: 'Peptide:DNA Ratio',
-    description: 'Simulation (Alpha Binding): DNA remains B-form. Ratio 0-1: peptide binds as α-helix. Ratio >1: excess peptide is Random Coil.'
-  },
-  dnaPepBeta: {
-    ratioLabel: 'Peptide:DNA Ratio',
-    description: 'Simulation (Beta Binding): DNA remains B-form. Ratio 0-1: peptide binds as β-sheet. Ratio >1: excess peptide is Random Coil.'
-  },
-  dnaPepAlphaZ: {
-    ratioLabel: 'Peptide:DNA Ratio',
-    description: 'Simulation (Alpha + Z-Switch): DNA switches from B to Z form. Ratio 0-1: DNA B → Z transition; peptide binds as α-helix. Ratio >1: DNA is Z-form; excess peptide is Random Coil.'
-  },
-  dnaPepBetaZ: {
-    ratioLabel: 'Peptide:DNA Ratio',
-    description: 'Simulation (Beta + Z-Switch): DNA switches from B to Z form. Ratio 0-1: DNA B → Z transition; peptide binds as β-sheet. Ratio >1: DNA is Z-form; excess peptide is Random Coil.'
-  },
-  pepDnaAlpha: {
-    ratioLabel: 'DNA:Peptide Ratio',
-    description: 'Simulation (Peptide + DNA [Alpha]): Titration of peptide solution with B-DNA. Ratio 0-1: free peptide is Random Coil, bound peptide is α-helix. Ratio >1: peptide fully bound as α-helix; excess DNA is B-form.'
-  },
-  pepDnaBeta: {
-    ratioLabel: 'DNA:Peptide Ratio',
-    description: 'Simulation (Peptide + DNA [Beta]): Titration of peptide solution with B-DNA. Ratio 0-1: free peptide is Random Coil, bound peptide is β-sheet. Ratio >1: peptide fully bound as β-sheet; excess DNA is B-form.'
-  },
-  pepDnaAlphaZ: {
-    ratioLabel: 'DNA:Peptide Ratio',
-    description: 'Simulation (Peptide + DNA [Alpha+Z]): DNA assumes Z-form when bound. Ratio 0-1: peptide excess forces added DNA into Z-form; bound peptide is α-helix. Ratio >1: excess unbound DNA is B-form; bound DNA is Z-form.'
-  },
-  pepDnaBetaZ: {
-    ratioLabel: 'DNA:Peptide Ratio',
-    description: 'Simulation (Peptide + DNA [Beta+Z]): DNA assumes Z-form when bound. Ratio 0-1: peptide excess forces added DNA into Z-form; bound peptide is β-sheet. Ratio >1: excess unbound DNA is B-form; bound DNA is Z-form.'
-  }
+  dnaPepAlpha: { ratioLabel: 'Peptide:DNA Ratio', description: 'Simulation (Alpha Binding): DNA remains B-form. Ratio 0-1: peptide binds as α-helix. Ratio >1: excess peptide is Random Coil.' },
+  dnaPepBeta: { ratioLabel: 'Peptide:DNA Ratio', description: 'Simulation (Beta Binding): DNA remains B-form. Ratio 0-1: peptide binds as β-sheet. Ratio >1: excess peptide is Random Coil.' },
+  dnaPepAlphaZ: { ratioLabel: 'Peptide:DNA Ratio', description: 'Simulation (Alpha + Z-Switch): DNA switches from B to Z form. Ratio 0-1: DNA B → Z transition; peptide binds as α-helix. Ratio >1: DNA is Z-form; excess peptide is Random Coil.' },
+  dnaPepBetaZ: { ratioLabel: 'Peptide:DNA Ratio', description: 'Simulation (Beta + Z-Switch): DNA switches from B to Z form. Ratio 0-1: DNA B → Z transition; peptide binds as β-sheet. Ratio >1: DNA is Z-form; excess peptide is Random Coil.' },
+  pepDnaAlpha: { ratioLabel: 'DNA:Peptide Ratio', description: 'Simulation (Peptide + DNA [Alpha]): Titration of peptide solution with B-DNA. Ratio 0-1: free peptide is Random Coil, bound peptide is α-helix. Ratio >1: peptide fully bound as α-helix; excess DNA is B-form.' },
+  pepDnaBeta: { ratioLabel: 'DNA:Peptide Ratio', description: 'Simulation (Peptide + DNA [Beta]): Titration of peptide solution with B-DNA. Ratio 0-1: free peptide is Random Coil, bound peptide is β-sheet. Ratio >1: peptide fully bound as β-sheet; excess DNA is B-form.' },
+  pepDnaAlphaZ: { ratioLabel: 'DNA:Peptide Ratio', description: 'Simulation (Peptide + DNA [Alpha+Z]): DNA assumes Z-form when bound. Ratio 0-1: peptide excess forces added DNA into Z-form; bound peptide is α-helix. Ratio >1: excess unbound DNA is B-form; bound DNA is Z-form.' },
+  pepDnaBetaZ: { ratioLabel: 'DNA:Peptide Ratio', description: 'Simulation (Peptide + DNA [Beta+Z]): DNA assumes Z-form when bound. Ratio 0-1: peptide excess forces added DNA into Z-form; bound peptide is β-sheet. Ratio >1: excess unbound DNA is B-form; bound DNA is Z-form.' }
 };
 
 const CD_REF_TYPES = {
@@ -1004,41 +969,15 @@ const buildCdLibraryData = ({ tab, selectedProtein, selectedDna, selectedGq, rat
     let values = [];
     let label = '';
     switch (tab) {
-      case 'dnaPepAlpha':
-        values = mix([[B, 1], [alpha, bound01], [coil, excess]]);
-        label = `DNA + α-peptide (P/D ${r.toFixed(1)})`;
-        break;
-      case 'dnaPepBeta':
-        values = mix([[B, 1], [beta, bound01], [coil, excess]]);
-        label = `DNA + β-peptide (P/D ${r.toFixed(1)})`;
-        break;
-      case 'dnaPepAlphaZ':
-        values = mix([[B, 1 - bound01], [Z, bound01], [alpha, bound01], [coil, excess]]);
-        label = `DNA B→Z + α-peptide (P/D ${r.toFixed(1)})`;
-        break;
-      case 'dnaPepBetaZ':
-        values = mix([[B, 1 - bound01], [Z, bound01], [beta, bound01], [coil, excess]]);
-        label = `DNA B→Z + β-peptide (P/D ${r.toFixed(1)})`;
-        break;
-      case 'pepDnaAlpha':
-        values = mix([[alpha, bound01], [coil, free], [B, r]]);
-        label = `Peptide + B-DNA (D/P ${r.toFixed(1)})`;
-        break;
-      case 'pepDnaBeta':
-        values = mix([[beta, bound01], [coil, free], [B, r]]);
-        label = `Peptide + B-DNA (D/P ${r.toFixed(1)})`;
-        break;
-      case 'pepDnaAlphaZ':
-        values = mix([[alpha, bound01], [coil, free], [Z, bound01], [B, Math.max(r - 1, 0)]]);
-        label = `Peptide + Z-DNA/B-DNA (D/P ${r.toFixed(1)})`;
-        break;
-      case 'pepDnaBetaZ':
-        values = mix([[beta, bound01], [coil, free], [Z, bound01], [B, Math.max(r - 1, 0)]]);
-        label = `Peptide + Z-DNA/B-DNA (D/P ${r.toFixed(1)})`;
-        break;
-      default:
-        values = xs.map(() => 0);
-        label = 'Unknown simulation';
+      case 'dnaPepAlpha': values = mix([[B, 1], [alpha, bound01], [coil, excess]]); label = `DNA + α-peptide (P/D ${r.toFixed(1)})`; break;
+      case 'dnaPepBeta': values = mix([[B, 1], [beta, bound01], [coil, excess]]); label = `DNA + β-peptide (P/D ${r.toFixed(1)})`; break;
+      case 'dnaPepAlphaZ': values = mix([[B, 1 - bound01], [Z, bound01], [alpha, bound01], [coil, excess]]); label = `DNA B→Z + α-peptide (P/D ${r.toFixed(1)})`; break;
+      case 'dnaPepBetaZ': values = mix([[B, 1 - bound01], [Z, bound01], [beta, bound01], [coil, excess]]); label = `DNA B→Z + β-peptide (P/D ${r.toFixed(1)})`; break;
+      case 'pepDnaAlpha': values = mix([[alpha, bound01], [coil, free], [B, r]]); label = `Peptide + B-DNA (D/P ${r.toFixed(1)})`; break;
+      case 'pepDnaBeta': values = mix([[beta, bound01], [coil, free], [B, r]]); label = `Peptide + B-DNA (D/P ${r.toFixed(1)})`; break;
+      case 'pepDnaAlphaZ': values = mix([[alpha, bound01], [coil, free], [Z, bound01], [B, Math.max(r - 1, 0)]]); label = `Peptide + Z-DNA/B-DNA (D/P ${r.toFixed(1)})`; break;
+      case 'pepDnaBetaZ': values = mix([[beta, bound01], [coil, free], [Z, bound01], [B, Math.max(r - 1, 0)]]); label = `Peptide + Z-DNA/B-DNA (D/P ${r.toFixed(1)})`; break;
+      default: values = xs.map(() => 0); label = 'Unknown simulation';
     }
     series = [{ label, color: '#7c3aed', values }];
   }
@@ -1470,7 +1409,7 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
   }, [d.instances, seriesData, plot.xMode, plot.manualSD, plot.useFixedSD, plot.fixedSDStr, plot.excluded]);
 
   const numData = (s) =>
-    includedPts(s).filter((p) => p.x !== null).map((p) => ({ x: p.x, y: p.y, sd: effSD(s.key, p), name: p.name }));
+    includedPts(s).filter((p) => p.x !== null).sort((a, b) => a.x - b.x).map((p) => ({ x: p.x, y: p.y, sd: effSD(s.key, p), name: p.name }));
 
   const fitData = (s) => {
     const fit = fits[s.key];
@@ -1990,7 +1929,7 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
 SECTION COMPONENTS
 ========================================================================== */
 
-// ================= TOOLBAR (Export XLS / Export PDF) =================
+// ================= TOOLBAR =================
 export const Toolbar = ({ ctx }) => {
   const { activeTest } = ctx;
   const barRef = useRef(null);
@@ -2001,23 +1940,18 @@ export const Toolbar = ({ ctx }) => {
       const structureComposition = activeTest.structureComposition || DEFAULT_STRUCTURE;
       const instances = getInstances(activeTest);
       const layers = getLayers(activeTest);
-      const titrationVariables = Array.isArray(activeTest.titrationVariables)
-        ? activeTest.titrationVariables
-        : ['Ratio', 'Concentration', 'Temperature'];
+      const titrationVariables = Array.isArray(activeTest.titrationVariables) ? activeTest.titrationVariables : ['Ratio', 'Concentration', 'Temperature'];
       const titrationRows = activeTest.titrationRows || [];
 
       const wb = XLSX.utils.book_new();
       const usedNames = new Set();
       const sheetSafe = (s) => (s || 'Sheet').replace(/[\\/?*[\]:]/g, '_').slice(0, 31);
       const uniqueSheet = (base) => {
-        let n = sheetSafe(base);
-        let i = 2;
+        let n = sheetSafe(base); let i = 2;
         while (usedNames.has(n)) { n = sheetSafe(`${base}_${i}`); i++; }
-        usedNames.add(n);
-        return n;
+        usedNames.add(n); return n;
       };
 
-      // One sheet per instance (condition)
       instances.forEach((inst, ii) => {
         const { parsedWavelengths, parsedSpectra } = computeParsed(inst);
         const wlAoa = [['Wavelength (nm)', ...parsedSpectra.map((s) => s.title)]];
@@ -2029,7 +1963,6 @@ export const Toolbar = ({ ctx }) => {
         XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(wlAoa), uniqueSheet(`CD ${inst.name || ii + 1}`));
       });
 
-      // Condition values (all layers)
       const valAoa = [['Instance (Condition)', 'X (numeric)', 'Parameter', 'Spectrum', 'Value']];
       instances.forEach((inst) => {
         layers.forEach((l) => {
@@ -2044,30 +1977,21 @@ export const Toolbar = ({ ctx }) => {
       });
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(valAoa), uniqueSheet('Condition Values'));
 
-      // Structure
       const structAoa = [['Structure', 'Percentage (%)']];
       Object.entries(structureComposition).forEach(([k, v]) => structAoa.push([k, v]));
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(structAoa), uniqueSheet('Structure'));
 
-      // Experimental variables
       if (titrationRows.length > 0) {
         const titrationAoa = [['Point', ...titrationVariables, 'Notes']];
         titrationRows.forEach((row, idx) => {
-          titrationAoa.push([
-            idx + 1,
-            ...titrationVariables.map((v) => (row.values || {})[v] || ''),
-            row.notes || ''
-          ]);
+          titrationAoa.push([idx + 1, ...titrationVariables.map((v) => (row.values || {})[v] || ''), row.notes || '']);
         });
         XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(titrationAoa), uniqueSheet('Experimental Variables'));
       }
 
       const fname = `CD_${(compound || 'experiment').replace(/[^a-z0-9]+/gi, '_')}.xlsx`;
       XLSX.writeFile(wb, fname);
-    } catch (e) {
-      console.error(e);
-      alert(`Export Failed: ${e.message}`);
-    }
+    } catch (e) { console.error(e); alert(`Export Failed: ${e.message}`); }
   };
 
   const exportPDF = async () => {
@@ -2075,38 +1999,23 @@ export const Toolbar = ({ ctx }) => {
     const el = bar ? bar.closest('.h-full') : null;
     if (!el) return;
     const scroller = el.querySelector('.overflow-y-auto');
-    const origElOverflow = el.style.overflow;
-    const origElHeight = el.style.height;
-    const origScrollerOverflow = scroller ? scroller.style.overflow : '';
-    const origScrollerHeight = scroller ? scroller.style.height : '';
+    const origElOverflow = el.style.overflow; const origElHeight = el.style.height;
+    const origScrollerOverflow = scroller ? scroller.style.overflow : ''; const origScrollerHeight = scroller ? scroller.style.height : '';
     const fixedEls = document.querySelectorAll('.fixed, [style*="position: fixed"]');
     fixedEls.forEach((x) => (x.style.display = 'none'));
     const noPrintEls = el.querySelectorAll('.no-print');
     noPrintEls.forEach((x) => (x.style.display = 'none'));
-    el.style.overflow = 'visible';
-    el.style.height = 'auto';
-    if (scroller) {
-      scroller.style.overflow = 'visible';
-      scroller.style.height = 'auto';
-    }
+    el.style.overflow = 'visible'; el.style.height = 'auto';
+    if (scroller) { scroller.style.overflow = 'visible'; scroller.style.height = 'auto'; }
     window.scrollTo(0, 0);
     await new Promise((r) => setTimeout(r, 500));
     try {
-      const canvas = await html2canvas(el, {
-        scale: 2,
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: '#f8fafc',
-        logging: false
-      });
+      const canvas = await html2canvas(el, { scale: 2, useCORS: true, allowTaint: true, backgroundColor: '#f8fafc', logging: false });
       const imgData = canvas.toDataURL('image/jpeg', 0.92);
       const pdf = new jsPDF('p', 'pt', 'a4');
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const imgWidth = pageWidth;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      let heightLeft = imgHeight;
-      let position = 0;
+      const pageWidth = pdf.internal.pageSize.getWidth(); const pageHeight = pdf.internal.pageSize.getHeight();
+      const imgWidth = pageWidth; const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      let heightLeft = imgHeight; let position = 0;
       pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
       heightLeft -= pageHeight;
       while (heightLeft > 0) {
@@ -2116,40 +2025,27 @@ export const Toolbar = ({ ctx }) => {
         heightLeft -= pageHeight;
       }
       pdf.save(`CD_Report_${(activeTest.compound || 'experiment').replace(/[^a-z0-9]+/gi, '_')}.pdf`);
-    } catch (e) {
-      console.error(e);
-      alert(`Export Failed: ${e.message}`);
-    } finally {
+    } catch (e) { console.error(e); alert(`Export Failed: ${e.message}`); } finally {
       fixedEls.forEach((x) => (x.style.display = ''));
       noPrintEls.forEach((x) => (x.style.display = ''));
-      el.style.overflow = origElOverflow;
-      el.style.height = origElHeight;
-      if (scroller) {
-        scroller.style.overflow = origScrollerOverflow;
-        scroller.style.height = origScrollerHeight;
-      }
+      el.style.overflow = origElOverflow; el.style.height = origElHeight;
+      if (scroller) { scroller.style.overflow = origScrollerOverflow; scroller.style.height = origScrollerHeight; }
     }
   };
 
   return (
     <div ref={barRef} className="bg-white border-b border-slate-200 px-6 py-2 flex items-center justify-end gap-3 shrink-0 z-10 shadow-sm no-print">
-      <button
-        onClick={exportXLS}
-        className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1.5 px-3 rounded text-xs flex items-center gap-1 shadow-sm transition-colors"
-      >
+      <button onClick={exportXLS} className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1.5 px-3 rounded text-xs flex items-center gap-1 shadow-sm transition-colors">
         📊 Export XLS
       </button>
-      <button
-        onClick={exportPDF}
-        className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold py-1.5 px-3 rounded text-xs flex items-center gap-1 shadow-sm transition-colors"
-      >
+      <button onClick={exportPDF} className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold py-1.5 px-3 rounded text-xs flex items-center gap-1 shadow-sm transition-colors">
         📄 Export PDF
       </button>
     </div>
   );
 };
 
-// ================= SETUP (Instances + Layers + Values + CD Data Input) =================
+// ================= SETUP (Instances + Layers + Values + CD Data Input + Molar Ellipticity Converter) =================
 export const Setup = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useCdDerived(activeTest);
@@ -2157,6 +2053,8 @@ export const Setup = ({ ctx }) => {
   const [newInstanceName, setNewInstanceName] = useState('');
   const [newLayerName, setNewLayerName] = useState('');
   const [newLayerUnit, setNewLayerUnit] = useState('');
+  
+  const [convParams, setConvParams] = useState({ conc: activeTest.concentration || '', path: activeTest.pathLength || '', res: '' });
 
   const fileInputRef = useRef(null);
   const importModeRef = useRef('replace');
@@ -2170,78 +2068,46 @@ export const Setup = ({ ctx }) => {
     });
   };
 
-  // ---------- Instances ----------
   const addInstance = () => {
     const name = newInstanceName.trim() || `Condition ${d.instances.length + 1}`;
     const src = d.activeInstance;
     const cols = (src?.spectraColumns || []).map((c) => ({ ...c, data: '' }));
-    const inst = {
-      id: makeInstanceId(),
-      name,
-      xValue: '',
-      notes: '',
-      wavelengthData: src?.wavelengthData || '',
-      spectraColumns: cols,
-      values: {}
-    };
+    const inst = { id: makeInstanceId(), name, xValue: '', notes: '', wavelengthData: src?.wavelengthData || '', spectraColumns: cols, values: {} };
     updateActiveTest({ instances: [...d.instances, inst], activeInstanceId: inst.id });
     setNewInstanceName('');
   };
 
   const removeInstance = (id) => {
-    if (d.instances.length <= 1) {
-      alert('At least one instance (condition) is required.');
-      return;
-    }
+    if (d.instances.length <= 1) { alert('At least one condition is required.'); return; }
     const upd = d.instances.filter((i) => i.id !== id);
-    updateActiveTest({
-      instances: upd,
-      activeInstanceId: d.activeInstance && d.activeInstance.id === id ? upd[0].id : activeTest.activeInstanceId
-    });
+    updateActiveTest({ instances: upd, activeInstanceId: d.activeInstance && d.activeInstance.id === id ? upd[0].id : activeTest.activeInstanceId });
   };
 
   const renameInstance = (id) => {
     const inst = d.instances.find((i) => i.id === id);
     const nn = window.prompt('Rename condition:', inst ? inst.name : '');
-    if (nn && nn.trim()) {
-      updateActiveTest({
-        instances: d.instances.map((i) => (i.id === id ? { ...i, name: nn.trim() } : i))
-      });
-    }
+    if (nn && nn.trim()) updateActiveTest({ instances: d.instances.map((i) => (i.id === id ? { ...i, name: nn.trim() } : i)) });
   };
 
   const duplicateInstance = (inst) => {
-    const copy = {
-      ...JSON.parse(JSON.stringify(inst)),
-      id: makeInstanceId(),
-      name: `${inst.name} (copy)`
-    };
+    const copy = { ...JSON.parse(JSON.stringify(inst)), id: makeInstanceId(), name: `${inst.name} (copy)` };
     updateActiveTest({ instances: [...d.instances, copy], activeInstanceId: copy.id });
   };
 
-  // ---------- Layers ----------
   const addLayer = () => {
     const label = newLayerName.trim();
     if (!label) return;
     const layer = { key: makeLayerId(), label, unit: newLayerUnit.trim() || '' };
-    updateActiveTest({
-      parameterLayers: [...(activeTest.parameterLayers || []), layer],
-      activeLayerKey: layer.key
-    });
-    setNewLayerName('');
-    setNewLayerUnit('');
+    updateActiveTest({ parameterLayers: [...(activeTest.parameterLayers || []), layer], activeLayerKey: layer.key });
+    setNewLayerName(''); setNewLayerUnit('');
   };
 
   const removeLayer = (key) => {
     if (key === 'cd') return;
     const upd = (activeTest.parameterLayers || []).filter((l) => l.key !== key);
-    updateActiveTest({
-      parameterLayers: upd,
-      activeLayerKey: d.activeLayerKey === key ? 'cd' : d.activeLayerKey
-    });
+    updateActiveTest({ parameterLayers: upd, activeLayerKey: d.activeLayerKey === key ? 'cd' : d.activeLayerKey });
   };
 
-  // ---------- Values ----------
   const handleValueChange = (seriesKey, val) => {
     if (!d.activeInstance) return;
     updateActiveTest({
@@ -2257,175 +2123,152 @@ export const Setup = ({ ctx }) => {
   const clearLayer = () => {
     if (!d.activeInstance) return;
     updateActiveTest({
-      instances: d.instances.map((inst) =>
-        inst.id === d.activeInstance.id
-          ? { ...inst, values: { ...(inst.values || {}), [d.activeLayerKey]: {} } }
-          : inst
-      )
+      instances: d.instances.map((inst) => inst.id === d.activeInstance.id ? { ...inst, values: { ...(inst.values || {}), [d.activeLayerKey]: {} } } : inst)
     });
   };
 
   const extractForInstance = (inst) => {
     const lambda = parseManual(activeTest.analysisWavelength);
-    if (lambda === null) {
-      alert('Set an analysis wavelength (nm) first.');
-      return;
-    }
+    if (lambda === null) { alert('Set an analysis wavelength (nm) first.'); return; }
     const vals = extractAtWavelength(inst, lambda);
     updateActiveTest({
-      instances: d.instances.map((i) =>
-        i.id === inst.id
-          ? {
-            ...i,
-            values: {
-              ...(i.values || {}),
-              [d.activeLayerKey]: { ...((i.values || {})[d.activeLayerKey] || {}), ...vals }
-            }
-          }
-          : i
-      )
+      instances: d.instances.map((i) => i.id === inst.id ? { ...i, values: { ...(i.values || {}), [d.activeLayerKey]: { ...((i.values || {})[d.activeLayerKey] || {}), ...vals } } } : i)
     });
   };
 
   const extractForAll = () => {
     const lambda = parseManual(activeTest.analysisWavelength);
-    if (lambda === null) {
-      alert('Set an analysis wavelength (nm) first.');
-      return;
-    }
+    if (lambda === null) { alert('Set an analysis wavelength (nm) first.'); return; }
     updateActiveTest({
-      instances: d.instances.map((i) => ({
-        ...i,
-        values: {
-          ...(i.values || {}),
-          [d.activeLayerKey]: {
-            ...((i.values || {})[d.activeLayerKey] || {}),
-            ...extractAtWavelength(i, lambda)
-          }
-        }
-      }))
+      instances: d.instances.map((i) => ({ ...i, values: { ...(i.values || {}), [d.activeLayerKey]: { ...((i.values || {})[d.activeLayerKey] || {}), ...extractAtWavelength(i, lambda) } } }))
     });
+  };
+  
+  const runDeconvolutionForAll = () => {
+    let layers = [...(activeTest.parameterLayers || [])];
+    const ssKeys = ['ss_alpha', 'ss_beta', 'ss_turn', 'ss_coil'];
+    const ssLabels = ['% α-Helix', '% β-Sheet', '% Turn', '% Coil'];
+    let activeKey = d.activeLayerKey;
+
+    ssKeys.forEach((key, idx) => {
+      if (!layers.find(l => l.key === key)) {
+        layers.push({ key, label: ssLabels[idx], unit: '%' });
+      }
+    });
+
+    const newInstances = d.instances.map(inst => {
+      const { parsedWavelengths, parsedSpectra } = computeParsed(inst);
+      const newValues = { ...(inst.values || {}) };
+      ssKeys.forEach(k => { if (!newValues[k]) newValues[k] = {}; });
+
+      parsedSpectra.forEach(spec => {
+        const A = []; const b = [];
+        parsedWavelengths.forEach((x, i) => {
+          if (x >= 190 && x <= 260) {
+            A.push([splines.alpha.at(x), splines.beta.at(x), splines.turn.at(x), splines.coil.at(x)]);
+            b.push(spec.values[i]);
+          }
+        });
+        if (A.length < 4) return;
+        const AtA = [0,1,2,3].map(i => [0,1,2,3].map(j => A.reduce((sum, row) => sum + row[i]*row[j], 0)));
+        const Atb = [0,1,2,3].map(i => A.reduce((sum, row, idx) => sum + row[i]*b[idx], 0));
+        const coeffs = gaussSolve(AtA, Atb);
+        if (coeffs) {
+          const sum = coeffs.reduce((s, c) => s + Math.max(0, c), 0);
+          const norm = coeffs.map(c => sum > 0 ? (Math.max(0, c) / sum) * 100 : 0);
+          newValues['ss_alpha'][`spec-${spec.id}`] = String(+norm[0].toFixed(2));
+          newValues['ss_beta'][`spec-${spec.id}`] = String(+norm[1].toFixed(2));
+          newValues['ss_turn'][`spec-${spec.id}`] = String(+norm[2].toFixed(2));
+          newValues['ss_coil'][`spec-${spec.id}`] = String(+norm[3].toFixed(2));
+        }
+      });
+      return { ...inst, values: newValues };
+    });
+
+    updateActiveTest({ parameterLayers: layers, instances: newInstances, activeLayerKey: 'ss_alpha' });
   };
 
   const handleRowClick = (e, key) => {
     if (e && e.target && e.target.tagName === 'INPUT') return;
     const cur = Array.isArray(activeTest.selectedSeriesKeys) ? activeTest.selectedSeriesKeys : [];
-    updateActiveTest({
-      selectedSeriesKeys: cur.length === 1 && cur[0] === key ? [] : [key]
-    });
+    updateActiveTest({ selectedSeriesKeys: cur.length === 1 && cur[0] === key ? [] : [key] });
   };
 
-  // ---------- Spectra columns (active instance) ----------
   const addSpectrumColumn = () => {
     if (!d.activeInstance) return;
     const cols = d.activeInstance.spectraColumns || [];
-    const newCol = {
-      id: `${Date.now()}`,
-      title: `Spectrum ${cols.length + 1}`,
-      data: '',
-      color: SPECTRA_PALETTE[cols.length % SPECTRA_PALETTE.length],
-      visible: true
-    };
+    const newCol = { id: `${Date.now()}`, title: `Spectrum ${cols.length + 1}`, data: '', color: SPECTRA_PALETTE[cols.length % SPECTRA_PALETTE.length], visible: true };
     updateActiveInstance({ spectraColumns: [...cols, newCol] });
   };
 
   const updateSpectrumColumn = (id, updates) => {
     if (!d.activeInstance) return;
-    updateActiveInstance({
-      spectraColumns: (d.activeInstance.spectraColumns || []).map((c) => (c.id === id ? { ...c, ...updates } : c))
-    });
+    updateActiveInstance({ spectraColumns: (d.activeInstance.spectraColumns || []).map((c) => (c.id === id ? { ...c, ...updates } : c)) });
   };
 
   const removeSpectrumColumn = (id) => {
     if (!d.activeInstance) return;
-    updateActiveInstance({
-      spectraColumns: (d.activeInstance.spectraColumns || []).filter((c) => c.id !== id)
-    });
+    updateActiveInstance({ spectraColumns: (d.activeInstance.spectraColumns || []).filter((c) => c.id !== id) });
   };
-
-  // ---------- JASCO import (into active instance) ----------
-  const triggerJascoImport = (mode) => {
-    importModeRef.current = mode;
-    if (fileInputRef.current) fileInputRef.current.click();
-  };
-
-  const importJascoFiles = async (event) => {
-    const input = event.target;
-    const mode = importModeRef.current || 'replace';
-    const files = Array.from(input.files || []);
-    if (!files.length || !d.activeInstance) return;
-    const imported = [];
-    let baseX = null;
-    let firstMeta = null;
-    for (const file of files) {
-      try {
-        const text = await file.text();
-        const parsed = parseJascoCDText(text);
-        if (!parsed.xs.length || !parsed.ys.length) {
-          alert(`No numeric CD data found in ${file.name}.`);
-          continue;
-        }
-        if (!baseX) {
-          baseX = parsed.xs;
-          firstMeta = parsed;
-        } else {
-          const sameX = parsed.xs.length === baseX.length && parsed.xs.every((x, i) => Math.abs(x - baseX[i]) < 0.01);
-          if (!sameX) {
-            alert(`Wavelength axes do not match between imported files.\nStopped before: ${file.name}`);
-            break;
-          }
-        }
-        imported.push({ file, parsed });
-      } catch (err) {
-        alert(`Could not read ${file.name}: ${err.message}`);
-      }
-    }
-    if (!imported.length || !baseX) {
-      input.value = '';
+  
+  const convertActiveInstance = () => {
+    if (!d.activeInstance) return;
+    const C = parseFloat(convParams.conc);
+    const l = parseFloat(convParams.path);
+    const n = parseFloat(convParams.res);
+    
+    if (isNaN(C) || isNaN(l) || isNaN(n) || C <= 0 || l <= 0 || n <= 0) {
+      alert("Please enter valid positive numbers for Concentration, Path Length, and Residues.");
       return;
     }
-    const inst = d.activeInstance;
-    const startIndex = mode === 'append' ? (inst.spectraColumns || []).length : 0;
-    const newCols = imported.map(({ file, parsed }, i) => {
-      const baseName = file.name.replace(/\.[^.]+$/, '');
-      const title = baseName || parsed.title || `Spectrum ${startIndex + i + 1}`;
-      return {
-        id: `${Date.now()}-${i}-${Math.random().toString(16).slice(2)}`,
-        title,
-        data: parsed.ys.join('\n'),
-        color: SPECTRA_PALETTE[(startIndex + i) % SPECTRA_PALETTE.length],
-        visible: true
-      };
+    
+    const factor = 10 * C * l * n;
+    const cols = d.activeInstance.spectraColumns || [];
+    const updatedCols = cols.map(col => {
+      if (col.isMRE) return col;
+      const parsedData = (col.data || '').split(/[\n,]+/).map(s => parseFloat(s.trim())).filter(num => !isNaN(num));
+      if (!parsedData.length) return col;
+      const newData = parsedData.map(y => y / factor).join('\n');
+      return { ...col, data: newData, isMRE: true, title: col.title.includes('MRE') ? col.title : `${col.title} (MRE)` };
     });
+    
+    updateActiveInstance({ spectraColumns: updatedCols });
+    alert(`Conversion applied to ${d.activeInstance.name}`);
+  };
 
-    const topPatch = {};
-    const instPatch = {};
-    const minX = Math.min(...baseX);
-    const maxX = Math.max(...baseX);
+  const triggerJascoImport = (mode) => { importModeRef.current = mode; if (fileInputRef.current) fileInputRef.current.click(); };
 
-    if (mode === 'replace' || d.parsedWavelengths.length === 0) {
-      instPatch.wavelengthData = baseX.join('\n');
-      instPatch.spectraColumns = newCols;
-      topPatch.chartCfg = { ...chartCfg, xMin: String(minX), xMax: String(maxX) };
-    } else {
-      const sameAsCurrent =
-        baseX.length === d.parsedWavelengths.length &&
-        baseX.every((x, i) => Math.abs(x - d.parsedWavelengths[i]) < 0.01);
-      if (!sameAsCurrent) {
-        alert('Cannot append: imported wavelength axis does not match the current wavelength axis of this condition.\nUse Replace import or clear the current data.');
-        input.value = '';
-        return;
-      }
-      instPatch.spectraColumns = [...(inst.spectraColumns || []), ...newCols];
-      const currentMin = Math.min(...d.parsedWavelengths);
-      const currentMax = Math.max(...d.parsedWavelengths);
-      topPatch.chartCfg = {
-        ...chartCfg,
-        xMin: String(Math.min(currentMin, minX)),
-        xMax: String(Math.max(currentMax, maxX))
-      };
+  const importJascoFiles = async (event) => {
+    const input = event.target; const mode = importModeRef.current || 'replace'; const files = Array.from(input.files || []);
+    if (!files.length || !d.activeInstance) return;
+    const imported = []; let baseX = null; let firstMeta = null;
+    for (const file of files) {
+      try {
+        const text = await file.text(); const parsed = parseJascoCDText(text);
+        if (!parsed.xs.length || !parsed.ys.length) { alert(`No numeric CD data found in ${file.name}.`); continue; }
+        if (!baseX) { baseX = parsed.xs; firstMeta = parsed; } else {
+          const sameX = parsed.xs.length === baseX.length && parsed.xs.every((x, i) => Math.abs(x - baseX[i]) < 0.01);
+          if (!sameX) { alert(`Wavelength axes do not match between imported files.\nStopped before: ${file.name}`); break; }
+        }
+        imported.push({ file, parsed });
+      } catch (err) { alert(`Could not read ${file.name}: ${err.message}`); }
     }
-
+    if (!imported.length || !baseX) { input.value = ''; return; }
+    const inst = d.activeInstance; const startIndex = mode === 'append' ? (inst.spectraColumns || []).length : 0;
+    const newCols = imported.map(({ file, parsed }, i) => {
+      const baseName = file.name.replace(/\.[^.]+$/, ''); const title = baseName || parsed.title || `Spectrum ${startIndex + i + 1}`;
+      return { id: `${Date.now()}-${i}-${Math.random().toString(16).slice(2)}`, title, data: parsed.ys.join('\n'), color: SPECTRA_PALETTE[(startIndex + i) % SPECTRA_PALETTE.length], visible: true };
+    });
+    const topPatch = {}; const instPatch = {}; const minX = Math.min(...baseX); const maxX = Math.max(...baseX);
+    if (mode === 'replace' || d.parsedWavelengths.length === 0) {
+      instPatch.wavelengthData = baseX.join('\n'); instPatch.spectraColumns = newCols; topPatch.chartCfg = { ...chartCfg, xMin: String(minX), xMax: String(maxX) };
+    } else {
+      const sameAsCurrent = baseX.length === d.parsedWavelengths.length && baseX.every((x, i) => Math.abs(x - d.parsedWavelengths[i]) < 0.01);
+      if (!sameAsCurrent) { alert('Cannot append: imported wavelength axis does not match the current wavelength axis of this condition.\nUse Replace import or clear the current data.'); input.value = ''; return; }
+      instPatch.spectraColumns = [...(inst.spectraColumns || []), ...newCols];
+      const currentMin = Math.min(...d.parsedWavelengths); const currentMax = Math.max(...d.parsedWavelengths);
+      topPatch.chartCfg = { ...chartCfg, xMin: String(Math.min(currentMin, minX)), xMax: String(Math.max(currentMax, maxX)) };
+    }
     if (firstMeta) {
       if (firstMeta.title && !activeTest.compound) topPatch.compound = firstMeta.title;
       if (firstMeta.experimentDate && !activeTest.experimentDate) topPatch.experimentDate = firstMeta.experimentDate;
@@ -2433,36 +2276,29 @@ export const Setup = ({ ctx }) => {
       if (firstMeta.pathLength && !activeTest.pathLength) topPatch.pathLength = firstMeta.pathLength;
       if (firstMeta.concentration && !activeTest.concentration) topPatch.concentration = firstMeta.concentration;
     }
-
     topPatch.instances = d.instances.map((i) => (i.id === inst.id ? { ...i, ...instPatch } : i));
-    updateActiveTest(topPatch);
-    input.value = '';
+    updateActiveTest(topPatch); input.value = '';
   };
 
   const manualCount = Object.values(d.activeValues).filter((v) => parseManual(v) !== null).length;
 
   return (
     <>
-      {/* ============ CONDITIONS / INSTANCES ============ */}
       <CollapsibleSection title="Conditions / Instances" icon="🧩">
         <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 flex flex-col gap-4">
           <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
             <label className="text-xs font-bold text-indigo-800 uppercase">🧩 Experimental conditions</label>
-            <span className="text-[9px] bg-indigo-200 text-indigo-800 px-2 py-0.5 rounded">
-              Each instance = one experimental condition (e.g. temperature point, ratio, pH)
-            </span>
+            <span className="text-[9px] bg-indigo-200 text-indigo-800 px-2 py-0.5 rounded">Each instance = one experimental condition</span>
           </div>
           <div className="flex flex-wrap gap-2">
             {d.instances.map((inst) => {
               const isActive = d.activeInstance && d.activeInstance.id === inst.id;
               return (
                 <div key={inst.id} className={`flex items-center gap-1 rounded-lg px-2 py-1 border shadow-sm transition-colors ${isActive ? 'bg-indigo-600 border-indigo-700 text-white' : 'bg-white border-indigo-300 text-indigo-900'}`}>
-                  <button type="button" onClick={() => updateActiveTest({ activeInstanceId: inst.id })} className="text-xs font-bold max-w-[180px] truncate" title="Set as active condition">
-                    {inst.name}
-                  </button>
-                  <button type="button" onClick={() => renameInstance(inst.id)} className={`text-[10px] font-bold ${isActive ? 'text-indigo-200 hover:text-white' : 'text-slate-400 hover:text-blue-600'}`} title="Rename">✎</button>
-                  <button type="button" onClick={() => duplicateInstance(inst)} className={`text-[10px] font-bold ${isActive ? 'text-indigo-200 hover:text-white' : 'text-slate-400 hover:text-blue-600'}`} title="Duplicate">⧉</button>
-                  <button type="button" onClick={() => removeInstance(inst.id)} className={`text-[10px] font-bold ${isActive ? 'text-indigo-200 hover:text-red-300' : 'text-slate-400 hover:text-red-500'}`} title="Remove">×</button>
+                  <button type="button" onClick={() => updateActiveTest({ activeInstanceId: inst.id })} className="text-xs font-bold max-w-[180px] truncate" title="Set as active condition">{inst.name}</button>
+                  <button type="button" onClick={() => renameInstance(inst.id)} className={`text-[10px] font-bold ${isActive ? 'text-indigo-200 hover:text-white' : 'text-slate-400 hover:text-blue-600'}`}>✎</button>
+                  <button type="button" onClick={() => duplicateInstance(inst)} className={`text-[10px] font-bold ${isActive ? 'text-indigo-200 hover:text-white' : 'text-slate-400 hover:text-blue-600'}`}>⧉</button>
+                  <button type="button" onClick={() => removeInstance(inst.id)} className={`text-[10px] font-bold ${isActive ? 'text-indigo-200 hover:text-red-300' : 'text-slate-400 hover:text-red-500'}`}>×</button>
                 </div>
               );
             })}
@@ -2470,52 +2306,20 @@ export const Setup = ({ ctx }) => {
           {d.activeInstance && (
             <div className="flex items-center gap-4 flex-wrap">
               <div className="flex items-center gap-2">
-                <label className="text-[10px] font-bold text-indigo-700 uppercase">
-                  X value of “{d.activeInstance.name}” (numeric — used for fitting):
-                </label>
-                <input
-                  type="text"
-                  value={d.activeInstance.xValue || ''}
-                  onChange={(e) => updateActiveInstance({ xValue: e.target.value })}
-                  className="border border-indigo-300 rounded-lg px-2 py-1 text-xs w-28 bg-white outline-none focus:border-indigo-500 font-mono"
-                  placeholder="e.g. 298 / 0.5"
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <label className="text-[10px] font-bold text-indigo-700 uppercase">Notes:</label>
-                <input
-                  type="text"
-                  value={d.activeInstance.notes || ''}
-                  onChange={(e) => updateActiveInstance({ notes: e.target.value })}
-                  className="border border-indigo-300 rounded-lg px-2 py-1 text-xs w-56 bg-white outline-none focus:border-indigo-500"
-                  placeholder="Optional notes for this condition"
-                />
+                <label className="text-[10px] font-bold text-indigo-700 uppercase">X value of "{d.activeInstance.name}" (numeric — for fitting):</label>
+                <input type="text" value={d.activeInstance.xValue || ''} onChange={(e) => updateActiveInstance({ xValue: e.target.value })} className="border border-indigo-300 rounded-lg px-2 py-1 text-xs w-28 bg-white outline-none focus:border-indigo-500 font-mono" placeholder="e.g. 298 / 0.5" />
               </div>
             </div>
           )}
           <div className="flex gap-2">
-            <input
-              type="text"
-              value={newInstanceName}
-              onChange={(e) => setNewInstanceName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addInstance(); } }}
-              placeholder="New condition name (e.g. 25°C, Ratio 1:5, pH 7.4)"
-              className="flex-1 border border-indigo-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-indigo-500"
-            />
-            <button type="button" onClick={addInstance} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm">
-              + Add Instance
-            </button>
+            <input type="text" value={newInstanceName} onChange={(e) => setNewInstanceName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addInstance(); } }} placeholder="New condition name (e.g. 25°C, Ratio 1:5, pH 7.4)" className="flex-1 border border-indigo-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-indigo-500" />
+            <button type="button" onClick={addInstance} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm">+ Add Instance</button>
           </div>
-          <p className="text-[10px] text-indigo-600">
-            💡 New instances inherit the wavelength axis and spectrum slots (titles/colors) of the active condition, so values stay aligned across conditions for fitting.
-          </p>
         </div>
       </CollapsibleSection>
 
-      {/* ============ PARAMETER LAYERS + VALUES ============ */}
       <CollapsibleSection title="Parameter Layers & Condition Values" icon="🗂️">
         <div className="flex flex-col gap-5">
-          {/* Layers */}
           <div className="bg-white border border-slate-200 rounded-xl p-4">
             <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
               <label className="text-xs font-bold text-slate-600 uppercase">Parameter layer (values table data type)</label>
@@ -2524,22 +2328,11 @@ export const Setup = ({ ctx }) => {
             <div className="flex flex-wrap gap-2 items-center mb-3">
               {d.layers.map((l) => (
                 <div key={l.key} className="inline-flex items-center">
-                  <button
-                    type="button"
-                    onClick={() => updateActiveTest({ activeLayerKey: l.key })}
-                    className={`px-3 py-1.5 rounded-l-lg text-xs font-bold border transition-colors ${d.activeLayerKey === l.key ? 'bg-blue-600 border-blue-700 text-white' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}`}
-                  >
+                  <button type="button" onClick={() => updateActiveTest({ activeLayerKey: l.key })} className={`px-3 py-1.5 rounded-l-lg text-xs font-bold border transition-colors ${d.activeLayerKey === l.key ? 'bg-blue-600 border-blue-700 text-white' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
                     {l.label}{l.unit ? ` (${l.unit})` : ''}
                   </button>
                   {!l.builtin ? (
-                    <button
-                      type="button"
-                      onClick={() => removeLayer(l.key)}
-                      className={`px-2 py-1.5 rounded-r-lg border border-l-0 text-xs font-black ${d.activeLayerKey === l.key ? 'bg-blue-600 border-blue-700 text-blue-200 hover:text-white' : 'bg-white border-slate-300 text-slate-400 hover:text-red-500'}`}
-                      title="Delete parameter"
-                    >
-                      ×
-                    </button>
+                    <button type="button" onClick={() => removeLayer(l.key)} className={`px-2 py-1.5 rounded-r-lg border border-l-0 text-xs font-black ${d.activeLayerKey === l.key ? 'bg-blue-600 border-blue-700 text-blue-200 hover:text-white' : 'bg-white border-slate-300 text-slate-400 hover:text-red-500'}`}>×</button>
                   ) : (
                     <span className="px-2 py-1.5 rounded-r-lg border border-l-0 bg-slate-100 border-slate-300 text-slate-400 text-xs">🔒</span>
                   )}
@@ -2549,54 +2342,29 @@ export const Setup = ({ ctx }) => {
             <div className="flex flex-wrap gap-2 items-end">
               <div className="flex flex-col gap-1">
                 <label className="text-[10px] font-bold text-slate-500 uppercase">New parameter name</label>
-                <input type="text" value={newLayerName} onChange={(e) => setNewLayerName(e.target.value)} placeholder="e.g. Fraction Folded, Peak Amplitude" className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-56 bg-white" />
+                <input type="text" value={newLayerName} onChange={(e) => setNewLayerName(e.target.value)} placeholder="e.g. Fraction Folded" className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-56 bg-white" />
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-[10px] font-bold text-slate-500 uppercase">Unit</label>
-                <input type="text" value={newLayerUnit} onChange={(e) => setNewLayerUnit(e.target.value)} placeholder="e.g. a.u., %" className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-24 bg-white" />
+                <input type="text" value={newLayerUnit} onChange={(e) => setNewLayerUnit(e.target.value)} placeholder="e.g. %" className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-24 bg-white" />
               </div>
-              <button type="button" onClick={addLayer} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm h-fit">
-                + Add Parameter Layer
-              </button>
+              <button type="button" onClick={addLayer} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm h-fit">+ Add Parameter Layer</button>
             </div>
           </div>
 
-          {/* Extraction + table toolbar */}
           <div className="flex flex-wrap items-end gap-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
             <div className="flex flex-col gap-1">
               <label className="text-[10px] font-bold text-slate-500 uppercase">Analysis wavelength λ (nm)</label>
-              <input
-                type="number"
-                value={activeTest.analysisWavelength ?? '222'}
-                onChange={(e) => updateActiveTest({ analysisWavelength: e.target.value })}
-                className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-28 bg-white font-mono"
-              />
+              <input type="number" value={activeTest.analysisWavelength ?? '222'} onChange={(e) => updateActiveTest({ analysisWavelength: e.target.value })} className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-28 bg-white font-mono" />
             </div>
-            <button type="button" onClick={() => d.activeInstance && extractForInstance(d.activeInstance)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-2 rounded-lg text-xs shadow-sm">
-              📥 Extract at λ (active condition)
-            </button>
-            <button type="button" onClick={extractForAll} className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold px-3 py-2 rounded-lg text-xs shadow-sm">
-              📥 Extract at λ (all conditions)
-            </button>
-            <button type="button" onClick={clearLayer} className="bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 font-bold px-3 py-2 rounded-lg text-xs shadow-sm">
-              🧹 Clear {d.activeLayer.label}
-            </button>
-            {manualCount > 0 && (
-              <span className="text-[10px] font-bold text-green-700 bg-green-50 border border-green-300 rounded-lg px-2 py-1">🟩 {manualCount} filled</span>
-            )}
-            {d.selectedKeys && (
-              <span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded-lg px-2 py-1 flex items-center gap-1">
-                🎯 Selected: {d.seriesOptions.find((o) => o.key === d.selectedKeys[0])?.label || d.selectedKeys[0]}
-                <button onClick={() => updateActiveTest({ selectedSeriesKeys: [] })} className="text-amber-600 hover:text-red-600 font-black">✕</button>
-              </span>
-            )}
+            <button type="button" onClick={() => d.activeInstance && extractForInstance(d.activeInstance)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-2 rounded-lg text-xs shadow-sm">📥 Extract at λ (active condition)</button>
+            <button type="button" onClick={extractForAll} className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold px-3 py-2 rounded-lg text-xs shadow-sm">📥 Extract at λ (all conditions)</button>
+            <div className="w-px h-8 bg-slate-300 mx-2"></div>
+            <button type="button" onClick={runDeconvolutionForAll} className="bg-purple-600 hover:bg-purple-700 text-white font-bold px-3 py-2 rounded-lg text-xs shadow-sm">🧩 Auto-Deconvolute 2° Structure (All Conditions)</button>
           </div>
 
-          {/* Values table */}
           {d.seriesOptions.length === 0 ? (
-            <div className="text-center py-8 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">
-              No spectra in the active condition. Add spectra in “CD Data Input” below.
-            </div>
+            <div className="text-center py-8 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">No spectra in the active condition. Add spectra in “CD Data Input” below.</div>
           ) : (
             <div className="overflow-x-auto custom-scrollbar border border-slate-200 rounded-lg">
               <table className="w-full text-sm text-left">
@@ -2604,9 +2372,7 @@ export const Setup = ({ ctx }) => {
                   <tr>
                     <th className="px-3 py-2 w-12 border-b border-slate-200">#</th>
                     <th className="px-3 py-2 border-b border-slate-200">Spectrum</th>
-                    <th className="px-3 py-2 border-b border-slate-200 text-blue-700">
-                      Value {d.activeLayer.unit ? `(${d.activeLayer.unit})` : ''} — {d.activeInstance ? d.activeInstance.name : ''}
-                    </th>
+                    <th className="px-3 py-2 border-b border-slate-200 text-blue-700">Value {d.activeLayer.unit ? `(${d.activeLayer.unit})` : ''} — {d.activeInstance ? d.activeInstance.name : ''}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
@@ -2615,27 +2381,11 @@ export const Setup = ({ ctx }) => {
                     const isMan = parseManual(d.activeValues[opt.key]) !== null;
                     const isSel = d.selectedKeys && d.selectedKeys.includes(opt.key);
                     return (
-                      <tr
-                        key={opt.key}
-                        onClick={(e) => handleRowClick(e, opt.key)}
-                        className={`cursor-pointer transition-colors ${isSel ? 'bg-amber-100 ring-2 ring-inset ring-amber-400' : isMan ? 'bg-green-50' : 'hover:bg-slate-50'}`}
-                        title="Click to highlight this spectrum everywhere"
-                      >
+                      <tr key={opt.key} onClick={(e) => handleRowClick(e, opt.key)} className={`cursor-pointer transition-colors ${isSel ? 'bg-amber-100 ring-2 ring-inset ring-amber-400' : isMan ? 'bg-green-50' : 'hover:bg-slate-50'}`}>
                         <td className="px-3 py-2 font-bold text-slate-500">{idx + 1}</td>
+                        <td className="px-3 py-2"><span className="inline-flex items-center gap-2 font-bold text-slate-700"><span className="w-3 h-3 rounded-full inline-block" style={{ backgroundColor: col?.color || SPECTRA_PALETTE[idx % SPECTRA_PALETTE.length] }} />{opt.label}</span></td>
                         <td className="px-3 py-2">
-                          <span className="inline-flex items-center gap-2 font-bold text-slate-700">
-                            <span className="w-3 h-3 rounded-full inline-block" style={{ backgroundColor: col?.color || SPECTRA_PALETTE[idx % SPECTRA_PALETTE.length] }} />
-                            {opt.label}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2">
-                          <input
-                            type="text"
-                            value={d.activeValues[opt.key] || ''}
-                            onChange={(e) => handleValueChange(opt.key, e.target.value)}
-                            className={`w-40 border rounded px-2 py-1 outline-none text-center text-xs font-mono ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-200 focus:border-blue-500'}`}
-                            placeholder="—"
-                          />
+                          <input type="text" value={d.activeValues[opt.key] || ''} onChange={(e) => handleValueChange(opt.key, e.target.value)} className={`w-40 border rounded px-2 py-1 outline-none text-center text-xs font-mono ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-200 focus:border-blue-500'}`} placeholder="—" />
                         </td>
                       </tr>
                     );
@@ -2644,43 +2394,37 @@ export const Setup = ({ ctx }) => {
               </table>
             </div>
           )}
-          <p className="text-[10px] text-slate-400">
-            💡 Typical workflow: set λ (e.g. 222 nm for α-helix), press “Extract at λ (all conditions)”, then plot the values vs the numeric X of each condition in the Fitting section (thermal melts, titrations, denaturation curves).
-          </p>
         </div>
       </CollapsibleSection>
 
-      {/* ============ CD DATA INPUT (active instance) ============ */}
-      <CollapsibleSection title="CD Data Input" icon="📥" headerExtra={
-        <span className="text-[10px] font-bold bg-blue-100 text-blue-700 px-2 py-1 rounded">
-          Editing: {d.activeInstance ? d.activeInstance.name : '—'}
-        </span>
-      }>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".txt,.csv,.asc,.dcm"
-          multiple
-          className="hidden"
-          onChange={importJascoFiles}
-        />
+      <CollapsibleSection title="CD Data Input" icon="📥" headerExtra={<span className="text-[10px] font-bold bg-blue-100 text-blue-700 px-2 py-1 rounded">Editing: {d.activeInstance ? d.activeInstance.name : '—'}</span>}>
+        <input ref={fileInputRef} type="file" accept=".txt,.csv,.asc,.dcm" multiple className="hidden" onChange={importJascoFiles} />
         <div className="flex flex-col gap-4">
-          <div className="border border-blue-200 bg-blue-50 rounded-lg p-4">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-              <div>
-                <div className="text-xs font-bold text-blue-800 uppercase">JASCO / TXT Import (into active condition)</div>
-                <p className="text-[10px] text-blue-700 mt-1">
-                  Imports the CD [mdeg] channel from JASCO .txt files, converts the wavelength axis to ascending
-                  order, and fills sample metadata when available.
-                </p>
-              </div>
+          <div className="flex flex-col lg:flex-row gap-4">
+            <div className="border border-blue-200 bg-blue-50 rounded-lg p-4 flex-1">
+              <div className="text-xs font-bold text-blue-800 uppercase mb-2">JASCO / TXT Import</div>
               <div className="flex flex-wrap gap-2">
-                <button onClick={() => triggerJascoImport('replace')} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm transition-colors">
-                  📂 Import JASCO (Replace)
-                </button>
-                <button onClick={() => triggerJascoImport('append')} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm transition-colors">
-                  ➕ Import JASCO (Append)
-                </button>
+                <button onClick={() => triggerJascoImport('replace')} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm transition-colors">📂 Import (Replace)</button>
+                <button onClick={() => triggerJascoImport('append')} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm transition-colors">➕ Import (Append)</button>
+              </div>
+            </div>
+            
+            <div className="border border-indigo-200 bg-indigo-50 rounded-lg p-4 flex-1">
+              <div className="text-xs font-bold text-indigo-800 uppercase mb-2">Molar Ellipticity Converter</div>
+              <div className="flex flex-wrap gap-2 items-end">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-indigo-700">Conc (M)</label>
+                  <input type="number" step="any" value={convParams.conc} onChange={e => setConvParams({...convParams, conc: e.target.value})} className="border border-indigo-300 rounded p-1.5 text-xs w-20" />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-indigo-700">Path (cm)</label>
+                  <input type="number" step="any" value={convParams.path} onChange={e => setConvParams({...convParams, path: e.target.value})} className="border border-indigo-300 rounded p-1.5 text-xs w-20" />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-indigo-700">Residues</label>
+                  <input type="number" value={convParams.res} onChange={e => setConvParams({...convParams, res: e.target.value})} className="border border-indigo-300 rounded p-1.5 text-xs w-20" />
+                </div>
+                <button onClick={convertActiveInstance} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm">🔄 Convert</button>
               </div>
             </div>
           </div>
@@ -2688,80 +2432,42 @@ export const Setup = ({ ctx }) => {
           <div className="border border-slate-200 bg-slate-50 rounded-lg p-4">
             <div className="flex justify-between items-center mb-2">
               <label className="text-xs font-bold text-slate-600 uppercase">📏 Wavelength Data (X axis - nm)</label>
-              <span className="text-[10px] text-slate-400">{d.parsedWavelengths.length} values loaded</span>
+              <span className="text-[10px] text-slate-400">{d.parsedWavelengths.length} values</span>
             </div>
             <textarea
               value={d.activeInstance ? d.activeInstance.wavelengthData || '' : ''}
               onChange={(e) => updateActiveInstance({ wavelengthData: e.target.value })}
-              className="w-full border border-slate-300 rounded-lg p-3 font-mono text-xs outline-none focus:border-blue-500 h-24 resize-y shadow-inner"
-              placeholder={'Paste wavelength values (one per line or comma-separated)\ne.g.: 190, 191, 192, 193, ... 260'}
+              className="w-full border border-slate-300 rounded-lg p-3 font-mono text-xs outline-none focus:border-blue-500 h-20 resize-y shadow-inner"
+              placeholder={'Paste wavelength values (one per line or comma-separated)'}
             />
-            <p className="text-[10px] text-slate-400 mt-1">
-              Range:{' '}
-              {d.parsedWavelengths.length > 0
-                ? `${Math.min(...d.parsedWavelengths).toFixed(1)} - ${Math.max(...d.parsedWavelengths).toFixed(1)} nm`
-                : 'No data'}
-            </p>
           </div>
 
           <div className="border border-slate-200 bg-slate-50 rounded-lg p-4">
             <div className="flex justify-between items-center mb-3">
               <label className="text-xs font-bold text-slate-600 uppercase">📊 CD Spectra (Y axis - multiple spectra)</label>
-              <button onClick={addSpectrumColumn} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm transition-colors flex items-center gap-1">
-                + Add Spectrum
-              </button>
+              <button onClick={addSpectrumColumn} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm">+ Add Spectrum</button>
             </div>
-            {d.parsedSpectra.length === 0 ? (
-              <div className="text-center py-8 text-slate-400 italic bg-white rounded-lg border border-dashed border-slate-300">
-                No spectra added yet. Click "Add Spectrum" to start.
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                {d.parsedSpectra.map((spectrum) => (
-                  <div key={spectrum.id} className="bg-white border border-slate-200 rounded-lg p-3 shadow-sm relative group">
-                    <div className="flex items-center gap-2 mb-2">
-                      <input
-                        type="color"
-                        value={spectrum.color}
-                        onChange={(e) => updateSpectrumColumn(spectrum.id, { color: e.target.value })}
-                        className="w-6 h-6 rounded border border-slate-300 cursor-pointer"
-                      />
-                      <input
-                        type="text"
-                        value={spectrum.title}
-                        onChange={(e) => updateSpectrumColumn(spectrum.id, { title: e.target.value })}
-                        className="flex-1 border border-slate-200 rounded px-2 py-1 text-xs font-bold outline-none focus:border-blue-500"
-                        placeholder="Spectrum title..."
-                      />
-                      <label className="flex items-center gap-1 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={spectrum.visible}
-                          onChange={(e) => updateSpectrumColumn(spectrum.id, { visible: e.target.checked })}
-                          className="w-3 h-3 accent-blue-600"
-                        />
-                        <span className="text-[9px] text-slate-500">Show</span>
-                      </label>
-                      <button onClick={() => removeSpectrumColumn(spectrum.id)} className="text-slate-400 hover:text-red-500 font-bold text-sm opacity-0 group-hover:opacity-100 transition-opacity">
-                        ×
-                      </button>
-                    </div>
-                    <textarea
-                      value={spectrum.data}
-                      onChange={(e) => updateSpectrumColumn(spectrum.id, { data: e.target.value })}
-                      className="w-full border border-slate-200 rounded p-2 font-mono text-[10px] outline-none focus:border-blue-500 h-20 resize-y shadow-inner"
-                      placeholder={`Paste CD values for ${spectrum.title}...`}
-                    />
-                    <p className="text-[9px] text-slate-400 mt-1">
-                      {spectrum.values.length} values{' '}
-                      {spectrum.values.length !== d.parsedWavelengths.length && d.parsedWavelengths.length > 0 && (
-                        <span className="text-amber-600 font-bold">⚠️ Mismatch with {d.parsedWavelengths.length} wavelengths</span>
-                      )}
-                    </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {d.parsedSpectra.map((spectrum) => (
+                <div key={spectrum.id} className="bg-white border border-slate-200 rounded-lg p-3 shadow-sm relative group">
+                  <div className="flex items-center gap-2 mb-2">
+                    <input type="color" value={spectrum.color} onChange={(e) => updateSpectrumColumn(spectrum.id, { color: e.target.value })} className="w-6 h-6 rounded border border-slate-300 cursor-pointer" />
+                    <input type="text" value={spectrum.title} onChange={(e) => updateSpectrumColumn(spectrum.id, { title: e.target.value })} className="flex-1 border border-slate-200 rounded px-2 py-1 text-xs font-bold outline-none focus:border-blue-500" placeholder="Spectrum title..." />
+                    <button onClick={() => removeSpectrumColumn(spectrum.id)} className="text-slate-400 hover:text-red-500 font-bold text-sm opacity-0 group-hover:opacity-100">×</button>
                   </div>
-                ))}
-              </div>
-            )}
+                  <textarea
+                    value={spectrum.data}
+                    onChange={(e) => updateSpectrumColumn(spectrum.id, { data: e.target.value })}
+                    className="w-full border border-slate-200 rounded p-2 font-mono text-[10px] outline-none focus:border-blue-500 h-20 resize-y shadow-inner"
+                    placeholder={`Paste CD values for ${spectrum.title}...`}
+                  />
+                  <div className="flex justify-between items-center mt-1">
+                    <p className="text-[9px] text-slate-400">{spectrum.values.length} values</p>
+                    {spectrum.isMRE && <span className="bg-green-100 text-green-700 px-1 py-0.5 rounded text-[8px] font-bold">MRE</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </CollapsibleSection>
@@ -2769,26 +2475,19 @@ export const Setup = ({ ctx }) => {
   );
 };
 
-// ================= DATA (CD Spectra & Secondary Structure — active instance) =================
+// ================= DATA (CD Spectra Plot — active instance) =================
 export const Data = ({ ctx }) => {
-  const { activeTest, updateActiveTest } = ctx;
+  const { activeTest } = ctx;
   const d = useCdDerived(activeTest);
-  const structureComposition = activeTest.structureComposition || DEFAULT_STRUCTURE;
   const chartCfg = activeTest.chartCfg || DEFAULT_CHART_CFG;
-
-  const [fsPanel, setFsPanel] = useState(null);
-  const toggleFs = (id) => setFsPanel((prev) => (prev === id ? null : id));
-
   const cdChartRef = useRef(null);
-  const structChartRef = useRef(null);
   const cdChart = useRef(null);
-  const structChart = useRef(null);
 
   useEffect(() => {
     if (!cdChartRef.current) return;
     if (cdChart.current) cdChart.current.destroy();
     const datasets = d.parsedSpectra
-      .filter((s) => s.visible && s.values.length > 0)
+      .filter((s) => s.visible !== false && s.values.length > 0)
       .map((s) => {
         const data = d.parsedWavelengths
           .map((w, i) => ({ x: w, y: s.values[i] !== undefined ? s.values[i] : null }))
@@ -2821,413 +2520,110 @@ export const Data = ({ ctx }) => {
             type: 'linear',
             min: chartCfg.xMin !== '' ? parseFloat(chartCfg.xMin) : undefined,
             max: chartCfg.xMax !== '' ? parseFloat(chartCfg.xMax) : undefined,
-            reverse: false,
-            title: {
-              display: true,
-              text: 'Wavelength (nm)',
-              font: { size: (chartCfg.fontSize || 12) + 2, weight: 'bold' },
-              color: '#334155'
-            },
+            title: { display: true, text: 'Wavelength (nm)', font: { size: (chartCfg.fontSize || 12) + 2, weight: 'bold' }, color: '#334155' },
             ticks: { font: { size: chartCfg.fontSize || 12 }, color: '#64748b' },
             grid: { color: '#f1f5f9' }
           },
           y: {
             min: chartCfg.yMin !== '' ? parseFloat(chartCfg.yMin) : undefined,
             max: chartCfg.yMax !== '' ? parseFloat(chartCfg.yMax) : undefined,
-            title: {
-              display: true,
-              text: 'CD Signal (mdeg)',
-              font: { size: (chartCfg.fontSize || 12) + 2, weight: 'bold' },
-              color: '#334155'
-            },
+            title: { display: true, text: 'CD Signal / MRE', font: { size: (chartCfg.fontSize || 12) + 2, weight: 'bold' }, color: '#334155' },
             ticks: { font: { size: chartCfg.fontSize || 12 }, color: '#64748b' },
             grid: { color: '#f1f5f9' }
           }
         },
         plugins: {
-          legend: {
-            position: 'top',
-            labels: { font: { size: chartCfg.fontSize || 12, weight: 'bold' }, usePointStyle: true }
-          },
-          tooltip: {
-            callbacks: {
-              title: (c) => `${c[0].parsed.x.toFixed(1)} nm`,
-              label: (c) => `${c.dataset.label}: ${c.parsed.y.toFixed(3)} mdeg`
-            }
-          }
+          legend: { position: 'top', labels: { font: { size: chartCfg.fontSize || 12, weight: 'bold' }, usePointStyle: true } },
+          tooltip: { callbacks: { title: (c) => `${c[0].parsed.x.toFixed(1)} nm`, label: (c) => `${c.dataset.label}: ${c.parsed.y.toFixed(3)}` } }
         }
       }
     });
-    return () => {
-      if (cdChart.current) cdChart.current.destroy();
-    };
+    return () => { if (cdChart.current) cdChart.current.destroy(); };
   }, [d.parsedWavelengths, d.parsedSpectra, chartCfg, d.selectedKeys]);
 
-  useEffect(() => {
-    if (!structChartRef.current) return;
-    if (structChart.current) structChart.current.destroy();
-    const labels = Object.keys(structureComposition);
-    const values = Object.values(structureComposition);
-    const colors = labels.map((l) => STRUCTURE_COLORS[l] || '#94a3b8');
-    structChart.current = new Chart(structChartRef.current, {
-      type: 'doughnut',
-      data: {
-        labels,
-        datasets: [{ data: values, backgroundColor: colors, borderColor: '#ffffff', borderWidth: 3 }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        cutout: '55%',
-        plugins: {
-          legend: {
-            position: 'bottom',
-            labels: { font: { size: 11, weight: 'bold' }, padding: 12, usePointStyle: true }
-          },
-          tooltip: {
-            callbacks: {
-              label: (c) => `${c.label}: ${c.parsed.toFixed(1)}%`
-            }
-          }
-        }
-      }
-    });
-    return () => {
-      if (structChart.current) structChart.current.destroy();
-    };
-  }, [structureComposition]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (cdChart.current) cdChart.current.resize();
-      if (structChart.current) structChart.current.resize();
-    }, 80);
-    return () => clearTimeout(timer);
-  }, [fsPanel]);
-
   return (
-    <CollapsibleSection
-      title="CD Spectra & Secondary Structure Analysis"
-      icon="📈"
-      headerExtra={
-        <span className="text-[10px] font-bold bg-blue-100 text-blue-700 px-2 py-1 rounded">
-          Condition: {d.activeInstance ? d.activeInstance.name : '—'}
-        </span>
-      }
-    >
-      <div className="flex flex-col lg:flex-row gap-6">
-        {fsPanel === 'cd' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('cd')}></div>}
-        <div className={`flex flex-col ${fsPanel === 'cd' ? ` ${FS_CLASSES} p-6` : 'flex-[3] min-w-0'}`}>
-          <div className="flex justify-between items-start mb-3">
-            <h2 className="text-sm font-bold text-slate-600 uppercase tracking-widest">CD Spectra Plot</h2>
-            <button onClick={() => toggleFs('cd')} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors">
-              {fsPanel === 'cd' ? '↙️' : '↗️'}
-            </button>
-          </div>
-          <div className="flex-1 relative min-h-0" style={{ minHeight: fsPanel === 'cd' ? '0' : '400px' }}>
-            <canvas ref={cdChartRef}></canvas>
-          </div>
-        </div>
-
-        {fsPanel === 'struct' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('struct')}></div>}
-        <div className={`flex flex-col ${fsPanel === 'struct' ? ` ${FS_CLASSES} p-6` : 'flex-[2] min-w-0'}`}>
-          <div className="flex justify-between items-start mb-3">
-            <h2 className="text-sm font-bold text-slate-600 uppercase tracking-widest">Secondary Structure</h2>
-            <button onClick={() => toggleFs('struct')} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors">
-              {fsPanel === 'struct' ? '↙️' : '↗️'}
-            </button>
-          </div>
-          <div
-            className="flex-1 relative min-h-0 flex flex-col items-center justify-center"
-            style={{ minHeight: fsPanel === 'struct' ? '0' : '300px' }}
-          >
-            <div className="w-full max-w-[280px] aspect-square relative">
-              <canvas ref={structChartRef}></canvas>
-            </div>
-            <div className="w-full mt-4 grid grid-cols-2 gap-2">
-              {Object.entries(structureComposition).map(([key, val]) => (
-                <div key={key} className="flex flex-col gap-0.5">
-                  <div className="flex justify-between items-center">
-                    <span className="text-[10px] font-bold" style={{ color: STRUCTURE_COLORS[key] }}>{key}</span>
-                    <span className="text-[10px] font-mono font-bold text-slate-600">{val}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    value={val}
-                    onChange={(e) => {
-                      const newVal = parseInt(e.target.value, 10);
-                      const newComp = { ...structureComposition, [key]: newVal };
-                      updateActiveTest({ structureComposition: newComp });
-                    }}
-                    className="w-full h-1.5 rounded-lg appearance-none cursor-pointer"
-                    style={{ accentColor: STRUCTURE_COLORS[key] }}
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+    <CollapsibleSection title="CD Spectra Plot" icon="📈" headerExtra={<span className="text-[10px] font-bold bg-blue-100 text-blue-700 px-2 py-1 rounded">Condition: {d.activeInstance ? d.activeInstance.name : '—'}</span>}>
+      <div className="flex-1 relative min-h-0 w-full" style={{ height: '450px' }}>
+        <canvas ref={cdChartRef}></canvas>
       </div>
     </CollapsibleSection>
   );
 };
 
-// ================= FITTING — CONDITION PLOTS + ERRORS + EXPERIMENTAL VARIABLES =================
+// ================= FITTING — CONDITION PLOTS + EXPERIMENTAL VARIABLES =================
 export const FittingErrors = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useCdDerived(activeTest);
   const [newVariable, setNewVariable] = useState('');
 
-  const plots =
-    Array.isArray(activeTest.conditionPlots) && activeTest.conditionPlots.length
-      ? activeTest.conditionPlots
-      : [defaultCdPlotCfg(1)];
-
-  const updatePlot = (id, patch) =>
-    updateActiveTest({ conditionPlots: plots.map((p) => (p.id === id ? { ...p, ...patch } : p)) });
+  const plots = Array.isArray(activeTest.conditionPlots) && activeTest.conditionPlots.length ? activeTest.conditionPlots : [defaultCdPlotCfg(1)];
+  const updatePlot = (id, patch) => updateActiveTest({ conditionPlots: plots.map((p) => (p.id === id ? { ...p, ...patch } : p)) });
   const addPlot = () => updateActiveTest({ conditionPlots: [...plots, defaultCdPlotCfg(plots.length + 1)] });
-  const removePlot = (id) => {
-    if (plots.length <= 1) {
-      alert('At least one condition plot is required.');
-      return;
-    }
-    updateActiveTest({ conditionPlots: plots.filter((p) => p.id !== id) });
-  };
-  const duplicatePlot = (p) =>
-    updateActiveTest({
-      conditionPlots: [...plots, { ...JSON.parse(JSON.stringify(p)), id: makePlotId(), title: `${p.title} (copy)` }]
-    });
+  const removePlot = (id) => { if (plots.length <= 1) return alert('At least one condition plot is required.'); updateActiveTest({ conditionPlots: plots.filter((p) => p.id !== id) }); };
+  const duplicatePlot = (p) => updateActiveTest({ conditionPlots: [...plots, { ...JSON.parse(JSON.stringify(p)), id: makePlotId(), title: `${p.title} (copy)` }] });
 
-  // ---------- Experimental variables (table) ----------
-  const variables = Array.isArray(activeTest.titrationVariables)
-    ? activeTest.titrationVariables
-    : ['Ratio', 'Concentration', 'Temperature'];
+  const variables = Array.isArray(activeTest.titrationVariables) ? activeTest.titrationVariables : ['Ratio', 'Concentration', 'Temperature'];
   const rows = activeTest.titrationRows || [];
   const makeId = () => `tit_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
-  const addVariable = () => {
-    const name = newVariable.trim();
-    if (!name || variables.includes(name)) return;
-    updateActiveTest({ titrationVariables: [...variables, name] });
-    setNewVariable('');
-  };
-
-  const removeVariable = (name) => {
-    updateActiveTest({
-      titrationVariables: variables.filter((v) => v !== name),
-      titrationRows: rows.map((row) => {
-        const values = { ...(row.values || {}) };
-        delete values[name];
-        return { ...row, values };
-      })
-    });
-  };
-
-  const addRow = () => {
-    const values = {};
-    variables.forEach((v) => { values[v] = ''; });
-    updateActiveTest({ titrationVariables: variables, titrationRows: [...rows, { id: makeId(), values, notes: '' }] });
-  };
-
-  const addRowFromCurrent = () => {
-    const values = {};
-    variables.forEach((v) => {
-      const key = v.toLowerCase();
-      if (key.includes('ratio')) values[v] = activeTest.ratio || '';
-      else if (key.includes('conc')) values[v] = activeTest.concentration || '';
-      else if (key.includes('temp')) values[v] = activeTest.temperature || '';
-      else if (key.includes('buffer') || key.includes('solvent')) values[v] = activeTest.buffer || activeTest.solvent || '';
-      else if (key.includes('path')) values[v] = activeTest.pathLength || '';
-      else if (key.includes('salt')) values[v] = activeTest.saltConcentration || '';
-      else if (key.includes('other') || key.includes('ligand') || key.includes('molecule')) values[v] = activeTest.otherMolecule || '';
-      else values[v] = '';
-    });
-    updateActiveTest({ titrationVariables: variables, titrationRows: [...rows, { id: makeId(), values, notes: '' }] });
-  };
-
-  const updateRowValue = (id, variable, value) =>
-    updateActiveTest({
-      titrationRows: rows.map((row) => (row.id === id ? { ...row, values: { ...(row.values || {}), [variable]: value } } : row))
-    });
-
-  const updateRowNotes = (id, notes) =>
-    updateActiveTest({ titrationRows: rows.map((row) => (row.id === id ? { ...row, notes } : row)) });
-
-  const duplicateRow = (row) =>
-    updateActiveTest({ titrationRows: [...rows, { ...row, id: makeId() }] });
-
-  const removeRow = (id) =>
-    updateActiveTest({ titrationRows: rows.filter((row) => row.id !== id) });
-
-  // Create one instance per experimental point
-  const createInstancesFromPoints = () => {
-    if (!rows.length) {
-      alert('No experimental points defined in the table below.');
-      return;
-    }
-    const src = d.activeInstance;
-    const cols = (src?.spectraColumns || []).map((c) => ({ ...c, data: '' }));
-    const newInsts = rows.map((row, i) => {
-      const name =
-        variables
-          .map((v) => {
-            const val = (row.values || {})[v];
-            return val ? `${v} ${val}` : '';
-          })
-          .filter(Boolean)
-          .join(' · ') || `Point ${i + 1}`;
-      let xVal = '';
-      for (const v of variables) {
-        const n = parseManual((row.values || {})[v]);
-        if (n !== null) { xVal = String(n); break; }
-      }
-      return {
-        id: makeInstanceId(),
-        name,
-        xValue: xVal,
-        notes: row.notes || '',
-        wavelengthData: src?.wavelengthData || '',
-        spectraColumns: cols.map((c) => ({ ...c })),
-        values: {}
-      };
-    });
-    updateActiveTest({ instances: [...d.instances, ...newInsts] });
-  };
+  const addVariable = () => { const name = newVariable.trim(); if (!name || variables.includes(name)) return; updateActiveTest({ titrationVariables: [...variables, name] }); setNewVariable(''); };
+  const removeVariable = (name) => { updateActiveTest({ titrationVariables: variables.filter((v) => v !== name), titrationRows: rows.map((row) => { const values = { ...(row.values || {}) }; delete values[name]; return { ...row, values }; }) }); };
+  const addRow = () => { const values = {}; variables.forEach((v) => { values[v] = ''; }); updateActiveTest({ titrationVariables: variables, titrationRows: [...rows, { id: makeId(), values, notes: '' }] }); };
+  
+  const updateRowValue = (id, variable, value) => updateActiveTest({ titrationRows: rows.map((row) => (row.id === id ? { ...row, values: { ...(row.values || {}), [variable]: value } } : row)) });
+  const duplicateRow = (row) => updateActiveTest({ titrationRows: [...rows, { ...row, id: makeId() }] });
+  const removeRow = (id) => updateActiveTest({ titrationRows: rows.filter((row) => row.id !== id) });
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <span className="text-xs font-bold text-slate-500 uppercase">
-          Condition plots — each one has its own parameter, spectra, fit, errors and graphical settings
-        </span>
-        <button type="button" onClick={addPlot} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm">
-          + Add Condition Plot
-        </button>
+        <span className="text-xs font-bold text-slate-500 uppercase">Condition plots — plot layers across instances (e.g. CD at 222nm vs Temp)</span>
+        <button type="button" onClick={addPlot} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm">+ Add Condition Plot</button>
       </div>
 
       {plots.map((p) => (
-        <ConditionPlotPanel
-          key={p.id}
-          ctx={ctx}
-          d={d}
-          plot={p}
-          updatePlot={updatePlot}
-          removePlot={removePlot}
-          duplicatePlot={duplicatePlot}
-        />
+        <ConditionPlotPanel key={p.id} ctx={ctx} d={d} plot={p} updatePlot={updatePlot} removePlot={removePlot} duplicatePlot={duplicatePlot} />
       ))}
 
-      <CollapsibleSection title="Experimental Variables" icon="🎛️" defaultOpen={false}>
+      <CollapsibleSection title="Experimental Variables (Table)" icon="🎛️" defaultOpen={false}>
         <div className="flex flex-col gap-4">
-          <div className="flex flex-col lg:flex-row gap-3 lg:items-end justify-between bg-slate-50 border border-slate-200 rounded-lg p-4">
-            <div className="flex flex-col md:flex-row gap-2 w-full lg:w-auto">
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-bold text-slate-500 uppercase">New Experimental Variable</label>
-                <input
-                  type="text"
-                  value={newVariable}
-                  onChange={(e) => setNewVariable(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      addVariable();
-                    }
-                  }}
-                  placeholder="e.g. Ratio, Concentration, pH, Temperature"
-                  className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-full md:w-72 bg-white"
-                />
-              </div>
-              <button type="button" onClick={addVariable} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm h-fit">
-                + Add Variable
-              </button>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={addRowFromCurrent} className="bg-white border border-blue-300 hover:bg-blue-50 text-blue-700 font-bold px-4 py-2 rounded-lg text-sm shadow-sm">
-                + Add Point from Current Conditions
-              </button>
-              <button type="button" onClick={addRow} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm">
-                + Add Empty Point
-              </button>
-              <button type="button" onClick={createInstancesFromPoints} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm">
-                🧩 Create Instance per Point
-              </button>
-            </div>
-          </div>
-
           <div className="flex flex-wrap gap-2">
-            {variables.length === 0 && (
-              <span className="text-sm text-slate-400 italic">
-                No variables defined. Add variables such as Ratio, Concentration, pH, Temperature, etc.
-              </span>
-            )}
+            <input type="text" value={newVariable} onChange={(e) => setNewVariable(e.target.value)} placeholder="New variable (e.g. Ratio)" className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
+            <button type="button" onClick={addVariable} className="bg-blue-600 text-white font-bold px-4 py-1.5 rounded-lg text-sm">+ Add Variable</button>
+            <button type="button" onClick={addRow} className="bg-emerald-600 text-white font-bold px-4 py-1.5 rounded-lg text-sm">+ Add Empty Point</button>
+          </div>
+          <div className="flex flex-wrap gap-2">
             {variables.map((v) => (
-              <span key={v} className="inline-flex items-center gap-2 bg-white border border-slate-300 px-2.5 py-1 rounded-lg text-xs font-bold text-slate-700 shadow-sm">
+              <span key={v} className="inline-flex items-center gap-2 bg-white border border-slate-300 px-2.5 py-1 rounded-lg text-xs font-bold text-slate-700">
                 {v}
-                <button type="button" onClick={() => removeVariable(v)} className="text-slate-400 hover:text-red-500 font-black" title={`Remove variable ${v}`}>
-                  ×
-                </button>
+                <button type="button" onClick={() => removeVariable(v)} className="text-slate-400 hover:text-red-500 font-black">×</button>
               </span>
             ))}
           </div>
-
-          <div className="overflow-x-auto custom-scrollbar border border-slate-200 rounded-lg">
-            <table className="w-full text-sm text-left min-w-[700px]">
-              <thead className="text-xs text-slate-500 uppercase bg-slate-100 sticky top-0 z-10">
+          <div className="overflow-x-auto border border-slate-200 rounded-lg">
+            <table className="w-full text-sm text-left">
+              <thead className="text-xs text-slate-500 uppercase bg-slate-100">
                 <tr>
                   <th className="px-3 py-2 w-12 border-b border-slate-200">#</th>
-                  {variables.map((v) => (
-                    <th key={v} className="px-3 py-2 font-bold text-blue-700 whitespace-nowrap border-b border-slate-200">{v}</th>
-                  ))}
-                  <th className="px-3 py-2 min-w-[180px] border-b border-slate-200">Notes</th>
+                  {variables.map((v) => <th key={v} className="px-3 py-2 font-bold text-blue-700 border-b border-slate-200">{v}</th>)}
                   <th className="px-3 py-2 w-32 border-b border-slate-200">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white">
-                {rows.length === 0 ? (
-                  <tr>
-                    <td colSpan={variables.length + 3} className="px-3 py-10 text-center text-slate-400 italic">
-                      No experimental points defined yet.
+                {rows.map((row, idx) => (
+                  <tr key={row.id}>
+                    <td className="px-3 py-2 font-bold text-slate-500">{idx + 1}</td>
+                    {variables.map((v) => (
+                      <td key={v} className="px-3 py-2">
+                        <input type="text" value={(row.values || {})[v] || ''} onChange={(e) => updateRowValue(row.id, v, e.target.value)} className="w-full border rounded px-2 py-1 text-sm" placeholder={v} />
+                      </td>
+                    ))}
+                    <td className="px-3 py-2 flex gap-2">
+                      <button type="button" onClick={() => duplicateRow(row)} className="text-xs font-bold text-blue-600">Duplicate</button>
+                      <button type="button" onClick={() => removeRow(row.id)} className="text-xs font-bold text-red-500">Delete</button>
                     </td>
                   </tr>
-                ) : (
-                  rows.map((row, idx) => (
-                    <tr key={row.id} className="hover:bg-slate-50">
-                      <td className="px-3 py-2 font-bold text-slate-500">{idx + 1}</td>
-                      {variables.map((v) => (
-                        <td key={v} className="px-3 py-2">
-                          <input
-                            type="text"
-                            value={(row.values || {})[v] || ''}
-                            onChange={(e) => updateRowValue(row.id, v, e.target.value)}
-                            className="w-full min-w-[90px] border border-slate-300 rounded-md px-2 py-1.5 text-sm outline-none focus:border-blue-500"
-                            placeholder={v}
-                          />
-                        </td>
-                      ))}
-                      <td className="px-3 py-2">
-                        <input
-                          type="text"
-                          value={row.notes || ''}
-                          onChange={(e) => updateRowNotes(row.id, e.target.value)}
-                          className="w-full min-w-[180px] border border-slate-300 rounded-md px-2 py-1.5 text-sm outline-none focus:border-blue-500"
-                          placeholder="Notes..."
-                        />
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        <div className="flex items-center gap-2">
-                          <button type="button" onClick={() => duplicateRow(row)} className="text-xs font-bold text-blue-600 hover:text-blue-800">
-                            Duplicate
-                          </button>
-                          <button type="button" onClick={() => removeRow(row.id)} className="text-xs font-bold text-red-500 hover:text-red-700">
-                            Delete
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
-                )}
+                ))}
               </tbody>
             </table>
           </div>
@@ -3246,8 +2642,8 @@ export const FittingGraphics = ({ ctx }) => {
       {[
         ['X Min (nm)', 'xMin'],
         ['X Max (nm)', 'xMax'],
-        ['Y Min (mdeg)', 'yMin'],
-        ['Y Max (mdeg)', 'yMax']
+        ['Y Min', 'yMin'],
+        ['Y Max', 'yMax']
       ].map(([lbl, k]) => (
         <div key={k} className="flex flex-col gap-1">
           <label className="text-xs font-bold text-slate-600">{lbl}</label>
@@ -3288,13 +2684,9 @@ export const Simulations = () => {
   const toggleFs = (id) => setFsPanel((prev) => (prev === id ? null : id));
   return (
     <div className="flex flex-col gap-6">
-      {fsPanel === 'mixer' && (
-        <div className={OVERLAY_CLASSES} onClick={() => toggleFs('mixer')}></div>
-      )}
+      {fsPanel === 'mixer' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('mixer')}></div>}
       <ProteinCDMixer isExpanded={fsPanel === 'mixer'} onToggleExpand={() => toggleFs('mixer')} />
-      {fsPanel === 'library' && (
-        <div className={OVERLAY_CLASSES} onClick={() => toggleFs('library')}></div>
-      )}
+      {fsPanel === 'library' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('library')}></div>}
       <CDSpectraLibrary isExpanded={fsPanel === 'library'} onToggleExpand={() => toggleFs('library')} />
     </div>
   );
@@ -3304,29 +2696,36 @@ export const Simulations = () => {
 export const NotebookExtra = ({ ctx, checkId }) => {
   const { activeTest } = ctx;
   const d = useCdDerived(activeTest);
-  const structureComposition = activeTest.structureComposition || DEFAULT_STRUCTURE;
 
   if (checkId === 'cond') {
     const names = d.instances.map((i) => i.name).join(', ');
     return `<p style="font-size: 12px; color: #475569; margin-top: 10px;"><b>Conditions:</b> ${names || 'N/A'} (${d.instances.length})</p>`;
   }
-
-  if (checkId === 'struct') {
-    let html =
-      '<table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; text-align: left; background: white;">';
-    html +=
-      '<tr style="background-color: #f1f5f9;"><th style="padding: 6px; border: 1px solid #cbd5e1;">Structure</th><th style="padding: 6px; border: 1px solid #cbd5e1;">Percentage</th></tr>';
-    Object.entries(structureComposition).forEach(([k, v]) => {
-      html += `<tr><td style="padding: 6px; border: 1px solid #e2e8f0;"><b>${k}</b></td><td style="padding: 6px; border: 1px solid #e2e8f0;">${v}%</td></tr>`;
-    });
-    html += '</table>';
-    return html;
-  }
-
   if (checkId === 'spectra') {
     if (d.parsedSpectra.length === 0) return '';
     let html = `<p style="font-size: 12px; color: #475569; margin-top: 10px;"><b>Spectra recorded (${d.activeInstance ? d.activeInstance.name : 'Condition'}):</b> ${d.parsedSpectra.map((s) => s.title).join(', ')}</p>`;
     html += `<p style="font-size: 11px; color: #64748b;">Wavelength range: ${d.parsedWavelengths.length > 0 ? `${Math.min(...d.parsedWavelengths)} - ${Math.max(...d.parsedWavelengths)} nm` : 'N/A'} (${d.parsedWavelengths.length} points)</p>`;
+    return html;
+  }
+  if (checkId === 'table') {
+    // Show Secondary Structure metrics if any exist
+    const layers = activeTest.parameterLayers || [];
+    const ssLayers = layers.filter(l => l.key.startsWith('ss_'));
+    if (!ssLayers.length || !d.activeInstance) return '';
+    
+    let html = `<table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; text-align: left; background: white;"><tr style="background-color: #f1f5f9;"><th style="padding: 6px; border: 1px solid #cbd5e1;">Spectrum ID</th>`;
+    ssLayers.forEach(l => { html += `<th style="padding: 6px; border: 1px solid #cbd5e1;">${l.label}</th>`; });
+    html += `</tr>`;
+    
+    d.seriesOptions.forEach(opt => {
+      html += `<tr><td style="padding: 6px; border: 1px solid #e2e8f0; color: #334155;">${opt.label}</td>`;
+      ssLayers.forEach(l => {
+        const val = getLayerValues(d.activeInstance, l.key)[opt.key] || '—';
+        html += `<td style="padding: 6px; border: 1px solid #e2e8f0;">${val}</td>`;
+      });
+      html += `</tr>`;
+    });
+    html += `</table>`;
     return html;
   }
 
