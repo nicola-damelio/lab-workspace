@@ -313,6 +313,63 @@ function DecayChart({ table, colFits, chartCfg, isFs, onToggleFs }) {
   );
 }
 
+function IndividualDecayChart({ table, colIndex, colFit, chartCfg, isFs, onToggleFs }) {
+  const ref = useRef(null); const chartRef = useRef(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    const color = toHex(PALETTE[colIndex % PALETTE.length]);
+    const pts = [];
+    for (let r = 0; r < table.nRows; r++) {
+      const x = table.delays[r], y = parseFloat(table.grid[r]?.[colIndex]);
+      if (isFinite(x) && isFinite(y)) pts.push({ x, y });
+    }
+    if (pts.length === 0) return;
+    
+    const ds = [];
+    ds.push({ label: 'Data', data: pts, showLine: false, pointRadius: chartCfg.ptSize, pointStyle: chartCfg.ptStyle, backgroundColor: color, borderColor: color, type: 'scatter' });
+    const fit = colFit?.fit;
+    if (fit && pts.length >= 2) {
+      const xmin = Math.min(...pts.map((p) => p.x)), xmax = Math.max(...pts.map((p) => p.x)), curve = [];
+      for (let i = 0; i <= 60; i++) {
+        const x = xmin + ((xmax - xmin) * i) / 60;
+        let yVal = fit.modelType === 'inversion-recovery' ? fit.A - fit.B * Math.exp(-fit.R * x) : fit.A * Math.exp(-fit.R * x);
+        curve.push({ x, y: yVal });
+      }
+      let borderDash = [];
+      if (chartCfg.lineStyle === 'dashed') borderDash = [5, 5];
+      if (chartCfg.lineStyle === 'dotted') borderDash = [2, 3];
+      ds.push({ label: `Fit`, data: curve, showLine: true, pointRadius: 0, borderColor: color, backgroundColor: 'transparent', borderWidth: chartCfg.lineThickness, borderDash, type: 'line', tension: 0.25 });
+    }
+    
+    if (chartRef.current) chartRef.current.destroy();
+    chartRef.current = new Chart(ref.current, {
+      type: 'scatter', data: { datasets: ds },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: {
+          x: { type: 'linear', position: chartCfg.xPos, min: chartCfg.xMin !== '' ? parseFloat(chartCfg.xMin) : undefined, max: chartCfg.xMax !== '' ? parseFloat(chartCfg.xMax) : undefined, title: { display: isFs, text: chartCfg.xAxisLabel || (table.relaxType === 'DOSY' ? `b-value / G² (${table.delayUnit})` : `Delay (${table.delayUnit})`), font: { size: chartCfg.fontSize + 2 } }, ticks: { display: isFs, font: { size: chartCfg.fontSize } } },
+          y: { position: chartCfg.yPos, min: chartCfg.yMin !== '' ? parseFloat(chartCfg.yMin) : undefined, max: chartCfg.yMax !== '' ? parseFloat(chartCfg.yMax) : undefined, title: { display: isFs, text: 'Intensity / Volume', font: { size: chartCfg.fontSize + 2 } }, ticks: { display: isFs, font: { size: chartCfg.fontSize } } },
+        },
+        plugins: { legend: { display: false }, tooltip: { enabled: true } },
+        interaction: { mode: 'nearest', intersect: true },
+      }
+    });
+    return () => { if (chartRef.current) chartRef.current.destroy(); };
+  }, [table, colIndex, colFit, chartCfg, isFs]);
+
+  const residueName = table.colResidues[colIndex] || `Col ${colIndex + 1}`;
+  return (
+    <div className={`flex flex-col relative bg-white ${isFs ? FS_CLASSES + ' p-6' : 'aspect-square p-2 cursor-pointer hover:shadow-lg transition-shadow border border-slate-200 rounded-lg group'}`} onClick={!isFs ? onToggleFs : undefined}>
+      <div className="flex justify-between items-start mb-1 z-10">
+        <h4 className="text-xs font-bold text-slate-600 uppercase">{residueName}</h4>
+        {!isFs && <button className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1 transition-all text-[10px]">↗️</button>}
+        {isFs && <button onClick={(e) => { e.stopPropagation(); onToggleFs(); }} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors no-print">↙️</button>}
+      </div>
+      <div className={`flex-1 relative min-h-0 ${!isFs ? 'pointer-events-none' : ''}`}><canvas ref={ref} /></div>
+    </div>
+  );
+}
+
 function ParameterChart({ table, colFits, chartCfg, isFs, onToggleFs }) {
   const ref = useRef(null); const chartRef = useRef(null);
   useEffect(() => {
@@ -560,6 +617,28 @@ export const NMRFittingsTestRenderer = ({ activeTest = {}, updateActiveTest, Tes
                <ParameterChart table={t} colFits={colFits} chartCfg={chartCfg} isFs={fsPanel === `param_${t.id}`} onToggleFs={() => setFsPanel(fsPanel === `param_${t.id}` ? null : `param_${t.id}`)} />
              </div>
           </div>
+
+          {/* Individual Fittings Panel */}
+          {colFits.length > 0 && (
+            <div className="mt-4 p-4 bg-slate-50 border border-slate-200 rounded-lg shadow-sm">
+              <h4 className="text-xs font-black text-slate-700 uppercase mb-3 border-b border-slate-200 pb-2">Individual Fittings</h4>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+                {colFits.map((cf, c) => (
+                  <React.Fragment key={c}>
+                    {fsPanel === `indiv_${t.id}_${c}` && <div className={OVERLAY_CLASSES} onClick={() => setFsPanel(null)}></div>}
+                    <IndividualDecayChart 
+                      table={t} 
+                      colIndex={c} 
+                      colFit={cf} 
+                      chartCfg={chartCfg} 
+                      isFs={fsPanel === `indiv_${t.id}_${c}`} 
+                      onToggleFs={() => setFsPanel(fsPanel === `indiv_${t.id}_${c}` ? null : `indiv_${t.id}_${c}`)} 
+                    />
+                  </React.Fragment>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </CollapsibleSection>
     );
