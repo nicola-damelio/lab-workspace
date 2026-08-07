@@ -1259,10 +1259,133 @@ const SpectrumFittingSection = ({ ctx }) => {
       <p className="text-[10px] text-slate-400">💡 Blue = experimental spectrum · Red dashed = fitted curve from secondary-structure components.</p>
     </div>
   );
+  );
 };
 
+// ================= INDIVIDUAL SPECTRA CHART =================
+function IndividualSpectraChart({ title, data, color, chartCfg, isFs, onToggleFs, isActiveInst }) {
+  const ref = useRef(null);
+  const chartRef = useRef(null);
+
+  useEffect(() => {
+    if (!ref.current) return;
+    let borderDash = [];
+    if (chartCfg.lineStyle === 'dashed') borderDash = [5, 5];
+    if (chartCfg.lineStyle === 'dotted') borderDash = [2, 3];
+    if (!isActiveInst) borderDash = [3, 3];
+
+    const ds = [{
+      label: title,
+      data,
+      borderColor: color,
+      backgroundColor: 'transparent',
+      borderWidth: chartCfg.lineThickness || chartCfg.lineWidth || 2,
+      borderDash,
+      pointRadius: chartCfg.ptSize || 0,
+      pointStyle: chartCfg.ptStyle || 'circle',
+      pointBackgroundColor: color,
+      fill: false,
+      tension: 0.1,
+      type: 'line'
+    }];
+
+    if (chartRef.current) chartRef.current.destroy();
+    chartRef.current = new Chart(ref.current, {
+      type: 'line',
+      data: { datasets: ds },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: {
+            type: 'linear',
+            min: chartCfg.xMin !== '' ? parseFloat(chartCfg.xMin) : undefined,
+            max: chartCfg.xMax !== '' ? parseFloat(chartCfg.xMax) : undefined,
+            title: {
+              display: isFs,
+              text: chartCfg.xAxisLabel || 'Wavelength (nm)',
+              font: { size: (chartCfg.fontSize || 12) + 2, weight: 'bold' },
+              color: '#334155'
+            },
+            ticks: {
+              display: isFs,
+              font: { size: chartCfg.fontSize || 12 },
+              color: '#64748b'
+            },
+            grid: { color: '#f1f5f9' }
+          },
+          y: {
+            min: chartCfg.yMin !== '' ? parseFloat(chartCfg.yMin) : undefined,
+            max: chartCfg.yMax !== '' ? parseFloat(chartCfg.yMax) : undefined,
+            title: {
+              display: isFs,
+              text: 'CD Signal / MRE',
+              font: { size: (chartCfg.fontSize || 12) + 2, weight: 'bold' },
+              color: '#334155'
+            },
+            ticks: {
+              display: isFs,
+              font: { size: chartCfg.fontSize || 12 },
+              color: '#64748b'
+            },
+            grid: { color: '#f1f5f9' }
+          }
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title: (c) => `${c[0].parsed.x.toFixed(1)} nm`,
+              label: (c) => `${c.dataset.label}: ${c.parsed.y.toFixed(3)}`
+            }
+          }
+        },
+        interaction: { mode: 'nearest', intersect: false }
+      }
+    });
+
+    return () => {
+      if (chartRef.current) chartRef.current.destroy();
+    };
+  }, [data, color, chartCfg, isFs, title, isActiveInst]);
+
+  return (
+    <div
+      className={`flex flex-col bg-white ${
+        isFs
+          ? FS_CLASSES + ' p-6'
+          : 'relative aspect-square p-2 cursor-pointer hover:shadow-lg transition-shadow border border-slate-200 rounded-lg group'
+      }`}
+      onClick={!isFs ? onToggleFs : undefined}
+    >
+      <div className="flex justify-between items-start mb-1 z-10">
+        <h4 className="text-xs font-bold text-slate-600 uppercase truncate w-[80%]">{title}</h4>
+        {!isFs && (
+          <button className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1 transition-all text-[10px]">
+            ↗️
+          </button>
+        )}
+        {isFs && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleFs();
+            }}
+            className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors no-print"
+          >
+            ↙️
+          </button>
+        )}
+      </div>
+      <div className={`flex-1 relative min-h-0 ${!isFs ? 'pointer-events-none' : ''}`}>
+        <canvas ref={ref} />
+      </div>
+    </div>
+  );
+}
+
 /* ========================================================================
-   DATA — CD Spectra Plot (all instances overlaid)  (unchanged)
+   DATA — CD Spectra Plot (all instances overlaid)
    ======================================================================== */
 export const Data = ({ ctx }) => {
   const { activeTest } = ctx;
@@ -1270,6 +1393,10 @@ export const Data = ({ ctx }) => {
   const chartCfg = activeTest.chartCfg || DEFAULT_CHART_CFG;
   const cdChartRef = useRef(null); const cdChartWrapRef = useRef(null); const cdChart = useRef(null);
   const { width, height } = useElementSize(cdChartWrapRef);
+  const [fsPanel, setFsPanel] = useState(null);
+  const toggleFs = (id) => setFsPanel((prev) => (prev === id ? null : id));
+  const isMainFs = fsPanel === 'cdMain';
+
   useEffect(() => { const timer = setTimeout(() => window.dispatchEvent(new Event('resize')), 120); return () => clearTimeout(timer); }, []);
   useEffect(() => {
     if (!cdChartRef.current) return;
@@ -1278,6 +1405,11 @@ export const Data = ({ ctx }) => {
     if (w < 50 || h < 50) return;
     if (cdChart.current) cdChart.current.destroy();
     const datasets = [];
+    
+    let borderDashOpt = [];
+    if (chartCfg.lineStyle === 'dashed') borderDashOpt = [5, 5];
+    if (chartCfg.lineStyle === 'dotted') borderDashOpt = [2, 3];
+
     d.instances.forEach((inst) => {
       const { parsedWavelengths, parsedSpectra } = computeParsed(inst);
       const isActiveInst = d.activeInstance && d.activeInstance.id === inst.id;
@@ -1287,7 +1419,22 @@ export const Data = ({ ctx }) => {
         const sk = `spec-${s.id}`;
         const isSel = isActiveInst && d.selectedKeys && d.selectedKeys.includes(sk);
         const dimmed = !isActiveInst || (d.selectedKeys && !isSel);
-        datasets.push({ label: `${s.title} [${inst.name}]`, data, borderColor: dimmed ? `${s.color}66` : s.color, backgroundColor: `${s.color}20`, borderWidth: isSel ? (chartCfg.lineWidth || 2) + 1.5 : (chartCfg.lineWidth || 2), borderDash: isActiveInst ? [] : [3, 3], pointRadius: 0, pointHoverRadius: 4, fill: false, tension: 0.1, type: 'line' });
+        
+        let bd = isActiveInst ? borderDashOpt : [3, 3];
+        datasets.push({ 
+          label: `${s.title} [${inst.name}]`, 
+          data, 
+          borderColor: dimmed ? `${s.color}66` : s.color, 
+          backgroundColor: dimmed ? `${s.color}20` : s.color, 
+          borderWidth: isSel ? (chartCfg.lineWidth || chartCfg.lineThickness || 2) + 1.5 : (chartCfg.lineWidth || chartCfg.lineThickness || 2), 
+          borderDash: bd, 
+          pointRadius: chartCfg.ptSize || 0, 
+          pointHoverRadius: (chartCfg.ptSize || 0) + 2, 
+          pointStyle: chartCfg.ptStyle || 'circle',
+          fill: false, 
+          tension: 0.1, 
+          type: 'line' 
+        });
       });
     });
     cdChart.current = new Chart(cdChartRef.current, {
@@ -1295,19 +1442,64 @@ export const Data = ({ ctx }) => {
       options: {
         responsive: true, maintainAspectRatio: false, interaction: { mode: 'nearest', intersect: false },
         scales: {
-          x: { type: 'linear', min: chartCfg.xMin !== '' ? parseFloat(chartCfg.xMin) : undefined, max: chartCfg.xMax !== '' ? parseFloat(chartCfg.xMax) : undefined, title: { display: true, text: 'Wavelength (nm)', font: { size: (chartCfg.fontSize || 12) + 2, weight: 'bold' }, color: '#334155' }, ticks: { font: { size: chartCfg.fontSize || 12 }, color: '#64748b' }, grid: { color: '#f1f5f9' } },
+          x: { type: 'linear', min: chartCfg.xMin !== '' ? parseFloat(chartCfg.xMin) : undefined, max: chartCfg.xMax !== '' ? parseFloat(chartCfg.xMax) : undefined, title: { display: true, text: chartCfg.xAxisLabel || 'Wavelength (nm)', font: { size: (chartCfg.fontSize || 12) + 2, weight: 'bold' }, color: '#334155' }, ticks: { font: { size: chartCfg.fontSize || 12 }, color: '#64748b' }, grid: { color: '#f1f5f9' } },
           y: { min: chartCfg.yMin !== '' ? parseFloat(chartCfg.yMin) : undefined, max: chartCfg.yMax !== '' ? parseFloat(chartCfg.yMax) : undefined, title: { display: true, text: 'CD Signal / MRE', font: { size: (chartCfg.fontSize || 12) + 2, weight: 'bold' }, color: '#334155' }, ticks: { font: { size: chartCfg.fontSize || 12 }, color: '#64748b' }, grid: { color: '#f1f5f9' } }
         },
         plugins: { legend: { position: 'top', labels: { font: { size: chartCfg.fontSize || 12, weight: 'bold' }, usePointStyle: true } }, tooltip: { callbacks: { title: (c) => `${c[0].parsed.x.toFixed(1)} nm`, label: (c) => `${c.dataset.label}: ${c.parsed.y.toFixed(3)}` } } }
       }
     });
     return () => { if (cdChart.current) cdChart.current.destroy(); };
-  }, [d.instances, d.activeInstance, chartCfg, d.selectedKeys, width, height]);
+  }, [d.instances, d.activeInstance, chartCfg, d.selectedKeys, width, height, fsPanel]);
+
+  // Collect active individual spectra
+  const indivSpectra = [];
+  if (d.activeInstance) {
+    const { parsedWavelengths, parsedSpectra } = computeParsed(d.activeInstance);
+    parsedSpectra.forEach((s, idx) => {
+      if (s.visible === false || !s.values || s.values.length === 0) return;
+      const data = parsedWavelengths.map((w2, i) => ({ x: w2, y: s.values[i] !== undefined ? s.values[i] : null })).filter((p) => p.y !== null);
+      indivSpectra.push({ id: `indiv_cd_${idx}`, title: s.title, data, color: s.color });
+    });
+  }
+
   return (
     <CollapsibleSection title="CD Spectra Plot (All Conditions)" icon="📈" headerExtra={<span className="text-[10px] font-bold bg-blue-100 text-blue-700 px-2 py-1 rounded">Active: {d.activeInstance ? d.activeInstance.name : '—'}</span>}>
-      <div ref={cdChartWrapRef} className="flex-1 relative min-h-0 w-full" style={{ height: '450px' }}>
-        <canvas ref={cdChartRef} />
+      {isMainFs && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('cdMain')}></div>}
+      <div className={`flex flex-col bg-white ${isMainFs ? FS_CLASSES + ' p-6' : ''}`}>
+        <div className="flex justify-between items-start mb-2">
+          {isMainFs && <h2 className="text-sm font-bold text-slate-600 uppercase tracking-widest">CD Spectra Plot</h2>}
+          <button onClick={() => toggleFs('cdMain')} className={`ml-auto text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors no-print ${!isMainFs && 'absolute top-0 right-0 z-10 m-2'}`}>
+            {isMainFs ? '↙️' : '↗️'}
+          </button>
+        </div>
+        <div ref={cdChartWrapRef} className="flex-1 relative min-h-0 w-full" style={{ height: isMainFs ? '100%' : '450px' }}>
+          <canvas ref={cdChartRef} />
+        </div>
       </div>
+
+      {indivSpectra.length > 0 && (
+        <div className="mt-4 p-4 bg-slate-50 border border-slate-200 rounded-lg shadow-sm">
+          <h4 className="text-xs font-black text-slate-700 uppercase mb-3 border-b border-slate-200 pb-2">
+            Individual Spectra ({d.activeInstance.name})
+          </h4>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+            {indivSpectra.map((spec) => (
+              <React.Fragment key={spec.id}>
+                {fsPanel === spec.id && <div className={OVERLAY_CLASSES} onClick={() => toggleFs(spec.id)}></div>}
+                <IndividualSpectraChart
+                  title={spec.title}
+                  data={spec.data}
+                  color={spec.color}
+                  chartCfg={chartCfg}
+                  isFs={fsPanel === spec.id}
+                  onToggleFs={() => toggleFs(spec.id)}
+                  isActiveInst={true}
+                />
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
+      )}
     </CollapsibleSection>
   );
 };
@@ -1376,7 +1568,7 @@ export const SetupInstanceEditor = ({ ctx }) => {
 /* ========================================================================
    SMALL MULTIPLES — one zoomable square plot per series/fit
    ======================================================================== */
-const SmallSeriesPlot = ({ s, fit, cfg, color, xLab, yLab, showFit, showPoints, showErrors, effSD }) => {
+const SmallSeriesPlot = ({ s, fit, cfg, color, xLab, yLab, showFit, showPoints, showErrors, effSD, isFs, onToggleFs }) => {
   const chartRef = useRef(null);
   const incl = s.pts.filter((p) => !p.excluded && p.x !== null).sort((a, b) => a.x - b.x);
   const xs = incl.map((p) => p.x);
@@ -1387,12 +1579,15 @@ const SmallSeriesPlot = ({ s, fit, cfg, color, xLab, yLab, showFit, showPoints, 
   const fitData = fit && fit.f ? (() => { const [mn, mx] = zoom.domain; const out = []; for (let i = 0; i <= 60; i++) { const x = mn + ((mx - mn) * i) / 60; out.push({ x, y: fit.f(x) }); } return out; })() : [];
   const fs = Math.max(9, (cfg.fontSize || 12) - 2);
   return (
-    <div className="relative bg-white border border-slate-200 rounded-lg p-2 shadow-sm">
-      <div className="flex items-center justify-between mb-1 gap-1">
+    <div className={`flex flex-col bg-white ${isFs ? FS_CLASSES + ' p-6' : 'relative border border-slate-200 rounded-lg p-2 shadow-sm'}`}>
+      <div className="flex items-center justify-between mb-1 gap-1 z-10">
         <span className="text-[10px] font-bold truncate" style={{ color }}>{s.label}</span>
-        {zoom.isZoomed && <button type="button" onClick={zoom.reset} className="text-[9px] bg-slate-200 hover:bg-slate-300 px-1.5 py-0.5 rounded font-bold shrink-0">Reset Zoom</button>}
+        <div className="flex gap-1">
+          {zoom.isZoomed && <button type="button" onClick={zoom.reset} className="text-[9px] bg-slate-200 hover:bg-slate-300 px-1.5 py-0.5 rounded font-bold shrink-0">Reset Zoom</button>}
+          <button type="button" onClick={(e) => { e.stopPropagation(); onToggleFs(); }} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1 transition-all text-[10px] shrink-0 no-print">{isFs ? '↙️' : '↗️'}</button>
+        </div>
       </div>
-      <div ref={chartRef} onMouseDown={zoom.onMouseDown} className="select-none" style={{ aspectRatio: '1', minHeight: '140px' }}>
+      <div ref={chartRef} onMouseDown={zoom.onMouseDown} className="select-none flex-1 relative min-h-0 w-full" style={!isFs ? { aspectRatio: '1', minHeight: '140px' } : {}}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart margin={{ top: 5, right: 8, bottom: 24, left: 4 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
@@ -1448,6 +1643,9 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
   const [presetName, setPresetName] = useState('');
   const [showErr, setShowErr] = useState(false);
   const [showCfg, setShowCfg] = useState(false);
+  const [fsPanel, setFsPanel] = useState(null);
+  const toggleFs = (id) => setFsPanel((prev) => (prev === id ? null : id));
+  const isMainFs = fsPanel === 'main';
   const [hVal, setHVal] = useState('');
   const [hLab, setHLab] = useState('');
   const chartRef = useRef(null);
@@ -1789,11 +1987,18 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
             {series.length === 0 ? (
               <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">Select at least one series to plot.</div>
             ) : (
-              <div className="select-none relative">
+              <div className={`select-none relative bg-white flex flex-col ${isMainFs ? FS_CLASSES + ' p-6 z-50' : ''}`}>
+                {isMainFs && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('main')}></div>}
+                <div className="flex justify-between items-start mb-2 z-10">
+                  {isMainFs && <h2 className="text-sm font-bold text-slate-600 uppercase tracking-widest">{plot.title}</h2>}
+                  <button onClick={() => toggleFs('main')} className={`ml-auto text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors no-print ${!isMainFs ? 'absolute top-0 right-0 z-10 m-2' : ''}`}>
+                    {isMainFs ? '↙️' : '↗️'}
+                  </button>
+                </div>
                 {!isHist && zoom.isZoomed && (
-                  <button type="button" onClick={zoom.reset} className="absolute top-2 right-2 z-10 text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>
+                  <button type="button" onClick={zoom.reset} className={`absolute top-2 z-10 text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold ${!isMainFs ? 'right-12' : 'right-16'}`}>Reset Zoom</button>
                 )}
-                <div ref={chartRef} onMouseDown={isHist ? undefined : zoom.onMouseDown} style={chartBoxStyle(cfg)} className="bg-white border border-slate-200 rounded-xl p-3">
+                <div ref={chartRef} onMouseDown={isHist ? undefined : zoom.onMouseDown} style={isMainFs ? { flex: 1, minHeight: 0 } : chartBoxStyle(cfg)} className={`bg-white border border-slate-200 rounded-xl p-3 ${isMainFs ? 'w-full h-full' : ''}`}>
                   <ResponsiveContainer width="100%" height="100%">
                     {isHist ? (
                       <BarChart data={catData} margin={{ top: 8, right: 16, bottom: 30, left: 12 }}>
@@ -1849,8 +2054,11 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
             {/* Small multiples grid */}
             {plot.showSmall && !isHist && effXVar !== 'category' && visibleSeries.length > 0 && (
               <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
-                {visibleSeries.map((s) => (
-                  <SmallSeriesPlot key={s.key} s={s} fit={fits[s.key]} cfg={cfg} color={colorOf(s)} xLab={xVarLabel} yLab={plotLayer.label} showFit={plot.fitEnabled && plot.showFit} showPoints={plot.showPoints} showErrors={plot.showErrors} effSD={effSD} />
+                {visibleSeries.map((s, idx) => (
+                  <React.Fragment key={s.key}>
+                    {fsPanel === `small_${idx}` && <div className={OVERLAY_CLASSES} onClick={() => toggleFs(`small_${idx}`)}></div>}
+                    <SmallSeriesPlot s={s} fit={fits[s.key]} cfg={cfg} color={colorOf(s)} xLab={xVarLabel} yLab={plotLayer.label} showFit={plot.fitEnabled && plot.showFit} showPoints={plot.showPoints} showErrors={plot.showErrors} effSD={effSD} isFs={fsPanel === `small_${idx}`} onToggleFs={() => toggleFs(`small_${idx}`)} />
+                  </React.Fragment>
                 ))}
               </div>
             )}
@@ -1992,24 +2200,36 @@ export const FittingErrors = ({ ctx }) => {
 export const FittingGraphics = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const chartCfg = activeTest.chartCfg || DEFAULT_CHART_CFG;
+  const update = (patch) => updateActiveTest({ chartCfg: { ...chartCfg, ...patch } });
+  
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-      {['X Min (nm)', 'X Max (nm)', 'Y Min', 'Y Max'].map((lbl, i) => {
-        const k = ['xMin', 'xMax', 'yMin', 'yMax'][i];
-        return (
-          <div key={k} className="flex flex-col gap-1">
-            <label className="text-xs font-bold text-slate-600">{lbl}</label>
-            <input type="number" placeholder="Auto" value={chartCfg[k]} onChange={(e) => updateActiveTest({ chartCfg: { ...chartCfg, [k]: e.target.value } })} className="border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-          </div>
-        );
-      })}
+    <div className="p-5 bg-white border border-slate-300 rounded-xl grid grid-cols-2 lg:grid-cols-4 gap-4 shadow-sm">
+      {[['X Min', 'xMin'], ['X Max', 'xMax'], ['Y Min', 'yMin'], ['Y Max', 'yMax']].map(([lbl, k]) => (
+        <div key={k} className="flex flex-col gap-1">
+          <label className="text-xs font-bold text-slate-600">{lbl}</label>
+          <input type="number" placeholder="Auto" value={chartCfg[k] ?? ''} onChange={(e) => update({ [k]: e.target.value })} className="border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
+        </div>
+      ))}
       <div className="flex flex-col gap-1">
-        <label className="text-xs font-bold text-slate-600">Font Size</label>
-        <input type="number" value={chartCfg.fontSize} onChange={(e) => updateActiveTest({ chartCfg: { ...chartCfg, fontSize: parseFloat(e.target.value) || 12 } })} className="border border-slate-300 rounded-md p-2 text-sm outline-none" />
+        <label className="text-xs font-bold text-slate-600">X Axis Label</label>
+        <input type="text" placeholder="Default" value={chartCfg.xAxisLabel ?? ''} onChange={(e) => update({ xAxisLabel: e.target.value })} className="border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
       </div>
       <div className="flex flex-col gap-1">
-        <label className="text-xs font-bold text-slate-600">Line Thickness</label>
-        <input type="number" value={chartCfg.lineWidth} onChange={(e) => updateActiveTest({ chartCfg: { ...chartCfg, lineWidth: parseFloat(e.target.value) || 2 } })} className="border border-slate-300 rounded-md p-2 text-sm outline-none" />
+        <label className="text-xs font-bold text-slate-600">Font Size</label>
+        <input type="number" value={chartCfg.fontSize ?? 12} onChange={(e) => update({ fontSize: parseFloat(e.target.value) || 12 })} className="border border-slate-300 rounded-md p-2 text-sm outline-none" />
+      </div>
+      <div className="flex flex-col gap-1">
+        <label className="text-xs font-bold text-slate-600">Point Style</label>
+        <select value={chartCfg.ptStyle ?? 'circle'} onChange={(e) => update({ ptStyle: e.target.value })} className="border border-slate-300 rounded-md p-2 text-sm bg-white outline-none">
+          {['circle', 'triangle', 'rect', 'rectRot', 'cross', 'crossRot', 'star'].map((s) => (<option key={s} value={s}>{s}</option>))}
+        </select>
+      </div>
+      <div className="flex flex-col gap-1">
+        <label className="text-xs font-bold text-slate-600">Line Style / Thick.</label>
+        <div className="flex gap-2">
+          <select value={chartCfg.lineStyle ?? 'solid'} onChange={(e) => update({ lineStyle: e.target.value })} className="border border-slate-300 rounded-md p-2 text-sm bg-white flex-1 outline-none"><option value="solid">Solid</option><option value="dashed">Dashed</option><option value="dotted">Dotted</option></select>
+          <input type="number" value={chartCfg.lineThickness ?? chartCfg.lineWidth ?? 2} onChange={(e) => update({ lineThickness: parseFloat(e.target.value) || 2 })} className="border border-slate-300 rounded-md p-2 text-sm w-16 outline-none" />
+        </div>
       </div>
     </div>
   );

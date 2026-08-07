@@ -59,6 +59,151 @@ export const ErrInput = ({ label, value, sdRaw, isOverridden, onSave, onReset })
   );
 };
 
+// ================= INDIVIDUAL DOSE RESPONSE CHART =================
+function IndividualDoseResponseChart({ cd, chartCfg, isFs, onToggleFs, unit, eScale }) {
+  const ref = useRef(null);
+  const chartRef = useRef(null);
+
+  useEffect(() => {
+    if (!ref.current) return;
+    const ds = [];
+
+    if (cd.fit && isFinite(cd.fit.ic50)) {
+      const minL = Math.min(...cd.vPts.map((p) => p.x)) - 0.2;
+      const maxL = Math.max(...cd.vPts.map((p) => p.x)) + 0.2;
+      const curve = [];
+      const step = (maxL - minL) / 60;
+      for (let v = minL; v <= maxL + step * 0.5; v += step) {
+        curve.push({
+          x: v,
+          y: 100 / (1 + Math.pow(Math.pow(10, v) / cd.fit.ic50, cd.fit.hill))
+        });
+      }
+      let borderDash = [];
+      if (chartCfg.lineStyle === 'dashed') borderDash = [5, 5];
+      if (chartCfg.lineStyle === 'dotted') borderDash = [2, 3];
+      ds.push({
+        label: `${cd.name} fit`,
+        data: curve,
+        borderColor: cd.color,
+        backgroundColor: 'transparent',
+        borderWidth: chartCfg.lineThickness || 2,
+        borderDash,
+        pointRadius: 0,
+        fill: false,
+        type: 'line',
+        tension: 0,
+        showLine: true
+      });
+    }
+
+    if (cd.vPts.length > 0) {
+      ds.push({
+        label: cd.fit ? `${cd.name} [pts]` : cd.name,
+        data: cd.vPts,
+        errorBars: cd.vPts.map((p) => ({ plus: p.sd * eScale, minus: p.sd * eScale })),
+        borderColor: cd.color,
+        backgroundColor: cd.color,
+        borderWidth: 2,
+        pointBackgroundColor: cd.color,
+        pointStyle: chartCfg.ptStyle || 'circle',
+        pointRadius: chartCfg.ptSize != null ? chartCfg.ptSize : 5,
+        fill: false,
+        type: 'scatter',
+        showLine: false
+      });
+    }
+
+    if (chartRef.current) chartRef.current.destroy();
+    chartRef.current = new Chart(ref.current, {
+      type: 'scatter',
+      data: { datasets: ds },
+      plugins: [errBarPlugin],
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: {
+            type: 'linear',
+            position: chartCfg.xPos || 'bottom',
+            min: chartCfg.xMin !== '' ? parseFloat(chartCfg.xMin) : undefined,
+            max: chartCfg.xMax !== '' ? parseFloat(chartCfg.xMax) : undefined,
+            title: {
+              display: isFs,
+              text: chartCfg.xAxisLabel || `Log₁₀ [Conc. (${unit})]`,
+              font: { size: chartCfg.fontSize + 2, weight: 'bold' },
+              color: '#334155'
+            },
+            ticks: {
+              display: isFs,
+              font: { size: chartCfg.fontSize },
+              color: '#64748b'
+            }
+          },
+          y: {
+            position: chartCfg.yPos || 'left',
+            min: chartCfg.yMin !== '' ? parseFloat(chartCfg.yMin) : undefined,
+            max: chartCfg.yMax !== '' ? parseFloat(chartCfg.yMax) : undefined,
+            title: {
+              display: isFs,
+              text: 'Viability (%)',
+              font: { size: chartCfg.fontSize + 2, weight: 'bold' },
+              color: '#334155'
+            },
+            ticks: {
+              display: isFs,
+              font: { size: chartCfg.fontSize },
+              color: '#64748b'
+            }
+          }
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: { enabled: true }
+        }
+      }
+    });
+
+    return () => {
+      if (chartRef.current) chartRef.current.destroy();
+    };
+  }, [cd, chartCfg, isFs, eScale, unit]);
+
+  return (
+    <div
+      className={`flex flex-col bg-white ${
+        isFs
+          ? FS_CLASSES + ' p-6'
+          : 'relative aspect-square p-2 cursor-pointer hover:shadow-lg transition-shadow border border-slate-200 rounded-lg group'
+      }`}
+      onClick={!isFs ? onToggleFs : undefined}
+    >
+      <div className="flex justify-between items-start mb-1 z-10">
+        <h4 className="text-xs font-bold text-slate-600 uppercase truncate w-[80%]">{cd.name}</h4>
+        {!isFs && (
+          <button className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1 transition-all text-[10px]">
+            ↗️
+          </button>
+        )}
+        {isFs && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleFs();
+            }}
+            className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors no-print"
+          >
+            ↙️
+          </button>
+        )}
+      </div>
+      <div className={`flex-1 relative min-h-0 ${!isFs ? 'pointer-events-none' : ''}`}>
+        <canvas ref={ref} />
+      </div>
+    </div>
+  );
+}
+
 // ================= REGION CHARTS =================
 export function RegionCharts({ regionName, regionData, config }) {
   const {
@@ -447,6 +592,37 @@ export function RegionCharts({ regionName, regionData, config }) {
           </>
         )}
       </div>
+
+      {/* INDIVIDUAL SQUARES */}
+      {fitIC50 && regionData.filter((cd) => !hiddenCmpds[cd.name]).length > 0 && (
+        <div className="mt-4 p-4 bg-slate-50 border border-slate-200 rounded-lg shadow-sm">
+          <h4 className="text-xs font-black text-slate-700 uppercase mb-3 border-b border-slate-200 pb-2">
+            Individual Dose-Response Curves
+          </h4>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+            {regionData
+              .filter((cd) => !hiddenCmpds[cd.name])
+              .map((cd, idx) => (
+                <React.Fragment key={idx}>
+                  {fsPanel === `indiv_${regionName}_${idx}` && (
+                    <div
+                      className={OVERLAY_CLASSES}
+                      onClick={() => toggleFs(`indiv_${regionName}_${idx}`)}
+                    ></div>
+                  )}
+                  <IndividualDoseResponseChart
+                    cd={cd}
+                    chartCfg={chartCfg}
+                    isFs={fsPanel === `indiv_${regionName}_${idx}`}
+                    onToggleFs={() => toggleFs(`indiv_${regionName}_${idx}`)}
+                    unit={unit}
+                    eScale={eScale}
+                  />
+                </React.Fragment>
+              ))}
+          </div>
+        </div>
+      )}
     </CollapsibleSection>
   );
 }
