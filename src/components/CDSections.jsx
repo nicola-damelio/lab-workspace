@@ -1694,7 +1694,7 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
       const v = parseManual(vals[sk]);
       if (v === null) return;
       const xRaw = effXVar === 'category' ? null : getExpValue(inst, effXVar);
-      pts.push({ instId: inst.id, name: inst.name, x: effXVar === 'category' ? null : parseXValue(xRaw), y: v, excluded: !!((plot.excluded[sk] || {})[inst.id]) });
+      pts.push({ instId: inst.id, name: inst.name, x: effXVar === 'category' ? null : parseManual(xRaw), y: v, excluded: !!((plot.excluded[sk] || {})[inst.id]) });
     });
     pts.sort((a, b) => (a.x ?? 0) - (b.x ?? 0));
     return { key: sk, label: opt ? opt.label : sk, pts };
