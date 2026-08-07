@@ -6,7 +6,6 @@ import { PALETTE, toHex } from '../data/constants';
 
 /* ============================================================================
    NMR FITTINGS / RELAXATION RENDERER
-   - Added Inversion Recovery (T1), Exponential (T2/T1rho), DOSY (Diffusion)
 ============================================================================ */
 
 /* ---------------------------------------------------------------------------
@@ -192,19 +191,37 @@ function fitMonoExp(xs, ys) {
   pts.forEach((q) => { ssTot += (q.y - meanY) ** 2; ssRes += (q.y - model(q.x, p)) ** 2; });
   const r2 = ssTot > 0 ? 1 - ssRes / ssTot : 1;
 
-  return { A, R, T: 1 / R, r2, n, modelType: 'mono-exp' };
+  // Std Error
+  let seR = null;
+  const H = [[0, 0], [0, 0]];
+  for (let i = 0; i < n; i++) {
+    const x = pts[i].x; const f0 = model(x, p); const g = [];
+    for (let j = 0; j < 2; j++) {
+      const h = Math.max(1e-8, Math.abs(p[j]) * 1e-6);
+      const pp = p.slice(); pp[j] += h;
+      g.push((model(x, pp) - f0) / h);
+    }
+    for (let a = 0; a < 2; a++) for (let b = 0; b < 2; b++) H[a][b] += g[a] * g[b];
+  }
+  const det = H[0][0] * H[1][1] - H[0][1] * H[1][0];
+  if (Math.abs(det) > 1e-30) {
+    const s2 = ssRes / Math.max(1, n - 2);
+    const varLnR = (H[0][0] / det) * s2;
+    if (varLnR > 0) seR = R * Math.sqrt(varLnR);
+  }
+
+  return { A, R, T: 1 / R, r2, n, seR, modelType: 'mono-exp' };
 }
 
 // Fit Inversion Recovery (T1): I(t) = A - B * exp(-R * t)
 function fitInversionRecovery(xs, ys) {
   const pts = xs.map((x, i) => ({ x, y: ys[i] })).filter((p) => isFinite(p.x) && isFinite(p.y));
   const n = pts.length;
-  if (n < 4) return null; // 3 parameters need at least 4 points for standard errors
+  if (n < 4) return null;
 
   const maxY = Math.max(...pts.map(p => p.y));
   const minY = Math.min(...pts.map(p => p.y));
   
-  // Initial guesses
   const A0 = maxY;
   const B0 = maxY - minY;
   let R0 = 1;
@@ -481,7 +498,7 @@ function SimSweepChart({ params, nucleus }) {
 const makeTable = (overrides = {}) => ({
   id: 't' + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36),
   atom: 'HN',
-  relaxType: 'T2',          // 'T1', 'T2', or 'DOSY'
+  relaxType: 'T2',
   delayUnit: 'ms',          
   nRows: 6, nCols: 4,
   delays: [0, 50, 100, 200, 400, 800],
@@ -501,6 +518,9 @@ export const NMRFittingsTestRenderer = ({
   const update = (u) => { if (updateActiveTest) updateActiveTest(u); };
 
   const tables = Array.isArray(activeTest.nmrTables) ? activeTest.nmrTables : [];
+
+  // Local state to store fitting data on-demand
+  const [fits, setFits] = useState({});
 
   useEffect(() => {
     if (!Array.isArray(activeTest.nmrTables) || activeTest.nmrTables.length === 0) {
@@ -580,9 +600,16 @@ export const NMRFittingsTestRenderer = ({
   const duplicateTable = (t) => update({
     nmrTables: [...tables, { ...t, id: 't' + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36), grid: t.grid.map((r) => r.slice()), delays: t.delays.slice(), colResidues: t.colResidues.slice() }],
   });
+  
   const removeTable = (id) => {
     if (tables.length <= 1) { alert('Keep at least one table.'); return; }
     update({ nmrTables: tables.filter((t) => t.id !== id) });
+    // Also purge the associated fitting data state
+    setFits((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+    });
   };
 
   const applyImport = (t, data) => {
@@ -593,44 +620,40 @@ export const NMRFittingsTestRenderer = ({
     });
   };
 
-  /* -------- per-table fits (rate mapped based on relaxType) -------- */
-  const fittedByTable = useMemo(() => {
-    const out = {};
-    tables.forEach((t) => {
-      const unit = t.delayUnit === 'ms' ? 1e-3 : 1; 
-      const cols = [];
-      for (let c = 0; c < t.nCols; c++) {
-        const xs = []; const ys = [];
-        for (let r = 0; r < t.nRows; r++) {
-          const x = Number(t.delays[r]);
-          const y = parseFloat(t.grid[r]?.[c]);
-          if (isFinite(x) && isFinite(y)) { xs.push(x); ys.push(y); }
-        }
-        
-        let fit = null;
-        if (t.relaxType === 'T1') {
-          fit = fitInversionRecovery(xs, ys);
-        } else {
-          // T2, T1rho, and DOSY use standard mono-exponential
-          fit = fitMonoExp(xs, ys);
-        }
-
-        let fitS = null;
-        if (fit) {
-          const R_s = fit.R / unit;                 
-          fitS = {
-            ...fit,
-            R_s,
-            T_s: R_s > 0 ? 1 / R_s : Infinity,
-            seR_s: fit.seR != null ? fit.seR / unit : null,
-          };
-        }
-        cols.push({ residue: t.colResidues[c] || `Col ${c + 1}`, fit: fitS });
+  // Run the fit manually via a UI button instead of on every render loop
+  const runFitForTable = (t) => {
+    const unit = t.delayUnit === 'ms' ? 1e-3 : 1; 
+    const cols = [];
+    for (let c = 0; c < t.nCols; c++) {
+      const xs = []; const ys = [];
+      for (let r = 0; r < t.nRows; r++) {
+        const x = Number(t.delays[r]);
+        const y = parseFloat(t.grid[r]?.[c]);
+        if (isFinite(x) && isFinite(y)) { xs.push(x); ys.push(y); }
       }
-      out[t.id] = cols;
-    });
-    return out;
-  }, [tables]);
+      
+      let fit = null;
+      if (t.relaxType === 'T1') {
+        fit = fitInversionRecovery(xs, ys);
+      } else {
+        fit = fitMonoExp(xs, ys);
+      }
+
+      let fitS = null;
+      if (fit) {
+        const R_s = fit.R / unit;                 
+        fitS = {
+          ...fit,
+          R_s,
+          T_s: R_s > 0 ? 1 / R_s : Infinity,
+          seR_s: fit.seR != null ? fit.seR / unit : null,
+        };
+      }
+      cols.push({ residue: t.colResidues[c] || `Col ${c + 1}`, fit: fitS });
+    }
+    
+    setFits((prev) => ({ ...prev, [t.id]: cols }));
+  };
 
   const simByNucleus = (nucleus) => modelFreeRates({
     nucleus, fieldMHz: sim.fieldMHz, tau_c_ns: sim.tau_c_ns, S2: sim.S2,
@@ -644,12 +667,12 @@ export const NMRFittingsTestRenderer = ({
 
   const estimateTauFromRatio = () => {
     let r1 = null, r2 = null;
-    tables.forEach((t) => (fittedByTable[t.id] || []).forEach((c) => {
+    tables.forEach((t) => (fits[t.id] || []).forEach((c) => {
       if (!c.fit) return;
       if (t.relaxType === 'T1') r1 = c.fit.R_s;
       if (t.relaxType === 'T2') r2 = c.fit.R_s;
     }));
-    if (r1 == null || r2 == null) { alert('Need both a T1 and a T2 table with valid fits to estimate τc.'); return; }
+    if (r1 == null || r2 == null) { alert('Need both a T1 and a T2 table with valid fits computed to estimate τc.'); return; }
     const target = r1 / r2;
     let best = { t: sim.tau_c_ns, err: Infinity };
     for (let t = 0.1; t <= 60; t += 0.05) {
@@ -671,7 +694,7 @@ export const NMRFittingsTestRenderer = ({
         XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), `Table${idx + 1}`);
         
         const fAoa = [['Residue', t.relaxType === 'DOSY' ? 'D (Diffusion)' : 'Rate (s⁻¹)', t.relaxType === 'DOSY' ? '—' : 'T (s)', 'R²', 'N']];
-        (fittedByTable[t.id] || []).forEach((cf) => {
+        (fits[t.id] || []).forEach((cf) => {
           if (cf.fit) fAoa.push([cf.residue, cf.fit.R_s, t.relaxType === 'DOSY' ? '—' : cf.fit.T_s, cf.fit.r2, cf.fit.n]);
         });
         XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(fAoa), `Fit${idx + 1}`);
@@ -685,7 +708,7 @@ export const NMRFittingsTestRenderer = ({
     html += '<h4 style="margin:0 0 8px;color:#1e40af;">🧲 NMR Relaxation Summary</h4>';
     tables.forEach((t, i) => {
       html += `<p style="margin:4px 0;"><b>Table ${i + 1}</b> — ${t.atom} (${t.relaxType}, delays in ${t.delayUnit})</p><ul>`;
-      (fittedByTable[t.id] || []).forEach((c) => {
+      (fits[t.id] || []).forEach((c) => {
         if (c.fit) {
             if (t.relaxType === 'DOSY') {
                 html += `<li>${c.residue}: D=${c.fit.R_s.toExponential(3)} (R²=${c.fit.r2.toFixed(3)})</li>`;
@@ -706,7 +729,7 @@ export const NMRFittingsTestRenderer = ({
   /* ========================================================================= */
   const renderTable = (t, tIndex) => {
     const nucleus = nucleusFromAtom(t.atom);
-    const colFits = fittedByTable[t.id] || [];
+    const colFits = fits[t.id] || [];
     return (
       <CollapsibleSection key={t.id} title={`Table ${tIndex + 1} — ${t.atom || '…'} (${t.relaxType})`} icon="📈" defaultOpen={tIndex === 0}>
         <div className="flex flex-col gap-4">
@@ -830,9 +853,17 @@ export const NMRFittingsTestRenderer = ({
           <TableImport residueOptions={residueOptions} onApply={(data) => applyImport(t, data)} />
 
           <div>
-            <h4 className="text-xs font-bold text-slate-600 uppercase mb-2">Fitted {t.relaxType} per residue</h4>
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-xs font-bold text-slate-600 uppercase">Fitted {t.relaxType} per residue</h4>
+              <button
+                onClick={() => runFitForTable(t)}
+                className="text-[11px] bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded shadow-sm"
+              >
+                ▶️ Compute Fit
+              </button>
+            </div>
             <div className="overflow-x-auto">
-              <table className="text-xs border border-slate-200 rounded">
+              <table className="text-xs border border-slate-200 rounded w-full">
                 <thead>
                   <tr className="bg-slate-100 text-slate-600">
                     <th className="p-1.5 border border-slate-200">Residue</th>
@@ -845,23 +876,31 @@ export const NMRFittingsTestRenderer = ({
                   </tr>
                 </thead>
                 <tbody>
-                  {colFits.map((cf, i) => (
-                    <tr key={i} className="text-center">
-                      <td className="p-1.5 border border-slate-200 font-bold text-blue-800">{cf.residue}</td>
-                      <td className="p-1.5 border border-slate-200 font-mono">
-                        {cf.fit 
-                            ? (t.relaxType === 'DOSY' ? cf.fit.R_s.toExponential(3) : cf.fit.R_s.toFixed(3)) + (cf.fit.seR_s ? ` ± ${cf.fit.seR_s.toExponential(2)}` : '') 
-                            : '—'}
+                  {colFits.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="p-3 text-center text-slate-400">
+                        Click "Compute Fit" to calculate parameters.
                       </td>
-                      {t.relaxType !== 'DOSY' && (
-                        <td className="p-1.5 border border-slate-200 font-mono">
-                            {cf.fit ? (cf.fit.T_s === Infinity ? '∞' : cf.fit.T_s.toFixed(3)) : '—'}
-                        </td>
-                      )}
-                      <td className="p-1.5 border border-slate-200 font-mono">{cf.fit ? cf.fit.r2.toFixed(3) : '—'}</td>
-                      <td className="p-1.5 border border-slate-200">{cf.fit ? cf.fit.n : 0}</td>
                     </tr>
-                  ))}
+                  ) : (
+                    colFits.map((cf, i) => (
+                      <tr key={i} className="text-center">
+                        <td className="p-1.5 border border-slate-200 font-bold text-blue-800">{cf.residue}</td>
+                        <td className="p-1.5 border border-slate-200 font-mono">
+                          {cf.fit 
+                              ? (t.relaxType === 'DOSY' ? cf.fit.R_s.toExponential(3) : cf.fit.R_s.toFixed(3)) + (cf.fit.seR_s ? ` ± ${cf.fit.seR_s.toExponential(2)}` : '') 
+                              : '—'}
+                        </td>
+                        {t.relaxType !== 'DOSY' && (
+                          <td className="p-1.5 border border-slate-200 font-mono">
+                              {cf.fit ? (cf.fit.T_s === Infinity ? '∞' : cf.fit.T_s.toFixed(3)) : '—'}
+                          </td>
+                        )}
+                        <td className="p-1.5 border border-slate-200 font-mono">{cf.fit ? cf.fit.r2.toFixed(3) : '—'}</td>
+                        <td className="p-1.5 border border-slate-200">{cf.fit ? cf.fit.n : 0}</td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -1059,7 +1098,7 @@ export const NMRFittingsTestRenderer = ({
                       </tr>
                     </thead>
                     <tbody>
-                      {tables.map((t, ti) => (fittedByTable[t.id] || []).map((cf, ci) => {
+                      {tables.map((t, ti) => (fits[t.id] || []).map((cf, ci) => {
                         if (t.relaxType === 'DOSY') return null; // Exclude DOSY from model-free comparison
                         const simRates = simByNucleus(nucleusFromAtom(t.atom));
                         const simVal = t.relaxType === 'T1' ? simRates.R1 : simRates.R2;
