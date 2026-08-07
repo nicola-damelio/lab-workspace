@@ -1710,6 +1710,103 @@ const CDAll = ({ ctx }) => {
     }
   };
 
+  // ===== SECONDARY STRUCTURE FITTING =====
+  const autoFitSecondaryStructure = () => {
+    // 1. Grab the first visible spectrum that contains data
+    const targetSpec = parsedSpectra.find((s) => s.visible && s.values.length > 0);
+    if (!targetSpec) {
+      alert('Please ensure at least one CD spectrum is uploaded and visible.');
+      return;
+    }
+
+    // 2. Build the matrices for the least-squares fit (A*c = b)
+    const A = [];
+    const b = [];
+    
+    parsedWavelengths.forEach((x, i) => {
+      // Fit exclusively within the standard secondary structure range
+      if (x >= 190 && x <= 260) {
+        A.push([
+          splineAlpha.at(x), 
+          splineBeta.at(x), 
+          splineTurn.at(x), 
+          splineCoil.at(x)
+        ]);
+        // Apply the global baseline offset if one is set
+        b.push(targetSpec.values[i] !== undefined ? targetSpec.values[i] - gOff : 0);
+      }
+    });
+
+    if (A.length < 4) {
+      alert('Not enough data points in the 190-260 nm range for a reliable fit.');
+      return;
+    }
+
+    // 3. Compute AtA and Atb
+    const AtA = [0, 1, 2, 3].map((i) => [0, 1, 2, 3].map((j) => A.reduce((sum, row) => sum + row[i] * row[j], 0)));
+    const Atb = [0, 1, 2, 3].map((i) => A.reduce((sum, row, idx) => sum + row[i] * b[idx], 0));
+
+    // 4. Gaussian elimination solver
+    const gaussSolve = (mat, vec) => {
+      const n = vec.length;
+      const M = mat.map((row, i) => [...row, vec[i]]);
+      for (let i = 0; i < n; i++) {
+        let maxRow = i;
+        for (let k = i + 1; k < n; k++) {
+          if (Math.abs(M[k][i]) > Math.abs(M[maxRow][i])) maxRow = k;
+        }
+        [M[i], M[maxRow]] = [M[maxRow], M[i]];
+        if (Math.abs(M[i][i]) < 1e-12) return null; // Singular matrix
+        
+        for (let k = i + 1; k < n; k++) {
+          const factor = M[k][i] / M[i][i];
+          for (let j = i; j <= n; j++) M[k][j] -= factor * M[i][j];
+        }
+      }
+      const x = new Array(n).fill(0);
+      for (let i = n - 1; i >= 0; i--) {
+        let sum = M[i][n];
+        for (let j = i + 1; j < n; j++) sum -= M[i][j] * x[j];
+        x[i] = sum / M[i][i];
+      }
+      return x;
+    };
+
+    const coeffs = gaussSolve(AtA, Atb);
+    if (!coeffs) {
+      alert('Fitting failed (singular matrix).');
+      return;
+    }
+
+    // 5. Force non-negativity and normalize to 100%
+    const clamped = coeffs.map((c) => Math.max(0, c));
+    const sum = clamped.reduce((a, val) => a + val, 0);
+    
+    if (sum === 0) {
+      alert('Fitting resulted in zero for all components. Check your data scale or baseline.');
+      return;
+    }
+
+    const norm = clamped.map((c) => Math.round((c / sum) * 100));
+    
+    // 6. Absorb rounding errors so the total is exactly 100%
+    const diff = 100 - norm.reduce((a, b) => a + b, 0);
+    if (diff !== 0) {
+      const maxIdx = norm.indexOf(Math.max(...norm));
+      norm[maxIdx] += diff;
+    }
+
+    // 7. Push the new structure directly to the doughnut chart
+    update({
+      structureComposition: {
+        'α-Helix': norm[0],
+        'β-Sheet': norm[1],
+        Turn: norm[2],
+        'Random Coil': norm[3]
+      }
+    });
+  };
+
   return (
     <div className="flex flex-col gap-6">
       {/* Toolbar */}
@@ -2502,7 +2599,16 @@ const CDAll = ({ ctx }) => {
                 </div>
               </div>
               <div className="flex-[2] min-w-0 flex flex-col">
-                <h2 className="text-sm font-bold text-slate-600 uppercase tracking-widest mb-3">Secondary Structure</h2>
+                <div className="flex justify-between items-center mb-3">
+                  <h2 className="text-sm font-bold text-slate-600 uppercase tracking-widest">Secondary Structure</h2>
+                  <button
+                    onClick={autoFitSecondaryStructure}
+                    className="bg-purple-100 hover:bg-purple-200 text-purple-700 font-bold px-3 py-1 rounded text-[10px] shadow-sm transition-colors flex items-center gap-1"
+                    title="Fit the first visible spectrum using reference splines"
+                  >
+                    <span>✨</span> Auto-Fit Spectrum
+                  </button>
+                </div>
                 <div
                   className="flex-1 relative min-h-0 flex flex-col items-center justify-center"
                   style={{ minHeight: '300px' }}
