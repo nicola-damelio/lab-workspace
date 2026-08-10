@@ -1437,6 +1437,46 @@ const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, row
   );
 };
 
+
+
+// ================= ZOOMABLE PLOTS & SCROLLBARS =================
+
+// Nuovo componente per gestire il panning / scrolling degli assi
+const AxisScrollbar = ({ domain, fullDomain, onChange, vertical = false, reversed = true }) => {
+  const [min, max] = domain;
+  const [fMin, fMax] = fullDomain;
+  const size = max - min;
+  const limit = fMax - size;
+  
+  const handleChange = (e) => {
+    const v = parseFloat(e.target.value);
+    onChange([v, v + size]);
+  };
+
+  return (
+    <input 
+      type="range"
+      min={fMin}
+      max={limit}
+      step={(fMax - fMin) / 1000}
+      value={min}
+      onChange={handleChange}
+      orient={vertical ? "vertical" : "horizontal"}
+      dir={reversed && !vertical ? "rtl" : "ltr"}
+      className="accent-slate-400 hover:accent-blue-500 transition-all cursor-pointer"
+      style={{
+        WebkitAppearance: vertical ? 'slider-vertical' : undefined,
+        width: vertical ? '16px' : '100%',
+        height: vertical ? '100%' : '12px',
+        transform: vertical && reversed ? 'rotate(180deg)' : 'none',
+        margin: 0,
+        outline: 'none'
+      }}
+      title="Pan axis"
+    />
+  );
+};
+
 const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel, selectedKeys, manualKeys = [], heightPx = 300, fs = 11, aspect = null, simCfg = {} }) => {
   const { simShowLabels, simLabelFormat, simLabelDim, simLabelFontSize = 10 } = simCfg;
   const isExpanded = expandedPanel === panelId;
@@ -1447,6 +1487,7 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
   const [boxRef, boxW] = useMeasureWidth();
   const isDragging = useRef(false);
   const isZoomed = xDomain[0] !== fullDomain[0] || xDomain[1] !== fullDomain[1];
+  
   const getXVal = (clientX) => {
     if (!chartRef.current) return null;
     const wrapper = chartRef.current.querySelector('.recharts-wrapper');
@@ -1458,6 +1499,7 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
     const fx = Math.min(1, Math.max(0, px / plotW));
     return xDomain[1] - fx * (xDomain[1] - xDomain[0]);
   };
+  
   useEffect(() => {
     const handleMouseMove = (e) => { if (!isDragging.current) return; const xVal = getXVal(e.clientX); if (xVal !== null) setRefAreaRight(xVal); };
     const handleMouseUp = () => {
@@ -1470,10 +1512,12 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
     window.addEventListener('mouseup', handleMouseUp);
     return () => { window.removeEventListener('mousemove', handleMouseMove); window.removeEventListener('mouseup', handleMouseUp); };
   }, [refAreaLeft, refAreaRight]);
+  
   const handleMouseDown = (e) => {
     const xVal = getXVal(e.clientX);
     if (xVal !== null) { isDragging.current = true; setRefAreaLeft(xVal); setRefAreaRight(xVal); }
   };
+  
   return (
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)} />}
@@ -1485,35 +1529,45 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
           </div>
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
         </div>
-        <div className="flex-1 min-h-0 select-none relative" ref={(n) => { chartRef.current = n; boxRef.current = n; }} onMouseDown={handleMouseDown}>
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} margin={CHART_MARGIN_1D}>
-              <CartesianGrid strokeDasharray="3 3" vertical={true} horizontal={false} stroke="#f1f5f9" />
-              <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : ticks} interval={0} tickLine={false} tick={<TickComponent isZoomed={isZoomed} fs={fs} />} label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} axisLine={{ stroke: '#cbd5e1' }} />
-              <YAxis type="number" dataKey="y" domain={[0, 'auto']} hide={true} />
-              <Tooltip cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} content={<NMRTooltip selectedKeys={selectedKeys} />} />
-              <Bar dataKey="y" barSize={2} shape={(props) => {
-                const { x, y, width, height, payload } = props;
-                const centerX = x + width / 2;
-                const isSel = selectedKeys && payload.keys && payload.keys.some((k) => selectedKeys.includes(k));
-                const isMan = manualKeys && payload.keys && payload.keys.some((k) => manualKeys.includes(k));
-                const dimmed = selectedKeys && !isSel && !isMan;
-                const textStr = simShowLabels ? getPeakLabelText(payload, simLabelFormat, simLabelDim) : '';
-                return (
-                  <g opacity={dimmed ? 0.2 : 1}>
-                    <line x1={centerX} y1={y + height} x2={centerX} y2={y} stroke={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : payload.color} strokeWidth={isSel ? 3 : isMan ? 2.5 : 1.5} />
-                    {textStr && <text x={centerX} y={y - 5} textAnchor="middle" fontSize={simLabelFontSize} fill="#475569" fontWeight="bold">{textStr}</text>}
-                  </g>
-                );
-              }} isAnimationActive={false} />
-              {refAreaLeft !== null && refAreaRight !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} strokeOpacity={0.3} fill="#cbd5e1" />}
-            </BarChart>
-          </ResponsiveContainer>
+        <div className="flex-1 min-h-0 select-none relative" ref={(n) => { chartRef.current = n; boxRef.current = n; }}>
+          <div onMouseDown={handleMouseDown} style={{ width: '100%', height: '100%' }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={data} margin={CHART_MARGIN_1D}>
+                <CartesianGrid strokeDasharray="3 3" vertical={true} horizontal={false} stroke="#f1f5f9" />
+                <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : ticks} interval={0} tickLine={false} tick={<TickComponent isZoomed={isZoomed} fs={fs} />} label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} axisLine={{ stroke: '#cbd5e1' }} />
+                <YAxis type="number" dataKey="y" domain={[0, 'auto']} hide={true} />
+                <Tooltip cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} content={<NMRTooltip selectedKeys={selectedKeys} />} />
+                <Bar dataKey="y" barSize={2} shape={(props) => {
+                  const { x, y, width, height, payload } = props;
+                  const centerX = x + width / 2;
+                  const isSel = selectedKeys && payload.keys && payload.keys.some((k) => selectedKeys.includes(k));
+                  const isMan = manualKeys && payload.keys && payload.keys.some((k) => manualKeys.includes(k));
+                  const dimmed = selectedKeys && !isSel && !isMan;
+                  const textStr = simShowLabels ? getPeakLabelText(payload, simLabelFormat, simLabelDim) : '';
+                  return (
+                    <g opacity={dimmed ? 0.2 : 1}>
+                      <line x1={centerX} y1={y + height} x2={centerX} y2={y} stroke={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : payload.color} strokeWidth={isSel ? 3 : isMan ? 2.5 : 1.5} />
+                      {textStr && <text x={centerX} y={y - 5} textAnchor="middle" fontSize={simLabelFontSize} fill="#475569" fontWeight="bold">{textStr}</text>}
+                    </g>
+                  );
+                }} isAnimationActive={false} />
+                {refAreaLeft !== null && refAreaRight !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} strokeOpacity={0.3} fill="#cbd5e1" />}
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          
+          {/* Scrollbar Orizzontale */}
+          {isZoomed && (
+            <div className="absolute left-0 right-0 z-10 flex items-center" style={{ bottom: '0px', paddingLeft: CHART_MARGIN_1D.left, paddingRight: CHART_MARGIN_1D.right }}>
+              <AxisScrollbar domain={xDomain} fullDomain={fullDomain} onChange={setXDomain} />
+            </div>
+          )}
         </div>
       </div>
     </>
   );
 };
+
 const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setExpandedPanel, panelId, diagonalColor, selectedKeys, manualKeys = [], aspect = 1, fs = 11, simCfg = {} }) => {
   const { simShowLabels, simLabelFormat, simLabelDim, simLabelFontSize = 10 } = simCfg;
   const isExpanded = expandedPanel === panelId;
@@ -1527,6 +1581,7 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
   const [boxRef, boxW] = useMeasureWidth();
   const isDragging = useRef(false);
   const isZoomed = xDomain[0] !== 0 || xDomain[1] !== 11 || yDomain[0] !== 0 || yDomain[1] !== 11;
+  
   const getPlotCoords = (clientX, clientY) => {
     if (!chartRef.current) return null;
     const wrapper = chartRef.current.querySelector('.recharts-wrapper');
@@ -1541,6 +1596,7 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
     const fy = Math.min(1, Math.max(0, py / plotH));
     return { x: xDomain[1] - fx * (xDomain[1] - xDomain[0]), y: yDomain[0] + fy * (yDomain[1] - yDomain[0]) };
   };
+  
   useEffect(() => {
     const handleMouseMove = (e) => { if (!isDragging.current) return; const coords = getPlotCoords(e.clientX, e.clientY); if (coords) { setRefAreaRight(coords.x); setRefAreaBottom(coords.y); } };
     const handleMouseUp = () => {
@@ -1558,10 +1614,12 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
     window.addEventListener('mouseup', handleMouseUp);
     return () => { window.removeEventListener('mousemove', handleMouseMove); window.removeEventListener('mouseup', handleMouseUp); };
   }, [refAreaLeft, refAreaRight, refAreaTop, refAreaBottom]);
+  
   const handleMouseDown = (e) => {
     const coords = getPlotCoords(e.clientX, e.clientY);
     if (coords) { isDragging.current = true; setRefAreaLeft(coords.x); setRefAreaTop(coords.y); setRefAreaRight(coords.x); setRefAreaBottom(coords.y); }
   };
+  
   const shape = (props) => {
     const { cx, cy, fill, payload } = props;
     if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
@@ -1578,6 +1636,7 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
       </g>
     );
   };
+  
   return (
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)} />}
@@ -1589,24 +1648,39 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
           </div>
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
         </div>
-        <div ref={(n) => { chartRef.current = n; boxRef.current = n; }} className="select-none relative flex-1 min-h-0" onMouseDown={handleMouseDown}>
-          <ResponsiveContainer width="100%" height="100%">
-            <ScatterChart margin={CHART_MARGIN}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-              <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} />
-              <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomYTick1H isZoomed={isZoomed} fs={fs} />} label={{ value: '¹H F1 (ppm)', angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fs + 1 }} />
-              <Tooltip content={<NMRTooltip diagonalColor={diagonalColor} selectedKeys={selectedKeys} />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
-              <Scatter name="Diagonal" data={[{ x: 0, y: 0 }, { x: 11, y: 11 }]} line={{ stroke: '#cbd5e1', strokeWidth: 1 }} shape={<circle r={0} />} legendType="none" isAnimationActive={false} />
-              <Scatter data={diagonalData} fill={diagonalColor} shape={shape} isAnimationActive={false} />
-              <Scatter data={crossPeakData} shape={shape} isAnimationActive={false} />
-              {refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} y1={refAreaTop} y2={refAreaBottom} strokeOpacity={0.3} fill="#cbd5e1" />}
-            </ScatterChart>
-          </ResponsiveContainer>
+        <div ref={(n) => { chartRef.current = n; boxRef.current = n; }} className="select-none relative flex-1 min-h-0">
+          <div onMouseDown={handleMouseDown} style={{ width: '100%', height: '100%' }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <ScatterChart margin={CHART_MARGIN}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} />
+                <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomYTick1H isZoomed={isZoomed} fs={fs} />} label={{ value: '¹H F1 (ppm)', angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fs + 1 }} />
+                <Tooltip content={<NMRTooltip diagonalColor={diagonalColor} selectedKeys={selectedKeys} />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
+                <Scatter name="Diagonal" data={[{ x: 0, y: 0 }, { x: 11, y: 11 }]} line={{ stroke: '#cbd5e1', strokeWidth: 1 }} shape={<circle r={0} />} legendType="none" isAnimationActive={false} />
+                <Scatter data={diagonalData} fill={diagonalColor} shape={shape} isAnimationActive={false} />
+                <Scatter data={crossPeakData} shape={shape} isAnimationActive={false} />
+                {refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} y1={refAreaTop} y2={refAreaBottom} strokeOpacity={0.3} fill="#cbd5e1" />}
+              </ScatterChart>
+            </ResponsiveContainer>
+          </div>
+          
+          {/* Scrollbars X & Y */}
+          {isZoomed && (
+            <>
+              <div className="absolute left-0 right-0 z-10 flex items-center" style={{ bottom: '0px', paddingLeft: CHART_MARGIN.left, paddingRight: CHART_MARGIN.right }}>
+                <AxisScrollbar domain={xDomain} fullDomain={[0, 11]} onChange={setXDomain} />
+              </div>
+              <div className="absolute top-0 bottom-0 z-10 flex justify-center" style={{ right: '0px', paddingTop: CHART_MARGIN.top, paddingBottom: CHART_MARGIN.bottom }}>
+                <AxisScrollbar domain={yDomain} fullDomain={[0, 11]} onChange={setYDomain} vertical={true} />
+              </div>
+            </>
+          )}
         </div>
       </div>
     </>
   );
 };
+
 const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panelId, selectedKeys, manualKeys = [], yAxisLabel = '¹³C F1 (ppm)', yDomainInit = [0, 220], yTicks = TICKS_13C, aspect = 1, fs = 11, simCfg = {} }) => {
   const { simShowLabels, simLabelFormat, simLabelDim, simLabelFontSize = 10 } = simCfg;
   const isExpanded = expandedPanel === panelId;
@@ -1620,6 +1694,7 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
   const [boxRef, boxW] = useMeasureWidth();
   const isDragging = useRef(false);
   const isZoomed = xDomain[0] !== 0 || xDomain[1] !== 11 || yDomain[0] !== yDomainInit[0] || yDomain[1] !== yDomainInit[1];
+  
   const getPlotCoords = (clientX, clientY) => {
     if (!chartRef.current) return null;
     const wrapper = chartRef.current.querySelector('.recharts-wrapper');
@@ -1634,6 +1709,7 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
     const fy = Math.min(1, Math.max(0, py / plotH));
     return { x: xDomain[1] - fx * (xDomain[1] - xDomain[0]), y: yDomain[0] + fy * (yDomain[1] - yDomain[0]) };
   };
+  
   useEffect(() => {
     const handleMouseMove = (e) => { if (!isDragging.current) return; const coords = getPlotCoords(e.clientX, e.clientY); if (coords) { setRefAreaRight(coords.x); setRefAreaBottom(coords.y); } };
     const handleMouseUp = () => {
@@ -1651,10 +1727,12 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
     window.addEventListener('mouseup', handleMouseUp);
     return () => { window.removeEventListener('mousemove', handleMouseMove); window.removeEventListener('mouseup', handleMouseUp); };
   }, [refAreaLeft, refAreaRight, refAreaTop, refAreaBottom]);
+  
   const handleMouseDown = (e) => {
     const coords = getPlotCoords(e.clientX, e.clientY);
     if (coords) { isDragging.current = true; setRefAreaLeft(coords.x); setRefAreaTop(coords.y); setRefAreaRight(coords.x); setRefAreaBottom(coords.y); }
   };
+  
   return (
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)} />}
@@ -1666,32 +1744,46 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
           </div>
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
         </div>
-        <div ref={(n) => { chartRef.current = n; boxRef.current = n; }} className="select-none relative flex-1 min-h-0" onMouseDown={handleMouseDown}>
-          <ResponsiveContainer width="100%" height="100%">
-            <ScatterChart margin={CHART_MARGIN}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-              <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} />
-              <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : yTicks} interval={0} tickLine={false} tick={<CustomYTick13C isZoomed={isZoomed} fs={fs} />} label={{ value: yAxisLabel, angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fs + 1 }} />
-              <Tooltip content={<NMRTooltip diagonalColor="#8b5cf6" selectedKeys={selectedKeys} />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
-              <Scatter data={crossPeakData} shape={(props) => {
-                const { cx, cy, payload } = props;
-                if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
-                const isSel = selectedKeys && payload.keys && payload.keys.some((k) => selectedKeys.includes(k));
-                const isMan = manualKeys && payload.keys && payload.keys.some((k) => manualKeys.includes(k));
-                const dimmed = selectedKeys && !isSel && !isMan;
-                const textStr = simShowLabels ? getPeakLabelText(payload, simLabelFormat, simLabelDim) : '';
-                return (
-                  <g opacity={dimmed ? 0.18 : 1}>
-                    {isSel && <circle cx={cx} cy={cy} r={(payload.size || 5) + 5} fill={SELECT_COLOR} opacity={0.3} />}
-                    {isMan && !isSel && <circle cx={cx} cy={cy} r={(payload.size || 5) + 5} fill={MANUAL_COLOR} opacity={0.22} />}
-                    <circle cx={cx} cy={cy} r={isSel ? (payload.size || 5) + 2 : isMan ? (payload.size || 5) + 1.5 : payload.size || 5} fill={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : getNMRFillColor(payload)} stroke={isSel ? '#b45309' : isMan ? '#166534' : 'none'} strokeWidth={isSel ? 2 : isMan ? 1.5 : 0} opacity={0.85} />
-                    {textStr && <text x={cx + ((payload.size || 5) + 2)} y={cy - ((payload.size || 5) + 2)} fontSize={simLabelFontSize} fill="#475569" fontWeight="bold">{textStr}</text>}
-                  </g>
-                );
-              }} isAnimationActive={false} />
-              {refAreaLeft !== null && refAreaRight !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} y1={refAreaTop} y2={refAreaBottom} strokeOpacity={0.3} fill="#cbd5e1" />}
-            </ScatterChart>
-          </ResponsiveContainer>
+        <div ref={(n) => { chartRef.current = n; boxRef.current = n; }} className="select-none relative flex-1 min-h-0">
+          <div onMouseDown={handleMouseDown} style={{ width: '100%', height: '100%' }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <ScatterChart margin={CHART_MARGIN}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} />
+                <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : yTicks} interval={0} tickLine={false} tick={<CustomYTick13C isZoomed={isZoomed} fs={fs} />} label={{ value: yAxisLabel, angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fs + 1 }} />
+                <Tooltip content={<NMRTooltip diagonalColor="#8b5cf6" selectedKeys={selectedKeys} />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
+                <Scatter data={crossPeakData} shape={(props) => {
+                  const { cx, cy, payload } = props;
+                  if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
+                  const isSel = selectedKeys && payload.keys && payload.keys.some((k) => selectedKeys.includes(k));
+                  const isMan = manualKeys && payload.keys && payload.keys.some((k) => manualKeys.includes(k));
+                  const dimmed = selectedKeys && !isSel && !isMan;
+                  const textStr = simShowLabels ? getPeakLabelText(payload, simLabelFormat, simLabelDim) : '';
+                  return (
+                    <g opacity={dimmed ? 0.18 : 1}>
+                      {isSel && <circle cx={cx} cy={cy} r={(payload.size || 5) + 5} fill={SELECT_COLOR} opacity={0.3} />}
+                      {isMan && !isSel && <circle cx={cx} cy={cy} r={(payload.size || 5) + 5} fill={MANUAL_COLOR} opacity={0.22} />}
+                      <circle cx={cx} cy={cy} r={isSel ? (payload.size || 5) + 2 : isMan ? (payload.size || 5) + 1.5 : payload.size || 5} fill={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : getNMRFillColor(payload)} stroke={isSel ? '#b45309' : isMan ? '#166534' : 'none'} strokeWidth={isSel ? 2 : isMan ? 1.5 : 0} opacity={0.85} />
+                      {textStr && <text x={cx + ((payload.size || 5) + 2)} y={cy - ((payload.size || 5) + 2)} fontSize={simLabelFontSize} fill="#475569" fontWeight="bold">{textStr}</text>}
+                    </g>
+                  );
+                }} isAnimationActive={false} />
+                {refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} y1={refAreaTop} y2={refAreaBottom} strokeOpacity={0.3} fill="#cbd5e1" />}
+              </ScatterChart>
+            </ResponsiveContainer>
+          </div>
+          
+          {/* Scrollbars X & Y */}
+          {isZoomed && (
+            <>
+              <div className="absolute left-0 right-0 z-10 flex items-center" style={{ bottom: '0px', paddingLeft: CHART_MARGIN.left, paddingRight: CHART_MARGIN.right }}>
+                <AxisScrollbar domain={xDomain} fullDomain={[0, 11]} onChange={setXDomain} />
+              </div>
+              <div className="absolute top-0 bottom-0 z-10 flex justify-center" style={{ right: '0px', paddingTop: CHART_MARGIN.top, paddingBottom: CHART_MARGIN.bottom }}>
+                <AxisScrollbar domain={yDomain} fullDomain={yDomainInit} onChange={setYDomain} vertical={true} />
+              </div>
+            </>
+          )}
         </div>
       </div>
     </>

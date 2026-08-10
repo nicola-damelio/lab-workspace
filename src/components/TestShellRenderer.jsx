@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { RichTextEditor } from './RichTextEditor';
 import { BufferAdditiveFields } from './DefinitionsExtra';
 
@@ -45,16 +45,15 @@ export const CollapsibleSection = ({
     <div
       className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-6 break-inside-avoid ${className}`}
     >
-      <button
-        type="button"
+      <div
         onClick={() => setIsOpen(!isOpen)}
-        className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left ${
+        className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left cursor-pointer ${
           isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'
         }`}
       >
         <div className="flex items-center gap-2 overflow-hidden">
           {icon && <span className="text-xl shrink-0">{icon}</span>}
-          <h3 className="text-lg font-bold text-slate-800 truncate">{title}</h3>
+          <h3 className="text-lg font-bold text-slate-800 truncate select-none">{title}</h3>
         </div>
 
         <div className="flex items-center gap-3 shrink-0">
@@ -78,7 +77,7 @@ export const CollapsibleSection = ({
             />
           </svg>
         </div>
-      </button>
+      </div>
 
       {isOpen && <div className="p-6">{children}</div>}
     </div>
@@ -838,8 +837,49 @@ const isSolventMedia =
     );
   };
 
-  /* ===== CONTEXT ===== */
+  /* ===== MISSING MANDATORY FIELDS LOGIC ===== */
+  const mandatoryFields = Array.isArray(rest.mandatoryFields) ? rest.mandatoryFields : [];
+  const missingFields = useMemo(() => {
+    if (!mandatoryFields.length) return [];
+    
+    // Costruiamo un dizionario di tutti i dati correnti per un rapido controllo
+    const currentData = {
+      'operator': testOperator,
+      'experiment type': testCategory,
+      'secondary classification': t.secondaryCategory,
+      'compound': selectedCompounds.length ? selectedCompounds : (compound ? [compound] : []),
+      'compounds': selectedCompounds.length ? selectedCompounds : (compound ? [compound] : []),
+      'cell line': cellLines.length ? cellLines : [],
+      'cell lines': cellLines.length ? cellLines : [],
+      'date': t.date,
+      'experiment date': t.date,
+      'instance': t.instanceName,
+      ...((config.conditionFields || []).reduce((acc, f) => { 
+          acc[f.label.toLowerCase()] = t[f.key]; 
+          acc[f.key.toLowerCase()] = t[f.key]; // Fallback by key
+          return acc; 
+      }, {})),
+      ...(Object.keys(t.customFieldValues || {}).reduce((acc, k) => { 
+          acc[k.toLowerCase()] = t.customFieldValues[k]; 
+          return acc; 
+      }, {}))
+    };
 
+    return mandatoryFields.filter(req => {
+       const key = req.toLowerCase().trim();
+       const val = currentData[key];
+       
+       if (val === 0) return false; // valid number
+       if (val === false) return false; // valid boolean
+       if (val === undefined || val === null) return true; // missing
+       if (typeof val === 'string' && val.trim() === '') return true; // empty string
+       if (Array.isArray(val) && val.length === 0) return true; // empty array
+       
+       return false;
+    });
+  }, [mandatoryFields, t, config.conditionFields, selectedCompounds, compound, cellLines, testCategory, testOperator]);
+
+  /* ===== CONTEXT ===== */
   const ctx = {
     activeTest: t,
     updateActiveTest,
@@ -858,7 +898,6 @@ const isSolventMedia =
   };
 
   /* ===== NOTEBOOK EXPORT ===== */
-
   const notebookChecks =
     config.notebookChecks || [
       { id: 'cond', label: 'Experimental Conditions' },
@@ -867,7 +906,6 @@ const isSolventMedia =
 
   const appendToNotebook = () => {
     const checked = {};
-
     notebookChecks.forEach((c) => {
       const el = document.getElementById(`nb-${typeKey}-${c.id}`);
       checked[c.id] = el ? el.checked : false;
@@ -896,12 +934,10 @@ const isSolventMedia =
 
       const category = testCategory || 'N/A';
       const secondary = t.secondaryCategory || '';
-
       const sample =
         selectedCompounds.length > 0
           ? selectedCompounds.join(', ')
           : compound || 'N/A';
-
       const cells =
         cellLines.length > 0 ? cellLines.join(', ') : 'N/A';
 
@@ -948,29 +984,18 @@ const isSolventMedia =
   };
 
   /* ===== CUSTOM SECTIONS ===== */
-
   const CustomToolbar = custom.Toolbar || null;
   const CustomAll = custom.All || null;
-
-  const CompoundsSection =
-    config.CompoundsSection || custom.Compounds || null;
-
+  const CompoundsSection = config.CompoundsSection || custom.Compounds || null;
   const SetupSection = config.SetupSection || custom.Setup || null;
-
   const InstrumentalSetupSection = custom.InstrumentalSetup || null;
-
   const DataSection = config.DataSection || custom.Data || null;
-
   const FittingSection = config.FittingSection || custom.Fitting || null;
-
   const FittingErrors = custom.FittingErrors || null;
   const FittingGraphics = custom.FittingGraphics || null;
-
-  const SimulationsSection =
-    config.SimulationsSection || custom.Simulations || null;
+  const SimulationsSection = config.SimulationsSection || custom.Simulations || null;
 
   /* ===== RENDER ===== */
-
   return (
     <div className="flex flex-col h-full overflow-hidden relative">
       {TestHeader}
@@ -978,17 +1003,29 @@ const isSolventMedia =
       {CustomToolbar && <CustomToolbar ctx={ctx} />}
 
       <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
-        {/* ===== CLASSIFICATION ===== */}
+        
+        {/* ===== MANDATORY WARNING BANNER ===== */}
+        {missingFields.length > 0 && (
+          <div className="mb-6 bg-red-50 border-l-4 border-red-500 p-4 rounded-r-lg shadow-sm">
+            <div className="flex items-center gap-2">
+              <span className="text-red-500 text-lg">⚠️</span>
+              <h3 className="text-sm font-bold text-red-800 uppercase tracking-wide">Missing Mandatory Parameters</h3>
+            </div>
+            <p className="text-xs text-red-700 mt-1">
+              Please fill in the following required fields to complete this record: 
+              <span className="font-bold"> {missingFields.join(', ')}</span>
+            </p>
+          </div>
+        )}
 
+        {/* ===== CLASSIFICATION ===== */}
         <CollapsibleSection title="Classification" icon="🏷️">
           <div className="max-w-xl flex flex-col gap-5">
             {/* PRIMARY CLASSIFICATION */}
-
             <div>
               <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
                 Primary Classification / Experiment Type / Test Category
               </label>
-
               <select
                 value={testCategory}
                 onChange={(e) => update({ testCategory: e.target.value })}
@@ -1003,12 +1040,10 @@ const isSolventMedia =
             </div>
 
             {/* SECONDARY CLASSIFICATION */}
-
             <div>
               <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
                 Secondary Classification / Sub-category
               </label>
-
               <select
                 value={t.secondaryCategory || ''}
                 onChange={(e) => update({ secondaryCategory: e.target.value })}
@@ -1043,7 +1078,6 @@ const isSolventMedia =
                   </button>
                 )}
               </div>
-
               <p className="text-xs text-slate-400 mt-1">
                 Secondary classification uses the same category list defined in
                 Definitions & Labels.
@@ -1051,7 +1085,6 @@ const isSolventMedia =
             </div>
 
             {/* OPERATORS */}
-
             <div>
               <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
                 Operator / Scientist who performed the experiment
@@ -1091,7 +1124,6 @@ const isSolventMedia =
         </CollapsibleSection>
 
         {/* ===== COMPOUNDS & BIOLOGICAL MODELS ===== */}
-
         {(showCompoundsSection || CompoundsSection) && (
           <CollapsibleSection
             title="Compounds & Biological Models"
@@ -1140,7 +1172,6 @@ const isSolventMedia =
         )}
 
         {/* ===== EXPERIMENTAL CONDITIONS ===== */}
-
         <CollapsibleSection title="Experimental Conditions" icon="🌡️">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {(config.conditionFields || []).map(renderConditionField)}
@@ -1163,7 +1194,6 @@ const isSolventMedia =
         </CollapsibleSection>
 
         {/* ===== INSTRUMENTAL SETUP ===== */}
-
         <CollapsibleSection
           title="Instrumental Setup"
           icon="🔬"
@@ -1193,7 +1223,6 @@ const isSolventMedia =
         </CollapsibleSection>
 
         {/* ===== LINKED PROTOCOLS ===== */}
-
         <CollapsibleSection title="Linked Protocols" icon="📋">
           <div className="flex flex-col gap-1 p-3 bg-indigo-50 border border-indigo-200 rounded-lg">
             <label className="text-xs font-bold text-indigo-800 uppercase flex items-center justify-between mb-2">
@@ -1261,7 +1290,6 @@ const isSolventMedia =
         </CollapsibleSection>
 
         {/* ===== AGENDA ===== */}
-
         <CollapsibleSection title="Agenda" icon="📅" defaultOpen={false}>
           <h3 className="text-[11px] font-bold text-slate-600 mb-2 flex justify-between items-center">
             <span>📅 Schedule / Planning (This Item)</span>
@@ -1373,7 +1401,6 @@ const isSolventMedia =
         </CollapsibleSection>
 
         {/* ===== REPORT ===== */}
-
         <CollapsibleSection title="Report" icon="📝">
           <div className="flex flex-col lg:flex-row gap-6">
             <div className="flex-1 flex flex-col h-full min-h-[160px]">
@@ -1489,7 +1516,6 @@ const isSolventMedia =
         </CollapsibleSection>
 
         {/* ===== FIGURES ===== */}
-
         <CollapsibleSection title="Figures" icon="🖼️">
           <div className="flex justify-between items-center mb-4 flex-wrap gap-3">
             <p className="text-sm text-slate-500">
@@ -1570,15 +1596,12 @@ const isSolventMedia =
         </CollapsibleSection>
 
         {/* ===== TYPE-SPECIFIC CONTENT ===== */}
-
         {CustomAll ? (
           <CustomAll ctx={ctx} />
         ) : (
           <>
             {SetupSection && <SetupSection ctx={ctx} />}
-
             {DataSection && <DataSection ctx={ctx} />}
-
             {FittingSection ? (
               <FittingSection ctx={ctx} />
             ) : (
@@ -1608,13 +1631,11 @@ const isSolventMedia =
                 </CollapsibleSection>
               )
             )}
-
             {SimulationsSection && <SimulationsSection ctx={ctx} />}
           </>
         )}
 
         {/* ===== LAB NOTEBOOK EXPORT ===== */}
-
         {!config.hideNotebook && notebookChecks.length > 0 && (
           <CollapsibleSection
             title="Lab Notebook Export"
@@ -1658,7 +1679,6 @@ const isSolventMedia =
       </div>
 
       {/* ===== ZOOM IMAGE MODAL ===== */}
-
       {zoomImage && (
         <div
           className="fixed inset-0 z-[99999] flex items-center justify-center bg-slate-900/90 backdrop-blur-sm"

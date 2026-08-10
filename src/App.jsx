@@ -3063,6 +3063,7 @@ export default function App() {
 
   const [user, setUser] = useState(null);
   const [needsLogin, setNeedsLogin] = useState(false);
+  const [mandatoryFields, setMandatoryFields] = useState([]);
   const [isCloudReady, setIsCloudReady] = useState(false);
   const [saveStatus, setSaveStatus] = useState('idle');
   const [saveErrorMsg, setSaveErrorMsg] = useState('');
@@ -3304,7 +3305,8 @@ export default function App() {
     additives,
     nmrInstruments,
     nmrProbes,
-    nmrExperiments
+    nmrExperiments,
+    mandatoryFields
   };
 
   const getCompressedPayload = () =>
@@ -3535,6 +3537,7 @@ useEffect(() => {
       if (s.calculationEntries !== undefined) setCalculationEntries(s.calculationEntries);
       if (s.cellLineMeta !== undefined) setCellLineMeta(s.cellLineMeta);
       if (s.plasmidMeta !== undefined) setPlasmidMeta(s.plasmidMeta);
+      if (s.mandatoryFields !== undefined) setMandatoryFields(s.mandatoryFields);
       if (s.solvents !== undefined) setSolvents(s.solvents);
       if (s.buffers !== undefined) setBuffers(s.buffers);
       if (s.additives !== undefined) setAdditives(s.additives);
@@ -3585,7 +3588,7 @@ useEffect(() => {
       if (s.compoundMeta !== undefined) setCompoundMeta((prev) => ({ ...prev, ...s.compoundMeta }));
       if (s.cellLineMeta !== undefined) setCellLineMeta((prev) => ({ ...prev, ...s.cellLineMeta }));
       if (s.plasmidMeta !== undefined) setPlasmidMeta((prev) => ({ ...prev, ...s.plasmidMeta }));
-
+if (s.mandatoryFields !== undefined) setMandatoryFields((prev) => [...new Set([...prev, ...s.mandatoryFields])]);
       if (s.calculationEntries !== undefined) {
         setCalculationEntries((prev) => {
           const next = { ...prev };
@@ -3665,6 +3668,7 @@ useEffect(() => {
     setMolecules([]);
     setCellLineMeta({});
     setPlasmidMeta({});
+    setMandatoryFields([]);
     setSolvents([]);
     setBuffers([]);
     setAdditives([]);
@@ -3822,7 +3826,7 @@ useEffect(() => {
       setMolecules(Array.isArray(s.molecules) ? s.molecules : []);
       setCellLineMeta(s.cellLineMeta || {});
       setPlasmidMeta(s.plasmidMeta || {});
-
+setMandatoryFields(s.mandatoryFields || []);
       setTestCategories(
         s.testCategories || [
           'Activity',
@@ -4854,6 +4858,8 @@ useEffect(() => {
                       nmrExperiments={nmrExperiments}
                       onSelectResource={(id, type) => {
                         setActiveLibrarySelection({ id, type });
+                        mandatoryFields={mandatoryFields} 
+            setMandatoryFields={setMandatoryFields}
                         setTimeout(() => {
                           const el = document.getElementById(`section-${type}`);
                           if (el) {

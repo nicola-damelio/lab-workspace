@@ -3,11 +3,7 @@ import { CompoundDefinitionSection } from './CompoundDefinitionSection';
 import { SolventsManager, BuffersManager, AdditivesManager, NMRProbesManager, NMRInstrumentsManager, NMRExperimentsManager } from './DefinitionsExtra';
 
 /* ============================================================
-DefinitionsPanel — Reorganized with all new subsections
-Order: Library → Compound → Cell Lines → Plasmids →
-       Solvents & Media → Buffers → Additives →
-       NMR Instruments → NMR Probes → NMR Experiments →
-       Scientists/Operators → Custom Metadata Fields
+DefinitionsPanel
 ============================================================ */
 
 const CollapsibleSection = ({ title, subtitle, defaultOpen = false, children, className = '' }) => {
@@ -85,6 +81,7 @@ export const DefinitionsPanel = ({
   cellLineMeta, setCellLineMeta,
   plasmidMeta, setPlasmidMeta,
   activeLibrarySelection, setActiveLibrarySelection,
+  mandatoryFields = [], setMandatoryFields,
   handlePrint
 }) => {
   const allCmpds = [...new Set([...customCmpds, ...Object.keys(compoundMeta || {})])];
@@ -93,17 +90,16 @@ export const DefinitionsPanel = ({
     <div className="h-full min-h-0 overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
       <div className="max-w-6xl mx-auto flex flex-col gap-4 pb-10">
 
-{/* 1. LIBRARY DIRECTORY */}
+        {/* 1. LIBRARY DIRECTORY */}
         <CollapsibleSection title="Library Directory" subtitle="Click any item to view or edit its full details." defaultOpen={false}>
           <p className="text-sm text-slate-500 mb-3">All defined compounds, cell lines, plasmids, solvents, buffers, and instrument configurations appear here. Click to edit.</p>
-          {/* Note: In App.jsx, LibraryDirectory needs the new arrays passed to it (solvents, buffers, additives, nmrProbes, nmrInstruments, nmrExperiments) */}
           <div className="flex flex-wrap gap-2">
-             <span className="text-xs text-slate-500 italic">Library Directory component injected below.</span>
+             <span className="text-xs text-slate-500 italic">Library Directory is active globally. Select items from headers below to edit.</span>
           </div>
         </CollapsibleSection>
 
         {/* 2. COMPOUND SEQUENCE / STRUCTURE */}
-        <CollapsibleSection title="Compound Sequence / Structure" subtitle="Define sequence, SMILES, modifications, MW." defaultOpen={activeLibrarySelection?.type === 'compound'}>
+        <CollapsibleSection id="section-compound" title="Compound Sequence / Structure" subtitle="Define sequence, SMILES, modifications, MW." defaultOpen={activeLibrarySelection?.type === 'compound'}>
           <CompoundDefinitionSection
             compoundOptions={allCmpds}
             customCmpds={customCmpds}
@@ -116,7 +112,7 @@ export const DefinitionsPanel = ({
         </CollapsibleSection>
 
         {/* 3. CELL LINE DEFINITIONS */}
-        <CollapsibleSection title="Cell Line Definitions" subtitle="Define organism, tissue, and culture medium." defaultOpen={activeLibrarySelection?.type === 'cellLine'}>
+        <CollapsibleSection id="section-cellLine" title="Cell Line Definitions" subtitle="Define organism, tissue, and culture medium." defaultOpen={activeLibrarySelection?.type === 'cellLine'}>
           <TagManager
             items={customCellLines}
             onAdd={(name) => setCustomCellLines((prev) => [...prev, name])}
@@ -129,7 +125,7 @@ export const DefinitionsPanel = ({
         </CollapsibleSection>
 
         {/* 4. PLASMID DEFINITIONS */}
-        <CollapsibleSection title="Plasmid Definitions" subtitle="Define backbone, promoters, resistance, and sequences." defaultOpen={activeLibrarySelection?.type === 'plasmid'}>
+        <CollapsibleSection id="section-plasmid" title="Plasmid Definitions" subtitle="Define backbone, promoters, resistance, and sequences." defaultOpen={activeLibrarySelection?.type === 'plasmid'}>
           <TagManager
             items={customPlasmids || []}
             onAdd={(name) => setCustomPlasmids((prev) => [...prev, name])}
@@ -142,32 +138,32 @@ export const DefinitionsPanel = ({
         </CollapsibleSection>
 
         {/* 5. SOLVENTS AND MEDIA */}
-        <CollapsibleSection title="Solvents and Media" subtitle="Define solvents and media that appear as dropdowns in all experiment pages." defaultOpen={activeLibrarySelection?.type === 'solvent'}>
+        <CollapsibleSection id="section-solvent" title="Solvents & Media" subtitle="Define solvents and media that appear as dropdowns in all experiment pages." defaultOpen={activeLibrarySelection?.type === 'solvent'}>
           <SolventsManager solvents={solvents} setSolvents={setSolvents} selectedId={activeLibrarySelection?.type === 'solvent' ? activeLibrarySelection.id : null} onSelect={(id) => setActiveLibrarySelection({ type: 'solvent', id })} />
         </CollapsibleSection>
 
         {/* 6. BUFFERS */}
-        <CollapsibleSection title="Buffers" subtitle="Define buffers with optional description (e.g. PBS pH 7.4)." defaultOpen={activeLibrarySelection?.type === 'buffer'}>
+        <CollapsibleSection id="section-buffer" title="Buffers" subtitle="Define buffers with optional description (e.g. PBS pH 7.4)." defaultOpen={activeLibrarySelection?.type === 'buffer'}>
           <BuffersManager buffers={buffers} setBuffers={setBuffers} selectedId={activeLibrarySelection?.type === 'buffer' ? activeLibrarySelection.id : null} onSelect={(id) => setActiveLibrarySelection({ type: 'buffer', id })} />
         </CollapsibleSection>
 
         {/* 7. ADDITIVES */}
-        <CollapsibleSection title="Additives" subtitle="Define additives (NaN3, DTT, EDTA...) for Experimental Conditions." defaultOpen={activeLibrarySelection?.type === 'additive'}>
+        <CollapsibleSection id="section-additive" title="Additives" subtitle="Define additives (NaN3, DTT, EDTA...) for Experimental Conditions." defaultOpen={activeLibrarySelection?.type === 'additive'}>
           <AdditivesManager additives={additives} setAdditives={setAdditives} selectedId={activeLibrarySelection?.type === 'additive' ? activeLibrarySelection.id : null} onSelect={(id) => setActiveLibrarySelection({ type: 'additive', id })} />
         </CollapsibleSection>
 
         {/* 8. NMR INSTRUMENTS */}
-        <CollapsibleSection title="Instruments" subtitle="Define NMR spectrometers: frequency in MHz, available probes." defaultOpen={activeLibrarySelection?.type === 'nmrInstrument'}>
+        <CollapsibleSection id="section-nmrInstrument" title="Instruments" subtitle="Define NMR spectrometers: frequency in MHz, available probes." defaultOpen={activeLibrarySelection?.type === 'nmrInstrument'}>
           <NMRInstrumentsManager nmrInstruments={nmrInstruments} setNmrInstruments={setNmrInstruments} nmrProbes={nmrProbes} selectedId={activeLibrarySelection?.type === 'nmrInstrument' ? activeLibrarySelection.id : null} onSelect={(id) => setActiveLibrarySelection({ type: 'nmrInstrument', id })} />
         </CollapsibleSection>
 
         {/* 9. NMR PROBES */}
-        <CollapsibleSection title="NMR Probes" subtitle="Define probe name, type, subtype, field, diameter, cryo, and sample state." defaultOpen={activeLibrarySelection?.type === 'nmrProbe'}>
+        <CollapsibleSection id="section-nmrProbe" title="NMR Probes" subtitle="Define probe name, type, subtype, field, diameter, cryo, and sample state." defaultOpen={activeLibrarySelection?.type === 'nmrProbe'}>
           <NMRProbesManager nmrProbes={nmrProbes} setNmrProbes={setNmrProbes} selectedId={activeLibrarySelection?.type === 'nmrProbe' ? activeLibrarySelection.id : null} onSelect={(id) => setActiveLibrarySelection({ type: 'nmrProbe', id })} />
         </CollapsibleSection>
 
         {/* 10. NMR EXPERIMENTS / PULSE PROGRAMS */}
-        <CollapsibleSection title="NMR Experiments" subtitle="Define pulse programs: nuclei, dimensions, and custom acquisition parameters." defaultOpen={activeLibrarySelection?.type === 'nmrExperiment'}>
+        <CollapsibleSection id="section-nmrExperiment" title="NMR Experiments" subtitle="Define pulse programs: nuclei, dimensions, and custom acquisition parameters." defaultOpen={activeLibrarySelection?.type === 'nmrExperiment'}>
           <NMRExperimentsManager nmrExperiments={nmrExperiments} setNmrExperiments={setNmrExperiments} selectedId={activeLibrarySelection?.type === 'nmrExperiment' ? activeLibrarySelection.id : null} onSelect={(id) => setActiveLibrarySelection({ type: 'nmrExperiment', id })} />
         </CollapsibleSection>
 
@@ -200,6 +196,22 @@ export const DefinitionsPanel = ({
         {/* 13. CUSTOM METADATA FIELDS */}
         <CollapsibleSection title="Custom Metadata Fields" subtitle="Add custom fields. Choose placement: Experimental Conditions or Instrumental Setup." defaultOpen={false}>
           <CustomMetadataFieldsManager customFields={customFields} setCustomFields={setCustomFields} />
+        </CollapsibleSection>
+
+        {/* 14. MANDATORY PARAMETERS */}
+        <CollapsibleSection title="Mandatory Parameters" subtitle="Define fields that must be filled out in every test." defaultOpen={true}>
+          <TagManager
+            items={mandatoryFields}
+            onAdd={(name) => setMandatoryFields((prev) => [...prev, name])}
+            onRemove={(name) => setMandatoryFields((prev) => prev.filter((c) => c !== name))}
+            onRename={(oldN, newN) => setMandatoryFields((prev) => prev.map((c) => c === oldN ? newN : c))}
+            color="bg-red-600 hover:bg-red-700"
+            placeholder="e.g. Operator, Solvent, Temperature..."
+            icon="⚠️"
+          />
+          <p className="text-xs text-slate-500 mt-2">
+            Type the exact name of the field (e.g., "Operator", "Solvent", "Experiment Type", or the name of a Custom Metadata Field). A warning will appear at the top of any test where these fields are left blank.
+          </p>
         </CollapsibleSection>
 
       </div>
