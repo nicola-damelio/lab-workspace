@@ -438,7 +438,7 @@ const collectParams = (ast) => {
   })(ast);
   return [...s];
 };
-const fitGeneric = (pts, f0, P0) => {
+export const fitGeneric = (pts, f0, P0) => {
   let P = [...P0];
   const f = (x, Pv) => f0(x, Pv);
   const ssr = (Pv) => { let s = 0; for (const p of pts) { const v = f(p.x, Pv); if (!isFinite(v)) return Infinity; const w = p.w || 1; s += w * (p.y - v) ** 2; } return s; };
@@ -484,19 +484,19 @@ const fitGeneric = (pts, f0, P0) => {
   } catch (err) { /* ignore */ }
   return { params: P, paramsErr: P_err, r2, se, f: (x) => f(x, P) };
 };
-const fitLinear = (pts) => {
+export const fitLinear = (pts) => {
   if (pts.length < 2) return null;
   const r = fitGeneric(pts, (x, P) => P[0] + P[1] * x, [0, 1]);
   return r ? { ...r, intercept: r.params[0], slope: r.params[1], interceptErr: r.paramsErr[0], slopeErr: r.paramsErr[1] } : null;
 };
-const fit4PL = (pts) => {
+export const fit4PL = (pts) => {
   if (pts.length < 4) return null;
   const ys = pts.map((p) => p.y);
   const t = Math.max(...ys), b = Math.min(...ys);
   const r = fitGeneric(pts, (x, P) => P[1] + (P[0] - P[1]) / (1 + Math.pow(x / P[2], P[3])), [t, b, pts.reduce((s, p) => s + p.x, 0) / Math.max(1, pts.length), 1]);
   return r ? { ...r, top: r.params[0], bottom: r.params[1], ic50: r.params[2], hill: r.params[3], topErr: r.paramsErr[0], bottomErr: r.paramsErr[1], ic50Err: r.paramsErr[2], hillErr: r.paramsErr[3] } : null;
 };
-const fitCustomEquation = (expr, pts) => {
+export const fitCustomEquation = (expr, pts) => {
   let ast, par;
   try { ast = parseExpression(expr); par = collectParams(ast); } catch (e) { return null; }
   if (!par.length || pts.length < par.length + 1) return null;
@@ -507,19 +507,19 @@ const fitCustomEquation = (expr, pts) => {
   res.paramsErr = Object.fromEntries(par.map((n, i) => [n, res.paramsErr[i]]));
   return res;
 };
-const runFit = (model, customExpr, wpts) => {
+export const runFit = (model, customExpr, wpts) => {
   if (model === 'linear') return fitLinear(wpts);
   if (model === '4pl') return fit4PL(wpts);
   if (model === 'custom' && customExpr) return fitCustomEquation(customExpr, wpts);
   return null;
 };
-const fitParamOptions = (model, customExpr) => {
+export const fitParamOptions = (model, customExpr) => {
   if (model === 'linear') return ['slope', 'intercept'];
   if (model === '4pl') return ['top', 'bottom', 'ic50', 'hill'];
   if (model === 'custom') { try { return collectParams(parseExpression(customExpr || '')); } catch { return []; } }
   return [];
 };
-const extractFitParam = (fit, model, param) => {
+export const extractFitParam = (fit, model, param) => {
   if (!fit) return null;
   if (model === 'linear') return param === 'intercept' ? fit.intercept : fit.slope;
   if (model === '4pl') return ({ top: fit.top, bottom: fit.bottom, ic50: fit.ic50, hill: fit.hill })[param] ?? null;
@@ -2543,7 +2543,7 @@ const ImportPanel = ({ ctx, d }) => {
           {d.layers.map((l) => <option key={l.key} value={l.key}>{l.label}</option>)}
         </select>
         <div className="flex bg-white border border-sky-300 p-1 rounded-lg flex-wrap">
-          {[['file', '📄 File'], ['paste', '📋 Paste'], ['sparky', '✨ Sparky'], ['tab', '🗂️ Another tab'], ['cond', '⧉ Instance']].map(([m, lab]) => (
+          {[['file', '📄 File'], ['paste', '📋 Paste'], ['sparky', '✨ Sparky'], ['cond', '⧉ Condition']].map(([m, lab]) => (
             <button key={m} type="button" onClick={() => setMode(m)} className={`px-2.5 py-1 text-xs font-bold rounded-md ${mode === m ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-sky-100'}`}>{lab}</button>
           ))}
         </div>
@@ -3241,7 +3241,7 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
     else el = <circle cx={cx} cy={cy} r={r} fill={color} />;
     return <g key={`d-${s.key}-${index}`}>{el}</g>;
   };
-  const xLab = cfg.xAxisLabel || `${xFieldLabel} (read from each instance)`;
+  const xLab = cfg.xAxisLabel || xFieldLabel;
   const yLab = cfg.yAxisLabel || `${plotLayer.label}${plotLayer.unit ? ` (${plotLayer.unit})` : ''}`;
   const refLines = (
     <>
@@ -3294,7 +3294,7 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
             </select>
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold text-slate-500 uppercase">X axis (Experimental Condition field, read from each instance)</label>
+            <label className="text-[10px] font-bold text-slate-500 uppercase">X axis (Experimental Condition)</label>
             <select value={effXField} onChange={(e) => set({ xField: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
               {experimentalFields.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
             </select>
@@ -3357,7 +3357,7 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
         )}
 
         <div className="flex flex-wrap items-center gap-2 bg-white border border-slate-200 rounded-lg p-2">
-          <span className="text-[10px] font-bold text-slate-500 uppercase">Instances used (from the top of the page):</span>
+          <span className="text-[10px] font-bold text-slate-500 uppercase">Conditions used:</span>
           {d.instances.map((inst) => (
             <label key={inst.id} className={`flex items-center gap-1.5 text-xs font-bold px-2 py-1 rounded-lg border cursor-pointer ${used[inst.id] === false ? 'bg-slate-100 border-slate-200 text-slate-400' : 'bg-blue-50 border-blue-200 text-blue-800'}`}>
               <input type="checkbox" checked={used[inst.id] !== false} onChange={() => toggleInstance(inst.id)} className="w-3.5 h-3.5 accent-blue-600" />
@@ -3449,7 +3449,7 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
                     {isHist ? (
                       <BarChart data={catData} margin={{ top: 8, right: 16, bottom: 30, left: 12 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                        <XAxis dataKey="__condition" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} />} tickMargin={10} label={{ value: 'Instance', position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                        <XAxis dataKey="__condition" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} />} tickMargin={10} label={{ value: 'Condition', position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
                         <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={{ value: yLab, angle: -90, position: 'insideLeft', offset: 6, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
                         <Tooltip />
                         {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 10 }} />}
@@ -3608,7 +3608,7 @@ const FittingSection = ({ ctx }) => {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <span className="text-xs font-bold text-slate-500 uppercase">Condition plots — X = Experimental Condition field read from each instance · zoomable · aspect ratio adjustable</span>
+        <span className="text-xs font-bold text-slate-500 uppercase">Condition plots — X = Experimental Condition · zoomable · aspect ratio adjustable</span>
         <button type="button" onClick={addPlot} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm">+ Add Condition Plot</button>
       </div>
       {plots.map((p) => (
@@ -3804,3 +3804,4 @@ export const NotebookExtra = ({ ctx, checkId }) => {
   }
   return '';
 };
+

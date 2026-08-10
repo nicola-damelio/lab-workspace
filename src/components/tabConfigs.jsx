@@ -6,6 +6,52 @@
 //
 // The categories provided by Definitions & Labels should be the primary source.
 
+export const MD_TAB_CONFIG = {
+  typeKey: 'md',
+  typeLabel: 'Molecular Dynamics',
+  icon: '🎞️',
+  fallbackCategories: [
+    'Production MD',
+    'Equilibration',
+    'Energy Minimization',
+    'Steered MD',
+    'Replica Exchange',
+    'Metadynamics',
+    'Umbrella Sampling',
+    'Free Energy Calculation'
+  ],
+  samples: {
+    compounds: true,
+    cellLines: false,
+    compoundLabel: 'System / Molecule Label(s)',
+    cellLineLabel: 'Biological Models'
+  },
+  imagesKey: 'mdImages',
+  conditionFields: [
+    { key: 'experimentDate', label: 'Simulation Date', type: 'date' },
+    { key: 'forceField', label: 'Force Field', type: 'text', placeholder: 'e.g. CHARMM36m' },
+    { key: 'forceFieldVersion', label: 'FF Version', type: 'text', placeholder: 'e.g. charmm36m' },
+    { key: 'waterModel', label: 'Water Model', type: 'text', placeholder: 'e.g. TIP3P' },
+    { key: 'ensemble', label: 'Ensemble', type: 'text', placeholder: 'e.g. NPT' },
+    { key: 'integrator', label: 'Integrator', type: 'text', placeholder: 'e.g. Velocity Verlet' },
+    { key: 'timestep', label: 'Time Step', type: 'text', placeholder: 'e.g. 2', units: ['fs', 'ps'] },
+    { key: 'nSteps', label: 'Number of Steps', type: 'text', placeholder: 'e.g. 500000' },
+    { key: 'simTemperature', label: 'Temperature', type: 'text', placeholder: 'e.g. 300', units: ['K'] },
+    { key: 'simPressure', label: 'Pressure', type: 'text', placeholder: 'e.g. 1.0', units: ['bar', 'atm'] },
+    { key: 'thermostat', label: 'Thermostat', type: 'text', placeholder: 'e.g. Nosé-Hoover' },
+    { key: 'barostat', label: 'Barostat', type: 'text', placeholder: 'e.g. Parrinello-Rahman' },
+    { key: 'trajectoryUrl', label: 'Trajectory URL', type: 'text', placeholder: 'https://…/traj.xtc' },
+    { key: 'trajectoryFormat', label: 'Trajectory Format', type: 'text', placeholder: 'e.g. xtc' }
+  ],
+  notebookChecks: [
+    { id: 'cond', label: 'Simulation Parameters' },
+    { id: 'seq', label: 'System / Sequence' },
+    { id: 'table', label: 'Atom Table' },
+    { id: 'formula', label: 'Chemical Formula' },
+    { id: 'trajectory', label: 'Trajectory Info' },
+    { id: 'images', label: 'Figures / Images' }
+  ]
+};
 export const CLONING_TAB_CONFIG = {
   typeKey: 'cloning',
   typeLabel: 'Cloning & DNA Prep',
@@ -17,8 +63,8 @@ export const CLONING_TAB_CONFIG = {
     'Validation'
   ],
   samples: {
-    compounds: true,   // Gene / Insert name
-    cellLines: true,   // Bacterial strains (DH5α, BL21, ...)
+    compounds: true,
+    cellLines: true,
     compoundLabel: 'Construct / Insert Name',
     cellLineLabel: 'Bacterial / Host Strain'
   },
@@ -44,10 +90,13 @@ export const CLONING_TAB_CONFIG = {
       label: 'Sequencing Verification',
       type: 'select',
       options: ['Pending', 'Verified (Correct)', 'Failed / Mutated']
-    }
+    },
+    { key: 'otherMolecule', label: 'Other Molecule', type: 'text', placeholder: 'e.g. Ligand X' },
+    { key: 'otherConditions', label: 'Other Conditions', type: 'text', placeholder: 'e.g. Special notes' }
   ],
   notebookChecks: [
     { id: 'cond', label: 'Classification & Conditions' },
+    { id: 'strategy', label: 'Cloning Strategy' },
     { id: 'setup', label: 'Thermal Cycler & Reaction Mix' },
     { id: 'quant', label: 'DNA Quantification' },
     { id: 'uv', label: 'UV Spectra Analysis' },
@@ -58,7 +107,7 @@ export const CLONING_TAB_CONFIG = {
 
 export const PROTEIN_EXPRESSION_TAB_CONFIG = {
   typeKey: 'protein_expression',
-  typeLabel: 'Expression & Purification',
+  typeLabel: 'Protein Expression / Purification',
   icon: '🧫',
   fallbackCategories: [
     'Expression Optimization',
@@ -76,8 +125,6 @@ export const PROTEIN_EXPRESSION_TAB_CONFIG = {
   imagesKey: 'gelImages',
   conditionFields: [
     { key: 'experimentDate', label: 'Experiment Date', type: 'date' },
-
-    // ---- Culture ----
     { key: 'cultureVolume', label: 'Culture Volume', type: 'text', placeholder: 'e.g. 1', units: ['L', 'mL', 'µL'] },
     {
       key: 'medium',
@@ -86,8 +133,6 @@ export const PROTEIN_EXPRESSION_TAB_CONFIG = {
       options: ['LB', 'TB', '2xYT', 'M9 minimal', 'Auto-induction medium', 'Other']
     },
     { key: 'antibiotic', label: 'Antibiotic', type: 'text', placeholder: 'e.g. Kanamycin 50', units: ['µg/mL', 'mg/mL'] },
-
-    // ---- Induction ----
     {
       key: 'inductionMethod',
       label: 'Induction Method',
@@ -99,8 +144,6 @@ export const PROTEIN_EXPRESSION_TAB_CONFIG = {
     { key: 'inductionTemp', label: 'Induction Temperature', type: 'text', placeholder: 'e.g. 18', units: ['°C', 'K'] },
     { key: 'inductionDuration', label: 'Induction Duration', type: 'text', placeholder: 'e.g. 16 (overnight)', units: ['h', 'min', 'days'] },
     { key: 'harvestOD', label: 'OD600 at Harvest', type: 'text', placeholder: 'e.g. 3.2' },
-
-    // ---- Lysis ----
     {
       key: 'lysisMethod',
       label: 'Lysis Method',
@@ -116,8 +159,6 @@ export const PROTEIN_EXPRESSION_TAB_CONFIG = {
     },
     { key: 'lysisBuffer', label: 'Lysis Buffer', type: 'text', placeholder: 'e.g. 50 mM Tris, 300 mM NaCl, pH 8.0' },
     { key: 'proteaseInhibitors', label: 'Protease Inhibitors', type: 'select', options: ['Yes', 'No'] },
-
-    // ---- Construct / Tag ----
     {
       key: 'proteinTag',
       label: 'Affinity Tag',
@@ -130,8 +171,6 @@ export const PROTEIN_EXPRESSION_TAB_CONFIG = {
       type: 'select',
       options: ['None', 'TEV', 'Thrombin', 'HRV 3C', 'Factor Xa']
     },
-
-    // ---- Purification ----
     {
       key: 'columnType',
       label: 'Primary Column',
@@ -148,7 +187,9 @@ export const PROTEIN_EXPRESSION_TAB_CONFIG = {
       ]
     },
     { key: 'elutionConditions', label: 'Elution Conditions', type: 'text', placeholder: 'e.g. 250 mM imidazole' },
-    { key: 'storageBuffer', label: 'Storage Buffer', type: 'text', placeholder: 'e.g. 20 mM HEPES, 150 mM NaCl, 10% glycerol' }
+    { key: 'storageBuffer', label: 'Storage Buffer', type: 'text', placeholder: 'e.g. 20 mM HEPES, 150 mM NaCl, 10% glycerol' },
+    { key: 'otherMolecule', label: 'Other Molecule', type: 'text', placeholder: 'e.g. Ligand X' },
+    { key: 'solvent', label: 'Solvent / Buffer', type: 'text', placeholder: 'e.g. PBS pH 7.4' }
   ],
   notebookChecks: [
     { id: 'cond', label: 'Conditions & Buffers' },
@@ -158,6 +199,21 @@ export const PROTEIN_EXPRESSION_TAB_CONFIG = {
   ]
 };
 
+// Field type conventions for CD_TAB_CONFIG.conditionFields (see
+// TestShellRenderer.jsx renderConditionField):
+//   'solvent-select' / key 'solvent' -> dropdown fed by Definitions & Labels
+//     solvents, with a free-text fallback for custom values.
+// Buffer/Additive are NOT listed as conditionFields — TestShellRenderer always
+// renders the shared <BufferAdditiveFields> component (bufferName/bufferConc/
+// bufferUnit, additiveName/additiveConc/additiveUnit) right after the
+// conditionFields grid, fed by Definitions & Labels buffers/additives. Adding a
+// 'buffer'/'additive' conditionFields entry here would create a second,
+// differently-keyed input that silently goes out of sync with it.
+//
+// CD-spectrometer instrumental fields live in CD_INSTRUMENTAL_FIELDS in
+// CDSections.jsx (wired in via CDTestRenderer's custom.InstrumentalSetup), not
+// here — TestShellRenderer's Instrumental Setup section is driven by that
+// custom component, not by a config field list.
 export const CD_TAB_CONFIG = {
   typeKey: 'cd',
   typeLabel: 'Circular Dichroism',
@@ -178,18 +234,18 @@ export const CD_TAB_CONFIG = {
   imagesKey: 'images',
   conditionFields: [
     { key: 'experimentDate', label: 'Experiment Date', type: 'date' },
-    { key: 'concentration', label: 'Concentration', type: 'text', placeholder: 'e.g. 0.1', units: ['mg/mL', 'µM', 'mM'] },
-    { key: 'solvent', label: 'Solvent / Buffer', type: 'text', placeholder: 'e.g. 10 mM Phosphate Buffer' },
-    { key: 'buffer', label: 'Buffer', type: 'text', placeholder: 'e.g. 10 mM PBS pH 7.4' },
+    { key: 'concentration', label: 'Concentration', type: 'text', placeholder: 'e.g. 0.1', units: ['µM', 'mg/mL', 'mM', 'M', 'nM'] },
+    { key: 'solvent', label: 'Solvent', type: 'solvent-select', placeholder: 'e.g. 10 mM Phosphate Buffer' },
     { key: 'saltConcentration', label: 'Salt Concentration', type: 'text', placeholder: 'e.g. 50', units: ['mM', 'M'] },
     { key: 'ph', label: 'pH', type: 'text', placeholder: 'e.g. 7.4' },
-    { key: 'temperature', label: 'Temperature', type: 'text', placeholder: 'e.g. 25', units: ['°C', 'K'] },
+    { key: 'temperature', label: 'Temperature', type: 'text', placeholder: 'e.g. 25', units: ['K', '°C'] },
     { key: 'pathLength', label: 'Cuvette Path Length', type: 'text', placeholder: 'e.g. 1', units: ['mm', 'cm'] },
     { key: 'otherMolecule', label: 'Other Molecule / Ligand', type: 'text', placeholder: 'e.g. Ligand X' },
     { key: 'ratio', label: 'Molar Ratio', type: 'text', placeholder: 'e.g. 1:5' }
   ],
   notebookChecks: [
     { id: 'cond', label: 'Experimental Conditions' },
+    { id: 'instrument', label: 'Instrumental Setup' },
     { id: 'struct', label: 'Structure Composition' },
     { id: 'spectra', label: 'Spectra Summary' }
   ]
@@ -217,6 +273,8 @@ export const PLATE_TAB_CONFIG = {
     { key: 'cellsSeeded', label: 'Cells per Well', type: 'number', placeholder: 'e.g. 5000' },
     { key: 'timeBeforeRevelation', label: 'Time Before Revelation', type: 'number', step: '0.5', placeholder: 'e.g. 72', units: ['h', 'min', 'days'] },
     { key: 'temperature', label: 'Temperature', type: 'text', placeholder: 'e.g. 37', units: ['°C', 'K'] },
+    { key: 'solvent', label: 'Solvent / Medium', type: 'text', placeholder: 'e.g. DMEM + 10% FBS' },
+    { key: 'otherMolecule', label: 'Other Molecule', type: 'text', placeholder: 'e.g. Ligand X' },
     { key: 'otherConditions', label: 'Other Conditions', type: 'text', placeholder: 'e.g. Serum-free medium' }
   ],
   notebookChecks: [
@@ -285,10 +343,50 @@ export const NMR_FITTING_TAB_CONFIG = {
     { key: 'spectrometer', label: 'Spectrometer Frequency', type: 'text', placeholder: 'e.g. 600', units: ['MHz'] },
     { key: 'temperature', label: 'Temperature', type: 'text', placeholder: 'e.g. 298', units: ['K', '°C'] },
     { key: 'solvent', label: 'Solvent', type: 'text', placeholder: 'e.g. D2O' },
-    { key: 'ph', label: 'pH', type: 'text', placeholder: 'e.g. 6.8' }
+    { key: 'ph', label: 'pH', type: 'text', placeholder: 'e.g. 6.8' },
+    { key: 'otherMolecule', label: 'Other Molecule', type: 'text', placeholder: 'e.g. Ligand X' },
+    { key: 'ratio', label: 'Ratio', type: 'text', placeholder: 'e.g. 1:5' }
   ],
   notebookChecks: [
     { id: 'cond', label: 'Experimental Conditions' },
     { id: 'fittings', label: 'Fittings Summary' }
+  ]
+};
+
+export const MD_SIMULATION_TAB_CONFIG = {
+  typeKey: 'md_simulation',
+  typeLabel: 'MD Simulations',
+  icon: '🖥️',
+  fallbackCategories: [
+    'Equilibration',
+    'Production',
+    'Free Energy',
+    'Binding'
+  ],
+  samples: {
+    compounds: true,
+    cellLines: false,
+    compoundLabel: 'System / Molecule',
+    cellLineLabel: ''
+  },
+  imagesKey: 'images',
+  conditionFields: [
+    { key: 'experimentDate', label: 'Simulation Date', type: 'date' },
+    { key: 'forceField', label: 'Force Field', type: 'select', options: ['AMBER ff19SB', 'CHARMM36m', 'OPLS-AA/M', 'GROMOS 54a7', 'Other'] },
+    { key: 'waterModel', label: 'Water Model', type: 'select', options: ['TIP3P', 'TIP4P', 'SPC/E', 'OPC', 'Other'] },
+    { key: 'temperature', label: 'Temperature', type: 'text', placeholder: 'e.g. 300', units: ['K'] },
+    { key: 'pressure', label: 'Pressure', type: 'text', placeholder: 'e.g. 1', units: ['bar', 'atm'] },
+    { key: 'simulationTime', label: 'Simulation Time', type: 'text', placeholder: 'e.g. 100', units: ['ns', 'µs', 'ps'] },
+    { key: 'timestep', label: 'Timestep', type: 'text', placeholder: 'e.g. 2', units: ['fs', 'ps'] },
+    { key: 'boxType', label: 'Box Type', type: 'select', options: ['Cubic', 'Dodecahedral', 'Truncated Octahedral', 'Rectangular'] },
+    { key: 'ionConcentration', label: 'Ion Concentration', type: 'text', placeholder: 'e.g. 0.15', units: ['M', 'mM'] },
+    { key: 'software', label: 'MD Software', type: 'select', options: ['GROMACS', 'AMBER', 'NAMD', 'OpenMM', 'CHARMM', 'Other'] },
+    { key: 'otherMolecule', label: 'Other Molecule', type: 'text', placeholder: 'e.g. Ligand X' },
+    { key: 'otherConditions', label: 'Other Conditions', type: 'text', placeholder: 'e.g. Replica exchange' }
+  ],
+  notebookChecks: [
+    { id: 'cond', label: 'Simulation Parameters' },
+    { id: 'setup', label: 'System Setup' },
+    { id: 'results', label: 'Results Summary' }
   ]
 };

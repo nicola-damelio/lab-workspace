@@ -1,43 +1,68 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+// ============================================================================
+// CDSections.jsx
+// Circular Dichroism page: Data · Data Analysis (spectra, fitter, condition
+// plots) · Simulations.
+// ============================================================================
+
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  BarChart, Bar, ReferenceArea, Legend, ErrorBar
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line,
+  Legend, ErrorBar, Cell, PieChart, Pie
 } from 'recharts';
-import { Chart, registerables } from 'chart.js';
-Chart.register(...registerables);
+import { SharedGraphConfig, SharedErrorTreatment } from './SharedAnalysisTools';
 
-/* ============================================================================
-   CDSections — CD Spectroscopy Analysis
-   ========================================================================== */
-const LINE_COLORS = ['#3b82f6','#ef4444','#22c55e','#f59e0b','#8b5cf6','#ec4899','#14b8a6','#f97316','#6366f1','#84cc16'];
-const FS_CLASSES = 'fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col';
-const OVERLAY_CLASSES = 'fixed top-0 left-0 w-screen h-screen bg-slate-900/50 backdrop-blur-sm z-[999990]';
+const HAS_EB = typeof ErrorBar !== 'undefined';
 
-/* ============================= HELPERS ============================= */
-const parseManual = (v) => {
-  if (v === '' || v == null) return null;
-  const n = Number(v);
-  return isFinite(n) ? n : null;
+/* ========================================================================
+LAYOUT / STYLE CONSTANTS
+======================================================================== */
+const FS_CLASSES =
+  'fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col';
+const OVERLAY_CLASSES =
+  'fixed top-0 left-0 w-screen h-screen bg-slate-900/50 backdrop-blur-sm z-[999990]';
+
+const SPECTRA_PALETTE = [
+  '#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6',
+  '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#06b6d4',
+  '#84cc16', '#e11d48', '#0ea5e9', '#a855f7', '#10b981'
+];
+const LINE_COLORS = [
+  '#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6',
+  '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16'
+];
+
+const DEFAULT_CD_CHART_CFG = {
+  yMin: '', yMax: '', xMin: '190', xMax: '260',
+  fontSize: 12, lineWidth: 2
 };
 
-const parseNums = (str) => {
-  if (!str || typeof str !== 'string') return [];
-  return str.split(/[\s,;\t\n]+/).map((s) => parseFloat(s.trim())).filter((n) => isFinite(n));
-};
+const CHART_MARGIN = { top: 20, right: 20, bottom: 45, left: 50 };
 
-const CollapsibleSection = ({ title, icon, defaultOpen = true, children, headerExtra, className = '' }) => {
+/* ========================================================================
+COLLAPSIBLE SECTION
+======================================================================== */
+export const CollapsibleSection = ({
+  title, icon, defaultOpen = true, children, headerExtra, className = ''
+}) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   return (
     <div className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-6 break-inside-avoid ${className}`}>
-      <button type="button" onClick={() => setIsOpen(!isOpen)}
-        className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left ${isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'}`}>
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left ${isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'}`}
+      >
         <div className="flex items-center gap-2 overflow-hidden">
           {icon && <span className="text-xl shrink-0">{icon}</span>}
           <h3 className="text-lg font-bold text-slate-800 truncate">{title}</h3>
         </div>
         <div className="flex items-center gap-3 shrink-0">
           {headerExtra && <div onClick={(e) => e.stopPropagation()}>{headerExtra}</div>}
-          <svg className={`w-5 h-5 text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg
+            className={`w-5 h-5 text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor"
+          >
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
           </svg>
         </div>
@@ -47,7 +72,399 @@ const CollapsibleSection = ({ title, icon, defaultOpen = true, children, headerE
   );
 };
 
-/* ============================= GAUSS SOLVE ============================= */
+/* ========================================================================
+GENERIC PARSING HELPERS
+======================================================================== */
+const parseManual = (v) => {
+  if (v === undefined || v === null || v === '') return null;
+  const n = parseFloat(String(v).replace(',', '.'));
+  return Number.isFinite(n) ? n : null;
+};
+
+const parseXValue = (v) => {
+  if (v === null || v === undefined) return NaN;
+  const s = String(v).trim();
+  if (s === '') return NaN;
+  const ratio = s.match(/^(-?\d+(?:[.,]\d+)?)\s*:\s*(-?\d+(?:[.,]\d+)?)$/);
+  if (ratio) {
+    const a = parseFloat(ratio[1].replace(',', '.'));
+    const b = parseFloat(ratio[2].replace(',', '.'));
+    if (!isNaN(a) && !isNaN(b) && b !== 0) return a / b;
+  }
+  return parseFloat(s.replace(',', '.'));
+};
+
+const makeId = (prefix) =>
+  `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+/* ========================================================================
+EXPERIMENTAL-CONDITION FIELDS (CD)
+======================================================================== */
+export const CD_EXPERIMENTAL_FIELDS = [
+  // Default unit is units[0] — µM is the default concentration unit, Kelvin the default temperature unit.
+  { key: 'concentration', label: 'Concentration', unitKey: 'concentrationUnit', units: ['µM', 'mg/mL', 'mM', 'M', 'nM'] },
+  { key: 'temperature', label: 'Temperature', unitKey: 'temperatureUnit', units: ['K', '°C'] },
+  { key: 'ph', label: 'pH', unitKey: '' },
+  { key: 'saltConcentration', label: 'Salt Concentration', unitKey: 'saltConcentrationUnit', units: ['mM', 'M'] },
+  { key: 'pathLength', label: 'Cuvette Path Length', unitKey: 'pathLengthUnit', units: ['mm', 'cm'] },
+  { key: 'ratio', label: 'Molar Ratio', unitKey: '' },
+  { key: 'solvent', label: 'Solvent', unitKey: '', type: 'solvent-select' },
+  // NOTE: buffer/additive are rendered by the shared <BufferAdditiveFields>
+  // component (TestShellRenderer.jsx / DefinitionsExtra.jsx), which stores them
+  // as bufferName/additiveName (+ Conc/Unit) — NOT buffer/additive. These entries
+  // just let CD's condition-plot "variables", warnings, and notebook export read
+  // the same values, they don't render their own input.
+  { key: 'bufferName', label: 'Buffer', unitKey: '' },
+  { key: 'additiveName', label: 'Additive', unitKey: '' },
+  { key: 'otherMolecule', label: 'Other Molecule / Ligand', unitKey: '' }
+];
+
+// Default unit per field key (units[0]), exposed for consumers (e.g. CDTestRenderer)
+// that need to pre-fill a new condition's *Unit fields.
+export const CD_DEFAULT_UNITS = CD_EXPERIMENTAL_FIELDS.reduce((acc, f) => {
+  if (f.unitKey && Array.isArray(f.units) && f.units.length) acc[f.unitKey] = f.units[0];
+  return acc;
+}, {});
+
+// CD-spectrometer-specific instrumental setup fields (see InstrumentalSetup section below).
+export const CD_INSTRUMENTAL_FIELDS = [
+  { key: 'instrumentModel', label: 'Instrument Model', type: 'text', placeholder: 'e.g. Jasco J-1500' },
+  { key: 'scanMode', label: 'Scan Mode', type: 'select', options: ['Continuous Scan', 'Step Scan'] },
+  { key: 'scanSpeed', label: 'Scan Speed', type: 'text', placeholder: 'e.g. 50', units: ['nm/min'] },
+  { key: 'dataPitch', label: 'Data Pitch', type: 'text', placeholder: 'e.g. 0.5', units: ['nm'] },
+  { key: 'bandwidth', label: 'Bandwidth', type: 'text', placeholder: 'e.g. 1', units: ['nm'] },
+  { key: 'responseTime', label: 'Response Time (D.I.T.)', type: 'text', placeholder: 'e.g. 1', units: ['sec', 'msec'] },
+  { key: 'accumulations', label: 'Accumulations', type: 'number', placeholder: 'e.g. 3' },
+  { key: 'sensitivity', label: 'Sensitivity (full scale)', type: 'text', placeholder: 'e.g. 100', units: ['mdeg'] },
+  { key: 'detectorHT', label: 'Detector HT Voltage', type: 'text', placeholder: 'e.g. 400', units: ['V'] },
+  { key: 'purgeGas', label: 'N₂ Purge Flow', type: 'text', placeholder: 'e.g. 5', units: ['L/min'] },
+  { key: 'cellType', label: 'Cell Type / Material', type: 'select', options: ['Quartz cuvette', 'Demountable cell', 'Strain-free cell', 'Other'] }
+];
+
+const getExpValue = (inst, key) => {
+  const t = inst?.test || inst || {};
+  if (t[key] !== undefined && t[key] !== null && t[key] !== '') return t[key];
+  if (t.exp && t.exp[key] !== undefined && t.exp[key] !== '') return t.exp[key];
+  if (t.expValues && t.expValues[key] !== undefined && t.expValues[key] !== '') return t.expValues[key];
+  return '';
+};
+
+const getExpUnit = (inst, field) => {
+  if (!field.unitKey) return '';
+  const t = inst?.test || inst || {};
+  return t[field.unitKey] || '';
+};
+
+/* ========================================================================
+INSTANCES (top-of-page condition tabs)
+======================================================================== */
+const normalizeInstance = (t, idx) => ({
+  id: t.id || `inst_${idx}`,
+  name: t.instanceName || t.name || `Instance ${idx + 1}`,
+  test: t
+});
+
+const getInstances = (ctx, activeTest) => {
+  let list = null;
+  if (ctx) {
+    if (typeof ctx.getInstances === 'function') {
+      try { list = ctx.getInstances(); } catch { list = null; }
+    }
+    if (!list && Array.isArray(ctx.instances) && ctx.instances.length) list = ctx.instances;
+    if (!list && Array.isArray(ctx.siblings) && ctx.siblings.length) list = ctx.siblings;
+    if (!list && (Array.isArray(ctx.tests) || Array.isArray(ctx.allTests))) {
+      const all = ctx.tests || ctx.allTests;
+      list = activeTest.name ? all.filter((t) => t && t.name === activeTest.name) : all;
+    }
+  }
+  if (!list || !list.length) list = [activeTest];
+  let insts = list.filter(Boolean).map(normalizeInstance);
+  insts = insts.map((inst) =>
+    inst.id === activeTest.id ? normalizeInstance(activeTest, 0) : inst
+  );
+  if (!insts.some((i) => i.id === activeTest.id)) insts.unshift(normalizeInstance(activeTest, 0));
+  insts.sort((a, b) => String(a.test.date || '').localeCompare(String(b.test.date || '')));
+  return insts;
+};
+
+const patchInstance = (ctx, activeTest, instId, updates) => {
+  if (typeof ctx?.updateInstance === 'function') {
+    ctx.updateInstance(instId, updates);
+    return;
+  }
+  if (instId === activeTest.id) ctx.updateActiveTest(updates);
+};
+
+/* ========================================================================
+SPECTRA STORAGE MODEL
+======================================================================== */
+const computeParsed = (source) => {
+  const src = source || {};
+  const wavelengthData = src.wavelengthData || '';
+  const spectraColumns = src.spectraColumns || [];
+  const parsedWavelengths = wavelengthData
+    .split(/[\n,\s]+/)
+    .map((s) => parseFloat(String(s).trim()))
+    .filter((n) => !isNaN(n));
+  const parsedSpectra = spectraColumns.map((col, idx) => {
+    const values = (col.data || '')
+      .split(/[\n,]+/)
+      .map((s) => parseFloat(String(s).trim()))
+      .filter((n) => !isNaN(n));
+    return {
+      ...col,
+      values,
+      color: col.color || SPECTRA_PALETTE[idx % SPECTRA_PALETTE.length]
+    };
+  });
+  return { parsedWavelengths, parsedSpectra };
+};
+
+const valueAtWavelength = (parsed, specIdx, lambda) => {
+  const spec = parsed.parsedSpectra[specIdx];
+  if (!spec || !parsed.parsedWavelengths.length) return null;
+  const pairs = parsed.parsedWavelengths
+    .map((x, i) => ({ x, y: spec.values[i] }))
+    .filter((p) => Number.isFinite(p.y))
+    .sort((a, b) => a.x - b.x);
+  if (!pairs.length) return null;
+  if (lambda <= pairs[0].x) return pairs[0].y;
+  if (lambda >= pairs[pairs.length - 1].x) return pairs[pairs.length - 1].y;
+  for (let i = 0; i < pairs.length - 1; i++) {
+    if (lambda >= pairs[i].x && lambda <= pairs[i + 1].x) {
+      const span = pairs[i + 1].x - pairs[i].x || 1;
+      const t = (lambda - pairs[i].x) / span;
+      return pairs[i].y + t * (pairs[i + 1].y - pairs[i].y);
+    }
+  }
+  return null;
+};
+
+/* ========================================================================
+JASCO FILE PARSER
+======================================================================== */
+const parseJascoDate = (value) => {
+  if (!value) return '';
+  const s = String(value);
+  let m = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
+  m = s.match(/^(\d{2})\/(\d{2})\/(\d{2})$/);
+  if (m) return `20${m[1]}-${m[2]}-${m[3]}`;
+  return '';
+};
+
+const parseJascoCDText = (text) => {
+  const meta = {};
+  let xs = [];
+  let ys = [];
+  let inData = false;
+
+  const addMeta = (line) => {
+    if (!line) return;
+    if (line.includes('\t')) {
+      const parts = line.split('\t');
+      const key = parts[0].trim();
+      const value = parts.slice(1).join('\t').trim();
+      if (key) meta[key] = value;
+      return;
+    }
+    if (line.includes(',') && !/^[-+]?\d/.test(line)) {
+      const idx = line.indexOf(',');
+      const key = line.slice(0, idx).trim();
+      const value = line.slice(idx + 1).trim();
+      if (key) meta[key] = value;
+      return;
+    }
+    const m = line.match(/^([A-Za-z0-9\/.()\- ]{2,60}?)\s{2,}(.*)$/);
+    if (m && !/^\d/.test(m[1])) meta[m[1].trim()] = m[2].trim();
+  };
+
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (line.startsWith('#####')) { inData = false; continue; }
+    if (line.startsWith('[')) continue;
+    if (/^XYDATA/i.test(line)) { inData = true; continue; }
+    if (inData) {
+      const cols = line.split(/[,\s]+/).filter(Boolean);
+      if (cols.length >= 2) {
+        const x = parseFloat(cols[0]);
+        const y = parseFloat(cols[1]);
+        if (!isNaN(x) && !isNaN(y)) { xs.push(x); ys.push(y); }
+      }
+      continue;
+    }
+    addMeta(line);
+  }
+  if (xs.length > 1 && xs[0] > xs[xs.length - 1]) { xs.reverse(); ys.reverse(); }
+
+  return {
+    xs, ys, meta,
+    title: meta['Sample name'] || meta['TITLE'] || '',
+    experimentDate: parseJascoDate(meta['Measurement date'] || meta['DATE'] || ''),
+    temperature: meta['Temperature'] ? meta['Temperature'].replace(/\sC\s*$/, ' °C') : '',
+    pathLength: (meta['Cell length'] || '').match(/(-?\d+(?:\.\d+)?)/)?.[1] || (meta['Cell length'] || ''),
+    concentration: meta['Concentration'] || ''
+  };
+};
+
+/* ========================================================================
+MOLAR ELLIPTICITY
+======================================================================== */
+const concentrationToMgPerMl = (concStr, unit, mw) => {
+  const c = parseManual(concStr);
+  if (c === null) return null;
+  const u = String(unit || 'mg/mL');
+  if (u === 'mg/mL') return c;
+  if (!mw) return null;
+  if (u === 'µM' || u === 'uM') return c * 1e-6 * mw;
+  if (u === 'mM') return c * 1e-3 * mw;
+  if (u === 'M') return c * mw;
+  return c;
+};
+
+const pathLengthToCm = (vStr, unit) => {
+  const v = parseManual(vStr);
+  if (v === null) return null;
+  return String(unit || 'cm') === 'mm' ? v / 10 : v;
+};
+
+const molarEllipticityFactor = (inst, mw) => {
+  const t = inst?.test || inst || {};
+  const cMg = concentrationToMgPerMl(t.concentration, t.concentrationUnit, mw);
+  const lCm = pathLengthToCm(t.pathLength, t.pathLengthUnit);
+  if (!cMg || !lCm || !mw) return null;
+  return mw / (10 * cMg * lCm);
+};
+
+const getCompoundMW = (inst, ctx) => {
+  const t = inst?.test || inst || {};
+  const meta = ctx?.compoundMeta || {};
+  const cmps =
+    Array.isArray(t.selectedCompounds) && t.selectedCompounds.length
+      ? t.selectedCompounds
+      : t.compound
+        ? [t.compound]
+        : [];
+  for (const c of cmps) {
+    const mw = meta[c]?.molecularWeight;
+    if (mw) {
+      const n = Number(mw);
+      if (Number.isFinite(n) && n > 0) return { value: n, compound: c };
+    }
+  }
+  return null;
+};
+
+const getMWForInstance = (inst, ctx) => {
+  const t = inst?.test || inst || {};
+  const manual = parseManual(t.manualMW);
+  if (manual && manual > 0) return manual;
+  const fromCompound = getCompoundMW(inst, ctx);
+  return fromCompound ? fromCompound.value : null;
+};
+
+/* ========================================================================
+NATURAL CUBIC SPLINE
+======================================================================== */
+class NaturalCubicSpline {
+  constructor(xs, ys) {
+    this.xs = xs; this.ys = ys; this.n = xs.length;
+    this.a = ys.slice();
+    this.b = new Array(this.n).fill(0);
+    this.c = new Array(this.n).fill(0);
+    this.d = new Array(this.n).fill(0);
+    this.calculateCoefficients();
+  }
+  calculateCoefficients() {
+    const h = [];
+    for (let i = 0; i < this.n - 1; i++) h.push(this.xs[i + 1] - this.xs[i]);
+    const alpha = new Array(this.n - 1).fill(0);
+    for (let i = 1; i < this.n - 1; i++) {
+      alpha[i] = (3 / h[i]) * (this.a[i + 1] - this.a[i]) - (3 / h[i - 1]) * (this.a[i] - this.a[i - 1]);
+    }
+    const l = new Array(this.n).fill(0);
+    const mu = new Array(this.n).fill(0);
+    const z = new Array(this.n).fill(0);
+    l[0] = 1;
+    for (let i = 1; i < this.n - 1; i++) {
+      l[i] = 2 * (this.xs[i + 1] - this.xs[i - 1]) - h[i - 1] * mu[i - 1];
+      mu[i] = h[i] / l[i];
+      z[i] = (alpha[i] - h[i - 1] * z[i - 1]) / l[i];
+    }
+    l[this.n - 1] = 1;
+    for (let j = this.n - 2; j >= 0; j--) {
+      this.c[j] = z[j] - mu[j] * this.c[j + 1];
+      this.b[j] = (this.a[j + 1] - this.a[j]) / h[j] - (h[j] * (this.c[j + 1] + 2 * this.c[j])) / 3;
+      this.d[j] = (this.c[j + 1] - this.c[j]) / (3 * h[j]);
+    }
+  }
+  at(x) {
+    let i = 0;
+    if (x >= this.xs[this.n - 1]) i = this.n - 2;
+    else if (x <= this.xs[0]) i = 0;
+    else {
+      let low = 0, high = this.n - 1;
+      while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+        if (this.xs[mid] < x) low = mid + 1; else high = mid - 1;
+      }
+      i = Math.max(0, high);
+    }
+    if (i >= this.n - 1) i = this.n - 2;
+    const dx = x - this.xs[i];
+    return this.a[i] + this.b[i] * dx + this.c[i] * dx * dx + this.d[i] * dx * dx * dx;
+  }
+}
+
+/* ========================================================================
+CD SECONDARY-STRUCTURE REFERENCE SPECTRA (PROTEIN & DNA/GQ)
+======================================================================== */
+const alphaKnots = [{ x: 176, y: 12000 }, { x: 180, y: 22000 }, { x: 185, y: 48000 }, { x: 190, y: 66000 }, { x: 192, y: 65000 }, { x: 195, y: 55000 }, { x: 200, y: 20000 }, { x: 203, y: 0 }, { x: 205, y: -15000 }, { x: 208, y: -32000 }, { x: 215, y: -29000 }, { x: 222, y: -35000 }, { x: 230, y: -20000 }, { x: 240, y: -2000 }, { x: 250, y: 0 }, { x: 260, y: 0 }];
+const betaKnots = [{ x: 176, y: -10000 }, { x: 180, y: -8000 }, { x: 185, y: -4000 }, { x: 190, y: 2000 }, { x: 196, y: 12000 }, { x: 205, y: 4000 }, { x: 210, y: 0 }, { x: 217, y: -5000 }, { x: 225, y: -4000 }, { x: 240, y: -500 }, { x: 260, y: 0 }];
+const turnKnots = [{ x: 176, y: 0 }, { x: 185, y: 10000 }, { x: 193, y: 20000 }, { x: 200, y: 8000 }, { x: 203, y: 0 }, { x: 210, y: -10500 }, { x: 220, y: -8000 }, { x: 230, y: -4000 }, { x: 245, y: 0 }, { x: 260, y: 0 }];
+const coilKnots = [{ x: 176, y: -5000 }, { x: 185, y: 0 }, { x: 187, y: 2000 }, { x: 190, y: 0 }, { x: 198, y: -16000 }, { x: 212, y: -2000 }, { x: 220, y: 1000 }, { x: 230, y: 1500 }, { x: 245, y: 0 }, { x: 260, y: 0 }];
+const bDnaKnots = [{ x: 180, y: -10 }, { x: 184, y: 30 }, { x: 187, y: 65 }, { x: 192, y: 40 }, { x: 195, y: 15 }, { x: 200, y: -5 }, { x: 205, y: -10 }, { x: 210, y: -12 }, { x: 215, y: -8 }, { x: 220, y: -2 }, { x: 230, y: 0 }, { x: 240, y: -2 }, { x: 250, y: -6 }, { x: 260, y: -2 }, { x: 275, y: 5 }, { x: 290, y: 2 }, { x: 300, y: 0 }, { x: 320, y: 0 }];
+const aDnaKnots = [{ x: 180, y: -15 }, { x: 185, y: 40 }, { x: 190, y: 81 }, { x: 195, y: 50 }, { x: 200, y: 0 }, { x: 205, y: -25 }, { x: 210, y: -30 }, { x: 215, y: -20 }, { x: 220, y: -10 }, { x: 225, y: -6 }, { x: 230, y: -5 }, { x: 240, y: -5 }, { x: 250, y: 0 }, { x: 265, y: 9 }, { x: 280, y: 5 }, { x: 300, y: 0 }, { x: 320, y: 0 }];
+const zDnaKnots = [{ x: 180, y: 30 }, { x: 183, y: 76 }, { x: 186, y: 40 }, { x: 188, y: 20 }, { x: 190, y: -10 }, { x: 195, y: -48 }, { x: 200, y: -40 }, { x: 205, y: -30 }, { x: 210, y: -22 }, { x: 220, y: -5 }, { x: 230, y: 2 }, { x: 240, y: 2 }, { x: 250, y: 4 }, { x: 260, y: 4 }, { x: 280, y: -5 }, { x: 295, y: -6 }, { x: 310, y: 0 }, { x: 320, y: 0 }];
+const gqParallelKnots = [{ x: 220, y: 40 }, { x: 225, y: 0 }, { x: 230, y: -50 }, { x: 235, y: -100 }, { x: 240, y: -115 }, { x: 245, y: -80 }, { x: 250, y: 50 }, { x: 255, y: 300 }, { x: 262, y: 475 }, { x: 270, y: 350 }, { x: 280, y: 80 }, { x: 290, y: 30 }, { x: 300, y: 25 }, { x: 310, y: 0 }, { x: 320, y: 0 }];
+const gqHybridKnots = [{ x: 220, y: 110 }, { x: 225, y: 50 }, { x: 230, y: 0 }, { x: 236, y: -32 }, { x: 245, y: 0 }, { x: 250, y: 40 }, { x: 260, y: 110 }, { x: 270, y: 142 }, { x: 280, y: 160 }, { x: 288, y: 190 }, { x: 300, y: 140 }, { x: 310, y: 20 }, { x: 320, y: 5 }];
+const gqAntiparallelKnots = [{ x: 220, y: 65 }, { x: 225, y: 30 }, { x: 233, y: 4 }, { x: 240, y: 25 }, { x: 248, y: 50 }, { x: 255, y: 0 }, { x: 260, y: -50 }, { x: 265, y: -70 }, { x: 272, y: -30 }, { x: 280, y: 0 }, { x: 290, y: 60 }, { x: 297, y: 78 }, { x: 305, y: 50 }, { x: 315, y: 0 }, { x: 320, y: -4 }];
+
+export const splineAlpha = new NaturalCubicSpline(alphaKnots.map((p) => p.x), alphaKnots.map((p) => p.y));
+export const splineBeta = new NaturalCubicSpline(betaKnots.map((p) => p.x), betaKnots.map((p) => p.y));
+export const splineTurn = new NaturalCubicSpline(turnKnots.map((p) => p.x), turnKnots.map((p) => p.y));
+export const splineCoil = new NaturalCubicSpline(coilKnots.map((p) => p.x), coilKnots.map((p) => p.y));
+export const splineADNA = new NaturalCubicSpline(aDnaKnots.map((p) => p.x), aDnaKnots.map((p) => p.y));
+export const splineBDNA = new NaturalCubicSpline(bDnaKnots.map((p) => p.x), bDnaKnots.map((p) => p.y));
+export const splineZDNA = new NaturalCubicSpline(zDnaKnots.map((p) => p.x), zDnaKnots.map((p) => p.y));
+export const splineGQP = new NaturalCubicSpline(gqParallelKnots.map((p) => p.x), gqParallelKnots.map((p) => p.y));
+export const splineGQH = new NaturalCubicSpline(gqHybridKnots.map((p) => p.x), gqHybridKnots.map((p) => p.y));
+export const splineGQA = new NaturalCubicSpline(gqAntiparallelKnots.map((p) => p.x), gqAntiparallelKnots.map((p) => p.y));
+
+export const CD_FIT_COMPONENTS = {
+  alpha: { label: 'α-Helix', spline: splineAlpha, color: '#3b82f6', min: 176, max: 260 },
+  beta: { label: 'β-Sheet', spline: splineBeta, color: '#ef4444', min: 176, max: 260 },
+  turn: { label: 'Turn', spline: splineTurn, color: '#f59e0b', min: 176, max: 260 },
+  coil: { label: 'Random Coil', spline: splineCoil, color: '#94a3b8', min: 176, max: 260 },
+  aDNA: { label: 'A-DNA', spline: splineADNA, color: '#8b5cf6', min: 180, max: 320 },
+  bDNA: { label: 'B-DNA', spline: splineBDNA, color: '#10b981', min: 180, max: 320 },
+  zDNA: { label: 'Z-DNA', spline: splineZDNA, color: '#f97316', min: 180, max: 320 },
+  gqP: { label: 'G-Quad (Parallel)', spline: splineGQP, color: '#ec4899', min: 220, max: 320 },
+  gqH: { label: 'G-Quad (Hybrid)', spline: splineGQH, color: '#14b8a6', min: 220, max: 320 },
+  gqA: { label: 'G-Quad (Antiparallel)', spline: splineGQA, color: '#6366f1', min: 220, max: 320 }
+};
+
+const evalComponent = (k, x) => {
+  const comp = CD_FIT_COMPONENTS[k];
+  if (!comp) return 0;
+  if (x < comp.min || x > comp.max) return 0;
+  return comp.spline.at(x);
+};
+
+/* ========================================================================
+GENERIC NON-LINEAR FITTING ENGINE (weighted Levenberg–Marquardt)
+======================================================================== */
 const gaussSolve = (A, b) => {
   const n = b.length;
   const M = A.map((r, i) => [...r, b[i]]);
@@ -62,108 +479,576 @@ const gaussSolve = (A, b) => {
       for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k];
     }
   }
-  return M.map((r, i) => r[n] / r[i][i]);
+  return M.map((r, i) => r[n] / r[i]);
 };
 
-/* ============================= PURE COMPONENT SPECTRA ============================= */
-const ALPHA_HELIX_REF = [
-  { w: 190, v: -5.0 }, { w: 192, v: -10.0 }, { w: 194, v: -15.0 }, { w: 196, v: -5.0 },
-  { w: 198, v: 10.0 }, { w: 200, v: 20.0 }, { w: 202, v: 20.0 }, { w: 204, v: 15.0 },
-  { w: 206, v: 8.0 },  { w: 208, v: -15.0 }, { w: 210, v: -28.0 }, { w: 212, v: -32.0 },
-  { w: 214, v: -31.0 }, { w: 216, v: -28.0 }, { w: 218, v: -25.0 }, { w: 220, v: -26.0 },
-  { w: 222, v: -30.0 }, { w: 224, v: -32.0 }, { w: 226, v: -30.0 }, { w: 228, v: -25.0 },
-  { w: 230, v: -18.0 }, { w: 232, v: -12.0 }, { w: 234, v: -7.0 }, { w: 236, v: -4.0 },
-  { w: 238, v: -2.0 },  { w: 240, v: -1.0 },  { w: 250, v: 0.0 },  { w: 260, v: 0.0 }
-];
-const BETA_SHEET_REF = [
-  { w: 190, v: 30.0 }, { w: 192, v: 35.0 }, { w: 194, v: 25.0 }, { w: 196, v: 10.0 },
-  { w: 198, v: 2.0 },  { w: 200, v: -3.0 }, { w: 202, v: -5.0 }, { w: 204, v: -6.0 },
-  { w: 206, v: -7.0 }, { w: 208, v: -7.5 }, { w: 210, v: -6.0 }, { w: 212, v: -4.0 },
-  { w: 214, v: -2.0 }, { w: 216, v: 5.0 },  { w: 218, v: 10.0 }, { w: 220, v: 12.0 },
-  { w: 222, v: 9.0 },  { w: 224, v: 5.0 },  { w: 226, v: 2.0 },  { w: 228, v: 0.5 },
-  { w: 230, v: 0.0 },  { w: 250, v: 0.0 },  { w: 260, v: 0.0 }
-];
-const TURN_REF = [
-  { w: 190, v: 5.0 },  { w: 192, v: 3.0 },  { w: 194, v: -5.0 }, { w: 196, v: -8.0 },
-  { w: 198, v: -6.0 }, { w: 200, v: 2.0 },  { w: 202, v: 8.0 },  { w: 204, v: 10.0 },
-  { w: 206, v: 8.0 },  { w: 208, v: 4.0 },  { w: 210, v: 0.0 },  { w: 212, v: -2.0 },
-  { w: 214, v: -3.0 }, { w: 216, v: -3.0 }, { w: 218, v: -2.0 }, { w: 220, v: -1.0 },
-  { w: 222, v: 0.0 },  { w: 250, v: 0.0 },  { w: 260, v: 0.0 }
-];
-const COIL_REF = [
-  { w: 190, v: -18.0 }, { w: 192, v: -25.0 }, { w: 194, v: -20.0 }, { w: 196, v: -10.0 },
-  { w: 198, v: -3.0 },  { w: 200, v: 2.0 },   { w: 202, v: 3.0 },   { w: 204, v: 2.0 },
-  { w: 206, v: 1.0 },   { w: 208, v: 0.0 },   { w: 220, v: 0.0 },   { w: 260, v: 0.0 }
-];
+const tokenizeExpr = (s) => {
+  const t = []; let i = 0;
+  const D = (c) => /[0-9.]/.test(c);
+  const A = (c) => /[a-zA-Z_]/.test(c);
+  while (i < s.length) {
+    const c = s[i];
+    if (c === ' ' || c === '\t') { i++; continue; }
+    if (D(c)) { let j = i; while (j < s.length && D(s[j])) j++; t.push({ t: 'num', v: parseFloat(s.slice(i, j)) }); i = j; continue; }
+    if (A(c)) { let j = i; while (j < s.length && (A(s[j]) || /[0-9]/.test(s[j]))) j++; t.push({ t: 'id', v: s.slice(i, j) }); i = j; continue; }
+    if ('+-/^(),'.includes(c)) { t.push({ t: c }); i++; continue; }
+    throw new Error('bad');
+  }
+  return t;
+};
 
-const interpRef = (refPts, w) => {
-  for (let i = 0; i < refPts.length - 1; i++) {
-    if (w >= refPts[i].w && w <= refPts[i + 1].w) {
-      const t = (w - refPts[i].w) / (refPts[i + 1].w - refPts[i].w);
-      return refPts[i].v + t * (refPts[i + 1].v - refPts[i].v);
+const parseExpression = (src) => {
+  const tk = tokenizeExpr(src); let p = 0;
+  const pk = () => tk[p];
+  const eat = (t) => { if (!tk[p] || tk[p].t !== t) throw new Error('exp'); return tk[p++]; };
+  const mul = () => { let n = un(); while (pk() && (pk().t === '*' || pk().t === '/')) { const o = eat(pk().t).t; n = { type: 'bin', op: o, l: n, r: un() }; } return n; };
+  const add = () => { let n = mul(); while (pk() && (pk().t === '+' || pk().t === '-')) { const o = eat(pk().t).t; n = { type: 'bin', op: o, l: n, r: mul() }; } return n; };
+  const un = () => { if (pk() && pk().t === '-') { eat('-'); return { type: 'un', a: un() }; } if (pk() && pk().t === '+') { eat('+'); return un(); } return pw(); };
+  const pw = () => { let n = pr(); if (pk() && pk().t === '^') { eat('^'); n = { type: 'bin', op: '^', l: n, r: un() }; } return n; };
+  const pr = () => {
+    const t = pk(); if (!t) throw new Error('exp');
+    if (t.t === 'num') { eat('num'); return { type: 'num', v: t.v }; }
+    if (t.t === 'id') {
+      eat('id');
+      if (pk() && pk().t === '(') {
+        eat('('); const a = [add()];
+        while (pk() && pk().t === ',') { eat(','); a.push(add()); }
+        eat(')');
+        return { type: 'call', name: t.v, args: a };
+      }
+      return { type: 'sym', name: t.v };
+    }
+    if (t.t === '(') { eat('('); const n = add(); eat(')'); return n; }
+    throw new Error('exp');
+  };
+  const ast = add();
+  if (p < tk.length) throw new Error('trail');
+  return ast;
+};
+
+const evalAST = (n, s) => {
+  switch (n.type) {
+    case 'num': return n.v;
+    case 'sym': return n.name === 'x' ? s.x : n.name === 'pi' ? Math.PI : n.name === 'e' ? Math.E : s[n.name];
+    case 'un': return -evalAST(n.a, s);
+    case 'bin': {
+      const a = evalAST(n.l, s), b = evalAST(n.r, s);
+      if (n.op === '+') return a + b;
+      if (n.op === '-') return a - b;
+      if (n.op === '*') return a * b;
+      if (n.op === '/') return a / b;
+      return Math.pow(a, b);
+    }
+    case 'call': {
+      const a = n.args.map((x) => evalAST(x, s));
+      switch (n.name) {
+        case 'exp': return Math.exp(a[0]);
+        case 'log': return Math.log10(a[0]);
+        case 'ln': return Math.log(a[0]);
+        case 'sqrt': return Math.sqrt(a[0]);
+        case 'sin': return Math.sin(a[0]);
+        case 'cos': return Math.cos(a[0]);
+        case 'tan': return Math.tan(a[0]);
+        case 'abs': return Math.abs(a[0]);
+        case 'pow': return Math.pow(a[0], a[1]);
+        case 'min': return Math.min(...a);
+        case 'max': return Math.max(...a);
+        default: return NaN;
+      }
+    }
+    default: return NaN;
+  }
+};
+
+const collectParams = (ast) => {
+  const s = new Set();
+  (function w(n) {
+    if (!n) return;
+    if (n.type === 'sym') { if (n.name !== 'x' && n.name !== 'pi' && n.name !== 'e') s.add(n.name); }
+    if (n.type === 'bin') { w(n.l); w(n.r); }
+    if (n.type === 'un') w(n.a);
+    if (n.type === 'call') n.args.forEach(w);
+  })(ast);
+  return [...s];
+};
+
+const fitGeneric = (pts, f0, P0) => {
+  let P = [...P0];
+  const f = (x, Pv) => f0(x, Pv);
+  const ssr = (Pv) => {
+    let s = 0;
+    for (const p of pts) {
+      const v = f(p.x, Pv);
+      if (!isFinite(v)) return Infinity;
+      const w = p.w || 1;
+      s += w * (p.y - v) ** 2;
+    }
+    return s;
+  };
+  let lam = 1e-3, cur = ssr(P);
+  for (let it = 0; it < 120 && isFinite(cur); it++) {
+    const J = pts.map((p) => {
+      const y0 = f(p.x, P); const row = [];
+      for (let k = 0; k < P.length; k++) {
+        const h = Math.max(1e-6, Math.abs(P[k]) * 1e-4);
+        row.push((f(p.x, P.map((v, i) => (i === k ? v + h : v))) - y0) / h);
+      }
+      return row;
+    });
+    const A = P.map(() => new Array(P.length).fill(0));
+    const g = P.map(() => 0);
+    pts.forEach((p, i) => {
+      const w = p.w || 1; const r = p.y - f(p.x, P);
+      for (let a = 0; a < P.length; a++) {
+        g[a] += w * J[i][a] * r;
+        for (let b = 0; b < P.length; b++) A[a][b] += w * J[i][a] * J[i][b];
+      }
+    });
+    for (let a = 0; a < P.length; a++) A[a][a] *= (1 + lam);
+    const dvec = gaussSolve(A, g);
+    if (!dvec) { lam *= 4; if (lam > 1e7) break; continue; }
+    const P2 = P.map((v, k) => v + dvec[k]);
+    const s2 = ssr(P2);
+    if (isFinite(s2) && s2 < cur) {
+      const pv = cur; P = P2; cur = s2; lam = Math.max(1e-8, lam / 2);
+      if (Math.abs(pv - cur) < 1e-10) break;
+    } else {
+      lam *= 3; if (lam > 1e7) break;
     }
   }
-  return 0;
+  if (!P.every(isFinite)) return null;
+  let sst = 0;
+  const m = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+  pts.forEach((p) => { sst += (p.y - m) ** 2; });
+  const df = Math.max(1, pts.length - P.length);
+  const r2 = sst > 0 ? 1 - cur / sst : 1;
+  const se = Math.sqrt(cur / df);
+  const P_err = P.map(() => 0);
+  try {
+    const J = pts.map((p) => {
+      const y0 = f(p.x, P); const row = [];
+      for (let k = 0; k < P.length; k++) {
+        const h = Math.max(1e-6, Math.abs(P[k]) * 1e-4);
+        row.push((f(p.x, P.map((v, i) => (i === k ? v + h : v))) - y0) / h);
+      }
+      return row;
+    });
+    const A = P.map(() => new Array(P.length).fill(0));
+    pts.forEach((p, i) => {
+      const w = p.w || 1;
+      for (let a = 0; a < P.length; a++) {
+        for (let b = 0; b < P.length; b++) A[a][b] += w * J[i][a] * J[i][b];
+      }
+    });
+    for (let i = 0; i < P.length; i++) {
+      const e = P.map((_, j) => (i === j ? 1 : 0));
+      const col = gaussSolve(A, e);
+      if (col) P_err[i] = Math.sqrt(Math.max(0, col[i] * (cur / df)));
+    }
+  } catch (err) { /* ignore */ }
+  return { params: P, paramsErr: P_err, r2, se, f: (x) => f(x, P) };
 };
 
-const fitCdSpectrum = (wavelengths, values) => {
-  const pts = [];
-  for (let i = 0; i < wavelengths.length; i++) {
-    const w = wavelengths[i], v = values[i];
-    if (w >= 190 && w <= 250 && Number.isFinite(v)) pts.push({ w, v });
+const fitLinear = (pts) => {
+  if (pts.length < 2) return null;
+  const r = fitGeneric(pts, (x, P) => P[0] + P[1] * x, [0, 1]);
+  return r ? { ...r, intercept: r.params[0], slope: r.params[1], interceptErr: r.paramsErr[0], slopeErr: r.paramsErr[1] } : null;
+};
+
+const fit4PL = (pts) => {
+  if (pts.length < 4) return null;
+  const ys = pts.map((p) => p.y);
+  const t = Math.max(...ys), b = Math.min(...ys);
+  const r = fitGeneric(
+    pts,
+    (x, P) => P[1] + (P[0] - P[1]) / (1 + Math.pow(x / P[2], P[3])),
+    [t, b, pts.reduce((s, p) => s + p.x, 0) / Math.max(1, pts.length), 1]
+  );
+  return r ? {
+    ...r,
+    top: r.params[0], bottom: r.params[1], ic50: r.params[2], hill: r.params[3],
+    topErr: r.paramsErr[0], bottomErr: r.paramsErr[1], ic50Err: r.paramsErr[2], hillErr: r.paramsErr[3]
+  } : null;
+};
+
+const fitCustomEquation = (expr, pts) => {
+  let ast, par;
+  try { ast = parseExpression(expr); par = collectParams(ast); } catch (e) { return null; }
+  if (!par.length || pts.length < par.length + 1) return null;
+  const init = par.map((_, i) => (i === 0 ? pts.reduce((s, p) => s + p.y, 0) / Math.max(1, pts.length) : 1));
+  const res = fitGeneric(pts, (x, P) => {
+    const s = { x };
+    par.forEach((n, i) => { s[n] = P[i]; });
+    return evalAST(ast, s);
+  }, init);
+  if (!res) return null;
+  res.params = Object.fromEntries(par.map((n, i) => [n, res.params[i]]));
+  res.paramsErr = Object.fromEntries(par.map((n, i) => [n, res.paramsErr[i]]));
+  return res;
+};
+
+const runFitModel = (model, customExpr, wpts) => {
+  if (model === 'linear') return fitLinear(wpts);
+  if (model === '4pl') return fit4PL(wpts);
+  if (model === 'custom' && customExpr) return fitCustomEquation(customExpr, wpts);
+  return null;
+};
+
+const fitParamOptions = (model, customExpr) => {
+  if (model === 'linear') return ['slope', 'intercept'];
+  if (model === '4pl') return ['top', 'bottom', 'ic50', 'hill'];
+  if (model === 'custom') {
+    try { return collectParams(parseExpression(customExpr || '')); } catch { return []; }
   }
-  if (pts.length < 10) return null;
-  const refs = [ALPHA_HELIX_REF, BETA_SHEET_REF, TURN_REF, COIL_REF];
-  const A = pts.map(({ w }) => refs.map((r) => interpRef(r, w)));
-  const bv = pts.map(({ v }) => v);
-  const AtA = [0,1,2,3].map((i) => [0,1,2,3].map((j) => A.reduce((s, row) => s + row[i] * row[j], 0)));
-  const Atb = [0,1,2,3].map((i) => A.reduce((s, row, idx) => s + row[i] * bv[idx], 0));
-  const raw = gaussSolve(AtA, Atb);
-  if (!raw) return null;
-  const clamped = raw.map((c) => Math.max(0, c));
-  const total = clamped.reduce((a, v) => a + v, 0);
-  if (total <= 0) return null;
-  const fracs = clamped.map((c) => c / total);
-  const norm = fracs.map((f) => Math.round(f * 1000) / 10);
+  return [];
+};
+
+const extractFitParam = (fit, model, param) => {
+  if (!fit) return null;
+  if (model === 'linear') return param === 'intercept' ? fit.intercept : fit.slope;
+  if (model === '4pl') return ({ top: fit.top, bottom: fit.bottom, ic50: fit.ic50, hill: fit.hill })[param] ?? null;
+  return fit.params?.[param] ?? null;
+};
+
+/* ========================================================================
+DYNAMIC PURE-COMPONENT CD SPECTRUM FITTER
+Returns { fractions, scaleK, fitCurve, r2, nPoints, activeBases }
+======================================================================== */
+/* ========================================================================
+DYNAMIC PURE-COMPONENT CD SPECTRUM FITTER
+Returns { success, fractions, scaleK, fitCurve, r2, nPoints, activeBases, fitMin, fitMax }
+======================================================================== */
+/* ========================================================================
+DYNAMIC PURE-COMPONENT CD SPECTRUM FITTER (Adaptive Regularization)
+Returns { success, fractions, scaleK, fitCurve, r2, nPoints, activeBases, fitMin, fitMax }
+======================================================================== */
+const fitCdSpectrum = (wavelengths, values, selectedKeys = ['alpha', 'beta', 'turn', 'coil']) => {
+  if (!selectedKeys.length) return { error: 'No components selected.' };
+  
+  // Calculate strict overlap domain of ALL selected components
+  const fitMin = Math.max(...selectedKeys.map(k => CD_FIT_COMPONENTS[k].min));
+  const fitMax = Math.min(...selectedKeys.map(k => CD_FIT_COMPONENTS[k].max));
+  
+  if (fitMin >= fitMax) {
+    return { error: `No overlapping wavelength domain for selected components. (Min: ${fitMin}nm, Max: ${fitMax}nm)` };
+  }
+
+  const fitPairs = [];
+  for (let i = 0; i < wavelengths.length; i++) {
+    const w = wavelengths[i];
+    const v = values[i];
+    if (w >= fitMin && w <= fitMax && v !== undefined && Number.isFinite(v)) {
+      fitPairs.push({ w, v });
+    }
+  }
+  
+  if (fitPairs.length < 10) {
+    return { error: `Not enough data points between ${fitMin} and ${fitMax} nm (found ${fitPairs.length}, need at least 10).` };
+  }
+  
+  const n = fitPairs.length;
+  const kLen = selectedKeys.length;
+
+  // Normalize column vectors to prevent scale imbalances
+  const rawA = fitPairs.map(({ w }) => selectedKeys.map(k => evalComponent(k, w)));
+  const colMax = Array.from({ length: kLen }, (_, j) => Math.max(1e-9, ...rawA.map((r) => Math.abs(r[j]))));
+  const A = rawA.map((r) => r.map((v, j) => v / colMax[j]));
+  const bMax = Math.max(1e-9, ...fitPairs.map(({ v }) => Math.abs(v)));
+  const b = fitPairs.map(({ v }) => v / bMax);
+
+  // Construct AtA and Atb
+  const AtA = Array.from({ length: kLen }, (_, i) => Array.from({ length: kLen }, (_, j) => A.reduce((sum, row) => sum + row[i] * row[j], 0)));
+  const Atb = Array.from({ length: kLen }, (_, i) => A.reduce((sum, row, idx) => sum + row[i] * b[idx], 0));
+
+  let coeffsScaled = null;
+  let penalty = 1e-4; // Start with a very mild ridge penalty
+
+  // Adaptive Regularization Loop: If the matrix is singular/collinear, 
+  // progressively increase the diagonal penalty until it solves successfully.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const AtA_reg = AtA.map((row, i) => 
+      row.map((val, j) => i === j ? val + penalty + (val * penalty) : val)
+    );
+    
+    coeffsScaled = gaussSolve(AtA_reg, Atb);
+    
+    if (coeffsScaled && coeffsScaled.every(Number.isFinite)) {
+      break; // Success
+    }
+    penalty *= 10; // Increase penalty (1e-4 -> 1e-3 -> 1e-2 -> 1e-1 -> 1)
+  }
+
+  if (!coeffsScaled || !coeffsScaled.every(Number.isFinite)) {
+    return { error: 'Matrix inversion failed completely. Try selecting fewer, more distinct components.' };
+  }
+
+  // Convert back to original scale and clamp to >= 0
+  const coeffs = coeffsScaled.map((c, j) => c / colMax[j]);
+  const clamped = coeffs.map((c) => Math.max(0, c)); 
+  const sum = clamped.reduce((a, v) => a + v, 0);
+  
+  if (!Number.isFinite(sum) || sum <= 1e-12) {
+    return { error: 'Fit resulted in 0% for all components. Check if the spectrum is inverted or severely baseline-shifted.' };
+  }
+
+  // Normalize fractions to 100%
+  const norm = clamped.map((c) => Math.round((c / sum) * 1000) / 10);
   const diff = +(100 - norm.reduce((a, v) => a + v, 0)).toFixed(1);
-  if (diff !== 0) { const mi = norm.indexOf(Math.max(...norm)); norm[mi] = +(norm[mi] + diff).toFixed(1); }
-  let num = 0, den = 0;
-  pts.forEach(({ w, v }) => {
-    const t = fracs.reduce((s, f, i) => s + f * interpRef(refs[i], w), 0);
-    num += v * t; den += t * t;
+  if (diff !== 0) {
+    const maxIdx = norm.indexOf(Math.max(...norm));
+    norm[maxIdx] = +(norm[maxIdx] + diff).toFixed(1);
+  }
+
+  // Calculate absolute scale factor (k)
+  let scaleK = 1, num = 0, den = 0;
+  fitPairs.forEach(({ w, v }) => {
+    let t = 0;
+    selectedKeys.forEach((k, idx) => {
+      t += evalComponent(k, w) * (clamped[idx] / sum);
+    });
+    num += v * t;
+    den += t * t;
   });
-  const scale = den > 0 ? num / den : 1;
-  const fitCurve = pts.map(({ w }) => ({ x: w, y: scale * fracs.reduce((s, f, i) => s + f * interpRef(refs[i], w), 0) }));
+  
+  if (den > 0) scaleK = num / den;
+  if (!Number.isFinite(scaleK)) return { error: 'Scale factor calculation failed.' };
+
+  // Generate the simulated fit curve
+  const fitCurve = fitPairs.map(({ w }) => {
+    let y = 0;
+    selectedKeys.forEach((k, idx) => {
+      y += evalComponent(k, w) * (clamped[idx] / sum);
+    });
+    return { x: w, y: scaleK * y };
+  });
+
+  // Calculate R-squared
+  const meanY = fitPairs.reduce((a, p) => a + p.v, 0) / n;
   let ssRes = 0, ssTot = 0;
-  const meanY = bv.reduce((a, v) => a + v, 0) / pts.length;
-  pts.forEach(({ v }, i) => { ssRes += (v - fitCurve[i].y) ** 2; ssTot += (v - meanY) ** 2; });
-  return { alpha: norm[0], beta: norm[1], turn: norm[2], coil: norm[3], fitCurve, r2: ssTot > 0 ? 1 - ssRes / ssTot : 1, nPoints: pts.length };
+  fitPairs.forEach(({ v }, i) => {
+    ssRes += (v - fitCurve[i].y) ** 2;
+    ssTot += (v - meanY) ** 2;
+  });
+  const r2 = ssTot > 0 ? 1 - ssRes / ssTot : 1;
+
+  if (!norm.every(Number.isFinite) || !Number.isFinite(r2)) {
+    return { error: 'Statistical calculations failed (NaN encountered).' };
+  }
+
+  const fractions = {};
+  selectedKeys.forEach((k, i) => fractions[k] = norm[i]);
+
+  return {
+    success: true,
+    fractions, scaleK, fitCurve, r2, nPoints: n, activeBases: selectedKeys,
+    fitMin, fitMax
+  };
 };
 
-/* ============================= CONDITION FIELDS ============================= */
-const CD_COND_FIELDS = [
-  { key: 'concentration', label: 'Concentration' },
-  { key: 'temperature', label: 'Temperature' },
-  { key: 'ph', label: 'pH' },
-  { key: 'saltConcentration', label: 'Salt Concentration' },
-  { key: 'otherMolecule', label: 'Other Molecule' },
-  { key: 'ratio', label: 'Molar Ratio' },
-  { key: 'pathLength', label: 'Path Length' },
-  { key: 'solvent', label: 'Solvent' },
-  { key: 'buffer', label: 'Buffer' },
-];
+const buildSimulatedCurve = (fitRes, wavelengths) => {
+  if (!fitRes) return [];
+  const bases = fitRes.activeBases || ['alpha', 'beta', 'turn', 'coil'];
+  const fractions = fitRes.fractions || {
+    alpha: fitRes.alpha, beta: fitRes.beta, turn: fitRes.turn, coil: fitRes.coil
+  };
+  const scaleK = fitRes.scaleK || 1;
+  let tot = bases.reduce((sum, k) => sum + (fractions[k] || 0), 0);
+  if (tot === 0) tot = 100;
 
-const getInstCond = (inst, key) => { const v = inst?.[key]; return (v === undefined || v === null || v === '') ? null : v; };
-
-const parseInstSpectra = (inst) => {
-  const wavelengths = parseNums(inst?.wavelengthData || '');
-  const cols = Array.isArray(inst?.spectraColumns) ? inst.spectraColumns : [];
-  const spectra = cols.map((col) => ({ ...col, values: parseNums(col.data || '') }));
-  return { wavelengths, spectra };
+  return wavelengths
+    .filter((w) => w >= 176 && w <= 320)
+    .map((w) => {
+      let y = 0;
+      bases.forEach((k) => {
+        y += evalComponent(k, w) * ((fractions[k] || 0) / tot);
+      });
+      return { x: w, y: scaleK * y };
+    });
 };
 
-/* ============================= ZOOM HOOK ============================= */
-const useXZoom = (chartRef, dataDomain) => {
+/* ========================================================================
+SHARED CHART STYLE SYSTEM + DRAG-TO-ZOOM
+======================================================================== */
+const DEFAULT_CHART_STYLE = {
+  height: 380, aspect: 1.8, fontSize: 12, tickStep: '', tickAngle: 0,
+  ptStyle: 'circle', ptSize: 5, lineStyle: 'solid', lineThickness: 2,
+  legend: 'top', colors: {}, barRadius: 3,
+  xMin: '', xMax: '', yMin: '', yMax: '', xAxisLabel: '', yAxisLabel: ''
+};
+
+const lineDash = (style) =>
+  style === 'dashed' ? '7 5' : style === 'dotted' ? '2 3' : undefined;
+
+const seriesColor = (cfg, key, idx) =>
+  (cfg.colors && cfg.colors[key]) || LINE_COLORS[Math.max(0, idx) % LINE_COLORS.length];
+
+const makeTicks = (domain, stepStr) => {
+  const step = parseManual(stepStr);
+  if (!step || step <= 0 || !Array.isArray(domain)) return undefined;
+  const [a, b] = [Math.min(domain[0], domain[1]), Math.max(domain[0], domain[1])];
+  const out = [];
+  for (let v = Math.ceil(a / step) * step; v <= b + 1e-9; v += step) {
+    out.push(parseFloat(v.toFixed(6)));
+  }
+  return out.length ? out : undefined;
+};
+
+const catInterval = (stepStr) => {
+  const n = parseManual(stepStr);
+  return n && n >= 1 ? Math.round(n) - 1 : 0;
+};
+
+const dom = (v) =>
+  v === '' || v == null || parseManual(v) === null ? undefined : parseManual(v);
+
+const chartBoxStyle = (cfg) => ({
+  width: '100%',
+  aspectRatio: String(cfg.aspect || 1.8),
+  maxHeight: cfg.height || 380,
+  minHeight: 220
+});
+
+const AngledTick = ({ x, y, payload, angle = 0, fontSize = 11, anchor = 'middle' }) => {
+  const a = Number(angle) || 0;
+  return (
+    <g transform={`translate(${x || 0},${y || 0})`}>
+      <text
+        transform={a ? `rotate(${a})` : undefined}
+        textAnchor={a < 0 ? 'end' : a > 0 ? 'start' : anchor}
+        dy={a ? 4 : 12}
+        dx={a ? (a > 0 ? 4 : -4) : 0}
+        fill="#64748b"
+        fontSize={fontSize}
+      >
+        {String(payload.value)}
+      </text>
+    </g>
+  );
+};
+
+const NumField = ({ label, value, onChange, step = 1, w = 'w-full' }) => {
+  const [local, setLocal] = useState(value ?? '');
+  useEffect(() => { setLocal(value ?? ''); }, [value]);
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-[10px] font-bold text-slate-600">{label}</label>
+      <input
+        type="number" step={step} value={local}
+        onWheel={(e) => e.target.blur()}
+        onChange={(e) => setLocal(e.target.value)}
+        onBlur={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))}
+        onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
+        className={`border border-slate-300 rounded-md p-1.5 text-xs outline-none focus:border-blue-500 ${w}`}
+      />
+    </div>
+  );
+};
+
+const TxtField = ({ label, value, onChange, placeholder = '', w = 'w-full' }) => {
+  const [local, setLocal] = useState(value ?? '');
+  useEffect(() => { setLocal(value ?? ''); }, [value]);
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-[10px] font-bold text-slate-600">{label}</label>
+      <input
+        type="text" value={local}
+        onChange={(e) => setLocal(e.target.value)}
+        onBlur={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
+        placeholder={placeholder}
+        className={`border border-slate-300 rounded-md p-1.5 text-xs outline-none focus:border-blue-500 ${w}`}
+      />
+    </div>
+  );
+};
+
+const CfgNumInput = ({ value, onCommit, placeholder = 'auto' }) => {
+  const [local, setLocal] = useState(value ?? '');
+  useEffect(() => { setLocal(value ?? ''); }, [value]);
+  return (
+    <input
+      type="number" placeholder={placeholder} value={local}
+      onWheel={(e) => e.target.blur()}
+      onChange={(e) => setLocal(e.target.value)}
+      onBlur={(e) => onCommit(e.target.value)}
+      onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
+      className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none"
+    />
+  );
+};
+
+const SelField = ({ label, value, onChange, options }) => (
+  <div className="flex flex-col gap-1">
+    <label className="text-[10px] font-bold text-slate-600">{label}</label>
+    <select
+      value={value} onChange={(e) => onChange(e.target.value)}
+      className="border border-slate-300 rounded-md p-1.5 text-xs bg-white outline-none focus:border-blue-500"
+    >
+      {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+    </select>
+  </div>
+);
+
+const GraphConfigPanel = ({ cfg, setCfg, series = [], unit = 'a.u.' }) => (
+  <div className="flex flex-col gap-3">
+    <SharedGraphConfig
+      activeTest={{ chartCfg: cfg }}
+      updateActiveTest={(u) => setCfg(u.chartCfg || {})}
+      unit={unit}
+      showHeightSlider
+      chartH={cfg.height}
+      setChartH={(h) => setCfg({ height: h })}
+    />
+    <div className="p-4 bg-white border border-slate-300 rounded-xl grid grid-cols-2 lg:grid-cols-4 gap-3 shadow-sm">
+      <NumField label="Aspect ratio X/Y (W÷H)" step={0.1} value={cfg.aspect} onChange={(v) => setCfg({ aspect: v || 1.8 })} />
+      <TxtField label="Tick step (num: spacing · cat: every N)" value={cfg.tickStep} onChange={(v) => setCfg({ tickStep: v })} placeholder="auto" />
+      <SelField
+        label="Tick label orientation" value={String(cfg.tickAngle || 0)}
+        onChange={(v) => setCfg({ tickAngle: Number(v) })}
+        options={[['0', '0° (horizontal)'], ['-30', '-30°'], ['-45', '-45°'], ['-60', '-60°'], ['-90', '-90° (vertical)'], ['30', '30°'], ['45', '45°'], ['90', '90°']]}
+      />
+      <SelField label="Legend" value={cfg.legend} onChange={(v) => setCfg({ legend: v })} options={[['top', 'Top'], ['bottom', 'Bottom'], ['none', 'None']]} />
+      {series.length > 0 && (
+        <div className="col-span-2 lg:col-span-4 pt-2 border-t border-slate-100 flex flex-col gap-2">
+          <label className="text-[10px] font-bold text-slate-600 uppercase">Series colors (points / lines / bars)</label>
+          <div className="flex flex-wrap gap-3">
+            {series.map((s) => (
+              <label key={s.key} className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
+                <input
+                  type="color"
+                  value={(cfg.colors && cfg.colors[s.key]) || s.color || '#3b82f6'}
+                  onChange={(e) => setCfg({ colors: { ...(cfg.colors || {}), [s.key]: e.target.value } })}
+                  className="w-6 h-6 rounded cursor-pointer border border-slate-300"
+                />
+                {s.label}
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+    <p className="text-[9px] text-slate-400">💡 Drag with the mouse over any graph to zoom into a region. Use "Reset Zoom" to restore.</p>
+  </div>
+);
+
+const ErrorTreatmentPanel = ({ plot, set, showFitToggle = true, customActions }) => {
+  const shimTest = {
+    useFixedSD: plot.useFixedSD,
+    fixedSDStr: plot.fixedSDStr,
+    outlierThreshStr: plot.outlierThreshStr,
+    fitIC50: plot.fitEnabled,
+    showExcl: plot.showExcl
+  };
+  const shimUpdate = (u) => {
+    const patch = { ...u };
+    if ('fitIC50' in patch) { patch.fitEnabled = patch.fitIC50; delete patch.fitIC50; }
+    set(patch);
+  };
+  return <SharedErrorTreatment activeTest={shimTest} updateActiveTest={shimUpdate} showFitToggle={showFitToggle} customActions={customActions} />;
+};
+
+
+const useXZoom = (chartRef, dataDomain, margin = CHART_MARGIN) => {
   const [domain, setDomain] = useState(null);
   const [lo, setLo] = useState(null);
   const [hi, setHi] = useState(null);
@@ -173,707 +1058,2488 @@ const useXZoom = (chartRef, dataDomain) => {
   const eff = domain || safe;
   const effRef = useRef(eff);
   effRef.current = eff;
+
   const getX = (clientX) => {
     const el = chartRef.current;
     if (!el) return null;
     const wrapper = el.querySelector('.recharts-wrapper');
     if (!wrapper) return null;
     const rect = wrapper.getBoundingClientRect();
-    const margin = { left: 20, right: 30 };
     const plotW = rect.width - margin.left - margin.right;
     if (plotW <= 0) return null;
     const fx = Math.min(1, Math.max(0, (clientX - rect.left - margin.left) / plotW));
     const d0 = effRef.current;
     return d0[0] + fx * (d0[1] - d0[0]);
   };
+
   useEffect(() => {
     const mv = (e) => { if (dragging.current) setHi(getX(e.clientX)); };
     const up = (e) => {
       if (!dragging.current) return;
       dragging.current = false;
-      const end = getX(e.clientX); const start = loRef.current;
+      const end = getX(e.clientX);
+      const start = loRef.current;
       if (start !== null && end !== null && Math.abs(end - start) > (effRef.current[1] - effRef.current[0]) * 0.01) {
         setDomain([Math.min(start, end), Math.max(start, end)]);
       }
       loRef.current = null; setLo(null); setHi(null);
     };
-    window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up);
-    return () => { window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); };
+    window.addEventListener('mousemove', mv);
+    window.addEventListener('mouseup', up);
+    return () => {
+      window.removeEventListener('mousemove', mv);
+      window.removeEventListener('mouseup', up);
+    };
   }, []);
-  const onMouseDown = (e) => { const v = getX(e.clientX); if (v !== null) { dragging.current = true; loRef.current = v; setLo(v); setHi(v); } };
+
+  const onMouseDown = (e) => {
+    const v = getX(e.clientX);
+    if (v !== null) { dragging.current = true; loRef.current = v; setLo(v); setHi(v); }
+  };
+
   return { domain: eff, refLo: lo, refHi: hi, onMouseDown, isZoomed: !!domain, reset: () => setDomain(null) };
 };
 
-/* ============================= DEFAULT CHART CFG ============================= */
-const DEFAULT_CHART_CFG = {
-  height: 380, aspect: 1.8, fontSize: 12, ptSize: 4, lineStyle: 'solid', lineThickness: 2,
-  legend: 'top', colors: {}, xMin: '', xMax: '', yMin: '', yMax: '', xAxisLabel: '', yAxisLabel: ''
-};
-const lineDash = (s) => (s === 'dashed' ? '7 5' : s === 'dotted' ? '2 3' : undefined);
-const domV = (v) => (v === '' || v == null ? undefined : parseManual(v));
+const useYZoom = (chartRef, dataDomain, margin = CHART_MARGIN) => {
+  const [domain, setDomain] = useState(null);
+  const [lo, setLo] = useState(null);
+  const [hi, setHi] = useState(null);
+  const dragging = useRef(false);
+  const loRef = useRef(null);
+  const safe = Array.isArray(dataDomain) && dataDomain[1] > dataDomain[0] ? dataDomain : [0, 1];
+  const eff = domain || safe;
+  const effRef = useRef(eff);
+  effRef.current = eff;
 
-/* ============================= CHART STYLE PANEL ============================= */
-const ChartStylePanel = ({ cfg, setCfg, series = [] }) => (
-  <div className="p-4 bg-white border border-slate-300 rounded-xl grid grid-cols-2 lg:grid-cols-4 gap-3 shadow-sm">
-    {[
-      ['Font size', 'fontSize', 'number', 1], ['Height (px)', 'height', 'number', 10],
-      ['Point size', 'ptSize', 'number', 1], ['Line thickness', 'lineThickness', 'number', 0.5]
-    ].map(([label, key, type, step]) => (
-      <div key={key} className="flex flex-col gap-1">
-        <label className="text-[10px] font-bold text-slate-600">{label}</label>
-        <input type={type} step={step} value={cfg[key] ?? ''} onChange={(e) => setCfg({ [key]: e.target.value === '' ? cfg[key] : Number(e.target.value) })}
-          className="border border-slate-300 rounded-md p-1.5 text-xs outline-none focus:border-blue-500" />
-      </div>
-    ))}
-    <div className="flex flex-col gap-1">
-      <label className="text-[10px] font-bold text-slate-600">Line style</label>
-      <select value={cfg.lineStyle} onChange={(e) => setCfg({ lineStyle: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs bg-white outline-none focus:border-blue-500">
-        <option value="solid">Solid</option><option value="dashed">Dashed</option><option value="dotted">Dotted</option>
-      </select>
-    </div>
-    <div className="flex flex-col gap-1">
-      <label className="text-[10px] font-bold text-slate-600">Legend</label>
-      <select value={cfg.legend} onChange={(e) => setCfg({ legend: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs bg-white outline-none focus:border-blue-500">
-        <option value="top">Top</option><option value="bottom">Bottom</option><option value="none">None</option>
-      </select>
-    </div>
-    <div className="flex flex-col gap-1">
-      <label className="text-[10px] font-bold text-slate-600">X Min / Max</label>
-      <div className="flex gap-1">
-        <input type="number" placeholder="auto" value={cfg.xMin || ''} onChange={(e) => setCfg({ xMin: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none" />
-        <input type="number" placeholder="auto" value={cfg.xMax || ''} onChange={(e) => setCfg({ xMax: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none" />
-      </div>
-    </div>
-    <div className="flex flex-col gap-1">
-      <label className="text-[10px] font-bold text-slate-600">Y Min / Max</label>
-      <div className="flex gap-1">
-        <input type="number" placeholder="auto" value={cfg.yMin || ''} onChange={(e) => setCfg({ yMin: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none" />
-        <input type="number" placeholder="auto" value={cfg.yMax || ''} onChange={(e) => setCfg({ yMax: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none" />
-      </div>
-    </div>
-    <div className="flex flex-col gap-1">
-      <label className="text-[10px] font-bold text-slate-600">X label</label>
-      <input type="text" value={cfg.xAxisLabel || ''} onChange={(e) => setCfg({ xAxisLabel: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs outline-none" />
-    </div>
-    <div className="flex flex-col gap-1">
-      <label className="text-[10px] font-bold text-slate-600">Y label</label>
-      <input type="text" value={cfg.yAxisLabel || ''} onChange={(e) => setCfg({ yAxisLabel: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs outline-none" />
-    </div>
-    {series.length > 0 && (
-      <div className="col-span-2 lg:col-span-4 pt-2 border-t border-slate-100 flex flex-wrap gap-3">
-        {series.map((s) => (
-          <label key={s.key} className="flex items-center gap-2 text-xs font-bold bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
-            <input type="color" value={(cfg.colors && cfg.colors[s.key]) || s.color || '#3b82f6'}
-              onChange={(e) => setCfg({ colors: { ...(cfg.colors || {}), [s.key]: e.target.value } })}
-              className="w-5 h-5 rounded cursor-pointer border border-slate-300" />
-            {s.label}
-          </label>
-        ))}
-      </div>
-    )}
-    <p className="col-span-2 lg:col-span-4 text-[9px] text-slate-400">Drag over any graph to zoom · Reset Zoom to restore</p>
-  </div>
-);
-
-/* ============================= INSTANCE CONSISTENCY ============================= */
-const useConsistency = (instances, xField) => useMemo(() => {
-  if (!instances || instances.length < 2) return { varyingFields: [], mismatchedIds: new Set(), hasMismatch: false };
-  const varyingFields = CD_COND_FIELDS.filter((f) => new Set(instances.map((i) => String(getInstCond(i, f.key) ?? ''))).size > 1);
-  const fixedNonX = CD_COND_FIELDS.filter((f) => f.key !== xField && !varyingFields.find((v) => v.key === f.key));
-  if (varyingFields.length <= 1) return { varyingFields, mismatchedIds: new Set(), hasMismatch: false };
-  const sigs = instances.map((i) => ({ id: i.id, sig: fixedNonX.map((f) => String(getInstCond(i, f.key) ?? '')).join('|') }));
-  const counts = {}; sigs.forEach(({ sig }) => { counts[sig] = (counts[sig] || 0) + 1; });
-  const dom = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] || '';
-  const mismatchedIds = new Set(sigs.filter((s) => s.sig !== dom).map((s) => s.id));
-  return { varyingFields, mismatchedIds, hasMismatch: mismatchedIds.size > 0 };
-}, [instances, xField]);
-
-/* ============================= MINI SPECTRA CHART ============================= */
-const MiniSpecChart = ({ wavelengths, values, cfg, color, isFs, onToggleFs, title, fitCurve }) => {
-  const chartRef = useRef(null);
-  const allX = wavelengths.length ? wavelengths : [190, 260];
-  const zoom = useXZoom(chartRef, [Math.min(...allX), Math.max(...allX)]);
-  const data = wavelengths.map((w, i) => ({ x: w, y: values[i] ?? null }));
-  const fs = Math.max(9, (cfg.fontSize || 12) - 2);
-  return (
-    <div className={`flex flex-col bg-white ${isFs ? FS_CLASSES + ' p-6' : 'relative border border-slate-200 rounded-lg p-2 shadow-sm'}`}>
-      {isFs && <div className={OVERLAY_CLASSES} onClick={onToggleFs} />}
-      <div className="flex items-center justify-between mb-1 gap-1 z-10">
-        <span className="text-[10px] font-bold truncate" style={{ color }}>{title}</span>
-        <div className="flex gap-1">
-          {zoom.isZoomed && <button type="button" onClick={zoom.reset} className="text-[9px] bg-slate-200 hover:bg-slate-300 px-1.5 py-0.5 rounded font-bold">Reset</button>}
-          <button type="button" onClick={(e) => { e.stopPropagation(); onToggleFs(); }} className="text-slate-400 hover:text-blue-600 bg-slate-50 rounded p-1 text-[10px] shrink-0 no-print">{isFs ? 'X' : 'Z'}</button>
-        </div>
-      </div>
-      <div ref={chartRef} onMouseDown={zoom.onMouseDown} className="select-none flex-1 relative min-h-0 w-full" style={!isFs ? { aspectRatio: '1', minHeight: '130px' } : {}}>
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart margin={{ top: 5, right: 8, bottom: 24, left: 4 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-            <XAxis type="number" dataKey="x" domain={[domV(cfg.xMin) ?? zoom.domain[0], domV(cfg.xMax) ?? zoom.domain[1]]} tick={{ fontSize: fs, fill: '#64748b' }} tickMargin={4} label={{ value: 'nm', position: 'insideBottom', offset: -14, fill: '#64748b', fontSize: fs }} />
-            <YAxis type="number" domain={[domV(cfg.yMin) ?? 'auto', domV(cfg.yMax) ?? 'auto']} tick={{ fontSize: fs, fill: '#64748b' }} width={38} />
-            <Tooltip formatter={(v) => v != null ? v.toFixed(3) : 'N/A'} />
-            <Line data={data} type="monotone" dataKey="y" stroke={color} strokeWidth={cfg.lineThickness || 2} strokeDasharray={lineDash(cfg.lineStyle)} dot={cfg.ptSize > 0 ? { r: Math.max(1, cfg.ptSize - 2), fill: color, strokeWidth: 0 } : false} connectNulls isAnimationActive={false} />
-            {fitCurve && fitCurve.length > 0 && (
-              <Line data={fitCurve} type="monotone" dataKey="y" stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="6 4" dot={false} legendType="none" isAnimationActive={false} />
-            )}
-            {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
-  );
-};
-
-/* ============================= CD OVERLAY CHART (Chart.js) ============================= */
-const CDOverlayChart = ({ instances, chartCfg, isFs, onToggleFs, xField }) => {
-  const wrapRef = useRef(null);
-  const canvasRef = useRef(null);
-  const chartInst = useRef(null);
+  const getY = (clientY) => {
+    const el = chartRef.current;
+    if (!el) return null;
+    const wrapper = el.querySelector('.recharts-wrapper');
+    if (!wrapper) return null;
+    const rect = wrapper.getBoundingClientRect();
+    const plotH = rect.height - margin.top - margin.bottom;
+    if (plotH <= 0) return null;
+    const fy = Math.min(1, Math.max(0, (clientY - rect.top - margin.top) / plotH));
+    const d0 = effRef.current;
+    // Screen Y grows downward, data domain grows upward — invert.
+    return d0[1] - fy * (d0[1] - d0[0]);
+  };
 
   useEffect(() => {
-    if (!canvasRef.current) return;
-    if (chartInst.current) { chartInst.current.destroy(); chartInst.current = null; }
-    const datasets = [];
-    let ci = 0;
-    instances.forEach((inst) => {
-      const { wavelengths, spectra } = parseInstSpectra(inst);
-      if (!wavelengths.length) return;
-      const xLabel = xField && getInstCond(inst, xField) != null ? `${inst.name || inst.id} (${getInstCond(inst, xField)})` : (inst.name || inst.instanceName || inst.id);
-      spectra.forEach((spec) => {
-        if (spec.visible === false || !spec.values || !spec.values.length) return;
-        const color = spec.color || LINE_COLORS[ci % LINE_COLORS.length]; ci++;
-        const bd = chartCfg.lineStyle === 'dashed' ? [5, 5] : chartCfg.lineStyle === 'dotted' ? [2, 3] : [];
-        datasets.push({
-          label: `${spec.title} [${xLabel}]`,
-          data: wavelengths.map((w, i) => ({ x: w, y: spec.values[i] ?? null })).filter((p) => p.y !== null),
-          borderColor: color, backgroundColor: color + '22',
-          borderWidth: chartCfg.lineThickness || 2, borderDash: bd,
-          pointRadius: chartCfg.ptSize || 0, fill: false, tension: 0.1, type: 'line'
-        });
-      });
-    });
-    if (!datasets.length) return;
-    chartInst.current = new Chart(canvasRef.current, {
-      type: 'line', data: { datasets },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        interaction: { mode: 'nearest', intersect: false },
-        scales: {
-          x: { type: 'linear', min: chartCfg.xMin !== '' ? +chartCfg.xMin : undefined, max: chartCfg.xMax !== '' ? +chartCfg.xMax : undefined, title: { display: true, text: chartCfg.xAxisLabel || 'Wavelength (nm)', font: { size: +(chartCfg.fontSize || 12) + 2, weight: 'bold' }, color: '#334155' }, ticks: { font: { size: +(chartCfg.fontSize || 12) }, color: '#64748b' }, grid: { color: '#f1f5f9' } },
-          y: { min: chartCfg.yMin !== '' ? +chartCfg.yMin : undefined, max: chartCfg.yMax !== '' ? +chartCfg.yMax : undefined, title: { display: true, text: chartCfg.yAxisLabel || 'CD Signal', font: { size: +(chartCfg.fontSize || 12) + 2, weight: 'bold' }, color: '#334155' }, ticks: { font: { size: +(chartCfg.fontSize || 12) }, color: '#64748b' }, grid: { color: '#f1f5f9' } }
-        },
-        plugins: { legend: { display: chartCfg.legend !== 'none', position: chartCfg.legend || 'top', labels: { font: { size: +(chartCfg.fontSize || 12) }, usePointStyle: true } }, tooltip: { callbacks: { title: (c) => `${c[0].parsed.x.toFixed(1)} nm`, label: (c) => `${c.dataset.label}: ${c.parsed.y.toFixed(4)}` } } }
+    const mv = (e) => { if (dragging.current) setHi(getY(e.clientY)); };
+    const up = (e) => {
+      if (!dragging.current) return;
+      dragging.current = false;
+      const end = getY(e.clientY);
+      const start = loRef.current;
+      if (start !== null && end !== null && Math.abs(end - start) > (effRef.current[1] - effRef.current[0]) * 0.01) {
+        setDomain([Math.min(start, end), Math.max(start, end)]);
       }
-    });
-    return () => { if (chartInst.current) { chartInst.current.destroy(); chartInst.current = null; } };
-  }, [instances, chartCfg, isFs, xField]);
+      loRef.current = null; setLo(null); setHi(null);
+    };
+    window.addEventListener('mousemove', mv);
+    window.addEventListener('mouseup', up);
+    return () => {
+      window.removeEventListener('mousemove', mv);
+      window.removeEventListener('mouseup', up);
+    };
+  }, []);
 
-  return (
-    <div className={`flex flex-col bg-white relative ${isFs ? FS_CLASSES + ' p-6' : ''}`}>
-      {isFs && <div className={OVERLAY_CLASSES} onClick={onToggleFs} />}
-      <div className="flex justify-between items-center mb-2 z-10">
-        {isFs && <h2 className="text-sm font-bold text-slate-600 uppercase">CD Spectra Overlay</h2>}
-        <button onClick={onToggleFs} className={`${isFs ? '' : 'absolute top-0 right-0 m-2'} ml-auto text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors no-print z-10`}>
-          {isFs ? 'Close' : 'Zoom'}
-        </button>
-      </div>
-      <div ref={wrapRef} className="flex-1 relative min-h-0 w-full" style={{ height: isFs ? '100%' : `${chartCfg.height || 380}px` }}>
-        <canvas ref={canvasRef} />
-      </div>
-    </div>
-  );
+  const onMouseDown = (e) => {
+    const v = getY(e.clientY);
+    if (v !== null) { dragging.current = true; loRef.current = v; setLo(v); setHi(v); }
+  };
+
+  return { domain: eff, refLo: lo, refHi: hi, onMouseDown, isZoomed: !!domain, reset: () => setDomain(null) };
 };
 
-/* ============================= SS BAR CHART ============================= */
-const SSBarChart = ({ ssData, isFs, onToggleFs, cfg }) => {
-  const barData = ['Alpha Helix', 'Beta Sheet', 'Turn', 'Coil'].map((name, si) => {
-    const keys = ['alpha', 'beta', 'turn', 'coil'];
-    const row = { name };
-    ssData.forEach((d) => { row[d.label] = d[keys[si]]; });
-    return row;
-  });
-  const fs = Math.max(9, (cfg.fontSize || 12) - 1);
-  return (
-    <div className={`flex flex-col bg-white ${isFs ? FS_CLASSES + ' p-6' : 'relative border border-slate-200 rounded-lg p-3 shadow-sm'}`}>
-      {isFs && <div className={OVERLAY_CLASSES} onClick={onToggleFs} />}
-      <div className="flex items-center justify-between mb-2 z-10">
-        <span className="text-xs font-bold text-slate-700">Secondary Structure Distribution</span>
-        <button type="button" onClick={onToggleFs} className="text-slate-400 hover:text-blue-600 text-[10px] no-print z-10">{isFs ? 'Close' : 'Zoom'}</button>
-      </div>
-      <div className="select-none" style={{ height: isFs ? '100%' : `${cfg.height || 300}px` }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={barData} margin={{ top: 5, right: 16, bottom: 30, left: 12 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-            <XAxis dataKey="name" tick={{ fontSize: fs, fill: '#64748b' }} />
-            <YAxis tickFormatter={(v) => `${v}%`} domain={[0, 100]} tick={{ fontSize: fs, fill: '#64748b' }} />
-            <Tooltip formatter={(v) => `${v}%`} />
-            {cfg.legend !== 'none' && <Legend wrapperStyle={{ fontSize: fs }} />}
-            {ssData.map((d, i) => <Bar key={d.label} dataKey={d.label} fill={LINE_COLORS[i % LINE_COLORS.length]} radius={[3,3,0,0]} isAnimationActive={false} />)}
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
-  );
+const useElementSize = (ref) => {
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const update = () => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) setSize({ width: rect.width, height: rect.height });
+    };
+    update();
+    let ro = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => update());
+      ro.observe(el);
+    }
+    window.addEventListener('resize', update);
+    const t = setTimeout(update, 60);
+    return () => {
+      if (ro) ro.disconnect();
+      window.removeEventListener('resize', update);
+      clearTimeout(t);
+    };
+  }, [ref]);
+  return size;
 };
 
-/* ============================= SS CONDITION PLOT ============================= */
-const SSConditionPlot = ({ ssData, xField, cfg, isFs, onToggleFs }) => {
-  const chartRef = useRef(null);
-  const pts = ssData.filter((d) => d.xVal !== null && d.xVal !== undefined);
-  if (!pts.length) return null;
-  const allX = pts.map((d) => d.xVal);
-  const zoom = useXZoom(chartRef, [Math.min(...allX), Math.max(...allX)]);
-  const KEYS = [{ k: 'alpha', l: 'alpha-Helix', c: '#3b82f6' }, { k: 'beta', l: 'beta-Sheet', c: '#ef4444' }, { k: 'turn', l: 'Turn', c: '#22c55e' }, { k: 'coil', l: 'Coil', c: '#f59e0b' }];
-  const fs = Math.max(9, (cfg.fontSize || 12) - 1);
-  const xLabel = CD_COND_FIELDS.find((f) => f.key === xField)?.label || xField;
-  return (
-    <div className={`flex flex-col bg-white ${isFs ? FS_CLASSES + ' p-6' : 'relative border border-slate-200 rounded-lg p-3 shadow-sm'}`}>
-      {isFs && <div className={OVERLAY_CLASSES} onClick={onToggleFs} />}
-      <div className="flex items-center justify-between mb-2 z-10">
-        <span className="text-xs font-bold text-slate-700">Structure vs {xLabel}</span>
-        <div className="flex gap-1">
-          {zoom.isZoomed && <button type="button" onClick={zoom.reset} className="text-[9px] bg-slate-200 px-1.5 py-0.5 rounded font-bold">Reset</button>}
-          <button type="button" onClick={onToggleFs} className="text-slate-400 hover:text-blue-600 text-[10px] no-print z-10">{isFs ? 'Close' : 'Zoom'}</button>
-        </div>
-      </div>
-      <div ref={chartRef} onMouseDown={zoom.onMouseDown} className="select-none" style={{ height: isFs ? '100%' : `${cfg.height || 300}px` }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart margin={{ top: 5, right: 16, bottom: 30, left: 12 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-            <XAxis type="number" dataKey="x" domain={[domV(cfg.xMin) ?? zoom.domain[0], domV(cfg.xMax) ?? zoom.domain[1]]} tick={{ fontSize: fs, fill: '#64748b' }} label={{ value: xLabel, position: 'insideBottom', offset: -16, fill: '#64748b', fontSize: fs }} />
-            <YAxis tickFormatter={(v) => `${v}%`} domain={[0, domV(cfg.yMax) ?? 100]} tick={{ fontSize: fs, fill: '#64748b' }} width={48} />
-            <Tooltip formatter={(v) => `${v?.toFixed(1)}%`} />
-            {cfg.legend !== 'none' && <Legend wrapperStyle={{ fontSize: fs }} />}
-            {KEYS.map(({ k, l, c }) => (
-              <Line key={k} data={pts.map((d) => ({ x: d.xVal, y: d[k] }))} type="monotone" dataKey="y" name={l}
-                stroke={(cfg.colors && cfg.colors[k]) || c} strokeWidth={cfg.lineThickness || 2}
-                strokeDasharray={lineDash(cfg.lineStyle)} dot={cfg.ptSize > 0 ? { r: cfg.ptSize, fill: c, strokeWidth: 0 } : false}
-                connectNulls isAnimationActive={false} />
-            ))}
-            {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
-  );
+const useCdDerived = (activeTest, ctx = {}) => {
+  const instances = getInstances(ctx, activeTest);
+  const activeInstance =
+    instances.find((i) => i.id === activeTest.id) || instances[0] || null;
+  const conditionFields = CD_EXPERIMENTAL_FIELDS;
+  const activeParsed = useMemo(() => computeParsed(activeInstance ? activeInstance.test : null), [activeInstance]);
+  const mw = getMWForInstance(activeInstance, ctx);
+  const compoundMW = getCompoundMW(activeInstance, ctx);
+  return { instances, activeInstance, conditionFields, activeParsed, mw, compoundMW };
 };
 
-/* ============================= COMPUTE SS RESULTS ============================= */
-const useSsResults = (instances, xField) => useMemo(() => {
-  return instances.map((inst) => {
-    const { wavelengths, spectra } = parseInstSpectra(inst);
-    if (!wavelengths.length || !spectra.length) return null;
-    const spec = spectra.find((s) => s.visible !== false && s.values?.length > 0);
-    if (!spec) return null;
-    const result = fitCdSpectrum(wavelengths, spec.values);
-    if (!result) return null;
-    const xRaw = getInstCond(inst, xField);
-    return { instId: inst.id, label: inst.name || inst.instanceName || inst.id, xVal: parseManual(xRaw), xRaw, ...result, specColor: spec.color, wavelengths, values: spec.values };
-  }).filter(Boolean);
-}, [instances, xField]);
-
-/* ============================= DATA SECTION ============================= */
-export const CDDataSection = ({ ctx }) => {
+/* ========================================================================
+DATA SECTION 
+======================================================================== */
+export const Data = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
-  const instances = ctx.instances || [];
-  const activeInstId = activeTest?.cdActiveInstId || instances[0]?.id || null;
-  const activeInst = instances.find((i) => i.id === activeInstId) || instances[0] || null;
-  const [fsPanel, setFsPanel] = useState(null);
-  const [showStyle, setShowStyle] = useState(false);
-  const chartCfg = useMemo(() => ({ ...DEFAULT_CHART_CFG, ...(activeTest?.cdChartCfg || {}) }), [activeTest?.cdChartCfg]);
-  const setCfg = (patch) => updateActiveTest({ cdChartCfg: { ...chartCfg, ...patch } });
-  const xField = activeTest?.cdXField || 'temperature';
+  const d = useCdDerived(activeTest, ctx);
+  const { activeInstance, activeParsed, instances, mw, compoundMW } = d;
 
-  const updateInst = (updates) => {
-    if (!activeInst) return;
-    if (ctx.updateInstance) ctx.updateInstance(activeInst.id, updates);
-    else if (activeInst.id === activeTest.id) updateActiveTest(updates);
+  const spectraColumns = activeTest.spectraColumns || [];
+  const yUnit = activeTest.yUnit || 'mdeg';
+
+  const updateWavelengthData = (val) => updateActiveTest({ wavelengthData: val });
+  const addSpectrumColumn = () => {
+    const cols = [...spectraColumns];
+    cols.push({
+      id: makeId('spec'),
+      title: `Spectrum ${cols.length + 1}`,
+      data: '',
+      color: SPECTRA_PALETTE[cols.length % SPECTRA_PALETTE.length],
+      visible: true
+    });
+    updateActiveTest({ spectraColumns: cols });
+  };
+  const patchColumn = (id, patch) =>
+    updateActiveTest({ spectraColumns: spectraColumns.map((c) => (c.id === id ? { ...c, ...patch } : c)) });
+  const removeSpectrumColumn = (id) =>
+    updateActiveTest({ spectraColumns: spectraColumns.filter((c) => c.id !== id) });
+
+  const [jascoText, setJascoText] = useState('');
+  const [jascoMsg, setJascoMsg] = useState('');
+  const jascoFileRef = useRef(null);
+  const applyJasco = (parsed) => {
+    if (!parsed || !parsed.xs.length) { setJascoMsg('⚠️ No XY data found in the Jasco file.'); return; }
+    const updates = {
+      wavelengthData: parsed.xs.join('\n'),
+      spectraColumns: [{ id: makeId('spec'), title: parsed.title || 'Imported Spectrum', data: parsed.ys.join('\n'), color: SPECTRA_PALETTE[0], visible: true }],
+      yUnit: 'mdeg'
+    };
+    const cNum = parseManual(parsed.concentration);
+    if (cNum !== null) updates.concentration = String(cNum);
+    const pNum = parseManual(parsed.pathLength);
+    if (pNum !== null) updates.pathLength = String(pNum);
+    if (parsed.temperature) updates.temperature = String(parsed.temperature);
+    if (parsed.experimentDate) updates.experimentDate = parsed.experimentDate;
+    updateActiveTest(updates);
+    setJascoMsg(`✅ Imported ${parsed.xs.length} points${parsed.title ? ` — "${parsed.title}"` : ''}.`);
+  };
+  const handleJascoFile = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    applyJasco(parseJascoCDText(await f.text()));
+    if (jascoFileRef.current) jascoFileRef.current.value = '';
   };
 
-  const { wavelengths, spectra } = useMemo(() => parseInstSpectra(activeInst), [activeInst]);
-
-  const addSpectrum = () => {
-    const cols = activeInst?.spectraColumns || [];
-    updateInst({ spectraColumns: [...cols, { id: Date.now().toString(), title: `Spectrum ${cols.length + 1}`, data: '', visible: true, color: LINE_COLORS[cols.length % LINE_COLORS.length] }] });
+  const mwSource = (() => {
+    const manual = parseManual(activeTest.manualMW);
+    if (manual && manual > 0) return 'manual';
+    return mw ? 'compound' : null;
+  })();
+  const meFactor = activeInstance ? molarEllipticityFactor(activeInstance, mw) : null;
+  const convertToMolarEllipticity = () => {
+    if (!mw) { alert('Molecular weight is required. Select a compound with a defined MW or fill the manual MW field.'); return; }
+    if (!meFactor) { alert('Fill the concentration and cuvette path length in the Experimental Conditions section of this tab.'); return; }
+    if (!window.confirm('Convert all spectra of the ACTIVE condition to Mean Residue Ellipticity [θ]?\nThe raw spectra are kept as a backup (revert button).')) return;
+    const cols = (activeTest.spectraColumns || []).map((c) => ({
+      ...c, data: String(c.data || '').split(/[\n,]+/).map((s) => { const n = parseFloat(String(s).trim()); return Number.isFinite(n) ? String(n * meFactor) : s; }).join('\n')
+    }));
+    updateActiveTest({ spectraColumns: cols, rawSpectraColumns: activeTest.spectraColumns, yUnit: 'theta' });
   };
-  const updateSpec = (id, upd) => updateInst({ spectraColumns: (activeInst?.spectraColumns || []).map((c) => c.id === id ? { ...c, ...upd } : c) });
-  const removeSpec = (id) => updateInst({ spectraColumns: (activeInst?.spectraColumns || []).filter((c) => c.id !== id) });
+  const convertAllInstances = () => {
+    if (!window.confirm('Convert the spectra of ALL conditions to [θ] using each tab\'s own concentration / path length / MW?')) return;
+    let done = 0;
+    instances.forEach((inst) => {
+      const t = inst.test || {};
+      if (t.yUnit === 'theta') return;
+      const instMw = getMWForInstance(inst, ctx);
+      const factor = molarEllipticityFactor(inst, instMw);
+      if (!factor || !Array.isArray(t.spectraColumns) || !t.spectraColumns.length) return;
+      const cols = t.spectraColumns.map((c) => ({
+        ...c, data: String(c.data || '').split(/[\n,]+/).map((s) => { const n = parseFloat(String(s).trim()); return Number.isFinite(n) ? String(n * factor) : s; }).join('\n')
+      }));
+      patchInstance(ctx, activeTest, inst.id, { spectraColumns: cols, rawSpectraColumns: t.spectraColumns, yUnit: 'theta' });
+      done++;
+    });
+    alert(`Converted ${done} condition(s) to molar ellipticity.`);
+  };
+  const revertConversion = () => {
+    if (!Array.isArray(activeTest.rawSpectraColumns)) return;
+    // Cache the theta version being left behind so the user can jump straight
+    // back to it later instead of having to re-run the conversion.
+    updateActiveTest({ spectraColumns: activeTest.rawSpectraColumns, rawSpectraColumns: undefined, thetaSpectraColumns: activeTest.spectraColumns, yUnit: 'mdeg' });
+  };
+  const restoreMolarEllipticity = () => {
+    if (!Array.isArray(activeTest.thetaSpectraColumns)) return;
+    updateActiveTest({ spectraColumns: activeTest.thetaSpectraColumns, rawSpectraColumns: activeTest.spectraColumns, thetaSpectraColumns: undefined, yUnit: 'theta' });
+  };
 
-  // Trigger chart resize on mount
-  useEffect(() => { const t = setTimeout(() => window.dispatchEvent(new Event('resize')), 100); return () => clearTimeout(t); }, []);
+  const [blankId, setBlankId] = useState('');
+  const [blankScope, setBlankScope] = useState('all'); // 'all' | 'current'
+  const canRevertBlank = blankScope === 'current'
+    ? !!(activeInstance && Array.isArray(activeInstance.test.preBlankSpectraColumns))
+    : instances.some((i) => Array.isArray(i.test.preBlankSpectraColumns));
+  const applyBlankSubtraction = () => {
+    const blank = instances.find((i) => i.id === blankId);
+    if (!blank) { alert('Select the blank condition.'); return; }
+    const blankParsed = computeParsed(blank.test);
+    if (!blankParsed.parsedWavelengths.length || !blankParsed.parsedSpectra.length) { alert('The blank condition has no spectrum.'); return; }
+    const targets = blankScope === 'current'
+      ? (activeInstance && activeInstance.id !== blankId ? [activeInstance] : [])
+      : instances.filter((i) => i.id !== blankId);
+    if (!targets.length) { alert(blankScope === 'current' ? 'The active condition is the blank itself — switch to another condition first.' : 'No other conditions to subtract from.'); return; }
+    const scopeLabel = blankScope === 'current' ? `the current condition ("${activeInstance.name}")` : 'ALL spectra of every other condition';
+    if (!window.confirm(`Subtract the first spectrum of "${blank.name}" from ${scopeLabel}? A backup is kept so this can be reverted.`)) return;
+    let touched = 0;
+    targets.forEach((inst) => {
+      const parsed = computeParsed(inst.test);
+      if (!parsed.parsedWavelengths.length || !parsed.parsedSpectra.length) return;
+      const blankYs = parsed.parsedWavelengths.map((x) => valueAtWavelength(blankParsed, 0, x));
+      const cols = (inst.test.spectraColumns || []).map((c, ci) => {
+        const specVals = parsed.parsedSpectra[ci] ? parsed.parsedSpectra[ci].values : [];
+        return {
+          ...c,
+          data: parsed.parsedWavelengths.map((x, i) => {
+            const v = specVals[i]; const b = blankYs[i];
+            if (!Number.isFinite(v)) return '';
+            if (!Number.isFinite(b)) return String(v);
+            return String(v - b);
+          }).join('\n')
+        };
+      });
+      // Keep the OLDEST backup if one already exists, so a single revert undoes
+      // the whole chain of un-reverted blank subtractions, not just the last one.
+      const backup = Array.isArray(inst.test.preBlankSpectraColumns) ? inst.test.preBlankSpectraColumns : (inst.test.spectraColumns || []);
+      patchInstance(ctx, activeTest, inst.id, { spectraColumns: cols, preBlankSpectraColumns: backup, blankSubtractedFrom: blank.name });
+      touched++;
+    });
+    alert(`Blank subtracted from ${touched} condition(s).`);
+  };
+  const revertBlankSubtraction = () => {
+    const targets = (blankScope === 'current'
+      ? (activeInstance ? [activeInstance] : [])
+      : instances
+    ).filter((i) => Array.isArray(i.test.preBlankSpectraColumns));
+    if (!targets.length) { alert('Nothing to revert.'); return; }
+    if (!window.confirm(`Revert blank subtraction for ${targets.length} condition(s)?`)) return;
+    targets.forEach((inst) => {
+      patchInstance(ctx, activeTest, inst.id, { spectraColumns: inst.test.preBlankSpectraColumns, preBlankSpectraColumns: undefined, blankSubtractedFrom: undefined });
+    });
+  };
+
+  const [mathA, setMathA] = useState('');
+  const [mathB, setMathB] = useState('');
+  const [mathOp, setMathOp] = useState('subtract'); // 'add' | 'subtract' | 'multiply' | 'addConstant'
+  const [mathFactor, setMathFactor] = useState('1');
+  const [mathConstant, setMathConstant] = useState('0');
+  const [mathScope, setMathScope] = useState('single'); // 'single' | 'all'
+  const mathOptions = useMemo(() => {
+    const out = [];
+    instances.forEach((inst) => {
+      const parsed = computeParsed(inst.test);
+      parsed.parsedSpectra.forEach((s, idx) => out.push({ key: `${inst.id}|${idx}`, label: `${inst.name} — ${s.title || `Spectrum ${idx + 1}`}` }));
+    });
+    return out;
+  }, [instances]);
+  const parseMathSel = (key) => {
+    if (!key) return null;
+    const [instId, idxStr] = key.split('|');
+    const inst = instances.find((i) => i.id === instId);
+    if (!inst) return null;
+    return { inst, idx: parseInt(idxStr, 10) };
+  };
+  const canRevertMath = instances.some((i) => Array.isArray(i.test.preMathSpectraColumns));
+  const applyMathOperation = () => {
+    const A = parseMathSel(mathA);
+    if (!A) { alert('Select spectrum A.'); return; }
+
+    let factor = null, constant = null, B = null, parsedB = null;
+    if (mathOp === 'multiply') {
+      factor = parseManual(mathFactor);
+      if (factor === null) { alert('Enter a valid factor.'); return; }
+    } else if (mathOp === 'addConstant') {
+      constant = parseManual(mathConstant);
+      if (constant === null) { alert('Enter a valid constant.'); return; }
+    } else {
+      B = parseMathSel(mathB);
+      if (!B) { alert('Select spectrum B.'); return; }
+      parsedB = computeParsed(B.inst.test);
+      if (!parsedB.parsedSpectra[B.idx]) { alert('Spectrum B not found.'); return; }
+    }
+
+    const targets = mathScope === 'all'
+      ? instances.flatMap((inst) => computeParsed(inst.test).parsedSpectra.map((_, idx) => ({ inst, idx })))
+      : [A];
+    if (!targets.length) { alert('No spectra to apply to.'); return; }
+
+    const opLabel = mathOp === 'multiply' ? `× ${factor}` : mathOp === 'addConstant' ? `+ ${constant}` : mathOp === 'add' ? '+ B' : '− B';
+    const scopeLabel = mathScope === 'all' ? `ALL ${targets.length} spectra (every condition)` : 'spectrum A only';
+    if (!window.confirm(`Apply "${opLabel}" to ${scopeLabel}? A backup is kept so this can be reverted.`)) return;
+
+    let touched = 0;
+    targets.forEach(({ inst, idx }) => {
+      const parsed = computeParsed(inst.test);
+      const spec = parsed.parsedSpectra[idx];
+      if (!spec) return;
+      const xs = parsed.parsedWavelengths;
+      const bYs = parsedB ? xs.map((x) => valueAtWavelength(parsedB, B.idx, x)) : null;
+      const newYs = spec.values.map((v, i) => {
+        if (!Number.isFinite(v)) return v;
+        if (mathOp === 'multiply') return v * factor;
+        if (mathOp === 'addConstant') return v + constant;
+        const bv = bYs ? bYs[i] : undefined;
+        if (!Number.isFinite(bv)) return v;
+        return mathOp === 'add' ? v + bv : v - bv;
+      });
+      const cols = (inst.test.spectraColumns || []).map((c, ci) => ci === idx ? { ...c, data: newYs.map((v) => (Number.isFinite(v) ? String(v) : '')).join('\n') } : c);
+      // Keep the OLDEST backup so a single revert undoes the whole chain of
+      // un-reverted operations on this condition, not just the last one.
+      const backup = Array.isArray(inst.test.preMathSpectraColumns) ? inst.test.preMathSpectraColumns : (inst.test.spectraColumns || []);
+      patchInstance(ctx, activeTest, inst.id, { spectraColumns: cols, preMathSpectraColumns: backup });
+      touched++;
+    });
+    alert(`Operation applied to ${touched} spectrum/spectra.`);
+  };
+  const revertMathOperation = () => {
+    const targets = instances.filter((i) => Array.isArray(i.test.preMathSpectraColumns));
+    if (!targets.length) { alert('Nothing to revert.'); return; }
+    if (!window.confirm(`Revert the last math operation(s) for ${targets.length} condition(s)?`)) return;
+    targets.forEach((inst) => {
+      patchInstance(ctx, activeTest, inst.id, { spectraColumns: inst.test.preMathSpectraColumns, preMathSpectraColumns: undefined });
+    });
+  };
+
+  const exportCSV = () => {
+    const allWl = new Set();
+    const seriesDefs = [];
+    instances.forEach((inst) => {
+      const parsed = computeParsed(inst.test);
+      parsed.parsedWavelengths.forEach((w) => allWl.add(w));
+      parsed.parsedSpectra.forEach((s) => seriesDefs.push({ inst, spec: s, parsed }));
+    });
+    if (!allWl.size) { alert('No data to export.'); return; }
+    const wls = [...allWl].sort((a, b) => a - b);
+    const header = ['Wavelength (nm)', ...seriesDefs.map(({ inst, spec }) => `${inst.name} — ${spec.title}`)];
+    const rows = wls.map((w) => {
+      const row = [w];
+      seriesDefs.forEach(({ spec, parsed }) => {
+        const i = parsed.parsedWavelengths.indexOf(w);
+        row.push(i >= 0 && Number.isFinite(spec.values[i]) ? spec.values[i] : '');
+      });
+      return row;
+    });
+    const csv = [header, ...rows].map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `CD_${(activeTest.name || 'data').replace(/[^a-z0-9]+/gi, '_')}.csv`;
+    document.body.appendChild(a);
+    a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  };
+
+  const INPUT_CLS = 'border border-slate-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-500 bg-white';
+  const LABEL_CLS = 'text-[10px] font-bold text-slate-500 uppercase';
 
   return (
-    <div className="flex flex-col gap-6">
-      {instances.length > 0 && (
-        <div className="flex gap-2 flex-wrap border-b border-slate-200 pb-3">
-          <span className="text-xs font-bold text-slate-500 self-center mr-2">Active instance:</span>
-          {instances.map((inst) => (
-            <button key={inst.id} onClick={() => updateActiveTest({ cdActiveInstId: inst.id })}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${inst.id === activeInstId ? 'bg-blue-600 text-white shadow' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}>
-              {inst.name || inst.instanceName || inst.id}
-              {getInstCond(inst, xField) != null && <span className="ml-1 opacity-70">({getInstCond(inst, xField)})</span>}
-            </button>
-          ))}
+    <CollapsibleSection title="Data" icon="📂" defaultOpen={true}>
+      <div className="flex flex-col gap-6">
+        <div className="bg-purple-50 border border-purple-200 rounded-xl px-4 py-3 flex flex-wrap items-center gap-2">
+          <span className="text-xs font-bold text-purple-800 uppercase">Editing condition:</span>
+          <span className="text-sm font-black text-purple-900">{activeInstance ? activeInstance.name : '—'}</span>
+          {['concentration', 'pathLength', 'temperature', 'ph', 'solvent', 'bufferName', 'additiveName'].map((k) => {
+            const v = getExpValue(activeInstance, k);
+            if (v === '') return null;
+            const f = CD_EXPERIMENTAL_FIELDS.find((x) => x.key === k);
+            const u = f ? getExpUnit(activeInstance, f) : '';
+            return <span key={k} className="text-[10px] font-bold bg-white border border-purple-200 text-purple-700 px-2 py-0.5 rounded-full">{f ? f.label : k}: {v}{u ? ` ${u}` : ''}</span>;
+          })}
+          <span className="text-[9px] text-purple-400 ml-auto">Switch condition using the tabs at the top of the page.</span>
         </div>
-      )}
 
-      <CollapsibleSection title="Data Import" icon="📥" defaultOpen>
-        {!activeInst ? (
-          <div className="text-sm text-slate-500 italic p-4 bg-slate-50 rounded border border-slate-200">No instances available.</div>
-        ) : (
-          <div className="flex flex-col gap-4">
-            <div className="border border-slate-200 bg-slate-50 rounded-lg p-4">
-              <div className="flex justify-between items-center mb-2">
-                <label className="text-xs font-bold text-slate-600 uppercase">Wavelength Data (nm)</label>
-                <span className="text-[10px] text-slate-400">{wavelengths.length} points</span>
-              </div>
-              <textarea value={activeInst.wavelengthData || ''} onChange={(e) => updateInst({ wavelengthData: e.target.value })}
-                className="w-full border border-slate-300 rounded-lg p-3 font-mono text-xs outline-none focus:border-blue-500 h-20 resize-y shadow-inner"
-                placeholder="190, 191, 192, ... 260 (comma or newline separated)" />
-              <p className="text-[10px] text-slate-400 mt-1">
-                {wavelengths.length > 0 ? `Range: ${Math.min(...wavelengths).toFixed(1)} - ${Math.max(...wavelengths).toFixed(1)} nm` : 'No wavelengths loaded'}
-              </p>
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <h4 className="text-sm font-bold text-slate-700">Spectra — condition "{activeInstance ? activeInstance.name : '—'}"</h4>
+            <div className="flex gap-2">
+              <button type="button" onClick={addSpectrumColumn} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm">+ Add Spectrum</button>
+              <button type="button" onClick={exportCSV} className="bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm hover:bg-emerald-100">📊 Export CSV (all conditions)</button>
             </div>
-            <div className="border border-slate-200 bg-slate-50 rounded-lg p-4">
-              <div className="flex justify-between items-center mb-3">
-                <label className="text-xs font-bold text-slate-600 uppercase">CD Spectra (intensity columns)</label>
-                <button onClick={addSpectrum} disabled={!activeInst} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm transition-colors">+ Add Spectrum</button>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className={LABEL_CLS}>Wavelengths (nm) — comma, space or newline separated</label>
+            <textarea
+              value={activeTest.wavelengthData || ''} onChange={(e) => updateWavelengthData(e.target.value)} placeholder={'190, 191, 192, ...'}
+              className="w-full border border-slate-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-blue-500 h-20 custom-scrollbar"
+            />
+            <span className="text-[10px] text-slate-400">{activeParsed.parsedWavelengths.length} valid wavelengths parsed.</span>
+          </div>
+          {spectraColumns.map((col, idx) => (
+            <div key={col.id} className="border border-slate-200 rounded-lg p-3 bg-slate-50 flex flex-col gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <input type="color" value={col.color || SPECTRA_PALETTE[idx % SPECTRA_PALETTE.length]} onChange={(e) => patchColumn(col.id, { color: e.target.value })} className="w-7 h-7 rounded cursor-pointer border border-slate-300" title="Series color" />
+                <input type="text" value={col.title || ''} onChange={(e) => patchColumn(col.id, { title: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs font-bold flex-1 min-w-[140px] outline-none focus:border-blue-500" />
+                <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600 cursor-pointer">
+                  <input type="checkbox" checked={col.visible !== false} onChange={(e) => patchColumn(col.id, { visible: e.target.checked })} className="w-3.5 h-3.5 accent-blue-600" /> Visible
+                </label>
+                <button type="button" onClick={() => removeSpectrumColumn(col.id)} className="text-red-500 hover:text-red-700 font-black text-sm px-1" title="Remove spectrum">×</button>
               </div>
-              {spectra.length === 0 ? (
-                <div className="text-center py-6 text-slate-400 italic bg-white rounded-lg border border-dashed border-slate-300">Click "Add Spectrum" to import CD signal data.</div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                  {spectra.map((spec) => (
-                    <div key={spec.id} className="bg-white border border-slate-200 rounded-lg p-3 shadow-sm relative group">
-                      <div className="flex items-center gap-2 mb-2">
-                        <input type="color" value={spec.color || '#3b82f6'} onChange={(e) => updateSpec(spec.id, { color: e.target.value })} className="w-6 h-6 rounded border border-slate-300 cursor-pointer" />
-                        <input type="text" value={spec.title} onChange={(e) => updateSpec(spec.id, { title: e.target.value })} className="flex-1 border border-slate-200 rounded px-2 py-1 text-xs font-bold outline-none" placeholder="Spectrum name..." />
-                        <label className="flex items-center gap-1 cursor-pointer">
-                          <input type="checkbox" checked={spec.visible !== false} onChange={(e) => updateSpec(spec.id, { visible: e.target.checked })} className="w-3 h-3 accent-blue-600" />
-                          <span className="text-[9px] text-slate-500">Show</span>
-                        </label>
-                        <button onClick={() => removeSpec(spec.id)} className="text-slate-400 hover:text-red-500 font-bold opacity-0 group-hover:opacity-100 transition-opacity">✕</button>
-                      </div>
-                      <textarea value={spec.data || ''} onChange={(e) => updateSpec(spec.id, { data: e.target.value })}
-                        className="w-full border border-slate-200 rounded p-2 font-mono text-[10px] outline-none focus:border-blue-500 h-16 resize-y shadow-inner"
-                        placeholder={`CD intensities for ${spec.title}...`} />
-                      <p className="text-[9px] text-slate-400 mt-1">
-                        {spec.values?.length ?? 0} values
-                        {spec.values?.length !== wavelengths.length && wavelengths.length > 0 && (
-                          <span className="text-amber-600 font-bold ml-1">⚠ {wavelengths.length} expected</span>
-                        )}
-                      </p>
-                    </div>
-                  ))}
-                </div>
+              <textarea
+                value={col.data || ''} onChange={(e) => patchColumn(col.id, { data: e.target.value })} placeholder="CD values (comma or newline separated), same order as wavelengths"
+                className="w-full border border-slate-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-blue-500 h-16 custom-scrollbar bg-white"
+              />
+            </div>
+          ))}
+          {spectraColumns.length === 0 && <div className="text-xs text-slate-400 italic bg-slate-50 border border-dashed border-slate-300 rounded-lg p-4 text-center">No spectra yet. Add a spectrum manually or import a Jasco file below.</div>}
+        </div>
+
+        <div className="bg-sky-50 border border-sky-200 rounded-xl p-4 flex flex-col gap-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <h4 className="text-sm font-bold text-sky-900">📥 Jasco Import (.txt / .csv export)</h4>
+            <span className="text-[9px] bg-sky-200 text-sky-900 px-2 py-0.5 rounded font-bold">imports into the ACTIVE condition</span>
+          </div>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="bg-white border border-sky-300 hover:bg-sky-100 text-sky-800 font-bold px-3 py-2 rounded-lg text-xs cursor-pointer shadow-sm transition-colors">
+              📄 Choose Jasco file…
+              <input ref={jascoFileRef} type="file" accept=".txt,.csv,.jws" onChange={handleJascoFile} className="hidden" />
+            </label>
+            <span className="text-[10px] text-sky-700">…or paste the file content below and press Import.</span>
+          </div>
+          <textarea
+            value={jascoText} onChange={(e) => setJascoText(e.target.value)} placeholder={'Paste Jasco export here (metadata block + XYDATA)…'}
+            className="w-full border border-sky-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-sky-500 h-24 custom-scrollbar bg-white"
+          />
+          <div className="flex items-center gap-3">
+            <button type="button" onClick={() => applyJasco(parseJascoCDText(jascoText))} disabled={!jascoText.trim()} className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm">Import pasted data</button>
+            {jascoMsg && <span className="text-xs font-bold text-sky-900">{jascoMsg}</span>}
+          </div>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3">
+          <h4 className="text-sm font-bold text-slate-700">🧮 Molar Ellipticity [θ]</h4>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+            <div className="flex flex-col gap-1">
+              <label className={LABEL_CLS}>Compound MW (from Definitions & Labels)</label>
+              <div className="border border-slate-200 bg-slate-50 rounded-lg px-3 py-2 text-sm font-bold text-slate-700">
+                {compoundMW ? `${Number(compoundMW.value).toLocaleString()} Da` : 'Not found for selected compound'}
+              </div>
+              {compoundMW && <span className="text-[9px] text-slate-400">Auto-retrieved from "{compoundMW.compound}"</span>}
+              {!compoundMW && <span className="text-[9px] text-amber-600">Select a compound with a defined MW, or set a manual override.</span>}
+              {compoundMW && mwSource === 'manual' && (
+                <button type="button" onClick={() => updateActiveTest({ manualMW: '' })} className="text-[10px] font-bold text-blue-600 hover:text-blue-800 text-left">↺ Use compound MW instead of override</button>
               )}
             </div>
-          </div>
-        )}
-      </CollapsibleSection>
-
-      <CollapsibleSection title="CD Spectra Overlay — All Conditions" icon="📈" headerExtra={
-        <button onClick={() => setShowStyle((p) => !p)} className="text-[10px] bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded font-bold">⚙ Style</button>
-      }>
-        {showStyle && <div className="mb-4"><ChartStylePanel cfg={chartCfg} setCfg={setCfg} /></div>}
-        {fsPanel === 'overlay' && <div className={OVERLAY_CLASSES} onClick={() => setFsPanel(null)} />}
-        <CDOverlayChart instances={instances} chartCfg={chartCfg} isFs={fsPanel === 'overlay'} onToggleFs={() => setFsPanel((p) => p === 'overlay' ? null : 'overlay')} xField={xField} />
-      </CollapsibleSection>
-
-      {activeInst && spectra.filter((s) => s.visible !== false && s.values?.length > 0).length > 0 && (
-        <CollapsibleSection title={`Individual Spectra — ${activeInst.name || activeInst.instanceName || 'Active'}`} icon="🔬" defaultOpen={false}>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-            {spectra.filter((s) => s.visible !== false && s.values?.length > 0).map((spec, idx) => (
-              <React.Fragment key={spec.id}>
-                {fsPanel === `m-${spec.id}` && <div className={OVERLAY_CLASSES} onClick={() => setFsPanel(null)} />}
-                <MiniSpecChart wavelengths={wavelengths} values={spec.values} cfg={chartCfg} color={spec.color || LINE_COLORS[idx % LINE_COLORS.length]}
-                  isFs={fsPanel === `m-${spec.id}`} onToggleFs={() => setFsPanel((p) => p === `m-${spec.id}` ? null : `m-${spec.id}`)}
-                  title={spec.title} fitCurve={null} />
-              </React.Fragment>
-            ))}
-          </div>
-        </CollapsibleSection>
-      )}
-    </div>
-  );
-};
-
-/* ============================= MATH & FITTING SECTION ============================= */
-export const MathAndFittingSection = ({ ctx }) => {
-  const { activeTest, updateActiveTest } = ctx;
-  const instances = ctx.instances || [];
-  const xField = activeTest?.cdXField || 'temperature';
-  const setXField = (f) => updateActiveTest({ cdXField: f });
-  const activeInstId = activeTest?.cdActiveInstId || instances[0]?.id || null;
-  const activeInst = instances.find((i) => i.id === activeInstId) || instances[0] || null;
-  const [fsPanel, setFsPanel] = useState(null);
-  const [showStyle, setShowStyle] = useState(false);
-  const [excludeMismatch, setExcludeMismatch] = useState(false);
-  const chartCfg = useMemo(() => ({ ...DEFAULT_CHART_CFG, height: 300, ...(activeTest?.cdFitChartCfg || {}) }), [activeTest?.cdFitChartCfg]);
-  const setCfg = (patch) => updateActiveTest({ cdFitChartCfg: { ...chartCfg, ...patch } });
-
-  const mathOp = activeTest?.cdMathOp || { op: 'subtract', factor: 1, blankInstId: '' };
-  const setMathOp = (patch) => updateActiveTest({ cdMathOp: { ...mathOp, ...patch } });
-
-  const consistency = useConsistency(instances, xField);
-  const usedInsts = excludeMismatch ? instances.filter((i) => !consistency.mismatchedIds.has(i.id)) : instances;
-  const ssResults = useSsResults(usedInsts, xField);
-
-  const applyMathOp = () => {
-    if (!activeInst) return;
-    const blankInst = instances.find((i) => i.id === mathOp.blankInstId);
-    const blankVals = blankInst ? (parseInstSpectra(blankInst).spectra[0]?.values || []) : [];
-    const { spectra } = parseInstSpectra(activeInst);
-    const newCols = spectra.map((spec) => {
-      if (!spec.values || !spec.values.length) return spec;
-      const newData = spec.values.map((v, i) => {
-        if (mathOp.op === 'subtract') return v - (blankVals[i] ?? 0);
-        if (mathOp.op === 'add') return v + (blankVals[i] ?? 0);
-        if (mathOp.op === 'multiply') return v * (mathOp.factor || 1);
-        return v;
-      }).join('\n');
-      return { ...spec, data: newData };
-    });
-    if (ctx.updateInstance) ctx.updateInstance(activeInst.id, { spectraColumns: newCols });
-    else if (activeInst.id === activeTest.id) updateActiveTest({ spectraColumns: newCols });
-  };
-
-  return (
-    <div className="flex flex-col gap-6">
-      <CollapsibleSection title="X-Axis & Consistency Check" icon="📊" defaultOpen>
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-wrap gap-3 items-start">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-bold text-slate-600 uppercase">X-Axis Condition</label>
-              <select value={xField} onChange={(e) => setXField(e.target.value)} className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold">
-                {CD_COND_FIELDS.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
-              </select>
+              <label className={LABEL_CLS}>Manual MW override (Da)</label>
+              <input type="number" onWheel={(e) => e.target.blur()} value={activeTest.manualMW || ''} onChange={(e) => updateActiveTest({ manualMW: e.target.value })} placeholder={compoundMW ? `auto: ${compoundMW.value}` : 'optional'} className={INPUT_CLS} />
             </div>
-            {consistency.varyingFields.length > 0 && (
-              <div className="flex-1 bg-blue-50 border border-blue-200 rounded-lg p-3 min-w-[200px]">
-                <p className="text-xs font-bold text-blue-700 mb-2">Auto-detected varying conditions:</p>
-                <div className="flex flex-wrap gap-2">
-                  {consistency.varyingFields.map((f) => (
-                    <button key={f.key} onClick={() => setXField(f.key)}
-                      className={`px-2 py-1 rounded text-xs font-bold transition-colors ${xField === f.key ? 'bg-blue-600 text-white' : 'bg-white border border-blue-300 text-blue-600 hover:bg-blue-100'}`}>
-                      {f.label}
-                    </button>
-                  ))}
-                </div>
+            <div className="flex flex-col gap-1">
+              <label className={LABEL_CLS}>Conversion factor (this tab)</label>
+              <div className="border border-slate-200 bg-slate-50 rounded-lg px-3 py-2 text-sm font-bold text-slate-700">
+                {meFactor ? meFactor.toPrecision(4) : '— (need conc + path + MW)'}
               </div>
+            </div>
+            <div className="flex flex-col gap-2">
+              <button type="button" onClick={convertToMolarEllipticity} className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-3 py-2 rounded-lg text-xs shadow-sm">Convert ACTIVE → [θ]</button>
+              <button type="button" onClick={convertAllInstances} className="bg-violet-50 border border-violet-300 text-violet-700 hover:bg-violet-100 font-bold px-3 py-2 rounded-lg text-xs shadow-sm">Convert ALL conditions → [θ]</button>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 mt-2">
+            <span className={`text-xs font-bold px-2 py-1 rounded ${yUnit === 'theta' ? 'bg-violet-100 text-violet-800' : 'bg-slate-100 text-slate-600'}`}>
+              Current Y unit: {yUnit === 'theta' ? 'Mean Residue Ellipticity (deg·cm²·dmol⁻¹)' : 'Ellipticity (mdeg)'}
+            </span>
+            {yUnit === 'theta' && Array.isArray(activeTest.rawSpectraColumns) && (
+              <button type="button" onClick={revertConversion} className="text-xs font-bold bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 px-3 py-1.5 rounded-lg shadow-sm">↩️ Revert to raw mdeg</button>
+            )}
+            {yUnit === 'mdeg' && Array.isArray(activeTest.thetaSpectraColumns) && (
+              <button type="button" onClick={restoreMolarEllipticity} className="text-xs font-bold bg-violet-50 border border-violet-200 text-violet-700 hover:bg-violet-100 px-3 py-1.5 rounded-lg shadow-sm">↪️ Revert to [θ] Molar Ellipticity</button>
             )}
           </div>
-          {consistency.hasMismatch && (
-            <div className="bg-amber-50 border border-amber-300 rounded-lg p-4">
-              <p className="text-sm font-bold text-amber-800 mb-2">⚠️ Consistency Warning</p>
-              <p className="text-xs text-amber-700 mb-3">{consistency.mismatchedIds.size} instance(s) have different fixed experimental conditions.</p>
-              <div className="flex flex-wrap gap-2 mb-3">
-                {[...consistency.mismatchedIds].map((id) => {
-                  const inst = instances.find((i) => i.id === id);
-                  return <span key={id} className="px-2 py-0.5 bg-amber-200 text-amber-800 text-xs rounded font-bold">{inst?.name || id}</span>;
-                })}
-              </div>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={excludeMismatch} onChange={(e) => setExcludeMismatch(e.target.checked)} className="w-4 h-4 accent-amber-600" />
-                <span className="text-xs font-bold text-amber-800">Exclude mismatched instances from analysis</span>
-              </label>
-            </div>
-          )}
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs border-collapse">
-              <thead><tr className="bg-slate-100">
-                <th className="text-left p-2 font-bold text-slate-600 border border-slate-200">Instance</th>
-                <th className="text-left p-2 font-bold text-slate-600 border border-slate-200">{CD_COND_FIELDS.find((f) => f.key === xField)?.label} (X)</th>
-                <th className="text-left p-2 font-bold text-slate-600 border border-slate-200">Spectra loaded</th>
-                {consistency.hasMismatch && <th className="text-left p-2 font-bold text-slate-600 border border-slate-200">Status</th>}
-              </tr></thead>
-              <tbody>{instances.map((inst) => {
-                const { spectra } = parseInstSpectra(inst); const xRaw = getInstCond(inst, xField); const isM = consistency.mismatchedIds.has(inst.id);
-                return (<tr key={inst.id} className={`${isM ? 'bg-amber-50' : 'bg-white'} hover:bg-blue-50`}>
-                  <td className="p-2 border border-slate-200 font-bold">{inst.name || inst.instanceName || inst.id}</td>
-                  <td className="p-2 border border-slate-200 font-mono">{xRaw != null ? String(xRaw) : <span className="text-slate-400 italic">not set</span>}</td>
-                  <td className="p-2 border border-slate-200">{spectra.filter((s) => s.visible !== false && s.values?.length > 0).length}</td>
-                  {consistency.hasMismatch && <td className="p-2 border border-slate-200">{isM ? <span className="text-amber-600 font-bold">⚠ Mismatch</span> : <span className="text-green-600 font-bold">✓ OK</span>}</td>}
-                </tr>);
-              })}</tbody>
-            </table>
-          </div>
         </div>
-      </CollapsibleSection>
 
-      <CollapsibleSection title="Secondary Structure Fitting" icon="🧬" defaultOpen>
-        {ssResults.length === 0 ? (
-          <div className="text-sm text-slate-500 italic bg-slate-50 p-4 rounded border border-slate-200">
-            No CD spectra loaded. Import wavelength + intensity data in the Data section.
-          </div>
-        ) : (
-          <div className="flex flex-col gap-6">
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs border-collapse">
-                <thead><tr className="bg-slate-100">
-                  <th className="text-left p-2 font-bold text-slate-600 border border-slate-200">Instance</th>
-                  <th className="text-left p-2 font-bold text-slate-600 border border-slate-200">{CD_COND_FIELDS.find((f) => f.key === xField)?.label}</th>
-                  <th className="text-center p-2 font-bold text-blue-700 border border-slate-200">alpha-Helix %</th>
-                  <th className="text-center p-2 font-bold text-red-700 border border-slate-200">beta-Sheet %</th>
-                  <th className="text-center p-2 font-bold text-green-700 border border-slate-200">Turn %</th>
-                  <th className="text-center p-2 font-bold text-amber-700 border border-slate-200">Coil %</th>
-                  <th className="text-center p-2 font-bold text-slate-600 border border-slate-200">R2</th>
-                </tr></thead>
-                <tbody>{ssResults.map((r) => (
-                  <tr key={r.instId} className="bg-white hover:bg-blue-50 transition-colors">
-                    <td className="p-2 border border-slate-200 font-bold">{r.label}</td>
-                    <td className="p-2 border border-slate-200 font-mono">{r.xRaw != null ? String(r.xRaw) : '—'}</td>
-                    <td className="p-2 border border-slate-200 text-center font-bold text-blue-700">{r.alpha}%</td>
-                    <td className="p-2 border border-slate-200 text-center font-bold text-red-700">{r.beta}%</td>
-                    <td className="p-2 border border-slate-200 text-center font-bold text-green-700">{r.turn}%</td>
-                    <td className="p-2 border border-slate-200 text-center font-bold text-amber-700">{r.coil}%</td>
-                    <td className="p-2 border border-slate-200 text-center font-mono">{r.r2.toFixed(3)}</td>
-                  </tr>
-                ))}</tbody>
-              </table>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-              {ssResults.map((r, idx) => (
-                <React.Fragment key={r.instId}>
-                  {fsPanel === `sf-${r.instId}` && <div className={OVERLAY_CLASSES} onClick={() => setFsPanel(null)} />}
-                  <MiniSpecChart wavelengths={r.wavelengths} values={r.values} cfg={chartCfg}
-                    color={r.specColor || LINE_COLORS[idx % LINE_COLORS.length]}
-                    isFs={fsPanel === `sf-${r.instId}`} onToggleFs={() => setFsPanel((p) => p === `sf-${r.instId}` ? null : `sf-${r.instId}`)}
-                    title={`${r.label}${r.xRaw != null ? ' (' + r.xRaw + ')' : ''}`}
-                    fitCurve={r.fitCurve} />
-                </React.Fragment>
-              ))}
-            </div>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {fsPanel === 'ssBar' && <div className={OVERLAY_CLASSES} onClick={() => setFsPanel(null)} />}
-              <SSBarChart ssData={ssResults} isFs={fsPanel === 'ssBar'} onToggleFs={() => setFsPanel((p) => p === 'ssBar' ? null : 'ssBar')} cfg={chartCfg} />
-              {ssResults.filter((r) => r.xVal !== null).length >= 2 && (
-                <>
-                  {fsPanel === 'ssCond' && <div className={OVERLAY_CLASSES} onClick={() => setFsPanel(null)} />}
-                  <SSConditionPlot ssData={ssResults} xField={xField} cfg={chartCfg} isFs={fsPanel === 'ssCond'} onToggleFs={() => setFsPanel((p) => p === 'ssCond' ? null : 'ssCond')} />
-                </>
-              )}
-            </div>
-            <button onClick={() => setShowStyle((p) => !p)} className="self-start text-[10px] bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded font-bold">⚙ Chart Style</button>
-            {showStyle && <ChartStylePanel cfg={chartCfg} setCfg={setCfg} series={[{ key:'alpha',label:'alpha-Helix',color:'#3b82f6' },{ key:'beta',label:'beta-Sheet',color:'#ef4444' },{ key:'turn',label:'Turn',color:'#22c55e' },{ key:'coil',label:'Coil',color:'#f59e0b' }]} />}
-          </div>
-        )}
-      </CollapsibleSection>
-
-      <CollapsibleSection title="Math Operations" icon="±" defaultOpen={false}>
-        <div className="flex flex-col gap-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3">
+          <h4 className="text-sm font-bold text-slate-700">🧹 Blank Subtraction</h4>
+          <div className="flex flex-wrap items-end gap-3">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-bold text-slate-600 uppercase">Operation</label>
-              <select value={mathOp.op} onChange={(e) => setMathOp({ op: e.target.value })} className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500">
-                <option value="subtract">Subtract blank spectrum</option>
-                <option value="add">Add spectrum</option>
-                <option value="multiply">Multiply by factor</option>
+              <label className={LABEL_CLS}>Blank condition</label>
+              <select value={blankId} onChange={(e) => setBlankId(e.target.value)} className={INPUT_CLS}>
+                <option value="">-- select blank --</option>
+                {instances.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
               </select>
             </div>
-            {mathOp.op === 'multiply' ? (
+            <div className="flex flex-col gap-1">
+              <label className={LABEL_CLS}>Apply to</label>
+              <select value={blankScope} onChange={(e) => setBlankScope(e.target.value)} className={INPUT_CLS}>
+                <option value="all">All conditions</option>
+                <option value="current">This condition only ({activeInstance ? activeInstance.name : '—'})</option>
+              </select>
+            </div>
+            <button type="button" onClick={applyBlankSubtraction} className="bg-red-600 hover:bg-red-700 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm">Subtract blank</button>
+            {canRevertBlank && (
+              <button type="button" onClick={revertBlankSubtraction} className="bg-white border border-red-300 text-red-600 hover:bg-red-50 font-bold px-4 py-2 rounded-lg text-xs shadow-sm">↩️ Revert blank subtraction</button>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3">
+          <h4 className="text-sm font-bold text-slate-700">🔧 Math Operations (A + B, A − B, A × factor, A + constant)</h4>
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex flex-col gap-1">
+              <label className={LABEL_CLS}>Spectrum A (target)</label>
+              <select value={mathA} onChange={(e) => setMathA(e.target.value)} className={`${INPUT_CLS} max-w-[240px]`}>
+                <option value="">-- select A --</option>
+                {mathOptions.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className={LABEL_CLS}>Operation</label>
+              <select value={mathOp} onChange={(e) => setMathOp(e.target.value)} className={INPUT_CLS}>
+                <option value="subtract">A − B</option>
+                <option value="add">A + B</option>
+                <option value="multiply">A × factor</option>
+                <option value="addConstant">A + constant</option>
+              </select>
+            </div>
+            {mathOp === 'multiply' ? (
               <div className="flex flex-col gap-1">
-                <label className="text-xs font-bold text-slate-600 uppercase">Factor</label>
-                <input type="number" step="any" value={mathOp.factor || 1} onChange={(e) => setMathOp({ factor: parseFloat(e.target.value) || 1 })} className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500" />
+                <label className={LABEL_CLS}>Factor</label>
+                <input type="number" step="0.1" onWheel={(e) => e.target.blur()} value={mathFactor} onChange={(e) => setMathFactor(e.target.value)} className={`${INPUT_CLS} w-24`} />
+              </div>
+            ) : mathOp === 'addConstant' ? (
+              <div className="flex flex-col gap-1">
+                <label className={LABEL_CLS}>Constant</label>
+                <input type="number" step="0.1" onWheel={(e) => e.target.blur()} value={mathConstant} onChange={(e) => setMathConstant(e.target.value)} className={`${INPUT_CLS} w-24`} />
               </div>
             ) : (
               <div className="flex flex-col gap-1">
-                <label className="text-xs font-bold text-slate-600 uppercase">Blank instance</label>
-                <select value={mathOp.blankInstId || ''} onChange={(e) => setMathOp({ blankInstId: e.target.value })} className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500">
-                  <option value="">-- Select blank --</option>
-                  {instances.map((inst) => <option key={inst.id} value={inst.id}>{inst.name || inst.instanceName || inst.id}</option>)}
+                <label className={LABEL_CLS}>Spectrum B</label>
+                <select value={mathB} onChange={(e) => setMathB(e.target.value)} className={`${INPUT_CLS} max-w-[240px]`}>
+                  <option value="">-- select B --</option>
+                  {mathOptions.filter((o) => o.key !== mathA).map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
                 </select>
               </div>
             )}
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-bold text-slate-600 uppercase">Apply to instance</label>
-              <select value={activeInstId || ''} onChange={(e) => updateActiveTest({ cdActiveInstId: e.target.value })} className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500">
-                {instances.map((inst) => <option key={inst.id} value={inst.id}>{inst.name || inst.instanceName || inst.id}</option>)}
+              <label className={LABEL_CLS}>Apply to</label>
+              <select value={mathScope} onChange={(e) => setMathScope(e.target.value)} className={INPUT_CLS}>
+                <option value="single">Spectrum A only</option>
+                <option value="all">All spectra (every condition)</option>
               </select>
             </div>
+            <button type="button" onClick={applyMathOperation} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm">Apply</button>
+            {canRevertMath && (
+              <button type="button" onClick={revertMathOperation} className="bg-white border border-blue-300 text-blue-600 hover:bg-blue-50 font-bold px-4 py-2 rounded-lg text-xs shadow-sm">↩️ Revert last operation</button>
+            )}
           </div>
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
-            ⚠️ This permanently modifies the first visible spectrum of the selected instance.
-          </div>
-          <button onClick={applyMathOp} className="self-start bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm transition-colors">Apply</button>
         </div>
-      </CollapsibleSection>
-    </div>
+      </div>
+    </CollapsibleSection>
   );
 };
 
-/* ============================= FITTING ERRORS ============================= */
-export const FittingErrors = ({ ctx }) => {
-  const instances = ctx.instances || [];
-  const xField = ctx.activeTest?.cdXField || 'temperature';
-  const ssResults = useSsResults(instances, xField);
-  if (!ssResults.length) return <div className="text-sm text-slate-500 italic p-4">No fitting results. Import CD spectra data first.</div>;
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs border-collapse">
-        <thead><tr className="bg-slate-100">
-          <th className="text-left p-2 font-bold text-slate-600 border border-slate-200">Instance</th>
-          <th className="text-center p-2 font-bold text-slate-600 border border-slate-200">R2 (goodness of fit)</th>
-          <th className="text-center p-2 font-bold text-slate-600 border border-slate-200">Points used</th>
-          <th className="text-center p-2 font-bold text-slate-600 border border-slate-200">Quality</th>
-        </tr></thead>
-        <tbody>{ssResults.map((r) => (
-          <tr key={r.instId} className="bg-white hover:bg-slate-50">
-            <td className="p-2 border border-slate-200 font-bold">{r.label}</td>
-            <td className="p-2 border border-slate-200 text-center font-mono">{r.r2.toFixed(4)}</td>
-            <td className="p-2 border border-slate-200 text-center">{r.nPoints}</td>
-            <td className="p-2 border border-slate-200 text-center">
-              <span className={`px-2 py-0.5 rounded text-xs font-bold ${r.r2 >= 0.95 ? 'bg-green-100 text-green-700' : r.r2 >= 0.85 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
-                {r.r2 >= 0.95 ? 'Excellent' : r.r2 >= 0.85 ? 'Good' : 'Poor'}
-              </span>
-            </td>
-          </tr>
-        ))}</tbody>
-      </table>
+/* ========================================================================
+DATA ANALYSIS — SPECTRA VISUALIZATION
+======================================================================== */
+export const SpectraVisualization = ({ ctx }) => {
+  const { activeTest, updateActiveTest } = ctx;
+  const d = useCdDerived(activeTest, ctx);
+  const { instances } = d;
+
+  const cfg = { ...DEFAULT_CHART_STYLE, ...(activeTest.vizCfg || {}) };
+  const setCfg = (patch) => updateActiveTest({ vizCfg: { ...cfg, ...patch } });
+
+  const [showCfg, setShowCfg] = useState(false);
+  const [fs, setFs] = useState(false);
+  const [fsSmall, setFsSmall] = useState(null);
+  const [hidden, setHidden] = useState({});
+
+  const seriesList = useMemo(() => {
+    const out = [];
+    instances.forEach((inst) => {
+      const parsed = computeParsed(inst.test);
+      parsed.parsedSpectra.forEach((s, idx) => {
+        if (s.visible === false || !s.values.length) return;
+        out.push({
+          key: `${inst.id}__${s.id}`,
+          label: `${inst.name} — ${s.title || `Spectrum ${idx + 1}`}`,
+          color: s.color || SPECTRA_PALETTE[idx % SPECTRA_PALETTE.length],
+          active: inst.id === activeTest.id,
+          yUnit: inst.test.yUnit || 'mdeg',
+          data: parsed.parsedWavelengths
+            .map((w, i) => ({ x: w, y: Number.isFinite(s.values[i]) ? s.values[i] : null }))
+            .filter((p) => p.y !== null)
+        });
+      });
+    });
+    return out;
+  }, [instances, activeTest.id]);
+
+  const visible = seriesList.filter((s) => !hidden[s.key]);
+  const allXs = visible.flatMap((s) => s.data.map((p) => p.x));
+  const padX = allXs.length ? ((Math.max(...allXs) - Math.min(...allXs)) * 0.03 || 1) : 1;
+  const dataDomain = allXs.length ? [Math.min(...allXs) - padX, Math.max(...allXs) + padX] : [190, 260];
+
+  const chartRef = useRef(null);
+  const zoom = useXZoom(chartRef, dataDomain);
+  const yLabel = activeTest.yUnit === 'theta' ? '[θ] (deg·cm²·dmol⁻¹)' : 'Ellipticity (mdeg)';
+  const xLabel = cfg.xAxisLabel || 'Wavelength (nm)';
+  const yLab = cfg.yAxisLabel || yLabel;
+
+  const chartBody = (
+    <div ref={chartRef} onMouseDown={zoom.onMouseDown} style={fs ? { flex: 1, minHeight: 0 } : chartBoxStyle(cfg)} className={`bg-white border border-slate-200 rounded-xl p-3 select-none relative ${fs ? 'w-full' : ''}`}>
+      {zoom.isZoomed && <button type="button" onClick={zoom.reset} className="absolute top-2 right-2 z-10 text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart margin={CHART_MARGIN}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+          <XAxis type="number" dataKey="x" domain={[dom(cfg.xMin) ?? zoom.domain[0], dom(cfg.xMax) ?? zoom.domain[1]]} allowDataOverflow ticks={makeTicks(zoom.domain, cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} />} tickMargin={10} label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+          <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} allowDataOverflow tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={{ value: yLab, angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+          <Tooltip />
+          {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 8 }} />}
+          {visible.map((s) => <Line key={s.key} data={s.data} type="monotone" dataKey="y" name={s.label} stroke={s.color} strokeWidth={cfg.lineThickness || 2} strokeDasharray={lineDash(cfg.lineStyle)} strokeOpacity={1} dot={false} connectNulls isAnimationActive={false} />)}
+          {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
+        </LineChart>
+      </ResponsiveContainer>
     </div>
   );
-};
 
-/* ============================= FITTING GRAPHICS ============================= */
-export const FittingGraphics = ({ ctx }) => {
-  const { activeTest } = ctx;
-  const instances = ctx.instances || [];
-  const xField = activeTest?.cdXField || 'temperature';
-  const [fsPanel, setFsPanel] = useState(null);
-  const chartCfg = useMemo(() => ({ ...DEFAULT_CHART_CFG, height: 300, ...(activeTest?.cdFitChartCfg || {}) }), [activeTest?.cdFitChartCfg]);
-  const ssResults = useSsResults(instances, xField);
-  if (!ssResults.length) return <div className="text-sm text-slate-500 italic p-4">No fitting results. Import CD spectra data first.</div>;
   return (
-    <div className="flex flex-col gap-6">
-      {fsPanel === 'fgBar' && <div className={OVERLAY_CLASSES} onClick={() => setFsPanel(null)} />}
-      <SSBarChart ssData={ssResults} isFs={fsPanel === 'fgBar'} onToggleFs={() => setFsPanel((p) => p === 'fgBar' ? null : 'fgBar')} cfg={chartCfg} />
-      {ssResults.filter((r) => r.xVal !== null).length >= 2 && (
-        <>
-          {fsPanel === 'fgCond' && <div className={OVERLAY_CLASSES} onClick={() => setFsPanel(null)} />}
-          <SSConditionPlot ssData={ssResults} xField={xField} cfg={chartCfg} isFs={fsPanel === 'fgCond'} onToggleFs={() => setFsPanel((p) => p === 'fgCond' ? null : 'fgCond')} />
-        </>
+    <div className="flex flex-col gap-4 border border-slate-200 rounded-xl p-4 bg-white shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="text-sm font-bold text-slate-700">📈 Spectra Visualization — all conditions overlaid</h4>
+        <div className="flex gap-2">
+          <button type="button" onClick={() => setShowCfg(!showCfg)} className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${showCfg ? 'bg-slate-200 border-slate-400 text-slate-900' : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'}`}>🎨 Chart Config</button>
+          <button type="button" onClick={() => setFs(!fs)} className="font-bold py-1.5 px-3 rounded-lg text-xs border border-slate-300 bg-white text-slate-800 hover:bg-slate-50">{fs ? '↙️ Exit' : '↗️ Fullscreen'}</button>
+        </div>
+      </div>
+      {seriesList.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {seriesList.map((s) => (
+            <label key={s.key} className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs font-bold border cursor-pointer ${hidden[s.key] ? 'bg-slate-100 border-slate-200 text-slate-400' : 'bg-white border-slate-200 text-slate-700'}`}>
+              <input type="checkbox" checked={!hidden[s.key]} onChange={() => setHidden((p) => ({ ...p, [s.key]: !p[s.key] }))} className="w-3.5 h-3.5 accent-blue-600" />
+              <span className="w-3 h-3 rounded-full inline-block" style={{ backgroundColor: s.color }} />
+              <span className="truncate max-w-[220px]">{s.label}</span>
+            </label>
+          ))}
+        </div>
+      )}
+      {fs && <div className={OVERLAY_CLASSES} onClick={() => setFs(false)} />}
+      <div className={fs ? FS_CLASSES + ' p-6 flex flex-col' : 'flex flex-col'}>
+        {fs && (
+          <div className="flex justify-between items-center mb-2 shrink-0">
+            <h3 className="font-bold text-slate-700">CD Spectra — all conditions</h3>
+            <button type="button" onClick={() => setFs(false)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">↙️</button>
+          </div>
+        )}
+        {chartBody}
+      </div>
+      {showCfg && <GraphConfigPanel cfg={cfg} setCfg={setCfg} series={seriesList.map((s) => ({ key: s.key, label: s.label, color: s.color }))} unit="nm" />}
+      
+      {seriesList.length > 0 && (
+        <div className="mt-2 p-4 bg-slate-50 border border-slate-200 rounded-lg shadow-sm">
+          <h5 className="text-xs font-black text-slate-700 uppercase mb-3 border-b border-slate-200 pb-2">Individual Spectra</h5>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+            {seriesList.map((s) => (
+              <React.Fragment key={s.key}>
+                {fsSmall === s.key && <div className={OVERLAY_CLASSES} onClick={() => setFsSmall(null)} />}
+                <div className={`flex flex-col bg-white ${fsSmall === s.key ? FS_CLASSES + ' p-6' : 'relative aspect-square p-2 cursor-pointer hover:shadow-lg transition-shadow border border-slate-200 rounded-lg group'}`} onClick={fsSmall !== s.key ? () => setFsSmall(s.key) : undefined}>
+                  <div className="flex justify-between items-start mb-1 z-10">
+                    <h4 className="text-xs font-bold text-slate-600 uppercase truncate w-[80%]" title={s.label}>{s.label}</h4>
+                    <button className={fsSmall === s.key ? 'text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5' : 'opacity-0 group-hover:opacity-100 text-slate-400 hover:text-blue-600 bg-slate-50 rounded p-1 text-[10px]'} onClick={(e) => { e.stopPropagation(); setFsSmall(fsSmall === s.key ? null : s.key); }}>{fsSmall === s.key ? '↙️' : '↗️'}</button>
+                  </div>
+                  <div className={`flex-1 relative min-h-0 ${fsSmall !== s.key ? 'pointer-events-none' : ''}`}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={s.data} margin={{ top: 5, right: 8, bottom: fsSmall === s.key ? 30 : 18, left: fsSmall === s.key ? 10 : 2 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                        <XAxis type="number" dataKey="x" tick={{ fontSize: fsSmall === s.key ? cfg.fontSize : 9, fill: '#64748b' }} domain={['dataMin', 'dataMax']} label={fsSmall === s.key ? { value: xLabel, position: 'insideBottom', offset: -20, fill: '#64748b', fontSize: cfg.fontSize + 1 } : undefined} />
+                        <YAxis tick={{ fontSize: fsSmall === s.key ? cfg.fontSize : 9, fill: '#64748b' }} width={fsSmall === s.key ? 60 : 38} label={fsSmall === s.key ? { value: yLab, angle: -90, position: 'insideLeft', offset: -5, fill: '#64748b', fontSize: cfg.fontSize + 1 } : undefined} />
+                        {fsSmall === s.key && <Tooltip />}
+                        <Line type="monotone" dataKey="y" stroke={s.color} strokeWidth={cfg.lineThickness || 2} strokeDasharray={lineDash(cfg.lineStyle)} dot={false} isAnimationActive={false} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );
 };
 
-/* ============================= NOTEBOOK EXTRA ============================= */
-export const NotebookExtra = ({ ctx, checkId }) => {
-  const instances = ctx.instances || [];
-  const xField = ctx.activeTest?.cdXField || 'temperature';
-  if (checkId === 'cond') {
-    return `<h3 style="font-size:14px;font-weight:bold;margin-bottom:8px">Experimental Conditions</h3><table style="width:100%;border-collapse:collapse;font-size:11px"><thead><tr><th style="padding:4px 8px;border:1px solid #e2e8f0;background:#f8fafc">Instance</th>${CD_COND_FIELDS.map((f) => `<th style="padding:4px 8px;border:1px solid #e2e8f0;background:#f8fafc">${f.label}</th>`).join('')}</tr></thead><tbody>${instances.map((inst) => `<tr><td style="padding:4px 8px;border:1px solid #e2e8f0;font-weight:bold">${inst.name || inst.id}</td>${CD_COND_FIELDS.map((f) => `<td style="padding:4px 8px;border:1px solid #e2e8f0">${getInstCond(inst, f.key) ?? '—'}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+/* ========================================================================
+DATA ANALYSIS — FITTING (DYNAMIC PURE COMPONENTS)
+======================================================================== */
+const DonutSS = ({ res }) => {
+  const bases = res.activeBases || ['alpha', 'beta', 'turn', 'coil'];
+  const data = bases.map((k) => ({
+    name: CD_FIT_COMPONENTS[k]?.label || k,
+    value: res.fractions ? res.fractions[k] : res[k],
+    color: CD_FIT_COMPONENTS[k]?.color || '#cbd5e1'
+  })).filter((x) => x.value > 0);
+  
+  return (
+    <div style={{ width: '100%', height: 260 }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <PieChart>
+          <Pie data={data} dataKey="value" nameKey="name" innerRadius="55%" outerRadius="82%" paddingAngle={2} label={(p) => `${p.name} ${p.value}%`} labelLine={false}>
+            {data.map((entry, i) => <Cell key={i} fill={entry.color} stroke="#fff" strokeWidth={2} />)}
+          </Pie>
+          <Tooltip formatter={(v) => `${v} %`} />
+          <Legend verticalAlign="bottom" wrapperStyle={{ fontSize: 11 }} />
+        </PieChart>
+      </ResponsiveContainer>
+    </div>
+  );
+};
+
+export const SpectrumFitting = ({ ctx }) => {
+  const { activeTest, updateActiveTest } = ctx;
+  const d = useCdDerived(activeTest, ctx);
+  const { instances } = d;
+  const [fitInstId, setFitInstId] = useState(activeTest.id);
+  const [fitSpecIdx, setFitSpecIdx] = useState(0);
+  const [msg, setMsg] = useState('');
+  const [fsFit, setFsFit] = useState(false);
+  const [showCfg, setShowCfg] = useState(false);
+  const [selectedFitBases, setSelectedFitBases] = useState(['alpha', 'beta', 'turn', 'coil']);
+  
+  const cfg = { ...DEFAULT_CHART_STYLE, ...(activeTest.vizCfg || {}) };
+  const setCfg = (patch) => updateActiveTest({ vizCfg: { ...cfg, ...patch } });
+
+  const fitInst = instances.find((i) => i.id === fitInstId) || instances[0];
+  const fitParsed = useMemo(() => computeParsed(fitInst ? fitInst.test : null), [fitInst]);
+  const spec = fitParsed.parsedSpectra[fitSpecIdx] || fitParsed.parsedSpectra[0] || null;
+
+  const savedFit = useMemo(() => {
+    if (!fitInst || !spec) return null;
+    const fits = fitInst.test.ssFits || {};
+    return fits[spec.id] || null;
+  }, [fitInst, spec]);
+
+  const toggleBase = (k) => {
+    setSelectedFitBases((prev) => prev.includes(k) ? prev.filter(x => x !== k) : [...prev, k]);
+  };
+
+  const runFit = () => {
+    if (!fitInst || !spec) { setMsg('Select a condition and a spectrum.'); return; }
+    if (selectedFitBases.length === 0) { setMsg('Select at least one component to fit.'); return; }
+    
+    // Catch the detailed response object
+    const res = fitCdSpectrum(fitParsed.parsedWavelengths, spec.values, selectedFitBases);
+    
+    // Display specific errors to the user if the math fails
+    if (res.error) { 
+       setMsg(`⚠️ ${res.error}`); 
+       return; 
+    }
+    
+    const stored = {
+      fractions: res.fractions, activeBases: res.activeBases,
+      scaleK: res.scaleK, r2: res.r2, nPoints: res.nPoints,
+      savedAt: new Date().toLocaleString(),
+      alpha: res.fractions.alpha || 0, beta: res.fractions.beta || 0, turn: res.fractions.turn || 0, coil: res.fractions.coil || 0
+    };
+    
+    const ssFits = { ...(fitInst.test.ssFits || {}), [spec.id]: stored };
+    const structureComposition = {};
+    res.activeBases.forEach(k => { structureComposition[CD_FIT_COMPONENTS[k]?.label || k] = res.fractions[k]; });
+    
+    patchInstance(ctx, activeTest, fitInst.id, { ssFits, structureComposition });
+    
+    // Output exactly which wavelengths were successfully overlapped and fitted
+    setMsg(`✅ Fit stored — R² = ${res.r2.toFixed(4)} (${res.nPoints} pts, ${res.fitMin}-${res.fitMax}nm).`);
+  };
+
+  const deleteFit = (inst, specId) => {
+    const ssFits = { ...(inst.test.ssFits || {}) };
+    delete ssFits[specId];
+    patchInstance(ctx, activeTest, inst.id, { ssFits });
+  };
+
+  const expData = useMemo(() => {
+    if (!spec) return [];
+    return fitParsed.parsedWavelengths.map((w, i) => ({ x: w, y: Number.isFinite(spec.values[i]) ? spec.values[i] : null })).filter((p) => p.y !== null);
+  }, [spec, fitParsed]);
+  const simData = useMemo(() => {
+    if (!savedFit || !spec) return [];
+    return buildSimulatedCurve(savedFit, fitParsed.parsedWavelengths);
+  }, [savedFit, fitParsed, spec]);
+
+  const overlayRef = useRef(null);
+  const allXs = [...expData.map((p) => p.x), ...simData.map((p) => p.x)];
+  const allYs = [...expData.map((p) => p.y), ...simData.map((p) => p.y)].filter((y) => Number.isFinite(y));
+  const padX = allXs.length ? ((Math.max(...allXs) - Math.min(...allXs)) * 0.03 || 1) : 1;
+  const padY = allYs.length ? ((Math.max(...allYs) - Math.min(...allYs)) * 0.05 || 1) : 1;
+  const resolvedXDomain = [dom(cfg.xMin) !== undefined ? dom(cfg.xMin) : (allXs.length ? Math.min(...allXs) - padX : 190), dom(cfg.xMax) !== undefined ? dom(cfg.xMax) : (allXs.length ? Math.max(...allXs) + padX : 260)];
+  const zoomFit = useXZoom(overlayRef, resolvedXDomain);
+
+  const allSaved = useMemo(() => {
+    const out = [];
+    instances.forEach((inst) => {
+      const parsed = computeParsed(inst.test);
+      Object.entries(inst.test.ssFits || {}).forEach(([specId, res]) => {
+        const s = parsed.parsedSpectra.find((x) => x.id === specId);
+        out.push({ inst, specId, title: s ? (s.title || 'Spectrum') : specId, res });
+      });
+    });
+    return out;
+  }, [instances]);
+
+  return (
+    <div className="flex flex-col gap-4 border border-slate-200 rounded-xl p-4 bg-white shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="text-sm font-bold text-slate-700">🧬 Fitting — Pure Component Decomposition</h4>
+        <div className="flex gap-2 items-center">
+          <button type="button" onClick={() => setShowCfg(!showCfg)} className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${showCfg ? 'bg-slate-200 border-slate-400 text-slate-900' : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'}`}>🎨 Chart Config</button>
+          <span className="text-[9px] bg-purple-100 text-purple-800 px-2 py-0.5 rounded font-bold">Customizable Pure Components</span>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
+        <div className="flex flex-col gap-1.5">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">1. Select Reference Components to Fit</label>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(CD_FIT_COMPONENTS).map(([k, def]) => (
+              <label key={k} className={`flex items-center gap-1.5 px-2 py-1 rounded border text-xs cursor-pointer ${selectedFitBases.includes(k) ? 'bg-blue-50 border-blue-200 text-blue-800 font-bold shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100'}`}>
+                <input type="checkbox" checked={selectedFitBases.includes(k)} onChange={() => toggleBase(k)} className="w-3.5 h-3.5 accent-blue-600" />
+                <span className="w-2.5 h-2.5 rounded-full" style={{backgroundColor: def.color}} />
+                {def.label}
+              </label>
+            ))}
+          </div>
+        </div>
+        
+        <div className="flex flex-wrap items-end gap-3 mt-2 border-t border-slate-200 pt-3">
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">2. Target Condition</label>
+            <select value={fitInst ? fitInst.id : ''} onChange={(e) => { setFitInstId(e.target.value); setFitSpecIdx(0); }} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
+              {instances.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">Spectrum Slot</label>
+            <select value={fitSpecIdx} onChange={(e) => setFitSpecIdx(parseInt(e.target.value, 10))} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
+              {fitParsed.parsedSpectra.map((s, i) => <option key={s.id} value={i}>{s.title || `Spectrum ${i + 1}`}</option>)}
+            </select>
+          </div>
+          <button type="button" onClick={runFit} className="bg-purple-600 hover:bg-purple-700 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm">✨ Fit Spectrum</button>
+          {msg && <span className="text-xs font-bold text-slate-700">{msg}</span>}
+        </div>
+      </div>
+
+      {savedFit && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-2">
+          <div className="flex flex-col gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+              {(savedFit.activeBases || ['alpha', 'beta', 'turn', 'coil']).map((k) => {
+                const val = savedFit.fractions ? savedFit.fractions[k] : savedFit[k];
+                return (
+                  <div key={k} className="bg-white border border-slate-200 rounded-lg p-3 text-center shadow-sm">
+                    <div className="text-[10px] font-bold uppercase truncate" style={{ color: CD_FIT_COMPONENTS[k]?.color || '#64748b' }} title={CD_FIT_COMPONENTS[k]?.label || k}>{CD_FIT_COMPONENTS[k]?.label || k}</div>
+                    <div className="text-xl font-black text-slate-800">{val}%</div>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-xs text-slate-500">
+              Fit quality: <b>R² = {Number(savedFit.r2 || 0).toFixed(4)}</b> · {savedFit.nPoints} points · scale k = {Number(savedFit.scaleK || 0).toFixed(4)} · saved {savedFit.savedAt}
+            </p>
+            <DonutSS res={savedFit} />
+          </div>
+
+          <div className="flex flex-col">
+            {fsFit && <div className={OVERLAY_CLASSES} onClick={() => setFsFit(false)} />}
+            <div className={`flex flex-col ${fsFit ? FS_CLASSES + ' p-6' : ''}`}>
+              <div className="flex justify-between items-center mb-2 shrink-0">
+                <span className="text-xs font-bold text-slate-600 uppercase">Experimental vs Simulated</span>
+                <button type="button" onClick={() => setFsFit(!fsFit)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 text-[10px]">{fsFit ? '↙️' : '↗️'}</button>
+              </div>
+              <div ref={overlayRef} onMouseDown={zoomFit.onMouseDown} style={fsFit ? { flex: 1, minHeight: 0 } : { width: '100%', aspectRatio: '1.6', maxHeight: 380 }} className="bg-white border border-slate-200 rounded-xl p-3 select-none relative">
+                {zoomFit.isZoomed && <button type="button" onClick={zoomFit.reset} className="absolute top-2 right-2 z-10 text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart margin={CHART_MARGIN}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis type="number" dataKey="x" domain={[dom(cfg.xMin) ?? zoomFit.domain[0], dom(cfg.xMax) ?? zoomFit.domain[1]]} allowDataOverflow ticks={makeTicks(zoomFit.domain, cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} />} tickMargin={10} label={{ value: cfg.xAxisLabel || 'Wavelength (nm)', position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                    <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} allowDataOverflow tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={{ value: cfg.yAxisLabel || ((fitInst && fitInst.test.yUnit === 'theta') ? '[θ] (deg·cm²·dmol⁻¹)' : 'Ellipticity (mdeg)'), angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                    <Line data={expData} type="monotone" dataKey="y" name="Experimental" stroke="#3b82f6" strokeWidth={cfg.lineThickness || 2} dot={false} connectNulls isAnimationActive={false} />
+                    <Line data={simData} type="monotone" dataKey="y" name="Simulated (fit)" stroke="#ef4444" strokeWidth={cfg.lineThickness || 2} strokeDasharray="7 5" dot={false} connectNulls isAnimationActive={false} />
+                    <Tooltip />
+                    <Legend verticalAlign="top" wrapperStyle={{ fontSize: 11 }} />
+                    {zoomFit.refLo !== null && zoomFit.refHi !== null && <ReferenceArea x1={zoomFit.refLo} x2={zoomFit.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <p className="text-[10px] text-slate-400 mt-1">💡 Blue = experimental · Red dashed = reconstructed from fitted pure components. Drag to zoom.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {allSaved.length > 0 && (
+        <div className="overflow-x-auto border border-slate-200 rounded-lg mt-4">
+          <table className="w-full text-xs text-left bg-white">
+            <thead className="bg-slate-100 text-slate-500 uppercase">
+              <tr>
+                <th className="px-3 py-2">Condition</th>
+                <th className="px-3 py-2">Spectrum</th>
+                <th className="px-3 py-2">Composition</th>
+                <th className="px-3 py-2">R²</th>
+                <th className="px-3 py-2">Saved</th>
+                <th className="px-3 py-2"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {allSaved.map((row) => (
+                <tr key={`${row.inst.id}-${row.specId}`}>
+                  <td className="px-3 py-1.5 font-bold text-slate-700">{row.inst.name}</td>
+                  <td className="px-3 py-1.5 text-slate-600">{row.title}</td>
+                  <td className="px-3 py-1.5 text-[11px] leading-tight">
+                    {(row.res.activeBases || ['alpha', 'beta', 'turn', 'coil']).map(k => {
+                      const v = row.res.fractions ? row.res.fractions[k] : row.res[k];
+                      if (!v) return null;
+                      return <span key={k} style={{color: CD_FIT_COMPONENTS[k]?.color, marginRight: '8px', whiteSpace: 'nowrap'}}>{CD_FIT_COMPONENTS[k]?.label}: <b>{v}%</b></span>;
+                    })}
+                  </td>
+                  <td className="px-3 py-1.5 font-mono text-slate-600">{Number(row.res.r2 || 0).toFixed(4)}</td>
+                  <td className="px-3 py-1.5 text-slate-400">{row.res.savedAt}</td>
+                  <td className="px-3 py-1.5 text-right">
+                    <button type="button" onClick={() => deleteFit(row.inst, row.specId)} className="text-red-500 hover:text-red-700 font-black px-2" title="Delete fit">×</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {showCfg && <GraphConfigPanel cfg={cfg} setCfg={setCfg} series={[{ key: 'exp', label: 'Experimental', color: '#3b82f6' }, { key: 'sim', label: 'Simulated (fit)', color: '#ef4444' }]} unit="nm" />}
+    </div>
+  );
+};
+
+/* ========================================================================
+CONDITION PLOTS (Dynamic Component Graphing)
+======================================================================== */
+const defaultCdConditionPlot = (n) => ({
+  id: makeId('cdplot'),
+  title: `Condition Plot ${n}`,
+  yMode: 'ss',
+  specIdx: 0,
+  lambda: '222',
+  xField: 'temperature',
+  // Up to 2 experimental-condition fields set as the plot's "variables". A
+  // second entry switches the chart to a 3D (variable1 x variable2 x value) plot.
+  xFields: ['temperature'],
+  chartType: 'line',
+  chartType3D: 'scatter',
+  fitEnabled: false,
+  fitModel: 'linear',
+  customExpr: '',
+  showPoints: true,
+  showErrors: true,
+  showFit: true,
+  showMaxLines: false,
+  hLines: [],
+  useFixedSD: false,
+  fixedSDStr: '',
+  showExcl: false,
+  outlierThreshStr: '2.5',
+  hiddenSeries: {},
+  excluded: {},
+  manualSD: {},
+  usedInstances: {},
+  style: { ...DEFAULT_CHART_STYLE }
+});
+
+/* ========================================================================
+3D CONDITION SCATTER (isometric projection, pure SVG)
+Used when a condition plot has 2 experimental-condition "variables" set —
+renders variable1 x variable2 x value as a 3D scatter.
+======================================================================== */
+// Rotate a normalized (x,y,z) point by azimuth (around the vertical axis) and
+// elevation (tilt), then orthographically project to screen space. Returns
+// [screenX, screenY, depth] — depth is used for painter's-algorithm sorting so
+// nearer elements draw on top of farther ones as the view rotates.
+const rotateProject = (x, y, z, azimuth, elevation, cx, cy, scale) => {
+  const X = x - 0.5, Y = y - 0.5, Z = z - 0.5;
+  const cosA = Math.cos(azimuth), sinA = Math.sin(azimuth);
+  const x1 = X * cosA - Y * sinA;
+  const y1 = X * sinA + Y * cosA;
+  const cosE = Math.cos(elevation), sinE = Math.sin(elevation);
+  const y2 = y1 * cosE - Z * sinE;
+  const z2 = y1 * sinE + Z * cosE;
+  return [cx + x1 * scale, cy - z2 * scale, y2];
+};
+
+const shadeColor = (hex, percent) => {
+  const h = (hex || '#3b82f6').replace('#', '');
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  const num = parseInt(full, 16);
+  if (Number.isNaN(num)) return hex || '#3b82f6';
+  let r = (num >> 16) & 0xff, g = (num >> 8) & 0xff, b = num & 0xff;
+  const amt = Math.round(2.55 * percent);
+  r = Math.min(255, Math.max(0, r + amt));
+  g = Math.min(255, Math.max(0, g + amt));
+  b = Math.min(255, Math.max(0, b + amt));
+  return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+};
+
+const fmt3D = (v) => {
+  if (!Number.isFinite(v)) return '—';
+  if (Math.abs(v) >= 1000 || (Math.abs(v) < 0.01 && v !== 0)) return v.toExponential(2);
+  return String(Math.round(v * 1000) / 1000);
+};
+
+const Condition3DScatter = ({ series, colorOf, includedPts, xLabel, yLabel, zLabel, cfg, height = 380, chartType = 'scatter', setChartType }) => {
+  const W = 640, H = Math.max(280, height || 380);
+  const cx = W / 2, cy = H * 0.56;
+  const scale = Math.min(W, H) * 0.62;
+
+  const [azimuth, setAzimuth] = useState(-0.7);
+  const [elevation, setElevation] = useState(0.55);
+  const dragRef = useRef(null);
+  const svgRef = useRef(null);
+
+  useEffect(() => {
+    const mv = (e) => {
+      if (!dragRef.current) return;
+      const { startX, startY, az0, el0 } = dragRef.current;
+      const dx = e.clientX - startX, dy = e.clientY - startY;
+      setAzimuth(az0 + dx * 0.008);
+      setElevation(Math.min(1.45, Math.max(-1.45, el0 - dy * 0.008)));
+    };
+    const up = () => { dragRef.current = null; };
+    window.addEventListener('mousemove', mv);
+    window.addEventListener('mouseup', up);
+    return () => {
+      window.removeEventListener('mousemove', mv);
+      window.removeEventListener('mouseup', up);
+    };
+  }, []);
+
+  const onMouseDown = (e) => {
+    dragRef.current = { startX: e.clientX, startY: e.clientY, az0: azimuth, el0: elevation };
+  };
+  const resetView = () => { setAzimuth(-0.7); setElevation(0.55); };
+
+  const allPts = [];
+  (series || []).forEach((s) => {
+    const color = colorOf ? colorOf(s) : '#3b82f6';
+    includedPts(s).forEach((p) => {
+      if (Number.isFinite(p.x) && Number.isFinite(p.x2) && Number.isFinite(p.y)) {
+        allPts.push({ x: p.x, y: p.x2, z: p.y, name: `${p.name} — ${s.label}`, color });
+      }
+    });
+  });
+
+  if (allPts.length < 2) {
+    return (
+      <div className="flex items-center justify-center h-full text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">
+        Not enough spectra have numeric values on both variable axes to draw a 3D plot.
+      </div>
+    );
   }
-  if (checkId === 'struct') {
-    const rows = instances.map((inst) => {
-      const { wavelengths, spectra } = parseInstSpectra(inst);
-      const spec = spectra.find((s) => s.visible !== false && s.values?.length > 0);
-      if (!spec || !wavelengths.length) return '';
-      const r = fitCdSpectrum(wavelengths, spec.values);
-      if (!r) return '';
-      return `<tr><td style="padding:4px 8px;border:1px solid #e2e8f0;font-weight:bold">${inst.name || inst.id}</td><td style="padding:4px 8px;border:1px solid #e2e8f0;text-align:center">${r.alpha}%</td><td style="padding:4px 8px;border:1px solid #e2e8f0;text-align:center">${r.beta}%</td><td style="padding:4px 8px;border:1px solid #e2e8f0;text-align:center">${r.turn}%</td><td style="padding:4px 8px;border:1px solid #e2e8f0;text-align:center">${r.coil}%</td><td style="padding:4px 8px;border:1px solid #e2e8f0;text-align:center">${r.r2.toFixed(3)}</td></tr>`;
+
+  const xs = allPts.map((p) => p.x), ys = allPts.map((p) => p.y), zs = allPts.map((p) => p.z);
+  const xMin = Math.min(...xs), xMax = Math.max(...xs);
+  const yMin = Math.min(...ys), yMax = Math.max(...ys);
+  const zMin = Math.min(0, ...zs), zMax = Math.max(...zs, zMin + 1);
+  const xSpan = (xMax - xMin) || 1, ySpan = (yMax - yMin) || 1, zSpan = (zMax - zMin) || 1;
+
+  const nPts = allPts.map((p) => ({
+    ...p,
+    nx: (p.x - xMin) / xSpan,
+    ny: (p.y - yMin) / ySpan,
+    nz: (p.z - zMin) / zSpan
+  }));
+
+  const proj = (x, y, z) => rotateProject(x, y, z, azimuth, elevation, cx, cy, scale);
+  const fontSize = (cfg && cfg.fontSize) || 12;
+  const ptSize = (cfg && cfg.ptSize) || 5;
+
+  const AXIS_LEN = 1.12;
+  const origin = proj(0, 0, 0);
+  const xEnd = proj(AXIS_LEN, 0, 0);
+  const yEnd = proj(0, AXIS_LEN, 0);
+  const zEnd = proj(0, 0, AXIS_LEN);
+
+  const gridLines = [];
+  for (let i = 0; i <= 4; i++) {
+    const t = i / 4;
+    const a = proj(t, 0, 0), b = proj(t, 1, 0);
+    gridLines.push({ d: `M${a[0]},${a[1]} L${b[0]},${b[1]}`, depth: (a[2] + b[2]) / 2 });
+    const c = proj(0, t, 0), e = proj(1, t, 0);
+    gridLines.push({ d: `M${c[0]},${c[1]} L${e[0]},${e[1]}`, depth: (c[2] + e[2]) / 2 });
+  }
+
+  // Bar half-width in normalized data units, scaled loosely with point size.
+  const hw = 0.02 + Math.min(0.05, (ptSize / 5) * 0.02);
+  const bars = chartType === 'bar' ? nPts.map((p) => {
+    const corners = {
+      b00: [p.nx - hw, p.ny - hw, 0], b10: [p.nx + hw, p.ny - hw, 0],
+      b11: [p.nx + hw, p.ny + hw, 0], b01: [p.nx - hw, p.ny + hw, 0],
+      t00: [p.nx - hw, p.ny - hw, p.nz], t10: [p.nx + hw, p.ny - hw, p.nz],
+      t11: [p.nx + hw, p.ny + hw, p.nz], t01: [p.nx - hw, p.ny + hw, p.nz]
+    };
+    const pr = {};
+    let depthSum = 0, depthN = 0;
+    Object.entries(corners).forEach(([k, [x, y, z]]) => { const r = proj(x, y, z); pr[k] = r; depthSum += r[2]; depthN++; });
+    return { p, pr, depth: depthSum / depthN };
+  }).sort((a, b) => a.depth - b.depth) : [];
+
+  const pts3D = chartType === 'scatter' ? nPts.map((p) => {
+    const top = proj(p.nx, p.ny, p.nz);
+    const floor = proj(p.nx, p.ny, 0);
+    return { p, top, floor, depth: top[2] };
+  }).sort((a, b) => a.depth - b.depth) : [];
+
+  const poly = (pr, keys) => keys.map((k) => pr[k].slice(0, 2).join(',')).join(' ');
+
+  return (
+    <div className="relative w-full h-full">
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="w-full h-full cursor-grab active:cursor-grabbing" onMouseDown={onMouseDown}>
+        {gridLines.sort((a, b) => a.depth - b.depth).map((g, i) => <path key={`gl${i}`} d={g.d} stroke="#e2e8f0" strokeWidth={1} fill="none" />)}
+
+        {chartType === 'bar' && bars.map(({ p, pr }, i) => (
+          <g key={i}>
+            <polygon points={poly(pr, ['b10', 'b11', 't11', 't10'])} fill={shadeColor(p.color, -30)} stroke="white" strokeWidth={0.75} />
+            <polygon points={poly(pr, ['b00', 'b10', 't10', 't00'])} fill={shadeColor(p.color, -15)} stroke="white" strokeWidth={0.75} />
+            <polygon points={poly(pr, ['t00', 't10', 't11', 't01'])} fill={p.color} stroke="white" strokeWidth={0.75}>
+              <title>{`${p.name}\n${xLabel}: ${fmt3D(p.x)}\n${yLabel}: ${fmt3D(p.y)}\n${zLabel}: ${fmt3D(p.z)}`}</title>
+            </polygon>
+          </g>
+        ))}
+
+        {chartType === 'scatter' && pts3D.map(({ p, top, floor }, i) => (
+          <g key={i}>
+            <line x1={floor[0]} y1={floor[1]} x2={top[0]} y2={top[1]} stroke={p.color} strokeWidth={1} strokeDasharray="2 2" opacity={0.4} />
+            <circle cx={floor[0]} cy={floor[1]} r={2} fill={p.color} opacity={0.25} />
+            <circle cx={top[0]} cy={top[1]} r={ptSize} fill={p.color} stroke="white" strokeWidth={1.5}>
+              <title>{`${p.name}\n${xLabel}: ${fmt3D(p.x)}\n${yLabel}: ${fmt3D(p.y)}\n${zLabel}: ${fmt3D(p.z)}`}</title>
+            </circle>
+          </g>
+        ))}
+
+        <line x1={origin[0]} y1={origin[1]} x2={xEnd[0]} y2={xEnd[1]} stroke="#334155" strokeWidth={1.5} />
+        <line x1={origin[0]} y1={origin[1]} x2={yEnd[0]} y2={yEnd[1]} stroke="#334155" strokeWidth={1.5} />
+        <line x1={origin[0]} y1={origin[1]} x2={zEnd[0]} y2={zEnd[1]} stroke="#334155" strokeWidth={1.5} />
+        <text x={xEnd[0]} y={xEnd[1] + 16} fontSize={fontSize} fill="#334155" textAnchor="middle" fontWeight="bold">{xLabel}</text>
+        <text x={yEnd[0]} y={yEnd[1] + 4} fontSize={fontSize} fill="#334155" textAnchor="start" fontWeight="bold">{yLabel}</text>
+        <text x={zEnd[0] - 8} y={zEnd[1] - 6} fontSize={fontSize} fill="#334155" textAnchor="end" fontWeight="bold">{zLabel}</text>
+        <text x={origin[0]} y={origin[1] + 16} fontSize={Math.max(8, fontSize - 3)} fill="#94a3b8" textAnchor="middle">{fmt3D(xMin)}</text>
+        <text x={xEnd[0]} y={xEnd[1] + 30} fontSize={Math.max(8, fontSize - 3)} fill="#94a3b8" textAnchor="middle">{fmt3D(xMax)}</text>
+        <text x={yEnd[0] - 4} y={yEnd[1] - 4} fontSize={Math.max(8, fontSize - 3)} fill="#94a3b8" textAnchor="end">{fmt3D(yMax)}</text>
+        <text x={zEnd[0] - 8} y={zEnd[1] + 12} fontSize={Math.max(8, fontSize - 3)} fill="#94a3b8" textAnchor="end">{fmt3D(zMax)}</text>
+      </svg>
+      <div className="absolute top-1 right-1 flex gap-1">
+        {setChartType && (
+          <div className="flex rounded-lg overflow-hidden border border-slate-300 shadow-sm">
+            <button type="button" onClick={() => setChartType('scatter')} className={`text-[10px] font-bold px-2 py-1 ${chartType === 'scatter' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>Scatter</button>
+            <button type="button" onClick={() => setChartType('bar')} className={`text-[10px] font-bold px-2 py-1 ${chartType === 'bar' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>Bars (3D histogram)</button>
+          </div>
+        )}
+        <button type="button" onClick={resetView} className="text-[10px] bg-white hover:bg-slate-50 border border-slate-300 text-slate-600 px-2 py-1 rounded-lg font-bold shadow-sm">Reset view</button>
+      </div>
+    </div>
+  );
+};
+
+const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlot }) => {
+  const cfg = { ...DEFAULT_CHART_STYLE, ...(plot.style || {}) };
+  const set = (patch) => updatePlot(plot.id, patch);
+  const setCfg = (patch) => updatePlot(plot.id, { style: { ...cfg, ...patch } });
+
+  const [showErr, setShowErr] = useState(false);
+  const [showCfg, setShowCfg] = useState(false);
+  const [fs, setFs] = useState(false);
+  const chartRef = useRef(null);
+
+  const isHist = plot.chartType === 'hist';
+  const validKey = (k) => CD_EXPERIMENTAL_FIELDS.some((f) => f.key === k);
+  const rawXFields = Array.isArray(plot.xFields) && plot.xFields.length
+    ? plot.xFields
+    : (plot.xField ? [plot.xField] : []);
+  const effXFields = (rawXFields.filter(validKey).slice(0, 2).length
+    ? rawXFields.filter(validKey).slice(0, 2)
+    : [CD_EXPERIMENTAL_FIELDS[0].key]);
+  const effXField = effXFields[0];
+  const is3D = effXFields.length === 2;
+  const xFieldDef = CD_EXPERIMENTAL_FIELDS.find((f) => f.key === effXField);
+  const xFieldLabel = xFieldDef ? xFieldDef.label : effXField;
+  const xField2Def = is3D ? CD_EXPERIMENTAL_FIELDS.find((f) => f.key === effXFields[1]) : null;
+  const xField2Label = xField2Def ? xField2Def.label : effXFields[1];
+  const setXFields = (fields) => set({ xFields: fields, xField: fields[0] });
+  const used = plot.usedInstances || {};
+
+  const usedSSKeys = useMemo(() => {
+    const set = new Set();
+    d.instances.forEach((inst) => {
+      if (used[inst.id] === false) return;
+      const parsed = computeParsed(inst.test);
+      const spec = parsed.parsedSpectra[plot.specIdx];
+      if (!spec) return;
+      const fitRes = (inst.test.ssFits || {})[spec.id];
+      if (!fitRes) return;
+      (fitRes.activeBases || ['alpha', 'beta', 'turn', 'coil']).forEach(k => set.add(k));
+    });
+    return Array.from(set);
+  }, [d.instances, used, plot.specIdx]);
+
+  const series = useMemo(() => {
+    const out = [];
+    const specTitleOf = (inst) => {
+      const p = computeParsed(inst.test);
+      const s = p.parsedSpectra[plot.specIdx];
+      return s ? (s.title || `Spectrum ${plot.specIdx + 1}`) : `Spectrum ${plot.specIdx + 1}`;
+    };
+    if (plot.yMode === 'ss') {
+      usedSSKeys.forEach((comp) => {
+        const pts = [];
+        d.instances.forEach((inst) => {
+          if (used[inst.id] === false) return;
+          const parsed = computeParsed(inst.test);
+          const spec = parsed.parsedSpectra[plot.specIdx];
+          if (!spec) return;
+          const fitRes = (inst.test.ssFits || {})[spec.id];
+          if (!fitRes) return;
+          const yVal = fitRes.fractions ? fitRes.fractions[comp] : fitRes[comp];
+          if (yVal === undefined) return;
+          pts.push({ instId: inst.id, name: inst.name, x: parseXValue(getExpValue(inst, effXField)), rawX: getExpValue(inst, effXField), x2: is3D ? parseXValue(getExpValue(inst, effXFields[1])) : undefined, y: yVal });
+        });
+        out.push({
+          key: `ss_${comp}`,
+          label: `${CD_FIT_COMPONENTS[comp]?.label || comp} — ${specTitleOf(d.activeInstance || d.instances[0])}`,
+          pts: pts.map((p) => ({ ...p, excluded: !!((plot.excluded[`ss_${comp}`] || {})[p.instId]) }))
+        });
+      });
+    } else {
+      const lam = parseManual(plot.lambda);
+      const pts = [];
+      if (lam !== null) {
+        d.instances.forEach((inst) => {
+          if (used[inst.id] === false) return;
+          const parsed = computeParsed(inst.test);
+          const v = valueAtWavelength(parsed, plot.specIdx, lam);
+          if (v === null) return;
+          pts.push({ instId: inst.id, name: inst.name, x: parseXValue(getExpValue(inst, effXField)), rawX: getExpValue(inst, effXField), x2: is3D ? parseXValue(getExpValue(inst, effXFields[1])) : undefined, y: v });
+        });
+      }
+      out.push({
+        key: 'intensity', label: `Intensity @ ${plot.lambda || '—'} nm (${specTitleOf(d.activeInstance || d.instances[0])})`,
+        pts: pts.map((p) => ({ ...p, excluded: !!((plot.excluded.intensity || {})[p.instId]) }))
+      });
+    }
+    return out;
+  }, [plot.yMode, plot.specIdx, plot.lambda, effXField, is3D, effXFields.join('|'), d.instances, plot.excluded, used, usedSSKeys, d.activeInstance]);
+
+  const colorOf = (s) =>
+    plot.yMode === 'ss'
+      ? (CD_FIT_COMPONENTS[s.key.replace('ss_', '')]?.color || seriesColor(cfg, s.key, series.findIndex((q) => q.key === s.key)))
+      : seriesColor(cfg, s.key, series.findIndex((q) => q.key === s.key));
+
+  const includedPts = (s) => s.pts.filter((p) => !p.excluded);
+
+  const effSD = (sKey, p) => {
+    const man = (plot.manualSD[sKey] || {})[p.instId];
+    if (typeof man === 'number' && Number.isFinite(man)) return man;
+    if (plot.useFixedSD) { const f = parseManual(plot.fixedSDStr); if (f !== null) return f; }
+    return null;
+  };
+  const setManualSD = (sKey, instId, val) => {
+    const inner = { ...(plot.manualSD[sKey] || {}) };
+    const n = parseManual(val);
+    if (n === null) delete inner[instId]; else inner[instId] = n;
+    set({ manualSD: { ...plot.manualSD, [sKey]: inner } });
+  };
+  const toggleExclude = (sKey, instId) => {
+    const inner = { ...(plot.excluded[sKey] || {}) };
+    if (inner[instId]) delete inner[instId]; else inner[instId] = true;
+    set({ excluded: { ...plot.excluded, [sKey]: inner } });
+  };
+
+  const fitOf = (s) => {
+    if (!plot.fitEnabled || isHist) return null;
+    const wpts = includedPts(s).filter((p) => Number.isFinite(p.x)).map((p) => {
+      const sd = effSD(s.key, p);
+      return { x: p.x, y: p.y, w: sd && sd > 0 ? 1 / (sd * sd) : 1 };
+    });
+    return runFitModel(plot.fitModel, plot.customExpr, wpts);
+  };
+  const fits = useMemo(() => {
+    const out = {}; series.forEach((s) => { out[s.key] = fitOf(s); }); return out;
+  }, [series, plot.fitEnabled, plot.fitModel, plot.customExpr, plot.chartType, plot.manualSD, plot.useFixedSD, plot.fixedSDStr]);
+
+  const autoTouch = (s) => {
+    const fit = fits[s.key] || fitOf(s);
+    if (!fit || !fit.f) return;
+    const inner = { ...(plot.manualSD[s.key] || {}) };
+    includedPts(s).forEach((p) => {
+      if (!Number.isFinite(p.x)) return;
+      inner[p.instId] = Math.ceil((Math.abs(p.y - fit.f(p.x)) * 1.02 + 0.01) * 100) / 100;
+    });
+    set({ manualSD: { ...plot.manualSD, [s.key]: inner } });
+  };
+  const resetSD = (sKey) => { const next = { ...plot.manualSD }; delete next[sKey]; set({ manualSD: next }); };
+  const cleanOutliers = (target) => {
+    const thresh = parseManual(plot.outlierThreshStr) || 2.5;
+    const excluded = JSON.parse(JSON.stringify(plot.excluded || {}));
+    const proc = (s) => {
+      for (let it = 0; it < 20; it++) {
+        const pts = s.pts.filter((p) => !((excluded[s.key] || {})[p.instId]) && Number.isFinite(p.x));
+        if (pts.length < 4) break;
+        const wpts = pts.map((p) => {
+          const sd = effSD(s.key, p);
+          return { x: p.x, y: p.y, w: sd && sd > 0 ? 1 / (sd * sd) : 1, p };
+        });
+        const fit = runFitModel(plot.fitModel, plot.customExpr, wpts);
+        if (!fit || !fit.f) break;
+        let worst = null, maxR = 0;
+        wpts.forEach((q) => {
+          const sd = effSD(s.key, q.p);
+          const err = sd && sd > 0 ? sd : 1;
+          const ratio = Math.abs(q.p.y - fit.f(q.p.x)) / err;
+          if (ratio > thresh && ratio > maxR) { maxR = ratio; worst = q.p; }
+        });
+        if (!worst) break;
+        excluded[s.key] = { ...(excluded[s.key] || {}), [worst.instId]: true };
+      }
+    };
+    (target ? [target] : series).forEach(proc);
+    set({ excluded });
+  };
+  const restoreExcluded = () => set({ excluded: {} });
+
+  // ===== Experimental-condition compatibility warnings =====
+  // When plotting Y as a function of the chosen variable field(s), every OTHER
+  // experimental condition should be held constant across the instances being
+  // compared. If it isn't (e.g. plotting vs temperature & pH while concentration
+  // silently differs between spectra), the fit/plot is scientifically misleading.
+  const conditionWarnings = useMemo(() => {
+    const includedInstIds = new Set();
+    series.forEach((s) => s.pts.forEach((p) => { if (!p.excluded) includedInstIds.add(p.instId); }));
+    const relevant = d.instances.filter((inst) => used[inst.id] !== false && includedInstIds.has(inst.id));
+    if (relevant.length < 2) return [];
+    const issues = [];
+
+    // Variable field(s): flag inconsistent units (e.g. one spectrum's temperature
+    // in degC, another in K) — the x-values would not be directly comparable.
+    effXFields.forEach((fk) => {
+      const f = CD_EXPERIMENTAL_FIELDS.find((x) => x.key === fk);
+      if (!f || !f.unitKey) return;
+      const withUnit = relevant
+        .map((inst) => ({ inst, unit: getExpUnit(inst, f) || f.units[0] }))
+        .filter((v) => getExpValue(v.inst, f.key) !== '');
+      const unitSet = new Set(withUnit.map((v) => v.unit));
+      if (unitSet.size > 1) {
+        const majorityUnit = [...unitSet].sort((a, b) =>
+          withUnit.filter((v) => v.unit === b).length - withUnit.filter((v) => v.unit === a).length
+        )[0];
+        issues.push({
+          field: f,
+          isUnitMismatch: true,
+          refValue: majorityUnit,
+          offenders: withUnit.filter((v) => v.unit !== majorityUnit).map((v) => ({ instId: v.inst.id, name: v.inst.name, value: v.unit }))
+        });
+      }
+    });
+
+    // Other (non-variable) fields: flag differing values across the compared spectra.
+    const others = CD_EXPERIMENTAL_FIELDS.filter((f) => !effXFields.includes(f.key));
+    const norm = (raw) => { const n = parseManual(raw); return n !== null ? Math.round(n * 1e6) / 1e6 : String(raw).trim().toLowerCase(); };
+    others.forEach((f) => {
+      const valued = relevant
+        .map((inst) => ({ inst, raw: getExpValue(inst, f.key) }))
+        .filter((v) => v.raw !== '' && v.raw !== undefined && v.raw !== null);
+      if (valued.length < 2) return;
+      const counts = new Map();
+      valued.forEach((v) => { const k = norm(v.raw); counts.set(k, (counts.get(k) || 0) + 1); });
+      if (counts.size <= 1) return;
+      let refKey = null, refCount = -1;
+      counts.forEach((cnt, k) => { if (cnt > refCount) { refCount = cnt; refKey = k; } });
+      const refValue = valued.find((v) => norm(v.raw) === refKey)?.raw;
+      const offenders = valued.filter((v) => norm(v.raw) !== refKey).map((v) => ({ instId: v.inst.id, name: v.inst.name, value: v.raw }));
+      if (offenders.length) issues.push({ field: f, refValue, offenders });
+    });
+    return issues;
+  }, [series, effXFields.join('|'), d.instances, used]);
+
+  const autoDropIncompatible = () => {
+    const nextUsed = { ...used };
+    conditionWarnings.forEach((issue) => issue.offenders.forEach((o) => { nextUsed[o.instId] = false; }));
+    set({ usedInstances: nextUsed });
+  };
+
+  const visibleSeries = series.filter((s) => !plot.hiddenSeries[s.key]);
+  const xs = visibleSeries.flatMap((s) => includedPts(s).filter((p) => Number.isFinite(p.x)).map((p) => p.x));
+  const padX = xs.length ? ((Math.max(...xs) - Math.min(...xs)) * 0.06 || 1) : 1;
+  const dataDomain = xs.length ? [Math.min(...xs) - padX, Math.max(...xs) + padX] : [0, 1];
+  const zoom = useXZoom(chartRef, dataDomain);
+
+  const numData = (s) => includedPts(s).filter((p) => Number.isFinite(p.x)).sort((a, b) => a.x - b.x).map((p) => ({ x: p.x, y: p.y, sd: effSD(s.key, p), name: p.name }));
+  const excludedPts = (s) => s.pts.filter((p) => p.excluded && Number.isFinite(p.x)).sort((a, b) => a.x - b.x).map((p) => ({ x: p.x, y: p.y, name: p.name }));
+  const fitData = (s) => {
+    const fit = fits[s.key];
+    if (!fit || !fit.f) return [];
+    const [mn, mx] = zoom.domain;
+    if (!(mx > mn)) return [];
+    const out = [];
+    for (let i = 0; i <= 60; i++) { const x = mn + ((mx - mn) * i) / 60; out.push({ x, y: fit.f(x) }); }
+    return out;
+  };
+  const histData = useMemo(() => {
+    return d.instances.filter((inst) => used[inst.id] !== false).map((inst) => {
+      const row = { __condition: inst.name };
+      series.forEach((s) => {
+        const p = s.pts.find((q) => q.instId === inst.id);
+        if (p && !p.excluded) { row[s.key] = p.y; row[`${s.key}__sd`] = effSD(s.key, p); } 
+        else { row[s.key] = null; row[`${s.key}__sd`] = null; }
+      });
+      return row;
+    });
+  }, [d.instances, series, used, plot.manualSD, plot.useFixedSD, plot.fixedSDStr]);
+
+  const makeDot = (color, s) => (props) => {
+    const { cx, cy, index } = props;
+    if (cx == null || cy == null) return <g key={`d-${s.key}-${index}`} />;
+    const r = cfg.ptSize || 5;
+    const style = cfg.ptStyle;
+    let el;
+    if (style === 'square' || style === 'rect') el = <rect x={cx - r} y={cy - r} width={2 * r} height={2 * r} fill={color} />;
+    else if (style === 'rectRot') el = <rect x={cx - r} y={cy - r} width={2 * r} height={2 * r} fill={color} transform={`rotate(45 ${cx} ${cy})`} />;
+    else if (style === 'triangle') el = <polygon points={`${cx},${cy - r} ${cx - r},${cy + r} ${cx + r},${cy + r}`} fill={color} />;
+    else if (style === 'cross') el = <g><line x1={cx - r} y1={cy} x2={cx + r} y2={cy} stroke={color} strokeWidth={2} /><line x1={cx} y1={cy - r} x2={cx} y2={cy + r} stroke={color} strokeWidth={2} /></g>;
+    else if (style === 'crossRot') el = <g><line x1={cx - r} y1={cy - r} x2={cx + r} y2={cy + r} stroke={color} strokeWidth={2} /><line x1={cx - r} y1={cy + r} x2={cx + r} y2={cy - r} stroke={color} strokeWidth={2} /></g>;
+    else if (style === 'star') el = <g><line x1={cx - r} y1={cy} x2={cx + r} y2={cy} stroke={color} strokeWidth={2} /><line x1={cx} y1={cy - r} x2={cx} y2={cy + r} stroke={color} strokeWidth={2} /><line x1={cx - r} y1={cy - r} x2={cx + r} y2={cy + r} stroke={color} strokeWidth={1.5} /><line x1={cx - r} y1={cy + r} x2={cx + r} y2={cy - r} stroke={color} strokeWidth={1.5} /></g>;
+    else el = <circle cx={cx} cy={cy} r={r} fill={color} />;
+    return <g key={`d-${s.key}-${index}`}>{el}</g>;
+  };
+
+  const yLab = cfg.yAxisLabel || (plot.yMode === 'ss' ? 'Component Fraction (%)' : `CD intensity (${(d.activeInstance && d.activeInstance.test.yUnit === 'theta') ? 'deg·cm²·dmol⁻¹' : 'mdeg'})`);
+  const xLab = cfg.xAxisLabel || `${xFieldLabel} (per condition)`;
+  const yUnitSuffix = xFieldDef && xFieldDef.unitKey && d.activeInstance ? getExpUnit(d.activeInstance, xFieldDef) : '';
+
+  const paramKeys = useMemo(() => {
+    if (!plot.fitEnabled || isHist || !series.length) return [];
+    return fitParamOptions(plot.fitModel, plot.customExpr);
+  }, [plot.fitEnabled, plot.fitModel, plot.customExpr, series, isHist]);
+  const [paramGraphVar, setParamGraphVar] = useState('');
+  useEffect(() => { if (!paramKeys.includes(paramGraphVar)) setParamGraphVar(paramKeys[0] || ''); }, [paramKeys, paramGraphVar]);
+  const paramData = useMemo(() => {
+    if (!paramGraphVar) return [];
+    return series.map((s) => {
+      const f = fits[s.key]; if (!f) return null;
+      const val = extractFitParam(f, plot.fitModel, paramGraphVar);
+      const err = plot.fitModel === 'custom' ? f.paramsErr?.[paramGraphVar] : f[`${paramGraphVar}Err`];
+      if (val === undefined || val === null) return null;
+      return { name: s.label, val, err: err || 0, fill: colorOf(s) };
     }).filter(Boolean);
-    return `<h3 style="font-size:14px;font-weight:bold;margin-bottom:8px">Secondary Structure</h3><table style="width:100%;border-collapse:collapse;font-size:11px"><thead><tr><th style="padding:4px 8px;border:1px solid #e2e8f0;background:#f8fafc">Instance</th><th style="padding:4px 8px;border:1px solid #e2e8f0;background:#f8fafc">alpha-Helix</th><th style="padding:4px 8px;border:1px solid #e2e8f0;background:#f8fafc">beta-Sheet</th><th style="padding:4px 8px;border:1px solid #e2e8f0;background:#f8fafc">Turn</th><th style="padding:4px 8px;border:1px solid #e2e8f0;background:#f8fafc">Coil</th><th style="padding:4px 8px;border:1px solid #e2e8f0;background:#f8fafc">R2</th></tr></thead><tbody>${rows.join('')}</tbody></table>`;
+  }, [series, fits, paramGraphVar, plot.fitModel, cfg.colors]);
+  const paramYDataDomain = useMemo(() => {
+    const vals = paramData.flatMap((p) => [p.val - Math.abs(p.err || 0), p.val + Math.abs(p.err || 0)]);
+    if (!vals.length) return [0, 1];
+    const min = Math.min(0, ...vals);
+    const max = Math.max(...vals);
+    const pad = (max - min) * 0.1 || Math.abs(max) * 0.1 || 1;
+    return [min - pad, max + pad];
+  }, [paramData]);
+  const fitChartRef = useRef(null);
+  const fitZoom = useYZoom(fitChartRef, paramYDataDomain);
+
+  const refLines = (
+    <>
+      {(plot.hLines || []).map((h) => {
+        const v = parseManual(h.value);
+        if (v === null) return null;
+        return <ReferenceLine key={h.id} y={v} stroke={h.color || '#64748b'} strokeDasharray="4 4" ifOverflow="extendDomain" label={{ value: h.label || `y=${v}`, fill: h.color || '#64748b', fontSize: Math.max(9, cfg.fontSize - 1), position: 'insideTopRight' }} />;
+      })}
+    </>
+  );
+
+  return (
+    <CollapsibleSection
+      title={plot.title} icon="📈" defaultOpen={true}
+      headerExtra={
+        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+          <span role="button" onClick={(e) => { e.stopPropagation(); const nn = window.prompt('Rename plot:', plot.title); if (nn && nn.trim()) set({ title: nn.trim() }); }} className="text-slate-400 hover:text-blue-600 cursor-pointer text-lg leading-none" title="Rename">✏️</span>
+          <span role="button" onClick={(e) => { e.stopPropagation(); duplicatePlot(plot); }} className="text-slate-400 hover:text-blue-600 cursor-pointer text-lg leading-none" title="Duplicate">⧉</span>
+          <span role="button" onClick={(e) => { e.stopPropagation(); removePlot(plot.id); }} className="text-slate-400 hover:text-red-500 cursor-pointer text-lg leading-none" title="Remove">×</span>
+        </div>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-wrap gap-3 items-end bg-slate-50 border border-slate-200 rounded-lg p-3">
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">Y axis</label>
+            <select value={plot.yMode} onChange={(e) => set({ yMode: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
+              <option value="ss">Component fractions % (from fits)</option>
+              <option value="intensity">Intensity at wavelength</option>
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">Spectrum slot</label>
+            <select value={plot.specIdx} onChange={(e) => set({ specIdx: parseInt(e.target.value, 10) || 0 })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
+              {Array.from({ length: Math.max(1, ...d.instances.map((i) => computeParsed(i.test).parsedSpectra.length)) }, (_, i) => (
+                <option key={i} value={i}>Spectrum {i + 1}</option>
+              ))}
+            </select>
+          </div>
+          {plot.yMode === 'intensity' && (
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-bold text-slate-500 uppercase">λ (nm)</label>
+              <input type="number" value={plot.lambda} onChange={(e) => set({ lambda: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs w-24 outline-none focus:border-blue-500" />
+            </div>
+          )}
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">Variable 1 (X)</label>
+            <select value={effXField} onChange={(e) => setXFields(is3D ? [e.target.value, effXFields[1]] : [e.target.value])} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
+              {CD_EXPERIMENTAL_FIELDS.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">Variable 2 (3D)</label>
+            <select
+              value={is3D ? effXFields[1] : ''}
+              onChange={(e) => setXFields(e.target.value ? [effXField, e.target.value] : [effXField])}
+              className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold"
+            >
+              <option value="">— none (2D) —</option>
+              {CD_EXPERIMENTAL_FIELDS.filter((f) => f.key !== effXField).map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">Type</label>
+            <select value={plot.chartType} onChange={(e) => set({ chartType: e.target.value })} disabled={is3D} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold disabled:opacity-40 disabled:cursor-not-allowed">
+              <option value="line">Line / Scatter (zoomable)</option>
+              <option value="hist">Histogram (per condition)</option>
+            </select>
+            {is3D && <span className="text-[9px] text-slate-400">3D scatter (2 variables set)</span>}
+          </div>
+          {!isHist && !is3D && (
+            <label className="flex items-center gap-2 text-xs font-bold text-slate-700 pb-1.5 cursor-pointer">
+              <input type="checkbox" checked={plot.fitEnabled} onChange={(e) => set({ fitEnabled: e.target.checked })} className="w-4 h-4 accent-blue-600" />
+              Fit curve
+            </label>
+          )}
+          {plot.fitEnabled && !isHist && !is3D && (
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-bold text-slate-500 uppercase">Model</label>
+              <div className="flex gap-2 items-center">
+                <select value={plot.fitModel} onChange={(e) => set({ fitModel: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
+                  <option value="linear">Linear (weighted)</option>
+                  <option value="4pl">4PL logistic (weighted)</option>
+                  <option value="custom">Custom Equation</option>
+                </select>
+                {plot.fitModel === 'custom' && (
+                  <input type="text" value={plot.customExpr || ''} onChange={(e) => set({ customExpr: e.target.value })} placeholder="e.g. a*exp(-b*x)+c" className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-500 w-44 bg-white" />
+                )}
+              </div>
+            </div>
+          )}
+          <div className="ml-auto flex gap-2">
+            <button type="button" onClick={() => setShowErr(!showErr)} className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${showErr ? 'bg-orange-100 border-orange-400 text-orange-800' : 'bg-white border-orange-300 text-orange-700 hover:bg-orange-50'}`}>⚠️ Error Management</button>
+            <button type="button" onClick={() => setShowCfg(!showCfg)} className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${showCfg ? 'bg-slate-200 border-slate-400 text-slate-900' : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'}`}>🎨 Graphical Parameters</button>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 bg-white border border-slate-200 rounded-lg p-2">
+          <span className="text-[10px] font-bold text-slate-500 uppercase">Conditions used:</span>
+          {d.instances.map((inst) => (
+            <label key={inst.id} className={`flex items-center gap-1.5 text-xs font-bold px-2 py-1 rounded-lg border cursor-pointer ${used[inst.id] === false ? 'bg-slate-100 border-slate-200 text-slate-400' : 'bg-blue-50 border-blue-200 text-blue-800'}`}>
+              <input type="checkbox" checked={used[inst.id] !== false} onChange={() => set({ usedInstances: { ...used, [inst.id]: used[inst.id] === false ? undefined : false } })} className="w-3.5 h-3.5 accent-blue-600" />
+              {inst.name}
+              <span className="text-[9px] font-mono opacity-70">
+                ({xFieldLabel}: {getExpValue(inst, effXField) || '—'}{is3D ? `, ${xField2Label}: ${getExpValue(inst, effXFields[1]) || '—'}` : ''})
+              </span>
+            </label>
+          ))}
+        </div>
+
+        {conditionWarnings.length > 0 && (
+          <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 flex flex-col gap-2">
+            <div className="flex items-start gap-2">
+              <span className="text-lg leading-none">⚠️</span>
+              <div className="flex-1 text-xs text-amber-900">
+                <p className="font-bold uppercase mb-1">
+                  Conditions not set as variables differ between the spectra used in this plot
+                </p>
+                <ul className="list-disc list-inside space-y-0.5">
+                  {conditionWarnings.map((issue) => (
+                    <li key={issue.field.key + (issue.isUnitMismatch ? '-unit' : '')}>
+                      {issue.isUnitMismatch ? (
+                        <><b>{issue.field.label}</b> — most spectra use <span className="font-mono">{issue.refValue}</span>, but {issue.offenders.map((o) => `${o.name} (${o.value})`).join(', ')} {issue.offenders.length === 1 ? 'uses' : 'use'} a different unit — values are not directly comparable.</>
+                      ) : (
+                        <><b>{issue.field.label}</b> — most spectra use <span className="font-mono">{String(issue.refValue)}</span>, but {issue.offenders.map((o) => `${o.name} (${o.value})`).join(', ')} {issue.offenders.length === 1 ? 'differs' : 'differ'}.</>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-1 text-amber-700">
+                  Mixing spectra with different {conditionWarnings.map((i) => i.field.label).join(', ')} can make this {is3D ? '3D plot' : 'fit'} misleading, since only {is3D ? `${xFieldLabel} and ${xField2Label}` : xFieldLabel} {is3D ? 'are' : 'is'} being treated as the variable(s).
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button type="button" onClick={autoDropIncompatible} className="text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded-lg shadow-sm w-fit">
+                🧹 Auto-drop incompatible spectra
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="flex flex-col lg:flex-row gap-6">
+          <div className="w-full lg:w-64 flex flex-col gap-2 shrink-0">
+            <label className="text-xs font-bold text-slate-600 uppercase">Series</label>
+            {series.map((s) => (
+              <label key={s.key} className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-2 py-1 rounded-lg text-xs font-bold text-slate-700 cursor-pointer">
+                <input type="checkbox" checked={!plot.hiddenSeries[s.key]} onChange={() => set({ hiddenSeries: { ...plot.hiddenSeries, [s.key]: !plot.hiddenSeries[s.key] } })} className="w-3.5 h-3.5 accent-blue-600" />
+                <span className="w-3 h-3 rounded-full inline-block" style={{ backgroundColor: colorOf(s) }} />
+                <span className="truncate">{s.label}</span>
+              </label>
+            ))}
+          </div>
+
+          <div className="flex-1 min-w-0 flex flex-col gap-3">
+            {series.length === 0 || visibleSeries.length === 0 ? (
+              <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">
+                No data — run at least one spectrum fit (ss mode) or check spectra/wavelength (intensity mode).
+              </div>
+            ) : (
+              <>
+                {fs && <div className={OVERLAY_CLASSES} onClick={() => setFs(false)} />}
+                <div className={`flex flex-col ${fs ? FS_CLASSES + ' p-6' : ''}`}>
+                  <div className="flex justify-between items-center mb-2 shrink-0">
+                    <span className="text-xs font-bold text-slate-600 uppercase">{plot.title}</span>
+                    <div className="flex gap-2">
+                      {!isHist && zoom.isZoomed && <button type="button" onClick={zoom.reset} className="text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
+                      <button type="button" onClick={() => setFs(!fs)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 text-[10px]">{fs ? '↙️' : '↗️'}</button>
+                    </div>
+                  </div>
+                  <div ref={chartRef} onMouseDown={(isHist || is3D) ? undefined : zoom.onMouseDown} style={fs ? { flex: 1, minHeight: 0 } : chartBoxStyle(cfg)} className="bg-white border border-slate-200 rounded-xl p-3 select-none relative">
+                    {is3D ? (
+                      <Condition3DScatter
+                        series={visibleSeries}
+                        colorOf={colorOf}
+                        includedPts={includedPts}
+                        xLabel={`${xFieldLabel}${(xFieldDef && xFieldDef.unitKey && d.activeInstance && getExpUnit(d.activeInstance, xFieldDef)) ? ` (${getExpUnit(d.activeInstance, xFieldDef)})` : ''}`}
+                        yLabel={`${xField2Label}${(xField2Def && xField2Def.unitKey && d.activeInstance && getExpUnit(d.activeInstance, xField2Def)) ? ` (${getExpUnit(d.activeInstance, xField2Def)})` : ''}`}
+                        zLabel={yLab}
+                        cfg={cfg}
+                        height={fs ? undefined : (cfg.height || 380)}
+                        chartType={plot.chartType3D || 'scatter'}
+                        setChartType={(t) => set({ chartType3D: t })}
+                      />
+                    ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      {isHist ? (
+                        <BarChart data={histData} margin={{ top: 8, right: 16, bottom: 30, left: 12 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                          <XAxis dataKey="__condition" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} />} tickMargin={10} label={{ value: 'Condition', position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                          <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={{ value: yLab, angle: -90, position: 'insideLeft', offset: 6, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                          <Tooltip />
+                          {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 10 }} />}
+                          {refLines}
+                          {visibleSeries.map((s) => {
+                            const color = colorOf(s);
+                            return (
+                              <Bar key={s.key} dataKey={s.key} name={s.label} fill={color} radius={[cfg.barRadius || 3, cfg.barRadius || 3, 0, 0]} isAnimationActive={false}>
+                                {HAS_EB && plot.showErrors && <ErrorBar dataKey={`${s.key}__sd`} width={4} strokeWidth={1} direction="y" color={color} />}
+                              </Bar>
+                            );
+                          })}
+                        </BarChart>
+                      ) : (
+                        <LineChart margin={{ top: 8, right: 16, bottom: 30, left: 12 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                          <XAxis type="number" dataKey="x" domain={[dom(cfg.xMin) ?? zoom.domain[0], dom(cfg.xMax) ?? zoom.domain[1]]} ticks={makeTicks(zoom.domain, cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} />} tickMargin={10} allowDataOverflow label={{ value: `${xLab}${yUnitSuffix ? ` (${yUnitSuffix})` : ''}`, position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                          <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} allowDataOverflow label={{ value: yLab, angle: -90, position: 'insideLeft', offset: 6, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                          <Tooltip />
+                          {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 10 }} />}
+                          {refLines}
+                          {visibleSeries.map((s) => {
+                            const color = colorOf(s);
+                            return (
+                              <React.Fragment key={s.key}>
+                                <Line data={numData(s)} type="monotone" dataKey="y" name={s.label} stroke={color} strokeWidth={cfg.lineThickness || 2} strokeDasharray={lineDash(cfg.lineStyle)} dot={plot.showPoints ? makeDot(color, s) : false} connectNulls isAnimationActive={false}>
+                                  {HAS_EB && plot.showErrors && <ErrorBar dataKey="sd" width={4} strokeWidth={1} direction="y" color={color} />}
+                                </Line>
+                                {plot.fitEnabled && plot.showFit && fits[s.key] && (
+                                  <Line data={fitData(s)} type="monotone" dataKey="y" name={`${s.label} (fit)`} stroke={color} strokeWidth={1.5} strokeDasharray="8 4" dot={false} legendType="none" isAnimationActive={false} />
+                                )}
+                                {plot.showExcl && (
+                                  <Line
+                                    data={excludedPts(s)} type="monotone" dataKey="y" name={`${s.label} (excluded)`}
+                                    stroke="transparent" legendType="none" isAnimationActive={false} connectNulls
+                                    dot={(props) => {
+                                      const { cx, cy, index } = props;
+                                      if (cx == null || cy == null) return <g key={`ex-${s.key}-${index}`} />;
+                                      const r = (cfg.ptSize || 5) + 1;
+                                      return <circle key={`ex-${s.key}-${index}`} cx={cx} cy={cy} r={r} fill="none" stroke={color} strokeWidth={1.5} strokeDasharray="2 2" opacity={0.6} />;
+                                    }}
+                                  />
+                                )}
+                              </React.Fragment>
+                            );
+                          })}
+                          {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
+                        </LineChart>
+                      )}
+                    </ResponsiveContainer>
+                    )}
+                  </div>
+                  {!isHist && !is3D && <p className="text-[10px] text-slate-400 mt-1">💡 Drag with the mouse across the graph to zoom. Points without a numeric {xFieldLabel} are omitted in line mode.</p>}
+                  {is3D && <p className="text-[10px] text-slate-400 mt-1">💡 3D scatter: {xFieldLabel} × {xField2Label} × {yLab}. Hover a point for its exact values.</p>}
+                </div>
+              </>
+            )}
+
+            {plot.fitEnabled && !isHist && !is3D && series.length > 0 && (
+              <div className="flex flex-col gap-4">
+                <div className="overflow-x-auto border border-slate-200 rounded-lg">
+                  <table className="w-full text-xs text-left bg-white">
+                    <thead className="bg-slate-100 text-slate-500 uppercase">
+                      <tr><th className="px-3 py-2">Series</th><th className="px-3 py-2">Model</th><th className="px-3 py-2">Parameters (weighted)</th><th className="px-3 py-2">SE</th></tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {series.map((s) => {
+                        const f = fits[s.key];
+                        return (
+                          <tr key={s.key}>
+                            <td className="px-3 py-1.5 font-bold text-slate-700">{s.label}</td>
+                            <td className="px-3 py-1.5">{f ? (plot.fitModel === 'linear' ? 'Linear' : plot.fitModel === '4pl' ? '4PL' : 'Custom') : '—'}</td>
+                            <td className="px-3 py-1.5 font-mono text-slate-600">
+                              {f
+                                ? plot.fitModel === 'linear'
+                                  ? `slope=${Number(f.slope || 0).toFixed(4)}±${Number(f.slopeErr || 0).toFixed(4)}; int=${Number(f.intercept || 0).toFixed(4)}±${Number(f.interceptErr || 0).toFixed(4)}; R²=${Number(f.r2 || 0).toFixed(3)}`
+                                  : plot.fitModel === '4pl'
+                                    ? `Top=${Number(f.top || 0).toFixed(3)}; Bottom=${Number(f.bottom || 0).toFixed(3)}; EC50=${Number(f.ic50 || 0).toFixed(3)}; Hill=${Number(f.hill || 0).toFixed(3)}; R²=${Number(f.r2 || 0).toFixed(3)}`
+                                    : `${Object.entries(f.params || {}).map(([k, v]) => `${k}=${Number(v || 0).toFixed(4)}`).join('; ')}; R²=${Number(f.r2 || 0).toFixed(3)}`
+                                : 'not enough points'}
+                            </td>
+                            <td className="px-3 py-1.5 font-mono text-slate-600">{f ? (f.se ?? 0).toFixed(3) : '—'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {paramKeys.length > 0 && paramData.length > 0 && (
+                  <div className="bg-white border border-slate-200 rounded-lg p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-xs font-bold text-slate-700">Fitted Parameter Chart</label>
+                      <div className="flex items-center gap-2">
+                        {fitZoom.isZoomed && <button type="button" onClick={fitZoom.reset} className="text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
+                        <select value={paramGraphVar} onChange={(e) => setParamGraphVar(e.target.value)} className="border border-slate-300 rounded px-2 py-1 text-xs">
+                          {paramKeys.map((k) => <option key={k} value={k}>{k}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div ref={fitChartRef} onMouseDown={fitZoom.onMouseDown} style={{ height: Math.min(280, cfg.height), aspectRatio: String(cfg.aspect || 2) }} className="select-none">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={paramData} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                          <XAxis dataKey="name" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={Math.max(9, cfg.fontSize - 2)} />} />
+                          <YAxis domain={[dom(cfg.yMin) ?? fitZoom.domain[0], dom(cfg.yMax) ?? fitZoom.domain[1]]} allowDataOverflow tick={{ fontSize: Math.max(9, cfg.fontSize - 2) }} label={{ value: paramGraphVar, angle: -90, position: 'insideLeft', fontSize: cfg.fontSize, fill: '#64748b' }} />
+                          <Tooltip />
+                          <Bar dataKey="val" isAnimationActive={false}>
+                            {paramData.map((entry, idx) => <Cell key={idx} fill={entry.fill} />)}
+                            {HAS_EB && <ErrorBar dataKey="err" width={4} strokeWidth={1} color="#333" />}
+                          </Bar>
+                          {fitZoom.refLo !== null && fitZoom.refHi !== null && <ReferenceArea y1={fitZoom.refLo} y2={fitZoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-1">💡 Drag vertically to zoom into a Y range, or set fixed Y Min/Max in Graphical Parameters.</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {showCfg && (
+          <GraphConfigPanel
+            cfg={cfg}
+            setCfg={setCfg}
+            series={series.map((s) => ({ key: s.key, label: s.label, color: colorOf(s) }))}
+            unit={xFieldDef && xFieldDef.unitKey && d.activeInstance ? (getExpUnit(d.activeInstance, xFieldDef) || 'a.u.') : 'a.u.'}
+          />
+        )}
+
+        {showErr && !is3D && (
+          <div className="flex flex-col gap-4">
+            <ErrorTreatmentPanel
+              plot={plot}
+              set={set}
+              showFitToggle={!isHist}
+              customActions={
+                <>
+                  <button type="button" onClick={() => cleanOutliers()} className="bg-orange-600 hover:bg-orange-700 text-white font-bold px-3 py-2 rounded-lg text-xs shadow-sm whitespace-nowrap">🧹 Clean outliers (all series)</button>
+                  <button type="button" onClick={restoreExcluded} className="bg-white border border-orange-300 text-orange-700 hover:bg-orange-100 font-bold px-3 py-2 rounded-lg text-xs shadow-sm whitespace-nowrap">↩️ Restore all excluded points</button>
+                </>
+              }
+            />
+
+            {series.length === 0 ? (
+              <p className="text-xs text-orange-700 italic">No series to manage yet.</p>
+            ) : (
+              series.map((s) => (
+                <div key={s.key} className="bg-white border border-orange-200 rounded-lg p-3 flex flex-col gap-2">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <span className="text-xs font-bold" style={{ color: colorOf(s) }}>{s.label}</span>
+                    <div className="flex gap-2">
+                      <button type="button" onClick={() => cleanOutliers(s)} className="text-[10px] font-bold bg-orange-100 hover:bg-orange-200 text-orange-800 px-2 py-1 rounded">Clean outliers (this series)</button>
+                      <button type="button" onClick={() => autoTouch(s)} className="text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-1 rounded">Auto-set SD from fit residual</button>
+                      <button type="button" onClick={() => resetSD(s.key)} className="text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-1 rounded">Reset manual SD</button>
+                    </div>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-[11px] text-left">
+                      <thead className="text-slate-400 uppercase">
+                        <tr>
+                          <th className="px-2 py-1">Drop</th>
+                          <th className="px-2 py-1">Condition</th>
+                          <th className="px-2 py-1">{xFieldLabel}</th>
+                          {is3D && <th className="px-2 py-1">{xField2Label}</th>}
+                          <th className="px-2 py-1">Value</th>
+                          <th className="px-2 py-1">Manual SD</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {s.pts.map((p) => (
+                          <tr key={p.instId} className={p.excluded ? 'opacity-40' : ''}>
+                            <td className="px-2 py-1">
+                              <input type="checkbox" checked={!!p.excluded} onChange={() => toggleExclude(s.key, p.instId)} className="w-3.5 h-3.5 accent-red-600" title="Drop this point" />
+                            </td>
+                            <td className="px-2 py-1 font-bold text-slate-700">{p.name}</td>
+                            <td className="px-2 py-1 font-mono text-slate-600">{p.rawX || '—'}</td>
+                            {is3D && <td className="px-2 py-1 font-mono text-slate-600">{Number.isFinite(p.x2) ? fmt3D(p.x2) : '—'}</td>}
+                            <td className="px-2 py-1 font-mono text-slate-600">{Number(p.y).toFixed(3)}</td>
+                            <td className="px-2 py-1">
+                              <input
+                                type="number" step="0.01" placeholder={plot.useFixedSD ? plot.fixedSDStr || 'fixed' : 'auto'}
+                                value={(plot.manualSD[s.key] || {})[p.instId] ?? ''}
+                                onChange={(e) => setManualSD(s.key, p.instId, e.target.value)}
+                                className="border border-slate-200 rounded px-1.5 py-0.5 text-[11px] w-20 outline-none focus:border-orange-500"
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+    </CollapsibleSection>
+  );
+};
+
+const ConditionFittingSection = ({ ctx }) => {
+  const { activeTest, updateActiveTest } = ctx;
+  const d = useCdDerived(activeTest, ctx);
+  const plots = Array.isArray(activeTest.conditionPlots) && activeTest.conditionPlots.length
+    ? activeTest.conditionPlots
+    : [defaultCdConditionPlot(1)];
+  const updatePlot = (id, patch) => updateActiveTest({ conditionPlots: plots.map((p) => (p.id === id ? { ...p, ...patch } : p)) });
+  const addPlot = () => updateActiveTest({ conditionPlots: [...plots, defaultCdConditionPlot(plots.length + 1)] });
+  const removePlot = (id) => {
+    if (plots.length <= 1) { alert('At least one condition plot is required.'); return; }
+    updateActiveTest({ conditionPlots: plots.filter((p) => p.id !== id) });
+  };
+  const duplicatePlot = (p) => updateActiveTest({ conditionPlots: [...plots, { ...JSON.parse(JSON.stringify(p)), id: makeId('cdplot'), title: `${p.title} (copy)` }] });
+  return (
+    <div className="flex flex-col gap-4 border border-slate-200 rounded-xl p-4 bg-white shadow-sm">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h4 className="text-sm font-bold text-slate-700">📊 Fitting — Condition Plots</h4>
+          <span className="text-xs font-bold text-slate-500 uppercase">X = any Experimental-Conditions parameter · Y = SS % or intensity at λ</span>
+        </div>
+        <button type="button" onClick={addPlot} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm">+ Add Condition Plot</button>
+      </div>
+      {plots.map((p) => <ConditionPlotPanel key={p.id} ctx={ctx} d={d} plot={p} updatePlot={updatePlot} removePlot={removePlot} duplicatePlot={duplicatePlot} />)}
+    </div>
+  );
+};
+
+export const DataAnalysis = ({ ctx }) => (
+  <CollapsibleSection title="Data Analysis" icon="📐" defaultOpen={true}>
+    <div className="flex flex-col gap-6">
+      <SpectraVisualization ctx={ctx} />
+      <SpectrumFitting ctx={ctx} />
+      <ConditionFittingSection ctx={ctx} />
+    </div>
+  </CollapsibleSection>
+);
+
+/* ========================================================================
+SIMULATIONS — 1) PROTEIN CD MIXER
+======================================================================== */
+const ProteinCDMixer = ({ isExpanded, onToggleExpand }) => {
+  const canvasRef = useRef(null);
+  const wrapRef = useRef(null);
+  const { width, height } = useElementSize(wrapRef);
+  const [compositions, setCompositions] = useState({ helix: 0, sheet: 0, turn: 0, coil: 100 });
+  const [autoNormalize, setAutoNormalize] = useState(true);
+  
+  const updateComp = (key, val) => {
+    const newVal = Math.max(0, Math.min(100, val));
+    const newComps = { ...compositions, [key]: newVal };
+    if (autoNormalize) {
+      let currentTotal = 0;
+      const others = Object.keys(newComps).filter((k) => k !== key);
+      others.forEach((k) => { currentTotal += newComps[k]; });
+      if (newVal + currentTotal > 100) {
+        const excess = newVal + currentTotal - 100;
+        if (currentTotal > 0) others.forEach((k) => { newComps[k] = Math.max(0, newComps[k] - Math.round(excess * (newComps[k] / currentTotal))); });
+        else others.forEach((k) => { newComps[k] = 0; });
+      }
+      const finalTotal = Object.values(newComps).reduce((a, b) => a + b, 0);
+      if (finalTotal !== 100 && finalTotal < 100) { const target = key !== 'coil' ? 'coil' : 'turn'; newComps[target] += 100 - finalTotal; }
+    }
+    setCompositions(newComps);
+  };
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || width < 80 || height < 80) return;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    const ctx2 = canvas.getContext('2d');
+    ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const W = width, H = height;
+    const wavelengths = [], values = [];
+    const pA = compositions.helix / 100, pB = compositions.sheet / 100, pT = compositions.turn / 100, pC = compositions.coil / 100;
+    for (let w = 176; w <= 260; w += 1) wavelengths.push(w), values.push(splineAlpha.at(w) * pA + splineBeta.at(w) * pB + splineTurn.at(w) * pT + splineCoil.at(w) * pC);
+    
+    const pad = { top: 20, right: 20, bottom: 40, left: 60 };
+    const plotW = W - pad.left - pad.right, plotH = H - pad.top - pad.bottom;
+    if (plotW <= 0 || plotH <= 0) return;
+    const xMin = 176, xMax = 260;
+    const yMin = Math.min(Math.min(...values), -40000), yMax = Math.max(Math.max(...values), 80000);
+    
+    ctx2.clearRect(0, 0, W, H);
+    ctx2.fillStyle = '#f8fafc';
+    ctx2.fillRect(0, 0, W, H);
+    ctx2.strokeStyle = '#e2e8f0';
+    ctx2.lineWidth = 0.5;
+    for (let x = Math.ceil(xMin / 10) * 10; x <= xMax; x += 10) {
+      const px = pad.left + ((x - xMin) / (xMax - xMin)) * plotW;
+      ctx2.beginPath(); ctx2.moveTo(px, pad.top); ctx2.lineTo(px, pad.top + plotH); ctx2.stroke();
+    }
+    const yTickStep = (yMax - yMin) > 100000 ? 20000 : 10000;
+    for (let y = Math.ceil(yMin / yTickStep) * yTickStep; y <= yMax; y += yTickStep) {
+      const py = pad.top + plotH - ((y - yMin) / (yMax - yMin)) * plotH;
+      ctx2.beginPath(); ctx2.moveTo(pad.left, py); ctx2.lineTo(pad.left + plotW, py); ctx2.stroke();
+    }
+    if (yMin < 0 && yMax > 0) {
+      const zeroY = pad.top + plotH - ((0 - yMin) / (yMax - yMin)) * plotH;
+      ctx2.strokeStyle = '#94a3b8'; ctx2.lineWidth = 1; ctx2.setLineDash([4, 4]);
+      ctx2.beginPath(); ctx2.moveTo(pad.left, zeroY); ctx2.lineTo(pad.left + plotW, zeroY); ctx2.stroke();
+      ctx2.setLineDash([]);
+    }
+    ctx2.strokeStyle = '#8e44ad'; ctx2.lineWidth = 2.5; ctx2.beginPath();
+    wavelengths.forEach((w, i) => {
+      const px = pad.left + ((w - xMin) / (xMax - xMin)) * plotW;
+      const py = pad.top + plotH - ((values[i] - yMin) / (yMax - yMin)) * plotH;
+      if (i === 0) ctx2.moveTo(px, py); else ctx2.lineTo(px, py);
+    });
+    ctx2.stroke();
+    ctx2.fillStyle = '#64748b'; ctx2.font = '11px sans-serif'; ctx2.textAlign = 'center';
+    for (let x = Math.ceil(xMin / 10) * 10; x <= xMax; x += 10) ctx2.fillText(x.toString(), pad.left + ((x - xMin) / (xMax - xMin)) * plotW, pad.top + plotH + 15);
+    ctx2.fillText('Wavelength (nm)', pad.left + plotW / 2, H - 5);
+    ctx2.textAlign = 'right';
+    for (let y = Math.ceil(yMin / yTickStep) * yTickStep; y <= yMax; y += yTickStep) ctx2.fillText(`${(y / 1000).toFixed(0)}k`, pad.left - 5, pad.top + plotH - ((y - yMin) / (yMax - yMin)) * plotH + 4);
+    ctx2.save();
+    ctx2.translate(12, pad.top + plotH / 2);
+    ctx2.rotate(-Math.PI / 2);
+    ctx2.textAlign = 'center';
+    ctx2.fillText('MRE (deg cm² dmol⁻¹)', 0, 0);
+    ctx2.restore();
+  }, [compositions, width, height]);
+
+  return (
+    <div className={`bg-white border border-slate-200 rounded-xl shadow-sm flex flex-col ${isExpanded ? ` ${FS_CLASSES} p-6 ` : 'break-inside-avoid p-4'}`}>
+      <div className="flex justify-between items-center mb-3 border-b pb-2 shrink-0">
+        <h4 className="font-bold text-slate-700 flex items-center gap-2"><span>🧬</span> Protein Secondary Structure Simulator</h4>
+        <button onClick={onToggleExpand} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors">{isExpanded ? '↙️' : '↗️'}</button>
+      </div>
+      <div className="flex flex-col lg:flex-row gap-4 flex-1 min-h-0">
+        <div className="flex-1 flex flex-col min-h-0">
+          <div ref={wrapRef} className={`relative rounded-lg border border-slate-200 bg-slate-50 overflow-hidden ${isExpanded ? 'flex-1 min-h-0' : 'h-[350px]'}`}>
+            <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
+          </div>
+        </div>
+        <div className="w-full lg:w-64 flex flex-col gap-3 shrink-0">
+          <div className="text-[10px] uppercase font-bold text-slate-500 mb-1">Composition</div>
+          {Object.entries(compositions).map(([key, val]) => {
+            const labels = { helix: 'α-Helix', sheet: 'β-Sheet', turn: 'Turn', coil: 'Random Coil' };
+            const colors = { helix: '#3b82f6', sheet: '#ef4444', turn: '#f59e0b', coil: '#94a3b8' };
+            return (
+              <div key={key} className="flex flex-col gap-1">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-bold" style={{ color: colors[key] }}>{labels[key]}</span>
+                  <span className="text-xs font-mono font-bold text-slate-700">{val}%</span>
+                </div>
+                <input type="range" min="0" max="100" value={val} onChange={(e) => updateComp(key, parseInt(e.target.value, 10))} className="w-full h-2 rounded-lg appearance-none cursor-pointer" style={{ accentColor: colors[key] }} />
+              </div>
+            );
+          })}
+          <div className="border-t border-slate-200 pt-2 mt-1">
+            <div className="flex justify-between text-xs font-bold text-slate-600 mb-2">
+              <span>Total:</span>
+              <span className={Object.values(compositions).reduce((a, b) => a + b, 0) === 100 ? 'text-emerald-600' : 'text-red-500'}>{Object.values(compositions).reduce((a, b) => a + b, 0)}%</span>
+            </div>
+            <label className="flex items-center gap-2 text-[10px] text-slate-600 cursor-pointer">
+              <input type="checkbox" checked={autoNormalize} onChange={(e) => setAutoNormalize(e.target.checked)} className="w-3 h-3 accent-blue-600" />
+              Auto-normalize to 100%
+            </label>
+            <button onClick={() => setCompositions({ helix: 0, sheet: 0, turn: 0, coil: 100 })} className="mt-2 w-full text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-1.5 rounded transition-colors">Reset to 100% Coil</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* ========================================================================
+SIMULATIONS — 2) CD SPECTRA LIBRARY + MIXTURE SIMULATOR
+======================================================================== */
+const CD_LIBRARY_TABS = [
+  { id: 'protein', label: 'Protein Structures' },
+  { id: 'dna', label: 'DNA Helices' },
+  { id: 'gq', label: 'G-Quadruplexes' },
+  { id: 'dnaPepAlpha', label: 'DNA+Pep (Alpha)' },
+  { id: 'dnaPepBeta', label: 'DNA+Pep (Beta)' },
+  { id: 'dnaPepAlphaZ', label: 'DNA+Pep (Alpha+Z)' },
+  { id: 'dnaPepBetaZ', label: 'DNA+Pep (Beta+Z)' },
+  { id: 'pepDnaAlpha', label: 'Pep+DNA (Alpha)' },
+  { id: 'pepDnaBeta', label: 'Pep+DNA (Beta)' },
+  { id: 'pepDnaAlphaZ', label: 'Pep+DNA (Alpha+Z)' },
+  { id: 'pepDnaBetaZ', label: 'Pep+DNA (Beta+Z)' }
+];
+const CD_SIM_INFO = {
+  dnaPepAlpha: { ratioLabel: 'Peptide:DNA Ratio', description: 'Simulation (Alpha Binding): DNA remains B-form. Ratio 0-1: peptide binds as α-helix. Ratio >1: excess peptide is Random Coil.' },
+  dnaPepBeta: { ratioLabel: 'Peptide:DNA Ratio', description: 'Simulation (Beta Binding): DNA remains B-form. Ratio 0-1: peptide binds as β-sheet. Ratio >1: excess peptide is Random Coil.' },
+  dnaPepAlphaZ: { ratioLabel: 'Peptide:DNA Ratio', description: 'Simulation (Alpha + Z-Switch): DNA switches from B to Z form. Ratio 0-1: DNA B→Z transition; peptide binds as α-helix. Ratio >1: DNA is Z-form; excess peptide is Random Coil.' },
+  dnaPepBetaZ: { ratioLabel: 'Peptide:DNA Ratio', description: 'Simulation (Beta + Z-Switch): DNA switches from B to Z form. Ratio 0-1: DNA B→Z transition; peptide binds as β-sheet. Ratio >1: DNA is Z-form; excess peptide is Random Coil.' },
+  pepDnaAlpha: { ratioLabel: 'DNA:Peptide Ratio', description: 'Simulation (Peptide + DNA [Alpha]): Titration of peptide solution with B-DNA. Ratio 0-1: free peptide is Random Coil, bound peptide is α-helix. Ratio >1: peptide fully bound as α-helix; excess DNA is B-form.' },
+  pepDnaBeta: { ratioLabel: 'DNA:Peptide Ratio', description: 'Simulation (Peptide + DNA [Beta]): Titration of peptide solution with B-DNA. Ratio 0-1: free peptide is Random Coil, bound peptide is β-sheet. Ratio >1: peptide fully bound as β-sheet; excess DNA is B-form.' },
+  pepDnaAlphaZ: { ratioLabel: 'DNA:Peptide Ratio', description: 'Simulation (Peptide + DNA [Alpha+Z]): DNA assumes Z-form when bound. Ratio 0-1: peptide excess forces added DNA into Z-form; bound peptide is α-helix. Ratio >1: excess unbound DNA is B-form; bound DNA is Z-form.' },
+  pepDnaBetaZ: { ratioLabel: 'DNA:Peptide Ratio', description: 'Simulation (Peptide + DNA [Beta+Z]): DNA assumes Z-form when bound. Ratio 0-1: peptide excess forces added DNA into Z-form; bound peptide is β-sheet. Ratio >1: excess unbound DNA is B-form; bound DNA is Z-form.' }
+};
+
+const CD_LIBRARY_SCALE = 10000;
+const niceCdStep = (range, targetTicks = 6) => {
+  if (!Number.isFinite(range) || range <= 0) return 1;
+  const raw = range / targetTicks;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const norm = raw / mag;
+  let nice;
+  if (norm >= 7.5) nice = 10;
+  else if (norm >= 3.5) nice = 5;
+  else if (norm >= 1.5) nice = 2;
+  else nice = 1;
+  return nice * mag;
+};
+
+const getScaledCdSpectrum = (key, xs) => {
+  const def = CD_FIT_COMPONENTS[key];
+  if (!def) return xs.map(() => 0);
+  const raw = xs.map((x) => {
+    const xx = Math.min(Math.max(x, def.min), def.max);
+    return def.spline.at(xx);
+  });
+  const maxAbs = Math.max(1e-6, ...raw.map((v) => Math.abs(v)));
+  return raw.map((v) => (v / maxAbs) * CD_LIBRARY_SCALE);
+};
+
+const normalizeCdSeries = (series) => {
+  if (!series.length) return series;
+  const allValues = series.flatMap((s) => s.values);
+  const maxAbs = Math.max(1e-6, ...allValues.map((v) => Math.abs(v)));
+  return series.map((s) => ({ ...s, values: s.values.map((v) => (v / maxAbs) * 100) }));
+};
+
+const buildCdLibraryData = ({ tab, selectedProtein, selectedDna, selectedGq, ratio, normalize }) => {
+  let domain = { min: 176, max: 260 };
+  if (tab === 'dna' || tab === 'gq' || tab.startsWith('dnaPep') || tab.startsWith('pepDna')) domain = { min: 180, max: 320 };
+  const xs = [];
+  for (let x = domain.min; x <= domain.max; x += 1) xs.push(x);
+  let series = [];
+  if (tab === 'protein') {
+    series = selectedProtein.map((key) => ({ label: CD_FIT_COMPONENTS[key]?.label || key, color: CD_FIT_COMPONENTS[key]?.color || '#3b82f6', values: getScaledCdSpectrum(key, xs) }));
+  } else if (tab === 'dna') {
+    series = selectedDna.map((key) => ({ label: CD_FIT_COMPONENTS[key]?.label || key, color: CD_FIT_COMPONENTS[key]?.color || '#8b5cf6', values: getScaledCdSpectrum(key, xs) }));
+  } else if (tab === 'gq') {
+    series = selectedGq.map((key) => ({ label: CD_FIT_COMPONENTS[key]?.label || key, color: CD_FIT_COMPONENTS[key]?.color || '#ec4899', values: getScaledCdSpectrum(key, xs) }));
+  } else {
+    const r = Math.max(0, Math.min(10, Number(ratio) || 0));
+    const B = getScaledCdSpectrum('bDNA', xs);
+    const Z = getScaledCdSpectrum('zDNA', xs);
+    const alpha = getScaledCdSpectrum('alpha', xs);
+    const beta = getScaledCdSpectrum('beta', xs);
+    const coil = getScaledCdSpectrum('coil', xs);
+    const mix = (parts) => xs.map((_, i) => parts.reduce((sum, [arr, weight]) => sum + (arr[i] || 0) * (weight || 0), 0));
+    const bound01 = Math.min(r, 1), excess = Math.max(r - 1, 0), free = Math.max(1 - r, 0);
+    let values = [], label = '';
+    switch (tab) {
+      case 'dnaPepAlpha': values = mix([[B, 1], [alpha, bound01], [coil, excess]]); label = `DNA + α-peptide (P/D ${r.toFixed(1)})`; break;
+      case 'dnaPepBeta': values = mix([[B, 1], [beta, bound01], [coil, excess]]); label = `DNA + β-peptide (P/D ${r.toFixed(1)})`; break;
+      case 'dnaPepAlphaZ': values = mix([[B, 1 - bound01], [Z, bound01], [alpha, bound01], [coil, excess]]); label = `DNA B→Z + α-peptide (P/D ${r.toFixed(1)})`; break;
+      case 'dnaPepBetaZ': values = mix([[B, 1 - bound01], [Z, bound01], [beta, bound01], [coil, excess]]); label = `DNA B→Z + β-peptide (P/D ${r.toFixed(1)})`; break;
+      case 'pepDnaAlpha': values = mix([[alpha, bound01], [coil, free], [B, r]]); label = `Peptide + B-DNA (D/P ${r.toFixed(1)})`; break;
+      case 'pepDnaBeta': values = mix([[beta, bound01], [coil, free], [B, r]]); label = `Peptide + B-DNA (D/P ${r.toFixed(1)})`; break;
+      case 'pepDnaAlphaZ': values = mix([[alpha, bound01], [coil, free], [Z, bound01], [B, Math.max(r - 1, 0)]]); label = `Peptide + Z-DNA/B-DNA (D/P ${r.toFixed(1)})`; break;
+      case 'pepDnaBetaZ': values = mix([[beta, bound01], [coil, free], [Z, bound01], [B, Math.max(r - 1, 0)]]); label = `Peptide + Z-DNA/B-DNA (D/P ${r.toFixed(1)})`; break;
+      default: values = xs.map(() => 0); label = 'Unknown simulation';
+    }
+    series = [{ label, color: '#7c3aed', values }];
+  }
+  if (normalize) series = normalizeCdSeries(series);
+  return { xs, series, domain };
+};
+
+const CDSpectraLibrary = ({ isExpanded, onToggleExpand }) => {
+  const canvasRef = useRef(null);
+  const wrapRef = useRef(null);
+  const { width, height } = useElementSize(wrapRef);
+  const [tab, setTab] = useState('protein');
+  const [selectedProtein, setSelectedProtein] = useState(['alpha', 'beta', 'coil']);
+  const [selectedDna, setSelectedDna] = useState(['bDNA']);
+  const [selectedGq, setSelectedGq] = useState(['gqP']);
+  const [ratio, setRatio] = useState(0);
+  const [normalize, setNormalize] = useState(true);
+
+  const proteinTypes = ['alpha', 'beta', 'turn', 'coil'];
+  const dnaTypes = ['aDNA', 'bDNA', 'zDNA'];
+  const gqTypes = ['gqP', 'gqH', 'gqA'];
+
+  const isSim = Boolean(CD_SIM_INFO[tab]);
+  const plotData = useMemo(
+    () => buildCdLibraryData({ tab, selectedProtein, selectedDna, selectedGq, ratio, normalize }),
+    [tab, selectedProtein, selectedDna, selectedGq, ratio, normalize]
+  );
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || width < 80 || height < 80) return;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    const ctx2 = canvas.getContext('2d');
+    ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const W = width, H = height;
+    const pad = { top: 20, right: 20, bottom: 40, left: 60 };
+    const plotW = W - pad.left - pad.right, plotH = H - pad.top - pad.bottom;
+    ctx2.clearRect(0, 0, W, H);
+    ctx2.fillStyle = '#f8fafc';
+    ctx2.fillRect(0, 0, W, H);
+    
+    if (!plotData.series.length || !plotData.xs.length) {
+      ctx2.fillStyle = '#64748b'; ctx2.font = '12px sans-serif'; ctx2.textAlign = 'center';
+      ctx2.fillText('Select at least one spectrum', W / 2, H / 2);
+      return;
+    }
+    const allValues = plotData.series.flatMap((s) => s.values);
+    if (!allValues.length) {
+      ctx2.fillStyle = '#64748b'; ctx2.font = '12px sans-serif'; ctx2.textAlign = 'center';
+      ctx2.fillText('No data available', W / 2, H / 2);
+      return;
+    }
+    
+    let yMin = Math.min(...allValues), yMax = Math.max(...allValues);
+    if (!Number.isFinite(yMin) || !Number.isFinite(yMax)) { yMin = -1; yMax = 1; }
+    if (yMin === yMax) { yMin -= 1; yMax += 1; }
+    const yMargin = (yMax - yMin) * 0.1;
+    yMin -= yMargin; yMax += yMargin;
+    const xMin = plotData.domain.min, xMax = plotData.domain.max;
+    const xTickStep = xMax - xMin > 100 ? 20 : 10;
+    const yTickStep = niceCdStep(yMax - yMin);
+    
+    ctx2.strokeStyle = '#e2e8f0'; ctx2.lineWidth = 0.5;
+    for (let x = Math.ceil(xMin / xTickStep) * xTickStep; x <= xMax; x += xTickStep) {
+      const px = pad.left + ((x - xMin) / (xMax - xMin)) * plotW;
+      ctx2.beginPath(); ctx2.moveTo(px, pad.top); ctx2.lineTo(px, pad.top + plotH); ctx2.stroke();
+    }
+    for (let y = Math.ceil(yMin / yTickStep) * yTickStep; y <= yMax; y += yTickStep) {
+      const py = pad.top + plotH - ((y - yMin) / (yMax - yMin)) * plotH;
+      ctx2.beginPath(); ctx2.moveTo(pad.left, py); ctx2.lineTo(pad.left + plotW, py); ctx2.stroke();
+    }
+    if (yMin < 0 && yMax > 0) {
+      const zeroY = pad.top + plotH - ((0 - yMin) / (yMax - yMin)) * plotH;
+      ctx2.strokeStyle = '#94a3b8'; ctx2.lineWidth = 1; ctx2.setLineDash([4, 4]);
+      ctx2.beginPath(); ctx2.moveTo(pad.left, zeroY); ctx2.lineTo(pad.left + plotW, zeroY); ctx2.stroke();
+      ctx2.setLineDash([]);
+    }
+    
+    ctx2.save();
+    ctx2.beginPath(); ctx2.rect(pad.left, pad.top, plotW, plotH); ctx2.clip();
+    plotData.series.forEach((s) => {
+      ctx2.strokeStyle = s.color; ctx2.lineWidth = 2; ctx2.beginPath();
+      plotData.xs.forEach((x, i) => {
+        const px = pad.left + ((x - xMin) / (xMax - xMin)) * plotW;
+        const py = pad.top + plotH - ((s.values[i] - yMin) / (yMax - yMin)) * plotH;
+        if (i === 0) ctx2.moveTo(px, py); else ctx2.lineTo(px, py);
+      });
+      ctx2.stroke();
+    });
+    ctx2.restore();
+    
+    ctx2.font = '10px sans-serif';
+    plotData.series.forEach((s, idx) => {
+      const lx = pad.left + 10, ly = pad.top + 15 + idx * 14;
+      ctx2.fillStyle = s.color; ctx2.fillRect(lx, ly - 6, 12, 3);
+      ctx2.fillStyle = '#334155'; ctx2.textAlign = 'left'; ctx2.fillText(s.label, lx + 16, ly - 2);
+    });
+    ctx2.fillStyle = '#64748b'; ctx2.font = '11px sans-serif'; ctx2.textAlign = 'center';
+    for (let x = Math.ceil(xMin / xTickStep) * xTickStep; x <= xMax; x += xTickStep) ctx2.fillText(x.toString(), pad.left + ((x - xMin) / (xMax - xMin)) * plotW, pad.top + plotH + 15);
+    ctx2.fillText('Wavelength (nm)', pad.left + plotW / 2, H - 5);
+    const fmtY = (v) => (Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(1).replace(/\.0$/, '')}k` : `${Math.round(v)}`);
+    ctx2.textAlign = 'right';
+    for (let y = Math.ceil(yMin / yTickStep) * yTickStep; y <= yMax; y += yTickStep) ctx2.fillText(fmtY(y), pad.left - 5, pad.top + plotH - ((y - yMin) / (yMax - yMin)) * plotH + 4);
+    ctx2.save();
+    ctx2.translate(12, pad.top + plotH / 2);
+    ctx2.rotate(-Math.PI / 2);
+    ctx2.textAlign = 'center';
+    ctx2.fillText(normalize ? 'Normalized CD (a.u.)' : 'CD (a.u.)', 0, 0);
+    ctx2.restore();
+  }, [plotData, width, height, normalize]);
+
+  const toggleInArray = (setter, value) => {
+    setter((prev) => (prev.includes(value) ? prev.filter((x) => x !== value) : [...prev, value]));
+  };
+
+  return (
+    <div className={`bg-white border border-slate-200 rounded-xl shadow-sm flex flex-col ${isExpanded ? ` ${FS_CLASSES} p-6 ` : 'break-inside-avoid p-4'}`}>
+      <div className="flex justify-between items-center mb-3 border-b pb-2 shrink-0">
+        <h4 className="font-bold text-slate-700 flex items-center gap-2"><span>📚</span> CD Spectra Reference Library & DNA/Protein Mixture Simulator</h4>
+        <button onClick={onToggleExpand} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors">{isExpanded ? '↙️' : '↗️'}</button>
+      </div>
+      <div className="flex flex-col xl:flex-row gap-4 flex-1 min-h-0">
+        <div className="flex-1 flex flex-col min-h-0">
+          <div className="flex flex-wrap gap-1 mb-2">
+            {CD_LIBRARY_TABS.map((t) => (
+              <button key={t.id} onClick={() => { setTab(t.id); if (CD_SIM_INFO[t.id]) setRatio(0); }}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-colors ${tab === t.id ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+          <div ref={wrapRef} className={`relative rounded-lg border border-slate-200 bg-slate-50 overflow-hidden ${isExpanded ? 'flex-1 min-h-0' : 'h-[380px]'}`}>
+            <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
+          </div>
+        </div>
+        <div className="w-full xl:w-72 flex flex-col gap-3 shrink-0 overflow-y-auto custom-scrollbar">
+          <label className="flex items-center gap-2 text-[11px] font-bold text-slate-600 cursor-pointer">
+            <input type="checkbox" checked={normalize} onChange={(e) => setNormalize(e.target.checked)} className="w-3.5 h-3.5 accent-blue-600" />
+            Normalize spectra for display
+          </label>
+          {tab === 'protein' && (
+            <div className="flex flex-col gap-1">
+              <div className="text-[10px] uppercase font-bold text-slate-500">Protein Structures</div>
+              {proteinTypes.map((t) => (
+                <label key={t} className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 p-1 rounded">
+                  <input type="checkbox" checked={selectedProtein.includes(t)} onChange={() => toggleInArray(setSelectedProtein, t)} className="w-3 h-3 accent-blue-600" />
+                  <span className="w-3 h-2 rounded-sm" style={{ backgroundColor: CD_FIT_COMPONENTS[t]?.color }} />
+                  <span className="text-xs font-medium text-slate-700">{CD_FIT_COMPONENTS[t]?.label}</span>
+                </label>
+              ))}
+            </div>
+          )}
+          {tab === 'dna' && (
+            <div className="flex flex-col gap-1">
+              <div className="text-[10px] uppercase font-bold text-slate-500">DNA Helices</div>
+              {dnaTypes.map((t) => (
+                <label key={t} className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 p-1 rounded">
+                  <input type="checkbox" checked={selectedDna.includes(t)} onChange={() => toggleInArray(setSelectedDna, t)} className="w-3 h-3 accent-purple-600" />
+                  <span className="w-3 h-2 rounded-sm" style={{ backgroundColor: CD_FIT_COMPONENTS[t]?.color }} />
+                  <span className="text-xs font-medium text-slate-700">{CD_FIT_COMPONENTS[t]?.label}</span>
+                </label>
+              ))}
+            </div>
+          )}
+          {tab === 'gq' && (
+            <div className="flex flex-col gap-1">
+              <div className="text-[10px] uppercase font-bold text-slate-500">G-Quadruplexes</div>
+              {gqTypes.map((t) => (
+                <label key={t} className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 p-1 rounded">
+                  <input type="checkbox" checked={selectedGq.includes(t)} onChange={() => toggleInArray(setSelectedGq, t)} className="w-3 h-3 accent-pink-600" />
+                  <span className="w-3 h-2 rounded-sm" style={{ backgroundColor: CD_FIT_COMPONENTS[t]?.color }} />
+                  <span className="text-xs font-medium text-slate-700">{CD_FIT_COMPONENTS[t]?.label}</span>
+                </label>
+              ))}
+            </div>
+          )}
+          {isSim && (
+            <div className="flex flex-col gap-2 border-t border-slate-200 pt-3">
+              <div className="text-[10px] uppercase font-bold text-slate-500">{CD_SIM_INFO[tab].ratioLabel}</div>
+              <div className="flex justify-between text-xs font-bold text-slate-700">
+                <span>Ratio</span><span className="font-mono">{ratio.toFixed(1)}</span>
+              </div>
+              <input type="range" min="0" max="10" step="0.1" value={ratio} onChange={(e) => setRatio(parseFloat(e.target.value))} className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-blue-600" />
+              <p className="text-[10px] leading-4 text-slate-500">{CD_SIM_INFO[tab].description}</p>
+            </div>
+          )}
+          <button onClick={() => { setSelectedProtein(['alpha', 'beta', 'coil']); setSelectedDna(['bDNA']); setSelectedGq(['gqP']); setRatio(0); setNormalize(true); }}
+            className="mt-2 text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-1.5 rounded transition-colors">
+            Reset Selection
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export const Simulations = () => {
+  const [fsPanel, setFsPanel] = useState(null);
+  const toggleFs = (id) => setFsPanel((prev) => (prev === id ? null : id));
+  return (
+    <CollapsibleSection title="Simulations" icon="🧪" defaultOpen={false}>
+      <div className="flex flex-col gap-6">
+        {fsPanel === 'mixer' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('mixer')} />}
+        <ProteinCDMixer isExpanded={fsPanel === 'mixer'} onToggleExpand={() => toggleFs('mixer')} />
+        {fsPanel === 'library' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('library')} />}
+        <CDSpectraLibrary isExpanded={fsPanel === 'library'} onToggleExpand={() => toggleFs('library')} />
+      </div>
+    </CollapsibleSection>
+  );
+};
+
+/* ========================================================================
+NOTEBOOK EXTRA
+======================================================================== */
+/* ========================================================================
+INSTRUMENTAL SETUP (CD spectrometer)
+Wired in via CDTestRenderer's `custom.InstrumentalSetup`, so it renders inside
+TestShellRenderer's own "Instrumental Setup" section instead of duplicating one.
+======================================================================== */
+export const InstrumentalSetup = ({ ctx }) => {
+  const { activeTest = {}, updateActiveTest } = ctx || {};
+  const LABEL_CLS = 'text-[10px] font-bold text-slate-500 uppercase';
+  const INPUT_CLS = 'border border-slate-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-500 bg-white';
+  const update = (u) => { if (updateActiveTest) updateActiveTest(u); };
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        {CD_INSTRUMENTAL_FIELDS.map((f) => (
+          <div key={f.key} className="flex flex-col gap-1">
+            <label className={LABEL_CLS}>{f.label}</label>
+            {f.type === 'select' ? (
+              <select value={activeTest[f.key] || ''} onChange={(e) => update({ [f.key]: e.target.value })} className={INPUT_CLS}>
+                <option value="">—</option>
+                {f.options.map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+            ) : (
+              <div className={f.units ? 'flex gap-1' : ''}>
+                <input
+                  type={f.type === 'number' ? 'number' : 'text'}
+                  value={activeTest[f.key] || ''}
+                  onChange={(e) => update({ [f.key]: e.target.value })}
+                  onWheel={f.type === 'number' ? (e) => e.target.blur() : undefined}
+                  placeholder={f.placeholder}
+                  className={`${INPUT_CLS} ${f.units ? 'flex-1 min-w-0' : 'w-full'}`}
+                />
+                {f.units && (
+                  f.units.length > 1 ? (
+                    <select value={activeTest[`${f.key}Unit`] || f.units[0]} onChange={(e) => update({ [`${f.key}Unit`]: e.target.value })} className={`${INPUT_CLS} w-24 shrink-0`}>
+                      {f.units.map((u) => <option key={u} value={u}>{u}</option>)}
+                    </select>
+                  ) : (
+                    <span className="text-[10px] font-bold text-slate-400 self-center px-1 shrink-0">{f.units[0]}</span>
+                  )
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      <p className="text-[10px] text-slate-400">Spectrometer configuration used to acquire the spectra for this condition — saved per condition, like the other experimental fields.</p>
+    </div>
+  );
+};
+
+export const NotebookExtra = ({ ctx, checkId }) => {
+  const { activeTest } = ctx;
+  const d = useCdDerived(activeTest, ctx);
+  if (checkId === 'cond') {
+    const expStr = CD_EXPERIMENTAL_FIELDS
+      .map((f) => {
+        const v = getExpValue(d.activeInstance, f.key);
+        if (v === '') return '';
+        const u = getExpUnit(d.activeInstance, f);
+        return `${f.label}: ${v}${u ? ` ${u}` : ''}`;
+      })
+      .filter(Boolean)
+      .join(' | ');
+    return `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;"><b>Condition:</b> ${d.activeInstance ? d.activeInstance.name : 'N/A'} | ${expStr || 'No experimental condition values set'}</p>`;
+  }
+  if (checkId === 'instrument') {
+    const instrStr = CD_INSTRUMENTAL_FIELDS
+      .map((f) => {
+        const v = activeTest[f.key];
+        if (!v) return '';
+        const u = f.units ? (activeTest[`${f.key}Unit`] || f.units[0]) : '';
+        return `${f.label}: ${v}${u ? ` ${u}` : ''}`;
+      })
+      .filter(Boolean)
+      .join(' | ');
+    if (!instrStr) return '';
+    return `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;"><b>Instrumental Setup (${d.activeInstance ? d.activeInstance.name : 'Condition'}):</b> ${instrStr}</p>`;
+  }
+  if (checkId === 'spectra') {
+    if (!d.activeParsed.parsedSpectra.length) return '';
+    const titles = d.activeParsed.parsedSpectra.map((s) => s.title || 'Spectrum').join(', ');
+    const wl = d.activeParsed.parsedWavelengths;
+    return `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;"><b>Spectra (${d.activeInstance ? d.activeInstance.name : 'Condition'}):</b> ${titles}<br/><span style="font-size: 11px; color: #64748b;">Wavelength range: ${wl.length ? `${Math.min(...wl)}–${Math.max(...wl)} nm (${wl.length} points)` : 'N/A'} · Y unit: ${activeTest.yUnit === 'theta' ? 'Mean Residue Ellipticity (deg·cm²·dmol⁻¹)' : 'mdeg'}</span></p>`;
+  }
+  if (checkId === 'struct' || checkId === 'table') {
+    const rows = [];
+    d.instances.forEach((inst) => {
+      const parsed = computeParsed(inst.test);
+      Object.entries(inst.test.ssFits || {}).forEach(([specId, res]) => {
+        const s = parsed.parsedSpectra.find((x) => x.id === specId);
+        rows.push({ inst: inst.name, spec: s ? (s.title || 'Spectrum') : specId, res });
+      });
+    });
+    if (!rows.length) return '';
+    let html = `<table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; text-align: left; background: white;"><tr style="background-color: #f1f5f9;"><th style="padding: 6px; border: 1px solid #cbd5e1;">Condition</th><th style="padding: 6px; border: 1px solid #cbd5e1;">Spectrum</th><th style="padding: 6px; border: 1px solid #cbd5e1;">Composition</th><th style="padding: 6px; border: 1px solid #cbd5e1;">R²</th></tr>`;
+    rows.forEach(({ inst, spec, res }) => {
+      const compStr = (res.activeBases || ['alpha', 'beta', 'turn', 'coil']).map(k => {
+        const v = res.fractions ? res.fractions[k] : res[k];
+        return v > 0 ? `${CD_FIT_COMPONENTS[k]?.label || k}: <b>${v}%</b>` : null;
+      }).filter(Boolean).join('<br/>');
+      html += `<tr><td style="padding: 6px; border: 1px solid #e2e8f0;"><b>${inst}</b></td><td style="padding: 6px; border: 1px solid #e2e8f0;">${spec}</td><td style="padding: 6px; border: 1px solid #e2e8f0;">${compStr}</td><td style="padding: 6px; border: 1px solid #e2e8f0;">${Number(res.r2 || 0).toFixed(4)}</td></tr>`;
+    });
+    html += `</table>`;
+    return html;
   }
   return '';
 };
+
+/* ========================================================================
+ALL
+======================================================================== */
+export const All = ({ ctx }) => (
+  <div className="flex flex-col gap-6">
+    <Data ctx={ctx} />
+    <DataAnalysis ctx={ctx} />
+    <Simulations />
+  </div>
+);
+export default All;

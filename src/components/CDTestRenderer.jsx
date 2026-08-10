@@ -1,34 +1,47 @@
 import React from 'react';
 import TestShellRenderer from './TestShellRenderer';
 import { CD_TAB_CONFIG } from './tabConfigs';
-import { CDDataSection, MathAndFittingSection, FittingErrors, FittingGraphics, NotebookExtra } from './CDSections';
+import { All, InstrumentalSetup, NotebookExtra } from './CDSections';
 
 export const CDTestRenderer = (props) => {
-  // Categories defined in App → Definitions & Labels take priority
   const appCategories =
     Array.isArray(props.testCategories) && props.testCategories.length
       ? props.testCategories
-      : CD_TAB_CONFIG.categories || [
-          'Activity', 'Toxicity', 'Structure', 'Binding', 'Characterization'
-        ];
+      : CD_TAB_CONFIG.fallbackCategories;
 
-  const config = { ...CD_TAB_CONFIG, categories: appCategories };
+  const config = {
+    ...CD_TAB_CONFIG,
+    categories: appCategories,
+    // Remove the cell-lines selector from "Compounds & Biological Models"
+    samples: { ...CD_TAB_CONFIG.samples, cellLines: false }
+  };
+
+  const enrichCtx = (ctxProps) => ({
+    ...(ctxProps.ctx || {}),
+    instances: props.instances || [],
+    updateInstance: props.updateInstance || null,
+    compoundMeta: props.compoundMeta || {}
+  });
 
   return (
     <TestShellRenderer
       {...props}
       config={config}
       custom={{
-        Data: (ctxProps) => <CDDataSection {...ctxProps} ctx={{ ...ctxProps.ctx, instances: props.instances || [] }} />,
-        Fitting: (ctxProps) => <MathAndFittingSection {...ctxProps} ctx={{ ...ctxProps.ctx, instances: props.instances || [] }} />,
-        FittingErrors: (ctxProps) => <FittingErrors {...ctxProps} ctx={{ ...ctxProps.ctx, instances: props.instances || [] }} />,
-        FittingGraphics: (ctxProps) => <FittingGraphics {...ctxProps} ctx={{ ...ctxProps.ctx, instances: props.instances || [] }} />,
+        All: (ctxProps) => <All {...ctxProps} ctx={enrichCtx(ctxProps)} />,
+        InstrumentalSetup: (ctxProps) => <InstrumentalSetup ctx={enrichCtx(ctxProps)} />,
         buildNotebookHtml: (checked, ctx) => {
           let html = '';
-          const enhancedCtx = { ...ctx, instances: props.instances || [] };
-          if (checked.cond) html += NotebookExtra({ ctx: enhancedCtx, checkId: 'cond' });
-          if (checked.spectra) html += NotebookExtra({ ctx: enhancedCtx, checkId: 'spectra' });
-          if (checked.struct) html += NotebookExtra({ ctx: enhancedCtx, checkId: 'table' });
+          const enhanced = {
+            ...ctx,
+            instances: props.instances || [],
+            updateInstance: props.updateInstance || null,
+            compoundMeta: props.compoundMeta || {}
+          };
+          if (checked.cond) html += NotebookExtra({ ctx: enhanced, checkId: 'cond' });
+          if (checked.instrument) html += NotebookExtra({ ctx: enhanced, checkId: 'instrument' });
+          if (checked.spectra) html += NotebookExtra({ ctx: enhanced, checkId: 'spectra' });
+          if (checked.struct) html += NotebookExtra({ ctx: enhanced, checkId: 'struct' });
           return html;
         }
       }}

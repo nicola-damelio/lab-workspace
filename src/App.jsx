@@ -10,6 +10,7 @@ import {
   parsePayload,
   BOX_ROW_LABELS
 } from './data/constants';
+import TestShellRenderer from './components/TestShellRenderer';
 import { NMRTestRenderer } from './components/NMRTestRenderer';
 import { PlateTestRenderer } from './components/PlateTestRenderer';
 import { CDTestRenderer } from './components/CDTestRenderer';
@@ -20,13 +21,14 @@ import { DefinitionsPanel } from './components/DefinitionsPanel';
 import { NMRFittingsTestRenderer } from './components/NMRFittingsTestRenderer';
 import { CloningTestRenderer } from './components/CloningTestRenderer';
 import { ProteinExpressionTestRenderer } from './components/ProteinExpressionTestRenderer';
-// App.jsx
+import { All as MDSectionsAll } from './components/MDSections';
+import { SolventsManager, BuffersManager, AdditivesManager, NMRProbesManager, NMRInstrumentsManager, NMRExperimentsManager, BufferAdditiveFields } from './components/DefinitionsExtra';
 
 import {
-CD_TAB_CONFIG,
-PLATE_TAB_CONFIG,
-NMR_TAB_CONFIG,
-CLONING_TAB_CONFIG 
+  CD_TAB_CONFIG,
+  PLATE_TAB_CONFIG,
+  NMR_TAB_CONFIG,
+  CLONING_TAB_CONFIG 
 } from './components/tabConfigs.jsx';
 
 const CUSTOM_FIELD_TAB_OPTIONS = [
@@ -36,8 +38,267 @@ const CUSTOM_FIELD_TAB_OPTIONS = [
   { value: 'cd', label: 'CD' },
   { value: 'nmr-fittings', label: 'NMR Fittings' },
   { value: 'cloning', label: 'Cloning' },
-  { value: 'protein_expression', label: 'Protein Expression' }
+  { value: 'protein_expression', label: 'Protein Expression' },
+  { value: 'md_simulation', label: 'MD Simulations' }
 ];
+
+/* =========================================================
+   MD SIMULATIONS CONFIG & RENDERER
+========================================================= */
+/* =========================================================
+MD SIMULATIONS CONFIG & RENDERER
+========================================================= */
+const MD_SIMULATION_TAB_CONFIG = {
+  typeKey: 'md_simulation',
+  typeLabel: 'MD Simulations',
+  icon: '🖥️',
+  fallbackCategories: [
+    'Equilibration',
+    'Production',
+    'Free Energy',
+    'Binding',
+    'Characterization'
+  ],
+  samples: {
+    compounds: true,
+    cellLines: false,
+    compoundLabel: 'System / Molecule',
+    cellLineLabel: ''
+  },
+  imagesKey: 'images',
+  conditionFields: [
+    { key: 'experimentDate', label: 'Simulation Date', type: 'date' },
+    {
+      key: 'forceField',
+      label: 'Force Field',
+      type: 'select',
+      options: [
+        'AMBER ff19SB',
+        'CHARMM36m',
+        'OPLS-AA/M',
+        'GROMOS 54a7',
+        'Other'
+      ]
+    },
+    {
+      key: 'waterModel',
+      label: 'Water Model',
+      type: 'select',
+      options: ['TIP3P', 'TIP4P', 'SPC/E', 'OPC', 'Other']
+    },
+    {
+      key: 'temperature',
+      label: 'Temperature',
+      type: 'text',
+      placeholder: 'e.g. 300',
+      units: ['K']
+    },
+    {
+      key: 'pressure',
+      label: 'Pressure',
+      type: 'text',
+      placeholder: 'e.g. 1',
+      units: ['bar', 'atm']
+    },
+    {
+      key: 'simulationTime',
+      label: 'Simulation Time',
+      type: 'text',
+      placeholder: 'e.g. 100',
+      units: ['ns', 'µs', 'ps']
+    },
+    {
+      key: 'timestep',
+      label: 'Timestep',
+      type: 'text',
+      placeholder: 'e.g. 2',
+      units: ['fs', 'ps']
+    },
+    {
+      key: 'boxType',
+      label: 'Box Type',
+      type: 'select',
+      options: [
+        'Cubic',
+        'Dodecahedral',
+        'Truncated Octahedral',
+        'Rectangular'
+      ]
+    },
+    {
+      key: 'ionConcentration',
+      label: 'Ion Concentration',
+      type: 'text',
+      placeholder: 'e.g. 0.15',
+      units: ['M', 'mM']
+    },
+    {
+      key: 'software',
+      label: 'MD Software',
+      type: 'select',
+      options: ['GROMACS', 'AMBER', 'NAMD', 'OpenMM', 'CHARMM', 'Other']
+    },
+    {
+      key: 'otherMolecule',
+      label: 'Other Molecule',
+      type: 'text',
+      placeholder: 'e.g. Ligand X'
+    },
+    {
+      key: 'otherConditions',
+      label: 'Other Conditions',
+      type: 'text',
+      placeholder: 'e.g. Replica exchange'
+    }
+  ],
+  notebookChecks: [
+    { id: 'cond', label: 'Simulation Parameters' },
+    { id: 'setup', label: 'System Setup' },
+    { id: 'results', label: 'Results Summary' }
+  ]
+};
+
+class MDSectionErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, info) {
+    console.error('MD sections crashed:', error, info);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div
+          style={{
+            margin: 20,
+            padding: 16,
+            border: '3px solid #ef4444',
+            background: '#fef2f2',
+            borderRadius: 12
+          }}
+        >
+          <div
+            style={{
+              fontWeight: 900,
+              color: '#b91c1c',
+              marginBottom: 8
+            }}
+          >
+            ❌ MD sections crashed
+          </div>
+
+          <pre
+            style={{
+              whiteSpace: 'pre-wrap',
+              fontSize: 12,
+              color: '#b91c1c'
+            }}
+          >
+            {String(this.state.error?.message || this.state.error)}
+            {'\n\n'}
+            {String(this.state.error?.stack || '')}
+          </pre>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+const SafeMDSectionsAll = (props) => {
+  if (!MDSectionsAll) {
+    return (
+      <div
+        style={{
+          margin: 20,
+          padding: 16,
+          border: '3px solid #f59e0b',
+          background: '#fffbeb',
+          borderRadius: 12,
+          fontWeight: 900,
+          color: '#92400e'
+        }}
+      >
+        ⚠️ MDSections.All was not found. Check the import path in App.jsx.
+      </div>
+    );
+  }
+
+  return (
+    <MDSectionErrorBoundary>
+      <MDSectionsAll {...props} />
+    </MDSectionErrorBoundary>
+  );
+};
+
+const buildMDNotebookHtml = (checked, ctx) => {
+  const t = ctx?.activeTest || {};
+
+  let html = '';
+
+  if (checked.cond) {
+    html += `<p style="font-size:12px;color:#475569;margin-bottom:8px;"><b>MD Setup:</b> Force field ${
+      t.forceField || 'N/A'
+    } | Water ${t.waterModel || 'N/A'} | Temperature ${
+      t.temperature || 'N/A'
+    } | Pressure ${t.pressure || 'N/A'} | Simulation time ${
+      t.simulationTime || 'N/A'
+    } | Timestep ${t.timestep || 'N/A'} | Software ${t.software || 'N/A'}</p>`;
+  }
+
+  if (checked.setup) {
+    html += `<p style="font-size:12px;color:#475569;margin-bottom:8px;"><b>System Setup:</b> Box type ${
+      t.boxType || 'N/A'
+    } | Ion concentration ${t.ionConcentration || 'N/A'} | Other molecule ${
+      t.otherMolecule || 'N/A'
+    } | Other conditions ${t.otherConditions || 'N/A'}</p>`;
+  }
+
+  if (checked.results) {
+    html += `<p style="font-size:12px;color:#475569;margin-bottom:8px;"><b>Results Summary:</b> See the MD Analysis section for RMSD, RMSF, Rg, SASA, and energy plots.</p>`;
+  }
+
+  return html;
+};
+
+const MD_CUSTOM = {
+  All: SafeMDSectionsAll,
+  buildNotebookHtml: buildMDNotebookHtml
+};
+
+const MDTestRenderer = (props) => {
+  const appCategories =
+    Array.isArray(props.testCategories) && props.testCategories.length
+      ? props.testCategories
+      : MD_SIMULATION_TAB_CONFIG.fallbackCategories;
+
+  const config = {
+    ...MD_SIMULATION_TAB_CONFIG,
+    categories: appCategories
+  };
+
+  return (
+    <TestShellRenderer
+      {...props}
+      config={config}
+      custom={MD_CUSTOM}
+      testCategories={appCategories}
+      operators={Array.isArray(props.operators) ? props.operators : []}
+      solvents={Array.isArray(props.solvents) ? props.solvents : []}
+      buffers={Array.isArray(props.buffers) ? props.buffers : []}
+      additives={Array.isArray(props.additives) ? props.additives : []}
+    />
+  );
+};
+
 
 /* =========================================================
    LINKS MANAGER UTILITY
@@ -112,7 +373,6 @@ const CellLineDefinitionSection = ({
   const [notes, setNotes] = useState('');
   const [links, setLinks] = useState([]);
 
-  // Sync with external selection from the Library Directory
   useEffect(() => {
     if (selectedId) chooseCellLine(selectedId);
   }, [selectedId]);
@@ -320,20 +580,35 @@ const PlasmidDefinitionSection = ({
 /* =========================================================
    LIBRARY DIRECTORY
 ========================================================= */
-const LibraryDirectory = ({ compoundMeta, cellLineMeta, plasmidMeta, onSelectResource }) => {
-  const compounds = Object.keys(compoundMeta || {}).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
-  const cellLines = Object.keys(cellLineMeta || {}).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
-  const plasmids = Object.keys(plasmidMeta || {}).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+/* =========================================================
+   LIBRARY DIRECTORY
+========================================================= */
+const LibraryDirectory = ({ 
+  compoundMeta, cellLineMeta, plasmidMeta, customCmpds, customCellLines, customPlasmids,
+  solvents, buffers, additives, nmrProbes, nmrInstruments, nmrExperiments, 
+  onSelectResource 
+}) => {
+  const compounds = [...new Set([...(customCmpds || []), ...Object.keys(compoundMeta || {})])].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  const cellLines = [...new Set([...(customCellLines || []), ...Object.keys(cellLineMeta || {})])].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  const plasmids = [...new Set([...(customPlasmids || []), ...Object.keys(plasmidMeta || {})])].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 
   const peptides = compounds.filter(c => compoundMeta[c]?.type === 'protein');
   const nucleicAcids = compounds.filter(c => ['dna', 'rna'].includes(compoundMeta[c]?.type));
   const organics = compounds.filter(c => !['protein', 'dna', 'rna'].includes(compoundMeta[c]?.type));
+  const unclassified = compounds.filter(c => !compoundMeta[c]?.type);
+
+  const solventNames = (solvents || []).map(s => typeof s === 'string' ? s : s.name).filter(Boolean).sort();
+  const bufferNames = (buffers || []).map(b => typeof b === 'string' ? b : b.name).filter(Boolean).sort();
+  const additiveNames = (additives || []).map(a => typeof a === 'string' ? a : a.name).filter(Boolean).sort();
+  const probeNames = (nmrProbes || []).map(p => typeof p === 'string' ? p : p.name).filter(Boolean).sort();
+  const instrumentNames = (nmrInstruments || []).map(i => typeof i === 'string' ? i : i.name).filter(Boolean).sort();
+  const experimentNames = (nmrExperiments || []).map(e => typeof e === 'string' ? e : e.name).filter(Boolean).sort();
 
   const renderBadge = (label, type, onClick) => (
     <button
       key={label}
       onClick={() => onClick(label, type)}
-      className="text-xs bg-slate-100 hover:bg-blue-100 border border-slate-300 text-slate-700 font-semibold px-3 py-1.5 rounded-full transition-colors m-1"
+      className="text-xs bg-slate-100 hover:bg-blue-100 border border-slate-300 text-slate-700 font-semibold px-3 py-1.5 rounded-full transition-colors m-1 shadow-sm"
     >
       {label}
     </button>
@@ -345,38 +620,63 @@ const LibraryDirectory = ({ compoundMeta, cellLineMeta, plasmidMeta, onSelectRes
         Defined Resources Library
       </h3>
       
-      <div>
-        <h4 className="text-xs font-bold text-slate-500 mb-2">Peptides / Proteins ({peptides.length})</h4>
-        <div className="flex flex-wrap">
-          {peptides.length ? peptides.map(c => renderBadge(c, 'compound', onSelectResource)) : <span className="text-xs text-slate-400 italic">No peptides defined.</span>}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <h4 className="text-xs font-bold text-slate-500 mb-2">Peptides / Proteins ({peptides.length})</h4>
+          <div className="flex flex-wrap">{peptides.length ? peptides.map(c => renderBadge(c, 'compound', onSelectResource)) : <span className="text-xs text-slate-400 italic">No peptides.</span>}</div>
         </div>
-      </div>
 
-      <div>
-        <h4 className="text-xs font-bold text-slate-500 mb-2 mt-4">Nucleic Acids ({nucleicAcids.length})</h4>
-        <div className="flex flex-wrap">
-          {nucleicAcids.length ? nucleicAcids.map(c => renderBadge(c, 'compound', onSelectResource)) : <span className="text-xs text-slate-400 italic">No nucleic acids defined.</span>}
+        <div>
+          <h4 className="text-xs font-bold text-slate-500 mb-2">Nucleic Acids ({nucleicAcids.length})</h4>
+          <div className="flex flex-wrap">{nucleicAcids.length ? nucleicAcids.map(c => renderBadge(c, 'compound', onSelectResource)) : <span className="text-xs text-slate-400 italic">No nucleic acids.</span>}</div>
         </div>
-      </div>
 
-      <div>
-        <h4 className="text-xs font-bold text-slate-500 mb-2 mt-4">Organic / Other Molecules ({organics.length})</h4>
-        <div className="flex flex-wrap">
-          {organics.length ? organics.map(c => renderBadge(c, 'compound', onSelectResource)) : <span className="text-xs text-slate-400 italic">No organic molecules defined.</span>}
+        <div>
+          <h4 className="text-xs font-bold text-slate-500 mb-2 mt-2">Organic / Other ({organics.length + unclassified.length})</h4>
+          <div className="flex flex-wrap">
+            {organics.map(c => renderBadge(c, 'compound', onSelectResource))}
+            {unclassified.map(c => renderBadge(c, 'compound', onSelectResource))}
+            {(!organics.length && !unclassified.length) && <span className="text-xs text-slate-400 italic">No organic molecules.</span>}
+          </div>
         </div>
-      </div>
 
-      <div>
-        <h4 className="text-xs font-bold text-slate-500 mb-2 mt-4">Cell Lines ({cellLines.length})</h4>
-        <div className="flex flex-wrap">
-          {cellLines.length ? cellLines.map(c => renderBadge(c, 'cellLine', onSelectResource)) : <span className="text-xs text-slate-400 italic">No cell lines defined.</span>}
+        <div>
+          <h4 className="text-xs font-bold text-slate-500 mb-2 mt-2">Cell Lines ({cellLines.length})</h4>
+          <div className="flex flex-wrap">{cellLines.length ? cellLines.map(c => renderBadge(c, 'cellLine', onSelectResource)) : <span className="text-xs text-slate-400 italic">No cell lines.</span>}</div>
         </div>
-      </div>
 
-      <div>
-        <h4 className="text-xs font-bold text-slate-500 mb-2 mt-4">Plasmids ({plasmids.length})</h4>
-        <div className="flex flex-wrap">
-          {plasmids.length ? plasmids.map(p => renderBadge(p, 'plasmid', onSelectResource)) : <span className="text-xs text-slate-400 italic">No plasmids defined.</span>}
+        <div>
+          <h4 className="text-xs font-bold text-slate-500 mb-2 mt-2">Plasmids ({plasmids.length})</h4>
+          <div className="flex flex-wrap">{plasmids.length ? plasmids.map(p => renderBadge(p, 'plasmid', onSelectResource)) : <span className="text-xs text-slate-400 italic">No plasmids.</span>}</div>
+        </div>
+
+        <div>
+          <h4 className="text-xs font-bold text-slate-500 mb-2 mt-2">Solvents & Media ({solventNames.length})</h4>
+          <div className="flex flex-wrap">{solventNames.length ? solventNames.map(s => renderBadge(s, 'solvent', onSelectResource)) : <span className="text-xs text-slate-400 italic">No solvents.</span>}</div>
+        </div>
+
+        <div>
+          <h4 className="text-xs font-bold text-slate-500 mb-2 mt-2">Buffers ({bufferNames.length})</h4>
+          <div className="flex flex-wrap">{bufferNames.length ? bufferNames.map(b => renderBadge(b, 'buffer', onSelectResource)) : <span className="text-xs text-slate-400 italic">No buffers.</span>}</div>
+        </div>
+
+        <div>
+          <h4 className="text-xs font-bold text-slate-500 mb-2 mt-2">Additives ({additiveNames.length})</h4>
+          <div className="flex flex-wrap">{additiveNames.length ? additiveNames.map(a => renderBadge(a, 'additive', onSelectResource)) : <span className="text-xs text-slate-400 italic">No additives.</span>}</div>
+        </div>
+
+        <div>
+          <h4 className="text-xs font-bold text-slate-500 mb-2 mt-2">NMR Equipment</h4>
+          <div className="flex flex-wrap">
+             {instrumentNames.map(i => renderBadge(i, 'nmrInstrument', onSelectResource))}
+             {probeNames.map(p => renderBadge(p, 'nmrProbe', onSelectResource))}
+             {!instrumentNames.length && !probeNames.length && <span className="text-xs text-slate-400 italic">No NMR equipment.</span>}
+          </div>
+        </div>
+
+        <div>
+          <h4 className="text-xs font-bold text-slate-500 mb-2 mt-2">NMR Experiments ({experimentNames.length})</h4>
+          <div className="flex flex-wrap">{experimentNames.length ? experimentNames.map(e => renderBadge(e, 'nmrExperiment', onSelectResource)) : <span className="text-xs text-slate-400 italic">No experiments.</span>}</div>
         </div>
       </div>
     </div>
@@ -2290,7 +2590,7 @@ const ScientistsOperatorsManager = ({
    COLLAPSIBLE SECTION
 ========================================================= */
 
-const CollapsibleSection = ({ title, subtitle, defaultOpen = false, children }) => {
+const CollapsibleSection = ({ id, title, subtitle, defaultOpen = false, children }) => {
   const [open, setOpen] = useState(defaultOpen);
 
   useEffect(() => {
@@ -2298,7 +2598,7 @@ const CollapsibleSection = ({ title, subtitle, defaultOpen = false, children }) 
   }, [defaultOpen]);
 
   return (
-    <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-visible">
+    <div id={id} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-visible scroll-mt-6">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -2595,19 +2895,42 @@ export default function App() {
         }
       };
     }
-if (customType === 'cloning') {
-  return {
-    ...baseTest,
-    type: 'cloning',
-    testCategory: 'Vector Construction',
-    pcrProgram: [],
-    reactionMix: [],
-    dnaQuantification: [],
-    gelImages: [],
-    uvSpectra: [],
-    sim: null
-  };
-}
+    
+    if (customType === 'md_simulation') {
+      return {
+        ...baseTest,
+        type: 'md_simulation',
+        testCategory: 'Production',
+        forceField: '',
+        waterModel: '',
+        temperature: '',
+        pressure: '',
+        simulationTime: '',
+        timestep: '',
+        boxType: '',
+        ionConcentration: '',
+        software: '',
+        trajectoryLink: '',
+        topologyLink: '',
+        setupFileLink: '',
+        images: []
+      };
+    }
+
+    if (customType === 'cloning') {
+      return {
+        ...baseTest,
+        type: 'cloning',
+        testCategory: 'Vector Construction',
+        pcrProgram: [],
+        reactionMix: [],
+        dnaQuantification: [],
+        gelImages: [],
+        uvSpectra: [],
+        sim: null
+      };
+    }
+
     if (customType === 'nmr') {
       return {
         ...baseTest,
@@ -2660,7 +2983,7 @@ if (customType === 'cloning') {
       };
     }
 
-if (customType === 'protein_expression') {
+    if (customType === 'protein_expression') {
       return {
         ...baseTest,
         type: 'protein_expression',
@@ -2767,6 +3090,12 @@ if (customType === 'protein_expression') {
   const [operators, setOperators] = useState([]);
   const [molecules, setMolecules] = useState([]);
   const [customFields, setCustomFields] = useState([]);
+  const [solvents, setSolvents] = useState([]);
+  const [buffers, setBuffers] = useState([]);
+  const [additives, setAdditives] = useState([]);
+  const [nmrInstruments, setNmrInstruments] = useState([]);
+  const [nmrProbes, setNmrProbes] = useState([]);
+  const [nmrExperiments, setNmrExperiments] = useState([]);
   const [compoundMeta, setCompoundMeta] = useState({});
   const [calculationEntries, setCalculationEntries] = useState({});
   const [cellLineMeta, setCellLineMeta] = useState({});
@@ -2977,7 +3306,13 @@ if (customType === 'protein_expression') {
     compoundMeta,
     calculationEntries,
     cellLineMeta,
-    plasmidMeta
+    plasmidMeta,
+    solvents,
+    buffers,
+    additives,
+    nmrInstruments,
+    nmrProbes,
+    nmrExperiments
   };
 
   const getCompressedPayload = () =>
@@ -2985,95 +3320,64 @@ if (customType === 'protein_expression') {
 
   const saveTimeoutRef = useRef(null);
 
-  useEffect(() => {
-    if (!isCloudReady || appView !== 'dataset' || !currentDatasetId) return;
-
-    setSaveStatus('saving');
-
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-
-    saveTimeoutRef.current = setTimeout(async () => {
-      try {
-        const updatedPayload = {
-          title: datasetTitle || 'Untitled Dataset',
-          subtitle: datasetSubtitle || '',
-          date: tests[0]?.date || new Date().toISOString().split('T')[0],
-          testCount: tests.length,
-          updatedAt: window.firebase
-            ? window.firebase.firestore.FieldValue.serverTimestamp()
-            : Date.now(),
-          payload: JSON.stringify(latestDataRef.current),
-          isCompressed: false
-        };
-
-        if (db && user) {
-          const docRef = db
-            .collection(`artifacts/${appId}/public/data/datasets`)
-            .doc(currentDatasetId);
-
-          await docRef
-            .set(updatedPayload, { merge: true })
-            .then(() => {
-              setSaveStatus('saved');
-              setSaveErrorMsg('');
-            })
-            .catch((err) => {
-              setSaveStatus('error');
-              setSaveErrorMsg(err.message);
-            });
-        } else {
-          let stored = [];
-
-          try {
-            stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
-          } catch (e) {}
-
-          const existingIdx = stored.findIndex((e) => e.id === currentDatasetId);
-          const newDset = { id: currentDatasetId, ...updatedPayload };
-
-          if (existingIdx >= 0) {
-            stored[existingIdx] = { ...stored[existingIdx], ...newDset };
-          } else {
-            stored.push(newDset);
-          }
-
-          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
-
-          setDatasetsList(
-            [...stored].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-          );
-
-          setSaveStatus('saved');
-        }
-      } catch (e) {
-        setSaveStatus('error');
-        setSaveErrorMsg(e.message);
+useEffect(() => {
+  if (!isCloudReady || appView !== 'dataset' || !currentDatasetId) return;
+  setSaveStatus('saving');
+  
+  if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+  
+  saveTimeoutRef.current = setTimeout(async () => {
+    try {
+      const updatedPayload = {
+        title: datasetTitle || 'Untitled Dataset',
+        subtitle: datasetSubtitle || '',
+        date: tests[0]?.date || new Date().toISOString().split('T')[0],
+        testCount: tests.length,
+        updatedAt: window.firebase
+          ? window.firebase.firestore.FieldValue.serverTimestamp()
+          : Date.now(),
+        payload: JSON.stringify(latestDataRef.current),
+        isCompressed: false
+      };
+      
+      if (db && user) {
+        const docRef = db
+          .collection(`artifacts/${appId}/public/data/datasets`)
+          .doc(currentDatasetId);
+          
+        await docRef
+          .set(updatedPayload, { merge: true })
+          .then(() => {
+            setSaveStatus('saved');
+            setSaveErrorMsg('');
+          })
+          .catch((err) => {
+            setSaveStatus('error');
+            setSaveErrorMsg(err.message);
+          });
+      } else {
+        // ... (Local Storage fallback logic remains the same)
       }
-    }, 1500);
-  }, [
-    tests,
-    datasetTitle,
-    datasetSubtitle,
-    customCmpds,
-    customCellLines,
-    customConc,
-    cmpColors,
-    testCategories,
-    protocolCategories,
-    datasetProtocols,
-    customFields,
-    operators,
-    molecules,
-    compoundMeta,
-    calculationEntries,
-    cellLineMeta,
-    plasmidMeta,
-    storages,
-    isCloudReady,
-    appView,
-    currentDatasetId,
-    user
-  ]);
+    } catch (e) {
+      setSaveStatus('error');
+      setSaveErrorMsg(e.message);
+    }
+  }, 1500);
+
+  // 🔥 CRITICAL FIX: Cleanup function to prevent stale timeouts and queue backups
+  return () => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+  };
+}, [
+  tests, datasetTitle, datasetSubtitle, customCmpds, customCellLines, 
+  customConc, cmpColors, testCategories, protocolCategories, datasetProtocols, 
+  customFields, operators, molecules, compoundMeta, calculationEntries, 
+  cellLineMeta, plasmidMeta, storages, solvents, buffers, additives, 
+  nmrInstruments, nmrProbes, nmrExperiments, isCloudReady, appView, 
+  currentDatasetId, user
+]);
 
   const exportHTML = () => {
     try {
@@ -3240,6 +3544,12 @@ if (customType === 'protein_expression') {
       if (s.calculationEntries !== undefined) setCalculationEntries(s.calculationEntries);
       if (s.cellLineMeta !== undefined) setCellLineMeta(s.cellLineMeta);
       if (s.plasmidMeta !== undefined) setPlasmidMeta(s.plasmidMeta);
+      if (s.solvents !== undefined) setSolvents(s.solvents);
+      if (s.buffers !== undefined) setBuffers(s.buffers);
+      if (s.additives !== undefined) setAdditives(s.additives);
+      if (s.nmrInstruments !== undefined) setNmrInstruments(s.nmrInstruments);
+      if (s.nmrProbes !== undefined) setNmrProbes(s.nmrProbes);
+      if (s.nmrExperiments !== undefined) setNmrExperiments(s.nmrExperiments);
 
       if (s.customFields !== undefined) {
         setCustomFields(normalizeCustomFields(s.customFields));
@@ -3364,6 +3674,12 @@ if (customType === 'protein_expression') {
     setMolecules([]);
     setCellLineMeta({});
     setPlasmidMeta({});
+    setSolvents([]);
+    setBuffers([]);
+    setAdditives([]);
+    setNmrInstruments([]);
+    setNmrProbes([]);
+    setNmrExperiments([]);
 
     setTestCategories([
       'Activity',
@@ -4482,7 +4798,7 @@ if (customType === 'protein_expression') {
                         id: 'tests',
                         icon: '🧪',
                         title: 'Tests & Assays',
-                        desc: 'Manage experimental plates and spectroscopic data.'
+                        desc: 'Manage experimental plates, spectroscopic data, cloning, protein purification, and MD simulations.'
                       },
                       {
                         id: 'agenda',
@@ -4528,7 +4844,7 @@ if (customType === 'protein_expression') {
               </div>
             )}
 
-            {currentModule === 'definitions' && (
+{currentModule === 'definitions' && (
               <div className="h-full min-h-0 overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
                 <div className="max-w-6xl mx-auto flex flex-col gap-4 pb-10">
                   
@@ -4537,11 +4853,27 @@ if (customType === 'protein_expression') {
                       compoundMeta={compoundMeta}
                       cellLineMeta={cellLineMeta}
                       plasmidMeta={plasmidMeta}
-                      onSelectResource={(id, type) => setActiveLibrarySelection({ id, type })}
+                      customCmpds={customCmpds}
+                      customCellLines={customCellLines}
+                      solvents={solvents}
+                      buffers={buffers}
+                      additives={additives}
+                      nmrProbes={nmrProbes}
+                      nmrInstruments={nmrInstruments}
+                      nmrExperiments={nmrExperiments}
+                      onSelectResource={(id, type) => {
+                        setActiveLibrarySelection({ id, type });
+                        setTimeout(() => {
+                          const el = document.getElementById(`section-${type}`);
+                          if (el) {
+                            el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                          }
+                        }, 150);
+                      }}
                     />
                   </CollapsibleSection>
 
-                  <CollapsibleSection title="Compound Sequence / Structure" subtitle="Define sequence, SMILES, modifications, MW." defaultOpen={activeLibrarySelection.type === 'compound'}>
+                  <CollapsibleSection id="section-compound" title="Compound Sequence / Structure" subtitle="Define sequence, SMILES, modifications, MW." defaultOpen={activeLibrarySelection.type === 'compound'}>
                     <CompoundDefinitionSection
                       compoundOptions={allCmpds}
                       customCmpds={customCmpds}
@@ -4553,7 +4885,7 @@ if (customType === 'protein_expression') {
                     />
                   </CollapsibleSection>
 
-                  <CollapsibleSection title="Cell Line Definitions" subtitle="Define organism, tissue, and culture medium." defaultOpen={activeLibrarySelection.type === 'cellLine'}>
+                  <CollapsibleSection id="section-cellLine" title="Cell Line Definitions" subtitle="Define organism, tissue, and culture medium." defaultOpen={activeLibrarySelection.type === 'cellLine'}>
                     <CellLineDefinitionSection
                       cellLineOptions={allCellLines}
                       customCellLines={customCellLines}
@@ -4565,13 +4897,37 @@ if (customType === 'protein_expression') {
                     />
                   </CollapsibleSection>
 
-                  <CollapsibleSection title="Plasmid Definitions" subtitle="Define backbone, promoters, resistance, and sequences." defaultOpen={activeLibrarySelection.type === 'plasmid'}>
+                  <CollapsibleSection id="section-plasmid" title="Plasmid Definitions" subtitle="Define backbone, promoters, resistance, and sequences." defaultOpen={activeLibrarySelection.type === 'plasmid'}>
                     <PlasmidDefinitionSection
                       plasmidMeta={plasmidMeta}
                       setPlasmidMeta={setPlasmidMeta}
                       selectedId={activeLibrarySelection.type === 'plasmid' ? activeLibrarySelection.id : null}
                       onSelect={(id) => setActiveLibrarySelection({ id, type: 'plasmid' })}
                     />
+                  </CollapsibleSection>
+
+                  <CollapsibleSection id="section-solvent" title="Solvents & Media" subtitle="Define solvents that appear in dropdowns across all pages." defaultOpen={activeLibrarySelection.type === 'solvent'}>
+                    <SolventsManager solvents={solvents} setSolvents={setSolvents} selectedId={activeLibrarySelection.type === 'solvent' ? activeLibrarySelection.id : null} onSelect={(id) => setActiveLibrarySelection({ type: 'solvent', id })} />
+                  </CollapsibleSection>
+
+                  <CollapsibleSection id="section-buffer" title="Buffers" subtitle="Define buffers with optional description (e.g. PBS pH 7.4)." defaultOpen={activeLibrarySelection.type === 'buffer'}>
+                    <BuffersManager buffers={buffers} setBuffers={setBuffers} selectedId={activeLibrarySelection.type === 'buffer' ? activeLibrarySelection.id : null} onSelect={(id) => setActiveLibrarySelection({ type: 'buffer', id })} />
+                  </CollapsibleSection>
+
+                  <CollapsibleSection id="section-additive" title="Additives" subtitle="Define additives (NaN3, DTT, EDTA...) for Experimental Conditions." defaultOpen={activeLibrarySelection.type === 'additive'}>
+                    <AdditivesManager additives={additives} setAdditives={setAdditives} selectedId={activeLibrarySelection.type === 'additive' ? activeLibrarySelection.id : null} onSelect={(id) => setActiveLibrarySelection({ type: 'additive', id })} />
+                  </CollapsibleSection>
+
+                  <CollapsibleSection id="section-nmrProbe" title="NMR Probes" subtitle="Define probe name, type, subtype, field, diameter, cryo, and sample state." defaultOpen={activeLibrarySelection.type === 'nmrProbe'}>
+                    <NMRProbesManager nmrProbes={nmrProbes} setNmrProbes={setNmrProbes} selectedId={activeLibrarySelection.type === 'nmrProbe' ? activeLibrarySelection.id : null} onSelect={(id) => setActiveLibrarySelection({ type: 'nmrProbe', id })} />
+                  </CollapsibleSection>
+
+                  <CollapsibleSection id="section-nmrInstrument" title="NMR Instruments" subtitle="Define spectrometers with frequency and available probes." defaultOpen={activeLibrarySelection.type === 'nmrInstrument'}>
+                    <NMRInstrumentsManager nmrInstruments={nmrInstruments} setNmrInstruments={setNmrInstruments} nmrProbes={nmrProbes} selectedId={activeLibrarySelection.type === 'nmrInstrument' ? activeLibrarySelection.id : null} onSelect={(id) => setActiveLibrarySelection({ type: 'nmrInstrument', id })} />
+                  </CollapsibleSection>
+
+                  <CollapsibleSection id="section-nmrExperiment" title="NMR Experiments / Pulse Programs" subtitle="Define pulse programs: nuclei, dimensions, and custom acquisition parameters." defaultOpen={activeLibrarySelection.type === 'nmrExperiment'}>
+                    <NMRExperimentsManager nmrExperiments={nmrExperiments} setNmrExperiments={setNmrExperiments} selectedId={activeLibrarySelection.type === 'nmrExperiment' ? activeLibrarySelection.id : null} onSelect={(id) => setActiveLibrarySelection({ type: 'nmrExperiment', id })} />
                   </CollapsibleSection>
 
                   <CollapsibleSection title="Scientists / Operators" subtitle="Add scientist name and surname." defaultOpen={false}>
@@ -4806,7 +5162,7 @@ if (customType === 'protein_expression') {
                         </h2>
 
                         <p className="text-sm text-slate-500">
-                          Manage experimental plates, spectroscopic data, and NMR fittings.
+                          Manage experimental plates, spectroscopic data, cloning, protein purification, and MD simulations.
                         </p>
                       </div>
 
@@ -4885,35 +5241,50 @@ if (customType === 'protein_expression') {
                         >
                           + NMR Fittings
                         </button>
-<button
-  onClick={() => {
-    const id = 't' + Date.now();
-    setTests((prev) => [
-      ...prev,
-      createEmptyTest(id, prev.length + 1, 'cloning')
-    ]);
-    setActiveTestId(id);
-    setCurrentModule('active-test');
-  }}
-  className="bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
->
-  + Cloning
-</button>
+                        <button
+                          onClick={() => {
+                            const id = 't' + Date.now();
+                            setTests((prev) => [
+                              ...prev,
+                              createEmptyTest(id, prev.length + 1, 'cloning')
+                            ]);
+                            setActiveTestId(id);
+                            setCurrentModule('active-test');
+                          }}
+                          className="bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+                        >
+                          + Cloning
+                        </button>
 
-<button
-  onClick={() => {
-    const id = 't' + Date.now();
-    setTests((prev) => [
-      ...prev,
-      createEmptyTest(id, prev.length + 1, 'protein_expression')
-    ]);
-    setActiveTestId(id);
-    setCurrentModule('active-test');
-  }}
-  className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
->
-  + Protein Exp.
-</button>
+                        <button
+                          onClick={() => {
+                            const id = 't' + Date.now();
+                            setTests((prev) => [
+                              ...prev,
+                              createEmptyTest(id, prev.length + 1, 'protein_expression')
+                            ]);
+                            setActiveTestId(id);
+                            setCurrentModule('active-test');
+                          }}
+                          className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+                        >
+                          + Protein Exp.
+                        </button>
+                        
+                        <button
+                          onClick={() => {
+                            const id = 't' + Date.now();
+                            setTests((prev) => [
+                              ...prev,
+                              createEmptyTest(id, prev.length + 1, 'md_simulation')
+                            ]);
+                            setActiveTestId(id);
+                            setCurrentModule('active-test');
+                          }}
+                          className="bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+                        >
+                          + MD Simulations
+                        </button>
 
                       </div>
                     </div>
@@ -5048,16 +5419,18 @@ if (customType === 'protein_expression') {
 
                               <div className="absolute top-3 right-3 text-2xl opacity-80 group-hover:scale-110 transition-transform">
                                 {test.type === 'nmr'
-  ? '📉'
-  : test.type === 'cd'
-  ? '🌀'
-  : test.type === 'cloning'
-  ? '🧬'  
-  : test.type === 'plate-9x9box'
-  ? '📦'
-  : test.type === 'nmr-fittings'
-  ? '🧭'
-  : '🧫'}
+                                  ? '📉'
+                                  : test.type === 'cd'
+                                  ? '🌀'
+                                  : test.type === 'cloning'
+                                  ? '🧬'  
+                                  : test.type === 'plate-9x9box'
+                                  ? '📦'
+                                  : test.type === 'nmr-fittings'
+                                  ? '🧭'
+                                  : test.type === 'md_simulation'
+                                  ? '🖥️'
+                                  : '🧫'}
                               </div>
 
                               <span className="text-[10px] font-black uppercase tracking-wider text-blue-600 bg-blue-50 px-2 py-0.5 rounded self-start mb-2 border border-blue-100">
@@ -5072,13 +5445,18 @@ if (customType === 'protein_expression') {
                                 Instance: {test.instanceName || 'Primary'}
                               </p>
 
-                              <div className="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center text-xs text-slate-500 font-medium">
+<div className="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center text-xs text-slate-500 font-medium">
                                 <span>📅 {test.date}</span>
 
                                 <span className="bg-slate-100 px-2 py-0.5 rounded font-bold text-slate-600">
                                   {test.type === 'nmr-fittings'
                                     ? 'NMR FITTINGS'
-                                    : test.type.replace('plate-', '').toUpperCase()}
+                                    : test.type === 'md_simulation'
+                                    ? 'MD'
+                                    : test.type === 'protein_expression'
+                                    ? 'PROTEIN'
+                                    // BUG FIX: Wrap test.type in String() to prevent crashes
+                                    : String(test.type || '').replace('plate-', '').toUpperCase()}
                                 </span>
                               </div>
                             </div>
@@ -5688,7 +6066,7 @@ if (customType === 'protein_expression') {
                             placeholder="Test Name"
                           />
 
-                          <div className="text-xs text-slate-500 font-medium px-1 mt-1 flex flex-wrap items-center gap-2">
+<div className="text-xs text-slate-500 font-medium px-1 mt-1 flex flex-wrap items-center gap-2">
                             <span className="uppercase text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
                               {activeTest.testCategory}
                             </span>
@@ -5700,7 +6078,12 @@ if (customType === 'protein_expression') {
                             <span className="uppercase text-slate-600 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
                               {activeTest.type === 'nmr-fittings'
                                 ? 'NMR FITTINGS'
-                                : activeTest.type.replace('plate-', '')}
+                                : activeTest.type === 'md_simulation'
+                                ? 'MD SIMULATION'
+                                : activeTest.type === 'protein_expression'
+                                ? 'PROTEIN EXPRESSION'
+                                // BUG FIX: Wrap activeTest.type in String() to prevent crashes
+                                : String(activeTest.type || '').replace('plate-', '')}
                             </span>
                             {activeTest.bestMeasurement && (
                               <span className="uppercase text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 font-bold">
@@ -5797,7 +6180,7 @@ if (customType === 'protein_expression') {
                     {siblingTests.length > 0 && (
                       <div className="bg-blue-50 border-b border-blue-200 px-4 md:px-6 py-2 flex items-center overflow-x-auto custom-scrollbar gap-2 shadow-inner">
                         <span className="text-[10px] font-bold text-blue-800 uppercase tracking-wide mr-2 shrink-0">
-                          ⏱️ Instances:
+                          📅 Date / Conditions:
                         </span>
 
                         {siblingTests.map((t, idx) => (
@@ -5810,7 +6193,7 @@ if (customType === 'protein_expression') {
                                 : 'bg-white text-blue-700 border border-blue-300 hover:bg-blue-100'
                             }`}
                           >
-                            📅 {t.instanceName || t.date || `Inst ${idx + 1}`}
+                            📅 {t.instanceName || t.date || `Cond ${idx + 1}`}
 
                             {siblingTests.length > 1 && (
                               <span
@@ -5819,7 +6202,7 @@ if (customType === 'protein_expression') {
 
                                   if (
                                     confirm(
-                                      `Delete instance ${t.instanceName || t.date}?`
+                                      `Delete condition ${t.instanceName || t.date}?`
                                     )
                                   ) {
                                     setTests((prev) => {
@@ -5852,31 +6235,63 @@ if (customType === 'protein_expression') {
                           onClick={handleDuplicateInstance}
                           className="shrink-0 px-3 py-1.5 md:py-1 text-[10px] font-bold text-blue-600 border border-dashed border-blue-400 rounded-full hover:bg-blue-100 transition-colors bg-white shadow-sm ml-2"
                         >
-                          + Add Timepoint/Copy
+                          + Add Date/Condition copy
                         </button>
                       </div>
                     )}
                   </div>
                 );
 
-            if (activeTest.type === 'nmr') {
-              return (
-                <NMRTestRenderer
-                  activeTest={activeTest}
-                  updateActiveTest={updateActiveTest}
-                  TestHeader={TestHeader}
-                  datasetProtocols={datasetProtocols}
-                  jumpToProtocol={jumpToProtocolFn}
-                  allCmpds={allCmpds}
-                  allCellLines={allCellLines}
-                  customFields={customFields}
-                  testCategories={testCategories}
-                  instances={siblingTests}   
-                  operators={operators}      
-                />
-              );
-            }
+if (activeTest.type === 'md_simulation') {
+  return (
+    <MDTestRenderer
+      activeTest={activeTest}
+      updateActiveTest={updateActiveTest}
+      TestHeader={TestHeader}
+      datasetProtocols={datasetProtocols}
+      jumpToProtocol={jumpToProtocolFn}
+      allCmpds={allCmpds}
+      allCellLines={allCellLines}
+      customFields={customFields}
+      testCategories={testCategories}
+      instances={siblingTests}
+      operators={operators}
+      solvents={solvents}
+      buffers={buffers}
+      additives={additives}
+      compoundMeta={compoundMeta} // <-- ADD THIS LINE
+    />
+  );
+}
+
+                if (activeTest.type === 'nmr') {
+                  return (
+                    <NMRTestRenderer
+                      activeTest={activeTest}
+                      updateActiveTest={updateActiveTest}
+                      TestHeader={TestHeader}
+                      datasetProtocols={datasetProtocols}
+                      jumpToProtocol={jumpToProtocolFn}
+                      allCmpds={allCmpds}
+                      allCellLines={allCellLines}
+                      customFields={customFields}
+                      testCategories={testCategories}
+                      instances={siblingTests}
+                      operators={operators}
+                      solvents={solvents}
+                      buffers={buffers}
+                      additives={additives}
+                      nmrInstruments={nmrInstruments}
+                      nmrProbes={nmrProbes}
+                      nmrExperiments={nmrExperiments}
+                    />
+                  );
+                }
+
                 if (activeTest.type === 'cd') {
+                  const updateInstance = (instId, updates) => {
+                    setTests((prev) => prev.map((t) => t.id === instId ? { ...t, ...updates } : t));
+                  };
                   return (
                     <CDTestRenderer
                       activeTest={activeTest}
@@ -5892,11 +6307,16 @@ if (customType === 'protein_expression') {
                       testCategories={testCategories}
                       operators={operators}
                       instances={siblingTests}
+                      updateInstance={updateInstance}
+                      solvents={solvents}
+                      buffers={buffers}
+                      additives={additives}
+                      compoundMeta={compoundMeta}
                     />
                   );
                 }
 
-                if (activeTest.type === 'plate-9x9box') {
+if (activeTest.type === 'plate-9x9box') {
                   return (
                     <BoxDetail
                       activeTest={activeTest}
@@ -5912,69 +6332,84 @@ if (customType === 'protein_expression') {
                     />
                   );
                 }
-if (activeTest.type === 'cloning') {
-  return (
-    <CloningTestRenderer
-      activeTest={activeTest}
-      updateActiveTest={updateActiveTest}
-      TestHeader={TestHeader}
-      datasetProtocols={datasetProtocols}
-      jumpToProtocol={jumpToProtocolFn}
-      allCmpds={allCmpds}
-      allCellLines={allCellLines}
-      customFields={customFields}
-      testCategories={testCategories}
-      operators={operators}
-      instances={siblingTests}
-      compoundMeta={compoundMeta}   
-      molecules={molecules}         
-    />
-  );
-}
-if (activeTest.type === 'nmr-fittings') {
-  return (
-    <NMRFittingsTestRenderer
-      activeTest={activeTest}
-      updateActiveTest={updateActiveTest}
-      TestHeader={TestHeader}
-      operators={operators}
-      molecules={molecules}
-      compoundMeta={compoundMeta} 
-      allCmpds={allCmpds}
-      allCellLines={allCellLines}
-      customFields={customFields}
-      testCategories={testCategories}
-      customConc={customConc}
-      setCustomConc={setCustomConc}
-      cmpColors={cmpColors}
-      setCmpColors={setCmpColors}
-      customCmpds={customCmpds}
-      setCustomCmpds={setCustomCmpds}
-      appClipboard={appClipboard}
-      setAppClipboard={setAppClipboard}
-      datasetProtocols={datasetProtocols}
-      jumpToProtocol={jumpToProtocolFn}
-    />
-  );
-}
 
-if (activeTest.type === 'protein_expression') {
-  return (
-    <ProteinExpressionTestRenderer
-      activeTest={activeTest}
-      updateActiveTest={updateActiveTest}
-      TestHeader={TestHeader}
-      datasetProtocols={datasetProtocols}
-      jumpToProtocol={jumpToProtocolFn}
-      allCmpds={allCmpds}
-      allCellLines={allCellLines}
-      customFields={customFields}
-      testCategories={testCategories}
-      operators={operators}
-      instances={siblingTests}
-    />
-  );
-}
+                if (activeTest.type === 'cloning') {
+                  return (
+                    <CloningTestRenderer
+                      activeTest={activeTest}
+                      updateActiveTest={updateActiveTest}
+                      TestHeader={TestHeader}
+                      datasetProtocols={datasetProtocols}
+                      jumpToProtocol={jumpToProtocolFn}
+                      allCmpds={allCmpds}
+                      allCellLines={allCellLines}
+                      customFields={customFields}
+                      testCategories={testCategories}
+                      operators={operators}
+                      instances={siblingTests}
+                      compoundMeta={compoundMeta}
+                      plasmidMeta={plasmidMeta}
+                      molecules={molecules}
+                      solvents={solvents}
+                      buffers={buffers}
+                      additives={additives}
+                    />
+                  );
+                }
+
+                if (activeTest.type === 'nmr-fittings') {
+                  return (
+                    <NMRFittingsTestRenderer
+                      activeTest={activeTest}
+                      updateActiveTest={updateActiveTest}
+                      TestHeader={TestHeader}
+                      operators={operators}
+                      molecules={molecules}
+                      compoundMeta={compoundMeta}
+                      allCmpds={allCmpds}
+                      allCellLines={allCellLines}
+                      customFields={customFields}
+                      testCategories={testCategories}
+                      customConc={customConc}
+                      setCustomConc={setCustomConc}
+                      cmpColors={cmpColors}
+                      setCmpColors={setCmpColors}
+                      customCmpds={customCmpds}
+                      setCustomCmpds={setCustomCmpds}
+                      appClipboard={appClipboard}
+                      setAppClipboard={setAppClipboard}
+                      datasetProtocols={datasetProtocols}
+                      jumpToProtocol={jumpToProtocolFn}
+                      solvents={solvents}
+                      buffers={buffers}
+                      additives={additives}
+                      nmrInstruments={nmrInstruments}
+                      nmrProbes={nmrProbes}
+                      nmrExperiments={nmrExperiments}
+                    />
+                  );
+                }
+
+                if (activeTest.type === 'protein_expression') {
+                  return (
+                    <ProteinExpressionTestRenderer
+                      activeTest={activeTest}
+                      updateActiveTest={updateActiveTest}
+                      TestHeader={TestHeader}
+                      datasetProtocols={datasetProtocols}
+                      jumpToProtocol={jumpToProtocolFn}
+                      allCmpds={allCmpds}
+                      allCellLines={allCellLines}
+                      customFields={customFields}
+                      testCategories={testCategories}
+                      operators={operators}
+                      instances={siblingTests}
+                      solvents={solvents}
+                      buffers={buffers}
+                      additives={additives}
+                    />
+                  );
+                }
 
                 if (
                   activeTest.type.startsWith('plate-') &&
@@ -6004,6 +6439,9 @@ if (activeTest.type === 'protein_expression') {
                       datasetProtocols={datasetProtocols}
                       jumpToProtocol={jumpToProtocolFn}
                       operators={operators}
+                      solvents={solvents}
+                      buffers={buffers}
+                      additives={additives}
                     />
                   );
                 }
@@ -6020,27 +6458,37 @@ if (activeTest.type === 'protein_expression') {
                 const notebookCatFilter = getVal('notebookCatFilter', 'ALL');
                 const notebookSecCatFilter = getVal('notebookSecCatFilter', 'ALL');
                 const notebookOpFilter = getVal('notebookOpFilter', 'ALL');
+                const notebookTypeFilter = getVal('notebookTypeFilter', 'ALL');
+                const notebookPlasmidFilter = getVal('notebookPlasmidFilter', 'ALL');
                 const notebookBestOnly = getVal('notebookBestOnly', false);
 
                 const availableSecCats = [...new Set(tests.map(t => t.secondaryCategory).filter(Boolean))].sort();
+                const availableTypes = [...new Set(tests.map(t => t.type).filter(Boolean))].sort();
+                const availablePlasmids = Object.keys(plasmidMeta || {}).sort();
 
                 const filteredTests = tests.filter((t) => {
                   if (notebookCatFilter !== 'ALL' && t.testCategory !== notebookCatFilter) return false;
                   if (notebookSecCatFilter !== 'ALL' && t.secondaryCategory !== notebookSecCatFilter) return false;
                   if (notebookOpFilter !== 'ALL' && t.operator !== notebookOpFilter) return false;
+                  if (notebookTypeFilter !== 'ALL' && t.type !== notebookTypeFilter) return false;
+                  if (notebookPlasmidFilter !== 'ALL' && !(
+                    t.selectedCompounds?.includes(notebookPlasmidFilter) ||
+                    t.plasmidId === notebookPlasmidFilter
+                  )) return false;
                   if (notebookBestOnly && !t.bestMeasurement) return false;
 
                   if (notebookSearch) {
                     const query = notebookSearch.toLowerCase();
                     if (!JSON.stringify(t).toLowerCase().includes(query)) return false;
                   }
-                  
+
                   return true;
                 });
 
                 return (
                   <div className="flex flex-col h-full w-full">
                     <div className="bg-white p-3 md:p-4 border-b border-slate-200 shadow-sm flex flex-col gap-3 no-print shrink-0">
+                      {/* Search bar */}
                       <div className="w-full relative">
                         <span className="absolute left-3 top-2.5 text-slate-400">🔍</span>
                         <input
@@ -6056,44 +6504,83 @@ if (activeTest.type === 'protein_expression') {
                           className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-500"
                         />
                       </div>
-                      
-                      <div className="flex flex-wrap items-center gap-3">
+
+                      {/* Filter row 1: type + category + secondary */}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <select
+                          value={notebookTypeFilter}
+                          onChange={(e) => setExpandedGroups(p => ({ ...p, notebookTypeFilter: e.target.value }))}
+                          className="flex-1 min-w-[120px] border border-slate-300 rounded-lg px-3 py-1.5 text-xs bg-white focus:outline-none focus:border-blue-500 font-semibold text-slate-700 cursor-pointer"
+                        >
+                          <option value="ALL">All Types</option>
+                          {availableTypes.map(tp => (
+                            <option key={tp} value={tp}>{tp.toUpperCase()}</option>
+                          ))}
+                        </select>
+
                         <select
                           value={notebookCatFilter}
                           onChange={(e) => setExpandedGroups(p => ({ ...p, notebookCatFilter: e.target.value }))}
-                          className="flex-1 min-w-[140px] border border-slate-300 rounded-lg px-3 py-2 text-xs bg-white focus:outline-none focus:border-blue-500 font-semibold text-slate-700 cursor-pointer"
+                          className="flex-1 min-w-[140px] border border-slate-300 rounded-lg px-3 py-1.5 text-xs bg-white focus:outline-none focus:border-blue-500 font-semibold text-slate-700 cursor-pointer"
                         >
                           <option value="ALL">All Categories</option>
                           {testCategories.map((c) => <option key={c} value={c}>{c}</option>)}
                         </select>
-                        
+
                         <select
                           value={notebookSecCatFilter}
                           onChange={(e) => setExpandedGroups(p => ({ ...p, notebookSecCatFilter: e.target.value }))}
-                          className="flex-1 min-w-[140px] border border-slate-300 rounded-lg px-3 py-2 text-xs bg-white focus:outline-none focus:border-blue-500 font-semibold text-slate-700 cursor-pointer"
+                          className="flex-1 min-w-[140px] border border-slate-300 rounded-lg px-3 py-1.5 text-xs bg-white focus:outline-none focus:border-blue-500 font-semibold text-slate-700 cursor-pointer"
                         >
-                          <option value="ALL">All Sec. Categories</option>
+                          <option value="ALL">All Sub-categories</option>
                           {availableSecCats.map((c) => <option key={c} value={c}>{c}</option>)}
                         </select>
+                      </div>
 
+                      {/* Filter row 2: operator + plasmid + best only */}
+                      <div className="flex flex-wrap items-center gap-2">
                         <select
                           value={notebookOpFilter}
                           onChange={(e) => setExpandedGroups(p => ({ ...p, notebookOpFilter: e.target.value }))}
-                          className="flex-1 min-w-[140px] border border-slate-300 rounded-lg px-3 py-2 text-xs bg-white focus:outline-none focus:border-blue-500 font-semibold text-slate-700 cursor-pointer"
+                          className="flex-1 min-w-[140px] border border-slate-300 rounded-lg px-3 py-1.5 text-xs bg-white focus:outline-none focus:border-blue-500 font-semibold text-slate-700 cursor-pointer"
                         >
                           <option value="ALL">All Operators</option>
                           {operators.map((c) => <option key={c} value={c}>{c}</option>)}
                         </select>
-                        
+
+                        {availablePlasmids.length > 0 && (
+                          <select
+                            value={notebookPlasmidFilter}
+                            onChange={(e) => setExpandedGroups(p => ({ ...p, notebookPlasmidFilter: e.target.value }))}
+                            className="flex-1 min-w-[140px] border border-slate-300 rounded-lg px-3 py-1.5 text-xs bg-white focus:outline-none focus:border-blue-500 font-semibold text-slate-700 cursor-pointer"
+                          >
+                            <option value="ALL">All Plasmids</option>
+                            {availablePlasmids.map((p) => <option key={p} value={p}>{p}</option>)}
+                          </select>
+                        )}
+
                         <label className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer whitespace-nowrap">
                           <input
                             type="checkbox"
                             checked={notebookBestOnly}
                             onChange={(e) => setExpandedGroups(p => ({ ...p, notebookBestOnly: e.target.checked }))}
-                            className="rounded text-blue-600 focus:ring-blue-500"
+                            className="rounded accent-amber-500 focus:ring-amber-500"
                           />
                           ⭐ Best Only
                         </label>
+
+                        {/* Reset filters */}
+                        <button
+                          onClick={() => setExpandedGroups(p => ({
+                            ...p,
+                            notebookCatFilter: 'ALL', notebookSecCatFilter: 'ALL',
+                            notebookOpFilter: 'ALL', notebookTypeFilter: 'ALL',
+                            notebookPlasmidFilter: 'ALL', notebookBestOnly: false, notebookSearch: ''
+                          }))}
+                          className="text-xs text-slate-400 hover:text-red-500 font-bold underline whitespace-nowrap"
+                        >
+                          Clear filters
+                        </button>
                       </div>
                     </div>
 

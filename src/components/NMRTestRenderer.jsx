@@ -2,6 +2,7 @@ import React, { useMemo, useContext } from 'react';
 import TestShellRenderer from './TestShellRenderer';
 import { NMR_TAB_CONFIG } from './tabConfigs';
 import * as NMRSections from './NMRSections';
+import { NMRInstrumentalSetup } from './NMRInstrumentalSetup';
 
 const getActiveShifts = (t) => {
   const instances =
@@ -50,7 +51,7 @@ const buildNmrNotebookHtml = (checked, ctx) => {
 };
 
 // ================= CONTEXT INJECTION =================
-const NmrExtrasContext = React.createContext({ operators: [], instances: [] });
+const NmrExtrasContext = React.createContext({ operators: [], instances: [], nmrInstruments: [], nmrProbes: [], nmrExperiments: [] });
 
 const withNmrExtras = (Comp) => {
   if (!Comp) return null;
@@ -69,6 +70,7 @@ const NMR_CUSTOM = {
   Data: withNmrExtras(NMRSections.Data),
   Fitting: withNmrExtras(NMRSections.Fitting),
   Simulations: withNmrExtras(NMRSections.Simulations),
+  InstrumentalSetup: withNmrExtras(NMRInstrumentalSetup),
   NotebookExtra: NMRSections.NotebookExtra,
   buildNotebookHtml: buildNmrNotebookHtml
 };
@@ -77,11 +79,14 @@ export const NMRTestRenderer = (props) => {
   const extras = useMemo(
     () => ({
       operators: Array.isArray(props.operators) ? props.operators : [],
-      instances: Array.isArray(props.instances) ? props.instances : []
+      instances: Array.isArray(props.instances) ? props.instances : [],
+      nmrInstruments: Array.isArray(props.nmrInstruments) ? props.nmrInstruments : [],
+      nmrProbes: Array.isArray(props.nmrProbes) ? props.nmrProbes : [],
+      nmrExperiments: Array.isArray(props.nmrExperiments) ? props.nmrExperiments : [],
     }),
-    [props.operators, props.instances]
+    [props.operators, props.instances, props.nmrInstruments, props.nmrProbes, props.nmrExperiments]
   );
-  
+
   return (
     <NmrExtrasContext.Provider value={extras}>
       <TestShellRenderer
