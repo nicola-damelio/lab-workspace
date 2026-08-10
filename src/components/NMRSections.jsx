@@ -21,11 +21,14 @@ const CollapsibleSection = ({ title, icon, defaultOpen = true, children, headerE
   const [isOpen, setIsOpen] = useState(defaultOpen);
   return (
     <div className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-6 break-inside-avoid ${className}`}>
-      <button type="button" onClick={() => setIsOpen(!isOpen)}
-        className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left ${isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'}`}>
+      {/* Cambiato da <button> a <div> per evitare button innestati */}
+      <div 
+        onClick={() => setIsOpen(!isOpen)}
+        className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left cursor-pointer ${isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'}`}
+      >
         <div className="flex items-center gap-2 overflow-hidden">
           {icon && <span className="text-xl shrink-0">{icon}</span>}
-          <h3 className="text-lg font-bold text-slate-800 truncate">{title}</h3>
+          <h3 className="text-lg font-bold text-slate-800 truncate select-none">{title}</h3>
         </div>
         <div className="flex items-center gap-3 shrink-0">
           {headerExtra && <div onClick={(e) => e.stopPropagation()}>{headerExtra}</div>}
@@ -33,7 +36,7 @@ const CollapsibleSection = ({ title, icon, defaultOpen = true, children, headerE
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
           </svg>
         </div>
-      </button>
+      </div>
       {isOpen && <div className="p-6">{children}</div>}
     </div>
   );
@@ -110,6 +113,7 @@ const FORM_META = { A: { label: 'A-form', color: '#0ea5e9' }, B: { label: 'B-for
 const DNA_FORM_OFFSETS = { B: { "H1'": 0, "H2'": 0, "H3'": 0, "H2''": 0 }, A: { "H1'": 0.2, "H2'": -0.3, "H3'": 0.15, "H2''": -0.25 }, Z: { "H1'": -0.15, "H2'": 0.25, "H3'": -0.1, "H2''": 0.2 } };
 const SUGAR_ANOMER_OFFSETS = { alpha: { H1: 0.25 }, beta: { H1: -0.15 } };
 const RESIDUE_COLORS = ['#3b82f6', '#8b5cf6', '#d946ef', '#ec4899', '#f43f5e', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#6366f1'];
+
 
 // ================= GENERIC HELPERS =================
 const useMeasureWidth = () => {
@@ -1159,6 +1163,7 @@ const buildLipidStructure = (res, db) => {
   addText(450, 268, `${res.name} (${db} Δ9)`, c, 13, 'middle', null);
   return b.finish();
 };
+
 const elementsToSVG = (structure, height = 320) => {
   let inner = '';
   structure.elements.forEach((el) => {
@@ -1184,10 +1189,24 @@ const normalizeImageCandidates = (url) => {
   return [u];
 };
 
+export const getPeakLabelText = (payload, format, dim) => {
+  if (!payload || !payload.resNum) return '';
+  let atomStr = '';
+  if (dim === 'direct') atomStr = payload.atom1 || '';
+  else if (dim === 'indirect') atomStr = payload.atom2 || '';
+  else atomStr = [payload.atom1, payload.atom2].filter(Boolean).join('-');
+
+  if (!atomStr && format.includes('atom')) return '';
+
+  let base = '';
+  if (format === 'resNum') base = `${payload.resNum}`;
+  else if (format === 'resNum_code') base = `${payload.resNum}${payload.resCode || ''}`;
+  else if (format === 'resNum_code_atom') base = `${payload.resNum}${payload.resCode || ''} ${atomStr}`;
+
+  return base.trim();
+};
+
 // ================= STRUCTURE VIEW / PAINT / TICKS / TOOLTIP / RANGE / ZOOMABLE PLOTS =================
-// (StructureSVGView, SequencePaintStrip, CustomXTick1H, CustomYTick1H, CustomXTick13C, CustomYTick13C,
-//  NMRTooltip, RangeBarChart, OneDSpectrumPlot, SpectrumPlot, HSQCPlot, ThreeDScatter)
-//  --> IDENTICI alla versione precedente. Riporto solo la firma; mantienili uguali.
 const StructureSVGView = ({ structure, minWidth, isExpanded, onToggleExpand, selectedKeys, manualKeys = [], onAtomClick, height = '300px' }) => {
   const clickables = structure.elements.filter((e) => (e.type === 'circle' || e.type === 'text') && e.ri != null && e.keys && e.keys.length && onAtomClick);
   return (
@@ -1417,9 +1436,9 @@ const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, row
     </div>
   );
 };
-// OneDSpectrumPlot, SpectrumPlot, HSQCPlot, ThreeDScatter: IDENTICI alla versione precedente.
-// (Mantienili uguali; qui omessi per spazio ma vanno inclusi.)
-const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel, selectedKeys, manualKeys = [], heightPx = 300, fs = 11, aspect = null }) => {
+
+const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel, selectedKeys, manualKeys = [], heightPx = 300, fs = 11, aspect = null, simCfg = {} }) => {
+  const { simShowLabels, simLabelFormat, simLabelDim, simLabelFontSize = 10 } = simCfg;
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState(fullDomain);
   const [refAreaLeft, setRefAreaLeft] = useState(null);
@@ -1479,7 +1498,13 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
                 const isSel = selectedKeys && payload.keys && payload.keys.some((k) => selectedKeys.includes(k));
                 const isMan = manualKeys && payload.keys && payload.keys.some((k) => manualKeys.includes(k));
                 const dimmed = selectedKeys && !isSel && !isMan;
-                return <line x1={centerX} y1={y + height} x2={centerX} y2={y} stroke={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : payload.color} strokeWidth={isSel ? 3 : isMan ? 2.5 : 1.5} opacity={dimmed ? 0.2 : 1} />;
+                const textStr = simShowLabels ? getPeakLabelText(payload, simLabelFormat, simLabelDim) : '';
+                return (
+                  <g opacity={dimmed ? 0.2 : 1}>
+                    <line x1={centerX} y1={y + height} x2={centerX} y2={y} stroke={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : payload.color} strokeWidth={isSel ? 3 : isMan ? 2.5 : 1.5} />
+                    {textStr && <text x={centerX} y={y - 5} textAnchor="middle" fontSize={simLabelFontSize} fill="#475569" fontWeight="bold">{textStr}</text>}
+                  </g>
+                );
               }} isAnimationActive={false} />
               {refAreaLeft !== null && refAreaRight !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} strokeOpacity={0.3} fill="#cbd5e1" />}
             </BarChart>
@@ -1489,7 +1514,8 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
     </>
   );
 };
-const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setExpandedPanel, panelId, diagonalColor, selectedKeys, manualKeys = [], aspect = 1, fs = 11 }) => {
+const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setExpandedPanel, panelId, diagonalColor, selectedKeys, manualKeys = [], aspect = 1, fs = 11, simCfg = {} }) => {
+  const { simShowLabels, simLabelFormat, simLabelDim, simLabelFontSize = 10 } = simCfg;
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState([0, 11]);
   const [yDomain, setYDomain] = useState([0, 11]);
@@ -1542,11 +1568,13 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
     const isSel = selectedKeys && payload.keys && payload.keys.some((k) => selectedKeys.includes(k));
     const isMan = manualKeys && payload.keys && payload.keys.some((k) => manualKeys.includes(k));
     const dimmed = selectedKeys && !isSel && !isMan && payload.type !== 'Diagonal';
+    const textStr = simShowLabels && payload.type !== 'Diagonal' ? getPeakLabelText(payload, simLabelFormat, simLabelDim) : '';
     return (
       <g opacity={dimmed ? 0.18 : 1}>
         {isSel && <circle cx={cx} cy={cy} r={(payload.size || 5) + 5} fill={SELECT_COLOR} opacity={0.3} />}
         {isMan && !isSel && <circle cx={cx} cy={cy} r={(payload.size || 5) + 5} fill={MANUAL_COLOR} opacity={0.22} />}
         <circle cx={cx} cy={cy} r={isSel ? (payload.size || 5) + 2 : isMan ? (payload.size || 5) + 1.5 : payload.size || 5} fill={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : payload.type === 'Diagonal' ? fill : getNMRFillColor(payload)} stroke={isSel ? '#b45309' : isMan ? '#166534' : 'none'} strokeWidth={isSel ? 2 : isMan ? 1.5 : 0} opacity={0.85} />
+        {textStr && <text x={cx + ((payload.size || 5) + 2)} y={cy - ((payload.size || 5) + 2)} fontSize={simLabelFontSize} fill="#475569" fontWeight="bold">{textStr}</text>}
       </g>
     );
   };
@@ -1579,7 +1607,8 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
     </>
   );
 };
-const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panelId, selectedKeys, manualKeys = [], yAxisLabel = '¹³C F1 (ppm)', yDomainInit = [0, 220], yTicks = TICKS_13C, aspect = 1, fs = 11 }) => {
+const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panelId, selectedKeys, manualKeys = [], yAxisLabel = '¹³C F1 (ppm)', yDomainInit = [0, 220], yTicks = TICKS_13C, aspect = 1, fs = 11, simCfg = {} }) => {
+  const { simShowLabels, simLabelFormat, simLabelDim, simLabelFontSize = 10 } = simCfg;
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState([0, 11]);
   const [yDomain, setYDomain] = useState(yDomainInit);
@@ -1650,15 +1679,17 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
                 const isSel = selectedKeys && payload.keys && payload.keys.some((k) => selectedKeys.includes(k));
                 const isMan = manualKeys && payload.keys && payload.keys.some((k) => manualKeys.includes(k));
                 const dimmed = selectedKeys && !isSel && !isMan;
+                const textStr = simShowLabels ? getPeakLabelText(payload, simLabelFormat, simLabelDim) : '';
                 return (
                   <g opacity={dimmed ? 0.18 : 1}>
                     {isSel && <circle cx={cx} cy={cy} r={(payload.size || 5) + 5} fill={SELECT_COLOR} opacity={0.3} />}
                     {isMan && !isSel && <circle cx={cx} cy={cy} r={(payload.size || 5) + 5} fill={MANUAL_COLOR} opacity={0.22} />}
                     <circle cx={cx} cy={cy} r={isSel ? (payload.size || 5) + 2 : isMan ? (payload.size || 5) + 1.5 : payload.size || 5} fill={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : getNMRFillColor(payload)} stroke={isSel ? '#b45309' : isMan ? '#166534' : 'none'} strokeWidth={isSel ? 2 : isMan ? 1.5 : 0} opacity={0.85} />
+                    {textStr && <text x={cx + ((payload.size || 5) + 2)} y={cy - ((payload.size || 5) + 2)} fontSize={simLabelFontSize} fill="#475569" fontWeight="bold">{textStr}</text>}
                   </g>
                 );
               }} isAnimationActive={false} />
-              {refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} y1={refAreaTop} y2={refAreaBottom} strokeOpacity={0.3} fill="#cbd5e1" />}
+              {refAreaLeft !== null && refAreaRight !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} y1={refAreaTop} y2={refAreaBottom} strokeOpacity={0.3} fill="#cbd5e1" />}
             </ScatterChart>
           </ResponsiveContainer>
         </div>
@@ -1666,6 +1697,7 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
     </>
   );
 };
+
 const ThreeDScatter = ({ seriesList, cfg, xLabel, yLabel, zLabel }) => {
   const [zoom, setZoom] = useState(1);
   const fs = cfg.fontSize || 11;
@@ -1723,6 +1755,7 @@ const ThreeDScatter = ({ seriesList, cfg, xLabel, yLabel, zLabel }) => {
   );
 };
 
+
 // ================= SHARED DERIVED DATA HOOK =================
 const useNmrDerived = (activeTest, ctx = {}) => {
   const moleculeType = activeTest.moleculeType || 'protein';
@@ -1750,10 +1783,39 @@ const useNmrDerived = (activeTest, ctx = {}) => {
   const sugarConf = activeTest.sugarConf || 'chair';
   const sugarAnomer = activeTest.sugarAnomer || 'alpha';
   const lipidDB = activeTest.lipidDB || 'cis';
-  const typeLabel = moleculeType === 'protein' ? 'Protein' : moleculeType === 'dna' ? 'DNA' : moleculeType === 'rna' ? 'RNA' : moleculeType === 'sugar' ? 'Sugar' : 'Phospholipid';
-  const nucDefs = moleculeType === 'protein' ? { H: ['HN', 'Hα', 'Hβ'], N: ['N'], C: ['Cα', 'Cβ', "C'"] } : moleculeType === 'dna' || moleculeType === 'rna' ? { H: ["H1'", "H2'", "H3'"], N: [], C: ["C1'", "C2'", "C3'"] } : { H: [], N: [], C: [] };
+  const typeLabel = moleculeType === 'protein' ? 'Protein' : moleculeType === 'dna' ? 'DNA' : moleculeType === 'rna' ? 'RNA' : moleculeType === 'sugar' ? 'Sugar' : moleculeType === 'organic' ? 'Organic' : 'Phospholipid';
+  
+  // NUCDEFS: Aggiunti atomi generici H1..H12, C1..C12 per le molecole organiche in modo da generare la tabella
+  const nucDefs = moleculeType === 'protein' ? { H: ['HN', 'Hα', 'Hβ'], N: ['N'], C: ['Cα', 'Cβ', "C'"] } 
+    : moleculeType === 'dna' || moleculeType === 'rna' ? { H: ["H1'", "H2'", "H3'"], N: [], C: ["C1'", "C2'", "C3'"] } 
+    : moleculeType === 'organic' ? { H: Array.from({length: 12}, (_, i) => `H${i+1}`), N: Array.from({length: 3}, (_, i) => `N${i+1}`), C: Array.from({length: 12}, (_, i) => `C${i+1}`) }
+    : { H: [], N: [], C: [] };
+
   const parsedSeq = useMemo(() => {
     let chars = [];
+
+    // FAKE RESIDUE PER MOLECOLE ORGANICHE
+    if (moleculeType === 'organic') {
+      if (!activeTest.smiles) return [];
+      const hAtoms = Array.from({length: 12}, (_, i) => `H${i+1}`);
+      const cAtoms = Array.from({length: 12}, (_, i) => `C${i+1}`);
+      const ranges = {}; const shifts = {}; const uniqueCShifts = {}; const shifts13C = {};
+      hAtoms.forEach(a => {
+         ranges[a] = { min: 1, max: 9 };
+         shifts[a] = parseFloat((1 + Math.random() * 8).toFixed(2));
+         shifts13C[a] = parseFloat((20 + Math.random() * 150).toFixed(1));
+      });
+      cAtoms.forEach(a => {
+         uniqueCShifts[a] = parseFloat((20 + Math.random() * 150).toFixed(1));
+      });
+      return [{
+        name: 'Organic', code3: 'Org', char: 'O', id: 'ORG1', color: '#3b82f6',
+        atoms: [...hAtoms, ...cAtoms, 'N1','N2','N3','P1'],
+        ranges, shifts, uniqueCShifts, shifts13C, backboneRand: null, p31: 0,
+        cosy: [], spinSystems: []
+      }];
+    }
+
     if (isPolymer) { if (!seq) return []; chars = seq.split(''); }
     else if (moleculeType === 'sugar') chars = [activeTest.sugarChoice || 'GLC'];
     else if (moleculeType === 'lipid') chars = [activeTest.lipidChoice || 'POPC'];
@@ -1806,7 +1868,7 @@ const useNmrDerived = (activeTest, ctx = {}) => {
       const p31 = hasPhosphorus ? parseFloat((-2 + Math.random() * 3).toFixed(2)) : null;
       return { ...entry, id: `${entry.code3 || char}${index + 1}`, char, color: RESIDUE_COLORS[index % RESIDUE_COLORS.length], shifts: generatedShifts, shifts13C: generatedShifts13C, uniqueCShifts: { ...cShifts }, backboneRand, p31 };
     }).filter(Boolean);
-  }, [seq, moleculeType, activeTest.sugarChoice, activeTest.lipidChoice]);
+  }, [seq, moleculeType, activeTest.sugarChoice, activeTest.lipidChoice, activeTest.smiles]);
   const estSeq = useMemo(() => parsedSeq.map((res, idx) => {
     const ssLetter = moleculeType === 'protein' ? getSSAt(idx) : 'C';
     const ssKey = { C: 'coil', H: 'helix', E: 'sheet' }[ssLetter];
@@ -1863,16 +1925,18 @@ const useNmrDerived = (activeTest, ctx = {}) => {
     if (moleculeType === 'dna' || moleculeType === 'rna') return buildNucleicStructure(parsedSeq, moleculeType);
     if (moleculeType === 'sugar') return buildSugarStructure(parsedSeq[0], sugarConf, sugarAnomer);
     if (moleculeType === 'lipid') return buildLipidStructure(parsedSeq[0], lipidDB);
-    return null;
+    return null; // Organic molecules don't use this SVG builder, they use NCI Cactus
   }, [parsedSeq, moleculeType, sugarConf, sugarAnomer, lipidDB]);
   const peaks = useMemo(() => {
     let diag = [], cosy = [], tocsy = [], noesy = [], hsqc = [], hsqc15n = [], d1H = [], d13C = [], p31 = [];
-    const addPair = (arr, x, y, label, type, colorClass, size, keys) => {
-      arr.push({ x, y, label, type, colorClass, size, keys });
-      arr.push({ x: y, y: x, label, type, colorClass, size, keys });
+    const addPair = (arr, x, y, label, type, colorClass, size, keys, atom1, atom2, ri, ch) => {
+      arr.push({ x, y, label, type, colorClass, size, keys, resNum: ri + 1, resCode: ch, atom1, atom2 });
+      arr.push({ x: y, y: x, label, type, colorClass, size, keys, resNum: ri + 1, resCode: ch, atom1: atom2, atom2: atom1 });
     };
     simSeq.forEach((res, index) => {
       if (!res.simShifts) return;
+      const rN = index + 1;
+      const rC = res.char;
       Object.entries(res.simShifts).forEach(([atom, ppm]) => {
         let pks = [{ shift: ppm, intensity: 1 }]; let totalNeighbors = 0;
         if (res.cosy) {
@@ -1907,25 +1971,25 @@ const useNmrDerived = (activeTest, ctx = {}) => {
         else if (totalNeighbors === 2) multStr = merged.length === 3 ? 't' : 'dd';
         else if (totalNeighbors === 3) multStr = merged.length === 4 ? 'q' : 'm';
         const keys = buildKeys(index, [atom], moleculeType, res.char);
-        merged.forEach((p) => d1H.push({ x: p.shift, y: (p.intensity / maxIntensity) * baseIntensity, label: `${res.id} ${atom}`, color: res.color, type: '1D', multiplet: multStr, keys }));
+        merged.forEach((p) => d1H.push({ x: p.shift, y: (p.intensity / maxIntensity) * baseIntensity, label: `${res.id} ${atom}`, color: res.color, type: '1D', multiplet: multStr, keys, resNum: rN, resCode: rC, atom1: atom, atom2: null }));
       });
       Object.entries(res.simUniqueC || {}).forEach(([cName, ppm]) => {
-        d13C.push({ x: ppm, y: 0.8 + Math.random() * 0.4, label: `${res.id} ${cName}`, color: res.color, type: '1D', keys: [`${index}-${cName}`] });
+        d13C.push({ x: ppm, y: 0.8 + Math.random() * 0.4, label: `${res.id} ${cName}`, color: res.color, type: '1D', keys: [`${index}-${cName}`], resNum: rN, resCode: rC, atom1: null, atom2: cName });
       });
       if (moleculeType === 'protein' && res.simCP !== null && res.simCP !== undefined) {
-        d13C.push({ x: res.simCP, y: 0.8 + Math.random() * 0.4, label: `${res.id} C'`, color: res.color, type: '1D', keys: [`${index}-C'`] });
+        d13C.push({ x: res.simCP, y: 0.8 + Math.random() * 0.4, label: `${res.id} C'`, color: res.color, type: '1D', keys: [`${index}-C'`], resNum: rN, resCode: rC, atom1: null, atom2: "C'" });
       }
       Object.keys(res.simShifts).forEach((atom) => {
-        diag.push({ x: res.simShifts[atom], y: res.simShifts[atom], label: `${res.id} ${atom}`, type: 'Diagonal', size: 4, keys: buildKeys(index, [atom], moleculeType, res.char) });
+        diag.push({ x: res.simShifts[atom], y: res.simShifts[atom], label: `${res.id} ${atom}`, type: 'Diagonal', size: 4, keys: buildKeys(index, [atom], moleculeType, res.char), resNum: rN, resCode: rC, atom1: atom, atom2: atom });
       });
       if (res.cosy) res.cosy.forEach(([a1, a2]) => {
-        if (res.simShifts[a1] !== undefined && res.simShifts[a2] !== undefined) addPair(cosy, res.simShifts[a1], res.simShifts[a2], res.id, `${a1}-${a2} (COSY)`, 'cosy', 4, buildKeys(index, [a1, a2], moleculeType, res.char));
+        if (res.simShifts[a1] !== undefined && res.simShifts[a2] !== undefined) addPair(cosy, res.simShifts[a1], res.simShifts[a2], res.id, `${a1}-${a2} (COSY)`, 'cosy', 4, buildKeys(index, [a1, a2], moleculeType, res.char), a1, a2, index, res.char);
       });
       if (res.spinSystems) res.spinSystems.forEach((sys) => {
         for (let i = 0; i < sys.length; i++) for (let j = i + 1; j < sys.length; j++) {
           if (res.simShifts[sys[i]] !== undefined && res.simShifts[sys[j]] !== undefined) {
             const isDirect = res.cosy && res.cosy.some((c) => (c[0] === sys[i] && c[1] === sys[j]) || (c[0] === sys[j] && c[1] === sys[i]));
-            addPair(tocsy, res.simShifts[sys[i]], res.simShifts[sys[j]], res.id, `${sys[i]}-${sys[j]} (${isDirect ? 'Direct' : 'Relay'})`, isDirect ? 'tocsyDirect' : 'tocsyRelay', 4, buildKeys(index, [sys[i], sys[j]], moleculeType, res.char));
+            addPair(tocsy, res.simShifts[sys[i]], res.simShifts[sys[j]], res.id, `${sys[i]}-${sys[j]} (${isDirect ? 'Direct' : 'Relay'})`, isDirect ? 'tocsyDirect' : 'tocsyRelay', 4, buildKeys(index, [sys[i], sys[j]], moleculeType, res.char), sys[i], sys[j], index, res.char);
           }
         }
       });
@@ -1934,34 +1998,34 @@ const useNmrDerived = (activeTest, ctx = {}) => {
       const seenPairs = new Set();
       if (res.cosy) res.cosy.forEach(([a1, a2]) => {
         seenPairs.add([a1, a2].sort().join('-'));
-        if (res.simShifts[a1] !== undefined && res.simShifts[a2] !== undefined) addPair(noesy, res.simShifts[a1], res.simShifts[a2], res.id, `${a1}-${a2} (NOE Intra)`, 'noesyIntra', 4, buildKeys(index, [a1, a2], moleculeType, res.char));
+        if (res.simShifts[a1] !== undefined && res.simShifts[a2] !== undefined) addPair(noesy, res.simShifts[a1], res.simShifts[a2], res.id, `${a1}-${a2} (NOE Intra)`, 'noesyIntra', 4, buildKeys(index, [a1, a2], moleculeType, res.char), a1, a2, index, res.char);
       });
       Object.keys(adj).forEach((u) => adj[u].forEach((v) => adj[v].forEach((w) => {
         if (u !== w) {
           const pk = [u, w].sort().join('-');
           if (!seenPairs.has(pk)) {
             seenPairs.add(pk);
-            if (res.simShifts[u] !== undefined && res.simShifts[w] !== undefined) addPair(noesy, res.simShifts[u], res.simShifts[w], res.id, `${u}-${w} (NOE 4-bond)`, 'noesyIntra4', 3, buildKeys(index, [u, w], moleculeType, res.char));
+            if (res.simShifts[u] !== undefined && res.simShifts[w] !== undefined) addPair(noesy, res.simShifts[u], res.simShifts[w], res.id, `${u}-${w} (NOE 4-bond)`, 'noesyIntra4', 3, buildKeys(index, [u, w], moleculeType, res.char), u, w, index, res.char);
           }
         }
       })));
       if (index < simSeq.length - 1 && moleculeType === 'protein') {
         const nextRes = simSeq[index + 1];
         if (res.simShifts['HN'] !== undefined && nextRes.simShifts['HN'] !== undefined) {
-          addPair(noesy, res.simShifts['HN'], nextRes.simShifts['HN'], 'Seq. NOE', `${res.id} HN ↔ ${nextRes.id} HN`, 'noesySeq', 3, [...buildKeys(index, ['HN'], 'protein', res.char), ...buildKeys(index + 1, ['HN'], 'protein', nextRes.char)]);
+          addPair(noesy, res.simShifts['HN'], nextRes.simShifts['HN'], 'Seq. NOE', `${res.id} HN ↔ ${nextRes.id} HN`, 'noesySeq', 3, [...buildKeys(index, ['HN'], 'protein', res.char), ...buildKeys(index + 1, ['HN'], 'protein', nextRes.char)], 'HN', 'HN', index, res.char);
         }
       }
       Object.keys(res.simShifts13C || {}).forEach((atom) => {
         if (res.simShifts[atom] !== undefined) {
           const cn = getCarbonName(moleculeType, res.char, atom);
-          hsqc.push({ x: res.simShifts[atom], y: res.simShifts13C[atom], label: `${res.id} ${atom}-${cn}`, type: 'HSQC', colorClass: 'hsqc', size: 4, keys: [...buildKeys(index, [atom], moleculeType, res.char), `${index}-${cn}`] });
+          hsqc.push({ x: res.simShifts[atom], y: res.simShifts13C[atom], label: `${res.id} ${atom}-${cn}`, type: 'HSQC', colorClass: 'hsqc', size: 4, keys: [...buildKeys(index, [atom], moleculeType, res.char), `${index}-${cn}`], resNum: rN, resCode: rC, atom1: atom, atom2: cn });
         }
       });
       if (moleculeType === 'protein' && res.simN !== null && res.simN !== undefined && res.simShifts['HN'] !== undefined) {
-        hsqc15n.push({ x: res.simShifts['HN'], y: res.simN, label: `${res.id} HN-N`, type: 'HSQC', colorClass: 'hsqc15n', size: 4, keys: [...buildKeys(index, ['HN'], moleculeType, res.char), `${index}-N`] });
+        hsqc15n.push({ x: res.simShifts['HN'], y: res.simN, label: `${res.id} HN-N`, type: 'HSQC', colorClass: 'hsqc15n', size: 4, keys: [...buildKeys(index, ['HN'], moleculeType, res.char), `${index}-N`], resNum: rN, resCode: rC, atom1: 'HN', atom2: 'N' });
       }
       if (hasPhosphorus && res.p31 !== null) {
-        p31.push({ x: res.p31, y: 0.8 + Math.random() * 0.4, label: `${res.id} P`, color: res.color, type: '1D', colorClass: 'p31', keys: [`${index}-P`] });
+        p31.push({ x: res.p31, y: 0.8 + Math.random() * 0.4, label: `${res.id} P`, color: res.color, type: '1D', colorClass: 'p31', keys: [`${index}-P`], resNum: rN, resCode: rC, atom1: null, atom2: 'P' });
       }
     });
     return { diagonalData: diag, cosyPeaks: cosy, tocsyPeaks: tocsy, noesyPeaks: noesy, hsqcPeaks: hsqc, hsqc15NPeaks: hsqc15n, data1H: d1H, data13C: d13C, p31Data: p31 };
@@ -2010,7 +2074,7 @@ const useNmrDerived = (activeTest, ctx = {}) => {
   };
 };
 
-// ================= IMPORT HELPERS (generic + SPARKY) — IDENTICI alla versione precedente =================
+// ================= IMPORT HELPERS (generic + SPARKY) =================
 const GREEK_MAP = { 'α': 'a', 'β': 'b', 'γ': 'g', 'δ': 'd', 'ε': 'e', 'ζ': 'z', 'η': 'h' };
 const normAtomName = (s) => String(s || '').trim().replace(/\s+/g, '').split('').map((ch) => GREEK_MAP[ch] || ch).join('').toUpperCase();
 const ATOM_ALIASES = { HA: 'Hα', HB: 'Hβ', HG: 'Hγ', HD: 'Hδ', HE: 'Hε', HZ: 'Hζ', CA: 'Cα', CB: 'Cβ', CG: 'Cγ', CD: 'Cδ', CE: 'Cε', CZ: 'Cζ', C: "C'", CO: "C'", N: 'N', H: 'HN', HN: 'HN' };
@@ -2156,9 +2220,8 @@ const parseSparkyAssignments = (text) => {
   return out;
 };
 
-// ================= 1) EXPERIMENT SETUP =================
-// (ExperimentSetupSection — IDENTICO alla versione precedente, senza la sezione "Experimental Parameters")
-const ExperimentSetupSection = ({ ctx }) => {
+// ================= EXPERIMENTAL CONDITIONS =================
+export const ExperimentSetupSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useNmrDerived(activeTest, ctx);
   const structureMode = activeTest.structureMode || '2d';
@@ -2171,6 +2234,31 @@ const ExperimentSetupSection = ({ ctx }) => {
     const t = setTimeout(() => { window.dispatchEvent(new Event('resize')); }, 100);
     return () => clearTimeout(t);
   }, [structureMode, hasOpened3D]);
+
+  const firstSelectedCmp = activeTest.selectedCompounds?.[0];
+  useEffect(() => {
+    if (firstSelectedCmp && ctx.compoundMeta) {
+      const meta = ctx.compoundMeta[firstSelectedCmp];
+      if (meta) {
+        let needsUpdate = false;
+        const updates = {};
+        if (meta.smiles && meta.smiles !== activeTest.smiles) {
+          updates.smiles = meta.smiles;
+          updates.moleculeType = 'organic';
+          needsUpdate = true;
+        }
+        if (meta.sequence && meta.sequence !== activeTest.proteinSequence) {
+          updates.proteinSequence = meta.sequence;
+          updates.moleculeType = meta.type || 'protein';
+          needsUpdate = true;
+        }
+        if (needsUpdate) {
+          updateActiveTest(updates);
+        }
+      }
+    }
+  }, [firstSelectedCmp]); // Dipende SOLO dal composto selezionato, per evitare loop continui!
+  
   const structureSrc = useMemo(() => {
     const raw = (activeTest.structureSrc || activeTest.pdbId || '').trim();
     if (!raw) {
@@ -2185,6 +2273,7 @@ const ExperimentSetupSection = ({ ctx }) => {
     if (/^[0-9][A-Za-z0-9]{3}$/.test(raw)) return `https://models.rcsb.org/${raw.toUpperCase()}.mmtf`;
     return raw;
   }, [activeTest.structureSrc, activeTest.pdbId, d.moleculeType, activeTest.lipidChoice, activeTest.sugarChoice]);
+  
   const focusIdx = activeTest.focusIdx !== undefined ? activeTest.focusIdx : 'ALL';
   const setFocusIdx = (val) => updateActiveTest({ focusIdx: val });
   const [expandedPanel, setExpandedPanel] = useState(null);
@@ -2193,18 +2282,22 @@ const ExperimentSetupSection = ({ ctx }) => {
   const [sugarBrushAnomer, setSugarBrushAnomer] = useState(activeTest.sugarAnomer || 'alpha');
   const [sugarBrushConf, setSugarBrushConf] = useState(activeTest.sugarConf || 'chair');
   const [lipidBrush, setLipidBrush] = useState(activeTest.lipidDB || 'cis');
+  
   const selectedKeys = getSelectedKeys(activeTest);
   const manualKeys = useMemo(() => getManualKeys(d.shifts), [d.shifts]);
+  
   const handleAtomClick = (ri, keys) => {
     if (ri === null || !keys) return;
     const cur = getSelectedKeys(activeTest);
     if (cur && cur.join('|') === keys.join('|')) updateActiveTest({ selectedAtomKeys: [] });
     else updateActiveTest({ selectedAtomKeys: keys });
   };
+  
   const paintSSAt = (i, letter) => { const arr = d.seq.split('').map((_, j) => d.getSSAt(j)); arr[i] = letter; updateActiveTest({ secondaryStructure: arr.join('') }); };
   const setAllSS = (letter) => updateActiveTest({ secondaryStructure: d.seq.split('').map(() => letter).join('') });
   const paintFormAt = (i, letter) => { const arr = d.seq.split('').map((_, j) => d.getFormAt(j)); arr[i] = letter; updateActiveTest({ nucleicForms: arr.join('') }); };
   const setAllForms = (letter) => updateActiveTest({ nucleicForms: d.seq.split('').map(() => letter).join(''), dnaForm: letter });
+  
   const exportFormulaToNotebook = () => {
     if (!d.structure) return;
     const html = `<div style="margin-top:10px;"><h5 style="color:#1e40af;font-size:12px;margin-bottom:6px;">🔬 Chemical Formula (${d.typeLabel}):</h5>` + elementsToSVG(d.structure, 300) + `</div>`;
@@ -2212,10 +2305,13 @@ const ExperimentSetupSection = ({ ctx }) => {
     updateActiveTest({ comments: currentComments + (currentComments ? ' <br/>' : '') + html });
     alert('Chemical formula appended to the Lab Notebook notes.');
   };
+  
+  const hasStructure = d.parsedSeq.length > 0 || (d.moleculeType === 'organic' && !!activeTest.smiles) || !!(activeTest.structureSrc && activeTest.structureSrc.trim());
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap gap-2 mb-2">
-        {[['protein', '🧬 Protein'], ['dna', '🧬 DNA'], ['rna', '🧬 RNA'], ['sugar', '🍬 Sugars'], ['lipid', '🫧 Phospholipids']].map(([val, lab]) => (
+        {[['protein', '🧬 Protein'], ['dna', '🧬 DNA'], ['rna', '🧬 RNA'], ['sugar', '🍬 Sugars'], ['lipid', '🫧 Phospholipids'], ['organic', '⬡ Organic Molecule']].map(([val, lab]) => (
           <button key={val} onClick={() => updateActiveTest({ moleculeType: val })}
             className={`px-3 py-1.5 rounded-lg text-sm font-bold border transition-colors ${d.moleculeType === val ? 'bg-blue-600 border-blue-700 text-white shadow' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
             {lab}
@@ -2224,7 +2320,14 @@ const ExperimentSetupSection = ({ ctx }) => {
       </div>
       <div className="flex flex-col md:flex-row gap-6 items-start">
         <div className="flex-1 w-full">
-          {d.isPolymer ? (
+          {d.moleculeType === 'organic' ? (
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase mb-2">SMILES String</label>
+              <input type="text" value={activeTest.smiles || ''} onChange={(e) => updateActiveTest({ smiles: e.target.value })}
+                className="w-full border border-slate-300 rounded-lg p-3 font-mono text-sm outline-none focus:border-blue-500 shadow-inner"
+                placeholder="e.g. CC(=O)Oc1ccccc1C(=O)O" />
+            </div>
+          ) : d.isPolymer ? (
             <>
               <label className="block text-xs font-bold text-slate-500 uppercase mb-2">{d.typeLabel} Sequence (1-letter code)</label>
               <textarea value={activeTest.proteinSequence || ''} onChange={(e) => updateActiveTest({ proteinSequence: e.target.value })}
@@ -2339,26 +2442,30 @@ const ExperimentSetupSection = ({ ctx }) => {
             onApply={() => updateActiveTest({ lipidDB: lipidBrush })} focusIdx={focusIdx} charLabel={(r) => r.char} />
         </div>
       )}
-      {d.structure && (
+      
+      {hasStructure && (
         <div>
           <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
             <div className="flex bg-slate-200 p-1 rounded-lg">
               <button onClick={() => updateActiveTest({ structureMode: '2d' })} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${structureMode === '2d' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>2D Formula</button>
               <button onClick={() => updateActiveTest({ structureMode: '3d' })} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${structureMode === '3d' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>3D Viewer</button>
             </div>
-            <div className="flex items-center gap-2 flex-wrap justify-end">
-              <label className="text-[10px] font-bold text-slate-500 uppercase">🔍 Focus</label>
-              <select value={focusIdx} onChange={(e) => setFocusIdx(e.target.value === 'ALL' ? 'ALL' : Number(e.target.value))}
-                className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 max-w-[180px]">
-                <option value="ALL">All residues</option>
-                {d.parsedSeq.map((r, i) => <option key={i} value={i}>{r.id} — {r.name}</option>)}
-              </select>
-              {selectedKeys && (
-                <button onClick={() => updateActiveTest({ selectedAtomKeys: [] })} className="px-2 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-400 text-amber-800">✖ Deselect ({selectionLabel(d, selectedKeys)})</button>
-              )}
-              <button onClick={exportFormulaToNotebook} className="px-2 py-1 rounded-lg text-xs font-bold bg-indigo-50 border border-indigo-300 text-indigo-700 hover:bg-indigo-100" title="Append this formula (SVG) to the Lab Notebook notes">📓 Formula → Notebook</button>
-            </div>
+            {d.moleculeType !== 'organic' && (
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">🔍 Focus</label>
+                <select value={focusIdx} onChange={(e) => setFocusIdx(e.target.value === 'ALL' ? 'ALL' : Number(e.target.value))}
+                  className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 max-w-[180px]">
+                  <option value="ALL">All residues</option>
+                  {d.parsedSeq.map((r, i) => <option key={i} value={i}>{r.id} — {r.name}</option>)}
+                </select>
+                {selectedKeys && (
+                  <button onClick={() => updateActiveTest({ selectedAtomKeys: [] })} className="px-2 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-400 text-amber-800">✖ Deselect ({selectionLabel(d, selectedKeys)})</button>
+                )}
+                <button onClick={exportFormulaToNotebook} className="px-2 py-1 rounded-lg text-xs font-bold bg-indigo-50 border border-indigo-300 text-indigo-700 hover:bg-indigo-100" title="Append this formula (SVG) to the Lab Notebook notes">📓 Formula → Notebook</button>
+              </div>
+            )}
           </div>
+          
           {structureMode === '3d' && (
             <div className="mb-3 grid grid-cols-1 md:grid-cols-4 gap-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
               <div className="flex flex-col gap-1">
@@ -2379,24 +2486,34 @@ const ExperimentSetupSection = ({ ctx }) => {
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-[10px] font-bold text-slate-500 uppercase">Atom-name map JSON</label>
-                <input type="text" value={activeTest.atomNameMap || ''} onChange={(e) => updateActiveTest({ atomNameMap: e.target.value })} placeholder='{"HA":"Hα","HB1":"Hβ1"}' className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-mono" />
+                <input type="text" value={activeTest.atomNameMap || ''} onChange={(e) => updateActiveTest({ atomNameMap: e.target.value })} placeholder='{"HA":"Hα"}' className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-mono" />
               </div>
             </div>
           )}
+          
           <p className="text-xs text-slate-400 mb-2">💡 Click an atom in the {structureMode === '2d' ? 'formula' : '3D viewer'} to highlight its cell in the assignment table and its peaks in the spectra.</p>
+          
           <div style={{ display: structureMode === '3d' ? 'block' : 'none' }} aria-hidden={structureMode !== '3d'}>
             {hasOpened3D && (
-              <NMRMoleculeViewer key={structureSrc || 'no-structure-src'} src={structureSrc} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq}
+              <NMRMoleculeViewer key={structureSrc || 'no-structure-src'} src={structureSrc} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles}
                 selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset}
                 atomNameMap={atomNameMap} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '620px' : '520px'} />
             )}
           </div>
+          
           <div style={{ display: structureMode === '2d' ? 'block' : 'none' }} aria-hidden={structureMode !== '2d'}>
-            <StructureSVGView structure={d.structure}
-              minWidth={d.moleculeType === 'protein' && d.parsedSeq.length > 3 ? `${d.parsedSeq.length * 120}px` : '100%'}
-              isExpanded={expandedPanel === 'formula'} onToggleExpand={() => setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')}
-              selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick}
-              height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? `${Math.max(360, d.parsedSeq.length * 250 + 120)}px` : '300px'} />
+            {d.moleculeType === 'organic' && activeTest.smiles ? (
+              <div className="flex justify-center items-center bg-white p-4 rounded-xl shadow-sm border border-slate-200" style={{ height: '300px' }}>
+                 <img src={`https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(activeTest.smiles)}/image`} alt="2D Structure" className="max-w-full h-full object-contain" />
+              </div>
+            ) : d.structure ? (
+              // >>> RIPRISTINATO IL COMPONENTE SVG ORIGINALE PER LE MOLECOLE NON ORGANICHE <<<
+              <StructureSVGView structure={d.structure}
+                minWidth={d.moleculeType === 'protein' && d.parsedSeq.length > 3 ? `${d.parsedSeq.length * 120}px` : '100%'}
+                isExpanded={expandedPanel === 'formula'} onToggleExpand={() => setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')}
+                selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick}
+                height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? `${Math.max(360, d.parsedSeq.length * 250 + 120)}px` : '300px'} />
+            ) : null}
           </div>
         </div>
       )}
@@ -2404,222 +2521,7 @@ const ExperimentSetupSection = ({ ctx }) => {
   );
 };
 
-// ================= 2) DATA (DataSection + ImportPanel — IDENTICI alla versione precedente) =================
-// (DataSection e ImportPanel identici alla versione precedente: import Sparky, tabella, layer, export)
-const ImportPanel = ({ ctx, d }) => {
-  const { activeTest, updateActiveTest } = ctx;
-  const [mode, setMode] = useState('file');
-  const [layerKey, setLayerKey] = useState(d.activeLayerKey);
-  const [pasteText, setPasteText] = useState('');
-  const [report, setReport] = useState(null);
-  const [srcId, setSrcId] = useState('');
-  const [copyFromId, setCopyFromId] = useState('');
-  const [sparkyFmt, setSparkyFmt] = useState('auto');
-  const [sparkyText, setSparkyText] = useState('');
-  const [importCS, setImportCS] = useState(true);
-  const [importInt, setImportInt] = useState(true);
-  const [importVol, setImportVol] = useState(true);
-  const fileRef = useRef(null);
-  const sparkyFileRef = useRef(null);
-  const nameMap = useMemo(() => { try { return activeTest.atomNameMap ? JSON.parse(activeTest.atomNameMap) : {}; } catch { return {}; } }, [activeTest.atomNameMap]);
-  const sources = Array.isArray(ctx?.importSources) ? ctx.importSources : [];
-  const applyValues = (vals) => {
-    const nv = { ...(activeTest.nmrValues || {}) };
-    nv[layerKey] = { ...(nv[layerKey] || {}), ...vals };
-    updateActiveTest({ nmrValues: nv });
-  };
-  const handleText = (text) => {
-    let vals = {}; let missed = 0;
-    try {
-      const j = JSON.parse(text);
-      if (j && typeof j === 'object' && !Array.isArray(j)) {
-        vals = remapAtomKeys(j, d.parsedSeq, nameMap);
-        missed = Object.keys(j).length - Object.keys(vals).length;
-      }
-    } catch {
-      const r = importRowsToValues(parseTableText(text), d.parsedSeq, nameMap);
-      vals = r.out; missed = r.missed.length;
-    }
-    applyValues(vals);
-    setReport({ ok: Object.keys(vals).length, missed });
-  };
-  const handleFile = async (e) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    const text = await f.text();
-    handleText(text);
-    if (fileRef.current) fileRef.current.value = '';
-  };
-  const importFromSource = async () => {
-    const s = sources.find((x) => x.id === srcId);
-    if (!s) return;
-    try {
-      let data = typeof s.getData === 'function' ? s.getData() : s.data;
-      if (data && typeof data.then === 'function') data = await data;
-      let vals = data?.values?.[layerKey] || data?.values?.cs || data?.nmrValues?.[layerKey] || data?.chemicalShifts || data || {};
-      vals = remapAtomKeys(vals, d.parsedSeq, nameMap);
-      applyValues(vals);
-      setReport({ ok: Object.keys(vals).length, missed: 0 });
-    } catch (err) {
-      setReport({ ok: 0, missed: -1, error: String(err) });
-    }
-  };
-  const importFromInstance = () => {
-    const src = d.instances.find((c) => c.id === copyFromId);
-    if (!src) return;
-    const vals = getInstanceValues(src, src.id === d.activeInstanceId, activeTest, layerKey);
-    applyValues(vals);
-    setReport({ ok: Object.keys(vals).length, missed: 0 });
-  };
-  const handleSparkyText = (text) => {
-    if (!text || !text.trim()) return;
-    const fmt = sparkyFmt === 'auto' ? detectSparkyFormat(text) : sparkyFmt;
-    const lookup = buildResLookup(d.parsedSeq);
-    const resolve = (resStr, atomStr) => {
-      const ri = lookup[String(resStr).toLowerCase().trim()];
-      if (ri === undefined) return null;
-      const atom = resolveAtom(d.parsedSeq[ri], atomStr, nameMap);
-      if (!atom) return null;
-      return `${ri}-${atom}`;
-    };
-    if (fmt === 'assignments') {
-      const rows = parseSparkyAssignments(text);
-      const vals = {}; let missed = 0;
-      rows.forEach((r) => {
-        const key = resolve(r.res, r.atom);
-        if (!key) { missed++; return; }
-        vals[key] = String(r.value);
-      });
-      applyValues(vals);
-      setReport({ ok: Object.keys(vals).length, missed, note: 'Sparky assignments → Chemical Shift layer' });
-      return;
-    }
-    const peaks = parseSparkyPeakList(text);
-    const wanted = [];
-    if (importInt) wanted.push({ key: 'int', label: 'Peak Intensity', unit: 'a.u.' });
-    if (importVol) wanted.push({ key: 'vol', label: 'Peak Integral', unit: 'a.u.' });
-    const layerMap = wanted.length ? ensureLayers(activeTest, updateActiveTest, wanted) : {};
-    const csVals = {}; const intVals = {}; const volVals = {};
-    let matched = 0; let missed = 0;
-    peaks.forEach((p) => {
-      const assigns = parseAssignmentString(p.ass || '');
-      const aX = assigns.length >= 2 ? assigns[1] : assigns[0] || null;
-      const aY = assigns.length >= 2 ? assigns[0] : null;
-      const kX = aX ? resolve(aX.res, aX.atom) : null;
-      const kY = aY ? resolve(aY.res, aY.atom) : null;
-      if (kX || kY) matched++; else missed++;
-      if (importCS) {
-        if (kX && p.x !== null) csVals[kX] = String(p.x);
-        if (kY && p.y !== null) csVals[kY] = String(p.y);
-      }
-      const storeKey = kX || kY;
-      if (storeKey) {
-        if (importInt && p.int !== null) intVals[storeKey] = String(p.int);
-        if (importVol && p.vol !== null) volVals[storeKey] = String(p.vol);
-      }
-    });
-    const nv = { ...(activeTest.nmrValues || {}) };
-    if (importCS) nv['cs'] = { ...(nv['cs'] || {}), ...csVals };
-    if (importInt && layerMap.int) nv[layerMap.int] = { ...(nv[layerMap.int] || {}), ...intVals };
-    if (importVol && layerMap.vol) nv[layerMap.vol] = { ...(nv[layerMap.vol] || {}), ...volVals };
-    updateActiveTest({ nmrValues: nv });
-    setReport({
-      ok: matched, missed,
-      note: `Sparky peak list → CS:${Object.keys(csVals).length}${importInt ? ` · Intensity:${Object.keys(intVals).length}` : ''}${importVol ? ` · Integral:${Object.keys(volVals).length}` : ''} (layers auto-created)`
-    });
-  };
-  const handleSparkyFile = async (e) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    const text = await f.text();
-    handleSparkyText(text);
-    if (sparkyFileRef.current) sparkyFileRef.current.value = '';
-  };
-  return (
-    <div className="mt-3 p-4 bg-sky-50 border border-sky-200 rounded-xl flex flex-col gap-3">
-      <div className="flex items-center gap-3 flex-wrap">
-        <span className="text-xs font-bold text-sky-800 uppercase">Import into “{d.activeInstance ? d.activeInstance.name : 'active instance'}”</span>
-        <select value={layerKey} onChange={(e) => setLayerKey(e.target.value)} className="border border-sky-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-sky-500 font-semibold">
-          {d.layers.map((l) => <option key={l.key} value={l.key}>{l.label}</option>)}
-        </select>
-        <div className="flex bg-white border border-sky-300 p-1 rounded-lg flex-wrap">
-          {[['file', '📄 File'], ['paste', '📋 Paste'], ['sparky', '✨ Sparky'], ['cond', '⧉ Condition']].map(([m, lab]) => (
-            <button key={m} type="button" onClick={() => setMode(m)} className={`px-2.5 py-1 text-xs font-bold rounded-md ${mode === m ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-sky-100'}`}>{lab}</button>
-          ))}
-        </div>
-      </div>
-      {mode === 'file' && (
-        <div className="text-xs text-slate-600">
-          <input ref={fileRef} type="file" accept=".csv,.tsv,.txt,.json" onChange={handleFile} className="text-xs" />
-          <p className="text-[10px] text-slate-400 mt-1">CSV/TSV columns: <b>Residue, Atom, Value</b> (header auto-detected; residue as “Ala3”, “A3” or index). JSON: {'{"0-HN": 8.2, ...}'}.</p>
-        </div>
-      )}
-      {mode === 'paste' && (
-        <div className="flex flex-col gap-2">
-          <textarea value={pasteText} onChange={(e) => setPasteText(e.target.value)} placeholder={'Residue,Atom,Value\nAla3,HN,8.21\n...'} className="w-full h-28 border border-sky-300 rounded-lg p-2 text-xs font-mono bg-white outline-none focus:border-sky-500" />
-          <button type="button" onClick={() => handleText(pasteText)} disabled={!pasteText.trim()} className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-bold px-4 py-1.5 rounded-lg text-xs w-fit">Import pasted data</button>
-        </div>
-      )}
-      {mode === 'sparky' && (
-        <div className="flex flex-col gap-2">
-          <div className="flex flex-wrap items-end gap-3">
-            <SelField label="Format" value={sparkyFmt} onChange={setSparkyFmt}
-              options={[['auto', 'Auto-detect'], ['peaklist', 'Sparky peak list (.list)'], ['assignments', 'Sparky assignment file (.assign)']]} />
-            <div className="flex flex-col gap-1">
-              <label className="text-[10px] font-bold text-slate-500">Import (peak list)</label>
-              <div className="flex gap-3 text-[10px] font-bold text-slate-700">
-                <label className="flex items-center gap-1"><input type="checkbox" checked={importCS} onChange={(e) => setImportCS(e.target.checked)} className="accent-sky-600" /> Chemical shifts</label>
-                <label className="flex items-center gap-1"><input type="checkbox" checked={importInt} onChange={(e) => setImportInt(e.target.checked)} className="accent-sky-600" /> Peak intensities</label>
-                <label className="flex items-center gap-1"><input type="checkbox" checked={importVol} onChange={(e) => setImportVol(e.target.checked)} className="accent-sky-600" /> Peak integrals (volumes)</label>
-              </div>
-            </div>
-            <input ref={sparkyFileRef} type="file" accept=".list,.peaks,.txt,.assign,.csv" onChange={handleSparkyFile} className="text-xs" />
-          </div>
-          <textarea value={sparkyText} onChange={(e) => setSparkyText(e.target.value)}
-            placeholder={'…or paste Sparky content here, e.g.\nVARS INDEX,X_PPM,Y_PPM,DATA,VOL,ASS\nS 1,8.32,120.4,1.2e6,4.5e7,GLY1 HN,GLY1 N\n…or assignment lines:\nGLY1 HN 8.32\nGLY1 N 120.4'}
-            className="w-full h-28 border border-sky-300 rounded-lg p-2 text-xs font-mono bg-white outline-none focus:border-sky-500" />
-          <button type="button" onClick={() => handleSparkyText(sparkyText)} disabled={!sparkyText.trim()} className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-bold px-4 py-1.5 rounded-lg text-xs w-fit">Import Sparky data</button>
-        </div>
-      )}
-      {mode === 'tab' && (
-        <div className="flex flex-col gap-2 text-xs">
-          {sources.length === 0 ? (
-            <p className="text-slate-400 italic">No tabs exposed by the host app. The main program can provide <code className="bg-white px-1 rounded">ctx.importSources = [{'{ id, label, getData() }'}…]</code> to enable cross-tab import.</p>
-          ) : (
-            <div className="flex items-end gap-2 flex-wrap">
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-bold text-slate-500">Source tab</label>
-                <select value={srcId} onChange={(e) => setSrcId(e.target.value)} className="border border-sky-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none">
-                  <option value="">-- select --</option>
-                  {sources.map((s) => <option key={s.id} value={s.id}>{s.label || s.id}</option>)}
-                </select>
-              </div>
-              <button type="button" onClick={importFromSource} disabled={!srcId} className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-bold px-4 py-1.5 rounded-lg text-xs">Import from tab</button>
-            </div>
-          )}
-        </div>
-      )}
-      {mode === 'cond' && (
-        <div className="flex items-end gap-2 flex-wrap">
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold text-slate-500">Copy layer values from (top-of-page instance)</label>
-            <select value={copyFromId} onChange={(e) => setCopyFromId(e.target.value)} className="border border-sky-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none">
-              <option value="">-- select instance --</option>
-              {d.instances.filter((c) => c.id !== d.activeInstanceId).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </div>
-          <button type="button" onClick={importFromInstance} disabled={!copyFromId} className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-bold px-4 py-1.5 rounded-lg text-xs">Copy</button>
-        </div>
-      )}
-      {report && (
-        <p className={`text-xs font-bold ${report.error ? 'text-red-600' : 'text-emerald-700'}`}>
-          {report.error ? `Import error: ${report.error}` : `✅ ${report.note || `Imported ${report.ok} values`}${report.missed > 0 ? ` · ⚠️ ${report.missed} rows not matched (residue/atom names)` : ''}`}
-        </p>
-      )}
-    </div>
-  );
-};
-const DataSection = ({ ctx }) => {
+export const DataSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useNmrDerived(activeTest, ctx);
   const [tableMode, setTableMode] = useState(activeTest.tableMode || 'backbone');
@@ -2890,88 +2792,7 @@ const DataSection = ({ ctx }) => {
   );
 };
 
-// ================= SECONDARY CHEMICAL SHIFTS (SCSPlot + SecondaryShiftsSection — IDENTICI alla versione precedente) =================
-const SCSPlot = ({ title, data, color, cfg }) => {
-  const [refAreaLeft, setRefAreaLeft] = useState(null);
-  const [refAreaRight, setRefAreaRight] = useState(null);
-  const isDragging = useRef(false);
-  const fSize = cfg.fontSize || 11;
-  const barC = cfg.barColor || color;
-  const negC = cfg.negColor || '#ef4444';
-  const showHLine = !!cfg.showHLine;
-  const hLineVal = parseFloat(cfg.hLineVal) || 0;
-  const aspect = parseFloat(cfg.aspect) || 2;
-  const xLab = cfg.xAxisTitle || 'Residues';
-  const yLab = cfg.yAxisTitle || 'Δδ (ppm)';
-  const initialDomain = [0, Math.max(10, data.length)];
-  const [xDomain, setXDomain] = useState(initialDomain);
-  const isZoomed = xDomain[0] !== initialDomain[0] || xDomain[1] !== initialDomain[1];
-  const chartRef = useRef(null);
-  const getXVal = (clientX) => {
-    if (!chartRef.current) return null;
-    const wrapper = chartRef.current.querySelector('.recharts-wrapper');
-    if (!wrapper) return null;
-    const rect = wrapper.getBoundingClientRect();
-    const plotW = rect.width - 50 - 20;
-    if (plotW <= 0) return null;
-    const px = clientX - rect.left - 50;
-    const fx = Math.min(1, Math.max(0, px / plotW));
-    return xDomain[0] + fx * (xDomain[1] - xDomain[0]);
-  };
-  useEffect(() => {
-    const handleMouseMove = (e) => { if (!isDragging.current) return; const xVal = getXVal(e.clientX); if (xVal !== null) setRefAreaRight(xVal); };
-    const handleMouseUp = () => {
-      if (!isDragging.current) return;
-      isDragging.current = false;
-      if (refAreaLeft !== null && refAreaRight !== null && refAreaLeft !== refAreaRight) setXDomain([Math.min(refAreaLeft, refAreaRight), Math.max(refAreaLeft, refAreaRight)]);
-      setRefAreaLeft(null); setRefAreaRight(null);
-    };
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-    return () => { window.removeEventListener('mousemove', handleMouseMove); window.removeEventListener('mouseup', handleMouseUp); };
-  }, [refAreaLeft, refAreaRight]);
-  const handleMouseDown = (e) => {
-    const xVal = getXVal(e.clientX);
-    if (xVal !== null) { isDragging.current = true; setRefAreaLeft(xVal); setRefAreaRight(xVal); }
-  };
-  return (
-    <div className="bg-white rounded-lg border border-slate-200 p-2 flex flex-col relative" onMouseDown={handleMouseDown} ref={chartRef}>
-      <div className="flex justify-between items-center mb-1">
-        <h5 className="text-[12px] font-bold text-slate-700">{title}</h5>
-        {isZoomed && <button onClick={() => setXDomain(initialDomain)} className="text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-0.5 rounded z-10">Reset Zoom</button>}
-      </div>
-      <div className="flex-1 w-full" style={{ aspectRatio: String(aspect) }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 15, right: 20, left: 0, bottom: 20 }}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis type="number" dataKey="idx" domain={xDomain} allowDataOverflow tickFormatter={(val) => data[val]?.label || ''} tick={{ fontSize: fSize }} label={{ value: xLab, position: 'insideBottom', offset: -10, fontSize: fSize + 1 }} />
-            <YAxis tick={{ fontSize: fSize }} label={{ value: yLab, angle: -90, position: 'insideLeft', offset: 10, fontSize: fSize + 1 }} />
-            <Tooltip content={({ active, payload }) => {
-              if (active && payload && payload.length) {
-                const dd = payload[0].payload;
-                return (
-                  <div className="bg-white p-2 shadow rounded border border-slate-200 text-xs">
-                    <p className="font-bold">{dd.label}</p>
-                    <p>{yLab}: <span style={{ color: dd.v >= 0 ? barC : negC }}>{dd.v.toFixed(3)}</span></p>
-                  </div>
-                );
-              }
-              return null;
-            }} />
-            <ReferenceLine y={0} stroke="#94a3b8" />
-            {showHLine && <ReferenceLine y={hLineVal} stroke="#eab308" strokeDasharray="4 4" label={{ value: `Max: ${hLineVal}`, fill: '#eab308', fontSize: fSize, position: 'insideTopRight' }} />}
-            {showHLine && <ReferenceLine y={-hLineVal} stroke="#eab308" strokeDasharray="4 4" />}
-            <Bar dataKey="v" isAnimationActive={false}>
-              {data.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.v >= 0 ? barC : negC} />)}
-            </Bar>
-            {refAreaLeft !== null && refAreaRight !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} strokeOpacity={0.3} fill="#cbd5e1" />}
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
-  );
-};
-const SecondaryShiftsSection = ({ ctx }) => {
+export const SecondaryShiftsSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useNmrDerived(activeTest, ctx);
   const scsCfg = activeTest.scsCfg || {
@@ -3035,23 +2856,7 @@ const SecondaryShiftsSection = ({ ctx }) => {
   );
 };
 
-// ================= 3) FITTING — CONDITION PLOTS (MODIFICATO) =================
-// MODIFICHE CHIAVE:
-//  - linea ordinata per X (non torna più indietro)
-//  - warning quando le ALTRE condizioni sperimentali differiscono tra le istanze
-//  - opzione "Exclude non-comparable points"
-const makePlotId = () => `cp_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-const defaultPlotCfg = (n) => ({
-  id: makePlotId(), title: `Condition Plot ${n}`, layerKey: 'cs', atoms: [],
-  xField: 'temperature', yField: '', chartType: 'line',
-  fitEnabled: false, fitModel: 'linear', customExpr: '',
-  showPoints: true, showErrors: true, showFit: true,
-  useFixedSD: false, fixedSDStr: '', outlierThreshStr: '2.5',
-  excludeNonComparable: false,
-  hiddenSeries: {}, excluded: {}, manualSD: {}, usedInstances: {}, hLines: [], showMaxLines: false,
-  style: { ...DEFAULT_CHART_STYLE }
-});
-const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlot }) => {
+export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlot }) => {
   const { activeTest, updateActiveTest } = ctx;
   const cfg = { ...DEFAULT_CHART_STYLE, ...(plot.style || {}) };
   const [atomSearch, setAtomSearch] = useState('');
@@ -3594,10 +3399,24 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
     </CollapsibleSection>
   );
 };
-const FittingSection = ({ ctx }) => {
+// ================= 3) FITTING — CONDITION PLOTS =================
+const makePlotId = () => `cp_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+const defaultPlotCfg = (n) => ({
+  id: makePlotId(), title: `Condition Plot ${n}`, layerKey: 'cs', atoms: [],
+  xField: 'temperature', yField: '', chartType: 'line',
+  fitEnabled: false, fitModel: 'linear', customExpr: '',
+  showPoints: true, showErrors: true, showFit: true,
+  useFixedSD: false, fixedSDStr: '', outlierThreshStr: '2.5',
+  excludeNonComparable: false,
+  hiddenSeries: {}, excluded: {}, manualSD: {}, usedInstances: {}, hLines: [], showMaxLines: false,
+  style: { ...DEFAULT_CHART_STYLE }
+});
+
+export const FittingSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useNmrDerived(activeTest, ctx);
   const plots = Array.isArray(activeTest.conditionPlots) && activeTest.conditionPlots.length ? activeTest.conditionPlots : [defaultPlotCfg(1)];
+  
   const updatePlot = (id, patch) => updateActiveTest({ conditionPlots: plots.map((p) => (p.id === id ? { ...p, ...patch } : p)) });
   const addPlot = () => updateActiveTest({ conditionPlots: [...plots, defaultPlotCfg(plots.length + 1)] });
   const removePlot = (id) => {
@@ -3605,6 +3424,7 @@ const FittingSection = ({ ctx }) => {
     updateActiveTest({ conditionPlots: plots.filter((p) => p.id !== id) });
   };
   const duplicatePlot = (p) => updateActiveTest({ conditionPlots: [...plots, { ...JSON.parse(JSON.stringify(p)), id: makePlotId(), title: `${p.title} (copy)` }] });
+  
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between flex-wrap gap-2">
@@ -3612,15 +3432,15 @@ const FittingSection = ({ ctx }) => {
         <button type="button" onClick={addPlot} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm">+ Add Condition Plot</button>
       </div>
       {plots.map((p) => (
+        // Assicurati che ConditionPlotPanel sia già presente e definito nel file NMRSections.jsx,
+        // altrimenti avrai un altro errore di undefined. Lo avevamo integrato nei messaggi precedenti!
         <ConditionPlotPanel key={p.id} ctx={ctx} d={d} plot={p} updatePlot={updatePlot} removePlot={removePlot} duplicatePlot={duplicatePlot} />
       ))}
     </div>
   );
 };
 
-// ================= CLASSIFICATION (per la sezione esistente — NON aggiunta come sezione extra) =================
-// Usa ctx.testCategories (tipo esperimento) e ctx.operators (operatori) definiti in Definitions in App.jsx.
-// Integra questo componente nella tua sezione Classification esistente dentro TestShellRenderer.jsx.
+// ================= CLASSIFICATION =================
 export const ClassificationSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const testCategories = Array.isArray(ctx?.testCategories) ? ctx.testCategories : [];
@@ -3661,8 +3481,8 @@ export const ClassificationSection = ({ ctx }) => {
   );
 };
 
-// ================= 5) SIMULATIONS (IDENTICO alla versione precedente) =================
-const SimulationsSection = ({ ctx }) => {
+// ================= 5) SIMULATIONS =================
+export const SimulationsSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useNmrDerived(activeTest, ctx);
   const [expandedPanel, setExpandedPanel] = useState(null);
@@ -3671,11 +3491,14 @@ const SimulationsSection = ({ ctx }) => {
   const setFocusIdx = (val) => updateActiveTest({ focusIdx: val });
   const selectedKeys = getSelectedKeys(activeTest);
   const manualKeys = useMemo(() => getManualKeys(d.shifts), [d.shifts]);
-  const simCfg = { fontSize: 11, h1D: 300, aspect2D: 1, ...(activeTest.simChartCfg || {}) };
+  
+  const simCfg = { fontSize: 11, h1D: 300, aspect2D: 1, simShowLabels: false, simLabelFormat: 'resNum_code_atom', simLabelDim: 'both', simLabelFontSize: 10, ...(activeTest.simChartCfg || {}) };
   const setCfg = (patch) => updateActiveTest({ simChartCfg: { ...simCfg, ...patch } });
-  if (d.parsedSeq.length === 0) {
+  
+  if (d.parsedSeq.length === 0 && d.moleculeType !== 'organic') {
     return <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">Enter a sequence / select a molecule (in Experiment Setup) to generate simulated spectra.</div>;
   }
+  
   const fP = (arr) => {
     if (focusIdx === 'ALL' || !arr) return arr || [];
     const targetRes = d.parsedSeq[focusIdx];
@@ -3688,23 +3511,34 @@ const SimulationsSection = ({ ctx }) => {
       return false;
     }).sort((a, b) => a.x - b.x);
   };
+  
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center gap-3 flex-wrap bg-white border border-slate-200 rounded-lg px-3 py-2 w-fit">
         <button type="button" onClick={() => setShowCfg(!showCfg)} className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${showCfg ? 'bg-slate-200 border-slate-400 text-slate-900' : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'}`}>⚙️ Chart Parameters</button>
-        <span className="text-[10px] text-slate-400">13C axis: 0–220 ppm · 2D spectra: square (aspect {simCfg.aspect2D}) · HSQC side by side</span>
-        <div className="border-l border-slate-300 pl-3 ml-1 flex items-center gap-2">
-          <label className="text-[10px] font-bold text-slate-500 uppercase">🔍 Filter Peaks:</label>
-          <select value={focusIdx} onChange={(e) => setFocusIdx(e.target.value === 'ALL' ? 'ALL' : Number(e.target.value))} className="border border-slate-300 rounded-md px-2 py-1 text-xs bg-slate-50 outline-none focus:border-blue-500">
-            <option value="ALL">Show All Residues</option>
-            {d.parsedSeq.map((r, i) => <option key={i} value={i}>{r.id} — {r.name}</option>)}
-          </select>
-        </div>
+        
+        <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer ml-1 border-l border-slate-200 pl-3">
+          <input type="checkbox" checked={simCfg.simShowLabels} onChange={(e) => setCfg({ simShowLabels: e.target.checked })} className="accent-blue-600 w-4 h-4" />
+          Show Peak Labels
+        </label>
+
+        <span className="text-[10px] text-slate-400 ml-2">13C axis: 0–220 ppm · 2D spectra: square (aspect {simCfg.aspect2D}) · HSQC side by side</span>
+        
+        {d.moleculeType !== 'organic' && (
+          <div className="border-l border-slate-300 pl-3 ml-1 flex items-center gap-2">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">🔍 Filter Peaks:</label>
+            <select value={focusIdx} onChange={(e) => setFocusIdx(e.target.value === 'ALL' ? 'ALL' : Number(e.target.value))} className="border border-slate-300 rounded-md px-2 py-1 text-xs bg-slate-50 outline-none focus:border-blue-500">
+              <option value="ALL">Show All Residues</option>
+              {d.parsedSeq.map((r, i) => <option key={i} value={i}>{r.id} — {r.name}</option>)}
+            </select>
+          </div>
+        )}
       </div>
+      
       {showCfg && (
         <div className="p-4 bg-white border border-slate-300 rounded-xl grid grid-cols-1 md:grid-cols-3 gap-4 shadow-sm">
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-bold text-slate-600">Font size (ticks & labels): {simCfg.fontSize}</label>
+            <label className="text-xs font-bold text-slate-600">Font size (ticks & axis labels): {simCfg.fontSize}</label>
             <input type="range" min="8" max="18" step="1" value={simCfg.fontSize} onChange={(e) => setCfg({ fontSize: parseInt(e.target.value, 10) })} className="accent-blue-600 mt-2" />
           </div>
           <div className="flex flex-col gap-1">
@@ -3713,35 +3547,71 @@ const SimulationsSection = ({ ctx }) => {
           </div>
           <div className="flex flex-col gap-1">
             <label className="text-xs font-bold text-slate-600">2D aspect ratio (H/W): {simCfg.aspect2D} (1 = square)</label>
-            <input type="range" min="0.5" max="1.5" step="0.05" value={simCfg.aspect2D} onChange={(e) => setCfg({ aspect2D: parseFloat(e.target.value) })} className="accent-blue-600 mt-2" />
-            <button type="button" onClick={() => setCfg({ aspect2D: 1 })} className="text-[10px] font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100 px-2 py-1 rounded w-fit">⬛ Make 2D square</button>
+            <div className="flex gap-2">
+              <input type="range" min="0.5" max="1.5" step="0.05" value={simCfg.aspect2D} onChange={(e) => setCfg({ aspect2D: parseFloat(e.target.value) })} className="accent-blue-600 mt-2 flex-1" />
+              <button type="button" onClick={() => setCfg({ aspect2D: 1 })} className="text-[10px] font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100 px-2 py-1 rounded shrink-0">⬛ Square</button>
+            </div>
           </div>
+          
+          {/* Label Customization */}
+          {simCfg.simShowLabels && (
+            <div className="flex flex-col gap-3 md:col-span-3 pt-4 border-t border-slate-100 mt-2">
+              <h5 className="text-xs font-bold text-slate-600 uppercase">Label Format Options</h5>
+              <div className="flex flex-wrap gap-4">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-slate-500">Label Format</label>
+                  <select value={simCfg.simLabelFormat} onChange={(e) => setCfg({ simLabelFormat: e.target.value })} className="border border-slate-300 rounded-md px-2 py-1.5 text-xs outline-none bg-white font-semibold">
+                    <option value="resNum">Residue Number Only (e.g. 1)</option>
+                    <option value="resNum_code">Residue Number + Code (e.g. 1A)</option>
+                    <option value="resNum_code_atom">Res Num + Code + Atom (e.g. 1A Hα)</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-slate-500">Label Dimension (2D Spectra)</label>
+                  <select value={simCfg.simLabelDim} onChange={(e) => setCfg({ simLabelDim: e.target.value })} className="border border-slate-300 rounded-md px-2 py-1.5 text-xs outline-none bg-white font-semibold">
+                    <option value="direct">Direct Dimension Only (F2)</option>
+                    <option value="indirect">Indirect Dimension Only (F1)</option>
+                    <option value="both">Both Dimensions</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-slate-500">Peak Label Font Size: {simCfg.simLabelFontSize}</label>
+                  <input type="range" min="6" max="24" step="1" value={simCfg.simLabelFontSize} onChange={(e) => setCfg({ simLabelFontSize: parseInt(e.target.value, 10) })} className="accent-blue-600 mt-1" />
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
+      
       {selectedKeys && (
         <span className="text-xs font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded-lg px-3 py-1.5 w-fit">🎯 Highlighting: {selectionLabel(d, selectedKeys)}</span>
       )}
       <div className="text-xs font-bold text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 w-fit">
         Spectra are simulated from the <span className="text-indigo-700">{d.activeInstance ? d.activeInstance.name : '—'}</span> instance's Chemical Shift layer.
       </div>
-      <div className="grid grid-cols-1 gap-4">
-        <RangeBarChart title="Theoretical ¹H Ranges" ranges={d.ranges.ranges1H} domain={[0, 11]} ticks={Array.from({ length: 12 }, (_, i) => i)} xAxisLabel="¹H (ppm)" rowCount={d.uniqueTypes.length} rowLabels={d.uniqueTypes.map((c) => d.DB[c]?.code3 || c)} />
-        <RangeBarChart title="Theoretical ¹³C Ranges" ranges={d.ranges.ranges13C} domain={[0, 220]} ticks={Array.from({ length: 23 }, (_, i) => i * 10)} xAxisLabel="¹³C (ppm)" rowCount={d.uniqueTypes.length} rowLabels={d.uniqueTypes.map((c) => d.DB[c]?.code3 || c)} />
-      </div>
+      
+      {d.moleculeType !== 'organic' && (
+        <div className="grid grid-cols-1 gap-4">
+          <RangeBarChart title="Theoretical ¹H Ranges" ranges={d.ranges.ranges1H} domain={[0, 11]} ticks={Array.from({ length: 12 }, (_, i) => i)} xAxisLabel="¹H (ppm)" rowCount={d.uniqueTypes.length} rowLabels={d.uniqueTypes.map((c) => d.DB[c]?.code3 || c)} />
+          <RangeBarChart title="Theoretical ¹³C Ranges" ranges={d.ranges.ranges13C} domain={[0, 220]} ticks={Array.from({ length: 23 }, (_, i) => i * 10)} xAxisLabel="¹³C (ppm)" rowCount={d.uniqueTypes.length} rowLabels={d.uniqueTypes.map((c) => d.DB[c]?.code3 || c)} />
+        </div>
+      )}
+      
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <OneDSpectrumPlot key={`1d1h-${focusIdx}`} title="Simulated ¹H 1D Spectrum" data={fP(d.peaks.data1H)} fullDomain={[0, 11]} ticks={TICKS_1H} TickComponent={CustomXTick1H} xLabel="¹H (ppm)" panelId="1D_1H" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} />
-        <OneDSpectrumPlot key={`1d13c-${focusIdx}`} title="Simulated ¹³C 1D Spectrum" data={fP(d.peaks.data13C)} fullDomain={[0, 220]} ticks={TICKS_13C} TickComponent={CustomXTick13C} xLabel="¹³C (ppm)" panelId="1D_13C" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} />
+        <OneDSpectrumPlot key={`1d1h-${focusIdx}`} title="Simulated ¹H 1D Spectrum" data={fP(d.peaks.data1H)} fullDomain={[0, 11]} ticks={TICKS_1H} TickComponent={CustomXTick1H} xLabel="¹H (ppm)" panelId="1D_1H" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={simCfg} />
+        <OneDSpectrumPlot key={`1d13c-${focusIdx}`} title="Simulated ¹³C 1D Spectrum" data={fP(d.peaks.data13C)} fullDomain={[0, 220]} ticks={TICKS_13C} TickComponent={CustomXTick13C} xLabel="¹³C (ppm)" panelId="1D_13C" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={simCfg} />
         {d.hasPhosphorus && d.selNuc.includes('P') && fP(d.peaks.p31Data).length > 0 && (
-          <OneDSpectrumPlot key={`1dp31-${focusIdx}`} title="Simulated ³¹P 1D Spectrum" data={fP(d.peaks.p31Data)} fullDomain={[-5, 5]} ticks={Array.from({ length: 11 }, (_, i) => i - 5)} TickComponent={CustomXTick1H} xLabel="³¹P (ppm)" panelId="1D_31P" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} />
+          <OneDSpectrumPlot key={`1dp31-${focusIdx}`} title="Simulated ³¹P 1D Spectrum" data={fP(d.peaks.p31Data)} fullDomain={[-5, 5]} ticks={Array.from({ length: 11 }, (_, i) => i - 5)} TickComponent={CustomXTick1H} xLabel="³¹P (ppm)" panelId="1D_31P" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={simCfg} />
         )}
-        <SpectrumPlot key={`cosy-${focusIdx}`} title="Simulated COSY Spectrum" diagonalData={fP(d.peaks.diagonalData)} crossPeakData={fP(d.peaks.cosyPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="cosy" diagonalColor="#22c55e" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} />
-        <SpectrumPlot key={`noesy-${focusIdx}`} title="Simulated NOESY Spectrum" diagonalData={fP(d.peaks.diagonalData)} crossPeakData={fP(d.peaks.noesyPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="noesy" diagonalColor="#ef4444" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} />
-        <SpectrumPlot key={`tocsy-${focusIdx}`} title="Simulated TOCSY Spectrum" diagonalData={fP(d.peaks.diagonalData)} crossPeakData={fP(d.peaks.tocsyPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="tocsy" diagonalColor="#1e3a8a" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} />
+        <SpectrumPlot key={`cosy-${focusIdx}`} title="Simulated COSY Spectrum" diagonalData={fP(d.peaks.diagonalData)} crossPeakData={fP(d.peaks.cosyPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="cosy" diagonalColor="#22c55e" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={simCfg} />
+        <SpectrumPlot key={`noesy-${focusIdx}`} title="Simulated NOESY Spectrum" diagonalData={fP(d.peaks.diagonalData)} crossPeakData={fP(d.peaks.noesyPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="noesy" diagonalColor="#ef4444" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={simCfg} />
+        <SpectrumPlot key={`tocsy-${focusIdx}`} title="Simulated TOCSY Spectrum" diagonalData={fP(d.peaks.diagonalData)} crossPeakData={fP(d.peaks.tocsyPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="tocsy" diagonalColor="#1e3a8a" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={simCfg} />
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <HSQCPlot key={`hsqc-${focusIdx}`} title="Simulated ¹H-¹³C HSQC Spectrum" crossPeakData={fP(d.peaks.hsqcPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="hsqc" selectedKeys={selectedKeys} manualKeys={manualKeys} yAxisLabel="¹³C F1 (ppm)" yDomainInit={[0, 220]} yTicks={TICKS_13C} aspect={simCfg.aspect2D} fs={simCfg.fontSize} />
+        <HSQCPlot key={`hsqc-${focusIdx}`} title="Simulated ¹H-¹³C HSQC Spectrum" crossPeakData={fP(d.peaks.hsqcPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="hsqc" selectedKeys={selectedKeys} manualKeys={manualKeys} yAxisLabel="¹³C F1 (ppm)" yDomainInit={[0, 220]} yTicks={TICKS_13C} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={simCfg} />
         {d.moleculeType === 'protein' && d.selNuc.includes('N') && fP(d.peaks.hsqc15NPeaks).length > 0 && (
-          <HSQCPlot key={`hsqc15n-${focusIdx}`} title="Simulated ¹H-¹⁵N HSQC Spectrum" crossPeakData={fP(d.peaks.hsqc15NPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="hsqc15n" selectedKeys={selectedKeys} manualKeys={manualKeys} yAxisLabel="¹⁵N F1 (ppm)" yDomainInit={[95, 135]} yTicks={TICKS_15N} aspect={simCfg.aspect2D} fs={simCfg.fontSize} />
+          <HSQCPlot key={`hsqc15n-${focusIdx}`} title="Simulated ¹H-¹⁵N HSQC Spectrum" crossPeakData={fP(d.peaks.hsqc15NPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="hsqc15n" selectedKeys={selectedKeys} manualKeys={manualKeys} yAxisLabel="¹⁵N F1 (ppm)" yDomainInit={[95, 135]} yTicks={TICKS_15N} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={simCfg} />
         )}
       </div>
     </div>

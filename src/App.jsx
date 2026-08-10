@@ -45,9 +45,6 @@ const CUSTOM_FIELD_TAB_OPTIONS = [
 /* =========================================================
    MD SIMULATIONS CONFIG & RENDERER
 ========================================================= */
-/* =========================================================
-MD SIMULATIONS CONFIG & RENDERER
-========================================================= */
 const MD_SIMULATION_TAB_CONFIG = {
   typeKey: 'md_simulation',
   typeLabel: 'MD Simulations',
@@ -580,9 +577,6 @@ const PlasmidDefinitionSection = ({
 /* =========================================================
    LIBRARY DIRECTORY
 ========================================================= */
-/* =========================================================
-   LIBRARY DIRECTORY
-========================================================= */
 const LibraryDirectory = ({ 
   compoundMeta, cellLineMeta, plasmidMeta, customCmpds, customCellLines, customPlasmids,
   solvents, buffers, additives, nmrProbes, nmrInstruments, nmrExperiments, 
@@ -682,8 +676,6 @@ const LibraryDirectory = ({
     </div>
   );
 };
-
-
 const normalizeCustomFields = (fields) => {
   if (!Array.isArray(fields)) return [];
 
@@ -3356,7 +3348,7 @@ useEffect(() => {
             setSaveErrorMsg(err.message);
           });
       } else {
-        // ... (Local Storage fallback logic remains the same)
+        // Local Storage fallback logic remains the same
       }
     } catch (e) {
       setSaveStatus('error');
@@ -3364,7 +3356,6 @@ useEffect(() => {
     }
   }, 1500);
 
-  // 🔥 CRITICAL FIX: Cleanup function to prevent stale timeouts and queue backups
   return () => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
@@ -4844,7 +4835,7 @@ useEffect(() => {
               </div>
             )}
 
-{currentModule === 'definitions' && (
+            {currentModule === 'definitions' && (
               <div className="h-full min-h-0 overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
                 <div className="max-w-6xl mx-auto flex flex-col gap-4 pb-10">
                   
@@ -5445,7 +5436,7 @@ useEffect(() => {
                                 Instance: {test.instanceName || 'Primary'}
                               </p>
 
-<div className="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center text-xs text-slate-500 font-medium">
+                              <div className="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center text-xs text-slate-500 font-medium">
                                 <span>📅 {test.date}</span>
 
                                 <span className="bg-slate-100 px-2 py-0.5 rounded font-bold text-slate-600">
@@ -6066,7 +6057,7 @@ useEffect(() => {
                             placeholder="Test Name"
                           />
 
-<div className="text-xs text-slate-500 font-medium px-1 mt-1 flex flex-wrap items-center gap-2">
+                          <div className="text-xs text-slate-500 font-medium px-1 mt-1 flex flex-wrap items-center gap-2">
                             <span className="uppercase text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
                               {activeTest.testCategory}
                             </span>
@@ -6242,27 +6233,27 @@ useEffect(() => {
                   </div>
                 );
 
-if (activeTest.type === 'md_simulation') {
-  return (
-    <MDTestRenderer
-      activeTest={activeTest}
-      updateActiveTest={updateActiveTest}
-      TestHeader={TestHeader}
-      datasetProtocols={datasetProtocols}
-      jumpToProtocol={jumpToProtocolFn}
-      allCmpds={allCmpds}
-      allCellLines={allCellLines}
-      customFields={customFields}
-      testCategories={testCategories}
-      instances={siblingTests}
-      operators={operators}
-      solvents={solvents}
-      buffers={buffers}
-      additives={additives}
-      compoundMeta={compoundMeta} // <-- ADD THIS LINE
-    />
-  );
-}
+                if (activeTest.type === 'md_simulation') {
+                  return (
+                    <MDTestRenderer
+                      activeTest={activeTest}
+                      updateActiveTest={updateActiveTest}
+                      TestHeader={TestHeader}
+                      datasetProtocols={datasetProtocols}
+                      jumpToProtocol={jumpToProtocolFn}
+                      allCmpds={allCmpds}
+                      allCellLines={allCellLines}
+                      customFields={customFields}
+                      testCategories={testCategories}
+                      instances={siblingTests}
+                      operators={operators}
+                      solvents={solvents}
+                      buffers={buffers}
+                      additives={additives}
+                      compoundMeta={compoundMeta}
+                    />
+                  );
+                }
 
                 if (activeTest.type === 'nmr') {
                   return (
@@ -6284,6 +6275,7 @@ if (activeTest.type === 'md_simulation') {
                       nmrInstruments={nmrInstruments}
                       nmrProbes={nmrProbes}
                       nmrExperiments={nmrExperiments}
+                      compoundMeta={compoundMeta}
                     />
                   );
                 }
@@ -6316,7 +6308,7 @@ if (activeTest.type === 'md_simulation') {
                   );
                 }
 
-if (activeTest.type === 'plate-9x9box') {
+                if (activeTest.type === 'plate-9x9box') {
                   return (
                     <BoxDetail
                       activeTest={activeTest}
