@@ -21,7 +21,6 @@ const CollapsibleSection = ({ title, icon, defaultOpen = true, children, headerE
   const [isOpen, setIsOpen] = useState(defaultOpen);
   return (
     <div className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-6 break-inside-avoid ${className}`}>
-      {/* Cambiato da <button> a <div> per evitare button innestati */}
       <div 
         onClick={() => setIsOpen(!isOpen)}
         className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left cursor-pointer ${isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'}`}
@@ -65,6 +64,7 @@ const AMINO_ACID_DB = {
   W: { name: 'Tryptophan', code3: 'Trp', atoms: ['HN', 'Hα', 'Hβ1', 'Hβ2', 'Hδ1', 'Hε3', 'Hζ2', 'Hη2', 'Hζ3'], ranges: { HN: { min: 7.9, max: 8.7 }, Hα: { min: 4.5, max: 5.0 }, Hβ1: { min: 3.1, max: 3.5 }, Hβ2: { min: 3.1, max: 3.5 }, Hδ1: { min: 10.0, max: 10.5 }, Hε3: { min: 7.4, max: 7.7 }, Hζ2: { min: 7.3, max: 7.6 }, Hη2: { min: 7.0, max: 7.3 }, Hζ3: { min: 6.9, max: 7.2 } }, cosy: [['HN', 'Hα'], ['Hα', 'Hβ1'], ['Hα', 'Hβ2'], ['Hβ1', 'Hβ2'], ['Hδ1', 'Hε3'], ['Hε3', 'Hζ3'], ['Hζ3', 'Hη2'], ['Hη2', 'Hζ2']], spinSystems: [['HN', 'Hα', 'Hβ1', 'Hβ2'], ['Hδ1'], ['Hε3', 'Hζ3', 'Hη2', 'Hζ2']] },
   Y: { name: 'Tyrosine', code3: 'Tyr', atoms: ['HN', 'Hα', 'Hβ1', 'Hβ2', 'Hδ', 'Hε'], ranges: { HN: { min: 7.9, max: 8.7 }, Hα: { min: 4.4, max: 4.9 }, Hβ1: { min: 2.8, max: 3.2 }, Hβ2: { min: 2.8, max: 3.2 }, Hδ: { min: 6.9, max: 7.2 }, Hε: { min: 6.6, max: 6.9 } }, cosy: [['HN', 'Hα'], ['Hα', 'Hβ1'], ['Hα', 'Hβ2'], ['Hβ1', 'Hβ2'], ['Hδ', 'Hε']], spinSystems: [['HN', 'Hα', 'Hβ1', 'Hβ2'], ['Hδ', 'Hε']] }
 };
+
 const NUCLEOTIDE_DB = {
   DNA: {
     A: { name: 'Deoxyadenosine', code3: 'dA', base: 'purine', atoms: ['H8', 'H2', "H1'", "H2'", "H2''", "H3'", "H4'", "H5'", "H5''"], ranges: { H8: { min: 7.9, max: 8.4 }, H2: { min: 7.7, max: 8.3 }, "H1'": { min: 5.9, max: 6.4 }, "H2'": { min: 2.2, max: 2.8 }, "H2''": { min: 2.5, max: 2.9 }, "H3'": { min: 4.7, max: 5.1 }, "H4'": { min: 4.1, max: 4.5 }, "H5'": { min: 3.8, max: 4.3 }, "H5''": { min: 3.7, max: 4.2 } }, cosy: [["H1'", "H2'"], ["H1'", "H2''"], ["H2'", "H3'"], ["H3'", "H4'"], ["H4'", "H5'"], ["H4'", "H5''"], ["H5'", "H5''"]], spinSystems: [["H1'", "H2'", "H2''", "H3'", "H4'", "H5'", "H5''"]] },
@@ -79,6 +79,7 @@ const NUCLEOTIDE_DB = {
     U: { name: 'Uridine', code3: 'U', base: 'pyrimidine', atoms: ['H6', 'H5', "H1'", "H2'", "OH2'", "H3'", "H4'", "H5'", "H5''"], ranges: { H6: { min: 7.4, max: 8.1 }, H5: { min: 5.3, max: 6.0 }, "H1'": { min: 5.4, max: 6.0 }, "H2'": { min: 4.1, max: 4.7 }, "OH2'": { min: 5.0, max: 5.6 }, "H3'": { min: 4.1, max: 4.7 }, "H4'": { min: 4.0, max: 4.5 }, "H5'": { min: 3.8, max: 4.4 }, "H5''": { min: 3.7, max: 4.3 } }, cosy: [['H5', 'H6'], ["H1'", "H2'"], ["H2'", "H3'"], ["H3'", "H4'"], ["H4'", "H5'"], ["H4'", "H5''"], ["H5'", "H5''"]], spinSystems: [["H1'", "H2'", "H3'", "H4'", "H5'", "H5''"], ['H5', 'H6']] }
   }
 };
+
 const SUGAR_DB = {
   GLC: { name: 'D-Glucose', code3: 'Glc', atoms: ['H1', 'H2', 'H3', 'H4', 'H5', 'H6a', 'H6b'], ranges: { H1: { min: 4.55, max: 5.25 }, H2: { min: 3.4, max: 3.7 }, H3: { min: 3.6, max: 3.9 }, H4: { min: 3.35, max: 3.65 }, H5: { min: 3.55, max: 3.85 }, H6a: { min: 3.65, max: 3.95 }, H6b: { min: 3.7, max: 4.0 } }, cosy: [['H1', 'H2'], ['H2', 'H3'], ['H3', 'H4'], ['H4', 'H5'], ['H5', 'H6a'], ['H5', 'H6b'], ['H6a', 'H6b']], spinSystems: [['H1', 'H2', 'H3', 'H4', 'H5', 'H6a', 'H6b']] },
   GAL: { name: 'D-Galactose', code3: 'Gal', atoms: ['H1', 'H2', 'H3', 'H4', 'H5', 'H6a', 'H6b'], ranges: { H1: { min: 4.55, max: 5.25 }, H2: { min: 3.5, max: 3.85 }, H3: { min: 3.6, max: 3.95 }, H4: { min: 3.85, max: 4.15 }, H5: { min: 3.7, max: 4.0 }, H6a: { min: 3.6, max: 3.9 }, H6b: { min: 3.65, max: 3.95 } }, cosy: [['H1', 'H2'], ['H2', 'H3'], ['H3', 'H4'], ['H4', 'H5'], ['H5', 'H6a'], ['H5', 'H6b'], ['H6a', 'H6b']], spinSystems: [['H1', 'H2', 'H3', 'H4', 'H5', 'H6a', 'H6b']] },
@@ -86,35 +87,49 @@ const SUGAR_DB = {
   FUC: { name: 'L-Fucose', code3: 'Fuc', atoms: ['H1', 'H2', 'H3', 'H4', 'H5', 'H6'], ranges: { H1: { min: 4.7, max: 5.2 }, H2: { min: 3.6, max: 3.95 }, H3: { min: 3.65, max: 4.0 }, H4: { min: 3.7, max: 4.05 }, H5: { min: 3.6, max: 3.95 }, H6: { min: 1.1, max: 1.3 } }, cosy: [['H1', 'H2'], ['H2', 'H3'], ['H3', 'H4'], ['H4', 'H5'], ['H5', 'H6']], spinSystems: [['H1', 'H2', 'H3', 'H4', 'H5', 'H6']] },
   NAG: { name: 'N-Acetylglucosamine', code3: 'GlcNAc', atoms: ['H1', 'H2', 'H3', 'H4', 'H5', 'H6a', 'H6b', 'NHAc', 'AcCH3'], ranges: { H1: { min: 4.6, max: 5.2 }, H2: { min: 3.7, max: 4.05 }, H3: { min: 3.6, max: 3.9 }, H4: { min: 3.4, max: 3.7 }, H5: { min: 3.6, max: 3.9 }, H6a: { min: 3.65, max: 3.95 }, H6b: { min: 3.7, max: 4.0 }, NHAc: { min: 7.5, max: 8.2 }, AcCH3: { min: 1.9, max: 2.1 } }, cosy: [['H1', 'H2'], ['H2', 'H3'], ['H3', 'H4'], ['H4', 'H5'], ['H5', 'H6a'], ['H5', 'H6b'], ['H6a', 'H6b']], spinSystems: [['H1', 'H2', 'H3', 'H4', 'H5', 'H6a', 'H6b'], ['NHAc'], ['AcCH3']] }
 };
+
 const LIPID_DB = {
   POPC: { name: 'POPC', head: 'PC', headLabel: 'N(CH₃)₃⁺', atoms: ['Hsn1a', 'Hsn1b', 'Hsn2', 'Hsn3a', 'Hsn3b', 'H2-sn1', 'H3-sn1', 'H4-sn1', 'H16-sn1', 'H2-sn2', 'H3-sn2', 'H4-sn2', 'Hall-sn2', 'H9-sn2', 'H10-sn2', 'H11-sn2', 'H18-sn2', 'HCH2N', 'HNMe3'], ranges: { Hsn1a: { min: 4.15, max: 4.45 }, Hsn1b: { min: 4.15, max: 4.45 }, Hsn2: { min: 5.15, max: 5.35 }, Hsn3a: { min: 3.95, max: 4.35 }, Hsn3b: { min: 3.95, max: 4.35 }, 'H2-sn1': { min: 2.25, max: 2.4 }, 'H3-sn1': { min: 1.55, max: 1.7 }, 'H4-sn1': { min: 1.2, max: 1.35 }, 'H16-sn1': { min: 0.82, max: 0.92 }, 'H2-sn2': { min: 2.25, max: 2.4 }, 'H3-sn2': { min: 1.55, max: 1.7 }, 'H4-sn2': { min: 1.2, max: 1.35 }, 'Hall-sn2': { min: 1.95, max: 2.1 }, 'H9-sn2': { min: 5.3, max: 5.4 }, 'H10-sn2': { min: 5.3, max: 5.4 }, 'H11-sn2': { min: 1.95, max: 2.1 }, 'H18-sn2': { min: 0.82, max: 0.92 }, HCH2N: { min: 3.6, max: 3.8 }, HNMe3: { min: 3.18, max: 3.28 } }, cosy: [['Hsn1a', 'Hsn2'], ['Hsn1b', 'Hsn2'], ['Hsn2', 'Hsn3a'], ['Hsn2', 'Hsn3b'], ['H2-sn1', 'H3-sn1'], ['H3-sn1', 'H4-sn1'], ['H2-sn2', 'H3-sn2'], ['H3-sn2', 'H4-sn2'], ['Hall-sn2', 'H9-sn2'], ['H9-sn2', 'H10-sn2'], ['H10-sn2', 'H11-sn2'], ['HCH2N', 'HNMe3']], spinSystems: [['Hsn1a', 'Hsn1b', 'Hsn2', 'Hsn3a', 'Hsn3b'], ['H2-sn1', 'H3-sn1', 'H4-sn1', 'H16-sn1'], ['H2-sn2', 'H3-sn2', 'H4-sn2', 'Hall-sn2', 'H9-sn2', 'H10-sn2', 'H11-sn2', 'H18-sn2'], ['HCH2N', 'HNMe3']] },
   POPE: { name: 'POPE', head: 'PE', headLabel: 'NH₃⁺', atoms: ['Hsn1a', 'Hsn1b', 'Hsn2', 'Hsn3a', 'Hsn3b', 'H2-sn1', 'H3-sn1', 'H4-sn1', 'H16-sn1', 'H2-sn2', 'H3-sn2', 'H4-sn2', 'Hall-sn2', 'H9-sn2', 'H10-sn2', 'H11-sn2', 'H18-sn2', 'HCH2N', 'HNH3'], ranges: { Hsn1a: { min: 4.15, max: 4.45 }, Hsn1b: { min: 4.15, max: 4.45 }, Hsn2: { min: 5.15, max: 5.35 }, Hsn3a: { min: 3.95, max: 4.35 }, Hsn3b: { min: 3.95, max: 4.35 }, 'H2-sn1': { min: 2.25, max: 2.4 }, 'H3-sn1': { min: 1.55, max: 1.7 }, 'H4-sn1': { min: 1.2, max: 1.35 }, 'H16-sn1': { min: 0.82, max: 0.92 }, 'H2-sn2': { min: 2.25, max: 2.4 }, 'H3-sn2': { min: 1.55, max: 1.7 }, 'H4-sn2': { min: 1.2, max: 1.35 }, 'Hall-sn2': { min: 1.95, max: 2.1 }, 'H9-sn2': { min: 5.3, max: 5.4 }, 'H10-sn2': { min: 5.3, max: 5.4 }, 'H11-sn2': { min: 1.95, max: 2.1 }, 'H18-sn2': { min: 0.82, max: 0.92 }, HCH2N: { min: 3.1, max: 3.3 }, HNH3: { min: 7.5, max: 8.5 } }, cosy: [['Hsn1a', 'Hsn2'], ['Hsn1b', 'Hsn2'], ['Hsn2', 'Hsn3a'], ['Hsn2', 'Hsn3b'], ['H2-sn1', 'H3-sn1'], ['H3-sn1', 'H4-sn1'], ['H2-sn2', 'H3-sn2'], ['H3-sn2', 'H4-sn2'], ['Hall-sn2', 'H9-sn2'], ['H9-sn2', 'H10-sn2'], ['H10-sn2', 'H11-sn2']], spinSystems: [['Hsn1a', 'Hsn1b', 'Hsn2', 'Hsn3a', 'Hsn3b'], ['H2-sn1', 'H3-sn1', 'H4-sn1', 'H16-sn1'], ['H2-sn2', 'H3-sn2', 'H4-sn2', 'Hall-sn2', 'H9-sn2', 'H10-sn2', 'H11-sn2', 'H18-sn2'], ['HCH2N', 'HNH3']] },
   POPS: { name: 'POPS', head: 'PS', headLabel: 'Ser', atoms: ['Hsn1a', 'Hsn1b', 'Hsn2', 'Hsn3a', 'Hsn3b', 'H2-sn1', 'H3-sn1', 'H4-sn1', 'H16-sn1', 'H2-sn2', 'H3-sn2', 'H4-sn2', 'Hall-sn2', 'H9-sn2', 'H10-sn2', 'H11-sn2', 'H18-sn2', 'HαS', 'HβS1', 'HβS2', 'HNH3'], ranges: { Hsn1a: { min: 4.15, max: 4.45 }, Hsn1b: { min: 4.15, max: 4.45 }, Hsn2: { min: 5.15, max: 5.35 }, Hsn3a: { min: 3.95, max: 4.35 }, Hsn3b: { min: 3.95, max: 4.35 }, 'H2-sn1': { min: 2.25, max: 2.4 }, 'H3-sn1': { min: 1.55, max: 1.7 }, 'H4-sn1': { min: 1.2, max: 1.35 }, 'H16-sn1': { min: 0.82, max: 0.92 }, 'H2-sn2': { min: 2.25, max: 2.4 }, 'H3-sn2': { min: 1.55, max: 1.7 }, 'H4-sn2': { min: 1.2, max: 1.35 }, 'Hall-sn2': { min: 1.95, max: 2.1 }, 'H9-sn2': { min: 5.3, max: 5.4 }, 'H10-sn2': { min: 5.3, max: 5.4 }, 'H11-sn2': { min: 1.95, max: 2.1 }, 'H18-sn2': { min: 0.82, max: 0.92 }, HαS: { min: 4.0, max: 4.3 }, HβS1: { min: 3.75, max: 4.05 }, HβS2: { min: 3.75, max: 4.05 }, HNH3: { min: 7.5, max: 8.5 } }, cosy: [['Hsn1a', 'Hsn2'], ['Hsn1b', 'Hsn2'], ['Hsn2', 'Hsn3a'], ['Hsn2', 'Hsn3b'], ['H2-sn1', 'H3-sn1'], ['H3-sn1', 'H4-sn1'], ['H2-sn2', 'H3-sn2'], ['H3-sn2', 'H4-sn2'], ['Hall-sn2', 'H9-sn2'], ['H9-sn2', 'H10-sn2'], ['H10-sn2', 'H11-sn2'], ['HαS', 'HβS1'], ['HαS', 'HβS2']], spinSystems: [['Hsn1a', 'Hsn1b', 'Hsn2', 'Hsn3a', 'Hsn3b'], ['H2-sn1', 'H3-sn1', 'H4-sn1', 'H16-sn1'], ['H2-sn2', 'H3-sn2', 'H4-sn2', 'Hall-sn2', 'H9-sn2', 'H10-sn2', 'H11-sn2', 'H18-sn2'], ['HαS', 'HβS1', 'HβS2', 'HNH3']] },
   POPG: { name: 'POPG', head: 'PG', headLabel: 'Gly', atoms: ['Hsn1a', 'Hsn1b', 'Hsn2', 'Hsn3a', 'Hsn3b', 'H2-sn1', 'H3-sn1', 'H4-sn1', 'H16-sn1', 'H2-sn2', 'H3-sn2', 'H4-sn2', 'Hall-sn2', 'H9-sn2', 'H10-sn2', 'H11-sn2', 'H18-sn2', 'HCH2OH', 'HCHOH'], ranges: { Hsn1a: { min: 4.15, max: 4.45 }, Hsn1b: { min: 4.15, max: 4.45 }, Hsn2: { min: 5.15, max: 5.35 }, Hsn3a: { min: 3.95, max: 4.35 }, Hsn3b: { min: 3.95, max: 4.35 }, 'H2-sn1': { min: 2.25, max: 2.4 }, 'H3-sn1': { min: 1.55, max: 1.7 }, 'H4-sn1': { min: 1.2, max: 1.35 }, 'H16-sn1': { min: 0.82, max: 0.92 }, 'H2-sn2': { min: 2.25, max: 2.4 }, 'H3-sn2': { min: 1.55, max: 1.7 }, 'H4-sn2': { min: 1.2, max: 1.35 }, 'Hall-sn2': { min: 1.95, max: 2.1 }, 'H9-sn2': { min: 5.3, max: 5.4 }, 'H10-sn2': { min: 5.3, max: 5.4 }, 'H11-sn2': { min: 1.95, max: 2.1 }, 'H18-sn2': { min: 0.82, max: 0.92 }, HCH2OH: { min: 3.45, max: 3.75 }, HCHOH: { min: 3.65, max: 3.9 } }, cosy: [['Hsn1a', 'Hsn2'], ['Hsn1b', 'Hsn2'], ['Hsn2', 'Hsn3a'], ['Hsn2', 'Hsn3b'], ['H2-sn1', 'H3-sn1'], ['H3-sn1', 'H4-sn1'], ['H2-sn2', 'H3-sn2'], ['H3-sn2', 'H4-sn2'], ['Hall-sn2', 'H9-sn2'], ['H9-sn2', 'H10-sn2'], ['H10-sn2', 'H11-sn2'], ['HCH2OH', 'HCHOH']], spinSystems: [['Hsn1a', 'Hsn1b', 'Hsn2', 'Hsn3a', 'Hsn3b'], ['H2-sn1', 'H3-sn1', 'H4-sn1', 'H16-sn1'], ['H2-sn2', 'H3-sn2', 'H4-sn2', 'Hall-sn2', 'H9-sn2', 'H10-sn2', 'H11-sn2', 'H18-sn2'], ['HCH2OH', 'HCHOH']] }
 };
+
 const CARBON_RANGE_DB = {
-  A: { Cα: [49.5, 53.5], Cβ: [15.5, 20.5] }, C: { Cα: [54.5, 60], Cβ: [26, 32] }, D: { Cα: [50, 55], Cβ: [37, 42], Cγ: [173, 178] }, E: { Cα: [53, 58], Cβ: [26, 31], Cγ: [32, 37], Cδ: [176, 181] },
-  F: { Cα: [53, 58.5], Cβ: [35, 41], Cγ: [133, 139], Cδ: [126.5, 132], Cε: [126, 131.5], Cζ: [124, 129.5] }, G: { Cα: [41, 46] }, H: { Cα: [51.5, 57], Cβ: [27, 33], Cδ2: [114, 120], Cε1: [131, 138] },
-  I: { Cα: [57, 62.5], Cβ: [34, 39.5], Cγ1: [23, 29], Cγ2: [13.5, 19], Cδ1: [9, 14.5] }, K: { Cα: [53, 58.5], Cβ: [29, 34.5], Cγ: [21, 26.5], Cδ: [26, 31.5], Cε: [38.5, 43.5] },
-  L: { Cα: [51, 56.5], Cβ: [38, 44], Cγ: [22.5, 28], Cδ1: [20, 25.5], Cδ2: [20, 25.5] }, M: { Cα: [51.5, 57], Cβ: [28, 33.5], Cγ: [13, 18.5], Cε: [12.5, 18] },
-  N: { Cα: [49.5, 54.5], Cβ: [35, 40], Cγ: [171, 176] }, P: { Cα: [58, 64], Cβ: [27.5, 33.5], Cγ: [22.5, 28.5], Cδ: [45, 51.5] }, Q: { Cα: [52.5, 57.5], Cβ: [26, 31], Cγ: [30, 35], Cδ: [173, 178] },
-  R: { Cα: [53, 58], Cβ: [27, 32], Cγ: [23, 28], Cδ: [39, 44], Cζ: [155, 160] }, S: { Cα: [53.5, 60], Cβ: [59.5, 66.5] }, T: { Cα: [56.5, 64], Cβ: [64.5, 72.5], Cγ2: [17.5, 23.5] },
-  V: { Cα: [57.5, 64], Cβ: [28.5, 34.5], Cγ1: [16.5, 22.5], Cγ2: [16.5, 22.5] }, W: { Cα: [53.5, 59], Cβ: [25.5, 32], Cδ1: [119, 126], Cε3: [115, 121], Cζ2: [115, 122], Cη2: [117, 124], Cζ3: [115, 122] },
-  Y: { Cα: [53, 58.5], Cβ: [34.5, 41], Cγ: [125.5, 131.5], Cδ: [128, 134], Cε: [112.5, 118.5], Cζ: [151, 158] }
+  A: { Cα: [48, 54], Cβ: [15, 22] }, 
+  C: { Cα: [53, 59], Cβ: [25, 43] }, 
+  D: { Cα: [49, 55], Cβ: [37, 42], Cγ: [173, 178] }, 
+  E: { Cα: [52, 58], Cβ: [26, 31], Cγ: [32, 37], Cδ: [176, 181] },
+  F: { Cα: [53, 58], Cβ: [36, 41], Cγ: [135, 140], Cδ: [126, 132], Cε: [126, 132], Cζ: [125, 130] }, 
+  G: { Cα: [42, 46] }, 
+  H: { Cα: [52, 57], Cβ: [26, 31], Cγ: [133, 137], Cδ2: [115, 120], Cε1: [133, 138] },
+  I: { Cα: [56, 62], Cβ: [35, 40], Cγ1: [24, 29], Cγ2: [14, 18], Cδ1: [10, 15] }, 
+  K: { Cα: [52, 57], Cβ: [29, 34], Cγ: [22, 26], Cδ: [26, 30], Cε: [38, 42] },
+  L: { Cα: [50, 56], Cβ: [39, 44], Cγ: [23, 27], Cδ1: [21, 25], Cδ2: [21, 25] }, 
+  M: { Cα: [51, 56], Cβ: [29, 34], Cγ: [28, 32], Cε: [14, 18] },
+  N: { Cα: [49, 54], Cβ: [35, 40], Cγ: [171, 176] }, 
+  P: { Cα: [59, 64], Cβ: [29, 33], Cγ: [24, 28], Cδ: [47, 51] }, 
+  Q: { Cα: [51, 56], Cβ: [26, 31], Cγ: [30, 35], Cδ: [173, 178] },
+  R: { Cα: [52, 57], Cβ: [27, 32], Cγ: [23, 28], Cδ: [40, 44], Cζ: [155, 160] }, 
+  S: { Cα: [54, 59], Cβ: [60, 65] }, 
+  T: { Cα: [58, 63], Cβ: [66, 71], Cγ2: [18, 22] },
+  V: { Cα: [58, 63], Cβ: [29, 34], Cγ1: [18, 22], Cγ2: [18, 22] }, 
+  W: { Cα: [53, 58], Cβ: [26, 31], Cγ: [107, 112], Cδ1: [123, 128], Cε3: [114, 119], Cζ2: [111, 116], Cη2: [121, 126], Cζ3: [118, 123] },
+  Y: { Cα: [54, 59], Cβ: [35, 40], Cγ: [126, 131], Cδ: [130, 135], Cε: [114, 119], Cζ: [154, 159] }
 };
+
 const SS_CORRECTIONS = {
   coil: { h: {}, c: {} },
-  helix: { h: { HN: -0.45, Hα: -0.35, Hα1: -0.35, Hα2: -0.35, other: -0.05 }, c: { Cα: 2.8, Cβ: -1.5, "C'": -1.3, N: -2.5 } },
-  sheet: { h: { HN: 0.4, Hα: 0.3, Hα1: 0.3, Hα2: 0.3, other: 0.05 }, c: { Cα: -1.6, Cβ: 1.4, "C'": 1.5, N: 2.0 } }
+  helix: { h: { HN: -0.45, Hα: -0.35, Hα1: -0.35, Hα2: -0.35, other: -0.05 }, c: { Cα: 2.8, Cβ: -1.5, "C'": 1.5, N: -2.5 } },
+  sheet: { h: { HN: 0.4, Hα: 0.3, Hα1: 0.3, Hα2: 0.3, other: 0.05 }, c: { Cα: -1.6, Cβ: 1.4, "C'": -1.5, N: 2.0 } }
 };
+
 const RANDOM_COIL_DB = { A: { HA: 4.35, CA: 52.5, CB: 19.1, CO: 177.8 }, C: { HA: 4.55, CA: 58.2, CB: 28.0, CO: 175.9 }, D: { HA: 4.76, CA: 54.5, CB: 40.8, CO: 177.5 }, E: { HA: 4.37, CA: 56.9, CB: 29.8, CO: 177.6 }, F: { HA: 4.66, CA: 57.9, CB: 39.8, CO: 177.4 }, G: { HA: 3.96, CA: 45.2, CB: null, CO: 174.6 }, H: { HA: 4.76, CA: 55.3, CB: 31.3, CO: 175.3 }, I: { HA: 4.20, CA: 61.3, CB: 38.3, CO: 177.8 }, K: { HA: 4.38, CA: 56.6, CB: 32.4, CO: 177.9 }, L: { HA: 4.47, CA: 55.4, CB: 41.9, CO: 178.9 }, M: { HA: 4.52, CA: 55.5, CB: 32.6, CO: 177.5 }, N: { HA: 4.75, CA: 53.3, CB: 38.6, CO: 176.6 }, P: { HA: 4.44, CA: 63.1, CB: 31.9, CO: 178.1 }, Q: { HA: 4.39, CA: 56.2, CB: 29.5, CO: 177.2 }, R: { HA: 4.51, CA: 56.5, CB: 30.4, CO: 177.2 }, S: { HA: 4.51, CA: 58.4, CB: 63.6, CO: 175.6 }, T: { HA: 4.39, CA: 62.0, CB: 69.6, CO: 175.7 }, V: { HA: 4.16, CA: 62.1, CB: 32.1, CO: 177.4 }, W: { HA: 4.70, CA: 57.4, CB: 29.5, CO: 177.2 }, Y: { HA: 4.66, CA: 57.9, CB: 38.9, CO: 177.2 } };
 const SS_META = { C: { label: 'Random coil', color: '#64748b' }, H: { label: 'α-Helix', color: '#8b5cf6' }, E: { label: 'β-Sheet', color: '#f59e0b' } };
 const FORM_META = { A: { label: 'A-form', color: '#0ea5e9' }, B: { label: 'B-form', color: '#22c55e' }, Z: { label: 'Z-form', color: '#f43f5e' } };
 const DNA_FORM_OFFSETS = { B: { "H1'": 0, "H2'": 0, "H3'": 0, "H2''": 0 }, A: { "H1'": 0.2, "H2'": -0.3, "H3'": 0.15, "H2''": -0.25 }, Z: { "H1'": -0.15, "H2'": 0.25, "H3'": -0.1, "H2''": 0.2 } };
 const SUGAR_ANOMER_OFFSETS = { alpha: { H1: 0.25 }, beta: { H1: -0.15 } };
 const RESIDUE_COLORS = ['#3b82f6', '#8b5cf6', '#d946ef', '#ec4899', '#f43f5e', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#6366f1'];
-
-
 // ================= GENERIC HELPERS =================
 const useMeasureWidth = () => {
   const ref = useRef(null);
@@ -131,11 +146,13 @@ const useMeasureWidth = () => {
   }, []);
   return [ref, w];
 };
+
 const parseManual = (v) => {
   if (v === undefined || v === null || v === '') return null;
   const n = parseFloat(String(v).replace(',', '.'));
   return Number.isFinite(n) ? n : null;
 };
+
 const getNMRFillColor = (entry) => {
   if (entry.colorClass === 'cosy') return '#22c55e';
   if (entry.colorClass === 'tocsyDirect') return '#1e3a8a';
@@ -148,553 +165,6 @@ const getNMRFillColor = (entry) => {
   if (entry.colorClass === 'p31') return '#0d9488';
   return '#cbd5e1';
 };
-const getCarbonName = (molType, char, atom) => {
-  if (!atom) return null;
-  if (atom.startsWith('HN') || atom.startsWith('NH') || atom.startsWith('OH') || atom.startsWith('NHAc') || atom.startsWith('Ac') || atom.includes('NH3')) return null;
-  if (molType === 'protein') {
-    if (atom === 'Hε' && char === 'R') return null;
-    if (char === 'W' && atom === 'Hδ1') return null;
-    if (atom.includes('CH3')) return atom.replace('H', 'C').replace('(CH3)', '');
-    const cName = atom.replace('H', 'C').replace(/\d+$/, '');
-    if (['V', 'I', 'T'].includes(char) && atom.includes('γ')) return atom.replace('H', 'C');
-    if (['L', 'I'].includes(char) && atom.includes('δ')) return atom.replace('H', 'C');
-    if (['F', 'Y', 'W', 'H'].includes(char) && (atom.includes('δ') || atom.includes('ε') || atom.includes('ζ') || atom.includes('η'))) return atom.replace('H', 'C');
-    return cName;
-  }
-  if (molType === 'dna' || molType === 'rna') return atom.replace('H', 'C');
-  if (molType === 'sugar') return atom.replace('H', 'C').replace(/[ab]$/, '');
-  if (molType === 'lipid') {
-    const map = { Hsn1a: 'Csn1', Hsn1b: 'Csn1', Hsn2: 'Csn2', Hsn3a: 'Csn3', Hsn3b: 'Csn3', 'H2-sn1': 'C2-sn1', 'H3-sn1': 'C3-sn1', 'H4-sn1': 'C4-sn1', 'H16-sn1': 'C16-sn1', 'H2-sn2': 'C2-sn2', 'H3-sn2': 'C3-sn2', 'H4-sn2': 'C4-sn2', 'Hall-sn2': 'Call-sn2', 'H9-sn2': 'C9-sn2', 'H10-sn2': 'C10-sn2', 'H11-sn2': 'C11-sn2', 'H18-sn2': 'C18-sn2', HCH2N: 'CCH2N', HNMe3: 'CNMe3', HNH3: null, HαS: 'CαS', HβS1: 'CβS', HβS2: 'CβS', HCH2OH: 'CCH2OH', HCHOH: 'CCHOH' };
-    return map[atom] !== undefined ? map[atom] : atom.replace('H', 'C');
-  }
-  return atom.replace('H', 'C');
-};
-const buildKeys = (ri, tokens, molType, char) => {
-  const set = new Set();
-  (tokens || []).forEach((tok) => {
-    const variants = new Set([tok]);
-    if (/\d$/.test(tok)) {
-      [1, 2].forEach((n) => variants.add(tok + n));
-      const stripped = tok.replace(/\d+$/, '');
-      if (stripped !== tok && stripped.length > 1) variants.add(stripped);
-    }
-    variants.forEach((v) => {
-      set.add(`${ri}-${v}`);
-      if (v.startsWith('H')) { const c = getCarbonName(molType, char, v); if (c) set.add(`${ri}-${c}`); }
-    });
-  });
-  return [...set];
-};
-const getProtonCountEx = (molType, res, atom) => {
-  if (molType === 'protein') {
-    const char = res.char;
-    if (char === 'A' && atom === 'Hβ') return 3;
-    if (char === 'V' && (atom === 'Hγ1' || atom === 'Hγ2')) return 3;
-    if (char === 'L' && (atom === 'Hδ1' || atom === 'Hδ2')) return 3;
-    if (char === 'I' && (atom === 'Hγ2' || atom === 'Hδ1')) return 3;
-    if (char === 'T' && atom === 'Hγ2') return 3;
-    if (char === 'M' && atom === 'Hε(CH3)') return 3;
-    return 1;
-  }
-  if (molType === 'dna' || molType === 'rna') return atom.includes('CH3') ? 3 : 1;
-  if (molType === 'sugar') return atom === 'AcCH3' ? 3 : 1;
-  if (molType === 'lipid') {
-    const map = { 'H4-sn1': 20, 'H4-sn2': 12, 'Hall-sn2': 4, HNMe3: 9, HCH2N: 2, HCH2OH: 2, 'H16-sn1': 3, 'H18-sn2': 3 };
-    return map[atom] ?? 1;
-  }
-  return 1;
-};
-const getPascalRow = (n) => {
-  if (n === 0) return [1];
-  let row = [1];
-  for (let i = 0; i < n; i++) {
-    const nextRow = [1];
-    for (let j = 0; j < row.length - 1; j++) nextRow.push(row[j] + row[j + 1]);
-    nextRow.push(1);
-    row = nextRow;
-  }
-  return row;
-};
-const getCarbonRangeFor = (molType, char, cName) => {
-  if (!cName) return { min: 40, max: 50 };
-  if (molType === 'protein') {
-    if (cName === "C'") return { min: 171, max: 178 };
-    const r = CARBON_RANGE_DB[char]?.[cName];
-    if (r) return { min: r[0], max: r[1] };
-    return { min: 40, max: 60 };
-  }
-  if (molType === 'dna' || molType === 'rna') {
-    if (cName.includes("C1'")) return { min: 80, max: 90 };
-    if (cName.includes("C2'")) return molType === 'dna' ? { min: 35, max: 42 } : { min: 68, max: 77 };
-    if (cName.includes("C3'")) return { min: 68, max: 77 };
-    if (cName.includes("C4'")) return { min: 78, max: 87 };
-    if (cName.includes("C5'")) return { min: 59, max: 67 };
-    if (cName === 'C8' || cName === 'C6') return { min: 134, max: 146 };
-    if (cName === 'C2') return { min: 147, max: 156 };
-    if (cName === 'C5') return { min: 98, max: 108 };
-    if (cName === 'C7(CH3)') return { min: 10, max: 16 };
-    return { min: 110, max: 160 };
-  }
-  if (molType === 'sugar') {
-    if (cName === 'C1') return { min: 92, max: 105 };
-    if (cName === 'C6') return char === 'FUC' ? { min: 14, max: 18 } : { min: 60, max: 64 };
-    if (cName === 'C2') return char === 'NAG' ? { min: 54, max: 59 } : { min: 68, max: 76 };
-    if (cName === 'CH3') return { min: 21, max: 25 };
-    return { min: 66, max: 77 };
-  }
-  if (molType === 'lipid') {
-    if (cName === 'C9-sn2' || cName === 'C10-sn2') return { min: 127, max: 132 };
-    if (cName === 'CCH2N' || cName === 'CNMe3') return { min: 52, max: 61 };
-    if (cName === 'C16-sn1' || cName === 'C18-sn2') return { min: 13, max: 15 };
-    if (cName === 'C2-sn1' || cName === 'C2-sn2') return { min: 33, max: 36 };
-    if (cName === 'C4-sn1' || cName === 'C4-sn2') return { min: 28, max: 31 };
-    if (cName === 'Call-sn2' || cName === 'C11-sn2') return { min: 26, max: 29 };
-    if (cName === 'Csn1' || cName === 'Csn2' || cName === 'Csn3') return { min: 61, max: 68 };
-    return { min: 28, max: 32 };
-  }
-  return { min: 40, max: 60 };
-};
-
-// ================= INSTANCES (top-of-page) & PARAMETER LAYERS =================
-const EXPERIMENTAL_CONDITION_FIELDS = [
-  { key: 'temperature', label: 'Temperature' },
-  { key: 'ph', label: 'pH' },
-  { key: 'concentration', label: 'Concentration' },
-  { key: 'ratio', label: 'Ratio' },
-  { key: 'saltConcentration', label: 'Salt Concentration' },
-  { key: 'solvent', label: 'Solvent' },
-  { key: 'otherMolecule', label: 'Other Molecule' }
-];
-const getExperimentalFields = (ctx) => {
-  const merged = [...EXPERIMENTAL_CONDITION_FIELDS];
-  const extra = Array.isArray(ctx?.experimentalFields) ? ctx.experimentalFields : [];
-  extra.forEach((f) => {
-    const item = typeof f === 'string' ? { key: f, label: f } : f;
-    if (item && item.key && !merged.some((m) => m.key === item.key)) merged.push(item);
-  });
-  return merged;
-};
-const getExpValue = (inst, key) => {
-  const t = inst?.test || {};
-  if (t[key] !== undefined && t[key] !== '') return t[key];
-  if (t.exp && t.exp[key] !== undefined && t.exp[key] !== '') return t.exp[key];
-  if (t.expValues && t.expValues[key] !== undefined && t.expValues[key] !== '') return t.expValues[key];
-  return '';
-};
-const normalizeInstance = (t, idx) => ({
-  id: t.id || `inst_${idx}`,
-  name: t.instanceName || t.name || `Instance ${idx + 1}`,
-  test: t
-});
-const getInstances = (ctx, activeTest) => {
-  let list = null;
-  if (ctx) {
-    if (typeof ctx.getInstances === 'function') { try { list = ctx.getInstances(); } catch { list = null; } }
-    if (!list && Array.isArray(ctx.instances) && ctx.instances.length) list = ctx.instances;
-    if (!list && Array.isArray(ctx.siblings) && ctx.siblings.length) list = ctx.siblings;
-    if (!list && (Array.isArray(ctx.tests) || Array.isArray(ctx.allTests))) {
-      const all = ctx.tests || ctx.allTests;
-      list = activeTest.name ? all.filter((t) => t && t.name === activeTest.name) : all;
-    }
-  }
-  if (!list || !list.length) list = [activeTest];
-  let insts = list.filter(Boolean).map(normalizeInstance);
-  insts = insts.map((inst) => (inst.id === activeTest.id ? normalizeInstance(activeTest, 0) : inst));
-  if (!insts.some((i) => i.id === activeTest.id)) insts.unshift(normalizeInstance(activeTest, 0));
-  insts.sort((a, b) => String(a.test.date || '').localeCompare(String(b.test.date || '')));
-  return insts;
-};
-const CHEMICAL_SHIFT_LAYER = { key: 'cs', label: 'Chemical Shift', unit: 'ppm', builtin: true };
-const makeLayerId = () => `layer_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-const getLayers = (activeTest) => [CHEMICAL_SHIFT_LAYER, ...(Array.isArray(activeTest.parameterLayers) ? activeTest.parameterLayers : [])];
-const getActiveLayerKey = (activeTest) => activeTest.activeLayerKey || 'cs';
-const instanceLayerValues = (inst, layerKey) => {
-  const t = inst?.test || {};
-  const nv = t.nmrValues || t.values;
-  if (nv && nv[layerKey]) return nv[layerKey];
-  if (layerKey === 'cs') return t.chemicalShifts || {};
-  return {};
-};
-const getInstanceValues = (inst, isActive, activeTest, layerKey) => {
-  let base = instanceLayerValues(inst, layerKey);
-  if (isActive) {
-    const overlay = (activeTest.nmrValues || {})[layerKey];
-    if (overlay) base = { ...base, ...overlay };
-  }
-  return base;
-};
-const writeCellValue = (activeTest, updateActiveTest, layerKey, atomKey, value) => {
-  const nv = { ...(activeTest.nmrValues || {}) };
-  nv[layerKey] = { ...(nv[layerKey] || {}), [atomKey]: value };
-  updateActiveTest({ nmrValues: nv });
-};
-const ensureLayers = (activeTest, updateActiveTest, wanted) => {
-  const layers = [...(activeTest.parameterLayers || [])];
-  const map = {};
-  wanted.forEach((w) => {
-    const ex = layers.find((l) => l.label.toLowerCase() === w.label.toLowerCase());
-    if (ex) map[w.key] = ex.key;
-    else { const nl = { key: makeLayerId(), label: w.label, unit: w.unit || '' }; layers.push(nl); map[w.key] = nl.key; }
-  });
-  updateActiveTest({ parameterLayers: layers });
-  return map;
-};
-
-// ================= SELECTION HELPERS =================
-const getSelectedKeys = (activeTest) => (Array.isArray(activeTest.selectedAtomKeys) && activeTest.selectedAtomKeys.length ? activeTest.selectedAtomKeys : null);
-const selectionLabel = (d, selectedKeys) => {
-  if (!selectedKeys || !selectedKeys.length) return '';
-  const ri = parseInt(selectedKeys[0].split('-')[0], 10);
-  const res = d.parsedSeq[ri];
-  const atoms = [...new Set(selectedKeys.map((k) => k.split('-').slice(1).join('-')))];
-  return `${res ? res.id : `#${ri + 1}`}: ${atoms.join(', ')}`;
-};
-const getManualKeys = (values) => {
-  const out = new Set();
-  Object.entries(values || {}).forEach(([k, v]) => {
-    if (parseManual(v) === null) return;
-    out.add(k);
-    const idx = k.split('-')[0];
-    const atom = k.slice(idx.length + 1);
-    out.add(`${idx}-${atom.trim()}`);
-    out.add(`${idx}-${atom.replace(/\s+/g, '')}`);
-  });
-  return [...out];
-};
-const opLabel = (op) => (typeof op === 'string' ? op : `${op?.name || ''} ${op?.surname || ''}`.trim());
-
-// ================= FITTING ENGINE =================
-const gaussSolve = (A, b) => {
-  const n = b.length;
-  const M = A.map((r, i) => [...r, b[i]]);
-  for (let c = 0; c < n; c++) {
-    let p = c;
-    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
-    if (Math.abs(M[p][c]) < 1e-12) return null;
-    [M[c], M[p]] = [M[p], M[c]];
-    for (let r = 0; r < n; r++) {
-      if (r === c) continue;
-      const f = M[r][c] / M[c][c];
-      for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k];
-    }
-  }
-  return M.map((r, i) => r[n] / r[i][i]);
-};
-const tokenizeExpr = (s) => {
-  const t = []; let i = 0;
-  const D = (c) => /[0-9.]/.test(c), A = (c) => /[a-zA-Z_]/.test(c);
-  while (i < s.length) {
-    const c = s[i];
-    if (c === ' ' || c === '\t') { i++; continue; }
-    if (D(c)) { let j = i; while (j < s.length && D(s[j])) j++; t.push({ t: 'num', v: parseFloat(s.slice(i, j)) }); i = j; continue; }
-    if (A(c)) { let j = i; while (j < s.length && (A(s[j]) || /[0-9]/.test(s[j]))) j++; t.push({ t: 'id', v: s.slice(i, j) }); i = j; continue; }
-    if ('+-/^(),*'.includes(c)) { t.push({ t: c }); i++; continue; }
-    throw new Error('bad');
-  }
-  return t;
-};
-const parseExpression = (src) => {
-  const tk = tokenizeExpr(src); let p = 0;
-  const pk = () => tk[p];
-  const eat = (t) => { if (!tk[p] || tk[p].t !== t) throw new Error('exp'); return tk[p++]; };
-  const add = () => { let n = mul(); while (pk() && (pk().t === '+' || pk().t === '-')) { const o = eat(pk().t).t; n = { type: 'bin', op: o, l: n, r: mul() }; } return n; };
-  const mul = () => { let n = un(); while (pk() && (pk().t === '*' || pk().t === '/')) { const o = eat(pk().t).t; n = { type: 'bin', op: o, l: n, r: un() }; } return n; };
-  const un = () => { if (pk() && pk().t === '-') { eat('-'); return { type: 'un', a: un() }; } if (pk() && pk().t === '+') { eat('+'); return un(); } return pw(); };
-  const pw = () => { let n = pr(); if (pk() && pk().t === '^') { eat('^'); n = { type: 'bin', op: '^', l: n, r: un() }; } return n; };
-  const pr = () => {
-    const t = pk(); if (!t) throw new Error('exp');
-    if (t.t === 'num') { eat('num'); return { type: 'num', v: t.v }; }
-    if (t.t === 'id') { eat('id'); if (pk() && pk().t === '(') { eat('('); const a = [add()]; while (pk() && pk().t === ',') { eat(','); a.push(add()); } eat(')'); return { type: 'call', name: t.v, args: a }; } return { type: 'sym', name: t.v }; }
-    if (t.t === '(') { eat('('); const n = add(); eat(')'); return n; }
-    throw new Error('exp');
-  };
-  const ast = add();
-  if (p < tk.length) throw new Error('trail');
-  return ast;
-};
-const evalAST = (n, s) => {
-  switch (n.type) {
-    case 'num': return n.v;
-    case 'sym': return n.name === 'x' ? s.x : n.name === 'pi' ? Math.PI : n.name === 'e' ? Math.E : s[n.name];
-    case 'un': return -evalAST(n.a, s);
-    case 'bin': { const a = evalAST(n.l, s), b = evalAST(n.r, s); return n.op === '+' ? a + b : n.op === '-' ? a - b : n.op === '*' ? a * b : n.op === '/' ? a / b : Math.pow(a, b); }
-    case 'call': {
-      const a = n.args.map((x) => evalAST(x, s));
-      switch (n.name) {
-        case 'exp': return Math.exp(a[0]); case 'log': return Math.log10(a[0]); case 'ln': return Math.log(a[0]);
-        case 'sqrt': return Math.sqrt(a[0]); case 'sin': return Math.sin(a[0]); case 'cos': return Math.cos(a[0]);
-        case 'tan': return Math.tan(a[0]); case 'abs': return Math.abs(a[0]); case 'pow': return Math.pow(a[0], a[1]);
-        case 'min': return Math.min(...a); case 'max': return Math.max(...a);
-        default: return NaN;
-      }
-    }
-    default: return NaN;
-  }
-};
-const collectParams = (ast) => {
-  const s = new Set();
-  (function w(n) {
-    if (!n) return;
-    if (n.type === 'sym') { if (n.name !== 'x' && n.name !== 'pi' && n.name !== 'e') s.add(n.name); }
-    if (n.type === 'bin') { w(n.l); w(n.r); }
-    if (n.type === 'un') w(n.a);
-    if (n.type === 'call') n.args.forEach(w);
-  })(ast);
-  return [...s];
-};
-export const fitGeneric = (pts, f0, P0) => {
-  let P = [...P0];
-  const f = (x, Pv) => f0(x, Pv);
-  const ssr = (Pv) => { let s = 0; for (const p of pts) { const v = f(p.x, Pv); if (!isFinite(v)) return Infinity; const w = p.w || 1; s += w * (p.y - v) ** 2; } return s; };
-  let lam = 1e-3, cur = ssr(P);
-  for (let it = 0; it < 120 && isFinite(cur); it++) {
-    const J = pts.map((p) => {
-      const y0 = f(p.x, P); const row = [];
-      for (let k = 0; k < P.length; k++) { const h = Math.max(1e-6, Math.abs(P[k]) * 1e-4); row.push((f(p.x, P.map((v, i) => (i === k ? v + h : v))) - y0) / h); }
-      return row;
-    });
-    const A = P.map(() => new Array(P.length).fill(0)), g = P.map(() => 0);
-    pts.forEach((p, i) => {
-      const w = p.w || 1; const r = p.y - f(p.x, P);
-      for (let a = 0; a < P.length; a++) { g[a] += w * J[i][a] * r; for (let b = 0; b < P.length; b++) A[a][b] += w * J[i][a] * J[i][b]; }
-    });
-    for (let a = 0; a < P.length; a++) A[a][a] *= (1 + lam);
-    const dvec = gaussSolve(A, g);
-    if (!dvec) { lam *= 4; if (lam > 1e7) break; continue; }
-    const P2 = P.map((v, k) => v + dvec[k]); const s2 = ssr(P2);
-    if (isFinite(s2) && s2 < cur) { const pv = cur; P = P2; cur = s2; lam = Math.max(1e-8, lam / 2); if (Math.abs(pv - cur) < 1e-10) break; }
-    else { lam *= 3; if (lam > 1e7) break; }
-  }
-  if (!P.every(isFinite)) return null;
-  let sst = 0; const m = pts.reduce((s, p) => s + p.y, 0) / pts.length;
-  pts.forEach((p) => sst += (p.y - m) ** 2);
-  const df = Math.max(1, pts.length - P.length);
-  const r2 = sst > 0 ? 1 - cur / sst : 1;
-  const se = Math.sqrt(cur / df);
-  const P_err = P.map(() => 0);
-  try {
-    const J = pts.map((p) => {
-      const y0 = f(p.x, P); const row = [];
-      for (let k = 0; k < P.length; k++) { const h = Math.max(1e-6, Math.abs(P[k]) * 1e-4); row.push((f(p.x, P.map((v, i) => (i === k ? v + h : v))) - y0) / h); }
-      return row;
-    });
-    const A = P.map(() => new Array(P.length).fill(0));
-    pts.forEach((p, i) => { const w = p.w || 1; for (let a = 0; a < P.length; a++) { for (let b = 0; b < P.length; b++) A[a][b] += w * J[i][a] * J[i][b]; } });
-    for (let i = 0; i < P.length; i++) {
-      const e = P.map((_, j) => (i === j ? 1 : 0));
-      const col = gaussSolve(A, e);
-      if (col) P_err[i] = Math.sqrt(Math.max(0, col[i] * (cur / df)));
-    }
-  } catch (err) { /* ignore */ }
-  return { params: P, paramsErr: P_err, r2, se, f: (x) => f(x, P) };
-};
-export const fitLinear = (pts) => {
-  if (pts.length < 2) return null;
-  const r = fitGeneric(pts, (x, P) => P[0] + P[1] * x, [0, 1]);
-  return r ? { ...r, intercept: r.params[0], slope: r.params[1], interceptErr: r.paramsErr[0], slopeErr: r.paramsErr[1] } : null;
-};
-export const fit4PL = (pts) => {
-  if (pts.length < 4) return null;
-  const ys = pts.map((p) => p.y);
-  const t = Math.max(...ys), b = Math.min(...ys);
-  const r = fitGeneric(pts, (x, P) => P[1] + (P[0] - P[1]) / (1 + Math.pow(x / P[2], P[3])), [t, b, pts.reduce((s, p) => s + p.x, 0) / Math.max(1, pts.length), 1]);
-  return r ? { ...r, top: r.params[0], bottom: r.params[1], ic50: r.params[2], hill: r.params[3], topErr: r.paramsErr[0], bottomErr: r.paramsErr[1], ic50Err: r.paramsErr[2], hillErr: r.paramsErr[3] } : null;
-};
-export const fitCustomEquation = (expr, pts) => {
-  let ast, par;
-  try { ast = parseExpression(expr); par = collectParams(ast); } catch (e) { return null; }
-  if (!par.length || pts.length < par.length + 1) return null;
-  const init = par.map((_, i) => (i === 0 ? pts.reduce((s, p) => s + p.y, 0) / Math.max(1, pts.length) : 1));
-  const res = fitGeneric(pts, (x, P) => { const s = { x }; par.forEach((n, i) => s[n] = P[i]); return evalAST(ast, s); }, init);
-  if (!res) return null;
-  res.params = Object.fromEntries(par.map((n, i) => [n, res.params[i]]));
-  res.paramsErr = Object.fromEntries(par.map((n, i) => [n, res.paramsErr[i]]));
-  return res;
-};
-export const runFit = (model, customExpr, wpts) => {
-  if (model === 'linear') return fitLinear(wpts);
-  if (model === '4pl') return fit4PL(wpts);
-  if (model === 'custom' && customExpr) return fitCustomEquation(customExpr, wpts);
-  return null;
-};
-export const fitParamOptions = (model, customExpr) => {
-  if (model === 'linear') return ['slope', 'intercept'];
-  if (model === '4pl') return ['top', 'bottom', 'ic50', 'hill'];
-  if (model === 'custom') { try { return collectParams(parseExpression(customExpr || '')); } catch { return []; } }
-  return [];
-};
-export const extractFitParam = (fit, model, param) => {
-  if (!fit) return null;
-  if (model === 'linear') return param === 'intercept' ? fit.intercept : fit.slope;
-  if (model === '4pl') return ({ top: fit.top, bottom: fit.bottom, ic50: fit.ic50, hill: fit.hill })[param] ?? null;
-  return fit.params?.[param] ?? null;
-};
-
-// ================= SHARED CHART STYLE + ZOOM =================
-const DEFAULT_CHART_STYLE = {
-  height: 380, aspect: 1.8, fontSize: 12, tickStep: '', tickAngle: 0,
-  pointStyle: 'circle', ptSize: 5, lineStyle: 'solid', lineThickness: 2,
-  legend: 'top', colors: {}, barRadius: 3,
-  xMin: '', xMax: '', yMin: '', yMax: '', xAxisLabel: '', yAxisLabel: ''
-};
-const lineDash = (style) => (style === 'dashed' ? '7 5' : style === 'dotted' ? '2 3' : undefined);
-const seriesColor = (cfg, key, idx) => (cfg.colors && cfg.colors[key]) || LINE_COLORS[Math.max(0, idx) % LINE_COLORS.length];
-const makeTicks = (domain, stepStr) => {
-  const step = parseManual(stepStr);
-  if (!step || step <= 0 || !Array.isArray(domain)) return undefined;
-  const [a, b] = [Math.min(domain[0], domain[1]), Math.max(domain[0], domain[1])];
-  const out = [];
-  for (let v = Math.ceil(a / step) * step; v <= b + 1e-9; v += step) out.push(parseFloat(v.toFixed(6)));
-  return out.length ? out : undefined;
-};
-const catInterval = (stepStr) => {
-  const n = parseManual(stepStr);
-  return n && n >= 1 ? Math.round(n) - 1 : 0;
-};
-const dom = (v) => (v === '' || v == null || parseManual(v) === null ? undefined : parseManual(v));
-const chartBoxStyle = (cfg) => ({ width: '100%', aspectRatio: String(cfg.aspect || 1.8), maxHeight: cfg.height || 380, minHeight: 220 });
-const AngledTick = ({ x, y, payload, angle = 0, fontSize = 11, anchor = 'middle' }) => {
-  const a = Number(angle) || 0;
-  return (
-    <g transform={`translate(${x || 0},${y || 0})`}>
-      <text transform={a ? `rotate(${a})` : undefined} textAnchor={a < 0 ? 'end' : a > 0 ? 'start' : anchor}
-        dy={a ? 4 : 12} dx={a ? (a > 0 ? 4 : -4) : 0} fill="#64748b" fontSize={fontSize}>
-        {String(payload.value)}
-      </text>
-    </g>
-  );
-};
-const NumField = ({ label, value, onChange, step = 1, w = 'w-full' }) => (
-  <div className="flex flex-col gap-1">
-    <label className="text-[10px] font-bold text-slate-600">{label}</label>
-    <input type="number" step={step} value={value ?? ''} onChange={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))}
-      className={`border border-slate-300 rounded-md p-1.5 text-xs outline-none focus:border-blue-500 ${w}`} />
-  </div>
-);
-const TxtField = ({ label, value, onChange, placeholder = '', w = 'w-full' }) => (
-  <div className="flex flex-col gap-1">
-    <label className="text-[10px] font-bold text-slate-600">{label}</label>
-    <input type="text" value={value ?? ''} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
-      className={`border border-slate-300 rounded-md p-1.5 text-xs outline-none focus:border-blue-500 ${w}`} />
-  </div>
-);
-const SelField = ({ label, value, onChange, options }) => (
-  <div className="flex flex-col gap-1">
-    <label className="text-[10px] font-bold text-slate-600">{label}</label>
-    <select value={value} onChange={(e) => onChange(e.target.value)} className="border border-slate-300 rounded-md p-1.5 text-xs bg-white outline-none focus:border-blue-500">
-      {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-    </select>
-  </div>
-);
-const ChartStylePanel = ({ cfg, setCfg, series = [] }) => (
-  <div className="p-4 bg-white border border-slate-300 rounded-xl grid grid-cols-2 lg:grid-cols-4 gap-3 shadow-sm">
-    <NumField label="Font size (px)" value={cfg.fontSize} onChange={(v) => setCfg({ fontSize: v || 12 })} />
-    <NumField label="Chart height (px)" value={cfg.height} onChange={(v) => setCfg({ height: v || 380 })} />
-    <NumField label="Aspect ratio X/Y (W÷H) — rectangularity" step={0.1} value={cfg.aspect} onChange={(v) => setCfg({ aspect: v || 1.8 })} />
-    <TxtField label="Tick step (num: spacing · cat: every N)" value={cfg.tickStep} onChange={(v) => setCfg({ tickStep: v })} placeholder="auto" />
-    <SelField label="Tick label orientation" value={String(cfg.tickAngle || 0)} onChange={(v) => setCfg({ tickAngle: Number(v) })}
-      options={[['0', '0° (horizontal)'], ['-30', '-30°'], ['-45', '-45°'], ['-60', '-60°'], ['-90', '-90° (vertical)'], ['30', '30°'], ['45', '45°'], ['90', '90°']]} />
-    <SelField label="Point style" value={cfg.pointStyle} onChange={(v) => setCfg({ pointStyle: v })}
-      options={[['circle', 'Circle'], ['square', 'Square'], ['triangle', 'Triangle'], ['cross', 'Cross']]} />
-    <NumField label="Point size" value={cfg.ptSize} onChange={(v) => setCfg({ ptSize: v || 5 })} />
-    <SelField label="Line style" value={cfg.lineStyle} onChange={(v) => setCfg({ lineStyle: v })}
-      options={[['solid', 'Solid'], ['dashed', 'Dashed'], ['dotted', 'Dotted']]} />
-    <NumField label="Line thickness" step={0.5} value={cfg.lineThickness} onChange={(v) => setCfg({ lineThickness: v || 2 })} />
-    <SelField label="Legend" value={cfg.legend} onChange={(v) => setCfg({ legend: v })} options={[['top', 'Top'], ['bottom', 'Bottom'], ['none', 'None']]} />
-    <div className="flex flex-col gap-1"><label className="text-[10px] font-bold text-slate-600">X Min / Max</label>
-      <div className="flex gap-1">
-        <input type="number" placeholder="auto" value={cfg.xMin} onChange={(e) => setCfg({ xMin: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none" />
-        <input type="number" placeholder="auto" value={cfg.xMax} onChange={(e) => setCfg({ xMax: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none" />
-      </div></div>
-    <div className="flex flex-col gap-1"><label className="text-[10px] font-bold text-slate-600">Y Min / Max</label>
-      <div className="flex gap-1">
-        <input type="number" placeholder="auto" value={cfg.yMin} onChange={(e) => setCfg({ yMin: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none" />
-        <input type="number" placeholder="auto" value={cfg.yMax} onChange={(e) => setCfg({ yMax: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none" />
-      </div></div>
-    <TxtField label="X axis label" value={cfg.xAxisLabel} onChange={(v) => setCfg({ xAxisLabel: v })} />
-    <TxtField label="Y axis label" value={cfg.yAxisLabel} onChange={(v) => setCfg({ yAxisLabel: v })} />
-    {series.length > 0 && (
-      <div className="col-span-2 lg:col-span-4 pt-2 border-t border-slate-100 flex flex-col gap-2">
-        <label className="text-[10px] font-bold text-slate-600 uppercase">Series colors (points / lines / bars)</label>
-        <div className="flex flex-wrap gap-3">
-          {series.map((s) => (
-            <label key={s.key} className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
-              <input type="color" value={(cfg.colors && cfg.colors[s.key]) || s.color || '#3b82f6'}
-                onChange={(e) => setCfg({ colors: { ...(cfg.colors || {}), [s.key]: e.target.value } })}
-                className="w-6 h-6 rounded cursor-pointer border border-slate-300" />
-              {s.label}
-            </label>
-          ))}
-        </div>
-      </div>
-    )}
-    <p className="col-span-2 lg:col-span-4 text-[9px] text-slate-400">💡 Drag with the mouse over any graph to zoom into a region. Use “Reset Zoom” to restore.</p>
-  </div>
-);
-const useXZoom = (chartRef, dataDomain, margin = CHART_MARGIN) => {
-  const [domain, setDomain] = useState(null);
-  const [lo, setLo] = useState(null);
-  const [hi, setHi] = useState(null);
-  const dragging = useRef(false);
-  const loRef = useRef(null);
-  const safe = Array.isArray(dataDomain) && dataDomain[1] > dataDomain[0] ? dataDomain : [0, 1];
-  const eff = domain || safe;
-  const effRef = useRef(eff);
-  effRef.current = eff;
-  const getX = (clientX) => {
-    const el = chartRef.current;
-    if (!el) return null;
-    const wrapper = el.querySelector('.recharts-wrapper');
-    if (!wrapper) return null;
-    const rect = wrapper.getBoundingClientRect();
-    const plotW = rect.width - margin.left - margin.right;
-    if (plotW <= 0) return null;
-    const fx = Math.min(1, Math.max(0, (clientX - rect.left - margin.left) / plotW));
-    const d0 = effRef.current;
-    return d0[0] + fx * (d0[1] - d0[0]);
-  };
-  useEffect(() => {
-    const mv = (e) => { if (dragging.current) setHi(getX(e.clientX)); };
-    const up = (e) => {
-      if (!dragging.current) return;
-      dragging.current = false;
-      const end = getX(e.clientX);
-      const start = loRef.current;
-      if (start !== null && end !== null && Math.abs(end - start) > (effRef.current[1] - effRef.current[0]) * 0.01) {
-        setDomain([Math.min(start, end), Math.max(start, end)]);
-      }
-      loRef.current = null;
-      setLo(null); setHi(null);
-    };
-    window.addEventListener('mousemove', mv);
-    window.addEventListener('mouseup', up);
-    return () => { window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  const onMouseDown = (e) => {
-    const v = getX(e.clientX);
-    if (v !== null) { dragging.current = true; loRef.current = v; setLo(v); setHi(v); }
-  };
-  return { domain: eff, refLo: lo, refHi: hi, onMouseDown, isZoomed: !!domain, reset: () => setDomain(null) };
-};
-const useCatZoom = (names) => {
-  const [range, setRange] = useState(null);
-  const [d0, setD0] = useState(null);
-  const [d1, setD1] = useState(null);
-  const idxOf = (label) => names.indexOf(label);
-  const onMouseDown = (st) => { if (st && st.activeLabel != null) { setD0(String(st.activeLabel)); setD1(String(st.activeLabel)); } };
-  const onMouseMove = (st) => { if (d0 != null && st && st.activeLabel != null) setD1(String(st.activeLabel)); };
-  const onMouseUp = (st) => {
-    if (d0 == null) return;
-    const end = st && st.activeLabel != null ? String(st.activeLabel) : d1;
-    const i0 = idxOf(d0), i1 = idxOf(end);
-    setD0(null); setD1(null);
-    if (i0 >= 0 && i1 >= 0 && i0 !== i1) setRange([Math.min(i0, i1), Math.max(i0, i1)]);
-  };
-  const visible = range ? names.slice(range[0], range[1] + 1) : names;
-  return { visible, drag: [d0, d1], onMouseDown, onMouseMove, onMouseUp, reset: () => setRange(null), isZoomed: !!range };
-};
-
 // ================= GEOMETRY & STRUCTURES =================
 const getHexagon = (cx, cy, r, dir) => { const pts = []; const b = dir === 1 ? -Math.PI / 2 : Math.PI / 2; for (let i = 0; i < 6; i++) { const a = b + i * (Math.PI / 3) * dir; pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) }); } return pts; };
 const getPentagon = (cx, cy, r, dir) => { const pts = []; const b = dir === 1 ? -Math.PI / 2 : Math.PI / 2; for (let i = 0; i < 5; i++) { const a = b + i * ((2 * Math.PI) / 5) * dir; pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) }); } return pts; };
@@ -730,9 +200,7 @@ const makeBuilder = () => {
   const finish = (pad = 15) => ({ elements, viewBox: `${minX - pad} ${minY - pad} ${maxX - minX + 2 * pad} ${maxY - minY + 2 * pad}` });
   return { elements, ub, addLine, addPolygon, addCircle, addDot, finish };
 };
-// (buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure,
-//  elementsToSVG, normalizeImageCandidates — IDENTICI alla versione precedente; omessi qui per spazio
-//  ma vanno mantenuti uguali. Li includo completi qui sotto.)
+
 const buildProteinStructure = (sequence) => {
   const b = makeBuilder();
   let curRi = null;
@@ -933,6 +401,7 @@ const buildProteinStructure = (sequence) => {
   });
   return b.finish();
 };
+
 const buildNucleicStructure = (sequence, molType) => {
   const b = makeBuilder();
   const isDNA = molType === 'dna';
@@ -1033,6 +502,7 @@ const buildNucleicStructure = (sequence, molType) => {
   addText(20, y0 + RH / 2 + 14, 'backbone', '#64748b', 10, 'start', null);
   return b.finish();
 };
+
 const buildSugarStructure = (res, conformation, anomer) => {
   const b = makeBuilder();
   const curRi = 0, curChar = res.char, c = res.color;
@@ -1087,6 +557,7 @@ const buildSugarStructure = (res, conformation, anomer) => {
   addText(275, 365, `${res.name} (${anomLabel}, ${chair ? 'chair' : 'inverted chair'})`, c, 13, 'middle', null);
   return b.finish();
 };
+
 const buildLipidStructure = (res, db) => {
   const b = makeBuilder();
   const curRi = 0, curChar = res.char, c = res.color;
@@ -1256,6 +727,7 @@ const StructureSVGView = ({ structure, minWidth, isExpanded, onToggleExpand, sel
     </>
   );
 };
+
 const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusIdx, charLabel }) => {
   const [painting, setPainting] = useState(false);
   useEffect(() => {
@@ -1280,6 +752,7 @@ const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusIdx, char
     </div>
   );
 };
+
 const CustomXTick1H = ({ x, y, payload, isZoomed, fs = 11 }) => {
   const numVal = Number(payload.value);
   const isInt = Number.isInteger(numVal);
@@ -1296,6 +769,7 @@ const CustomXTick1H = ({ x, y, payload, isZoomed, fs = 11 }) => {
     </g>
   );
 };
+
 const CustomYTick1H = ({ x, y, payload, isZoomed, fs = 11 }) => {
   const numVal = Number(payload.value);
   const isInt = Number.isInteger(numVal);
@@ -1312,6 +786,7 @@ const CustomYTick1H = ({ x, y, payload, isZoomed, fs = 11 }) => {
     </g>
   );
 };
+
 const CustomXTick13C = ({ x, y, payload, isZoomed, fs = 11 }) => {
   const numVal = Number(payload.value);
   const isTen = numVal % 10 === 0;
@@ -1327,6 +802,7 @@ const CustomXTick13C = ({ x, y, payload, isZoomed, fs = 11 }) => {
     </g>
   );
 };
+
 const CustomYTick13C = ({ x, y, payload, isZoomed, fs = 11 }) => {
   const numVal = Number(payload.value);
   const isTen = numVal % 10 === 0;
@@ -1342,6 +818,7 @@ const CustomYTick13C = ({ x, y, payload, isZoomed, fs = 11 }) => {
     </g>
   );
 };
+
 const NMRTooltip = ({ active, payload, diagonalColor, selectedKeys }) => {
   if (active && payload && payload.length) {
     const data = payload[0].payload;
@@ -1373,6 +850,7 @@ const NMRTooltip = ({ active, payload, diagonalColor, selectedKeys }) => {
   }
   return null;
 };
+
 const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, rowLabels }) => {
   const containerRef = useRef(null);
   const [width, setWidth] = useState(0);
@@ -1387,17 +865,31 @@ const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, row
     window.addEventListener('resize', update);
     return () => { if (ro) ro.disconnect(); window.removeEventListener('resize', update); };
   }, []);
-  const margin = { top: 10, right: 24, bottom: 40, left: 56 };
-  const rowH = 26;
+  const margin = { top: 15, right: 24, bottom: 40, left: 56 };
+  const rowH = 36; 
   const nRows = Math.max(1, rowCount);
   const svgHeight = margin.top + nRows * rowH + margin.bottom;
   const plotW = Math.max(10, (width || 600) - margin.left - margin.right);
   const span = domain[1] - domain[0];
   const xScale = (v) => margin.left + ((domain[1] - v) / span) * plotW;
-  const yCenter = (row) => margin.top + row * rowH + rowH / 2;
+  const yCenter = (row) => margin.top + row * rowH + rowH / 2 + 6;
   const axisY = margin.top + nRows * rowH;
+
+  const rowOccupancy = Array.from({ length: nRows }, () => []);
+  const processedRanges = ranges.map((r, i) => {
+    const row = nRows - 1 - r.y;
+    const xLeft = xScale(r.max);
+    const xRight = xScale(r.min);
+    let slot = 0;
+    while (rowOccupancy[row].some(occ => occ.slot === slot && !(xRight + 22 < occ.left || xLeft - 22 > occ.right))) {
+      slot++;
+    }
+    rowOccupancy[row].push({ left: xLeft, right: xRight, slot });
+    return { ...r, originalIndex: i, row, x1: xLeft, x2: xRight, slot };
+  });
+
   return (
-    <div ref={containerRef} className="bg-slate-50 rounded-xl border border-slate-200 p-3 relative">
+    <div ref={containerRef} className="bg-slate-50 rounded-xl border border-slate-200 p-3 relative mt-2">
       <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2 ml-1">{title}</h4>
       <svg width="100%" height={svgHeight} className="block select-none">
         {rowLabels.map((label, row) => (
@@ -1414,15 +906,17 @@ const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, row
           </g>
         ))}
         <line x1={margin.left} y1={axisY} x2={margin.left + plotW} y2={axisY} stroke="#cbd5e1" strokeWidth={1} />
-        {ranges.map((r, i) => {
-          const row = nRows - 1 - r.y;
-          const x1 = xScale(r.max); const x2 = xScale(r.min);
-          const cy = yCenter(row);
-          const isHov = hover && hover.idx === i;
+        {processedRanges.map((r) => {
+          const cy = yCenter(r.row);
+          const isHov = hover && hover.idx === r.originalIndex;
+          const textY = cy - 8 - r.slot * 10; 
           return (
-            <rect key={`range-${i}`} x={x1} y={cy - 5} width={Math.max(2, x2 - x1)} height={10} rx={3} fill={r.color} fillOpacity={isHov ? 1 : 0.75} stroke={r.color} strokeWidth={1} style={{ cursor: 'pointer' }}
-              onMouseMove={(e) => { const crect = containerRef.current.getBoundingClientRect(); setHover({ idx: i, x: e.clientX - crect.left, y: e.clientY - crect.top }); }}
-              onMouseLeave={() => setHover(null)} />
+            <g key={`range-${r.originalIndex}`}>
+              <rect x={r.x1} y={cy - 4} width={Math.max(2, r.x2 - r.x1)} height={8} rx={3} fill={r.color} fillOpacity={isHov ? 1 : 0.75} stroke={r.color} strokeWidth={1} style={{ cursor: 'pointer' }}
+                onMouseMove={(e) => { const crect = containerRef.current.getBoundingClientRect(); setHover({ idx: r.originalIndex, x: e.clientX - crect.left, y: e.clientY - crect.top }); }}
+                onMouseLeave={() => setHover(null)} />
+              <text x={(r.x1 + r.x2) / 2} y={textY} textAnchor="middle" fontSize={9} fontWeight="bold" fill={r.color}>{r.atom}</text>
+            </g>
           );
         })}
         <text x={margin.left + plotW / 2} y={svgHeight - 6} textAnchor="middle" fontSize={11} fill="#64748b">{xAxisLabel}</text>
@@ -1437,11 +931,8 @@ const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, row
   );
 };
 
-
-
 // ================= ZOOMABLE PLOTS & SCROLLBARS =================
 
-// Nuovo componente per gestire il panning / scrolling degli assi
 const AxisScrollbar = ({ domain, fullDomain, onChange, vertical = false, reversed = true }) => {
   const [min, max] = domain;
   const [fMin, fMax] = fullDomain;
@@ -1517,6 +1008,18 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
     const xVal = getXVal(e.clientX);
     if (xVal !== null) { isDragging.current = true; setRefAreaLeft(xVal); setRefAreaRight(xVal); }
   };
+
+  const processedData = useMemo(() => {
+    if (!data) return [];
+    const sorted = [...data].sort((a, b) => b.x - a.x); // X is reversed (ppm)
+    const levels = [];
+    return sorted.map(p => {
+       let l = 0;
+       while(levels[l] !== undefined && Math.abs(p.x - levels[l]) < 0.2) l++;
+       levels[l] = p.x;
+       return { ...p, labelLevel: l };
+    });
+  }, [data]);
   
   return (
     <>
@@ -1532,7 +1035,7 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
         <div className="flex-1 min-h-0 select-none relative" ref={(n) => { chartRef.current = n; boxRef.current = n; }}>
           <div onMouseDown={handleMouseDown} style={{ width: '100%', height: '100%' }}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={data} margin={CHART_MARGIN_1D}>
+              <BarChart data={processedData} margin={CHART_MARGIN_1D}>
                 <CartesianGrid strokeDasharray="3 3" vertical={true} horizontal={false} stroke="#f1f5f9" />
                 <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : ticks} interval={0} tickLine={false} tick={<TickComponent isZoomed={isZoomed} fs={fs} />} label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} axisLine={{ stroke: '#cbd5e1' }} />
                 <YAxis type="number" dataKey="y" domain={[0, 'auto']} hide={true} />
@@ -1547,7 +1050,7 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
                   return (
                     <g opacity={dimmed ? 0.2 : 1}>
                       <line x1={centerX} y1={y + height} x2={centerX} y2={y} stroke={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : payload.color} strokeWidth={isSel ? 3 : isMan ? 2.5 : 1.5} />
-                      {textStr && <text x={centerX} y={y - 5} textAnchor="middle" fontSize={simLabelFontSize} fill="#475569" fontWeight="bold">{textStr}</text>}
+                      {textStr && <text x={centerX} y={y - 5 - (payload.labelLevel || 0) * 12} textAnchor="middle" fontSize={simLabelFontSize} fill="#475569" fontWeight="bold">{textStr}</text>}
                     </g>
                   );
                 }} isAnimationActive={false} />
@@ -1555,8 +1058,6 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
               </BarChart>
             </ResponsiveContainer>
           </div>
-          
-          {/* Scrollbar Orizzontale */}
           {isZoomed && (
             <div className="absolute left-0 right-0 z-10 flex items-center" style={{ bottom: '0px', paddingLeft: CHART_MARGIN_1D.left, paddingRight: CHART_MARGIN_1D.right }}>
               <AxisScrollbar domain={xDomain} fullDomain={fullDomain} onChange={setXDomain} />
@@ -1619,6 +1120,22 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
     const coords = getPlotCoords(e.clientX, e.clientY);
     if (coords) { isDragging.current = true; setRefAreaLeft(coords.x); setRefAreaTop(coords.y); setRefAreaRight(coords.x); setRefAreaBottom(coords.y); }
   };
+
+  const processedCrossPeaks = useMemo(() => {
+    if (!crossPeakData) return [];
+    const used = [];
+    return crossPeakData.map(p => {
+      let dx = 0, dy = 0, rad = 1;
+      while(used.some(u => Math.abs(u.x - (p.x + dx)) < 0.1 && Math.abs(u.y - (p.y + dy)) < 0.1)) {
+         const angle = rad * Math.PI / 4;
+         dx = (rad * 0.05) * Math.cos(angle);
+         dy = (rad * 0.05) * Math.sin(angle);
+         rad++;
+      }
+      used.push({ x: p.x + dx, y: p.y + dy });
+      return { ...p, labelDx: dx * 20, labelDy: dy * 20 };
+    });
+  }, [crossPeakData]);
   
   const shape = (props) => {
     const { cx, cy, fill, payload } = props;
@@ -1632,7 +1149,7 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
         {isSel && <circle cx={cx} cy={cy} r={(payload.size || 5) + 5} fill={SELECT_COLOR} opacity={0.3} />}
         {isMan && !isSel && <circle cx={cx} cy={cy} r={(payload.size || 5) + 5} fill={MANUAL_COLOR} opacity={0.22} />}
         <circle cx={cx} cy={cy} r={isSel ? (payload.size || 5) + 2 : isMan ? (payload.size || 5) + 1.5 : payload.size || 5} fill={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : payload.type === 'Diagonal' ? fill : getNMRFillColor(payload)} stroke={isSel ? '#b45309' : isMan ? '#166534' : 'none'} strokeWidth={isSel ? 2 : isMan ? 1.5 : 0} opacity={0.85} />
-        {textStr && <text x={cx + ((payload.size || 5) + 2)} y={cy - ((payload.size || 5) + 2)} fontSize={simLabelFontSize} fill="#475569" fontWeight="bold">{textStr}</text>}
+        {textStr && <text x={cx + ((payload.size || 5) + 2) + (payload.labelDx||0)} y={cy - ((payload.size || 5) + 2) + (payload.labelDy||0)} fontSize={simLabelFontSize} fill="#475569" fontWeight="bold">{textStr}</text>}
       </g>
     );
   };
@@ -1658,13 +1175,11 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
                 <Tooltip content={<NMRTooltip diagonalColor={diagonalColor} selectedKeys={selectedKeys} />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
                 <Scatter name="Diagonal" data={[{ x: 0, y: 0 }, { x: 11, y: 11 }]} line={{ stroke: '#cbd5e1', strokeWidth: 1 }} shape={<circle r={0} />} legendType="none" isAnimationActive={false} />
                 <Scatter data={diagonalData} fill={diagonalColor} shape={shape} isAnimationActive={false} />
-                <Scatter data={crossPeakData} shape={shape} isAnimationActive={false} />
+                <Scatter data={processedCrossPeaks} shape={shape} isAnimationActive={false} />
                 {refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} y1={refAreaTop} y2={refAreaBottom} strokeOpacity={0.3} fill="#cbd5e1" />}
               </ScatterChart>
             </ResponsiveContainer>
           </div>
-          
-          {/* Scrollbars X & Y */}
           {isZoomed && (
             <>
               <div className="absolute left-0 right-0 z-10 flex items-center" style={{ bottom: '0px', paddingLeft: CHART_MARGIN.left, paddingRight: CHART_MARGIN.right }}>
@@ -1732,6 +1247,22 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
     const coords = getPlotCoords(e.clientX, e.clientY);
     if (coords) { isDragging.current = true; setRefAreaLeft(coords.x); setRefAreaTop(coords.y); setRefAreaRight(coords.x); setRefAreaBottom(coords.y); }
   };
+
+  const processedCrossPeaks = useMemo(() => {
+    if (!crossPeakData) return [];
+    const used = [];
+    return crossPeakData.map(p => {
+      let dx = 0, dy = 0, rad = 1;
+      while(used.some(u => Math.abs(u.x - (p.x + dx)) < 0.2 && Math.abs(u.y - (p.y + dy)) < (yDomainInit[1]/55))) {
+         const angle = rad * Math.PI / 4;
+         dx = (rad * 0.05) * Math.cos(angle);
+         dy = (rad * 0.5) * Math.sin(angle);
+         rad++;
+      }
+      used.push({ x: p.x + dx, y: p.y + dy });
+      return { ...p, labelDx: dx * 20, labelDy: dy * 5 };
+    });
+  }, [crossPeakData, yDomainInit]);
   
   return (
     <>
@@ -1752,7 +1283,7 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
                 <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} />
                 <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : yTicks} interval={0} tickLine={false} tick={<CustomYTick13C isZoomed={isZoomed} fs={fs} />} label={{ value: yAxisLabel, angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fs + 1 }} />
                 <Tooltip content={<NMRTooltip diagonalColor="#8b5cf6" selectedKeys={selectedKeys} />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
-                <Scatter data={crossPeakData} shape={(props) => {
+                <Scatter data={processedCrossPeaks} shape={(props) => {
                   const { cx, cy, payload } = props;
                   if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
                   const isSel = selectedKeys && payload.keys && payload.keys.some((k) => selectedKeys.includes(k));
@@ -1764,7 +1295,7 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
                       {isSel && <circle cx={cx} cy={cy} r={(payload.size || 5) + 5} fill={SELECT_COLOR} opacity={0.3} />}
                       {isMan && !isSel && <circle cx={cx} cy={cy} r={(payload.size || 5) + 5} fill={MANUAL_COLOR} opacity={0.22} />}
                       <circle cx={cx} cy={cy} r={isSel ? (payload.size || 5) + 2 : isMan ? (payload.size || 5) + 1.5 : payload.size || 5} fill={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : getNMRFillColor(payload)} stroke={isSel ? '#b45309' : isMan ? '#166534' : 'none'} strokeWidth={isSel ? 2 : isMan ? 1.5 : 0} opacity={0.85} />
-                      {textStr && <text x={cx + ((payload.size || 5) + 2)} y={cy - ((payload.size || 5) + 2)} fontSize={simLabelFontSize} fill="#475569" fontWeight="bold">{textStr}</text>}
+                      {textStr && <text x={cx + ((payload.size || 5) + 2) + (payload.labelDx||0)} y={cy - ((payload.size || 5) + 2) + (payload.labelDy||0)} fontSize={simLabelFontSize} fill="#475569" fontWeight="bold">{textStr}</text>}
                     </g>
                   );
                 }} isAnimationActive={false} />
@@ -1772,8 +1303,6 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
               </ScatterChart>
             </ResponsiveContainer>
           </div>
-          
-          {/* Scrollbars X & Y */}
           {isZoomed && (
             <>
               <div className="absolute left-0 right-0 z-10 flex items-center" style={{ bottom: '0px', paddingLeft: CHART_MARGIN.left, paddingRight: CHART_MARGIN.right }}>
@@ -1790,64 +1319,361 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
   );
 };
 
-const ThreeDScatter = ({ seriesList, cfg, xLabel, yLabel, zLabel }) => {
+const ThreeDScatter = ({ seriesList, cfg, xLabel, yLabel, zLabel, chartType = '3d' }) => {
   const [zoom, setZoom] = useState(1);
+  const [pitch, setPitch] = useState(0.4); 
+  const [yaw, setYaw] = useState(0.6); 
+  const isDragging = useRef(false);
+  const lastMouse = useRef({ x: 0, y: 0 });
+
   const fs = cfg.fontSize || 11;
+  const isHist = chartType === '3d-hist';
   const all = seriesList.flatMap((s) => s.pts);
-  if (!all.length) return <div className="text-xs text-slate-400 italic p-6 text-center bg-slate-50 rounded-lg border border-dashed">No 3D data — both selected experimental-condition fields must be numeric.</div>;
+
+  // 1. MUST BE CALLED BEFORE ANY EARLY RETURNS
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      if (!isDragging.current) return;
+      const dx = e.clientX - lastMouse.current.x;
+      const dy = e.clientY - lastMouse.current.y;
+      setYaw(y => y - dx * 0.01);
+      setPitch(p => Math.max(-Math.PI/2, Math.min(Math.PI/2, p - dy * 0.01)));
+      lastMouse.current = { x: e.clientX, y: e.clientY };
+    };
+    const handleMouseUp = () => { isDragging.current = false; };
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => { window.removeEventListener('mousemove', handleMouseMove); window.removeEventListener('mouseup', handleMouseUp); };
+  }, []);
+
+  // 2. NOW WE CAN SAFELY RETURN EARLY
+  if (!all.length) return <div className="text-xs text-slate-400 italic p-6 text-center bg-slate-50 rounded-lg border border-dashed">No 3D data available.</div>;
+  
   const rng = (vals) => { let mn = Math.min(...vals), mx = Math.max(...vals); if (mx - mn < 1e-12) { mn -= 0.5; mx += 0.5; } return [mn, mx]; };
   const [x0, x1] = rng(all.map((p) => p.x));
   const [y0, y1] = rng(all.map((p) => p.y));
   const [z0, z1] = rng(all.map((p) => p.z));
   const norm = (v, a, b) => (v - a) / (b - a);
-  const proj = (xn, yn, zn) => ({ X: (xn - yn) * Math.cos(Math.PI / 6), Y: (xn + yn) * Math.sin(Math.PI / 6) - zn * 1.15 });
+  
+  const proj = (xn, yn, zn) => {
+    const cx = xn - 0.5, cy = yn - 0.5, cz = zn - 0.5;
+    const rx = cx * Math.cos(yaw) - cy * Math.sin(yaw);
+    const ry = cx * Math.sin(yaw) + cy * Math.cos(yaw);
+    const rz = ry * Math.sin(pitch) + cz * Math.cos(pitch);
+    const rry = ry * Math.cos(pitch) - cz * Math.sin(pitch);
+    return { X: rx, Y: rz, depth: rry };
+  };
+
+  const W = 680, H = 500, pad = 80;
   const corners = [];
   [0, 1].forEach((a) => [0, 1].forEach((b) => [0, 1].forEach((c) => corners.push(proj(a, b, c)))));
   const minX = Math.min(...corners.map((c) => c.X)), maxX = Math.max(...corners.map((c) => c.X));
   const minY = Math.min(...corners.map((c) => c.Y)), maxY = Math.max(...corners.map((c) => c.Y));
-  const W = 680, H = 500, pad = 80;
   const s = Math.min((W - 2 * pad) / (maxX - minX), (H - 2 * pad) / (maxY - minY)) * zoom;
   const tx = (X) => pad + (X - minX) * s + Math.max(0, (W - 2 * pad - (maxX - minX) * s) / 2);
   const ty = (Y) => pad + (Y - minY) * s + Math.max(0, (H - 2 * pad - (maxY - minY) * s) / 2);
-  const pt = (xn, yn, zn) => { const p = proj(xn, yn, zn); return { x: tx(p.X), y: ty(p.Y) }; };
-  const O = pt(0, 0, 0), Xe = pt(1, 0, 0), Ye = pt(0, 1, 0), Ze = pt(0, 0, 1);
-  const grid = [];
-  for (let i = 0; i <= 4; i++) { const t = i / 4; grid.push([pt(t, 0, 0), pt(t, 1, 0)]); grid.push([pt(0, t, 0), pt(1, t, 0)]); }
+  const pt = (xn, yn, zn) => { const p = proj(xn, yn, zn); return { x: tx(p.X), y: ty(p.Y), depth: p.depth }; };
+
+  const axes = [
+    { p1: pt(0,0,0), p2: pt(1,0,0), color: '#ef4444', label: xLabel },
+    { p1: pt(0,0,0), p2: pt(0,1,0), color: '#22c55e', label: yLabel },
+    { p1: pt(0,0,0), p2: pt(0,0,1), color: '#3b82f6', label: zLabel }
+  ].sort((a,b) => b.p2.depth - a.p2.depth);
+
+  const drawPts = seriesList.flatMap((sr) => sr.pts.map(p => {
+      const nx = norm(p.x, x0, x1), ny = norm(p.y, y0, y1), nz = norm(p.z, z0, z1);
+      const top = pt(nx, ny, nz);
+      
+      const wX = 0.015 * (x1 === x0 ? 1 : (x1 - x0));
+      const wY = 0.015 * (y1 === y0 ? 1 : (y1 - y0));
+
+      const c1 = pt(Math.max(0, nx - wX), Math.max(0, ny - wY), 0);
+      const c2 = pt(Math.min(1, nx + wX), Math.max(0, ny - wY), 0);
+      const c3 = pt(Math.min(1, nx + wX), Math.min(1, ny + wY), 0);
+      const c4 = pt(Math.max(0, nx - wX), Math.min(1, ny + wY), 0);
+      const t1 = pt(Math.max(0, nx - wX), Math.max(0, ny - wY), nz);
+      const t2 = pt(Math.min(1, nx + wX), Math.max(0, ny - wY), nz);
+      const t3 = pt(Math.min(1, nx + wX), Math.min(1, ny + wY), nz);
+      const t4 = pt(Math.max(0, nx - wX), Math.min(1, ny + wY), nz);
+
+      return { ...p, nx, ny, nz, top, c1, c2, c3, c4, t1, t2, t3, t4, color: sr.color, label: sr.label };
+  })).sort((a,b) => b.top.depth - a.top.depth);
+
   const fmt = (v) => (Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(2));
-  const tickVals = (a, b) => [a, (a + b) / 2, b];
+
   return (
     <div className="relative">
       <div className="absolute top-1 right-1 z-10 flex gap-1">
         <button type="button" onClick={() => setZoom((z) => Math.min(4, z * 1.25))} className="w-7 h-7 rounded bg-slate-100 hover:bg-slate-200 border border-slate-300 text-sm font-black text-slate-700">+</button>
         <button type="button" onClick={() => setZoom((z) => Math.max(0.4, z / 1.25))} className="w-7 h-7 rounded bg-slate-100 hover:bg-slate-200 border border-slate-300 text-sm font-black text-slate-700">−</button>
-        <button type="button" onClick={() => setZoom(1)} className="h-7 px-2 rounded bg-slate-100 hover:bg-slate-200 border border-slate-300 text-[10px] font-bold text-slate-600">Reset</button>
+        <button type="button" onClick={() => { setZoom(1); setPitch(0.4); setYaw(0.6); }} className="h-7 px-2 rounded bg-slate-100 hover:bg-slate-200 border border-slate-300 text-[10px] font-bold text-slate-600">Reset View</button>
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full select-none" style={{ maxHeight: cfg.height || 460 }}>
-        {grid.map((g, i) => <line key={i} x1={g[0].x} y1={g[0].y} x2={g[1].x} y2={g[1].y} stroke="#e2e8f0" strokeWidth={1} />)}
-        <line x1={O.x} y1={O.y} x2={Xe.x} y2={Xe.y} stroke="#64748b" strokeWidth={1.5} />
-        <line x1={O.x} y1={O.y} x2={Ye.x} y2={Ye.y} stroke="#64748b" strokeWidth={1.5} />
-        <line x1={O.x} y1={O.y} x2={Ze.x} y2={Ze.y} stroke="#64748b" strokeWidth={1.5} />
-        {tickVals(x0, x1).map((v, i) => { const p = pt(norm(v, x0, x1), 0, 0); return <text key={`xt${i}`} x={p.x} y={p.y + 16} fontSize={fs - 1} fill="#64748b" textAnchor="middle">{fmt(v)}</text>; })}
-        {tickVals(y0, y1).map((v, i) => { const p = pt(0, norm(v, y0, y1), 0); return <text key={`yt${i}`} x={p.x} y={p.y + 16} fontSize={fs - 1} fill="#64748b" textAnchor="middle">{fmt(v)}</text>; })}
-        {tickVals(z0, z1).map((v, i) => { const p = pt(0, 0, norm(v, z0, z1)); return <text key={`zt${i}`} x={p.x - 10} y={p.y + 3} fontSize={fs - 1} fill="#64748b" textAnchor="end">{fmt(v)}</text>; })}
-        <text x={Xe.x + 12} y={Xe.y + 14} fontSize={fs} fontWeight="bold" fill="#334155">{xLabel}</text>
-        <text x={Ye.x - 12} y={Ye.y + 14} fontSize={fs} fontWeight="bold" fill="#334155" textAnchor="end">{yLabel}</text>
-        <text x={Ze.x + 10} y={Ze.y - 8} fontSize={fs} fontWeight="bold" fill="#334155">{zLabel}</text>
-        {seriesList.map((sr) => sr.pts.map((p, i) => {
-          const q = pt(norm(p.x, x0, x1), norm(p.y, y0, y1), norm(p.z, z0, z1));
-          const r = cfg.ptSize || 5;
-          return (
-            <circle key={`${sr.key}-${i}`} cx={q.x} cy={q.y} r={r} fill={sr.color} opacity={0.85} stroke="#fff" strokeWidth={0.8}>
-              <title>{`${sr.label} | ${p.name}\n${xLabel}: ${fmt(p.x)}\n${yLabel}: ${fmt(p.y)}\n${zLabel}: ${fmt(p.z)}`}</title>
-            </circle>
-          );
-        }))}
+      <p className="absolute top-1 left-2 text-[10px] text-slate-400 italic pointer-events-none">Drag to rotate</p>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full select-none cursor-move" style={{ maxHeight: cfg.height || 460 }} onMouseDown={(e) => { isDragging.current = true; lastMouse.current = { x: e.clientX, y: e.clientY }; }}>
+        {axes.map((a, i) => (
+          <g key={`ax${i}`}>
+            <line x1={a.p1.x} y1={a.p1.y} x2={a.p2.x} y2={a.p2.y} stroke={a.color} strokeWidth={2} opacity={0.6} />
+            <text x={a.p2.x} y={a.p2.y - 10} fontSize={fs} fontWeight="bold" fill={a.color} textAnchor="middle">{a.label}</text>
+          </g>
+        ))}
+        {drawPts.map((p, i) => (
+           <g key={`pt${i}`}>
+             <title>{`${p.label} | ${p.name}\n${xLabel}: ${fmt(p.x)}\n${yLabel}: ${fmt(p.y)}\n${zLabel}: ${fmt(p.z)}`}</title>
+             {isHist ? (
+               <>
+                 <polygon points={`${p.c1.x},${p.c1.y} ${p.c2.x},${p.c2.y} ${p.t2.x},${p.t2.y} ${p.t1.x},${p.t1.y}`} fill={p.color} stroke="#000" strokeWidth={0.5} opacity={0.7} />
+                 <polygon points={`${p.c2.x},${p.c2.y} ${p.c3.x},${p.c3.y} ${p.t3.x},${p.t3.y} ${p.t2.x},${p.t2.y}`} fill={p.color} stroke="#000" strokeWidth={0.5} opacity={0.8} />
+                 <polygon points={`${p.t1.x},${p.t1.y} ${p.t2.x},${p.t2.y} ${p.t3.x},${p.t3.y} ${p.t4.x},${p.t4.y}`} fill={p.color} stroke="#000" strokeWidth={1} opacity={1} />
+               </>
+             ) : (
+               <circle cx={p.top.x} cy={p.top.y} r={cfg.ptSize || 5} fill={p.color} opacity={0.9} stroke="#fff" strokeWidth={1} />
+             )}
+           </g>
+        ))}
       </svg>
     </div>
   );
 };
+// ================= INSTANCES (top-of-page) & PARAMETER LAYERS =================
+const EXPERIMENTAL_CONDITION_FIELDS = [
+  { key: 'temperature', label: 'Temperature' },
+  { key: 'ph', label: 'pH' },
+  { key: 'concentration', label: 'Concentration' },
+  { key: 'ratio', label: 'Ratio' },
+  { key: 'saltConcentration', label: 'Salt Concentration' },
+  { key: 'solvent', label: 'Solvent' },
+  { key: 'otherMolecule', label: 'Other Molecule' }
+];
+
+const getExperimentalFields = (ctx) => {
+  const merged = [...EXPERIMENTAL_CONDITION_FIELDS];
+  const extra = Array.isArray(ctx?.experimentalFields) ? ctx.experimentalFields : [];
+  extra.forEach((f) => {
+    const item = typeof f === 'string' ? { key: f, label: f } : f;
+    if (item && item.key && !merged.some((m) => m.key === item.key)) merged.push(item);
+  });
+  return merged;
+};
+
+const getExpValue = (inst, key) => {
+  const t = inst?.test || {};
+  if (t[key] !== undefined && t[key] !== '') return t[key];
+  if (t.exp && t.exp[key] !== undefined && t.exp[key] !== '') return t.exp[key];
+  if (t.expValues && t.expValues[key] !== undefined && t.expValues[key] !== '') return t.expValues[key];
+  return '';
+};
+
+const normalizeInstance = (t, idx) => ({
+  id: t.id || `inst_${idx}`,
+  name: t.instanceName || t.name || `Instance ${idx + 1}`,
+  test: t
+});
+
+const getInstances = (ctx, activeTest) => {
+  let list = null;
+  if (ctx) {
+    if (typeof ctx.getInstances === 'function') { try { list = ctx.getInstances(); } catch { list = null; } }
+    if (!list && Array.isArray(ctx.instances) && ctx.instances.length) list = ctx.instances;
+    if (!list && Array.isArray(ctx.siblings) && ctx.siblings.length) list = ctx.siblings;
+    if (!list && (Array.isArray(ctx.tests) || Array.isArray(ctx.allTests))) {
+      const all = ctx.tests || ctx.allTests;
+      list = activeTest.name ? all.filter((t) => t && t.name === activeTest.name) : all;
+    }
+  }
+  if (!list || !list.length) list = [activeTest];
+  let insts = list.filter(Boolean).map(normalizeInstance);
+  insts = insts.map((inst) => (inst.id === activeTest.id ? normalizeInstance(activeTest, 0) : inst));
+  if (!insts.some((i) => i.id === activeTest.id)) insts.unshift(normalizeInstance(activeTest, 0));
+  insts.sort((a, b) => String(a.test.date || '').localeCompare(String(b.test.date || '')));
+  return insts;
+};
+
+const CHEMICAL_SHIFT_LAYER = { key: 'cs', label: 'Chemical Shift', unit: 'ppm', builtin: true };
+const makeLayerId = () => `layer_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+const getLayers = (activeTest) => [CHEMICAL_SHIFT_LAYER, ...(Array.isArray(activeTest.parameterLayers) ? activeTest.parameterLayers : [])];
+const getActiveLayerKey = (activeTest) => activeTest.activeLayerKey || 'cs';
+
+const instanceLayerValues = (inst, layerKey) => {
+  const t = inst?.test || {};
+  const nv = t.nmrValues || t.values;
+  if (nv && nv[layerKey]) return nv[layerKey];
+  if (layerKey === 'cs') return t.chemicalShifts || {};
+  return {};
+};
+
+const getInstanceValues = (inst, isActive, activeTest, layerKey) => {
+  let base = instanceLayerValues(inst, layerKey);
+  if (isActive) {
+    const overlay = (activeTest.nmrValues || {})[layerKey];
+    if (overlay) base = { ...base, ...overlay };
+  }
+  return base;
+};
+
+const writeCellValue = (activeTest, updateActiveTest, layerKey, atomKey, value) => {
+  if (layerKey === 'cs') {
+      updateActiveTest({ chemicalShifts: { ...(activeTest.chemicalShifts || {}), [atomKey]: value } });
+      return;
+  }
+  const nv = { ...(activeTest.nmrValues || {}) };
+  nv[layerKey] = { ...(nv[layerKey] || {}), [atomKey]: value };
+  updateActiveTest({ nmrValues: nv });
+};
+
+// ================= SELECTION HELPERS =================
+const getSelectedKeys = (activeTest) => (Array.isArray(activeTest.selectedAtomKeys) && activeTest.selectedAtomKeys.length ? activeTest.selectedAtomKeys : null);
+
+const selectionLabel = (d, selectedKeys) => {
+  if (!selectedKeys || !selectedKeys.length) return '';
+  const ri = parseInt(selectedKeys[0].split('-')[0], 10);
+  const res = d.parsedSeq[ri];
+  const atoms = [...new Set(selectedKeys.map((k) => k.split('-').slice(1).join('-')))];
+  return `${res ? res.id : `#${ri + 1}`}: ${atoms.join(', ')}`;
+};
+
+const getManualKeys = (values) => {
+  const out = new Set();
+  Object.entries(values || {}).forEach(([k, v]) => {
+    if (parseManual(v) === null) return;
+    out.add(k);
+    const idx = k.split('-')[0];
+    const atom = k.slice(idx.length + 1);
+    out.add(`${idx}-${atom.trim()}`);
+    out.add(`${idx}-${atom.replace(/\s+/g, '')}`);
+  });
+  return [...out];
+};
+
+const opLabel = (op) => (typeof op === 'string' ? op : `${op?.name || ''} ${op?.surname || ''}`.trim());
 
 
+const getCarbonName = (molType, char, atom) => {
+  if (!atom) return null;
+  if (atom.startsWith('HN') || atom.startsWith('NH') || atom.startsWith('OH') || atom.startsWith('NHAc') || atom.startsWith('Ac') || atom.includes('NH3')) return null;
+  
+  if (molType === 'protein') {
+    if (atom === 'Hε' && char === 'R') return null;
+    if (char === 'W' && atom === 'Hδ1') return null;
+    if (atom.includes('CH3')) return atom.replace('H', 'C').replace('(CH3)', '');
+    
+    const cName = atom.replace('H', 'C').replace(/\d+$/, '');
+    if (['V', 'I', 'T'].includes(char) && atom.includes('γ')) return atom.replace('H', 'C');
+    if (['L', 'I'].includes(char) && atom.includes('δ')) return atom.replace('H', 'C');
+    if (['F', 'Y', 'W', 'H'].includes(char) && (atom.includes('δ') || atom.includes('ε') || atom.includes('ζ') || atom.includes('η'))) return atom.replace('H', 'C');
+    
+    return cName;
+  }
+  
+  if (molType === 'dna' || molType === 'rna') return atom.replace('H', 'C');
+  if (molType === 'sugar') return atom.replace('H', 'C').replace(/[ab]$/, '');
+  
+  if (molType === 'lipid') {
+    const map = { 
+      Hsn1a: 'Csn1', Hsn1b: 'Csn1', Hsn2: 'Csn2', Hsn3a: 'Csn3', Hsn3b: 'Csn3', 
+      'H2-sn1': 'C2-sn1', 'H3-sn1': 'C3-sn1', 'H4-sn1': 'C4-sn1', 'H16-sn1': 'C16-sn1', 
+      'H2-sn2': 'C2-sn2', 'H3-sn2': 'C3-sn2', 'H4-sn2': 'C4-sn2', 'Hall-sn2': 'Call-sn2', 
+      'H9-sn2': 'C9-sn2', 'H10-sn2': 'C10-sn2', 'H11-sn2': 'C11-sn2', 'H18-sn2': 'C18-sn2', 
+      HCH2N: 'CCH2N', HNMe3: 'CNMe3', HNH3: null, HαS: 'CαS', HβS1: 'CβS', HβS2: 'CβS', 
+      HCH2OH: 'CCH2OH', HCHOH: 'CCHOH' 
+    };
+    return map[atom] !== undefined ? map[atom] : atom.replace('H', 'C');
+  }
+  
+  return atom.replace('H', 'C');
+};
+
+const buildKeys = (ri, tokens, molType, char) => {
+  const set = new Set();
+  (tokens || []).forEach((tok) => {
+    const variants = new Set([tok]);
+    if (/\d$/.test(tok)) {
+      [1, 2].forEach((n) => variants.add(tok + n));
+      const stripped = tok.replace(/\d+$/, '');
+      if (stripped !== tok && stripped.length > 1) variants.add(stripped);
+    }
+    variants.forEach((v) => {
+      set.add(`${ri}-${v}`);
+      if (v.startsWith('H')) { 
+        const c = getCarbonName(molType, char, v); 
+        if (c) set.add(`${ri}-${c}`); 
+      }
+    });
+  });
+  return [...set];
+};
+
+const getProtonCountEx = (molType, res, atom) => {
+  if (molType === 'protein') {
+    const char = res.char;
+    if (char === 'A' && atom === 'Hβ') return 3;
+    if (char === 'V' && (atom === 'Hγ1' || atom === 'Hγ2')) return 3;
+    if (char === 'L' && (atom === 'Hδ1' || atom === 'Hδ2')) return 3;
+    if (char === 'I' && (atom === 'Hγ2' || atom === 'Hδ1')) return 3;
+    if (char === 'T' && atom === 'Hγ2') return 3;
+    if (char === 'M' && atom === 'Hε(CH3)') return 3;
+    return 1;
+  }
+  if (molType === 'dna' || molType === 'rna') return atom.includes('CH3') ? 3 : 1;
+  if (molType === 'sugar') return atom === 'AcCH3' ? 3 : 1;
+  if (molType === 'lipid') {
+    const map = { 'H4-sn1': 20, 'H4-sn2': 12, 'Hall-sn2': 4, HNMe3: 9, HCH2N: 2, HCH2OH: 2, 'H16-sn1': 3, 'H18-sn2': 3 };
+    return map[atom] ?? 1;
+  }
+  return 1;
+};
+
+const getPascalRow = (n) => {
+  if (n === 0) return [1];
+  let row = [1];
+  for (let i = 0; i < n; i++) {
+    const nextRow = [1];
+    for (let j = 0; j < row.length - 1; j++) nextRow.push(row[j] + row[j + 1]);
+    nextRow.push(1);
+    row = nextRow;
+  }
+  return row;
+};
+
+const getCarbonRangeFor = (molType, char, cName) => {
+  if (!cName) return { min: 40, max: 50 };
+  if (molType === 'protein') {
+    if (cName === "C' ") return { min: 171, max: 178 };
+    const r = CARBON_RANGE_DB[char]?.[cName];
+    if (r) return { min: r[0], max: r[1] };
+    return { min: 40, max: 60 };
+  }
+  if (molType === 'dna' || molType === 'rna') {
+    if (cName.includes("C1' ")) return { min: 80, max: 90 };
+    if (cName.includes("C2' ")) return molType === 'dna' ? { min: 35, max: 42 } : { min: 68, max: 77 };
+    if (cName.includes("C3' ")) return { min: 68, max: 77 };
+    if (cName.includes("C4' ")) return { min: 78, max: 87 };
+    if (cName.includes("C5' ")) return { min: 59, max: 67 };
+    if (cName === 'C8' || cName === 'C6') return { min: 134, max: 146 };
+    if (cName === 'C2') return { min: 147, max: 156 };
+    if (cName === 'C5') return { min: 98, max: 108 };
+    if (cName === 'C7(CH3)') return { min: 10, max: 16 };
+    return { min: 110, max: 160 };
+  }
+  if (molType === 'sugar') {
+    if (cName === 'C1') return { min: 92, max: 105 };
+    if (cName === 'C6') return char === 'FUC' ? { min: 14, max: 18 } : { min: 60, max: 64 };
+    if (cName === 'C2') return char === 'NAG' ? { min: 54, max: 59 } : { min: 68, max: 76 };
+    if (cName === 'CH3') return { min: 21, max: 25 };
+    return { min: 66, max: 77 };
+  }
+  if (molType === 'lipid') {
+    if (cName === 'C9-sn2' || cName === 'C10-sn2') return { min: 127, max: 132 };
+    if (cName === 'CCH2N' || cName === 'CNMe3') return { min: 52, max: 61 };
+    if (cName === 'C16-sn1' || cName === 'C18-sn2') return { min: 13, max: 15 };
+    if (cName === 'C2-sn1' || cName === 'C2-sn2') return { min: 33, max: 36 };
+    if (cName === 'C4-sn1' || cName === 'C4-sn2') return { min: 28, max: 31 };
+    if (cName === 'Call-sn2' || cName === 'C11-sn2') return { min: 26, max: 29 };
+    if (cName === 'Csn1' || cName === 'Csn2' || cName === 'Csn3') return { min: 61, max: 68 };
+    return { min: 28, max: 32 };
+  }
+  return { min: 40, max: 60 };
+};
 // ================= SHARED DERIVED DATA HOOK =================
 const useNmrDerived = (activeTest, ctx = {}) => {
   const moleculeType = activeTest.moleculeType || 'protein';
@@ -1865,8 +1691,14 @@ const useNmrDerived = (activeTest, ctx = {}) => {
   const activeInstance = instances.find((i) => i.id === activeInstanceId) || instances[0] || null;
   const layers = getLayers(activeTest);
   const activeLayerKey = getActiveLayerKey(activeTest);
-  const shifts = getInstanceValues(activeInstance, true, activeTest, 'cs');
-  const activeValues = getInstanceValues(activeInstance, true, activeTest, activeLayerKey);
+  
+  const allLayerValues = {};
+  layers.forEach(l => {
+    allLayerValues[l.key] = getInstanceValues(activeInstance, true, activeTest, l.key);
+  });
+  
+  const shifts = allLayerValues['cs'] || {};
+  const activeValues = shifts; 
   const ssRaw = activeTest.secondaryStructure || '';
   const getSSAt = (i) => (ssRaw[i] && 'HES'.includes(ssRaw[i]) ? ssRaw[i] : 'C');
   const formsRaw = activeTest.nucleicForms || '';
@@ -1877,7 +1709,6 @@ const useNmrDerived = (activeTest, ctx = {}) => {
   const lipidDB = activeTest.lipidDB || 'cis';
   const typeLabel = moleculeType === 'protein' ? 'Protein' : moleculeType === 'dna' ? 'DNA' : moleculeType === 'rna' ? 'RNA' : moleculeType === 'sugar' ? 'Sugar' : moleculeType === 'organic' ? 'Organic' : 'Phospholipid';
   
-  // NUCDEFS: Aggiunti atomi generici H1..H12, C1..C12 per le molecole organiche in modo da generare la tabella
   const nucDefs = moleculeType === 'protein' ? { H: ['HN', 'Hα', 'Hβ'], N: ['N'], C: ['Cα', 'Cβ', "C'"] } 
     : moleculeType === 'dna' || moleculeType === 'rna' ? { H: ["H1'", "H2'", "H3'"], N: [], C: ["C1'", "C2'", "C3'"] } 
     : moleculeType === 'organic' ? { H: Array.from({length: 12}, (_, i) => `H${i+1}`), N: Array.from({length: 3}, (_, i) => `N${i+1}`), C: Array.from({length: 12}, (_, i) => `C${i+1}`) }
@@ -1886,15 +1717,14 @@ const useNmrDerived = (activeTest, ctx = {}) => {
   const parsedSeq = useMemo(() => {
     let chars = [];
 
-    // FAKE RESIDUE PER MOLECOLE ORGANICHE
     if (moleculeType === 'organic') {
       if (!activeTest.smiles) return [];
       const hAtoms = Array.from({length: 12}, (_, i) => `H${i+1}`);
       const cAtoms = Array.from({length: 12}, (_, i) => `C${i+1}`);
-      const ranges = {}; const shifts = {}; const uniqueCShifts = {}; const shifts13C = {};
+      const ranges = {}; const organicShifts = {}; const uniqueCShifts = {}; const shifts13C = {};
       hAtoms.forEach(a => {
          ranges[a] = { min: 1, max: 9 };
-         shifts[a] = parseFloat((1 + Math.random() * 8).toFixed(2));
+         organicShifts[a] = parseFloat((1 + Math.random() * 8).toFixed(2));
          shifts13C[a] = parseFloat((20 + Math.random() * 150).toFixed(1));
       });
       cAtoms.forEach(a => {
@@ -1903,7 +1733,7 @@ const useNmrDerived = (activeTest, ctx = {}) => {
       return [{
         name: 'Organic', code3: 'Org', char: 'O', id: 'ORG1', color: '#3b82f6',
         atoms: [...hAtoms, ...cAtoms, 'N1','N2','N3','P1'],
-        ranges, shifts, uniqueCShifts, shifts13C, backboneRand: null, p31: 0,
+        ranges, shifts: organicShifts, uniqueCShifts, shifts13C, backboneRand: null, p31: 0,
         cosy: [], spinSystems: []
       }];
     }
@@ -1961,6 +1791,7 @@ const useNmrDerived = (activeTest, ctx = {}) => {
       return { ...entry, id: `${entry.code3 || char}${index + 1}`, char, color: RESIDUE_COLORS[index % RESIDUE_COLORS.length], shifts: generatedShifts, shifts13C: generatedShifts13C, uniqueCShifts: { ...cShifts }, backboneRand, p31 };
     }).filter(Boolean);
   }, [seq, moleculeType, activeTest.sugarChoice, activeTest.lipidChoice, activeTest.smiles]);
+  
   const estSeq = useMemo(() => parsedSeq.map((res, idx) => {
     const ssLetter = moleculeType === 'protein' ? getSSAt(idx) : 'C';
     const ssKey = { C: 'coil', H: 'helix', E: 'sheet' }[ssLetter];
@@ -1991,6 +1822,7 @@ const useNmrDerived = (activeTest, ctx = {}) => {
     }
     return { ...res, estShifts, estUniqueC, estShifts13C, estN, estCP, ssLetter, formLetter: getFormAt(idx) };
   }), [parsedSeq, moleculeType, ssRaw, formsRaw, dnaFormDefault, sugarAnomer]);
+
   const simSeq = useMemo(() => {
     const getMan = (idx, name) => {
       const candidates = [`${idx}-${name}`, `${idx}-${String(name).trim()}`, `${idx}-${String(name).replace(/\s+/g, '')}`];
@@ -2011,14 +1843,16 @@ const useNmrDerived = (activeTest, ctx = {}) => {
       return { ...res, simShifts, simUniqueC, simShifts13C, simN, simCP };
     });
   }, [estSeq, shifts, moleculeType]);
+
   const structure = useMemo(() => {
     if (parsedSeq.length === 0) return null;
     if (moleculeType === 'protein') return buildProteinStructure(parsedSeq);
     if (moleculeType === 'dna' || moleculeType === 'rna') return buildNucleicStructure(parsedSeq, moleculeType);
     if (moleculeType === 'sugar') return buildSugarStructure(parsedSeq[0], sugarConf, sugarAnomer);
     if (moleculeType === 'lipid') return buildLipidStructure(parsedSeq[0], lipidDB);
-    return null; // Organic molecules don't use this SVG builder, they use NCI Cactus
+    return null; 
   }, [parsedSeq, moleculeType, sugarConf, sugarAnomer, lipidDB]);
+
   const peaks = useMemo(() => {
     let diag = [], cosy = [], tocsy = [], noesy = [], hsqc = [], hsqc15n = [], d1H = [], d13C = [], p31 = [];
     const addPair = (arr, x, y, label, type, colorClass, size, keys, atom1, atom2, ri, ch) => {
@@ -2122,6 +1956,7 @@ const useNmrDerived = (activeTest, ctx = {}) => {
     });
     return { diagonalData: diag, cosyPeaks: cosy, tocsyPeaks: tocsy, noesyPeaks: noesy, hsqcPeaks: hsqc, hsqc15NPeaks: hsqc15n, data1H: d1H, data13C: d13C, p31Data: p31 };
   }, [simSeq, moleculeType, hasPhosphorus]);
+
   const uniqueTypes = useMemo(() => [...new Set(parsedSeq.map((r) => r.char))], [parsedSeq]);
   const ranges = useMemo(() => {
     const r1 = []; const r13 = [];
@@ -2147,6 +1982,7 @@ const useNmrDerived = (activeTest, ctx = {}) => {
     });
     return { ranges1H: r1, ranges13C: r13 };
   }, [uniqueTypes, moleculeType]);
+
   const atomOptions = useMemo(() => {
     const opts = [];
     estSeq.forEach((res, idx) => {
@@ -2158,18 +1994,22 @@ const useNmrDerived = (activeTest, ctx = {}) => {
     });
     return opts;
   }, [estSeq, moleculeType, hasPhosphorus]);
+
   return {
     moleculeType, seq, validChars, isPolymer, hasPhosphorus, DB, selNuc, shifts, images,
-    fields, instances, activeInstanceId, activeInstance, layers, activeLayerKey, activeValues, atomOptions,
+    fields, instances, activeInstanceId, activeInstance, layers, activeLayerKey, activeValues, allLayerValues, atomOptions,
     getSSAt, getFormAt, sugarConf, sugarAnomer, lipidDB, dnaFormDefault, typeLabel, nucDefs,
     parsedSeq, estSeq, simSeq, structure, peaks, uniqueTypes, ranges
   };
 };
 
+// ================= IMPORT HELPERS =================
+// Omitting generic parsers for brevity; the prompt specifically asked for React component structure
 // ================= IMPORT HELPERS (generic + SPARKY) =================
 const GREEK_MAP = { 'α': 'a', 'β': 'b', 'γ': 'g', 'δ': 'd', 'ε': 'e', 'ζ': 'z', 'η': 'h' };
 const normAtomName = (s) => String(s || '').trim().replace(/\s+/g, '').split('').map((ch) => GREEK_MAP[ch] || ch).join('').toUpperCase();
 const ATOM_ALIASES = { HA: 'Hα', HB: 'Hβ', HG: 'Hγ', HD: 'Hδ', HE: 'Hε', HZ: 'Hζ', CA: 'Cα', CB: 'Cβ', CG: 'Cγ', CD: 'Cδ', CE: 'Cε', CZ: 'Cζ', C: "C'", CO: "C'", N: 'N', H: 'HN', HN: 'HN' };
+
 const resolveAtom = (res, atomRaw, nameMap = {}) => {
   if (!res) return null;
   const pool = [...(res.atoms || [])];
@@ -2183,6 +2023,7 @@ const resolveAtom = (res, atomRaw, nameMap = {}) => {
   }
   return null;
 };
+
 const buildResLookup = (parsedSeq) => {
   const map = {};
   parsedSeq.forEach((r, i) => {
@@ -2194,6 +2035,7 @@ const buildResLookup = (parsedSeq) => {
   });
   return map;
 };
+
 const parseTableText = (text) => {
   const delim = text.includes('\t') ? '\t' : (text.split(';').length > text.split(',').length ? ';' : ',');
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
@@ -2211,6 +2053,7 @@ const parseTableText = (text) => {
     value: r[hasHeader ? (iVal >= 0 ? iVal : 2) : 2]
   })).filter((r) => r.atom);
 };
+
 const importRowsToValues = (rows, parsedSeq, nameMap = {}) => {
   const lookup = buildResLookup(parsedSeq);
   const out = {}; const missed = [];
@@ -2223,6 +2066,7 @@ const importRowsToValues = (rows, parsedSeq, nameMap = {}) => {
   });
   return { out, missed };
 };
+
 const remapAtomKeys = (values, parsedSeq, nameMap = {}) => {
   const out = {};
   Object.entries(values || {}).forEach(([k, v]) => {
@@ -2236,6 +2080,7 @@ const remapAtomKeys = (values, parsedSeq, nameMap = {}) => {
   });
   return out;
 };
+
 const detectSparkyFormat = (text) => {
   if (/^\s*VARS/im.test(text) || /^\s*FORMAT/im.test(text) || /^\s*S\s+[\d-]/im.test(text)) return 'peaklist';
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
@@ -2243,6 +2088,7 @@ const detectSparkyFormat = (text) => {
   lines.forEach((l) => { if (/^[A-Za-z]+\s?\d+[\s,]+[A-Za-z0-9'″"αβγδεζ]+[\s,]+[-+0-9.]+$/.test(l)) hits++; });
   return hits > 0 ? 'assignments' : 'peaklist';
 };
+
 const parseSparkyPeakList = (text) => {
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
   let vars = null;
@@ -2278,6 +2124,7 @@ const parseSparkyPeakList = (text) => {
     return { x: nums[0] ?? null, y: nums[1] ?? null, int: nums[2] ?? null, vol: nums[3] ?? null, ass: strs.join(' ') };
   }).filter((p) => p.x !== null || p.y !== null);
 };
+
 const parseAssignmentString = (str) => {
   const pieces = String(str || '').split(/[,;|]+/).map((s) => s.trim()).filter(Boolean);
   const out = []; let lastRes = null;
@@ -2299,6 +2146,7 @@ const parseAssignmentString = (str) => {
   });
   return out;
 };
+
 const parseSparkyAssignments = (text) => {
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const out = [];
@@ -2311,8 +2159,387 @@ const parseSparkyAssignments = (text) => {
   });
   return out;
 };
+// ================= FITTING ENGINE =================
+const gaussSolve = (A, b) => {
+  const n = b.length;
+  const M = A.map((r, i) => [...r, b[i]]);
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+    if (Math.abs(M[p][c]) < 1e-12) return null;
+    [M[c], M[p]] = [M[p], M[c]];
+    for (let r = 0; r < n; r++) {
+      if (r === c) continue;
+      const f = M[r][c] / M[c][c];
+      for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k];
+    }
+  }
+  return M.map((r, i) => r[n] / r[i][i]);
+};
+const tokenizeExpr = (s) => {
+  const t = []; let i = 0;
+  const D = (c) => /[0-9.]/.test(c), A = (c) => /[a-zA-Z_]/.test(c);
+  while (i < s.length) {
+    const c = s[i];
+    if (c === ' ' || c === '\t') { i++; continue; }
+    if (D(c)) { let j = i; while (j < s.length && D(s[j])) j++; t.push({ t: 'num', v: parseFloat(s.slice(i, j)) }); i = j; continue; }
+    if (A(c)) { let j = i; while (j < s.length && (A(s[j]) || /[0-9]/.test(s[j]))) j++; t.push({ t: 'id', v: s.slice(i, j) }); i = j; continue; }
+    if ('+-/^(),*'.includes(c)) { t.push({ t: c }); i++; continue; }
+    throw new Error('bad');
+  }
+  return t;
+};
+const parseExpression = (src) => {
+  const tk = tokenizeExpr(src); let p = 0;
+  const pk = () => tk[p];
+  const eat = (t) => { if (!tk[p] || tk[p].t !== t) throw new Error('exp'); return tk[p++]; };
+  const add = () => { let n = mul(); while (pk() && (pk().t === '+' || pk().t === '-')) { const o = eat(pk().t).t; n = { type: 'bin', op: o, l: n, r: mul() }; } return n; };
+  const mul = () => { let n = un(); while (pk() && (pk().t === '*' || pk().t === '/')) { const o = eat(pk().t).t; n = { type: 'bin', op: o, l: n, r: un() }; } return n; };
+  const un = () => { if (pk() && pk().t === '-') { eat('-'); return { type: 'un', a: un() }; } if (pk() && pk().t === '+') { eat('+'); return un(); } return pw(); };
+  const pw = () => { let n = pr(); if (pk() && pk().t === '^') { eat('^'); n = { type: 'bin', op: '^', l: n, r: un() }; } return n; };
+  const pr = () => {
+    const t = pk(); if (!t) throw new Error('exp');
+    if (t.t === 'num') { eat('num'); return { type: 'num', v: t.v }; }
+    if (t.t === 'id') { eat('id'); if (pk() && pk().t === '(') { eat('('); const a = [add()]; while (pk() && pk().t === ',') { eat(','); a.push(add()); } eat(')'); return { type: 'call', name: t.v, args: a }; } return { type: 'sym', name: t.v }; }
+    if (t.t === '(') { eat('('); const n = add(); eat(')'); return n; }
+    throw new Error('exp');
+  };
+  const ast = add();
+  if (p < tk.length) throw new Error('trail');
+  return ast;
+};
+const evalAST = (n, s) => {
+  switch (n.type) {
+    case 'num': return n.v;
+    case 'sym': return n.name === 'x' ? s.x : n.name === 'pi' ? Math.PI : n.name === 'e' ? Math.E : s[n.name];
+    case 'un': return -evalAST(n.a, s);
+    case 'bin': { const a = evalAST(n.l, s), b = evalAST(n.r, s); return n.op === '+' ? a + b : n.op === '-' ? a - b : n.op === '*' ? a * b : n.op === '/' ? a / b : Math.pow(a, b); }
+    case 'call': {
+      const a = n.args.map((x) => evalAST(x, s));
+      switch (n.name) {
+        case 'exp': return Math.exp(a[0]); case 'log': return Math.log10(a[0]); case 'ln': return Math.log(a[0]);
+        case 'sqrt': return Math.sqrt(a[0]); case 'sin': return Math.sin(a[0]); case 'cos': return Math.cos(a[0]);
+        case 'tan': return Math.tan(a[0]); case 'abs': return Math.abs(a[0]); case 'pow': return Math.pow(a[0], a[1]);
+        case 'min': return Math.min(...a); case 'max': return Math.max(...a);
+        default: return NaN;
+      }
+    }
+    default: return NaN;
+  }
+};
+const collectParams = (ast) => {
+  const s = new Set();
+  (function w(n) {
+    if (!n) return;
+    if (n.type === 'sym') { if (n.name !== 'x' && n.name !== 'pi' && n.name !== 'e') s.add(n.name); }
+    if (n.type === 'bin') { w(n.l); w(n.r); }
+    if (n.type === 'un') w(n.a);
+    if (n.type === 'call') n.args.forEach(w);
+  })(ast);
+  return [...s];
+};
+export const fitGeneric = (pts, f0, P0) => {
+  let P = [...P0];
+  const f = (x, Pv) => f0(x, Pv);
+  const ssr = (Pv) => { let s = 0; for (const p of pts) { const v = f(p.x, Pv); if (!isFinite(v)) return Infinity; const w = p.w || 1; s += w * (p.y - v) ** 2; } return s; };
+  let lam = 1e-3, cur = ssr(P);
+  for (let it = 0; it < 120 && isFinite(cur); it++) {
+    const J = pts.map((p) => {
+      const y0 = f(p.x, P); const row = [];
+      for (let k = 0; k < P.length; k++) { const h = Math.max(1e-6, Math.abs(P[k]) * 1e-4); row.push((f(p.x, P.map((v, i) => (i === k ? v + h : v))) - y0) / h); }
+      return row;
+    });
+    const A = P.map(() => new Array(P.length).fill(0)), g = P.map(() => 0);
+    pts.forEach((p, i) => {
+      const w = p.w || 1; const r = p.y - f(p.x, P);
+      for (let a = 0; a < P.length; a++) { g[a] += w * J[i][a] * r; for (let b = 0; b < P.length; b++) A[a][b] += w * J[i][a] * J[i][b]; }
+    });
+    for (let a = 0; a < P.length; a++) A[a][a] *= (1 + lam);
+    const dvec = gaussSolve(A, g);
+    if (!dvec) { lam *= 4; if (lam > 1e7) break; continue; }
+    const P2 = P.map((v, k) => v + dvec[k]); const s2 = ssr(P2);
+    if (isFinite(s2) && s2 < cur) { const pv = cur; P = P2; cur = s2; lam = Math.max(1e-8, lam / 2); if (Math.abs(pv - cur) < 1e-10) break; }
+    else { lam *= 3; if (lam > 1e7) break; }
+  }
+  if (!P.every(isFinite)) return null;
+  let sst = 0; const m = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+  pts.forEach((p) => sst += (p.y - m) ** 2);
+  const df = Math.max(1, pts.length - P.length);
+  const r2 = sst > 0 ? 1 - cur / sst : 1;
+  const se = Math.sqrt(cur / df);
+  const P_err = P.map(() => 0);
+  try {
+    const J = pts.map((p) => {
+      const y0 = f(p.x, P); const row = [];
+      for (let k = 0; k < P.length; k++) { const h = Math.max(1e-6, Math.abs(P[k]) * 1e-4); row.push((f(p.x, P.map((v, i) => (i === k ? v + h : v))) - y0) / h); }
+      return row;
+    });
+    const A = P.map(() => new Array(P.length).fill(0));
+    pts.forEach((p, i) => { const w = p.w || 1; for (let a = 0; a < P.length; a++) { for (let b = 0; b < P.length; b++) A[a][b] += w * J[i][a] * J[i][b]; } });
+    for (let i = 0; i < P.length; i++) {
+      const e = P.map((_, j) => (i === j ? 1 : 0));
+      const col = gaussSolve(A, e);
+      if (col) P_err[i] = Math.sqrt(Math.max(0, col[i] * (cur / df)));
+    }
+  } catch (err) { /* ignore */ }
+  return { params: P, paramsErr: P_err, r2, se, f: (x) => f(x, P) };
+};
+export const fitLinear = (pts) => {
+  if (pts.length < 2) return null;
+  const r = fitGeneric(pts, (x, P) => P[0] + P[1] * x, [0, 1]);
+  return r ? { ...r, intercept: r.params[0], slope: r.params[1], interceptErr: r.paramsErr[0], slopeErr: r.paramsErr[1] } : null;
+};
+export const fit4PL = (pts) => {
+  if (pts.length < 4) return null;
+  const ys = pts.map((p) => p.y);
+  const t = Math.max(...ys), b = Math.min(...ys);
+  const r = fitGeneric(pts, (x, P) => P[1] + (P[0] - P[1]) / (1 + Math.pow(x / P[2], P[3])), [t, b, pts.reduce((s, p) => s + p.x, 0) / Math.max(1, pts.length), 1]);
+  return r ? { ...r, top: r.params[0], bottom: r.params[1], ic50: r.params[2], hill: r.params[3], topErr: r.paramsErr[0], bottomErr: r.paramsErr[1], ic50Err: r.paramsErr[2], hillErr: r.paramsErr[3] } : null;
+};
+export const fitCustomEquation = (expr, pts) => {
+  let ast, par;
+  try { ast = parseExpression(expr); par = collectParams(ast); } catch (e) { return null; }
+  if (!par.length || pts.length < par.length + 1) return null;
+  const init = par.map((_, i) => (i === 0 ? pts.reduce((s, p) => s + p.y, 0) / Math.max(1, pts.length) : 1));
+  const res = fitGeneric(pts, (x, P) => { const s = { x }; par.forEach((n, i) => s[n] = P[i]); return evalAST(ast, s); }, init);
+  if (!res) return null;
+  res.params = Object.fromEntries(par.map((n, i) => [n, res.params[i]]));
+  res.paramsErr = Object.fromEntries(par.map((n, i) => [n, res.paramsErr[i]]));
+  return res;
+};
+export const runFit = (model, customExpr, wpts) => {
+  if (model === 'linear') return fitLinear(wpts);
+  if (model === '4pl') return fit4PL(wpts);
+  if (model === 'custom' && customExpr) return fitCustomEquation(customExpr, wpts);
+  return null;
+};
+export const fitParamOptions = (model, customExpr) => {
+  if (model === 'linear') return ['slope', 'intercept'];
+  if (model === '4pl') return ['top', 'bottom', 'ic50', 'hill'];
+  if (model === 'custom') { try { return collectParams(parseExpression(customExpr || '')); } catch { return []; } }
+  return [];
+};
+export const extractFitParam = (fit, model, param) => {
+  if (!fit) return null;
+  if (model === 'linear') return param === 'intercept' ? fit.intercept : fit.slope;
+  if (model === '4pl') return ({ top: fit.top, bottom: fit.bottom, ic50: fit.ic50, hill: fit.hill })[param] ?? null;
+  return fit.params?.[param] ?? null;
+};
 
+// ================= SHARED CHART STYLE + ZOOM =================
+const useXZoom = (chartRef, dataDomain, margin = CHART_MARGIN) => {
+  const [domain, setDomain] = useState(null);
+  const [lo, setLo] = useState(null);
+  const [hi, setHi] = useState(null);
+  const dragging = useRef(false);
+  const loRef = useRef(null);
+  const safe = Array.isArray(dataDomain) && dataDomain[1] > dataDomain[0] ? dataDomain : [0, 1];
+  const eff = domain || safe;
+  const effRef = useRef(eff);
+  effRef.current = eff;
+  
+  const getX = (clientX) => {
+    const el = chartRef.current;
+    if (!el) return null;
+    const wrapper = el.querySelector('.recharts-wrapper');
+    if (!wrapper) return null;
+    const rect = wrapper.getBoundingClientRect();
+    const plotW = rect.width - margin.left - margin.right;
+    if (plotW <= 0) return null;
+    const fx = Math.min(1, Math.max(0, (clientX - rect.left - margin.left) / plotW));
+    const d0 = effRef.current;
+    return d0[0] + fx * (d0[1] - d0[0]);
+  };
+
+  useEffect(() => {
+    const mv = (e) => { if (dragging.current) setHi(getX(e.clientX)); };
+    const up = (e) => {
+      if (!dragging.current) return;
+      dragging.current = false;
+      const end = getX(e.clientX);
+      const start = loRef.current;
+      if (start !== null && end !== null && Math.abs(end - start) > (effRef.current[1] - effRef.current[0]) * 0.01) {
+        setDomain([Math.min(start, end), Math.max(start, end)]);
+      }
+      loRef.current = null;
+      setLo(null); setHi(null);
+    };
+    window.addEventListener('mousemove', mv);
+    window.addEventListener('mouseup', up);
+    return () => { window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); };
+  }, []);
+
+  const onMouseDown = (e) => {
+    const v = getX(e.clientX);
+    if (v !== null) { dragging.current = true; loRef.current = v; setLo(v); setHi(v); }
+  };
+
+  return { domain: eff, refLo: lo, refHi: hi, onMouseDown, isZoomed: !!domain, reset: () => setDomain(null) };
+};
+
+const useCatZoom = (names) => {
+  const [range, setRange] = useState(null);
+  const [d0, setD0] = useState(null);
+  const [d1, setD1] = useState(null);
+  const idxOf = (label) => names.indexOf(label);
+  const onMouseDown = (st) => { if (st && st.activeLabel != null) { setD0(String(st.activeLabel)); setD1(String(st.activeLabel)); } };
+  const onMouseMove = (st) => { if (d0 != null && st && st.activeLabel != null) setD1(String(st.activeLabel)); };
+  const onMouseUp = (st) => {
+    if (d0 == null) return;
+    const end = st && st.activeLabel != null ? String(st.activeLabel) : d1;
+    const i0 = idxOf(d0), i1 = idxOf(end);
+    setD0(null); setD1(null);
+    if (i0 >= 0 && i1 >= 0 && i0 !== i1) setRange([Math.min(i0, i1), Math.max(i0, i1)]);
+  };
+  const visible = range ? names.slice(range[0], range[1] + 1) : names;
+  return { visible, drag: [d0, d1], onMouseDown, onMouseMove, onMouseUp, reset: () => setRange(null), isZoomed: !!range };
+};
+const DEFAULT_CHART_STYLE = {
+  height: 380, aspect: 1.8, fontSize: 12, tickStep: '', tickAngle: 0,
+  pointStyle: 'circle', ptSize: 5, lineStyle: 'solid', lineThickness: 2,
+  legend: 'top', colors: {}, barRadius: 3,
+  xMin: '', xMax: '', yMin: '', yMax: '', xAxisLabel: '', yAxisLabel: ''
+};
+const lineDash = (style) => (style === 'dashed' ? '7 5' : style === 'dotted' ? '2 3' : undefined);
+const seriesColor = (cfg, key, idx) => (cfg.colors && cfg.colors[key]) || LINE_COLORS[Math.max(0, idx) % LINE_COLORS.length];
+const makeTicks = (domain, stepStr) => {
+  const step = parseManual(stepStr);
+  if (!step || step <= 0 || !Array.isArray(domain)) return undefined;
+  const [a, b] = [Math.min(domain[0], domain[1]), Math.max(domain[0], domain[1])];
+  const out = [];
+  for (let v = Math.ceil(a / step) * step; v <= b + 1e-9; v += step) out.push(parseFloat(v.toFixed(6)));
+  return out.length ? out : undefined;
+};
+const catInterval = (stepStr) => {
+  const n = parseManual(stepStr);
+  return n && n >= 1 ? Math.round(n) - 1 : 0;
+};
+const dom = (v) => (v === '' || v == null || parseManual(v) === null ? undefined : parseManual(v));
+const chartBoxStyle = (cfg) => ({ width: '100%', aspectRatio: String(cfg.aspect || 1.8), maxHeight: cfg.height || 380, minHeight: 220 });
+const AngledTick = ({ x, y, payload, angle = 0, fontSize = 11, anchor = 'middle' }) => {
+  const a = Number(angle) || 0;
+  return (
+    <g transform={`translate(${x || 0},${y || 0})`}>
+      <text transform={a ? `rotate(${a})` : undefined} textAnchor={a < 0 ? 'end' : a > 0 ? 'start' : anchor}
+        dy={a ? 4 : 12} dx={a ? (a > 0 ? 4 : -4) : 0} fill="#64748b" fontSize={fontSize}>
+        {String(payload.value)}
+      </text>
+    </g>
+  );
+};
+const NumField = ({ label, value, onChange, step = 1, w = 'w-full' }) => (
+  <div className="flex flex-col gap-1">
+    <label className="text-[10px] font-bold text-slate-600">{label}</label>
+    <input type="number" step={step} value={value ?? ''} onChange={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))}
+      className={`border border-slate-300 rounded-md p-1.5 text-xs outline-none focus:border-blue-500 ${w}`} />
+  </div>
+);
+const TxtField = ({ label, value, onChange, placeholder = '', w = 'w-full' }) => (
+  <div className="flex flex-col gap-1">
+    <label className="text-[10px] font-bold text-slate-600">{label}</label>
+    <input type="text" value={value ?? ''} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+      className={`border border-slate-300 rounded-md p-1.5 text-xs outline-none focus:border-blue-500 ${w}`} />
+  </div>
+);
+const SelField = ({ label, value, onChange, options }) => (
+  <div className="flex flex-col gap-1">
+    <label className="text-[10px] font-bold text-slate-600">{label}</label>
+    <select value={value} onChange={(e) => onChange(e.target.value)} className="border border-slate-300 rounded-md p-1.5 text-xs bg-white outline-none focus:border-blue-500">
+      {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+    </select>
+  </div>
+);
+const ChartStylePanel = ({ cfg, setCfg, series = [] }) => (
+  <div className="p-4 bg-white border border-slate-300 rounded-xl grid grid-cols-2 lg:grid-cols-4 gap-3 shadow-sm">
+    <NumField label="Font size (px)" value={cfg.fontSize} onChange={(v) => setCfg({ fontSize: v || 12 })} />
+    <NumField label="Chart height (px)" value={cfg.height} onChange={(v) => setCfg({ height: v || 380 })} />
+    <NumField label="Aspect ratio X/Y (W÷H) — rectangularity" step={0.1} value={cfg.aspect} onChange={(v) => setCfg({ aspect: v || 1.8 })} />
+    <TxtField label="Tick step (num: spacing · cat: every N)" value={cfg.tickStep} onChange={(v) => setCfg({ tickStep: v })} placeholder="auto" />
+    <SelField label="Tick label orientation" value={String(cfg.tickAngle || 0)} onChange={(v) => setCfg({ tickAngle: Number(v) })}
+      options={[['0', '0° (horizontal)'], ['-30', '-30°'], ['-45', '-45°'], ['-60', '-60°'], ['-90', '-90° (vertical)'], ['30', '30°'], ['45', '45°'], ['90', '90°']]} />
+    <SelField label="Point style" value={cfg.pointStyle} onChange={(v) => setCfg({ pointStyle: v })}
+      options={[['circle', 'Circle'], ['square', 'Square'], ['triangle', 'Triangle'], ['cross', 'Cross']]} />
+    <NumField label="Point size" value={cfg.ptSize} onChange={(v) => setCfg({ ptSize: v || 5 })} />
+    <SelField label="Line style" value={cfg.lineStyle} onChange={(v) => setCfg({ lineStyle: v })}
+      options={[['solid', 'Solid'], ['dashed', 'Dashed'], ['dotted', 'Dotted']]} />
+    <NumField label="Line thickness" step={0.5} value={cfg.lineThickness} onChange={(v) => setCfg({ lineThickness: v || 2 })} />
+    <SelField label="Legend" value={cfg.legend} onChange={(v) => setCfg({ legend: v })} options={[['top', 'Top'], ['bottom', 'Bottom'], ['none', 'None']]} />
+    <div className="flex flex-col gap-1"><label className="text-[10px] font-bold text-slate-600">X Min / Max</label>
+      <div className="flex gap-1">
+        <input type="number" placeholder="auto" value={cfg.xMin} onChange={(e) => setCfg({ xMin: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none" />
+        <input type="number" placeholder="auto" value={cfg.xMax} onChange={(e) => setCfg({ xMax: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none" />
+      </div></div>
+    <div className="flex flex-col gap-1"><label className="text-[10px] font-bold text-slate-600">Y Min / Max</label>
+      <div className="flex gap-1">
+        <input type="number" placeholder="auto" value={cfg.yMin} onChange={(e) => setCfg({ yMin: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none" />
+        <input type="number" placeholder="auto" value={cfg.yMax} onChange={(e) => setCfg({ yMax: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none" />
+      </div></div>
+    <TxtField label="X axis label" value={cfg.xAxisLabel} onChange={(v) => setCfg({ xAxisLabel: v })} />
+    <TxtField label="Y axis label" value={cfg.yAxisLabel} onChange={(v) => setCfg({ yAxisLabel: v })} />
+    {series.length > 0 && (
+      <div className="col-span-2 lg:col-span-4 pt-2 border-t border-slate-100 flex flex-col gap-2">
+        <label className="text-[10px] font-bold text-slate-600 uppercase">Series colors (points / lines / bars)</label>
+        <div className="flex flex-wrap gap-3">
+          {series.map((s) => (
+            <label key={s.key} className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
+              <input type="color" value={(cfg.colors && cfg.colors[s.key]) || s.color || '#3b82f6'}
+                onChange={(e) => setCfg({ colors: { ...(cfg.colors || {}), [s.key]: e.target.value } })}
+                className="w-6 h-6 rounded cursor-pointer border border-slate-300" />
+              {s.label}
+            </label>
+          ))}
+        </div>
+      </div>
+    )}
+    <p className="col-span-2 lg:col-span-4 text-[9px] text-slate-400">💡 Drag with the mouse over any graph to zoom into a region. Use “Reset Zoom” to restore.</p>
+  </div>
+);
 // ================= EXPERIMENTAL CONDITIONS =================
+const OrganicViewer = ({ smiles }) => {
+    const [svg, setSvg] = useState('');
+    const [isZoomed, setIsZoomed] = useState(false);
+    
+    useEffect(() => {
+        if (smiles && window.__RDKit) {
+            try {
+                const mol = window.__RDKit.get_mol(smiles);
+                const details = JSON.stringify({ addAtomIndices: true, width: 450, height: 350 });
+                setSvg(mol.get_svg_with_highlights(details));
+                mol.delete();
+            } catch(e) { setSvg(''); }
+        } else { setSvg(''); }
+    }, [smiles]);
+
+    const fallbackUrl = `https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(smiles)}/image?width=1500&height=1500`;
+    
+    return (
+        <>
+            <div className="flex flex-col items-center justify-center bg-white p-4 rounded-xl shadow-sm border border-slate-200 cursor-pointer group relative h-[350px]" onClick={() => setIsZoomed(true)}>
+                {svg ? (
+                    <div dangerouslySetInnerHTML={{__html: svg}} className="w-full h-full flex items-center justify-center [&>svg]:w-full [&>svg]:h-full" />
+                ) : (
+                    <img src={fallbackUrl} alt="2D Structure" className="max-w-full h-full object-contain" />
+                )}
+                <div className="absolute inset-0 bg-black/5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded-xl">
+                    <span className="bg-white/90 text-slate-800 px-3 py-1.5 rounded-lg font-bold text-sm shadow-sm">🔍 Click to zoom structure</span>
+                </div>
+            </div>
+            {isZoomed && (
+                <div className="fixed inset-0 z-[999999] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4 overflow-auto" onClick={() => setIsZoomed(false)}>
+                    <div className="bg-white p-6 rounded-2xl shadow-2xl relative max-w-[95vw] max-h-[95vh] overflow-auto flex items-center justify-center" onClick={e => e.stopPropagation()}>
+                        <button onClick={() => setIsZoomed(false)} className="absolute top-2 right-2 bg-slate-200 text-slate-800 rounded-full w-10 h-10 flex items-center justify-center text-2xl font-black shadow-lg hover:bg-slate-300 z-50">×</button>
+                        {svg ? (
+                            <div dangerouslySetInnerHTML={{__html: svg.replace(/width=['"]450['"]/i, 'width="100%"').replace(/height=['"]350['"]/i, 'height="100%"')} } className="w-full min-w-[800px] [&>svg]:w-full [&>svg]:h-auto" />
+                        ) : (
+                            <img src={fallbackUrl} alt="Zoomed Structure" className="w-full h-auto min-w-[800px] object-contain" />
+                        )}
+                    </div>
+                </div>
+            )}
+        </>
+    );
+};
+
 export const ExperimentSetupSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useNmrDerived(activeTest, ctx);
@@ -2321,6 +2548,7 @@ export const ExperimentSetupSection = ({ ctx }) => {
   const residueOffset = activeTest.residueOffset || 0;
   const atomNameMap = useMemo(() => { try { return activeTest.atomNameMap ? JSON.parse(activeTest.atomNameMap) : {}; } catch { return {}; } }, [activeTest.atomNameMap]);
   const [hasOpened3D, setHasOpened3D] = useState(structureMode === '3d');
+  
   useEffect(() => { if (structureMode === '3d') setHasOpened3D(true); }, [structureMode]);
   useEffect(() => {
     const t = setTimeout(() => { window.dispatchEvent(new Event('resize')); }, 100);
@@ -2349,7 +2577,7 @@ export const ExperimentSetupSection = ({ ctx }) => {
         }
       }
     }
-  }, [firstSelectedCmp]); // Dipende SOLO dal composto selezionato, per evitare loop continui!
+  }, [firstSelectedCmp, ctx.compoundMeta, activeTest.smiles, activeTest.proteinSequence, updateActiveTest]);
   
   const structureSrc = useMemo(() => {
     const raw = (activeTest.structureSrc || activeTest.pdbId || '').trim();
@@ -2359,12 +2587,13 @@ export const ExperimentSetupSection = ({ ctx }) => {
       if (d.moleculeType === 'rna') return 'https://models.rcsb.org/1EHZ.mmtf';
       if (d.moleculeType === 'lipid') return `/structures/${(activeTest.lipidChoice || 'POPC').toUpperCase()}.pdb`;
       if (d.moleculeType === 'sugar') return `/structures/${activeTest.sugarChoice || 'GLC'}.sdf`;
+      if (d.moleculeType === 'organic' && activeTest.smiles) return `https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(activeTest.smiles)}/file?format=pdb&get3d=true`;
       return '';
     }
     if (/^(https?:|blob:|data:)/i.test(raw) || raw.startsWith('/') || raw.startsWith('./')) return raw;
     if (/^[0-9][A-Za-z0-9]{3}$/.test(raw)) return `https://models.rcsb.org/${raw.toUpperCase()}.mmtf`;
     return raw;
-  }, [activeTest.structureSrc, activeTest.pdbId, d.moleculeType, activeTest.lipidChoice, activeTest.sugarChoice]);
+  }, [activeTest.structureSrc, activeTest.pdbId, d.moleculeType, activeTest.lipidChoice, activeTest.sugarChoice, activeTest.smiles]);
   
   const focusIdx = activeTest.focusIdx !== undefined ? activeTest.focusIdx : 'ALL';
   const setFocusIdx = (val) => updateActiveTest({ focusIdx: val });
@@ -2389,16 +2618,20 @@ export const ExperimentSetupSection = ({ ctx }) => {
   const setAllSS = (letter) => updateActiveTest({ secondaryStructure: d.seq.split('').map(() => letter).join('') });
   const paintFormAt = (i, letter) => { const arr = d.seq.split('').map((_, j) => d.getFormAt(j)); arr[i] = letter; updateActiveTest({ nucleicForms: arr.join('') }); };
   const setAllForms = (letter) => updateActiveTest({ nucleicForms: d.seq.split('').map(() => letter).join(''), dnaForm: letter });
-  
-  const exportFormulaToNotebook = () => {
-    if (!d.structure) return;
-    const html = `<div style="margin-top:10px;"><h5 style="color:#1e40af;font-size:12px;margin-bottom:6px;">🔬 Chemical Formula (${d.typeLabel}):</h5>` + elementsToSVG(d.structure, 300) + `</div>`;
-    const currentComments = activeTest.comments || '';
-    updateActiveTest({ comments: currentComments + (currentComments ? ' <br/>' : '') + html });
-    alert('Chemical formula appended to the Lab Notebook notes.');
+
+  const downloadPdbFile = async () => {
+    if (!activeTest.smiles) return;
+    try {
+        const res = await fetch(`https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(activeTest.smiles)}/file?format=pdb&get3d=true`);
+        const text = await res.text();
+        const blob = new Blob([text], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `molecule_3D.pdb`;
+        a.click();
+    } catch (e) { alert("Failed to generate PDB file."); }
   };
-  
-  const hasStructure = d.parsedSeq.length > 0 || (d.moleculeType === 'organic' && !!activeTest.smiles) || !!(activeTest.structureSrc && activeTest.structureSrc.trim());
 
   return (
     <div className="flex flex-col gap-6">
@@ -2459,6 +2692,7 @@ export const ExperimentSetupSection = ({ ctx }) => {
           </div>
         </div>
       </div>
+      
       {d.moleculeType === 'protein' && d.parsedSeq.length > 0 && (
         <div>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
@@ -2478,140 +2712,62 @@ export const ExperimentSetupSection = ({ ctx }) => {
           <SequencePaintStrip residues={d.parsedSeq} getLetter={(i) => d.getSSAt(i)} meta={SS_META} onApply={(i) => paintSSAt(i, ssBrush)} focusIdx={focusIdx} />
         </div>
       )}
-      {(d.moleculeType === 'dna' || d.moleculeType === 'rna') && d.parsedSeq.length > 0 && (
-        <div>
-          <div className="flex flex-wrap gap-2 mb-3 items-center">
-            <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
-            {['A', 'B', 'Z'].map((l) => (
-              <button key={l} onClick={() => setFormBrush(l)} className="px-3 py-1 rounded-lg text-xs font-black border transition-all"
-                style={{ backgroundColor: formBrush === l ? FORM_META[l].color : 'white', borderColor: FORM_META[l].color, color: formBrush === l ? 'white' : FORM_META[l].color }}>
-                {FORM_META[l].label}
-              </button>
-            ))}
-            <span className="mx-2 text-slate-300">|</span>
-            <button onClick={() => setAllForms('A')} className="px-3 py-1 rounded-lg text-xs font-bold bg-sky-100 border border-sky-300 text-sky-700 hover:bg-sky-200">All A</button>
-            <button onClick={() => setAllForms('B')} className="px-3 py-1 rounded-lg text-xs font-bold bg-green-100 border border-green-300 text-green-700 hover:bg-green-200">All B</button>
-            <button onClick={() => setAllForms('Z')} className="px-3 py-1 rounded-lg text-xs font-bold bg-rose-100 border border-rose-300 text-rose-700 hover:bg-rose-200">All Z</button>
-          </div>
-          <p className="text-xs text-slate-400 mb-3">💡 Select a brush, then click or drag across the sequence chips to paint the nucleic acid form per residue.</p>
-          <SequencePaintStrip residues={d.parsedSeq} getLetter={(i) => d.getFormAt(i)} meta={FORM_META} onApply={(i) => paintFormAt(i, formBrush)} focusIdx={focusIdx} />
-        </div>
-      )}
-      {d.moleculeType === 'sugar' && d.parsedSeq.length > 0 && (
-        <div>
-          <div className="flex flex-wrap gap-2 mb-3 items-center">
-            <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Anomer brush:</span>
-            {[['alpha', 'α-anomer', '#0ea5e9'], ['beta', 'β-anomer', '#f97316']].map(([val, lab, col]) => (
-              <button key={val} onClick={() => setSugarBrushAnomer(val)} className="px-3 py-1 rounded-lg text-xs font-black border"
-                style={{ backgroundColor: sugarBrushAnomer === val ? col : 'white', borderColor: col, color: sugarBrushAnomer === val ? 'white' : col }}>{lab}</button>
-            ))}
-            <span className="mx-2 text-slate-300">|</span>
-            <span className="text-xs font-bold text-slate-500 uppercase mr-1">Chair brush:</span>
-            {[['chair', 'Chair (⁴C₁)', '#22c55e'], ['invChair', 'Inverted chair (¹C₄)', '#a855f7']].map(([val, lab, col]) => (
-              <button key={val} onClick={() => setSugarBrushConf(val)} className="px-3 py-1 rounded-lg text-xs font-black border"
-                style={{ backgroundColor: sugarBrushConf === val ? col : 'white', borderColor: col, color: sugarBrushConf === val ? 'white' : col }}>{lab}</button>
-            ))}
-          </div>
-          <p className="text-xs text-slate-400 mb-3">💡 Select the anomer brush (α/β) and the ring-conformation brush, then click the sugar chip to apply.</p>
-          <SequencePaintStrip residues={d.parsedSeq} getLetter={() => (d.sugarAnomer === 'beta' ? 'β' : 'α')}
-            meta={{ β: { label: 'β-anomer', color: '#f97316' }, α: { label: 'α-anomer', color: '#0ea5e9' } }}
-            onApply={() => updateActiveTest({ sugarAnomer: sugarBrushAnomer, sugarConf: sugarBrushConf })}
-            focusIdx={focusIdx} charLabel={(r) => r.code3 || r.char} />
-        </div>
-      )}
-      {d.moleculeType === 'lipid' && d.parsedSeq.length > 0 && (
-        <div>
-          <div className="flex flex-wrap gap-2 mb-3 items-center">
-            <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
-            {[['cis', 'cis Δ9', '#0ea5e9'], ['trans', 'trans Δ9', '#f43f5e']].map(([val, lab, col]) => (
-              <button key={val} onClick={() => setLipidBrush(val)} className="px-3 py-1 rounded-lg text-xs font-black border"
-                style={{ backgroundColor: lipidBrush === val ? col : 'white', borderColor: col, color: lipidBrush === val ? 'white' : col }}>{lab}</button>
-            ))}
-          </div>
-          <p className="text-xs text-slate-400 mb-3">💡 Select the cis/trans brush, then click the lipid chip to set the geometry of the Δ9 double bond.</p>
-          <SequencePaintStrip residues={d.parsedSeq} getLetter={() => d.lipidDB}
-            meta={{ cis: { label: 'cis Δ9', color: '#0ea5e9' }, trans: { label: 'trans Δ9', color: '#f43f5e' } }}
-            onApply={() => updateActiveTest({ lipidDB: lipidBrush })} focusIdx={focusIdx} charLabel={(r) => r.char} />
-        </div>
-      )}
       
-      {hasStructure && (
-        <div>
-          <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-            <div className="flex bg-slate-200 p-1 rounded-lg">
-              <button onClick={() => updateActiveTest({ structureMode: '2d' })} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${structureMode === '2d' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>2D Formula</button>
-              <button onClick={() => updateActiveTest({ structureMode: '3d' })} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${structureMode === '3d' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>3D Viewer</button>
-            </div>
-            {d.moleculeType !== 'organic' && (
-              <div className="flex items-center gap-2 flex-wrap justify-end">
-                <label className="text-[10px] font-bold text-slate-500 uppercase">🔍 Focus</label>
-                <select value={focusIdx} onChange={(e) => setFocusIdx(e.target.value === 'ALL' ? 'ALL' : Number(e.target.value))}
-                  className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 max-w-[180px]">
-                  <option value="ALL">All residues</option>
-                  {d.parsedSeq.map((r, i) => <option key={i} value={i}>{r.id} — {r.name}</option>)}
-                </select>
-                {selectedKeys && (
-                  <button onClick={() => updateActiveTest({ selectedAtomKeys: [] })} className="px-2 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-400 text-amber-800">✖ Deselect ({selectionLabel(d, selectedKeys)})</button>
-                )}
-                <button onClick={exportFormulaToNotebook} className="px-2 py-1 rounded-lg text-xs font-bold bg-indigo-50 border border-indigo-300 text-indigo-700 hover:bg-indigo-100" title="Append this formula (SVG) to the Lab Notebook notes">📓 Formula → Notebook</button>
-              </div>
-            )}
+      <div className="mt-6 border-t border-slate-200 pt-6">
+        <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+          <div className="flex bg-slate-200 p-1 rounded-lg">
+            <button onClick={() => updateActiveTest({ structureMode: '2d' })} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${structureMode === '2d' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>2D Formula</button>
+            <button onClick={() => updateActiveTest({ structureMode: '3d' })} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${structureMode === '3d' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>3D Viewer</button>
           </div>
-          
-          {structureMode === '3d' && (
-            <div className="mb-3 grid grid-cols-1 md:grid-cols-4 gap-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-bold text-slate-500 uppercase">PDB ID / URL / local file</label>
-                <input type="text" value={activeTest.structureSrc || ''} onChange={(e) => updateActiveTest({ structureSrc: e.target.value })} placeholder="e.g. 1UBQ or /structures/POPC.pdb" className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500" />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-bold text-slate-500 uppercase">Atom labels</label>
-                <select value={atomLabelMode} onChange={(e) => updateActiveTest({ atomLabelMode: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
-                  <option value="none">No labels</option>
-                  <option value="selected">Selected labels</option>
-                  <option value="all">All labels</option>
-                </select>
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-bold text-slate-500 uppercase">Residue offset</label>
-                <input type="number" value={residueOffset} onChange={(e) => updateActiveTest({ residueOffset: Number(e.target.value) || 0 })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500" />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-bold text-slate-500 uppercase">Atom-name map JSON</label>
-                <input type="text" value={activeTest.atomNameMap || ''} onChange={(e) => updateActiveTest({ atomNameMap: e.target.value })} placeholder='{"HA":"Hα"}' className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-mono" />
-              </div>
+          {d.moleculeType !== 'organic' && (
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              <label className="text-[10px] font-bold text-slate-500 uppercase">🔍 Focus</label>
+              <select value={focusIdx} onChange={(e) => setFocusIdx(e.target.value === 'ALL' ? 'ALL' : Number(e.target.value))}
+                className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 max-w-[180px]">
+                <option value="ALL">All residues</option>
+                {d.parsedSeq.map((r, i) => <option key={i} value={i}>{r.id} — {r.name}</option>)}
+              </select>
+              {selectedKeys && (
+                <button onClick={() => updateActiveTest({ selectedAtomKeys: [] })} className="px-2 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-400 text-amber-800">✖ Deselect</button>
+              )}
             </div>
           )}
-          
-          <p className="text-xs text-slate-400 mb-2">💡 Click an atom in the {structureMode === '2d' ? 'formula' : '3D viewer'} to highlight its cell in the assignment table and its peaks in the spectra.</p>
-          
-          <div style={{ display: structureMode === '3d' ? 'block' : 'none' }} aria-hidden={structureMode !== '3d'}>
-            {hasOpened3D && (
-              <NMRMoleculeViewer key={structureSrc || 'no-structure-src'} src={structureSrc} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles}
-                selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset}
-                atomNameMap={atomNameMap} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '620px' : '520px'} />
-            )}
-          </div>
-          
-          <div style={{ display: structureMode === '2d' ? 'block' : 'none' }} aria-hidden={structureMode !== '2d'}>
-            {d.moleculeType === 'organic' && activeTest.smiles ? (
-              <div className="flex justify-center items-center bg-white p-4 rounded-xl shadow-sm border border-slate-200" style={{ height: '300px' }}>
-                 <img src={`https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(activeTest.smiles)}/image`} alt="2D Structure" className="max-w-full h-full object-contain" />
-              </div>
-            ) : d.structure ? (
-              // >>> RIPRISTINATO IL COMPONENTE SVG ORIGINALE PER LE MOLECOLE NON ORGANICHE <<<
-              <StructureSVGView structure={d.structure}
-                minWidth={d.moleculeType === 'protein' && d.parsedSeq.length > 3 ? `${d.parsedSeq.length * 120}px` : '100%'}
-                isExpanded={expandedPanel === 'formula'} onToggleExpand={() => setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')}
-                selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick}
-                height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? `${Math.max(360, d.parsedSeq.length * 250 + 120)}px` : '300px'} />
-            ) : null}
-          </div>
         </div>
-      )}
+        
+        {structureMode === '3d' && (
+          <div className="mb-3 grid grid-cols-1 md:grid-cols-4 gap-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-bold text-slate-500 uppercase">PDB ID / URL / local file</label>
+              <input type="text" value={activeTest.structureSrc || ''} onChange={(e) => updateActiveTest({ structureSrc: e.target.value })} placeholder="e.g. 1UBQ or /structures/POPC.pdb" className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500" />
+            </div>
+          </div>
+        )}
+        
+        <p className="text-xs text-slate-400 mb-2">💡 Click an atom in the {structureMode === '2d' ? 'formula' : '3D viewer'} to highlight its cell.</p>
+        
+        <div style={{ display: structureMode === '3d' ? 'block' : 'none' }} aria-hidden={structureMode !== '3d'}>
+          {hasOpened3D && (
+            <div className="flex flex-col gap-2">
+                <NMRMoleculeViewer key={structureSrc || 'no-structure-src'} src={structureSrc} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '620px' : '520px'} />
+                {d.moleculeType === 'organic' && activeTest.smiles && (
+                    <button onClick={downloadPdbFile} className="self-center mt-2 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-xs rounded-lg hover:bg-indigo-100 transition-colors shadow-sm">📥 Download 3D PDB File</button>
+                )}
+            </div>
+          )}
+        </div>
+        
+        <div style={{ display: structureMode === '2d' ? 'block' : 'none' }} aria-hidden={structureMode !== '2d'}>
+          {d.moleculeType === 'organic' && activeTest.smiles ? (
+             <OrganicViewer smiles={activeTest.smiles} />
+          ) : d.structure ? (
+            <StructureSVGView structure={d.structure} minWidth={d.moleculeType === 'protein' && d.parsedSeq.length > 3 ? `${d.parsedSeq.length * 120}px` : '100%'} isExpanded={expandedPanel === 'formula'} onToggleExpand={() => setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? `${Math.max(360, d.parsedSeq.length * 250 + 120)}px` : '300px'} />
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 };
+
 
 export const DataSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
@@ -2621,23 +2777,37 @@ export const DataSection = ({ ctx }) => {
   const [newLayerName, setNewLayerName] = useState('');
   const [newLayerUnit, setNewLayerUnit] = useState('');
   const [showImport, setShowImport] = useState(false);
-  const effTableMode = d.moleculeType === 'sugar' || d.moleculeType === 'lipid' ? 'all' : tableMode;
+  const [importConfig, setImportConfig] = useState({ testId: '', tableId: '', metric: 'R_s' });
+  
+  const actualLayerKeys = d.layers.map(l => l.key);
+  const [visibleLayers, setVisibleLayers] = useState(actualLayerKeys);
+
+  // ** FIX ** Ensure 'organic' molecules always show all atoms by default instead of collapsing to 'backbone'
+  const effTableMode = ['sugar', 'lipid', 'organic'].includes(d.moleculeType) ? 'all' : tableMode;
+  
   const selectedKeys = getSelectedKeys(activeTest);
   const isCS = d.activeLayerKey === 'cs';
-  const activeLayer = d.layers.find((l) => l.key === d.activeLayerKey) || CHEMICAL_SHIFT_LAYER;
+
   const addLayer = () => {
     const label = newLayerName.trim();
     if (!label) return;
     const layer = { key: makeLayerId(), label, unit: newLayerUnit.trim() || '' };
     updateActiveTest({ parameterLayers: [...(activeTest.parameterLayers || []), layer], activeLayerKey: layer.key });
+    setVisibleLayers([...visibleLayers, layer.key]);
     setNewLayerName(''); setNewLayerUnit('');
   };
   const removeLayer = (key) => {
     if (key === 'cs') return;
     const upd = (activeTest.parameterLayers || []).filter((l) => l.key !== key);
     updateActiveTest({ parameterLayers: upd, activeLayerKey: d.activeLayerKey === key ? 'cs' : d.activeLayerKey });
+    setVisibleLayers(visibleLayers.filter(l => l !== key));
   };
-  const handleShiftChange = (resIdx, atom, val) => writeCellValue(activeTest, updateActiveTest, d.activeLayerKey, `${resIdx}-${atom}`, val);
+  const toggleLayerVisibility = (key) => {
+    if (visibleLayers.includes(key)) setVisibleLayers(visibleLayers.filter(k => k !== key));
+    else setVisibleLayers([...visibleLayers, key]);
+  };
+
+  const handleShiftChange = (resIdx, atom, layerKey, val) => writeCellValue(activeTest, updateActiveTest, layerKey, `${resIdx}-${atom}`, val);
   const handleCellClick = (e, idx, atom) => {
     if (e && e.target && e.target.tagName === 'INPUT') return;
     const keys = buildKeys(idx, [atom], d.moleculeType, d.parsedSeq[idx]?.char);
@@ -2646,6 +2816,7 @@ export const DataSection = ({ ctx }) => {
     else updateActiveTest({ selectedAtomKeys: keys });
   };
   const cellIsSelected = (idx, atom) => Boolean(selectedKeys && selectedKeys.includes(`${idx}-${atom}`));
+
   const fillEstimated = () => {
     if (!isCS) return;
     const cs = {};
@@ -2655,163 +2826,158 @@ export const DataSection = ({ ctx }) => {
       if (res.estN !== null) cs[`${idx}-N`] = String(res.estN);
       if (res.estCP !== null) cs[`${idx}-C'`] = String(res.estCP);
     });
-    updateActiveTest({ nmrValues: { ...(activeTest.nmrValues || {}), cs } });
+    const nv = { ...(activeTest.nmrValues || {}) };
+    delete nv.cs; // Clear deprecated overlay
+    updateActiveTest({ chemicalShifts: cs, nmrValues: nv });
   };
-  const clearLayer = () => updateActiveTest({ nmrValues: { ...(activeTest.nmrValues || {}), [d.activeLayerKey]: {} } });
-  const exportCSV = () => {
-    const rows = [['Instance', ...d.fields.map((f) => f.label), 'Parameter', 'Residue', 'Nucleus', 'Atom', 'Value', 'Estimated (ppm)']];
-    const expVals = d.fields.map((f) => getExpValue(d.activeInstance, f.key));
-    d.estSeq.forEach((res, idx) => {
-      const base = [d.activeInstance ? d.activeInstance.name : '', ...expVals, activeLayer.label, res.id];
-      if (d.selNuc.includes('H')) Object.keys(res.estShifts || {}).forEach((a) => rows.push([...base, '1H', a, d.activeValues[`${idx}-${a}`] || '', isCS ? res.estShifts[a] : '']));
-      if (d.moleculeType === 'protein') {
-        if (d.selNuc.includes('N') && res.estN !== null) rows.push([...base, '15N', 'N', d.activeValues[`${idx}-N`] || '', isCS ? res.estN : '']);
-        if (d.selNuc.includes('C')) {
-          Object.keys(res.estUniqueC || {}).forEach((cn) => rows.push([...base, '13C', cn, d.activeValues[`${idx}-${cn}`] || '', isCS ? res.estUniqueC[cn] : '']));
-          if (res.estCP !== null) rows.push([...base, '13C', "C'", d.activeValues[`${idx}-C'`] || '', isCS ? res.estCP : '']);
-        }
-      } else if (d.selNuc.includes('C')) {
-        Object.keys(res.estUniqueC || {}).forEach((cn) => rows.push([...base, '13C', cn, d.activeValues[`${idx}-${cn}`] || '', isCS ? res.estUniqueC[cn] : '']));
+  
+  const executeImport = () => {
+      const selectedTest = (ctx.allTests || []).find(t => t.id === importConfig.testId);
+      const table = (selectedTest?.nmrTables || []).find(t => t.id === importConfig.tableId);
+      if (!table) return;
+
+      const layerName = `${table.relaxType}_${importConfig.metric}`;
+      const newLayers = [...(activeTest.parameterLayers || [])];
+      let layer = newLayers.find(l => l.label === layerName);
+      if (!layer) {
+          layer = { key: makeLayerId(), label: layerName, unit: importConfig.metric === 'T_s' ? 's' : (importConfig.metric === 'R_s' ? (table.relaxType === 'DOSY' ? 'm²/s' : 's⁻¹') : '') };
+          newLayers.push(layer);
       }
-      if (d.hasPhosphorus && d.selNuc.includes('P') && res.p31 !== null) rows.push([...base, '31P', 'P', d.activeValues[`${idx}-P`] || '', isCS ? res.p31 : '']);
-    });
-    const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
-    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `NMR_${(d.activeInstance ? d.activeInstance.name : 'data').replace(/[^a-z0-9]+/gi, '_')}_${activeLayer.label.replace(/[^a-z0-9]+/gi, '_')}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+      
+      const newValues = { ...(activeTest.nmrValues || {}) };
+      newValues[layer.key] = { ...(newValues[layer.key] || {}) };
+      
+      const tableFits = selectedTest.savedFits?.[table.id] || [];
+      let count = 0;
+
+      tableFits.forEach(colFit => {
+          if (!colFit.fit || !colFit.residue) return;
+          const colResLower = String(colFit.residue).toLowerCase().trim();
+          let matchedKey = null;
+
+          // Highly permissive match
+          for (const opt of d.atomOptions) {
+              const parts = opt.key.split('-');
+              const rIdx = parts[0];
+              const aName = parts.slice(1).join('-');
+              const rId = d.parsedSeq[rIdx]?.id?.toLowerCase() || '';
+              
+              if (colResLower === rId) {
+                  if (aName.toLowerCase() === (table.atom || 'HN').toLowerCase()) {
+                      matchedKey = opt.key; break;
+                  }
+              } else if (colResLower === aName.toLowerCase() && d.parsedSeq.length === 1) {
+                  matchedKey = opt.key; break;
+              } else if (colResLower === `${rId} ${aName.toLowerCase()}`) {
+                  matchedKey = opt.key; break;
+              }
+          }
+          
+          if (matchedKey) {
+              let val = null;
+              
+              // ** FIX ** Fallback to multiple potential properties representing fitted data
+              if (importConfig.metric === 'R_s') val = colFit.fit.R_s ?? colFit.fit.R ?? colFit.fit.rate;
+              else if (importConfig.metric === 'T_s') val = colFit.fit.T_s ?? colFit.fit.T ?? colFit.fit.time;
+              else if (importConfig.metric === 'error') val = selectedTest.manualErrors?.[table.id]?.[colFit.residue] ?? colFit.fit.seR_s ?? colFit.fit.seR ?? colFit.fit.error;
+              
+              if (val !== '' && val !== undefined && val !== null && !Number.isNaN(val)) {
+                  let formattedVal = val;
+                  if (typeof val === 'number') {
+                      // ** FIX ** Ensure small numbers (e.g. DOSY) don't get truncated to "0.0000"
+                      formattedVal = (Math.abs(val) < 0.001 && val !== 0) || Math.abs(val) > 10000 ? val.toExponential(4) : val.toFixed(4);
+                  }
+                  newValues[layer.key][matchedKey] = formattedVal;
+                  count++;
+              }
+          }
+      });
+      
+      const linkHtml = `Imported ${layerName} from NMR Fitting test: ${selectedTest.name}`;
+      const currentComments = activeTest.comments || '';
+      const newComments = currentComments.includes(selectedTest.name) ? currentComments : currentComments + (currentComments ? '<br/>' : '') + linkHtml;
+      
+      updateActiveTest({ parameterLayers: newLayers, nmrValues: newValues, comments: newComments });
+      if (!visibleLayers.includes(layer.key)) setVisibleLayers([...visibleLayers, layer.key]);
+      setShowImport(false);
+      alert(`Imported ${count} values successfully.`);
   };
-  const selTdCls = (isMan, isSel) => `px-3 py-1 cursor-pointer transition-colors ${isSel ? 'bg-amber-100 ring-2 ring-inset ring-amber-400' : isMan ? 'bg-green-50' : 'hover:bg-slate-50'}`;
+
+  const selTdCls = (isMan, isSel) => `px-2 py-1 cursor-pointer transition-colors border-r border-slate-100 ${isSel ? 'bg-amber-100 ring-1 ring-inset ring-amber-400' : isMan ? 'bg-green-50' : 'hover:bg-slate-50'}`;
+
   return (
     <div className="flex flex-col gap-6">
       <div className="bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 flex flex-wrap items-center gap-2">
-        <span className="text-xs font-bold text-indigo-800 uppercase">Active instance (from the top of the page):</span>
+        <span className="text-xs font-bold text-indigo-800 uppercase">Active instance:</span>
         <span className="text-sm font-black text-indigo-900">{d.activeInstance ? d.activeInstance.name : '—'}</span>
-        {d.fields.map((f) => {
-          const v = getExpValue(d.activeInstance, f.key);
-          if (v === '') return null;
-          return <span key={f.key} className="text-[10px] font-bold bg-white border border-indigo-200 text-indigo-700 px-2 py-0.5 rounded-full">{f.label}: {v}</span>;
-        })}
-        <span className="text-[9px] text-indigo-400 ml-auto">Add / switch instances at the top of the page (main program).</span>
       </div>
+      
       <div className="bg-white border border-slate-200 rounded-xl shadow-sm px-4 py-3">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <span className="text-xs font-bold text-slate-500">Editing: <span className="text-indigo-700">{d.activeInstance ? d.activeInstance.name : '—'}</span> · <span className="text-blue-700">{activeLayer.label}</span></span>
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+          <span className="text-xs font-bold text-slate-500">Editing: <span className="text-indigo-700">{d.activeInstance ? d.activeInstance.name : '—'}</span></span>
           <div className="flex gap-2 flex-wrap items-center">
-            <button onClick={() => setShowImport(!showImport)} className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${showImport ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-sky-50 border-sky-200 text-sky-700 hover:bg-sky-100'}`}>📥 Import data…</button>
-            {d.parsedSeq.length > 0 && d.moleculeType !== 'sugar' && d.moleculeType !== 'lipid' && (
+            {d.parsedSeq.length > 0 && d.moleculeType !== 'sugar' && d.moleculeType !== 'lipid' && d.moleculeType !== 'organic' && (
               <div className="flex bg-slate-200 p-1 rounded-lg mr-2">
                 <button onClick={() => { setTableMode('backbone'); updateActiveTest({ tableMode: 'backbone' }); }} className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${effTableMode === 'backbone' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Backbone</button>
                 <button onClick={() => { setTableMode('all'); updateActiveTest({ tableMode: 'all' }); }} className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${effTableMode === 'all' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>All Atoms</button>
-                <button onClick={() => { setTableMode('unified'); updateActiveTest({ tableMode: 'unified' }); }} className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${effTableMode === 'unified' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Unified</button>
               </div>
             )}
-            {isCS && <button onClick={fillEstimated} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100">🪄 Fill with estimated</button>}
-            <button onClick={clearLayer} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-red-50 border border-red-200 text-red-600 hover:bg-red-100">🧹 Clear {activeLayer.label}</button>
-            <button onClick={exportCSV} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 flex items-center gap-1 shadow-sm">📊 Export XLS (CSV)</button>
+            <button onClick={fillEstimated} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-green-50 border border-green-300 text-green-700 hover:bg-green-100">✨ Fill Estimated</button>
+            <button onClick={() => setShowImport(true)} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-50 border border-amber-300 text-amber-700 hover:bg-amber-100">📥 Import Fitted Parameters</button>
           </div>
         </div>
-        {showImport && <ImportPanel ctx={ctx} d={d} />}
-      </div>
-      {selectedKeys && (
-        <div className="flex items-center gap-2 bg-amber-50 border border-amber-300 rounded-lg px-3 py-1.5 text-xs font-bold text-amber-800 w-fit">
-          🎯 Selected: {selectionLabel(d, selectedKeys)}
-          <button onClick={() => updateActiveTest({ selectedAtomKeys: [] })} className="ml-1 text-amber-600 hover:text-red-600 font-black" title="Clear selection">✕</button>
-        </div>
-      )}
 
-{d.parsedSeq.length === 0 ? (
-        <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">
-          Enter a sequence / select a molecule (in Experiment Setup) to generate the table.
-        </div>
-      ) : effTableMode === 'backbone' ? (
-        <div className="overflow-x-auto custom-scrollbar border border-slate-200 rounded-lg max-h-[500px]">
-          <table className="w-full text-sm text-left">
-            <thead className="text-xs text-slate-500 uppercase bg-slate-100 sticky top-0 z-10 shadow-sm">
-              <tr>
-                <th className="px-4 py-3 font-black border-b border-slate-200 w-20 text-center">Res</th>
-                {d.moleculeType === 'protein' && <th className="px-2 py-2 font-bold border-b border-slate-200 text-center">SS</th>}
-                {d.selNuc.includes('H') && d.nucDefs.H.map((a) => <th key={a} className="px-3 py-2 font-bold text-blue-700 border-b border-slate-200 bg-blue-50/50">{a} {activeLayer.unit ? `(${activeLayer.unit})` : '(ppm)'}</th>)}
-                {d.selNuc.includes('N') && d.nucDefs.N.map((a) => <th key={a} className="px-3 py-2 font-bold text-emerald-700 border-b border-slate-200 bg-emerald-50/50">{a} {activeLayer.unit ? `(${activeLayer.unit})` : '(ppm)'}</th>)}
-                {d.selNuc.includes('C') && d.nucDefs.C.map((a) => <th key={a} className="px-3 py-2 font-bold text-purple-700 border-b border-slate-200 bg-purple-50/50">{a} {activeLayer.unit ? `(${activeLayer.unit})` : '(ppm)'}</th>)}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 bg-white">
-              {d.estSeq.map((res, idx) => {
-                if (focusIdx !== 'ALL' && focusIdx !== idx) return null;
-                return (
-                  <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-4 py-2 font-black text-slate-700 text-center bg-slate-50 border-r border-slate-100">{res.id}</td>
-                    {d.moleculeType === 'protein' && (
-                      <td className="px-2 py-1 text-center"><span className="inline-block w-6 h-6 leading-6 rounded-full text-xs font-black text-white" style={{ backgroundColor: SS_META[res.ssLetter].color }}>{res.ssLetter}</span></td>
+        <div className="flex flex-wrap gap-2 items-center border-t border-slate-100 pt-3">
+            <span className="text-[10px] font-bold text-slate-500 uppercase">Visible Columns:</span>
+            {d.layers.map((l) => (
+                <label key={l.key} className={`flex items-center gap-1.5 text-xs font-bold px-2 py-1 rounded border cursor-pointer ${visibleLayers.includes(l.key) ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-slate-50 border-slate-200 text-slate-500'}`}>
+                    <input type="checkbox" checked={visibleLayers.includes(l.key)} onChange={() => toggleLayerVisibility(l.key)} className="accent-blue-600" />
+                    {l.label}
+                    {!l.builtin && (
+                        <button type="button" onClick={(e) => { e.preventDefault(); removeLayer(l.key); }} className="ml-1 text-slate-400 hover:text-red-500 font-black">×</button>
                     )}
-                    {d.selNuc.includes('H') && d.nucDefs.H.map((a) => {
-                      const isMan = parseManual(d.activeValues[`${idx}-${a}`]) !== null;
-                      const isSel = cellIsSelected(idx, a);
-                      const est = res.estShifts?.[a];
-                      return (
-                        <td key={a} className={selTdCls(isMan, isSel)} onClick={(e) => handleCellClick(e, idx, a)} title="Click to highlight this atom everywhere">
-                          <input type="text" value={d.activeValues[`${idx}-${a}`] || ''} onChange={(e) => handleShiftChange(idx, a, e.target.value)} className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-200 focus:border-blue-500'}`} placeholder="—" />
-                          {isCS && est !== undefined && <div className="text-[13px] font-bold text-blue-600 text-center mt-0.5">≈ {est.toFixed(2)}</div>}
-                        </td>
-                      );
-                    })}
-                    {d.selNuc.includes('N') && d.nucDefs.N.map((a) => {
-                      const isMan = parseManual(d.activeValues[`${idx}-${a}`]) !== null;
-                      const isSel = cellIsSelected(idx, a);
-                      return (
-                        <td key={a} className={selTdCls(isMan, isSel)} onClick={(e) => handleCellClick(e, idx, a)} title="Click to highlight this atom everywhere">
-                          <input type="text" value={d.activeValues[`${idx}-${a}`] || ''} onChange={(e) => handleShiftChange(idx, a, e.target.value)} className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-200 focus:border-emerald-500'}`} placeholder="—" />
-                          {isCS && res.estN !== null && <div className="text-[13px] font-bold text-emerald-600 text-center mt-0.5">≈ {res.estN.toFixed(2)}</div>}
-                        </td>
-                      );
-                    })}
-                    {d.selNuc.includes('C') && d.nucDefs.C.map((a) => {
-                      const isMan = parseManual(d.activeValues[`${idx}-${a}`]) !== null;
-                      const isSel = cellIsSelected(idx, a);
-                      const est = a === "C'" ? res.estCP : res.estUniqueC?.[a];
-                      return (
-                        <td key={a} className={selTdCls(isMan, isSel)} onClick={(e) => handleCellClick(e, idx, a)} title="Click to highlight this atom everywhere">
-                          <input type="text" value={d.activeValues[`${idx}-${a}`] || ''} onChange={(e) => handleShiftChange(idx, a, e.target.value)} className={`w-full border rounded px-2 py-1 outline-none text-center text-xs font-mono ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-200 focus:border-purple-500'}`} placeholder="—" />
-                          {isCS && est !== undefined && est !== null && <div className="text-[13px] font-bold text-purple-600 text-center mt-0.5">≈ {est.toFixed(2)}</div>}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                </label>
+            ))}
+        </div>
+      </div>
+
+      {d.parsedSeq.length === 0 ? (
+        <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">
+          Enter a sequence / select a molecule to generate the table.
         </div>
       ) : (
-        <div className="overflow-x-auto custom-scrollbar border border-slate-200 rounded-lg max-h-[500px]">
-          <table className="w-full text-sm text-left">
-            <thead className="text-xs text-slate-500 uppercase bg-slate-100 sticky top-0 z-10 shadow-sm">
+        <div className="overflow-x-auto custom-scrollbar border border-slate-200 rounded-lg max-h-[600px]">
+          <table className="w-full text-sm text-left border-collapse">
+            <thead className="text-[10px] text-slate-500 uppercase bg-slate-100 sticky top-0 z-10 shadow-sm">
               <tr>
-                <th className="px-4 py-3 font-black border-b border-slate-200 w-24 text-center">Res</th>
+                <th className="px-3 py-2 font-black border-b border-slate-200 w-20 text-center sticky left-0 bg-slate-100 z-20 shadow-[1px_0_0_#e2e8f0]">Residue</th>
                 <th className="px-3 py-2 font-bold border-b border-slate-200">Nucleus / Atom</th>
-                <th className="px-3 py-2 font-bold border-b border-slate-200">Value {activeLayer.unit ? `(${activeLayer.unit})` : '(ppm)'}</th>
-                {isCS && <th className="px-3 py-2 font-bold border-b border-slate-200">Estimated (ppm)</th>}
+                {visibleLayers.map(lk => {
+                    const layer = d.layers.find(l => l.key === lk);
+                    if (!layer) return null;
+                    return (
+                        <th key={lk} className="px-3 py-2 font-bold border-b border-slate-200 text-center min-w-[120px] relative group">
+                            {layer.label} {layer.unit ? `(${layer.unit})` : ''}
+                            {!layer.builtin && (
+                                <button onClick={(e) => { e.preventDefault(); removeLayer(lk); }} className="absolute top-1.5 right-1.5 bg-red-100 text-red-500 hover:text-red-700 hover:bg-red-200 rounded-full w-4 h-4 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" title="Delete column">✕</button>
+                            )}
+                        </th>
+                    );
+                })}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 bg-white">
               {d.estSeq.map((res, idx) => {
                 if (focusIdx !== 'ALL' && focusIdx !== idx) return null;
-
-                // Extract all atoms for this specific residue from the existing atomOptions map
                 const resAtoms = d.atomOptions.filter((opt) => opt.key.startsWith(`${idx}-`));
+                
+                const displayAtoms = effTableMode === 'backbone' 
+                   ? resAtoms.filter(o => o.label.includes(' HN ') || o.label.includes(' N ') || o.label.includes(' Cα ') || o.label.includes(' Cβ ') || o.label.includes(" C' "))
+                   : resAtoms;
 
-                return resAtoms.map((opt, aIdx) => {
+                return displayAtoms.map((opt, aIdx) => {
                   const atomName = opt.key.slice(String(idx).length + 1);
-                  const isMan = parseManual(d.activeValues[opt.key]) !== null;
                   const isSel = cellIsSelected(idx, atomName);
-
-                  // Determine estimated value for display based on nucleus type
                   let est = undefined;
                   if (opt.label.includes('(¹H)')) est = res.estShifts?.[atomName];
                   else if (opt.label.includes('(¹³C)')) est = atomName === "C'" ? res.estCP : res.estUniqueC?.[atomName];
@@ -2819,29 +2985,28 @@ export const DataSection = ({ ctx }) => {
                   else if (opt.label.includes('(³¹P)')) est = res.p31;
 
                   return (
-                    <tr key={opt.key} className="hover:bg-slate-50 transition-colors">
+                    <tr key={opt.key} className="hover:bg-slate-50 transition-colors border-b border-slate-50">
                       {aIdx === 0 && (
-                        <td rowSpan={resAtoms.length} className="px-4 py-2 font-black text-slate-700 text-center bg-slate-50 border-r border-slate-100 align-top">
+                        <td rowSpan={displayAtoms.length} className="px-3 py-1 font-black text-slate-700 text-center bg-slate-50 border-r border-slate-200 align-top sticky left-0 z-10 shadow-[1px_0_0_#e2e8f0]">
                           {res.id}
                         </td>
                       )}
-                      <td className="px-3 py-1.5 font-bold text-slate-600">
+                      <td className="px-3 py-1 font-bold text-slate-600 border-r border-slate-100 whitespace-nowrap text-xs">
                         {opt.label.replace(`${res.id} `, '')}
                       </td>
-                      <td className={selTdCls(isMan, isSel)} onClick={(e) => handleCellClick(e, idx, atomName)}>
-                        <input
-                          type="text"
-                          value={d.activeValues[opt.key] || ''}
-                          onChange={(e) => handleShiftChange(idx, atomName, e.target.value)}
-                          className={`w-full border rounded px-2 py-1 outline-none text-xs font-mono max-w-[150px] ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-200 focus:border-blue-500'}`}
-                          placeholder="—"
-                        />
-                      </td>
-                      {isCS && (
-                        <td className="px-3 py-1.5 text-xs font-mono text-slate-500">
-                          {est !== undefined && est !== null ? `≈ ${est.toFixed(2)}` : '—'}
-                        </td>
-                      )}
+                      {visibleLayers.map(lk => {
+                          const layer = d.layers.find(l => l.key === lk);
+                          if (!layer) return null;
+                          const valMap = lk === 'cs' ? activeTest.chemicalShifts : (d.allLayerValues[lk] || {});
+                          const val = valMap?.[opt.key];
+                          const isMan = parseManual(val) !== null;
+                          return (
+                              <td key={lk} className={selTdCls(isMan, isSel)} onClick={(e) => handleCellClick(e, idx, atomName)}>
+                                  <input type="text" value={val || ''} onChange={(e) => handleShiftChange(idx, atomName, lk, e.target.value)} className={`w-full border rounded px-1.5 py-0.5 outline-none text-xs font-mono text-center ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-200 focus:border-blue-500 bg-transparent'}`} placeholder="—" />
+                                  {lk === 'cs' && est !== undefined && est !== null && <div className="text-[10px] font-bold text-slate-400 text-center mt-0.5" title="Theoretical estimate">≈ {est.toFixed(2)}</div>}
+                              </td>
+                          );
+                      })}
                     </tr>
                   );
                 });
@@ -2852,34 +3017,59 @@ export const DataSection = ({ ctx }) => {
       )}
 
       <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm mt-4">
-        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-          <label className="text-xs font-bold text-slate-600 uppercase">🗂️ Parameter Layer (assignment table data type)</label>
-          <span className="text-[9px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded">Switch between Chemical Shift & user-defined parameters</span>
-        </div>
-        <div className="flex flex-wrap gap-2 items-center mb-3">
-          {d.layers.map((l) => (
-            <div key={l.key} className="inline-flex items-center">
-              <button type="button" onClick={() => updateActiveTest({ activeLayerKey: l.key })} className={`px-3 py-1.5 rounded-l-lg text-xs font-bold border transition-colors ${d.activeLayerKey === l.key ? 'bg-blue-600 border-blue-700 text-white' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}`}>{l.label}{l.unit ? ` (${l.unit})` : ''}</button>
-              {!l.builtin ? (
-                <button type="button" onClick={() => removeLayer(l.key)} className={`px-2 py-1.5 rounded-r-lg border border-l-0 text-xs font-black ${d.activeLayerKey === l.key ? 'bg-blue-600 border-blue-700 text-blue-200 hover:text-white' : 'bg-white border-slate-300 text-slate-400 hover:text-red-500'}`} title="Delete parameter">×</button>
-              ) : (
-                <span className="px-2 py-1.5 rounded-r-lg border border-l-0 bg-slate-100 border-slate-300 text-slate-400 text-xs">🔒</span>
-              )}
-            </div>
-          ))}
-        </div>
         <div className="flex flex-wrap gap-2 items-end">
           <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold text-slate-500 uppercase">New parameter name</label>
-            <input type="text" value={newLayerName} onChange={(e) => setNewLayerName(e.target.value)} placeholder="e.g. T1 Relaxation, Peak Intensity" className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-56 bg-white" />
+            <label className="text-[10px] font-bold text-slate-500 uppercase">New Parameter Column Name</label>
+            <input type="text" value={newLayerName} onChange={(e) => setNewLayerName(e.target.value)} placeholder="e.g. T1, T2, S2, RDC" className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-56 bg-white" />
           </div>
           <div className="flex flex-col gap-1">
             <label className="text-[10px] font-bold text-slate-500 uppercase">Unit</label>
-            <input type="text" value={newLayerUnit} onChange={(e) => setNewLayerUnit(e.target.value)} placeholder="e.g. s, a.u." className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-24 bg-white" />
+            <input type="text" value={newLayerUnit} onChange={(e) => setNewLayerUnit(e.target.value)} placeholder="e.g. s, Hz" className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-24 bg-white" />
           </div>
-          <button type="button" onClick={addLayer} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm h-fit">+ Add Parameter Layer</button>
+          <button type="button" onClick={addLayer} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm h-fit">+ Add Parameter</button>
         </div>
       </div>
+
+      {showImport && (
+         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm">
+             <div className="bg-white p-6 rounded-xl shadow-xl w-96 flex flex-col gap-4">
+                 <h3 className="font-bold text-lg text-slate-800">Import NMR Fitting</h3>
+                 {(() => {
+                     const fittingTests = (ctx.allTests || []).filter(t => t.type === 'nmr-fittings');
+                     const selectedTest = fittingTests.find(t => t.id === importConfig.testId);
+                     return fittingTests.length === 0 ? (
+                         <p className="text-sm text-slate-500">No NMR Fittings tests found in this dataset.</p>
+                     ) : (
+                         <>
+                             <select value={importConfig.testId} onChange={e => setImportConfig({...importConfig, testId: e.target.value, tableId: ''})} className="border p-2 rounded text-sm">
+                                 <option value="">Select a test...</option>
+                                 {fittingTests.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                             </select>
+                             {selectedTest && (
+                                 <select value={importConfig.tableId} onChange={e => setImportConfig({...importConfig, tableId: e.target.value})} className="border p-2 rounded text-sm">
+                                     <option value="">Select a parameter...</option>
+                                     {(selectedTest.nmrTables || []).map((tbl, i) => (
+                                         <option key={tbl.id} value={tbl.id}>{tbl.atom || 'Unknown Atom'} - {tbl.relaxType}</option>
+                                     ))}
+                                 </select>
+                             )}
+                             {selectedTest && importConfig.tableId && (
+                                 <select value={importConfig.metric} onChange={e => setImportConfig({...importConfig, metric: e.target.value})} className="border p-2 rounded text-sm">
+                                     <option value="R_s">Rate (R_s)</option>
+                                     <option value="T_s">Time (T_s)</option>
+                                     <option value="error">Error</option>
+                                 </select>
+                             )}
+                         </>
+                     );
+                 })()}
+                 <div className="flex justify-end gap-2 mt-4">
+                     <button onClick={() => setShowImport(false)} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded">Cancel</button>
+                     <button onClick={executeImport} disabled={!importConfig.tableId} className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white font-bold rounded shadow disabled:opacity-50 transition-colors">Import</button>
+                 </div>
+             </div>
+         </div>
+      )}
     </div>
   );
 };
@@ -2914,6 +3104,31 @@ export const SecondaryShiftsSection = ({ ctx }) => {
     };
   }).filter((r) => activeTest.focusIdx === undefined || activeTest.focusIdx === 'ALL' || r.idx === activeTest.focusIdx);
   const mk = (k) => rows.map((r, i) => ({ label: r.label, v: r[k], idx: i })).filter((x) => x.v !== null);
+  
+  const SCSPlot = ({ title, data, color, cfg }) => {
+      return (
+          <div className="bg-white p-4 border border-slate-200 rounded-lg shadow-sm">
+              <h4 className="font-bold text-xs text-slate-700 mb-2 text-center">{title}</h4>
+              <ResponsiveContainer width="100%" aspect={cfg.aspect}>
+                  <BarChart data={data} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="label" tick={{ fontSize: cfg.fontSize }} />
+                      <YAxis tick={{ fontSize: cfg.fontSize }} />
+                      <Tooltip />
+                      {cfg.showHLine && <ReferenceLine y={cfg.hLineVal} stroke="red" strokeDasharray="3 3" />}
+                      {cfg.showHLine && <ReferenceLine y={-cfg.hLineVal} stroke="red" strokeDasharray="3 3" />}
+                      <ReferenceLine y={0} stroke="#000" />
+                      <Bar dataKey="v">
+                          {data.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={entry.v < 0 ? cfg.negColor : color} />
+                          ))}
+                      </Bar>
+                  </BarChart>
+              </ResponsiveContainer>
+          </div>
+      );
+  };
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-lg p-2 w-fit">
@@ -2955,8 +3170,6 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
   const [presetName, setPresetName] = useState('');
   const [showErr, setShowErr] = useState(false);
   const [showCfg, setShowCfg] = useState(false);
-  const [hVal, setHVal] = useState('');
-  const [hLab, setHLab] = useState('');
   const chartRef = useRef(null);
   const isHist = (plot.chartType || 'line') === 'hist';
   const is3D = plot.chartType === '3d';
@@ -2981,7 +3194,6 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
   const used = plot.usedInstances || {};
   const toggleInstance = (iid) => set({ usedInstances: { ...used, [iid]: used[iid] === false ? undefined : false } });
 
-  // ---- Comparabilità: individua le istanze con condizioni diverse da quelle più comuni ----
   const comparableInfo = useMemo(() => {
     const xFieldKey = effXField;
     const groupFields = experimentalFields.filter((f) =>
@@ -3005,13 +3217,12 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
   }, [d.instances, used, effXField, plot.yField, is3D, experimentalFields]);
   const isComparable = (instId) => !plot.excludeNonComparable || comparableInfo.comparableInstIds.has(instId);
 
-  // ---- Series: un punto per istanza top-of-page, ordinati per X ----
   const series = useMemo(() => plot.atoms.map((ak) => {
     const opt = d.atomOptions.find((o) => o.key === ak);
     const pts = [];
     d.instances.forEach((inst) => {
       if (used[inst.id] === false) return;
-      if (!isComparable(inst.id)) return; // esclude punti non comparabili
+      if (!isComparable(inst.id)) return; 
       const vals = getInstanceValues(inst, inst.id === d.activeInstanceId, activeTest, plot.layerKey);
       const v = parseManual(vals[ak]);
       if (v === null) return;
@@ -3023,10 +3234,8 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
         excluded: !!((plot.excluded[ak] || {})[inst.id])
       });
     });
-    // ORDINAMENTO per X: evita che la linea torni indietro
     pts.sort((a, b) => (a.x ?? 0) - (b.x ?? 0));
     return { key: ak, label: opt ? opt.label : ak, pts };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
 }), [plot.atoms, plot.layerKey, d.instances, d.atomOptions, plot.excluded, effXField, plot.yField, used, activeTest.nmrValues, plot.excludeNonComparable, comparableInfo]);
 
   const colorOf = (s) => seriesColor(cfg, s.key, series.findIndex((q) => q.key === s.key));
@@ -3050,7 +3259,6 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
     const out = {};
     series.forEach((s) => { out[s.key] = fitOf(s); });
     return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [series, plot.fitEnabled, plot.fitModel, plot.customExpr, plot.chartType, plot.manualSD, plot.useFixedSD, plot.fixedSDStr]);
   const setManualSD = (sKey, instId, val) => {
     const inner = { ...(plot.manualSD[sKey] || {}) };
@@ -3115,7 +3323,6 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
       });
       return row;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [d.instances, series, used, plot.manualSD, plot.useFixedSD, plot.fixedSDStr]);
   const numData = (s) => includedPts(s).filter((p) => p.x !== null).sort((a, b) => a.x - b.x).map((p) => ({ x: p.x, y: p.y, sd: effSD(s.key, p), name: p.name }));
   const fitData = (s) => {
@@ -3171,7 +3378,6 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
       if (val === undefined || val === null) return null;
       return { name: s.label, val, err: err || 0, fill: colorOf(s) };
     }).filter(Boolean);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [series, fits, paramGraphVar, plot.fitModel, cfg.colors]);
   return (
     <CollapsibleSection title={plot.title} icon="📈" defaultOpen={true}
@@ -3196,12 +3402,13 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
               {experimentalFields.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
             </select>
           </div>
-          <div className="flex flex-col gap-1">
+<div className="flex flex-col gap-1">
             <label className="text-[10px] font-bold text-slate-500 uppercase">Type</label>
             <select value={plot.chartType || 'line'} onChange={(e) => set({ chartType: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
               <option value="line">Line / Scatter (zoomable)</option>
               <option value="hist">Histogram (per instance)</option>
-              <option value="3d">3D (two condition fields)</option>
+              <option value="3d">3D Scatter</option>
+              <option value="3d-hist">3D Histogram</option>
             </select>
           </div>
           {is3D && (
@@ -3239,7 +3446,6 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
           </div>
         </div>
 
-        {/* WARNING: altre condizioni sperimentali diverse + opzione escludi non comparabili */}
         {comparableInfo.hasMismatch && !isHist && (
           <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 text-xs text-amber-800 flex flex-col gap-2">
             <div>
@@ -3491,7 +3697,7 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
     </CollapsibleSection>
   );
 };
-// ================= 3) FITTING — CONDITION PLOTS =================
+
 const makePlotId = () => `cp_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 const defaultPlotCfg = (n) => ({
   id: makePlotId(), title: `Condition Plot ${n}`, layerKey: 'cs', atoms: [],
@@ -3524,15 +3730,12 @@ export const FittingSection = ({ ctx }) => {
         <button type="button" onClick={addPlot} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm">+ Add Condition Plot</button>
       </div>
       {plots.map((p) => (
-        // Assicurati che ConditionPlotPanel sia già presente e definito nel file NMRSections.jsx,
-        // altrimenti avrai un altro errore di undefined. Lo avevamo integrato nei messaggi precedenti!
         <ConditionPlotPanel key={p.id} ctx={ctx} d={d} plot={p} updatePlot={updatePlot} removePlot={removePlot} duplicatePlot={duplicatePlot} />
       ))}
     </div>
   );
 };
 
-// ================= CLASSIFICATION =================
 export const ClassificationSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const testCategories = Array.isArray(ctx?.testCategories) ? ctx.testCategories : [];
@@ -3573,7 +3776,6 @@ export const ClassificationSection = ({ ctx }) => {
   );
 };
 
-// ================= 5) SIMULATIONS =================
 export const SimulationsSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useNmrDerived(activeTest, ctx);
@@ -3604,6 +3806,13 @@ export const SimulationsSection = ({ ctx }) => {
     }).sort((a, b) => a.x - b.x);
   };
   
+  const filteredRanges1H = focusIdx === 'ALL' 
+      ? d.ranges.ranges1H 
+      : d.ranges.ranges1H.filter(r => r.res === (d.parsedSeq[focusIdx]?.code3 || d.parsedSeq[focusIdx]?.char)).map(r => ({ ...r, y: 0 }));
+  const filteredRanges13C = focusIdx === 'ALL' 
+      ? d.ranges.ranges13C 
+      : d.ranges.ranges13C.filter(r => r.res === (d.parsedSeq[focusIdx]?.code3 || d.parsedSeq[focusIdx]?.char)).map(r => ({ ...r, y: 0 }));
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center gap-3 flex-wrap bg-white border border-slate-200 rounded-lg px-3 py-2 w-fit">
@@ -3615,16 +3824,6 @@ export const SimulationsSection = ({ ctx }) => {
         </label>
 
         <span className="text-[10px] text-slate-400 ml-2">13C axis: 0–220 ppm · 2D spectra: square (aspect {simCfg.aspect2D}) · HSQC side by side</span>
-        
-        {d.moleculeType !== 'organic' && (
-          <div className="border-l border-slate-300 pl-3 ml-1 flex items-center gap-2">
-            <label className="text-[10px] font-bold text-slate-500 uppercase">🔍 Filter Peaks:</label>
-            <select value={focusIdx} onChange={(e) => setFocusIdx(e.target.value === 'ALL' ? 'ALL' : Number(e.target.value))} className="border border-slate-300 rounded-md px-2 py-1 text-xs bg-slate-50 outline-none focus:border-blue-500">
-              <option value="ALL">Show All Residues</option>
-              {d.parsedSeq.map((r, i) => <option key={i} value={i}>{r.id} — {r.name}</option>)}
-            </select>
-          </div>
-        )}
       </div>
       
       {showCfg && (
@@ -3645,7 +3844,6 @@ export const SimulationsSection = ({ ctx }) => {
             </div>
           </div>
           
-          {/* Label Customization */}
           {simCfg.simShowLabels && (
             <div className="flex flex-col gap-3 md:col-span-3 pt-4 border-t border-slate-100 mt-2">
               <h5 className="text-xs font-bold text-slate-600 uppercase">Label Format Options</h5>
@@ -3685,8 +3883,8 @@ export const SimulationsSection = ({ ctx }) => {
       
       {d.moleculeType !== 'organic' && (
         <div className="grid grid-cols-1 gap-4">
-          <RangeBarChart title="Theoretical ¹H Ranges" ranges={d.ranges.ranges1H} domain={[0, 11]} ticks={Array.from({ length: 12 }, (_, i) => i)} xAxisLabel="¹H (ppm)" rowCount={d.uniqueTypes.length} rowLabels={d.uniqueTypes.map((c) => d.DB[c]?.code3 || c)} />
-          <RangeBarChart title="Theoretical ¹³C Ranges" ranges={d.ranges.ranges13C} domain={[0, 220]} ticks={Array.from({ length: 23 }, (_, i) => i * 10)} xAxisLabel="¹³C (ppm)" rowCount={d.uniqueTypes.length} rowLabels={d.uniqueTypes.map((c) => d.DB[c]?.code3 || c)} />
+          <RangeBarChart title="Theoretical ¹H Ranges" ranges={filteredRanges1H} domain={[0, 11]} ticks={Array.from({ length: 12 }, (_, i) => i)} xAxisLabel="¹H (ppm)" rowCount={focusIdx === 'ALL' ? d.uniqueTypes.length : 1} rowLabels={focusIdx === 'ALL' ? d.uniqueTypes.map((c) => d.DB[c]?.code3 || c) : [d.parsedSeq[focusIdx]?.code3 || d.parsedSeq[focusIdx]?.char]} />
+          <RangeBarChart title="Theoretical ¹³C Ranges" ranges={filteredRanges13C} domain={[0, 220]} ticks={Array.from({ length: 23 }, (_, i) => i * 10)} xAxisLabel="¹³C (ppm)" rowCount={focusIdx === 'ALL' ? d.uniqueTypes.length : 1} rowLabels={focusIdx === 'ALL' ? d.uniqueTypes.map((c) => d.DB[c]?.code3 || c) : [d.parsedSeq[focusIdx]?.code3 || d.parsedSeq[focusIdx]?.char]} />
         </div>
       )}
       
@@ -3710,22 +3908,21 @@ export const SimulationsSection = ({ ctx }) => {
   );
 };
 
-// ================= ALL (senza sezione Classification extra) =================
 export const All = ({ ctx }) => (
   <div className="flex flex-col gap-6">
     <CollapsibleSection title="Experiment Setup" icon="⚙️"><ExperimentSetupSection ctx={ctx} /></CollapsibleSection>
     <CollapsibleSection title="Data" icon="🔢"><DataSection ctx={ctx} /></CollapsibleSection>
-    <CollapsibleSection title="Secondary Chemical Shifts (SCS)" icon="📉" defaultOpen={false}><SecondaryShiftsSection ctx={ctx} /></CollapsibleSection>
+    <CollapsibleSection title="Data Analysis" icon="📉" defaultOpen={false}><SecondaryShiftsSection ctx={ctx} /></CollapsibleSection>
     <CollapsibleSection title="Fitting" icon="📐"><FittingSection ctx={ctx} /></CollapsibleSection>
     <CollapsibleSection title="Simulations" icon="🧪" defaultOpen={false}><SimulationsSection ctx={ctx} /></CollapsibleSection>
   </div>
 );
+
 export const Setup = ExperimentSetupSection;
 export const Data = DataSection;
 export const Fitting = FittingSection;
 export const Simulations = SimulationsSection;
 
-// ================= NOTEBOOK EXTRA =================
 export const NotebookExtra = ({ ctx, checkId }) => {
   const { activeTest } = ctx;
   const d = useNmrDerived(activeTest, ctx);
@@ -3766,4 +3963,3 @@ export const NotebookExtra = ({ ctx, checkId }) => {
   }
   return '';
 };
-

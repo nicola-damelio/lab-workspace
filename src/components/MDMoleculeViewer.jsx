@@ -149,7 +149,14 @@ const getTrajectoryObject = (component) => {
 
 const getNumFrames = (traj) => {
   if (!traj) return 0;
-  return traj.numframes || traj.nFrames || (traj.trajectory && traj.trajectory.numframes) || (traj.trajectoryPlayer && traj.trajectoryPlayer.numframes) || 0;
+  // Different NGL versions have exposed the frame count under different names
+  // (numframes/nFrames in older builds, frameCount in current ones) — check them all.
+  return (
+    traj.frameCount || traj.numframes || traj.nFrames ||
+    (traj.trajectory && (traj.trajectory.frameCount || traj.trajectory.numframes || traj.trajectory.nFrames)) ||
+    (traj.trajectoryPlayer && (traj.trajectoryPlayer.frameCount || traj.trajectoryPlayer.numframes)) ||
+    0
+  );
 };
 
 const setFrameSafe = (traj, frame) => {
@@ -331,19 +338,27 @@ const MDMoleculeViewer = ({
               try {
                 let targetCand = cand;
 
-                // FIX: Generate a permanent blob URL from the local File to bypass the `t.replace` crash.
-                // This keeps it as a string so NGL can safely pass it to `component.addTrajectory()`, 
-                // which is required to link the XTC frames with the PDB atom topology!
+                // Generate a permanent blob URL from a local File so we have a
+                // fetchable string source (kept alive for the component's lifetime).
                 if (typeof cand === 'object' && cand instanceof File) {
                   const url = URL.createObjectURL(cand);
                   blobUrlsRef.current.push(url); // Keep it alive
                   targetCand = url;
                 }
 
-                // Add directly to the component (ties coordinates to structure)
-                const trajComp = component.addTrajectory(targetCand, {
-                  ext: trajectoryFormat
-                });
+                // IMPORTANT: component.addTrajectory(url, {ext}) treats a plain
+                // string as a request to an NGL "trajectory server" (a REST
+                // backend for streaming frames) and throws "Cannot read
+                // properties of undefined (reading 'getCountUrl')" once no such
+                // server datasource is registered — which is always true here,
+                // since this app has no backend. Parsing the whole trajectory
+                // client-side first with autoLoad() (into an NGL Frames object)
+                // and handing THAT to addTrajectory() keeps everything in the
+                // browser and avoids the server code path entirely.
+                const frames = await NGL.autoLoad(targetCand, { ext: trajectoryFormat });
+                if (!frames) throw new Error('Could not parse trajectory frames');
+
+                const trajComp = component.addTrajectory(frames);
 
                 traj = (trajComp && trajComp.trajectory) || getTrajectoryObject(component);
 

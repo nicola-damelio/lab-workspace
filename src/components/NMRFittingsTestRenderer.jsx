@@ -582,7 +582,7 @@ function SimulationSection({ sim, setSim, solvents = [], activeTest }) {
 export const NMRFittingsTestRenderer = ({ activeTest = {}, updateActiveTest, TestHeader, compoundMeta = {}, allCmpds = [], ...rest }) => {
     const update = (u) => { if (updateActiveTest) updateActiveTest(u); };
     const tables = Array.isArray(activeTest.nmrTables) ? activeTest.nmrTables : [];
-    const [fits, setFits] = useState({});
+    const [fits, setFits] = useState(activeTest.savedFits || {});
     const [fsPanel, setFsPanel] = useState(null);
     const [showChartCfg, setShowChartCfg] = useState(false);
     const [chartType, setChartType] = useState('line'); // 'line' or 'hist'
@@ -629,7 +629,10 @@ export const NMRFittingsTestRenderer = ({ activeTest = {}, updateActiveTest, Tes
             }
             cols.push({ residue: t.colResidues[c] || `Col ${c + 1}`, fit: fitS });
         }
-        setFits((prev) => ({ ...prev, [t.id]: cols }));
+
+        const nextFits = { ...fits, [t.id]: cols };
+        setFits(nextFits);
+        update({ savedFits: nextFits });
     };
 
     const exportFittedTable = (t, colFits) => {
@@ -672,34 +675,37 @@ export const NMRFittingsTestRenderer = ({ activeTest = {}, updateActiveTest, Tes
 
                     {/* Data table */}
                     <div className="overflow-auto border border-slate-300 rounded-lg bg-white shadow-inner">
-                        <table className="border-collapse text-xs">
+                        <table className="border-collapse text-xs w-full">
                             <thead>
                                 <tr>
                                     <th className="bg-slate-200 border border-slate-300 p-1 sticky top-0 left-0 z-20 text-slate-600">{t.relaxType === 'DOSY' ? 'b-value / G²' : 'Delay'} ({t.delayUnit})</th>
                                     {Array.from({ length: t.nCols }, (_, c) => (
-                                        <th key={c} className="bg-slate-100 border border-slate-300 p-1 min-w-[110px] sticky top-0 z-10">
-                                            <div className="flex flex-col gap-1">
-                                                <input value={t.colResidues[c] || ''} onChange={(e) => setColResidue(t, c, e.target.value)} placeholder="residue" className="w-full text-center border border-slate-300 rounded p-0.5 text-[11px] font-bold text-blue-800" />
-                                                <button onClick={() => removeCol(t, c)} className="self-end text-red-400 hover:text-red-600 text-[10px] leading-none">✕ col</button>
+                                        <th key={c} className="bg-slate-100 border border-slate-300 p-1 min-w-[110px] sticky top-0 z-10 group relative">
+                                            <div className="flex flex-col gap-1 w-full relative">
+                                                <input value={t.colResidues[c] || ''} onChange={(e) => setColResidue(t, c, e.target.value)} placeholder="residue" className="w-full text-center border border-slate-300 rounded p-1 text-[11px] font-bold text-blue-800" />
+                                                <button onClick={() => removeCol(t, c)} className="absolute -top-1 -right-1 bg-red-100 text-red-500 hover:bg-red-500 hover:text-white rounded-full w-5 h-5 flex items-center justify-center font-bold opacity-0 group-hover:opacity-100 transition-opacity shadow-sm" title="Delete Column">✕</button>
                                             </div>
                                         </th>
                                     ))}
-                                    <th className="bg-slate-50 border border-slate-200 p-1 sticky top-0 z-10"><button onClick={() => addCol(t)} className="text-blue-600 hover:text-blue-800 font-bold text-[11px]">+ col</button></th>
+                                    <th className="bg-slate-50 border border-slate-200 p-1 sticky top-0 z-10"><button onClick={() => addCol(t)} className="text-blue-600 hover:text-blue-800 font-bold text-[11px] bg-blue-50 px-2 py-1 rounded w-full h-full transition-colors">+ Add Col</button></th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {Array.from({ length: t.nRows }, (_, r) => (
                                     <tr key={r}>
                                         <td className="bg-slate-100 border border-slate-300 p-0.5 sticky left-0 z-10">
-                                            <div className="flex items-center gap-1"><input type="number" step="any" value={t.delays[r]} onChange={(e) => setDelay(t, r, e.target.value === '' ? '' : Number(e.target.value))} className="w-16 text-center border border-slate-300 rounded p-0.5 text-[11px] font-mono" /><button onClick={() => removeRow(t, r)} className="text-red-400 hover:text-red-600 text-[11px]">✕</button></div>
+                                            <div className="flex items-center justify-between px-1">
+                                                <input type="number" step="any" value={t.delays[r]} onChange={(e) => setDelay(t, r, e.target.value === '' ? '' : Number(e.target.value))} className="w-16 text-center border border-slate-300 rounded p-1 text-[11px] font-mono" />
+                                                <button onClick={() => removeRow(t, r)} className="text-red-400 hover:text-red-600 text-[11px] font-bold ml-1 px-1" title="Delete Row">✕</button>
+                                            </div>
                                         </td>
                                         {Array.from({ length: t.nCols }, (_, c) => (
-                                            <td key={c} className="border border-slate-200 p-0"><input value={t.grid[r]?.[c] ?? ''} onChange={(e) => setCell(t, r, c, e.target.value)} className="w-full h-7 text-center outline-none focus:bg-blue-50 focus:ring-1 focus:ring-blue-400 font-mono text-[11px]" /></td>
+                                            <td key={c} className="border border-slate-200 p-0"><input value={t.grid[r]?.[c] ?? ''} onChange={(e) => setCell(t, r, c, e.target.value)} className="w-full h-8 text-center outline-none focus:bg-blue-50 focus:ring-1 focus:ring-blue-400 font-mono text-[11px]" /></td>
                                         ))}
-                                        <td className="border border-slate-100 p-0.5 text-center text-slate-300">·</td>
+                                        <td className="border border-slate-100 p-0.5 text-center text-slate-300 bg-slate-50">·</td>
                                     </tr>
                                 ))}
-                                <tr><td colSpan={t.nCols + 2} className="bg-slate-50 border border-slate-200 p-1"><button onClick={() => addRow(t)} className="text-blue-600 hover:text-blue-800 font-bold text-[11px]">+ add row</button></td></tr>
+                                <tr><td colSpan={t.nCols + 2} className="bg-slate-50 border border-slate-200 p-2"><button onClick={() => addRow(t)} className="text-blue-600 hover:text-blue-800 font-bold text-[11px] w-full text-left pl-2">+ Add Delay Row</button></td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -727,12 +733,15 @@ export const NMRFittingsTestRenderer = ({ activeTest = {}, updateActiveTest, Tes
                                     </select>
                                 </div>
                                 <div className="flex items-end gap-2">
-                                    <button onClick={() => runFitForTable(t)} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-md shadow-sm">▶️ Compute Fit</button>
+                                    <button onClick={() => runFitForTable(t)} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 w-full rounded-md shadow-sm transition-colors">▶️ Compute Fit</button>
                                 </div>
                                 <div className="flex items-end gap-2">
-                                    <button onClick={() => duplicateTable(t)} className="text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold px-3 py-2 rounded-md">♻️ Duplicate</button>
-                                    <button onClick={() => removeTable(t.id)} className="text-xs bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 font-bold px-3 py-2 rounded-md">🗑️ Remove</button>
+                                    <button onClick={() => duplicateTable(t)} className="text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold px-3 py-2 w-full rounded-md transition-colors">♻️ Duplicate</button>
                                 </div>
+                            </div>
+                            
+                            <div className="flex justify-end pt-2 border-t border-slate-100">
+                               <button onClick={() => removeTable(t.id)} className="text-xs bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold px-4 py-2 rounded-md shadow-sm flex items-center gap-2 transition-colors">🗑️ Delete Entire Table</button>
                             </div>
 
                             {/* Chart type selector */}

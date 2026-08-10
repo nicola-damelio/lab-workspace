@@ -5985,7 +5985,7 @@ setMandatoryFields(s.mandatoryFields || []);
                 );
               })()}
 
-            {currentModule === 'active-test' &&
+{currentModule === 'active-test' &&
               (() => {
                 const activeTest = tests.find((t) => t.id === activeTestId);
 
@@ -6079,7 +6079,6 @@ setMandatoryFields(s.mandatoryFields || []);
                                 ? 'MD SIMULATION'
                                 : activeTest.type === 'protein_expression'
                                 ? 'PROTEIN EXPRESSION'
-                                // BUG FIX: Wrap activeTest.type in String() to prevent crashes
                                 : String(activeTest.type || '').replace('plate-', '')}
                             </span>
                             {activeTest.bestMeasurement && (
@@ -6198,7 +6197,7 @@ setMandatoryFields(s.mandatoryFields || []);
                                   e.stopPropagation();
 
                                   if (
-                                    confirm(
+                                    window.confirm(
                                       `Delete condition ${t.instanceName || t.date}?`
                                     )
                                   ) {
@@ -6244,6 +6243,7 @@ setMandatoryFields(s.mandatoryFields || []);
                     <MDTestRenderer
                       activeTest={activeTest}
                       updateActiveTest={updateActiveTest}
+                      allTests={tests}
                       TestHeader={TestHeader}
                       datasetProtocols={datasetProtocols}
                       jumpToProtocol={jumpToProtocolFn}
@@ -6266,6 +6266,7 @@ setMandatoryFields(s.mandatoryFields || []);
                     <NMRTestRenderer
                       activeTest={activeTest}
                       updateActiveTest={updateActiveTest}
+                      allTests={tests}
                       TestHeader={TestHeader}
                       datasetProtocols={datasetProtocols}
                       jumpToProtocol={jumpToProtocolFn}
@@ -6294,6 +6295,7 @@ setMandatoryFields(s.mandatoryFields || []);
                     <CDTestRenderer
                       activeTest={activeTest}
                       updateActiveTest={updateActiveTest}
+                      allTests={tests}
                       appClipboard={appClipboard}
                       setAppClipboard={setAppClipboard}
                       TestHeader={TestHeader}
@@ -6319,6 +6321,7 @@ setMandatoryFields(s.mandatoryFields || []);
                     <BoxDetail
                       activeTest={activeTest}
                       updateActiveTest={updateActiveTest}
+                      allTests={tests}
                       storages={storages}
                       expandedGroups={expandedGroups}
                       setExpandedGroups={setExpandedGroups}
@@ -6336,6 +6339,7 @@ setMandatoryFields(s.mandatoryFields || []);
                     <CloningTestRenderer
                       activeTest={activeTest}
                       updateActiveTest={updateActiveTest}
+                      allTests={tests}
                       TestHeader={TestHeader}
                       datasetProtocols={datasetProtocols}
                       jumpToProtocol={jumpToProtocolFn}
@@ -6360,6 +6364,7 @@ setMandatoryFields(s.mandatoryFields || []);
                     <NMRFittingsTestRenderer
                       activeTest={activeTest}
                       updateActiveTest={updateActiveTest}
+                      allTests={tests}
                       TestHeader={TestHeader}
                       operators={operators}
                       molecules={molecules}
@@ -6393,6 +6398,7 @@ setMandatoryFields(s.mandatoryFields || []);
                     <ProteinExpressionTestRenderer
                       activeTest={activeTest}
                       updateActiveTest={updateActiveTest}
+                      allTests={tests}
                       TestHeader={TestHeader}
                       datasetProtocols={datasetProtocols}
                       jumpToProtocol={jumpToProtocolFn}
@@ -6417,6 +6423,7 @@ setMandatoryFields(s.mandatoryFields || []);
                     <PlateTestRenderer
                       activeTest={activeTest}
                       updateActiveTest={updateActiveTest}
+                      allTests={tests}
                       appClipboard={appClipboard}
                       setAppClipboard={setAppClipboard}
                       customCmpds={customCmpds}
@@ -6446,7 +6453,6 @@ setMandatoryFields(s.mandatoryFields || []);
 
                 return <div className="p-6">Unknown test type.</div>;
               })()}
-
             {currentModule === 'notebook' &&
               (() => {
                 const getVal = (key, def) =>

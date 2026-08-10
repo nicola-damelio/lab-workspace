@@ -171,6 +171,34 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useMDDerived(activeTest, ctx);
 
+  const [setupParamReport, setSetupParamReport] = useState(null);
+
+  const handleSetupParamFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const text = ev.target.result;
+        const parsedUpdates = parseSimulationParameters(text, file.name);
+        const count = Object.keys(parsedUpdates).length;
+
+        if (count > 0) {
+          updateActiveTest(parsedUpdates);
+          setSetupParamReport({ ok: true, count, name: file.name });
+        } else {
+          setSetupParamReport({ ok: false, count: 0, name: file.name });
+        }
+      } catch (err) {
+        setSetupParamReport({ ok: false, count: 0, name: file.name, error: true });
+      }
+    };
+    reader.onerror = () => setSetupParamReport({ ok: false, count: 0, name: file.name, error: true });
+    reader.readAsText(file);
+    e.target.value = ''; // reset input so the same file can be re-uploaded
+  };
+
   const structureMode = activeTest.structureMode || '2d';
   const atomLabelMode = activeTest.atomLabelMode || 'selected';
   const residueOffset = activeTest.residueOffset || 0;
@@ -320,6 +348,24 @@ export const MDExperimentSetupSection = ({ ctx }) => {
               className="w-full border border-slate-300 rounded-lg p-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold">
               {Object.entries(WATER_MODELS).map(([k, v]) => <option key={k} value={k}>{v.name} ({v.sites}-site)</option>)}
             </select>
+          </div>
+
+          <div className="bg-emerald-50 p-4 rounded-lg border border-emerald-200">
+            <label className="block text-xs font-bold text-emerald-700 uppercase mb-2">📄 Auto-fill from file</label>
+            <label className="bg-white hover:bg-emerald-100 text-emerald-700 border border-emerald-300 font-bold py-1.5 px-3 rounded-lg text-xs cursor-pointer shadow-sm transition-colors inline-flex items-center gap-2 w-full justify-center">
+              Upload GROMACS / CHARMM file
+              <input type="file" accept=".mdp,.top,.itp,.inp,.str,.conf,.namd,.prm,.par,.psf" onChange={handleSetupParamFile} className="hidden" />
+            </label>
+            <p className="text-[9px] text-emerald-700/70 mt-1.5 leading-tight">Reads force field, water model &amp; run parameters (temperature, pressure, timestep…) from a .mdp / .top (GROMACS) or .inp / .str / .psf (CHARMM/NAMD) file.</p>
+            {setupParamReport && (
+              <p className={`text-[10px] font-bold mt-1.5 ${setupParamReport.ok ? 'text-emerald-700' : 'text-amber-600'}`}>
+                {setupParamReport.error
+                  ? `⚠️ Could not read ${setupParamReport.name}`
+                  : setupParamReport.ok
+                    ? `✓ Parsed ${setupParamReport.count} field${setupParamReport.count === 1 ? '' : 's'} from ${setupParamReport.name}`
+                    : `⚠️ No recognizable parameters found in ${setupParamReport.name}`}
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -955,6 +1001,7 @@ export const MDAnalysisSection = ({ ctx }) => {
 export const MDSimulationParamsSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useMDDerived(activeTest, ctx);
+  const [paramFileReport, setParamFileReport] = useState(null);
 
   const handleParamFile = (e) => {
     const file = e.target.files && e.target.files[0];
@@ -962,13 +1009,22 @@ export const MDSimulationParamsSection = ({ ctx }) => {
 
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const text = ev.target.result;
-      const parsedUpdates = parseSimulationParameters(text, file.name);
-      
-      if (Object.keys(parsedUpdates).length > 0) {
-        updateActiveTest(parsedUpdates);
+      try {
+        const text = ev.target.result;
+        const parsedUpdates = parseSimulationParameters(text, file.name);
+        const count = Object.keys(parsedUpdates).length;
+
+        if (count > 0) {
+          updateActiveTest(parsedUpdates);
+          setParamFileReport({ ok: true, count, name: file.name });
+        } else {
+          setParamFileReport({ ok: false, count: 0, name: file.name });
+        }
+      } catch (err) {
+        setParamFileReport({ ok: false, count: 0, name: file.name, error: true });
       }
     };
+    reader.onerror = () => setParamFileReport({ ok: false, count: 0, name: file.name, error: true });
     reader.readAsText(file);
     e.target.value = ''; // reset input so you can re-upload if needed
   };
@@ -1007,11 +1063,20 @@ export const MDSimulationParamsSection = ({ ctx }) => {
         </div>
 
         {/* --- Upload Button --- */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col items-start gap-1">
           <label className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1.5 px-3 rounded-lg text-xs cursor-pointer shadow-sm transition-colors flex items-center gap-2">
-            📄 Auto-fill from .mdp / .inp
-            <input type="file" accept=".mdp,.inp,.prm" onChange={handleParamFile} className="hidden" />
+            📄 Auto-fill from GROMACS / CHARMM file
+            <input type="file" accept=".mdp,.top,.itp,.inp,.str,.conf,.namd,.prm,.par,.psf" onChange={handleParamFile} className="hidden" />
           </label>
+          {paramFileReport && (
+            <span className={`text-[10px] font-bold ${paramFileReport.ok ? 'text-emerald-700' : 'text-amber-600'}`}>
+              {paramFileReport.error
+                ? `⚠️ Could not read ${paramFileReport.name}`
+                : paramFileReport.ok
+                  ? `✓ Parsed ${paramFileReport.count} field${paramFileReport.count === 1 ? '' : 's'} from ${paramFileReport.name}`
+                  : `⚠️ No recognizable parameters found in ${paramFileReport.name}`}
+            </span>
+          )}
         </div>
       </div>
 

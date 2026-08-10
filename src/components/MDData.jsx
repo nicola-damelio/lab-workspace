@@ -614,14 +614,67 @@ export const writeMDCellValue = (
 
   updateActiveTest({ mdValues });
 };
-// In MDData.jsx — REPLACE the existing parseSimulationParameters
-
 export const parseSimulationParameters = (text, filename) => {
   const updates = {};
   const lowerText = text.toLowerCase();
+  const lowerName = (filename || '').toLowerCase();
 
-  if (filename.endsWith('.mdp')) {
-    // ================= GROMACS (.mdp) =================
+  // ================= FORCE FIELD / WATER MODEL DETECTION =================
+  // Runs on every file regardless of extension: force-field / water-model names
+  // usually show up as #include lines, header comments, or filenames rather than
+  // as a single "key = value" pair, so a keyword scan is more reliable here than
+  // a line-anchored regex. First match wins.
+  const FF_DETECT = [
+    { key: 'CHARMM', needle: 'charmm36m', version: 'charmm36m' },
+    { key: 'CHARMM', needle: 'charmm36', version: 'charmm36' },
+    { key: 'CHARMM', needle: 'charmm27', version: 'charmm27' },
+    { key: 'CHARMM', needle: 'cgenff', version: 'cgenff' },
+    { key: 'AMBER', needle: 'ff19sb', version: 'ff19SB' },
+    { key: 'AMBER', needle: 'ff14sb', version: 'ff14SB' },
+    { key: 'AMBER', needle: 'ff99sb', version: 'ff99SB' },
+    { key: 'AMBER', needle: 'gaff2', version: 'GAFF2' },
+    { key: 'OPLS', needle: 'opls-aa/m', version: 'opls-aa/m' },
+    { key: 'OPLS', needle: 'opls4', version: 'opls4' },
+    { key: 'OPLS', needle: 'opls3e', version: 'opls3e' },
+    { key: 'OPLS', needle: 'opls2005', version: 'opls2005' },
+    { key: 'OPLS', needle: 'oplsaa', version: 'opls-aa' },
+    { key: 'OPLS', needle: 'opls-aa', version: 'opls-aa' },
+    { key: 'GROMOS', needle: '54a7', version: '54a7' },
+    { key: 'GROMOS', needle: '54a8', version: '54a8' },
+    { key: 'GROMOS', needle: '53a6', version: '53a6' },
+    { key: 'GROMOS', needle: '45a3', version: '45a3' },
+    { key: 'MARTINI', needle: 'martini3', version: '3.0' },
+    { key: 'MARTINI', needle: 'martini2', version: '2.2' },
+    { key: 'MARTINI', needle: 'martini', version: '3.0' }
+  ];
+  for (const entry of FF_DETECT) {
+    if (lowerText.includes(entry.needle) || lowerName.includes(entry.needle)) {
+      updates.forceField = entry.key;
+      updates.forceFieldVersion = entry.version;
+      break;
+    }
+  }
+
+  const WATER_DETECT = [
+    ['tip5p', 'TIP5P'],
+    ['tip4p', 'TIP4P'],
+    ['tip3p', 'TIP3P'],
+    ['spc/e', 'SPCE'],
+    ['spce', 'SPCE'],
+    ['opc', 'OPC'],
+    ['spc', 'SPC']
+  ];
+  for (const [needle, key] of WATER_DETECT) {
+    if (lowerText.includes(needle)) {
+      updates.waterModel = key;
+      break;
+    }
+  }
+
+  if (lowerName.endsWith('.mdp')) {
+    // ================= GROMACS run parameters (.mdp) =================
+    updates.software = 'GROMACS';
+
     const getVal = (key) => {
       const match = new RegExp(`^\\s*${key}\\s*=\\s*([^\\s;]+)`, 'im').exec(text);
       return match ? match[1].trim() : null;
@@ -639,12 +692,13 @@ export const parseSimulationParameters = (text, filename) => {
     const ref_p = getVal('ref_p');
     if (ref_p) updates.simPressure = ref_p.split(',')[0].trim();
 
-    // Integrator
+    // Integrator (GROMACS 'md' is leap-frog; 'md-vv' is velocity Verlet)
     const integrator = getVal('integrator');
-    if (integrator === 'md' || integrator === 'md-vv') updates.integrator = 'verlet';
+    if (integrator === 'md') updates.integrator = 'leapfrog';
+    else if (integrator === 'md-vv' || integrator === 'md-vv-avek') updates.integrator = 'verlet';
     else if (integrator === 'sd' || integrator === 'sd2') updates.integrator = 'stochastic';
     else if (integrator === 'bd') updates.integrator = 'brownian';
-    else if (integrator === 'steep' || integrator === 'cg') updates.integrator = 'verlet';
+    else if (integrator === 'steep' || integrator === 'cg' || integrator === 'l-bfgs') updates.integrator = 'verlet';
 
     // Thermostat
     const tcoupl = getVal('tcoupl');
@@ -680,18 +734,30 @@ export const parseSimulationParameters = (text, filename) => {
     const coulombtype = getVal('coulombtype');
     if (coulombtype) updates.coulombType = coulombtype;
 
-  } else if (filename.endsWith('.inp') || filename.endsWith('.prm') || filename.endsWith('.str')) {
-    // ================= CHARMM / NAMD (.inp / .prm / .str) =================
+  } else if (/\.(top|itp)$/.test(lowerName)) {
+    // ================= GROMACS topology (.top / .itp) =================
+    // No run-control parameters live here — this branch only exists so uploading
+    // a topology file still records the force field / water model detected above
+    // and tags the software, without pretending to find a timestep that isn't there.
+    updates.software = 'GROMACS';
+
+  } else if (/\.(inp|str|conf|namd)$/.test(lowerName)) {
+    // ================= CHARMM / NAMD control script (.inp / .str / .conf / .namd) =================
     const getMatch = (regex) => {
       const m = regex.exec(lowerText);
       return m ? m[1] : null;
     };
 
-    const dt = getMatch(/timestep\s+([0-9.]+)/);
-    if (dt) updates.timestep = (parseFloat(dt) * 1000).toString();
-
     const nstep = getMatch(/nstep\s+([0-9]+)/) || getMatch(/numsteps\s+([0-9]+)/);
     if (nstep) updates.nSteps = nstep;
+
+    const isNamd = lowerText.includes('langevinpiston') || lowerText.includes('usegrouppressure') || lowerText.includes('numsteps') || lowerName.endsWith('.namd') || lowerName.endsWith('.conf');
+    updates.software = isNamd ? 'NAMD' : 'CHARMM';
+
+    // NAMD's "timestep" directive is already in fs; CHARMM's "timestep"/"timestp" in a
+    // `dynamics` command is in ps, so only the CHARMM case needs the ×1000 conversion.
+    const dt = getMatch(/timestep\s+([0-9.]+)/);
+    if (dt) updates.timestep = isNamd ? parseFloat(dt).toString() : (parseFloat(dt) * 1000).toString();
 
     const temp =
       getMatch(/finalt\s+([0-9.]+)/) ||
@@ -726,7 +792,26 @@ export const parseSimulationParameters = (text, filename) => {
     // Barostat inference
     if (lowerText.includes('langevinpiston')) updates.barostat = 'parrinello_rahman';
     else if (lowerText.includes('berendsen') && isNpt) updates.barostat = 'berendsen';
+
+  } else if (/\.(prm|par|psf)$/.test(lowerName)) {
+    // ================= CHARMM/NAMD parameter or structure file (.prm / .par / .psf) =================
+    // Also has no run-control block — force field / water model + software tag only.
+    updates.software = 'CHARMM';
   }
+
+  // ================= DERIVED VALUES =================
+  const tsNum = parseFloat(updates.timestep);
+  const stepsNum = parseFloat(updates.nSteps);
+  if (Number.isFinite(tsNum) && Number.isFinite(stepsNum) && tsNum > 0 && stepsNum > 0) {
+    const ns = (tsNum * stepsNum) / 1e6; // fs * steps → ns
+    updates.simulationTime = ns >= 0.01 ? ns.toFixed(3) : ns.toExponential(2);
+  }
+
+  // Mirror onto the generic condition-field keys ("Experimental Condition" /
+  // "System Setup" tabs) so a single upload keeps every view of the same
+  // activeTest in sync, without needing a second parser or a second button.
+  if (updates.simTemperature) updates.temperature = updates.simTemperature;
+  if (updates.simPressure) updates.pressure = updates.simPressure;
 
   return updates;
 };
