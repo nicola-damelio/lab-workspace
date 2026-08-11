@@ -668,18 +668,47 @@ export const TestShellRenderer = ({
 
   const typeCustomFields = (customFields || []).filter(customFieldMatchesTab);
 
-  const getFieldPlacement = (field) =>
-    String(
-      field?.placement || field?.section || field?.location || 'conditions'
+  // Resolve which named "subsection" of the current page a custom field
+  // belongs to. Prefers the new `subsection` key (a notebookChecks id,
+  // e.g. 'cond', 'seq', 'instrument'). Falls back to the legacy binary
+  // `placement` ('conditions' / 'instrumental') for fields saved before
+  // subsections existed, and finally defaults to 'cond'.
+  const getFieldSubsection = (field) => {
+    const explicit = String(field?.subsection || '').trim().toLowerCase();
+    if (explicit) return explicit;
+
+    const legacy = String(
+      field?.placement || field?.section || field?.location || ''
     ).toLowerCase();
 
+    if (legacy === 'instrumental') return 'instrument';
+    return 'cond';
+  };
+
+  const pageNotebookChecks = Array.isArray(config.notebookChecks)
+    ? config.notebookChecks
+    : [];
+
   const conditionCustomFields = typeCustomFields.filter(
-    (f) => getFieldPlacement(f) !== 'instrumental'
+    (f) => getFieldSubsection(f) === 'cond'
   );
 
   const instrumentalCustomFields = typeCustomFields.filter(
-    (f) => getFieldPlacement(f) === 'instrumental'
+    (f) => getFieldSubsection(f) === 'instrument'
   );
+
+  // Any other named subsection this page exposes (Sequence, Table, Images,
+  // etc. — sourced from the page's own notebookChecks) that has custom
+  // fields assigned to it. These render in their own "Additional Fields"
+  // card further down the page, grouped by that subsection's label.
+  const otherSubsectionCustomFields = pageNotebookChecks
+    .filter((c) => c.id !== 'cond' && c.id !== 'instrument')
+    .map((c) => ({
+      id: c.id,
+      label: c.label,
+      fields: typeCustomFields.filter((f) => getFieldSubsection(f) === c.id)
+    }))
+    .filter((group) => group.fields.length > 0);
 
   const renderConditionField = (f) => {
     if (!f || !f.key) return null;
@@ -976,12 +1005,39 @@ export const TestShellRenderer = ({
     );
   };
 
-  const mandatoryFields = Array.isArray(rest.mandatoryFields)
-    ? rest.mandatoryFields
+  /* ===== MANDATORY PARAMETERS (per special page + optional subsection) =====
+     Rules and per-page behavior come from the Definitions & Labels ->
+     Custom Metadata Fields -> Mandatory Parameters manager. Each rule is
+     { page: 'all' | typeKey, subsection: '' | notebookCheck id, fieldName }.
+     Behavior is looked up per page: 'block' | 'warning' | 'deactivate'
+     (defaults to 'warning' to match the previous behavior). */
+  const mandatoryRules = Array.isArray(rest.mandatoryRules)
+    ? rest.mandatoryRules
     : [];
 
-  const missingFields = useMemo(() => {
-    if (!mandatoryFields.length) return [];
+  const mandatoryBehaviorMap =
+    rest.mandatoryBehavior && typeof rest.mandatoryBehavior === 'object'
+      ? rest.mandatoryBehavior
+      : {};
+
+  const mandatoryBehaviorForPage = mandatoryBehaviorMap[typeKey] || 'warning';
+
+  const applicableMandatoryRules = mandatoryRules.filter(
+    (r) => r && (r.page === 'all' || r.page === typeKey)
+  );
+
+  const notebookCheckLabelById = pageNotebookChecks.reduce((acc, c) => {
+    acc[c.id] = c.label;
+    return acc;
+  }, {});
+
+  const missingMandatoryRules = useMemo(() => {
+    if (
+      mandatoryBehaviorForPage === 'deactivate' ||
+      !applicableMandatoryRules.length
+    ) {
+      return [];
+    }
 
     const conditionFieldData = (
       Array.isArray(config.conditionFields) ? config.conditionFields : []
@@ -1007,7 +1063,7 @@ export const TestShellRenderer = ({
       {}
     );
 
-    const customFieldData = conditionCustomFields.reduce((acc, field) => {
+    const customFieldData = typeCustomFields.reduce((acc, field) => {
       const key = getFieldKey(field);
       const label = getFieldLabel(field);
       const value = key ? customFieldValues[key] : undefined;
@@ -1042,33 +1098,47 @@ export const TestShellRenderer = ({
       ...customFieldData
     };
 
-    return mandatoryFields.filter((req) => {
-      const key = String(req || '').toLowerCase().trim();
-      const val = currentData[key];
+    return applicableMandatoryRules
+      .filter((rule) => {
+        const key = String(rule.fieldName || '').toLowerCase().trim();
+        if (!key) return false;
 
-      if (val === 0) return false;
-      if (val === false) return false;
+        const val = currentData[key];
 
-      if (val === undefined || val === null) return true;
+        if (val === 0) return false;
+        if (val === false) return false;
 
-      if (typeof val === 'string' && val.trim() === '') return true;
+        if (val === undefined || val === null) return true;
 
-      if (Array.isArray(val) && val.length === 0) return true;
+        if (typeof val === 'string' && val.trim() === '') return true;
 
-      return false;
-    });
+        if (Array.isArray(val) && val.length === 0) return true;
+
+        return false;
+      })
+      .map((rule) => ({
+        ...rule,
+        subsectionLabel:
+          rule.subsection && rule.subsection !== 'all'
+            ? notebookCheckLabelById[rule.subsection] || rule.subsection
+            : 'General'
+      }));
   }, [
-    mandatoryFields,
+    applicableMandatoryRules,
+    mandatoryBehaviorForPage,
     t,
     config.conditionFields,
     customFieldValues,
-    conditionCustomFields,
+    typeCustomFields,
     selectedCompounds,
     compound,
     cellLines,
     testCategory,
     testOperator
   ]);
+
+  const mandatoryBlocked =
+    mandatoryBehaviorForPage === 'block' && missingMandatoryRules.length > 0;
 
   const ctx = {
     activeTest: t,
@@ -1236,7 +1306,7 @@ export const TestShellRenderer = ({
       {CustomToolbar && <CustomToolbar ctx={ctx} />}
 
       <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
-        {missingFields.length > 0 && (
+        {!mandatoryBlocked && missingMandatoryRules.length > 0 && (
           <div className="mb-6 bg-red-50 border-l-4 border-red-500 p-4 rounded-r-lg shadow-sm">
             <div className="flex items-center gap-2">
               <span className="text-red-500 text-lg">⚠️</span>
@@ -1247,8 +1317,12 @@ export const TestShellRenderer = ({
 
             <p className="text-xs text-red-700 mt-1">
               Please fill in the following required fields to complete this
-              record:
-              <span className="font-bold"> {missingFields.join(', ')}</span>
+              record:{' '}
+              <span className="font-bold">
+                {missingMandatoryRules
+                  .map((r) => `${r.fieldName} (${r.subsectionLabel})`)
+                  .join(', ')}
+              </span>
             </p>
           </div>
         )}
@@ -1521,6 +1595,54 @@ export const TestShellRenderer = ({
           </div>
         </CollapsibleSection>
 
+        {/* ===== ADDITIONAL FIELDS BY SUBSECTION =====
+            Custom Metadata Fields targeted at a named subsection of this
+            page other than Experimental Conditions / Instrumental Setup
+            (e.g. Sequence, Table, Images — sourced from this page's own
+            notebookChecks) render here, grouped by that subsection. */}
+        {otherSubsectionCustomFields.map((group) => (
+          <CollapsibleSection
+            key={group.id}
+            title={`Additional Fields — ${group.label}`}
+            icon="📎"
+            defaultOpen={false}
+          >
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {group.fields.map(renderCustomMetadataField)}
+            </div>
+          </CollapsibleSection>
+        ))}
+
+        {/* ===== TYPE-SPECIFIC CONTENT + LAB NOTEBOOK EXPORT =====
+            Locked when this page's mandatory-parameter behavior is set to
+            "block" and at least one required field above is still empty.
+            Classification, Experimental Conditions, Instrumental Setup and
+            Additional Fields stay visible/editable above so the user can
+            actually satisfy the requirement and unlock this section. */}
+        {mandatoryBlocked ? (
+          <div className="max-w-2xl mx-auto mt-6 bg-red-50 border-2 border-red-300 rounded-2xl p-8 text-center shadow-sm">
+            <div className="text-4xl mb-3">🔒</div>
+            <h2 className="text-base font-bold text-red-800 uppercase tracking-wide mb-2">
+              {config.typeLabel || 'This page'} is locked
+            </h2>
+            <p className="text-sm text-red-700 mb-4">
+              Fill in the required fields below before continuing. Everything
+              above (Classification, Experimental Conditions, Instrumental
+              Setup) is still editable.
+            </p>
+            <ul className="text-sm text-red-800 font-semibold text-left inline-block">
+              {missingMandatoryRules.map((r, i) => (
+                <li key={i}>
+                  • {r.fieldName}{' '}
+                  <span className="text-red-500 font-normal">
+                    ({r.subsectionLabel})
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+        <>
         {CustomAll ? (
           <CustomAll ctx={ctx} />
         ) : (
@@ -2044,6 +2166,8 @@ export const TestShellRenderer = ({
               </button>
             </div>
           </CollapsibleSection>
+        )}
+        </>
         )}
       </div>
 
