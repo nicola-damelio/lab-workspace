@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { RichTextEditor } from './RichTextEditor';
 import { BufferAdditiveFields } from './DefinitionsExtra';
+import { parseSimulationParameters } from './MDData';
 
 /* ============================================================================
 HELPERS
@@ -8,6 +9,7 @@ HELPERS
 
 const sortAlpha = (arr) => {
   if (!Array.isArray(arr)) return [];
+
   return [...arr].sort((a, b) =>
     String(a ?? '').localeCompare(String(b ?? ''), undefined, {
       sensitivity: 'base'
@@ -17,15 +19,35 @@ const sortAlpha = (arr) => {
 
 const uniqueOptions = (arr) => {
   if (!Array.isArray(arr)) return [];
-  return Array.from(new Set(arr.filter(Boolean)));
+
+  return Array.from(
+    new Set(
+      arr.filter((value) => value !== null && value !== undefined && value !== '')
+    )
+  );
 };
 
 const alignCaptions = (images, captions) => {
   if (!Array.isArray(images)) return [];
+
   return images.map((_, i) =>
     Array.isArray(captions) && captions[i] != null ? captions[i] : ''
   );
 };
+
+const getFieldKey = (field) => field?.key || field?.name || '';
+
+const getFieldLabel = (field) =>
+  field?.label || field?.name || field?.key || '';
+
+const escapeHtml = (value) =>
+  String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[ch]));
 
 /* ============================================================================
 COLLAPSIBLE SECTION
@@ -34,7 +56,7 @@ COLLAPSIBLE SECTION
 export const CollapsibleSection = ({
   title,
   icon,
-  defaultOpen = true,
+  defaultOpen = false,
   children,
   headerExtra,
   className = ''
@@ -53,7 +75,9 @@ export const CollapsibleSection = ({
       >
         <div className="flex items-center gap-2 overflow-hidden">
           {icon && <span className="text-xl shrink-0">{icon}</span>}
-          <h3 className="text-lg font-bold text-slate-800 truncate select-none">{title}</h3>
+          <h3 className="text-lg font-bold text-slate-800 truncate select-none">
+            {title}
+          </h3>
         </div>
 
         <div className="flex items-center gap-3 shrink-0">
@@ -103,14 +127,17 @@ export const MultiSelectDropdown = ({
 
   useEffect(() => {
     const handler = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target)) {
+        setOpen(false);
+      }
     };
 
     document.addEventListener('mousedown', handler);
+
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const optionsSafe = Array.isArray(options) ? options : [];
+  const optionsSafe = uniqueOptions(Array.isArray(options) ? options : []);
   const selectedSafe = Array.isArray(selected) ? selected : [];
 
   const emerald = accent === 'emerald';
@@ -169,6 +196,7 @@ export const MultiSelectDropdown = ({
 
       <button
         type="button"
+        aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
         className={`w-full border rounded-md p-2 text-sm bg-white outline-none flex items-center justify-between gap-3 shadow-sm ${buttonCls}`}
       >
@@ -189,15 +217,15 @@ export const MultiSelectDropdown = ({
           {optionsSafe.length === 0 ? (
             <div className="p-3 text-sm text-slate-400 italic">{emptyHint}</div>
           ) : (
-            optionsSafe.map((opt) => (
+            optionsSafe.map((opt, idx) => (
               <label
-                key={opt}
+                key={`${String(opt)}-${idx}`}
                 className={`flex items-center gap-2 px-3 py-2 cursor-pointer border-b border-slate-100 last:border-b-0 ${optionHoverCls}`}
               >
                 <input
                   type="checkbox"
                   checked={selectedSafe.includes(opt)}
-                  onChange={() => onToggle(opt)}
+                  onChange={() => onToggle && onToggle(opt)}
                   className={`w-4 h-4 ${checkboxCls}`}
                 />
                 <span
@@ -207,7 +235,7 @@ export const MultiSelectDropdown = ({
                       : 'text-slate-700'
                   }`}
                 >
-                  {opt}
+                  {String(opt)}
                 </span>
               </label>
             ))
@@ -217,15 +245,15 @@ export const MultiSelectDropdown = ({
 
       {selectedSafe.length > 0 && (
         <div className="flex flex-wrap gap-2 mt-2">
-          {selectedSafe.map((s) => (
+          {selectedSafe.map((s, idx) => (
             <span
-              key={s}
+              key={`${String(s)}-${idx}`}
               className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold border ${chipCls}`}
             >
-              {s}
+              {String(s)}
               <button
                 type="button"
-                onClick={() => onToggle(s)}
+                onClick={() => onToggle && onToggle(s)}
                 className={`font-black ${chipRemoveCls}`}
                 title={`Remove ${s}`}
               >
@@ -256,9 +284,10 @@ IMAGE URL NORMALIZATION
 const normalizeImageCandidates = (url) => {
   const u = (url || '').trim();
 
-  let m = u.match(/drive.google.com\/file\/d\/([^/?]+)/);
+  let m = u.match(/drive\.google\.com\/file\/d\/([^\/?#]+)/);
   if (m) {
     const id = m[1];
+
     return [
       `https://lh3.googleusercontent.com/d/${id}`,
       `https://drive.google.com/thumbnail?id=${id}&sz=w1600`,
@@ -266,9 +295,10 @@ const normalizeImageCandidates = (url) => {
     ];
   }
 
-  m = u.match(/drive.google.com\/(?:open|uc)[^#]*[?&]id=([^&#]+)/);
+  m = u.match(/drive\.google\.com\/(?:open|uc)[^#]*[?&]id=([^&#]+)/);
   if (m) {
     const id = m[1];
+
     return [
       `https://lh3.googleusercontent.com/d/${id}`,
       `https://drive.google.com/thumbnail?id=${id}&sz=w1600`,
@@ -277,10 +307,10 @@ const normalizeImageCandidates = (url) => {
   }
 
   if (u.includes('dropbox.com')) {
-    return [
-      u.replace(/[?&]dl=0/g, '') + (u.includes('?') ? '&raw=1' : '?raw=1'),
-      u
-    ];
+    const clean = u.replace(/[?&]dl=0/g, '');
+    const raw = clean + (clean.includes('?') ? '&raw=1' : '?raw=1');
+
+    return [raw, u];
   }
 
   return [u];
@@ -291,7 +321,7 @@ SMART IMAGE
 ========================================================================== */
 
 export const SmartImage = ({ src, alt, style }) => {
-  const cands = React.useMemo(() => normalizeImageCandidates(src), [src]);
+  const cands = useMemo(() => normalizeImageCandidates(src), [src]);
   const [idx, setIdx] = useState(0);
   const [failed, setFailed] = useState(false);
 
@@ -300,11 +330,24 @@ export const SmartImage = ({ src, alt, style }) => {
     setFailed(false);
   }, [src]);
 
+  const fallbackStyle = style || { minHeight: '150px', maxHeight: '400px' };
+
+  if (!src || cands.length === 0) {
+    return (
+      <div
+        className="w-full flex flex-col items-center justify-center bg-slate-50 border border-dashed border-slate-300 rounded text-slate-400 text-xs text-center px-4 py-6"
+        style={fallbackStyle}
+      >
+        ⚠️ No image URL provided.
+      </div>
+    );
+  }
+
   if (failed) {
     return (
       <div
         className="w-full flex flex-col items-center justify-center bg-slate-50 border border-dashed border-slate-300 rounded text-slate-400 text-xs text-center px-4 py-6"
-        style={style || { minHeight: '150px', maxHeight: '400px' }}
+        style={fallbackStyle}
       >
         ⚠️ Preview not available. If the file is private, set it to “Anyone
         with the link can view”.
@@ -312,20 +355,24 @@ export const SmartImage = ({ src, alt, style }) => {
     );
   }
 
+  const currentSrc = cands[Math.min(idx, cands.length - 1)];
+
   return (
     <img
-      src={cands[Math.min(idx, cands.length - 1)]}
+      src={currentSrc}
       alt={alt}
       className="w-full h-auto object-contain rounded bg-white"
-      style={style || { minHeight: '150px', maxHeight: '400px' }}
+      style={fallbackStyle}
       onError={() => {
-        if (idx < cands.length - 1) setIdx(idx + 1);
-        else setFailed(true);
+        if (idx < cands.length - 1) {
+          setIdx(idx + 1);
+        } else {
+          setFailed(true);
+        }
       }}
     />
   );
 };
-
 /* ============================================================================
 MAIN SHELL
 ========================================================================== */
@@ -355,33 +402,50 @@ export const TestShellRenderer = ({
   const typeKey = config.typeKey || 'test';
 
   const compound = t.compound || '';
-  const comments = t.comments || '';
-  const images = t[imagesKey] || [];
-  const documents = t.documents || [];
+  const comments = typeof t.comments === 'string' ? t.comments : t.comments || '';
+
+  const images = Array.isArray(t[imagesKey]) ? t[imagesKey] : [];
+  const documents = Array.isArray(t.documents) ? t.documents : [];
+  const cellLines = Array.isArray(t.cellLines) ? t.cellLines : [];
+
   const linkedProtocolId = t.linkedProtocolId || '';
-  const cellLines = t.cellLines || [];
-  const customFieldValues = t.customFieldValues || {};
-  const experimentPlan = t.plan || [];
+
+  const customFieldValues =
+    t.customFieldValues && typeof t.customFieldValues === 'object'
+      ? t.customFieldValues
+      : {};
+
+  const experimentPlan = Array.isArray(t.plan) ? t.plan : [];
 
   const [zoomImage, setZoomImage] = useState(null);
+  const [mdParamFileReport, setMdParamFileReport] = useState(null);
+
+  const planDateId = `plan-date-${t.id ?? 'unsaved'}`;
 
   const definitionCategories = Array.isArray(testCategories)
     ? testCategories.filter(Boolean)
     : [];
 
-  const fallbackCategories =
-    config.fallbackCategories || config.categories || ['Activity'];
+  const fallbackCategories = (
+    Array.isArray(config.fallbackCategories)
+      ? config.fallbackCategories
+      : Array.isArray(config.categories)
+        ? config.categories
+        : ['Activity']
+  ).filter(Boolean);
 
   const baseCategories =
-    definitionCategories.length > 0 ? definitionCategories : fallbackCategories;
+    definitionCategories.length > 0
+      ? definitionCategories
+      : fallbackCategories.length > 0
+        ? fallbackCategories
+        : ['Activity'];
 
   const testCategory = t.testCategory || baseCategories[0] || 'Activity';
 
   const categories = [
     ...new Set([...baseCategories, testCategory].filter(Boolean))
   ];
-
-  /* ===== OPERATORS ===== */
 
   const operatorsRaw = Array.isArray(rest.operators) ? rest.operators : [];
 
@@ -397,12 +461,8 @@ export const TestShellRenderer = ({
 
   const testOperator = t.operator || '';
 
-  /* ===== DEFINITIONS ===== */
-
   const buffersFromDefs = Array.isArray(rest.buffers) ? rest.buffers : [];
-  const additivesFromDefs = Array.isArray(rest.additives)
-    ? rest.additives
-    : [];
+  const additivesFromDefs = Array.isArray(rest.additives) ? rest.additives : [];
   const solventsFromDefs = Array.isArray(rest.solvents) ? rest.solvents : [];
 
   const sortedCompounds = sortAlpha(allCmpds);
@@ -421,37 +481,56 @@ export const TestShellRenderer = ({
     samplesCfg.cellLineLabel || 'Cell Lines / Biological Models';
 
   const selectedCompounds = (() => {
-    if (Array.isArray(t.selectedCompounds))
+    if (Array.isArray(t.selectedCompounds)) {
       return t.selectedCompounds.filter(Boolean);
+    }
 
-    if (Array.isArray(t.compoundsSelected))
+    if (Array.isArray(t.compoundsSelected)) {
       return t.compoundsSelected.filter(Boolean);
+    }
 
-    if (typeKey !== 'plate' && Array.isArray(t.compounds))
+    if (typeKey !== 'plate' && Array.isArray(t.compounds)) {
       return t.compounds.filter(Boolean);
+    }
 
-    if (compound)
+    if (compound) {
       return String(compound)
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean);
+    }
 
     return [];
   })();
 
-  const linkedProtocolIds =
-    t.linkedProtocolIds || (linkedProtocolId ? [linkedProtocolId] : []);
+  const linkedProtocolIds = Array.isArray(t.linkedProtocolIds)
+    ? t.linkedProtocolIds.filter(Boolean)
+    : linkedProtocolId
+      ? [linkedProtocolId]
+      : [];
+
+  const safeDatasetProtocols = Array.isArray(datasetProtocols)
+    ? datasetProtocols
+    : [];
 
   const addLinkedProtocol = (id) => {
     if (!id || linkedProtocolIds.includes(id)) return;
 
     const upd = [...linkedProtocolIds, id];
-    update({ linkedProtocolIds: upd, linkedProtocolId: upd[0] });
+
+    update({
+      linkedProtocolIds: upd,
+      linkedProtocolId: upd[0]
+    });
   };
 
   const removeLinkedProtocol = (id) => {
     const upd = linkedProtocolIds.filter((p) => p !== id);
-    update({ linkedProtocolIds: upd, linkedProtocolId: upd[0] || '' });
+
+    update({
+      linkedProtocolIds: upd,
+      linkedProtocolId: upd[0] || ''
+    });
   };
 
   const toggleCompound = (cmp) => {
@@ -465,7 +544,9 @@ export const TestShellRenderer = ({
       compound: upd.length > 0 ? upd[0] : ''
     };
 
-    if (typeKey !== 'plate') payload.compounds = upd;
+    if (typeKey !== 'plate') {
+      payload.compounds = upd;
+    }
 
     update(payload);
   };
@@ -477,7 +558,9 @@ export const TestShellRenderer = ({
       compound: ''
     };
 
-    if (typeKey !== 'plate') payload.compounds = [];
+    if (typeKey !== 'plate') {
+      payload.compounds = [];
+    }
 
     update(payload);
   };
@@ -492,11 +575,12 @@ export const TestShellRenderer = ({
 
   const handleCustomFieldChange = (fieldName, value) => {
     update({
-      customFieldValues: { ...customFieldValues, [fieldName]: value }
+      customFieldValues: {
+        ...customFieldValues,
+        [fieldName]: value
+      }
     });
   };
-
-  /* ===== FIGURE CAPTIONS ===== */
 
   const figureCaptions = Array.isArray(t.figureCaptions)
     ? t.figureCaptions
@@ -507,16 +591,14 @@ export const TestShellRenderer = ({
   const updateFigureCaption = (idx, value) => {
     const next = captionsAligned.slice();
     next[idx] = value;
+
     update({ figureCaptions: next });
   };
 
   const addImageLink = (url) => {
     update({
       [imagesKey]: [...images, url],
-      figureCaptions: [
-        ...captionsAligned,
-        `Figure ${images.length + 1}: `
-      ]
+      figureCaptions: [...captionsAligned, `Figure ${images.length + 1}:`]
     });
   };
 
@@ -527,23 +609,23 @@ export const TestShellRenderer = ({
     });
   };
 
-  /* ===== ESCAPE KEY ===== */
-
   useEffect(() => {
     const handler = (e) => {
       if (e.key === 'Escape') setZoomImage(null);
     };
 
     document.addEventListener('keydown', handler);
+
     return () => document.removeEventListener('keydown', handler);
   }, []);
-
-  /* ===== CUSTOM FIELD TAB MATCHING ===== */
 
   const normalizeScopeValue = (value) => String(value || '').toLowerCase();
 
   const currentTabKey = normalizeScopeValue(config.typeKey || t.type || 'test');
   const currentTestType = normalizeScopeValue(t.type || currentTabKey);
+
+  const isMdType =
+    currentTestType === 'md_simulation' || currentTestType === 'md';
 
   const customFieldMatchesTab = (field) => {
     if (!field) return false;
@@ -553,8 +635,11 @@ export const TestShellRenderer = ({
     const addScopes = (value) => {
       if (!value) return;
 
-      if (Array.isArray(value)) value.forEach(addScopes);
-      else scopes.push(normalizeScopeValue(value));
+      if (Array.isArray(value)) {
+        value.forEach(addScopes);
+      } else {
+        scopes.push(normalizeScopeValue(value));
+      }
     };
 
     addScopes(field.appliesTo);
@@ -573,8 +658,9 @@ export const TestShellRenderer = ({
 
       if (scope === currentTabKey || scope === currentTestType) return true;
 
-      if (scope === 'plate')
+      if (scope === 'plate') {
         return currentTabKey === 'plate' || currentTestType.startsWith('plate');
+      }
 
       return false;
     });
@@ -595,31 +681,40 @@ export const TestShellRenderer = ({
     (f) => getFieldPlacement(f) === 'instrumental'
   );
 
-  /* ===== CONDITION FIELDS ===== */
-
   const renderConditionField = (f) => {
+    if (!f || !f.key) return null;
+
     const val =
       t[f.key] !== undefined && t[f.key] !== null ? t[f.key] : '';
+
+    const hasUnits = Array.isArray(f.units) && f.units.length > 0;
 
     const unitVal =
       t[`${f.key}Unit`] !== undefined && t[`${f.key}Unit`] !== null
         ? t[`${f.key}Unit`]
-        : f.units?.[0] || '';
+        : hasUnits
+          ? f.units[0]
+          : '';
 
     const cls =
       'w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500';
 
-    const inputCls = f.units
+    const inputCls = hasUnits
       ? 'flex-1 border border-slate-300 rounded-l-lg p-2 text-sm outline-none focus:border-blue-500 min-w-0'
       : cls;
 
-const isSolventMedia =
+    const isSolventMedia =
       f.type === 'solvent-select' ||
       ['solvent', 'medium', 'media'].includes(f.key);
 
     if (isSolventMedia) {
       const options = sortAlpha(
-        uniqueOptions([...solventsFromDefs.map(s => typeof s === 'string' ? s : (s?.name || '')), val])
+        uniqueOptions([
+          ...solventsFromDefs.map((s) =>
+            typeof s === 'string' ? s : s?.name || ''
+          ),
+          val
+        ])
       );
 
       return (
@@ -631,9 +726,7 @@ const isSolventMedia =
           <div className="flex gap-1">
             <select
               value={options.includes(val) ? val : ''}
-              onChange={(e) =>
-                e.target.value && update({ [f.key]: e.target.value })
-              }
+              onChange={(e) => update({ [f.key]: e.target.value })}
               className="border border-slate-300 rounded-l-lg p-2 text-sm bg-white outline-none focus:border-blue-500 flex-1"
             >
               <option value="">— Select —</option>
@@ -660,9 +753,7 @@ const isSolventMedia =
       f.type === 'compound-select' || f.key === 'otherMolecule';
 
     if (isOtherMolecule) {
-      const options = sortAlpha(
-        uniqueOptions([...sortedCompounds, val])
-      );
+      const options = sortAlpha(uniqueOptions([...sortedCompounds, val]));
 
       return (
         <div key={f.key}>
@@ -673,9 +764,7 @@ const isSolventMedia =
           <div className="flex gap-1">
             <select
               value={options.includes(val) ? val : ''}
-              onChange={(e) =>
-                e.target.value && update({ [f.key]: e.target.value })
-              }
+              onChange={(e) => update({ [f.key]: e.target.value })}
               className="border border-slate-300 rounded-l-lg p-2 text-sm bg-white outline-none focus:border-blue-500 flex-1"
             >
               <option value="">— Select compound —</option>
@@ -704,7 +793,7 @@ const isSolventMedia =
           {f.label}
         </label>
 
-        <div className={f.units ? 'flex' : ''}>
+        <div className={hasUnits ? 'flex' : ''}>
           {f.type === 'date' ? (
             <input
               type="date"
@@ -752,7 +841,7 @@ const isSolventMedia =
             />
           )}
 
-          {f.units && (
+          {hasUnits && (
             <select
               value={unitVal}
               onChange={(e) => update({ [`${f.key}Unit`]: e.target.value })}
@@ -770,43 +859,93 @@ const isSolventMedia =
     );
   };
 
-  /* ===== CUSTOM METADATA FIELD RENDER ===== */
+  const handleMdParamFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+
+    reader.onload = (ev) => {
+      try {
+        const text = ev.target.result;
+
+        const parsed = parseSimulationParameters(text, file.name);
+
+        const parsedUpdates =
+          parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+            ? parsed
+            : {};
+
+        const count = Object.keys(parsedUpdates).length;
+
+        if (count > 0) {
+          update(parsedUpdates);
+          setMdParamFileReport({ ok: true, count, name: file.name });
+        } else {
+          setMdParamFileReport({ ok: false, count: 0, name: file.name });
+        }
+      } catch (err) {
+        setMdParamFileReport({
+          ok: false,
+          count: 0,
+          name: file.name,
+          error: true
+        });
+      }
+    };
+
+    reader.onerror = () =>
+      setMdParamFileReport({
+        ok: false,
+        count: 0,
+        name: file.name,
+        error: true
+      });
+
+    reader.readAsText(file);
+    e.target.value = '';
+  };
 
   const renderCustomMetadataField = (field) => {
+    const fieldKey = getFieldKey(field);
+    if (!fieldKey) return null;
+
+    const fieldLabel = getFieldLabel(field);
+
     const val =
-      customFieldValues[field.name] !== undefined &&
-      customFieldValues[field.name] !== null
-        ? customFieldValues[field.name]
+      customFieldValues[fieldKey] !== undefined &&
+      customFieldValues[fieldKey] !== null
+        ? customFieldValues[fieldKey]
         : '';
 
     const cls =
       'w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-blue-500';
 
     return (
-      <div key={field.id || field.name}>
+      <div key={field.id || fieldKey}>
         <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-          {field.name}
+          {fieldLabel}
         </label>
 
         {field.type === 'date' ? (
           <input
             type="date"
             value={val}
-            onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
+            onChange={(e) => handleCustomFieldChange(fieldKey, e.target.value)}
             className={cls}
           />
         ) : field.type === 'number' ? (
           <input
             type="number"
             value={val}
-            onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
+            onChange={(e) => handleCustomFieldChange(fieldKey, e.target.value)}
             className={cls}
             placeholder="Enter value..."
           />
         ) : field.type === 'select' ? (
           <select
             value={val}
-            onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
+            onChange={(e) => handleCustomFieldChange(fieldKey, e.target.value)}
             className={cls}
           >
             <option value="">-- Select --</option>
@@ -819,7 +958,7 @@ const isSolventMedia =
         ) : field.type === 'textarea' ? (
           <textarea
             value={val}
-            onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
+            onChange={(e) => handleCustomFieldChange(fieldKey, e.target.value)}
             className={cls}
             placeholder="Enter value..."
             rows={3}
@@ -828,7 +967,7 @@ const isSolventMedia =
           <input
             type="text"
             value={val}
-            onChange={(e) => handleCustomFieldChange(field.name, e.target.value)}
+            onChange={(e) => handleCustomFieldChange(fieldKey, e.target.value)}
             className={cls}
             placeholder="Enter value..."
           />
@@ -837,49 +976,100 @@ const isSolventMedia =
     );
   };
 
-  /* ===== MISSING MANDATORY FIELDS LOGIC ===== */
-  const mandatoryFields = Array.isArray(rest.mandatoryFields) ? rest.mandatoryFields : [];
+  const mandatoryFields = Array.isArray(rest.mandatoryFields)
+    ? rest.mandatoryFields
+    : [];
+
   const missingFields = useMemo(() => {
     if (!mandatoryFields.length) return [];
-    
-    // Costruiamo un dizionario di tutti i dati correnti per un rapido controllo
+
+    const conditionFieldData = (
+      Array.isArray(config.conditionFields) ? config.conditionFields : []
+    ).reduce((acc, f) => {
+      const value = f?.key ? t[f.key] : undefined;
+
+      if (f?.label) {
+        acc[String(f.label).toLowerCase()] = value;
+      }
+
+      if (f?.key) {
+        acc[String(f.key).toLowerCase()] = value;
+      }
+
+      return acc;
+    }, {});
+
+    const customValueData = Object.keys(customFieldValues).reduce(
+      (acc, k) => {
+        acc[k.toLowerCase()] = customFieldValues[k];
+        return acc;
+      },
+      {}
+    );
+
+    const customFieldData = conditionCustomFields.reduce((acc, field) => {
+      const key = getFieldKey(field);
+      const label = getFieldLabel(field);
+      const value = key ? customFieldValues[key] : undefined;
+
+      if (key) acc[key.toLowerCase()] = value;
+      if (label) acc[label.toLowerCase()] = value;
+
+      return acc;
+    }, {});
+
     const currentData = {
-      'operator': testOperator,
+      operator: testOperator,
       'experiment type': testCategory,
       'secondary classification': t.secondaryCategory,
-      'compound': selectedCompounds.length ? selectedCompounds : (compound ? [compound] : []),
-      'compounds': selectedCompounds.length ? selectedCompounds : (compound ? [compound] : []),
+      compound: selectedCompounds.length
+        ? selectedCompounds
+        : compound
+          ? [compound]
+          : [],
+      compounds: selectedCompounds.length
+        ? selectedCompounds
+        : compound
+          ? [compound]
+          : [],
       'cell line': cellLines.length ? cellLines : [],
       'cell lines': cellLines.length ? cellLines : [],
-      'date': t.date,
+      date: t.date,
       'experiment date': t.date,
-      'instance': t.instanceName,
-      ...((config.conditionFields || []).reduce((acc, f) => { 
-          acc[f.label.toLowerCase()] = t[f.key]; 
-          acc[f.key.toLowerCase()] = t[f.key]; // Fallback by key
-          return acc; 
-      }, {})),
-      ...(Object.keys(t.customFieldValues || {}).reduce((acc, k) => { 
-          acc[k.toLowerCase()] = t.customFieldValues[k]; 
-          return acc; 
-      }, {}))
+      instance: t.instanceName,
+      ...conditionFieldData,
+      ...customValueData,
+      ...customFieldData
     };
 
-    return mandatoryFields.filter(req => {
-       const key = req.toLowerCase().trim();
-       const val = currentData[key];
-       
-       if (val === 0) return false; // valid number
-       if (val === false) return false; // valid boolean
-       if (val === undefined || val === null) return true; // missing
-       if (typeof val === 'string' && val.trim() === '') return true; // empty string
-       if (Array.isArray(val) && val.length === 0) return true; // empty array
-       
-       return false;
-    });
-  }, [mandatoryFields, t, config.conditionFields, selectedCompounds, compound, cellLines, testCategory, testOperator]);
+    return mandatoryFields.filter((req) => {
+      const key = String(req || '').toLowerCase().trim();
+      const val = currentData[key];
 
-  /* ===== CONTEXT ===== */
+      if (val === 0) return false;
+      if (val === false) return false;
+
+      if (val === undefined || val === null) return true;
+
+      if (typeof val === 'string' && val.trim() === '') return true;
+
+      if (Array.isArray(val) && val.length === 0) return true;
+
+      return false;
+    });
+  }, [
+    mandatoryFields,
+    t,
+    config.conditionFields,
+    customFieldValues,
+    conditionCustomFields,
+    selectedCompounds,
+    compound,
+    cellLines,
+    testCategory,
+    testOperator
+  ]);
+
   const ctx = {
     activeTest: t,
     updateActiveTest,
@@ -890,22 +1080,36 @@ const isSolventMedia =
     conditionCustomFields,
     instrumentalCustomFields,
     testCategories: categories,
-    datasetProtocols,
+    datasetProtocols: safeDatasetProtocols,
     jumpToProtocol,
     selectedCompounds,
     cellLines,
     ...rest
   };
 
-  /* ===== NOTEBOOK EXPORT ===== */
   const notebookChecks =
     config.notebookChecks || [
       { id: 'cond', label: 'Experimental Conditions' },
       ...(config.extraNotebookChecks || [])
     ];
 
+  const isEmptyValue = (v) => v === undefined || v === null || v === '';
+
+  const formatNotebookValue = (v, unit) => {
+    if (isEmptyValue(v)) return 'N/A';
+
+    const base =
+      typeof v === 'object' ? JSON.stringify(v) : String(v);
+
+    const safeBase = escapeHtml(base);
+    const safeUnit = unit ? escapeHtml(unit) : '';
+
+    return safeUnit ? `${safeBase} ${safeUnit}` : safeBase;
+  };
+
   const appendToNotebook = () => {
     const checked = {};
+
     notebookChecks.forEach((c) => {
       const el = document.getElementById(`nb-${typeKey}-${c.id}`);
       checked[c.id] = el ? el.checked : false;
@@ -914,9 +1118,9 @@ const isSolventMedia =
     let html =
       '<div style="background-color: #f8fafc; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0; margin-top: 15px; font-family: sans-serif;">';
 
-    html += `<h4 style="color: #1e40af; margin-top: 0; margin-bottom: 12px; font-size: 14px; border-bottom: 2px solid #bfdbfe; padding-bottom: 4px;">📊 ${
+    html += `<h4 style="color: #1e40af; margin-top: 0; margin-bottom: 12px; font-size: 14px; border-bottom: 2px solid #bfdbfe; padding-bottom: 4px;">📊 ${escapeHtml(
       config.typeLabel || 'Experiment'
-    } Summary</h4>`;
+    )} Summary</h4>`;
 
     const builder = custom.buildNotebookHtml || config.buildNotebookHtml;
 
@@ -934,35 +1138,52 @@ const isSolventMedia =
 
       const category = testCategory || 'N/A';
       const secondary = t.secondaryCategory || '';
+
       const sample =
         selectedCompounds.length > 0
           ? selectedCompounds.join(', ')
-          : compound || 'N/A';
-      const cells =
-        cellLines.length > 0 ? cellLines.join(', ') : 'N/A';
+          : compound || '';
 
-      const conditionPairs = (config.conditionFields || [])
+      const cells = cellLines.length > 0 ? cellLines.join(', ') : '';
+
+      const conditionPairs = (
+        Array.isArray(config.conditionFields) ? config.conditionFields : []
+      )
+        .filter((f) => f && f.key)
         .map((f) => {
           const v = t[f.key];
-          const unit = t[`${f.key}Unit`] || f.units?.[0] || '';
-          const displayVal = v ? `${v}${unit ? ' ' + unit : ''}` : 'N/A';
-          return `<b>${f.label}:</b> ${displayVal}`;
+          const unit =
+            t[`${f.key}Unit`] ||
+            (Array.isArray(f.units) && f.units.length > 0 ? f.units[0] : '');
+
+          const label = escapeHtml(f.label || f.key);
+
+          return `<b>${label}:</b> ${formatNotebookValue(v, unit)}`;
         })
         .join(' | ');
 
       const customPairs = conditionCustomFields
-        .map(
-          (f) =>
-            `<b>${f.name}:</b> ${customFieldValues[f.name] || 'N/A'}`
-        )
+        .map((f) => {
+          const key = getFieldKey(f);
+          const label = escapeHtml(getFieldLabel(f));
+          const v = key ? customFieldValues[key] : undefined;
+
+          return `<b>${label}:</b> ${formatNotebookValue(v)}`;
+        })
         .join(' | ');
 
       const details = [
-        `<b>Experiment Type:</b> ${category}`,
-        secondary ? `<b>Secondary Classification:</b> ${secondary}` : '',
-        testOperator ? `<b>Operator:</b> ${testOperator}` : '',
-        sample && sample !== 'N/A' ? `<b>Sample:</b> ${sample}` : '',
-        cells && cells !== 'N/A' ? `<b>Cell lines:</b> ${cells}` : '',
+        `<b>Experiment Type:</b> ${escapeHtml(category)}`,
+        secondary
+          ? `<b>Secondary Classification:</b> ${escapeHtml(secondary)}`
+          : '',
+        testOperator
+          ? `<b>Operator:</b> ${escapeHtml(testOperator)}`
+          : operatorNames
+            ? `<b>Operator:</b> ${escapeHtml(operatorNames)}`
+            : '',
+        sample ? `<b>Sample:</b> ${escapeHtml(sample)}` : '',
+        cells ? `<b>Cell lines:</b> ${escapeHtml(cells)}` : '',
         conditionPairs,
         customPairs
       ]
@@ -983,19 +1204,31 @@ const isSolventMedia =
     );
   };
 
-  /* ===== CUSTOM SECTIONS ===== */
   const CustomToolbar = custom.Toolbar || null;
   const CustomAll = custom.All || null;
+
   const CompoundsSection = config.CompoundsSection || custom.Compounds || null;
-  const SetupSection = config.SetupSection || custom.Setup || null;
+
+  const MolecularStructureSection = custom.MolecularStructure || null;
+
+  const SetupSection =
+    config.SetupSection || custom.Setup || custom.ExperimentSetup || null;
+
   const InstrumentalSetupSection = custom.InstrumentalSetup || null;
+
   const DataSection = config.DataSection || custom.Data || null;
+
+  const DataAnalysisSection =
+    custom.DataAnalysis || custom.Analysis || null;
+
   const FittingSection = config.FittingSection || custom.Fitting || null;
+
   const FittingErrors = custom.FittingErrors || null;
   const FittingGraphics = custom.FittingGraphics || null;
-  const SimulationsSection = config.SimulationsSection || custom.Simulations || null;
 
-  /* ===== RENDER ===== */
+  const SimulationsSection =
+    config.SimulationsSection || custom.Simulations || null;
+
   return (
     <div className="flex flex-col h-full overflow-hidden relative">
       {TestHeader}
@@ -1003,29 +1236,34 @@ const isSolventMedia =
       {CustomToolbar && <CustomToolbar ctx={ctx} />}
 
       <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
-        
-        {/* ===== MANDATORY WARNING BANNER ===== */}
         {missingFields.length > 0 && (
           <div className="mb-6 bg-red-50 border-l-4 border-red-500 p-4 rounded-r-lg shadow-sm">
             <div className="flex items-center gap-2">
               <span className="text-red-500 text-lg">⚠️</span>
-              <h3 className="text-sm font-bold text-red-800 uppercase tracking-wide">Missing Mandatory Parameters</h3>
+              <h3 className="text-sm font-bold text-red-800 uppercase tracking-wide">
+                Missing Mandatory Parameters
+              </h3>
             </div>
+
             <p className="text-xs text-red-700 mt-1">
-              Please fill in the following required fields to complete this record: 
+              Please fill in the following required fields to complete this
+              record:
               <span className="font-bold"> {missingFields.join(', ')}</span>
             </p>
           </div>
         )}
 
-        {/* ===== CLASSIFICATION ===== */}
-        <CollapsibleSection title="Classification" icon="🏷️">
+        <CollapsibleSection
+          title="Classification"
+          icon="🏷️"
+          defaultOpen={false}
+        >
           <div className="max-w-xl flex flex-col gap-5">
-            {/* PRIMARY CLASSIFICATION */}
             <div>
               <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
                 Primary Classification / Experiment Type / Test Category
               </label>
+
               <select
                 value={testCategory}
                 onChange={(e) => update({ testCategory: e.target.value })}
@@ -1039,11 +1277,11 @@ const isSolventMedia =
               </select>
             </div>
 
-            {/* SECONDARY CLASSIFICATION */}
             <div>
               <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
                 Secondary Classification / Sub-category
               </label>
+
               <select
                 value={t.secondaryCategory || ''}
                 onChange={(e) => update({ secondaryCategory: e.target.value })}
@@ -1078,13 +1316,13 @@ const isSolventMedia =
                   </button>
                 )}
               </div>
+
               <p className="text-xs text-slate-400 mt-1">
                 Secondary classification uses the same category list defined in
                 Definitions & Labels.
               </p>
             </div>
 
-            {/* OPERATORS */}
             <div>
               <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
                 Operator / Scientist who performed the experiment
@@ -1123,11 +1361,11 @@ const isSolventMedia =
           </div>
         </CollapsibleSection>
 
-        {/* ===== COMPOUNDS & BIOLOGICAL MODELS ===== */}
         {(showCompoundsSection || CompoundsSection) && (
           <CollapsibleSection
             title="Compounds & Biological Models"
             icon="🧪"
+            defaultOpen={false}
           >
             {showCompoundsSection && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1171,10 +1409,63 @@ const isSolventMedia =
           </CollapsibleSection>
         )}
 
-        {/* ===== EXPERIMENTAL CONDITIONS ===== */}
-        <CollapsibleSection title="Experimental Conditions" icon="🌡️">
+        {MolecularStructureSection && (
+          <CollapsibleSection
+            title="Molecular structure and visualization"
+            icon="🧬"
+            defaultOpen={false}
+          >
+            <MolecularStructureSection ctx={ctx} />
+          </CollapsibleSection>
+        )}
+
+        <CollapsibleSection
+          title="Experimental Conditions"
+          icon="🌡️"
+          defaultOpen={false}
+        >
+          {isMdType && (
+            <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded-lg flex flex-wrap items-center gap-3">
+              <label className="bg-white hover:bg-emerald-100 text-emerald-700 border border-emerald-300 font-bold py-1.5 px-3 rounded-lg text-xs cursor-pointer shadow-sm transition-colors flex items-center gap-2 shrink-0">
+                📄 Auto-fill from GROMACS / CHARMM file
+                <input
+                  type="file"
+                  accept=".mdp,.top,.itp,.inp,.str,.conf,.namd,.prm,.par,.psf"
+                  onChange={handleMdParamFile}
+                  className="hidden"
+                />
+              </label>
+
+              <p className="text-[11px] text-emerald-700/80 flex-1 min-w-[220px]">
+                Reads force field, water model, temperature, pressure, timestep
+                &amp; more directly from your simulation input file.
+              </p>
+
+              {mdParamFileReport && (
+                <span
+                  className={`text-[11px] font-bold ${
+                    mdParamFileReport.ok
+                      ? 'text-emerald-700'
+                      : 'text-amber-600'
+                  }`}
+                >
+                  {mdParamFileReport.error
+                    ? `⚠️ Could not read ${mdParamFileReport.name}`
+                    : mdParamFileReport.ok
+                      ? `✓ Parsed ${mdParamFileReport.count} field${
+                          mdParamFileReport.count === 1 ? '' : 's'
+                        } from ${mdParamFileReport.name}`
+                      : `⚠️ No recognizable parameters found in ${mdParamFileReport.name}`}
+                </span>
+              )}
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {(config.conditionFields || []).map(renderConditionField)}
+            {(Array.isArray(config.conditionFields)
+              ? config.conditionFields
+              : []
+            ).map(renderConditionField)}
 
             {conditionCustomFields.length > 0 && (
               <div className="col-span-full text-xs font-bold text-slate-400 uppercase pt-2 border-t border-slate-100">
@@ -1192,8 +1483,16 @@ const isSolventMedia =
             additives={additivesFromDefs}
           />
         </CollapsibleSection>
+                {SetupSection && (
+          <CollapsibleSection
+            title="Experiment Setup"
+            icon="⚙️"
+            defaultOpen={false}
+          >
+            <SetupSection ctx={ctx} />
+          </CollapsibleSection>
+        )}
 
-        {/* ===== INSTRUMENTAL SETUP ===== */}
         <CollapsibleSection
           title="Instrumental Setup"
           icon="🔬"
@@ -1222,8 +1521,83 @@ const isSolventMedia =
           </div>
         </CollapsibleSection>
 
-        {/* ===== LINKED PROTOCOLS ===== */}
-        <CollapsibleSection title="Linked Protocols" icon="📋">
+        {CustomAll ? (
+          <CustomAll ctx={ctx} />
+        ) : (
+          <>
+            {DataSection && (
+              <CollapsibleSection title="Data" icon="🔢" defaultOpen={false}>
+                <DataSection ctx={ctx} />
+              </CollapsibleSection>
+            )}
+
+            {DataAnalysisSection && (
+              <CollapsibleSection
+                title="Data Analysis"
+                icon="📉"
+                defaultOpen={false}
+              >
+                <DataAnalysisSection ctx={ctx} />
+              </CollapsibleSection>
+            )}
+
+            {FittingSection ? (
+              <CollapsibleSection
+                title="Fitting"
+                icon="📐"
+                defaultOpen={false}
+              >
+                <FittingSection ctx={ctx} />
+              </CollapsibleSection>
+            ) : (
+              (FittingErrors || FittingGraphics) && (
+                <CollapsibleSection
+                  title="Data Analysis"
+                  icon="📐"
+                  defaultOpen={false}
+                >
+                  <div className="flex flex-col gap-6">
+                    {FittingErrors && (
+                      <CollapsibleSection
+                        title="Error Management"
+                        icon="⚠️"
+                        defaultOpen={false}
+                      >
+                        <FittingErrors ctx={ctx} />
+                      </CollapsibleSection>
+                    )}
+
+                    {FittingGraphics && (
+                      <CollapsibleSection
+                        title="Graphical Parameters"
+                        icon="🎨"
+                        defaultOpen={false}
+                      >
+                        <FittingGraphics ctx={ctx} />
+                      </CollapsibleSection>
+                    )}
+                  </div>
+                </CollapsibleSection>
+              )
+            )}
+
+            {SimulationsSection && (
+              <CollapsibleSection
+                title="Simulations"
+                icon="🧪"
+                defaultOpen={false}
+              >
+                <SimulationsSection ctx={ctx} />
+              </CollapsibleSection>
+            )}
+          </>
+        )}
+
+        <CollapsibleSection
+          title="Linked Protocols"
+          icon="📋"
+          defaultOpen={false}
+        >
           <div className="flex flex-col gap-1 p-3 bg-indigo-50 border border-indigo-200 rounded-lg">
             <label className="text-xs font-bold text-indigo-800 uppercase flex items-center justify-between mb-2">
               <span>📋 Linked Protocols</span>
@@ -1235,9 +1609,7 @@ const isSolventMedia =
             {linkedProtocolIds.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-2">
                 {linkedProtocolIds.map((pid) => {
-                  const prot = (datasetProtocols || []).find(
-                    (p) => p.id === pid
-                  );
+                  const prot = safeDatasetProtocols.find((p) => p.id === pid);
 
                   return (
                     <div
@@ -1278,10 +1650,10 @@ const isSolventMedia =
             >
               <option value="">-- Add a protocol to link --</option>
 
-              {(datasetProtocols || [])
+              {safeDatasetProtocols
                 .filter((p) => !linkedProtocolIds.includes(p.id))
-                .map((p) => (
-                  <option key={p.id} value={p.id}>
+                .map((p, idx) => (
+                  <option key={p.id ?? `protocol-${idx}`} value={p.id}>
                     {p.title} ({p.category})
                   </option>
                 ))}
@@ -1289,7 +1661,6 @@ const isSolventMedia =
           </div>
         </CollapsibleSection>
 
-        {/* ===== AGENDA ===== */}
         <CollapsibleSection title="Agenda" icon="📅" defaultOpen={false}>
           <h3 className="text-[11px] font-bold text-slate-600 mb-2 flex justify-between items-center">
             <span>📅 Schedule / Planning (This Item)</span>
@@ -1297,21 +1668,27 @@ const isSolventMedia =
             <div className="flex gap-2">
               <input
                 type="date"
-                id={`plan-date-${t.id}`}
+                id={planDateId}
                 className="border border-slate-300 px-2 py-1 text-xs rounded bg-white text-slate-800 outline-none focus:border-blue-500"
               />
 
               <button
                 type="button"
                 onClick={() => {
-                  const el = document.getElementById(`plan-date-${t.id}`);
+                  const el = document.getElementById(planDateId);
                   const d = el ? el.value : '';
 
                   if (d) {
                     update({
                       plan: [
                         ...experimentPlan,
-                        { id: Date.now(), date: d, task: '' }
+                        {
+                          id: `plan-${Date.now()}-${Math.random()
+                            .toString(36)
+                            .slice(2)}`,
+                          date: d,
+                          task: ''
+                        }
                       ].sort((a, b) => a.date.localeCompare(b.date))
                     });
                   }
@@ -1345,9 +1722,7 @@ const isSolventMedia =
                   onChange={(e) =>
                     update({
                       plan: experimentPlan.map((p) =>
-                        p.id === item.id
-                          ? { ...p, task: e.target.value }
-                          : p
+                        p.id === item.id ? { ...p, task: e.target.value } : p
                       )
                     })
                   }
@@ -1400,8 +1775,7 @@ const isSolventMedia =
           </div>
         </CollapsibleSection>
 
-        {/* ===== REPORT ===== */}
-        <CollapsibleSection title="Report" icon="📝">
+        <CollapsibleSection title="Report" icon="📝" defaultOpen={false}>
           <div className="flex flex-col lg:flex-row gap-6">
             <div className="flex-1 flex flex-col h-full min-h-[160px]">
               <label className="text-xs font-bold text-slate-600 mb-2">
@@ -1431,48 +1805,69 @@ const isSolventMedia =
                     </span>
                   )}
 
-                  {documents.map((doc, idx) => (
-                    <div
-                      key={doc.id || idx}
-                      className="flex items-center justify-between bg-slate-50 border border-slate-200 p-1.5 rounded-lg shadow-sm group"
-                    >
+                  {documents.map((doc, idx) => {
+                    const docKey = doc.id ?? idx;
+                    const displayName = doc.name || doc.data || 'Document';
+
+                    return (
                       <div
-                        className="flex items-center gap-2 truncate flex-1 cursor-pointer"
-                        onClick={() => {
-                          const nn = prompt('Rename document:', doc.name);
-
-                          if (nn) {
-                            update({
-                              documents: documents.map((d) =>
-                                (d.id || idx) === (doc.id || idx)
-                                  ? { ...d, name: nn.trim() }
-                                  : d
-                              )
-                            });
-                          }
-                        }}
+                        key={docKey}
+                        className="flex items-center justify-between bg-slate-50 border border-slate-200 p-1.5 rounded-lg shadow-sm group"
                       >
-                        <span className="text-sm">🔗</span>
-                        <span className="text-[10px] font-bold text-slate-700 truncate group-hover:text-blue-600">
-                          {doc.name}
-                        </span>
+                        <div className="flex items-center gap-2 truncate flex-1 min-w-0">
+                          <span className="text-sm">🔗</span>
+
+                          <a
+                            href={doc.data}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[10px] font-bold text-slate-700 truncate hover:text-blue-600"
+                            title={doc.data}
+                          >
+                            {displayName}
+                          </a>
+                        </div>
+
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const nn = prompt('Rename document:', displayName);
+
+                              if (nn) {
+                                update({
+                                  documents: documents.map((d, i) =>
+                                    (d.id ?? i) === docKey
+                                      ? { ...d, name: nn.trim() }
+                                      : d
+                                  )
+                                });
+                              }
+                            }}
+                            className="text-slate-400 hover:text-blue-500 font-bold px-1 opacity-0 group-hover:opacity-100"
+                            title="Rename"
+                          >
+                            ✏️
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              update({
+                                documents: documents.filter(
+                                  (d, i) => (d.id ?? i) !== docKey
+                                )
+                              })
+                            }
+                            className="text-slate-400 hover:text-red-500 font-bold px-1 opacity-0 group-hover:opacity-100"
+                            title="Remove"
+                          >
+                            ×
+                          </button>
+                        </div>
                       </div>
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                          update({
-                            documents: documents.filter(
-                              (d, i) => (d.id || i) !== (doc.id || idx)
-                            )
-                          })
-                        }
-                        className="text-slate-400 hover:text-red-500 font-bold px-1 opacity-0 group-hover:opacity-100"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
 
                 <button
@@ -1489,15 +1884,23 @@ const isSolventMedia =
                         .map((s) => s.trim())
                         .filter(Boolean);
 
-                      const newDocs = urls.map((url, i) => {
+                      const newDocs = urls.map((rawUrl, i) => {
+                        const url = /^https?:\/\//i.test(rawUrl)
+                          ? rawUrl
+                          : `https://${rawUrl}`;
+
                         let name = url;
 
                         try {
                           name = new URL(url).hostname;
-                        } catch (e) {}
+                        } catch (e) {
+                          name = rawUrl;
+                        }
 
                         return {
-                          id: Date.now().toString() + i + Math.random(),
+                          id: `${Date.now()}-${i}-${Math.random()
+                            .toString(36)
+                            .slice(2)}`,
                           name,
                           type: 'link',
                           data: url
@@ -1515,8 +1918,7 @@ const isSolventMedia =
           </div>
         </CollapsibleSection>
 
-        {/* ===== FIGURES ===== */}
-        <CollapsibleSection title="Figures" icon="🖼️">
+        <CollapsibleSection title="Figures" icon="🖼️" defaultOpen={false}>
           <div className="flex justify-between items-center mb-4 flex-wrap gap-3">
             <p className="text-sm text-slate-500">
               Attach image links (Google Drive/Dropbox supported). Each figure
@@ -1526,11 +1928,19 @@ const isSolventMedia =
             <button
               type="button"
               onClick={() => {
-                const url = prompt(
+                const rawUrl = prompt(
                   'Paste image link (Google Drive, Dropbox, or direct URL):'
                 );
 
-                if (url && url.trim()) addImageLink(url.trim());
+                if (rawUrl && rawUrl.trim()) {
+                  const trimmed = rawUrl.trim();
+
+                  const url = /^https?:\/\//i.test(trimmed)
+                    ? trimmed
+                    : `https://${trimmed}`;
+
+                  addImageLink(url);
+                }
               }}
               className="bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 font-bold px-3 py-1.5 rounded transition-colors shadow-sm text-xs"
             >
@@ -1566,7 +1976,7 @@ const isSolventMedia =
                   <div
                     className="bg-slate-50 rounded-lg p-2 border border-slate-100 cursor-pointer"
                     onClick={() =>
-                      setZoomImage(normalizeImageCandidates(imgSrc)[0])
+                      setZoomImage(normalizeImageCandidates(imgSrc)[0] || imgSrc)
                     }
                     title="Click to zoom"
                   >
@@ -1595,47 +2005,6 @@ const isSolventMedia =
           </div>
         </CollapsibleSection>
 
-        {/* ===== TYPE-SPECIFIC CONTENT ===== */}
-        {CustomAll ? (
-          <CustomAll ctx={ctx} />
-        ) : (
-          <>
-            {SetupSection && <SetupSection ctx={ctx} />}
-            {DataSection && <DataSection ctx={ctx} />}
-            {FittingSection ? (
-              <FittingSection ctx={ctx} />
-            ) : (
-              (FittingErrors || FittingGraphics) && (
-                <CollapsibleSection title="Data Analysis" icon="📐">
-                  <div className="flex flex-col gap-6">
-                    {FittingErrors && (
-                      <CollapsibleSection
-                        title="Error Management"
-                        icon="⚠️"
-                        defaultOpen={false}
-                      >
-                        <FittingErrors ctx={ctx} />
-                      </CollapsibleSection>
-                    )}
-
-                    {FittingGraphics && (
-                      <CollapsibleSection
-                        title="Graphical Parameters"
-                        icon="🎨"
-                        defaultOpen={false}
-                      >
-                        <FittingGraphics ctx={ctx} />
-                      </CollapsibleSection>
-                    )}
-                  </div>
-                </CollapsibleSection>
-              )
-            )}
-            {SimulationsSection && <SimulationsSection ctx={ctx} />}
-          </>
-        )}
-
-        {/* ===== LAB NOTEBOOK EXPORT ===== */}
         {!config.hideNotebook && notebookChecks.length > 0 && (
           <CollapsibleSection
             title="Lab Notebook Export"
@@ -1678,7 +2047,6 @@ const isSolventMedia =
         )}
       </div>
 
-      {/* ===== ZOOM IMAGE MODAL ===== */}
       {zoomImage && (
         <div
           className="fixed inset-0 z-[99999] flex items-center justify-center bg-slate-900/90 backdrop-blur-sm"

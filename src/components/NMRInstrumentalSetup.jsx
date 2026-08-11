@@ -25,9 +25,7 @@ export const NMRInstrumentalSetup = ({ ctx }) => {
   const nmrProbes = Array.isArray(ctx.nmrProbes) ? ctx.nmrProbes : [];
   const nmrExperiments = Array.isArray(ctx.nmrExperiments) ? ctx.nmrExperiments : [];
 
-  // Derived instrument object
   const selectedInstrument = nmrInstruments.find(i => i.name === t.nmrInstrumentName) || null;
-  // Probes available for the selected instrument
   const availableProbes = selectedInstrument
     ? nmrProbes.filter(p => (selectedInstrument.availableProbes || []).includes(p.name))
     : nmrProbes;
@@ -43,7 +41,6 @@ export const NMRInstrumentalSetup = ({ ctx }) => {
   const isNoesy = selectedExp?.expType === 'NOESY';
   const isTocsy = selectedExp?.expType === 'TOCSY';
 
-  // Dataset rows (dataset name + experiment number + link)
   const datasets = t.nmrDatasets || [];
   const addDataset = () => update({ nmrDatasets: [...datasets, { id: Date.now().toString(), name: '', expNo: '', link: '' }] });
   const updateDataset = (id, patch) => update({ nmrDatasets: datasets.map(d => d.id === id ? { ...d, ...patch } : d) });
@@ -51,8 +48,6 @@ export const NMRInstrumentalSetup = ({ ctx }) => {
 
   return (
     <div className="flex flex-col gap-5">
-
-      {/* === Instrument row === */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Field label="Instrument">
           <select value={t.nmrInstrumentName || ''} onChange={e => update({ nmrInstrumentName: e.target.value, nmrFieldMHz: nmrInstruments.find(i => i.name === e.target.value)?.frequency || t.nmrFieldMHz })} className={cls}>
@@ -76,7 +71,6 @@ export const NMRInstrumentalSetup = ({ ctx }) => {
         </Field>
       </div>
 
-      {/* === Probe details row === */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Field label="Probe type (L/S)">
           <select value={t.nmrProbeType || selectedProbe?.state || 'liquid'} onChange={e => update({ nmrProbeType: e.target.value })} className={cls}>
@@ -98,7 +92,6 @@ export const NMRInstrumentalSetup = ({ ctx }) => {
         )}
       </div>
 
-      {/* === Pulse program === */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Field label="Pulse program">
           <select value={t.nmrPulseProgram || ''} onChange={e => update({ nmrPulseProgram: e.target.value })} className={cls}>
@@ -114,12 +107,10 @@ export const NMRInstrumentalSetup = ({ ctx }) => {
         </Field>
       </div>
 
-      {/* === Dynamic acquisition parameters based on experiment definition === */}
       {(selectedExp || t.nmrPulseProgram) && (
         <div className="border-t border-slate-100 pt-4">
           <p className="text-[10px] font-black text-slate-500 uppercase mb-3">Acquisition Parameters</p>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {/* Nucleus fields */}
             {Array.from({ length: dimCount }).map((_, i) => (
               <Field key={i} label={i === 0 ? 'Nucleus (F2/direct)' : i === 1 ? 'Nucleus F1 (indirect)' : 'Nucleus F3'}>
                 <select value={(t.nmrNuclei || [])[i] || NUCLEUS_OPTIONS[i === 0 ? 0 : 1]} onChange={e => {
@@ -131,7 +122,6 @@ export const NMRInstrumentalSetup = ({ ctx }) => {
               </Field>
             ))}
 
-            {/* TD points */}
             <Field label="TD (direct)">
               <input type="number" value={t.nmrTD || ''} onChange={e => update({ nmrTD: e.target.value })} className={cls} placeholder="e.g. 2048" />
             </Field>
@@ -146,21 +136,18 @@ export const NMRInstrumentalSetup = ({ ctx }) => {
               </Field>
             )}
 
-            {/* NOESY mixing time */}
             {isNoesy && (
               <Field label="NOESY mixing d8 (ms)">
                 <input type="number" value={t.nmrNoesyD8 || ''} onChange={e => update({ nmrNoesyD8: e.target.value })} className={cls} placeholder="e.g. 100" />
               </Field>
             )}
 
-            {/* TOCSY mixing time */}
             {isTocsy && (
               <Field label="TOCSY mixing d9 (ms)">
                 <input type="number" value={t.nmrTocsyD9 || ''} onChange={e => update({ nmrTocsyD9: e.target.value })} className={cls} placeholder="e.g. 80" />
               </Field>
             )}
 
-            {/* Custom parameters from experiment definition */}
             {selectedExp?.param1Name && (
               <Field label={selectedExp.param1Name}>
                 <input type="text" value={t.nmrCustomParam1 || ''} onChange={e => update({ nmrCustomParam1: e.target.value })} className={cls} />
@@ -177,12 +164,18 @@ export const NMRInstrumentalSetup = ({ ctx }) => {
               </Field>
             )}
 
-            {/* Relaxation delay D1 */}
             <Field label="Relaxation delay D1 (s)">
               <input type="number" value={t.nmrD1 || ''} onChange={e => update({ nmrD1: e.target.value })} className={cls} placeholder="e.g. 1.5" />
             </Field>
 
-            {/* MAS rate if solid state */}
+            <Field label="Number of Scans (NS)">
+              <input type="number" value={t.nmrNS || ''} onChange={e => update({ nmrNS: e.target.value })} className={cls} placeholder="e.g. 16" />
+            </Field>
+
+            <Field label="Dummy Scans (DS)">
+              <input type="number" value={t.nmrDS || ''} onChange={e => update({ nmrDS: e.target.value })} className={cls} placeholder="e.g. 4" />
+            </Field>
+
             {isSolid && (
               <Field label="MAS Rate (kHz)">
                 <input type="number" value={t.nmrMasRate || ''} onChange={e => update({ nmrMasRate: e.target.value })} className={cls} placeholder="e.g. 10" />
@@ -192,7 +185,6 @@ export const NMRInstrumentalSetup = ({ ctx }) => {
         </div>
       )}
 
-      {/* === Dataset rows === */}
       <div className="border-t border-slate-100 pt-4">
         <div className="flex items-center justify-between mb-2">
           <p className="text-[10px] font-black text-slate-500 uppercase">Datasets</p>

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   BarChart,
   Bar,
@@ -12,10 +12,8 @@ import {
   ResponsiveContainer,
   Cell
 } from 'recharts';
-
 import TestShellRenderer, { CollapsibleSection } from './TestShellRenderer';
 import {
-  All as MDSectionsAll,
   buildNotebookHtml as buildMDNotebookHtmlFromSections
 } from './MDSections';
 import {
@@ -24,28 +22,28 @@ import {
   SUGAR_DB,
   LIPID_DB,
   SS_META,
-  FORM_META,
   RESIDUE_COLORS,
   buildProteinStructure,
   buildNucleicStructure,
   buildSugarStructure,
   buildLipidStructure,
-  elementsToSVG,
   StructureSVGView,
   SequencePaintStrip,
   getSelectedKeys,
-  getManualKeys,
-  parseManual
+  getManualKeys
 } from './NMRData';
 
 /* ============================================================================
-   MDTestRenderer — SINGLE self-contained file.
-   Molecule definition (2D formula + 3D viewer + atom table) reuses the exact
-   same NMR builders/components. 3D viewer additionally loads online
-   XTC / TRR / DCD trajectories via NGL.
-========================================================================== */
+   MDTestRenderer — corrected self-contained file.
+   - Fixed undefined MDSections reference
+   - Fixed JSX syntax issues
+   - Fixed Google Drive / Dropbox URL handling
+   - Improved parameter parsing
+   - Improved trajectory playback safety
+============================================================================ */
 
 // ================= MD DATABASES =================
+
 const FORCE_FIELDS = {
   GROMOS: {
     name: 'GROMOS',
@@ -78,7 +76,6 @@ const FF_ATOM_TYPES = {
     { atom: 'C', type: 'C', mass: 12.011, charge: 0.51 },
     { atom: 'O', type: 'O', mass: 15.999, charge: -0.51 }
   ],
-
   OPLS: [
     { atom: 'N', type: 'opls_238', mass: 14.007, charge: -0.5 },
     { atom: 'HN', type: 'opls_240', mass: 1.008, charge: 0.3 },
@@ -87,7 +84,6 @@ const FF_ATOM_TYPES = {
     { atom: 'C', type: 'opls_235', mass: 12.011, charge: 0.5 },
     { atom: 'O', type: 'opls_236', mass: 15.999, charge: -0.5 }
   ],
-
   CHARMM: [
     { atom: 'N', type: 'NH1', mass: 14.007, charge: -0.47 },
     { atom: 'HN', type: 'H', mass: 1.008, charge: 0.31 },
@@ -96,7 +92,6 @@ const FF_ATOM_TYPES = {
     { atom: 'C', type: 'C', mass: 12.011, charge: 0.51 },
     { atom: 'O', type: 'O', mass: 15.999, charge: -0.51 }
   ],
-
   AMBER: [
     { atom: 'N', type: 'N', mass: 14.007, charge: -0.4157 },
     { atom: 'HN', type: 'H', mass: 1.008, charge: 0.2719 },
@@ -105,7 +100,6 @@ const FF_ATOM_TYPES = {
     { atom: 'C', type: 'C', mass: 12.011, charge: 0.5973 },
     { atom: 'O', type: 'O', mass: 15.999, charge: -0.5679 }
   ],
-
   MARTINI: [
     { atom: 'BB', type: 'P5', mass: 72.0, charge: 0.0 }
   ]
@@ -160,7 +154,6 @@ export const MD_TAB_CONFIG = {
   typeKey: 'md',
   typeLabel: 'Molecular Dynamics',
   icon: '🎞️',
-
   fallbackCategories: [
     'Production MD',
     'Equilibration',
@@ -169,16 +162,13 @@ export const MD_TAB_CONFIG = {
     'Replica Exchange',
     'Metadynamics'
   ],
-
   samples: {
     compounds: true,
     cellLines: false,
     compoundLabel: 'System / Molecule Label(s)',
     cellLineLabel: 'Biological Models'
   },
-
   imagesKey: 'mdImages',
-
   conditionFields: [
     { key: 'experimentDate', label: 'Simulation Date', type: 'date' },
     { key: 'forceField', label: 'Force Field', type: 'text', placeholder: 'e.g. CHARMM36m' },
@@ -189,7 +179,6 @@ export const MD_TAB_CONFIG = {
     { key: 'simTemperature', label: 'Temperature', type: 'text', placeholder: 'e.g. 300', units: ['K'] },
     { key: 'trajectoryUrl', label: 'Trajectory URL', type: 'text', placeholder: 'https://…/traj.xtc' }
   ],
-
   notebookChecks: [
     { id: 'cond', label: 'Simulation Parameters' },
     { id: 'seq', label: 'System / Sequence' },
@@ -199,20 +188,16 @@ export const MD_TAB_CONFIG = {
 };
 
 // ================= HELPERS =================
+
 const getFF = (k) => FORCE_FIELDS[k] || FORCE_FIELDS.GROMOS;
-
 const getFFVersions = (k) => getFF(k).versions || [];
-
 const getWM = (k) => WATER_MODELS[k] || WATER_MODELS.TIP3P;
-
 const getFFAtoms = (k) => FF_ATOM_TYPES[k] || FF_ATOM_TYPES.GROMOS;
 
 const detectTrajFmt = (url) => {
   const u = (url || '').toLowerCase();
-
   if (u.endsWith('.trr')) return 'trr';
   if (u.endsWith('.dcd')) return 'dcd';
-
   return 'xtc';
 };
 
@@ -227,10 +212,8 @@ const normTrajUrl = (url) => {
   }
 
   let m = u.match(/drive\.google\.com\/file\/d\/([^/?]+)/);
-
   if (m) {
     const id = m[1];
-
     return {
       url: `https://lh3.googleusercontent.com/d/${id}`,
       fallbacks: [
@@ -241,10 +224,8 @@ const normTrajUrl = (url) => {
   }
 
   m = u.match(/drive\.google\.com\/(?:open|uc)[^#]*[?&]id=([^&#]+)/);
-
   if (m) {
     const id = m[1];
-
     return {
       url: `https://lh3.googleusercontent.com/d/${id}`,
       fallbacks: [
@@ -255,14 +236,24 @@ const normTrajUrl = (url) => {
   }
 
   if (u.includes('dropbox.com')) {
-    const raw =
-      u.replace(/[?&]dl=0/g, '') +
-      (u.includes('?') ? '&raw=1' : '?raw=1');
+    try {
+      const parsed = new URL(u);
+      parsed.searchParams.delete('dl');
+      parsed.searchParams.set('raw', '1');
 
-    return {
-      url: raw,
-      fallbacks: [u]
-    };
+      return {
+        url: parsed.toString(),
+        fallbacks: [u]
+      };
+    } catch {
+      const cleaned = u.replace(/[?&]dl=0/g, '');
+      const raw = cleaned + (cleaned.includes('?') ? '&raw=1' : '?raw=1');
+
+      return {
+        url: raw,
+        fallbacks: [u]
+      };
+    }
   }
 
   return {
@@ -314,6 +305,7 @@ const genEnergy = (n) =>
   }));
 
 // ================= TRAJECTORY OBJECT HELPERS =================
+
 const getTrajectoryObject = (component) => {
   if (!component) return null;
 
@@ -345,14 +337,16 @@ const setFrameSafe = (traj, frame) => {
     } else if (traj.trajectory && typeof traj.trajectory.setFrame === 'function') {
       traj.trajectory.setFrame(frame);
     }
-  } catch (e) {
+  } catch {
     // ignore frame errors
   }
 };
 
 // ================= DERIVED HOOK =================
+
 const useMDDerived = (activeTest) => {
   const moleculeType = activeTest.moleculeType || 'protein';
+
   const rawSeq = (activeTest.proteinSequence || '').toUpperCase();
 
   const validChars =
@@ -396,6 +390,7 @@ const useMDDerived = (activeTest) => {
             : 'Phospholipid';
 
   const ssRaw = activeTest.secondaryStructure || '';
+
   const getSSAt = (i) =>
     ssRaw[i] && 'HES'.includes(ssRaw[i]) ? ssRaw[i] : 'C';
 
@@ -441,12 +436,15 @@ const useMDDerived = (activeTest) => {
 
     try {
       if (moleculeType === 'protein') return buildProteinStructure(parsedSeq);
+
       if (moleculeType === 'dna' || moleculeType === 'rna') {
         return buildNucleicStructure(parsedSeq, moleculeType);
       }
+
       if (moleculeType === 'sugar') {
         return buildSugarStructure(parsedSeq[0], 'chair', 'alpha');
       }
+
       if (moleculeType === 'lipid') {
         return buildLipidStructure(parsedSeq[0], 'cis');
       }
@@ -457,8 +455,11 @@ const useMDDerived = (activeTest) => {
     return null;
   }, [parsedSeq, moleculeType]);
 
-  const activeValues =
-    (activeTest.mdValues || {})[activeTest.activeLayerKey || 'md'] || {};
+  const activeValues = useMemo(
+    () =>
+      (activeTest.mdValues || {})[activeTest.activeLayerKey || 'md'] || {},
+    [activeTest.mdValues, activeTest.activeLayerKey]
+  );
 
   return {
     moleculeType,
@@ -477,6 +478,7 @@ const useMDDerived = (activeTest) => {
 };
 
 // ================= 3D VIEWER WITH TRAJECTORY =================
+
 const SELECT_COLOR_HEX = 0xf59e0b;
 
 const MDMoleculeViewer = ({
@@ -494,6 +496,7 @@ const MDMoleculeViewer = ({
   const stageRef = useRef(null);
   const componentRef = useRef(null);
   const trajRef = useRef(null);
+  const selectionReprRef = useRef(null);
 
   const parsedSeqRef = useRef(parsedSeq);
   const onAtomClickRef = useRef(onAtomClick);
@@ -514,6 +517,7 @@ const MDMoleculeViewer = ({
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(10);
 
+  // Initialize structure + trajectory
   useEffect(() => {
     if (!structureSrc || !containerRef.current) {
       setStatus('idle');
@@ -535,6 +539,7 @@ const MDMoleculeViewer = ({
 
     componentRef.current = null;
     trajRef.current = null;
+    selectionReprRef.current = null;
 
     setStatus('loading');
     setErrorMsg('');
@@ -551,6 +556,7 @@ const MDMoleculeViewer = ({
         stageRef.current = stage;
 
         let component;
+
         const raw = structureSrc.trim();
 
         const isUrl =
@@ -563,17 +569,17 @@ const MDMoleculeViewer = ({
 
           component = await stage.loadFile(
             raw,
-            ['pdb', 'cif', 'gro', 'mmcif', 'bcif', 'mol2', 'sdf'].includes(ext)
+            ['pdb', 'cif', 'gro', 'mmcif', 'bcif', 'mol2', 'sdf', 'mmtf'].includes(ext)
               ? { ext }
               : {}
           );
-        } else if (/^[0-9a-z]{4}$/i.test(raw)) {
+        } else if (/^[0-9][A-Za-z0-9]{3}$/i.test(raw)) {
           try {
             component = await stage.loadFile(
               `https://files.rcsb.org/download/${raw.toUpperCase()}.cif`,
               { ext: 'cif' }
             );
-          } catch (e) {
+          } catch {
             component = await stage.loadFile(`rcsb://${raw.toUpperCase()}`);
           }
         } else {
@@ -583,13 +589,14 @@ const MDMoleculeViewer = ({
         if (cancelled) return;
 
         componentRef.current = component;
+        selectionReprRef.current = null;
 
         try {
           component.addRepresentation('cartoon', {
             color: 'residueindex',
             quality: 'high'
           });
-        } catch (e) {
+        } catch {
           // ignore representation error
         }
 
@@ -598,7 +605,7 @@ const MDMoleculeViewer = ({
             sele: 'hetero and not water',
             aspectRatio: 1.1
           });
-        } catch (e) {
+        } catch {
           // ignore representation error
         }
 
@@ -710,26 +717,74 @@ const MDMoleculeViewer = ({
         stageRef.current.dispose();
         stageRef.current = null;
       }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [structureSrc, trajectorySrc, trajectoryFormat]);
 
-  // playback loop
+      componentRef.current = null;
+      trajRef.current = null;
+      selectionReprRef.current = null;
+    };
+  }, [structureSrc, trajectorySrc, trajectoryFormat, trajectoryFallbacks]);
+
+  // Playback loop: only update React state here
   useEffect(() => {
-    if (!playing || !trajRef.current || numFrames === 0) return;
+    if (!playing || numFrames === 0) return;
 
     const interval = Math.max(16, 1000 / speed);
 
     const id = setInterval(() => {
-      setCurrentFrame((prev) => {
-        const next = (prev + 1) % numFrames;
-        setFrameSafe(trajRef.current, next);
-        return next;
-      });
+      setCurrentFrame((prev) => (prev + 1) % numFrames);
     }, interval);
 
     return () => clearInterval(id);
   }, [playing, speed, numFrames]);
+
+  // Apply frame changes to trajectory object
+  useEffect(() => {
+    if (trajStatus === 'ready' && trajRef.current) {
+      setFrameSafe(trajRef.current, currentFrame);
+    }
+  }, [currentFrame, trajStatus]);
+
+  // Optional selected-atom highlight
+  useEffect(() => {
+    const component = componentRef.current;
+
+    if (!component || status !== 'ready') return;
+
+    if (selectionReprRef.current) {
+      try {
+        component.removeRepresentation(selectionReprRef.current);
+      } catch {
+        // ignore
+      }
+      selectionReprRef.current = null;
+    }
+
+    if (!Array.isArray(selectedKeys) || selectedKeys.length === 0) return;
+
+    const sele = selectedKeys
+      .map((key) => {
+        const [idx, atom] = String(key).split('-');
+        const resno = Number(idx) + 1;
+
+        if (!Number.isFinite(resno)) return null;
+
+        return atom ? `${resno} and .${atom}` : `${resno}`;
+      })
+      .filter(Boolean)
+      .join(' or ');
+
+    if (!sele) return;
+
+    try {
+      selectionReprRef.current = component.addRepresentation('ball+stick', {
+        sele,
+        color: SELECT_COLOR_HEX,
+        aspectRatio: 1.2
+      });
+    } catch {
+      // ignore selection representation errors
+    }
+  }, [selectedKeys, status]);
 
   return (
     <div className="flex flex-col gap-3">
@@ -755,7 +810,6 @@ const MDMoleculeViewer = ({
               onChange={(e) => {
                 const f = parseInt(e.target.value, 10);
                 setCurrentFrame(f);
-                setFrameSafe(trajRef.current, f);
               }}
               disabled={trajStatus !== 'ready' || numFrames === 0}
               className="flex-1 accent-indigo-600"
@@ -846,15 +900,134 @@ const MDMoleculeViewer = ({
     </div>
   );
 };
+// ================= PARAMETER PARSER =================
+
+const parseSimulationParameters = (text, filename) => {
+  const updates = {};
+  const lowerText = text.toLowerCase();
+  const name = (filename || '').toLowerCase();
+
+  if (name.endsWith('.mdp')) {
+    const getVal = (key) => {
+      const match = new RegExp(`^\\s*${key}\\s*=\\s*([^\\s;]+)`, 'im').exec(text);
+      return match ? match[1] : null;
+    };
+
+    const dt = getVal('dt');
+    if (dt) {
+      const parsed = parseFloat(dt);
+      if (!Number.isNaN(parsed)) {
+        // GROMACS dt is in ps; UI uses fs
+        updates.timestep = String(parsed * 1000);
+      }
+    }
+
+    const nsteps = getVal('nsteps');
+    if (nsteps) updates.nSteps = nsteps;
+
+    const refT = getVal('ref_t');
+    if (refT) updates.simTemperature = refT.split(',')[0].trim();
+
+    const refP = getVal('ref_p');
+    if (refP) updates.simPressure = refP.split(',')[0].trim();
+
+    const integrator = (getVal('integrator') || '').toLowerCase();
+    if (integrator === 'md') {
+      updates.integrator = 'leapfrog';
+    } else if (integrator === 'md-vv') {
+      updates.integrator = 'verlet';
+    } else if (integrator === 'sd') {
+      updates.integrator = 'langevin';
+    }
+
+    const tcoupl = (getVal('tcoupl') || '').toLowerCase();
+    if (tcoupl === 'v-rescale') {
+      updates.thermostat = 'v_rescale';
+    } else if (tcoupl === 'nose-hoover') {
+      updates.thermostat = 'nose_hoover';
+    } else if (tcoupl === 'berendsen') {
+      updates.thermostat = 'berendsen';
+    }
+
+    const pcoupl = (getVal('pcoupl') || '').toLowerCase();
+    if (pcoupl === 'parrinello-rahman') {
+      updates.barostat = 'parrinello_rahman';
+    } else if (pcoupl === 'berendsen') {
+      updates.barostat = 'berendsen';
+    }
+
+    const tcActive = tcoupl && tcoupl !== 'no';
+    const pcActive = pcoupl && pcoupl !== 'no';
+
+    if (tcActive && pcActive) {
+      updates.ensemble = 'NPT';
+    } else if (tcActive) {
+      updates.ensemble = 'NVT';
+    } else {
+      updates.ensemble = 'NVE';
+    }
+  } else if (name.endsWith('.inp') || name.endsWith('.prm')) {
+    const getMatch = (regex) => {
+      const m = regex.exec(lowerText);
+      return m ? m[1] : null;
+    };
+
+    const dt = getMatch(/timestep\s+([0-9.]+)/);
+    if (dt) {
+      // Assume input is already in fs for NAMD-like configs.
+      // If you support CHARMM AKMA units, convert explicitly here.
+      updates.timestep = dt;
+    }
+
+    const nstep =
+      getMatch(/nstep\s+([0-9]+)/) ||
+      getMatch(/nsteps\s+([0-9]+)/);
+
+    if (nstep) updates.nSteps = nstep;
+
+    const temp =
+      getMatch(/finalt\s+([0-9.]+)/) ||
+      getMatch(/firstt\s+([0-9.]+)/) ||
+      getMatch(/temperature\s+([0-9.]+)/);
+
+    if (temp) updates.simTemperature = temp;
+
+    const pressure =
+      getMatch(/pcons\s+([0-9.]+)/) ||
+      getMatch(/pressure\s+([0-9.]+)/);
+
+    if (pressure) updates.simPressure = pressure;
+
+    const isNpt =
+      lowerText.includes('pcons') ||
+      lowerText.includes('prmc') ||
+      lowerText.includes('barostat');
+
+    const isNvt =
+      lowerText.includes('hoover') ||
+      lowerText.includes('lang') ||
+      lowerText.includes('thermostat');
+
+    if (isNpt) updates.ensemble = 'NPT';
+    else if (isNvt) updates.ensemble = 'NVT';
+    else updates.ensemble = 'NVE';
+  }
+
+  return updates;
+};
 
 // ================= SETUP SECTION =================
+
 const MDExperimentSetupSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
+
   const d = useMDDerived(activeTest);
 
   const structureMode = activeTest.structureMode || '2d';
 
   const [hasOpened3D, setHasOpened3D] = useState(structureMode === '3d');
+  const [expandedPanel, setExpandedPanel] = useState(null);
+  const [ssBrush, setSSBrush] = useState('H');
 
   useEffect(() => {
     if (structureMode === '3d') setHasOpened3D(true);
@@ -864,9 +1037,6 @@ const MDExperimentSetupSection = ({ ctx }) => {
     const t = setTimeout(() => window.dispatchEvent(new Event('resize')), 100);
     return () => clearTimeout(t);
   }, [structureMode, hasOpened3D]);
-
-  const [expandedPanel, setExpandedPanel] = useState(null);
-  const [ssBrush, setSSBrush] = useState('H');
 
   const structureSrc = useMemo(() => {
     const raw = (activeTest.structureSrc || '').trim();
@@ -887,10 +1057,17 @@ const MDExperimentSetupSection = ({ ctx }) => {
     return raw;
   }, [activeTest.structureSrc, d.moleculeType]);
 
-  const selectedKeys = getSelectedKeys(activeTest);
-  const manualKeys = useMemo(() => getManualKeys(d.activeValues), [d.activeValues]);
+  const trajNorm = useMemo(
+    () => normTrajUrl(activeTest.trajectoryUrl || ''),
+    [activeTest.trajectoryUrl]
+  );
 
-  const trajNorm = normTrajUrl(activeTest.trajectoryUrl || '');
+  const selectedKeys = getSelectedKeys(activeTest);
+
+  const manualKeys = useMemo(
+    () => getManualKeys(d.activeValues),
+    [d.activeValues]
+  );
 
   const handleAtomClick = (ri, keys) => {
     if (ri === null || !keys) return;
@@ -1052,42 +1229,49 @@ const MDExperimentSetupSection = ({ ctx }) => {
               ))}
             </select>
           </div>
-          {/* Insert this block inside MDExperimentSetupSection, after the force-field/water sidebar */}
-<div className="bg-emerald-50 p-4 rounded-lg border border-emerald-200 mt-4">
-  <label className="block text-xs font-bold text-emerald-700 uppercase mb-2">
-    📄 Auto-fill from .mdp / .inp
-  </label>
-  <p className="text-[10px] text-emerald-600 mb-2">
-    Upload a GROMACS (.mdp) or CHARMM/NAMD (.inp) parameter file to auto-populate
-    ensemble, integrator, thermostat, barostat, timestep, steps, temperature & pressure.
-  </p>
-  <label className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded-lg text-xs cursor-pointer shadow-sm transition-colors inline-flex items-center gap-2">
-    📂 Choose parameter file…
-    <input
-      type="file"
-      accept=".mdp,.inp,.prm,.str"
-      className="hidden"
-      onChange={(e) => {
-        const file = e.target.files && e.target.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-          const parsed = parseSimulationParameters(ev.target.result, file.name);
-          if (Object.keys(parsed).length > 0) {
-            updateActiveTest(parsed);
-            alert(
-              `✅ Imported ${Object.keys(parsed).length} parameters from ${file.name}`
-            );
-          } else {
-            alert('⚠️ No recognized parameters found in this file.');
-          }
-        };
-        reader.readAsText(file);
-        e.target.value = '';
-      }}
-    />
-  </label>
-</div>
+
+          <div className="bg-emerald-50 p-4 rounded-lg border border-emerald-200 mt-4">
+            <label className="block text-xs font-bold text-emerald-700 uppercase mb-2">
+              📄 Auto-fill from .mdp / .inp
+            </label>
+
+            <p className="text-[10px] text-emerald-600 mb-2">
+              Upload a GROMACS (.mdp) or CHARMM/NAMD (.inp) parameter file to
+              auto-populate ensemble, integrator, thermostat, barostat, timestep,
+              steps, temperature and pressure.
+            </p>
+
+            <label className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded-lg text-xs cursor-pointer shadow-sm transition-colors inline-flex items-center gap-2">
+              📂 Choose parameter file…
+              <input
+                type="file"
+                accept=".mdp,.inp,.prm"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files && e.target.files[0];
+                  if (!file) return;
+
+                  const reader = new FileReader();
+
+                  reader.onload = (ev) => {
+                    const parsed = parseSimulationParameters(ev.target.result, file.name);
+
+                    if (Object.keys(parsed).length > 0) {
+                      updateActiveTest(parsed);
+                      window.alert(
+                        `✅ Imported ${Object.keys(parsed).length} parameters from ${file.name}`
+                      );
+                    } else {
+                      window.alert('⚠️ No recognized parameters found in this file.');
+                    }
+                  };
+
+                  reader.readAsText(file);
+                  e.target.value = '';
+                }}
+              />
+            </label>
+          </div>
         </div>
       </div>
 
@@ -1213,9 +1397,7 @@ const MDExperimentSetupSection = ({ ctx }) => {
             </div>
           )}
 
-          <div
-            style={{ display: structureMode === '3d' ? 'block' : 'none' }}
-          >
+          <div style={{ display: structureMode === '3d' ? 'block' : 'none' }}>
             {hasOpened3D && (
               <MDMoleculeViewer
                 key={`${structureSrc}|${activeTest.trajectoryUrl || ''}`}
@@ -1239,9 +1421,7 @@ const MDExperimentSetupSection = ({ ctx }) => {
             )}
           </div>
 
-          <div
-            style={{ display: structureMode === '2d' ? 'block' : 'none' }}
-          >
+          <div style={{ display: structureMode === '2d' ? 'block' : 'none' }}>
             <StructureSVGView
               structure={d.structure}
               minWidth={
@@ -1270,10 +1450,11 @@ const MDExperimentSetupSection = ({ ctx }) => {
 };
 
 // ================= DATA SECTION =================
+
 const MDDataSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
-  const d = useMDDerived(activeTest);
 
+  const d = useMDDerived(activeTest);
   const selectedKeys = getSelectedKeys(activeTest);
 
   if (!d.parsedSeq.length) {
@@ -1397,71 +1578,9 @@ const MDDataSection = ({ ctx }) => {
     </div>
   );
 };
-const parseSimulationParameters = (text, filename) => {
-  const updates = {};
-  const lowerText = text.toLowerCase();
 
-  if (filename.endsWith('.mdp')) {
-    const getVal = (key) => {
-      const match = new RegExp(`^\\s*${key}\\s*=\\s*([^\\s;]+)`, 'im').exec(text);
-      return match ? match[1] : null;
-    };
-
-    const dt = getVal('dt');
-    if (dt) updates.timestep = (parseFloat(dt) * 1000).toString();
-
-    const nsteps = getVal('nsteps');
-    if (nsteps) updates.nSteps = nsteps;
-
-    const ref_t = getVal('ref_t');
-    if (ref_t) updates.simTemperature = ref_t.split(',')[0].trim();
-
-    const ref_p = getVal('ref_p');
-    if (ref_p) updates.simPressure = ref_p.split(',')[0].trim();
-
-    const integrator = getVal('integrator');
-    if (integrator === 'md') updates.integrator = 'verlet';
-    else if (integrator === 'sd') updates.integrator = 'stochastic';
-
-    const tcoupl = getVal('tcoupl');
-    if (tcoupl === 'v-rescale') updates.thermostat = 'v_rescale';
-    else if (tcoupl === 'nose-hoover') updates.thermostat = 'nose_hoover';
-    else if (tcoupl === 'berendsen') updates.thermostat = 'berendsen';
-
-    const pcoupl = getVal('pcoupl');
-    if (pcoupl === 'parrinello-rahman') updates.barostat = 'parrinello_rahman';
-    else if (pcoupl === 'berendsen') updates.barostat = 'berendsen';
-
-    if (tcoupl && tcoupl !== 'no' && pcoupl && pcoupl !== 'no') updates.ensemble = 'NPT';
-    else if (tcoupl && tcoupl !== 'no') updates.ensemble = 'NVT';
-    else updates.ensemble = 'NVE';
-
-  } else if (filename.endsWith('.inp') || filename.endsWith('.prm')) {
-    const getMatch = (regex) => {
-      const m = regex.exec(lowerText);
-      return m ? m[1] : null;
-    };
-
-    const dt = getMatch(/timestep\s+([0-9.]+)/);
-    if (dt) updates.timestep = (parseFloat(dt) * 1000).toString();
-
-    const nstep = getMatch(/nstep\s+([0-9]+)/);
-    if (nstep) updates.nSteps = nstep;
-
-    const temp = getMatch(/finalt\s+([0-9.]+)/) || getMatch(/firstt\s+([0-9.]+)/);
-    if (temp) updates.simTemperature = temp;
-
-    const isNpt = lowerText.includes('pcons') || lowerText.includes('prmc');
-    const isNvt = lowerText.includes('hoover') || lowerText.includes('lang');
-
-    if (isNpt) updates.ensemble = 'NPT';
-    else if (isNvt) updates.ensemble = 'NVT';
-    else updates.ensemble = 'NVE';
-  }
-
-  return updates;
-};
 // ================= SIMULATION PARAMS =================
+
 const MDSimulationParamsSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
 
@@ -1470,16 +1589,18 @@ const MDSimulationParamsSection = ({ ctx }) => {
     if (!file) return;
 
     const reader = new FileReader();
+
     reader.onload = (ev) => {
       const text = ev.target.result;
       const parsedUpdates = parseSimulationParameters(text, file.name);
-      
+
       if (Object.keys(parsedUpdates).length > 0) {
         updateActiveTest(parsedUpdates);
       }
     };
+
     reader.readAsText(file);
-    e.target.value = ''; // reset so the same file can be re-uploaded if needed
+    e.target.value = '';
   };
 
   const Sel = ({ label, value, onChange, options }) => (
@@ -1506,7 +1627,7 @@ const MDSimulationParamsSection = ({ ctx }) => {
     <div className="flex flex-col gap-1">
       <label className="text-[10px] font-bold text-slate-500 uppercase">
         {label}
-        {unit ? `(${unit})` : ''}
+        {unit ? ` (${unit})` : ''}
       </label>
 
       <input
@@ -1540,7 +1661,12 @@ const MDSimulationParamsSection = ({ ctx }) => {
         <div className="flex items-center gap-2">
           <label className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1.5 px-3 rounded-lg text-xs cursor-pointer shadow-sm transition-colors flex items-center gap-2">
             📄 Auto-fill from .mdp / .inp
-            <input type="file" accept=".mdp,.inp,.prm" onChange={handleParamFile} className="hidden" />
+            <input
+              type="file"
+              accept=".mdp,.inp,.prm"
+              onChange={handleParamFile}
+              className="hidden"
+            />
           </label>
         </div>
       </div>
@@ -1606,8 +1732,10 @@ const MDSimulationParamsSection = ({ ctx }) => {
 };
 
 // ================= ANALYSIS =================
+
 const MDAnalysisSection = ({ ctx }) => {
   const { activeTest } = ctx;
+
   const d = useMDDerived(activeTest);
 
   const nFrames = 500;
@@ -1648,6 +1776,7 @@ const MDAnalysisSection = ({ ctx }) => {
               margin={{ top: 5, right: 10, bottom: 25, left: 10 }}
             >
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
+
               <XAxis
                 dataKey={xKey}
                 tick={{ fontSize: 10 }}
@@ -1658,6 +1787,7 @@ const MDAnalysisSection = ({ ctx }) => {
                   fontSize: 10
                 }}
               />
+
               <YAxis
                 tick={{ fontSize: 10 }}
                 label={{
@@ -1667,7 +1797,9 @@ const MDAnalysisSection = ({ ctx }) => {
                   fontSize: 10
                 }}
               />
+
               <Tooltip />
+
               <Bar dataKey={dataKey} isAnimationActive={false}>
                 {data.map((e, i) => (
                   <Cell key={i} fill={e.fill || color} />
@@ -1680,6 +1812,7 @@ const MDAnalysisSection = ({ ctx }) => {
               margin={{ top: 5, right: 10, bottom: 25, left: 10 }}
             >
               <CartesianGrid strokeDasharray="3 3" />
+
               <XAxis
                 dataKey={xKey}
                 type="number"
@@ -1691,6 +1824,7 @@ const MDAnalysisSection = ({ ctx }) => {
                   fontSize: 10
                 }}
               />
+
               <YAxis
                 tick={{ fontSize: 10 }}
                 label={{
@@ -1700,7 +1834,9 @@ const MDAnalysisSection = ({ ctx }) => {
                   fontSize: 10
                 }}
               />
+
               <Tooltip />
+
               <Line
                 type="monotone"
                 dataKey={dataKey}
@@ -1764,8 +1900,10 @@ const MDAnalysisSection = ({ ctx }) => {
               margin={{ top: 5, right: 10, bottom: 25, left: 10 }}
             >
               <CartesianGrid strokeDasharray="3 3" />
+
               <XAxis dataKey="time" tick={{ fontSize: 10 }} />
               <YAxis tick={{ fontSize: 10 }} />
+
               <Tooltip />
               <Legend verticalAlign="top" wrapperStyle={{ fontSize: 10 }} />
 
@@ -1802,8 +1940,8 @@ const MDAnalysisSection = ({ ctx }) => {
     </div>
   );
 };
-
 // ================= ALL =================
+
 const MDAll = ({ ctx }) => (
   <div className="flex flex-col gap-6">
     <div className="bg-emerald-100 border-2 border-emerald-500 rounded-xl p-3 text-center text-emerald-800 font-black text-sm">
@@ -1833,6 +1971,7 @@ const MDAll = ({ ctx }) => (
 );
 
 // ================= NOTEBOOK =================
+
 const buildMDNotebookHtml = (checked, ctx) => {
   const { activeTest } = ctx;
 
@@ -1867,13 +2006,15 @@ const buildMDNotebookHtml = (checked, ctx) => {
   }
 
   if (checked.seq) {
-    const seqText = seq || activeTest.sugarChoice || activeTest.lipidChoice || 'N/A';
+    const seqText =
+      seq || activeTest.sugarChoice || activeTest.lipidChoice || 'N/A';
 
     html += `<p style="font-size:12px;color:#475569;margin-bottom:8px;"><b>System / Sequence:</b> <span style="font-family:monospace;background:#e2e8f0;padding:2px 4px;border-radius:4px;">${seqText}</span></p>`;
   }
 
   if (checked.table && seq) {
     const ffAtoms = getFFAtoms(ffKey);
+
     const values =
       (activeTest.mdValues || {})[activeTest.activeLayerKey || 'md'] || {};
 
@@ -1917,6 +2058,7 @@ const buildMDNotebookHtml = (checked, ctx) => {
 };
 
 // ================= ERROR BOUNDARY =================
+
 class MDErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -1959,6 +2101,7 @@ class MDErrorBoundary extends React.Component {
 }
 
 // ================= MAIN RENDERER =================
+
 const MDTestRenderer = ({
   activeTest,
   updateActiveTest,
@@ -1985,17 +2128,29 @@ const MDTestRenderer = ({
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
-      activeTest, updateActiveTest, allCmpds, allCellLines,
-      customFields, testCategories, datasetProtocols, jumpToProtocol
+      activeTest,
+      updateActiveTest,
+      allCmpds,
+      allCellLines,
+      customFields,
+      testCategories,
+      datasetProtocols,
+      jumpToProtocol
     ]
   );
 
   const custom = useMemo(
     () => ({
-      All: MDSectionsAll,
-      buildNotebookHtml: buildMDNotebookHtmlFromSections
-        ? (checked, ctxArg) => buildMDNotebookHtmlFromSections(ctxArg, checked)
-        : buildMDNotebookHtml
+      All: MDAll,
+      MolecularStructure: MDExperimentSetupSection,
+      ExperimentSetup: MDExperimentSetupSection,
+      Data: MDDataSection,
+      Analysis: MDAnalysisSection,
+      SimulationParameters: MDSimulationParamsSection,
+      buildNotebookHtml:
+        typeof buildMDNotebookHtmlFromSections === 'function'
+          ? (checked, ctxArg) => buildMDNotebookHtmlFromSections(ctxArg, checked)
+          : buildMDNotebookHtml
     }),
     []
   );
