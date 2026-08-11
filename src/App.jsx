@@ -4843,7 +4843,7 @@ setMandatoryFields(s.mandatoryFields || []);
               <div className="h-full min-h-0 overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
                 <div className="max-w-6xl mx-auto flex flex-col gap-4 pb-10">
                   
-                  <CollapsibleSection title="Library Directory" subtitle="Click any item to view or edit its full details." defaultOpen={true}>
+<CollapsibleSection title="Library Directory" subtitle="Click any item to view or edit its full details." defaultOpen={true}>
                     <LibraryDirectory 
                       compoundMeta={compoundMeta}
                       cellLineMeta={cellLineMeta}
@@ -4858,8 +4858,6 @@ setMandatoryFields(s.mandatoryFields || []);
                       nmrExperiments={nmrExperiments}
                       onSelectResource={(id, type) => {
                         setActiveLibrarySelection({ id, type });
-                        mandatoryFields={mandatoryFields} 
-            setMandatoryFields={setMandatoryFields}
                         setTimeout(() => {
                           const el = document.getElementById(`section-${type}`);
                           if (el) {
