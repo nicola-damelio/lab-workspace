@@ -421,10 +421,19 @@ export const TestShellRenderer = ({
       ? t.customFieldValues
       : {};
 
-  const experimentPlan = Array.isArray(t.plan) ? t.plan : [];
+const experimentPlan = Array.isArray(t.plan) ? t.plan : [];
 
   const [zoomImage, setZoomImage] = useState(null);
   const [mdParamFileReport, setMdParamFileReport] = useState(null);
+
+const [showGeneral, setShowGeneral] = useState(true);
+  const [showSetup, setShowSetup] = useState(true);
+  const [showMolSys, setShowMolSys] = useState(true);
+  const [showData, setShowData] = useState(true);
+  const [showReport, setShowReport] = useState(true);
+
+  const [tableRows, setTableRows] = useState(2);
+  const [tableCols, setTableCols] = useState(3);
 
   const planDateId = `plan-date-${t.id ?? 'unsaved'}`;
 
@@ -1310,8 +1319,7 @@ export const TestShellRenderer = ({
       {TestHeader}
 
       {CustomToolbar && <CustomToolbar ctx={ctx} />}
-
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+<div className="flex-1 overflow-y-auto custom-scrollbar p-6">
         {!mandatoryBlocked && missingMandatoryRules.length > 0 && (
           <div className="mb-6 bg-red-50 border-l-4 border-red-500 p-4 rounded-r-lg shadow-sm">
             <div className="flex items-center gap-2">
@@ -1333,718 +1341,15 @@ export const TestShellRenderer = ({
           </div>
         )}
 
-        <CollapsibleSection
-          title="Classification"
-          icon="🏷️"
-          defaultOpen={false}
-        >
-          <div className="max-w-xl flex flex-col gap-5">
-            <div>
-              <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
-                Primary Classification / Experiment Type / Test Category
-              </label>
-
-              <select
-                value={testCategory}
-                onChange={(e) => update({ testCategory: e.target.value })}
-                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
-              >
-                {sortAlpha(categories).map((cat) => (
-                  <option key={cat} value={cat}>
-                    {cat}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
-                Secondary Classification / Sub-category
-              </label>
-
-              <select
-                value={t.secondaryCategory || ''}
-                onChange={(e) => update({ secondaryCategory: e.target.value })}
-                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
-              >
-                <option value="">— None —</option>
-                {sortAlpha(categories).map((cat) => (
-                  <option key={`secondary-${cat}`} value={cat}>
-                    {cat}
-                  </option>
-                ))}
-              </select>
-
-              <div className="mt-2 flex items-center gap-3">
-                {t.secondaryCategory ? (
-                  <span className="text-xs font-bold text-slate-700 bg-slate-100 border border-slate-200 px-2 py-1 rounded">
-                    {t.secondaryCategory}
-                  </span>
-                ) : (
-                  <span className="text-xs text-slate-400 italic">
-                    No secondary classification selected.
-                  </span>
-                )}
-
-                {t.secondaryCategory && (
-                  <button
-                    type="button"
-                    onClick={() => update({ secondaryCategory: '' })}
-                    className="text-xs font-bold text-red-500 hover:text-red-700 underline"
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-
-              <p className="text-xs text-slate-400 mt-1">
-                Secondary classification uses the same category list defined in
-                Definitions & Labels.
-              </p>
-            </div>
-
-            <div>
-              <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
-                Operator / Scientist who performed the experiment
-              </label>
-
-              {operators.length === 0 ? (
-                <p className="text-sm text-slate-400 italic">
-                  No operators defined. Add them in Definitions & Labels →
-                  Scientists / Operators.
-                </p>
-              ) : (
-                <select
-                  value={testOperator}
-                  onChange={(e) => update({ operator: e.target.value })}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
-                >
-                  <option value="">— Select Operator —</option>
-                  {operators.map((op) => (
-                    <option key={op} value={op}>
-                      {op}
-                    </option>
-                  ))}
-                </select>
-              )}
-
-              {testOperator && (
-                <button
-                  type="button"
-                  onClick={() => update({ operator: '' })}
-                  className="mt-2 text-xs font-bold text-red-500 hover:text-red-700 underline"
-                >
-                  Clear operator
-                </button>
-              )}
-            </div>
-          </div>
-        </CollapsibleSection>
-
-        {(showCompoundsSection || CompoundsSection) && (
-          <CollapsibleSection
-            title="Compounds & Biological Models"
-            icon="🧪"
-            defaultOpen={false}
-          >
-            {showCompoundsSection && (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {showCompounds && (
-                  <MultiSelectDropdown
-                    label={compoundLabel}
-                    accent="blue"
-                    options={sortedCompounds}
-                    selected={selectedCompounds}
-                    onToggle={toggleCompound}
-                    onClear={clearCompounds}
-                    placeholder="Select compound(s)..."
-                    emptyHint="No compounds defined. Add them in Definitions & Labels."
-                  />
-                )}
-
-                {showCellLines && (
-                  <MultiSelectDropdown
-                    label={cellLineLabel}
-                    accent="emerald"
-                    options={sortedCellLines}
-                    selected={cellLines}
-                    onToggle={toggleCellLine}
-                    onClear={() => update({ cellLines: [] })}
-                    placeholder="Select cell line(s)..."
-                    emptyHint="No cell lines defined. Add them in Definitions & Labels."
-                  />
-                )}
-              </div>
-            )}
-
-            {CompoundsSection && (
-              <div
-                className={`pt-6 border-t border-slate-200 ${
-                  showCompoundsSection ? 'mt-6' : ''
-                }`}
-              >
-                <CompoundsSection ctx={ctx} />
-              </div>
-            )}
-          </CollapsibleSection>
-        )}
-
-        {MolecularStructureSection && (
-          <CollapsibleSection
-            title="Molecular structure and visualization"
-            icon="🧬"
-            defaultOpen={false}
-          >
-            <MolecularStructureSection ctx={ctx} />
-          </CollapsibleSection>
-        )}
-
-        <CollapsibleSection
-          title="Experimental Conditions"
-          icon="🌡️"
-          defaultOpen={false}
-        >
-          {isMdType && (
-            <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded-lg flex flex-wrap items-center gap-3">
-              <label className="bg-white hover:bg-emerald-100 text-emerald-700 border border-emerald-300 font-bold py-1.5 px-3 rounded-lg text-xs cursor-pointer shadow-sm transition-colors flex items-center gap-2 shrink-0">
-                📄 Auto-fill from GROMACS / CHARMM file
-                <input
-                  type="file"
-                  accept=".mdp,.top,.itp,.inp,.str,.conf,.namd,.prm,.par,.psf"
-                  onChange={handleMdParamFile}
-                  className="hidden"
-                />
-              </label>
-
-              <p className="text-[11px] text-emerald-700/80 flex-1 min-w-[220px]">
-                Reads force field, water model, temperature, pressure, timestep
-                &amp; more directly from your simulation input file.
-              </p>
-
-              {mdParamFileReport && (
-                <span
-                  className={`text-[11px] font-bold ${
-                    mdParamFileReport.ok
-                      ? 'text-emerald-700'
-                      : 'text-amber-600'
-                  }`}
-                >
-                  {mdParamFileReport.error
-                    ? `⚠️ Could not read ${mdParamFileReport.name}`
-                    : mdParamFileReport.ok
-                      ? `✓ Parsed ${mdParamFileReport.count} field${
-                          mdParamFileReport.count === 1 ? '' : 's'
-                        } from ${mdParamFileReport.name}`
-                      : `⚠️ No recognizable parameters found in ${mdParamFileReport.name}`}
-                </span>
-              )}
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {(Array.isArray(config.conditionFields)
-              ? config.conditionFields
-              : []
-            ).map(renderConditionField)}
-
-            {conditionCustomFields.length > 0 && (
-              <div className="col-span-full text-xs font-bold text-slate-400 uppercase pt-2 border-t border-slate-100">
-                Custom Metadata
-              </div>
-            )}
-
-            {conditionCustomFields.map(renderCustomMetadataField)}
-          </div>
-
-          <BufferAdditiveFields
-            t={t}
-            update={update}
-            buffers={buffersFromDefs}
-            additives={additivesFromDefs}
-          />
-        </CollapsibleSection>
-
-        {SetupSection && (
-          <CollapsibleSection
-            title="Experiment Setup"
-            icon="⚙️"
-            defaultOpen={false}
-          >
-            <SetupSection ctx={ctx} />
-          </CollapsibleSection>
-        )}
-
-        <CollapsibleSection
-          title="Instrumental Setup"
-          icon="🔬"
-          defaultOpen={false}
-        >
-          <div className="flex flex-col gap-4">
-            {InstrumentalSetupSection ? (
-              <InstrumentalSetupSection ctx={ctx} />
-            ) : (
-              <p className="text-sm text-slate-400 italic">
-                No instrument-specific setup defined for this page type.
-              </p>
-            )}
-
-            {instrumentalCustomFields.length > 0 && (
-              <div className="border-t border-slate-100 pt-3">
-                <div className="text-xs font-bold text-slate-400 uppercase mb-2">
-                  Instrumental Custom Metadata
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {instrumentalCustomFields.map(renderCustomMetadataField)}
-                </div>
-              </div>
-            )}
-          </div>
-        </CollapsibleSection>
-
-        {/* ===== ADDITIONAL FIELDS BY SUBSECTION ===== */}
-        {otherSubsectionCustomFields.map((group) => (
-          <CollapsibleSection
-            key={group.id}
-            title={`Additional Fields — ${group.label}`}
-            icon="📎"
-            defaultOpen={false}
-          >
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {group.fields.map(renderCustomMetadataField)}
-            </div>
-          </CollapsibleSection>
-        ))}
-
-        {/* ===== SECTIONS MOVED AFTER INSTRUMENTAL SETUP ===== */}
-        <CollapsibleSection
-          title="Linked Protocols"
-          icon="📋"
-          defaultOpen={false}
-        >
-          <div className="flex flex-col gap-1 p-3 bg-indigo-50 border border-indigo-200 rounded-lg">
-            <label className="text-xs font-bold text-indigo-800 uppercase flex items-center justify-between mb-2">
-              <span>📋 Linked Protocols</span>
-              <span className="text-[9px] bg-indigo-200 text-indigo-800 px-2 py-0.5 rounded">
-                Multiple protocols allowed
-              </span>
-            </label>
-
-            {linkedProtocolIds.length > 0 && (
-              <div className="flex flex-wrap gap-2 mb-2">
-                {linkedProtocolIds.map((pid) => {
-                  const prot = safeDatasetProtocols.find((p) => p.id === pid);
-
-                  return (
-                    <div
-                      key={pid}
-                      className="flex items-center gap-1 bg-white border border-indigo-300 rounded-lg px-2 py-1 shadow-sm"
-                    >
-                      <span className="text-xs font-bold text-indigo-900 max-w-[220px] truncate">
-                        {prot ? `${prot.title} (${prot.category})` : pid}
-                      </span>
-
-                      <button
-                        type="button"
-                        onClick={() => jumpToProtocol && jumpToProtocol(pid)}
-                        className="text-[10px] font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-2 py-0.5 rounded transition-colors"
-                        title="Open this protocol"
-                      >
-                        📖 Open
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => removeLinkedProtocol(pid)}
-                        className="text-slate-400 hover:text-red-500 font-bold px-1"
-                        title="Unlink"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            <select
-              value=""
-              onChange={(e) => addLinkedProtocol(e.target.value)}
-              className="border border-indigo-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-indigo-500 w-full cursor-pointer font-semibold text-indigo-900"
-            >
-              <option value="">-- Add a protocol to link --</option>
-
-              {safeDatasetProtocols
-                .filter((p) => !linkedProtocolIds.includes(p.id))
-                .map((p, idx) => (
-                  <option key={p.id ?? `protocol-${idx}`} value={p.id}>
-                    {p.title} ({p.category})
-                  </option>
-                ))}
-            </select>
-          </div>
-        </CollapsibleSection>
-
-        <CollapsibleSection title="Agenda" icon="📅" defaultOpen={false}>
-          <h3 className="text-[11px] font-bold text-slate-600 mb-2 flex justify-between items-center">
-            <span>📅 Schedule / Planning (This Item)</span>
-
-            <div className="flex gap-2">
-              <input
-                type="date"
-                id={planDateId}
-                className="border border-slate-300 px-2 py-1 text-xs rounded bg-white text-slate-800 outline-none focus:border-blue-500"
-              />
-
-              <button
-                type="button"
-                onClick={() => {
-                  const el = document.getElementById(planDateId);
-                  const d = el ? el.value : '';
-
-                  if (d) {
-                    update({
-                      plan: [
-                        ...experimentPlan,
-                        {
-                          id: `plan-${Date.now()}-${Math.random()
-                            .toString(36)
-                            .slice(2)}`,
-                          date: d,
-                          task: ''
-                        }
-                      ].sort((a, b) => a.date.localeCompare(b.date))
-                    });
-                  }
-                }}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs font-bold transition shadow-sm"
-              >
-                Add Task
-              </button>
-            </div>
-          </h3>
-
-          <div className="flex flex-col gap-2 max-h-40 overflow-y-auto custom-scrollbar pr-2">
-            {experimentPlan.length === 0 && (
-              <span className="text-xs text-slate-400 italic">
-                No tasks planned yet.
-              </span>
-            )}
-
-            {experimentPlan.map((item) => (
-              <div
-                key={item.id}
-                className="flex gap-2 items-start flex-wrap bg-slate-50 border border-slate-200 p-1.5 rounded-lg shadow-sm"
-              >
-                <span className="text-[10px] font-bold w-20 text-slate-600 pl-2 mt-1.5">
-                  {item.date}
-                </span>
-
-                <input
-                  type="text"
-                  value={item.task}
-                  onChange={(e) =>
-                    update({
-                      plan: experimentPlan.map((p) =>
-                        p.id === item.id ? { ...p, task: e.target.value } : p
-                      )
-                    })
-                  }
-                  className="bg-transparent border-none focus:outline-none focus:bg-white focus:ring-1 focus:ring-blue-500 p-1 text-xs flex-1 text-slate-700 rounded transition-all min-w-[120px]"
-                  placeholder="Task description..."
-                />
-
-                {operators.length > 0 && (
-                  <select
-                    value={item.assignedTo || ''}
-                    onChange={(e) =>
-                      update({
-                        plan: experimentPlan.map((p) =>
-                          p.id === item.id
-                            ? { ...p, assignedTo: e.target.value }
-                            : p
-                        )
-                      })
-                    }
-                    className="border border-slate-200 rounded px-1.5 py-0.5 text-[10px] bg-white text-slate-700 outline-none focus:border-blue-500 shrink-0"
-                  >
-                    <option value="">Assign to...</option>
-                    {operators.map((op) => (
-                      <option key={op} value={op}>
-                        {op}
-                      </option>
-                    ))}
-                  </select>
-                )}
-
-                {item.assignedTo && (
-                  <span className="text-[10px] font-bold bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full self-center whitespace-nowrap">
-                    {item.assignedTo}
-                  </span>
-                )}
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    update({
-                      plan: experimentPlan.filter((p) => p.id !== item.id)
-                    })
-                  }
-                  className="text-slate-400 hover:text-red-500 text-[10px] font-bold px-2 transition self-center"
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
-        </CollapsibleSection>
-
-        <CollapsibleSection title="Report" icon="📝" defaultOpen={false}>
-          <div className="flex flex-col lg:flex-row gap-6">
-            <div className="flex-1 flex flex-col h-full min-h-[160px]">
-              <label className="text-xs font-bold text-slate-600 mb-2">
-                Comments & Notes
-              </label>
-
-              <RichTextEditor
-                value={comments}
-                onChange={(val) => update({ comments: val })}
-                placeholder="Enter your experiment notes, observations, etc..."
-              />
-            </div>
-
-            <div
-              className="flex-shrink-0 flex flex-col justify-start gap-4"
-              style={{ maxWidth: '300px', minWidth: '180px' }}
-            >
-              <div className="w-full flex flex-col items-end border-t border-slate-200 pt-3">
-                <label className="text-xs font-bold text-slate-600 mb-2 w-full text-right">
-                  🔗 Document Links
-                </label>
-
-                <div className="flex flex-col gap-1 w-full mb-3 max-h-[140px] overflow-y-auto custom-scrollbar">
-                  {documents.length === 0 && (
-                    <span className="text-[10px] text-slate-400 italic text-right w-full">
-                      No documents attached.
-                    </span>
-                  )}
-
-                  {documents.map((doc, idx) => {
-                    const docKey = doc.id ?? idx;
-                    const displayName = doc.name || doc.data || 'Document';
-
-                    return (
-                      <div
-                        key={docKey}
-                        className="flex items-center justify-between bg-slate-50 border border-slate-200 p-1.5 rounded-lg shadow-sm group"
-                      >
-                        <div className="flex items-center gap-2 truncate flex-1 min-w-0">
-                          <span className="text-sm">🔗</span>
-
-                          <a
-                            href={doc.data}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-[10px] font-bold text-slate-700 truncate hover:text-blue-600"
-                            title={doc.data}
-                          >
-                            {displayName}
-                          </a>
-                        </div>
-
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const nn = prompt('Rename document:', displayName);
-
-                              if (nn) {
-                                update({
-                                  documents: documents.map((d, i) =>
-                                    (d.id ?? i) === docKey
-                                      ? { ...d, name: nn.trim() }
-                                      : d
-                                  )
-                                });
-                              }
-                            }}
-                            className="text-slate-400 hover:text-blue-500 font-bold px-1 opacity-0 group-hover:opacity-100"
-                            title="Rename"
-                          >
-                            ✏️
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              update({
-                                documents: documents.filter(
-                                  (d, i) => (d.id ?? i) !== docKey
-                                )
-                              })
-                            }
-                            className="text-slate-400 hover:text-red-500 font-bold px-1 opacity-0 group-hover:opacity-100"
-                            title="Remove"
-                          >
-                            ×
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <button
-                  type="button"
-                  className="cursor-pointer text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 hover:bg-blue-100 px-3 py-1.5 rounded-lg shadow-sm transition-colors w-full text-center"
-                  onClick={() => {
-                    const urlsText = prompt(
-                      'Paste external link(s) separated by commas (Drive, PDF, Image URL):'
-                    );
-
-                    if (urlsText && urlsText.trim()) {
-                      const urls = urlsText
-                        .split(',')
-                        .map((s) => s.trim())
-                        .filter(Boolean);
-
-                      const newDocs = urls.map((rawUrl, i) => {
-                        const url = /^https?:\/\//i.test(rawUrl)
-                          ? rawUrl
-                          : `https://${rawUrl}`;
-
-                        let name = url;
-
-                        try {
-                          name = new URL(url).hostname;
-                        } catch (e) {
-                          name = rawUrl;
-                        }
-
-                        return {
-                          id: `${Date.now()}-${i}-${Math.random()
-                            .toString(36)
-                            .slice(2)}`,
-                          name,
-                          type: 'link',
-                          data: url
-                        };
-                      });
-
-                      update({ documents: [...documents, ...newDocs] });
-                    }
-                  }}
-                >
-                  + Add Document Link(s)
-                </button>
-              </div>
-            </div>
-          </div>
-        </CollapsibleSection>
-
-<CollapsibleSection title="Figures" icon="🖼️" defaultOpen={false}>
-          <div className="flex justify-between items-center mb-4 flex-wrap gap-3">
-            <p className="text-sm text-slate-500">
-              Attach image links (Google Drive/Dropbox supported). Each figure
-              gets an editable caption.
-            </p>
-
-            <button
-              type="button"
-              onClick={() => {
-                // Adds an empty placeholder instead of relying on a blocked prompt
-                addImageLink('');
-              }}
-              className="bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 font-bold px-3 py-1.5 rounded transition-colors shadow-sm text-xs"
-            >
-              + Add Link
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {images.length === 0 ? (
-              <div className="col-span-full text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">
-                No images attached. Click "+ Add Link" to add a new figure.
-              </div>
-            ) : (
-              images.map((imgSrc, idx) => (
-                <div
-                  key={idx}
-                  className="relative group bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col gap-2"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-500">
-                      Figure {idx + 1}
-                    </span>
-
-                    <button
-                      type="button"
-                      onClick={() => removeImageAt(idx)}
-                      className="bg-red-50 hover:bg-red-100 text-red-500 hover:text-red-700 rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold transition-colors border border-red-200"
-                    >
-                      ×
-                    </button>
-                  </div>
-
-                  <input
-                    type="text"
-                    value={imgSrc}
-                    onChange={(e) => {
-                      const newImages = [...images];
-                      newImages[idx] = e.target.value;
-                      update({ [imagesKey]: newImages });
-                    }}
-                    placeholder="Paste image URL here (Google Drive, Dropbox, etc.)"
-                    className="w-full border border-slate-300 rounded-lg p-2 text-xs outline-none focus:border-blue-500"
-                  />
-
-                  {imgSrc && imgSrc.trim() !== '' && (
-                    <div
-                      className="bg-slate-50 rounded-lg p-2 border border-slate-100 cursor-pointer mt-1"
-                      onClick={() =>
-                        setZoomImage(normalizeImageCandidates(imgSrc)[0] || imgSrc)
-                      }
-                      title="Click to zoom"
-                    >
-                      <SmartImage src={imgSrc} alt={`Figure ${idx + 1}`} />
-                    </div>
-                  )}
-
-                  <textarea
-                    value={captionsAligned[idx] ?? ''}
-                    onChange={(e) => updateFigureCaption(idx, e.target.value)}
-                    placeholder={`Figure ${idx + 1} caption...`}
-                    rows={2}
-                    className="w-full border border-slate-300 rounded-lg p-2 text-xs outline-none focus:border-blue-500 resize-y"
-                  />
-
-                  {imgSrc && imgSrc.trim() !== '' && (
-                    <a
-                      href={imgSrc}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-blue-500 hover:text-blue-700 font-medium flex items-center gap-1"
-                    >
-                      🔗 Open original link
-                    </a>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-        </CollapsibleSection>
-
-        {/* ===== TYPE-SPECIFIC CONTENT + LAB NOTEBOOK EXPORT ===== */}
-        {mandatoryBlocked ? (
-          <div className="max-w-2xl mx-auto mt-6 bg-red-50 border-2 border-red-300 rounded-2xl p-8 text-center shadow-sm">
+        {mandatoryBlocked && (
+          <div className="max-w-2xl mx-auto mb-6 bg-red-50 border-2 border-red-300 rounded-2xl p-8 text-center shadow-sm">
             <div className="text-4xl mb-3">🔒</div>
             <h2 className="text-base font-bold text-red-800 uppercase tracking-wide mb-2">
               {config.typeLabel || 'This page'} is locked
             </h2>
             <p className="text-sm text-red-700 mb-4">
               Fill in the required fields below before continuing. Everything
-              above (Classification, Experimental Conditions, Instrumental
-              Setup) is still editable.
+              above is still editable.
             </p>
             <ul className="text-sm text-red-800 font-semibold text-left inline-block">
               {missingMandatoryRules.map((r, i) => (
@@ -2057,9 +1362,515 @@ export const TestShellRenderer = ({
               ))}
             </ul>
           </div>
-        ) : (
-          <>
-            {CustomAll ? (
+        )}
+
+{/* ================= GENERAL ================= */}
+        <div className="mb-8">
+          <button
+            type="button"
+            onClick={() => setShowGeneral(!showGeneral)}
+            className="w-full flex items-center justify-center gap-2 mb-4 border-b-2 border-slate-200 pb-2 cursor-pointer group outline-none bg-transparent"
+          >
+            <h2 className="text-lg font-black text-slate-800 uppercase tracking-widest group-hover:text-blue-600 transition-colors m-0">GENERAL</h2>
+            <span className="text-slate-400 group-hover:text-blue-600 transition-colors text-sm">{showGeneral ? '▼' : '▶'}</span>
+          </button>
+
+          {showGeneral && (
+            <div className="flex flex-col gap-0">
+              <CollapsibleSection title="Classification" icon="🏷️" defaultOpen={false}>
+            <div className="max-w-xl flex flex-col gap-5">
+              <div>
+                <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
+                  Primary Classification / Experiment Type / Test Category
+                </label>
+
+                <select
+                  value={testCategory}
+                  onChange={(e) => update({ testCategory: e.target.value })}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
+                >
+                  {sortAlpha(categories).map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
+                  Secondary Classification / Sub-category
+                </label>
+
+                <select
+                  value={t.secondaryCategory || ''}
+                  onChange={(e) => update({ secondaryCategory: e.target.value })}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
+                >
+                  <option value="">— None —</option>
+                  {sortAlpha(categories).map((cat) => (
+                    <option key={`secondary-${cat}`} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                </select>
+
+                <div className="mt-2 flex items-center gap-3">
+                  {t.secondaryCategory ? (
+                    <span className="text-xs font-bold text-slate-700 bg-slate-100 border border-slate-200 px-2 py-1 rounded">
+                      {t.secondaryCategory}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-slate-400 italic">
+                      No secondary classification selected.
+                    </span>
+                  )}
+
+                  {t.secondaryCategory && (
+                    <button
+                      type="button"
+                      onClick={() => update({ secondaryCategory: '' })}
+                      className="text-xs font-bold text-red-500 hover:text-red-700 underline"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+
+                <p className="text-xs text-slate-400 mt-1">
+                  Secondary classification uses the same category list defined in
+                  Definitions & Labels.
+                </p>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
+                  Operator / Scientist who performed the experiment
+                </label>
+
+                {operators.length === 0 ? (
+                  <p className="text-sm text-slate-400 italic">
+                    No operators defined. Add them in Definitions & Labels →
+                    Scientists / Operators.
+                  </p>
+                ) : (
+                  <select
+                    value={testOperator}
+                    onChange={(e) => update({ operator: e.target.value })}
+                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
+                  >
+                    <option value="">— Select Operator —</option>
+                    {operators.map((op) => (
+                      <option key={op} value={op}>
+                        {op}
+                      </option>
+                    ))}
+                  </select>
+                )}
+
+                {testOperator && (
+                  <button
+                    type="button"
+                    onClick={() => update({ operator: '' })}
+                    className="mt-2 text-xs font-bold text-red-500 hover:text-red-700 underline"
+                  >
+                    Clear operator
+                  </button>
+                )}
+              </div>
+            </div>
+          </CollapsibleSection>
+
+          {(showCompoundsSection || CompoundsSection) && (
+            <CollapsibleSection title="Compounds & Biological Models" icon="🧪" defaultOpen={false}>
+              {showCompoundsSection && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {showCompounds && (
+                    <MultiSelectDropdown
+                      label={compoundLabel}
+                      accent="blue"
+                      options={sortedCompounds}
+                      selected={selectedCompounds}
+                      onToggle={toggleCompound}
+                      onClear={clearCompounds}
+                      placeholder="Select compound(s)..."
+                      emptyHint="No compounds defined. Add them in Definitions & Labels."
+                    />
+                  )}
+
+                  {showCellLines && (
+                    <MultiSelectDropdown
+                      label={cellLineLabel}
+                      accent="emerald"
+                      options={sortedCellLines}
+                      selected={cellLines}
+                      onToggle={toggleCellLine}
+                      onClear={() => update({ cellLines: [] })}
+                      placeholder="Select cell line(s)..."
+                      emptyHint="No cell lines defined. Add them in Definitions & Labels."
+                    />
+                  )}
+                </div>
+              )}
+
+              {CompoundsSection && (
+                <div
+                  className={`pt-6 border-t border-slate-200 ${
+                    showCompoundsSection ? 'mt-6' : ''
+                  }`}
+                >
+                  <CompoundsSection ctx={ctx} />
+                </div>
+ )}
+            </CollapsibleSection>
+          )}
+            </div>
+          )}
+        </div>
+
+        {/* ================= SETUP ================= */}
+        <div className="mb-8">
+          <button
+            type="button"
+            onClick={() => setShowSetup(!showSetup)}
+            className="w-full flex items-center justify-center gap-2 mb-4 border-b-2 border-slate-200 pb-2 cursor-pointer group outline-none bg-transparent"
+          >
+            <h2 className="text-lg font-black text-slate-800 uppercase tracking-widest group-hover:text-blue-600 transition-colors m-0">SETUP</h2>
+            <span className="text-slate-400 group-hover:text-blue-600 transition-colors text-sm">{showSetup ? '▼' : '▶'}</span>
+          </button>
+
+          {showSetup && (
+            <div className="flex flex-col gap-0">
+              <CollapsibleSection title="Linked Protocols" icon="📋" defaultOpen={false}>
+            <div className="flex flex-col gap-1 p-3 bg-indigo-50 border border-indigo-200 rounded-lg">
+              <label className="text-xs font-bold text-indigo-800 uppercase flex items-center justify-between mb-2">
+                <span>📋 Linked Protocols</span>
+                <span className="text-[9px] bg-indigo-200 text-indigo-800 px-2 py-0.5 rounded">
+                  Multiple protocols allowed
+                </span>
+              </label>
+
+              {linkedProtocolIds.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {linkedProtocolIds.map((pid) => {
+                    const prot = safeDatasetProtocols.find((p) => p.id === pid);
+
+                    return (
+                      <div
+                        key={pid}
+                        className="flex items-center gap-1 bg-white border border-indigo-300 rounded-lg px-2 py-1 shadow-sm"
+                      >
+                        <span className="text-xs font-bold text-indigo-900 max-w-[220px] truncate">
+                          {prot ? `${prot.title} (${prot.category})` : pid}
+                        </span>
+
+                        <button
+                          type="button"
+                          onClick={() => jumpToProtocol && jumpToProtocol(pid)}
+                          className="text-[10px] font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-2 py-0.5 rounded transition-colors"
+                          title="Open this protocol"
+                        >
+                          📖 Open
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => removeLinkedProtocol(pid)}
+                          className="text-slate-400 hover:text-red-500 font-bold px-1"
+                          title="Unlink"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <select
+                value=""
+                onChange={(e) => addLinkedProtocol(e.target.value)}
+                className="border border-indigo-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-indigo-500 w-full cursor-pointer font-semibold text-indigo-900"
+              >
+                <option value="">-- Add a protocol to link --</option>
+
+                {safeDatasetProtocols
+                  .filter((p) => !linkedProtocolIds.includes(p.id))
+                  .map((p, idx) => (
+                    <option key={p.id ?? `protocol-${idx}`} value={p.id}>
+                      {p.title} ({p.category})
+                    </option>
+                  ))}
+              </select>
+            </div>
+          </CollapsibleSection>
+
+          <CollapsibleSection title="Agenda" icon="📅" defaultOpen={false}>
+            <h3 className="text-[11px] font-bold text-slate-600 mb-2 flex justify-between items-center">
+              <span>📅 Schedule / Planning (This Item)</span>
+
+              <div className="flex gap-2">
+                <input
+                  type="date"
+                  id={planDateId}
+                  className="border border-slate-300 px-2 py-1 text-xs rounded bg-white text-slate-800 outline-none focus:border-blue-500"
+                />
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const el = document.getElementById(planDateId);
+                    const d = el ? el.value : '';
+
+                    if (d) {
+                      update({
+                        plan: [
+                          ...experimentPlan,
+                          {
+                            id: `plan-${Date.now()}-${Math.random()
+                              .toString(36)
+                              .slice(2)}`,
+                            date: d,
+                            task: ''
+                          }
+                        ].sort((a, b) => a.date.localeCompare(b.date))
+                      });
+                    }
+                  }}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs font-bold transition shadow-sm"
+                >
+                  Add Task
+                </button>
+              </div>
+            </h3>
+
+            <div className="flex flex-col gap-2 max-h-40 overflow-y-auto custom-scrollbar pr-2">
+              {experimentPlan.length === 0 && (
+                <span className="text-xs text-slate-400 italic">
+                  No tasks planned yet.
+                </span>
+              )}
+
+              {experimentPlan.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex gap-2 items-start flex-wrap bg-slate-50 border border-slate-200 p-1.5 rounded-lg shadow-sm"
+                >
+                  <span className="text-[10px] font-bold w-20 text-slate-600 pl-2 mt-1.5">
+                    {item.date}
+                  </span>
+
+                  <input
+                    type="text"
+                    value={item.task}
+                    onChange={(e) =>
+                      update({
+                        plan: experimentPlan.map((p) =>
+                          p.id === item.id ? { ...p, task: e.target.value } : p
+                        )
+                      })
+                    }
+                    className="bg-transparent border-none focus:outline-none focus:bg-white focus:ring-1 focus:ring-blue-500 p-1 text-xs flex-1 text-slate-700 rounded transition-all min-w-[120px]"
+                    placeholder="Task description..."
+                  />
+
+                  {operators.length > 0 && (
+                    <select
+                      value={item.assignedTo || ''}
+                      onChange={(e) =>
+                        update({
+                          plan: experimentPlan.map((p) =>
+                            p.id === item.id
+                              ? { ...p, assignedTo: e.target.value }
+                              : p
+                          )
+                        })
+                      }
+                      className="border border-slate-200 rounded px-1.5 py-0.5 text-[10px] bg-white text-slate-700 outline-none focus:border-blue-500 shrink-0"
+                    >
+                      <option value="">Assign to...</option>
+                      {operators.map((op) => (
+                        <option key={op} value={op}>
+                          {op}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+
+                  {item.assignedTo && (
+                    <span className="text-[10px] font-bold bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full self-center whitespace-nowrap">
+                      {item.assignedTo}
+                    </span>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      update({
+                        plan: experimentPlan.filter((p) => p.id !== item.id)
+                      })
+                    }
+                    className="text-slate-400 hover:text-red-500 text-[10px] font-bold px-2 transition self-center"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          </CollapsibleSection>
+
+          <CollapsibleSection title="Experimental Conditions" icon="🌡️" defaultOpen={false}>
+            {isMdType && (
+              <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded-lg flex flex-wrap items-center gap-3">
+                <label className="bg-white hover:bg-emerald-100 text-emerald-700 border border-emerald-300 font-bold py-1.5 px-3 rounded-lg text-xs cursor-pointer shadow-sm transition-colors flex items-center gap-2 shrink-0">
+                  📄 Auto-fill from GROMACS / CHARMM file
+                  <input
+                    type="file"
+                    accept=".mdp,.top,.itp,.inp,.str,.conf,.namd,.prm,.par,.psf"
+                    onChange={handleMdParamFile}
+                    className="hidden"
+                  />
+                </label>
+
+                <p className="text-[11px] text-emerald-700/80 flex-1 min-w-[220px]">
+                  Reads force field, water model, temperature, pressure, timestep
+                  &amp; more directly from your simulation input file.
+                </p>
+
+                {mdParamFileReport && (
+                  <span
+                    className={`text-[11px] font-bold ${
+                      mdParamFileReport.ok
+                        ? 'text-emerald-700'
+                        : 'text-amber-600'
+                    }`}
+                  >
+                    {mdParamFileReport.error
+                      ? `⚠️ Could not read ${mdParamFileReport.name}`
+                      : mdParamFileReport.ok
+                        ? `✓ Parsed ${mdParamFileReport.count} field${
+                            mdParamFileReport.count === 1 ? '' : 's'
+                          } from ${mdParamFileReport.name}`
+                        : `⚠️ No recognizable parameters found in ${mdParamFileReport.name}`}
+                  </span>
+                )}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {(Array.isArray(config.conditionFields)
+                ? config.conditionFields
+                : []
+              ).map(renderConditionField)}
+
+              {conditionCustomFields.length > 0 && (
+                <div className="col-span-full text-xs font-bold text-slate-400 uppercase pt-2 border-t border-slate-100">
+                  Custom Metadata
+                </div>
+              )}
+
+              {conditionCustomFields.map(renderCustomMetadataField)}
+            </div>
+
+            <BufferAdditiveFields
+              t={t}
+              update={update}
+              buffers={buffersFromDefs}
+              additives={additivesFromDefs}
+            />
+          </CollapsibleSection>
+
+          <CollapsibleSection title="Instrumental Setup" icon="🔬" defaultOpen={false}>
+            <div className="flex flex-col gap-4">
+              {InstrumentalSetupSection ? (
+                <InstrumentalSetupSection ctx={ctx} />
+              ) : (
+                <p className="text-sm text-slate-400 italic">
+                  No instrument-specific setup defined for this page type.
+                </p>
+              )}
+
+              {instrumentalCustomFields.length > 0 && (
+                <div className="border-t border-slate-100 pt-3">
+                  <div className="text-xs font-bold text-slate-400 uppercase mb-2">
+                    Instrumental Custom Metadata
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {instrumentalCustomFields.map(renderCustomMetadataField)}
+                  </div>
+                </div>
+              )}
+            </div>
+          </CollapsibleSection>
+
+          {otherSubsectionCustomFields.map((group) => (
+            <CollapsibleSection
+              key={group.id}
+              title={`Additional Fields — ${group.label}`}
+              icon="📎"
+              defaultOpen={false}
+            >
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {group.fields.map(renderCustomMetadataField)}
+              </div>
+            </CollapsibleSection>
+          ))}
+
+{!mandatoryBlocked && SetupSection && !CustomAll && (
+            <CollapsibleSection title="Experiment Setup" icon="⚙️" defaultOpen={false}>
+              <SetupSection ctx={ctx} />
+            </CollapsibleSection>
+          )}
+            </div>
+          )}
+        </div>
+
+        {/* ================= MOLECULAR SYSTEM & SIMULATIONS ================= */}
+        {(MolecularStructureSection || (!mandatoryBlocked && SimulationsSection)) && (
+          <div className="mb-8">
+            <button
+              type="button"
+              onClick={() => setShowMolSys(!showMolSys)}
+              className="w-full flex items-center justify-center gap-2 mb-4 border-b-2 border-slate-200 pb-2 cursor-pointer group outline-none bg-transparent"
+            >
+              <h2 className="text-lg font-black text-slate-800 uppercase tracking-widest group-hover:text-blue-600 transition-colors m-0">MOLECULAR SYSTEM AND SIMULATIONS</h2>
+              <span className="text-slate-400 group-hover:text-blue-600 transition-colors text-sm">{showMolSys ? '▼' : '▶'}</span>
+            </button>
+            
+            {showMolSys && (
+              <div className="flex flex-col gap-0">
+                {MolecularStructureSection && (
+              <CollapsibleSection title="Molecular structure and visualization" icon="🧬" defaultOpen={false}>
+                <MolecularStructureSection ctx={ctx} />
+              </CollapsibleSection>
+            )}
+
+{!mandatoryBlocked && SimulationsSection && (
+              <CollapsibleSection title="Simulations" icon="🧪" defaultOpen={false}>
+                <SimulationsSection ctx={ctx} />
+              </CollapsibleSection>
+            )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ================= DATA AND ANALYSIS ================= */}
+        {!mandatoryBlocked && (CustomAll || DataSection || DataAnalysisSection || FittingSection || FittingErrors || FittingGraphics) && (
+          <div className="mb-8">
+            <button
+              type="button"
+              onClick={() => setShowData(!showData)}
+              className="w-full flex items-center justify-center gap-2 mb-4 border-b-2 border-slate-200 pb-2 cursor-pointer group outline-none bg-transparent"
+            >
+              <h2 className="text-lg font-black text-slate-800 uppercase tracking-widest group-hover:text-blue-600 transition-colors m-0">DATA AND ANALYSIS</h2>
+              <span className="text-slate-400 group-hover:text-blue-600 transition-colors text-sm">{showData ? '▼' : '▶'}</span>
+            </button>
+            
+            {showData && (
+              <div className="flex flex-col gap-0">
+                {CustomAll ? (
               <CustomAll ctx={ctx} />
             ) : (
               <>
@@ -2070,54 +1881,29 @@ export const TestShellRenderer = ({
                 )}
 
                 {(DataAnalysisSection || FittingSection || FittingErrors || FittingGraphics) && (
-                  <CollapsibleSection
-                    title="Data Analysis"
-                    icon="📉"
-                    defaultOpen={false}
-                  >
+                  <CollapsibleSection title="Data Analysis" icon="📉" defaultOpen={false}>
                     <div className="flex flex-col gap-6">
                       {DataAnalysisSection && (
-                        <CollapsibleSection
-                          title="Secondary Shifts analysis"
-                          icon="📉"
-                          defaultOpen={false}
-                        >
+                        <CollapsibleSection title="Secondary Shifts analysis" icon="📉" defaultOpen={false}>
                           <DataAnalysisSection ctx={ctx} />
                         </CollapsibleSection>
                       )}
 
                       {FittingSection ? (
-                        <CollapsibleSection
-                          title="Fitting"
-                          icon="📐"
-                          defaultOpen={false}
-                        >
+                        <CollapsibleSection title="Fitting" icon="📐" defaultOpen={false}>
                           <FittingSection ctx={ctx} />
                         </CollapsibleSection>
                       ) : (
                         (FittingErrors || FittingGraphics) && (
-                          <CollapsibleSection
-                            title="Fitting"
-                            icon="📐"
-                            defaultOpen={false}
-                          >
+                          <CollapsibleSection title="Fitting" icon="📐" defaultOpen={false}>
                             <div className="flex flex-col gap-6">
                               {FittingErrors && (
-                                <CollapsibleSection
-                                  title="Error Management"
-                                  icon="⚠️"
-                                  defaultOpen={false}
-                                >
+                                <CollapsibleSection title="Error Management" icon="⚠️" defaultOpen={false}>
                                   <FittingErrors ctx={ctx} />
                                 </CollapsibleSection>
                               )}
-
                               {FittingGraphics && (
-                                <CollapsibleSection
-                                  title="Graphical Parameters"
-                                  icon="🎨"
-                                  defaultOpen={false}
-                                >
+                                <CollapsibleSection title="Graphical Parameters" icon="🎨" defaultOpen={false}>
                                   <FittingGraphics ctx={ctx} />
                                 </CollapsibleSection>
                               )}
@@ -2128,61 +1914,324 @@ export const TestShellRenderer = ({
                     </div>
                   </CollapsibleSection>
                 )}
-
-                {SimulationsSection && (
-                  <CollapsibleSection
-                    title="Simulations"
-                    icon="🧪"
-                    defaultOpen={false}
-                  >
-                    <SimulationsSection ctx={ctx} />
-                  </CollapsibleSection>
-                )}
-              </>
+</>
             )}
+              </div>
+            )}
+          </div>
+        )}
 
-            {!config.hideNotebook && notebookChecks.length > 0 && (
-              <CollapsibleSection
-                title="Lab Notebook Export"
-                icon="📓"
-                defaultOpen={false}
-                className="no-print"
-              >
-                <div className="flex flex-col gap-4">
-                  <p className="text-sm text-slate-600">
-                    Select the data to format and append to the General Comments
-                    (Lab Notebook entry).
-                  </p>
-
-                  <div className="flex flex-wrap gap-4 border border-slate-200 p-4 rounded-lg bg-white shadow-sm">
-                    {notebookChecks.map((c) => (
-                      <label
-                        key={c.id}
-                        className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600"
+        {/* ================= REPORT ================= */}
+        <div className="mb-8">
+          <button
+            type="button"
+            onClick={() => setShowReport(!showReport)}
+            className="w-full flex items-center justify-center gap-2 mb-4 border-b-2 border-slate-200 pb-2 cursor-pointer group outline-none bg-transparent"
+          >
+            <h2 className="text-lg font-black text-slate-800 uppercase tracking-widest group-hover:text-blue-600 transition-colors m-0">REPORT</h2>
+            <span className="text-slate-400 group-hover:text-blue-600 transition-colors text-sm">{showReport ? '▼' : '▶'}</span>
+          </button>
+          
+          {showReport && (
+            <div className="flex flex-col gap-0">
+              <CollapsibleSection title="Report" icon="📝" defaultOpen={false}>
+            <div className="flex flex-col gap-6">
+              <div className="flex flex-col lg:flex-row gap-6">
+                <div className="flex-1 flex flex-col h-full min-h-[160px]">
+<div className="flex flex-col xl:flex-row justify-between items-start xl:items-center mb-2 gap-2">
+                    <label className="text-xs font-bold text-slate-600 whitespace-nowrap">
+                      Comments & Notes
+                    </label>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => addImageLink('')}
+                        className="bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 font-bold px-2 py-1 rounded transition-colors shadow-sm text-[10px]"
                       >
-                        <input
-                          type="checkbox"
-                          id={`nb-${typeKey}-${c.id}`}
-                          defaultChecked
-                          className="w-4 h-4 accent-blue-600 cursor-pointer"
-                        />
-                        {c.label}
-                      </label>
-                    ))}
+                        + Add Figure
+                      </button>
+
+                      <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded px-2 py-1 shadow-sm">
+                        <label className="text-[10px] font-bold text-slate-500">Rows:</label>
+                        <input type="number" min="1" value={tableRows} onChange={(e) => setTableRows(parseInt(e.target.value) || 1)} className="w-10 text-[10px] border border-slate-300 rounded px-1 outline-none" />
+                        <label className="text-[10px] font-bold text-slate-500 ml-1">Cols:</label>
+                        <input type="number" min="1" value={tableCols} onChange={(e) => setTableCols(parseInt(e.target.value) || 1)} className="w-10 text-[10px] border border-slate-300 rounded px-1 outline-none" />
+                        
+                        <button
+                          type="button"
+                          onClick={() => {
+                            let tableHtml = '<br/><table style="width:100%; border-collapse: collapse;" border="1"><tbody><tr>';
+                            for (let c = 0; c < tableCols; c++) {
+                                tableHtml += `<th style="padding:4px; background-color:#f1f5f9; border: 1px solid #cbd5e1;">Header ${c + 1}</th>`;
+                            }
+                            tableHtml += '</tr>';
+                            for (let r = 0; r < tableRows; r++) {
+                                tableHtml += '<tr>';
+                                for (let c = 0; c < tableCols; c++) {
+                                    tableHtml += `<td style="padding:4px; border: 1px solid #cbd5e1;">Data</td>`;
+                                }
+                                tableHtml += '</tr>';
+                            }
+                            tableHtml += '</tbody></table><br/>';
+                            update({ comments: (comments || '') + tableHtml });
+                          }}
+                          className="ml-1 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-200 font-bold px-2 py-0.5 rounded transition-colors text-[10px]"
+                        >
+                          + Std Table
+                        </button>
+
+<button
+                          type="button"
+                          onClick={() => {
+                            const seq = (t.proteinSequence || '').toUpperCase().replace(/[^ACDEFGHIKLMNPQRSTVWY]/g, '');
+                            const shifts = t.chemicalShifts || {};
+                            const commonAtoms = ['HN', 'N', 'Cα', 'Hα', 'Cβ', 'Hβ', "C'"];
+                            let rowsHtml = '';
+                            
+                            if (seq.length > 0) {
+                              seq.split('').forEach((char, idx) => {
+                                const resId = `${idx + 1}${char}`;
+                                let hasData = false;
+                                let rowCells = '';
+                                
+                                commonAtoms.forEach(ca => {
+                                  const val = shifts[`${idx}-${ca}`] || '';
+                                  if (val) hasData = true;
+                                  rowCells += `<td style="padding: 4px 8px; text-align: center;">${val || '-'}</td>`;
+                                });
+
+                                const others = [];
+                                Object.keys(shifts).forEach(k => {
+                                  if (k.startsWith(`${idx}-`)) {
+                                    const atomName = k.slice(String(idx).length + 1);
+                                    if (!commonAtoms.includes(atomName)) {
+                                      others.push(`${atomName}: ${shifts[k]}`);
+                                      hasData = true;
+                                    }
+                                  }
+                                });
+
+                                if (hasData) {
+                                  rowsHtml += `<tr><td style="padding: 4px 8px; text-align: left;">${resId}</td>${rowCells}<td style="padding: 4px 8px; text-align: center;">${others.length > 0 ? others.sort().join(', ') : '-'}</td></tr>`;
+                                }
+                              });
+                            }
+
+                            let headerCells = '';
+                            commonAtoms.forEach(ca => {
+                              headerCells += `<th style="border-top: 2px solid black; border-bottom: 1px solid black; padding: 6px 8px; text-align: center; font-weight: bold;">${ca}</th>`;
+                            });
+
+                            const tableHtml = rowsHtml ? 
+                              `<br/><table style="width: 100%; border-collapse: collapse; font-family: 'Times New Roman', Times, serif; font-size: 11pt; color: black; border-top: 2px solid black; border-bottom: 2px solid black;"><thead><tr><th style="border-top: 2px solid black; border-bottom: 1px solid black; padding: 6px 8px; text-align: left; font-weight: bold;">Residue</th>${headerCells}<th style="border-top: 2px solid black; border-bottom: 1px solid black; padding: 6px 8px; text-align: center; font-weight: bold;">Others</th></tr></thead><tbody>${rowsHtml}</tbody></table><br/>` :
+                              `<br/><table style="width: 100%; border-collapse: collapse; font-family: 'Times New Roman', Times, serif; font-size: 11pt; color: black; border-top: 2px solid black; border-bottom: 2px solid black;"><thead><tr><th style="border-top: 2px solid black; border-bottom: 1px solid black; padding: 6px 8px; text-align: left; font-weight: bold;">Residue</th>${headerCells}<th style="border-top: 2px solid black; border-bottom: 1px solid black; padding: 6px 8px; text-align: center; font-weight: bold;">Others</th></tr></thead><tbody><tr><td style="padding: 4px 8px; text-align: left;">1A</td><td style="padding: 4px 8px; text-align: center;">8.25</td><td style="padding: 4px 8px; text-align: center;">120.4</td><td style="padding: 4px 8px; text-align: center;">52.1</td><td style="padding: 4px 8px; text-align: center;">4.35</td><td style="padding: 4px 8px; text-align: center;">-</td><td style="padding: 4px 8px; text-align: center;">-</td><td style="padding: 4px 8px; text-align: center;">-</td><td style="padding: 4px 8px; text-align: center;">-</td></tr></tbody></table><br/>`;
+
+                            update({ comments: (comments || '') + tableHtml });
+                          }}
+                          className="bg-amber-50 text-amber-600 hover:bg-amber-100 border border-amber-200 font-bold px-2 py-0.5 rounded transition-colors text-[10px]"
+                        >
+                          + Pub Table
+                        </button>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const newDoc = {
+                            id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                            name: 'New Document Link',
+                            type: 'link',
+                            data: ''
+                          };
+                          update({ documents: [...documents, newDoc] });
+                        }}
+                        className="bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border border-indigo-200 font-bold px-2 py-1 rounded transition-colors shadow-sm text-[10px]"
+                      >
+                        + Add Document
+                      </button>
+                    </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={appendToNotebook}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-6 rounded-lg transition-all shadow-sm w-fit border border-indigo-700 flex items-center gap-2"
-                  >
-                    <span>+</span> Append Data to Lab Notebook
-                  </button>
+                  <RichTextEditor
+                    value={comments}
+                    onChange={(val) => update({ comments: val })}
+                    placeholder="Enter your experiment notes, observations, etc..."
+                  />
                 </div>
-              </CollapsibleSection>
-            )}
-          </>
-        )}
+
+<div className="flex-shrink-0 flex flex-col justify-start gap-4" style={{ maxWidth: '300px', minWidth: '180px' }}>
+                  <div className="w-full flex flex-col items-end border-t lg:border-t-0 border-slate-200 pt-3 lg:pt-0">
+                    <div className="flex flex-col gap-2 w-full max-h-[250px] overflow-y-auto custom-scrollbar">
+                      {documents.length === 0 && (
+                        <span className="text-[10px] text-slate-400 italic text-right w-full">
+                          No documents attached.
+                        </span>
+                      )}
+
+                      {documents.map((doc, idx) => {
+                        const docKey = doc.id ?? idx;
+                        return (
+                          <div key={docKey} className="flex flex-col gap-1.5 bg-slate-50 border border-slate-200 p-2 rounded-lg shadow-sm">
+                            <div className="flex justify-between items-center">
+                              <span className="text-[10px] font-bold text-slate-500">🔗 Document {idx + 1}</span>
+                              <button
+                                type="button"
+                                onClick={() => update({ documents: documents.filter((d, i) => (d.id ?? i) !== docKey) })}
+                                className="text-slate-400 hover:text-red-500 font-bold px-1 text-[10px]"
+                              >
+                                ×
+                              </button>
+                            </div>
+                            <input
+                              type="text"
+                              value={doc.name || ''}
+                              onChange={(e) => update({
+                                documents: documents.map((d, i) => (d.id ?? i) === docKey ? { ...d, name: e.target.value } : d)
+                              })}
+                              placeholder="Document Name"
+                              className="w-full border border-slate-300 rounded p-1 text-[10px] outline-none focus:border-blue-500"
+                            />
+                            <input
+                              type="text"
+                              value={doc.data || ''}
+                              onChange={(e) => update({
+                                documents: documents.map((d, i) => (d.id ?? i) === docKey ? { ...d, data: e.target.value } : d)
+                              })}
+                              placeholder="https://..."
+                              className="w-full border border-slate-300 rounded p-1 text-[10px] outline-none focus:border-blue-500"
+                            />
+                            {doc.data && doc.data.trim() !== '' && (
+                              <a href={doc.data} target="_blank" rel="noopener noreferrer" className="text-[9px] text-blue-500 hover:text-blue-700 underline truncate block mt-0.5">
+                                Open link ↗
+                              </a>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {images.length > 0 && (
+                <div className="mt-4 pt-4 border-t border-slate-200">
+                  <div className="mb-4">
+                    <h4 className="text-sm font-bold text-slate-700">Figures</h4>
+                    <p className="text-xs text-slate-500">Attached image links.</p>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {images.map((imgSrc, idx) => (
+                      <div
+                        key={idx}
+                        className="relative group bg-slate-50 p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col gap-2"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-500">
+                            Figure {idx + 1}
+                          </span>
+
+                          <button
+                            type="button"
+                            onClick={() => removeImageAt(idx)}
+                            className="bg-red-50 hover:bg-red-100 text-red-500 hover:text-red-700 rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold transition-colors border border-red-200"
+                          >
+                            ×
+                          </button>
+                        </div>
+
+                        <input
+                          type="text"
+                          value={imgSrc}
+                          onChange={(e) => {
+                            const newImages = [...images];
+                            newImages[idx] = e.target.value;
+                            update({ [imagesKey]: newImages });
+                          }}
+                          placeholder="Paste image URL here (Google Drive, Dropbox, etc.)"
+                          className="w-full border border-slate-300 rounded-lg p-2 text-xs outline-none focus:border-blue-500"
+                        />
+
+                        {imgSrc && imgSrc.trim() !== '' && (
+                          <div
+                            className="bg-white rounded-lg p-2 border border-slate-200 cursor-pointer mt-1"
+                            onClick={() =>
+                              setZoomImage(normalizeImageCandidates(imgSrc)[0] || imgSrc)
+                            }
+                            title="Click to zoom"
+                          >
+                            <SmartImage src={imgSrc} alt={`Figure ${idx + 1}`} />
+                          </div>
+                        )}
+
+                        <textarea
+                          value={captionsAligned[idx] ?? ''}
+                          onChange={(e) => updateFigureCaption(idx, e.target.value)}
+                          placeholder={`Figure ${idx + 1} caption...`}
+                          rows={2}
+                          className="w-full border border-slate-300 rounded-lg p-2 text-xs outline-none focus:border-blue-500 resize-y"
+                        />
+
+                        {imgSrc && imgSrc.trim() !== '' && (
+                          <a
+                            href={imgSrc}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-blue-500 hover:text-blue-700 font-medium flex items-center gap-1"
+                          >
+                            🔗 Open original link
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </CollapsibleSection>
+
+          {!mandatoryBlocked && !config.hideNotebook && notebookChecks.length > 0 && (
+            <CollapsibleSection
+              title="Lab Notebook Export"
+              icon="📓"
+              defaultOpen={false}
+              className="no-print mt-6"
+            >
+              <div className="flex flex-col gap-4">
+                <p className="text-sm text-slate-600">
+                  Select the data to format and append to the General Comments
+                  (Lab Notebook entry).
+                </p>
+
+                <div className="flex flex-wrap gap-4 border border-slate-200 p-4 rounded-lg bg-white shadow-sm">
+                  {notebookChecks.map((c) => (
+                    <label
+                      key={c.id}
+                      className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600"
+                    >
+                      <input
+                        type="checkbox"
+                        id={`nb-${typeKey}-${c.id}`}
+                        defaultChecked
+                        className="w-4 h-4 accent-blue-600 cursor-pointer"
+                      />
+                      {c.label}
+                    </label>
+                  ))}
+                </div>
+
+  <button
+                  type="button"
+                  onClick={appendToNotebook}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-6 rounded-lg transition-all shadow-sm w-fit border border-indigo-700 flex items-center gap-2"
+                >
+                  <span>+</span> Append Data to Lab Notebook
+                </button>
+              </div>
+            </CollapsibleSection>
+          )}
+            </div>
+          )}
+        </div>
       </div>
 
       {zoomImage && (

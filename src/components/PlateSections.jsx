@@ -747,6 +747,104 @@ export function RegionCharts({ regionName, regionData, config }) {
     );
 }
 
+// ================= TOOLBAR =================
+export const Toolbar = ({ ctx }) => {
+    const exportPDF = async () => {
+        const activeTest = ctx.activeTest || {};
+        const el = document.getElementById(`plate-report-${activeTest.id}`);
+        if (!el) return;
+
+        const scrollParent = el.closest('.overflow-y-auto');
+        const originalOverflow = scrollParent ? scrollParent.style.overflow : '';
+        const originalHeight = scrollParent ? scrollParent.style.height : '';
+
+        const loader = document.getElementById('loader');
+        const loaderText = document.getElementById('loader-text');
+
+        if (loader) loader.style.display = 'flex';
+        if (loaderText) loaderText.innerText = 'Generating PDF...';
+
+        const fixedEls = document.querySelectorAll('.fixed, [style*="position: fixed"]');
+        fixedEls.forEach((x) => (x.style.display = 'none'));
+
+        const noPrintEls = el.querySelectorAll('.no-print');
+        noPrintEls.forEach((e) => (e.style.display = 'none'));
+
+        if (scrollParent) {
+            scrollParent.style.overflow = 'visible';
+            scrollParent.style.height = 'auto';
+        }
+
+        el.classList.add('pdf-mode');
+        window.scrollTo(0, 0);
+
+        await new Promise((r) => setTimeout(r, 800));
+
+        try {
+            const canvas = await html2canvas(el, {
+                scale: 2,
+                useCORS: true,
+                allowTaint: true,
+                backgroundColor: '#f8fafc',
+                logging: false,
+                imageTimeout: 15000,
+                removeContainer: true,
+                windowWidth: el.scrollWidth,
+                windowHeight: el.scrollHeight
+            });
+
+            const imgData = canvas.toDataURL('image/jpeg', 0.92);
+            const pdf = new jsPDF('p', 'pt', 'a4');
+
+            const pageWidth = pdf.internal.pageSize.getWidth();
+            const pageHeight = pdf.internal.pageSize.getHeight();
+
+            const imgWidth = pageWidth;
+            const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+            let heightLeft = imgHeight;
+            let position = 0;
+
+            pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+            heightLeft -= pageHeight;
+
+            while (heightLeft > 0) {
+                position = heightLeft - imgHeight;
+                pdf.addPage();
+                pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+                heightLeft -= pageHeight;
+            }
+
+            pdf.save(`Plate_Report_${(activeTest.name || 'test').replace(/[^a-z0-9]+/gi, '_')}.pdf`);
+        } catch (e) {
+            console.error(e);
+            alert('Export Failed: ' + e.message);
+        } finally {
+            el.classList.remove('pdf-mode');
+            fixedEls.forEach((x) => (x.style.display = ''));
+            noPrintEls.forEach((e) => (e.style.display = ''));
+
+            if (scrollParent) {
+                scrollParent.style.overflow = originalOverflow;
+                scrollParent.style.height = originalHeight;
+            }
+
+            if (loader) loader.style.display = 'none';
+        }
+    };
+
+    return (
+        <div className="w-full bg-white border-b border-slate-200 px-6 py-2 flex items-center justify-end no-print shrink-0">
+            <button
+                onClick={exportPDF}
+                className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold py-1 px-3 rounded text-xs flex items-center gap-1 shadow-sm transition-colors"
+            >
+                📄 Export PDF
+            </button>
+        </div>
+    );
+};
+
 // ================= NOTEBOOK BUILDER =================
 export const buildNotebookHtml = (checked, ctx) => {
     const model = ctx.plateModelRef?.current || {};
@@ -851,9 +949,11 @@ export const All = ({ ctx }) => {
     const [mapFontSize, setMapFontSize] = useState(9);
     const [ctxMenu, setCtxMenu] = useState(null);
     const [focusedCell, setFocusedCell] = useState(null);
-    const [hiddenCmpds, setHiddenCmpds] = useState({});
+ const [hiddenCmpds, setHiddenCmpds] = useState({});
     const [showChartCfg, setShowChartCfg] = useState(false);
     const [showErrPanel, setShowErrPanel] = useState(false);
+    const [showErrMgmt, setShowErrMgmt] = useState(false);
+    const [showGraphParams, setShowGraphParams] = useState(false);
     const [fsPanel, setFsPanel] = useState(null);
     const [selStart, setSelStart] = useState(null);
     const [selEnd, setSelEnd] = useState(null);
@@ -1781,94 +1881,11 @@ export const All = ({ ctx }) => {
 
             XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summaryAoa), 'IC50 Summary');
 
-            const fname = `${(activeTest.name || 'test').replace(/[^a-z0-9]+/gi, '_')}.xlsx`;
+const fname = `${(activeTest.name || 'test').replace(/[^a-z0-9]+/gi, '_')}.xlsx`;
             XLSX.writeFile(wb, fname);
         } catch (e) {
             console.error(e);
             alert('Export Failed: ' + e.message);
-        }
-    };
-
-    const exportPDF = async () => {
-        const el = document.getElementById(`plate-report-${activeTest.id}`);
-        if (!el) return;
-
-        const scrollParent = el.closest('.overflow-y-auto');
-        const originalOverflow = scrollParent ? scrollParent.style.overflow : '';
-        const originalHeight = scrollParent ? scrollParent.style.height : '';
-
-        const loader = document.getElementById('loader');
-        const loaderText = document.getElementById('loader-text');
-
-        if (loader) loader.style.display = 'flex';
-        if (loaderText) loaderText.innerText = 'Generating PDF...';
-
-        const fixedEls = document.querySelectorAll('.fixed, [style*="position: fixed"]');
-        fixedEls.forEach((x) => (x.style.display = 'none'));
-
-        const noPrintEls = el.querySelectorAll('.no-print');
-        noPrintEls.forEach((e) => (e.style.display = 'none'));
-
-        if (scrollParent) {
-            scrollParent.style.overflow = 'visible';
-            scrollParent.style.height = 'auto';
-        }
-
-        el.classList.add('pdf-mode');
-        window.scrollTo(0, 0);
-
-        await new Promise((r) => setTimeout(r, 800));
-
-        try {
-            const canvas = await html2canvas(el, {
-                scale: 2,
-                useCORS: true,
-                allowTaint: true,
-                backgroundColor: '#f8fafc',
-                logging: false,
-                imageTimeout: 15000,
-                removeContainer: true,
-                windowWidth: el.scrollWidth,
-                windowHeight: el.scrollHeight
-            });
-
-            const imgData = canvas.toDataURL('image/jpeg', 0.92);
-            const pdf = new jsPDF('p', 'pt', 'a4');
-
-            const pageWidth = pdf.internal.pageSize.getWidth();
-            const pageHeight = pdf.internal.pageSize.getHeight();
-
-            const imgWidth = pageWidth;
-            const imgHeight = (canvas.height * imgWidth) / canvas.width;
-
-            let heightLeft = imgHeight;
-            let position = 0;
-
-            pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-            heightLeft -= pageHeight;
-
-            while (heightLeft > 0) {
-                position = heightLeft - imgHeight;
-                pdf.addPage();
-                pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-                heightLeft -= pageHeight;
-            }
-
-            pdf.save(`Plate_Report_${(activeTest.name || 'test').replace(/[^a-z0-9]+/gi, '_')}.pdf`);
-        } catch (e) {
-            console.error(e);
-            alert('Export Failed: ' + e.message);
-        } finally {
-            el.classList.remove('pdf-mode');
-            fixedEls.forEach((x) => (x.style.display = ''));
-            noPrintEls.forEach((e) => (e.style.display = ''));
-
-            if (scrollParent) {
-                scrollParent.style.overflow = originalOverflow;
-                scrollParent.style.height = originalHeight;
-            }
-
-            if (loader) loader.style.display = 'none';
         }
     };
 
@@ -2444,24 +2461,8 @@ export const All = ({ ctx }) => {
         }
     };
 
-    return (
+return (
         <div id={`plate-report-${activeTest.id}`} className="flex flex-col gap-6">
-            {/* TOOLBAR */}
-            <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 flex items-center justify-end gap-3 no-print">
-                <button
-                    onClick={exportXLS}
-                    className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1.5 px-3 rounded text-xs flex items-center gap-1 shadow-sm transition-colors"
-                >
-                    📊 Export XLS
-                </button>
-                <button
-                    onClick={exportPDF}
-                    className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold py-1.5 px-3 rounded text-xs flex items-center gap-1 shadow-sm transition-colors"
-                >
-                    📄 Export PDF
-                </button>
-            </div>
-
             {/* ================= EXPERIMENT SETUP ================= */}
             <CollapsibleSection title="Experiment Setup" icon="⚙️" defaultOpen={true}>
                 <div className="flex flex-col gap-6">
@@ -2652,18 +2653,22 @@ export const All = ({ ctx }) => {
                                 fsPanel === 'map' ? FS_CLASSES : 'rounded-xl w-full'
                             }`}
                         >
-                            <div className="flex justify-between items-start mb-2 gap-2">
-                                <div className="min-w-0">
-                                    <h2 className="text-sm lg:text-base font-bold text-slate-800 truncate">
-                                        Visual Plate Map
-                                    </h2>
-                                    <p className="text-[10px] text-slate-500 mt-0.5">
-                                        Shows compound & exact concentration assigned.
-                                    </p>
-                                </div>
+<div className="flex justify-between items-start mb-2 gap-2">
+                            <div className="min-w-0">
+                                <h2 className="text-sm lg:text-base font-bold text-slate-800 truncate">
+                                    {`Data Grid (${activePlateDim.rows}x${activePlateDim.cols})`}
+                                </h2>
+                            </div>
 
-                                <div className="flex items-center shrink-0">
-                                    <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1 shadow-sm mr-4">
+                            <div className="flex items-center shrink-0">
+                                <button
+                                    onClick={exportXLS}
+                                    className="mr-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1 px-3 rounded text-xs flex items-center gap-1 shadow-sm transition-colors no-print"
+                                >
+                                    📊 Export XLS
+                                </button>
+
+                                <div className="flex bg-slate-200 p-1 rounded-lg shadow-inner mr-4">
                                         <span className="text-[10px] text-slate-500 font-bold">A</span>
                                         <input
                                             type="range"
@@ -3211,12 +3216,39 @@ export const All = ({ ctx }) => {
             {/* ================= DATA ANALYSIS ================= */}
             <CollapsibleSection title="Data Analysis" icon="📐" defaultOpen={true}>
                 <div className="flex flex-col gap-6">
+{/* ===== TOGGLE BUTTONS FOR ERROR MGMT & GRAPHICAL PARAMS ===== */}
+                    <div className="flex flex-wrap gap-3">
+                        <button
+                            onClick={() => setShowErrMgmt(!showErrMgmt)}
+                            className={`font-bold py-2 px-4 rounded-lg text-sm transition-colors shadow-sm flex items-center gap-2 ${
+                                showErrMgmt
+                                    ? 'bg-blue-100 border border-blue-300 text-blue-800'
+                                    : 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-300'
+                            }`}
+                        >
+                            <span>⚠️</span> Error Management {showErrMgmt ? '▲' : '▼'}
+                        </button>
+                        <button
+                            onClick={() => setShowGraphParams(!showGraphParams)}
+                            className={`font-bold py-2 px-4 rounded-lg text-sm transition-colors shadow-sm flex items-center gap-2 ${
+                                showGraphParams
+                                    ? 'bg-blue-100 border border-blue-300 text-blue-800'
+                                    : 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-300'
+                            }`}
+                        >
+                            <span>🎨</span> Graphical Parameters {showGraphParams ? '▲' : '▼'}
+                        </button>
+                    </div>
+
                     {/* ===== ERROR MANAGEMENT ===== */}
-                    <CollapsibleSection title="Error Management" icon="⚠️" defaultOpen={false}>
-                        <div className="flex flex-col gap-4">
+                    {showErrMgmt && (
+                        <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col gap-4">
+                            <h3 className="text-sm font-bold text-slate-700 uppercase tracking-widest border-b border-slate-200 pb-2">
+                                ⚠️ Error Management
+                            </h3>
                             <div className="flex flex-wrap gap-4 items-stretch">
                                 {/* Data Normalization */}
-                                <div className="border border-slate-200 bg-slate-50 rounded-lg p-4 flex flex-col gap-3 flex-1 min-w-[300px]">
+                                <div className="border border-slate-200 bg-white rounded-lg p-4 flex flex-col gap-3 flex-1 min-w-[300px]">
                                     <div className="text-[10px] uppercase font-bold text-slate-500">
                                         Data Normalization
                                     </div>
@@ -3228,7 +3260,7 @@ export const All = ({ ctx }) => {
                                                 <select
                                                     value={ctrlType}
                                                     onChange={(e) => updatePlate({ ctrlType: e.target.value })}
-                                                    className="border border-slate-300 rounded-md p-1.5 text-xs bg-white w-full outline-none"
+                                                    className="border border-slate-300 rounded-md p-1.5 text-xs bg-slate-50 w-full outline-none"
                                                 >
                                                     <option value="none">Manual</option>
                                                     {allCmpds.map((c) => (
@@ -3270,7 +3302,7 @@ export const All = ({ ctx }) => {
                                             <select
                                                 value={bgType}
                                                 onChange={(e) => updatePlate({ bgType: e.target.value })}
-                                                className="border border-slate-300 rounded-md p-1.5 text-xs bg-white w-full outline-none"
+                                                className="border border-slate-300 rounded-md p-1.5 text-xs bg-slate-50 w-full outline-none"
                                             >
                                                 <option value="none">None</option>
                                                 <option value="manual">Manual</option>
@@ -3435,11 +3467,14 @@ export const All = ({ ctx }) => {
                                 </div>
                             )}
                         </div>
-                    </CollapsibleSection>
+                    )}
 
                     {/* ===== GRAPHICAL PARAMETERS ===== */}
-                    <CollapsibleSection title="Graphical Parameters" icon="🎨" defaultOpen={false}>
-                        <div className="flex flex-col gap-4">
+                    {showGraphParams && (
+                        <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col gap-4">
+                            <h3 className="text-sm font-bold text-slate-700 uppercase tracking-widest border-b border-slate-200 pb-2">
+                                🎨 Graphical Parameters
+                            </h3>
                             <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
                                 {plotCmps.length > 0 && (
                                     <div className="flex-1">
@@ -3454,7 +3489,7 @@ export const All = ({ ctx }) => {
                                                 return (
                                                     <div
                                                         key={cmp}
-                                                        className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm"
+                                                        className="flex items-center gap-1.5 bg-white border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm"
                                                     >
                                                         <input
                                                             type="checkbox"
@@ -3565,7 +3600,7 @@ export const All = ({ ctx }) => {
                                             <select
                                                 value={chartCfg.chartType || 'dose-response'}
                                                 onChange={(e) => updatePlate({ chartCfg: { ...chartCfg, chartType: e.target.value } })}
-                                                className="border border-slate-300 rounded-md p-2 text-sm bg-white outline-none focus:border-blue-500"
+                                                className="border border-slate-300 rounded-md p-2 text-sm bg-slate-50 outline-none focus:border-blue-500"
                                             >
                                                 <option value="dose-response">Dose-Response</option>
                                                 <option value="histogram">Histogram (IC50)</option>
@@ -3575,7 +3610,7 @@ export const All = ({ ctx }) => {
                                 </div>
                             )}
                         </div>
-                    </CollapsibleSection>
+                    )}
 
                     {/* REGION CHARTS */}
                     {Object.entries(processedByRegion).map(([reg, comps]) => (

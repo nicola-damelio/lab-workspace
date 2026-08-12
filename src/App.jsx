@@ -4685,7 +4685,7 @@ setMandatoryFields(s.mandatoryFields || []);
 
   return (
     <div className="w-full relative flex flex-col h-screen overflow-hidden bg-slate-50">
-      <style>{`
+<style>{`
         @media print {
           @page {
             margin: 1.5cm 1.2cm;
@@ -4695,7 +4695,9 @@ setMandatoryFields(s.mandatoryFields || []);
           .no-print,
           nav,
           button,
-          input[type="file"] {
+          input[type="file"],
+          aside,
+          [class*="sidebar"] {
             display: none !important;
           }
 
@@ -5181,26 +5183,38 @@ setMandatoryFields(s.mandatoryFields || []);
                 !isSidebarOpen ? 'items-center px-1' : ''
               }`}
             >
-              <div className={`flex ${isSidebarOpen ? 'gap-2' : 'flex-col gap-2 w-full'}`}>
-                <label
-                  className={`flex-1 text-center bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-200 font-bold py-1.5 rounded text-xs cursor-pointer shadow-sm transition-colors ${
-                    !isSidebarOpen ? 'py-2 px-0 text-[10px]' : ''
-                  }`}
-                  title="Load HTML"
-                >
-                  {isSidebarOpen ? '📂 Load HTML' : '📂'}
-                  <input type="file" accept=".html" onChange={loadHTML} className="hidden" />
-                </label>
-
+              <div className={`flex flex-col gap-2 w-full`}>
                 <button
-                  onClick={exportHTML}
-                  className={`flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors ${
+                  onClick={handlePrint}
+                  className={`w-full text-center bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors flex items-center justify-center gap-1 ${
                     !isSidebarOpen ? 'py-2 px-0 text-[10px]' : ''
                   }`}
-                  title="Save HTML"
+                  title="Print / Export PDF"
                 >
-                  {isSidebarOpen ? '💾 Save HTML' : '💾'}
+                  <span>🖨️</span> {isSidebarOpen ? 'Print / Export PDF' : ''}
                 </button>
+
+                <div className={`flex ${isSidebarOpen ? 'gap-2' : 'flex-col gap-2 w-full'}`}>
+                  <label
+                    className={`flex-1 text-center bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-200 font-bold py-1.5 rounded text-xs cursor-pointer shadow-sm transition-colors ${
+                      !isSidebarOpen ? 'py-2 px-0 text-[10px]' : ''
+                    }`}
+                    title="Load HTML"
+                  >
+                    {isSidebarOpen ? '📂 Load HTML' : '📂'}
+                    <input type="file" accept=".html" onChange={loadHTML} className="hidden" />
+                  </label>
+
+                  <button
+                    onClick={exportHTML}
+                    className={`flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors ${
+                      !isSidebarOpen ? 'py-2 px-0 text-[10px]' : ''
+                    }`}
+                    title="Save HTML"
+                  >
+                    {isSidebarOpen ? '💾 Save HTML' : '💾'}
+                  </button>
+                </div>
               </div>
 
               <div className="flex gap-2 justify-center mt-2">

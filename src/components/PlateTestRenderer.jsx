@@ -35,14 +35,7 @@ const PLATE_CONFIG = {
   icon: '🧫',
   samplesLabel: 'Compound / Sample Label(s)',
   notebookChecks: PLATE_NOTEBOOK_CHECKS,
-  buildNotebookHtml: PlateSections.buildNotebookHtml,
-
-  /*
-  This makes the file compatible with both:
-  - shells that use custom.All
-  - shells that use config.SetupSection
-  */
-  SetupSection: PlateSections.All
+  buildNotebookHtml: PlateSections.buildNotebookHtml
 };
 
 export const PlateTestRenderer = (props) => {
