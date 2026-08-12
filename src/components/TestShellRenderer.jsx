@@ -1557,7 +1557,8 @@ export const TestShellRenderer = ({
             additives={additivesFromDefs}
           />
         </CollapsibleSection>
-                {SetupSection && (
+
+        {SetupSection && (
           <CollapsibleSection
             title="Experiment Setup"
             icon="⚙️"
@@ -1595,11 +1596,7 @@ export const TestShellRenderer = ({
           </div>
         </CollapsibleSection>
 
-        {/* ===== ADDITIONAL FIELDS BY SUBSECTION =====
-            Custom Metadata Fields targeted at a named subsection of this
-            page other than Experimental Conditions / Instrumental Setup
-            (e.g. Sequence, Table, Images — sourced from this page's own
-            notebookChecks) render here, grouped by that subsection. */}
+        {/* ===== ADDITIONAL FIELDS BY SUBSECTION ===== */}
         {otherSubsectionCustomFields.map((group) => (
           <CollapsibleSection
             key={group.id}
@@ -1613,108 +1610,7 @@ export const TestShellRenderer = ({
           </CollapsibleSection>
         ))}
 
-        {/* ===== TYPE-SPECIFIC CONTENT + LAB NOTEBOOK EXPORT =====
-            Locked when this page's mandatory-parameter behavior is set to
-            "block" and at least one required field above is still empty.
-            Classification, Experimental Conditions, Instrumental Setup and
-            Additional Fields stay visible/editable above so the user can
-            actually satisfy the requirement and unlock this section. */}
-        {mandatoryBlocked ? (
-          <div className="max-w-2xl mx-auto mt-6 bg-red-50 border-2 border-red-300 rounded-2xl p-8 text-center shadow-sm">
-            <div className="text-4xl mb-3">🔒</div>
-            <h2 className="text-base font-bold text-red-800 uppercase tracking-wide mb-2">
-              {config.typeLabel || 'This page'} is locked
-            </h2>
-            <p className="text-sm text-red-700 mb-4">
-              Fill in the required fields below before continuing. Everything
-              above (Classification, Experimental Conditions, Instrumental
-              Setup) is still editable.
-            </p>
-            <ul className="text-sm text-red-800 font-semibold text-left inline-block">
-              {missingMandatoryRules.map((r, i) => (
-                <li key={i}>
-                  • {r.fieldName}{' '}
-                  <span className="text-red-500 font-normal">
-                    ({r.subsectionLabel})
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : (
-        <>
-        {CustomAll ? (
-          <CustomAll ctx={ctx} />
-        ) : (
-          <>
-            {DataSection && (
-              <CollapsibleSection title="Data" icon="🔢" defaultOpen={false}>
-                <DataSection ctx={ctx} />
-              </CollapsibleSection>
-            )}
-
-            {DataAnalysisSection && (
-              <CollapsibleSection
-                title="Data Analysis"
-                icon="📉"
-                defaultOpen={false}
-              >
-                <DataAnalysisSection ctx={ctx} />
-              </CollapsibleSection>
-            )}
-
-            {FittingSection ? (
-              <CollapsibleSection
-                title="Fitting"
-                icon="📐"
-                defaultOpen={false}
-              >
-                <FittingSection ctx={ctx} />
-              </CollapsibleSection>
-            ) : (
-              (FittingErrors || FittingGraphics) && (
-                <CollapsibleSection
-                  title="Data Analysis"
-                  icon="📐"
-                  defaultOpen={false}
-                >
-                  <div className="flex flex-col gap-6">
-                    {FittingErrors && (
-                      <CollapsibleSection
-                        title="Error Management"
-                        icon="⚠️"
-                        defaultOpen={false}
-                      >
-                        <FittingErrors ctx={ctx} />
-                      </CollapsibleSection>
-                    )}
-
-                    {FittingGraphics && (
-                      <CollapsibleSection
-                        title="Graphical Parameters"
-                        icon="🎨"
-                        defaultOpen={false}
-                      >
-                        <FittingGraphics ctx={ctx} />
-                      </CollapsibleSection>
-                    )}
-                  </div>
-                </CollapsibleSection>
-              )
-            )}
-
-            {SimulationsSection && (
-              <CollapsibleSection
-                title="Simulations"
-                icon="🧪"
-                defaultOpen={false}
-              >
-                <SimulationsSection ctx={ctx} />
-              </CollapsibleSection>
-            )}
-          </>
-        )}
-
+        {/* ===== SECTIONS MOVED AFTER INSTRUMENTAL SETUP ===== */}
         <CollapsibleSection
           title="Linked Protocols"
           icon="📋"
@@ -2127,47 +2023,154 @@ export const TestShellRenderer = ({
           </div>
         </CollapsibleSection>
 
-        {!config.hideNotebook && notebookChecks.length > 0 && (
-          <CollapsibleSection
-            title="Lab Notebook Export"
-            icon="📓"
-            defaultOpen={false}
-            className="no-print"
-          >
-            <div className="flex flex-col gap-4">
-              <p className="text-sm text-slate-600">
-                Select the data to format and append to the General Comments
-                (Lab Notebook entry).
-              </p>
+        {/* ===== TYPE-SPECIFIC CONTENT + LAB NOTEBOOK EXPORT ===== */}
+        {mandatoryBlocked ? (
+          <div className="max-w-2xl mx-auto mt-6 bg-red-50 border-2 border-red-300 rounded-2xl p-8 text-center shadow-sm">
+            <div className="text-4xl mb-3">🔒</div>
+            <h2 className="text-base font-bold text-red-800 uppercase tracking-wide mb-2">
+              {config.typeLabel || 'This page'} is locked
+            </h2>
+            <p className="text-sm text-red-700 mb-4">
+              Fill in the required fields below before continuing. Everything
+              above (Classification, Experimental Conditions, Instrumental
+              Setup) is still editable.
+            </p>
+            <ul className="text-sm text-red-800 font-semibold text-left inline-block">
+              {missingMandatoryRules.map((r, i) => (
+                <li key={i}>
+                  • {r.fieldName}{' '}
+                  <span className="text-red-500 font-normal">
+                    ({r.subsectionLabel})
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <>
+            {CustomAll ? (
+              <CustomAll ctx={ctx} />
+            ) : (
+              <>
+                {DataSection && (
+                  <CollapsibleSection title="Data" icon="🔢" defaultOpen={false}>
+                    <DataSection ctx={ctx} />
+                  </CollapsibleSection>
+                )}
 
-              <div className="flex flex-wrap gap-4 border border-slate-200 p-4 rounded-lg bg-white shadow-sm">
-                {notebookChecks.map((c) => (
-                  <label
-                    key={c.id}
-                    className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600"
+                {(DataAnalysisSection || FittingSection || FittingErrors || FittingGraphics) && (
+                  <CollapsibleSection
+                    title="Data Analysis"
+                    icon="📉"
+                    defaultOpen={false}
                   >
-                    <input
-                      type="checkbox"
-                      id={`nb-${typeKey}-${c.id}`}
-                      defaultChecked
-                      className="w-4 h-4 accent-blue-600 cursor-pointer"
-                    />
-                    {c.label}
-                  </label>
-                ))}
-              </div>
+                    <div className="flex flex-col gap-6">
+                      {DataAnalysisSection && (
+                        <CollapsibleSection
+                          title="Secondary Shifts analysis"
+                          icon="📉"
+                          defaultOpen={false}
+                        >
+                          <DataAnalysisSection ctx={ctx} />
+                        </CollapsibleSection>
+                      )}
 
-              <button
-                type="button"
-                onClick={appendToNotebook}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-6 rounded-lg transition-all shadow-sm w-fit border border-indigo-700 flex items-center gap-2"
+                      {FittingSection ? (
+                        <CollapsibleSection
+                          title="Fitting"
+                          icon="📐"
+                          defaultOpen={false}
+                        >
+                          <FittingSection ctx={ctx} />
+                        </CollapsibleSection>
+                      ) : (
+                        (FittingErrors || FittingGraphics) && (
+                          <CollapsibleSection
+                            title="Fitting"
+                            icon="📐"
+                            defaultOpen={false}
+                          >
+                            <div className="flex flex-col gap-6">
+                              {FittingErrors && (
+                                <CollapsibleSection
+                                  title="Error Management"
+                                  icon="⚠️"
+                                  defaultOpen={false}
+                                >
+                                  <FittingErrors ctx={ctx} />
+                                </CollapsibleSection>
+                              )}
+
+                              {FittingGraphics && (
+                                <CollapsibleSection
+                                  title="Graphical Parameters"
+                                  icon="🎨"
+                                  defaultOpen={false}
+                                >
+                                  <FittingGraphics ctx={ctx} />
+                                </CollapsibleSection>
+                              )}
+                            </div>
+                          </CollapsibleSection>
+                        )
+                      )}
+                    </div>
+                  </CollapsibleSection>
+                )}
+
+                {SimulationsSection && (
+                  <CollapsibleSection
+                    title="Simulations"
+                    icon="🧪"
+                    defaultOpen={false}
+                  >
+                    <SimulationsSection ctx={ctx} />
+                  </CollapsibleSection>
+                )}
+              </>
+            )}
+
+            {!config.hideNotebook && notebookChecks.length > 0 && (
+              <CollapsibleSection
+                title="Lab Notebook Export"
+                icon="📓"
+                defaultOpen={false}
+                className="no-print"
               >
-                <span>+</span> Append Data to Lab Notebook
-              </button>
-            </div>
-          </CollapsibleSection>
-        )}
-        </>
+                <div className="flex flex-col gap-4">
+                  <p className="text-sm text-slate-600">
+                    Select the data to format and append to the General Comments
+                    (Lab Notebook entry).
+                  </p>
+
+                  <div className="flex flex-wrap gap-4 border border-slate-200 p-4 rounded-lg bg-white shadow-sm">
+                    {notebookChecks.map((c) => (
+                      <label
+                        key={c.id}
+                        className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer hover:text-blue-600"
+                      >
+                        <input
+                          type="checkbox"
+                          id={`nb-${typeKey}-${c.id}`}
+                          defaultChecked
+                          className="w-4 h-4 accent-blue-600 cursor-pointer"
+                        />
+                        {c.label}
+                      </label>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={appendToNotebook}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-6 rounded-lg transition-all shadow-sm w-fit border border-indigo-700 flex items-center gap-2"
+                  >
+                    <span>+</span> Append Data to Lab Notebook
+                  </button>
+                </div>
+              </CollapsibleSection>
+            )}
+          </>
         )}
       </div>
 
@@ -2202,5 +2205,4 @@ export const TestShellRenderer = ({
     </div>
   );
 };
-
 export default TestShellRenderer;

@@ -627,9 +627,12 @@ const buildNucleicStructure = (sequence, molType) => {
       b.addLine(C1.x, C1.y, N1.x, N1.y, color);
       b.addPolygon(h, color);
       b.addCircle(cx, cy, 13, color, 'none', 1);
-      ringAtom(N1.x, N1.y, 'N1', color); ringAtom(N3.x, N3.y, 'N3', color);
-      ringAtom(C2b.x, C2b.y, 'C2', color); ringAtom(C4b.x, C4b.y, 'C4', color);
-      ringAtom(C5b.x, C5b.y, 'C5', color); ringAtom(C6.x, C6.y, 'C6', color);
+      ringAtom(N1.x, N1.y, 'N1', color, ['N1']);
+      ringAtom(N3.x, N3.y, 'N3', color, ['N3']);
+      ringAtom(C2b.x, C2b.y, 'C2', color, ['C2']);
+      ringAtom(C4b.x, C4b.y, 'C4', color, ['C4']);
+      ringAtom(C5b.x, C5b.y, 'C5', color, res.char === 'T' ? ['C5'] : ['H5']);
+      ringAtom(C6.x, C6.y, 'C6', color, ['H6']);
       b.addLine(C2b.x, C2b.y, C2b.x - 10, C2b.y - 18, color, true);
       addText(C2b.x - 14, C2b.y - 26, 'O', color, 9, 'middle', null);
       b.addLine(C4b.x, C4b.y, C4b.x + 16, C4b.y, color, res.char === 'C' ? false : true);
@@ -646,9 +649,15 @@ const buildNucleicStructure = (sequence, molType) => {
       b.addPolygon(h, color);
       b.addPolygon([C5b, V1, V2, V3, C4b], color);
       b.addCircle(cx, cy, 12, color, 'none', 1);
-      ringAtom(N1.x, N1.y, 'N1', color); ringAtom(C2b.x, C2b.y, 'C2', color); ringAtom(N3.x, N3.y, 'N3', color);
-      ringAtom(C4b.x, C4b.y, 'C4', color); ringAtom(C5b.x, C5b.y, 'C5', color); ringAtom(C6.x, C6.y, 'C6', color);
-      ringAtom(V1.x, V1.y, 'N7', color); ringAtom(V2.x, V2.y, 'C8', color, ['H8']); ringAtom(V3.x, V3.y, 'N9', color);
+      ringAtom(N1.x, N1.y, 'N1', color, ['N1']);
+      ringAtom(C2b.x, C2b.y, 'C2', color, res.char === 'A' ? ['H2'] : ['C2']);
+      ringAtom(N3.x, N3.y, 'N3', color, ['N3']);
+      ringAtom(C4b.x, C4b.y, 'C4', color, ['C4']);
+      ringAtom(C5b.x, C5b.y, 'C5', color, ['C5']);
+      ringAtom(C6.x, C6.y, 'C6', color, ['C6']);
+      ringAtom(V1.x, V1.y, 'N7', color, ['N7']);
+      ringAtom(V2.x, V2.y, 'C8', color, ['H8']);
+      ringAtom(V3.x, V3.y, 'N9', color, ['N9']);
       if (res.char === 'A') {
         b.addLine(C6.x, C6.y, C6.x, C6.y - 16, color);
         addText(C6.x, C6.y - 26, 'NH₂', color, 9, 'middle', null);
@@ -726,78 +735,246 @@ const buildSugarStructure = (res, conformation, anomer) => {
 const buildLipidStructure = (res, db) => {
   const b = makeBuilder();
   const curRi = 0, curChar = res.char, c = res.color;
+  
   const addText = (x, y, text, color, fontSize = 10, align = 'middle', atoms = null) => {
     b.ub(x - 30, y); b.ub(x + 30, y); b.ub(x, y - 12); b.ub(x, y + 12);
     b.elements.push({ type: 'text', x, y, text, color, fontSize, align, ri: curRi, atoms, keys: atoms ? buildKeys(curRi, atoms, 'lipid', curChar) : null });
   };
+  const dot = (x, y, atoms) => b.addDot(x, y, c, { ri: curRi, atoms, keys: buildKeys(curRi, atoms, 'lipid', curChar) });
+  
   const zig = (x0, y0, n, L, amp, dir0) => { const pts = [{ x: x0, y: y0 }]; let dir = dir0; for (let k = 0; k < n; k++) { const p = pts[pts.length - 1]; pts.push({ x: p.x - L, y: p.y + dir * amp }); dir = -dir; } return pts; };
   const chain = (pts, dblIdx) => { for (let k = 0; k < pts.length - 1; k++) b.addLine(pts[k].x, pts[k].y, pts[k + 1].x, pts[k + 1].y, c, k === dblIdx, 1.6); };
-  const g1 = { x: 640, y: 96 }, g2 = { x: 640, y: 140 }, g3 = { x: 640, y: 184 };
-  b.addLine(g1.x, g1.y, g2.x, g2.y, c); b.addLine(g2.x, g2.y, g3.x, g3.y, c);
-  addText(g1.x, g1.y, 'CH₂', c, 9, 'middle', ['Hsn1a', 'Hsn1b']);
-  addText(g2.x, g2.y, 'CH', c, 9, 'middle', ['Hsn2']);
-  b.addLine(g2.x + 10, g2.y + 2, g2.x + 24, g2.y + 6, c, false, 1.2);
-  addText(g2.x + 30, g2.y + 8, 'H', c, 8, 'start', null);
-  addText(g3.x, g3.y, 'CH₂', c, 9, 'middle', ['Hsn3a', 'Hsn3b']);
-  addText(600, 76, 'O', c, 9, 'middle', null);
-  b.addLine(g1.x - 8, g1.y - 6, 608, 78, c); b.addLine(592, 76, 568, 76, c);
-  b.addLine(560, 70, 560, 50, c, true); addText(560, 42, 'O', c, 9, 'middle', null);
-  const sn1 = zig(520, 96, 9, 44, 13, -1);
-  b.addLine(560, 76, sn1[0].x, sn1[0].y, c);
+  
+  // Handle Sterols (Cholesterol & Ergosterol) First
+  if (curChar === 'CHOL' || curChar === 'ERGO') {
+    const isErgo = curChar === 'ERGO';
+    const L = 22;
+    const dx = L * Math.cos(Math.PI/6);
+    const dy = L * Math.sin(Math.PI/6);
+    const cx = 500, cy = 180;
+    
+    // Core structure A, B, C, D rings
+    const c3 = {x: cx, y: cy};
+    const c4 = {x: cx + dx, y: cy + dy};
+    const c5 = {x: cx + 2*dx, y: cy};
+    const c10= {x: cx + 2*dx, y: cy - L};
+    const c1 = {x: cx + dx, y: cy - L - dy};
+    const c2 = {x: cx, y: cy - L};
+    
+    const c6 = {x: cx + 3*dx, y: cy + dy};
+    const c7 = {x: cx + 4*dx, y: cy};
+    const c8 = {x: cx + 4*dx, y: cy - L};
+    const c9 = {x: cx + 3*dx, y: cy - L - dy};
+    
+    const c11= {x: cx + 4*dx, y: cy - 2*L};
+    const c12= {x: cx + 5*dx, y: cy - 2*L - dy};
+    const c13= {x: cx + 6*dx, y: cy - 2*L};
+    const c14= {x: cx + 6*dx, y: cy - L};
+    
+    const c15= {x: cx + 7.2*dx, y: cy - 0.7*L};
+    const c16= {x: cx + 8*dx, y: cy - 1.5*L};
+    const c17= {x: cx + 7*dx, y: cy - 2.5*L};
+    
+    b.addPolygon([c1,c2,c3,c4,c5,c10], c);
+    b.addPolygon([c5,c6,c7,c8,c9,c10], c);
+    b.addPolygon([c8,c9,c11,c12,c13,c14], c);
+    b.addPolygon([c13,c14,c15,c16,c17], c);
+    
+    // Hydroxyl at C3
+    b.addLine(c3.x, c3.y, c3.x - 15, c3.y + 15, c);
+    addText(c3.x - 22, c3.y + 22, 'HO', c, 9, 'end', ['H3', 'O3']);
+    dot(c3.x, c3.y, ['H3', 'C3']);
+    
+    // Double Bonds
+    if (isErgo) {
+       b.addLine(c5.x+3, c5.y-3, c6.x-3, c6.y-5, c, true);
+       b.addLine(c7.x-2, c7.y-5, c8.x-2, c8.y+5, c, true);
+       dot(c7.x, c7.y, ['H7', 'C7']); addText(c7.x + 10, c7.y + 10, 'C7', c, 8, 'start', ['H7', 'C7']);
+    } else {
+       b.addLine(c5.x+3, c5.y-3, c6.x-3, c6.y-5, c, true);
+       dot(c6.x, c6.y, ['H6', 'C6']); addText(c6.x + 10, c6.y + 10, 'C6', c, 8, 'start', ['H6', 'C6']);
+    }
+    
+    // Methyls at C10 and C13
+    b.addLine(c10.x, c10.y, c10.x, c10.y - 15, c);
+    addText(c10.x, c10.y - 22, 'C19', c, 8, 'middle', ['H19', 'C19']); dot(c10.x, c10.y - 15, ['H19', 'C19']);
+    b.addLine(c13.x, c13.y, c13.x, c13.y - 15, c);
+    addText(c13.x, c13.y - 22, 'C18', c, 8, 'middle', ['H18', 'C18']); dot(c13.x, c13.y - 15, ['H18', 'C18']);
+    
+    // Tail from C17
+    const t20 = {x: c17.x + 15, y: c17.y - 15};
+    b.addLine(c17.x, c17.y, t20.x, t20.y, c);
+    dot(t20.x, t20.y, ['H20', 'C20']);
+    
+    const t21 = {x: t20.x, y: t20.y - 15};
+    b.addLine(t20.x, t20.y, t21.x, t21.y, c);
+    addText(t21.x, t21.y - 8, 'C21', c, 8, 'middle', ['H21', 'C21']); dot(t21.x, t21.y, ['H21', 'C21']);
+    
+    const t22 = {x: t20.x + 18, y: t20.y + 5};
+    b.addLine(t20.x, t20.y, t22.x, t22.y, c);
+    dot(t22.x, t22.y, ['H22', 'C22']);
+    
+    const t23 = {x: t22.x + 18, y: t22.y - 10};
+    b.addLine(t22.x, t22.y, t23.x, t23.y, c);
+    dot(t23.x, t23.y, ['H23', 'C23']);
+    
+    if (isErgo) {
+        b.addLine(t22.x+2, t22.y+2, t23.x-2, t23.y+2, c, true); // Double bond C22=C23
+        const t24 = {x: t23.x + 18, y: t23.y + 12};
+        b.addLine(t23.x, t23.y, t24.x, t24.y, c);
+        dot(t24.x, t24.y, ['H24', 'C24']);
+        
+        const t28 = {x: t24.x, y: t24.y + 15};
+        b.addLine(t24.x, t24.y, t28.x, t28.y, c);
+        addText(t28.x, t28.y + 8, 'C28', c, 8, 'middle', ['H28', 'C28']); dot(t28.x, t28.y, ['H28', 'C28']);
+        
+        const t25 = {x: t24.x + 18, y: t24.y - 10};
+        b.addLine(t24.x, t24.y, t25.x, t25.y, c);
+        dot(t25.x, t25.y, ['H25', 'C25']);
+        
+        const t26 = {x: t25.x + 15, y: t25.y + 12};
+        b.addLine(t25.x, t25.y, t26.x, t26.y, c);
+        addText(t26.x + 8, t26.y + 4, 'C26', c, 8, 'start', ['H26', 'C26']); dot(t26.x, t26.y, ['H26', 'C26']);
+        
+        const t27 = {x: t25.x + 10, y: t25.y - 15};
+        b.addLine(t25.x, t25.y, t27.x, t27.y, c);
+        addText(t27.x + 5, t27.y - 8, 'C27', c, 8, 'start', ['H27', 'C27']); dot(t27.x, t27.y, ['H27', 'C27']);
+    } else {
+        const t24 = {x: t23.x + 18, y: t23.y + 12};
+        b.addLine(t23.x, t23.y, t24.x, t24.y, c);
+        dot(t24.x, t24.y, ['H24', 'C24']);
+        
+        const t25 = {x: t24.x + 18, y: t24.y - 10};
+        b.addLine(t24.x, t24.y, t25.x, t25.y, c);
+        dot(t25.x, t25.y, ['H25', 'C25']);
+        
+        const t26 = {x: t25.x + 15, y: t25.y + 12};
+        b.addLine(t25.x, t25.y, t26.x, t26.y, c);
+        addText(t26.x + 8, t26.y + 4, 'C26', c, 8, 'start', ['H26', 'C26']); dot(t26.x, t26.y, ['H26', 'C26']);
+        
+        const t27 = {x: t25.x + 10, y: t25.y - 15};
+        b.addLine(t25.x, t25.y, t27.x, t27.y, c);
+        addText(t27.x + 5, t27.y - 8, 'C27', c, 8, 'start', ['H27', 'C27']); dot(t27.x, t27.y, ['H27', 'C27']);
+    }
+    
+    addText(cx + 3*dx, cy + 3*dy + 20, res.name, c, 13, 'middle', null);
+    return b.finish(40);
+  }
+  
+  // Glycerol Backbone (Vertical, Headgroup top, sn1 bottom)
+  const gx = 500; 
+  const g3y = 120; // sn-3 (top, connects to P)
+  const g2y = 160; // sn-2 (middle)
+  const g1y = 200; // sn-1 (bottom)
+  
+  b.addLine(gx, g3y, gx, g1y, c);
+  
+  // Separate Carbon and Protons visually and by hitbox
+  dot(gx, g1y, ['Csn1']); addText(gx + 8, g1y - 8, 'C', c, 10, 'start', ['Csn1']);
+  const h1x = gx + 25, h1y = g1y + 12;
+  b.addLine(gx, g1y, h1x, h1y, c, false, 1);
+  dot(h1x, h1y, ['Hsn1a', 'Hsn1b']); addText(h1x + 8, h1y, 'H₂ (sn-1)', c, 9, 'start', ['Hsn1a', 'Hsn1b']);
+  
+  dot(gx, g2y, ['Csn2']); addText(gx + 8, g2y - 8, 'C', c, 10, 'start', ['Csn2']);
+  const h2x = gx + 25, h2y = g2y + 12;
+  b.addLine(gx, g2y, h2x, h2y, c, false, 1);
+  dot(h2x, h2y, ['Hsn2']); addText(h2x + 8, h2y, 'H (sn-2)', c, 9, 'start', ['Hsn2']);
+  
+  dot(gx, g3y, ['Csn3']); addText(gx + 8, g3y + 8, 'C', c, 10, 'start', ['Csn3']);
+  const h3x = gx + 25, h3y = g3y - 12;
+  b.addLine(gx, g3y, h3x, h3y, c, false, 1);
+  dot(h3x, h3y, ['Hsn3a', 'Hsn3b']); addText(h3x + 8, h3y, 'H₂ (sn-3)', c, 9, 'start', ['Hsn3a', 'Hsn3b']);
+  
+  // sn-1 Chain (Points Left)
+  const O1x = gx - 30;
+  b.addLine(gx, g1y, O1x, g1y, c); addText(O1x, g1y, 'O', c, 9, 'middle', null);
+  const C1x = O1x - 30;
+  b.addLine(O1x - 6, g1y, C1x, g1y, c); 
+  b.addLine(C1x, g1y - 4, C1x, g1y - 24, c, true); addText(C1x, g1y - 32, 'O', c, 9, 'middle', null); // Carbonyl
+  
+  dot(C1x, g1y, ['C1-sn1']); addText(C1x, g1y + 14, 'C1', c, 9, 'middle', ['C1-sn1']);
+  
+  const sn1 = zig(C1x, g1y, 16, 22, 16, 1);
   chain(sn1, -1);
-  addText(sn1[1].x, sn1[1].y - 16, 'C2', c, 8, 'middle', ['H2-sn1']);
-  addText(sn1[2].x, sn1[2].y + 18, 'C3', c, 8, 'middle', ['H3-sn1']);
-  addText(sn1[4].x, sn1[4].y - 16, '(CH₂)ₙ', c, 8, 'middle', ['H4-sn1']);
-  addText(sn1[9].x - 14, sn1[9].y, 'CH₃', c, 9, 'end', ['H16-sn1']);
-  addText(600, 150, 'O', c, 9, 'middle', null);
-  b.addLine(g2.x - 10, g2.y, 608, 150, c); b.addLine(592, 152, 568, 166, c);
-  b.addLine(560, 172, 560, 192, c, true); addText(560, 202, 'O', c, 9, 'middle', null);
-  const sn2 = zig(520, 190, 9, 44, 13, 1);
-  if (db === 'trans') {
-    const a = sn2[4], d = sn2[7];
-    sn2[5] = { x: a.x + (d.x - a.x) / 3, y: a.y + (d.y - a.y) / 3 };
-    sn2[6] = { x: a.x + (2 * (d.x - a.x)) / 3, y: a.y + (2 * (d.y - a.y)) / 3 };
-  }
-  b.addLine(560, 170, sn2[0].x, sn2[0].y, c);
-  chain(sn2, 5);
-  addText(sn2[1].x, sn2[1].y + 18, 'C2', c, 8, 'middle', ['H2-sn2']);
-  addText(sn2[3].x, sn2[3].y - 16, 'CH₂', c, 8, 'middle', ['Hall-sn2']);
-  addText(sn2[5].x, sn2[5].y + 18, 'C9', c, 8, 'middle', ['H9-sn2']);
-  addText(sn2[6].x, sn2[6].y - 16, 'C10', c, 8, 'middle', ['H10-sn2']);
-  addText(sn2[7].x, sn2[7].y + 18, 'CH₂', c, 8, 'middle', ['H11-sn2']);
-  addText(sn2[9].x - 14, sn2[9].y, 'CH₃', c, 9, 'end', ['H18-sn2']);
-  b.addLine(g3.x + 10, g3.y, 674, 184, c);
-  addText(680, 184, 'O', c, 9, 'middle', null);
-  b.addLine(688, 184, 703, 184, c);
-  b.addCircle(716, 184, 13, c, 'white', 1.4, { ri: 0, atoms: ['P'], keys: buildKeys(0, ['P'], 'lipid', curChar) });
-  addText(716, 184, 'P', c, 12, 'middle', ['P']);
-  b.addLine(716, 171, 716, 158, c, true); addText(716, 150, 'O', c, 9, 'middle', null);
-  b.addLine(716, 197, 716, 210, c); addText(716, 220, 'O⁻', c, 9, 'middle', null);
-  b.addLine(729, 184, 744, 184, c); addText(752, 184, 'O', c, 9, 'middle', null);
-  const h1 = { x: 796, y: 172 }, h2 = { x: 832, y: 188 };
-  b.addLine(760, 184, h1.x, h1.y, c); b.addLine(h1.x, h1.y, h2.x, h2.y, c);
+  dot(sn1[1].x, sn1[1].y, ['H2-sn1', 'C2-sn1']); addText(sn1[1].x, sn1[1].y + 14, 'C2 (α)', c, 8, 'middle', ['H2-sn1', 'C2-sn1']);
+  dot(sn1[2].x, sn1[2].y, ['H3-sn1', 'C3-sn1']); addText(sn1[2].x, sn1[2].y - 14, 'C3 (β)', c, 8, 'middle', ['H3-sn1', 'C3-sn1']);
+  dot(sn1[3].x, sn1[3].y, ['H4-sn1', 'C4-sn1']); addText(sn1[3].x, sn1[3].y + 14, 'C4-14', c, 8, 'middle', ['H4-sn1', 'C4-sn1']);
+  
+  dot(sn1[14].x, sn1[14].y, ['H15-sn1', 'C15-sn1']); addText(sn1[14].x, sn1[14].y - 14, 'C15 (n-1)', c, 8, 'middle', ['H15-sn1', 'C15-sn1']);
+  dot(sn1[15].x, sn1[15].y, ['H16-sn1', 'C16-sn1']); addText(sn1[15].x - 14, sn1[15].y, 'C16 (n)', c, 8, 'end', ['H16-sn1', 'C16-sn1']);
+  
+  // sn-2 Chain (Points Left)
+  const O2x = gx - 30;
+  b.addLine(gx, g2y, O2x, g2y, c); addText(O2x, g2y, 'O', c, 9, 'middle', null);
+  const C2x = O2x - 30;
+  b.addLine(O2x - 6, g2y, C2x, g2y, c);
+  b.addLine(C2x, g2y - 4, C2x, g2y - 24, c, true); addText(C2x, g2y - 32, 'O', c, 9, 'middle', null); // Carbonyl
+  
+  dot(C2x, g2y, ['C1-sn2']); addText(C2x, g2y + 14, 'C1', c, 9, 'middle', ['C1-sn2']);
+  
+  const sn2 = zig(C2x, g2y, 18, 22, 16, -1); 
+  chain(sn2, 8); // Double bond mapped at C9-C10
+  dot(sn2[1].x, sn2[1].y, ['H2-sn2', 'C2-sn2']); addText(sn2[1].x, sn2[1].y - 14, 'C2 (α)', c, 8, 'middle', ['H2-sn2', 'C2-sn2']);
+  dot(sn2[2].x, sn2[2].y, ['H3-sn2', 'C3-sn2']); addText(sn2[2].x, sn2[2].y + 14, 'C3 (β)', c, 8, 'middle', ['H3-sn2', 'C3-sn2']);
+  dot(sn2[3].x, sn2[3].y, ['Hall-sn2', 'Call-sn2']); addText(sn2[3].x, sn2[3].y - 14, 'C4-8', c, 8, 'middle', ['Hall-sn2', 'Call-sn2']);
+  
+  dot(sn2[8].x, sn2[8].y, ['H9-sn2', 'C9-sn2']); addText(sn2[8].x, sn2[8].y + 14, 'C9', c, 8, 'middle', ['H9-sn2', 'C9-sn2']);
+  dot(sn2[9].x, sn2[9].y, ['H10-sn2', 'C10-sn2']); addText(sn2[9].x, sn2[9].y - 14, 'C10', c, 8, 'middle', ['H10-sn2', 'C10-sn2']);
+  dot(sn2[10].x, sn2[10].y, ['H11-sn2', 'C11-sn2']); addText(sn2[10].x, sn2[10].y + 14, 'C11', c, 8, 'middle', ['H11-sn2', 'C11-sn2']);
+  
+  dot(sn2[16].x, sn2[16].y, ['H17-sn2', 'C17-sn2']); addText(sn2[16].x, sn2[16].y + 14, 'C17 (n-1)', c, 8, 'middle', ['H17-sn2', 'C17-sn2']);
+  dot(sn2[17].x, sn2[17].y, ['H18-sn2', 'C18-sn2']); addText(sn2[17].x - 14, sn2[17].y, 'C18 (n)', c, 8, 'end', ['H18-sn2', 'C18-sn2']);
+  
+  // Phosphate (Points Right)
+  const O3x = gx + 30;
+  b.addLine(gx, g3y, O3x, g3y, c); addText(O3x, g3y, 'O', c, 9, 'middle', null);
+  const Px = O3x + 35;
+  b.addLine(O3x + 6, g3y, Px - 10, g3y, c);
+  
+  dot(Px, g3y, ['P']); addText(Px, g3y, 'P', c, 11, 'middle', ['P']);
+  b.addLine(Px, g3y - 10, Px, g3y - 30, c, true); addText(Px, g3y - 40, 'O', c, 9, 'middle', null);
+  b.addLine(Px, g3y + 10, Px, g3y + 30, c); addText(Px, g3y + 40, 'O⁻', c, 9, 'middle', null);
+  
+  // Headgroup
+  const O4x = Px + 35;
+  b.addLine(Px + 10, g3y, O4x - 6, g3y, c); addText(O4x, g3y, 'O', c, 9, 'middle', null);
+  
+  const Hx1 = O4x + 30;
+  const Hx2 = Hx1 + 35;
+  b.addLine(O4x + 6, g3y, Hx1, g3y, c);
+  b.addLine(Hx1, g3y, Hx2, g3y, c);
+  
   if (res.head === 'PC') {
-    addText(h1.x, h1.y - 14, 'CH₂', c, 8, 'middle', ['HCH2N']);
-    b.addLine(h2.x, h2.y, 862, 176, c);
-    addText(868, 172, 'N⁺', c, 11, 'middle', ['HNMe3']);
-    b.addLine(876, 164, 890, 150, c); b.addLine(878, 172, 896, 172, c); b.addLine(876, 180, 890, 194, c);
+    dot(Hx1, g3y, ['Hα', 'Cα', 'HCH2N', 'CCH2N']); addText(Hx1, g3y - 16, 'CH₂ (α)', c, 9, 'middle', ['Hα', 'Cα', 'HCH2N', 'CCH2N']);
+    dot(Hx2, g3y, ['Hβ', 'Cβ']); addText(Hx2, g3y - 16, 'CH₂ (β)', c, 9, 'middle', ['Hβ', 'Cβ']);
+    const Nx = Hx2 + 40;
+    b.addLine(Hx2, g3y, Nx - 16, g3y, c);
+    dot(Nx, g3y, ['Hγ', 'Cγ', 'HNMe3', 'CNMe3']); addText(Nx, g3y, 'N⁺(CH₃)₃ (γ)', c, 10, 'start', ['Hγ', 'Cγ', 'HNMe3', 'CNMe3']);
   } else if (res.head === 'PE') {
-    addText(h1.x, h1.y - 14, 'CH₂', c, 8, 'middle', ['HCH2N']);
-    b.addLine(h2.x, h2.y, 862, 176, c);
-    addText(884, 172, 'NH₃⁺', c, 11, 'start', ['HNH3']);
+    dot(Hx1, g3y, ['Hα', 'Cα', 'HCH2N', 'CCH2N']); addText(Hx1, g3y - 16, 'CH₂ (α)', c, 9, 'middle', ['Hα', 'Cα', 'HCH2N', 'CCH2N']);
+    dot(Hx2, g3y, ['Hβ', 'Cβ']); addText(Hx2, g3y - 16, 'CH₂ (β)', c, 9, 'middle', ['Hβ', 'Cβ']);
+    const Nx = Hx2 + 35;
+    b.addLine(Hx2, g3y, Nx - 14, g3y, c);
+    dot(Nx, g3y, ['HNH3', 'N']); addText(Nx, g3y, 'NH₃⁺', c, 10, 'start', ['HNH3', 'N']);
   } else if (res.head === 'PS') {
-    addText(h1.x, h1.y - 14, 'CH₂', c, 8, 'middle', ['HβS1', 'HβS2']);
-    addText(h2.x, h2.y + 16, 'CH', c, 8, 'middle', ['HαS']);
-    b.addLine(h2.x, h2.y - 8, h2.x + 20, h2.y - 26, c);
-    addText(h2.x + 34, h2.y - 30, 'COO⁻', c, 9, 'start', null);
-    b.addLine(h2.x, h2.y + 6, h2.x + 16, h2.y + 22, c);
-    addText(h2.x + 26, h2.y + 28, 'NH₃', c, 9, 'start', ['HNH3']);
+    dot(Hx1, g3y, ['HβS1', 'HβS2', 'CβS', 'Hβ', 'Cβ']); addText(Hx1, g3y - 16, 'CH₂ (β)', c, 9, 'middle', ['Hβ', 'Cβ', 'HβS1', 'HβS2', 'CβS']);
+    dot(Hx2, g3y, ['HαS', 'CαS', 'Hα', 'Cα']); addText(Hx2, g3y - 16, 'CH (α)', c, 9, 'middle', ['Hα', 'Cα', 'HαS', 'CαS']);
+    const Nx = Hx2 + 25;
+    b.addLine(Hx2, g3y, Nx, g3y - 30, c); dot(Nx, g3y - 30, ['HNH3', 'N']); addText(Nx + 10, g3y - 36, 'NH₃⁺', c, 10, 'start', ['HNH3', 'N']);
+    const Cx = Hx2 + 25;
+    b.addLine(Hx2, g3y, Cx, g3y + 30, c); addText(Cx + 10, g3y + 36, 'COO⁻', c, 10, 'start', null);
+  } else if (res.head === 'PG') {
+    dot(Hx1, g3y, ['Hα', 'Cα', 'HCH2OH', 'CCH2OH']); addText(Hx1, g3y - 16, 'CH₂ (α)', c, 9, 'middle', ['Hα', 'Cα', 'HCH2OH', 'CCH2OH']);
+    dot(Hx2, g3y, ['Hβ', 'Cβ', 'HCHOH', 'CCHOH']); addText(Hx2, g3y - 16, 'CHOH (β)', c, 9, 'middle', ['Hβ', 'Cβ', 'HCHOH', 'CCHOH']);
+    const Ox = Hx2 + 35;
+    b.addLine(Hx2, g3y, Ox, g3y, c); addText(Ox + 10, g3y, 'CH₂OH (γ)', c, 10, 'start', ['Hγ', 'Cγ']);
   } else {
-    addText(h1.x, h1.y - 14, 'CH₂OH', c, 8, 'middle', ['HCH2OH']);
-    addText(h2.x, h2.y + 16, 'CHOH', c, 8, 'middle', ['HCHOH']);
+    dot(Hx1, g3y, ['H1']); addText(Hx1, g3y - 14, 'CH₂', c, 9, 'middle', ['H1']);
+    dot(Hx2, g3y, ['H2']); addText(Hx2, g3y - 14, 'CH₂', c, 9, 'middle', ['H2']);
   }
-  addText(450, 268, `${res.name} (${db} Δ9)`, c, 13, 'middle', null);
-  return b.finish();
+  
+  addText(500, 260, `${res.name} (${db} Δ9)`, c, 13, 'middle', null);
+  return b.finish(40);
 };
 
 const elementsToSVG = (structure, height = 320) => {
@@ -1828,7 +2005,6 @@ const getCarbonRangeFor = (molType, char, cName) => {
 };
 
 // ================= SHARED DERIVED DATA HOOK =================
-// useNmrDerived — the nucDefs organic branch is FIXED here with (_, i) instead of ( , i)
 const useNmrDerived = (activeTest, ctx = {}) => {
   const moleculeType = activeTest.moleculeType || 'protein';
   const rawSeq = (activeTest.proteinSequence || '').toUpperCase();
@@ -1860,36 +2036,55 @@ const useNmrDerived = (activeTest, ctx = {}) => {
   const sugarAnomer = activeTest.sugarAnomer || 'alpha';
   const lipidDB = activeTest.lipidDB || 'cis';
   const typeLabel = moleculeType === 'protein' ? 'Protein' : moleculeType === 'dna' ? 'DNA' : moleculeType === 'rna' ? 'RNA' : moleculeType === 'sugar' ? 'Sugar' : moleculeType === 'organic' ? 'Organic' : 'Phospholipid';
-  // ✅ FIXED: (_, i) instead of ( , i)
+  
   const nucDefs = moleculeType === 'protein' ? { H: ['HN', 'Hα', 'Hβ'], N: ['N'], C: ['Cα', 'Cβ', "C'"] }
     : moleculeType === 'dna' || moleculeType === 'rna' ? { H: ["H1'", "H2'", "H3'"], N: [], C: ["C1'", "C2'", "C3'"] }
-    : moleculeType === 'organic' ? { H: Array.from({ length: 12 }, (_, i) => `H${i + 1}`), N: Array.from({ length: 3 }, (_, i) => `N${i + 1}`), C: Array.from({ length: 12 }, (_, i) => `C${i + 1}`) }
     : { H: [], N: [], C: [] };
+    
   const parsedSeq = useMemo(() => {
     let chars = [];
     if (moleculeType === 'organic') {
       if (!activeTest.smiles) return [];
-      const hAtoms = Array.from({ length: 12 }, (_, i) => `H${i + 1}`);
-      const cAtoms = Array.from({ length: 12 }, (_, i) => `C${i + 1}`);
+      
+      let atoms = [];
+      // Dynamically extract elements from SMILES if RDKit is ready
+      if (window.__RDKit) {
+        try {
+          const mol = window.__RDKit.get_mol(activeTest.smiles);
+          mol.add_hs();
+          const molblock = mol.get_molblock();
+          const lines = molblock.split('\n');
+          const numAtoms = parseInt((lines[3] || '').substring(0, 3).trim(), 10) || 0;
+          for (let i = 0; i < numAtoms; i++) {
+            const symbol = lines[4 + i].substring(31, 34).trim();
+            atoms.push(`${symbol}${i}`);
+          }
+          mol.delete();
+        } catch (e) {
+          atoms = Array.from({ length: 40 }, (_, i) => `Atom-${i}`);
+        }
+      } else {
+        atoms = Array.from({ length: 40 }, (_, i) => `Atom-${i}`);
+      }
+
       const ranges = {}; const organicShifts = {}; const uniqueCShifts = {}; const shifts13C = {};
-      hAtoms.forEach(a => {
-        ranges[a] = { min: 1, max: 9 };
-        organicShifts[a] = parseFloat((1 + Math.random() * 8).toFixed(2));
-        shifts13C[a] = parseFloat((20 + Math.random() * 150).toFixed(1));
-      });
-      cAtoms.forEach(a => {
-        uniqueCShifts[a] = parseFloat((20 + Math.random() * 150).toFixed(1));
+      atoms.forEach(a => {
+        ranges[a] = { min: 1, max: 200 };
+        if (a.startsWith('H')) organicShifts[a] = parseFloat((1 + Math.random() * 8).toFixed(2));
+        else if (a.startsWith('C')) uniqueCShifts[a] = parseFloat((20 + Math.random() * 150).toFixed(1));
+        else organicShifts[a] = parseFloat((1 + Math.random() * 10).toFixed(2));
       });
       return [{
         name: 'Organic', code3: 'Org', char: 'O', id: 'ORG1', color: '#3b82f6',
-        atoms: [...hAtoms, ...cAtoms, 'N1', 'N2', 'N3', 'P1'],
-        ranges, shifts: organicShifts, uniqueCShifts, shifts13C, backboneRand: null, p31: 0,
+        atoms, ranges, shifts: organicShifts, uniqueCShifts, shifts13C, backboneRand: null, p31: 0,
         cosy: [], spinSystems: []
       }];
     }
+    
     if (isPolymer) { if (!seq) return []; chars = seq.split(''); }
     else if (moleculeType === 'sugar') chars = [activeTest.sugarChoice || 'GLC'];
     else if (moleculeType === 'lipid') chars = [activeTest.lipidChoice || 'POPC'];
+    
     const assignedShifts = [];
     return chars.map((char, index) => {
       const entry = DB[char];
@@ -1940,6 +2135,7 @@ const useNmrDerived = (activeTest, ctx = {}) => {
       return { ...entry, id: `${entry.code3 || char}${index + 1}`, char, color: RESIDUE_COLORS[index % RESIDUE_COLORS.length], shifts: generatedShifts, shifts13C: generatedShifts13C, uniqueCShifts: { ...cShifts }, backboneRand, p31 };
     }).filter(Boolean);
   }, [seq, moleculeType, activeTest.sugarChoice, activeTest.lipidChoice, activeTest.smiles]);
+  
   const estSeq = useMemo(() => parsedSeq.map((res, idx) => {
     const ssLetter = moleculeType === 'protein' ? getSSAt(idx) : 'C';
     const ssKey = { C: 'coil', H: 'helix', E: 'sheet' }[ssLetter];
@@ -1970,6 +2166,7 @@ const useNmrDerived = (activeTest, ctx = {}) => {
     }
     return { ...res, estShifts, estUniqueC, estShifts13C, estN, estCP, ssLetter, formLetter: getFormAt(idx) };
   }), [parsedSeq, moleculeType, ssRaw, formsRaw, dnaFormDefault, sugarAnomer]);
+  
   const simSeq = useMemo(() => {
     const getMan = (idx, name) => {
       const candidates = [`${idx}-${name}`, `${idx}-${String(name).trim()}`, `${idx}-${String(name).replace(/\s+/g, '')}`];
@@ -1990,6 +2187,7 @@ const useNmrDerived = (activeTest, ctx = {}) => {
       return { ...res, simShifts, simUniqueC, simShifts13C, simN, simCP };
     });
   }, [estSeq, shifts, moleculeType]);
+  
   const structure = useMemo(() => {
     if (parsedSeq.length === 0) return null;
     if (moleculeType === 'protein') return buildProteinStructure(parsedSeq);
@@ -1998,6 +2196,7 @@ const useNmrDerived = (activeTest, ctx = {}) => {
     if (moleculeType === 'lipid') return buildLipidStructure(parsedSeq[0], lipidDB);
     return null;
   }, [parsedSeq, moleculeType, sugarConf, sugarAnomer, lipidDB]);
+  
   const peaks = useMemo(() => {
     let diag = [], cosy = [], tocsy = [], noesy = [], hsqc = [], hsqc15n = [], d1H = [], d13C = [], p31 = [];
     const addPair = (arr, x, y, label, type, colorClass, size, keys, atom1, atom2, ri, ch) => {
@@ -2101,6 +2300,7 @@ const useNmrDerived = (activeTest, ctx = {}) => {
     });
     return { diagonalData: diag, cosyPeaks: cosy, tocsyPeaks: tocsy, noesyPeaks: noesy, hsqcPeaks: hsqc, hsqc15NPeaks: hsqc15n, data1H: d1H, data13C: d13C, p31Data: p31 };
   }, [simSeq, moleculeType, hasPhosphorus]);
+  
   const uniqueTypes = useMemo(() => [...new Set(parsedSeq.map((r) => r.char))], [parsedSeq]);
   const ranges = useMemo(() => {
     const r1 = []; const r13 = [];
@@ -2126,6 +2326,7 @@ const useNmrDerived = (activeTest, ctx = {}) => {
     });
     return { ranges1H: r1, ranges13C: r13 };
   }, [uniqueTypes, moleculeType]);
+  
   const atomOptions = useMemo(() => {
     const opts = [];
     estSeq.forEach((res, idx) => {
@@ -2137,6 +2338,7 @@ const useNmrDerived = (activeTest, ctx = {}) => {
     });
     return opts;
   }, [estSeq, moleculeType, hasPhosphorus]);
+  
   return {
     moleculeType, seq, validChars, isPolymer, hasPhosphorus, DB, selNuc, shifts, images,
     fields, instances, activeInstanceId, activeInstance, layers, activeLayerKey, activeValues, allLayerValues, atomOptions,
@@ -2630,7 +2832,6 @@ const ChartStylePanel = ({ cfg, setCfg, series = [] }) => (
 );
 
 // ================= ORGANIC VIEWER =================
-// ================= ORGANIC VIEWER =================
 const OrganicViewer = ({ smiles, selectedKeys, onAtomClick }) => {
     const [svg, setSvg] = useState('');
     const [isZoomed, setIsZoomed] = useState(false);
@@ -2642,24 +2843,45 @@ const OrganicViewer = ({ smiles, selectedKeys, onAtomClick }) => {
             try {
                 const mol = window.__RDKit.get_mol(smiles);
                 
-                // Parse selectedKeys to highlight the correct RDKit atom indices
+                // Force RDKit to add explicit Hydrogens so they can be clicked and labeled
+                mol.add_hs();
+                
+                // Parse the internal molblock to extract exact element symbols (C, O, N, H)
+                const molblock = mol.get_molblock();
+                const lines = molblock.split('\n');
+                const numAtoms = parseInt((lines[3] || '').substring(0, 3).trim(), 10) || 0;
+                
+                const atomLabels = {};
+                const atomNameList = [];
+                for (let i = 0; i < numAtoms; i++) {
+                    const symbol = lines[4 + i].substring(31, 34).trim();
+                    const name = `${symbol}${i}`;
+                    atomLabels[i] = name; // Instructs RDKit to draw "C0", "O1", "H2" etc.
+                    atomNameList.push(name);
+                }
+
+                // Map selected keys from the generic table format back to RDKit indices
                 let highlightAtoms = [];
                 if (selectedKeys && selectedKeys.length > 0) {
                     highlightAtoms = selectedKeys.map(k => {
                         const parts = k.split('-');
                         if (parts.length < 2) return -1;
-                        const atomName = parts[1]; // e.g. "C1", "H2"
-                        // RDKit relies on 0-based indexing. We map C1 -> 0, C2 -> 1, etc.
-                        return parseInt(atomName.replace(/[^0-9]/g, ''), 10) - 1;
-                    }).filter(idx => !isNaN(idx) && idx >= 0);
+                        const atomName = parts.slice(1).join('-'); 
+                        return atomNameList.indexOf(atomName);
+                    }).filter(idx => idx >= 0);
                 }
 
                 const details = JSON.stringify({ 
-                    addAtomIndices: true, 
+                    addAtomIndices: false, 
                     addStereoAnnotation: true,
+                    atomLabels: atomLabels, // Push explicit symbols to SVG
                     width: 450, 
                     height: 350,
-                    atoms: highlightAtoms
+                    atoms: highlightAtoms,
+                    highlightAtomColors: highlightAtoms.reduce((acc, idx) => {
+                        acc[idx] = [0.96, 0.62, 0.04]; // Amber-500 highlighting
+                        return acc;
+                    }, {})
                 });
                 
                 setSvg(mol.get_svg_with_highlights(details));
@@ -2668,26 +2890,37 @@ const OrganicViewer = ({ smiles, selectedKeys, onAtomClick }) => {
         } else { setSvg(''); }
     }, [smiles, selectedKeys]);
 
-    // Attach click listeners to the dynamically generated SVG elements
     const attachListeners = (containerEl) => {
-        if (!containerEl || !onAtomClick) return;
-        const atoms = containerEl.querySelectorAll('[class*="atom-"]');
-        atoms.forEach(node => {
-            node.style.cursor = 'pointer';
-            node.onclick = (e) => {
-                e.stopPropagation();
-                const cls = Array.from(node.classList).find(c => c.startsWith('atom-'));
-                if (cls) {
-                    const idx = parseInt(cls.replace('atom-', ''), 10);
-                    if (!isNaN(idx)) {
-                        // Assuming organic molecule is residue 0. 
-                        // Note: Our generic table generates dummy atoms C1..C12. 
-                        // So atom-0 maps to C1.
-                        onAtomClick(0, [`0-C${idx + 1}`]);
+        if (!containerEl || !onAtomClick || !window.__RDKit) return;
+        try {
+            const mol = window.__RDKit.get_mol(smiles);
+            mol.add_hs();
+            const molblock = mol.get_molblock();
+            const lines = molblock.split('\n');
+            const numAtoms = parseInt((lines[3] || '').substring(0, 3).trim(), 10) || 0;
+            const atomNameList = [];
+            for (let i = 0; i < numAtoms; i++) {
+                const symbol = lines[4 + i].substring(31, 34).trim();
+                atomNameList.push(`${symbol}${i}`);
+            }
+            mol.delete();
+
+            const atoms = containerEl.querySelectorAll('[class*="atom-"]');
+            atoms.forEach(node => {
+                node.style.cursor = 'pointer';
+                node.onclick = (e) => {
+                    e.stopPropagation();
+                    const cls = Array.from(node.classList).find(c => c.startsWith('atom-'));
+                    if (cls) {
+                        const idx = parseInt(cls.replace('atom-', ''), 10);
+                        if (!isNaN(idx) && atomNameList[idx]) {
+                            // Dispatch exact name (e.g. "0-C0" or "0-H3") to sync with data table
+                            onAtomClick(0, [`0-${atomNameList[idx]}`]);
+                        }
                     }
-                }
-            };
-        });
+                };
+            });
+        } catch(e) {}
     };
 
     // Attach to standard viewer
@@ -2725,8 +2958,9 @@ const OrganicViewer = ({ smiles, selectedKeys, onAtomClick }) => {
     );
 };
 
-// ================= MOLECULAR STRUCTURE SECTION (CORRECTED - complete version) =================
-// ✅ FIXED: paintSSAt and paintFormAt now use (_, j) instead of (, j)
+
+
+// ================= MOLECULAR STRUCTURE SECTION =================
 export const MolecularStructureSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useNmrDerived(activeTest, ctx);
@@ -2735,11 +2969,25 @@ export const MolecularStructureSection = ({ ctx }) => {
   const residueOffset = activeTest.residueOffset || 0;
   const atomNameMap = useMemo(() => { try { return activeTest.atomNameMap ? JSON.parse(activeTest.atomNameMap) : {}; } catch { return {}; } }, [activeTest.atomNameMap]);
   const [hasOpened3D, setHasOpened3D] = useState(structureMode === '3d');
+  
+  const [localPdbInput, setLocalPdbInput] = useState(activeTest.structureSrc || '');
+
+  useEffect(() => {
+    setLocalPdbInput(activeTest.structureSrc || '');
+  }, [activeTest.structureSrc]);
+
+  const applyPdbInput = () => {
+    if (localPdbInput !== activeTest.structureSrc) {
+      updateActiveTest({ structureSrc: localPdbInput });
+    }
+  };
+
   useEffect(() => { if (structureMode === '3d') setHasOpened3D(true); }, [structureMode]);
   useEffect(() => {
     const t = setTimeout(() => { window.dispatchEvent(new Event('resize')); }, 100);
     return () => clearTimeout(t);
   }, [structureMode, hasOpened3D]);
+  
   const firstSelectedCmp = activeTest.selectedCompounds?.[0];
   useEffect(() => {
     if (firstSelectedCmp && ctx.compoundMeta) {
@@ -2763,56 +3011,109 @@ export const MolecularStructureSection = ({ ctx }) => {
       }
     }
   }, [firstSelectedCmp, ctx.compoundMeta, activeTest.smiles, activeTest.proteinSequence, updateActiveTest]);
+  
+  const activeSmiles = activeTest.smiles || (firstSelectedCmp && ctx.compoundMeta?.[firstSelectedCmp]?.smiles) || '';
+
   const structureSrc = useMemo(() => {
     const raw = (activeTest.structureSrc || activeTest.pdbId || '').trim();
     if (!raw) {
-      if (d.moleculeType === 'protein') return 'https://models.rcsb.org/1UBQ.mmtf';
-      if (d.moleculeType === 'dna') return 'https://models.rcsb.org/1BNA.mmtf';
-      if (d.moleculeType === 'rna') return 'https://models.rcsb.org/1EHZ.mmtf';
+      if (d.moleculeType === 'protein') return '/structures/template_amino_acid.pdb';
+      if (d.moleculeType === 'dna') return '/structures/template_nucleotide_dna.pdb';
+      if (d.moleculeType === 'rna') return '/structures/template_nucleotide_rna.pdb';
       if (d.moleculeType === 'lipid') return `/structures/${(activeTest.lipidChoice || 'POPC').toUpperCase()}.pdb`;
-      if (d.moleculeType === 'sugar') return `/structures/${activeTest.sugarChoice || 'GLC'}.sdf`;
-      if (d.moleculeType === 'organic' && activeTest.smiles) return `https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(activeTest.smiles)}/file?format=pdb&get3d=true`;
+      if (d.moleculeType === 'sugar') return `/structures/${activeTest.sugarChoice || 'GLC'}_${activeTest.sugarAnomer || 'alpha'}.pdb`;
+      if ((d.moleculeType === 'organic' || activeSmiles) && activeSmiles) return `https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(activeSmiles)}/file?format=sdf&get3d=true`;
       return '';
     }
     if (/^(https?:|blob:|data:)/i.test(raw) || raw.startsWith('/') || raw.startsWith('./')) return raw;
     if (/^[0-9][A-Za-z0-9]{3}$/.test(raw)) return `https://models.rcsb.org/${raw.toUpperCase()}.mmtf`;
     return raw;
-  }, [activeTest.structureSrc, activeTest.pdbId, d.moleculeType, activeTest.lipidChoice, activeTest.sugarChoice, activeTest.smiles]);
+  }, [activeTest.structureSrc, activeTest.pdbId, d.moleculeType, activeTest.lipidChoice, activeTest.sugarChoice, activeTest.sugarAnomer, activeSmiles]);
+  
   const focusIdx = activeTest.focusIdx !== undefined ? activeTest.focusIdx : 'ALL';
   const setFocusIdx = (val) => updateActiveTest({ focusIdx: val });
   const [expandedPanel, setExpandedPanel] = useState(null);
   const [ssBrush, setSSBrush] = useState('H');
-  const [formBrush, setFormBrush] = useState(activeTest.dnaForm || 'B');
-  const [sugarBrushAnomer, setSugarBrushAnomer] = useState(activeTest.sugarAnomer || 'alpha');
-  const [sugarBrushConf, setSugarBrushConf] = useState(activeTest.sugarConf || 'chair');
-  const [lipidBrush, setLipidBrush] = useState(activeTest.lipidDB || 'cis');
   const selectedKeys = getSelectedKeys(activeTest);
   const manualKeys = useMemo(() => getManualKeys(d.shifts), [d.shifts]);
+  
   const handleAtomClick = (ri, keys) => {
     if (ri === null || !keys) return;
     const cur = getSelectedKeys(activeTest);
     if (cur && cur.join('|') === keys.join('|')) updateActiveTest({ selectedAtomKeys: [] });
     else updateActiveTest({ selectedAtomKeys: keys });
   };
-  // ✅ FIXED: (_, j) instead of (, j)
+  
   const paintSSAt = (i, letter) => { const arr = d.seq.split('').map((_, j) => d.getSSAt(j)); arr[i] = letter; updateActiveTest({ secondaryStructure: arr.join('') }); };
   const setAllSS = (letter) => updateActiveTest({ secondaryStructure: d.seq.split('').map(() => letter).join('') });
-  // ✅ FIXED: (_, j) instead of (, j)
-  const paintFormAt = (i, letter) => { const arr = d.seq.split('').map((_, j) => d.getFormAt(j)); arr[i] = letter; updateActiveTest({ nucleicForms: arr.join('') }); };
-  const setAllForms = (letter) => updateActiveTest({ nucleicForms: d.seq.split('').map(() => letter).join(''), dnaForm: letter });
+
   const downloadPdbFile = async () => {
-    if (!activeTest.smiles) return;
-    try {
-      const res = await fetch(`https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(activeTest.smiles)}/file?format=pdb&get3d=true`);
-      const text = await res.text();
-      const blob = new Blob([text], { type: 'text/plain' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `molecule_3D.pdb`;
-      a.click();
-    } catch (e) { alert("Failed to generate PDB file."); }
+    const targetSmiles = activeSmiles.trim();
+
+    if (targetSmiles) {
+      try {
+        const res = await fetch(`https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(targetSmiles)}/file?format=sdf&get3d=true`);
+        if (!res.ok) throw new Error('Network response was not ok');
+        const sdfText = await res.text();
+        if (!sdfText || sdfText.includes('HTML') || sdfText.includes('404')) {
+          throw new Error('Structure not resolved by NCI Cactus service');
+        }
+
+        const lines = sdfText.split('\n');
+        const countsLine = lines[3];
+        const numAtoms = parseInt(countsLine.substring(0, 3).trim(), 10);
+        
+        let pdb = `HEADER    ${(activeTest.name || 'Organic_Molecule').substring(0,40)}\n`;
+        let atomIndex = 1;
+        
+        for (let i = 0; i < numAtoms; i++) {
+          const line = lines[4 + i];
+          if (line.length < 30) continue;
+          
+          const x = parseFloat(line.substring(0, 10)).toFixed(3).padStart(8);
+          const y = parseFloat(line.substring(10, 20)).toFixed(3).padStart(8);
+          const z = parseFloat(line.substring(20, 30)).toFixed(3).padStart(8);
+          const elem = line.substring(31, 34).trim();
+          
+          let atomName = `${elem}${i}`;
+          if (atomName.length < 4) atomName = ` ${atomName}`.padEnd(4);
+          else atomName = atomName.substring(0, 4);
+
+          pdb += `ATOM  ${String(atomIndex++).padStart(5)} ${atomName} ORG A   1    ${x}${y}${z}  1.00  0.00          ${elem.padStart(2)}\n`;
+        }
+
+        const numBonds = parseInt(countsLine.substring(3, 6).trim(), 10);
+        const bonds = {};
+        for(let i=0; i<numBonds; i++) {
+          const line = lines[4 + numAtoms + i];
+          if (!line || line.length < 6) continue;
+          const a1 = parseInt(line.substring(0, 3).trim(), 10);
+          const a2 = parseInt(line.substring(3, 6).trim(), 10);
+          if (!bonds[a1]) bonds[a1] = [];
+          bonds[a1].push(a2);
+        }
+        for (const a1 in bonds) {
+          let conectLine = `CONECT${String(a1).padStart(5)}`;
+          bonds[a1].forEach(a2 => { conectLine += String(a2).padStart(5); });
+          pdb += conectLine + '\n';
+        }
+        pdb += `END\n`;
+
+        const blob = new Blob([pdb], { type: 'chemical/x-pdb' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${(activeTest.name || 'molecule').replace(/[^a-z0-9]/gi, '_')}_labeled_3D.pdb`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        alert("Failed to generate PDB file for SMILES: " + e.message);
+      }
+    } else {
+      alert(`No SMILES structure available for this selection. In-browser 3D coordinate generation for ${d.moleculeType} without SMILES or a backend solver is currently not supported.`);
+    }
   };
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap gap-2 mb-2">
@@ -2841,11 +3142,20 @@ export const MolecularStructureSection = ({ ctx }) => {
               <p className="text-[10px] text-slate-400 mt-1 font-bold">Length: {d.seq.length} {d.moleculeType === 'protein' ? 'residues' : 'nucleotides'} (valid: {d.validChars.split('').join(' ')})</p>
             </>
           ) : d.moleculeType === 'sugar' ? (
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Select Sugar</label>
-              <select value={activeTest.sugarChoice || 'GLC'} onChange={(e) => updateActiveTest({ sugarChoice: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2.5 text-sm bg-white outline-none focus:border-blue-500 font-semibold">
-                {Object.entries(SUGAR_DB).map(([k, v]) => <option key={k} value={k}>{v.name} ({v.code3})</option>)}
-              </select>
+            <div className="flex gap-4">
+              <div className="flex-1">
+                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Select Sugar</label>
+                <select value={activeTest.sugarChoice || 'GLC'} onChange={(e) => updateActiveTest({ sugarChoice: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2.5 text-sm bg-white outline-none focus:border-blue-500 font-semibold">
+                  {Object.entries(SUGAR_DB).map(([k, v]) => <option key={k} value={k}>{v.name} ({v.code3})</option>)}
+                </select>
+              </div>
+              <div className="w-32">
+                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Anomer</label>
+                <select value={activeTest.sugarAnomer || 'alpha'} onChange={(e) => updateActiveTest({ sugarAnomer: e.target.value })} className="w-full border border-slate-300 rounded-lg p-2.5 text-sm bg-white outline-none focus:border-blue-500 font-semibold">
+                  <option value="alpha">Alpha (α)</option>
+                  <option value="beta">Beta (β)</option>
+                </select>
+              </div>
             </div>
           ) : (
             <div>
@@ -2872,6 +3182,7 @@ export const MolecularStructureSection = ({ ctx }) => {
           </div>
         </div>
       </div>
+      
       {d.moleculeType === 'protein' && d.parsedSeq.length > 0 && (
         <div>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
@@ -2891,6 +3202,7 @@ export const MolecularStructureSection = ({ ctx }) => {
           <SequencePaintStrip residues={d.parsedSeq} getLetter={(i) => d.getSSAt(i)} meta={SS_META} onApply={(i) => paintSSAt(i, ssBrush)} focusIdx={focusIdx} />
         </div>
       )}
+      
       <div className="mt-6 border-t border-slate-200 pt-6">
         <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
           <div className="flex bg-slate-200 p-1 rounded-lg">
@@ -2911,26 +3223,31 @@ export const MolecularStructureSection = ({ ctx }) => {
             </div>
           )}
         </div>
+        
         {structureMode === '3d' && (
           <div className="mb-3 grid grid-cols-1 md:grid-cols-4 gap-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1 col-span-3">
               <label className="text-[10px] font-bold text-slate-500 uppercase">PDB ID / URL / local file</label>
-              <input type="text" value={activeTest.structureSrc || ''} onChange={(e) => updateActiveTest({ structureSrc: e.target.value })} placeholder="e.g. 1UBQ or /structures/POPC.pdb" className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500" />
+              <div className="flex gap-2">
+                <input type="text" value={localPdbInput} onChange={(e) => setLocalPdbInput(e.target.value)} onBlur={applyPdbInput} onKeyDown={(e) => { if (e.key === 'Enter') applyPdbInput(); }} placeholder="e.g. 1UBQ or /structures/POPC.pdb" className="flex-1 border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500" />
+                <button onClick={applyPdbInput} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs transition-colors">Load</button>
+              </div>
             </div>
           </div>
         )}
+        
         <p className="text-xs text-slate-400 mb-2">💡 Click an atom in the {structureMode === '2d' ? 'formula' : '3D viewer'} to highlight its cell.</p>
+        
         <div style={{ display: structureMode === '3d' ? 'block' : 'none' }} aria-hidden={structureMode !== '3d'}>
           {hasOpened3D && (
             <div className="flex flex-col gap-2">
               <NMRMoleculeViewer key={structureSrc || 'no-structure-src'} src={structureSrc} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '620px' : '520px'} />
-              {d.moleculeType === 'organic' && activeTest.smiles && (
-                <button onClick={downloadPdbFile} className="self-center mt-2 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-xs rounded-lg hover:bg-indigo-100 transition-colors shadow-sm">📥 Download 3D PDB File</button>
-              )}
+              <button onClick={downloadPdbFile} className="self-center mt-2 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-xs rounded-lg hover:bg-indigo-100 transition-colors shadow-sm">📥 Download 3D PDB File</button>
             </div>
           )}
         </div>
-<div style={{ display: structureMode === '2d' ? 'block' : 'none' }} aria-hidden={structureMode !== '2d'}>
+        
+        <div style={{ display: structureMode === '2d' ? 'block' : 'none' }} aria-hidden={structureMode !== '2d'}>
           {d.moleculeType === 'organic' && activeTest.smiles ? (
              <OrganicViewer smiles={activeTest.smiles} selectedKeys={selectedKeys} onAtomClick={handleAtomClick} />
           ) : d.structure ? (
@@ -2941,6 +3258,7 @@ export const MolecularStructureSection = ({ ctx }) => {
     </div>
   );
 };
+
 
 // ================= DATA SECTION =================
 export const DataSection = ({ ctx }) => {
@@ -4069,13 +4387,22 @@ export const SimulationsSection = ({ ctx }) => {
 };
 
 // ================= ALL =================
+// ================= ALL =================
 export const All = ({ ctx }) => (
   <div className="flex flex-col gap-6">
     <CollapsibleSection title="Molecular structure and visualization" icon="🧬" defaultOpen={false}><MolecularStructureSection ctx={ctx} /></CollapsibleSection>
     <CollapsibleSection title="Experiment Setup" icon="⚙️" defaultOpen={false}><ExperimentSetupSection ctx={ctx} /></CollapsibleSection>
     <CollapsibleSection title="Data" icon="🔢" defaultOpen={false}><DataSection ctx={ctx} /></CollapsibleSection>
-    <CollapsibleSection title="Data Analysis" icon="📉" defaultOpen={false}><SecondaryShiftsSection ctx={ctx} /></CollapsibleSection>
-    <CollapsibleSection title="Fitting" icon="📐" defaultOpen={false}><FittingSection ctx={ctx} /></CollapsibleSection>
+    <CollapsibleSection title="Data Analysis" icon="📉" defaultOpen={false}>
+      <div className="flex flex-col gap-6">
+        <CollapsibleSection title="Secondary Shifts analysis" icon="📉" defaultOpen={false}>
+          <SecondaryShiftsSection ctx={ctx} />
+        </CollapsibleSection>
+        <CollapsibleSection title="Fitting" icon="📐" defaultOpen={false}>
+          <FittingSection ctx={ctx} />
+        </CollapsibleSection>
+      </div>
+    </CollapsibleSection>
     <CollapsibleSection title="Simulations" icon="🧪" defaultOpen={false}><SimulationsSection ctx={ctx} /></CollapsibleSection>
   </div>
 );
