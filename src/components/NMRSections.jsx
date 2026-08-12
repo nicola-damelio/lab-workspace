@@ -1345,13 +1345,58 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
 
   const processedData = useMemo(() => {
     if (!data) return [];
-    const sorted = [...data].sort((a, b) => b.x - a.x);
+    
+    // Group by label to identify multiplets
+    const groups = {};
+    data.forEach(p => {
+        if (!p.label) return;
+        if (!groups[p.label]) groups[p.label] = [];
+        groups[p.label].push(p);
+    });
+
+    const multipletMeta = {};
+    const maxPeaks = {};
+
+    Object.keys(groups).forEach(label => {
+        const peaks = groups[label];
+        const xs = peaks.map(p => p.x);
+        const minX = Math.min(...xs);
+        const maxX = Math.max(...xs);
+        const centerX = (minX + maxX) / 2;
+        
+        let maxPeak = peaks[0];
+        peaks.forEach(p => { if (p.y > maxPeak.y) maxPeak = p; });
+        
+        maxPeaks[label] = maxPeak;
+        multipletMeta[label] = { minX, maxX, centerX, peakXs: xs };
+    });
+
+    // Mark the tallest peak as the anchor for the label.
+    // Use 'multipletBounds' instead of 'multiplet' so we don't overwrite the string data property the Tooltip uses.
+    const withAnchorFlag = data.map(p => ({
+        ...p,
+        isLabelAnchor: p.label && maxPeaks[p.label] === p,
+        multipletBounds: p.label ? multipletMeta[p.label] : null
+    }));
+
+    // Stagger overlapping labels using centerX
+    const anchors = withAnchorFlag.filter(p => p.isLabelAnchor).sort((a, b) => b.multipletBounds.centerX - a.multipletBounds.centerX);
     const levels = [];
-    return sorted.map(p => {
-       let l = 0;
-       while(levels[l] !== undefined && Math.abs(p.x - levels[l]) < 0.45) l++;
-       levels[l] = p.x;
-       return { ...p, labelLevel: l };
+    
+    anchors.forEach(p => {
+        const cx = p.multipletBounds.centerX;
+        let l = 0;
+        while(levels[l] !== undefined && Math.abs(cx - levels[l]) < 0.35) l++;
+        levels[l] = cx;
+        p.labelLevel = l;
+    });
+
+    return withAnchorFlag.map(p => {
+        if (p.isLabelAnchor) {
+            const anchor = anchors.find(a => a === p);
+            return { ...p, labelLevel: anchor ? anchor.labelLevel : 0 };
+        }
+        return { ...p, labelLevel: 0 };
     });
   }, [data]);
   
@@ -1380,16 +1425,72 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
                   const isSel = selectedKeys && payload.keys && payload.keys.some((k) => selectedKeys.includes(k));
                   const isMan = manualKeys && payload.keys && payload.keys.some((k) => manualKeys.includes(k));
                   const dimmed = selectedKeys && !isSel && !isMan;
-                  const textStr = simShowLabels ? getPeakLabelText(payload, simLabelFormat, simLabelDim) : '';
+                  
+                  const textStr = (simShowLabels && payload.isLabelAnchor) ? getPeakLabelText(payload, simLabelFormat, simLabelDim) : '';
+                  const barElem = <line x1={centerX} y1={y + height} x2={centerX} y2={y} stroke={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : payload.color} strokeWidth={isSel ? 3 : isMan ? 2.5 : 1.5} />;
+                  
+                  if (!textStr || !payload.multipletBounds) {
+                    return <g opacity={dimmed ? 0.2 : 1}>{barElem}</g>;
+                  }
+
+                  const m = payload.multipletBounds;
+                  const labelY = y - 16 - (payload.labelLevel || 0) * 22; 
+                  
+                  const plotW = boxW ? (boxW - CHART_MARGIN_1D.left - CHART_MARGIN_1D.right) : 0;
+                  const scale = (plotW && (xDomain[1] - xDomain[0]) !== 0) ? plotW / (xDomain[1] - xDomain[0]) : 0;
+
+                  let annotationElem = null;
+
+                  if (scale > 0) {
+                      const getPixelX = (val) => centerX + (payload.x - val) * scale;
+                      
+                      const pxMinX = getPixelX(m.minX);
+                      const pxMaxX = getPixelX(m.maxX);
+                      const pxCenterX = getPixelX(m.centerX);
+                      const isSinglet = Math.abs(pxMinX - pxMaxX) < 2;
+
+                      if (isSinglet) {
+                          annotationElem = (
+                              <g>
+                                  <line x1={pxCenterX} y1={y} x2={pxCenterX} y2={labelY} stroke="#94a3b8" strokeWidth={1} strokeDasharray="2 2" />
+                                  <text x={pxCenterX} y={labelY - 4} textAnchor="middle" fontSize={simLabelFontSize} fill="white" stroke="white" strokeWidth={3} strokeLinejoin="round" fontWeight="bold">{textStr}</text>
+                                  <text x={pxCenterX} y={labelY - 4} textAnchor="middle" fontSize={simLabelFontSize} fill="#475569" fontWeight="bold">{textStr}</text>
+                              </g>
+                          );
+                      } else {
+                          annotationElem = (
+                              <g>
+                                  {/* Leader line from the max peak up to the label bar */}
+                                  <line x1={centerX} y1={y} x2={centerX} y2={labelY} stroke="#94a3b8" strokeWidth={1} strokeDasharray="2 2" />
+                                  
+                                  {/* Horizontal bar spanning the multiplet */}
+                                  <line x1={pxMinX} y1={labelY} x2={pxMaxX} y2={labelY} stroke="#475569" strokeWidth={1.5} />
+                                  
+                                  {/* Vertical ticks for each component dropping down from the horizontal bar */}
+                                  {m.peakXs.map((px, i) => (
+                                      <line key={i} x1={getPixelX(px)} y1={labelY} x2={getPixelX(px)} y2={labelY + 4} stroke="#475569" strokeWidth={1.5} />
+                                  ))}
+                                  
+                                  {/* Label text centered above the horizontal bar */}
+                                  <text x={pxCenterX} y={labelY - 4} textAnchor="middle" fontSize={simLabelFontSize} fill="white" stroke="white" strokeWidth={3} strokeLinejoin="round" fontWeight="bold">{textStr}</text>
+                                  <text x={pxCenterX} y={labelY - 4} textAnchor="middle" fontSize={simLabelFontSize} fill="#475569" fontWeight="bold">{textStr}</text>
+                              </g>
+                          );
+                      }
+                  } else {
+                      annotationElem = (
+                          <g>
+                              <line x1={centerX} y1={y} x2={centerX} y2={labelY} stroke="#94a3b8" strokeWidth={1} strokeDasharray="2 2" />
+                              <text x={centerX} y={labelY - 4} textAnchor="middle" fontSize={simLabelFontSize} fill="white" stroke="white" strokeWidth={3} strokeLinejoin="round" fontWeight="bold">{textStr}</text>
+                              <text x={centerX} y={labelY - 4} textAnchor="middle" fontSize={simLabelFontSize} fill="#475569" fontWeight="bold">{textStr}</text>
+                          </g>
+                      );
+                  }
+
                   return (
                     <g opacity={dimmed ? 0.2 : 1}>
-                      <line x1={centerX} y1={y + height} x2={centerX} y2={y} stroke={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : payload.color} strokeWidth={isSel ? 3 : isMan ? 2.5 : 1.5} />
-                      {textStr && (
-                        <g>
-                          <text x={centerX} y={y - 5 - (payload.labelLevel || 0) * 14} textAnchor="middle" fontSize={simLabelFontSize} fill="white" stroke="white" strokeWidth={3} strokeLinejoin="round" fontWeight="bold">{textStr}</text>
-                          <text x={centerX} y={y - 5 - (payload.labelLevel || 0) * 14} textAnchor="middle" fontSize={simLabelFontSize} fill="#475569" fontWeight="bold">{textStr}</text>
-                        </g>
-                      )}
+                      {barElem}
+                      {annotationElem}
                     </g>
                   );
                 }} isAnimationActive={false} />
@@ -1465,14 +1566,14 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
     const used = [];
     return crossPeakData.map(p => {
       let dx = 0, dy = 0, rad = 1;
-      while(used.some(u => Math.abs(u.x - (p.x + dx)) < 0.25 && Math.abs(u.y - (p.y + dy)) < 0.25)) {
+      while(used.some(u => Math.abs(u.x - (p.x + dx)) < 0.4 && Math.abs(u.y - (p.y + dy)) < 0.4)) {
          const angle = rad * Math.PI / 4;
-         dx = (rad * 0.1) * Math.cos(angle);
-         dy = (rad * 0.1) * Math.sin(angle);
+         dx = (Math.ceil(rad/8) * 0.4) * Math.cos(angle);
+         dy = (Math.ceil(rad/8) * 0.4) * Math.sin(angle);
          rad++;
       }
       used.push({ x: p.x + dx, y: p.y + dy });
-      return { ...p, labelDx: dx * 25, labelDy: dy * 25 };
+      return { ...p, labelDx: dx * 35, labelDy: dy * 35 };
     });
   }, [crossPeakData]);
   
@@ -1483,15 +1584,24 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
     const isMan = manualKeys && payload.keys && payload.keys.some((k) => manualKeys.includes(k));
     const dimmed = selectedKeys && !isSel && !isMan && payload.type !== 'Diagonal';
     const textStr = simShowLabels && payload.type !== 'Diagonal' ? getPeakLabelText(payload, simLabelFormat, simLabelDim) : '';
+    
+    const r = payload.size || 5;
+    const textX = cx + r + 5 + (payload.labelDx || 0);
+    const textY = cy - r - 5 + (payload.labelDy || 0);
+    const isMoved = Math.abs(payload.labelDx || 0) > 0 || Math.abs(payload.labelDy || 0) > 0;
+
     return (
       <g opacity={dimmed ? 0.18 : 1}>
-        {isSel && <circle cx={cx} cy={cy} r={(payload.size || 5) + 5} fill={SELECT_COLOR} opacity={0.3} />}
-        {isMan && !isSel && <circle cx={cx} cy={cy} r={(payload.size || 5) + 5} fill={MANUAL_COLOR} opacity={0.22} />}
-        <circle cx={cx} cy={cy} r={isSel ? (payload.size || 5) + 2 : isMan ? (payload.size || 5) + 1.5 : payload.size || 5} fill={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : payload.type === 'Diagonal' ? fill : getNMRFillColor(payload)} stroke={isSel ? '#b45309' : isMan ? '#166534' : 'none'} strokeWidth={isSel ? 2 : isMan ? 1.5 : 0} opacity={0.85} />
+        {textStr && isMoved && (
+          <line x1={cx} y1={cy} x2={textX} y2={textY} stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="2 2" />
+        )}
+        {isSel && <circle cx={cx} cy={cy} r={r + 5} fill={SELECT_COLOR} opacity={0.3} />}
+        {isMan && !isSel && <circle cx={cx} cy={cy} r={r + 5} fill={MANUAL_COLOR} opacity={0.22} />}
+        <circle cx={cx} cy={cy} r={isSel ? r + 2 : isMan ? r + 1.5 : r} fill={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : payload.type === 'Diagonal' ? fill : getNMRFillColor(payload)} stroke={isSel ? '#b45309' : isMan ? '#166534' : 'none'} strokeWidth={isSel ? 2 : isMan ? 1.5 : 0} opacity={0.85} />
         {textStr && (
           <g>
-            <text x={cx + ((payload.size || 5) + 3) + (payload.labelDx||0)} y={cy - ((payload.size || 5) + 3) + (payload.labelDy||0)} fontSize={simLabelFontSize} fill="white" stroke="white" strokeWidth={3} strokeLinejoin="round" fontWeight="bold">{textStr}</text>
-            <text x={cx + ((payload.size || 5) + 3) + (payload.labelDx||0)} y={cy - ((payload.size || 5) + 3) + (payload.labelDy||0)} fontSize={simLabelFontSize} fill="#475569" fontWeight="bold">{textStr}</text>
+            <text x={textX} y={textY} fontSize={simLabelFontSize} fill="white" stroke="white" strokeWidth={3} strokeLinejoin="round" fontWeight="bold">{textStr}</text>
+            <text x={textX} y={textY} fontSize={simLabelFontSize} fill="#475569" fontWeight="bold">{textStr}</text>
           </g>
         )}
       </g>
@@ -1517,7 +1627,10 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
                 <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} />
                 <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomYTick1H isZoomed={isZoomed} fs={fs} />} label={{ value: '¹H F1 (ppm)', angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fs + 1 }} />
                 <Tooltip content={<NMRTooltip diagonalColor={diagonalColor} selectedKeys={selectedKeys} />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
-                <Scatter name="Diagonal" data={[{ x: 0, y: 0 }, { x: 11, y: 11 }]} line={{ stroke: '#cbd5e1', strokeWidth: 1 }} shape={<circle r={0} />} legendType="none" isAnimationActive={false} />
+                
+                {/* Changed shape to function to avoid DOM warning propagation */}
+                <Scatter name="Diagonal" data={[{ x: 0, y: 0 }, { x: 11, y: 11 }]} line={{ stroke: '#cbd5e1', strokeWidth: 1 }} shape={(props) => <circle cx={props.cx || 0} cy={props.cy || 0} r={0} />} legendType="none" isAnimationActive={false} />
+                
                 <Scatter data={diagonalData} fill={diagonalColor} shape={shape} isAnimationActive={false} />
                 <Scatter data={processedCrossPeaks} shape={shape} isAnimationActive={false} />
                 {refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} y1={refAreaTop} y2={refAreaBottom} strokeOpacity={0.3} fill="#cbd5e1" />}
@@ -1539,9 +1652,6 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
     </>
   );
 };
-
-// HSQCPlot and ThreeDScatter follow the same pattern as SpectrumPlot (included in full file)
-// Due to extreme length, I'm including them condensed here — they are identical to the original with only formatting fixes
 
 const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panelId, selectedKeys, manualKeys = [], yAxisLabel = '¹³C F1 (ppm)', yDomainInit = [0, 220], yTicks = TICKS_13C, aspect = 1, fs = 11, simCfg = {} }) => {
   const { simShowLabels, simLabelFormat, simLabelDim, simLabelFontSize = 10 } = simCfg;
@@ -1601,14 +1711,14 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
     const yRange = yDomainInit[1] - yDomainInit[0];
     return crossPeakData.map(p => {
       let dx = 0, dy = 0, rad = 1;
-      while(used.some(u => Math.abs(u.x - (p.x + dx)) < 0.35 && Math.abs(u.y - (p.y + dy)) < (yRange/40))) {
+      while(used.some(u => Math.abs(u.x - (p.x + dx)) < 0.4 && Math.abs(u.y - (p.y + dy)) < (yRange/25))) {
          const angle = rad * Math.PI / 4;
-         dx = (rad * 0.1) * Math.cos(angle);
-         dy = (rad * 0.5 * (yRange/100)) * Math.sin(angle);
+         dx = (Math.ceil(rad/8) * 0.4) * Math.cos(angle);
+         dy = (Math.ceil(rad/8) * (yRange/25)) * Math.sin(angle);
          rad++;
       }
       used.push({ x: p.x + dx, y: p.y + dy });
-      return { ...p, labelDx: dx * 25, labelDy: dy * 10 };
+      return { ...p, labelDx: dx * 35, labelDy: dy * 12 };
     });
   }, [crossPeakData, yDomainInit]);
   
@@ -1638,15 +1748,24 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
                   const isMan = manualKeys && payload.keys && payload.keys.some((k) => manualKeys.includes(k));
                   const dimmed = selectedKeys && !isSel && !isMan;
                   const textStr = simShowLabels ? getPeakLabelText(payload, simLabelFormat, simLabelDim) : '';
+                  
+                  const r = payload.size || 5;
+                  const textX = cx + r + 5 + (payload.labelDx || 0);
+                  const textY = cy - r - 5 + (payload.labelDy || 0);
+                  const isMoved = Math.abs(payload.labelDx || 0) > 0 || Math.abs(payload.labelDy || 0) > 0;
+
                   return (
                     <g opacity={dimmed ? 0.18 : 1}>
-                      {isSel && <circle cx={cx} cy={cy} r={(payload.size || 5) + 5} fill={SELECT_COLOR} opacity={0.3} />}
-                      {isMan && !isSel && <circle cx={cx} cy={cy} r={(payload.size || 5) + 5} fill={MANUAL_COLOR} opacity={0.22} />}
-                      <circle cx={cx} cy={cy} r={isSel ? (payload.size || 5) + 2 : isMan ? (payload.size || 5) + 1.5 : payload.size || 5} fill={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : getNMRFillColor(payload)} stroke={isSel ? '#b45309' : isMan ? '#166534' : 'none'} strokeWidth={isSel ? 2 : isMan ? 1.5 : 0} opacity={0.85} />
+                      {textStr && isMoved && (
+                        <line x1={cx} y1={cy} x2={textX} y2={textY} stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="2 2" />
+                      )}
+                      {isSel && <circle cx={cx} cy={cy} r={r + 5} fill={SELECT_COLOR} opacity={0.3} />}
+                      {isMan && !isSel && <circle cx={cx} cy={cy} r={r + 5} fill={MANUAL_COLOR} opacity={0.22} />}
+                      <circle cx={cx} cy={cy} r={isSel ? r + 2 : isMan ? r + 1.5 : r} fill={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : getNMRFillColor(payload)} stroke={isSel ? '#b45309' : isMan ? '#166534' : 'none'} strokeWidth={isSel ? 2 : isMan ? 1.5 : 0} opacity={0.85} />
                       {textStr && (
                         <g>
-                          <text x={cx + ((payload.size || 5) + 3) + (payload.labelDx||0)} y={cy - ((payload.size || 5) + 3) + (payload.labelDy||0)} fontSize={simLabelFontSize} fill="white" stroke="white" strokeWidth={3} strokeLinejoin="round" fontWeight="bold">{textStr}</text>
-                          <text x={cx + ((payload.size || 5) + 3) + (payload.labelDx||0)} y={cy - ((payload.size || 5) + 3) + (payload.labelDy||0)} fontSize={simLabelFontSize} fill="#475569" fontWeight="bold">{textStr}</text>
+                          <text x={textX} y={textY} fontSize={simLabelFontSize} fill="white" stroke="white" strokeWidth={3} strokeLinejoin="round" fontWeight="bold">{textStr}</text>
+                          <text x={textX} y={textY} fontSize={simLabelFontSize} fill="#475569" fontWeight="bold">{textStr}</text>
                         </g>
                       )}
                     </g>
