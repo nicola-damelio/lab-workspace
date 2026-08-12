@@ -3,16 +3,11 @@ import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import Chart from 'chart.js/auto';
 import { PLATES_DEF, formatConc, concKey, getRegionColor, toHex, lighten, darken, needsDarkText, PALETTE, fit4PL, getDirectImageUrl } from '../data/constants';
+
 import {
-  useNmrDerived,
-  OneDSpectrumPlot,
-  SpectrumPlot,
-  HSQCPlot,
-  CustomXTick1H,
-  CustomXTick13C,
-  TICKS_1H,
-  TICKS_13C,
-  TICKS_15N
+  useNmrDerived, OneDSpectrumPlot, SpectrumPlot, HSQCPlot,
+  CustomXTick1H, CustomXTick13C, TICKS_1H, TICKS_13C, TICKS_15N,
+  SCSChartsPanel, NotebookConditionPlots
 } from './NMRSections';
 /* ============================================================================
 CD SPECTRA CHART (for Lab Notebook)
@@ -235,8 +230,9 @@ NOTEBOOK TEST ITEM
 const NotebookTestItem = ({
   test, jumpToTest,
   showConditions, showInstrumental, showReport, showImages,
-  showData, showDataAnalysisGraphs, showDataTables,
-  showSimImages, showNMRSpectra, selectedSpectrumTypes = []
+  showData, showDataAnalysisGraphs,
+  showSimImages, showNMRSpectra, selectedSpectrumType,
+  nbScsAtoms = ['HA', 'CA', 'CB', 'CO']
 }) => {
   const isPlate = test.type && test.type.startsWith('plate-') && test.type !== 'plate-9x9box';
   const isNMR = test.type === 'nmr';
@@ -245,32 +241,35 @@ const NotebookTestItem = ({
   const isCloning = test.type === 'cloning';
   const isProteinExp = test.type === 'protein_expression';
   const isMD = test.type === 'md_simulation';
+
   const typeLabel = isPlate ? 'Plate Assay' : isNMR ? 'NMR' : isCD ? 'Circular Dichroism' : isNMRFitting ? 'NMR Fitting' : isCloning ? 'Cloning' : isProteinExp ? 'Protein Expression' : isMD ? 'MD Simulation' : 'Experiment';
   const typeIcon = isPlate ? '🧫' : isNMR ? '📉' : isCD ? '🌀' : isNMRFitting ? '🧭' : isCloning ? '🧬' : isProteinExp ? '🧫' : isMD ? '🖥️' : '🧪';
-  const compounds = [...new Set([...(test.selectedCompounds || []), ...(test.compoundsSelected || []), ...(test.compound ? test.compound.split(',') : [])])].map(s => s.trim()).filter(Boolean);
+
+  const compounds = [...new Set([...(test.selectedCompounds || []), ...(test.compoundsSelected || []), ...(test.compound ? test.compound.split(',') : [])])].map((s) => s.trim()).filter(Boolean);
   const plasmids = [...new Set([...(test.plasmids || []), ...(test.plasmid ? [test.plasmid] : [])])].filter(Boolean);
+
+  const reportHtml = test.comments || test.report || '';
+  const hasReportContent = !!reportHtml;
+  const hasReportImages = showImages && Array.isArray(test.images) && test.images.length > 0;
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden break-inside-avoid avoid-break mb-4">
+      {/* ===== HEADER ===== */}
       <div className="px-5 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <span className="text-xl">{typeIcon}</span>
           <div>
             <h3 className="font-bold text-slate-800 text-sm">{test.name} {test.bestMeasurement && '⭐'}</h3>
-            <p className="text-[10px] text-slate-500">
-              {test.date} · {test.instanceName || 'Primary'} · {typeLabel}
-            </p>
+            <p className="text-[10px] text-slate-500">{test.date} · {test.instanceName || 'Primary'} · {typeLabel}</p>
           </div>
         </div>
-        <button
-          onClick={() => jumpToTest(test.id)}
-          className="text-[10px] font-bold bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors"
-        >
+        <button onClick={() => jumpToTest(test.id)} className="text-[10px] font-bold bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors">
           Open Test →
         </button>
       </div>
+
       <div className="px-5 py-4">
-        {/* FIRST: Experimental Conditions */}
+        {/* ===== 1. EXPERIMENTAL CONDITIONS (first) ===== */}
         {showConditions && (
           <div className="mb-3 pb-3 border-b border-slate-100">
             <h4 className="text-[10px] font-bold text-slate-500 uppercase mb-1">Experimental Conditions</h4>
@@ -281,33 +280,56 @@ const NotebookTestItem = ({
               {(test.additive || test.additiveName) && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Additive: {test.additive || test.additiveName} {test.additiveConc} {test.additiveUnit}</span>}
               {test.temperature && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">T: {test.temperature}</span>}
               {test.ph && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">pH: {test.ph}</span>}
-              {test.saltConcentration && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Salt: {test.saltConcentration}</span>}
               {test.otherMolecule && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Ligand: {test.otherMolecule}</span>}
               {test.ratio && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Ratio: {test.ratio}</span>}
             </div>
           </div>
         )}
 
-        {/* Compounds & Biologicals */}
+        {/* ===== 2. COMPOUNDS & BIOLOGICALS (always) ===== */}
         <div className="mb-3 pb-3 border-b border-slate-100">
           <h4 className="text-[10px] font-bold text-slate-500 uppercase mb-1">Compounds & Biologicals</h4>
           <div className="flex flex-wrap gap-1.5">
             {compounds.length === 0 && plasmids.length === 0 && (!test.cellLines || test.cellLines.length === 0) && (
               <span className="text-[10px] text-slate-400 italic">None defined</span>
             )}
-            {compounds.map(c => <span key={c} className="text-[10px] bg-blue-50 border border-blue-200 text-blue-700 px-2 py-0.5 rounded-full font-bold">{c}</span>)}
-            {(test.cellLines || []).map(cl => <span key={cl} className="text-[10px] bg-emerald-50 border border-emerald-200 text-emerald-700 px-2 py-0.5 rounded-full font-bold">🦠 {cl}</span>)}
-            {plasmids.map(p => <span key={p} className="text-[10px] bg-violet-50 border border-violet-200 text-violet-700 px-2 py-0.5 rounded-full font-bold">🧬 {p}</span>)}
+            {compounds.map((c) => <span key={c} className="text-[10px] bg-blue-50 border border-blue-200 text-blue-700 px-2 py-0.5 rounded-full font-bold">{c}</span>)}
+            {(test.cellLines || []).map((cl) => <span key={cl} className="text-[10px] bg-emerald-50 border border-emerald-200 text-emerald-700 px-2 py-0.5 rounded-full font-bold">🦠 {cl}</span>)}
+            {plasmids.map((p) => <span key={p} className="text-[10px] bg-violet-50 border border-violet-200 text-violet-700 px-2 py-0.5 rounded-full font-bold">🧬 {p}</span>)}
           </div>
         </div>
 
-        {test.comments && (
+        {/* ===== 3. REPORT (comments + images inside, gated by showReport / showImages) ===== */}
+        {showReport && (hasReportContent || hasReportImages) && (
           <div className="mb-3">
-            <h4 className="text-[10px] font-bold text-slate-500 uppercase mb-1">Notes</h4>
-            <div className="text-xs text-slate-700 prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: test.comments }} />
+            <h4 className="text-[10px] font-bold text-slate-500 uppercase mb-1">Report</h4>
+            {hasReportContent && (
+              <div className="text-xs text-slate-700 prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: reportHtml }} />
+            )}
+            {hasReportImages && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {test.images.map((img, idx) => (
+                  <div key={idx} className="flex flex-col gap-1 w-[200px]">
+                    <a href={typeof img === 'string' ? img : img.url} target="_blank" rel="noopener noreferrer" className="block">
+                      <img
+                        src={getDirectImageUrl(typeof img === 'string' ? img : img.url)}
+                        alt={`Figure ${idx + 1}`}
+                        style={{ maxWidth: '200px', maxHeight: '150px', objectFit: 'contain', border: '1px solid #e2e8f0', borderRadius: '6px' }}
+                      />
+                    </a>
+                    <span className="text-[10px] text-slate-500 italic truncate text-center">
+                      {(Array.isArray(test.figureCaptions) && test.figureCaptions[idx]) ||
+                        (typeof img === 'object' && img.caption) ||
+                        `Figure ${idx + 1}`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
+        {/* ===== 4. INSTRUMENTAL SETUP ===== */}
         {showInstrumental && (
           <div className="mb-3">
             <h4 className="text-[10px] font-bold text-slate-500 uppercase mb-1">Instrumental Setup</h4>
@@ -320,35 +342,7 @@ const NotebookTestItem = ({
           </div>
         )}
 
-        {showReport && test.report && (
-          <div className="mb-3">
-            <h4 className="text-[10px] font-bold text-slate-500 uppercase mb-1">Report</h4>
-            <div className="text-xs text-slate-700 bg-slate-50 p-2 rounded" dangerouslySetInnerHTML={{ __html: test.report }} />
-          </div>
-        )}
-
-        {showImages && test.images && test.images.length > 0 && (
-          <div className="mb-3">
-            <h4 className="text-[10px] font-bold text-slate-500 uppercase mb-1">Images</h4>
-            <div className="flex flex-wrap gap-2">
-              {test.images.map((img, idx) => (
-                <div key={idx} className="flex flex-col gap-1 w-[200px]">
-                  <a href={typeof img === 'string' ? img : img.url} target="_blank" rel="noopener noreferrer" className="block">
-                    <img
-                      src={getDirectImageUrl(typeof img === 'string' ? img : img.url)}
-                      alt={`Image ${idx + 1}`}
-                      style={{ maxWidth: '200px', maxHeight: '150px', objectFit: 'contain', border: '1px solid #e2e8f0', borderRadius: '6px' }}
-                    />
-                  </a>
-                  <span className="text-[10px] text-slate-500 italic truncate text-center">
-                    {typeof img === 'object' && img.caption ? img.caption : `Image ${idx + 1}`}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
+        {/* ===== 5. DATA ===== */}
         {showData && (
           <>
             {isCD && test.structureComposition && (
@@ -400,61 +394,80 @@ const NotebookTestItem = ({
           </>
         )}
 
-        {showDataAnalysisGraphs && (isCD || isNMRFitting) && (
+        {/* ===== 6. DATA ANALYSIS GRAPHS (CD + NMR SCS + Fitting) ===== */}
+        {showDataAnalysisGraphs && (isCD || isNMR || isNMRFitting) && (
           <div className="mb-3">
             <h4 className="text-[10px] font-bold text-slate-500 uppercase mb-1">Data Analysis Graphs</h4>
             {isCD && <CDSpectraChart wavelengthData={test.wavelengthData} spectraColumns={test.spectraColumns} chartCfg={test.chartCfg} />}
-            {!isCD && <span className="text-[10px] text-slate-400 italic">No graph rendered in this preview mode.</span>}
+            {isCD && test.structureComposition && (
+              <div className="mt-2"><CDStructureChart structureComposition={test.structureComposition} /></div>
+            )}
+            {isNMR && (
+              <div className="flex flex-col gap-3">
+                {typeof SCSChartsPanel === 'function'
+                  ? <SCSChartsPanel activeTest={test} selectedAtoms={nbScsAtoms} height={160} />
+                  : <span className="text-[10px] text-slate-400 italic">SCS panel not available (export SCSChartsPanel from NMRSections).</span>}
+                {typeof NotebookConditionPlots === 'function' && <NotebookConditionPlots activeTest={test} />}
+              </div>
+            )}
+            {isNMRFitting && (typeof NotebookConditionPlots === 'function'
+              ? <NotebookConditionPlots activeTest={test} />
+              : <span className="text-[10px] text-slate-400 italic">Fitting plots not available.</span>)}
           </div>
         )}
 
-        {showDataTables && test.dataTables && (
-          <div className="mb-3">
-            <h4 className="text-[10px] font-bold text-slate-500 uppercase mb-1">Data Tables</h4>
-            <span className="text-[10px] text-slate-400 italic">Table visualization not fully populated for this test.</span>
-          </div>
-        )}
-
-        {showSimImages && isMD && test.simImages && test.simImages.length > 0 && (
+        {/* ===== 7. SIMULATION IMAGES (non-NMR, from Simulations content) ===== */}
+        {showSimImages && !isNMR && !isNMRFitting &&
+          ((test.simImages || []).length > 0 || (test.simulatedSpectraImages || []).length > 0) && (
           <div className="mb-3">
             <h4 className="text-[10px] font-bold text-slate-500 uppercase mb-1">Simulation Images</h4>
             <div className="flex flex-wrap gap-2">
-              {test.simImages.map((img, idx) => (
-                <img key={idx} src={getDirectImageUrl(typeof img === 'string' ? img : img.url)} alt={`Sim ${idx}`} style={{ maxWidth: '200px' }} />
-              ))}
+              {[...(test.simImages || []), ...(test.simulatedSpectraImages || [])].map((img, idx) => {
+                const src = typeof img === 'string' ? img : (img.url || img.src || img.data);
+                if (!src) return null;
+                return (
+                  <img key={idx} src={getDirectImageUrl(src)} alt={`Sim ${idx}`}
+                    style={{ maxWidth: '200px', border: '1px solid #e2e8f0', borderRadius: '6px' }} />
+                );
+              })}
             </div>
           </div>
         )}
 
-        {/* NMR SPECTRA — simulated live from the same engine used by the NMR page */}
+        {/* ===== 8. NMR SPECTRA ===== */}
         {showNMRSpectra && (isNMR || isNMRFitting) && (
           <div className="mb-3">
             <h4 className="text-[10px] font-bold text-slate-500 uppercase mb-1">NMR Spectra</h4>
-            {selectedSpectrumTypes.length === 0 ? (
-              <span className="text-[10px] text-slate-400 italic">No spectrum types selected — use the checkboxes in the toolbar above.</span>
-            ) : (
-              <NMRSpectraPreview test={test} selectedTypes={selectedSpectrumTypes} />
-            )}
-            {(test.nmrSpectraImages || []).length > 0 && (
-              <div className="mt-2">
-                <h5 className="text-[10px] font-bold text-slate-400 uppercase mb-1">Saved Figures</h5>
-                <div className="flex flex-wrap gap-2">
-                  {test.nmrSpectraImages.map((img, idx) => {
-                    const raw = typeof img === 'string' ? img : (img.url || img.src || img.data || '');
-                    if (!raw) return null;
-                    const src = raw.startsWith('data:') || raw.startsWith('blob:') ? raw : getDirectImageUrl(raw);
-                    return (
-                      <div key={idx} className="flex flex-col gap-1 w-[220px]">
-                        <img src={src} alt={`NMR figure ${idx + 1}`} style={{ maxWidth: '220px', maxHeight: '160px', objectFit: 'contain', border: '1px solid #e2e8f0', borderRadius: '6px', background: 'white' }} />
-                        <span className="text-[10px] text-slate-500 italic truncate text-center">
-                          {(Array.isArray(test.figureCaptions) && test.figureCaptions[idx]) || (typeof img === 'object' && img.caption) || `Figure ${idx + 1}`}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
+            <div className="flex flex-wrap gap-2">
+              {(() => {
+                const allImgs = [
+                  ...(test.nmrSpectraImages || []),
+                  ...(test.simulatedSpectra || []),
+                  ...(test.simulatedSpectraImages || []),
+                  ...(test.simImages || []),
+                  ...(test.simulationImages || [])
+                ];
+                if (allImgs.length === 0) return <span className="text-[10px] text-slate-400 italic">No spectra available.</span>;
+                const filteredImgs = allImgs.filter((img) => {
+                  if (selectedSpectrumType === 'ALL') return true;
+                  if (typeof img === 'object' && img.type) return img.type === selectedSpectrumType;
+                  return false;
+                });
+                if (filteredImgs.length === 0) return <span className="text-[10px] text-slate-400 italic">No spectra match selected type.</span>;
+                return filteredImgs.map((img, idx) => {
+                  const srcStr = typeof img === 'string' ? img : (img.url || img.image || img.src || img.data);
+                  const labelStr = typeof img === 'object' && (img.label || img.title || img.name) ? (img.label || img.title || img.name) : '';
+                  return (
+                    <div key={idx} className="flex flex-col gap-1">
+                      <a href={srcStr} target="_blank" rel="noopener noreferrer" className="block">
+                        <img src={getDirectImageUrl(srcStr)} alt={`Spectrum ${idx}`} style={{ maxWidth: '200px', maxHeight: '150px', objectFit: 'contain', border: '1px solid #e2e8f0', borderRadius: '6px' }} />
+                      </a>
+                      <span className="text-[10px] text-slate-500 text-center truncate w-[200px]">{labelStr}</span>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
           </div>
         )}
       </div>
@@ -501,10 +514,16 @@ export const LabNotebook = ({
   const [showImages, setShowImages] = useState(true);
   const [showData, setShowData] = useState(false);
   const [showDataAnalysisGraphs, setShowDataAnalysisGraphs] = useState(false);
-  const [showDataTables, setShowDataTables] = useState(false);
   const [showSimImages, setShowSimImages] = useState(false);
   const [showNMRSpectra, setShowNMRSpectra] = useState(false);
   
+  // FIX: Missing States for Spectrum Types
+  const [selectedSpectrumType, setSelectedSpectrumType] = useState('ALL');
+  const [nbScsAtoms, setNbScsAtoms] = useState(['HA', 'CA', 'CB', 'CO']);
+  
+  const toggleNbScsAtom = (a) =>
+    setNbScsAtoms(prev => prev.includes(a) ? prev.filter(x => x !== a) : [...prev, a]);
+
   // Option Lists
   const allPrimaryCategories = useMemo(() => [...new Set(tests.map(t => t.testCategory).filter(Boolean))].sort(), [tests]);
   const allSecondaryCategories = useMemo(() => [...new Set(tests.map(t => t.secondaryCategory).filter(Boolean))].sort(), [tests]);
@@ -517,12 +536,24 @@ export const LabNotebook = ({
   const allInstruments = useMemo(() => (nmrInstruments || []).map(i => i.name || i).filter(Boolean).sort(), [nmrInstruments]);
   const allProbes = useMemo(() => (nmrProbes || []).map(p => p.name || p).filter(Boolean).sort(), [nmrProbes]);
   const allPulseSeqs = useMemo(() => (nmrExperiments || []).map(e => e.name || e).filter(Boolean).sort(), [nmrExperiments]);
-const [selectedSpectrumTypes, setSelectedSpectrumTypes] = useState(NMR_SPECTRUM_TYPES.map((t) => t.id));
 
-const toggleSpectrumType = (id) =>
-  setSelectedSpectrumTypes((prev) =>
-    prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-  );
+  // FIX: Dynamic computation for availableSpectrumTypes
+  const availableSpectrumTypes = useMemo(() => {
+    const types = new Set();
+    tests.forEach(t => {
+      [...(t.nmrSpectraImages || []), ...(t.simulatedSpectra || []), ...(t.simulatedSpectraImages || []), ...(t.simImages || []), ...(t.simulationImages || [])].forEach(img => {
+        if (typeof img === 'object' && img.type) types.add(img.type);
+      });
+    });
+    return Array.from(types).sort();
+  }, [tests]);
+
+  const [selectedSpectrumTypes, setSelectedSpectrumTypes] = useState(NMR_SPECTRUM_TYPES.map((t) => t.id));
+
+  const toggleSpectrumType = (id) =>
+    setSelectedSpectrumTypes((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
 
   const typeLabels = {
     'plate-96': 'Plate 96', 'plate-48': 'Plate 48', 'plate-24': 'Plate 24', 'plate-12': 'Plate 12', 'plate-6': 'Plate 6', 'plate-1': 'Petri Dish',
@@ -744,7 +775,7 @@ const toggleSpectrumType = (id) =>
         )}
 
         {/* DISPLAY OPTIONS */}
-        <div className="flex flex-wrap gap-2 items-center bg-blue-50 p-2 rounded border border-blue-100">
+       <div className="flex flex-wrap gap-2 items-center bg-blue-50 p-2 rounded border border-blue-100">
           <span className="text-[10px] font-bold text-blue-800 uppercase mr-2">Display Options:</span>
           
           <label className="flex items-center gap-1 text-[10px] font-bold text-slate-700 cursor-pointer">
@@ -772,7 +803,7 @@ const toggleSpectrumType = (id) =>
             <input type="checkbox" checked={showSimImages} onChange={(e) => setShowSimImages(e.target.checked)} className="accent-blue-600" /> Sim. Images
           </label>
           
-          <div className="flex items-start gap-1 flex-wrap">
+<div className="flex items-start gap-1 flex-wrap">
   <label className="flex items-center gap-1 text-[10px] font-bold text-slate-700 cursor-pointer">
     <input type="checkbox" checked={showNMRSpectra} onChange={(e) => setShowNMRSpectra(e.target.checked)} className="accent-blue-600" /> NMR Spectra
   </label>
@@ -805,21 +836,21 @@ const toggleSpectrumType = (id) =>
             <>
               <p className="text-[10px] text-slate-400 font-bold uppercase">{filteredTests.length} experiment(s) found</p>
               {filteredTests.map((test) => (
-<NotebookTestItem
-  key={test.id}
-  test={test}
-  jumpToTest={jumpToTest}
-  showConditions={showConditions}
-  showInstrumental={showInstrumental}
-  showReport={showReport}
-  showImages={showImages}
-  showData={showData}
-  showDataAnalysisGraphs={showDataAnalysisGraphs}
-  showDataTables={showDataTables}
-  showSimImages={showSimImages}
-  showNMRSpectra={showNMRSpectra}
-  selectedSpectrumTypes={selectedSpectrumTypes}
-/>
+                <NotebookTestItem
+                  key={test.id}
+                  test={test}
+                  jumpToTest={jumpToTest}
+                  showConditions={showConditions}
+                  showInstrumental={showInstrumental}
+                  showReport={showReport}
+                  showImages={showImages}
+                  showData={showData}
+                  showDataAnalysisGraphs={showDataAnalysisGraphs}
+                  showSimImages={showSimImages}
+                  showNMRSpectra={showNMRSpectra}
+                  selectedSpectrumType={selectedSpectrumType}
+                  nbScsAtoms={nbScsAtoms}
+                />
               ))}
             </>
           )}

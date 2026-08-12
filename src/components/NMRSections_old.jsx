@@ -3310,6 +3310,14 @@ export const MolecularStructureSection = ({ ctx }) => {
 
 
 // ================= DATA SECTION =================
+
+
+// Building blocks reused by the Lab Notebook to re-render simulated spectra
+export { OneDSpectrumPlot, SpectrumPlot, HSQCPlot, useNmrDerived };
+export { CustomXTick1H, CustomYTick1H, CustomXTick13C, CustomYTick13C };
+export { TICKS_1H, TICKS_13C, TICKS_15N };
+
+
 export const DataSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useNmrDerived(activeTest, ctx);
@@ -4766,6 +4774,7 @@ export const All = ({ ctx }) => (
     <CollapsibleSection title="Simulations" icon="🧪" defaultOpen={false}><SimulationsSection ctx={ctx} /></CollapsibleSection>
   </div>
 );
+
 // ================= EXPORTS (single occurrence - no duplicates) =================
 export const MolecularStructure = MolecularStructureSection;
 export const Setup = ExperimentSetupSection;
@@ -4778,7 +4787,6 @@ export const SecondaryShifts = SecondaryShiftsSection;
 export { OneDSpectrumPlot, SpectrumPlot, HSQCPlot, useNmrDerived };
 export { CustomXTick1H, CustomYTick1H, CustomXTick13C, CustomYTick13C };
 export { TICKS_1H, TICKS_13C, TICKS_15N };
-
 
 // ================= NOTEBOOK EXTRA =================
 export const NotebookExtra = ({ ctx, checkId }) => {
