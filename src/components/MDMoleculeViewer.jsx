@@ -84,15 +84,8 @@ const buildKeys = (ri, tokens, molType, char) => {
 
 const mapNGLAtomToNmrKeys = (atom, parsedSeq, moleculeType) => {
   if (moleculeType === 'organic') {
-    let nmrAtom = '';
-    // If the atomname is explicitly provided (e.g., from our generated PDB file)
-    if (atom.atomname && /[A-Za-z]\d+/.test(atom.atomname)) {
-      nmrAtom = atom.atomname.trim();
-    } else {
-      // Fallback for raw SDF streaming
-      const elem = atom.element || 'C';
-      nmrAtom = `${elem}${atom.index}`;
-    }
+    const elem = atom.element || 'C';
+    const nmrAtom = `${elem}${atom.index}`;
     const keys = buildKeys(0, [nmrAtom], 'organic', 'O');
     return { ri: 0, keys, label: `Org ${nmrAtom}`, nmrAtom };
   }
@@ -160,12 +153,14 @@ const NMRMoleculeViewer = ({
     onAtomClickRef.current = onAtomClick;
   }, [parsedSeq, moleculeType, onAtomClick]);
 
+  // Sync external src into loadRequest seamlessly
   useEffect(() => {
     if (src && !file) {
       setLoadRequest({ file: null, url: src, ts: Date.now() });
     }
   }, [src, file]);
 
+  // Safely Mount NGL Stage ONCE
   useEffect(() => {
     let isMounted = true;
     import('ngl').then((NGL) => {
@@ -201,6 +196,7 @@ const NMRMoleculeViewer = ({
     };
   }, []);
 
+  // Handle Loading without destroying the WebGL Context
   useEffect(() => {
     if (!loadRequest || (!loadRequest.file && !loadRequest.url)) return;
     if (!stageRef.current) return;
@@ -231,6 +227,7 @@ const NMRMoleculeViewer = ({
         componentRef.current = component;
 
         if (moleculeTypeRef.current === 'organic') {
+          // Explicitly color organic SDF by element
           component.addRepresentation('ball+stick', { colorScheme: 'element', multipleBond: true });
         } else {
           try { component.addRepresentation('cartoon', { color: 'residueindex', quality: 'high' }); } catch (e) {}
@@ -248,6 +245,7 @@ const NMRMoleculeViewer = ({
     loadStructure();
   }, [loadRequest]);
 
+  // Handle Labels
   useEffect(() => {
     const component = componentRef.current;
     if (!component || status !== 'ready') return;
@@ -260,15 +258,11 @@ const NMRMoleculeViewer = ({
     if (showLabels) {
       const isOrganic = moleculeTypeRef.current === 'organic';
       const sele = isOrganic ? 'not hydrogen' : 'protein and sidechain and not hydrogen';
-      
-      // Determine label format dynamically. If organic and from a local uploaded PDB, use the explicit atomname
-      const labelFormat = isOrganic ? (loadRequest?.file ? '%(atomname)s' : '%(element)s%(index)s') : undefined;
-
       try {
         labelCompRef.current = component.addRepresentation('label', {
           sele: sele,
           labelType: isOrganic ? 'format' : 'atomname',
-          labelFormat: labelFormat,
+          labelFormat: isOrganic ? '%(element)s%(index)s' : undefined,
           labelGrouping: 'atom',
           color: 0x111827,
           radius: 1.0,
@@ -277,8 +271,9 @@ const NMRMoleculeViewer = ({
         });
       } catch (e) {}
     }
-  }, [showLabels, status, loadRequest]);
+  }, [showLabels, status]);
 
+  // Handle Side Chains
   useEffect(() => {
     const component = componentRef.current;
     if (!component || status !== 'ready' || moleculeTypeRef.current === 'organic') return;
@@ -300,6 +295,7 @@ const NMRMoleculeViewer = ({
     }
   }, [sidechainStyle, status]);
 
+  // Handle Highlighting
   useEffect(() => {
     const component = componentRef.current;
     if (!component || status !== 'ready') return;
@@ -323,8 +319,9 @@ const NMRMoleculeViewer = ({
         const resno = ri + 1;
 
         if (moleculeTypeRef.current === 'organic') {
+          // Extract the numerical index from strings like "C12" or "O2"
           const match = atomName.match(/[a-zA-Z]+(\d+)/);
-          if (match) parts.push(`@${match[1]}`); 
+          if (match) parts.push(`@${match[1]}`); // Select by exact atom index
           return;
         }
 

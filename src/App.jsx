@@ -656,22 +656,14 @@ const LibraryDirectory = ({
   const cellLines = [...new Set([...(customCellLines || []), ...Object.keys(cellLineMeta || {})])].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
   const plasmids = [...new Set([...(customPlasmids || []), ...Object.keys(plasmidMeta || {})])].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 
-  const solventNames = (solvents || []).map(s => typeof s === 'string' ? s : s.name).filter(Boolean).sort();
-  const bufferNames = (buffers || []).map(b => typeof b === 'string' ? b : b.name).filter(Boolean).sort();
-  const additiveNames = (additives || []).map(a => typeof a === 'string' ? a : a.name).filter(Boolean).sort();
-  const probeNames = (nmrProbes || []).map(p => typeof p === 'string' ? p : p.name).filter(Boolean).sort();
-  const instrumentNames = (nmrInstruments || []).map(i => typeof i === 'string' ? i : i.name).filter(Boolean).sort();
-  const experimentNames = (nmrExperiments || []).map(e => typeof e === 'string' ? e : e.name).filter(Boolean).sort();
-
-  const renderBadge = (label, type, onClick) => (
-    <button
-      key={label}
-      onClick={() => onClick(label, type)}
-      className="text-xs bg-slate-100 hover:bg-blue-100 border border-slate-300 text-slate-700 font-semibold px-3 py-1.5 rounded-full transition-colors m-1 shadow-sm"
-    >
-      {label}
-    </button>
-  );
+  // Solvents/Buffers/Additives/NMR Probes/NMR Instruments/NMR Experiments are
+  // stored as objects ({ id, name, comments, links, ... }) — but tolerate
+  // plain strings too, for any legacy data saved before that existed.
+  const asRows = (items) =>
+    (Array.isArray(items) ? items : [])
+      .map((item) => (typeof item === 'string' ? { id: item, name: item } : item))
+      .filter((item) => item && item.name)
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 
   const compoundCategoryLabel = (meta) => {
     if (meta?.type === 'protein') return 'Peptide / Protein';
@@ -713,9 +705,69 @@ const LibraryDirectory = ({
     };
   });
 
+  const solventRows = asRows(solvents).map((s) => ({
+    id: s.id || s.name,
+    name: s.name,
+    density: s.density || '—',
+    comments: s.comments || '',
+    linkCount: Array.isArray(s.links) ? s.links.length : 0
+  }));
+
+  const bufferRows = asRows(buffers).map((b) => ({
+    id: b.id || b.name,
+    name: b.name,
+    description: b.description || '—',
+    comments: b.comments || '',
+    linkCount: Array.isArray(b.links) ? b.links.length : 0
+  }));
+
+  const additiveRows = asRows(additives).map((a) => ({
+    id: a.id || a.name,
+    name: a.name,
+    description: a.description || '—',
+    comments: a.comments || '',
+    linkCount: Array.isArray(a.links) ? a.links.length : 0
+  }));
+
+  const nmrInstrumentRows = asRows(nmrInstruments).map((i) => ({
+    id: i.id || i.name,
+    name: i.name,
+    frequency: i.frequency || '—',
+    manufacturer: i.manufacturer || '—',
+    comments: i.comments || '',
+    linkCount: Array.isArray(i.links) ? i.links.length : 0
+  }));
+
+  const nmrProbeRows = asRows(nmrProbes).map((p) => ({
+    id: p.id || p.name,
+    name: p.name,
+    type: [p.type, p.subtype].filter(Boolean).join(' / ') || '—',
+    field: p.field || '—',
+    comments: p.comments || '',
+    linkCount: Array.isArray(p.links) ? p.links.length : 0
+  }));
+
+  const nmrExperimentRows = asRows(nmrExperiments).map((e) => ({
+    id: e.id || e.name,
+    name: e.name,
+    dimensions: e.dimensions || '—',
+    nuclei: Array.isArray(e.nuclei) ? e.nuclei.filter(Boolean).join(', ') || '—' : '—',
+    comments: e.comments || '',
+    linkCount: Array.isArray(e.links) ? e.links.length : 0
+  }));
+
   const linksCell = (row) =>
     row.linkCount > 0 ? (
       <span className="inline-flex items-center gap-1 text-blue-600 font-semibold">🔗 {row.linkCount}</span>
+    ) : (
+      <span className="text-slate-300">—</span>
+    );
+
+  const commentsCell = (row) =>
+    row.comments && row.comments.trim() ? (
+      <span className="text-slate-600" title={row.comments}>
+        {row.comments.length > 40 ? `${row.comments.slice(0, 40)}…` : row.comments}
+      </span>
     ) : (
       <span className="text-slate-300">—</span>
     );
@@ -728,7 +780,7 @@ const LibraryDirectory = ({
         Defined Resources Library
       </h3>
 
-      {/* COMPOUND / CELL LINE / PLASMID — scrollable, clickable tables */}
+      {/* COMPOUND / CELL LINE / PLASMID */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div>
           <h4 className="text-xs font-bold text-slate-500 mb-2">Compounds ({compoundRows.length})</h4>
@@ -776,35 +828,102 @@ const LibraryDirectory = ({
         </div>
       </div>
 
-      {/* Everything else stays as a quick-pick badge cloud */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* SOLVENTS / BUFFERS / ADDITIVES */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div>
-          <h4 className="text-xs font-bold text-slate-500 mb-2 mt-2">Solvents & Media ({solventNames.length})</h4>
-          <div className="flex flex-wrap">{solventNames.length ? solventNames.map(s => renderBadge(s, 'solvent', onSelectResource)) : <span className="text-xs text-slate-400 italic">No solvents.</span>}</div>
+          <h4 className="text-xs font-bold text-slate-500 mb-2">Solvents & Media ({solventRows.length})</h4>
+          <LibraryTable
+            columns={[
+              { key: 'name', label: 'Name', render: nameCell },
+              { key: 'density', label: 'Density' },
+              { key: 'comments', label: 'Comments', render: commentsCell },
+              { key: 'linkCount', label: 'Links', render: linksCell }
+            ]}
+            rows={solventRows}
+            onRowClick={(row) => onSelectResource(row.name, 'solvent')}
+            emptyLabel="No solvents defined yet."
+          />
         </div>
 
         <div>
-          <h4 className="text-xs font-bold text-slate-500 mb-2 mt-2">Buffers ({bufferNames.length})</h4>
-          <div className="flex flex-wrap">{bufferNames.length ? bufferNames.map(b => renderBadge(b, 'buffer', onSelectResource)) : <span className="text-xs text-slate-400 italic">No buffers.</span>}</div>
+          <h4 className="text-xs font-bold text-slate-500 mb-2">Buffers ({bufferRows.length})</h4>
+          <LibraryTable
+            columns={[
+              { key: 'name', label: 'Name', render: nameCell },
+              { key: 'description', label: 'Description' },
+              { key: 'comments', label: 'Comments', render: commentsCell },
+              { key: 'linkCount', label: 'Links', render: linksCell }
+            ]}
+            rows={bufferRows}
+            onRowClick={(row) => onSelectResource(row.name, 'buffer')}
+            emptyLabel="No buffers defined yet."
+          />
         </div>
 
         <div>
-          <h4 className="text-xs font-bold text-slate-500 mb-2 mt-2">Additives ({additiveNames.length})</h4>
-          <div className="flex flex-wrap">{additiveNames.length ? additiveNames.map(a => renderBadge(a, 'additive', onSelectResource)) : <span className="text-xs text-slate-400 italic">No additives.</span>}</div>
+          <h4 className="text-xs font-bold text-slate-500 mb-2">Additives ({additiveRows.length})</h4>
+          <LibraryTable
+            columns={[
+              { key: 'name', label: 'Name', render: nameCell },
+              { key: 'description', label: 'Description' },
+              { key: 'comments', label: 'Comments', render: commentsCell },
+              { key: 'linkCount', label: 'Links', render: linksCell }
+            ]}
+            rows={additiveRows}
+            onRowClick={(row) => onSelectResource(row.name, 'additive')}
+            emptyLabel="No additives defined yet."
+          />
+        </div>
+      </div>
+
+      {/* NMR INSTRUMENTS / NMR PROBES / NMR EXPERIMENTS (PULSE PROGRAMS) */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div>
+          <h4 className="text-xs font-bold text-slate-500 mb-2">NMR Instruments ({nmrInstrumentRows.length})</h4>
+          <LibraryTable
+            columns={[
+              { key: 'name', label: 'Name', render: nameCell },
+              { key: 'frequency', label: 'Frequency' },
+              { key: 'manufacturer', label: 'Manufacturer' },
+              { key: 'comments', label: 'Comments', render: commentsCell },
+              { key: 'linkCount', label: 'Links', render: linksCell }
+            ]}
+            rows={nmrInstrumentRows}
+            onRowClick={(row) => onSelectResource(row.name, 'nmrInstrument')}
+            emptyLabel="No NMR instruments defined yet."
+          />
         </div>
 
         <div>
-          <h4 className="text-xs font-bold text-slate-500 mb-2 mt-2">NMR Equipment</h4>
-          <div className="flex flex-wrap">
-             {instrumentNames.map(i => renderBadge(i, 'nmrInstrument', onSelectResource))}
-             {probeNames.map(p => renderBadge(p, 'nmrProbe', onSelectResource))}
-             {!instrumentNames.length && !probeNames.length && <span className="text-xs text-slate-400 italic">No NMR equipment.</span>}
-          </div>
+          <h4 className="text-xs font-bold text-slate-500 mb-2">NMR Probes ({nmrProbeRows.length})</h4>
+          <LibraryTable
+            columns={[
+              { key: 'name', label: 'Name', render: nameCell },
+              { key: 'type', label: 'Type' },
+              { key: 'field', label: 'Field' },
+              { key: 'comments', label: 'Comments', render: commentsCell },
+              { key: 'linkCount', label: 'Links', render: linksCell }
+            ]}
+            rows={nmrProbeRows}
+            onRowClick={(row) => onSelectResource(row.name, 'nmrProbe')}
+            emptyLabel="No NMR probes defined yet."
+          />
         </div>
 
         <div>
-          <h4 className="text-xs font-bold text-slate-500 mb-2 mt-2">NMR Experiments ({experimentNames.length})</h4>
-          <div className="flex flex-wrap">{experimentNames.length ? experimentNames.map(e => renderBadge(e, 'nmrExperiment', onSelectResource)) : <span className="text-xs text-slate-400 italic">No experiments.</span>}</div>
+          <h4 className="text-xs font-bold text-slate-500 mb-2">NMR Experiments / Pulse Programs ({nmrExperimentRows.length})</h4>
+          <LibraryTable
+            columns={[
+              { key: 'name', label: 'Name', render: nameCell },
+              { key: 'dimensions', label: 'Dim.' },
+              { key: 'nuclei', label: 'Nuclei' },
+              { key: 'comments', label: 'Comments', render: commentsCell },
+              { key: 'linkCount', label: 'Links', render: linksCell }
+            ]}
+            rows={nmrExperimentRows}
+            onRowClick={(row) => onSelectResource(row.name, 'nmrExperiment')}
+            emptyLabel="No NMR experiments defined yet."
+          />
         </div>
       </div>
     </div>
@@ -5255,7 +5374,7 @@ setMandatoryFields(s.mandatoryFields || []);
               <div className="h-full min-h-0 overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
                 <div className="max-w-6xl mx-auto flex flex-col gap-4 pb-10">
                   
-<CollapsibleSection title="Library Directory" subtitle="Click any item to view or edit its full details." defaultOpen={true}>
+                  <CollapsibleSection title="Library Directory" subtitle="Click any item to view or edit its full details." defaultOpen={true}>
                     <LibraryDirectory 
                       compoundMeta={compoundMeta}
                       cellLineMeta={cellLineMeta}

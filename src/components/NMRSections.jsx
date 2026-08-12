@@ -1893,6 +1893,8 @@ const getCarbonName = (molType, char, atom) => {
   if (molType === 'protein') {
     if (atom === 'Hε' && char === 'R') return null;
     if (char === 'W' && atom === 'Hδ1') return null;
+    if (atom === 'Hδ21' || atom === 'Hδ22') return null; // Prevents phantom carbons for Asn amide protons
+    if (atom === 'Hε21' || atom === 'Hε22') return null; // Prevents phantom carbons for Gln amide protons
     if (atom.includes('CH3')) return atom.replace('H', 'C').replace('(CH3)', '');
     const cName = atom.replace('H', 'C').replace(/\d+$/, '');
     if (['V', 'I', 'T'].includes(char) && atom.includes('γ')) return atom.replace('H', 'C');
@@ -1900,7 +1902,8 @@ const getCarbonName = (molType, char, atom) => {
     if (['F', 'Y', 'W', 'H'].includes(char) && (atom.includes('δ') || atom.includes('ε') || atom.includes('ζ') || atom.includes('η'))) return atom.replace('H', 'C');
     return cName;
   }
-  if (molType === 'dna' || molType === 'rna') return atom.replace('H', 'C');
+  // Removes the double-prime to correctly merge H2'' and H5'' back into C2' and C5'
+  if (molType === 'dna' || molType === 'rna') return atom.replace('H', 'C').replace("''", "'");
   if (molType === 'sugar') return atom.replace('H', 'C').replace(/[ab]$/, '');
   if (molType === 'lipid') {
     const map = {
@@ -2843,43 +2846,26 @@ const OrganicViewer = ({ smiles, selectedKeys, onAtomClick }) => {
             try {
                 const mol = window.__RDKit.get_mol(smiles);
                 
-                // Force RDKit to add explicit Hydrogens so they can be clicked and labeled
-                mol.add_hs();
-                
-                // Parse the internal molblock to extract exact element symbols (C, O, N, H)
-                const molblock = mol.get_molblock();
-                const lines = molblock.split('\n');
-                const numAtoms = parseInt((lines[3] || '').substring(0, 3).trim(), 10) || 0;
-                
-                const atomLabels = {};
-                const atomNameList = [];
-                for (let i = 0; i < numAtoms; i++) {
-                    const symbol = lines[4 + i].substring(31, 34).trim();
-                    const name = `${symbol}${i}`;
-                    atomLabels[i] = name; // Instructs RDKit to draw "C0", "O1", "H2" etc.
-                    atomNameList.push(name);
-                }
-
-                // Map selected keys from the generic table format back to RDKit indices
+                // Parse selectedKeys to highlight the correct RDKit atom indices
                 let highlightAtoms = [];
                 if (selectedKeys && selectedKeys.length > 0) {
                     highlightAtoms = selectedKeys.map(k => {
                         const parts = k.split('-');
                         if (parts.length < 2) return -1;
-                        const atomName = parts.slice(1).join('-'); 
-                        return atomNameList.indexOf(atomName);
+                        const atomName = parts[1]; // e.g. "C1", "C2"
+                        const num = parseInt(atomName.replace(/[^0-9]/g, ''), 10);
+                        return !isNaN(num) ? num - 1 : -1; // Map 1-based table name to 0-based RDKit index
                     }).filter(idx => idx >= 0);
                 }
 
                 const details = JSON.stringify({ 
-                    addAtomIndices: false, 
+                    addAtomIndices: true, // Restores native RDKit atom index labels
                     addStereoAnnotation: true,
-                    atomLabels: atomLabels, // Push explicit symbols to SVG
                     width: 450, 
                     height: 350,
                     atoms: highlightAtoms,
                     highlightAtomColors: highlightAtoms.reduce((acc, idx) => {
-                        acc[idx] = [0.96, 0.62, 0.04]; // Amber-500 highlighting
+                        acc[idx] = [0.96, 0.62, 0.04]; // Amber highlight color
                         return acc;
                     }, {})
                 });
@@ -2891,41 +2877,25 @@ const OrganicViewer = ({ smiles, selectedKeys, onAtomClick }) => {
     }, [smiles, selectedKeys]);
 
     const attachListeners = (containerEl) => {
-        if (!containerEl || !onAtomClick || !window.__RDKit) return;
-        try {
-            const mol = window.__RDKit.get_mol(smiles);
-            mol.add_hs();
-            const molblock = mol.get_molblock();
-            const lines = molblock.split('\n');
-            const numAtoms = parseInt((lines[3] || '').substring(0, 3).trim(), 10) || 0;
-            const atomNameList = [];
-            for (let i = 0; i < numAtoms; i++) {
-                const symbol = lines[4 + i].substring(31, 34).trim();
-                atomNameList.push(`${symbol}${i}`);
-            }
-            mol.delete();
-
-            const atoms = containerEl.querySelectorAll('[class*="atom-"]');
-            atoms.forEach(node => {
-                node.style.cursor = 'pointer';
-                node.onclick = (e) => {
-                    e.stopPropagation();
-                    const cls = Array.from(node.classList).find(c => c.startsWith('atom-'));
-                    if (cls) {
-                        const idx = parseInt(cls.replace('atom-', ''), 10);
-                        if (!isNaN(idx) && atomNameList[idx]) {
-                            // Dispatch exact name (e.g. "0-C0" or "0-H3") to sync with data table
-                            onAtomClick(0, [`0-${atomNameList[idx]}`]);
-                        }
+        if (!containerEl || !onAtomClick) return;
+        const atoms = containerEl.querySelectorAll('[class*="atom-"]');
+        atoms.forEach(node => {
+            node.style.cursor = 'pointer';
+            node.onclick = (e) => {
+                e.stopPropagation();
+                const cls = Array.from(node.classList).find(c => c.startsWith('atom-'));
+                if (cls) {
+                    const idx = parseInt(cls.replace('atom-', ''), 10);
+                    if (!isNaN(idx)) {
+                        // Map RDKit 0-based index to 1-based table naming (index 0 -> C1)
+                        onAtomClick(0, [`0-C${idx + 1}`]);
                     }
-                };
-            });
-        } catch(e) {}
+                }
+            };
+        });
     };
 
-    // Attach to standard viewer
     useEffect(() => { attachListeners(svgRef.current); }, [svg, onAtomClick]);
-    // Attach to zoomed viewer if open
     useEffect(() => { if (isZoomed) attachListeners(zoomedSvgRef.current); }, [isZoomed, svg, onAtomClick]);
 
     const fallbackUrl = `https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(smiles)}/image?width=1500&height=1500`;
@@ -2943,7 +2913,7 @@ const OrganicViewer = ({ smiles, selectedKeys, onAtomClick }) => {
                 </div>
             </div>
             {isZoomed && (
-                <div className="fixed inset-0 z-[999999] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4 overflow-auto" onClick={() => setIsZoomed(false)}>
+                <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-slate-900/85 backdrop-blur-sm p-4 overflow-auto" onClick={() => setIsZoomed(false)}>
                     <div ref={zoomedSvgRef} className="bg-white p-6 rounded-2xl shadow-2xl relative max-w-[95vw] max-h-[95vh] overflow-auto flex items-center justify-center" onClick={e => e.stopPropagation()}>
                         <button onClick={() => setIsZoomed(false)} className="absolute top-2 right-2 bg-slate-200 text-slate-800 rounded-full w-10 h-10 flex items-center justify-center text-2xl font-black shadow-lg hover:bg-slate-300 z-50">×</button>
                         {svg ? (
@@ -2970,6 +2940,7 @@ export const MolecularStructureSection = ({ ctx }) => {
   const atomNameMap = useMemo(() => { try { return activeTest.atomNameMap ? JSON.parse(activeTest.atomNameMap) : {}; } catch { return {}; } }, [activeTest.atomNameMap]);
   const [hasOpened3D, setHasOpened3D] = useState(structureMode === '3d');
   
+  // Decoupled input state to prevent WebGL crash on keystroke
   const [localPdbInput, setLocalPdbInput] = useState(activeTest.structureSrc || '');
 
   useEffect(() => {
@@ -3022,7 +2993,7 @@ export const MolecularStructureSection = ({ ctx }) => {
       if (d.moleculeType === 'rna') return '/structures/template_nucleotide_rna.pdb';
       if (d.moleculeType === 'lipid') return `/structures/${(activeTest.lipidChoice || 'POPC').toUpperCase()}.pdb`;
       if (d.moleculeType === 'sugar') return `/structures/${activeTest.sugarChoice || 'GLC'}_${activeTest.sugarAnomer || 'alpha'}.pdb`;
-      if ((d.moleculeType === 'organic' || activeSmiles) && activeSmiles) return `https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(activeSmiles)}/file?format=sdf&get3d=true`;
+      if ((d.moleculeType === 'organic' || activeSmiles) && activeSmiles) return `https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(activeSmiles)}/file?format=pdb&get3d=true`;
       return '';
     }
     if (/^(https?:|blob:|data:)/i.test(raw) || raw.startsWith('/') || raw.startsWith('./')) return raw;
@@ -3052,58 +3023,17 @@ export const MolecularStructureSection = ({ ctx }) => {
 
     if (targetSmiles) {
       try {
-        const res = await fetch(`https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(targetSmiles)}/file?format=sdf&get3d=true`);
+        const res = await fetch(`https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(targetSmiles)}/file?format=pdb&get3d=true`);
         if (!res.ok) throw new Error('Network response was not ok');
-        const sdfText = await res.text();
-        if (!sdfText || sdfText.includes('HTML') || sdfText.includes('404')) {
+        const text = await res.text();
+        if (!text || text.includes('HTML') || text.includes('404')) {
           throw new Error('Structure not resolved by NCI Cactus service');
         }
-
-        const lines = sdfText.split('\n');
-        const countsLine = lines[3];
-        const numAtoms = parseInt(countsLine.substring(0, 3).trim(), 10);
-        
-        let pdb = `HEADER    ${(activeTest.name || 'Organic_Molecule').substring(0,40)}\n`;
-        let atomIndex = 1;
-        
-        for (let i = 0; i < numAtoms; i++) {
-          const line = lines[4 + i];
-          if (line.length < 30) continue;
-          
-          const x = parseFloat(line.substring(0, 10)).toFixed(3).padStart(8);
-          const y = parseFloat(line.substring(10, 20)).toFixed(3).padStart(8);
-          const z = parseFloat(line.substring(20, 30)).toFixed(3).padStart(8);
-          const elem = line.substring(31, 34).trim();
-          
-          let atomName = `${elem}${i}`;
-          if (atomName.length < 4) atomName = ` ${atomName}`.padEnd(4);
-          else atomName = atomName.substring(0, 4);
-
-          pdb += `ATOM  ${String(atomIndex++).padStart(5)} ${atomName} ORG A   1    ${x}${y}${z}  1.00  0.00          ${elem.padStart(2)}\n`;
-        }
-
-        const numBonds = parseInt(countsLine.substring(3, 6).trim(), 10);
-        const bonds = {};
-        for(let i=0; i<numBonds; i++) {
-          const line = lines[4 + numAtoms + i];
-          if (!line || line.length < 6) continue;
-          const a1 = parseInt(line.substring(0, 3).trim(), 10);
-          const a2 = parseInt(line.substring(3, 6).trim(), 10);
-          if (!bonds[a1]) bonds[a1] = [];
-          bonds[a1].push(a2);
-        }
-        for (const a1 in bonds) {
-          let conectLine = `CONECT${String(a1).padStart(5)}`;
-          bonds[a1].forEach(a2 => { conectLine += String(a2).padStart(5); });
-          pdb += conectLine + '\n';
-        }
-        pdb += `END\n`;
-
-        const blob = new Blob([pdb], { type: 'chemical/x-pdb' });
+        const blob = new Blob([text], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${(activeTest.name || 'molecule').replace(/[^a-z0-9]/gi, '_')}_labeled_3D.pdb`;
+        a.download = `${activeTest.name || 'molecule'}_3D.pdb`;
         a.click();
         URL.revokeObjectURL(url);
       } catch (e) {
@@ -3271,6 +3201,11 @@ export const DataSection = ({ ctx }) => {
   const [showImport, setShowImport] = useState(false);
   const [importConfig, setImportConfig] = useState({ testId: '', tableId: '', metric: 'R_s' });
   
+  // Publication Table Export States
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportColumns, setExportColumns] = useState([]);
+  const [exportNuclei, setExportNuclei] = useState(['1H', '13C', '15N', '31P']);
+
   const actualLayerKeys = d.layers.map(l => l.key);
   const [visibleLayers, setVisibleLayers] = useState(actualLayerKeys);
 
@@ -3314,10 +3249,22 @@ export const DataSection = ({ ctx }) => {
   const fillEstimated = () => {
     const cs = { ...(activeTest.chemicalShifts || {}) };
     d.estSeq.forEach((res, idx) => {
-      Object.entries(res.estShifts || {}).forEach(([a, v]) => { cs[`${idx}-${a}`] = String(v); });
-      Object.entries(res.estUniqueC || {}).forEach(([cn, v]) => { cs[`${idx}-${cn}`] = String(v); });
-      if (res.estN != null) cs[`${idx}-N`] = String(res.estN);
-      if (res.estCP != null) cs[`${idx}-C'`] = String(res.estCP);
+      Object.entries(res.estShifts || {}).forEach(([a, v]) => { 
+        const key = `${idx}-${a}`;
+        if (parseManual(cs[key]) === null) cs[key] = String(v); 
+      });
+      Object.entries(res.estUniqueC || {}).forEach(([cn, v]) => { 
+        const key = `${idx}-${cn}`;
+        if (parseManual(cs[key]) === null) cs[key] = String(v); 
+      });
+      if (res.estN != null) {
+        const key = `${idx}-N`;
+        if (parseManual(cs[key]) === null) cs[key] = String(res.estN);
+      }
+      if (res.estCP != null) {
+        const key = `${idx}-C'`;
+        if (parseManual(cs[key]) === null) cs[key] = String(res.estCP);
+      }
     });
     const nv = { ...(activeTest.nmrValues || {}) };
     delete nv.cs; // Clear deprecated overlay
@@ -3393,7 +3340,86 @@ export const DataSection = ({ ctx }) => {
       alert(`Imported ${count} values successfully.`);
   };
 
-  const selTdCls = (isMan, isSel) => `px-2 py-1 cursor-pointer transition-colors border-r border-slate-100 ${isSel ? 'bg-amber-100 ring-1 ring-inset ring-amber-400' : isMan ? 'bg-green-50' : 'hover:bg-slate-50'}`;
+  // Publication Table Handlers
+  const openExportModal = () => {
+    setExportColumns([...visibleLayers]);
+    setShowExportModal(true);
+  };
+
+  const toggleExportColumn = (key) => {
+    if (exportColumns.includes(key)) setExportColumns(exportColumns.filter(k => k !== key));
+    else setExportColumns([...exportColumns, key]);
+  };
+
+  const toggleExportNucleus = (nuc) => {
+    if (exportNuclei.includes(nuc)) setExportNuclei(exportNuclei.filter(k => k !== nuc));
+    else setExportNuclei([...exportNuclei, nuc]);
+  };
+
+  const copyPublicationTable = () => {
+    const el = document.getElementById('publication-table-container');
+    if (!el) return;
+    const range = document.createRange();
+    range.selectNode(el);
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(range);
+    try {
+      document.execCommand('copy');
+      window.getSelection().removeAllRanges();
+      alert('Table copied to clipboard! You can now paste it directly into Word or Excel.');
+    } catch (err) {
+      alert('Failed to copy automatically. Please select the table manually and press Ctrl+C (or Cmd+C).');
+    }
+  };
+
+  const saveTableAsImage = () => {
+    const el = document.getElementById('publication-table-container');
+    if (!el) return;
+    const html = el.innerHTML;
+    // Calculate the size based on scroll content to avoid cutting off
+    const width = el.scrollWidth + 40; 
+    const height = el.scrollHeight + 40;
+    
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+      <foreignObject width="100%" height="100%">
+        <div xmlns="http://www.w3.org/1999/xhtml" style="background: white; padding: 20px;">
+          ${html}
+        </div>
+      </foreignObject>
+    </svg>`;
+    
+    const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+    const reader = new FileReader();
+    reader.onload = (e) => {
+       const newImages = [...(activeTest.nmrSpectraImages || []), e.target.result];
+       const newCaptions = [...(activeTest.figureCaptions || [])];
+       // Match the array length
+       while(newCaptions.length < (activeTest.nmrSpectraImages || []).length) newCaptions.push('');
+       newCaptions.push("Publication Table Export");
+       
+       updateActiveTest({ nmrSpectraImages: newImages, figureCaptions: newCaptions });
+       alert("Table saved as an image to the Figures section! It will now be exported to the Lab Notebook.");
+    };
+    reader.readAsDataURL(blob);
+  };
+
+  const isPolymer = ['protein', 'dna', 'rna'].includes(d.moleculeType);
+  const COMMON_ATOMS_MAP = {
+    protein: ['HN', 'N', 'Cα', 'Hα', 'Cβ', 'Hβ', "C'"],
+    dna: ["H1'", "C1'", "H2'", "H2''", "C2'", "H3'", "C3'", "H4'", "C4'", "H5'", "H5''", "C5'"],
+    rna: ["H1'", "C1'", "H2'", "OH2'", "C2'", "H3'", "C3'", "H4'", "C4'", "H5'", "H5''", "C5'"]
+  };
+  const rawCommonAtoms = COMMON_ATOMS_MAP[d.moleculeType] || [];
+  
+  const getAtomNucleus = (a) => {
+    if (a.startsWith('H') || a.includes('OH') || a.includes('NH')) return '1H';
+    if (a.startsWith('C')) return '13C';
+    if (a === 'N') return '15N';
+    if (a === 'P') return '31P';
+    return '1H'; // fallback
+  };
+
+  const commonAtoms = rawCommonAtoms.filter(ca => exportNuclei.includes(getAtomNucleus(ca)));
 
   return (
     <div className="flex flex-col gap-6">
@@ -3412,6 +3438,7 @@ export const DataSection = ({ ctx }) => {
                 <button onClick={() => { setTableMode('all'); updateActiveTest({ tableMode: 'all' }); }} className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${effTableMode === 'all' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>All Atoms</button>
               </div>
             )}
+            <button onClick={openExportModal} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-50 border border-indigo-300 text-indigo-700 hover:bg-indigo-100">📄 Publication Table</button>
             <button onClick={fillEstimated} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-green-50 border border-green-300 text-green-700 hover:bg-green-100">✨ Fill Estimated</button>
             <button onClick={() => setShowImport(true)} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-50 border border-amber-300 text-amber-700 hover:bg-amber-100">📥 Import Fitted Parameters</button>
           </div>
@@ -3489,10 +3516,45 @@ export const DataSection = ({ ctx }) => {
                           if (!layer) return null;
                           const valMap = lk === 'cs' ? activeTest.chemicalShifts : (d.allLayerValues[lk] || {});
                           const val = valMap?.[opt.key];
-                          const isMan = parseManual(val) !== null;
+                          
+                          const hasValue = parseManual(val) !== null;
+                          
+                          let isManuallyEdited = false;
+                          if (hasValue) {
+                              if (lk !== 'cs') {
+                                  isManuallyEdited = true;
+                              } else if (est !== undefined && est !== null) {
+                                  const valNum = parseFloat(val);
+                                  const estNum = parseFloat(est);
+                                  if (Math.abs(valNum - estNum) > 0.001) isManuallyEdited = true;
+                              } else {
+                                  isManuallyEdited = true;
+                              }
+                          }
+                          
+                          const isFillEstimated = hasValue && !isManuallyEdited;
+
+                          const tdClass = `px-2 py-1 cursor-pointer transition-colors border-r border-slate-100 ${
+                              isSel ? 'bg-amber-100 ring-1 ring-inset ring-amber-400' : 
+                              isManuallyEdited ? 'bg-emerald-100' : 
+                              isFillEstimated ? 'bg-green-50' : 'hover:bg-slate-50'
+                          }`;
+
+                          const inputClass = `w-full border rounded px-1.5 py-0.5 outline-none text-xs font-mono text-center transition-colors ${
+                              isManuallyEdited ? 'border-emerald-600 bg-emerald-100 text-emerald-900 font-black' : 
+                              isFillEstimated ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 
+                              'border-slate-200 focus:border-blue-500 bg-transparent text-slate-700'
+                          }`;
+
                           return (
-                              <td key={lk} className={selTdCls(isMan, isSel)} onClick={(e) => handleCellClick(e, idx, atomName)}>
-                                  <input type="text" value={val || ''} onChange={(e) => handleShiftChange(idx, atomName, lk, e.target.value)} className={`w-full border rounded px-1.5 py-0.5 outline-none text-xs font-mono text-center ${isMan ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-200 focus:border-blue-500 bg-transparent'}`} placeholder="—" />
+                              <td key={lk} className={tdClass} onClick={(e) => handleCellClick(e, idx, atomName)}>
+                                  <input 
+                                    type="text" 
+                                    value={val || ''} 
+                                    onChange={(e) => handleShiftChange(idx, atomName, lk, e.target.value)} 
+                                    className={inputClass} 
+                                    placeholder="—" 
+                                  />
                                   {lk === 'cs' && est !== undefined && est !== null && <div className="text-[10px] font-bold text-slate-400 text-center mt-0.5" title="Theoretical estimate">≈ {est.toFixed(2)}</div>}
                               </td>
                           );
@@ -3520,6 +3582,7 @@ export const DataSection = ({ ctx }) => {
         </div>
       </div>
 
+      {/* Import NMR Fitting Modal */}
       {showImport && (
          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm">
              <div className="bg-white p-6 rounded-xl shadow-xl w-96 flex flex-col gap-4">
@@ -3560,9 +3623,187 @@ export const DataSection = ({ ctx }) => {
              </div>
          </div>
       )}
+
+      {/* Export Publication Table Modal */}
+      {showExportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+          <div className="bg-white p-6 rounded-xl shadow-2xl w-full max-w-5xl flex flex-col gap-4 max-h-[95vh]">
+            <div className="flex justify-between items-center">
+              <div>
+                <h3 className="font-bold text-lg text-slate-800">Export Publication Table</h3>
+                <p className="text-xs text-slate-500">Filter what to export. Empty rows are excluded automatically.</p>
+              </div>
+              <button onClick={() => setShowExportModal(false)} className="text-slate-400 hover:text-red-500 font-bold text-2xl leading-none">&times;</button>
+            </div>
+            
+            <div className="flex flex-wrap gap-x-6 gap-y-3 items-center bg-slate-50 p-3 rounded-lg border border-slate-200">
+              <div className="flex flex-wrap gap-2 items-center">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase">Include Parameters:</span>
+                  {d.layers.map((l) => (
+                      <label key={l.key} className={`flex items-center gap-1.5 text-xs font-bold px-2 py-1 rounded border cursor-pointer ${exportColumns.includes(l.key) ? 'bg-blue-50 border-blue-300 text-blue-700 shadow-sm' : 'bg-white border-slate-200 text-slate-500'}`}>
+                          <input type="checkbox" checked={exportColumns.includes(l.key)} onChange={() => toggleExportColumn(l.key)} className="accent-blue-600" />
+                          {l.label}
+                      </label>
+                  ))}
+              </div>
+
+              <div className="flex flex-wrap gap-2 items-center">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase">Include Nuclei:</span>
+                  {['1H', '13C', '15N', '31P'].map((nuc) => (
+                      <label key={nuc} className={`flex items-center gap-1.5 text-xs font-bold px-2 py-1 rounded border cursor-pointer ${exportNuclei.includes(nuc) ? 'bg-indigo-50 border-indigo-300 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-500'}`}>
+                          <input type="checkbox" checked={exportNuclei.includes(nuc)} onChange={() => toggleExportNucleus(nuc)} className="accent-indigo-600" />
+                          {nuc.replace('1H', '¹H').replace('13C', '¹³C').replace('15N', '¹⁵N').replace('31P', '³¹P')}
+                      </label>
+                  ))}
+              </div>
+            </div>
+
+            <div className="overflow-auto flex-1 border border-slate-300 p-8 bg-white shadow-inner" id="publication-table-container">
+              <table style={{ borderCollapse: 'collapse', width: '100%', fontFamily: '"Times New Roman", Times, serif', fontSize: '11pt', color: 'black', borderBottom: '2px solid black' }}>
+                <thead>
+                  {isPolymer ? (
+                    <tr>
+                      <th style={{ borderTop: '2px solid black', borderBottom: '1px solid black', padding: '6px 8px', textAlign: 'left', fontWeight: 'bold' }}>Residue</th>
+                      {exportColumns.map(lk => {
+                        const layer = d.layers.find(l => l.key === lk);
+                        const prefix = exportColumns.length > 1 ? `${layer?.label || lk} ` : '';
+                        return (
+                          <React.Fragment key={lk}>
+                            {commonAtoms.map(ca => (
+                              <th key={`${lk}-${ca}`} style={{ borderTop: '2px solid black', borderBottom: '1px solid black', padding: '6px 8px', textAlign: 'center', fontWeight: 'bold' }}>{prefix}{ca}</th>
+                            ))}
+                            <th style={{ borderTop: '2px solid black', borderBottom: '1px solid black', padding: '6px 8px', textAlign: 'center', fontWeight: 'bold' }}>{prefix}Others</th>
+                          </React.Fragment>
+                        );
+                      })}
+                    </tr>
+                  ) : (
+                    <tr>
+                      <th style={{ borderTop: '2px solid black', borderBottom: '1px solid black', padding: '6px 8px', textAlign: 'left', fontWeight: 'bold' }}>Residue</th>
+                      <th style={{ borderTop: '2px solid black', borderBottom: '1px solid black', padding: '6px 8px', textAlign: 'left', fontWeight: 'bold' }}>Atom</th>
+                      {exportColumns.map(lk => {
+                        const layer = d.layers.find(l => l.key === lk);
+                        return <th key={lk} style={{ borderTop: '2px solid black', borderBottom: '1px solid black', padding: '6px 8px', textAlign: 'center', fontWeight: 'bold' }}>{layer ? `${layer.label}${layer.unit ? ` (${layer.unit})` : ''}` : lk}</th>;
+                      })}
+                    </tr>
+                  )}
+                </thead>
+                <tbody>
+                  {d.estSeq.flatMap((res, idx) => {
+                    if (focusIdx !== 'ALL' && focusIdx !== idx) return [];
+                    
+                    if (isPolymer) {
+                      const rowDataByLayer = {};
+                      let hasAnyData = false;
+                      
+                      exportColumns.forEach(lk => {
+                        const valMap = lk === 'cs' ? activeTest.chemicalShifts : (d.allLayerValues[lk] || {});
+                        const layerData = {};
+                        const resAtoms = d.atomOptions.filter(opt => {
+                            if (!opt.key.startsWith(`${idx}-`)) return false;
+                            const aName = opt.key.slice(String(idx).length + 1);
+                            return exportNuclei.includes(getAtomNucleus(aName));
+                        });
+
+                        resAtoms.forEach(opt => {
+                          const atomName = opt.key.slice(String(idx).length + 1);
+                          const val = valMap?.[opt.key];
+                          if (val !== undefined && val !== null && val !== '') {
+                            layerData[atomName] = val;
+                            hasAnyData = true;
+                          }
+                        });
+                        rowDataByLayer[lk] = layerData;
+                    });
+                     
+                    if (!hasAnyData) return [];
+                    
+                    return (
+                      <tr key={idx}>
+                        <td style={{ padding: '4px 8px', textAlign: 'left' }}>{res.id}</td>
+                        {exportColumns.map(lk => {
+                          const layerData = rowDataByLayer[lk];
+                          const others = [];
+                          
+                          const commonCells = commonAtoms.map(ca => {
+                            const val = layerData[ca];
+                            return <td key={`${lk}-${ca}`} style={{ padding: '4px 8px', textAlign: 'center' }}>{val || '-'}</td>;
+                          });
+                          
+                          Object.keys(layerData).forEach(atomName => {
+                            if (!commonAtoms.includes(atomName)) {
+                                others.push(`${atomName}: ${layerData[atomName]}`);
+                            }
+                          });
+                          
+                          const othersCell = <td key={`${lk}-others`} style={{ padding: '4px 8px', textAlign: 'center' }}>{others.length > 0 ? others.sort().join(', ') : '-'}</td>;
+                          
+                          return (
+                            <React.Fragment key={lk}>
+                              {commonCells}
+                              {othersCell}
+                            </React.Fragment>
+                          );
+                        })}
+                      </tr>
+                    );
+                  } else {
+                    const resAtoms = d.atomOptions.filter((opt) => {
+                        if (!opt.key.startsWith(`${idx}-`)) return false;
+                        const aName = opt.key.slice(String(idx).length + 1);
+                        return exportNuclei.includes(getAtomNucleus(aName));
+                    });
+
+                    const displayAtoms = effTableMode === 'backbone' 
+                       ? resAtoms.filter(o => o.label.includes(' HN ') || o.label.includes(' N ') || o.label.includes(' Cα ') || o.label.includes(' Cβ ') || o.label.includes(" C' "))
+                       : resAtoms;
+                       
+                    return displayAtoms.map((opt, aIdx) => {
+                      const rowHasData = exportColumns.some(lk => {
+                        const valMap = lk === 'cs' ? activeTest.chemicalShifts : (d.allLayerValues[lk] || {});
+                        const val = valMap?.[opt.key];
+                        return val !== undefined && val !== null && val !== '';
+                      });
+                      
+                      if (!rowHasData) return null;
+
+                      return (
+                        <tr key={opt.key}>
+                          <td style={{ padding: '4px 8px', textAlign: 'left' }}>{res.id}</td>
+                          <td style={{ padding: '4px 8px', textAlign: 'left' }}>{opt.label.replace(`${res.id} `, '')}</td>
+                          {exportColumns.map(lk => {
+                            const valMap = lk === 'cs' ? activeTest.chemicalShifts : (d.allLayerValues[lk] || {});
+                            const val = valMap?.[opt.key];
+                            return <td key={lk} style={{ padding: '4px 8px', textAlign: 'center' }}>{val || '-'}</td>;
+                          })}
+                        </tr>
+                      );
+                    }).filter(Boolean);
+                  }
+                })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex justify-between items-center mt-2">
+              <span className="text-xs text-slate-400">If the copy button fails, manually select the table and press Ctrl+C</span>
+              <div className="flex gap-3">
+                <button onClick={() => setShowExportModal(false)} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded font-bold transition-colors">Close</button>
+                <button onClick={saveTableAsImage} className="px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-sm transition-colors flex items-center gap-2">
+                  <span>📸</span> Save Table as Figure
+                </button>
+                <button onClick={copyPublicationTable} className="px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-sm transition-colors flex items-center gap-2">
+                  <span>📋</span> Copy to Clipboard
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+
 
 // ================= SECONDARY SHIFTS SECTION =================
 export const SecondaryShiftsSection = ({ ctx }) => {

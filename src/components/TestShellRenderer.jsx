@@ -282,12 +282,16 @@ IMAGE URL NORMALIZATION
 ========================================================================== */
 
 const normalizeImageCandidates = (url) => {
-  const u = (url || '').trim();
+  let u = (url || '').trim();
+  
+  // Automatically prepend https:// if the user pastes a raw domain
+  if (u && !/^https?:\/\//i.test(u)) {
+    u = `https://${u}`;
+  }
 
   let m = u.match(/drive\.google\.com\/file\/d\/([^\/?#]+)/);
   if (m) {
     const id = m[1];
-
     return [
       `https://lh3.googleusercontent.com/d/${id}`,
       `https://drive.google.com/thumbnail?id=${id}&sz=w1600`,
@@ -298,7 +302,6 @@ const normalizeImageCandidates = (url) => {
   m = u.match(/drive\.google\.com\/(?:open|uc)[^#]*[?&]id=([^&#]+)/);
   if (m) {
     const id = m[1];
-
     return [
       `https://lh3.googleusercontent.com/d/${id}`,
       `https://drive.google.com/thumbnail?id=${id}&sz=w1600`,
@@ -309,7 +312,6 @@ const normalizeImageCandidates = (url) => {
   if (u.includes('dropbox.com')) {
     const clean = u.replace(/[?&]dl=0/g, '');
     const raw = clean + (clean.includes('?') ? '&raw=1' : '?raw=1');
-
     return [raw, u];
   }
 
@@ -359,8 +361,10 @@ export const SmartImage = ({ src, alt, style }) => {
 
   return (
     <img
+      key={currentSrc} // Forces React to recreate the element on fallback, preventing stuck broken images
       src={currentSrc}
       alt={alt}
+      referrerPolicy="no-referrer" // Helps bypass Drive hotlinking protections
       className="w-full h-auto object-contain rounded bg-white"
       style={fallbackStyle}
       onError={() => {
@@ -373,6 +377,8 @@ export const SmartImage = ({ src, alt, style }) => {
     />
   );
 };
+
+
 /* ============================================================================
 MAIN SHELL
 ========================================================================== */
@@ -1936,7 +1942,7 @@ export const TestShellRenderer = ({
           </div>
         </CollapsibleSection>
 
-        <CollapsibleSection title="Figures" icon="🖼️" defaultOpen={false}>
+<CollapsibleSection title="Figures" icon="🖼️" defaultOpen={false}>
           <div className="flex justify-between items-center mb-4 flex-wrap gap-3">
             <p className="text-sm text-slate-500">
               Attach image links (Google Drive/Dropbox supported). Each figure
@@ -1946,19 +1952,8 @@ export const TestShellRenderer = ({
             <button
               type="button"
               onClick={() => {
-                const rawUrl = prompt(
-                  'Paste image link (Google Drive, Dropbox, or direct URL):'
-                );
-
-                if (rawUrl && rawUrl.trim()) {
-                  const trimmed = rawUrl.trim();
-
-                  const url = /^https?:\/\//i.test(trimmed)
-                    ? trimmed
-                    : `https://${trimmed}`;
-
-                  addImageLink(url);
-                }
+                // Adds an empty placeholder instead of relying on a blocked prompt
+                addImageLink('');
               }}
               className="bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 font-bold px-3 py-1.5 rounded transition-colors shadow-sm text-xs"
             >
@@ -1969,15 +1964,15 @@ export const TestShellRenderer = ({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {images.length === 0 ? (
               <div className="col-span-full text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">
-                No images attached.
+                No images attached. Click "+ Add Link" to add a new figure.
               </div>
             ) : (
               images.map((imgSrc, idx) => (
                 <div
                   key={idx}
-                  className="relative group bg-white p-3 rounded-xl border border-slate-200 shadow-sm"
+                  className="relative group bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col gap-2"
                 >
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-slate-500">
                       Figure {idx + 1}
                     </span>
@@ -1991,32 +1986,48 @@ export const TestShellRenderer = ({
                     </button>
                   </div>
 
-                  <div
-                    className="bg-slate-50 rounded-lg p-2 border border-slate-100 cursor-pointer"
-                    onClick={() =>
-                      setZoomImage(normalizeImageCandidates(imgSrc)[0] || imgSrc)
-                    }
-                    title="Click to zoom"
-                  >
-                    <SmartImage src={imgSrc} alt={`Figure ${idx + 1}`} />
-                  </div>
+                  <input
+                    type="text"
+                    value={imgSrc}
+                    onChange={(e) => {
+                      const newImages = [...images];
+                      newImages[idx] = e.target.value;
+                      update({ [imagesKey]: newImages });
+                    }}
+                    placeholder="Paste image URL here (Google Drive, Dropbox, etc.)"
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs outline-none focus:border-blue-500"
+                  />
+
+                  {imgSrc && imgSrc.trim() !== '' && (
+                    <div
+                      className="bg-slate-50 rounded-lg p-2 border border-slate-100 cursor-pointer mt-1"
+                      onClick={() =>
+                        setZoomImage(normalizeImageCandidates(imgSrc)[0] || imgSrc)
+                      }
+                      title="Click to zoom"
+                    >
+                      <SmartImage src={imgSrc} alt={`Figure ${idx + 1}`} />
+                    </div>
+                  )}
 
                   <textarea
                     value={captionsAligned[idx] ?? ''}
                     onChange={(e) => updateFigureCaption(idx, e.target.value)}
                     placeholder={`Figure ${idx + 1} caption...`}
                     rows={2}
-                    className="mt-2 w-full border border-slate-300 rounded-lg p-2 text-xs outline-none focus:border-blue-500 resize-y"
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs outline-none focus:border-blue-500 resize-y"
                   />
 
-                  <a
-                    href={imgSrc}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-2 text-xs text-blue-500 hover:text-blue-700 font-medium flex items-center gap-1"
-                  >
-                    🔗 Open original link
-                  </a>
+                  {imgSrc && imgSrc.trim() !== '' && (
+                    <a
+                      href={imgSrc}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-blue-500 hover:text-blue-700 font-medium flex items-center gap-1"
+                    >
+                      🔗 Open original link
+                    </a>
+                  )}
                 </div>
               ))
             )}

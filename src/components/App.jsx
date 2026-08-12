@@ -28,19 +28,10 @@ import {
   CD_TAB_CONFIG,
   PLATE_TAB_CONFIG,
   NMR_TAB_CONFIG,
-  CLONING_TAB_CONFIG 
+  CLONING_TAB_CONFIG,
+  NMR_FITTING_TAB_CONFIG,
+  PROTEIN_EXPRESSION_TAB_CONFIG
 } from './components/tabConfigs.jsx';
-
-const CUSTOM_FIELD_TAB_OPTIONS = [
-  { value: 'all', label: 'All tabs' },
-  { value: 'plate', label: 'Plate' },
-  { value: 'nmr', label: 'NMR' },
-  { value: 'cd', label: 'CD' },
-  { value: 'nmr-fittings', label: 'NMR Fittings' },
-  { value: 'cloning', label: 'Cloning' },
-  { value: 'protein_expression', label: 'Protein Expression' },
-  { value: 'md_simulation', label: 'MD Simulations' }
-];
 
 /* =========================================================
    MD SIMULATIONS CONFIG & RENDERER
@@ -154,6 +145,37 @@ const MD_SIMULATION_TAB_CONFIG = {
     { id: 'results', label: 'Results Summary' }
   ]
 };
+
+/* =========================================================
+   SPECIAL PAGES REGISTRY
+   Single source of truth for the 7 "special page" test types and the
+   named subsections each one exposes (sourced from each page's own
+   notebookChecks, i.e. the same section list already used for the
+   Lab Notebook Export checklist). Used by:
+     - Custom Metadata Fields (page + subsection targeting)
+     - Mandatory Parameters (page + subsection rules, per-page behavior)
+   NOTE: the NMR Fittings page type is 'nmr-fittings' (hyphenated) at
+   runtime (see activeTest.type routing below) even though the
+   tabConfigs.jsx export for it is named differently — the value here
+   is kept in sync with the real routing key.
+========================================================= */
+const SPECIAL_PAGES = [
+  { value: 'nmr', label: 'NMR', subsections: NMR_TAB_CONFIG.notebookChecks || [] },
+  { value: 'nmr-fittings', label: 'NMR Fittings', subsections: NMR_FITTING_TAB_CONFIG.notebookChecks || [] },
+  { value: 'plate', label: 'Plate', subsections: PLATE_TAB_CONFIG.notebookChecks || [] },
+  { value: 'cd', label: 'CD', subsections: CD_TAB_CONFIG.notebookChecks || [] },
+  { value: 'cloning', label: 'Cloning', subsections: CLONING_TAB_CONFIG.notebookChecks || [] },
+  { value: 'protein_expression', label: 'Protein Purification', subsections: PROTEIN_EXPRESSION_TAB_CONFIG.notebookChecks || [] },
+  { value: 'md_simulation', label: 'MD Simulations', subsections: MD_SIMULATION_TAB_CONFIG.notebookChecks || [] }
+];
+
+const CUSTOM_FIELD_TAB_OPTIONS = [
+  { value: 'all', label: 'All tabs' },
+  ...SPECIAL_PAGES.map((p) => ({ value: p.value, label: p.label }))
+];
+
+const getSubsectionsForPage = (pageValue) =>
+  SPECIAL_PAGES.find((p) => p.value === pageValue)?.subsections || [];
 
 class MDSectionErrorBoundary extends React.Component {
   constructor(props) {
@@ -577,6 +599,54 @@ const PlasmidDefinitionSection = ({
 /* =========================================================
    LIBRARY DIRECTORY
 ========================================================= */
+/* Scrollable, clickable table used for the Compound / Cell Line / Plasmid
+   library listings — replaces the old tag/badge cloud for these three
+   resource types with something that reads more like a proper catalog. */
+const LibraryTable = ({ columns, rows, onRowClick, emptyLabel }) => (
+  <div className="border border-slate-200 rounded-lg overflow-hidden">
+    <div className="max-h-64 overflow-y-auto custom-scrollbar">
+      <table className="w-full text-sm border-collapse">
+        <thead className="sticky top-0 bg-slate-100 z-10">
+          <tr>
+            {columns.map((col) => (
+              <th
+                key={col.key}
+                className="text-left text-[10px] font-bold text-slate-500 uppercase tracking-wide px-3 py-2 border-b border-slate-200"
+              >
+                {col.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan={columns.length} className="text-xs text-slate-400 italic px-3 py-3">
+                {emptyLabel}
+              </td>
+            </tr>
+          ) : (
+            rows.map((row, idx) => (
+              <tr
+                key={row.id}
+                onClick={() => onRowClick(row)}
+                title="Click to view / edit"
+                className={`cursor-pointer hover:bg-blue-50 transition-colors ${idx % 2 === 1 ? 'bg-slate-50/70' : 'bg-white'}`}
+              >
+                {columns.map((col) => (
+                  <td key={col.key} className="px-3 py-2 border-b border-slate-100 text-slate-700 align-top">
+                    {col.render ? col.render(row) : (row[col.key] ?? '—')}
+                  </td>
+                ))}
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  </div>
+);
+
 const LibraryDirectory = ({ 
   compoundMeta, cellLineMeta, plasmidMeta, customCmpds, customCellLines, customPlasmids,
   solvents, buffers, additives, nmrProbes, nmrInstruments, nmrExperiments, 
@@ -586,91 +656,274 @@ const LibraryDirectory = ({
   const cellLines = [...new Set([...(customCellLines || []), ...Object.keys(cellLineMeta || {})])].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
   const plasmids = [...new Set([...(customPlasmids || []), ...Object.keys(plasmidMeta || {})])].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 
-  const peptides = compounds.filter(c => compoundMeta[c]?.type === 'protein');
-  const nucleicAcids = compounds.filter(c => ['dna', 'rna'].includes(compoundMeta[c]?.type));
-  const organics = compounds.filter(c => !['protein', 'dna', 'rna'].includes(compoundMeta[c]?.type));
-  const unclassified = compounds.filter(c => !compoundMeta[c]?.type);
+  // Solvents/Buffers/Additives/NMR Probes/NMR Instruments/NMR Experiments are
+  // stored as objects ({ id, name, comments, links, ... }) — but tolerate
+  // plain strings too, for any legacy data saved before that existed.
+  const asRows = (items) =>
+    (Array.isArray(items) ? items : [])
+      .map((item) => (typeof item === 'string' ? { id: item, name: item } : item))
+      .filter((item) => item && item.name)
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 
-  const solventNames = (solvents || []).map(s => typeof s === 'string' ? s : s.name).filter(Boolean).sort();
-  const bufferNames = (buffers || []).map(b => typeof b === 'string' ? b : b.name).filter(Boolean).sort();
-  const additiveNames = (additives || []).map(a => typeof a === 'string' ? a : a.name).filter(Boolean).sort();
-  const probeNames = (nmrProbes || []).map(p => typeof p === 'string' ? p : p.name).filter(Boolean).sort();
-  const instrumentNames = (nmrInstruments || []).map(i => typeof i === 'string' ? i : i.name).filter(Boolean).sort();
-  const experimentNames = (nmrExperiments || []).map(e => typeof e === 'string' ? e : e.name).filter(Boolean).sort();
+  const compoundCategoryLabel = (meta) => {
+    if (meta?.type === 'protein') return 'Peptide / Protein';
+    if (['dna', 'rna'].includes(meta?.type)) return 'Nucleic Acid';
+    if (meta?.type === 'smiles') return 'Small Molecule (SMILES)';
+    return meta?.type ? meta.type : 'Unclassified';
+  };
 
-  const renderBadge = (label, type, onClick) => (
-    <button
-      key={label}
-      onClick={() => onClick(label, type)}
-      className="text-xs bg-slate-100 hover:bg-blue-100 border border-slate-300 text-slate-700 font-semibold px-3 py-1.5 rounded-full transition-colors m-1 shadow-sm"
-    >
-      {label}
-    </button>
-  );
+  const compoundRows = compounds.map((name) => {
+    const meta = compoundMeta[name] || {};
+    return {
+      id: name,
+      name,
+      category: compoundCategoryLabel(meta),
+      mw: meta.molecularWeight ? `${Number(meta.molecularWeight).toFixed(1)} g/mol` : '—',
+      linkCount: Array.isArray(meta.links) ? meta.links.length : 0
+    };
+  });
+
+  const cellLineRows = cellLines.map((name) => {
+    const meta = cellLineMeta[name] || {};
+    return {
+      id: name,
+      name,
+      organism: meta.organism || '—',
+      tissue: meta.tissue || '—',
+      linkCount: Array.isArray(meta.links) ? meta.links.length : 0
+    };
+  });
+
+  const plasmidRows = plasmids.map((name) => {
+    const meta = plasmidMeta[name] || {};
+    return {
+      id: name,
+      name,
+      backbone: meta.backbone || '—',
+      marker: meta.marker || '—',
+      linkCount: Array.isArray(meta.links) ? meta.links.length : 0
+    };
+  });
+
+  const solventRows = asRows(solvents).map((s) => ({
+    id: s.id || s.name,
+    name: s.name,
+    density: s.density || '—',
+    comments: s.comments || '',
+    linkCount: Array.isArray(s.links) ? s.links.length : 0
+  }));
+
+  const bufferRows = asRows(buffers).map((b) => ({
+    id: b.id || b.name,
+    name: b.name,
+    description: b.description || '—',
+    comments: b.comments || '',
+    linkCount: Array.isArray(b.links) ? b.links.length : 0
+  }));
+
+  const additiveRows = asRows(additives).map((a) => ({
+    id: a.id || a.name,
+    name: a.name,
+    description: a.description || '—',
+    comments: a.comments || '',
+    linkCount: Array.isArray(a.links) ? a.links.length : 0
+  }));
+
+  const nmrInstrumentRows = asRows(nmrInstruments).map((i) => ({
+    id: i.id || i.name,
+    name: i.name,
+    frequency: i.frequency || '—',
+    manufacturer: i.manufacturer || '—',
+    comments: i.comments || '',
+    linkCount: Array.isArray(i.links) ? i.links.length : 0
+  }));
+
+  const nmrProbeRows = asRows(nmrProbes).map((p) => ({
+    id: p.id || p.name,
+    name: p.name,
+    type: [p.type, p.subtype].filter(Boolean).join(' / ') || '—',
+    field: p.field || '—',
+    comments: p.comments || '',
+    linkCount: Array.isArray(p.links) ? p.links.length : 0
+  }));
+
+  const nmrExperimentRows = asRows(nmrExperiments).map((e) => ({
+    id: e.id || e.name,
+    name: e.name,
+    dimensions: e.dimensions || '—',
+    nuclei: Array.isArray(e.nuclei) ? e.nuclei.filter(Boolean).join(', ') || '—' : '—',
+    comments: e.comments || '',
+    linkCount: Array.isArray(e.links) ? e.links.length : 0
+  }));
+
+  const linksCell = (row) =>
+    row.linkCount > 0 ? (
+      <span className="inline-flex items-center gap-1 text-blue-600 font-semibold">🔗 {row.linkCount}</span>
+    ) : (
+      <span className="text-slate-300">—</span>
+    );
+
+  const commentsCell = (row) =>
+    row.comments && row.comments.trim() ? (
+      <span className="text-slate-600" title={row.comments}>
+        {row.comments.length > 40 ? `${row.comments.slice(0, 40)}…` : row.comments}
+      </span>
+    ) : (
+      <span className="text-slate-300">—</span>
+    );
+
+  const nameCell = (row) => <span className="font-semibold text-slate-800">{row.name}</span>;
 
   return (
-    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-4">
-      <h3 className="text-sm font-bold text-slate-700 uppercase mb-2 border-b pb-2">
+    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-6">
+      <h3 className="text-sm font-bold text-slate-700 uppercase mb-1 border-b pb-2">
         Defined Resources Library
       </h3>
-      
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+      {/* COMPOUND / CELL LINE / PLASMID */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div>
-          <h4 className="text-xs font-bold text-slate-500 mb-2">Peptides / Proteins ({peptides.length})</h4>
-          <div className="flex flex-wrap">{peptides.length ? peptides.map(c => renderBadge(c, 'compound', onSelectResource)) : <span className="text-xs text-slate-400 italic">No peptides.</span>}</div>
+          <h4 className="text-xs font-bold text-slate-500 mb-2">Compounds ({compoundRows.length})</h4>
+          <LibraryTable
+            columns={[
+              { key: 'name', label: 'Name', render: nameCell },
+              { key: 'category', label: 'Category' },
+              { key: 'mw', label: 'MW' },
+              { key: 'linkCount', label: 'Links', render: linksCell }
+            ]}
+            rows={compoundRows}
+            onRowClick={(row) => onSelectResource(row.name, 'compound')}
+            emptyLabel="No compounds defined yet."
+          />
         </div>
 
         <div>
-          <h4 className="text-xs font-bold text-slate-500 mb-2">Nucleic Acids ({nucleicAcids.length})</h4>
-          <div className="flex flex-wrap">{nucleicAcids.length ? nucleicAcids.map(c => renderBadge(c, 'compound', onSelectResource)) : <span className="text-xs text-slate-400 italic">No nucleic acids.</span>}</div>
+          <h4 className="text-xs font-bold text-slate-500 mb-2">Cell Lines ({cellLineRows.length})</h4>
+          <LibraryTable
+            columns={[
+              { key: 'name', label: 'Name', render: nameCell },
+              { key: 'organism', label: 'Organism' },
+              { key: 'tissue', label: 'Tissue' },
+              { key: 'linkCount', label: 'Links', render: linksCell }
+            ]}
+            rows={cellLineRows}
+            onRowClick={(row) => onSelectResource(row.name, 'cellLine')}
+            emptyLabel="No cell lines defined yet."
+          />
         </div>
 
         <div>
-          <h4 className="text-xs font-bold text-slate-500 mb-2 mt-2">Organic / Other ({organics.length + unclassified.length})</h4>
-          <div className="flex flex-wrap">
-            {organics.map(c => renderBadge(c, 'compound', onSelectResource))}
-            {unclassified.map(c => renderBadge(c, 'compound', onSelectResource))}
-            {(!organics.length && !unclassified.length) && <span className="text-xs text-slate-400 italic">No organic molecules.</span>}
-          </div>
+          <h4 className="text-xs font-bold text-slate-500 mb-2">Plasmids ({plasmidRows.length})</h4>
+          <LibraryTable
+            columns={[
+              { key: 'name', label: 'Name', render: nameCell },
+              { key: 'backbone', label: 'Backbone' },
+              { key: 'marker', label: 'Marker' },
+              { key: 'linkCount', label: 'Links', render: linksCell }
+            ]}
+            rows={plasmidRows}
+            onRowClick={(row) => onSelectResource(row.name, 'plasmid')}
+            emptyLabel="No plasmids defined yet."
+          />
+        </div>
+      </div>
+
+      {/* SOLVENTS / BUFFERS / ADDITIVES */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div>
+          <h4 className="text-xs font-bold text-slate-500 mb-2">Solvents & Media ({solventRows.length})</h4>
+          <LibraryTable
+            columns={[
+              { key: 'name', label: 'Name', render: nameCell },
+              { key: 'density', label: 'Density' },
+              { key: 'comments', label: 'Comments', render: commentsCell },
+              { key: 'linkCount', label: 'Links', render: linksCell }
+            ]}
+            rows={solventRows}
+            onRowClick={(row) => onSelectResource(row.name, 'solvent')}
+            emptyLabel="No solvents defined yet."
+          />
         </div>
 
         <div>
-          <h4 className="text-xs font-bold text-slate-500 mb-2 mt-2">Cell Lines ({cellLines.length})</h4>
-          <div className="flex flex-wrap">{cellLines.length ? cellLines.map(c => renderBadge(c, 'cellLine', onSelectResource)) : <span className="text-xs text-slate-400 italic">No cell lines.</span>}</div>
+          <h4 className="text-xs font-bold text-slate-500 mb-2">Buffers ({bufferRows.length})</h4>
+          <LibraryTable
+            columns={[
+              { key: 'name', label: 'Name', render: nameCell },
+              { key: 'description', label: 'Description' },
+              { key: 'comments', label: 'Comments', render: commentsCell },
+              { key: 'linkCount', label: 'Links', render: linksCell }
+            ]}
+            rows={bufferRows}
+            onRowClick={(row) => onSelectResource(row.name, 'buffer')}
+            emptyLabel="No buffers defined yet."
+          />
         </div>
 
         <div>
-          <h4 className="text-xs font-bold text-slate-500 mb-2 mt-2">Plasmids ({plasmids.length})</h4>
-          <div className="flex flex-wrap">{plasmids.length ? plasmids.map(p => renderBadge(p, 'plasmid', onSelectResource)) : <span className="text-xs text-slate-400 italic">No plasmids.</span>}</div>
+          <h4 className="text-xs font-bold text-slate-500 mb-2">Additives ({additiveRows.length})</h4>
+          <LibraryTable
+            columns={[
+              { key: 'name', label: 'Name', render: nameCell },
+              { key: 'description', label: 'Description' },
+              { key: 'comments', label: 'Comments', render: commentsCell },
+              { key: 'linkCount', label: 'Links', render: linksCell }
+            ]}
+            rows={additiveRows}
+            onRowClick={(row) => onSelectResource(row.name, 'additive')}
+            emptyLabel="No additives defined yet."
+          />
+        </div>
+      </div>
+
+      {/* NMR INSTRUMENTS / NMR PROBES / NMR EXPERIMENTS (PULSE PROGRAMS) */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div>
+          <h4 className="text-xs font-bold text-slate-500 mb-2">NMR Instruments ({nmrInstrumentRows.length})</h4>
+          <LibraryTable
+            columns={[
+              { key: 'name', label: 'Name', render: nameCell },
+              { key: 'frequency', label: 'Frequency' },
+              { key: 'manufacturer', label: 'Manufacturer' },
+              { key: 'comments', label: 'Comments', render: commentsCell },
+              { key: 'linkCount', label: 'Links', render: linksCell }
+            ]}
+            rows={nmrInstrumentRows}
+            onRowClick={(row) => onSelectResource(row.name, 'nmrInstrument')}
+            emptyLabel="No NMR instruments defined yet."
+          />
         </div>
 
         <div>
-          <h4 className="text-xs font-bold text-slate-500 mb-2 mt-2">Solvents & Media ({solventNames.length})</h4>
-          <div className="flex flex-wrap">{solventNames.length ? solventNames.map(s => renderBadge(s, 'solvent', onSelectResource)) : <span className="text-xs text-slate-400 italic">No solvents.</span>}</div>
+          <h4 className="text-xs font-bold text-slate-500 mb-2">NMR Probes ({nmrProbeRows.length})</h4>
+          <LibraryTable
+            columns={[
+              { key: 'name', label: 'Name', render: nameCell },
+              { key: 'type', label: 'Type' },
+              { key: 'field', label: 'Field' },
+              { key: 'comments', label: 'Comments', render: commentsCell },
+              { key: 'linkCount', label: 'Links', render: linksCell }
+            ]}
+            rows={nmrProbeRows}
+            onRowClick={(row) => onSelectResource(row.name, 'nmrProbe')}
+            emptyLabel="No NMR probes defined yet."
+          />
         </div>
 
         <div>
-          <h4 className="text-xs font-bold text-slate-500 mb-2 mt-2">Buffers ({bufferNames.length})</h4>
-          <div className="flex flex-wrap">{bufferNames.length ? bufferNames.map(b => renderBadge(b, 'buffer', onSelectResource)) : <span className="text-xs text-slate-400 italic">No buffers.</span>}</div>
-        </div>
-
-        <div>
-          <h4 className="text-xs font-bold text-slate-500 mb-2 mt-2">Additives ({additiveNames.length})</h4>
-          <div className="flex flex-wrap">{additiveNames.length ? additiveNames.map(a => renderBadge(a, 'additive', onSelectResource)) : <span className="text-xs text-slate-400 italic">No additives.</span>}</div>
-        </div>
-
-        <div>
-          <h4 className="text-xs font-bold text-slate-500 mb-2 mt-2">NMR Equipment</h4>
-          <div className="flex flex-wrap">
-             {instrumentNames.map(i => renderBadge(i, 'nmrInstrument', onSelectResource))}
-             {probeNames.map(p => renderBadge(p, 'nmrProbe', onSelectResource))}
-             {!instrumentNames.length && !probeNames.length && <span className="text-xs text-slate-400 italic">No NMR equipment.</span>}
-          </div>
-        </div>
-
-        <div>
-          <h4 className="text-xs font-bold text-slate-500 mb-2 mt-2">NMR Experiments ({experimentNames.length})</h4>
-          <div className="flex flex-wrap">{experimentNames.length ? experimentNames.map(e => renderBadge(e, 'nmrExperiment', onSelectResource)) : <span className="text-xs text-slate-400 italic">No experiments.</span>}</div>
+          <h4 className="text-xs font-bold text-slate-500 mb-2">NMR Experiments / Pulse Programs ({nmrExperimentRows.length})</h4>
+          <LibraryTable
+            columns={[
+              { key: 'name', label: 'Name', render: nameCell },
+              { key: 'dimensions', label: 'Dim.' },
+              { key: 'nuclei', label: 'Nuclei' },
+              { key: 'comments', label: 'Comments', render: commentsCell },
+              { key: 'linkCount', label: 'Links', render: linksCell }
+            ]}
+            rows={nmrExperimentRows}
+            onRowClick={(row) => onSelectResource(row.name, 'nmrExperiment')}
+            emptyLabel="No NMR experiments defined yet."
+          />
         </div>
       </div>
     </div>
@@ -709,9 +962,45 @@ const normalizeCustomFields = (fields) => {
       name: base.name || `Field ${idx + 1}`,
       type: base.type || 'text',
       options: Array.isArray(base.options) ? base.options : [],
-      appliesTo
+      appliesTo,
+      // Which named subsection of the target page this field belongs to
+      // (a notebookChecks id, e.g. 'cond', 'seq', 'instrument'). Empty
+      // string = general / applies anywhere on the page.
+      subsection: typeof base.subsection === 'string' ? base.subsection : ''
     };
   });
+};
+
+/* =========================================================
+   MANDATORY PARAMETER RULES
+   { id, page: 'all' | typeKey, subsection: '' | notebookCheck id, fieldName }
+   Migrates the legacy flat `mandatoryFields` string array (global,
+   no page/subsection scoping) into the new rule shape when needed.
+========================================================= */
+const normalizeMandatoryRules = (rules, legacyFlatFields) => {
+  if (Array.isArray(rules) && rules.length) {
+    return rules
+      .map((r, idx) => ({
+        id: r?.id || `mandatory_rule_${idx}_${Math.random().toString(36).slice(2, 8)}`,
+        page: r?.page || 'all',
+        subsection: r?.subsection || '',
+        fieldName: (r?.fieldName || r?.name || '').toString()
+      }))
+      .filter((r) => r.fieldName.trim());
+  }
+
+  if (Array.isArray(legacyFlatFields) && legacyFlatFields.length) {
+    return legacyFlatFields
+      .filter(Boolean)
+      .map((name, idx) => ({
+        id: `mandatory_rule_legacy_${idx}_${Math.random().toString(36).slice(2, 8)}`,
+        page: 'all',
+        subsection: '',
+        fieldName: String(name)
+      }));
+  }
+
+  return [];
 };
 
 /* =========================================================
@@ -2197,8 +2486,11 @@ const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => 
     name: '',
     type: 'text',
     options: '',
-    appliesTo: 'all'
+    appliesTo: 'all',
+    subsection: ''
   });
+
+  const draftSubsections = draft.appliesTo === 'all' ? [] : getSubsectionsForPage(draft.appliesTo);
 
   const addField = () => {
     const name = draft.name.trim();
@@ -2221,7 +2513,8 @@ const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => 
       name,
       type: draft.type,
       options,
-      appliesTo: draft.appliesTo || 'all'
+      appliesTo: draft.appliesTo || 'all',
+      subsection: draft.appliesTo === 'all' ? '' : draft.subsection || ''
     };
 
     setCustomFields((prev) => [...(Array.isArray(prev) ? prev : []), newField]);
@@ -2230,7 +2523,8 @@ const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => 
       name: '',
       type: 'text',
       options: '',
-      appliesTo: 'all'
+      appliesTo: 'all',
+      subsection: ''
     });
   };
 
@@ -2287,7 +2581,7 @@ const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => 
           </select>
         </div>
 
-        <div className="md:col-span-3">
+        <div className="md:col-span-2">
           <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
             Options, comma separated
           </label>
@@ -2304,12 +2598,12 @@ const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => 
 
         <div className="md:col-span-2">
           <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-            Tab Type
+            Special Page
           </label>
 
           <select
             value={draft.appliesTo}
-            onChange={(e) => setDraft((prev) => ({ ...prev, appliesTo: e.target.value }))}
+            onChange={(e) => setDraft((prev) => ({ ...prev, appliesTo: e.target.value, subsection: '' }))}
             className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
           >
             {CUSTOM_FIELD_TAB_OPTIONS.map((opt) => (
@@ -2320,13 +2614,31 @@ const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => 
           </select>
         </div>
 
-        <div className="md:col-span-2 flex items-end">
+        <div className="md:col-span-2">
+          <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+            Subsection
+          </label>
+
+          <select
+            value={draft.subsection}
+            onChange={(e) => setDraft((prev) => ({ ...prev, subsection: e.target.value }))}
+            disabled={draft.appliesTo === 'all'}
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 disabled:bg-slate-50 disabled:text-slate-400"
+          >
+            <option value="">General (anywhere on the page)</option>
+            {draftSubsections.map((s) => (
+              <option key={s.id} value={s.id}>{s.label}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="md:col-span-1 flex items-end">
           <button
             type="button"
             onClick={addField}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm shadow-sm transition-colors"
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-2 rounded-lg text-sm shadow-sm transition-colors"
           >
-            Add Field
+            Add
           </button>
         </div>
       </div>
@@ -2341,6 +2653,7 @@ const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => 
             const scopeValue = Array.isArray(field.appliesTo)
               ? field.appliesTo[0] || 'all'
               : field.appliesTo || 'all';
+            const fieldSubsections = scopeValue === 'all' ? [] : getSubsectionsForPage(scopeValue);
 
             return (
               <div
@@ -2379,7 +2692,7 @@ const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => 
                     </select>
                   </div>
 
-                  <div className="md:col-span-3">
+                  <div className="md:col-span-2">
                     <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
                       Options
                     </label>
@@ -2403,12 +2716,12 @@ const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => 
 
                   <div className="md:col-span-2">
                     <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
-                      Tab Type
+                      Special Page
                     </label>
 
                     <select
                       value={scopeValue}
-                      onChange={(e) => updateField(field.id, { appliesTo: e.target.value })}
+                      onChange={(e) => updateField(field.id, { appliesTo: e.target.value, subsection: '' })}
                       className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
                     >
                       {CUSTOM_FIELD_TAB_OPTIONS.map((opt) => (
@@ -2419,13 +2732,31 @@ const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => 
                     </select>
                   </div>
 
-                  <div className="md:col-span-2 flex items-end justify-end">
+                  <div className="md:col-span-2">
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
+                      Subsection
+                    </label>
+
+                    <select
+                      value={field.subsection || ''}
+                      onChange={(e) => updateField(field.id, { subsection: e.target.value })}
+                      disabled={scopeValue === 'all'}
+                      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 disabled:bg-slate-100 disabled:text-slate-400"
+                    >
+                      <option value="">General</option>
+                      {fieldSubsections.map((s) => (
+                        <option key={s.id} value={s.id}>{s.label}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="md:col-span-1 flex items-end justify-end">
                     <button
                       type="button"
                       onClick={() => removeField(field.id)}
-                      className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold py-2 px-4 rounded-lg text-sm transition-colors"
+                      className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold py-2 px-3 rounded-lg text-sm transition-colors"
                     >
-                      Remove
+                      ✕
                     </button>
                   </div>
                 </div>
@@ -2439,8 +2770,183 @@ const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => 
 };
 
 /* =========================================================
-   SCIENTISTS / OPERATORS MANAGER
+   MANDATORY PARAMETERS MANAGER
+   Rules are scoped to a special page (or "all") + an optional named
+   subsection of that page. Each special page also gets its own
+   behavior setting for what happens when one of its mandatory fields
+   is left blank: show a warning, block the page, or don't check at all.
 ========================================================= */
+const MANDATORY_BEHAVIOR_OPTIONS = [
+  { value: 'warning', label: 'Warning banner only' },
+  { value: 'block', label: 'Block the page until filled in' },
+  { value: 'deactivate', label: 'Deactivate (do not check)' }
+];
+
+const MandatoryParametersManager = ({
+  mandatoryRules = [],
+  setMandatoryRules,
+  mandatoryBehavior = {},
+  setMandatoryBehavior
+}) => {
+  const [draft, setDraft] = useState({ page: 'all', subsection: '', fieldName: '' });
+
+  const draftSubsections = draft.page === 'all' ? [] : getSubsectionsForPage(draft.page);
+
+  const addRule = () => {
+    const fieldName = draft.fieldName.trim();
+
+    if (!fieldName) {
+      alert('Please enter the exact field name to require.');
+      return;
+    }
+
+    const newRule = {
+      id: `mandatory_rule_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      page: draft.page,
+      subsection: draft.page === 'all' ? '' : draft.subsection,
+      fieldName
+    };
+
+    setMandatoryRules((prev) => [...(Array.isArray(prev) ? prev : []), newRule]);
+    setDraft((prev) => ({ ...prev, fieldName: '' }));
+  };
+
+  const removeRule = (id) => {
+    setMandatoryRules((prev) => (Array.isArray(prev) ? prev : []).filter((r) => r.id !== id));
+  };
+
+  const setBehaviorForPage = (page, value) => {
+    setMandatoryBehavior((prev) => ({ ...(prev || {}), [page]: value }));
+  };
+
+  const pageLabel = (page) =>
+    page === 'all' ? 'All special pages' : (SPECIAL_PAGES.find((p) => p.value === page)?.label || page);
+
+  const subsectionLabel = (page, subId) => {
+    if (!subId) return 'General (any part of the page)';
+    return getSubsectionsForPage(page).find((s) => s.id === subId)?.label || subId;
+  };
+
+  return (
+    <div>
+      <h3 className="text-sm font-bold text-slate-700 uppercase mb-1">Mandatory Parameters</h3>
+      <p className="text-xs text-slate-500 mb-4">
+        Define fields that must be filled in before a special page is considered complete — optionally
+        scoped to one exact subsection of that page. Then choose, per page, what happens if one is left blank.
+      </p>
+
+      {/* Per-page behavior */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
+        {SPECIAL_PAGES.map((p) => (
+          <div
+            key={p.value}
+            className="flex items-center justify-between gap-3 border border-slate-200 rounded-lg px-3 py-2 bg-slate-50"
+          >
+            <span className="text-sm font-bold text-slate-700">{p.label}</span>
+
+            <select
+              value={mandatoryBehavior[p.value] || 'warning'}
+              onChange={(e) => setBehaviorForPage(p.value, e.target.value)}
+              className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500"
+            >
+              {MANDATORY_BEHAVIOR_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+        ))}
+      </div>
+
+      {/* Add rule form */}
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-3 mb-4">
+        <div className="md:col-span-3">
+          <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Special Page</label>
+
+          <select
+            value={draft.page}
+            onChange={(e) => setDraft({ page: e.target.value, subsection: '', fieldName: draft.fieldName })}
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
+          >
+            <option value="all">All special pages</option>
+            {SPECIAL_PAGES.map((p) => (
+              <option key={p.value} value={p.value}>{p.label}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="md:col-span-3">
+          <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Subsection</label>
+
+          <select
+            value={draft.subsection}
+            onChange={(e) => setDraft((prev) => ({ ...prev, subsection: e.target.value }))}
+            disabled={draft.page === 'all'}
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 disabled:bg-slate-50 disabled:text-slate-400"
+          >
+            <option value="">General (any part of the page)</option>
+            {draftSubsections.map((s) => (
+              <option key={s.id} value={s.id}>{s.label}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="md:col-span-4">
+          <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Field Name</label>
+
+          <input
+            type="text"
+            value={draft.fieldName}
+            onChange={(e) => setDraft((prev) => ({ ...prev, fieldName: e.target.value }))}
+            placeholder='e.g. "Operator", "Solvent", or a Custom Metadata Field name'
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
+          />
+        </div>
+
+        <div className="md:col-span-2 flex items-end">
+          <button
+            type="button"
+            onClick={addRule}
+            className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg text-sm shadow-sm transition-colors"
+          >
+            + Add
+          </button>
+        </div>
+      </div>
+
+      {/* Rules list */}
+      <div className="flex flex-col gap-2">
+        {(!mandatoryRules || mandatoryRules.length === 0) ? (
+          <div className="text-sm text-slate-400 italic bg-slate-50 border border-dashed border-slate-300 rounded-lg p-4">
+            No mandatory parameters defined yet.
+          </div>
+        ) : (
+          mandatoryRules.map((rule) => (
+            <div
+              key={rule.id}
+              className="flex items-center justify-between gap-3 border border-slate-200 rounded-lg px-3 py-2 bg-white shadow-sm"
+            >
+              <div className="text-sm">
+                <span className="font-bold text-slate-800">{rule.fieldName}</span>
+                <span className="text-slate-400"> — </span>
+                <span className="text-slate-600">{pageLabel(rule.page)}</span>
+                <span className="text-slate-400"> / </span>
+                <span className="text-slate-600">{subsectionLabel(rule.page, rule.subsection)}</span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => removeRule(rule.id)}
+                className="text-red-500 hover:text-red-700 font-bold text-sm px-2"
+              >
+                Remove
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+};
 
 const ScientistsOperatorsManager = ({
   operators = [],
@@ -3064,6 +3570,8 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [needsLogin, setNeedsLogin] = useState(false);
   const [mandatoryFields, setMandatoryFields] = useState([]);
+  const [mandatoryRules, setMandatoryRules] = useState([]);
+  const [mandatoryBehavior, setMandatoryBehavior] = useState({});
   const [isCloudReady, setIsCloudReady] = useState(false);
   const [saveStatus, setSaveStatus] = useState('idle');
   const [saveErrorMsg, setSaveErrorMsg] = useState('');
@@ -3306,7 +3814,9 @@ export default function App() {
     nmrInstruments,
     nmrProbes,
     nmrExperiments,
-    mandatoryFields
+    mandatoryFields,
+    mandatoryRules,
+    mandatoryBehavior
   };
 
   const getCompressedPayload = () =>
@@ -3538,6 +4048,10 @@ useEffect(() => {
       if (s.cellLineMeta !== undefined) setCellLineMeta(s.cellLineMeta);
       if (s.plasmidMeta !== undefined) setPlasmidMeta(s.plasmidMeta);
       if (s.mandatoryFields !== undefined) setMandatoryFields(s.mandatoryFields);
+      if (s.mandatoryRules !== undefined || s.mandatoryFields !== undefined) {
+        setMandatoryRules(normalizeMandatoryRules(s.mandatoryRules, s.mandatoryFields));
+      }
+      if (s.mandatoryBehavior !== undefined) setMandatoryBehavior(s.mandatoryBehavior);
       if (s.solvents !== undefined) setSolvents(s.solvents);
       if (s.buffers !== undefined) setBuffers(s.buffers);
       if (s.additives !== undefined) setAdditives(s.additives);
@@ -3589,6 +4103,21 @@ useEffect(() => {
       if (s.cellLineMeta !== undefined) setCellLineMeta((prev) => ({ ...prev, ...s.cellLineMeta }));
       if (s.plasmidMeta !== undefined) setPlasmidMeta((prev) => ({ ...prev, ...s.plasmidMeta }));
 if (s.mandatoryFields !== undefined) setMandatoryFields((prev) => [...new Set([...prev, ...s.mandatoryFields])]);
+      if (s.mandatoryRules !== undefined || s.mandatoryFields !== undefined) {
+        setMandatoryRules((prev) => {
+          const incoming = normalizeMandatoryRules(s.mandatoryRules, s.mandatoryFields);
+          const existingKeys = new Set(
+            prev.map((r) => `${r.page}|${r.subsection}|${r.fieldName.toLowerCase()}`)
+          );
+          const additions = incoming.filter(
+            (r) => !existingKeys.has(`${r.page}|${r.subsection}|${r.fieldName.toLowerCase()}`)
+          );
+          return [...prev, ...additions];
+        });
+      }
+      if (s.mandatoryBehavior !== undefined) {
+        setMandatoryBehavior((prev) => ({ ...prev, ...s.mandatoryBehavior }));
+      }
       if (s.calculationEntries !== undefined) {
         setCalculationEntries((prev) => {
           const next = { ...prev };
@@ -3827,6 +4356,8 @@ if (s.mandatoryFields !== undefined) setMandatoryFields((prev) => [...new Set([.
       setCellLineMeta(s.cellLineMeta || {});
       setPlasmidMeta(s.plasmidMeta || {});
 setMandatoryFields(s.mandatoryFields || []);
+      setMandatoryRules(normalizeMandatoryRules(s.mandatoryRules, s.mandatoryFields));
+      setMandatoryBehavior(s.mandatoryBehavior || {});
       setTestCategories(
         s.testCategories || [
           'Activity',
@@ -4858,8 +5389,6 @@ setMandatoryFields(s.mandatoryFields || []);
                       nmrExperiments={nmrExperiments}
                       onSelectResource={(id, type) => {
                         setActiveLibrarySelection({ id, type });
-                        mandatoryFields={mandatoryFields} 
-            setMandatoryFields={setMandatoryFields}
                         setTimeout(() => {
                           const el = document.getElementById(`section-${type}`);
                           if (el) {
@@ -4931,8 +5460,17 @@ setMandatoryFields(s.mandatoryFields || []);
                     <ScientistsOperatorsManager operators={operators} setOperators={setOperators} />
                   </CollapsibleSection>
 
-                  <CollapsibleSection title="Custom Metadata Fields" subtitle="Add custom fields for plate, NMR, CD, Cloning, or all tabs." defaultOpen={false}>
+                  <CollapsibleSection title="Custom Metadata Fields" subtitle="Add custom fields for plate, NMR, CD, Cloning, or all tabs — and target the exact subsection of each page they appear in." defaultOpen={false}>
                     <CustomMetadataFieldsManager customFields={customFields} setCustomFields={handleSetCustomFields} />
+
+                    <div className="mt-6 pt-6 border-t border-slate-200">
+                      <MandatoryParametersManager
+                        mandatoryRules={mandatoryRules}
+                        setMandatoryRules={setMandatoryRules}
+                        mandatoryBehavior={mandatoryBehavior}
+                        setMandatoryBehavior={setMandatoryBehavior}
+                      />
+                    </div>
                   </CollapsibleSection>
 
                 </div>
@@ -6257,6 +6795,8 @@ setMandatoryFields(s.mandatoryFields || []);
                       buffers={buffers}
                       additives={additives}
                       compoundMeta={compoundMeta}
+                      mandatoryRules={mandatoryRules}
+                      mandatoryBehavior={mandatoryBehavior}
                     />
                   );
                 }
@@ -6283,6 +6823,8 @@ setMandatoryFields(s.mandatoryFields || []);
                       nmrProbes={nmrProbes}
                       nmrExperiments={nmrExperiments}
                       compoundMeta={compoundMeta}
+                      mandatoryRules={mandatoryRules}
+                      mandatoryBehavior={mandatoryBehavior}
                     />
                   );
                 }
@@ -6312,6 +6854,8 @@ setMandatoryFields(s.mandatoryFields || []);
                       buffers={buffers}
                       additives={additives}
                       compoundMeta={compoundMeta}
+                      mandatoryRules={mandatoryRules}
+                      mandatoryBehavior={mandatoryBehavior}
                     />
                   );
                 }
@@ -6355,6 +6899,8 @@ setMandatoryFields(s.mandatoryFields || []);
                       solvents={solvents}
                       buffers={buffers}
                       additives={additives}
+                      mandatoryRules={mandatoryRules}
+                      mandatoryBehavior={mandatoryBehavior}
                     />
                   );
                 }
@@ -6389,6 +6935,8 @@ setMandatoryFields(s.mandatoryFields || []);
                       nmrInstruments={nmrInstruments}
                       nmrProbes={nmrProbes}
                       nmrExperiments={nmrExperiments}
+                      mandatoryRules={mandatoryRules}
+                      mandatoryBehavior={mandatoryBehavior}
                     />
                   );
                 }
@@ -6411,6 +6959,8 @@ setMandatoryFields(s.mandatoryFields || []);
                       solvents={solvents}
                       buffers={buffers}
                       additives={additives}
+                      mandatoryRules={mandatoryRules}
+                      mandatoryBehavior={mandatoryBehavior}
                     />
                   );
                 }
@@ -6447,6 +6997,8 @@ setMandatoryFields(s.mandatoryFields || []);
                       solvents={solvents}
                       buffers={buffers}
                       additives={additives}
+                      mandatoryRules={mandatoryRules}
+                      mandatoryBehavior={mandatoryBehavior}
                     />
                   );
                 }
