@@ -1644,6 +1644,9 @@ export const Data = ({ ctx }) => {
             )}
           </div>
         </div>
+
+        <SpectraVisualization ctx={ctx} />
+
       </div>
     </CollapsibleSection>
   );
@@ -2979,7 +2982,6 @@ const ConditionFittingSection = ({ ctx }) => {
 export const DataAnalysis = ({ ctx }) => (
   <CollapsibleSection title="Data Analysis" icon="📐" defaultOpen={true}>
     <div className="flex flex-col gap-6">
-      <SpectraVisualization ctx={ctx} />
       <SpectrumFitting ctx={ctx} />
       <ConditionFittingSection ctx={ctx} />
     </div>

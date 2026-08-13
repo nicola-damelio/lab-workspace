@@ -82,10 +82,47 @@ const buildKeys = (ri, tokens, molType, char) => {
   return [...set];
 };
 
+const getOrganicAtomName = (atom) => {
+  const structure = atom.structure;
+  const elem = atom.element || 'C';
+
+  const heavyRankOf = (targetIndex) => {
+    let rank = -1, count = 0;
+    structure.eachAtom((a) => {
+      if (a.element !== 'H') {
+        if (a.index === targetIndex) rank = count;
+        count++;
+      }
+    });
+    return rank;
+  };
+
+  if (elem !== 'H') {
+    const rank = heavyRankOf(atom.index);
+    return `${elem}${rank >= 0 ? rank : atom.index}`;
+  }
+
+  let parentIndex = -1;
+  atom.eachBondedAtom((bonded) => { if (parentIndex < 0 && bonded.element !== 'H') parentIndex = bonded.index; });
+  if (parentIndex < 0) return `H${atom.index}`; 
+
+  const parentRank = heavyRankOf(parentIndex);
+  const siblingIndices = [];
+  structure.eachAtom((a) => {
+    if (a.element !== 'H') return;
+    let bondedToSameParent = false;
+    a.eachBondedAtom((b) => { if (b.index === parentIndex) bondedToSameParent = true; });
+    if (bondedToSameParent) siblingIndices.push(a.index);
+  });
+  siblingIndices.sort((x, y) => x - y);
+  const pos = siblingIndices.indexOf(atom.index);
+  const suffix = siblingIndices.length > 1 ? ('abcdefgh'[pos] || String(pos)) : '';
+  return `H${parentRank >= 0 ? parentRank : parentIndex}${suffix}`;
+};
+
 const mapNGLAtomToNmrKeys = (atom, parsedSeq, moleculeType) => {
   if (moleculeType === 'organic') {
-    const elem = atom.element || 'C';
-    const nmrAtom = `${elem}${atom.index}`;
+    const nmrAtom = getOrganicAtomName(atom);
     const keys = buildKeys(0, [nmrAtom], 'organic', 'O');
     return { ri: 0, keys, label: `Org ${nmrAtom}`, nmrAtom };
   }
@@ -116,8 +153,20 @@ const mapNGLAtomToNmrKeys = (atom, parsedSeq, moleculeType) => {
   return { ri, keys, label: `${res.id || res.char}${atom.resno} ${nmrAtom}`, nmrAtom };
 };
 
-const NMRMoleculeViewer = ({
+const MDMoleculeViewer = ({
   src,
+  structureSrc,
+  structureFileData,
+  structureFileName,
+  structureFormat,
+  trajectorySrc,
+  trajectoryFile,
+  trajectoryFallbacks,
+  trajectoryFormat,
+  structureText,
+  structureTextExt,
+  externalLoading = false,
+  externalError = null,
   onAtomClick,
   selectedKeys,
   manualKeys = [],
@@ -133,6 +182,7 @@ const NMRMoleculeViewer = ({
   const manualHighlightCompRef = useRef(null);
   const labelCompRef = useRef(null);
   const sidechainCompRef = useRef(null);
+  const backboneCompRef = useRef(null);
 
   const [file, setFile] = useState(null);
   const [loadRequest, setLoadRequest] = useState(null);
@@ -140,8 +190,19 @@ const NMRMoleculeViewer = ({
   const [status, setStatus] = useState('idle');
   const [errorMsg, setErrorMsg] = useState('');
   const [hoverInfo, setHoverInfo] = useState(null);
+  
   const [showLabels, setShowLabels] = useState(false);
   const [sidechainStyle, setSidechainStyle] = useState('licorice');
+  const [backboneStyle, setBackboneStyle] = useState('cartoon');
+  const [speed, setSpeed] = useState(10);
+
+  // Trajectory State
+  const trajObjRef = useRef(null);
+  const trajPlayerRef = useRef(null);
+  const [currentFrame, setCurrentFrame] = useState(0);
+  const [totalFrames, setTotalFrames] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [hasTrajectory, setHasTrajectory] = useState(false);
 
   const parsedSeqRef = useRef(parsedSeq);
   const moleculeTypeRef = useRef(moleculeType);
@@ -153,12 +214,30 @@ const NMRMoleculeViewer = ({
     onAtomClickRef.current = onAtomClick;
   }, [parsedSeq, moleculeType, onAtomClick]);
 
-  // Sync external src into loadRequest seamlessly
+  const lastLoadedTextRef = useRef(null);
   useEffect(() => {
-    if (src && !file) {
-      setLoadRequest({ file: null, url: src, ts: Date.now() });
+    if (!structureText && !structureFileData) { lastLoadedTextRef.current = null; return; }
+    const targetText = structureFileData || structureText;
+    const targetExt = structureFormat !== 'auto' ? structureFormat : (structureTextExt || 'pdb');
+    
+    if (!file && targetText !== lastLoadedTextRef.current) {
+      lastLoadedTextRef.current = targetText;
+      setLoadRequest({ file: null, url: null, text: targetText, ext: targetExt, ts: Date.now() });
     }
-  }, [src, file]);
+  }, [structureText, structureTextExt, structureFileData, structureFormat, file]);
+
+  useEffect(() => {
+    const targetSrc = structureSrc || src;
+    if (targetSrc && !file && !structureText && !structureFileData) {
+      setLoadRequest({ file: null, url: targetSrc, ts: Date.now() });
+    }
+  }, [src, structureSrc, file, structureText, structureFileData]);
+
+  useEffect(() => {
+    if (structureText || structureFileData || loadRequest) return;
+    if (externalLoading) { setStatus('loading'); setErrorMsg(''); }
+    else if (externalError) { setStatus('error'); setErrorMsg(externalError); }
+  }, [externalLoading, externalError, structureText, structureFileData, loadRequest]);
 
   // Safely Mount NGL Stage ONCE
   useEffect(() => {
@@ -189,6 +268,10 @@ const NMRMoleculeViewer = ({
 
     return () => {
       isMounted = false;
+      if (trajPlayerRef.current) {
+        trajPlayerRef.current.stop();
+        trajPlayerRef.current = null;
+      }
       if (stageRef.current) {
         stageRef.current.dispose();
         stageRef.current = null;
@@ -196,19 +279,31 @@ const NMRMoleculeViewer = ({
     };
   }, []);
 
-  // Handle Loading without destroying the WebGL Context
+  // Handle Loading structure AND Trajectory
   useEffect(() => {
-    if (!loadRequest || (!loadRequest.file && !loadRequest.url)) return;
+    if (!loadRequest || (!loadRequest.file && !loadRequest.url && !loadRequest.text)) return;
     if (!stageRef.current) return;
 
     const stage = stageRef.current;
     stage.removeAllComponents();
     
+    // Reset trajectory states
+    if (trajPlayerRef.current) {
+      trajPlayerRef.current.stop();
+      trajPlayerRef.current = null;
+    }
+    trajObjRef.current = null;
+    setHasTrajectory(false);
+    setIsPlaying(false);
+    setCurrentFrame(0);
+    setTotalFrames(0);
+
     componentRef.current = null;
     highlightCompRef.current = null;
     manualHighlightCompRef.current = null;
     labelCompRef.current = null;
     sidechainCompRef.current = null;
+    backboneCompRef.current = null;
 
     setStatus('loading');
     setErrorMsg('');
@@ -216,8 +311,16 @@ const NMRMoleculeViewer = ({
     const loadStructure = async () => {
       try {
         let component;
+        // 1) Load the structure
         if (loadRequest.file) {
           component = await stage.loadFile(loadRequest.file, { ext: loadRequest.file.name.split('.').pop() });
+        } else if (loadRequest.text) {
+          if (loadRequest.text.startsWith('data:')) {
+             component = await stage.loadFile(loadRequest.text, { ext: loadRequest.ext || 'pdb' });
+          } else {
+             const blob = new Blob([loadRequest.text], { type: 'text/plain' });
+             component = await stage.loadFile(blob, { ext: loadRequest.ext || 'pdb' });
+          }
         } else {
           const target = normalizeStructureSource(loadRequest.url);
           if (!target) throw new Error('No structure URL provided');
@@ -226,15 +329,66 @@ const NMRMoleculeViewer = ({
 
         componentRef.current = component;
 
+        // Force SS calculation for topologies that don't declare it (.gro)
+        try { component.structure.autoSS(); } catch (e) {}
+        component.autoView();
+
         if (moleculeTypeRef.current === 'organic') {
-          // Explicitly color organic SDF by element
           component.addRepresentation('ball+stick', { colorScheme: 'element', multipleBond: true });
         } else {
-          try { component.addRepresentation('cartoon', { color: 'residueindex', quality: 'high' }); } catch (e) {}
           try { component.addRepresentation('ball+stick', { sele: 'hetero and not water', aspectRatio: 1.1 }); } catch (e) {}
         }
 
-        component.autoView();
+        // 2) Load the trajectory if provided
+        const NGL = await import('ngl');
+        if (trajectoryFile || trajectorySrc) {
+          try {
+            let trajTarget = trajectoryFile || trajectorySrc;
+            const trajExt = trajectoryFormat || (trajectoryFile ? trajectoryFile.name.split('.').pop() : 'xtc');
+            
+            // XTC Local AutoLoad fix
+            let objectUrlToRevoke = null;
+            if (typeof trajTarget === 'object' && trajTarget instanceof File) {
+              trajTarget = URL.createObjectURL(trajTarget);
+              objectUrlToRevoke = trajTarget;
+            }
+
+            const frames = await NGL.autoLoad(trajTarget, { ext: trajExt });
+            if (!frames) throw new Error('Could not parse trajectory frames');
+
+            const trajComp = await component.addTrajectory(frames);
+            
+            if (trajComp && trajComp.trajectory) {
+              const traj = trajComp.trajectory;
+              trajObjRef.current = traj;
+              
+              // Polling for XTC async parsing
+              const checkInterval = setInterval(() => {
+                const frameCount = traj.numframes || traj.frameCount || 0;
+                if (frameCount > 0) {
+                  setTotalFrames(frameCount);
+                  
+                  const player = new NGL.TrajectoryPlayer(traj, { step: 1, timeout: 1000 / speed });
+                  trajPlayerRef.current = player;
+                  
+                  traj.signals.frameChanged.add((frame) => {
+                    setCurrentFrame(frame);
+                  });
+                  
+                  setHasTrajectory(true);
+                  clearInterval(checkInterval);
+
+                  if (objectUrlToRevoke) URL.revokeObjectURL(objectUrlToRevoke);
+                }
+              }, 250);
+
+              setTimeout(() => clearInterval(checkInterval), 10000);
+            }
+          } catch (err) {
+            console.error('Failed to load trajectory:', err);
+          }
+        }
+
         setStatus('ready');
       } catch (err) {
         setErrorMsg(err?.message || 'Failed to load structure.');
@@ -243,7 +397,7 @@ const NMRMoleculeViewer = ({
     };
 
     loadStructure();
-  }, [loadRequest]);
+  }, [loadRequest, trajectoryFile, trajectorySrc, trajectoryFormat]);
 
   // Handle Labels
   useEffect(() => {
@@ -295,6 +449,33 @@ const NMRMoleculeViewer = ({
     }
   }, [sidechainStyle, status]);
 
+  // Handle Backbone / Secondary Structure
+  useEffect(() => {
+    const component = componentRef.current;
+    if (!component || status !== 'ready' || moleculeTypeRef.current === 'organic') return;
+
+    if (backboneCompRef.current) {
+      try { component.removeRepresentation(backboneCompRef.current); } catch (e) {}
+      backboneCompRef.current = null;
+    }
+
+    if (backboneStyle !== 'none') {
+      try {
+        backboneCompRef.current = component.addRepresentation(backboneStyle, {
+          color: 'residueindex',
+          quality: 'high'
+        });
+      } catch (e) {}
+    }
+  }, [backboneStyle, status]);
+
+  // Handle Trajectory Speed updates
+  useEffect(() => {
+    if (trajPlayerRef.current) {
+      trajPlayerRef.current.timeout = 1000 / speed;
+    }
+  }, [speed]);
+
   // Handle Highlighting
   useEffect(() => {
     const component = componentRef.current;
@@ -308,6 +489,14 @@ const NMRMoleculeViewer = ({
 
     if (sel.length === 0 && man.length === 0) return;
 
+    let organicNameToIndex = null;
+    const getOrganicNameToIndexMap = () => {
+      if (organicNameToIndex) return organicNameToIndex;
+      organicNameToIndex = {};
+      component.structure.eachAtom((a) => { organicNameToIndex[getOrganicAtomName(a)] = a.index; });
+      return organicNameToIndex;
+    };
+
     const buildSele = (keys) => {
       const parts = [];
       keys.forEach((k) => {
@@ -319,9 +508,8 @@ const NMRMoleculeViewer = ({
         const resno = ri + 1;
 
         if (moleculeTypeRef.current === 'organic') {
-          // Extract the numerical index from strings like "C12" or "O2"
-          const match = atomName.match(/[a-zA-Z]+(\d+)/);
-          if (match) parts.push(`@${match[1]}`); // Select by exact atom index
+          const map = getOrganicNameToIndexMap();
+          if (Object.prototype.hasOwnProperty.call(map, atomName)) parts.push(`@${map[atomName]}`);
           return;
         }
 
@@ -371,6 +559,24 @@ const NMRMoleculeViewer = ({
     e.target.value = '';
   }, []);
 
+  const toggleTrajectoryPlay = useCallback(() => {
+    if (!trajPlayerRef.current) return;
+    if (isPlaying) {
+      trajPlayerRef.current.pause();
+    } else {
+      trajPlayerRef.current.play();
+    }
+    setIsPlaying(!isPlaying);
+  }, [isPlaying]);
+
+  const handleTrajectoryScrub = useCallback((e) => {
+    if (!trajObjRef.current || !trajPlayerRef.current) return;
+    const f = parseInt(e.target.value, 10);
+    trajPlayerRef.current.pause();
+    setIsPlaying(false);
+    trajObjRef.current.setFrame(f);
+  }, []);
+
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-end gap-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
@@ -391,40 +597,93 @@ const NMRMoleculeViewer = ({
         </div>
 
         {moleculeType !== 'organic' && (
-          <div className="flex flex-col gap-1 ml-4">
-            <label className="text-[10px] font-bold text-slate-500 uppercase">Side Chains</label>
-            <select value={sidechainStyle} onChange={(e) => setSidechainStyle(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 h-8">
-              <option value="none">Hidden</option>
-              <option value="line">Lines (Thin)</option>
-              <option value="licorice">Licorice (Thick)</option>
-              <option value="ball+stick">Ball &amp; Stick</option>
-              <option value="spacefill">Spacefill</option>
-            </select>
-          </div>
+          <>
+            <div className="flex flex-col gap-1 ml-4">
+              <label className="text-[10px] font-bold text-slate-500 uppercase">Backbone</label>
+              <select value={backboneStyle} onChange={(e) => setBackboneStyle(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 h-8">
+                <option value="cartoon">Cartoon (Ribbon)</option>
+                <option value="ribbon">Ribbon (Thin)</option>
+                <option value="backbone">Backbone Trace</option>
+                <option value="none">Hidden</option>
+              </select>
+            </div>
+            
+            <div className="flex flex-col gap-1 ml-2">
+              <label className="text-[10px] font-bold text-slate-500 uppercase">Side Chains</label>
+              <select value={sidechainStyle} onChange={(e) => setSidechainStyle(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 h-8">
+                <option value="none">Hidden</option>
+                <option value="line">Lines (Thin)</option>
+                <option value="licorice">Licorice (Thick)</option>
+                <option value="ball+stick">Ball &amp; Stick</option>
+                <option value="spacefill">Spacefill</option>
+              </select>
+            </div>
+          </>
         )}
       </div>
 
       <div className="relative border border-slate-200 rounded-xl overflow-hidden bg-white" style={{ height }}>
         <div ref={containerRef} className="w-full h-full" />
+        
         {hoverInfo && status === 'ready' && (
           <div className="absolute top-2 left-2 bg-white/90 border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-bold text-slate-700 shadow-sm pointer-events-none z-10">{hoverInfo}</div>
         )}
-        {status === 'loading' && (
-          <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-20">
-            <div className="text-center">
-              <div className="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-2" />
-              <p className="text-sm text-slate-500 font-bold">Loading structure…</p>
+
+        {hasTrajectory && status === 'ready' && (
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/95 border border-slate-300 rounded-xl px-4 py-3 shadow-lg flex items-center gap-4 z-20 w-11/12 max-w-lg backdrop-blur-sm">
+            <button
+              onClick={toggleTrajectoryPlay}
+              className="bg-blue-600 hover:bg-blue-700 text-white rounded-full w-10 h-10 flex items-center justify-center text-sm shadow-md transition-colors shrink-0"
+            >
+              {isPlaying ? '⏸' : '▶'}
+            </button>
+            
+            <div className="flex-1 flex flex-col gap-1.5 min-w-[200px]">
+              <input
+                type="range"
+                min="0"
+                max={Math.max(0, totalFrames - 1)}
+                value={currentFrame}
+                onChange={handleTrajectoryScrub}
+                className="w-full accent-blue-600 cursor-pointer"
+              />
+              <div className="flex justify-between text-[11px] font-bold text-slate-500 px-1">
+                <span>Frame: {currentFrame}</span>
+                <span>Total: {totalFrames}</span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-0.5 items-end ml-2 border-l border-slate-300 pl-4 shrink-0">
+              <span className="text-[9px] font-bold text-slate-400 uppercase">Speed</span>
+              <select value={speed} onChange={(e) => setSpeed(Number(e.target.value))} className="bg-transparent text-xs text-blue-700 font-bold outline-none cursor-pointer p-0 m-0">
+                <option value={2}>2 fps</option>
+                <option value={5}>5 fps</option>
+                <option value={10}>10 fps</option>
+                <option value={20}>20 fps</option>
+                <option value={50}>50 fps</option>
+              </select>
             </div>
           </div>
         )}
+
+        {status === 'loading' && (
+          <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-30">
+            <div className="text-center">
+              <div className="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-2" />
+              <p className="text-sm text-slate-500 font-bold">Loading structure & trajectory…</p>
+            </div>
+          </div>
+        )}
+        
         {status === 'error' && (
-          <div className="absolute inset-0 flex items-center justify-center bg-white/90 z-20 p-4">
+          <div className="absolute inset-0 flex items-center justify-center bg-white/90 z-30 p-4">
             <div className="text-center max-w-md">
-              <p className="text-red-600 text-sm font-bold mb-1">⚠️ Failed to load structure</p>
+              <p className="text-red-600 text-sm font-bold mb-1">⚠️ Failed to load</p>
               <p className="text-slate-500 text-xs">{errorMsg}</p>
             </div>
           </div>
         )}
+        
         {status === 'idle' && (
           <div className="absolute inset-0 flex items-center justify-center bg-slate-50 z-10">
             <div className="text-center text-slate-400">
@@ -438,4 +697,4 @@ const NMRMoleculeViewer = ({
   );
 };
 
-export default NMRMoleculeViewer;
+export default MDMoleculeViewer;
