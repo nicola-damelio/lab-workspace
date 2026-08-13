@@ -158,15 +158,13 @@ export const CloningSetupSection = ({ ctx }) => {
   };
 
   return (
-    <CollapsibleSection
-      title="Experiment Setup"
-      icon="🌡️"
-      headerExtra={
+    <div className="flex flex-col">
+      <div className="flex justify-end mb-4">
         <span className={`text-[10px] font-black px-2 py-1 rounded-full border ${complete ? 'bg-emerald-100 border-emerald-300 text-emerald-700' : 'bg-red-100 border-red-300 text-red-700'}`}>
           {complete ? '✅ Program complete' : '⚠️ Program incomplete'}
         </span>
-      }
-    >
+      </div>
+
       {/* Cloning Strategy Planner — nested here, before the Thermal Cycler subsection */}
       <div className="mb-6">
         <CloningStrategyPlanner ctx={ctx} />
@@ -380,7 +378,7 @@ export const CloningSetupSection = ({ ctx }) => {
           {MIX_COMPONENTS.map((c) => <option key={c} value={c} />)}
         </datalist>
       </div>
-    </CollapsibleSection>
+    </div>
   );
 };
 

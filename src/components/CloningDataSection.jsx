@@ -457,64 +457,62 @@ export const CloningDataSection = ({ ctx }) => {
   };
 
   return (
-    <CollapsibleSection title="Data" icon="📊">
-      <div className="flex flex-col gap-6">
-        {/* ---------- UV SPECTRA ---------- */}
-        <CollapsibleSection title="UV Spectra — Concentration from Absorbance" icon="💧">
-          <input
-            ref={uvFileRef}
-            type="file"
-            accept=".csv,.txt,.tsv"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              importUvFiles(e.target.files);
-              e.target.value = '';
-            }}
-          />
-          <div className="flex justify-between items-center flex-wrap gap-2 mb-4">
-            <p className="text-xs text-slate-500">
-              Upload exported spectra (2 columns: wavelength, absorbance). Concentration is computed with
-              Beer–Lambert using molar extinction coefficients (manual or sequence-derived).
-            </p>
-            <button
-              type="button"
-              onClick={() => uvFileRef.current?.click()}
-              className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm"
-            >
-              📁 Upload UV Spectrum (CSV/TXT)
-            </button>
+    <div className="flex flex-col gap-6">
+      {/* ---------- UV SPECTRA ---------- */}
+      <CollapsibleSection title="UV Spectra — Concentration from Absorbance" icon="💧">
+        <input
+          ref={uvFileRef}
+          type="file"
+          accept=".csv,.txt,.tsv"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            importUvFiles(e.target.files);
+            e.target.value = '';
+          }}
+        />
+        <div className="flex justify-between items-center flex-wrap gap-2 mb-4">
+          <p className="text-xs text-slate-500">
+            Upload exported spectra (2 columns: wavelength, absorbance). Concentration is computed with
+            Beer–Lambert using molar extinction coefficients (manual or sequence-derived).
+          </p>
+          <button
+            type="button"
+            onClick={() => uvFileRef.current?.click()}
+            className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm"
+          >
+            📁 Upload UV Spectrum (CSV/TXT)
+          </button>
+        </div>
+        {uvSpectra.length === 0 ? (
+          <div className="text-center py-8 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300 text-sm">
+            No UV spectra uploaded yet.
           </div>
-          {uvSpectra.length === 0 ? (
-            <div className="text-center py-8 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300 text-sm">
-              No UV spectra uploaded yet.
-            </div>
-          ) : (
-            <div className="flex flex-col gap-4">
-              {uvSpectra.map((spec) => (
-                <UvSpectrumCard
-                  key={spec.id}
-                  spec={spec}
-                  onChange={(patch) => updateSpectrum(spec.id, patch)}
-                  onRemove={() => removeSpectrum(spec.id)}
-                  onSendToQuant={() => sendToQuant(spec)}
-                />
-              ))}
-            </div>
-          )}
-        </CollapsibleSection>
+        ) : (
+          <div className="flex flex-col gap-4">
+            {uvSpectra.map((spec) => (
+              <UvSpectrumCard
+                key={spec.id}
+                spec={spec}
+                onChange={(patch) => updateSpectrum(spec.id, patch)}
+                onRemove={() => removeSpectrum(spec.id)}
+                onSendToQuant={() => sendToQuant(spec)}
+              />
+            ))}
+          </div>
+        )}
+      </CollapsibleSection>
 
-        {/* ---------- DNA QUANTIFICATION ---------- */}
-        <CollapsibleSection title="DNA Quantification" icon="🧮">
-          <DnaQuantTable ctx={ctx} />
-        </CollapsibleSection>
+      {/* ---------- DNA QUANTIFICATION ---------- */}
+      <CollapsibleSection title="DNA Quantification" icon="🧮">
+        <DnaQuantTable ctx={ctx} />
+      </CollapsibleSection>
 
-        {/* ---------- GELS ---------- */}
-        <CollapsibleSection title="Gel Electrophoresis" icon="🧬">
-          <GelPanel ctx={ctx} />
-        </CollapsibleSection>
-      </div>
-    </CollapsibleSection>
+      {/* ---------- GELS ---------- */}
+      <CollapsibleSection title="Gel Electrophoresis" icon="🧬">
+        <GelPanel ctx={ctx} />
+      </CollapsibleSection>
+    </div>
   );
 };
 

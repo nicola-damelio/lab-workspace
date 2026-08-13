@@ -1940,35 +1940,6 @@ const MDAnalysisSection = ({ ctx }) => {
     </div>
   );
 };
-// ================= ALL =================
-
-const MDAll = ({ ctx }) => (
-  <div className="flex flex-col gap-6">
-    <div className="bg-emerald-100 border-2 border-emerald-500 rounded-xl p-3 text-center text-emerald-800 font-black text-sm">
-      ✅ MD TEST RENDERER LOADED SUCCESSFULLY
-    </div>
-
-    <CollapsibleSection title="Experiment Setup" icon="⚙️">
-      <MDExperimentSetupSection ctx={ctx} />
-    </CollapsibleSection>
-
-    <CollapsibleSection title="Data" icon="🔢">
-      <MDDataSection ctx={ctx} />
-    </CollapsibleSection>
-
-    <CollapsibleSection
-      title="Simulation Parameters"
-      icon="🧮"
-      defaultOpen={false}
-    >
-      <MDSimulationParamsSection ctx={ctx} />
-    </CollapsibleSection>
-
-    <CollapsibleSection title="Analysis" icon="📈" defaultOpen={false}>
-      <MDAnalysisSection ctx={ctx} />
-    </CollapsibleSection>
-  </div>
-);
 
 // ================= NOTEBOOK =================
 
@@ -2141,12 +2112,10 @@ const MDTestRenderer = ({
 
   const custom = useMemo(
     () => ({
-      All: MDAll,
+      ExperimentSetup: MDSimulationParamsSection,
       MolecularStructure: MDExperimentSetupSection,
-      ExperimentSetup: MDExperimentSetupSection,
       Data: MDDataSection,
-      Analysis: MDAnalysisSection,
-      SimulationParameters: MDSimulationParamsSection,
+      DataAnalysis: MDAnalysisSection,
       buildNotebookHtml:
         typeof buildMDNotebookHtmlFromSections === 'function'
           ? (checked, ctxArg) => buildMDNotebookHtmlFromSections(ctxArg, checked)

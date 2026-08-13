@@ -3297,36 +3297,633 @@ try {
 } catch (e) {
   console.error('Firebase init error. Falling back to local storage.', e);
 }
+/* =========================================================
+STORAGE FINDER
+========================================================= */
+const StorageFinder = ({
+  tests = [],
+  storages = [],
+  operators = [],
+  onOpenTest,
+  onOpenStorage
+}) => {
+  const [searchMode, setSearchMode] = useState('owner');
+  const [entityFilter, setEntityFilter] = useState('all');
+  const [ownerFilter, setOwnerFilter] = useState('');
+  const [textQuery, setTextQuery] = useState('');
+
+  const findStorage = useCallback(
+    (id) => storages.find((s) => s.id === id),
+    [storages]
+  );
+
+  const positionLabel = useCallback((index, cols = 12) => {
+    if (index === null || index === undefined || index === '') return '';
+
+    const i = Number(index);
+    const c = Number(cols) > 0 ? Number(cols) : 12;
+
+    if (!Number.isFinite(i) || i < 0) return '';
+
+    const row = Math.floor(i / c);
+    const col = (i % c) + 1;
+
+    const rowLabel =
+      (Array.isArray(BOX_ROW_LABELS) && BOX_ROW_LABELS[row]) || String(row + 1);
+
+    return `${rowLabel}${col}`;
+  }, []);
+
+  const parseWell = useCallback((value) => {
+    if (value === null || value === undefined || value === '') return null;
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+
+      if (!trimmed) return null;
+
+      if (trimmed.startsWith('{')) {
+        try {
+          return JSON.parse(trimmed);
+        } catch (e) {
+          return null;
+        }
+      }
+
+      return { compound: trimmed };
+    }
+
+    if (typeof value === 'object') return value;
+
+    return { compound: String(value) };
+  }, []);
+
+  const hasValue = useCallback((value) => {
+    return value !== null && value !== undefined && String(value).trim() !== '';
+  }, []);
+
+  const getBoxOwner = useCallback((box) => {
+    return String(box?.boxOwner || box?.operator || '').trim();
+  }, []);
+
+  const getWellOwner = useCallback((well) => {
+    return String(well?.sampleOwner || well?.operator || '').trim();
+  }, []);
+
+  const getWellDetails = useCallback(
+    (well) => {
+      if (!well || typeof well !== 'object') return [];
+
+      const owner = getWellOwner(well);
+
+      const concentration = hasValue(well.concentration)
+        ? [well.concentration, well.concUnit].filter(hasValue).join(' ')
+        : '';
+
+      const volume = hasValue(well.volume)
+        ? [well.volume, well.volUnit].filter(hasValue).join(' ')
+        : '';
+
+      const weight = hasValue(well.weight)
+        ? [well.weight, well.weightUnit].filter(hasValue).join(' ')
+        : '';
+
+      const details = [];
+
+      if (hasValue(well.compound)) {
+        details.push({ label: 'Compound', value: well.compound });
+      }
+
+      if (hasValue(owner)) {
+        details.push({ label: 'Sample Owner', value: owner });
+      }
+
+      if (hasValue(well.operator) && String(well.operator).trim() !== owner) {
+        details.push({ label: 'Operator', value: well.operator });
+      }
+
+      if (hasValue(well.solvent)) {
+        details.push({ label: 'Solvent', value: well.solvent });
+      }
+
+      if (hasValue(concentration)) {
+        details.push({ label: 'Concentration', value: concentration });
+      }
+
+      if (hasValue(volume)) {
+        details.push({ label: 'Volume', value: volume });
+      }
+
+      if (hasValue(well.date)) {
+        details.push({ label: 'Date', value: well.date });
+      }
+
+      if (hasValue(weight)) {
+        details.push({ label: 'Weight', value: weight });
+      }
+
+      if (hasValue(well.description)) {
+        details.push({ label: 'Notes', value: well.description });
+      }
+
+      return details;
+    },
+    [getWellOwner, hasValue]
+  );
+
+  const isStoredBox = useCallback(
+    (box) => {
+      if (!box) return false;
+
+      const storage = findStorage(box.storageId);
+
+      return Boolean(
+        storage ||
+          box.storageLabel ||
+          box.storageType ||
+          (box.storageIndex !== null &&
+            box.storageIndex !== undefined &&
+            box.storageIndex !== '')
+      );
+    },
+    [findStorage]
+  );
+
+  const getBoxLocation = useCallback(
+    (box) => {
+      const storage = findStorage(box?.storageId);
+
+      if (storage) {
+        const pos = positionLabel(box?.storageIndex, storage.cols);
+        return pos ? `${storage.name} · Slot ${pos}` : storage.name;
+      }
+
+      const legacy = [box?.storageType, box?.storageLabel]
+        .filter(Boolean)
+        .join(' / ');
+
+      return legacy || 'No storage assigned';
+    },
+    [findStorage, positionLabel]
+  );
+
+  const getWellLocation = useCallback(
+    (box, r, c) => {
+      const storage = findStorage(box?.storageId);
+
+      const rowLabel =
+        (Array.isArray(BOX_ROW_LABELS) && BOX_ROW_LABELS[r]) ||
+        String.fromCharCode(65 + r);
+
+      const cell = `${rowLabel}${c + 1}`;
+
+      const boxSlot = storage
+        ? positionLabel(box?.storageIndex, storage.cols)
+        : '';
+
+      const storageName = storage
+        ? storage.name
+        : [box?.storageType, box?.storageLabel].filter(Boolean).join(' / ') ||
+          'Unassigned storage';
+
+      return [
+        storageName,
+        box?.name || 'Unnamed box',
+        boxSlot ? `Slot ${boxSlot}` : '',
+        `Cell ${cell}`
+      ]
+        .filter(Boolean)
+        .join(' → ');
+    },
+    [findStorage, positionLabel]
+  );
+
+  const ownerOptions = useMemo(() => {
+    const fromOperators = (Array.isArray(operators) ? operators : [])
+      .map((op) =>
+        typeof op === 'string'
+          ? op
+          : `${op?.name || ''} ${op?.surname || ''}`.trim()
+      )
+      .filter(Boolean);
+
+    const fromTests = [];
+    const fromWells = [];
+
+    tests.forEach((t) => {
+      fromTests.push(t.boxOwner || '', t.operator || '', t.sampleOwner || '');
+
+      if (t.type === 'plate-9x9box') {
+        (t.grid || []).forEach((row) => {
+          (row || []).forEach((cell) => {
+            const well = parseWell(cell);
+
+            if (well) {
+              fromWells.push(well.sampleOwner || well.operator || '');
+            }
+          });
+        });
+      }
+    });
+
+    return [
+      ...new Set(
+        [...fromOperators, ...fromTests, ...fromWells].map(String).filter(Boolean)
+      )
+    ].sort((a, b) => a.localeCompare(b));
+  }, [operators, tests, parseWell]);
+
+  const results = useMemo(() => {
+    const sortResults = (arr) =>
+      [...arr].sort(
+        (a, b) =>
+          a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name)
+      );
+
+    const res = [];
+
+    if (searchMode === 'owner') {
+      if (!ownerFilter) return [];
+
+      tests.forEach((box) => {
+        if (box.type !== 'plate-9x9box') return;
+        if (!isStoredBox(box)) return;
+
+        if (entityFilter !== 'sample' && getBoxOwner(box) === ownerFilter) {
+          res.push({
+            key: box.id,
+            testId: box.id,
+            boxId: box.id,
+            storageId: box.storageId || '',
+            name: box.name || 'Unnamed box',
+            owner: getBoxOwner(box),
+            kind: 'Box',
+            location: getBoxLocation(box),
+            isWellSample: false,
+            details: []
+          });
+        }
+
+        if (entityFilter !== 'box') {
+          (box.grid || []).forEach((row, r) => {
+            (row || []).forEach((cell, c) => {
+              const well = parseWell(cell);
+
+              if (!well) return;
+
+              const owner = getWellOwner(well);
+
+              if (owner !== ownerFilter) return;
+
+              const rowLabel =
+                (Array.isArray(BOX_ROW_LABELS) && BOX_ROW_LABELS[r]) ||
+                String.fromCharCode(65 + r);
+
+              const cellLabel = `${rowLabel}${c + 1}`;
+
+              res.push({
+                key: `${box.id}-${r}-${c}`,
+                testId: box.id,
+                boxId: box.id,
+                storageId: box.storageId || '',
+                name: well.compound || `Sample ${cellLabel}`,
+                owner,
+                kind: 'Sample',
+                location: getWellLocation(box, r, c),
+                isWellSample: true,
+                details: getWellDetails(well)
+              });
+            });
+          });
+        }
+      });
+
+      return sortResults(res);
+    }
+
+    const q = textQuery.trim().toLowerCase();
+
+    if (!q) return [];
+
+    if (searchMode === 'box') {
+      tests.forEach((box) => {
+        if (box.type !== 'plate-9x9box') return;
+        if (!isStoredBox(box)) return;
+
+        const haystack = `${box.name || ''} ${box.instanceName || ''}`.toLowerCase();
+
+        if (!haystack.includes(q)) return;
+
+        res.push({
+          key: box.id,
+          testId: box.id,
+          boxId: box.id,
+          storageId: box.storageId || '',
+          name: box.name || 'Unnamed box',
+          owner: getBoxOwner(box),
+          kind: 'Box',
+          location: getBoxLocation(box),
+          isWellSample: false,
+          details: []
+        });
+      });
+
+      return sortResults(res);
+    }
+
+    tests.forEach((box) => {
+      if (box.type !== 'plate-9x9box') return;
+      if (!isStoredBox(box)) return;
+
+      (box.grid || []).forEach((row, r) => {
+        (row || []).forEach((cell, c) => {
+          const well = parseWell(cell);
+
+          if (!well) return;
+
+          const haystack = `${well.compound || ''} ${well.description || ''}`.toLowerCase();
+
+          if (!haystack.includes(q)) return;
+
+          const rowLabel =
+            (Array.isArray(BOX_ROW_LABELS) && BOX_ROW_LABELS[r]) ||
+            String.fromCharCode(65 + r);
+
+          const cellLabel = `${rowLabel}${c + 1}`;
+
+          res.push({
+            key: `${box.id}-${r}-${c}`,
+            testId: box.id,
+            boxId: box.id,
+            storageId: box.storageId || '',
+            name: well.compound || `Sample ${cellLabel}`,
+            owner: getWellOwner(well),
+            kind: 'Sample',
+            location: getWellLocation(box, r, c),
+            isWellSample: true,
+            details: getWellDetails(well)
+          });
+        });
+      });
+    });
+
+    return sortResults(res);
+  }, [
+    searchMode,
+    entityFilter,
+    ownerFilter,
+    textQuery,
+    tests,
+    isStoredBox,
+    getBoxOwner,
+    getWellOwner,
+    getBoxLocation,
+    getWellLocation,
+    getWellDetails,
+    parseWell
+  ]);
+
+  const hasSearch =
+    searchMode === 'owner' ? !!ownerFilter : !!textQuery.trim();
+
+  return (
+    <div className="p-4 md:p-6 pb-0 shrink-0 no-print">
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 md:p-5">
+        <div className="flex flex-col xl:flex-row gap-3 xl:items-end">
+          <div className="w-full xl:w-56">
+            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
+              Search Type
+            </label>
+            <select
+              value={searchMode}
+              onChange={(e) => {
+                setSearchMode(e.target.value);
+                setOwnerFilter('');
+                setTextQuery('');
+              }}
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold text-slate-700"
+            >
+              <option value="owner">Owner</option>
+              <option value="box">Box name</option>
+              <option value="sample">Sample name</option>
+            </select>
+          </div>
+
+          {searchMode === 'owner' && (
+            <>
+              <div className="w-full xl:w-56">
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
+                  Search Scope
+                </label>
+                <select
+                  value={entityFilter}
+                  onChange={(e) => setEntityFilter(e.target.value)}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold text-slate-700"
+                >
+                  <option value="all">Boxes & Samples</option>
+                  <option value="box">Boxes only</option>
+                  <option value="sample">Samples only</option>
+                </select>
+              </div>
+
+              <div className="flex-1 w-full">
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
+                  Owner
+                </label>
+                <select
+                  value={ownerFilter}
+                  onChange={(e) => setOwnerFilter(e.target.value)}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold text-slate-700"
+                >
+                  <option value="">Select owner...</option>
+                  {ownerOptions.map((op) => (
+                    <option key={op} value={op}>
+                      {op}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </>
+          )}
+
+          {searchMode === 'box' && (
+            <div className="flex-1 w-full">
+              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
+                Box Name
+              </label>
+              <input
+                type="text"
+                value={textQuery}
+                onChange={(e) => setTextQuery(e.target.value)}
+                placeholder="Search stored boxes by name..."
+                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+              />
+            </div>
+          )}
+
+          {searchMode === 'sample' && (
+            <div className="flex-1 w-full">
+              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
+                Sample Name
+              </label>
+              <input
+                type="text"
+                value={textQuery}
+                onChange={(e) => setTextQuery(e.target.value)}
+                placeholder="Search samples inside stored boxes..."
+                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+              />
+            </div>
+          )}
+        </div>
+
+        {hasSearch ? (
+          results.length === 0 ? (
+            <div className="mt-4 text-sm text-slate-400 italic bg-slate-50 border border-dashed border-slate-300 rounded-lg p-4">
+              No stored results found for this search.
+            </div>
+          ) : (
+            <div className="mt-4 border border-slate-200 rounded-lg overflow-hidden">
+              <div className="max-h-72 overflow-auto custom-scrollbar">
+                <table className="w-full text-sm border-collapse min-w-max">
+                  <thead className="sticky top-0 bg-slate-100 z-10">
+                    <tr>
+                      <th className="text-left text-[10px] font-bold text-slate-500 uppercase tracking-wide px-3 py-2 border-b border-slate-200">
+                        Type
+                      </th>
+                      <th className="text-left text-[10px] font-bold text-slate-500 uppercase tracking-wide px-3 py-2 border-b border-slate-200">
+                        Name
+                      </th>
+                      <th className="text-left text-[10px] font-bold text-slate-500 uppercase tracking-wide px-3 py-2 border-b border-slate-200">
+                        Owner
+                      </th>
+                      <th className="text-left text-[10px] font-bold text-slate-500 uppercase tracking-wide px-3 py-2 border-b border-slate-200">
+                        Location
+                      </th>
+                      <th className="text-left text-[10px] font-bold text-slate-500 uppercase tracking-wide px-3 py-2 border-b border-slate-200">
+                        Sample Fields
+                      </th>
+                      <th className="text-left text-[10px] font-bold text-slate-500 uppercase tracking-wide px-3 py-2 border-b border-slate-200">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {results.map((row) => (
+                      <tr
+                        key={row.key}
+                        className="border-b border-slate-100 hover:bg-blue-50/40 transition-colors"
+                      >
+                        <td className="px-3 py-2 text-slate-600 align-top">
+                          {row.kind}
+                        </td>
+                        <td className="px-3 py-2 font-semibold text-slate-800 align-top">
+                          {row.name}
+                        </td>
+                        <td className="px-3 py-2 text-slate-600 align-top">
+                          {row.owner || '—'}
+                        </td>
+                        <td className="px-3 py-2 text-slate-600 align-top">
+                          {row.location}
+                        </td>
+                        <td className="px-3 py-2 text-slate-600 align-top">
+                          {row.details && row.details.length > 0 ? (
+                            <div className="text-xs flex flex-col gap-0.5 min-w-[220px] max-w-[340px]">
+                              {row.details.map((d, i) => (
+                                <div key={i}>
+                                  <span className="font-bold text-slate-700">
+                                    {d.label}:
+                                  </span>{' '}
+                                  {d.value}
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            '—'
+                          )}
+                        </td>
+                        <td className="px-3 py-2 align-top">
+                          <div className="flex flex-wrap gap-2">
+                            {row.isWellSample ? (
+                              <button
+                                type="button"
+                                onClick={() => onOpenTest && onOpenTest(row.boxId)}
+                                className="bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold py-1 px-2 rounded text-xs transition-colors"
+                              >
+                                Open box
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => onOpenTest && onOpenTest(row.testId)}
+                                className="bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold py-1 px-2 rounded text-xs transition-colors"
+                              >
+                                Open {row.kind.toLowerCase()}
+                              </button>
+                            )}
+
+                            {row.storageId && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  onOpenStorage && onOpenStorage(row.storageId)
+                                }
+                                className="bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 font-bold py-1 px-2 rounded text-xs transition-colors"
+                              >
+                                Show storage
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )
+        ) : (
+          <div className="mt-4 text-xs text-slate-500 bg-blue-50 border border-blue-100 rounded-lg p-3">
+            Search by <b>owner</b> to find stored boxes and samples inside boxes.
+            Search by <b>box name</b> to find where a stored box is located.
+            Search by <b>sample name</b> to find samples stored inside boxes.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 /* =========================================================
-   MAIN APP
+MAIN APP
 ========================================================= */
-
 export default function App() {
   const createEmptyTest = (id, num, customType = 'plate-96') => {
-    const baseTest = {
-      id,
-      name: `Test ${num}`,
-      date: new Date().toISOString().split('T')[0],
-      instanceName: '',
-      testCategory: 'Activity',
-      secondaryCategory: '',
-      bestMeasurement: false,
-      operator: '',
-      type: customType,
-      storageType: '',
-      storageLabel: '',
-      storageIndex: null,
-      comments: '',
-      images: [],
-      documents: [],
-      plan: [],
-      linkedProtocolId: '',
-      cellLines: [],
-      customFieldValues: {},
-      selectedCompounds: [],
-      compound: ''
-    };
+const baseTest = {
+  id,
+  name: `Test ${num}`,
+  date: new Date().toISOString().split('T')[0],
+  instanceName: '',
+  testCategory: 'Activity',
+  secondaryCategory: '',
+  bestMeasurement: false,
+  operator: '',
+  boxOwner: '',
+  sampleOwner: '',
+  type: customType,
+  storageType: '',
+  storageLabel: '',
+  storageIndex: null,
+  comments: '',
+  images: [],
+  documents: [],
+  plan: [],
+  linkedProtocolId: '',
+  cellLines: [],
+  customFieldValues: {},
+  selectedCompounds: [],
+  compound: ''
+};
 
     if (customType.startsWith('plate')) {
       const dimKey = customType.split('-')[1];
@@ -5644,18 +6241,36 @@ setMandatoryFields(s.mandatoryFields || []);
               </div>
             )}
 
-            {currentModule === 'storage' && (
-              <StorageList
-                storages={storages}
-                tests={tests}
-                setStorageModal={setStorageModal}
-                setActiveStorageId={setActiveStorageId}
-                setCurrentModule={setCurrentModule}
-                handlePrint={handlePrint}
-                operators={operators}
-              />
-            )}
+{currentModule === 'storage' && (
+  <div className="h-full min-h-0 flex flex-col overflow-hidden bg-slate-50">
+    <StorageFinder
+      tests={tests}
+      storages={storages}
+      operators={operators}
+      onOpenTest={(testId) => {
+        setActiveTestId(testId);
+        setCurrentModule('active-test');
+      }}
+      onOpenStorage={(storageId) => {
+        if (!storageId) return;
+        setActiveStorageId(storageId);
+        setCurrentModule('storage-detail');
+      }}
+    />
 
+    <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+      <StorageList
+        storages={storages}
+        tests={tests}
+        setStorageModal={setStorageModal}
+        setActiveStorageId={setActiveStorageId}
+        setCurrentModule={setCurrentModule}
+        handlePrint={handlePrint}
+        operators={operators}
+      />
+    </div>
+  </div>
+)}
             {currentModule === 'storage-detail' && (
               <StorageDetail
                 storages={storages}
@@ -5715,127 +6330,119 @@ setMandatoryFields(s.mandatoryFields || []);
                         </p>
                       </div>
 
-                      <div className="flex flex-wrap gap-2 no-print w-full md:w-auto">
-                        <button
-                          onClick={handlePrint}
-                          className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 shadow-sm flex-1 md:flex-none"
-                        >
-                          🖨️ PDF
-                        </button>
+<div className="flex flex-wrap gap-2 no-print w-full md:w-auto">
+  <button
+    onClick={handlePrint}
+    className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 shadow-sm flex-1 md:flex-none"
+  >
+    🖨️ PDF
+  </button>
 
-                        <button
-                          onClick={() => {
-                            const id = 't' + Date.now();
+  <button
+    onClick={() => {
+      const id = 't' + Date.now();
+      setTests((prev) => [
+        ...prev,
+        createEmptyTest(id, prev.length + 1, 'cloning')
+      ]);
+      setActiveTestId(id);
+      setCurrentModule('active-test');
+    }}
+    className="bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+  >
+    + Cloning
+  </button>
 
-                            setTests((prev) => [
-                              ...prev,
-                              createEmptyTest(id, prev.length + 1, 'plate-96')
-                            ]);
+  <button
+    onClick={() => {
+      const id = 't' + Date.now();
+      setTests((prev) => [
+        ...prev,
+        createEmptyTest(id, prev.length + 1, 'protein_expression')
+      ]);
+      setActiveTestId(id);
+      setCurrentModule('active-test');
+    }}
+    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+  >
+    + Expression & Purification
+  </button>
 
-                            setActiveTestId(id);
-                            setCurrentModule('active-test');
-                          }}
-                          className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
-                        >
-                          + Plate
-                        </button>
+  <button
+    onClick={() => {
+      const id = 't' + Date.now();
+      setTests((prev) => [
+        ...prev,
+        createEmptyTest(id, prev.length + 1, 'plate-96')
+      ]);
+      setActiveTestId(id);
+      setCurrentModule('active-test');
+    }}
+    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+  >
+    + Multiwell Plate tests
+  </button>
 
-                        <button
-                          onClick={() => {
-                            const id = 't' + Date.now();
+  <button
+    onClick={() => {
+      const id = 't' + Date.now();
+      setTests((prev) => [
+        ...prev,
+        createEmptyTest(id, prev.length + 1, 'cd')
+      ]);
+      setActiveTestId(id);
+      setCurrentModule('active-test');
+    }}
+    className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+  >
+    + CD
+  </button>
 
-                            setTests((prev) => [
-                              ...prev,
-                              createEmptyTest(id, prev.length + 1, 'nmr')
-                            ]);
+  <button
+    onClick={() => {
+      const id = 't' + Date.now();
+      setTests((prev) => [
+        ...prev,
+        createEmptyTest(id, prev.length + 1, 'nmr')
+      ]);
+      setActiveTestId(id);
+      setCurrentModule('active-test');
+    }}
+    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+  >
+    + NMR
+  </button>
 
-                            setActiveTestId(id);
-                            setCurrentModule('active-test');
-                          }}
-                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
-                        >
-                          + NMR
-                        </button>
+  <button
+    onClick={() => {
+      const id = 't' + Date.now();
+      setTests((prev) => [
+        ...prev,
+        createEmptyTest(id, prev.length + 1, 'nmr-fittings')
+      ]);
+      setActiveTestId(id);
+      setCurrentModule('active-test');
+    }}
+    className="bg-amber-600 hover:bg-amber-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+  >
+    + NMR Fittings
+  </button>
 
-                        <button
-                          onClick={() => {
-                            const id = 't' + Date.now();
-
-                            setTests((prev) => [
-                              ...prev,
-                              createEmptyTest(id, prev.length + 1, 'cd')
-                            ]);
-
-                            setActiveTestId(id);
-                            setCurrentModule('active-test');
-                          }}
-                          className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
-                        >
-                          + CD
-                        </button>
-
-                        <button
-                          onClick={() => {
-                            const id = 't' + Date.now();
-
-                            setTests((prev) => [
-                              ...prev,
-                              createEmptyTest(id, prev.length + 1, 'nmr-fittings')
-                            ]);
-
-                            setActiveTestId(id);
-                            setCurrentModule('active-test');
-                          }}
-                          className="bg-amber-600 hover:bg-amber-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
-                        >
-                          + NMR Fittings
-                        </button>
-                        <button
-                          onClick={() => {
-                            const id = 't' + Date.now();
-                            setTests((prev) => [
-                              ...prev,
-                              createEmptyTest(id, prev.length + 1, 'cloning')
-                            ]);
-                            setActiveTestId(id);
-                            setCurrentModule('active-test');
-                          }}
-                          className="bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
-                        >
-                          + Cloning
-                        </button>
-
-                        <button
-                          onClick={() => {
-                            const id = 't' + Date.now();
-                            setTests((prev) => [
-                              ...prev,
-                              createEmptyTest(id, prev.length + 1, 'protein_expression')
-                            ]);
-                            setActiveTestId(id);
-                            setCurrentModule('active-test');
-                          }}
-                          className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
-                        >
-                          + Protein Exp.
-                        </button>
-                        
-                        <button
-                          onClick={() => {
-                            const id = 't' + Date.now();
-                            setTests((prev) => [
-                              ...prev,
-                              createEmptyTest(id, prev.length + 1, 'md_simulation')
-                            ]);
-                            setActiveTestId(id);
-                            setCurrentModule('active-test');
-                          }}
-                          className="bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
-                        >
-                          + MD Simulations
-                        </button>
-
-                      </div>
+  <button
+    onClick={() => {
+      const id = 't' + Date.now();
+      setTests((prev) => [
+        ...prev,
+        createEmptyTest(id, prev.length + 1, 'md_simulation')
+      ]);
+      setActiveTestId(id);
+      setCurrentModule('active-test');
+    }}
+    className="bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+  >
+    + MD Simulations
+  </button>
+</div>
                     </div>
 
                     <div className="bg-white p-3 md:p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex flex-col gap-4 shrink-0 no-print">
@@ -6036,9 +6643,54 @@ setMandatoryFields(s.mandatoryFields || []);
                   return matchesSearch && matchesCat;
                 });
 
-                const activeProtocol = activeProtoId
-                  ? datasetProtocols.find((p) => p.id === activeProtoId)
-                  : null;
+const activeProtocol = activeProtoId
+  ? datasetProtocols.find((p) => p.id === activeProtoId)
+  : null;
+
+const extractGoogleDriveId = (url) => {
+  try {
+    const u = String(url || '');
+
+    const fileMatch = u.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+    if (fileMatch) return fileMatch[1];
+
+    const idMatch = u.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+    if (idMatch) return idMatch[1];
+
+    const openMatch = u.match(/\/d\/([a-zA-Z0-9_-]+)/);
+    if (openMatch) return openMatch[1];
+  } catch (e) {}
+
+  return '';
+};
+
+const getProtocolImagePreview = (url) => {
+  if (!url) return '';
+
+  const u = String(url);
+
+  if (u.includes('drive.google.com')) {
+    const id = extractGoogleDriveId(u);
+
+    if (id) {
+      return `https://drive.google.com/thumbnail?id=${id}&sz=w1600`;
+    }
+  }
+
+  return getDirectImageUrl(u);
+};
+
+const getProtocolImageFallback = (url) => {
+  const direct = getProtocolImagePreview(url);
+
+  if (!direct) return '';
+
+  if (String(direct).includes('drive.google.com')) {
+    return `https://wsrv.nl/?url=${encodeURIComponent(direct)}`;
+  }
+
+  return direct;
+};
 
                 if (activeProtocol) {
                   return (
@@ -6093,66 +6745,201 @@ setMandatoryFields(s.mandatoryFields || []);
                       </div>
 
                       <div className="flex-1 flex flex-col lg:flex-row gap-6 overflow-y-auto lg:overflow-hidden">
-                        <div className="flex-1 flex flex-col h-auto lg:h-full min-h-[300px]">
-                          <label className="text-xs font-bold text-slate-500 uppercase mb-2">
-                            Protocol Description & Steps
-                          </label>
+<div className="flex-1 flex flex-col h-auto lg:h-full min-h-[300px]">
+  <label className="text-xs font-bold text-slate-500 uppercase mb-2">
+    Protocol Description & Steps
+  </label>
 
-                          <RichTextEditor
-                            value={activeProtocol.content || ''}
-                            onChange={(val) =>
-                              setDatasetProtocols(
-                                datasetProtocols.map((p) =>
-                                  p.id === activeProtocol.id ? { ...p, content: val } : p
-                                )
-                              )
-                            }
-                            placeholder="Write the detailed protocol steps here. You can paste images directly..."
-                          />
+  <RichTextEditor
+    value={activeProtocol.content || ''}
+    onChange={(val) =>
+      setDatasetProtocols(
+        datasetProtocols.map((p) =>
+          p.id === activeProtocol.id ? { ...p, content: val } : p
+        )
+      )
+    }
+    placeholder="Write the detailed protocol steps here. You can paste images directly..."
+  />
 
-                          <div className="mt-6 border-t border-slate-100 pt-4 no-print shrink-0">
-                            <h4 className="text-xs font-bold text-slate-500 uppercase mb-3">
-                              🧪 Tests Using This Protocol
-                            </h4>
+  <div className="mt-6 border border-slate-200 rounded-xl bg-slate-50 p-4 shadow-sm">
+    <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-3">
+      <div>
+        <h4 className="text-xs font-bold text-slate-500 uppercase">
+          Protocol Images
+        </h4>
+        <p className="text-xs text-slate-400">
+          Add Google Drive image links. Previews appear immediately.
+        </p>
+      </div>
 
-                            <div className="flex flex-wrap gap-2">
-                              {
-                                tests.filter(
-                                  (t) =>
-                                    t.linkedProtocolId === activeProtocol.id ||
-                                    (Array.isArray(t.linkedProtocolIds) &&
-                                      t.linkedProtocolIds.includes(activeProtocol.id))
-                                ).length === 0 && (
-                                  <span className="text-sm text-slate-400 italic">
-                                    No tests are currently linked to this protocol.
-                                  </span>
-                                )
-                              }
+      <button
+        type="button"
+        onClick={() => {
+          const urlsText = prompt(
+            'Paste one or more Google Drive image links, separated by commas:'
+          );
 
-                              {tests
-                                .filter(
-                                  (t) =>
-                                    t.linkedProtocolId === activeProtocol.id ||
-                                    (Array.isArray(t.linkedProtocolIds) &&
-                                      t.linkedProtocolIds.includes(activeProtocol.id))
-                                )
-                                .map((t) => (
-                                  <button
-                                    key={t.id}
-                                    onClick={() => {
-                                      setActiveTestId(t.id);
-                                      setCurrentModule('active-test');
-                                    }}
-                                    className="text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 hover:bg-blue-100 px-3 py-1.5 rounded-lg shadow-sm transition-colors flex items-center gap-1"
-                                  >
-                                    {t.type === 'nmr' ? '📉' : t.type === 'cd' ? '🌀' : '🧫'}{' '}
-                                    {t.name} {t.instanceName ? `(${t.instanceName})` : ''}
-                                  </button>
-                                ))}
-                            </div>
-                          </div>
-                        </div>
+          if (!urlsText || !urlsText.trim()) return;
 
+          const urls = urlsText
+            .split(/[,\n]+/)
+            .map((s) => s.trim())
+            .filter(Boolean);
+
+          if (!urls.length) return;
+
+          const existingCount = (activeProtocol.images || []).length;
+
+          const newImages = urls.map((url, idx) => ({
+            id: `proto_img_${Date.now()}_${idx}_${Math.random()
+              .toString(36)
+              .slice(2, 8)}`,
+            name: `Image ${existingCount + idx + 1}`,
+            url
+          }));
+
+          setDatasetProtocols(
+            datasetProtocols.map((p) =>
+              p.id === activeProtocol.id
+                ? { ...p, images: [...(p.images || []), ...newImages] }
+                : p
+            )
+          );
+        }}
+        className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-xs shadow-sm transition-colors no-print"
+      >
+        + Add Image Link(s)
+      </button>
+    </div>
+
+    {(activeProtocol.images || []).length === 0 ? (
+      <div className="text-sm text-slate-400 italic bg-white border border-dashed border-slate-300 rounded-lg p-4">
+        No images added yet. Use “+ Add Image Link(s)” and paste Google Drive
+        image URLs.
+      </div>
+    ) : (
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+        {(activeProtocol.images || []).map((img) => (
+          <div
+            key={img.id}
+            className="bg-white border border-slate-200 rounded-lg p-2 shadow-sm flex flex-col gap-2"
+          >
+            <div className="h-28 rounded-md overflow-hidden border border-slate-100 bg-slate-100">
+              <img
+                src={getProtocolImagePreview(img.url)}
+                alt={img.name || 'Protocol image'}
+                referrerPolicy="no-referrer"
+                className="w-full h-full object-cover"
+                onError={(e) => {
+                  if (!e.currentTarget.dataset.fallback) {
+                    e.currentTarget.dataset.fallback = '1';
+                    e.currentTarget.src = getProtocolImageFallback(img.url);
+                  }
+                }}
+              />
+            </div>
+
+            <input
+              type="text"
+              value={img.name || ''}
+              onChange={(e) =>
+                setDatasetProtocols(
+                  datasetProtocols.map((p) =>
+                    p.id === activeProtocol.id
+                      ? {
+                          ...p,
+                          images: (p.images || []).map((im) =>
+                            im.id === img.id
+                              ? { ...im, name: e.target.value }
+                              : im
+                          )
+                        }
+                      : p
+                  )
+                )
+              }
+              className="border border-slate-200 rounded-md px-2 py-1 text-xs font-bold text-slate-700 outline-none focus:border-blue-500"
+              placeholder="Image name"
+            />
+
+            <div className="flex gap-2">
+              <a
+                href={img.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex-1 text-center bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 font-bold py-1 px-2 rounded text-xs transition-colors"
+              >
+                Open
+              </a>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setDatasetProtocols(
+                    datasetProtocols.map((p) =>
+                      p.id === activeProtocol.id
+                        ? {
+                            ...p,
+                            images: (p.images || []).filter(
+                              (im) => im.id !== img.id
+                            )
+                          }
+                        : p
+                    )
+                  )
+                }
+                className="flex-1 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold py-1 px-2 rounded text-xs transition-colors"
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    )}
+  </div>
+
+  <div className="mt-6 border-t border-slate-100 pt-4 no-print shrink-0">
+    <h4 className="text-xs font-bold text-slate-500 uppercase mb-3">
+      🧪 Tests Using This Protocol
+    </h4>
+    <div className="flex flex-wrap gap-2">
+      {
+        tests.filter(
+          (t) =>
+            t.linkedProtocolId === activeProtocol.id ||
+            (Array.isArray(t.linkedProtocolIds) &&
+              t.linkedProtocolIds.includes(activeProtocol.id))
+        ).length === 0 && (
+          <span className="text-sm text-slate-400 italic">
+            No tests are currently linked to this protocol.
+          </span>
+        )
+      }
+      {tests
+        .filter(
+          (t) =>
+            t.linkedProtocolId === activeProtocol.id ||
+            (Array.isArray(t.linkedProtocolIds) &&
+              t.linkedProtocolIds.includes(activeProtocol.id))
+        )
+        .map((t) => (
+          <button
+            key={t.id}
+            onClick={() => {
+              setActiveTestId(t.id);
+              setCurrentModule('active-test');
+            }}
+            className="text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 hover:bg-blue-100 px-3 py-1.5 rounded-lg shadow-sm transition-colors flex items-center gap-1"
+          >
+            {t.type === 'nmr' ? '📉' : t.type === 'cd' ? '🌀' : '🧫'}{' '}
+            {t.name} {t.instanceName ? `(${t.instanceName})` : ''}
+          </button>
+        ))}
+    </div>
+  </div>
+</div>
                         <div className="w-full lg:w-80 flex flex-col gap-4 lg:overflow-y-auto custom-scrollbar shrink-0 lg:border-l border-t lg:border-t-0 border-slate-100 pt-4 lg:pt-0 lg:pl-4 no-print">
                           <label className="text-xs font-bold text-slate-500 uppercase">
                             Attached Resources
@@ -6336,13 +7123,14 @@ setMandatoryFields(s.mandatoryFields || []);
 
                         <button
                           onClick={() => {
-                            const newProto = {
-                              id: 'pr' + Date.now(),
-                              title: 'Untitled Protocol',
-                              category: protocolCategories[0] || 'Uncategorized',
-                              content: '',
-                              links: []
-                            };
+const newProto = {
+  id: 'pr' + Date.now(),
+  title: 'Untitled Protocol',
+  category: protocolCategories[0] || 'Uncategorized',
+  content: '',
+  links: [],
+  images: []
+};
 
                             setDatasetProtocols([newProto, ...datasetProtocols]);
 
@@ -6659,19 +7447,45 @@ setMandatoryFields(s.mandatoryFields || []);
                           🗑️ Elimina
                         </button>
                         
-                        <div className="flex flex-col flex-1 min-w-[120px]">
-                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
-                            Operator
-                          </label>
-                          <select
-                            value={activeTest.operator || ''}
-                            onChange={(e) => updateActiveTest({ operator: e.target.value })}
-                            className="bg-slate-50 border border-slate-200 text-xs px-2 py-2 rounded-lg outline-none focus:border-blue-500"
-                          >
-                            <option value="">Select Operator...</option>
-                            {operators.map(op => <option key={op} value={op}>{op}</option>)}
-                          </select>
-                        </div>
+<React.Fragment>
+  {activeTest.type === 'plate-9x9box' ? (
+    <div className="flex flex-col flex-1 min-w-[160px]">
+      <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
+        Box Owner
+      </label>
+      <select
+        value={activeTest.boxOwner || activeTest.operator || ''}
+        onChange={(e) => updateActiveTest({ boxOwner: e.target.value })}
+        className="bg-slate-50 border border-slate-200 text-xs px-2 py-2 rounded-lg outline-none focus:border-blue-500"
+      >
+        <option value="">Select Box Owner...</option>
+        {operators.map((op) => (
+          <option key={op} value={op}>
+            {op}
+          </option>
+        ))}
+      </select>
+    </div>
+  ) : (
+    <div className="flex flex-col flex-1 min-w-[160px]">
+      <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
+        Sample Owner
+      </label>
+      <select
+        value={activeTest.sampleOwner || activeTest.operator || ''}
+        onChange={(e) => updateActiveTest({ sampleOwner: e.target.value })}
+        className="bg-slate-50 border border-slate-200 text-xs px-2 py-2 rounded-lg outline-none focus:border-blue-500"
+      >
+        <option value="">Select Sample Owner...</option>
+        {operators.map((op) => (
+          <option key={op} value={op}>
+            {op}
+          </option>
+        ))}
+      </select>
+    </div>
+  )}
+</React.Fragment>
 
                         <div className="flex flex-col flex-1 min-w-[120px]">
                           <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">

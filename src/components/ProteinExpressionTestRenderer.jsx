@@ -209,355 +209,348 @@ DATA SECTION — YIELD, MULTIPLE CHROMATOGRAMS & SDS-PAGE
 (Each subsection now has a comment field)
 ========================================================================== */
 const ProteinDataSection = ({ ctx }) => {
-const { activeTest, updateActiveTest } = ctx;
-const yieldData = Array.isArray(activeTest.yieldData) ? activeTest.yieldData : [];
-const gelImages = Array.isArray(activeTest.gelImages) ? activeTest.gelImages : [];
-const gelImageInputRef = useRef(null);
+  const { activeTest, updateActiveTest } = ctx;
+  const yieldData = Array.isArray(activeTest.yieldData) ? activeTest.yieldData : [];
+  const gelImages = Array.isArray(activeTest.gelImages) ? activeTest.gelImages : [];
+  const gelImageInputRef = useRef(null);
 
-/* -------- chromatograms (multi-run, with legacy migration) -------- */
-const chromatograms = Array.isArray(activeTest.chromatograms)
-? activeTest.chromatograms
-: activeTest.chromatogramRaw
-? [
-{
-id: 'chr_legacy',
-name: 'Chromatogram 1',
-method: 'Affinity',
-buffer: '',
-rawData: activeTest.chromatogramRaw
-}
-]
-: [];
+  /* -------- chromatograms (multi-run, with legacy migration) -------- */
+  const chromatograms = Array.isArray(activeTest.chromatograms)
+    ? activeTest.chromatograms
+    : activeTest.chromatogramRaw
+      ? [
+          {
+            id: 'chr_legacy',
+            name: 'Chromatogram 1',
+            method: 'Affinity',
+            buffer: '',
+            rawData: activeTest.chromatogramRaw
+          }
+        ]
+      : [];
 
-const setChromatograms = (next) =>
-updateActiveTest({ chromatograms: next, chromatogramRaw: '' });
+  const setChromatograms = (next) =>
+    updateActiveTest({ chromatograms: next, chromatogramRaw: '' });
 
-const addChromatogram = () =>
-setChromatograms([
-...chromatograms,
-{
-id: uid('chr'),
-name: `Chromatogram ${chromatograms.length + 1}`,
-method: 'Affinity',
-buffer: '',
-rawData: ''
-}
-]);
+  const addChromatogram = () =>
+    setChromatograms([
+      ...chromatograms,
+      {
+        id: uid('chr'),
+        name: `Chromatogram ${chromatograms.length + 1}`,
+        method: 'Affinity',
+        buffer: '',
+        rawData: ''
+      }
+    ]);
 
-const updateChromatogram = (id, patch) =>
-setChromatograms(chromatograms.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+  const updateChromatogram = (id, patch) =>
+    setChromatograms(chromatograms.map((c) => (c.id === id ? { ...c, ...patch } : c)));
 
-const removeChromatogram = (id) =>
-setChromatograms(chromatograms.filter((c) => c.id !== id));
+  const removeChromatogram = (id) =>
+    setChromatograms(chromatograms.filter((c) => c.id !== id));
 
-/* -------- yield management -------- */
-const addYieldRow = () => {
-const newRow = {
-id: uid('yield'),
-fraction: '',
-concentration: '',
-volume: '',
-totalMass: '',
-purity: '',
-notes: ''
-};
-updateActiveTest({ yieldData: [...yieldData, newRow] });
-};
+  /* -------- yield management -------- */
+  const addYieldRow = () => {
+    const newRow = {
+      id: uid('yield'),
+      fraction: '',
+      concentration: '',
+      volume: '',
+      totalMass: '',
+      purity: '',
+      notes: ''
+    };
+    updateActiveTest({ yieldData: [...yieldData, newRow] });
+  };
 
-const updateYieldRow = (id, field, value) => {
-updateActiveTest({
-yieldData: yieldData.map((row) => {
-if (row.id === id) {
-const updated = { ...row, [field]: value };
-if (field === 'concentration' || field === 'volume') {
-const c = parseFloat(updated.concentration) || 0;
-const v = parseFloat(updated.volume) || 0;
-updated.totalMass = (c * v).toFixed(2);
-}
-return updated;
-}
-return row;
-})
-});
-};
+  const updateYieldRow = (id, field, value) => {
+    updateActiveTest({
+      yieldData: yieldData.map((row) => {
+        if (row.id === id) {
+          const updated = { ...row, [field]: value };
+          if (field === 'concentration' || field === 'volume') {
+            const c = parseFloat(updated.concentration) || 0;
+            const v = parseFloat(updated.volume) || 0;
+            updated.totalMass = (c * v).toFixed(2);
+          }
+          return updated;
+        }
+        return row;
+      })
+    });
+  };
 
-/* -------- gel images -------- */
-const importGelImages = async (fileList) => {
-const files = Array.from(fileList || []).filter(
-(f) => f && f.type && f.type.startsWith('image/')
-);
-if (!files.length) return;
-try {
-const imported = await Promise.all(
-files.map(
-(file) =>
-new Promise((resolve, reject) => {
-const reader = new FileReader();
-reader.onload = () => resolve(reader.result);
-reader.onerror = reject;
-reader.readAsDataURL(file);
-})
-)
-);
-updateActiveTest({ gelImages: [...gelImages, ...imported] });
-} catch (error) {
-console.error(error);
-alert('Gel image import failed.');
-}
-};
+  /* -------- gel images -------- */
+  const importGelImages = async (fileList) => {
+    const files = Array.from(fileList || []).filter(
+      (f) => f && f.type && f.type.startsWith('image/')
+    );
+    if (!files.length) return;
+    try {
+      const imported = await Promise.all(
+        files.map(
+          (file) =>
+            new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result);
+              reader.onerror = reject;
+              reader.readAsDataURL(file);
+            })
+        )
+      );
+      updateActiveTest({ gelImages: [...gelImages, ...imported] });
+    } catch (error) {
+      console.error(error);
+      alert('Gel image import failed.');
+    }
+  };
 
-const addGelImageLinks = () => {
-const urlsText = prompt('Paste external link(s) for gel images, separated by commas:');
-if (!urlsText || !urlsText.trim()) return;
-const urls = urlsText.split(/[\s,]+/).map((u) => u.trim()).filter(Boolean);
-updateActiveTest({ gelImages: [...gelImages, ...urls] });
-};
+  const addGelImageLinks = () => {
+    const urlsText = prompt('Paste external link(s) for gel images, separated by commas:');
+    if (!urlsText || !urlsText.trim()) return;
+    const urls = urlsText.split(/[\s,]+/).map((u) => u.trim()).filter(Boolean);
+    updateActiveTest({ gelImages: [...gelImages, ...urls] });
+  };
 
-return (
-<CollapsibleSection title="Data" icon="📊">
-<div className="flex flex-col gap-6">
+  return (
+    <div className="flex flex-col gap-6">
+      {/* ============ 1. PROTEIN YIELD ============ */}
+      <CollapsibleSection title="Protein Yield (BCA / Bradford / UV)" icon="💧">
+        <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm">
+          <div className="flex justify-between items-center mb-3">
+            <h3 className="text-xs font-bold text-slate-600 uppercase">Purified Fractions</h3>
+            <button
+              type="button"
+              onClick={addYieldRow}
+              className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm transition-colors"
+            >
+              + Add Fraction
+            </button>
+          </div>
+          <div className="overflow-x-auto custom-scrollbar border border-slate-200 rounded-lg">
+            <table className="w-full text-sm text-left min-w-[720px]">
+              <thead className="text-xs text-slate-500 uppercase bg-slate-100">
+                <tr>
+                  <th className="px-3 py-2 border-b">Fraction / Pool</th>
+                  <th className="px-3 py-2 border-b">Conc (mg/mL)</th>
+                  <th className="px-3 py-2 border-b">Volume (mL)</th>
+                  <th className="px-3 py-2 border-b">Total Yield (mg)</th>
+                  <th className="px-3 py-2 border-b">Purity %</th>
+                  <th className="px-3 py-2 border-b">Notes</th>
+                  <th className="px-3 py-2 border-b w-10"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {yieldData.length === 0 ? (
+                  <tr>
+                    <td colSpan="7" className="px-3 py-4 text-center text-slate-400 italic">
+                      No fractions added.
+                    </td>
+                  </tr>
+                ) : (
+                  yieldData.map((row) => (
+                    <tr key={row.id} className="hover:bg-slate-50">
+                      <td className="px-3 py-1.5">
+                        <input
+                          type="text"
+                          value={row.fraction}
+                          onChange={(e) => updateYieldRow(row.id, 'fraction', e.target.value)}
+                          className="w-full border border-slate-300 rounded px-2 py-1 text-sm outline-none focus:border-blue-500"
+                          placeholder="e.g. Elution 1"
+                        />
+                      </td>
+                      <td className="px-3 py-1.5">
+                        <input
+                          type="number"
+                          value={row.concentration}
+                          onChange={(e) => updateYieldRow(row.id, 'concentration', e.target.value)}
+                          className="w-full border border-slate-300 rounded px-2 py-1 text-sm outline-none focus:border-blue-500"
+                        />
+                      </td>
+                      <td className="px-3 py-1.5">
+                        <input
+                          type="number"
+                          value={row.volume}
+                          onChange={(e) => updateYieldRow(row.id, 'volume', e.target.value)}
+                          className="w-full border border-slate-300 rounded px-2 py-1 text-sm outline-none focus:border-blue-500"
+                        />
+                      </td>
+                      <td className="px-3 py-1.5 font-bold text-blue-700 font-mono">
+                        {row.totalMass || '—'}
+                      </td>
+                      <td className="px-3 py-1.5">
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={row.purity}
+                          onChange={(e) => updateYieldRow(row.id, 'purity', e.target.value)}
+                          className="w-full border border-slate-300 rounded px-2 py-1 text-sm outline-none focus:border-blue-500"
+                          placeholder="e.g. 95"
+                        />
+                      </td>
+                      <td className="px-3 py-1.5">
+                        <input
+                          type="text"
+                          value={row.notes}
+                          onChange={(e) => updateYieldRow(row.id, 'notes', e.target.value)}
+                          className="w-full border border-slate-300 rounded px-2 py-1 text-sm outline-none focus:border-blue-500"
+                          placeholder="Notes..."
+                        />
+                      </td>
+                      <td className="px-3 py-1.5 text-center">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateActiveTest({ yieldData: yieldData.filter((r) => r.id !== row.id) })
+                          }
+                          className="text-red-400 hover:text-red-600 font-bold"
+                        >
+                          ×
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
 
-{/* ============ 1. PROTEIN YIELD ============ */}
-<CollapsibleSection title="Protein Yield (BCA / Bradford / UV)" icon="💧">
-<div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm">
-<div className="flex justify-between items-center mb-3">
-<h3 className="text-xs font-bold text-slate-600 uppercase">Purified Fractions</h3>
-<button
-type="button"
-onClick={addYieldRow}
-className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm transition-colors"
->
-+ Add Fraction
-</button>
-</div>
-<div className="overflow-x-auto custom-scrollbar border border-slate-200 rounded-lg">
-<table className="w-full text-sm text-left min-w-[720px]">
-<thead className="text-xs text-slate-500 uppercase bg-slate-100">
-<tr>
-<th className="px-3 py-2 border-b">Fraction / Pool</th>
-<th className="px-3 py-2 border-b">Conc (mg/mL)</th>
-<th className="px-3 py-2 border-b">Volume (mL)</th>
-<th className="px-3 py-2 border-b">Total Yield (mg)</th>
-<th className="px-3 py-2 border-b">Purity %</th>
-<th className="px-3 py-2 border-b">Notes</th>
-<th className="px-3 py-2 border-b w-10"></th>
-</tr>
-</thead>
-<tbody className="divide-y divide-slate-100">
-{yieldData.length === 0 ? (
-<tr>
-<td colSpan="7" className="px-3 py-4 text-center text-slate-400 italic">
-No fractions added.
-</td>
-</tr>
-) : (
-yieldData.map((row) => (
-<tr key={row.id} className="hover:bg-slate-50">
-<td className="px-3 py-1.5">
-<input
-type="text"
-value={row.fraction}
-onChange={(e) => updateYieldRow(row.id, 'fraction', e.target.value)}
-className="w-full border border-slate-300 rounded px-2 py-1 text-sm outline-none focus:border-blue-500"
-placeholder="e.g. Elution 1"
-/>
-</td>
-<td className="px-3 py-1.5">
-<input
-type="number"
-value={row.concentration}
-onChange={(e) => updateYieldRow(row.id, 'concentration', e.target.value)}
-className="w-full border border-slate-300 rounded px-2 py-1 text-sm outline-none focus:border-blue-500"
-/>
-</td>
-<td className="px-3 py-1.5">
-<input
-type="number"
-value={row.volume}
-onChange={(e) => updateYieldRow(row.id, 'volume', e.target.value)}
-className="w-full border border-slate-300 rounded px-2 py-1 text-sm outline-none focus:border-blue-500"
-/>
-</td>
-<td className="px-3 py-1.5 font-bold text-blue-700 font-mono">
-{row.totalMass || '—'}
-</td>
-<td className="px-3 py-1.5">
-<input
-type="number"
-step="0.1"
-value={row.purity}
-onChange={(e) => updateYieldRow(row.id, 'purity', e.target.value)}
-className="w-full border border-slate-300 rounded px-2 py-1 text-sm outline-none focus:border-blue-500"
-placeholder="e.g. 95"
-/>
-</td>
-<td className="px-3 py-1.5">
-<input
-type="text"
-value={row.notes}
-onChange={(e) => updateYieldRow(row.id, 'notes', e.target.value)}
-className="w-full border border-slate-300 rounded px-2 py-1 text-sm outline-none focus:border-blue-500"
-placeholder="Notes..."
-/>
-</td>
-<td className="px-3 py-1.5 text-center">
-<button
-type="button"
-onClick={() =>
-updateActiveTest({ yieldData: yieldData.filter((r) => r.id !== row.id) })
-}
-className="text-red-400 hover:text-red-600 font-bold"
->
-×
-</button>
-</td>
-</tr>
-))
-)}
-</tbody>
-</table>
-</div>
+          <SectionComment
+            value={activeTest.yieldComment}
+            onChange={(v) => updateActiveTest({ yieldComment: v })}
+            placeholder="Notes about yield measurements, BCA/Bradford results, observations..."
+          />
+        </div>
+      </CollapsibleSection>
 
-{/* COMMENT FIELD FOR YIELD SECTION */}
-<SectionComment
-value={activeTest.yieldComment}
-onChange={(v) => updateActiveTest({ yieldComment: v })}
-placeholder="Notes about yield measurements, BCA/Bradford results, observations..."
-/>
-</div>
-</CollapsibleSection>
+      {/* ============ 2. CHROMATOGRAMS ============ */}
+      <CollapsibleSection title="Chromatograms (FPLC / AKTA)" icon="📈">
+        <div className="flex flex-col gap-4">
+          <div className="flex justify-between items-center flex-wrap gap-2">
+            <p className="text-xs text-slate-500">
+              Add one chromatogram per purification step and select the method type
+              (Ion Exchange, Affinity, His-Trap, GST, Gel Filtration).
+            </p>
+            <button
+              type="button"
+              onClick={addChromatogram}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm"
+            >
+              + Add Chromatogram
+            </button>
+          </div>
+          {chromatograms.length === 0 ? (
+            <div className="text-center py-8 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300 text-sm">
+              No chromatograms recorded. Add your first run above.
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4">
+              {chromatograms.map((chr, idx) => (
+                <ChromatogramCard
+                  key={chr.id}
+                  chr={chr}
+                  index={idx}
+                  onChange={(patch) => updateChromatogram(chr.id, patch)}
+                  onRemove={() => removeChromatogram(chr.id)}
+                />
+              ))}
+            </div>
+          )}
 
-{/* ============ 2. CHROMATOGRAMS ============ */}
-<CollapsibleSection title="Chromatograms (FPLC / AKTA)" icon="📈">
-<div className="flex flex-col gap-4">
-<div className="flex justify-between items-center flex-wrap gap-2">
-<p className="text-xs text-slate-500">
-Add one chromatogram per purification step and select the method type
-(Ion Exchange, Affinity, His-Trap, GST, Gel Filtration).
-</p>
-<button
-type="button"
-onClick={addChromatogram}
-className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm"
->
-+ Add Chromatogram
-</button>
-</div>
-{chromatograms.length === 0 ? (
-<div className="text-center py-8 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300 text-sm">
-No chromatograms recorded. Add your first run above.
-</div>
-) : (
-<div className="flex flex-col gap-4">
-{chromatograms.map((chr, idx) => (
-<ChromatogramCard
-key={chr.id}
-chr={chr}
-index={idx}
-onChange={(patch) => updateChromatogram(chr.id, patch)}
-onRemove={() => removeChromatogram(chr.id)}
-/>
-))}
-</div>
-)}
+          <SectionComment
+            value={activeTest.chromatogramComment}
+            onChange={(v) => updateActiveTest({ chromatogramComment: v })}
+            placeholder="Notes about purification runs, column behavior, peak observations..."
+          />
+        </div>
+      </CollapsibleSection>
 
-{/* COMMENT FIELD FOR CHROMATOGRAMS SECTION */}
-<SectionComment
-value={activeTest.chromatogramComment}
-onChange={(v) => updateActiveTest({ chromatogramComment: v })}
-placeholder="Notes about purification runs, column behavior, peak observations..."
-/>
-</div>
-</CollapsibleSection>
+      {/* ============ 3. SDS-PAGE GELS ============ */}
+      <CollapsibleSection title="SDS-PAGE Gels & Blots" icon="🖼️">
+        <div className="border border-slate-200 bg-slate-50 rounded-lg p-4">
+          <input
+            ref={gelImageInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              importGelImages(e.target.files);
+              e.target.value = '';
+            }}
+          />
+          <div className="flex justify-between items-center mb-3 flex-wrap gap-2">
+            <label className="text-xs font-bold text-slate-600 uppercase">Gel Images</label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => gelImageInputRef.current?.click()}
+                className="bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 font-bold px-3 py-1.5 rounded text-xs shadow-sm"
+              >
+                📁 Upload Images
+              </button>
+              <button
+                type="button"
+                onClick={addGelImageLinks}
+                className="bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-600 font-bold px-3 py-1.5 rounded text-xs shadow-sm"
+              >
+                🔗 Add Links
+              </button>
+            </div>
+          </div>
+          {gelImages.length === 0 ? (
+            <p className="text-xs text-slate-400 italic">No gel images attached.</p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mt-4">
+              {gelImages.map((imgSrc, idx) => (
+                <div
+                  key={idx}
+                  className="relative group bg-white p-3 rounded-xl border border-slate-200 shadow-sm"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-slate-500">Gel {idx + 1}</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateActiveTest({ gelImages: gelImages.filter((_, i) => i !== idx) })
+                      }
+                      className="bg-red-50 hover:bg-red-100 text-red-500 rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold border border-red-200"
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <div className="bg-slate-50 rounded-lg p-2 border border-slate-100">
+                    <SmartImage
+                      src={imgSrc}
+                      alt={`Gel image ${idx + 1}`}
+                      style={{ maxHeight: '260px', minHeight: '120px' }}
+                    />
+                  </div>
+                  {!String(imgSrc).startsWith('data:') && (
+                    <a
+                      href={imgSrc}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 text-xs text-blue-500 hover:text-blue-700 font-medium flex items-center gap-1"
+                    >
+                      🔗 Open original
+                    </a>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
 
-{/* ============ 3. SDS-PAGE GELS ============ */}
-<CollapsibleSection title="SDS-PAGE Gels & Blots" icon="🖼️">
-<div className="border border-slate-200 bg-slate-50 rounded-lg p-4">
-<input
-ref={gelImageInputRef}
-type="file"
-accept="image/*"
-multiple
-className="hidden"
-onChange={(e) => {
-importGelImages(e.target.files);
-e.target.value = '';
-}}
-/>
-<div className="flex justify-between items-center mb-3 flex-wrap gap-2">
-<label className="text-xs font-bold text-slate-600 uppercase">Gel Images</label>
-<div className="flex gap-2">
-<button
-type="button"
-onClick={() => gelImageInputRef.current?.click()}
-className="bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 font-bold px-3 py-1.5 rounded text-xs shadow-sm"
->
-📁 Upload Images
-</button>
-<button
-type="button"
-onClick={addGelImageLinks}
-className="bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-600 font-bold px-3 py-1.5 rounded text-xs shadow-sm"
->
-🔗 Add Links
-</button>
-</div>
-</div>
-{gelImages.length === 0 ? (
-<p className="text-xs text-slate-400 italic">No gel images attached.</p>
-) : (
-<div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mt-4">
-{gelImages.map((imgSrc, idx) => (
-<div
-key={idx}
-className="relative group bg-white p-3 rounded-xl border border-slate-200 shadow-sm"
->
-<div className="flex items-center justify-between mb-2">
-<span className="text-xs font-bold text-slate-500">Gel {idx + 1}</span>
-<button
-type="button"
-onClick={() =>
-updateActiveTest({ gelImages: gelImages.filter((_, i) => i !== idx) })
-}
-className="bg-red-50 hover:bg-red-100 text-red-500 rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold border border-red-200"
->
-×
-</button>
-</div>
-<div className="bg-slate-50 rounded-lg p-2 border border-slate-100">
-<SmartImage
-src={imgSrc}
-alt={`Gel image ${idx + 1}`}
-style={{ maxHeight: '260px', minHeight: '120px' }}
-/>
-</div>
-{!String(imgSrc).startsWith('data:') && (
-<a
-href={imgSrc}
-target="_blank"
-rel="noopener noreferrer"
-className="mt-2 text-xs text-blue-500 hover:text-blue-700 font-medium flex items-center gap-1"
->
-🔗 Open original
-</a>
-)}
-</div>
-))}
-</div>
-)}
-
-{/* COMMENT FIELD FOR GELS SECTION */}
-<SectionComment
-value={activeTest.gelComment}
-onChange={(v) => updateActiveTest({ gelComment: v })}
-placeholder="Notes about gel results, band patterns, molecular weight markers..."
-/>
-</div>
-</CollapsibleSection>
-
-</div>
-</CollapsibleSection>
-);
+          <SectionComment
+            value={activeTest.gelComment}
+            onChange={(v) => updateActiveTest({ gelComment: v })}
+            placeholder="Notes about gel results, band patterns, molecular weight markers..."
+          />
+        </div>
+      </CollapsibleSection>
+    </div>
+  );
 };
 
 /* ============================================================================

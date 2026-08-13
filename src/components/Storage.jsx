@@ -315,22 +315,68 @@ export const BoxDetail = ({ activeTest, updateActiveTest, storages, expandedGrou
     const selectedWells = getVal('selectedWells', []);
     const boxDragState = getVal('boxDragState', { active: false, startR: -1, startC: -1, currentR: -1, currentC: -1 });
     
-    const getWellData = (r, c) => { 
-        try { 
-            const val = activeTest.grid[r]?.[c]; 
-            if (typeof val === 'string' && val.startsWith('{')) return JSON.parse(val); 
-        } catch(e) {} 
-        return { compound: (activeTest.grid[r]?.[c] || '') + '', operator: '', solvent: '', concentration: '', concUnit: 'µM', volume: '', volUnit: 'µL', date: '', weight: '', weightUnit: 'mg', description: '' }; 
-    };
+const getWellData = (r, c) => {
+  const raw = activeTest?.grid?.[r]?.[c];
 
-    const updateWellData = (r, c, field, value) => { 
-        const current = getWellData(r, c); 
-        current[field] = value; 
-        const ng = activeTest.grid.map(row => [...row]); 
-        if(!ng[r]) ng[r] = []; 
-        ng[r][c] = JSON.stringify(current); 
-        updateActiveTest({ grid: ng }); 
-    };
+  const defaults = {
+    compound: typeof raw === 'string' && !raw.startsWith('{') ? raw : '',
+    operator: '',
+    sampleOwner: '',
+    solvent: '',
+    concentration: '',
+    concUnit: 'µM',
+    volume: '',
+    volUnit: 'µL',
+    date: '',
+    weight: '',
+    weightUnit: 'mg',
+    description: ''
+  };
+
+  try {
+    if (typeof raw === 'string' && raw.startsWith('{')) {
+      const parsed = JSON.parse(raw);
+
+      return {
+        ...defaults,
+        ...parsed,
+        sampleOwner: parsed.sampleOwner || parsed.operator || ''
+      };
+    }
+  } catch (e) {}
+
+  return defaults;
+};
+
+  const updateWellData = (r, c, field, value) => {
+  const current = getWellData(r, c);
+  current[field] = value;
+
+  const ng = (activeTest.grid || []).map((row) => [...row]);
+
+  if (!ng[r]) ng[r] = [];
+
+  ng[r][c] = JSON.stringify(current);
+
+  updateActiveTest({ grid: ng });
+};
+
+const updateWellOwner = (r, c, value) => {
+  const current = getWellData(r, c);
+
+  current.sampleOwner = value;
+
+  // Keep the old operator field synchronized only for backward compatibility.
+  current.operator = value;
+
+  const ng = (activeTest.grid || []).map((row) => [...row]);
+
+  if (!ng[r]) ng[r] = [];
+
+  ng[r][c] = JSON.stringify(current);
+
+  updateActiveTest({ grid: ng });
+};
 
     const toggleWellSelection = (r, c) => { 
         const exists = selectedWells.find(w => w.r === r && w.c === c); 
@@ -469,10 +515,18 @@ export const BoxDetail = ({ activeTest, updateActiveTest, storages, expandedGrou
                                         <div className="bg-blue-100 text-blue-800 font-black rounded-md w-12 h-10 flex items-center justify-center shrink-0 border border-blue-200 shadow-sm text-sm">{BOX_ROW_LABELS[r]}{c+1}</div>
                                         <input list="box-cmpd-list" value={d.compound} onChange={e => updateWellData(r, c, 'compound', e.target.value)} placeholder="Compound Name" className="border border-slate-300 rounded-md px-3 py-2 text-sm w-44 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 font-bold text-slate-700"/>
                                         
-                                        <select value={d.operator || ''} onChange={e => updateWellData(r, c, 'operator', e.target.value)} className="border border-slate-300 rounded-md px-2 py-2 text-sm w-28 outline-none focus:border-blue-500 text-slate-600 font-medium bg-white">
-                                            <option value="">Operator...</option>
-                                            {operators.map(op => <option key={op} value={op}>{op}</option>)}
-                                        </select>
+                                        <select
+  value={d.sampleOwner || d.operator || ''}
+  onChange={(e) => updateWellOwner(r, c, e.target.value)}
+  className="border border-slate-300 rounded-md px-2 py-2 text-sm w-32 outline-none focus:border-blue-500 text-slate-600 font-medium bg-white"
+>
+  <option value="">Sample Owner...</option>
+  {operators.map((op) => (
+    <option key={op} value={op}>
+      {op}
+    </option>
+  ))}
+</select>
 
                                         <input type="text" value={d.solvent} onChange={e => updateWellData(r, c, 'solvent', e.target.value)} placeholder="Solvent" className="border border-slate-300 rounded-md px-3 py-2 text-sm w-24 outline-none focus:border-blue-500"/>
                                         
