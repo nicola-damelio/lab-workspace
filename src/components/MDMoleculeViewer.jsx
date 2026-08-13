@@ -184,7 +184,6 @@ const MDMoleculeViewer = ({
   const sidechainCompRef = useRef(null);
   const backboneCompRef = useRef(null);
 
-  const [file, setFile] = useState(null);
   const [loadRequest, setLoadRequest] = useState(null);
 
   const [status, setStatus] = useState('idle');
@@ -192,7 +191,7 @@ const MDMoleculeViewer = ({
   const [hoverInfo, setHoverInfo] = useState(null);
   
   const [showLabels, setShowLabels] = useState(false);
-  const [sidechainStyle, setSidechainStyle] = useState('licorice');
+  const [sidechainStyle, setSidechainStyle] = useState('none');
   const [backboneStyle, setBackboneStyle] = useState('cartoon');
   const [speed, setSpeed] = useState(10);
 
@@ -220,18 +219,18 @@ const MDMoleculeViewer = ({
     const targetText = structureFileData || structureText;
     const targetExt = structureFormat !== 'auto' ? structureFormat : (structureTextExt || 'pdb');
     
-    if (!file && targetText !== lastLoadedTextRef.current) {
+    if (targetText !== lastLoadedTextRef.current) {
       lastLoadedTextRef.current = targetText;
-      setLoadRequest({ file: null, url: null, text: targetText, ext: targetExt, ts: Date.now() });
+      setLoadRequest({ url: null, text: targetText, ext: targetExt, ts: Date.now() });
     }
-  }, [structureText, structureTextExt, structureFileData, structureFormat, file]);
+  }, [structureText, structureTextExt, structureFileData, structureFormat]);
 
   useEffect(() => {
     const targetSrc = structureSrc || src;
-    if (targetSrc && !file && !structureText && !structureFileData) {
-      setLoadRequest({ file: null, url: targetSrc, ts: Date.now() });
+    if (targetSrc && !structureText && !structureFileData) {
+      setLoadRequest({ url: targetSrc, ts: Date.now() });
     }
-  }, [src, structureSrc, file, structureText, structureFileData]);
+  }, [src, structureSrc, structureText, structureFileData]);
 
   useEffect(() => {
     if (structureText || structureFileData || loadRequest) return;
@@ -281,7 +280,7 @@ const MDMoleculeViewer = ({
 
   // Handle Loading structure AND Trajectory
   useEffect(() => {
-    if (!loadRequest || (!loadRequest.file && !loadRequest.url && !loadRequest.text)) return;
+    if (!loadRequest || (!loadRequest.url && !loadRequest.text)) return;
     if (!stageRef.current) return;
 
     const stage = stageRef.current;
@@ -312,9 +311,7 @@ const MDMoleculeViewer = ({
       try {
         let component;
         // 1) Load the structure
-        if (loadRequest.file) {
-          component = await stage.loadFile(loadRequest.file, { ext: loadRequest.file.name.split('.').pop() });
-        } else if (loadRequest.text) {
+        if (loadRequest.text) {
           if (loadRequest.text.startsWith('data:')) {
              component = await stage.loadFile(loadRequest.text, { ext: loadRequest.ext || 'pdb' });
           } else {
@@ -333,9 +330,7 @@ const MDMoleculeViewer = ({
         try { component.structure.autoSS(); } catch (e) {}
         component.autoView();
 
-        if (moleculeTypeRef.current === 'organic') {
-          component.addRepresentation('ball+stick', { colorScheme: 'element', multipleBond: true });
-        } else {
+        if (moleculeTypeRef.current !== 'organic') {
           try { component.addRepresentation('ball+stick', { sele: 'hetero and not water', aspectRatio: 1.1 }); } catch (e) {}
         }
 
@@ -427,7 +422,7 @@ const MDMoleculeViewer = ({
     }
   }, [showLabels, status]);
 
-  // Handle Side Chains
+  // Handle Molecule Style / Side Chains
   useEffect(() => {
     const component = componentRef.current;
     if (!component || status !== 'ready' || moleculeTypeRef.current === 'organic') return;
@@ -449,10 +444,10 @@ const MDMoleculeViewer = ({
     }
   }, [sidechainStyle, status]);
 
-  // Handle Backbone / Secondary Structure
+  // Handle Backbone / Main Organic Molecule Style
   useEffect(() => {
     const component = componentRef.current;
-    if (!component || status !== 'ready' || moleculeTypeRef.current === 'organic') return;
+    if (!component || status !== 'ready') return;
 
     if (backboneCompRef.current) {
       try { component.removeRepresentation(backboneCompRef.current); } catch (e) {}
@@ -461,10 +456,24 @@ const MDMoleculeViewer = ({
 
     if (backboneStyle !== 'none') {
       try {
-        backboneCompRef.current = component.addRepresentation(backboneStyle, {
-          color: 'residueindex',
-          quality: 'high'
-        });
+        if (moleculeTypeRef.current === 'organic') {
+          // Cartoon/Ribbon defaults to Ball & Stick securely for organic molecules
+          const effectiveStyle = ['cartoon', 'ribbon', 'backbone'].includes(backboneStyle) ? 'ball+stick' : backboneStyle;
+          backboneCompRef.current = component.addRepresentation(effectiveStyle, {
+            colorScheme: 'element', multipleBond: true
+          });
+        } else {
+          // If Ball & Stick or Licorice is chosen, render the explicit backbone atoms rather than just ribbon index
+          if (backboneStyle === 'ball+stick' || backboneStyle === 'licorice') {
+            backboneCompRef.current = component.addRepresentation(backboneStyle, {
+              sele: 'protein and (backbone or .CA)', color: 'element', multipleBond: true
+            });
+          } else {
+            backboneCompRef.current = component.addRepresentation(backboneStyle, {
+              color: 'residueindex', quality: 'high'
+            });
+          }
+        }
       } catch (e) {}
     }
   }, [backboneStyle, status]);
@@ -551,14 +560,6 @@ const MDMoleculeViewer = ({
 
   }, [selectedKeys, manualKeys, status]);
 
-  const handleFileChange = useCallback((e) => {
-    const f = e.target.files && e.target.files[0];
-    if (!f) return;
-    setFile(f);
-    setLoadRequest({ file: f, url: null, ts: Date.now() });
-    e.target.value = '';
-  }, []);
-
   const toggleTrajectoryPlay = useCallback(() => {
     if (!trajPlayerRef.current) return;
     if (isPlaying) {
@@ -579,47 +580,37 @@ const MDMoleculeViewer = ({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-end gap-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
-        <div className="flex flex-col gap-1">
-          <label className="text-[10px] font-bold text-slate-500 uppercase">Load local file Override</label>
-          <label className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm transition-colors inline-flex items-center gap-2">
-            📂 Local PDB/SDF
-            <input type="file" accept=".pdb,.cif,.bcif,.ent,.mol2,.sdf" onChange={handleFileChange} className="hidden" />
-          </label>
-          {file && <span className="text-[10px] text-slate-500 max-w-[150px] truncate">{file.name}</span>}
-        </div>
+      <div className="flex flex-wrap items-center gap-4 bg-slate-50 border border-slate-200 rounded-lg p-3">
+        
+        <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
+          <input type="checkbox" checked={showLabels} onChange={(e) => setShowLabels(e.target.checked)} className="w-4 h-4 accent-blue-600" /> Show atom names
+        </label>
 
-        <div className="flex flex-col gap-1 ml-4">
-          <label className="text-[10px] font-bold text-slate-500 uppercase">Labels</label>
-          <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer h-8">
-            <input type="checkbox" checked={showLabels} onChange={(e) => setShowLabels(e.target.checked)} className="w-4 h-4 accent-blue-600" /> Show atom names
-          </label>
+        <div className="flex items-center gap-2 ml-4">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">{moleculeType === 'organic' ? 'Molecule Style' : 'Backbone'}</label>
+          <select value={backboneStyle} onChange={(e) => setBackboneStyle(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 h-8">
+            {moleculeType !== 'organic' && <option value="cartoon">Cartoon (Ribbon)</option>}
+            {moleculeType !== 'organic' && <option value="ribbon">Ribbon (Thin)</option>}
+            {moleculeType !== 'organic' && <option value="backbone">Backbone Trace</option>}
+            <option value="ball+stick">Ball &amp; Stick</option>
+            <option value="licorice">Licorice</option>
+            <option value="none">Hidden</option>
+          </select>
         </div>
-
+        
         {moleculeType !== 'organic' && (
-          <>
-            <div className="flex flex-col gap-1 ml-4">
-              <label className="text-[10px] font-bold text-slate-500 uppercase">Backbone</label>
-              <select value={backboneStyle} onChange={(e) => setBackboneStyle(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 h-8">
-                <option value="cartoon">Cartoon (Ribbon)</option>
-                <option value="ribbon">Ribbon (Thin)</option>
-                <option value="backbone">Backbone Trace</option>
-                <option value="none">Hidden</option>
-              </select>
-            </div>
-            
-            <div className="flex flex-col gap-1 ml-2">
-              <label className="text-[10px] font-bold text-slate-500 uppercase">Side Chains</label>
-              <select value={sidechainStyle} onChange={(e) => setSidechainStyle(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 h-8">
-                <option value="none">Hidden</option>
-                <option value="line">Lines (Thin)</option>
-                <option value="licorice">Licorice (Thick)</option>
-                <option value="ball+stick">Ball &amp; Stick</option>
-                <option value="spacefill">Spacefill</option>
-              </select>
-            </div>
-          </>
+          <div className="flex items-center gap-2 ml-4">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">Side Chains</label>
+            <select value={sidechainStyle} onChange={(e) => setSidechainStyle(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 h-8">
+              <option value="none">Hidden</option>
+              <option value="line">Lines (Thin)</option>
+              <option value="licorice">Licorice (Thick)</option>
+              <option value="ball+stick">Ball &amp; Stick</option>
+              <option value="spacefill">Spacefill</option>
+            </select>
+          </div>
         )}
+
       </div>
 
       <div className="relative border border-slate-200 rounded-xl overflow-hidden bg-white" style={{ height }}>

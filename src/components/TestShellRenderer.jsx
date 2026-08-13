@@ -1880,7 +1880,7 @@ const [showGeneral, setShowGeneral] = useState(true);
                   </CollapsibleSection>
                 )}
 
-                {(DataAnalysisSection || FittingSection || FittingErrors || FittingGraphics) && (
+{(DataAnalysisSection || FittingSection || FittingErrors || FittingGraphics) && (
                   <CollapsibleSection title="Data Analysis" icon="📉" defaultOpen={false}>
                     <div className="flex flex-col gap-6">
                       {DataAnalysisSection && (
@@ -1890,9 +1890,7 @@ const [showGeneral, setShowGeneral] = useState(true);
                       )}
 
                       {FittingSection ? (
-                        <CollapsibleSection title="Fitting" icon="📐" defaultOpen={false}>
-                          <FittingSection ctx={ctx} />
-                        </CollapsibleSection>
+                        <FittingSection ctx={ctx} />
                       ) : (
                         (FittingErrors || FittingGraphics) && (
                           <CollapsibleSection title="Fitting" icon="📐" defaultOpen={false}>

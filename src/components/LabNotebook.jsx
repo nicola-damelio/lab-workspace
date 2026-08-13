@@ -531,6 +531,211 @@ const RemovablePanel = ({ title, visible, setVisible, children }) => {
 };
 
 /* ============================================================================
+NMR FITTING GRAPHS PREVIEW (for Lab Notebook)
+========================================================================== */
+const NMRDecayChartPreview = ({ table, colFits }) => {
+  const canvasRef = useRef(null);
+  const chartInstance = useRef(null);
+
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    if (chartInstance.current) chartInstance.current.destroy();
+
+    const ds = [];
+    for (let c = 0; c < table.nCols; c++) {
+      const color = PALETTE ? toHex(PALETTE[c % PALETTE.length]) : '#3b82f6';
+      const pts = [];
+      for (let r = 0; r < table.nRows; r++) {
+        const x = table.delays[r], y = parseFloat(table.grid[r]?.[c]);
+        if (isFinite(x) && isFinite(y)) pts.push({ x, y });
+      }
+      if (pts.length === 0) continue;
+
+      ds.push({ label: table.colResidues[c] || `Col ${c + 1}`, data: pts, showLine: false, pointRadius: 3, backgroundColor: color, borderColor: color, type: 'scatter' });
+      
+      const fit = colFits[c]?.fit;
+      if (fit && pts.length >= 2) {
+        const xmin = Math.min(...pts.map((p) => p.x)), xmax = Math.max(...pts.map((p) => p.x)), curve = [];
+        for (let i = 0; i <= 60; i++) {
+          const x = xmin + ((xmax - xmin) * i) / 60;
+          let yVal = fit.modelType === 'inversion-recovery' ? fit.A - fit.B * Math.exp(-fit.R * x) : fit.A * Math.exp(-fit.R * x);
+          curve.push({ x, y: yVal });
+        }
+        ds.push({ label: `${table.colResidues[c] || `Col ${c + 1}`} fit`, data: curve, showLine: true, pointRadius: 0, borderColor: color, backgroundColor: 'transparent', borderWidth: 2, type: 'line', tension: 0.25 });
+      }
+    }
+
+    const xLabel = table.relaxType === 'DOSY' ? `b-value / G² (${table.delayUnit})` : `Delay (${table.delayUnit})`;
+    
+    chartInstance.current = new Chart(canvasRef.current, {
+      type: 'scatter',
+      data: { datasets: ds },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: {
+          x: { type: 'linear', title: { display: true, text: xLabel, font: { size: 10 } }, ticks: { font: { size: 9 } } },
+          y: { title: { display: true, text: 'Intensity / Volume', font: { size: 10 } }, ticks: { font: { size: 9 } } },
+        },
+        plugins: { legend: { display: false } }
+      }
+    });
+    return () => { if (chartInstance.current) chartInstance.current.destroy(); };
+  }, [table, colFits]);
+
+  return <div style={{ height: '220px' }}><canvas ref={canvasRef}></canvas></div>;
+};
+
+const NMRParameterChartPreview = ({ table, colFits }) => {
+  const canvasRef = useRef(null);
+  const chartInstance = useRef(null);
+
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    if (chartInstance.current) chartInstance.current.destroy();
+
+    const labels = [];
+    const data = [];
+    const colors = [];
+    
+    colFits.forEach((cf, i) => {
+      if (cf.fit) {
+        labels.push(cf.residue || `Col ${i+1}`);
+        data.push(cf.fit.R_s);
+        colors.push(PALETTE ? toHex(PALETTE[i % PALETTE.length]) : '#3b82f6');
+      }
+    });
+
+    if (data.length === 0) return;
+
+    const yLabel = table.relaxType === 'DOSY' ? 'Diffusion Rate (D)' : `Rate (${table.relaxType === 'T1' ? 'R1' : 'R2'}) s⁻¹`;
+
+    chartInstance.current = new Chart(canvasRef.current, {
+      type: 'bar',
+      data: { labels, datasets: [{ label: yLabel, data, backgroundColor: colors }] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: {
+          y: { title: { display: true, text: yLabel, font: { size: 10 } }, ticks: { font: { size: 9 } } },
+          x: { ticks: { font: { size: 9 } } }
+        },
+        plugins: { legend: { display: false } }
+      }
+    });
+
+    return () => { if (chartInstance.current) chartInstance.current.destroy(); };
+  }, [table, colFits]);
+
+  return <div style={{ height: '220px' }}><canvas ref={canvasRef}></canvas></div>;
+};
+
+const NMRIndividualDecayChartPreview = ({ table, colIndex, colFit }) => {
+  const canvasRef = useRef(null);
+  const chartInstance = useRef(null);
+
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    if (chartInstance.current) chartInstance.current.destroy();
+
+    const color = PALETTE ? toHex(PALETTE[colIndex % PALETTE.length]) : '#3b82f6';
+    const pts = [];
+    for (let r = 0; r < table.nRows; r++) {
+      const x = table.delays[r], y = parseFloat(table.grid[r]?.[colIndex]);
+      if (isFinite(x) && isFinite(y)) pts.push({ x, y });
+    }
+    if (pts.length === 0) return;
+
+    const ds = [];
+    ds.push({ label: 'Data', data: pts, showLine: false, pointRadius: 3, backgroundColor: color, borderColor: color, type: 'scatter' });
+    
+    const fit = colFit?.fit;
+    if (fit && pts.length >= 2) {
+      const xmin = Math.min(...pts.map((p) => p.x)), xmax = Math.max(...pts.map((p) => p.x)), curve = [];
+      for (let i = 0; i <= 60; i++) {
+        const x = xmin + ((xmax - xmin) * i) / 60;
+        let yVal = fit.modelType === 'inversion-recovery' ? fit.A - fit.B * Math.exp(-fit.R * x) : fit.A * Math.exp(-fit.R * x);
+        curve.push({ x, y: yVal });
+      }
+      ds.push({ label: `Fit`, data: curve, showLine: true, pointRadius: 0, borderColor: color, backgroundColor: 'transparent', borderWidth: 2, type: 'line', tension: 0.25 });
+    }
+
+    const xLabel = table.relaxType === 'DOSY' ? `b-value / G² (${table.delayUnit})` : `Delay (${table.delayUnit})`;
+
+    chartInstance.current = new Chart(canvasRef.current, {
+      type: 'scatter',
+      data: { datasets: ds },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: {
+          x: { type: 'linear', title: { display: true, text: xLabel, font: { size: 9 } }, ticks: { font: { size: 8 } } },
+          y: { title: { display: true, text: 'Intensity', font: { size: 9 } }, ticks: { font: { size: 8 } } },
+        },
+        plugins: { legend: { display: false } },
+        interaction: { mode: 'nearest', intersect: true },
+      }
+    });
+
+    return () => { if (chartInstance.current) chartInstance.current.destroy(); };
+  }, [table, colIndex, colFit]);
+
+  return (
+    <div className="bg-white p-2 border border-slate-200 rounded-lg shadow-sm flex flex-col">
+      <h6 className="text-[10px] font-bold text-slate-600 uppercase text-center mb-1">{table.colResidues[colIndex] || `Col ${colIndex + 1}`}</h6>
+      <div style={{ height: '150px' }}><canvas ref={canvasRef}></canvas></div>
+    </div>
+  );
+};
+
+const NMRFittingGraphsPreview = ({ test }) => {
+  const [showIndividual, setShowIndividual] = useState(true);
+
+  if (!test.nmrTables || test.nmrTables.length === 0 || !test.savedFits) {
+    return <p className="text-[10px] text-slate-400 italic">No fitting data available.</p>;
+  }
+
+  return (
+    <div className="flex flex-col gap-6 mt-2">
+      {test.nmrTables.map((t, idx) => {
+        const colFits = test.savedFits[t.id] || [];
+        if (colFits.length === 0) return null;
+        
+        return (
+          <div key={t.id} className="flex flex-col gap-4 border border-slate-200 p-3 rounded-lg bg-slate-50">
+            <div className="flex justify-between items-center border-b border-slate-200 pb-1">
+              <h5 className="text-[11px] font-bold text-slate-600 uppercase flex-1">Table {idx + 1} Graphs — {t.atom}</h5>
+              <label className="flex items-center gap-1 text-[10px] font-bold text-slate-700 cursor-pointer bg-white px-2 py-1 rounded border border-slate-200 shadow-sm hover:bg-slate-50 transition-colors">
+                <input type="checkbox" checked={showIndividual} onChange={(e) => setShowIndividual(e.target.checked)} className="accent-blue-600" /> Show Individual Fits
+              </label>
+            </div>
+            
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              <div className="bg-white p-2 rounded border border-slate-200 shadow-sm">
+                <h6 className="text-[10px] font-bold text-slate-500 mb-2 text-center uppercase">Decay / Diffusion Curves</h6>
+                <NMRDecayChartPreview table={t} colFits={colFits} />
+              </div>
+              <div className="bg-white p-2 rounded border border-slate-200 shadow-sm">
+                <h6 className="text-[10px] font-bold text-slate-500 mb-2 text-center uppercase">Fitted Rates</h6>
+                <NMRParameterChartPreview table={t} colFits={colFits} />
+              </div>
+            </div>
+
+            {showIndividual && (
+              <div className="mt-2 pt-3 border-t border-slate-200">
+                <h6 className="text-[10px] font-bold text-slate-500 mb-3 uppercase text-center">Individual Residue Fits</h6>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+                  {colFits.map((cf, c) => (
+                    <NMRIndividualDecayChartPreview key={c} table={t} colIndex={c} colFit={cf} />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+/* ============================================================================
 NOTEBOOK TEST ITEM
 ========================================================================== */
 const NotebookTestItem = ({
@@ -552,6 +757,9 @@ const NotebookTestItem = ({
   const [showAnaLocal, setShowAnaLocal] = useState(showDataAnalysisGraphs);
   const [showSimImgLocal, setShowSimImgLocal] = useState(showSimImages);
   const [showNmrSpecLocal, setShowNmrSpecLocal] = useState(showNMRSpectra);
+  
+  // Toggle for raw data in the Data section, now default true
+  const [showRawNmrData, setShowRawNmrData] = useState(true);
 
   useEffect(() => setShowCondLocal(showConditions), [showConditions]);
   useEffect(() => setShowMolFormLocal(showMolecularFormula), [showMolecularFormula]);
@@ -710,21 +918,80 @@ const NotebookTestItem = ({
               </table>
             </div>
           )}
-          {isNMRFitting && localTest.fittings && Object.keys(localTest.fittings).length > 0 && (
-            <div className="overflow-x-auto text-xs border border-slate-200 rounded max-w-md mt-2">
-              <table className="w-full text-left">
-                <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
-                  <tr><th className="px-3 py-1.5">Parameter</th><th className="px-3 py-1.5">Value</th></tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {Object.entries(localTest.fittings).map(([param, val]) => (
-                    <tr key={param}>
-                      <td className="px-3 py-1.5 font-mono text-slate-700 font-semibold">{param}</td>
-                      <td className="px-3 py-1.5 font-mono text-blue-700">{typeof val === 'object' ? JSON.stringify(val) : String(val)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          
+          {isNMRFitting && localTest.nmrTables && localTest.nmrTables.length > 0 && (
+            <div className="flex flex-col gap-4 mt-2">
+              <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+                <span className="text-[10px] font-bold text-slate-500 uppercase">NMR Fitting Data</span>
+                <label className="flex items-center gap-1 text-[10px] font-bold text-slate-700 cursor-pointer bg-white px-2 py-1 rounded border border-slate-200 shadow-sm hover:bg-slate-50 transition-colors">
+                  <input type="checkbox" checked={showRawNmrData} onChange={(e) => setShowRawNmrData(e.target.checked)} className="accent-blue-600" /> Show Raw Data
+                </label>
+              </div>
+              <div className="flex flex-col gap-6">
+                {localTest.nmrTables.map((t, idx) => {
+                  const cols = localTest.savedFits?.[t.id] || [];
+                  return (
+                    <div key={t.id} className="flex flex-col gap-3">
+                      {showRawNmrData && (
+                        <div className="overflow-x-auto text-xs border border-slate-200 rounded max-w-3xl">
+                          <h5 className="text-[10px] font-bold text-slate-500 bg-slate-100 px-3 py-1 border-b border-slate-200">
+                            Table {idx + 1} Raw Data — {t.atom} ({t.relaxType})
+                          </h5>
+                          <table className="w-full text-center">
+                            <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
+                              <tr>
+                                <th className="px-3 py-1.5 border-r border-slate-200">{t.relaxType === 'DOSY' ? 'b-value' : 'Delay'} ({t.delayUnit})</th>
+                                {Array.from({ length: t.nCols }, (_, c) => <th key={c} className="px-3 py-1.5">{t.colResidues[c] || `Col ${c + 1}`}</th>)}
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {Array.from({ length: t.nRows }, (_, r) => (
+                                <tr key={r}>
+                                  <td className="px-3 py-1.5 font-mono text-slate-700 border-r border-slate-200">{t.delays[r] !== '' && t.delays[r] !== undefined ? t.delays[r] : '-'}</td>
+                                  {Array.from({ length: t.nCols }, (_, c) => <td key={c} className="px-3 py-1.5 font-mono text-slate-600">{t.grid[r]?.[c] || '-'}</td>)}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+
+                      {cols.length > 0 && (
+                        <div className="overflow-x-auto text-xs border border-slate-200 rounded max-w-3xl">
+                          <h5 className="text-[10px] font-bold text-slate-500 bg-slate-100 px-3 py-1 border-b border-slate-200">
+                            Table {idx + 1} Fitted Parameters
+                          </h5>
+                          <table className="w-full text-left">
+                            <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
+                              <tr>
+                                <th className="px-3 py-1.5">Residue</th>
+                                <th className="px-3 py-1.5">Rate (s⁻¹)</th>
+                                <th className="px-3 py-1.5">Time (s)</th>
+                                <th className="px-3 py-1.5">R²</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {cols.map((cf, i) => cf.fit && (
+                                <tr key={i}>
+                                  <td className="px-3 py-1.5 font-mono text-slate-700 font-semibold">{cf.residue}</td>
+                                  <td className="px-3 py-1.5 font-mono text-blue-700">
+                                    {cf.fit.R_s ? cf.fit.R_s.toPrecision(4) : '-'}
+                                    {cf.effectiveError ? ` ± ${cf.effectiveError.toPrecision(2)}` : ''}
+                                  </td>
+                                  <td className="px-3 py-1.5 font-mono text-blue-700">
+                                    {cf.fit.T_s === Infinity ? '∞' : cf.fit.T_s ? cf.fit.T_s.toPrecision(4) : '-'}
+                                  </td>
+                                  <td className="px-3 py-1.5 font-mono text-slate-600">{cf.fit.r2 ? cf.fit.r2.toFixed(3) : '-'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
         </RemovablePanel>
@@ -738,19 +1005,58 @@ const NotebookTestItem = ({
                 <Fitting ctx={mockCtx} />
               </div>
             )}
-            {isNMRFitting && <span className="text-[10px] text-slate-400 italic">No graph rendered in this preview mode.</span>}
+            {isNMRFitting && <NMRFittingGraphsPreview test={localTest} />}
           </RemovablePanel>
         )}
 
-        {!isNMR && localTest.simImages && localTest.simImages.length > 0 && (
-          <RemovablePanel title="Simulation Images" visible={showSimImgLocal} setVisible={setShowSimImgLocal}>
-            <div className="flex flex-col items-center gap-6 mt-2 w-full">
-              {localTest.simImages.map((img, idx) => (
-                <img key={idx} src={getDirectImageUrl(typeof img === 'string' ? img : img.url)} alt={`Sim ${idx}`} style={{ maxWidth: '600px', maxHeight: '450px', width: '100%', objectFit: 'contain' }} className="rounded-lg shadow-sm border border-slate-200 bg-white" />
-              ))}
-            </div>
-          </RemovablePanel>
-        )}
+     {!isNMR && (() => {
+       // Collect simulation images from ANY sim-related field on the test
+       const looksLikeImage = (it) => {
+         if (typeof it === 'string') {
+           return /^(data:image|https?:\/\/|blob:)/i.test(it) || it.startsWith('/') || it.length > 200;
+         }
+         if (it && typeof it === 'object') {
+           return Boolean(it.url || it.dataUrl || it.src || it.image || (typeof it.data === 'string' && it.data.startsWith('data:image')));
+         }
+         return false;
+       };
+       const imgSrc = (it) => (typeof it === 'string' ? it : (it.url || it.dataUrl || it.src || it.image || it.data));
+       const normalize = (v) => (Array.isArray(v) ? v : [v]).filter(looksLikeImage);
+
+       const collected = [];
+       Object.entries(localTest || {}).forEach(([key, val]) => {
+         if (!/sim/i.test(key) || /cfg|config|setting|type|html|css/i.test(key)) return;
+         if (looksLikeImage(val) || Array.isArray(val)) {
+           collected.push(...normalize(val));
+         } else if (val && typeof val === 'object') {
+           // one level deeper (e.g. activeTest.sim.images / activeTest.simulation.imgs)
+           Object.entries(val).forEach(([k2, v2]) => {
+             if (/img|image|snapshot|figure|picture|photo/i.test(k2) && (Array.isArray(v2) || looksLikeImage(v2))) {
+               collected.push(...normalize(v2));
+             }
+           });
+         }
+       });
+
+       const seen = new Set();
+       const simImgList = collected.filter((it) => {
+         const s = imgSrc(it);
+         if (!s || seen.has(s)) return false;
+         seen.add(s);
+         return true;
+       });
+
+       if (simImgList.length === 0) return null;
+       return (
+         <RemovablePanel title="Simulation Images" visible={showSimImgLocal} setVisible={setShowSimImgLocal}>
+           <div className="flex flex-col items-center gap-6 mt-2 w-full">
+             {simImgList.map((img, idx) => (
+               <img key={idx} src={getDirectImageUrl(imgSrc(img))} alt={`Sim ${idx}`} style={{ maxWidth: '600px', maxHeight: '450px', width: '100%', objectFit: 'contain' }} className="rounded-lg shadow-sm border border-slate-200 bg-white" />
+             ))}
+           </div>
+         </RemovablePanel>
+       );
+     })()}
 
         {(isNMR || isNMRFitting) && selectedSpectrumTypes.length > 0 && (
           <RemovablePanel title="NMR Spectra (Simulated)" visible={showNmrSpecLocal} setVisible={setShowNmrSpecLocal}>

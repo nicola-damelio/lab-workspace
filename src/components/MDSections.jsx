@@ -375,34 +375,6 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useMDDerived(activeTest, ctx);
 
-  const [setupParamReport, setSetupParamReport] = useState(null);
-
-  const handleSetupParamFile = (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      try {
-        const text = ev.target.result;
-        const parsedUpdates = parseSimulationParameters(text, file.name);
-        const count = Object.keys(parsedUpdates).length;
-
-        if (count > 0) {
-          updateActiveTest(parsedUpdates);
-          setSetupParamReport({ ok: true, count, name: file.name });
-        } else {
-          setSetupParamReport({ ok: false, count: 0, name: file.name });
-        }
-      } catch (err) {
-        setSetupParamReport({ ok: false, count: 0, name: file.name, error: true });
-      }
-    };
-    reader.onerror = () => setSetupParamReport({ ok: false, count: 0, name: file.name, error: true });
-    reader.readAsText(file);
-    e.target.value = ''; // reset input so the same file can be re-uploaded
-  };
-
   const structureMode = activeTest.structureMode || '2d';
   const atomLabelMode = activeTest.atomLabelMode || 'selected';
   const residueOffset = activeTest.residueOffset || 0;
@@ -479,7 +451,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
 
   const setAllForms = (letter) => updateActiveTest({ nucleicForms: d.seq.split('').map(() => letter).join(''), dnaForm: letter });
 
-const exportFormulaToNotebook = () => {
+  const exportFormulaToNotebook = () => {
     if (!d.structure) return;
     const html = `<div style="margin-top:10px;"><h5 style="color:#1e40af;font-size:12px;margin-bottom:6px;">🔬 Chemical Formula (${d.typeLabel}):</h5>` + elementsToSVG(d.structure, 300) + `</div>`;
     const currentComments = activeTest.comments || '';
@@ -523,7 +495,7 @@ const exportFormulaToNotebook = () => {
         ))}
       </div>
 
-<div className="flex flex-col md:flex-row gap-6 items-start">
+      <div className="flex flex-col md:flex-row gap-6 items-start">
         <div className="flex-1 w-full">
           {d.moleculeType === 'organic' ? (
             <div>
@@ -559,49 +531,6 @@ const exportFormulaToNotebook = () => {
             </div>
           )}
         </div>
-
-        <div className="w-full md:w-72 flex flex-col gap-4">
-          <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
-            <label className="block text-xs font-bold text-slate-500 uppercase mb-3">⚛️ Force Field</label>
-            <div className="flex flex-col gap-2">
-              <select value={d.ffKey} onChange={(e) => updateActiveTest({ forceField: e.target.value, forceFieldVersion: '' })}
-                className="w-full border border-slate-300 rounded-lg p-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold">
-                {Object.entries(FORCE_FIELDS).map(([k, v]) => <option key={k} value={k}>{v.name}</option>)}
-              </select>
-              <select value={d.ffVersion} onChange={(e) => updateActiveTest({ forceFieldVersion: e.target.value })}
-                className="w-full border border-slate-300 rounded-lg p-2 text-xs bg-white outline-none focus:border-blue-500">
-                {getFFVersions(d.ffKey).map((v) => <option key={v} value={v}>{v}</option>)}
-              </select>
-              <p className="text-[10px] text-slate-400">{d.ffInfo.description}</p>
-            </div>
-          </div>
-
-          <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
-            <label className="block text-xs font-bold text-slate-500 uppercase mb-3">💧 Water Model</label>
-            <select value={d.waterModel} onChange={(e) => updateActiveTest({ waterModel: e.target.value })}
-              className="w-full border border-slate-300 rounded-lg p-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold">
-              {Object.entries(WATER_MODELS).map(([k, v]) => <option key={k} value={k}>{v.name} ({v.sites}-site)</option>)}
-            </select>
-          </div>
-
-          <div className="bg-emerald-50 p-4 rounded-lg border border-emerald-200">
-            <label className="block text-xs font-bold text-emerald-700 uppercase mb-2">📄 Auto-fill from file</label>
-            <label className="bg-white hover:bg-emerald-100 text-emerald-700 border border-emerald-300 font-bold py-1.5 px-3 rounded-lg text-xs cursor-pointer shadow-sm transition-colors inline-flex items-center gap-2 w-full justify-center">
-              Upload GROMACS / CHARMM file
-              <input type="file" accept=".mdp,.top,.itp,.inp,.str,.conf,.namd,.prm,.par,.psf" onChange={handleSetupParamFile} className="hidden" />
-            </label>
-            <p className="text-[9px] text-emerald-700/70 mt-1.5 leading-tight">Reads force field, water model &amp; run parameters (temperature, pressure, timestep…) from a .mdp / .top (GROMACS) or .inp / .str / .psf (CHARMM/NAMD) file.</p>
-            {setupParamReport && (
-              <p className={`text-[10px] font-bold mt-1.5 ${setupParamReport.ok ? 'text-emerald-700' : 'text-amber-600'}`}>
-                {setupParamReport.error
-                  ? `⚠️ Could not read ${setupParamReport.name}`
-                  : setupParamReport.ok
-                    ? `✓ Parsed ${setupParamReport.count} field${setupParamReport.count === 1 ? '' : 's'} from ${setupParamReport.name}`
-                    : `⚠️ No recognizable parameters found in ${setupParamReport.name}`}
-              </p>
-            )}
-          </div>
-        </div>
       </div>
 
       {d.moleculeType === 'protein' && d.parsedSeq.length > 0 && (
@@ -630,7 +559,7 @@ const exportFormulaToNotebook = () => {
         </div>
       )}
 
-{(d.moleculeType === 'dna' || d.moleculeType === 'rna') && d.parsedSeq.length > 0 && (
+      {(d.moleculeType === 'dna' || d.moleculeType === 'rna') && d.parsedSeq.length > 0 && (
         <div>
           <div className="flex flex-wrap gap-2 mb-3 items-center">
             <span className="text-xs font-bold text-slate-500 uppercase mr-1">🖌️ Brush:</span>
@@ -681,25 +610,11 @@ const exportFormulaToNotebook = () => {
 
           {structureMode === '3d' && (
             <div className="mb-3 flex flex-col gap-3 bg-slate-50 border border-slate-200 rounded-xl p-3">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                 <div className="flex flex-col gap-1">
                   <label className="text-[10px] font-bold text-slate-500 uppercase">Topology (PDB ID / Drive Link)</label>
                   <input type="text" value={activeTest.structureSrc || ''} onChange={(e) => updateActiveTest({ structureSrc: e.target.value })}
                     placeholder="e.g. 1UBQ or Google Drive link" className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500" />
-                </div>
-
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase">Topology format</label>
-                  <select value={activeTest.structureFormat || 'auto'} onChange={(e) => updateActiveTest({ structureFormat: e.target.value })}
-                    className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
-                    <option value="auto">Auto-detect</option>
-                    <option value="pdb">PDB</option>
-                    <option value="gro">GRO</option>
-                    <option value="cif">CIF</option>
-                    <option value="mmcif">mmCIF</option>
-                    <option value="mol2">MOL2</option>
-                    <option value="sdf">SDF</option>
-                  </select>
                 </div>
 
                 <div className="flex flex-col gap-1">
@@ -721,17 +636,26 @@ const exportFormulaToNotebook = () => {
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                 <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase">Topology format</label>
+                  <select value={activeTest.structureFormat || 'auto'} onChange={(e) => updateActiveTest({ structureFormat: e.target.value })}
+                    className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
+                    <option value="auto">Auto-detect</option>
+                    <option value="pdb">PDB</option>
+                    <option value="gro">GRO</option>
+                    <option value="cif">CIF</option>
+                    <option value="mmcif">mmCIF</option>
+                    <option value="mol2">MOL2</option>
+                    <option value="sdf">SDF</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1">
                   <label className="text-[10px] font-bold text-slate-500 uppercase">Atom labels</label>
                   <select value={atomLabelMode} onChange={(e) => updateActiveTest({ atomLabelMode: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
                     <option value="none">No labels</option>
                     <option value="selected">Selected labels</option>
                     <option value="all">All labels</option>
                   </select>
-                </div>
-
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase">Residue offset</label>
-                  <input type="number" value={residueOffset} onChange={(e) => updateActiveTest({ residueOffset: Number(e.target.value) || 0 })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500" />
                 </div>
 
                 <div className="flex flex-col gap-1">
@@ -788,9 +712,6 @@ const exportFormulaToNotebook = () => {
                       </a>
                     )}
                   </div>
-                  <span className="text-[9px] text-slate-400 leading-tight mt-1">
-                    * If the 3D viewer fails to load a large trajectory from a Google Drive link, download it manually using the link above, then upload it using the <b>"Trajectory file from PC"</b> button on the left.
-                  </span>
                 </div>
               </div>
             </div>
@@ -798,7 +719,6 @@ const exportFormulaToNotebook = () => {
 
           <p className="text-xs text-slate-400 mb-2">💡 Click an atom in the {structureMode === '2d' ? 'formula' : '3D viewer'} to highlight its cell in the atom table.</p>
 
- {/* ---- 3D viewer (with trajectory) ---- */}
           <div style={{ display: structureMode === '3d' ? 'block' : 'none' }} aria-hidden={structureMode !== '3d'}>
             {hasOpened3D && (
               <MDMoleculeViewer
@@ -830,7 +750,6 @@ const exportFormulaToNotebook = () => {
             )}
           </div>
 
-          {/* ---- 2D formula ---- */}
           <div style={{ display: structureMode === '2d' ? 'block' : 'none' }} aria-hidden={structureMode !== '2d'}>
             {d.moleculeType === 'organic' && activeTest.smiles ? (
                <OrganicViewer smiles={activeTest.smiles} selectedKeys={selectedKeys} onAtomClick={handleAtomClick} />
@@ -1346,33 +1265,6 @@ export const MDAnalysisSection = ({ ctx }) => {
 export const MDSimulationParamsSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useMDDerived(activeTest, ctx);
-  const [paramFileReport, setParamFileReport] = useState(null);
-
-  const handleParamFile = (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      try {
-        const text = ev.target.result;
-        const parsedUpdates = parseSimulationParameters(text, file.name);
-        const count = Object.keys(parsedUpdates).length;
-
-        if (count > 0) {
-          updateActiveTest(parsedUpdates);
-          setParamFileReport({ ok: true, count, name: file.name });
-        } else {
-          setParamFileReport({ ok: false, count: 0, name: file.name });
-        }
-      } catch (err) {
-        setParamFileReport({ ok: false, count: 0, name: file.name, error: true });
-      }
-    };
-    reader.onerror = () => setParamFileReport({ ok: false, count: 0, name: file.name, error: true });
-    reader.readAsText(file);
-    e.target.value = ''; // reset input so you can re-upload if needed
-  };
 
   const Sel = ({ label, value, onChange, options }) => (
     <div className="flex flex-col gap-1">
@@ -1385,7 +1277,7 @@ export const MDSimulationParamsSection = ({ ctx }) => {
 
   const Num = ({ label, value, onChange, step = 1, unit }) => (
     <div className="flex flex-col gap-1">
-      <label className="text-[10px] font-bold text-slate-500 uppercase">{label}{unit ? `(${unit})` : ''}</label>
+      <label className="text-[10px] font-bold text-slate-500 uppercase">{label}{unit ? ` (${unit})` : ''}</label>
       <input type="number" step={step} value={value ?? ''} onChange={(e) => onChange(e.target.value)}
         className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-500" />
     </div>
@@ -1406,26 +1298,24 @@ export const MDSimulationParamsSection = ({ ctx }) => {
             );
           })}
         </div>
-
-        {/* --- Upload Button --- */}
-        <div className="flex flex-col items-start gap-1">
-          <label className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1.5 px-3 rounded-lg text-xs cursor-pointer shadow-sm transition-colors flex items-center gap-2">
-            📄 Auto-fill from GROMACS / CHARMM file
-            <input type="file" accept=".mdp,.top,.itp,.inp,.str,.conf,.namd,.prm,.par,.psf" onChange={handleParamFile} className="hidden" />
-          </label>
-          {paramFileReport && (
-            <span className={`text-[10px] font-bold ${paramFileReport.ok ? 'text-emerald-700' : 'text-amber-600'}`}>
-              {paramFileReport.error
-                ? `⚠️ Could not read ${paramFileReport.name}`
-                : paramFileReport.ok
-                  ? `✓ Parsed ${paramFileReport.count} field${paramFileReport.count === 1 ? '' : 's'} from ${paramFileReport.name}`
-                  : `⚠️ No recognizable parameters found in ${paramFileReport.name}`}
-            </span>
-          )}
-        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+        
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">Force Field</label>
+          <div className="flex gap-1">
+            <select value={d.ffKey} onChange={(e) => updateActiveTest({ forceField: e.target.value, forceFieldVersion: '' })} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
+              {Object.entries(FORCE_FIELDS).map(([k, v]) => <option key={k} value={k}>{v.name}</option>)}
+            </select>
+            <select value={d.ffVersion} onChange={(e) => updateActiveTest({ forceFieldVersion: e.target.value })} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
+              {getFFVersions(d.ffKey).map((v) => <option key={v} value={v}>{v}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <Sel label="Water Model" value={d.waterModel} onChange={(v) => updateActiveTest({ waterModel: v })} options={Object.entries(WATER_MODELS).map(([k, v]) => [k, `${v.name} (${v.sites}-site)`])} />
+        
         <Sel label="Ensemble" value={d.ensemble} onChange={(v) => updateActiveTest({ ensemble: v })} options={MD_ENSEMBLES.map((e) => [e.key, e.label])} />
         <Sel label="Integrator" value={d.integrator} onChange={(v) => updateActiveTest({ integrator: v })} options={MD_INTEGRATORS.map((i) => [i.key, i.label])} />
         <Num label="Time step" value={d.timestep} onChange={(v) => updateActiveTest({ timestep: v })} step={0.5} unit="fs" />

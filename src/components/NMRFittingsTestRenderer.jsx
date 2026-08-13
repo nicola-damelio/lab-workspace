@@ -6,7 +6,509 @@ import { NMR_FITTING_TAB_CONFIG } from './tabConfigs';
 import { PALETTE, toHex, errBarPlugin } from '../data/constants';
 import { NMRInstrumentalSetup } from './NMRInstrumentalSetup';
 import { SharedGraphConfig } from './SharedAnalysisTools';
+const DIPOLAR_SIM_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>dipolar_CSA_S2 — rebuilt UI</title>
+<style>
+ :root{--bg:#ffffff;--panel:#f8fafc;--line:#cbd5e1;--ink:#0f172a;--muted:#475569;}
+ *{box-sizing:border-box}
+ body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Segoe UI",Roboto,Arial,sans-serif}
+ header{background:linear-gradient(90deg,#1e3a8a,#0e7490);padding:14px 22px;color:#fff}
+ header b{font-size:20px}
+ header small{display:block;color:#c7e6f7;font-size:14px}
+ .layout{display:flex;gap:14px;padding:14px;align-items:flex-start;flex-wrap:wrap}
+ .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+ aside.card{flex:0 0 352px;width:352px}
+ main.card{flex:1 1 680px;min-width:620px}
+ h2{font-size:15px;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);margin:0 0 10px}
+ h3{font-size:14px;text-transform:uppercase;letter-spacing:1px;color:#0369a1;margin:18px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}
+ .ctl{display:flex;flex-direction:column;gap:4px;font-size:15px;margin:10px 0}
+ .ctl .row{display:flex;justify-content:space-between;gap:6px;align-items:baseline}
+ .ctl b{color:#0284c7;font-size:16px;font-variant-numeric:tabular-nums;text-align:right}
+ .hint{color:#64748b;font-size:12.5px;font-weight:400}
+ input[type=range]{width:100%;accent-color:#0284c7;height:22px}
+ input[type=text]{background:#fff;color:var(--ink);border:1px solid #94a3b8;border-radius:6px;padding:5px 8px;font-size:14px;width:96px}
+ select{background:#fff;color:var(--ink);border:1px solid #94a3b8;border-radius:6px;padding:6px 8px;font-size:14px;width:100%}
+ label.inline{font-size:14px;display:flex;gap:6px;align-items:center}
+ .modeselect{display:flex;flex-direction:column;gap:8px;margin-bottom:8px}
+ .modeselect button{width:100%;text-align:left;font-size:15px}
+ button{background:#f1f5f9;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 14px;cursor:pointer;font-size:15px}
+ button:hover{background:#e2e8f0}
+ button.active{background:#0284c7;border-color:#0284c7;color:#fff}
+ button.ghost{background:transparent}
+ .hydout{font-size:14px;background:#eef2f7;border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-top:10px}
+ .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center}
+ .badge{margin-left:auto;font-size:14px;background:#eef2f7;border:1px solid var(--line);border-radius:999px;padding:5px 14px;color:#0369a1;font-weight:700}
+ canvas{width:100%;height:auto;background:#fff;border:1px solid var(--line);border-radius:10px}
+ .checks{display:flex;gap:18px;margin:12px 2px;flex-wrap:wrap;font-size:16px}
+ .checks label{display:flex;gap:7px;align-items:center;cursor:pointer}
+ .checks input{width:18px;height:18px;accent-color:#0284c7}
+ .dot{width:12px;height:12px;border-radius:50%;display:inline-block}
+ .readout{display:flex;gap:9px;flex-wrap:wrap;margin-top:10px}
+ .stat{background:#eef2f7;border:1px solid var(--line);border-radius:8px;padding:8px 11px;min-width:100px}
+ .stat .k{font-size:13px;color:var(--muted)}
+ .stat .v{font-size:18px;font-variant-numeric:tabular-nums}
+ .eqbar{margin:0 14px 14px}
+ .eqgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px}
+ .eq{background:#eef2f7;border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:15px}
+ .eq .tag{color:var(--muted);font-size:12px;display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px}
+ .eq .note{color:var(--muted);font-size:13px;margin-top:5px}
+ sub,sup{font-size:.7em}
+ .presets{display:flex;gap:6px;margin-top:6px}
+</style>
+</head>
+<body>
+<header>
+ <b>Dipolar + CSA relaxation, model-free S&sup2; &mdash; X (&sup1;&sup3;C/&sup1;&sup5;N) and &sup1;H modes</b>
+ <small>Rebuilt from dipolar_CSA_S2.xls &middot; rates on a log scale so the R&#8321; maximum is visible &middot; large fonts</small>
+</header>
 
+<div class="layout">
+<aside class="card">
+ <h2>Parameters</h2>
+ <div class="modeselect">
+   <button id="mX" class="active"><b>Observed: X nucleus</b> &mdash; relaxed by &sup1;H (shows R&#8321; maximum)</button>
+   <button id="mH"><b>Observed: &sup1;H</b> &mdash; relaxed by &sup1;H (homonuclear)</button>
+ </div>
+
+ <h3>Spin system &amp; field</h3>
+ <div class="ctl" id="rowNuc"><div class="row"><span>X nucleus &gamma;<sub>X</sub></span></div>
+   <select id="selNuc">
+     <option value="C13" selected>&sup1;&sup3;C (+6.728&times;10&#8311; rad/s/T)</option>
+     <option value="N15">&sup1;&sup5;N (&minus;2.713&times;10&#8312; rad/s/T)</option>
+     <option value="custom">custom &gamma;</option>
+   </select>
+   <div class="row" id="gWrap" style="display:none;margin-top:6px"><span>custom &gamma;<sub>X</sub></span><input type="text" id="sGx" value="6.73e7"></div>
+ </div>
+ <div class="ctl" id="rowRXH"><div class="row"><span>r(X&ndash;H) <span class="hint">0.9 &ndash; 2.5 &Aring;, sheet 1.10</span></span><b id="vRXH"></b></div>
+   <input type="range" id="sRXH" min="0.9" max="2.5" step="0.005" value="1.10"></div>
+ <div class="ctl" id="rowHH" style="display:none"><div class="row"><span>r(H&ndash;H) <span class="hint">1.0 &ndash; 4.0 &Aring;</span></span><b id="vRHH"></b></div>
+   <input type="range" id="sRHH" min="1.0" max="4.0" step="0.01" value="1.75"></div>
+ <div class="ctl" id="rowDWHH" style="display:none"><div class="row"><span>&Delta;&omega;(&sup1;H&ndash;&sup1;H) shift diff. <span class="hint">0 &ndash; 10 ppm</span></span><b id="vDWppm"></b></div>
+   <input type="range" id="sDWppm" min="0" max="10" step="0.1" value="1.0"></div>
+ <div class="ctl"><div class="row"><span>B&#8320; <span class="hint">0.5 &ndash; 28.2 T</span></span><b id="vB0"></b></div>
+   <input type="range" id="sB0" min="0.5" max="28.2" step="0.1" value="14.1"></div>
+ <div class="ctl"><div class="row"><span>CSA &Delta;&sigma; <span class="hint">&minus;300 &ndash; 300 ppm, sheet 0</span></span><b id="vCSA"></b></div>
+   <input type="range" id="sCSA" min="-300" max="300" step="1" value="0"></div>
+
+ <h3>Model-free dynamics</h3>
+ <div class="ctl"><div class="row"><span>Order parameter S&sup2; <span class="hint">0.01 &ndash; 1, sheet 0.5</span></span><b id="vS2"></b></div>
+   <input type="range" id="sS2" min="0.01" max="1" step="0.01" value="0.5"></div>
+ <div class="ctl"><div class="row"><span>Internal time &tau;<sub>e</sub> <span class="hint">0 &ndash; 2000 ps</span></span><b id="vTauE"></b></div>
+   <input type="range" id="sTauE" min="0" max="2000" step="5" value="50"></div>
+ <div class="ctl"><div class="row"><span>Overall &tau;<sub>m</sub> <span class="hint">0.01 ns &ndash; 10 &micro;s, sheet 0.247 ns</span></span><b id="vTauM"></b></div>
+   <input type="range" id="sTauM" min="-2" max="4" step="0.01" value="-0.607">
+   <div class="presets">
+     <button class="ghost" id="pT1">0.25 ns</button><button class="ghost" id="pT2">0.85 ns</button><button class="ghost" id="pT3">5 ns</button><button class="ghost" id="bReset">Reset</button>
+   </div></div>
+
+ <h3>Chemical exchange</h3>
+ <div class="ctl"><div class="row"><span>Minor population p<sub>B</sub> <span class="hint">0 &ndash; 0.5</span></span><b id="vPB"></b></div>
+   <input type="range" id="sPB" min="0" max="0.5" step="0.005" value="0.5"></div>
+ <div class="ctl"><div class="row"><span>Exchange &Delta;&omega; <span class="hint">0 &ndash; 20 ppm</span></span><b id="vDW"></b></div>
+   <input type="range" id="sDW" min="0" max="20" step="0.1" value="0"></div>
+ <div class="ctl"><div class="row"><span>&tau;<sub>ex</sub> <span class="hint">0 &ndash; 100 &micro;s, sheet 1 &micro;s</span></span><b id="vTex"></b></div>
+   <input type="range" id="sTex" min="0" max="100" step="0.5" value="1"></div>
+ <div class="ctl"><div class="row"><span>Extra R<sub>ex</sub> <span class="hint">0 &ndash; 50 s&#8315;&sup1;</span></span><b id="vRex"></b></div>
+   <input type="range" id="sRex" min="0" max="50" step="0.5" value="0"></div>
+
+ <h3>Hydrodynamics (D &rarr; MW, &tau;<sub>D</sub>)</h3>
+ <div class="ctl"><div class="row"><span>D<sub>meas</sub> <span class="hint">10&#8315;&sup1;&sup2; &ndash; 10&#8315;&#8312;&#8330;&#8330; m&sup2;/s</span></span><b id="vD"></b></div>
+   <input type="range" id="hD" min="-12" max="-8.5" step="0.005" value="-9.886"></div>
+ <div class="ctl"><div class="row"><span>T <span class="hint">270 &ndash; 320 K</span></span><b id="vT"></b></div>
+   <input type="range" id="hT" min="270" max="320" step="0.2" value="278.8"></div>
+ <div class="ctl"><div class="row"><span>&eta; <span class="hint">0.3 &ndash; 5 &times;10&#8315;&sup3; Pa&middot;s</span></span><b id="vEta"></b></div>
+   <input type="range" id="hEta" min="0.3" max="5" step="0.01" value="1.53">
+   <label class="inline"><input type="checkbox" id="hAuto"> auto &eta;(T)</label></div>
+ <div class="ctl"><div class="row"><span>Hydration n <span class="hint">0 &ndash; 1, sheet 0.4</span></span><b id="vN"></b></div>
+   <input type="range" id="hN" min="0" max="1" step="0.05" value="0.4"></div>
+ <div class="ctl"><div class="row"><span>&#772;v protein <span class="hint">0.5 &ndash; 1 cm&sup3;/g</span></span><b id="vSv"></b></div>
+   <input type="range" id="hSv" min="0.5" max="1" step="0.01" value="0.73"></div>
+ <div class="ctl"><div class="row"><span>&#772;v<sub>w</sub> water <span class="hint">0.8 &ndash; 1.2 cm&sup3;/g</span></span><b id="vSvW"></b></div>
+   <input type="range" id="hSvW" min="0.8" max="1.2" step="0.01" value="1.0"></div>
+ <div class="ctl"><div class="row"><span>Friction factor F <span class="hint">1 &ndash; 2</span></span><b id="vF"></b></div>
+   <input type="range" id="hF" min="1" max="2" step="0.01" value="1"></div>
+ <div class="hydout" id="hydroOut"></div>
+ <div style="margin-top:8px"><button class="ghost" id="hUse">use &tau;<sub>D</sub> as &tau;<sub>m</sub></button></div>
+</aside>
+
+<main class="card">
+ <div class="toolbar">
+   <button id="bRates" class="active">R&#8321;, R&#8322;, NOE vs &tau;<sub>c</sub></button>
+   <button id="bT1">T&#8321; = 1/R&#8321;</button>
+   <button id="bComp">dip vs CSA</button>
+   <button id="bRatio">R&#8321;/R&#8322;</button>
+   <button id="bS2s">S&sup2; sweep</button>
+   <button id="bJ">J(&omega;)</button>
+   <button id="bField">Field</button>
+   <button id="bMW">MW vs D</button>
+   <span class="badge" id="modeBadge">observed: X</span>
+ </div>
+ <canvas id="chart" width="1000" height="560"></canvas>
+ <div class="checks">
+   <label><span class="dot" style="background:#0284c7"></span><input type="checkbox" id="cR1" checked>R&#8321;</label>
+   <label><span class="dot" style="background:#db2777"></span><input type="checkbox" id="cR2" checked>R&#8322;</label>
+   <label><span class="dot" style="background:#16a34a"></span><input type="checkbox" id="cNOE" checked>NOE</label>
+ </div>
+ <div class="readout" id="readout"></div>
+</main>
+</div>
+
+<section class="card eqbar">
+ <h2>Equations</h2>
+ <div class="eqgrid">
+   <div class="eq"><span class="tag">Model-free spectral density</span>
+     J(&omega;) = (2/5)&middot;[ S&sup2;&middot;&tau;<sub>m</sub>/(1+(&omega;&tau;<sub>m</sub>)&sup2;) + (1&minus;S&sup2;)&middot;&tau;/(1+(&omega;&tau;)&sup2;) ],
+     &tau;<sup>&minus;1</sup> = &tau;<sub>m</sub><sup>&minus;1</sup> + &tau;<sub>e</sub><sup>&minus;1</sup></div>
+   <div class="eq"><span class="tag">Couplings</span>
+     d = (&mu;&#8320;/4&pi;)&middot;&gamma;<sub>o</sub>&gamma;<sub>p</sub>&#295;/r&sup3;, &nbsp; c = &omega;<sub>o</sub>&middot;&Delta;&sigma;/&radic;3
+     <span class="note">o = observed, p = relaxing partner (&sup1;H)</span></div>
+   <div class="eq"><span class="tag">Rates</span>
+     R&#8321; = (d&sup2;/4)[J(&omega;<sub>p</sub>&minus;&omega;<sub>o</sub>) + 3J(&omega;<sub>o</sub>) + 6J(&omega;<sub>p</sub>+&omega;<sub>o</sub>)] + c&sup2;J(&omega;<sub>o</sub>)<br>
+     R&#8322; = (d&sup2;/8)[4J(0) + J(&omega;<sub>p</sub>&minus;&omega;<sub>o</sub>) + 3J(&omega;<sub>o</sub>) + 6J(&omega;<sub>p</sub>) + 6J(&omega;<sub>p</sub>+&omega;<sub>o</sub>)] + (c&sup2;/6)[4J(0) + 3J(&omega;<sub>o</sub>)] + R<sub>ex</sub></div>
+   <div class="eq"><span class="tag">NOE (ratio form)</span>
+     NOE = 1 + (&gamma;<sub>p</sub>/&gamma;<sub>o</sub>)&middot;(d&sup2;/4)[6J(&omega;<sub>p</sub>+&omega;<sub>o</sub>) &minus; J(&omega;<sub>p</sub>&minus;&omega;<sub>o</sub>)]/R&#8321;</div>
+   <div class="eq"><span class="tag">Shape of the R&#8321;(&tau;<sub>c</sub>) curve</span>
+     Heteronuclear: R&#8321; peaks near <b>&tau;<sub>c</sub> &asymp; 1/&omega;<sub>X</sub></b> (&asymp;1 ns for &sup1;&sup3;C at 600 MHz; &asymp;2.6 ns for &sup1;&sup5;N), then falls &prop; 1/&tau;<sub>c</sub>.
+     With S&sup2; &lt; 1, &tau;<sub>e</sub> leaves a plateau at long &tau;<sub>c</sub>; set S&sup2; = 1 to see R&#8321; &rarr; 0.
+     <span class="note">Homonuclear &sup1;H&ndash;&sup1;H: the zero-quantum J(0) term makes R&#8321; keep rising with &tau;<sub>c</sub> (no maximum) &mdash; the classic BPP minimum applies to heteronuclear relaxation or exactly equivalent spins.</span></div>
+   <div class="eq"><span class="tag">Exchange &amp; hydrodynamics</span>
+     R<sub>ex</sub> = p<sub>A</sub>p<sub>B</sub>&Delta;&omega;&sup2;&tau;<sub>ex</sub>; &nbsp; r<sub>h</sub> = kT/(6&pi;&eta;D&middot;F); &nbsp; MW = (4&pi;/3)r<sub>h</sub>&sup3;N<sub>A</sub>/(&#772;v + n&#772;v<sub>w</sub>); &nbsp; &tau;<sub>D</sub> = 4&pi;&eta;r<sub>h</sub>&sup3;/(3kT)</div>
+ </div>
+</section>
+
+<script>
+"use strict";
+const GAMMA_H=2.6752218744e8, HBAR=1.054571817e-34, MU04PI=1e-7, KB=1.380649e-23, NA=6.02214076e23;
+let GAMMA_X=6.7283e7, obsMode='X', mode='rates';
+const $=id=>document.getElementById(id);
+const chk=id=>$(id).checked;
+
+function Jof(w,tm,S2,te){
+  const tau=te>0?tm*te/(tm+te):0;
+  return 0.4*(S2*tm/(1+(w*tm)*(w*tm))+(te>0?(1-S2)*tau/(1+(w*tau)*(w*tau)):0));
+}
+function etaOfT(T){return 2.414e-5*Math.pow(10,247.8/(T-140));}
+function state(){
+  const T=+$('hT').value;
+  return {B0:+$('sB0').value,dppm:+$('sCSA').value,
+    rXH:+$('sRXH').value*1e-10,rHH:+$('sRHH').value*1e-10,dOmppm:+$('sDWppm').value,
+    S2:+$('sS2').value,te:+$('sTauE').value*1e-12,tm:Math.pow(10,+$('sTauM').value)*1e-9,
+    pB:+$('sPB').value,dw:+$('sDW').value,tex:+$('sTex').value*1e-6,Rex0:+$('sRex').value,
+    D:Math.pow(10,+$('hD').value),T,eta:$('hAuto').checked?etaOfT(T):+$('hEta').value*1e-3,
+    n:+$('hN').value,sv:+$('hSv').value*1e-6,svw:+$('hSvW').value*1e-6,F:+$('hF').value};
+}
+function getSpins(s){
+  return obsMode==='X' ? {go:GAMMA_X,gp:GAMMA_H,r:s.rXH}
+                       : {go:GAMMA_H,gp:GAMMA_H,r:s.rHH};
+}
+function totals(s,tm,S2){
+  const sp=getSpins(s);
+  const wo=Math.abs(sp.go)*s.B0, wp=Math.abs(sp.gp)*s.B0;
+  const d=MU04PI*Math.abs(sp.go)*Math.abs(sp.gp)*HBAR/Math.pow(sp.r,3);
+  const c=wo*s.dppm*1e-6/Math.sqrt(3);
+  const d2=d*d,c2=c*c,J=w=>Jof(w,tm,S2,s.te);
+  const wd=obsMode==='X'?Math.abs(wp-wo):s.dOmppm*1e-6*GAMMA_H*s.B0;
+  const R1d=(d2/4)*(J(wd)+3*J(wo)+6*J(wp+wo));
+  const R2d=(d2/8)*(4*J(0)+J(wd)+3*J(wo)+6*J(wp)+6*J(wp+wo));
+  const R1c=c2*J(wo), R2c=(c2/6)*(4*J(0)+3*J(wo));
+  const pA=1-s.pB, dwx=s.dw*1e-6*Math.abs(sp.go)*s.B0;
+  const Rex=s.Rex0+pA*s.pB*dwx*dwx*s.tex;
+  const R1=R1d+R1c, R2=R2d+R2c+Rex;
+  const NOE=1+(sp.gp/sp.go)*((d2/4)*(6*J(wp+wo)-J(wd)))/Math.max(R1,1e-30);
+  return {R1d,R2d,R1c,R2c,R1,R2,Rex,NOE};
+}
+function hydro(s,D){
+  const rh=KB*s.T/(6*Math.PI*s.eta*D*s.F);
+  return {rh,MW:(4/3)*Math.PI*Math.pow(rh,3)*NA/(s.sv+s.n*s.svw),tauD:4*Math.PI*s.eta*Math.pow(rh,3)/(3*KB*s.T)};
+}
+
+/* ---------- chart ---------- */
+const cv=document.getElementById('chart'), ctx=cv.getContext('2d');
+const SUP={'-':'\u207b','0':'\u2070','1':'\u00b9','2':'\u00b2','3':'\u00b3','4':'\u2074','5':'\u2075','6':'\u2076','7':'\u2077','8':'\u2078','9':'\u2079'};
+const p10=e=>'10'+String(e).split('').map(c=>SUP[c]||c).join('');
+function sci(v,d){d=d||2;if(!isFinite(v))return'\u2013';if(v===0)return'0';
+  const e=Math.floor(Math.log10(Math.abs(v)));return (v/Math.pow(10,e)).toFixed(d)+'\u00d7'+p10(e);}
+function trim(v){return Math.abs(v)>=1000?v.toFixed(0):String(+v.toPrecision(3));}
+function logTicks(a,b){const t=[];for(let e=Math.ceil(Math.log10(a)-1e-9);e<=Math.floor(Math.log10(b)+1e-9);e++)t.push(Math.pow(10,e));return t;}
+function linTicks(a,b,n){n=n||6;const s0=(b-a)/n,m=Math.pow(10,Math.floor(Math.log10(s0))),f=s0/m,
+  st=(f<1.5?1:f<3?2:f<7?5:10)*m,t=[];for(let v=Math.ceil(a/st)*st;v<=b+st*1e-6;v+=st)t.push(v);return t;}
+function rangeOf(arr,log){
+  let mn=Infinity,mx=-Infinity;
+  for(const v of arr){if(!isFinite(v)||(log&&v<=0))continue;if(v<mn)mn=v;if(v>mx)mx=v;}
+  if(mn===Infinity){mn=log?1e-12:0;mx=log?1:1;}
+  if(mn===mx){mn*=0.5;mx*=1.5;if(mn===mx){mn-=1;mx+=1;}}
+  if(log){const f=Math.pow(10,0.08);return[mn/f,mx*f];}
+  const p=(mx-mn)*0.08;return[mn-p,mx+p];
+}
+function drawPlot(o){
+  const W=cv.width,H=cv.height,ML=96,MT=26,MB=66,MR=o.hasR?96:32,pw=W-ML-MR,ph=H-MT-MB;
+  ctx.clearRect(0,0,W,H);ctx.fillStyle='#ffffff';ctx.fillRect(ML,MT,pw,ph);
+  const xa=Math.log10(o.xmin),xb=Math.log10(o.xmax);
+  const X=v=>ML+(o.xlog?(Math.log10(v)-xa)/(xb-xa):(v-o.xmin)/(o.xmax-o.xmin))*pw;
+  const Y={};
+  for(const ax of['L','R']){if(ax==='R'&&!o.hasR)continue;const sc=o[ax];
+    if(sc.log){const a=Math.log10(sc.min),b=Math.log10(sc.max);Y[ax]=v=>MT+ph-(Math.log10(v)-a)/(b-a)*ph;}
+    else Y[ax]=v=>MT+ph-(v-sc.min)/(sc.max-sc.min)*ph;}
+  ctx.font='14px "Segoe UI"';
+  const xt=o.xlog?logTicks(o.xmin,o.xmax):linTicks(o.xmin,o.xmax,8);
+  ctx.textAlign='center';ctx.textBaseline='top';
+  for(const t of xt){const px=X(t);if(px<ML-1||px>ML+pw+1)continue;
+    ctx.strokeStyle='#e2e8f0';ctx.beginPath();ctx.moveTo(px,MT);ctx.lineTo(px,MT+ph);ctx.stroke();
+    ctx.fillStyle='#334155';ctx.fillText(o.xfmt?o.xfmt(t):trim(t),px,MT+ph+8);}
+  const yl=o.L.log?logTicks(o.L.min,o.L.max):linTicks(o.L.min,o.L.max,6);
+  ctx.textAlign='right';ctx.textBaseline='middle';
+  for(const t of yl){const py=Y.L(t);if(py<MT-1||py>MT+ph+1)continue;
+    ctx.strokeStyle='#e2e8f0';ctx.beginPath();ctx.moveTo(ML,py);ctx.lineTo(ML+pw,py);ctx.stroke();
+    ctx.fillStyle='#334155';ctx.fillText(o.Lfmt?o.Lfmt(t):trim(t),ML-9,py);}
+  if(o.hasR){const yr=o.R.log?logTicks(o.R.min,o.R.max):linTicks(o.R.min,o.R.max,6);
+    ctx.textAlign='left';
+    for(const t of yr){const py=Y.R(t);if(py<MT-1||py>MT+ph+1)continue;
+      ctx.fillStyle='#334155';ctx.fillText(o.Rfmt?o.Rfmt(t):trim(t),ML+pw+9,py);}}
+  ctx.fillStyle='#0f172a';ctx.font='17px "Segoe UI"';ctx.textAlign='center';ctx.textBaseline='alphabetic';
+  ctx.fillText(o.xlabel,ML+pw/2,H-16);
+  ctx.save();ctx.translate(26,MT+ph/2);ctx.rotate(-Math.PI/2);ctx.fillText(o.Llabel,0,0);ctx.restore();
+  if(o.hasR){ctx.save();ctx.translate(W-20,MT+ph/2);ctx.rotate(Math.PI/2);ctx.fillText(o.Rlabel,0,0);ctx.restore();}
+  ctx.save();ctx.beginPath();ctx.rect(ML,MT,pw,ph);ctx.clip();
+  for(const s of o.series){
+    const Yf=s.axis==='R'?Y.R:Y.L, Ls=s.axis==='R'?o.R:o.L;
+    ctx.strokeStyle=s.color;ctx.lineWidth=s.w||2.4;ctx.setLineDash(s.dash||[]);
+    ctx.beginPath();let st=false;
+    for(let i=0;i<s.x.length;i++){const xv=s.x[i],yv=s.y[i];
+      if(!isFinite(yv)||(Ls.log&&yv<=0)){st=false;continue;}
+      const px=X(xv),py=Yf(yv);
+      if(st)ctx.lineTo(px,py);else{ctx.moveTo(px,py);st=true;}}
+    ctx.stroke();ctx.setLineDash([]);
+  }
+  if(o.marker){const px=X(o.marker.x);
+    ctx.strokeStyle='rgba(15,23,42,.4)';ctx.setLineDash([6,5]);
+    ctx.beginPath();ctx.moveTo(px,MT);ctx.lineTo(px,MT+ph);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle='#0f172a';ctx.font='14px "Segoe UI"';ctx.textAlign='left';ctx.textBaseline='top';
+    ctx.fillText(o.marker.label,px+7,MT+7);}
+  if(o.point){const px=X(o.point.x),py=Y[o.point.axis||'L'](o.point.y);
+    ctx.fillStyle='#dc2626';ctx.beginPath();ctx.arc(px,py,6,0,2*Math.PI);ctx.fill();
+    ctx.font='bold 14px "Segoe UI"';ctx.textAlign='left';ctx.textBaseline='bottom';
+    ctx.fillText(o.point.label,px+10,py-8);}
+  ctx.restore();
+  ctx.strokeStyle='#64748b';ctx.strokeRect(ML,MT,pw,ph);
+  ctx.font='15px "Segoe UI"';ctx.textAlign='left';ctx.textBaseline='middle';
+  let ly=MT+22;
+  for(const s of o.series){
+    ctx.strokeStyle=s.color;ctx.lineWidth=2.6;ctx.setLineDash(s.dash||[]);
+    ctx.beginPath();ctx.moveTo(ML+14,ly);ctx.lineTo(ML+42,ly);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle='#0f172a';ctx.fillText(s.label,ML+50,ly);ly+=22;}
+}
+function logspace(a,b,n){const o=[];for(let i=0;i<n;i++)o.push(Math.pow(10,a+(b-a)*i/(n-1)));return o;}
+
+/* ---------- plot modes ---------- */
+function plotRates(s){
+  const xs=logspace(-11,-5,320),R1=[],R2=[],N=[];
+  for(const t of xs){const r=totals(s,t,s.S2);R1.push(r.R1);R2.push(r.R2);N.push(r.NOE);}
+  let im=0;for(let i=1;i<R1.length;i++)if(R1[i]>R1[im])im=i;
+  const ser=[];
+  if(chk('cR1'))ser.push({x:xs,y:R1,color:'#0284c7',label:'R\u2081 (s\u207b\u00b9)',axis:'L'});
+  if(chk('cR2'))ser.push({x:xs,y:R2,color:'#db2777',label:'R\u2082 (s\u207b\u00b9)',axis:'L'});
+  if(chk('cNOE'))ser.push({x:xs,y:N,color:'#16a34a',label:'NOE',axis:'R'});
+  const Lv=[].concat(chk('cR1')?R1:[],chk('cR2')?R2:[]);
+  const Lr=Lv.length?rangeOf(Lv,true):[0.01,10];
+  const Rr=chk('cNOE')?rangeOf(N,false):[0,1];
+  drawPlot({series:ser,xlog:true,xmin:1e-11,xmax:1e-5,xfmt:v=>p10(Math.round(Math.log10(v))),
+    L:{min:Lr[0],max:Lr[1],log:true},Lfmt:v=>p10(Math.round(Math.log10(v))),Llabel:'rate (s\u207b\u00b9)',
+    hasR:chk('cNOE'),R:{min:Rr[0],max:Rr[1]},Rlabel:'NOE',
+    xlabel:'correlation time \u03c4_c (s) \u2014 log scale',
+    marker:{x:s.tm,label:'\u03c4_m = '+sci(s.tm)+' s'},
+    point:(chk('cR1')&&im>0&&im<R1.length-1)?{x:xs[im],y:R1[im],axis:'L',label:'R\u2081 max \u2248 '+sci(xs[im],1)+' s'}:null});
+}
+function plotT1(s){
+  const xs=logspace(-11,-5,320),T1=[];
+  for(const t of xs){T1.push(1/totals(s,t,s.S2).R1);}
+  let im=0;for(let i=1;i<T1.length;i++)if(T1[i]<T1[im])im=i;
+  const R=rangeOf(T1,true);
+  drawPlot({series:[{x:xs,y:T1,color:'#7c3aed',label:'T\u2081 = 1/R\u2081 (s)',axis:'L'}],
+    xlog:true,xmin:1e-11,xmax:1e-5,xfmt:v=>p10(Math.round(Math.log10(v))),
+    L:{min:R[0],max:R[1],log:true},Lfmt:v=>p10(Math.round(Math.log10(v))),Llabel:'T\u2081 (s)',
+    xlabel:'correlation time \u03c4_c (s)',
+    marker:{x:s.tm,label:'\u03c4_m = '+sci(s.tm)+' s'},
+    point:(im>0&&im<T1.length-1)?{x:xs[im],y:T1[im],axis:'L',label:'T\u2081 min \u2248 '+sci(xs[im],1)+' s'}:null});
+}
+function plotComp(s){
+  const xs=logspace(-11,-5,320),A=[],B=[],C=[],D=[];
+  for(const t of xs){const r=totals(s,t,s.S2);A.push(r.R1d);B.push(r.R2d);C.push(r.R1c);D.push(r.R2c);}
+  const R=rangeOf(A.concat(B,C,D),true);
+  drawPlot({series:[
+    {x:xs,y:A,color:'#0284c7',label:'R\u2081 dipolar',axis:'L'},
+    {x:xs,y:B,color:'#db2777',label:'R\u2082 dipolar',axis:'L'},
+    {x:xs,y:C,color:'#d97706',label:'R\u2081 CSA (0 if \u0394\u03c3=0)',axis:'L',dash:[6,5]},
+    {x:xs,y:D,color:'#ea580c',label:'R\u2082 CSA (0 if \u0394\u03c3=0)',axis:'L',dash:[6,5]}],
+    xlog:true,xmin:1e-11,xmax:1e-5,xfmt:v=>p10(Math.round(Math.log10(v))),
+    L:{min:R[0],max:R[1],log:true},Lfmt:v=>p10(Math.round(Math.log10(v))),Llabel:'rate (s\u207b\u00b9)',
+    xlabel:'correlation time \u03c4_c (s)',marker:{x:s.tm,label:'\u03c4_m = '+sci(s.tm)+' s'}});
+}
+function plotRatio(s){
+  const xs=logspace(-11,-5,320),T=[],D=[];
+  for(const t of xs){const r=totals(s,t,s.S2);T.push(r.R1/r.R2);D.push(r.R1d/r.R2d);}
+  const R=rangeOf(T.concat(D),false);
+  drawPlot({series:[
+    {x:xs,y:T,color:'#ca8a04',label:'R\u2081/R\u2082 total',axis:'L'},
+    {x:xs,y:D,color:'#64748b',label:'R\u2081/R\u2082 dipolar (sheet column)',axis:'L',dash:[6,5]}],
+    xlog:true,xmin:1e-11,xmax:1e-5,xfmt:v=>p10(Math.round(Math.log10(v))),
+    L:{min:R[0],max:R[1]},Llabel:'R\u2081 / R\u2082',xlabel:'correlation time \u03c4_c (s)',
+    marker:{x:s.tm,label:'\u03c4_m = '+sci(s.tm)+' s'}});
+}
+function plotS2s(s){
+  const xs=[],R1=[],R2=[],N=[];
+  for(let i=0;i<240;i++){const S=0.01+1.09*i/239;xs.push(S);
+    const r=totals(s,s.tm,S);R1.push(r.R1);R2.push(r.R2);N.push(r.NOE);}
+  const ser=[];
+  if(chk('cR1'))ser.push({x:xs,y:R1,color:'#0284c7',label:'R\u2081(S\u00b2)',axis:'L'});
+  if(chk('cR2'))ser.push({x:xs,y:R2,color:'#db2777',label:'R\u2082(S\u00b2)',axis:'L'});
+  if(chk('cNOE'))ser.push({x:xs,y:N,color:'#16a34a',label:'NOE(S\u00b2)',axis:'R'});
+  const Lv=[].concat(chk('cR1')?R1:[],chk('cR2')?R2:[]);
+  const Lr=Lv.length?rangeOf(Lv,false):[0,1];
+  const Rr=chk('cNOE')?rangeOf(N,false):[0,1];
+  drawPlot({series:ser,xlog:false,xmin:0,xmax:1.1,
+    L:{min:Lr[0],max:Lr[1]},Llabel:'rate (s\u207b\u00b9)',
+    hasR:chk('cNOE'),R:{min:Rr[0],max:Rr[1]},Rlabel:'NOE',
+    xlabel:'order parameter S\u00b2 (sheet grid 0.01\u20131.1)',
+    marker:{x:s.S2,label:'S\u00b2 = '+s.S2.toFixed(2)}});
+}
+function plotJ(s){
+  const nus=logspace(2,11,300),J1=[],J2=[];
+  for(const nu of nus){const w=2*Math.PI*nu;J1.push(Jof(w,s.tm,s.S2,s.te));J2.push(Jof(w,s.tm,1,0));}
+  const R=rangeOf(J1.concat(J2),true);
+  drawPlot({series:[
+    {x:nus,y:J1,color:'#9333ea',label:'J(\u03c9), S\u00b2='+s.S2.toFixed(2),axis:'L'},
+    {x:nus,y:J2,color:'#64748b',label:'rigid (S\u00b2=1)',axis:'L',dash:[6,5]}],
+    xlog:true,xmin:1e2,xmax:1e11,xfmt:v=>p10(Math.round(Math.log10(v))),
+    L:{min:R[0],max:R[1],log:true},Lfmt:v=>p10(Math.round(Math.log10(v))),Llabel:'J(\u03c9) (s)',
+    xlabel:'frequency \u03bd = \u03c9/2\u03c0 (Hz)'});
+}
+function plotField(s){
+  const xs=[],R1=[],R2=[],N=[];
+  for(let i=0;i<240;i++){const B=0.5+(28.2-0.5)*i/239;xs.push(B);
+    const r=totals({...s,B0:B},s.tm,s.S2);R1.push(r.R1);R2.push(r.R2);N.push(r.NOE);}
+  const ser=[];
+  if(chk('cR1'))ser.push({x:xs,y:R1,color:'#0284c7',label:'R\u2081',axis:'L'});
+  if(chk('cR2'))ser.push({x:xs,y:R2,color:'#db2777',label:'R\u2082',axis:'L'});
+  if(chk('cNOE'))ser.push({x:xs,y:N,color:'#16a34a',label:'NOE',axis:'R'});
+  const Lv=[].concat(chk('cR1')?R1:[],chk('cR2')?R2:[]);
+  const Lr=Lv.length?rangeOf(Lv,false):[0,1];
+  const Rr=chk('cNOE')?rangeOf(N,false):[0,1];
+  drawPlot({series:ser,xlog:false,xmin:0.5,xmax:28.2,
+    L:{min:Lr[0],max:Lr[1]},Llabel:'rate (s\u207b\u00b9)',
+    hasR:chk('cNOE'),R:{min:Rr[0],max:Rr[1]},Rlabel:'NOE',
+    xlabel:'B\u2080 (T) \u2014 \u03bd(\u00b9H) = 42.58\u00b7B\u2080 MHz',
+    marker:{x:s.B0,label:'B\u2080 = '+s.B0.toFixed(1)+' T'}});
+}
+function plotMW(s){
+  const xs=logspace(-12,-8,220),ys=[];
+  for(const D of xs)ys.push(hydro(s,D).MW);
+  const R=rangeOf(ys,true);
+  drawPlot({series:[{x:xs,y:ys,color:'#0891b2',label:'apparent MW (Stokes\u2013Einstein)',axis:'L'}],
+    xlog:true,xmin:1e-12,xmax:1e-8,xfmt:v=>p10(Math.round(Math.log10(v))),
+    L:{min:R[0],max:R[1],log:true},Lfmt:v=>p10(Math.round(Math.log10(v))),Llabel:'MW (g/mol)',
+    xlabel:'D (m\u00b2/s) \u2014 sheet scan D\u2192MW',
+    marker:{x:s.D,label:'D_meas = '+sci(s.D)+' m\u00b2/s'}});
+}
+
+/* ---------- readout & labels ---------- */
+function readout(s){
+  const cur=totals(s,s.tm,s.S2), rig=totals(s,s.tm,1), sp=getSpins(s);
+  const stats=[
+    ['\u03bd(obs)',(Math.abs(sp.go)*s.B0/(2*Math.PI*1e6)).toFixed(1)+' MHz'],
+    ['\u03bd(partner)',(Math.abs(sp.gp)*s.B0/(2*Math.PI*1e6)).toFixed(1)+' MHz'],
+    ['R\u2081 dip\u00b7S\u00b2',cur.R1d.toFixed(2)],['R\u2082 dip\u00b7S\u00b2',cur.R2d.toFixed(2)],
+    ['R\u2081 dip (S\u00b2=1)',rig.R1d.toFixed(2)],['R\u2082 dip (S\u00b2=1)',rig.R2d.toFixed(2)],
+    ['R\u2081 CSA',cur.R1c.toFixed(2)],['R\u2082 CSA',cur.R2c.toFixed(2)],
+    ['R\u2081 tot',cur.R1.toFixed(2)],['R\u2082 tot',cur.R2.toFixed(2)],
+    ['R ex',cur.Rex.toFixed(2)],['R\u2081/R\u2082',(cur.R1/cur.R2).toFixed(3)],
+    ['NOE',cur.NOE.toFixed(3)]];
+  $('readout').innerHTML=stats.map(kv=>'<div class="stat"><div class="k">'+kv[0]+
+    '</div><div class="v">'+kv[1]+'</div></div>').join('');
+}
+function labels(){
+  const s=state(), tmNs=Math.pow(10,+$('sTauM').value);
+  $('vB0').textContent=s.B0.toFixed(1)+' T ('+(GAMMA_H*s.B0/(2*Math.PI*1e6)).toFixed(0)+' MHz \u00b9H)';
+  $('vCSA').textContent=s.dppm+' ppm';
+  $('vRXH').textContent=(+$('sRXH').value).toFixed(3)+' \u212b';
+  $('vRHH').textContent=(+$('sRHH').value).toFixed(2)+' \u212b';
+  $('vDWppm').textContent=(+$('sDWppm').value).toFixed(1)+' ppm';
+  $('vS2').textContent=s.S2.toFixed(2);
+  $('vTauE').textContent=$('sTauE').value+' ps';
+  $('vTauM').textContent=tmNs>=1?tmNs.toFixed(2)+' ns':(tmNs*1000).toFixed(0)+' ps';
+  $('vPB').textContent=s.pB.toFixed(3);
+  $('vDW').textContent=s.dw.toFixed(1)+' ppm';
+  $('vTex').textContent=(+$('sTex').value).toFixed(1)+' \u00b5s';
+  $('vRex').textContent=s.Rex0.toFixed(1)+' s\u207b\u00b9';
+  $('vD').textContent=sci(s.D)+' m\u00b2/s';
+  $('vT').textContent=s.T.toFixed(1)+' K ('+(s.T-273.15).toFixed(1)+' \u00b0C)';
+  $('vEta').textContent=$('hAuto').checked?sci(s.eta,3)+' Pa\u00b7s (auto)':(+$('hEta').value).toFixed(2)+'\u00d710\u207b\u00b3 Pa\u00b7s';
+  $('vN').textContent=s.n.toFixed(2);
+  $('vSv').textContent=(+$('hSv').value).toFixed(2)+' cm\u00b3/g';
+  $('vSvW').textContent=(+$('hSvW').value).toFixed(2)+' cm\u00b3/g';
+  $('vF').textContent=s.F.toFixed(2);
+  const h=hydro(s,s.D);
+  $('hydroOut').innerHTML='r<sub>h</sub> = '+(h.rh*1e10).toFixed(2)+' \u212b &nbsp;\u00b7&nbsp; MW = '+
+    h.MW.toFixed(1)+' g/mol (sheet 2416.9) &nbsp;\u00b7&nbsp; \u03c4<sub>D</sub> = '+sci(h.tauD)+' s';
+}
+function render(){
+  const s=state();
+  ({rates:plotRates,T1:plotT1,comp:plotComp,ratio:plotRatio,s2s:plotS2s,J:plotJ,field:plotField,MW:plotMW})[mode](s);
+  readout(s);
+}
+function sync(){labels();render();}
+
+/* ---------- wiring ---------- */
+function setObs(m){obsMode=m;
+  $('mX').classList.toggle('active',m==='X');$('mH').classList.toggle('active',m==='H');
+  const isX=m==='X';
+  $('rowNuc').style.display=isX?'':'none';
+  $('rowRXH').style.display=isX?'':'none';
+  $('rowHH').style.display=isX?'none':'';
+  $('rowDWHH').style.display=isX?'none':'';
+  $('modeBadge').textContent=isX?('observed: X ('+(GAMMA_X<0?'\u00b9\u2075N':'\u00b9\u00b3C')+' + \u00b9H)'):'observed: \u00b9H (\u00b9H\u2013\u00b9H)';
+  sync();}
+function setMode(m,btn){mode=m;
+  document.querySelectorAll('.toolbar button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');render();}
+$('mX').onclick=()=>setObs('X');
+$('mH').onclick=()=>setObs('H');
+$('bRates').onclick=e=>setMode('rates',e.currentTarget);
+$('bT1').onclick=e=>setMode('T1',e.currentTarget);
+$('bComp').onclick=e=>setMode('comp',e.currentTarget);
+$('bRatio').onclick=e=>setMode('ratio',e.currentTarget);
+$('bS2s').onclick=e=>setMode('s2s',e.currentTarget);
+$('bJ').onclick=e=>setMode('J',e.currentTarget);
+$('bField').onclick=e=>setMode('field',e.currentTarget);
+$('bMW').onclick=e=>setMode('MW',e.currentTarget);
+const NUC={C13:{g:6.7283e7,r:1.10},N15:{g:-2.7126e7,r:1.02}};
+$('selNuc').onchange=e=>{const v=e.target.value;
+  if(v==='custom'){$('gWrap').style.display='flex';GAMMA_X=parseFloat($('sGx').value)||6.73e7;}
+  else{$('gWrap').style.display='none';GAMMA_X=NUC[v].g;$('sRXH').value=NUC[v].r;}
+  setObs('X');};
+$('sGx').addEventListener('input',()=>{GAMMA_X=parseFloat($('sGx').value)||GAMMA_X;sync();});
+$('pT1').onclick=()=>{$('sTauM').value=Math.log10(0.25);sync();};
+$('pT2').onclick=()=>{$('sTauM').value=Math.log10(0.85);sync();};
+$('pT3').onclick=()=>{$('sTauM').value=Math.log10(5);sync();};
+$('bReset').onclick=()=>{
+  $('selNuc').value='C13';$('gWrap').style.display='none';GAMMA_X=6.7283e7;
+  $('sRXH').value=1.10;$('sRHH').value=1.75;$('sDWppm').value=1.0;
+  $('sB0').value=14.1;$('sCSA').value=0;$('sS2').value=0.5;$('sTauE').value=50;$('sTauM').value=-0.607;
+  $('sPB').value=0.5;$('sDW').value=0;$('sTex').value=1;$('sRex').value=0;
+  $('hD').value=-9.886;$('hT').value=278.8;$('hEta').value=1.53;$('hAuto').checked=false;
+  $('hN').value=0.4;$('hSv').value=0.73;$('hSvW').value=1.0;$('hF').value=1;
+  $('cR1').checked=$('cR2').checked=$('cNOE').checked=true;
+  setObs('X');};
+$('hUse').onclick=()=>{const s=state();$('sTauM').value=Math.log10(hydro(s,s.D).tauD*1e9);sync();};
+document.querySelectorAll('input[type=range],input[type=checkbox]')
+  .forEach(el=>el.addEventListener('input',sync));
+setObs('X');
+</script>
+</body>
+</html>`;
 /* ============================================================================
 NMR FITTINGS / RELAXATION RENDERER — UPDATED VERSION
 Changes:
@@ -461,120 +963,125 @@ function SimulationSection({ sim, setSim, solvents = [], activeTest }) {
     });
 
     return (
-        <CollapsibleSection title="Simulations" icon="🧪" defaultOpen={false}>
-            <div className="flex flex-col gap-4">
-                <div className="flex gap-2 flex-wrap">
-                    <button type="button" onClick={() => setSimType('diffusion')} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${simType === 'diffusion' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}>💧 Diffusion Coefficient</button>
-                    <button type="button" onClick={() => setSimType('relaxation')} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${simType === 'relaxation' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}>🔄 Nuclear Relaxation</button>
-                </div>
-
-                {simType === 'diffusion' && (
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="flex flex-col gap-3">
-                            <div>
-                                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Molecular Weight (Da)</label>
-                                <input type="number" value={sim.MW || 12000} onChange={(e) => setSim({ MW: parseFloat(e.target.value) || 12000 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-                            </div>
-                            <div>
-                                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Temperature (K)</label>
-                                <input type="number" value={T_K.toFixed(1)} onChange={(e) => setSim({ temperature: parseFloat(e.target.value) || 298 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-                            </div>
-                            <div>
-                                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Viscosity (Pa·s)</label>
-                                <input type="number" step="0.001e-3" value={viscosity} onChange={(e) => setSim({ viscosity: parseFloat(e.target.value) || 0.89e-3 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-                            </div>
-                            <div>
-                                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Shape</label>
-                                <select value={sim.shape || 'sphere'} onChange={(e) => setSim({ shape: e.target.value })} className="w-full border border-slate-300 rounded-md p-2 text-sm bg-white outline-none focus:border-blue-500">
-                                    <option value="sphere">Sphere</option>
-                                    <option value="rod">Rod (elongated)</option>
-                                    <option value="disc">Disc (flat)</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Partial specific volume (cm³/g)</label>
-                                <input type="number" step="0.01" value={sim.vbar || 0.73} onChange={(e) => setSim({ vbar: parseFloat(e.target.value) || 0.73 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-                            </div>
-                            <div>
-                                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Hydration (g/g)</label>
-                                <input type="number" step="0.05" value={sim.hydration || 0.3} onChange={(e) => setSim({ hydration: parseFloat(e.target.value) || 0.3 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-                            </div>
-                        </div>
-                        <div className="md:col-span-2 flex flex-col gap-3">
-                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                                <h4 className="text-xs font-black text-blue-800 uppercase mb-3">Stokes-Einstein Diffusion Coefficient</h4>
-                                <div className="grid grid-cols-2 gap-3 text-sm">
-                                    <div><span className="font-bold text-slate-600">Hydrodynamic radius:</span> <span className="font-mono text-blue-700">{(r_m * 1e9).toFixed(2)} nm</span></div>
-                                    <div><span className="font-bold text-slate-600">Diffusion coefficient D:</span> <span className="font-mono text-blue-700">{D_calc.toExponential(3)} m²/s</span></div>
-                                    <div><span className="font-bold text-slate-600">D (×10⁻¹¹ m²/s):</span> <span className="font-mono text-blue-700">{(D_calc * 1e11).toFixed(2)}</span></div>
-                                    <div><span className="font-bold text-slate-600">Rotational τc:</span> <span className="font-mono text-blue-700">{(tau_c_calc * 1e9).toFixed(2)} ns</span></div>
-                                </div>
-                                <p className="text-[10px] text-slate-500 mt-3 italic">D = k_B·T / (6π·η·r_h) — Stokes-Einstein equation. Shape correction factor: {shapeFactor.toFixed(2)}</p>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {simType === 'relaxation' && (
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="flex flex-col gap-3">
-                            <div>
-                                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Nucleus</label>
-                                <select value={sim.nucleus || '15N'} onChange={(e) => setSim({ nucleus: e.target.value })} className="w-full border border-slate-300 rounded-md p-2 text-sm bg-white outline-none focus:border-blue-500">
-                                    <option value="15N">¹⁵N</option>
-                                    <option value="13C">¹³C</option>
-                                    <option value="1H">¹H</option>
-                                    <option value="31P">³¹P</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Field (MHz)</label>
-                                <input type="number" value={sim.fieldMHz || 600} onChange={(e) => setSim({ fieldMHz: parseFloat(e.target.value) || 600 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-                            </div>
-                            <div>
-                                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">τc (ns)</label>
-                                <input type="number" step="0.1" value={sim.tau_c_ns || (tau_c_calc * 1e9).toFixed(1)} onChange={(e) => setSim({ tau_c_ns: parseFloat(e.target.value) || 5 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-                            </div>
-                            <div>
-                                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">S² (order parameter)</label>
-                                <input type="number" step="0.01" min="0" max="1" value={sim.S2 || 0.85} onChange={(e) => setSim({ S2: parseFloat(e.target.value) || 0.85 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-                            </div>
-                            <div>
-                                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Bond length r (Å)</label>
-                                <input type="number" step="0.01" value={sim.r_A || DEFAULT_DIST[sim.nucleus || '15N'] || 1.02} onChange={(e) => setSim({ r_A: parseFloat(e.target.value) || 1.02 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-                            </div>
-                            <div>
-                                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">CSA (ppm)</label>
-                                <input type="number" step="1" value={sim.csa_ppm ?? DEFAULT_CSA[sim.nucleus || '15N'] ?? -160} onChange={(e) => setSim({ csa_ppm: parseFloat(e.target.value) || -160 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-                            </div>
-                            <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
-                                <input type="checkbox" checked={sim.useInternal || false} onChange={(e) => setSim({ useInternal: e.target.checked })} className="w-4 h-4 accent-blue-600" /> Use internal motion (τe)
-                            </label>
-                            {sim.useInternal && (
-                                <div>
-                                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">τe (ps)</label>
-                                    <input type="number" step="1" value={sim.tau_e_ps || 50} onChange={(e) => setSim({ tau_e_ps: parseFloat(e.target.value) || 50 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-                                </div>
-                            )}
-                        </div>
-                        <div className="md:col-span-2 flex flex-col gap-3">
-                            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
-                                <h4 className="text-xs font-black text-emerald-800 uppercase mb-3">Model-Free Relaxation Rates</h4>
-                                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
-                                    <div><span className="font-bold text-slate-600">R1 (s⁻¹):</span> <span className="font-mono text-emerald-700">{rates.R1.toFixed(3)}</span></div>
-                                    <div><span className="font-bold text-slate-600">R2 (s⁻¹):</span> <span className="font-mono text-emerald-700">{rates.R2.toFixed(3)}</span></div>
-                                    <div><span className="font-bold text-slate-600">NOE:</span> <span className="font-mono text-emerald-700">{rates.NOE.toFixed(3)}</span></div>
-                                    <div><span className="font-bold text-slate-600">T1 (s):</span> <span className="font-mono text-emerald-700">{rates.T1 === Infinity ? '∞' : rates.T1.toFixed(3)}</span></div>
-                                    <div><span className="font-bold text-slate-600">T2 (s):</span> <span className="font-mono text-emerald-700">{rates.T2 === Infinity ? '∞' : rates.T2.toFixed(3)}</span></div>
-                                    <div><span className="font-bold text-slate-600">R1/R2:</span> <span className="font-mono text-emerald-700">{rates.ratio.toFixed(3)}</span></div>
-                                </div>
-                                <p className="text-[10px] text-slate-500 mt-3 italic">Model-free formalism: R1, R2, and heteronuclear NOE from dipolar + CSA relaxation mechanisms.</p>
-                            </div>
-                        </div>
-                    </div>
-                )}
+        <div className="flex flex-col gap-4">
+            <div className="flex gap-2 flex-wrap mb-2">
+                <button type="button" onClick={() => setSimType('diffusion')} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${simType === 'diffusion' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}>💧 Diffusion Coefficient</button>
+                <button type="button" onClick={() => setSimType('relaxation')} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${simType === 'relaxation' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}>🔄 Nuclear Relaxation</button>
+                <button type="button" onClick={() => setSimType('dipolar')} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${simType === 'dipolar' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}>🧲 Dipolar + CSA (Advanced)</button>
             </div>
-        </CollapsibleSection>
+
+            {simType === 'diffusion' && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="flex flex-col gap-3">
+                        <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Molecular Weight (Da)</label>
+                            <input type="number" value={sim.MW || 12000} onChange={(e) => setSim({ MW: parseFloat(e.target.value) || 12000 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
+                        </div>
+                        <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Temperature (K)</label>
+                            <input type="number" value={T_K.toFixed(1)} onChange={(e) => setSim({ temperature: parseFloat(e.target.value) || 298 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
+                        </div>
+                        <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Viscosity (Pa·s)</label>
+                            <input type="number" step="0.001e-3" value={viscosity} onChange={(e) => setSim({ viscosity: parseFloat(e.target.value) || 0.89e-3 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
+                        </div>
+                        <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Shape</label>
+                            <select value={sim.shape || 'sphere'} onChange={(e) => setSim({ shape: e.target.value })} className="w-full border border-slate-300 rounded-md p-2 text-sm bg-white outline-none focus:border-blue-500">
+                                <option value="sphere">Sphere</option>
+                                <option value="rod">Rod (elongated)</option>
+                                <option value="disc">Disc (flat)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Partial specific volume (cm³/g)</label>
+                            <input type="number" step="0.01" value={sim.vbar || 0.73} onChange={(e) => setSim({ vbar: parseFloat(e.target.value) || 0.73 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
+                        </div>
+                        <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Hydration (g/g)</label>
+                            <input type="number" step="0.05" value={sim.hydration || 0.3} onChange={(e) => setSim({ hydration: parseFloat(e.target.value) || 0.3 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
+                        </div>
+                    </div>
+                    <div className="md:col-span-2 flex flex-col gap-3">
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                            <h4 className="text-xs font-black text-blue-800 uppercase mb-3">Stokes-Einstein Diffusion Coefficient</h4>
+                            <div className="grid grid-cols-2 gap-3 text-sm">
+                                <div><span className="font-bold text-slate-600">Hydrodynamic radius:</span> <span className="font-mono text-blue-700">{(r_m * 1e9).toFixed(2)} nm</span></div>
+                                <div><span className="font-bold text-slate-600">Diffusion coefficient D:</span> <span className="font-mono text-blue-700">{D_calc.toExponential(3)} m²/s</span></div>
+                                <div><span className="font-bold text-slate-600">D (×10⁻¹¹ m²/s):</span> <span className="font-mono text-blue-700">{(D_calc * 1e11).toFixed(2)}</span></div>
+                                <div><span className="font-bold text-slate-600">Rotational τc:</span> <span className="font-mono text-blue-700">{(tau_c_calc * 1e9).toFixed(2)} ns</span></div>
+                            </div>
+                            <p className="text-[10px] text-slate-500 mt-3 italic">D = k_B·T / (6π·η·r_h) — Stokes-Einstein equation. Shape correction factor: {shapeFactor.toFixed(2)}</p>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {simType === 'relaxation' && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="flex flex-col gap-3">
+                        <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Nucleus</label>
+                            <select value={sim.nucleus || '15N'} onChange={(e) => setSim({ nucleus: e.target.value })} className="w-full border border-slate-300 rounded-md p-2 text-sm bg-white outline-none focus:border-blue-500">
+                                <option value="15N">¹⁵N</option>
+                                <option value="13C">¹³C</option>
+                                <option value="1H">¹H</option>
+                                <option value="31P">³¹P</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Field (MHz)</label>
+                            <input type="number" value={sim.fieldMHz || 600} onChange={(e) => setSim({ fieldMHz: parseFloat(e.target.value) || 600 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
+                        </div>
+                        <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">τc (ns)</label>
+                            <input type="number" step="0.1" value={sim.tau_c_ns || (tau_c_calc * 1e9).toFixed(1)} onChange={(e) => setSim({ tau_c_ns: parseFloat(e.target.value) || 5 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
+                        </div>
+                        <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">S² (order parameter)</label>
+                            <input type="number" step="0.01" min="0" max="1" value={sim.S2 || 0.85} onChange={(e) => setSim({ S2: parseFloat(e.target.value) || 0.85 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
+                        </div>
+                        <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Bond length r (Å)</label>
+                            <input type="number" step="0.01" value={sim.r_A || DEFAULT_DIST[sim.nucleus || '15N'] || 1.02} onChange={(e) => setSim({ r_A: parseFloat(e.target.value) || 1.02 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
+                        </div>
+                        <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">CSA (ppm)</label>
+                            <input type="number" step="1" value={sim.csa_ppm ?? DEFAULT_CSA[sim.nucleus || '15N'] ?? -160} onChange={(e) => setSim({ csa_ppm: parseFloat(e.target.value) || -160 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
+                        </div>
+                        <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
+                            <input type="checkbox" checked={sim.useInternal || false} onChange={(e) => setSim({ useInternal: e.target.checked })} className="w-4 h-4 accent-blue-600" /> Use internal motion (τe)
+                        </label>
+                        {sim.useInternal && (
+                            <div>
+                                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">τe (ps)</label>
+                                <input type="number" step="1" value={sim.tau_e_ps || 50} onChange={(e) => setSim({ tau_e_ps: parseFloat(e.target.value) || 50 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
+                            </div>
+                        )}
+                    </div>
+                    <div className="md:col-span-2 flex flex-col gap-3">
+                        <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+                            <h4 className="text-xs font-black text-emerald-800 uppercase mb-3">Model-Free Relaxation Rates</h4>
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+                                <div><span className="font-bold text-slate-600">R1 (s⁻¹):</span> <span className="font-mono text-emerald-700">{rates.R1.toFixed(3)}</span></div>
+                                <div><span className="font-bold text-slate-600">R2 (s⁻¹):</span> <span className="font-mono text-emerald-700">{rates.R2.toFixed(3)}</span></div>
+                                <div><span className="font-bold text-slate-600">NOE:</span> <span className="font-mono text-emerald-700">{rates.NOE.toFixed(3)}</span></div>
+                                <div><span className="font-bold text-slate-600">T1 (s):</span> <span className="font-mono text-emerald-700">{rates.T1 === Infinity ? '∞' : rates.T1.toFixed(3)}</span></div>
+                                <div><span className="font-bold text-slate-600">T2 (s):</span> <span className="font-mono text-emerald-700">{rates.T2 === Infinity ? '∞' : rates.T2.toFixed(3)}</span></div>
+                                <div><span className="font-bold text-slate-600">R1/R2:</span> <span className="font-mono text-emerald-700">{rates.ratio.toFixed(3)}</span></div>
+                            </div>
+                            <p className="text-[10px] text-slate-500 mt-3 italic">Model-free formalism: R1, R2, and heteronuclear NOE from dipolar + CSA relaxation mechanisms.</p>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {simType === 'dipolar' && (
+                <div className="w-full border border-slate-300 rounded-lg overflow-hidden mt-2 bg-slate-50" style={{ height: '900px' }}>
+                    <iframe srcDoc={DIPOLAR_SIM_HTML} className="w-full h-full border-0" title="Dipolar CSA Simulator" />
+                </div>
+            )}
+        </div>
     );
 }
 
@@ -635,7 +1142,7 @@ export const NMRFittingsTestRenderer = ({ activeTest = {}, updateActiveTest, Tes
         update({ savedFits: nextFits });
     };
 
-    const exportFittedTable = (t, colFits) => {
+const exportFittedTable = (t, colFits) => {
         try {
             const wb = XLSX.utils.book_new();
             const aoa = [['Residue', `Rate (${t.relaxType === 'T1' ? 'R1' : t.relaxType === 'DOSY' ? 'D' : 'R2'}) s⁻¹`, t.relaxType !== 'DOSY' ? `${t.relaxType} (s)` : null, 'R²', 'N', 'Error'].filter(Boolean)];
@@ -652,10 +1159,9 @@ export const NMRFittingsTestRenderer = ({ activeTest = {}, updateActiveTest, Tes
         } catch (e) { console.error(e); alert('Export failed: ' + e.message); }
     };
 
-    const renderTable = (t, tIndex) => {
-        const colFits = (fits[t.id] || []).map(cf => ({ ...cf, effectiveError: manualErrors[t.id]?.[cf.residue] ?? (cf.fit?.seR_s || 0) }));
+    const renderTableData = (t, tIndex) => {
         return (
-            <CollapsibleSection key={t.id} title={`Table ${tIndex + 1} — ${t.atom || '…'} (${t.relaxType})`} icon="📈" defaultOpen={tIndex === 0}>
+            <CollapsibleSection key={t.id} title={`Table ${tIndex + 1} Data — ${t.atom || '…'} (${t.relaxType})`} icon="📈" defaultOpen={tIndex === 0}>
                 <div className="flex flex-col gap-4">
                     {/* Dataset info row */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -710,141 +1216,160 @@ export const NMRFittingsTestRenderer = ({ activeTest = {}, updateActiveTest, Tes
                         </table>
                     </div>
 
-                    {/* Data Analysis subsection — Observed atom, Experiment Type, Delay unit, Fit button under the table */}
-                    <CollapsibleSection title="Data Analysis" icon="📐" defaultOpen={false}>
-                        <div className="flex flex-col gap-4">
-                            <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-                                <div>
-                                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Observed atom</label>
-                                    <input type="text" value={t.atom || 'HN'} onChange={(e) => updateTable(t.id, { atom: e.target.value })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" placeholder="HN" />
-                                </div>
-                                <div>
-                                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Experiment Type</label>
-                                    <select value={t.relaxType} onChange={(e) => updateTable(t.id, { relaxType: e.target.value })} className="w-full border border-slate-300 rounded-md p-2 text-sm bg-white outline-none focus:border-blue-500">
-                                        <option value="T1">T1 (Inversion Recovery)</option>
-                                        <option value="T2">T2 / T1rho (Exponential)</option>
-                                        <option value="DOSY">DOSY (Diffusion)</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">{t.relaxType === 'DOSY' ? 'X Unit' : 'Delay unit'}</label>
-                                    <select value={t.delayUnit} onChange={(e) => updateTable(t.id, { delayUnit: e.target.value })} className="w-full border border-slate-300 rounded-md p-2 text-sm bg-white outline-none focus:border-blue-500">
-                                        <option value="ms">ms</option> <option value="s">s</option>{t.relaxType === 'DOSY' && <option value="s/mm2">s/mm²</option>}
-                                    </select>
-                                </div>
-                                <div className="flex items-end gap-2">
-                                    <button onClick={() => runFitForTable(t)} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 w-full rounded-md shadow-sm transition-colors">▶️ Compute Fit</button>
-                                </div>
-                                <div className="flex items-end gap-2">
-                                    <button onClick={() => duplicateTable(t)} className="text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold px-3 py-2 w-full rounded-md transition-colors">♻️ Duplicate</button>
-                                </div>
-                            </div>
-                            
-                            <div className="flex justify-end pt-2 border-t border-slate-100">
-                               <button onClick={() => removeTable(t.id)} className="text-xs bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold px-4 py-2 rounded-md shadow-sm flex items-center gap-2 transition-colors">🗑️ Delete Entire Table</button>
-                            </div>
+                    <div className="flex justify-end pt-2 border-t border-slate-100">
+                       <button onClick={() => removeTable(t.id)} className="text-xs bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold px-4 py-2 rounded-md shadow-sm flex items-center gap-2 transition-colors">🗑️ Delete Entire Table</button>
+                    </div>
+                </div>
+            </CollapsibleSection>
+        );
+    };
 
-                            {/* Chart type selector */}
-                            <div className="flex items-center gap-3">
-                                <label className="text-[10px] font-bold text-slate-500 uppercase">Chart Type:</label>
-                                <select value={chartType} onChange={(e) => setChartType(e.target.value)} className="border border-slate-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-blue-500">
-                                    <option value="line">Line / Scatter</option>
-                                    <option value="hist">Histogram</option>
-                                </select>
-                            </div>
-
-                            {/* Fitted results table — expandable and exportable */}
-                            <div>
-                                <div className="flex items-center justify-between mb-2">
-                                    <h4 className="text-xs font-bold text-slate-600 uppercase">Fitted {t.relaxType} per residue</h4>
-                                    <button onClick={() => exportFittedTable(t, colFits)} className="text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded shadow-sm">📊 Export XLS</button>
-                                </div>
-                                <div className="overflow-x-auto">
-                                    <table className="text-xs border border-slate-200 rounded w-full">
-                                        <thead>
-                                            <tr className="bg-slate-100 text-slate-600">
-                                                <th className="p-1.5 border border-slate-200">Residue</th>
-                                                <th className="p-1.5 border border-slate-200">{t.relaxType === 'DOSY' ? 'D (Diff. Rate)' : `R (${t.relaxType === 'T1' ? 'R1' : 'R2'}) s⁻¹`}</th>
-                                                {t.relaxType !== 'DOSY' && <th className="p-1.5 border border-slate-200">{t.relaxType} (s)</th>}
-                                                <th className="p-1.5 border border-slate-200">R²</th><th className="p-1.5 border border-slate-200">N</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {colFits.length === 0 ? (<tr><td colSpan={5} className="p-3 text-center text-slate-400">Click "Compute Fit" to calculate parameters.</td></tr>) : (
-                                                colFits.map((cf, i) => (
-                                                    <tr key={i} className="text-center">
-                                                        <td className="p-1.5 border border-slate-200 font-bold text-blue-800">{cf.residue}</td>
-                                                        <td className="p-1.5 border border-slate-200 font-mono">{cf.fit ? (t.relaxType === 'DOSY' ? cf.fit.R_s.toExponential(3) : cf.fit.R_s.toFixed(3)) + (cf.effectiveError ? ` ± ${cf.effectiveError.toExponential(2)}` : '') : '—'}</td>
-                                                        {t.relaxType !== 'DOSY' && (<td className="p-1.5 border border-slate-200 font-mono">{cf.fit ? (cf.fit.T_s === Infinity ? '∞' : cf.fit.T_s.toFixed(3)) : '—'}</td>)}
-                                                        <td className="p-1.5 border border-slate-200 font-mono">{cf.fit ? cf.fit.r2.toFixed(3) : '—'}</td>
-                                                        <td className="p-1.5 border border-slate-200">{cf.fit ? cf.fit.n : 0}</td>
-                                                    </tr>
-                                                ))
-                                            )}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-
-                            {/* Error Management Panel per Table */}
-                            {colFits.some(cf => cf.fit) && (
-                                <div className="mt-4 p-4 bg-orange-50 border border-orange-200 rounded-lg shadow-sm">
-                                    <h4 className="text-xs font-black text-orange-800 uppercase mb-3 border-b border-orange-100 pb-2">Manual SD Overrides (Parameter Err)</h4>
-                                    <div className="flex flex-wrap gap-3">
-                                        {colFits.filter(cf => cf.fit).map(cf => {
-                                            const isOverridden = typeof manualErrors[t.id]?.[cf.residue] === 'number';
-                                            return (
-                                                <ErrInput
-                                                    key={cf.residue}
-                                                    label={cf.residue}
-                                                    value={isOverridden ? manualErrors[t.id][cf.residue] : cf.fit.seR_s}
-                                                    sdRaw={cf.fit.seR_s}
-                                                    isOverridden={isOverridden}
-                                                    onSave={(v) => storeManualErr(t.id, cf.residue, v)}
-                                                    onReset={() => clearManualErr(t.id, cf.residue)}
-                                                />
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Charts — FULL WIDTH, one per line */}
-                            <div className="flex flex-col gap-4 relative">
-                                {fsPanel === `decay_${t.id}` && <div className={OVERLAY_CLASSES} onClick={() => setFsPanel(null)}></div>}
-                                <div className={`border border-slate-200 rounded-lg bg-white ${fsPanel === `decay_${t.id}` ? 'z-[999999]' : 'p-3'}`}>
-                                    <DecayChart table={t} colFits={colFits} chartCfg={chartCfg} isFs={fsPanel === `decay_${t.id}`} onToggleFs={() => setFsPanel(fsPanel === `decay_${t.id}` ? null : `decay_${t.id}`)} chartType={chartType} />
-                                </div>
-
-                                {fsPanel === `param_${t.id}` && <div className={OVERLAY_CLASSES} onClick={() => setFsPanel(null)}></div>}
-                                <div className={`border border-slate-200 rounded-lg bg-white ${fsPanel === `param_${t.id}` ? 'z-[999999]' : 'p-3'}`}>
-                                    <ParameterChart table={t} colFits={colFits} chartCfg={chartCfg} isFs={fsPanel === `param_${t.id}`} onToggleFs={() => setFsPanel(fsPanel === `param_${t.id}` ? null : `param_${t.id}`)} chartType={chartType} />
-                                </div>
-                            </div>
-
-                            {/* Individual Fittings Panel */}
-                            {colFits.length > 0 && (
-                                <div className="mt-4 p-4 bg-slate-50 border border-slate-200 rounded-lg shadow-sm">
-                                    <h4 className="text-xs font-black text-slate-700 uppercase mb-3 border-b border-slate-200 pb-2">Individual Fittings</h4>
-                                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-                                        {colFits.map((cf, c) => (
-                                            <React.Fragment key={c}>
-                                                {fsPanel === `indiv_${t.id}_${c}` && <div className={OVERLAY_CLASSES} onClick={() => setFsPanel(null)}></div>}
-                                                <IndividualDecayChart
-                                                    table={t}
-                                                    colIndex={c}
-                                                    colFit={cf}
-                                                    chartCfg={chartCfg}
-                                                    isFs={fsPanel === `indiv_${t.id}_${c}`}
-                                                    onToggleFs={() => setFsPanel(fsPanel === `indiv_${t.id}_${c}` ? null : `indiv_${t.id}_${c}`)}
-                                                />
-                                            </React.Fragment>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
+const renderTableAnalysis = (t, tIndex) => {
+        const colFits = (fits[t.id] || []).map(cf => ({ ...cf, effectiveError: manualErrors[t.id]?.[cf.residue] ?? (cf.fit?.seR_s || 0) }));
+        return (
+            <CollapsibleSection key={t.id} title={`Table ${tIndex + 1} Analysis — ${t.atom || '…'} (${t.relaxType})`} icon="📐" defaultOpen={tIndex === 0}>
+                <div className="flex flex-col gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+                        <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Observed atom</label>
+                            <input type="text" value={t.atom || 'HN'} onChange={(e) => updateTable(t.id, { atom: e.target.value })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" placeholder="HN" />
                         </div>
-                    </CollapsibleSection>
+                        <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Experiment Type</label>
+                            <select value={t.relaxType} onChange={(e) => updateTable(t.id, { relaxType: e.target.value })} className="w-full border border-slate-300 rounded-md p-2 text-sm bg-white outline-none focus:border-blue-500">
+                                <option value="T1">T1 (Inversion Recovery)</option>
+                                <option value="T2">T2 / T1rho (Exponential)</option>
+                                <option value="DOSY">DOSY (Diffusion)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">{t.relaxType === 'DOSY' ? 'X Unit' : 'Delay unit'}</label>
+                            <select value={t.delayUnit} onChange={(e) => updateTable(t.id, { delayUnit: e.target.value })} className="w-full border border-slate-300 rounded-md p-2 text-sm bg-white outline-none focus:border-blue-500">
+                                <option value="ms">ms</option> <option value="s">s</option>{t.relaxType === 'DOSY' && <option value="s/mm2">s/mm²</option>}
+                            </select>
+                        </div>
+                        <div className="flex items-end gap-2">
+                            <button onClick={() => runFitForTable(t)} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 w-full rounded-md shadow-sm transition-colors">▶️ Compute Fit</button>
+                        </div>
+                        <div className="flex items-end gap-2">
+                            <button onClick={() => duplicateTable(t)} className="text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold px-3 py-2 w-full rounded-md transition-colors">♻️ Duplicate</button>
+                        </div>
+                    </div>
+                    
+                    {/* Chart type & Config controls */}
+                    <div className="flex items-center justify-between border-t border-slate-100 pt-3 mt-1">
+                        <div className="flex items-center gap-3">
+                            <label className="text-[10px] font-bold text-slate-500 uppercase">Chart Type:</label>
+                            <select value={chartType} onChange={(e) => setChartType(e.target.value)} className="border border-slate-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-blue-500">
+                                <option value="line">Line / Scatter</option>
+                                <option value="hist">Histogram</option>
+                            </select>
+                        </div>
+                        <button onClick={() => setShowChartCfg(showChartCfg === t.id ? false : t.id)} className={`font-bold py-1.5 px-3 rounded-lg text-xs transition-colors shadow-sm ${showChartCfg === t.id ? 'bg-slate-200 border border-slate-400 text-slate-900' : 'bg-white hover:bg-slate-50 text-slate-800 border border-slate-300'}`}>
+                            ⚙️ Chart Config
+                        </button>
+                    </div>
+
+                    {showChartCfg === t.id && (
+                        <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 mb-2">
+                            <SharedGraphConfig 
+                                activeTest={activeTest}
+                                updateActiveTest={update}
+                                showLayoutOptions={false}
+                            />
+                        </div>
+                    )}
+
+                    {/* Fitted results table — expandable and exportable */}
+                    <div>
+                        <div className="flex items-center justify-between mb-2">
+                            <h4 className="text-xs font-bold text-slate-600 uppercase">Fitted {t.relaxType} per residue</h4>
+                            <button onClick={() => exportFittedTable(t, colFits)} className="text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded shadow-sm">📊 Export XLS</button>
+                        </div>
+                        <div className="overflow-x-auto">
+                            <table className="text-xs border border-slate-200 rounded w-full">
+                                <thead>
+                                    <tr className="bg-slate-100 text-slate-600">
+                                        <th className="p-1.5 border border-slate-200">Residue</th>
+                                        <th className="p-1.5 border border-slate-200">{t.relaxType === 'DOSY' ? 'D (Diff. Rate)' : `R (${t.relaxType === 'T1' ? 'R1' : 'R2'}) s⁻¹`}</th>
+                                        {t.relaxType !== 'DOSY' && <th className="p-1.5 border border-slate-200">{t.relaxType} (s)</th>}
+                                        <th className="p-1.5 border border-slate-200">R²</th><th className="p-1.5 border border-slate-200">N</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {colFits.length === 0 ? (<tr><td colSpan={5} className="p-3 text-center text-slate-400">Click "Compute Fit" to calculate parameters.</td></tr>) : (
+                                        colFits.map((cf, i) => (
+                                            <tr key={i} className="text-center">
+                                                <td className="p-1.5 border border-slate-200 font-bold text-blue-800">{cf.residue}</td>
+                                                <td className="p-1.5 border border-slate-200 font-mono">{cf.fit ? (t.relaxType === 'DOSY' ? cf.fit.R_s.toExponential(3) : cf.fit.R_s.toFixed(3)) + (cf.effectiveError ? ` ± ${cf.effectiveError.toExponential(2)}` : '') : '—'}</td>
+                                                {t.relaxType !== 'DOSY' && (<td className="p-1.5 border border-slate-200 font-mono">{cf.fit ? (cf.fit.T_s === Infinity ? '∞' : cf.fit.T_s.toFixed(3)) : '—'}</td>)}
+                                                <td className="p-1.5 border border-slate-200 font-mono">{cf.fit ? cf.fit.r2.toFixed(3) : '—'}</td>
+                                                <td className="p-1.5 border border-slate-200">{cf.fit ? cf.fit.n : 0}</td>
+                                            </tr>
+                                        ))
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    {/* Error Management Panel per Table */}
+                    {colFits.some(cf => cf.fit) && (
+                        <div className="mt-4 p-4 bg-orange-50 border border-orange-200 rounded-lg shadow-sm">
+                            <h4 className="text-xs font-black text-orange-800 uppercase mb-3 border-b border-orange-100 pb-2">Manual SD Overrides (Parameter Err)</h4>
+                            <div className="flex flex-wrap gap-3">
+                                {colFits.filter(cf => cf.fit).map(cf => {
+                                    const isOverridden = typeof manualErrors[t.id]?.[cf.residue] === 'number';
+                                    return (
+                                        <ErrInput
+                                            key={cf.residue}
+                                            label={cf.residue}
+                                            value={isOverridden ? manualErrors[t.id][cf.residue] : cf.fit.seR_s}
+                                            sdRaw={cf.fit.seR_s}
+                                            isOverridden={isOverridden}
+                                            onSave={(v) => storeManualErr(t.id, cf.residue, v)}
+                                            onReset={() => clearManualErr(t.id, cf.residue)}
+                                        />
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Charts — FULL WIDTH, one per line */}
+                    <div className="flex flex-col gap-4 relative">
+                        {fsPanel === `decay_${t.id}` && <div className={OVERLAY_CLASSES} onClick={() => setFsPanel(null)}></div>}
+                        <div className={`border border-slate-200 rounded-lg bg-white ${fsPanel === `decay_${t.id}` ? 'z-[999999]' : 'p-3'}`}>
+                            <DecayChart table={t} colFits={colFits} chartCfg={chartCfg} isFs={fsPanel === `decay_${t.id}`} onToggleFs={() => setFsPanel(fsPanel === `decay_${t.id}` ? null : `decay_${t.id}`)} chartType={chartType} />
+                        </div>
+
+                        {fsPanel === `param_${t.id}` && <div className={OVERLAY_CLASSES} onClick={() => setFsPanel(null)}></div>}
+                        <div className={`border border-slate-200 rounded-lg bg-white ${fsPanel === `param_${t.id}` ? 'z-[999999]' : 'p-3'}`}>
+                            <ParameterChart table={t} colFits={colFits} chartCfg={chartCfg} isFs={fsPanel === `param_${t.id}`} onToggleFs={() => setFsPanel(fsPanel === `param_${t.id}` ? null : `param_${t.id}`)} chartType={chartType} />
+                        </div>
+                    </div>
+
+                    {/* Individual Fittings Panel */}
+                    {colFits.length > 0 && (
+                        <div className="mt-4 p-4 bg-slate-50 border border-slate-200 rounded-lg shadow-sm">
+                            <h4 className="text-xs font-black text-slate-700 uppercase mb-3 border-b border-slate-200 pb-2">Individual Fittings</h4>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+                                {colFits.map((cf, c) => (
+                                    <React.Fragment key={c}>
+                                        {fsPanel === `indiv_${t.id}_${c}` && <div className={OVERLAY_CLASSES} onClick={() => setFsPanel(null)}></div>}
+                                        <IndividualDecayChart
+                                            table={t}
+                                            colIndex={c}
+                                            colFit={cf}
+                                            chartCfg={chartCfg}
+                                            isFs={fsPanel === `indiv_${t.id}_${c}`}
+                                            onToggleFs={() => setFsPanel(fsPanel === `indiv_${t.id}_${c}` ? null : `indiv_${t.id}_${c}`)}
+                                        />
+                                    </React.Fragment>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
             </CollapsibleSection>
         );
@@ -873,36 +1398,21 @@ export const NMRFittingsTestRenderer = ({ activeTest = {}, updateActiveTest, Tes
     );
 
     /* ---------------------------------------------------------------------------
-    CHART CONFIG SECTION (Refactored to use modular SharedGraphConfig)
+    FITTING SECTION & DATA SECTION
     --------------------------------------------------------------------------- */
     const FittingSection = () => (
-        <CollapsibleSection title="Graphical Parameters" icon="🎨" defaultOpen={false}>
-            <div className="flex flex-col gap-4">
-                <div className="flex justify-end">
-                    <button onClick={() => setShowChartCfg(!showChartCfg)} className={`font-bold py-2 px-4 rounded-lg text-xs transition-colors shadow-sm ${showChartCfg ? 'bg-slate-200 border border-slate-400 text-slate-900' : 'bg-white hover:bg-slate-50 text-slate-800 border border-slate-300'}`}>
-                        ⚙️ Chart Config
-                    </button>
-                </div>
-                {showChartCfg && (
-                    <SharedGraphConfig 
-                        activeTest={activeTest}
-                        updateActiveTest={update}
-                        showLayoutOptions={false}
-                    />
-                )}
-            </div>
-        </CollapsibleSection>
+        <div className="flex flex-col gap-6">
+            {tables.map((t, i) => renderTableAnalysis(t, i))}
+        </div>
     );
 
     const DataSection = () => (
-        <CollapsibleSection title="Data" icon="📊" defaultOpen={true}>
-            <div className="flex flex-col gap-6">
-                {tables.map((t, i) => renderTable(t, i))}
-                <button onClick={addTable} className="self-start text-sm bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-md shadow-sm">+ Add relaxation table</button>
-            </div>
-        </CollapsibleSection>
+        <div className="flex flex-col gap-6">
+            {tables.map((t, i) => renderTableData(t, i))}
+            <button onClick={addTable} className="self-start text-sm bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-md shadow-sm">+ Add relaxation table</button>
+        </div>
     );
-
+ 
     return (
         <TestShellRenderer
             config={NMR_FITTING_TAB_CONFIG}
