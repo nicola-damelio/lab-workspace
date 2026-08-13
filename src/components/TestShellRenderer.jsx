@@ -1257,23 +1257,23 @@ const [showGeneral, setShowGeneral] = useState(true);
         })
         .join(' | ');
 
-      const details = [
-        `<b>Experiment Type:</b> ${escapeHtml(category)}`,
-        secondary
-          ? `<b>Secondary Classification:</b> ${escapeHtml(secondary)}`
-          : '',
-        testOperator
-          ? `<b>Operator:</b> ${escapeHtml(testOperator)}`
-          : operatorNames
-            ? `<b>Operator:</b> ${escapeHtml(operatorNames)}`
-            : '',
-        sample ? `<b>Sample:</b> ${escapeHtml(sample)}` : '',
-        cells ? `<b>Cell lines:</b> ${escapeHtml(cells)}` : '',
-        conditionPairs,
-        customPairs
-      ]
-        .filter(Boolean)
-        .join(' | ');
+const details = [
+  `<b>Experiment Type:</b> ${escapeHtml(category)}`,
+  secondary
+    ? `<b>Secondary Classification:</b> ${escapeHtml(secondary)}`
+    : '',
+  testOperator
+    ? `<b>Scientist:</b> ${escapeHtml(testOperator)}`
+    : operatorNames
+      ? `<b>Scientist:</b> ${escapeHtml(operatorNames)}`
+      : '',
+  sample ? `<b>Sample:</b> ${escapeHtml(sample)}` : '',
+  cells ? `<b>Cell lines:</b> ${escapeHtml(cells)}` : '',
+  conditionPairs,
+  customPairs
+]
+  .filter(Boolean)
+  .join(' | ');
 
       html += `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;">${details}</p>`;
     }
@@ -1443,41 +1443,39 @@ const [showGeneral, setShowGeneral] = useState(true);
                 </p>
               </div>
 
-              <div>
-                <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
-                  Operator / Scientist who performed the experiment
-                </label>
-
-                {operators.length === 0 ? (
-                  <p className="text-sm text-slate-400 italic">
-                    No operators defined. Add them in Definitions & Labels →
-                    Scientists / Operators.
-                  </p>
-                ) : (
-                  <select
-                    value={testOperator}
-                    onChange={(e) => update({ operator: e.target.value })}
-                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
-                  >
-                    <option value="">— Select Operator —</option>
-                    {operators.map((op) => (
-                      <option key={op} value={op}>
-                        {op}
-                      </option>
-                    ))}
-                  </select>
-                )}
-
-                {testOperator && (
-                  <button
-                    type="button"
-                    onClick={() => update({ operator: '' })}
-                    className="mt-2 text-xs font-bold text-red-500 hover:text-red-700 underline"
-                  >
-                    Clear operator
-                  </button>
-                )}
-              </div>
+ <div>
+  <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
+    Scientist who performed the experiment
+  </label>
+  {operators.length === 0 ? (
+    <p className="text-sm text-slate-400 italic">
+      No scientists defined. Add them in Definitions & Labels →
+      Scientists / Operators.
+    </p>
+  ) : (
+    <select
+      value={testOperator}
+      onChange={(e) => update({ operator: e.target.value })}
+      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
+    >
+      <option value="">— Select Scientist —</option>
+      {operators.map((op) => (
+        <option key={op} value={op}>
+          {op}
+        </option>
+      ))}
+    </select>
+  )}
+  {testOperator && (
+    <button
+      type="button"
+      onClick={() => update({ operator: '' })}
+      className="mt-2 text-xs font-bold text-red-500 hover:text-red-700 underline"
+    >
+      Clear scientist
+    </button>
+  )}
+</div>
             </div>
           </CollapsibleSection>
 

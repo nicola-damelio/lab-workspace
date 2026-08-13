@@ -383,39 +383,94 @@ const updateWellOwner = (r, c, value) => {
         setVal('selectedWells', exists ? selectedWells.filter(w => !(w.r === r && w.c === c)) : [...selectedWells, {r, c}]); 
     };
 
-    const printBoxLabel = () => {
-        try {
-            const printWin = window.open('', '_blank');
-            if (!printWin) { alert('Popup blocked!'); return; }
-            const safe = (v) => (v === null || v === undefined) ? '' : String(v);
-            const storageName = storages.find(s => s.id === activeTest.storageId)?.name || activeTest.storageLabel || 'Unassigned';
-            const posLabel = activeTest.storageIndex !== null && activeTest.storageIndex !== undefined ? activeTest.storageIndex + 1 : 'N/A';
-            let html = `<!DOCTYPE html><html><head><title>Label Print</title><style>
-                @page { size: 12cm 12cm; margin: 0; }
-                body { font-family: 'Inter', Arial, sans-serif; padding: 15px; font-size: 11px; color: #000; box-sizing: border-box; width: 12cm; height: 12cm; }
-                h3 { margin-top: 0; margin-bottom: 10px; font-size: 14px; border-bottom: 1px solid #000; padding-bottom: 5px; }
-                table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-                th, td { border: 1px solid #000; padding: 4px; text-align: left; font-size: 10px; }
-                th { background-color: #f3f4f6; }
-            </style></head><body>
-            <h3>Storage: ${safe(storageName)} (Pos: ${posLabel})</h3>
-            <p><strong>Box:</strong> ${safe(activeTest.name)}${activeTest.instanceName ? ' - ' + safe(activeTest.instanceName) : ''}</p>
-            <table><tr><th>Pos</th><th>Compound</th><th>Operator</th><th>Solvent</th><th>Conc.</th><th>Vol.</th><th>Date</th><th>Weight</th><th>Notes</th></tr>`;
-            const sortedWells = [...selectedWells].sort((a, b) => a.r === b.r ? a.c - b.c : a.r - b.r);
-            sortedWells.forEach(({ r, c }) => {
-                const d = getWellData(r, c);
-                const rowLabel = (BOX_ROW_LABELS && BOX_ROW_LABELS[r]) ? BOX_ROW_LABELS[r] : String.fromCharCode(65 + r);
-                const pos = `${rowLabel}${c + 1}`;
-                html += `<tr><td>${pos}</td><td>${safe(d.compound)}</td><td>${safe(d.operator)}</td><td>${safe(d.solvent)}</td><td>${safe(d.concentration)} ${safe(d.concUnit || 'µM')}</td><td>${safe(d.volume)} ${safe(d.volUnit || 'µL')}</td><td>${safe(d.date)}</td><td>${safe(d.weight)} ${safe(d.weightUnit || 'mg')}</td><td>${safe(d.description)}</td></tr>`;
-            });
-            html += `</table></body></html>`;
-            printWin.document.write(html);
-            printWin.document.close();
-            printWin.focus();
-            setTimeout(() => { try { printWin.print(); } catch(e) {} }, 300);
-        } catch (err) { alert('Print failed: ' + err.message); }
-    };
+const printBoxLabel = () => {
+  try {
+    const printWin = window.open('', '_blank');
 
+    if (!printWin) {
+      alert('Popup blocked!');
+      return;
+    }
+
+    const safe = (v) => (v === null || v === undefined ? '' : String(v));
+
+    const storageName =
+      storages.find((s) => s.id === activeTest.storageId)?.name ||
+      activeTest.storageLabel ||
+      'Unassigned';
+
+    const posLabel =
+      activeTest.storageIndex !== null && activeTest.storageIndex !== undefined
+        ? activeTest.storageIndex + 1
+        : 'N/A';
+
+    let html = `<!DOCTYPE html><html><head><title>Label Print</title><style>
+        @page { size: 12cm 12cm; margin: 0; }
+        body { font-family: 'Inter', Arial, sans-serif; padding: 15px; font-size: 11px; color: #000; box-sizing: border-box; width: 12cm; height: 12cm; }
+        h3 { margin-top: 0; margin-bottom: 10px; font-size: 14px; border-bottom: 1px solid #000; padding-bottom: 5px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { border: 1px solid #000; padding: 4px; text-align: left; font-size: 10px; }
+        th { background-color: #f3f4f6; }
+    </style></head><body>
+    <h3>Storage: ${safe(storageName)} (Pos: ${posLabel})</h3>
+    <p><strong>Box:</strong> ${safe(activeTest.name)}${
+      activeTest.instanceName ? ' - ' + safe(activeTest.instanceName) : ''
+    }</p>
+    <table>
+      <tr>
+        <th>Pos</th>
+        <th>Compound</th>
+        <th>Sample Owner</th>
+        <th>Solvent</th>
+        <th>Conc.</th>
+        <th>Vol.</th>
+        <th>Date</th>
+        <th>Weight</th>
+        <th>Notes</th>
+      </tr>`;
+
+    const sortedWells = [...selectedWells].sort((a, b) =>
+      a.r === b.r ? a.c - b.c : a.r - b.r
+    );
+
+    sortedWells.forEach(({ r, c }) => {
+      const d = getWellData(r, c);
+
+      const rowLabel =
+        BOX_ROW_LABELS && BOX_ROW_LABELS[r]
+          ? BOX_ROW_LABELS[r]
+          : String.fromCharCode(65 + r);
+
+      const pos = `${rowLabel}${c + 1}`;
+
+      html += `<tr>
+        <td>${pos}</td>
+        <td>${safe(d.compound)}</td>
+        <td>${safe(d.sampleOwner || d.operator)}</td>
+        <td>${safe(d.solvent)}</td>
+        <td>${safe(d.concentration)} ${safe(d.concUnit || 'µM')}</td>
+        <td>${safe(d.volume)} ${safe(d.volUnit || 'µL')}</td>
+        <td>${safe(d.date)}</td>
+        <td>${safe(d.weight)} ${safe(d.weightUnit || 'mg')}</td>
+        <td>${safe(d.description)}</td>
+      </tr>`;
+    });
+
+    html += `</table></body></html>`;
+
+    printWin.document.write(html);
+    printWin.document.close();
+    printWin.focus();
+
+    setTimeout(() => {
+      try {
+        printWin.print();
+      } catch (e) {}
+    }, 300);
+  } catch (err) {
+    alert('Print failed: ' + err.message);
+  }
+};
     return (
         <div className="flex flex-col h-full overflow-hidden">
             {TestHeader}
@@ -446,8 +501,8 @@ const updateWellOwner = (r, c, value) => {
                     </div>
                     <div className="flex-1 flex items-center gap-2 min-w-[200px]">
                         <label className="text-xs font-bold text-slate-500 uppercase">Search:</label>
-                        <input type="text" value={boxSearch} onChange={e => setVal('boxSearch', e.target.value)} placeholder="Filter compounds or operators..."
-                            className="flex-1 border border-slate-300 rounded px-3 py-1 text-sm outline-none focus:border-blue-500" />
+                        <input type="text" value={boxSearch} onChange={e => setVal('boxSearch', e.target.value)} placeholder="Filter compounds or sample owners..."
+    className="flex-1 border border-slate-300 rounded px-3 py-1 text-sm outline-none focus:border-blue-500" />
                     </div>
                 </div>
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 mb-6 overflow-x-auto text-center flex justify-center">
@@ -464,7 +519,7 @@ const updateWellOwner = (r, c, value) => {
                                         const data = getWellData(r, c);
                                         const hasContent = data.compound.trim().length > 0;
                                         const isSelected = selectedWells.some(w => w.r === r && w.c === c) || (boxDragState.active && r >= Math.min(boxDragState.startR, boxDragState.currentR) && r <= Math.max(boxDragState.startR, boxDragState.currentR) && c >= Math.min(boxDragState.startC, boxDragState.currentC) && c <= Math.max(boxDragState.startC, boxDragState.currentC));
-                                        const isMatch = boxSearch && (String(data.compound || '').toLowerCase().includes(boxSearch.toLowerCase()) || String(data.operator || '').toLowerCase().includes(boxSearch.toLowerCase()) || String(data.description || '').toLowerCase().includes(boxSearch.toLowerCase()) || String(data.solvent || '').toLowerCase().includes(boxSearch.toLowerCase()) || String(data.concentration || '').toLowerCase().includes(boxSearch.toLowerCase()));
+                                        const isMatch = boxSearch && (String(data.compound || '').toLowerCase().includes(boxSearch.toLowerCase()) || String(data.sampleOwner || data.operator || '').toLowerCase().includes(boxSearch.toLowerCase()) || String(data.description || '').toLowerCase().includes(boxSearch.toLowerCase()) || String(data.solvent || '').toLowerCase().includes(boxSearch.toLowerCase()) || String(data.concentration || '').toLowerCase().includes(boxSearch.toLowerCase()));
                                         return (
                                             <div key={c} 
                                                 onMouseDown={(e) => {

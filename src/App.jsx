@@ -6102,16 +6102,16 @@ setMandatoryFields(s.mandatoryFields || []);
                   </div>
 
                   <div className="flex flex-wrap gap-2 items-center">
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase">Filter by Operator</label>
-                      <select value={agendaOpFilter} onChange={(e) => setAgendaOpFilter(e.target.value)}
-                        className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm bg-white outline-none focus:border-blue-500 font-semibold shadow-sm">
-                        <option value="ALL">All Users</option>
-                        {(operators || []).map((op) => (
-                          <option key={op} value={op}>{op}</option>
-                        ))}
-                      </select>
-                    </div>
+<div className="flex flex-col gap-1">
+  <label className="text-[10px] font-bold text-slate-500 uppercase">Filter by Scientist</label>
+  <select value={agendaOpFilter} onChange={(e) => setAgendaOpFilter(e.target.value)}
+    className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm bg-white outline-none focus:border-blue-500 font-semibold shadow-sm">
+    <option value="ALL">All Users</option>
+    {(operators || []).map((op) => (
+      <option key={op} value={op}>{op}</option>
+    ))}
+  </select>
+</div>
                     <button
                       onClick={handlePrint}
                       className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center gap-2 shadow-sm no-print self-end"
@@ -7454,7 +7454,7 @@ const newProto = {
         Box Owner
       </label>
       <select
-        value={activeTest.boxOwner || activeTest.operator || ''}
+        value={activeTest.boxOwner || ''}
         onChange={(e) => updateActiveTest({ boxOwner: e.target.value })}
         className="bg-slate-50 border border-slate-200 text-xs px-2 py-2 rounded-lg outline-none focus:border-blue-500"
       >
@@ -7469,14 +7469,14 @@ const newProto = {
   ) : (
     <div className="flex flex-col flex-1 min-w-[160px]">
       <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
-        Sample Owner
+        Scientist
       </label>
       <select
-        value={activeTest.sampleOwner || activeTest.operator || ''}
-        onChange={(e) => updateActiveTest({ sampleOwner: e.target.value })}
+        value={activeTest.operator || ''}
+        onChange={(e) => updateActiveTest({ operator: e.target.value })}
         className="bg-slate-50 border border-slate-200 text-xs px-2 py-2 rounded-lg outline-none focus:border-blue-500"
       >
-        <option value="">Select Sample Owner...</option>
+        <option value="">Select Scientist...</option>
         {operators.map((op) => (
           <option key={op} value={op}>
             {op}

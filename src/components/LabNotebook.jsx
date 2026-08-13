@@ -19,7 +19,7 @@ import {
 import { CD_FIT_COMPONENTS } from './CDSections';
 
 /* ============================================================================
-CD SPECTRA CHART (for Lab Notebook)
+   CD SPECTRA CHART (for Lab Notebook)
 ========================================================================== */
 const CDSpectraChart = ({ wavelengthData, spectraColumns, chartCfg }) => {
   const canvasRef = useRef(null);
@@ -113,9 +113,6 @@ const CDSpectraChart = ({ wavelengthData, spectraColumns, chartCfg }) => {
   );
 };
 
-/* ============================================================================
-CD STRUCTURE DOUGHNUT CHART (for Lab Notebook)
-========================================================================== */
 const CDStructureChart = ({ structureComposition }) => {
   const canvasRef = useRef(null);
   const chartInstance = useRef(null);
@@ -169,7 +166,255 @@ const CDStructureChart = ({ structureComposition }) => {
 };
 
 /* ============================================================================
-NMR SIMULATED SPECTRA (for Lab Notebook)
+   CLONING UV SPECTRA CHART (for Lab Notebook)
+========================================================================== */
+const CloningUvSpectraChart = ({ uvSpectra }) => {
+  const canvasRef = useRef(null);
+  const chartInstance = useRef(null);
+
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    if (chartInstance.current) chartInstance.current.destroy();
+
+    const datasets = (uvSpectra || []).map((spec, idx) => {
+      const color = PALETTE ? toHex(PALETTE[idx % PALETTE.length]) : '#3b82f6';
+      return {
+        label: spec.name || `Spectrum ${idx + 1}`,
+        data: (spec.points || []).map(p => ({ x: p.wavelength, y: p.absorbance })),
+        borderColor: color,
+        backgroundColor: color + '20',
+        borderWidth: 2,
+        pointRadius: 0,
+        fill: false,
+        tension: 0.1,
+      };
+    }).filter(d => d.data.length > 0);
+
+    if (datasets.length === 0) return;
+
+    chartInstance.current = new Chart(canvasRef.current, {
+      type: 'line',
+      data: { datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        interaction: { mode: 'nearest', intersect: false },
+        scales: {
+          x: { type: 'linear', title: { display: true, text: 'Wavelength (nm)', font: { size: 10 } }, ticks: { font: { size: 9 } } },
+          y: { title: { display: true, text: 'Absorbance', font: { size: 10 } }, ticks: { font: { size: 9 } } }
+        },
+        plugins: { legend: { position: 'top', labels: { font: { size: 10 } } } }
+      }
+    });
+
+    return () => { if (chartInstance.current) chartInstance.current.destroy(); };
+  }, [uvSpectra]);
+
+  if (!uvSpectra || uvSpectra.length === 0) return null;
+
+  return (
+    <div className="mt-4">
+      <h5 className="text-[10px] font-bold text-slate-500 mb-1 uppercase">UV Spectra</h5>
+      <div style={{ height: '250px', position: 'relative' }} className="bg-white border border-slate-200 rounded p-2">
+        <canvas ref={canvasRef}></canvas>
+      </div>
+    </div>
+  );
+};
+
+/* ============================================================================
+   CLONING SIMULATION CHART PREVIEW (for Lab Notebook)
+========================================================================== */
+const CloningSimChartPreview = ({ sim }) => {
+  const canvasRef = useRef(null);
+  const chartInstance = useRef(null);
+
+  useEffect(() => {
+    if (!canvasRef.current || !sim || !sim.sequence) return;
+    if (chartInstance.current) chartInstance.current.destroy();
+
+    const molType = sim.molType || 'dsDNA';
+    const sequence = sim.sequence.toUpperCase().replace(/[^A-Z]/g, '');
+    const concStr = sim.conc ?? '50';
+    const concUnit = sim.concUnit || 'ng/µL';
+    const pathMm = sim.pathLengthMm ?? '10';
+
+    const isProt = molType === 'Protein';
+    let mw = 0;
+    const counts = {};
+    for (let char of sequence) {
+      counts[char] = (counts[char] || 0) + 1;
+    }
+
+    if (isProt) {
+      mw = sequence.length > 0 ? sequence.length * 110 : 0;
+    } else {
+      const naMw = molType === 'ssDNA' ? 330 : 660;
+      mw = sequence.length * naMw;
+    }
+
+    let concM = null;
+    const v = parseFloat(concStr);
+    if (!isNaN(v) && mw > 0) {
+      if (concUnit === 'µM') concM = v * 1e-6;
+      else concM = (v * 1e-3) / mw;
+    }
+
+    if (concM == null) return;
+
+    const GAUSS = (x, mu, sigma) => Math.exp(-0.5 * Math.pow((x - mu) / sigma, 2));
+    const DNA_BASE_EPS = {
+      A: { eps: 15400, peak: 259, sigma: 14 },
+      C: { eps: 7400, peak: 271, sigma: 14 },
+      G: { eps: 11500, peak: 253, sigma: 14 },
+      T: { eps: 8700, peak: 260, sigma: 14 },
+      U: { eps: 10000, peak: 260, sigma: 14 }
+    };
+
+    const l = (parseFloat(pathMm) || 10) / 10;
+    const start = isProt ? 190 : 220;
+    const end = isProt ? 350 : 320;
+    const data = [];
+
+    for (let wl = start; wl <= end; wl += 1) {
+      let eps = 0;
+      if (isProt) {
+        const nBonds = Math.max(0, sequence.length - 1);
+        eps += nBonds * 3000 * GAUSS(wl, 205, 13);
+        eps += (counts['W'] || 0) * 5500 * GAUSS(wl, 280, 7);
+        eps += (counts['Y'] || 0) * 1490 * GAUSS(wl, 274, 6);
+        eps += (counts['F'] || 0) * 200 * GAUSS(wl, 257, 6);
+        eps += Math.floor((counts['C'] || 0) / 2) * 125 * GAUSS(wl, 250, 8);
+      } else {
+        Object.entries(DNA_BASE_EPS).forEach(([base, cfg]) => {
+          eps += (counts[base] || 0) * cfg.eps * GAUSS(wl, cfg.peak, cfg.sigma);
+        });
+        if (molType === 'dsDNA') eps *= 0.6;
+      }
+      data.push({ x: wl, y: eps * concM * l });
+    }
+
+    chartInstance.current = new Chart(canvasRef.current, {
+      type: 'line',
+      data: {
+        datasets: [{
+          label: `Simulated ${molType}`,
+          data,
+          borderColor: '#7c3aed',
+          borderWidth: 2,
+          pointRadius: 0,
+          fill: false,
+          tension: 0.1
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        scales: {
+          x: { type: 'linear', title: { display: true, text: 'Wavelength (nm)', font: { size: 10 } }, ticks: { font: { size: 9 } } },
+          y: { title: { display: true, text: 'Absorbance', font: { size: 10 } }, ticks: { font: { size: 9 } } }
+        },
+        plugins: { legend: { display: false } }
+      }
+    });
+
+    return () => { if (chartInstance.current) chartInstance.current.destroy(); };
+  }, [sim]);
+
+  if (!sim || !sim.sequence) return null;
+
+  return (
+    <div className="mt-4">
+      <h5 className="text-[10px] font-bold text-slate-500 mb-1 uppercase text-center w-full">Simulated UV Spectrum ({sim.molType || 'dsDNA'})</h5>
+      <div style={{ height: '250px', position: 'relative' }} className="bg-white border border-slate-200 rounded p-2">
+        <canvas ref={canvasRef}></canvas>
+      </div>
+    </div>
+  );
+};
+
+
+/* ============================================================================
+   PROTEIN CHROMATOGRAM CHART (for Lab Notebook)
+========================================================================== */
+const METHOD_STROKE = {
+  'Affinity': '#1e40af',
+  'His-Trap': '#0d9488',
+  'GST': '#7c3aed',
+  'Ion Exchange': '#d97706',
+  'Gel Filtration': '#059669'
+};
+
+const parseChromatogram = (raw) => {
+  if (!raw) return [];
+  return String(raw).split('\n').map((line) => {
+    const parts = line.split(/[,\t; ]+/).filter(Boolean);
+    if (parts.length >= 2) {
+      const x = parseFloat(parts[0]);
+      const y = parseFloat(parts[1]);
+      if (!isNaN(x) && !isNaN(y)) return { x, y };
+    }
+    return null;
+  }).filter(Boolean).sort((a, b) => a.x - b.x);
+};
+
+const ProteinChromatogramChart = ({ chromatograms }) => {
+  const canvasRef = useRef(null);
+  const chartInstance = useRef(null);
+
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    if (chartInstance.current) chartInstance.current.destroy();
+
+    const datasets = (chromatograms || []).map((chr, idx) => {
+      const data = parseChromatogram(chr.rawData);
+      const color = METHOD_STROKE[chr.method] || '#1e40af';
+      return {
+        label: chr.name || `Chromatogram ${idx + 1}`,
+        data,
+        borderColor: color,
+        backgroundColor: color + '20',
+        borderWidth: 2,
+        pointRadius: 0,
+        fill: false,
+        tension: 0.1,
+      };
+    }).filter(d => d.data.length > 0);
+
+    if (datasets.length === 0) return;
+
+    chartInstance.current = new Chart(canvasRef.current, {
+      type: 'line',
+      data: { datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        interaction: { mode: 'nearest', intersect: false },
+        scales: {
+          x: { type: 'linear', title: { display: true, text: 'Elution Volume (mL)', font: { size: 10 } }, ticks: { font: { size: 9 } } },
+          y: { title: { display: true, text: 'Absorbance', font: { size: 10 } }, ticks: { font: { size: 9 } } }
+        },
+        plugins: { legend: { position: 'top', labels: { font: { size: 10 } } } }
+      }
+    });
+
+    return () => { if (chartInstance.current) chartInstance.current.destroy(); };
+  }, [chromatograms]);
+
+  if (!chromatograms || chromatograms.length === 0) return null;
+
+  return (
+    <div className="mt-4">
+      <div style={{ height: '250px', position: 'relative' }} className="bg-white border border-slate-200 rounded p-2">
+        <canvas ref={canvasRef}></canvas>
+      </div>
+    </div>
+  );
+};
+
+/* ============================================================================
+   NMR SIMULATED SPECTRA (for Lab Notebook)
 ========================================================================== */
 const NMR_SPECTRUM_TYPES = [
   { id: '1D_1H',   label: '¹H 1D',       dim: '1D' },
@@ -205,7 +450,7 @@ const NMRSpectraPreview = ({ test, selectedTypes = [] }) => {
   const showHsqc15N = has('hsqc15n') && d.moleculeType === 'protein' && d.selNuc.includes('N') && d.peaks.hsqc15NPeaks.length > 0;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-4 w-full">
       {has('1D_1H') && (
         <OneDSpectrumPlot title="Simulated ¹H 1D Spectrum" data={d.peaks.data1H} fullDomain={[0, 11]} ticks={TICKS_1H} TickComponent={CustomXTick1H} xLabel="¹H (ppm)" panelId="nb-1D_1H" expandedPanel={null} setExpandedPanel={noopPanel} selectedKeys={null} heightPx={260} fs={11} simCfg={simCfg} />
       )}
@@ -233,8 +478,9 @@ const NMRSpectraPreview = ({ test, selectedTypes = [] }) => {
     </div>
   );
 };
+
 /* ============================================================================
-PREVIEW HELPERS
+   PREVIEW HELPERS
 ========================================================================== */
 const PlateGridPreview = ({ test }) => {
   const { grid, cellConfig } = test;
@@ -251,7 +497,7 @@ const PlateGridPreview = ({ test }) => {
       <div>
         <h5 className="text-[10px] font-bold text-slate-500 mb-1 uppercase">Plate Map</h5>
         <div className="overflow-x-auto border border-slate-200 rounded max-w-full">
-          <table className="text-[10px] text-center w-full min-w-[max-content] bg-white">
+          <table className="text-[10px] text-center w-full min-w-[max-content] bg-white select-text" draggable="true">
             <thead>
               <tr>
                 <th className="bg-slate-100 border border-slate-200 p-1 w-8"></th>
@@ -292,7 +538,7 @@ const PlateGridPreview = ({ test }) => {
       <div>
         <h5 className="text-[10px] font-bold text-slate-500 mb-1 uppercase">Raw Data (OD)</h5>
         <div className="overflow-x-auto border border-slate-200 rounded max-w-full">
-          <table className="text-[10px] text-center w-full min-w-[max-content] bg-white">
+          <table className="text-[10px] text-center w-full min-w-[max-content] bg-white select-text" draggable="true">
             <thead>
               <tr>
                 <th className="bg-slate-100 border border-slate-200 p-1 w-8"></th>
@@ -531,7 +777,7 @@ const RemovablePanel = ({ title, visible, setVisible, children }) => {
 };
 
 /* ============================================================================
-NMR FITTING GRAPHS PREVIEW (for Lab Notebook)
+   NMR FITTING GRAPHS PREVIEW (for Lab Notebook)
 ========================================================================== */
 const NMRDecayChartPreview = ({ table, colFits }) => {
   const canvasRef = useRef(null);
@@ -736,13 +982,13 @@ const NMRFittingGraphsPreview = ({ test }) => {
 };
 
 /* ============================================================================
-NOTEBOOK TEST ITEM
+   NOTEBOOK TEST ITEM
 ========================================================================== */
 const NotebookTestItem = ({
   test, tests, jumpToTest,
   showConditions, showMolecularFormula, showInstrumental, showReport, showImages,
   showData, showDataAnalysisGraphs,
-  showSimImages, showNMRSpectra, selectedSpectrumTypes = []
+  showSimImages, selectedSpectrumTypes = []
 }) => {
   const [localTest, setLocalTest] = useState(test);
   useEffect(() => setLocalTest(test), [test]);
@@ -756,9 +1002,7 @@ const NotebookTestItem = ({
   const [showDataLocal, setShowDataLocal] = useState(showData);
   const [showAnaLocal, setShowAnaLocal] = useState(showDataAnalysisGraphs);
   const [showSimImgLocal, setShowSimImgLocal] = useState(showSimImages);
-  const [showNmrSpecLocal, setShowNmrSpecLocal] = useState(showNMRSpectra);
   
-  // Toggle for raw data in the Data section, now default true
   const [showRawNmrData, setShowRawNmrData] = useState(true);
 
   useEffect(() => setShowCondLocal(showConditions), [showConditions]);
@@ -769,7 +1013,6 @@ const NotebookTestItem = ({
   useEffect(() => setShowDataLocal(showData), [showData]);
   useEffect(() => setShowAnaLocal(showDataAnalysisGraphs), [showDataAnalysisGraphs]);
   useEffect(() => setShowSimImgLocal(showSimImages), [showSimImages]);
-  useEffect(() => setShowNmrSpecLocal(showNMRSpectra), [showNMRSpectra]);
 
   const mockCtx = useMemo(() => ({
     activeTest: localTest,
@@ -790,6 +1033,7 @@ const NotebookTestItem = ({
   
   const compounds = [...new Set([...(localTest.selectedCompounds || []), ...(localTest.compoundsSelected || []), ...(localTest.compound ? localTest.compound.split(',') : [])])].map(s => s.trim()).filter(Boolean);
   const plasmids = [...new Set([...(localTest.plasmids || []), ...(localTest.plasmid ? [localTest.plasmid] : [])])].filter(Boolean);
+  
   const allImages = [...(localTest.images || []), ...(localTest.nmrSpectraImages || [])];
 
   const getMolecularFormula = () => {
@@ -800,6 +1044,38 @@ const NotebookTestItem = ({
     return null;
   };
   const molFormula = getMolecularFormula();
+
+  const simImgList = useMemo(() => {
+    const looksLikeImage = (it) => {
+      if (typeof it === 'string') return /^(data:image|https?:\/\/|blob:)/i.test(it) || it.startsWith('/') || it.length > 200;
+      if (it && typeof it === 'object') return Boolean(it.url || it.dataUrl || it.src || it.image || (typeof it.data === 'string' && it.data.startsWith('data:image')));
+      return false;
+    };
+    const imgSrc = (it) => (typeof it === 'string' ? it : (it.url || it.dataUrl || it.src || it.image || it.data));
+    const normalize = (v) => (Array.isArray(v) ? v : [v]).filter(looksLikeImage);
+
+    const collected = [];
+    Object.entries(localTest || {}).forEach(([key, val]) => {
+      if (!/sim/i.test(key) || /cfg|config|setting|type|html|css/i.test(key)) return;
+      if (looksLikeImage(val) || Array.isArray(val)) {
+        collected.push(...normalize(val));
+      } else if (val && typeof val === 'object') {
+        Object.entries(val).forEach(([k2, v2]) => {
+          if (/img|image|snapshot|figure|picture|photo/i.test(k2) && (Array.isArray(v2) || looksLikeImage(v2))) {
+            collected.push(...normalize(v2));
+          }
+        });
+      }
+    });
+
+    const seen = new Set();
+    return collected.filter((it) => {
+      const s = imgSrc(it);
+      if (!s || seen.has(s)) return false;
+      seen.add(s);
+      return true;
+    }).map(imgSrc);
+  }, [localTest]);
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden break-inside-avoid avoid-break mb-4">
@@ -842,6 +1118,39 @@ const NotebookTestItem = ({
             {localTest.saltConcentration && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Salt: {localTest.saltConcentration}</span>}
             {localTest.otherMolecule && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Ligand: {localTest.otherMolecule}</span>}
             {localTest.ratio && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Ratio: {localTest.ratio}</span>}
+            
+            {/* Protein Expression specific fields */}
+            {isProteinExp && (
+              <>
+                {localTest.cultureVolume && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Culture: {localTest.cultureVolume}</span>}
+                {localTest.medium && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Medium: {localTest.medium}</span>}
+                {localTest.antibiotic && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Antibiotic: {localTest.antibiotic}</span>}
+                {localTest.inductionMethod && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Induction: {localTest.inductionMethod}</span>}
+                {localTest.iptgConcentration && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">IPTG: {localTest.iptgConcentration}</span>}
+                {localTest.inductionOD && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Ind. OD: {localTest.inductionOD}</span>}
+                {localTest.inductionTemp && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Ind. Temp: {localTest.inductionTemp}</span>}
+                {localTest.inductionDuration && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Ind. Duration: {localTest.inductionDuration}</span>}
+                {localTest.harvestOD && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Harvest OD: {localTest.harvestOD}</span>}
+                {localTest.lysisMethod && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Lysis: {localTest.lysisMethod}</span>}
+                {localTest.lysisBuffer && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Lysis Buf: {localTest.lysisBuffer}</span>}
+                {localTest.proteaseInhibitors && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Inhibitors: {localTest.proteaseInhibitors}</span>}
+                {localTest.proteinTag && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Tag: {localTest.proteinTag}</span>}
+                {localTest.cleavageProtease && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Protease: {localTest.cleavageProtease}</span>}
+                {localTest.columnType && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Column: {localTest.columnType}</span>}
+                {localTest.elutionConditions && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Elution: {localTest.elutionConditions}</span>}
+                {localTest.storageBuffer && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Storage Buf: {localTest.storageBuffer}</span>}
+              </>
+            )}
+
+            {/* Cloning specific fields */}
+            {isCloning && (
+              <>
+                {localTest.vectorBackbone && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Vector: {localTest.vectorBackbone}</span>}
+                {localTest.cloningMethod && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Method: {localTest.cloningMethod}</span>}
+                {localTest.selectionMarker && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Selection: {localTest.selectionMarker}</span>}
+                {localTest.sequencingStatus && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Seq: {localTest.sequencingStatus}</span>}
+              </>
+            )}
           </div>
         </RemovablePanel>
 
@@ -865,6 +1174,57 @@ const NotebookTestItem = ({
           </div>
         </RemovablePanel>
 
+        {isCloning && (localTest.pcrProgram?.length > 0 || localTest.reactionMix?.length > 0 || localTest.cloningStrategy) && (
+          <RemovablePanel title="Cloning Strategy & Setup" visible={showInstLocal} setVisible={setShowInstLocal}>
+            {localTest.cloningStrategy && (
+              <div className="mb-4 p-3 bg-slate-50 border border-slate-200 rounded text-xs flex flex-wrap gap-2">
+                <span className="font-bold text-slate-600 mt-1">Strategy:</span>
+                <span className="bg-white border border-slate-300 px-2 py-1 rounded shadow-sm">{localTest.cloningStrategy.method || 'restriction'}</span>
+                <span className="bg-white border border-slate-300 px-2 py-1 rounded shadow-sm">Insert: {localTest.cloningStrategy.insertCompound || '—'}</span>
+                <span className="bg-white border border-slate-300 px-2 py-1 rounded shadow-sm">Vector: {localTest.cloningStrategy.vectorName || '—'}</span>
+                {localTest.cloningStrategy.method === 'gibson' ? (
+                  <><span className="bg-white border border-slate-300 px-2 py-1 rounded shadow-sm">Overlap: {localTest.cloningStrategy.overlap || 20} bp</span><span className="bg-white border border-slate-300 px-2 py-1 rounded shadow-sm">Pos: {localTest.cloningStrategy.insertionIndex ?? '—'}</span></>
+                ) : (
+                  <><span className="bg-white border border-slate-300 px-2 py-1 rounded shadow-sm">5′ {localTest.cloningStrategy.enzyme5 || '—'}</span><span className="bg-white border border-slate-300 px-2 py-1 rounded shadow-sm">3′ {localTest.cloningStrategy.enzyme3 || '—'}</span></>
+                )}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {localTest.pcrProgram && localTest.pcrProgram.length > 0 && (
+                <div>
+                  <h5 className="text-[10px] font-bold text-slate-500 mb-1 uppercase">Thermal Cycler</h5>
+                  <div className="overflow-x-auto border border-slate-200 rounded max-h-[300px] overflow-y-auto custom-scrollbar">
+                    <table className="w-full text-[10px] text-left select-text bg-white" draggable="true">
+                      <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200 sticky top-0">
+                        <tr><th className="px-2 py-1 border-r">Step</th><th className="px-2 py-1 border-r">Temp (°C)</th><th className="px-2 py-1 border-r">Time</th><th className="px-2 py-1">Cycles</th></tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {localTest.pcrProgram.map(s => <tr key={s.id} className="hover:bg-slate-50"><td className="px-2 py-1 font-bold border-r">{s.name}</td><td className="px-2 py-1 border-r">{s.temp}</td><td className="px-2 py-1 border-r">{s.timeValue} {s.timeUnit}</td><td className="px-2 py-1">{s.cycles}</td></tr>)}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              {localTest.reactionMix && localTest.reactionMix.length > 0 && (
+                <div>
+                  <h5 className="text-[10px] font-bold text-slate-500 mb-1 uppercase">Reaction Mix</h5>
+                  <div className="overflow-x-auto border border-slate-200 rounded max-h-[300px] overflow-y-auto custom-scrollbar">
+                    <table className="w-full text-[10px] text-left select-text bg-white" draggable="true">
+                      <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200 sticky top-0">
+                        <tr><th className="px-2 py-1 border-r">Component</th><th className="px-2 py-1 border-r">Stock</th><th className="px-2 py-1 border-r">Vol (µL)</th><th className="px-2 py-1">Notes</th></tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {localTest.reactionMix.map(r => <tr key={r.id} className="hover:bg-slate-50"><td className="px-2 py-1 font-bold border-r">{r.name}</td><td className="px-2 py-1 border-r">{r.stock}</td><td className="px-2 py-1 border-r">{r.volume}</td><td className="px-2 py-1 text-slate-500">{r.note}</td></tr>)}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          </RemovablePanel>
+        )}
+
         {(localTest.comments || localTest.report) && (
           <RemovablePanel title="Report" visible={showRepLocal} setVisible={setShowRepLocal}>
             {localTest.comments && (
@@ -876,24 +1236,47 @@ const NotebookTestItem = ({
           </RemovablePanel>
         )}
         
-        {allImages.length > 0 && (
+        {(allImages.length > 0 || (localTest.gelImages && localTest.gelImages.length > 0)) && (
           <RemovablePanel title="Images" visible={showImgLocal} setVisible={setShowImgLocal}>
-            <div className="flex flex-col items-center gap-6 mt-2 w-full">
-              {allImages.map((img, idx) => (
-                <div key={idx} className="flex flex-col items-center gap-1 w-full max-w-[600px]">
-                  <a href={typeof img === 'string' ? img : img.url} target="_blank" rel="noopener noreferrer" className="block w-full flex justify-center">
-                    <img
-                      src={getDirectImageUrl(typeof img === 'string' ? img : img.url)}
-                      alt={`Image ${idx + 1}`}
-                      style={{ maxWidth: '600px', maxHeight: '450px', width: '100%', objectFit: 'contain', border: '1px solid #e2e8f0', borderRadius: '6px', background: 'white' }}
-                    />
-                  </a>
-                  <span className="text-[10px] text-slate-500 italic text-center w-full">
-                    {(Array.isArray(localTest.figureCaptions) && localTest.figureCaptions[idx]) || (typeof img === 'object' && img.caption) || `Figure ${idx + 1}`}
-                  </span>
+            {allImages.length > 0 && (
+              <div className="flex flex-col items-center gap-6 mt-2 w-full">
+                {allImages.map((img, idx) => (
+                  <div key={idx} className="flex flex-col items-center gap-2 w-full max-w-[1500px]">
+                    <a href={typeof img === 'string' ? img : img.url} target="_blank" rel="noopener noreferrer" className="flex justify-center w-full">
+                      <img
+                        src={getDirectImageUrl(typeof img === 'string' ? img : img.url)}
+                        alt={`Image ${idx + 1}`}
+                        style={{ maxWidth: '1500px', maxHeight: '1125px', width: '100%', objectFit: 'contain', border: '1px solid #e2e8f0', borderRadius: '6px', background: 'white' }}
+                      />
+                    </a>
+                    <span className="text-[10px] text-slate-500 italic text-center w-full">
+                      {(Array.isArray(localTest.figureCaptions) && localTest.figureCaptions[idx]) || (typeof img === 'object' && img.caption) || `Figure ${idx + 1}`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {localTest.gelImages && localTest.gelImages.length > 0 && (
+              <div className={`flex flex-col items-center w-full ${allImages.length > 0 ? 'mt-6 border-t border-slate-100 pt-4' : 'mt-2'}`}>
+                <h5 className="text-[10px] font-bold text-slate-500 mb-2 uppercase text-center w-full">Gel Images</h5>
+                <div className="flex flex-col items-center gap-6 w-full">
+                  {localTest.gelImages.map((imgSrc, idx) => (
+                    <div key={idx} className="flex flex-col items-center gap-2 bg-white p-3 border border-slate-200 rounded shadow-sm w-full max-w-[1500px]">
+                      <a href={typeof imgSrc === 'string' ? imgSrc : imgSrc.url} target="_blank" rel="noopener noreferrer" className="flex justify-center w-full">
+                        <img
+                          src={getDirectImageUrl(typeof imgSrc === 'string' ? imgSrc : imgSrc.url)}
+                          alt={`Gel ${idx + 1}`}
+                          style={{ maxWidth: '100%', maxHeight: '1125px', objectFit: 'contain' }}
+                        />
+                      </a>
+                      <span className="text-[10px] text-slate-500 italic text-center w-full">Gel {idx + 1}</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+                {localTest.gelComment && <p className="text-[10px] text-slate-500 italic mt-2 text-center w-full">📝 {localTest.gelComment}</p>}
+              </div>
+            )}
           </RemovablePanel>
         )}
 
@@ -901,9 +1284,88 @@ const NotebookTestItem = ({
           {isPlate && <PlateGridPreview test={localTest} />}
           {isCD && <CDSpectraChart wavelengthData={localTest.wavelengthData} spectraColumns={localTest.spectraColumns} chartCfg={localTest.chartCfg} />}
           
+          {isCloning && localTest.uvSpectra && localTest.uvSpectra.length > 0 && (
+            <CloningUvSpectraChart uvSpectra={localTest.uvSpectra} />
+          )}
+
+          {isCloning && localTest.dnaQuantification && localTest.dnaQuantification.length > 0 && (
+            <div className="overflow-x-auto text-xs border border-slate-200 rounded mt-2">
+              <table className="w-full text-left select-text bg-white" draggable="true">
+                <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
+                  <tr><th className="px-3 py-1.5">Sample</th><th className="px-3 py-1.5">Conc. ng/µL</th><th className="px-3 py-1.5">260/280</th><th className="px-3 py-1.5">Notes</th></tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {localTest.dnaQuantification.map(row => (
+                    <tr key={row.id}>
+                      <td className="px-3 py-1.5 font-bold">{row.sample}</td>
+                      <td className="px-3 py-1.5 text-blue-700 font-bold">{row.concentration}</td>
+                      <td className="px-3 py-1.5">{row.a260_280}</td>
+                      <td className="px-3 py-1.5">{row.notes}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {isProteinExp && (() => {
+            const chrs = Array.isArray(localTest.chromatograms) ? localTest.chromatograms : localTest.chromatogramRaw ? [{ id: 'chr_legacy', name: 'Chromatogram 1', method: 'Affinity', rawData: localTest.chromatogramRaw }] : [];
+            if (chrs.length > 0) return (
+               <div className="mb-4">
+                 <div className="overflow-x-auto text-xs border border-slate-200 rounded mt-2 mb-4">
+                   <table className="w-full text-left select-text bg-white" draggable="true">
+                     <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
+                       <tr>
+                         <th className="px-3 py-1.5 border-r">Run Name</th>
+                         <th className="px-3 py-1.5 border-r">Method Type</th>
+                         <th className="px-3 py-1.5">Running Buffer</th>
+                       </tr>
+                     </thead>
+                     <tbody className="divide-y divide-slate-100">
+                       {chrs.map((chr, idx) => (
+                         <tr key={chr.id || idx}>
+                           <td className="px-3 py-1.5 font-bold border-r">{chr.name || `Chromatogram ${idx + 1}`}</td>
+                           <td className="px-3 py-1.5 text-blue-700 font-bold border-r">{chr.method || '—'}</td>
+                           <td className="px-3 py-1.5">{chr.buffer || '—'}</td>
+                         </tr>
+                       ))}
+                     </tbody>
+                   </table>
+                 </div>
+                 <ProteinChromatogramChart chromatograms={chrs} />
+                 {localTest.chromatogramComment && <p className="text-[10px] text-slate-500 italic mt-2 text-center w-full">📝 {localTest.chromatogramComment}</p>}
+               </div>
+            );
+            return null;
+          })()}
+
+          {isProteinExp && localTest.yieldData && localTest.yieldData.length > 0 && (
+            <div className="mb-4">
+              <div className="overflow-x-auto text-xs border border-slate-200 rounded mt-2">
+                <table className="w-full text-left select-text bg-white" draggable="true">
+                  <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
+                    <tr><th className="px-3 py-1.5 border-r">Fraction</th><th className="px-3 py-1.5 border-r">Conc (mg/mL)</th><th className="px-3 py-1.5 border-r">Vol (mL)</th><th className="px-3 py-1.5 border-r">Total (mg)</th><th className="px-3 py-1.5">Purity %</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {localTest.yieldData.map(row => (
+                      <tr key={row.id}>
+                        <td className="px-3 py-1.5 font-bold border-r">{row.fraction}</td>
+                        <td className="px-3 py-1.5 border-r">{row.concentration}</td>
+                        <td className="px-3 py-1.5 border-r">{row.volume}</td>
+                        <td className="px-3 py-1.5 text-blue-700 font-bold border-r">{row.totalMass}</td>
+                        <td className="px-3 py-1.5">{row.purity}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {localTest.yieldComment && <p className="text-[10px] text-slate-500 italic mt-2 text-center w-full">📝 {localTest.yieldComment}</p>}
+            </div>
+          )}
+          
           {isNMR && localTest.chemicalShifts && Object.keys(localTest.chemicalShifts).length > 0 && (
             <div className="overflow-x-auto text-xs border border-slate-200 rounded max-w-md mt-2">
-              <table className="w-full text-left">
+              <table className="w-full text-left select-text bg-white" draggable="true">
                 <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
                   <tr><th className="px-3 py-1.5">Atom</th><th className="px-3 py-1.5">Shift (ppm)</th></tr>
                 </thead>
@@ -937,7 +1399,7 @@ const NotebookTestItem = ({
                           <h5 className="text-[10px] font-bold text-slate-500 bg-slate-100 px-3 py-1 border-b border-slate-200">
                             Table {idx + 1} Raw Data — {t.atom} ({t.relaxType})
                           </h5>
-                          <table className="w-full text-center">
+                          <table className="w-full text-center select-text bg-white" draggable="true">
                             <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
                               <tr>
                                 <th className="px-3 py-1.5 border-r border-slate-200">{t.relaxType === 'DOSY' ? 'b-value' : 'Delay'} ({t.delayUnit})</th>
@@ -961,7 +1423,7 @@ const NotebookTestItem = ({
                           <h5 className="text-[10px] font-bold text-slate-500 bg-slate-100 px-3 py-1 border-b border-slate-200">
                             Table {idx + 1} Fitted Parameters
                           </h5>
-                          <table className="w-full text-left">
+                          <table className="w-full text-left select-text bg-white" draggable="true">
                             <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
                               <tr>
                                 <th className="px-3 py-1.5">Residue</th>
@@ -996,7 +1458,7 @@ const NotebookTestItem = ({
           )}
         </RemovablePanel>
 
-        {(isCD || isNMR || isNMRFitting) && (
+        {(isCD || isNMR) && (
           <RemovablePanel title="Data Analysis Graphs" visible={showAnaLocal} setVisible={setShowAnaLocal}>
             {isCD && <CDAnalysisGraphsPreview test={localTest} instances={mockCtx.instances} />}
             {isNMR && (
@@ -1005,73 +1467,50 @@ const NotebookTestItem = ({
                 <Fitting ctx={mockCtx} />
               </div>
             )}
-            {isNMRFitting && <NMRFittingGraphsPreview test={localTest} />}
           </RemovablePanel>
         )}
 
-     {!isNMR && (() => {
-       // Collect simulation images from ANY sim-related field on the test
-       const looksLikeImage = (it) => {
-         if (typeof it === 'string') {
-           return /^(data:image|https?:\/\/|blob:)/i.test(it) || it.startsWith('/') || it.length > 200;
-         }
-         if (it && typeof it === 'object') {
-           return Boolean(it.url || it.dataUrl || it.src || it.image || (typeof it.data === 'string' && it.data.startsWith('data:image')));
-         }
-         return false;
-       };
-       const imgSrc = (it) => (typeof it === 'string' ? it : (it.url || it.dataUrl || it.src || it.image || it.data));
-       const normalize = (v) => (Array.isArray(v) ? v : [v]).filter(looksLikeImage);
-
-       const collected = [];
-       Object.entries(localTest || {}).forEach(([key, val]) => {
-         if (!/sim/i.test(key) || /cfg|config|setting|type|html|css/i.test(key)) return;
-         if (looksLikeImage(val) || Array.isArray(val)) {
-           collected.push(...normalize(val));
-         } else if (val && typeof val === 'object') {
-           // one level deeper (e.g. activeTest.sim.images / activeTest.simulation.imgs)
-           Object.entries(val).forEach(([k2, v2]) => {
-             if (/img|image|snapshot|figure|picture|photo/i.test(k2) && (Array.isArray(v2) || looksLikeImage(v2))) {
-               collected.push(...normalize(v2));
-             }
-           });
-         }
-       });
-
-       const seen = new Set();
-       const simImgList = collected.filter((it) => {
-         const s = imgSrc(it);
-         if (!s || seen.has(s)) return false;
-         seen.add(s);
-         return true;
-       });
-
-       if (simImgList.length === 0) return null;
-       return (
-         <RemovablePanel title="Simulation Images" visible={showSimImgLocal} setVisible={setShowSimImgLocal}>
-           <div className="flex flex-col items-center gap-6 mt-2 w-full">
-             {simImgList.map((img, idx) => (
-               <img key={idx} src={getDirectImageUrl(imgSrc(img))} alt={`Sim ${idx}`} style={{ maxWidth: '600px', maxHeight: '450px', width: '100%', objectFit: 'contain' }} className="rounded-lg shadow-sm border border-slate-200 bg-white" />
-             ))}
-           </div>
-         </RemovablePanel>
-       );
-     })()}
-
-        {(isNMR || isNMRFitting) && selectedSpectrumTypes.length > 0 && (
-          <RemovablePanel title="NMR Spectra (Simulated)" visible={showNmrSpecLocal} setVisible={setShowNmrSpecLocal}>
+        {showSimImgLocal && (
+          <RemovablePanel title="Simulations & Generated Data" visible={showSimImgLocal} setVisible={setShowSimImgLocal}>
+            
+            {isNMRFitting && <NMRFittingGraphsPreview test={localTest} />}
+            
+            {isCloning && localTest.sim && localTest.sim.sequence && (
+              <CloningSimChartPreview sim={localTest.sim} />
+            )}
+            
+{(isNMR || isNMRFitting) && showSimImgLocal && selectedSpectrumTypes.length > 0 && (
+          <RemovablePanel title="NMR Spectra (Simulated)" visible={showSimImgLocal} setVisible={setShowSimImgLocal}>
             <div className="mt-2">
               <NMRSpectraPreview test={localTest} selectedTypes={selectedSpectrumTypes} />
             </div>
           </RemovablePanel>
         )}
+            
+            {simImgList.length > 0 && (
+              <div className="flex flex-col items-center gap-6 mt-4 pt-4 border-t border-slate-100 w-full">
+                <h5 className="text-[10px] font-bold text-slate-500 mb-1 uppercase text-center w-full">Generic Simulation Images</h5>
+                {simImgList.map((src, idx) => (
+                  <div key={idx} className="flex flex-col items-center gap-2 w-full max-w-[1500px]">
+                    <img src={getDirectImageUrl(src)} alt={`Sim ${idx}`} style={{ maxWidth: '1500px', maxHeight: '1125px', width: '100%', objectFit: 'contain' }} className="rounded-lg shadow-sm border border-slate-200 bg-white" />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {!isNMRFitting && !(isCloning && localTest.sim?.sequence) && !((isNMR || isNMRFitting) && selectedSpectrumTypes.length > 0) && simImgList.length === 0 && (
+               <p className="text-[10px] text-slate-400 italic">No simulation data available for this experiment.</p>
+            )}
+          </RemovablePanel>
+        )}
+
       </div>
     </div>
   );
 };
 
 /* ============================================================================
-LAB NOTEBOOK — MAIN COMPONENT
+   LAB NOTEBOOK — MAIN COMPONENT
 ========================================================================== */
 export const LabNotebook = ({ 
   tests, allCellLines, testCategories, jumpToTest, customConc, cmpColors, allCmpds, customFields, operators,
@@ -1108,7 +1547,6 @@ export const LabNotebook = ({
   const [showData, setShowData] = useState(false);
   const [showDataAnalysisGraphs, setShowDataAnalysisGraphs] = useState(false);
   const [showSimImages, setShowSimImages] = useState(false);
-  const [showNMRSpectra, setShowNMRSpectra] = useState(false);
   
   // Option Lists
   const allPrimaryCategories = useMemo(() => [...new Set(tests.map(t => t.testCategory).filter(Boolean))].sort(), [tests]);
@@ -1119,10 +1557,10 @@ export const LabNotebook = ({
   const allSolvents = useMemo(() => (solvents || []).map(s => s.name || s).filter(Boolean).sort(), [solvents]);
   const allBuffers = useMemo(() => (buffers || []).map(b => b.name || b).filter(Boolean).sort(), [buffers]);
   const allAdditives = useMemo(() => (additives || []).map(a => a.name || a).filter(Boolean).sort(), [additives]);
-  const allInstruments = useMemo(() => (nmrInstruments || []).map(i => i.name || i).filter(Boolean).sort(), [nmrInstruments]);
+const allInstruments = useMemo(() => (nmrInstruments || []).map(i => i.name || i).filter(Boolean).sort(), [nmrInstruments]);
   const allProbes = useMemo(() => (nmrProbes || []).map(p => p.name || p).filter(Boolean).sort(), [nmrProbes]);
   const allPulseSeqs = useMemo(() => (nmrExperiments || []).map(e => e.name || e).filter(Boolean).sort(), [nmrExperiments]);
-  const [selectedSpectrumTypes, setSelectedSpectrumTypes] = useState(NMR_SPECTRUM_TYPES.map((t) => t.id));
+  const [selectedSpectrumTypes, setSelectedSpectrumTypes] = useState(['hsqc', 'hsqc15n']);
 
   const toggleSpectrumType = (id) =>
     setSelectedSpectrumTypes((prev) =>
@@ -1372,23 +1810,20 @@ export const LabNotebook = ({
           <label className="flex items-center gap-1 text-[10px] font-bold text-slate-700 cursor-pointer">
             <input type="checkbox" checked={showDataAnalysisGraphs} onChange={(e) => setShowDataAnalysisGraphs(e.target.checked)} className="accent-blue-600" /> Data Analysis Graphs
           </label>
-          <label className="flex items-center gap-1 text-[10px] font-bold text-slate-700 cursor-pointer">
-            <input type="checkbox" checked={showSimImages} onChange={(e) => setShowSimImages(e.target.checked)} className="accent-blue-600" /> Sim. Images
-          </label>
-          
-          <div className="flex items-start gap-1 flex-wrap">
+          <div className="flex items-center gap-2 border-l border-blue-200 pl-2 ml-1">
             <label className="flex items-center gap-1 text-[10px] font-bold text-slate-700 cursor-pointer">
-              <input type="checkbox" checked={showNMRSpectra} onChange={(e) => setShowNMRSpectra(e.target.checked)} className="accent-blue-600" /> NMR Spectra
+              <input type="checkbox" checked={showSimImages} onChange={(e) => setShowSimImages(e.target.checked)} className="accent-blue-600" /> Sim. Images
             </label>
-            {showNMRSpectra && (
-              <div className="flex flex-wrap items-center gap-1.5 ml-1 bg-white border border-blue-200 rounded-lg px-2 py-1.5">
-                <button type="button" onClick={() => setSelectedSpectrumTypes(NMR_SPECTRUM_TYPES.map((t) => t.id))} className="text-[9px] font-bold bg-blue-50 border border-blue-300 text-blue-700 px-1.5 py-0.5 rounded hover:bg-blue-100">All</button>
-                <button type="button" onClick={() => setSelectedSpectrumTypes(NMR_SPECTRUM_TYPES.filter((t) => t.dim === '1D').map((t) => t.id))} className="text-[9px] font-bold bg-blue-50 border border-blue-300 text-blue-700 px-1.5 py-0.5 rounded hover:bg-blue-100">1D</button>
-                <button type="button" onClick={() => setSelectedSpectrumTypes(NMR_SPECTRUM_TYPES.filter((t) => t.dim === '2D').map((t) => t.id))} className="text-[9px] font-bold bg-blue-50 border border-blue-300 text-blue-700 px-1.5 py-0.5 rounded hover:bg-blue-100">2D</button>
-                <button type="button" onClick={() => setSelectedSpectrumTypes([])} className="text-[9px] font-bold bg-red-50 border border-red-200 text-red-600 px-1.5 py-0.5 rounded hover:bg-red-100">None</button>
-                <span className="text-slate-200">|</span>
+            {showSimImages && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[9px] font-bold text-slate-500 uppercase ml-1">NMR Spectra:</span>
+                <button type="button" onClick={() => setSelectedSpectrumTypes(NMR_SPECTRUM_TYPES.map((t) => t.id))} className="text-[9px] font-bold bg-white border border-blue-300 text-blue-700 px-1.5 py-0.5 rounded hover:bg-blue-50 shadow-sm">All</button>
+                <button type="button" onClick={() => setSelectedSpectrumTypes(NMR_SPECTRUM_TYPES.filter((t) => t.dim === '1D').map((t) => t.id))} className="text-[9px] font-bold bg-white border border-blue-300 text-blue-700 px-1.5 py-0.5 rounded hover:bg-blue-50 shadow-sm">1D</button>
+                <button type="button" onClick={() => setSelectedSpectrumTypes(NMR_SPECTRUM_TYPES.filter((t) => t.dim === '2D').map((t) => t.id))} className="text-[9px] font-bold bg-white border border-blue-300 text-blue-700 px-1.5 py-0.5 rounded hover:bg-blue-50 shadow-sm">2D</button>
+                <button type="button" onClick={() => setSelectedSpectrumTypes([])} className="text-[9px] font-bold bg-white border border-red-300 text-red-600 px-1.5 py-0.5 rounded hover:bg-red-50 shadow-sm">None</button>
+                <div className="h-3 w-px bg-blue-200 mx-1"></div>
                 {NMR_SPECTRUM_TYPES.map((st) => (
-                  <label key={st.id} className="flex items-center gap-1 text-[9px] font-bold text-slate-700 cursor-pointer bg-slate-50 border border-slate-200 px-1.5 py-0.5 rounded">
+                  <label key={st.id} className="flex items-center gap-1 text-[9px] font-bold text-slate-700 cursor-pointer hover:text-blue-600">
                     <input type="checkbox" checked={selectedSpectrumTypes.includes(st.id)} onChange={() => toggleSpectrumType(st.id)} className="accent-blue-600" />
                     {st.label}
                   </label>
@@ -1422,7 +1857,6 @@ export const LabNotebook = ({
                   showData={showData}
                   showDataAnalysisGraphs={showDataAnalysisGraphs}
                   showSimImages={showSimImages}
-                  showNMRSpectra={showNMRSpectra}
                   selectedSpectrumTypes={selectedSpectrumTypes}
                 />
               ))}

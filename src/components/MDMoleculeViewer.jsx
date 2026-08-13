@@ -82,6 +82,13 @@ const buildKeys = (ri, tokens, molType, char) => {
   return [...set];
 };
 
+// Names an organic atom using the SAME scheme the 2D SMILES viewer uses (see
+// deriveOrganicAtomNaming in NMRSections.jsx): heavy atoms as "{Element}{heavyRank}" where
+// heavyRank is that atom's position counting heavy atoms only, and hydrogens as
+// "H{parentHeavyRank}[a/b/c]" named after the heavy atom they're bonded to. Deriving names from
+// bond connectivity (rather than the raw file order) is what keeps 2D<->3D atom selection in sync
+// even though the 2D structure (RDKit) and the 3D structure (an independently fetched/generated
+// PDB or SDF) can order their atoms -- especially hydrogens -- differently.
 const getOrganicAtomName = (atom) => {
   const structure = atom.structure;
   const elem = atom.element || 'C';
@@ -104,7 +111,7 @@ const getOrganicAtomName = (atom) => {
 
   let parentIndex = -1;
   atom.eachBondedAtom((bonded) => { if (parentIndex < 0 && bonded.element !== 'H') parentIndex = bonded.index; });
-  if (parentIndex < 0) return `H${atom.index}`; 
+  if (parentIndex < 0) return `H${atom.index}`; // no bond info available; degrade gracefully
 
   const parentRank = heavyRankOf(parentIndex);
   const siblingIndices = [];
@@ -118,6 +125,51 @@ const getOrganicAtomName = (atom) => {
   const pos = siblingIndices.indexOf(atom.index);
   const suffix = siblingIndices.length > 1 ? ('abcdefgh'[pos] || String(pos)) : '';
   return `H${parentRank >= 0 ? parentRank : parentIndex}${suffix}`;
+};
+
+// NGL isn't installed as an npm module in this app (there's no bundler-resolvable 'ngl' package,
+// hence "Module not found: 'ngl'" from a dynamic import), and no <script> tag for it exists either
+// (window.NGL is unavailable). So it's loaded here on demand, directly from a CDN, the same way
+// NGL's own docs recommend for plain script-tag embedding: the SELF-CONTAINED dist/ngl.js build
+// (NOT dist/ngl.umd.js, which expects three.js/chroma-js/signals/sprintf-js as separate externals
+// and would silently break without them). Module-level + a shared promise so multiple viewer
+// instances mounting at once only ever trigger one script load.
+let _nglLoadPromise = null;
+const NGL_CDN_URLS = [
+  'https://unpkg.com/ngl@2.4.0/dist/ngl.js',
+  'https://cdn.jsdelivr.net/npm/ngl@2.4.0/dist/ngl.js',
+];
+
+const loadNGLFromUrl = (url) => new Promise((resolve, reject) => {
+  const script = document.createElement('script');
+  script.src = url;
+  script.async = true;
+  script.onload = () => {
+    if (window.NGL) resolve(window.NGL);
+    else reject(new Error(`Script loaded from ${url} but did not set window.NGL`));
+  };
+  script.onerror = () => reject(new Error(`Failed to fetch NGL script from ${url}`));
+  document.head.appendChild(script);
+});
+
+const ensureNGL = () => {
+  if (window.NGL) return Promise.resolve(window.NGL);
+  if (_nglLoadPromise) return _nglLoadPromise;
+
+  _nglLoadPromise = (async () => {
+    let lastErr = null;
+    for (const url of NGL_CDN_URLS) {
+      try {
+        return await loadNGLFromUrl(url);
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    _nglLoadPromise = null; // allow a future retry rather than caching a permanent failure
+    throw new Error(`Could not load the NGL viewer library from any CDN. ${lastErr ? lastErr.message : ''}`);
+  })();
+
+  return _nglLoadPromise;
 };
 
 const mapNGLAtomToNmrKeys = (atom, parsedSeq, moleculeType) => {
@@ -153,16 +205,8 @@ const mapNGLAtomToNmrKeys = (atom, parsedSeq, moleculeType) => {
   return { ri, keys, label: `${res.id || res.char}${atom.resno} ${nmrAtom}`, nmrAtom };
 };
 
-const MDMoleculeViewer = ({
+const NMRMoleculeViewer = ({
   src,
-  structureSrc,
-  structureFileData,
-  structureFileName,
-  structureFormat,
-  trajectorySrc,
-  trajectoryFile,
-  trajectoryFallbacks,
-  trajectoryFormat,
   structureText,
   structureTextExt,
   externalLoading = false,
@@ -182,26 +226,15 @@ const MDMoleculeViewer = ({
   const manualHighlightCompRef = useRef(null);
   const labelCompRef = useRef(null);
   const sidechainCompRef = useRef(null);
-  const backboneCompRef = useRef(null);
 
+  const [file, setFile] = useState(null);
   const [loadRequest, setLoadRequest] = useState(null);
 
   const [status, setStatus] = useState('idle');
   const [errorMsg, setErrorMsg] = useState('');
   const [hoverInfo, setHoverInfo] = useState(null);
-  
   const [showLabels, setShowLabels] = useState(false);
-  const [sidechainStyle, setSidechainStyle] = useState('none');
-  const [backboneStyle, setBackboneStyle] = useState('cartoon');
-  const [speed, setSpeed] = useState(10);
-
-  // Trajectory State
-  const trajObjRef = useRef(null);
-  const trajPlayerRef = useRef(null);
-  const [currentFrame, setCurrentFrame] = useState(0);
-  const [totalFrames, setTotalFrames] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [hasTrajectory, setHasTrajectory] = useState(false);
+  const [sidechainStyle, setSidechainStyle] = useState('licorice');
 
   const parsedSeqRef = useRef(parsedSeq);
   const moleculeTypeRef = useRef(moleculeType);
@@ -213,35 +246,44 @@ const MDMoleculeViewer = ({
     onAtomClickRef.current = onAtomClick;
   }, [parsedSeq, moleculeType, onAtomClick]);
 
+  // Sync externally-provided structure TEXT (locally generated protein/DNA/RNA backbone, or a
+  // pre-fetched/validated organic PDB/SDF) into loadRequest. Takes priority over a plain src URL
+  // when both are present, and is handed to NGL as an in-memory Blob -- no extra network fetch.
   const lastLoadedTextRef = useRef(null);
   useEffect(() => {
-    if (!structureText && !structureFileData) { lastLoadedTextRef.current = null; return; }
-    const targetText = structureFileData || structureText;
-    const targetExt = structureFormat !== 'auto' ? structureFormat : (structureTextExt || 'pdb');
-    
-    if (targetText !== lastLoadedTextRef.current) {
-      lastLoadedTextRef.current = targetText;
-      setLoadRequest({ url: null, text: targetText, ext: targetExt, ts: Date.now() });
+    if (!structureText) { lastLoadedTextRef.current = null; return; }
+    if (!file && structureText !== lastLoadedTextRef.current) {
+      lastLoadedTextRef.current = structureText;
+      setLoadRequest({ file: null, url: null, text: structureText, ext: structureTextExt || 'pdb', ts: Date.now() });
     }
-  }, [structureText, structureTextExt, structureFileData, structureFormat]);
+  }, [structureText, structureTextExt, file]);
 
+  // Sync external src into loadRequest seamlessly (only when there's no structureText to prefer)
   useEffect(() => {
-    const targetSrc = structureSrc || src;
-    if (targetSrc && !structureText && !structureFileData) {
-      setLoadRequest({ url: targetSrc, ts: Date.now() });
+    if (src && !file && !structureText) {
+      setLoadRequest({ file: null, url: src, ts: Date.now() });
     }
-  }, [src, structureSrc, structureText, structureFileData]);
+  }, [src, file, structureText]);
 
+  // Reflect the PARENT's own async fetch/generation progress (e.g. resolving an organic SMILES
+  // to a 3D structure) in the same loading/error UI used for direct loads, before any loadRequest
+  // exists yet.
   useEffect(() => {
-    if (structureText || structureFileData || loadRequest) return;
+    if (structureText || loadRequest) return;
     if (externalLoading) { setStatus('loading'); setErrorMsg(''); }
     else if (externalError) { setStatus('error'); setErrorMsg(externalError); }
-  }, [externalLoading, externalError, structureText, structureFileData, loadRequest]);
+  }, [externalLoading, externalError, structureText, loadRequest]);
 
   // Safely Mount NGL Stage ONCE
   useEffect(() => {
     let isMounted = true;
-    import('ngl').then((NGL) => {
+
+    const nglWithTimeout = Promise.race([
+      ensureNGL(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Timed out loading the NGL viewer library (20s). Check your network connection / that unpkg.com and cdn.jsdelivr.net are reachable.')), 20000)),
+    ]);
+
+    nglWithTimeout.then((NGL) => {
       if (!isMounted || !containerRef.current) return;
       if (!stageRef.current) {
         stageRef.current = new NGL.Stage(containerRef.current, { backgroundColor: '#f8fafc' });
@@ -263,14 +305,14 @@ const MDMoleculeViewer = ({
           if (label !== lastHover) { lastHover = label; setHoverInfo(label); }
         });
       }
+    }).catch((err) => {
+      if (!isMounted) return;
+      setStatus('error');
+      setErrorMsg(err.message || 'Failed to load the NGL viewer library.');
     });
 
     return () => {
       isMounted = false;
-      if (trajPlayerRef.current) {
-        trajPlayerRef.current.stop();
-        trajPlayerRef.current = null;
-      }
       if (stageRef.current) {
         stageRef.current.dispose();
         stageRef.current = null;
@@ -278,31 +320,19 @@ const MDMoleculeViewer = ({
     };
   }, []);
 
-  // Handle Loading structure AND Trajectory
+  // Handle Loading without destroying the WebGL Context
   useEffect(() => {
-    if (!loadRequest || (!loadRequest.url && !loadRequest.text)) return;
+    if (!loadRequest || (!loadRequest.file && !loadRequest.url && !loadRequest.text)) return;
     if (!stageRef.current) return;
 
     const stage = stageRef.current;
     stage.removeAllComponents();
     
-    // Reset trajectory states
-    if (trajPlayerRef.current) {
-      trajPlayerRef.current.stop();
-      trajPlayerRef.current = null;
-    }
-    trajObjRef.current = null;
-    setHasTrajectory(false);
-    setIsPlaying(false);
-    setCurrentFrame(0);
-    setTotalFrames(0);
-
     componentRef.current = null;
     highlightCompRef.current = null;
     manualHighlightCompRef.current = null;
     labelCompRef.current = null;
     sidechainCompRef.current = null;
-    backboneCompRef.current = null;
 
     setStatus('loading');
     setErrorMsg('');
@@ -310,14 +340,13 @@ const MDMoleculeViewer = ({
     const loadStructure = async () => {
       try {
         let component;
-        // 1) Load the structure
-        if (loadRequest.text) {
-          if (loadRequest.text.startsWith('data:')) {
-             component = await stage.loadFile(loadRequest.text, { ext: loadRequest.ext || 'pdb' });
-          } else {
-             const blob = new Blob([loadRequest.text], { type: 'text/plain' });
-             component = await stage.loadFile(blob, { ext: loadRequest.ext || 'pdb' });
-          }
+        if (loadRequest.file) {
+          component = await stage.loadFile(loadRequest.file, { ext: loadRequest.file.name.split('.').pop() });
+        } else if (loadRequest.text) {
+          // In-memory structure text (locally generated, or fetched+validated by the parent) --
+          // loaded as a Blob so no network request happens here at all.
+          const blob = new Blob([loadRequest.text], { type: 'text/plain' });
+          component = await stage.loadFile(blob, { ext: loadRequest.ext || 'pdb' });
         } else {
           const target = normalizeStructureSource(loadRequest.url);
           if (!target) throw new Error('No structure URL provided');
@@ -326,64 +355,15 @@ const MDMoleculeViewer = ({
 
         componentRef.current = component;
 
-        // Force SS calculation for topologies that don't declare it (.gro)
-        try { component.structure.autoSS(); } catch (e) {}
-        component.autoView();
-
-        if (moleculeTypeRef.current !== 'organic') {
+        if (moleculeTypeRef.current === 'organic') {
+          // Explicitly color organic SDF by element
+          component.addRepresentation('ball+stick', { colorScheme: 'element', multipleBond: true });
+        } else {
+          try { component.addRepresentation('cartoon', { color: 'residueindex', quality: 'high' }); } catch (e) {}
           try { component.addRepresentation('ball+stick', { sele: 'hetero and not water', aspectRatio: 1.1 }); } catch (e) {}
         }
 
-        // 2) Load the trajectory if provided
-        const NGL = await import('ngl');
-        if (trajectoryFile || trajectorySrc) {
-          try {
-            let trajTarget = trajectoryFile || trajectorySrc;
-            const trajExt = trajectoryFormat || (trajectoryFile ? trajectoryFile.name.split('.').pop() : 'xtc');
-            
-            // XTC Local AutoLoad fix
-            let objectUrlToRevoke = null;
-            if (typeof trajTarget === 'object' && trajTarget instanceof File) {
-              trajTarget = URL.createObjectURL(trajTarget);
-              objectUrlToRevoke = trajTarget;
-            }
-
-            const frames = await NGL.autoLoad(trajTarget, { ext: trajExt });
-            if (!frames) throw new Error('Could not parse trajectory frames');
-
-            const trajComp = await component.addTrajectory(frames);
-            
-            if (trajComp && trajComp.trajectory) {
-              const traj = trajComp.trajectory;
-              trajObjRef.current = traj;
-              
-              // Polling for XTC async parsing
-              const checkInterval = setInterval(() => {
-                const frameCount = traj.numframes || traj.frameCount || 0;
-                if (frameCount > 0) {
-                  setTotalFrames(frameCount);
-                  
-                  const player = new NGL.TrajectoryPlayer(traj, { step: 1, timeout: 1000 / speed });
-                  trajPlayerRef.current = player;
-                  
-                  traj.signals.frameChanged.add((frame) => {
-                    setCurrentFrame(frame);
-                  });
-                  
-                  setHasTrajectory(true);
-                  clearInterval(checkInterval);
-
-                  if (objectUrlToRevoke) URL.revokeObjectURL(objectUrlToRevoke);
-                }
-              }, 250);
-
-              setTimeout(() => clearInterval(checkInterval), 10000);
-            }
-          } catch (err) {
-            console.error('Failed to load trajectory:', err);
-          }
-        }
-
+        component.autoView();
         setStatus('ready');
       } catch (err) {
         setErrorMsg(err?.message || 'Failed to load structure.');
@@ -392,7 +372,7 @@ const MDMoleculeViewer = ({
     };
 
     loadStructure();
-  }, [loadRequest, trajectoryFile, trajectorySrc, trajectoryFormat]);
+  }, [loadRequest]);
 
   // Handle Labels
   useEffect(() => {
@@ -422,7 +402,7 @@ const MDMoleculeViewer = ({
     }
   }, [showLabels, status]);
 
-  // Handle Molecule Style / Side Chains
+  // Handle Side Chains
   useEffect(() => {
     const component = componentRef.current;
     if (!component || status !== 'ready' || moleculeTypeRef.current === 'organic') return;
@@ -444,47 +424,6 @@ const MDMoleculeViewer = ({
     }
   }, [sidechainStyle, status]);
 
-  // Handle Backbone / Main Organic Molecule Style
-  useEffect(() => {
-    const component = componentRef.current;
-    if (!component || status !== 'ready') return;
-
-    if (backboneCompRef.current) {
-      try { component.removeRepresentation(backboneCompRef.current); } catch (e) {}
-      backboneCompRef.current = null;
-    }
-
-    if (backboneStyle !== 'none') {
-      try {
-        if (moleculeTypeRef.current === 'organic') {
-          // Cartoon/Ribbon defaults to Ball & Stick securely for organic molecules
-          const effectiveStyle = ['cartoon', 'ribbon', 'backbone'].includes(backboneStyle) ? 'ball+stick' : backboneStyle;
-          backboneCompRef.current = component.addRepresentation(effectiveStyle, {
-            colorScheme: 'element', multipleBond: true
-          });
-        } else {
-          // If Ball & Stick or Licorice is chosen, render the explicit backbone atoms rather than just ribbon index
-          if (backboneStyle === 'ball+stick' || backboneStyle === 'licorice') {
-            backboneCompRef.current = component.addRepresentation(backboneStyle, {
-              sele: 'protein and (backbone or .CA)', color: 'element', multipleBond: true
-            });
-          } else {
-            backboneCompRef.current = component.addRepresentation(backboneStyle, {
-              color: 'residueindex', quality: 'high'
-            });
-          }
-        }
-      } catch (e) {}
-    }
-  }, [backboneStyle, status]);
-
-  // Handle Trajectory Speed updates
-  useEffect(() => {
-    if (trajPlayerRef.current) {
-      trajPlayerRef.current.timeout = 1000 / speed;
-    }
-  }, [speed]);
-
   // Handle Highlighting
   useEffect(() => {
     const component = componentRef.current;
@@ -498,6 +437,10 @@ const MDMoleculeViewer = ({
 
     if (sel.length === 0 && man.length === 0) return;
 
+    // For organics, build a name -> raw NGL atom index lookup ONCE (using the same
+    // bond-connectivity-based naming as getOrganicAtomName / the 2D SMILES viewer), so
+    // selection keys like "0-C5" or "0-H5a" resolve to the correct physical atom regardless of
+    // how the 3D structure's own file order happens to differ from the 2D depiction's.
     let organicNameToIndex = null;
     const getOrganicNameToIndexMap = () => {
       if (organicNameToIndex) return organicNameToIndex;
@@ -560,46 +503,35 @@ const MDMoleculeViewer = ({
 
   }, [selectedKeys, manualKeys, status]);
 
-  const toggleTrajectoryPlay = useCallback(() => {
-    if (!trajPlayerRef.current) return;
-    if (isPlaying) {
-      trajPlayerRef.current.pause();
-    } else {
-      trajPlayerRef.current.play();
-    }
-    setIsPlaying(!isPlaying);
-  }, [isPlaying]);
-
-  const handleTrajectoryScrub = useCallback((e) => {
-    if (!trajObjRef.current || !trajPlayerRef.current) return;
-    const f = parseInt(e.target.value, 10);
-    trajPlayerRef.current.pause();
-    setIsPlaying(false);
-    trajObjRef.current.setFrame(f);
+  const handleFileChange = useCallback((e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    setFile(f);
+    setLoadRequest({ file: f, url: null, ts: Date.now() });
+    e.target.value = '';
   }, []);
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-4 bg-slate-50 border border-slate-200 rounded-lg p-3">
-        
-        <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
-          <input type="checkbox" checked={showLabels} onChange={(e) => setShowLabels(e.target.checked)} className="w-4 h-4 accent-blue-600" /> Show atom names
-        </label>
-
-        <div className="flex items-center gap-2 ml-4">
-          <label className="text-[10px] font-bold text-slate-500 uppercase">{moleculeType === 'organic' ? 'Molecule Style' : 'Backbone'}</label>
-          <select value={backboneStyle} onChange={(e) => setBackboneStyle(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 h-8">
-            {moleculeType !== 'organic' && <option value="cartoon">Cartoon (Ribbon)</option>}
-            {moleculeType !== 'organic' && <option value="ribbon">Ribbon (Thin)</option>}
-            {moleculeType !== 'organic' && <option value="backbone">Backbone Trace</option>}
-            <option value="ball+stick">Ball &amp; Stick</option>
-            <option value="licorice">Licorice</option>
-            <option value="none">Hidden</option>
-          </select>
+      <div className="flex flex-wrap items-end gap-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">Load local file Override</label>
+          <label className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm transition-colors inline-flex items-center gap-2">
+            📂 Local PDB/SDF
+            <input type="file" accept=".pdb,.cif,.bcif,.ent,.mol2,.sdf" onChange={handleFileChange} className="hidden" />
+          </label>
+          {file && <span className="text-[10px] text-slate-500 max-w-[150px] truncate">{file.name}</span>}
         </div>
-        
+
+        <div className="flex flex-col gap-1 ml-4">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">Labels</label>
+          <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer h-8">
+            <input type="checkbox" checked={showLabels} onChange={(e) => setShowLabels(e.target.checked)} className="w-4 h-4 accent-blue-600" /> Show atom names
+          </label>
+        </div>
+
         {moleculeType !== 'organic' && (
-          <div className="flex items-center gap-2 ml-4">
+          <div className="flex flex-col gap-1 ml-4">
             <label className="text-[10px] font-bold text-slate-500 uppercase">Side Chains</label>
             <select value={sidechainStyle} onChange={(e) => setSidechainStyle(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 h-8">
               <option value="none">Hidden</option>
@@ -610,71 +542,29 @@ const MDMoleculeViewer = ({
             </select>
           </div>
         )}
-
       </div>
 
       <div className="relative border border-slate-200 rounded-xl overflow-hidden bg-white" style={{ height }}>
         <div ref={containerRef} className="w-full h-full" />
-        
         {hoverInfo && status === 'ready' && (
           <div className="absolute top-2 left-2 bg-white/90 border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-bold text-slate-700 shadow-sm pointer-events-none z-10">{hoverInfo}</div>
         )}
-
-        {hasTrajectory && status === 'ready' && (
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/95 border border-slate-300 rounded-xl px-4 py-3 shadow-lg flex items-center gap-4 z-20 w-11/12 max-w-lg backdrop-blur-sm">
-            <button
-              onClick={toggleTrajectoryPlay}
-              className="bg-blue-600 hover:bg-blue-700 text-white rounded-full w-10 h-10 flex items-center justify-center text-sm shadow-md transition-colors shrink-0"
-            >
-              {isPlaying ? '⏸' : '▶'}
-            </button>
-            
-            <div className="flex-1 flex flex-col gap-1.5 min-w-[200px]">
-              <input
-                type="range"
-                min="0"
-                max={Math.max(0, totalFrames - 1)}
-                value={currentFrame}
-                onChange={handleTrajectoryScrub}
-                className="w-full accent-blue-600 cursor-pointer"
-              />
-              <div className="flex justify-between text-[11px] font-bold text-slate-500 px-1">
-                <span>Frame: {currentFrame}</span>
-                <span>Total: {totalFrames}</span>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-0.5 items-end ml-2 border-l border-slate-300 pl-4 shrink-0">
-              <span className="text-[9px] font-bold text-slate-400 uppercase">Speed</span>
-              <select value={speed} onChange={(e) => setSpeed(Number(e.target.value))} className="bg-transparent text-xs text-blue-700 font-bold outline-none cursor-pointer p-0 m-0">
-                <option value={2}>2 fps</option>
-                <option value={5}>5 fps</option>
-                <option value={10}>10 fps</option>
-                <option value={20}>20 fps</option>
-                <option value={50}>50 fps</option>
-              </select>
-            </div>
-          </div>
-        )}
-
         {status === 'loading' && (
-          <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-30">
+          <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-20">
             <div className="text-center">
               <div className="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-2" />
-              <p className="text-sm text-slate-500 font-bold">Loading structure & trajectory…</p>
+              <p className="text-sm text-slate-500 font-bold">Loading structure…</p>
             </div>
           </div>
         )}
-        
         {status === 'error' && (
-          <div className="absolute inset-0 flex items-center justify-center bg-white/90 z-30 p-4">
+          <div className="absolute inset-0 flex items-center justify-center bg-white/90 z-20 p-4">
             <div className="text-center max-w-md">
-              <p className="text-red-600 text-sm font-bold mb-1">⚠️ Failed to load</p>
+              <p className="text-red-600 text-sm font-bold mb-1">⚠️ Failed to load structure</p>
               <p className="text-slate-500 text-xs">{errorMsg}</p>
             </div>
           </div>
         )}
-        
         {status === 'idle' && (
           <div className="absolute inset-0 flex items-center justify-center bg-slate-50 z-10">
             <div className="text-center text-slate-400">
@@ -688,4 +578,4 @@ const MDMoleculeViewer = ({
   );
 };
 
-export default MDMoleculeViewer;
+export default NMRMoleculeViewer;
