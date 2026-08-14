@@ -1458,13 +1458,23 @@ const NotebookTestItem = ({
           )}
         </RemovablePanel>
 
-        {(isCD || isNMR) && (
+        {(isCD || isNMR || isNMRFitting || isPlate) && (
           <RemovablePanel title="Data Analysis Graphs" visible={showAnaLocal} setVisible={setShowAnaLocal}>
+            {isPlate && (
+              <div className="mt-2 text-center p-4 bg-slate-50 border border-dashed border-slate-300 rounded">
+                <p className="text-[10px] text-slate-400 italic">Plate analysis graphs will appear here.</p>
+              </div>
+            )}
             {isCD && <CDAnalysisGraphsPreview test={localTest} instances={mockCtx.instances} />}
             {isNMR && (
               <div className="flex flex-col gap-4 mt-2">
                 <SecondaryShifts ctx={mockCtx} />
                 <Fitting ctx={mockCtx} />
+              </div>
+            )}
+            {isNMRFitting && (
+              <div className="mt-2">
+                <NMRFittingGraphsPreview test={localTest} />
               </div>
             )}
           </RemovablePanel>
@@ -1473,19 +1483,16 @@ const NotebookTestItem = ({
         {showSimImgLocal && (
           <RemovablePanel title="Simulations & Generated Data" visible={showSimImgLocal} setVisible={setShowSimImgLocal}>
             
-            {isNMRFitting && <NMRFittingGraphsPreview test={localTest} />}
-            
             {isCloning && localTest.sim && localTest.sim.sequence && (
               <CloningSimChartPreview sim={localTest.sim} />
             )}
             
-{(isNMR || isNMRFitting) && showSimImgLocal && selectedSpectrumTypes.length > 0 && (
-          <RemovablePanel title="NMR Spectra (Simulated)" visible={showSimImgLocal} setVisible={setShowSimImgLocal}>
-            <div className="mt-2">
-              <NMRSpectraPreview test={localTest} selectedTypes={selectedSpectrumTypes} />
-            </div>
-          </RemovablePanel>
-        )}
+            {(isNMR || isNMRFitting) && selectedSpectrumTypes.length > 0 && (
+              <div className="mt-4">
+                <h5 className="text-[10px] font-bold text-slate-500 mb-1 uppercase text-center w-full">NMR Spectra (Simulated)</h5>
+                <NMRSpectraPreview test={localTest} selectedTypes={selectedSpectrumTypes} />
+              </div>
+            )}
             
             {simImgList.length > 0 && (
               <div className="flex flex-col items-center gap-6 mt-4 pt-4 border-t border-slate-100 w-full">
@@ -1557,7 +1564,7 @@ export const LabNotebook = ({
   const allSolvents = useMemo(() => (solvents || []).map(s => s.name || s).filter(Boolean).sort(), [solvents]);
   const allBuffers = useMemo(() => (buffers || []).map(b => b.name || b).filter(Boolean).sort(), [buffers]);
   const allAdditives = useMemo(() => (additives || []).map(a => a.name || a).filter(Boolean).sort(), [additives]);
-const allInstruments = useMemo(() => (nmrInstruments || []).map(i => i.name || i).filter(Boolean).sort(), [nmrInstruments]);
+  const allInstruments = useMemo(() => (nmrInstruments || []).map(i => i.name || i).filter(Boolean).sort(), [nmrInstruments]);
   const allProbes = useMemo(() => (nmrProbes || []).map(p => p.name || p).filter(Boolean).sort(), [nmrProbes]);
   const allPulseSeqs = useMemo(() => (nmrExperiments || []).map(e => e.name || e).filter(Boolean).sort(), [nmrExperiments]);
   const [selectedSpectrumTypes, setSelectedSpectrumTypes] = useState(['hsqc', 'hsqc15n']);

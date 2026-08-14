@@ -371,6 +371,7 @@ const NMRMoleculeViewer = ({
 }) => {
   const containerRef = useRef(null);
   const stageRef = useRef(null);
+  const stageReadyRef = useRef(null); // Promise<Stage|null> -- resolves once the ONE persistent Stage for this component's lifetime is created
   const componentRef = useRef(null);
 
   const highlightCompRef = useRef(null);
@@ -397,6 +398,73 @@ const NMRMoleculeViewer = ({
     moleculeTypeRef.current = moleculeType;
     onAtomClickRef.current = onAtomClick;
   }, [parsedSeq, moleculeType, onAtomClick]);
+
+  // ---- Create the NGL Stage ONCE for this component's whole lifetime ----
+  // Previously a brand new Stage (and WebGL context/renderer) was created on EVERY structure
+  // load and disposed on every re-load, which is what caused loading a second/different
+  // structure to visually "stick" on whatever loaded first: repeatedly tearing down and
+  // recreating WebGL contexts in quick succession is unreliable, and wasteful even when it
+  // works. Now the Stage is created once on mount and reused for every subsequent load --
+  // switching structures just clears the existing Stage's components and loads into it fresh.
+  useEffect(() => {
+    let cancelled = false;
+    console.log('[NMRMoleculeViewer] mount effect: waiting for NGL...');
+
+    stageReadyRef.current = (async () => {
+      const NGL = await Promise.race([
+        ensureNGL(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timed out loading the NGL viewer library (20s). Check your network connection / that unpkg.com and cdn.jsdelivr.net are reachable.')), 20000)),
+      ]);
+      console.log('[NMRMoleculeViewer] NGL loaded, creating Stage. containerRef ready:', !!containerRef.current, 'cancelled:', cancelled);
+      if (cancelled || !containerRef.current) return null;
+
+      const stage = new NGL.Stage(containerRef.current, { backgroundColor: '#f8fafc' });
+      stageRef.current = stage;
+      console.log('[NMRMoleculeViewer] Stage created successfully');
+
+      stage.signals.clicked.add((pickingProxy) => {
+        if (!pickingProxy || !pickingProxy.atom) return;
+        const atom = pickingProxy.atom;
+        const mapped = mapAtomToNmrKeys(atom, parsedSeqRef.current, moleculeTypeRef.current);
+        if (mapped && onAtomClickRef.current) onAtomClickRef.current(mapped.ri, mapped.keys);
+      });
+
+      let lastHover = null;
+      stage.signals.hovered.add((pickingProxy) => {
+        if (!pickingProxy || !pickingProxy.atom) {
+          if (lastHover !== null) { lastHover = null; setHoverInfo(null); }
+          return;
+        }
+        const atom = pickingProxy.atom;
+        const mapped = mapAtomToNmrKeys(atom, parsedSeqRef.current, moleculeTypeRef.current);
+        const label = mapped ? mapped.label : `${atom.resname || ''} ${atom.resno || ''} ${atom.atomname || ''}`.trim();
+        if (label !== lastHover) { lastHover = label; setHoverInfo(label); }
+      });
+
+      return stage;
+    })().catch((err) => {
+      if (!cancelled) {
+        console.error('NMRMoleculeViewer init error:', err);
+        setErrorMsg(err?.message || 'Failed to initialize the NGL viewer.');
+        setStatus('error');
+      }
+      return null;
+    });
+
+    return () => {
+      cancelled = true;
+      stageReadyRef.current = null;
+      if (stageRef.current) {
+        stageRef.current.dispose();
+        stageRef.current = null;
+      }
+      componentRef.current = null;
+      highlightCompRef.current = null;
+      manualHighlightCompRef.current = null;
+      labelCompRef.current = null;
+      sidechainCompRef.current = null;
+    };
+  }, []); // mount/unmount only -- deliberately not re-run per load
 
   // ---- Auto-load from parent-provided src/structureText ----
   // This viewer previously only ever loaded structures the user picked by hand (file picker or
@@ -450,46 +518,44 @@ const NMRMoleculeViewer = ({
     else if (externalError) { setStatus('error'); setErrorMsg(externalError); }
   }, [externalLoading, externalError, structureText, loadRequest, manualOverride]);
 
-  // Main structure loading effect
+  // Main structure loading effect -- reuses the ONE persistent Stage created in the mount effect
+  // above; never creates or disposes a Stage/WebGL context itself.
   useEffect(() => {
     if (!loadRequest || (!loadRequest.file && !loadRequest.url && !loadRequest.text)) return;
-    if (!containerRef.current) return;
 
     let cancelled = false;
-
-    if (stageRef.current) {
-      stageRef.current.dispose();
-      stageRef.current = null;
-    }
-
-    componentRef.current = null;
-    highlightCompRef.current = null;
-    manualHighlightCompRef.current = null;
-    labelCompRef.current = null;
-    sidechainCompRef.current = null;
 
     setStatus('loading');
     setErrorMsg('');
 
-    const init = async () => {
+    const run = async () => {
       try {
-        const NGL = await Promise.race([
-          ensureNGL(),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Timed out loading the NGL viewer library (20s). Check your network connection / that unpkg.com and cdn.jsdelivr.net are reachable.')), 20000)),
-        ]);
-        if (cancelled) return;
+        console.log('[NMRMoleculeViewer] waiting for stage...');
+        const stage = await stageReadyRef.current;
+        if (cancelled || !stage) {
+          console.log('[NMRMoleculeViewer] no stage available (cancelled=%s, stage=%s) -- aborting load', cancelled, !!stage);
+          return;
+        }
+        console.log('[NMRMoleculeViewer] stage ready, clearing previous components');
 
-        const stage = new NGL.Stage(containerRef.current, {
-          backgroundColor: '#f8fafc',
-        });
-
-        stageRef.current = stage;
+        // Clear out whatever was loaded before (e.g. a previously generated linear/backbone
+        // structure) on the SAME Stage, rather than tearing down and rebuilding the whole
+        // WebGL context -- this is what was causing a second/different structure to fail to
+        // replace the first one on screen.
+        stage.removeAllComponents();
+        componentRef.current = null;
+        highlightCompRef.current = null;
+        manualHighlightCompRef.current = null;
+        labelCompRef.current = null;
+        sidechainCompRef.current = null;
 
         let component;
 
         if (loadRequest.file) {
+          console.log('[NMRMoleculeViewer] loading local file:', loadRequest.file.name);
           component = await stage.loadFile(loadRequest.file);
         } else if (loadRequest.text) {
+          console.log('[NMRMoleculeViewer] loading in-memory text, ext:', loadRequest.ext);
           // In-memory structure text (locally generated protein/DNA/RNA backbone, or an
           // organic PDB/SDF fetched+validated by the parent) -- loaded as a Blob, no network
           // request happens here at all.
@@ -497,6 +563,7 @@ const NMRMoleculeViewer = ({
           component = await stage.loadFile(blob, { ext: loadRequest.ext || 'pdb' });
         } else {
           const target = normalizeStructureSource(loadRequest.url);
+          console.log('[NMRMoleculeViewer] loading URL/ID:', loadRequest.url, '-> normalized:', target);
 
           if (!target) {
             throw new Error('No structure URL or PDB ID provided');
@@ -506,23 +573,35 @@ const NMRMoleculeViewer = ({
             component = target.params
               ? await stage.loadFile(target.url, target.params)
               : await stage.loadFile(target.url);
+            console.log('[NMRMoleculeViewer] primary load succeeded:', target.url);
           } catch (firstErr) {
+            console.log('[NMRMoleculeViewer] primary load FAILED for', target.url, '-> message:', firstErr && firstErr.message, 'name:', firstErr && firstErr.name);
             if (cancelled) throw firstErr;
 
+            // Fallback for a plain PDB ID OR a URL we built around one (e.g.
+            // "https://models.rcsb.org/1UBQ.mmtf" 404ing) -- pull the 4-character ID out of
+            // either shape instead of only matching a bare ID, otherwise this fallback silently
+            // never triggers for the exact case (our own generated mmtf URL) it exists for.
             const raw = (loadRequest.url || '').trim();
+            const idMatch = raw.match(/([0-9][A-Za-z0-9]{3})(?:\.[A-Za-z0-9]+)?\/?$/);
+            console.log('[NMRMoleculeViewer] id extraction from', JSON.stringify(raw), '-> match:', idMatch && idMatch[1]);
 
-            // Fallback for plain PDB IDs
-            if (/^[0-9a-z]{4}$/i.test(raw)) {
-              const id = raw.toUpperCase();
+            if (idMatch) {
+              const id = idMatch[1].toUpperCase();
 
               try {
+                console.log('[NMRMoleculeViewer] fallback attempt: files.rcsb.org/download/' + id + '.pdb');
                 component = await stage.loadFile(
                   `https://files.rcsb.org/download/${id}.pdb`,
                   { ext: 'pdb' }
                 );
+                console.log('[NMRMoleculeViewer] fallback (files.rcsb.org) succeeded');
               } catch (secondErr) {
+                console.log('[NMRMoleculeViewer] fallback (files.rcsb.org) FAILED -> message:', secondErr && secondErr.message);
                 if (cancelled) throw secondErr;
+                console.log('[NMRMoleculeViewer] fallback attempt 2: rcsb://' + id);
                 component = await stage.loadFile(`rcsb://${id}`);
+                console.log('[NMRMoleculeViewer] fallback (rcsb://) succeeded');
               }
             } else {
               throw firstErr;
@@ -531,6 +610,7 @@ const NMRMoleculeViewer = ({
         }
 
         if (cancelled) return;
+        console.log('[NMRMoleculeViewer] component loaded, atomCount so far:', component.structure ? component.structure.atomCount : 'N/A');
 
         componentRef.current = component;
 
@@ -582,80 +662,30 @@ const NMRMoleculeViewer = ({
           throw new Error('The structure loaded but contains no atoms (empty/invalid file content).');
         }
 
-        stage.signals.clicked.add((pickingProxy) => {
-          if (!pickingProxy || !pickingProxy.atom) return;
-
-          const atom = pickingProxy.atom;
-
-          const mapped = mapAtomToNmrKeys(
-            atom,
-            parsedSeqRef.current,
-            moleculeTypeRef.current
-          );
-
-          if (mapped && onAtomClickRef.current) {
-            onAtomClickRef.current(mapped.ri, mapped.keys);
-          }
-        });
-
-        let lastHover = null;
-
-        stage.signals.hovered.add((pickingProxy) => {
-          if (!pickingProxy || !pickingProxy.atom) {
-            if (lastHover !== null) {
-              lastHover = null;
-              setHoverInfo(null);
-            }
-            return;
-          }
-
-          const atom = pickingProxy.atom;
-
-          const mapped = mapAtomToNmrKeys(
-            atom,
-            parsedSeqRef.current,
-            moleculeTypeRef.current
-          );
-
-          const label = mapped
-            ? mapped.label
-            : `${atom.resname || ''} ${atom.resno || ''} ${atom.atomname || ''}`.trim();
-
-          if (label !== lastHover) {
-            lastHover = label;
-            setHoverInfo(label);
-          }
-        });
-
         setStatus('ready');
       } catch (err) {
         console.error('NMRMoleculeViewer error:', err);
 
         if (!cancelled) {
+          const raw = (err && err.message ? String(err.message) : '').trim();
+          const wasUrlLoad = !loadRequest.file && !loadRequest.text;
+
           setErrorMsg(
-            err?.message ||
-              'Failed to load structure. If using a URL, check that it is HTTPS, CORS-enabled, and returns a PDB/CIF file.'
+            raw
+              ? raw
+              : wasUrlLoad
+                ? "Failed to load this structure and the browser gave no specific reason (this can happen for a few different causes -- a cross-origin/CORS restriction on the server, a network problem, or an internal error -- the browser console (not just this message) will show which)."
+                : 'Failed to load structure.'
           );
           setStatus('error');
         }
       }
     };
 
-    init();
+    run();
 
     return () => {
       cancelled = true;
-
-      if (stageRef.current) {
-        stageRef.current.dispose();
-        stageRef.current = null;
-      }
-
-      componentRef.current = null;
-      highlightCompRef.current = null;
-      manualHighlightCompRef.current = null;
-      labelCompRef.current = null;
-      sidechainCompRef.current = null;
     };
   }, [loadRequest]);
 
