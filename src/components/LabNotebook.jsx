@@ -1323,7 +1323,7 @@ return (
 );
 };
 /* ============================================================================
-NMR FITTING SIMULATION PREVIEW (for Lab Notebook)
+NMR FITTING SIMULATION PREVIEW (for Lab Notebook) — WITH GRAPHS
 ========================================================================== */
 const NMR_SIM_CONSTANTS = {
 HBAR: 1.054571817e-34,
@@ -1365,7 +1365,7 @@ const R1csa = C2 * J(wX);
 const R2csa = (C2 / 6) * (4 * J(0) + 3 * J(wX));
 const R1 = R1dip + R1csa;
 const R2 = R2dip + R2csa;
-return { R1, R2, NOE: R1 > 0 ? 1 + (GAMMA_H / gx) * (sigmaX / R1) : 1, T1: R1 > 0 ? 1 / R1 : Infinity, T2: R2 > 0 ? 1 / R2 : Infinity, ratio: R2 > 0 ? R1 / R2 : 0 };
+return { R1dip, R2dip, R1csa, R2csa, R1, R2, NOE: R1 > 0 ? 1 + (GAMMA_H / gx) * (sigmaX / R1) : 1, T1: R1 > 0 ? 1 / R1 : Infinity, T2: R2 > 0 ? 1 / R2 : Infinity, ratio: R2 > 0 ? R1 / R2 : 0 };
 };
 const nmrSimStokesEinsteinD = (T_K, eta_PaS, r_m) => (NMR_SIM_CONSTANTS.BOLTZMANN * T_K) / (6 * Math.PI * eta_PaS * r_m);
 const nmrSimRadiusFromMW = (MW_Da, vbar_cm3g, hydration) => {
@@ -1374,6 +1374,10 @@ return Math.pow((3 * V_m3) / (4 * Math.PI), 1 / 3);
 };
 const nmrSimTauFromMW = (MW_Da, eta_PaS, T_K, vbar_cm3g, hydration) => (eta_PaS * (MW_Da * 1e-3 * (vbar_cm3g * 1e-3 + hydration * 1e-3))) / (NMR_SIM_CONSTANTS.RGAS * T_K);
 const NMRFittingSimPreview = ({ test }) => {
+const relaxCanvasRef = useRef(null);
+const diffCanvasRef = useRef(null);
+const relaxChartRef = useRef(null);
+const diffChartRef = useRef(null);
 const sim = {
 nucleus: '15N', fieldMHz: 600, tau_c_ns: 5, S2: 0.85,
 useInternal: false, tau_e_ps: 50, r_A: 1.02, csa_ppm: -160,
@@ -1388,49 +1392,262 @@ const T_K = sim.temperature || 298;
 const viscosity = sim.viscosity || 0.89e-3;
 const vbar = sim.vbar || 0.73;
 const hydration = sim.hydration || 0.3;
+const S2 = sim.S2 || 0.85;
+const tau_e = sim.tau_e_ps || 50;
+const rXH = sim.r_A || 1.02;
+const csa = sim.csa_ppm !== undefined ? sim.csa_ppm : -160;
 const shapeFactor = (sim.shape || 'sphere') === 'sphere' ? 1 : sim.shape === 'rod' ? 1.3 : 1.15;
 const r_m = nmrSimRadiusFromMW(MW, vbar, hydration) * shapeFactor;
 const D_calc = nmrSimStokesEinsteinD(T_K, viscosity, r_m);
 const tau_c_calc = nmrSimTauFromMW(MW, viscosity, T_K, vbar, hydration);
 const tau_c_ns = sim.tau_c_ns || (tau_c_calc * 1e9) || 5;
 const rates = nmrSimModelFreeRates({
-nucleus, fieldMHz, tau_c_ns,
-S2: sim.S2 || 0.85,
+nucleus, fieldMHz, tau_c_ns, S2,
 useInternal: sim.useInternal || false,
-tau_e_ps: sim.tau_e_ps || 50,
-r_A: sim.r_A || 1.02,
-csa_ppm: sim.csa_ppm !== undefined ? sim.csa_ppm : -160
+tau_e_ps: tau_e, r_A: rXH, csa_ppm: csa
 });
+const pB = sim.pB || 0.05;
+const deltaW_ex = sim.deltaW_ex || 2;
+const tau_ex = sim.tau_ex || 10;
+const Rex_extra = sim.Rex_extra || 0;
+const Rex_calc = pB > 0 && tau_ex > 0 ? pB * (1 - pB) * Math.pow(deltaW_ex * 2 * Math.PI * fieldMHz, 2) * (tau_ex * 1e-6) : 0;
+const R2_with_ex = rates.R2 + Rex_calc + Rex_extra;
+// --- Generate R1/R2/NOE vs tau_c sweep data ---
+const sweepData = useMemo(() => {
+const pts = { R1: [], R2: [], NOE: [] };
+const tauRange = [];
+for (let t = 0.05; t <= 50; t *= 1.08) tauRange.push(t);
+tauRange.forEach(tc => {
+const r = nmrSimModelFreeRates({ nucleus, fieldMHz, tau_c_ns: tc, S2, useInternal: sim.useInternal || false, tau_e_ps: tau_e, r_A: rXH, csa_ppm: csa });
+pts.R1.push({ x: tc, y: r.R1 });
+pts.R2.push({ x: tc, y: r.R2 });
+pts.NOE.push({ x: tc, y: r.NOE });
+});
+return pts;
+}, [nucleus, fieldMHz, S2, sim.useInternal, tau_e, rXH, csa]);
+// --- Generate D vs MW sweep data ---
+const diffSweepData = useMemo(() => {
+const pts = [];
+for (let mw = 2000; mw <= 100000; mw += 2000) {
+const r = nmrSimRadiusFromMW(mw, vbar, hydration) * shapeFactor;
+const D = nmrSimStokesEinsteinD(T_K, viscosity, r);
+pts.push({ x: mw / 1000, y: D * 1e11 });
+}
+return pts;
+}, [vbar, hydration, shapeFactor, T_K, viscosity]);
+// --- Render Relaxation Chart ---
+useEffect(() => {
+if (!relaxCanvasRef.current) return;
+if (relaxChartRef.current) relaxChartRef.current.destroy();
+relaxChartRef.current = new Chart(relaxCanvasRef.current, {
+type: 'line',
+data: {
+datasets: [
+{
+label: 'R1 (s⁻¹)',
+data: sweepData.R1,
+borderColor: '#3b82f6',
+backgroundColor: 'transparent',
+borderWidth: 2,
+pointRadius: 0,
+fill: false,
+yAxisID: 'y'
+},
+{
+label: 'R2 (s⁻¹)',
+data: sweepData.R2,
+borderColor: '#ef4444',
+backgroundColor: 'transparent',
+borderWidth: 2,
+pointRadius: 0,
+fill: false,
+yAxisID: 'y'
+},
+{
+label: 'NOE',
+data: sweepData.NOE,
+borderColor: '#22c55e',
+backgroundColor: 'transparent',
+borderWidth: 2,
+borderDash: [5, 3],
+pointRadius: 0,
+fill: false,
+yAxisID: 'y1'
+}
+]
+},
+options: {
+responsive: true, maintainAspectRatio: false, animation: false,
+scales: {
+x: {
+type: 'logarithmic',
+title: { display: true, text: 'τc (ns)', font: { size: 11, weight: 'bold' }, color: '#334155' },
+ticks: { font: { size: 9 }, color: '#64748b', callback: (v) => { const log = Math.log10(v); if ([0.1,1,10,50].includes(v)) return v; return null; } },
+grid: { color: '#f1f5f9' }
+},
+y: {
+position: 'left',
+title: { display: true, text: 'R1, R2 (s⁻¹)', font: { size: 11, weight: 'bold' }, color: '#334155' },
+ticks: { font: { size: 9 }, color: '#64748b' },
+grid: { color: '#f1f5f9' }
+},
+y1: {
+position: 'right',
+title: { display: true, text: 'NOE', font: { size: 11, weight: 'bold' }, color: '#22c55e' },
+ticks: { font: { size: 9 }, color: '#22c55e' },
+grid: { drawOnChartArea: false }
+}
+},
+plugins: {
+legend: { position: 'top', labels: { font: { size: 10, weight: 'bold' }, usePointStyle: true } },
+tooltip: { callbacks: { title: (ctx) => `τc = ${ctx[0].parsed.x.toFixed(2)} ns` } }
+}
+}
+});
+// Draw vertical marker line at actual tau_c
+const chart = relaxChartRef.current;
+const xScale = chart.scales.x;
+const yArea = chart.chartArea;
+if (xScale && yArea) {
+const px = xScale.getPixelForValue(tau_c_ns);
+chart.ctx.save();
+chart.ctx.strokeStyle = '#6366f1';
+chart.ctx.lineWidth = 2;
+chart.ctx.setLineDash([6, 3]);
+chart.ctx.beginPath();
+chart.ctx.moveTo(px, yArea.top);
+chart.ctx.lineTo(px, yArea.bottom);
+chart.ctx.stroke();
+chart.ctx.fillStyle = '#6366f1';
+chart.ctx.font = 'bold 9px sans-serif';
+chart.ctx.fillText(`τc = ${tau_c_ns.toFixed(1)} ns`, px + 4, yArea.top + 12);
+chart.ctx.restore();
+}
+return () => { if (relaxChartRef.current) relaxChartRef.current.destroy(); };
+}, [sweepData, tau_c_ns]);
+// --- Render Diffusion Chart ---
+useEffect(() => {
+if (!diffCanvasRef.current) return;
+if (diffChartRef.current) diffChartRef.current.destroy();
+diffChartRef.current = new Chart(diffCanvasRef.current, {
+type: 'line',
+data: {
+datasets: [
+{
+label: 'D vs MW (Stokes-Einstein)',
+data: diffSweepData,
+borderColor: '#0d9488',
+backgroundColor: 'rgba(13,148,136,0.08)',
+borderWidth: 2,
+pointRadius: 0,
+fill: true
+},
+{
+label: `This protein (${MW.toLocaleString()} Da)`,
+data: [{ x: MW / 1000, y: D_calc * 1e11 }],
+borderColor: '#dc2626',
+backgroundColor: '#dc2626',
+pointRadius: 7,
+pointStyle: 'rectRot',
+type: 'scatter',
+showLine: false
+}
+]
+},
+options: {
+responsive: true, maintainAspectRatio: false, animation: false,
+scales: {
+x: {
+type: 'linear',
+title: { display: true, text: 'Molecular Weight (kDa)', font: { size: 11, weight: 'bold' }, color: '#334155' },
+ticks: { font: { size: 9 }, color: '#64748b' },
+grid: { color: '#f1f5f9' }
+},
+y: {
+title: { display: true, text: 'D (×10⁻¹¹ m²/s)', font: { size: 11, weight: 'bold' }, color: '#334155' },
+ticks: { font: { size: 9 }, color: '#64748b' },
+grid: { color: '#f1f5f9' }
+}
+},
+plugins: {
+legend: { position: 'top', labels: { font: { size: 10, weight: 'bold' }, usePointStyle: true } },
+tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: D = ${ctx.parsed.y.toFixed(3)} ×10⁻¹¹ m²/s` } }
+}
+}
+});
+return () => { if (diffChartRef.current) diffChartRef.current.destroy(); };
+}, [diffSweepData, MW, D_calc]);
 return (
 <div className="flex flex-col gap-4 mt-2">
-<h5 className="text-[10px] font-bold text-slate-500 uppercase text-center w-full">NMR Simulation Results (Diffusion + Relaxation)</h5>
-<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+<h5 className="text-[10px] font-bold text-slate-500 uppercase text-center w-full">NMR Simulation Results</h5>
+{/* ===== SECTION 1: DIFFUSION ===== */}
 <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
-<h6 className="text-[10px] font-bold text-slate-600 uppercase mb-2">💧 Diffusion (Stokes-Einstein)</h6>
-<div className="grid grid-cols-2 gap-2 text-xs">
+<h6 className="text-[10px] font-bold text-slate-600 uppercase mb-2">💧 Diffusion Coefficient (Stokes-Einstein)</h6>
+<div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs mb-3">
 <span className="text-slate-500">MW:</span><span className="font-mono font-bold">{MW.toLocaleString()} Da</span>
+<span className="text-slate-500">Shape:</span><span className="font-mono font-bold">{sim.shape || 'sphere'} (×{shapeFactor})</span>
 <span className="text-slate-500">Hydrodynamic r:</span><span className="font-mono font-bold">{(r_m * 1e9).toFixed(2)} nm</span>
 <span className="text-slate-500">D:</span><span className="font-mono font-bold">{D_calc.toExponential(3)} m²/s</span>
 <span className="text-slate-500">D (×10⁻¹¹):</span><span className="font-mono font-bold">{(D_calc * 1e11).toFixed(2)}</span>
 <span className="text-slate-500">τc (calc):</span><span className="font-mono font-bold">{(tau_c_calc * 1e9).toFixed(2)} ns</span>
-<span className="text-slate-500">Shape:</span><span className="font-mono font-bold">{sim.shape || 'sphere'} (×{shapeFactor})</span>
 <span className="text-slate-500">T / η:</span><span className="font-mono font-bold">{T_K} K / {(viscosity * 1e3).toFixed(2)} mPa·s</span>
 <span className="text-slate-500">v̄ / hydration:</span><span className="font-mono font-bold">{vbar} / {hydration}</span>
 </div>
+<div style={{ height: '220px', position: 'relative' }}>
+<canvas ref={diffCanvasRef}></canvas>
 </div>
+<p className="text-[9px] text-slate-400 italic mt-1">D = k_B·T / (6π·η·r_h) — Stokes-Einstein equation</p>
+</div>
+{/* ===== SECTION 2: RELAXATION ===== */}
 <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
 <h6 className="text-[10px] font-bold text-slate-600 uppercase mb-2">🔄 Model-Free Relaxation ({nucleus} @ {fieldMHz} MHz)</h6>
-<div className="grid grid-cols-2 gap-2 text-xs">
-<span className="text-slate-500">R1:</span><span className="font-mono font-bold">{rates.R1.toFixed(3)} s⁻¹</span>
-<span className="text-slate-500">R2:</span><span className="font-mono font-bold">{rates.R2.toFixed(3)} s⁻¹</span>
+<div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs mb-3">
+<span className="text-slate-500">R1 (s⁻¹):</span><span className="font-mono font-bold">{rates.R1.toFixed(3)}</span>
+<span className="text-slate-500">R2 (s⁻¹):</span><span className="font-mono font-bold">{rates.R2.toFixed(3)}</span>
 <span className="text-slate-500">NOE:</span><span className="font-mono font-bold">{rates.NOE.toFixed(3)}</span>
-<span className="text-slate-500">T1:</span><span className="font-mono font-bold">{rates.T1 === Infinity ? '∞' : rates.T1.toFixed(3)} s</span>
-<span className="text-slate-500">T2:</span><span className="font-mono font-bold">{rates.T2 === Infinity ? '∞' : rates.T2.toFixed(3)} s</span>
 <span className="text-slate-500">R1/R2:</span><span className="font-mono font-bold">{rates.ratio.toFixed(3)}</span>
-<span className="text-slate-500">τc used:</span><span className="font-mono font-bold">{tau_c_ns.toFixed(2)} ns</span>
-<span className="text-slate-500">S²:</span><span className="font-mono font-bold">{sim.S2 || 0.85}</span>
+<span className="text-slate-500">T1 (s):</span><span className="font-mono font-bold">{rates.T1 === Infinity ? '∞' : rates.T1.toFixed(3)}</span>
+<span className="text-slate-500">T2 (s):</span><span className="font-mono font-bold">{rates.T2 === Infinity ? '∞' : rates.T2.toFixed(3)}</span>
+<span className="text-slate-500">τc:</span><span className="font-mono font-bold">{tau_c_ns.toFixed(2)} ns</span>
+<span className="text-slate-500">S²:</span><span className="font-mono font-bold">{S2}</span>
+</div>
+<div style={{ height: '260px', position: 'relative' }}>
+<canvas ref={relaxCanvasRef}></canvas>
+</div>
+<p className="text-[9px] text-slate-400 italic mt-1">Model-free spectral density: R1 peaks near τc ≈ 1/ω_X. Vertical dashed line marks the actual τc.</p>
+</div>
+{/* ===== SECTION 3: DIPOLAR + CSA ===== */}
+<div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+<h6 className="text-[10px] font-bold text-slate-600 uppercase mb-2">🧲 Dipolar + CSA with Chemical Exchange</h6>
+<div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs mb-3">
+<span className="text-slate-500">Nucleus:</span><span className="font-mono font-bold">{nucleus}</span>
+<span className="text-slate-500">Field:</span><span className="font-mono font-bold">{fieldMHz} MHz</span>
+<span className="text-slate-500">r(X-H):</span><span className="font-mono font-bold">{rXH} Å</span>
+<span className="text-slate-500">CSA Δσ:</span><span className="font-mono font-bold">{csa} ppm</span>
+<span className="text-slate-500">S²:</span><span className="font-mono font-bold">{S2}</span>
+<span className="text-slate-500">τm:</span><span className="font-mono font-bold">{tau_c_ns.toFixed(2)} ns</span>
+<span className="text-slate-500">τe:</span><span className="font-mono font-bold">{sim.useInternal ? `${tau_e} ps` : 'off'}</span>
+</div>
+<div className="border-t border-slate-200 pt-2 mb-3">
+<h6 className="text-[9px] font-bold text-amber-600 uppercase mb-1">Chemical Exchange Contribution</h6>
+<div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+<span className="text-slate-500">p_B (minor pop.):</span><span className="font-mono font-bold">{pB}</span>
+<span className="text-slate-500">Δω (ppm):</span><span className="font-mono font-bold">{deltaW_ex}</span>
+<span className="text-slate-500">τ_ex (µs):</span><span className="font-mono font-bold">{tau_ex}</span>
+<span className="text-slate-500">R_ex calc (s⁻¹):</span><span className="font-mono font-bold text-amber-700">{Rex_calc.toFixed(3)}</span>
+<span className="text-slate-500">R_ex extra (s⁻¹):</span><span className="font-mono font-bold">{Rex_extra}</span>
 </div>
 </div>
+<div className="border-t border-slate-200 pt-2">
+<h6 className="text-[9px] font-bold text-blue-600 uppercase mb-1">Relaxation with Exchange</h6>
+<div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+<span className="text-slate-500">R1 (s⁻¹):</span><span className="font-mono font-bold">{rates.R1.toFixed(3)}</span>
+<span className="text-slate-500">R2 (no exch.) (s⁻¹):</span><span className="font-mono font-bold">{rates.R2.toFixed(3)}</span>
+<span className="text-slate-500">R2 + R_ex (s⁻¹):</span><span className="font-mono font-bold text-red-700">{R2_with_ex.toFixed(3)}</span>
+<span className="text-slate-500">R1/R2 (with exch.):</span><span className="font-mono font-bold">{R2_with_ex > 0 ? (rates.R1 / R2_with_ex).toFixed(3) : '—'}</span>
+</div>
+</div>
+<p className="text-[9px] text-slate-400 italic mt-2">R_ex = p_A·p_B·Δω²·τ_ex (fast exchange limit)</p>
 </div>
 </div>
 );
