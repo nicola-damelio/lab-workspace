@@ -2,21 +2,56 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import Chart from 'chart.js/auto';
-import { PLATES_DEF, formatConc, concKey, getRegionColor, toHex, lighten, darken, needsDarkText, PALETTE, fit4PL, getDirectImageUrl } from '../data/constants';
+import { PLATES_DEF, formatConc, concKey, getRegionColor, toHex, lighten, darken, needsDarkText, PALETTE, fit4PL, getDirectImageUrl, errBarPlugin } from '../data/constants';
 import {
-  useNmrDerived,
-  OneDSpectrumPlot,
-  SpectrumPlot,
-  HSQCPlot,
-  CustomXTick1H,
-  CustomXTick13C,
-  TICKS_1H,
-  TICKS_13C,
-  TICKS_15N,
-  SecondaryShifts,
-  Fitting
+useNmrDerived,
+OneDSpectrumPlot,
+SpectrumPlot,
+HSQCPlot,
+CustomXTick1H,
+CustomXTick13C,
+TICKS_1H,
+TICKS_13C,
+TICKS_15N,
+SecondaryShifts,
+Fitting
 } from './NMRSections';
 import { CD_FIT_COMPONENTS } from './CDSections';
+import {
+generateRMSDData, generateRMSFData, generateRgData, generateSASAData, generateEnergyData,
+parseMDValue, getForceFieldInfo, getWaterModelInfo, getTrajectoryFormatInfo
+} from './MDData';
+
+/* ============================================================================
+   CHUNKED TABLE HELPER
+   Automatically wraps long datasets into side-by-side table columns.
+========================================================================== */
+const ChunkedTable = ({ data, renderHeader, renderRow, maxRows = 12 }) => {
+  if (!data || data.length === 0) return null;
+  const chunks = [];
+  for (let i = 0; i < data.length; i += maxRows) {
+    chunks.push(data.slice(i, i + maxRows));
+  }
+  return (
+    <div className="flex flex-wrap items-start justify-center gap-4 w-full">
+      {chunks.map((chunk, idx) => (
+        <div key={idx} className="overflow-x-auto border border-slate-200 rounded flex-1 min-w-[max-content] max-w-fit bg-slate-50 shadow-sm">
+          <table className="w-full text-xs text-left select-text bg-white" draggable="true">
+            <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
+              {renderHeader()}
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {chunk.map((row, rowIdx) => {
+                const actualIdx = idx * maxRows + rowIdx;
+                return renderRow(row, actualIdx);
+              })}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+  );
+};
 
 /* ============================================================================
    CD SPECTRA CHART (for Lab Notebook)
@@ -982,13 +1017,612 @@ const NMRFittingGraphsPreview = ({ test }) => {
 };
 
 /* ============================================================================
+PLATE ANALYSIS GRAPHS PREVIEW (for Lab Notebook)
+========================================================================== */
+const PlateAnalysisPreview = ({ test }) => {
+const drCanvasRef = useRef(null);
+const ic50CanvasRef = useRef(null);
+const drChartRef = useRef(null);
+const ic50ChartRef = useRef(null);
+const processed = useMemo(() => {
+const { grid, cellConfig } = test;
+if (!grid || !grid.length) return null;
+const rows = grid.length;
+const cols = grid[0].length;
+const cOD = parseFloat(String(test.ctrlODStr).replace(',', '.')) || 0;
+const gOff = parseFloat(String(test.glbOffsetStr || '0').replace(',', '.')) || 0;
+const bgMan = parseFloat(String(test.bgManualStr || '0').replace(',', '.')) || 0;
+const bgType = test.bgType || 'none';
+let bgOD = 0;
+if (bgType === 'manual') {
+   bgOD = bgMan;
+ } else if (bgType !== 'none') {
+   let s = 0, n = 0;
+   for (let r = 0; r < rows; r++) {
+     for (let c = 0; c < cols; c++) {
+       const cfg = cellConfig?.[r]?.[c];
+       if (!cfg || cfg.excluded) continue;
+       if ((cfg.role || '') === bgType) {
+         const v = parseFloat(grid[r]?.[c]);
+         if (!isNaN(v)) { s += v - gOff; n++; }
+       }
+     }
+   }
+   bgOD = n > 0 ? s / n : 0;
+ }
+ const tConc = parseFloat(String(test.topConcStr).replace(',', '.')) || 0;
+ const dFact = parseFloat(String(test.dilFactorStr).replace(',', '.')) || 1;
+ const customConc = test.customConc || {};
+ const rowCompounds = test.rowCompounds || [];
+ const compounds = test.compounds || [];
+ const getRole = (r, c) => {
+   const cfg = cellConfig?.[r]?.[c];
+   if (!cfg) return null;
+   if (cfg.role !== null && cfg.role !== undefined) return cfg.role;
+   const rCmp = rowCompounds[r];
+   const cCmp = compounds[c];
+   if (rCmp && !cCmp) return rCmp;
+   if (cCmp && !rCmp) return cCmp;
+   return rCmp || null;
+ };
+ const concOf = (r, c, role) => {
+   if (!role || ['cells', 'medium', 'pbs'].includes(String(role).toLowerCase())) return 0;
+   const cfg = cellConfig?.[r]?.[c];
+   if (cfg && cfg.conc !== null && cfg.conc !== undefined) return Number(cfg.conc);
+   const s = customConc[role]
+     ? { top: parseFloat(customConc[role].top) || 0, dil: parseFloat(customConc[role].dil) || 1 }
+     : { top: tConc, dil: dFact };
+   let isHoriz = rowCompounds[r] === role;
+   if (!isHoriz && compounds[c] !== role && rowCompounds.includes(role)) isHoriz = true;
+   let step = 0;
+   if (isHoriz) {
+     for (let i = 0; i < c; i++) { if (getRole(r, i) === role) step++; }
+   } else {
+     for (let i = 0; i < r; i++) { if (getRole(i, c) === role) step++; }
+   }
+   return s.top / Math.pow(s.dil, step);
+ };
+ const viability = (raw) => {
+   const net = raw - bgOD;
+   const ctrl = cOD - bgOD;
+   return Math.abs(ctrl) < 1e-6 ? 0 : (net / ctrl) * 100;
+ };
+ const byRegion = {};
+ for (let r = 0; r < rows; r++) {
+   for (let c = 0; c < cols; c++) {
+     const cfg = cellConfig?.[r]?.[c];
+     if (!cfg || cfg.excluded) continue;
+     const role = getRole(r, c);
+     if (!role || ['cells', 'medium', 'pbs'].includes(String(role).toLowerCase())) continue;
+     const reg = cfg.region || 'Primary';
+     const rawVal = parseFloat(grid[r]?.[c]);
+     if (isNaN(rawVal)) continue;
+     const conc = concOf(r, c, role);
+     if (!(conc > 0)) continue;
+     if (!byRegion[reg]) byRegion[reg] = {};
+     if (!byRegion[reg][role]) byRegion[reg][role] = {};
+     const ck = concKey(conc);
+     if (!byRegion[reg][role][ck]) byRegion[reg][role][ck] = [];
+     byRegion[reg][role][ck].push(viability(rawVal - gOff));
+   }
+ }
+ const result = {};
+ Object.entries(byRegion).forEach(([reg, comps]) => {
+   result[reg] = [];
+   Object.entries(comps).forEach(([name, concMap]) => {
+     const vPts = [];
+     Object.entries(concMap).forEach(([ck, vals]) => {
+       const mean = vals.reduce((s, v) => s + v, 0) / vals.length;
+       let sd = 0;
+       if (vals.length > 1) {
+         sd = Math.sqrt(vals.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / (vals.length - 1));
+       }
+       const realX = parseFloat(ck);
+       vPts.push({ x: Math.log10(realX), realX, y: mean, sd, n: vals.length });
+     });
+     vPts.sort((a, b) => a.x - b.x);
+     let fit = null;
+     if (test.fitIC50 && vPts.length >= 3) {
+       const fitData = vPts.map(p => ({ x: p.realX, y: p.y, w: p.sd > 0 ? 1 / (p.sd * p.sd) : 1, sd: p.sd }));
+       const sumW = fitData.reduce((s, p) => s + p.w, 0);
+       if (sumW > 0) fitData.forEach(p => p.w = (p.w / sumW) * fitData.length);
+       fit = fit4PL(fitData);
+     }
+     result[reg].push({ name, vPts, fit, color: toHex(PALETTE[result[reg].length % PALETTE.length]) });
+   });
+ });
+ return result;
+}, [test]);
+useEffect(() => {
+if (!processed) return;
+// --- Dose-Response Chart ---
+if (drCanvasRef.current) {
+if (drChartRef.current) drChartRef.current.destroy();
+const ds = [];
+Object.entries(processed).forEach(([reg, comps]) => {
+comps.forEach(cd => {
+if (cd.fit) {
+   const minL = Math.min(...cd.vPts.map(p => p.x)) - 0.2;
+   const maxL = Math.max(...cd.vPts.map(p => p.x)) + 0.2;
+   const curve = [];
+   for (let v = minL; v <= maxL; v += (maxL - minL) / 60) {
+     curve.push({ x: v, y: 100 / (1 + Math.pow(Math.pow(10, v) / cd.fit.ic50, cd.fit.hill)) });
+   }
+   ds.push({
+     label: `${cd.name} (${reg}) fit`,
+     data: curve,
+     borderColor: cd.color,
+     backgroundColor: 'transparent',
+     borderWidth: 2,
+     pointRadius: 0,
+     fill: false,
+     type: 'line',
+     tension: 0
+   });
+ }
+ if (cd.vPts.length > 0) {
+   ds.push({
+     label: `${cd.name} (${reg})`,
+     data: cd.vPts,
+     errorBars: cd.vPts.map(p => ({ plus: p.sd, minus: p.sd })),
+     borderColor: cd.color,
+     backgroundColor: cd.color,
+     borderWidth: 2,
+     pointRadius: 4,
+     fill: false,
+     type: 'scatter',
+     showLine: false
+   });
+ }
+});
+});
+if (ds.length > 0) {
+drChartRef.current = new Chart(drCanvasRef.current, {
+type: 'scatter',
+data: { datasets: ds },
+plugins: [errBarPlugin],
+options: {
+responsive: true, maintainAspectRatio: false, animation: false,
+scales: {
+  x: {
+    type: 'linear',
+    title: { display: true, text: `Log₁₀ [Conc. (${test.unit || 'µM'})]`, font: { size: 11, weight: 'bold' }, color: '#334155' },
+    ticks: { font: { size: 10 }, color: '#64748b' },
+    grid: { color: '#f1f5f9' }
+  },
+  y: {
+    title: { display: true, text: 'Viability (%)', font: { size: 11, weight: 'bold' }, color: '#334155' },
+    ticks: { font: { size: 10 }, color: '#64748b' },
+    grid: { color: '#f1f5f9' }
+  }
+},
+plugins: {
+  legend: { position: 'top', labels: { font: { size: 10, weight: 'bold' }, usePointStyle: true } },
+  tooltip: {
+    callbacks: {
+      title: (ctx) => `Conc: ${formatConc(Math.pow(10, ctx[0].parsed.x))} ${test.unit || 'µM'}`,
+      label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)}%`
+    }
+  }
+}
+}
+});
+}
+}
+// --- IC50 Comparison Bar Chart ---
+if (ic50CanvasRef.current) {
+if (ic50ChartRef.current) ic50ChartRef.current.destroy();
+const labels = [];
+const data = [];
+const colors = [];
+const ebars = [];
+Object.entries(processed).forEach(([reg, comps]) => {
+comps.forEach(cd => {
+if (cd.fit && isFinite(cd.fit.ic50)) {
+  labels.push(`${cd.name} (${reg})`);
+  data.push(cd.fit.ic50);
+  colors.push(cd.color);
+  const se = Math.min(cd.fit.se, cd.fit.ic50 * 2);
+  ebars.push({ plus: se, minus: se });
+}
+});
+});
+if (labels.length > 0) {
+ic50ChartRef.current = new Chart(ic50CanvasRef.current, {
+type: 'bar',
+data: {
+labels,
+datasets: [{
+  label: `IC50 (${test.unit || 'µM'})`,
+  data,
+  backgroundColor: colors,
+  borderColor: colors,
+  borderWidth: 1,
+  errorBars: ebars
+}]
+},
+plugins: [errBarPlugin],
+options: {
+responsive: true, maintainAspectRatio: false, animation: false,
+scales: {
+  y: {
+    beginAtZero: true,
+    title: { display: true, text: `IC50 (${test.unit || 'µM'})`, font: { size: 11, weight: 'bold' }, color: '#334155' },
+    ticks: { font: { size: 10 }, color: '#64748b' },
+    grid: { color: '#f1f5f9' }
+  },
+  x: {
+    ticks: { font: { size: 10, weight: 'bold' }, color: '#334155' },
+    grid: { display: false }
+  }
+},
+plugins: {
+  legend: { display: false },
+  tooltip: {
+    callbacks: {
+      label: (ctx) => `IC50: ${ctx.raw.toFixed(3)} ± ${(ebars[ctx.dataIndex]?.plus || 0).toFixed(3)} ${test.unit || 'µM'}`
+    }
+  }
+}
+}
+});
+}
+}
+return () => {
+if (drChartRef.current) drChartRef.current.destroy();
+if (ic50ChartRef.current) ic50ChartRef.current.destroy();
+};
+}, [processed, test.unit]);
+if (!processed || Object.keys(processed).length === 0) {
+return <p className="text-[10px] text-slate-400 italic">No plate analysis data available.</p>;
+}
+const ic50Rows = [];
+Object.entries(processed).forEach(([reg, comps]) => {
+comps.forEach(cd => {
+if (cd.fit) ic50Rows.push({ region: reg, name: cd.name, ic50: cd.fit.ic50, hill: cd.fit.hill, se: cd.fit.se });
+});
+});
+return (
+<div className="flex flex-col gap-4 mt-2">
+<div style={{ height: '300px', position: 'relative' }}>
+<canvas ref={drCanvasRef}></canvas>
+</div>
+{ic50Rows.length > 0 && (
+<>
+<h5 className="text-[10px] font-bold text-slate-500 uppercase text-center w-full">IC50 Comparison</h5>
+<div style={{ height: '250px', position: 'relative' }}>
+<canvas ref={ic50CanvasRef}></canvas>
+</div>
+</>
+)}
+{ic50Rows.length > 0 && (
+<div className="overflow-x-auto border border-slate-200 rounded">
+<table className="w-full text-xs text-left select-text bg-white">
+<thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
+<tr>
+  <th className="px-3 py-1.5 border-r">Region</th>
+  <th className="px-3 py-1.5 border-r">Compound</th>
+  <th className="px-3 py-1.5 border-r">IC50 ({test.unit || 'µM'})</th>
+  <th className="px-3 py-1.5">Hill Slope</th>
+</tr>
+</thead>
+<tbody className="divide-y divide-slate-100">
+{ic50Rows.map((row, i) => (
+  <tr key={i}>
+    <td className="px-3 py-1.5 border-r">{row.region}</td>
+    <td className="px-3 py-1.5 font-bold border-r">{row.name}</td>
+    <td className="px-3 py-1.5 border-r">{row.ic50.toFixed(3)} ± {row.se.toFixed(3)}</td>
+    <td className="px-3 py-1.5">{row.hill.toFixed(3)}</td>
+  </tr>
+))}
+</tbody>
+</table>
+</div>
+)}
+</div>
+);
+};
+/* ============================================================================
+NMR FITTING SIMULATION PREVIEW (for Lab Notebook)
+========================================================================== */
+const NMR_SIM_CONSTANTS = {
+HBAR: 1.054571817e-34,
+MU0_4PI: 1e-7,
+RGAS: 8.314462618,
+GAMMA_H: 2.6752218744e8,
+GAMMA: { '15N': -2.7126e7, '13C': 6.7283e7, '1H': 2.6752218744e8, '31P': 1.083e8 },
+BOLTZMANN: 1.380649e-23
+};
+const nmrSimSpectralDensity = (w, tau_c, S2, useInternal, tau_e) => {
+let val = (S2 * tau_c) / (1 + (w * tau_c) ** 2);
+if (useInternal && tau_e > 0) {
+const te = 1 / (1 / tau_c + 1 / tau_e);
+val += ((1 - S2) * te) / (1 + (w * te) ** 2);
+}
+return (2 / 5) * val;
+};
+const nmrSimModelFreeRates = ({ nucleus, fieldMHz, tau_c_ns, S2, useInternal, tau_e_ps, r_A, csa_ppm }) => {
+const { GAMMA, GAMMA_H, HBAR, MU0_4PI } = NMR_SIM_CONSTANTS;
+const gx = GAMMA[nucleus] || GAMMA['15N'];
+const gxAbs = Math.abs(gx);
+const B0 = (2 * Math.PI * fieldMHz * 1e6) / GAMMA_H;
+const wH = GAMMA_H * B0;
+const wX = gxAbs * B0;
+const tau_c = tau_c_ns * 1e-9;
+const tau_e = tau_e_ps * 1e-12;
+const r_m = r_A * 1e-10;
+const J = (w) => nmrSimSpectralDensity(w, tau_c, S2, useInternal, tau_e);
+const D = MU0_4PI * GAMMA_H * gxAbs * HBAR / (r_m ** 3);
+const D2 = D * D;
+const C = (wX * csa_ppm * 1e-6) / Math.sqrt(3);
+const C2 = C * C;
+const wDiff = Math.abs(wH - wX);
+const wSum = wH + wX;
+const R1dip = (D2 / 4) * (J(wDiff) + 3 * J(wX) + 6 * J(wSum));
+const R2dip = (D2 / 8) * (4 * J(0) + J(wDiff) + 3 * J(wX) + 18 * J(wH) + 6 * J(wSum));
+const sigmaX = (D2 / 4) * (6 * J(wSum) - J(wDiff));
+const R1csa = C2 * J(wX);
+const R2csa = (C2 / 6) * (4 * J(0) + 3 * J(wX));
+const R1 = R1dip + R1csa;
+const R2 = R2dip + R2csa;
+return { R1, R2, NOE: R1 > 0 ? 1 + (GAMMA_H / gx) * (sigmaX / R1) : 1, T1: R1 > 0 ? 1 / R1 : Infinity, T2: R2 > 0 ? 1 / R2 : Infinity, ratio: R2 > 0 ? R1 / R2 : 0 };
+};
+const nmrSimStokesEinsteinD = (T_K, eta_PaS, r_m) => (NMR_SIM_CONSTANTS.BOLTZMANN * T_K) / (6 * Math.PI * eta_PaS * r_m);
+const nmrSimRadiusFromMW = (MW_Da, vbar_cm3g, hydration) => {
+const V_m3 = (MW_Da * 1e-3 / 6.022e23) * (vbar_cm3g * 1e-6 + hydration * 1e-6);
+return Math.pow((3 * V_m3) / (4 * Math.PI), 1 / 3);
+};
+const nmrSimTauFromMW = (MW_Da, eta_PaS, T_K, vbar_cm3g, hydration) => (eta_PaS * (MW_Da * 1e-3 * (vbar_cm3g * 1e-3 + hydration * 1e-3))) / (NMR_SIM_CONSTANTS.RGAS * T_K);
+const NMRFittingSimPreview = ({ test }) => {
+const sim = {
+nucleus: '15N', fieldMHz: 600, tau_c_ns: 5, S2: 0.85,
+useInternal: false, tau_e_ps: 50, r_A: 1.02, csa_ppm: -160,
+temperature: 298, viscosity: 0.89e-3, vbar: 0.73, hydration: 0.3,
+MW: 12000, shape: 'sphere',
+...(test.sim || {})
+};
+const nucleus = sim.nucleus || '15N';
+const fieldMHz = sim.fieldMHz || 600;
+const MW = sim.MW || 12000;
+const T_K = sim.temperature || 298;
+const viscosity = sim.viscosity || 0.89e-3;
+const vbar = sim.vbar || 0.73;
+const hydration = sim.hydration || 0.3;
+const shapeFactor = (sim.shape || 'sphere') === 'sphere' ? 1 : sim.shape === 'rod' ? 1.3 : 1.15;
+const r_m = nmrSimRadiusFromMW(MW, vbar, hydration) * shapeFactor;
+const D_calc = nmrSimStokesEinsteinD(T_K, viscosity, r_m);
+const tau_c_calc = nmrSimTauFromMW(MW, viscosity, T_K, vbar, hydration);
+const tau_c_ns = sim.tau_c_ns || (tau_c_calc * 1e9) || 5;
+const rates = nmrSimModelFreeRates({
+nucleus, fieldMHz, tau_c_ns,
+S2: sim.S2 || 0.85,
+useInternal: sim.useInternal || false,
+tau_e_ps: sim.tau_e_ps || 50,
+r_A: sim.r_A || 1.02,
+csa_ppm: sim.csa_ppm !== undefined ? sim.csa_ppm : -160
+});
+return (
+<div className="flex flex-col gap-4 mt-2">
+<h5 className="text-[10px] font-bold text-slate-500 uppercase text-center w-full">NMR Simulation Results (Diffusion + Relaxation)</h5>
+<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+<div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+<h6 className="text-[10px] font-bold text-slate-600 uppercase mb-2">💧 Diffusion (Stokes-Einstein)</h6>
+<div className="grid grid-cols-2 gap-2 text-xs">
+<span className="text-slate-500">MW:</span><span className="font-mono font-bold">{MW.toLocaleString()} Da</span>
+<span className="text-slate-500">Hydrodynamic r:</span><span className="font-mono font-bold">{(r_m * 1e9).toFixed(2)} nm</span>
+<span className="text-slate-500">D:</span><span className="font-mono font-bold">{D_calc.toExponential(3)} m²/s</span>
+<span className="text-slate-500">D (×10⁻¹¹):</span><span className="font-mono font-bold">{(D_calc * 1e11).toFixed(2)}</span>
+<span className="text-slate-500">τc (calc):</span><span className="font-mono font-bold">{(tau_c_calc * 1e9).toFixed(2)} ns</span>
+<span className="text-slate-500">Shape:</span><span className="font-mono font-bold">{sim.shape || 'sphere'} (×{shapeFactor})</span>
+<span className="text-slate-500">T / η:</span><span className="font-mono font-bold">{T_K} K / {(viscosity * 1e3).toFixed(2)} mPa·s</span>
+<span className="text-slate-500">v̄ / hydration:</span><span className="font-mono font-bold">{vbar} / {hydration}</span>
+</div>
+</div>
+<div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+<h6 className="text-[10px] font-bold text-slate-600 uppercase mb-2">🔄 Model-Free Relaxation ({nucleus} @ {fieldMHz} MHz)</h6>
+<div className="grid grid-cols-2 gap-2 text-xs">
+<span className="text-slate-500">R1:</span><span className="font-mono font-bold">{rates.R1.toFixed(3)} s⁻¹</span>
+<span className="text-slate-500">R2:</span><span className="font-mono font-bold">{rates.R2.toFixed(3)} s⁻¹</span>
+<span className="text-slate-500">NOE:</span><span className="font-mono font-bold">{rates.NOE.toFixed(3)}</span>
+<span className="text-slate-500">T1:</span><span className="font-mono font-bold">{rates.T1 === Infinity ? '∞' : rates.T1.toFixed(3)} s</span>
+<span className="text-slate-500">T2:</span><span className="font-mono font-bold">{rates.T2 === Infinity ? '∞' : rates.T2.toFixed(3)} s</span>
+<span className="text-slate-500">R1/R2:</span><span className="font-mono font-bold">{rates.ratio.toFixed(3)}</span>
+<span className="text-slate-500">τc used:</span><span className="font-mono font-bold">{tau_c_ns.toFixed(2)} ns</span>
+<span className="text-slate-500">S²:</span><span className="font-mono font-bold">{sim.S2 || 0.85}</span>
+</div>
+</div>
+</div>
+</div>
+);
+};
+/* ============================================================================
+MD PREVIEW COMPONENTS (for Lab Notebook)
+========================================================================== */
+const MDParamsPreview = ({ test }) => {
+const ffInfo = getForceFieldInfo(test.forceField || 'GROMOS');
+const wmInfo = getWaterModelInfo(test.waterModel || 'TIP3P');
+const trajInfo = getTrajectoryFormatInfo(test.trajectoryFormat || 'xtc');
+const tsNum = parseMDValue(test.timestep) || 2;
+const stepsNum = parseMDValue(test.nSteps) || 500000;
+const simTimeNs = (tsNum * stepsNum) / 1e6;
+return (
+<div className="flex flex-col gap-3 mt-2">
+<div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+{[
+  ['Force Field', `${ffInfo.name} ${test.forceFieldVersion || ''}`],
+  ['Water Model', wmInfo.name],
+  ['Ensemble', test.ensemble || 'NPT'],
+  ['Integrator', test.integrator || 'verlet'],
+  ['Timestep', `${tsNum} fs`],
+  ['Steps', stepsNum.toLocaleString()],
+  ['Sim. Time', `≈ ${simTimeNs.toFixed(3)} ns`],
+  ['Temperature', `${test.simTemperature || test.temperature || '300'} K`],
+  ['Pressure', `${test.simPressure || test.pressure || '1.0'} bar`],
+  ['Thermostat', test.thermostat || 'v_rescale'],
+  ['Barostat', test.barostat || 'parrinello_rahman'],
+  ['Phase', test.simPhase || 'production'],
+].map(([label, value]) => (
+  <div key={label} className="bg-slate-50 border border-slate-200 rounded p-2 text-center">
+    <span className="text-[9px] text-slate-400 uppercase block">{label}</span>
+    <span className="text-[11px] font-mono font-bold text-slate-700">{value}</span>
+  </div>
+))}
+</div>
+{test.trajectoryUrl && (
+<div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded p-2 text-xs">
+  <span className="font-bold text-blue-700">📁 Trajectory:</span>
+  <span className="font-mono text-blue-600 truncate flex-1">{test.trajectoryUrl}</span>
+  <span className="text-blue-500 font-bold">({trajInfo.label})</span>
+  {test.mdNumFrames && <span className="text-blue-500">· {test.mdNumFrames} frames</span>}
+</div>
+)}
+</div>
+);
+};
+const MDAnalysisPreview = ({ test }) => {
+const canvasRefs = { rmsd: useRef(null), rmsf: useRef(null), rg: useRef(null), sasa: useRef(null), energy: useRef(null) };
+const chartInstances = useRef({});
+const nFrames = parseMDValue(test.mdNumFrames) || 500;
+const seqLen = (test.proteinSequence || '').replace(/[^ACDEFGHIKLMNPQRSTVWY]/gi, '').length;
+const nResidues = Math.max(1, seqLen || 20);
+useEffect(() => {
+const datasets = {
+rmsd: generateRMSDData(Math.min(nFrames, 500)),
+rmsf: generateRMSFData(nResidues),
+rg: generateRgData(Math.min(nFrames, 500)),
+sasa: generateSASAData(Math.min(nFrames, 500)),
+energy: generateEnergyData(Math.min(nFrames, 500))
+};
+Object.entries(canvasRefs).forEach(([key, ref]) => {
+if (!ref.current) return;
+if (chartInstances.current[key]) chartInstances.current[key].destroy();
+let chartData, xLabel, yLabel;
+if (key === 'rmsf') {
+  chartData = {
+    labels: datasets.rmsf.map(d => d.residue),
+    datasets: [{
+      label: 'RMSF',
+      data: datasets.rmsf.map(d => d.value),
+      backgroundColor: datasets.rmsf.map(d => d.value > 0.25 ? '#ef444499' : '#3b82f699'),
+      borderColor: datasets.rmsf.map(d => d.value > 0.25 ? '#ef4444' : '#3b82f6'),
+      borderWidth: 1,
+      type: 'bar'
+    }]
+  };
+  xLabel = 'Residue';
+  yLabel = 'RMSF (nm)';
+} else if (key === 'energy') {
+  chartData = {
+    datasets: [
+      { label: 'Potential', data: datasets.energy.map(d => ({ x: d.time, y: d.potential })), borderColor: '#3b82f6', borderWidth: 1.5, pointRadius: 0, fill: false },
+      { label: 'Total', data: datasets.energy.map(d => ({ x: d.time, y: d.total })), borderColor: '#ef4444', borderWidth: 1.5, pointRadius: 0, fill: false }
+    ]
+  };
+  xLabel = 'Time (ps)';
+  yLabel = 'Energy (kJ/mol)';
+} else {
+  const unit = key === 'sasa' ? 'nm²' : 'nm';
+  chartData = {
+    datasets: [{
+      label: key.toUpperCase(),
+      data: datasets[key].map(d => ({ x: d.time, y: d.value })),
+      borderColor: key === 'rmsd' ? '#3b82f6' : key === 'rg' ? '#22c55e' : '#f59e0b',
+      borderWidth: 1.5,
+      pointRadius: 0,
+      fill: false
+    }]
+  };
+  xLabel = 'Time (ps)';
+  yLabel = `${key.toUpperCase()} (${unit})`;
+}
+chartInstances.current[key] = new Chart(ref.current, {
+  type: key === 'rmsf' ? 'bar' : key === 'energy' ? 'line' : 'line',
+  data: chartData,
+  options: {
+    responsive: true, maintainAspectRatio: false, animation: false,
+    scales: {
+      x: { type: key === 'rmsf' ? 'category' : 'linear', title: { display: true, text: xLabel, font: { size: 10 } }, ticks: { font: { size: 9 } } },
+      y: { title: { display: true, text: yLabel, font: { size: 10 } }, ticks: { font: { size: 9 } } }
+    },
+    plugins: { legend: { display: key === 'energy', labels: { font: { size: 9 } } } }
+  }
+});
+});
+return () => {
+Object.values(chartInstances.current).forEach(c => { if (c) c.destroy(); });
+chartInstances.current = {};
+};
+}, [nFrames, nResidues]);
+if (!(test.proteinSequence || test.smiles || test.moleculeType)) {
+return <p className="text-[10px] text-slate-400 italic">No sequence defined — MD analysis unavailable.</p>;
+}
+return (
+<div className="flex flex-col gap-4 mt-2">
+<h5 className="text-[10px] font-bold text-slate-500 uppercase text-center w-full">MD Analysis ({nFrames} frames)</h5>
+<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+<div className="bg-white p-2 border border-slate-200 rounded shadow-sm">
+  <h6 className="text-[10px] font-bold text-slate-500 mb-1 text-center uppercase">RMSD</h6>
+  <div style={{ height: '200px' }}><canvas ref={canvasRefs.rmsd}></canvas></div>
+</div>
+<div className="bg-white p-2 border border-slate-200 rounded shadow-sm">
+  <h6 className="text-[10px] font-bold text-slate-500 mb-1 text-center uppercase">RMSF per Residue</h6>
+  <div style={{ height: '200px' }}><canvas ref={canvasRefs.rmsf}></canvas></div>
+</div>
+<div className="bg-white p-2 border border-slate-200 rounded shadow-sm">
+  <h6 className="text-[10px] font-bold text-slate-500 mb-1 text-center uppercase">Radius of Gyration</h6>
+  <div style={{ height: '200px' }}><canvas ref={canvasRefs.rg}></canvas></div>
+</div>
+<div className="bg-white p-2 border border-slate-200 rounded shadow-sm">
+  <h6 className="text-[10px] font-bold text-slate-500 mb-1 text-center uppercase">SASA</h6>
+  <div style={{ height: '200px' }}><canvas ref={canvasRefs.sasa}></canvas></div>
+</div>
+</div>
+<div className="bg-white p-2 border border-slate-200 rounded shadow-sm">
+<h6 className="text-[10px] font-bold text-slate-500 mb-1 text-center uppercase">Energy</h6>
+<div style={{ height: '220px' }}><canvas ref={canvasRefs.energy}></canvas></div>
+</div>
+<p className="text-[9px] text-slate-400 italic text-center">Curves are simulated until a real trajectory analysis is attached.</p>
+</div>
+);
+};
+const MDAtomTablePreview = ({ test }) => {
+const instances = (Array.isArray(test.instances) && test.instances.length)
+? test.instances
+: [{ id: 'mdinst_default', name: 'Simulation 1', values: test.mdValues || {} }];
+const activeInstance = instances.find(i => i.id === test.activeInstanceId) || instances[0];
+const layers = [{ key: 'md', label: 'MD Parameters', unit: '', builtin: true }, ...(Array.isArray(test.parameterLayers) ? test.parameterLayers : [])];
+const activeLayerKey = test.activeLayerKey || 'md';
+const activeLayer = layers.find(l => l.key === activeLayerKey) || layers[0];
+const values = (activeInstance?.values?.[activeLayerKey]) || {};
+const entries = Object.entries(values).filter(([, v]) => v !== null && v !== undefined && v !== '');
+if (entries.length === 0) return null;
+return (
+<div className="mt-4">
+<h5 className="text-[10px] font-bold text-slate-500 mb-2 uppercase text-center w-full">Atom Table — {activeLayer.label}</h5>
+<ChunkedTable
+data={entries}
+renderHeader={() => (
+  <tr><th className="px-3 py-1.5 border-r">Cell Key</th><th className="px-3 py-1.5">Value {activeLayer.unit ? `(${activeLayer.unit})` : ''}</th></tr>
+)}
+renderRow={([key, val], i) => (
+  <tr key={i}>
+    <td className="px-3 py-1.5 font-mono text-slate-700 border-r">{key}</td>
+    <td className="px-3 py-1.5 font-mono text-blue-700 font-bold">{val}</td>
+  </tr>
+)}
+/>
+</div>
+);
+};
+/* ============================================================================
    NOTEBOOK TEST ITEM
 ========================================================================== */
 const NotebookTestItem = ({
   test, tests, jumpToTest,
   showConditions, showMolecularFormula, showInstrumental, showReport, showImages,
   showData, showDataAnalysisGraphs,
-  showSimImages, selectedSpectrumTypes = []
+  showSimImages, selectedSpectrumTypes = [],
+  imageScale = 100
 }) => {
   const [localTest, setLocalTest] = useState(test);
   useEffect(() => setLocalTest(test), [test]);
@@ -1039,6 +1673,8 @@ const NotebookTestItem = ({
   const getMolecularFormula = () => {
     if (localTest.smiles) return localTest.smiles;
     if (localTest.proteinSequence) return localTest.proteinSequence;
+    if (localTest.sequence) return localTest.sequence;
+    if (localTest.dnaSequence) return localTest.dnaSequence;
     if (localTest.sugarChoice) return `${localTest.sugarChoice} (${localTest.sugarAnomer || ''})`;
     if (localTest.lipidChoice) return localTest.lipidChoice;
     return null;
@@ -1056,10 +1692,21 @@ const NotebookTestItem = ({
 
     const collected = [];
     Object.entries(localTest || {}).forEach(([key, val]) => {
-      if (!/sim/i.test(key) || /cfg|config|setting|type|html|css/i.test(key)) return;
+      if (/cfg|config|setting|type|html|css/i.test(key)) return;
       if (looksLikeImage(val) || Array.isArray(val)) {
         collected.push(...normalize(val));
       } else if (val && typeof val === 'object') {
+        if (/sim|fit/i.test(key)) {
+          Object.values(val).forEach(v2 => {
+            if (looksLikeImage(v2) || Array.isArray(v2)) {
+              collected.push(...normalize(v2));
+            } else if (v2 && typeof v2 === 'object') {
+              Object.values(v2).forEach(v3 => {
+                if (looksLikeImage(v3)) collected.push(...normalize(v3));
+              });
+            }
+          });
+        }
         Object.entries(val).forEach(([k2, v2]) => {
           if (/img|image|snapshot|figure|picture|photo/i.test(k2) && (Array.isArray(v2) || looksLikeImage(v2))) {
             collected.push(...normalize(v2));
@@ -1100,7 +1747,7 @@ const NotebookTestItem = ({
         
         {molFormula && (
           <RemovablePanel title="Molecular Formula / System" visible={showMolFormLocal} setVisible={setShowMolFormLocal}>
-            <div className="font-mono text-xs break-all bg-slate-50 p-2 rounded border border-slate-200 text-slate-700">
+            <div className="font-mono text-xs break-all bg-slate-50 p-2 rounded border border-slate-200 text-slate-700 whitespace-pre-wrap">
               {molFormula}
             </div>
             <Formula2DPreview test={localTest} />
@@ -1190,35 +1837,33 @@ const NotebookTestItem = ({
               </div>
             )}
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="flex flex-col lg:flex-row gap-4 w-full">
               {localTest.pcrProgram && localTest.pcrProgram.length > 0 && (
-                <div>
-                  <h5 className="text-[10px] font-bold text-slate-500 mb-1 uppercase">Thermal Cycler</h5>
-                  <div className="overflow-x-auto border border-slate-200 rounded max-h-[300px] overflow-y-auto custom-scrollbar">
-                    <table className="w-full text-[10px] text-left select-text bg-white" draggable="true">
-                      <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200 sticky top-0">
-                        <tr><th className="px-2 py-1 border-r">Step</th><th className="px-2 py-1 border-r">Temp (°C)</th><th className="px-2 py-1 border-r">Time</th><th className="px-2 py-1">Cycles</th></tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {localTest.pcrProgram.map(s => <tr key={s.id} className="hover:bg-slate-50"><td className="px-2 py-1 font-bold border-r">{s.name}</td><td className="px-2 py-1 border-r">{s.temp}</td><td className="px-2 py-1 border-r">{s.timeValue} {s.timeUnit}</td><td className="px-2 py-1">{s.cycles}</td></tr>)}
-                      </tbody>
-                    </table>
-                  </div>
+                <div className="flex flex-col items-center flex-1">
+                  <h5 className="text-[10px] font-bold text-slate-500 mb-1 uppercase w-full text-center">Thermal Cycler</h5>
+                  <ChunkedTable
+                    data={localTest.pcrProgram}
+                    renderHeader={() => (
+                      <tr><th className="px-3 py-1.5 border-r">Step</th><th className="px-3 py-1.5 border-r">Temp (°C)</th><th className="px-3 py-1.5 border-r">Time</th><th className="px-3 py-1.5">Cycles</th></tr>
+                    )}
+                    renderRow={(s, i) => (
+                      <tr key={s.id || i} className="hover:bg-slate-50"><td className="px-3 py-1.5 font-bold border-r">{s.name}</td><td className="px-3 py-1.5 border-r">{s.temp}</td><td className="px-3 py-1.5 border-r">{s.timeValue} {s.timeUnit}</td><td className="px-3 py-1.5">{s.cycles}</td></tr>
+                    )}
+                  />
                 </div>
               )}
               {localTest.reactionMix && localTest.reactionMix.length > 0 && (
-                <div>
-                  <h5 className="text-[10px] font-bold text-slate-500 mb-1 uppercase">Reaction Mix</h5>
-                  <div className="overflow-x-auto border border-slate-200 rounded max-h-[300px] overflow-y-auto custom-scrollbar">
-                    <table className="w-full text-[10px] text-left select-text bg-white" draggable="true">
-                      <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200 sticky top-0">
-                        <tr><th className="px-2 py-1 border-r">Component</th><th className="px-2 py-1 border-r">Stock</th><th className="px-2 py-1 border-r">Vol (µL)</th><th className="px-2 py-1">Notes</th></tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {localTest.reactionMix.map(r => <tr key={r.id} className="hover:bg-slate-50"><td className="px-2 py-1 font-bold border-r">{r.name}</td><td className="px-2 py-1 border-r">{r.stock}</td><td className="px-2 py-1 border-r">{r.volume}</td><td className="px-2 py-1 text-slate-500">{r.note}</td></tr>)}
-                      </tbody>
-                    </table>
-                  </div>
+                <div className="flex flex-col items-center flex-1">
+                  <h5 className="text-[10px] font-bold text-slate-500 mb-1 uppercase w-full text-center">Reaction Mix</h5>
+                  <ChunkedTable
+                    data={localTest.reactionMix}
+                    renderHeader={() => (
+                      <tr><th className="px-3 py-1.5 border-r">Component</th><th className="px-3 py-1.5 border-r">Stock</th><th className="px-3 py-1.5 border-r">Vol (µL)</th><th className="px-3 py-1.5">Notes</th></tr>
+                    )}
+                    renderRow={(r, i) => (
+                      <tr key={r.id || i} className="hover:bg-slate-50"><td className="px-3 py-1.5 font-bold border-r">{r.name}</td><td className="px-3 py-1.5 border-r">{r.stock}</td><td className="px-3 py-1.5 border-r">{r.volume}</td><td className="px-3 py-1.5 text-slate-500">{r.note}</td></tr>
+                    )}
+                  />
                 </div>
               )}
             </div>
@@ -1241,12 +1886,12 @@ const NotebookTestItem = ({
             {allImages.length > 0 && (
               <div className="flex flex-col items-center gap-6 mt-2 w-full">
                 {allImages.map((img, idx) => (
-                  <div key={idx} className="flex flex-col items-center gap-2 w-full max-w-[1500px]">
+                  <div key={idx} className="flex flex-col items-center gap-2 w-full">
                     <a href={typeof img === 'string' ? img : img.url} target="_blank" rel="noopener noreferrer" className="flex justify-center w-full">
                       <img
                         src={getDirectImageUrl(typeof img === 'string' ? img : img.url)}
                         alt={`Image ${idx + 1}`}
-                        style={{ maxWidth: '1500px', maxHeight: '1125px', width: '100%', objectFit: 'contain', border: '1px solid #e2e8f0', borderRadius: '6px', background: 'white' }}
+                        style={{ maxWidth: '100%', width: `${imageScale}%`, height: 'auto', maxHeight: '1125px', objectFit: 'contain', border: '1px solid #e2e8f0', borderRadius: '6px', background: 'white' }}
                       />
                     </a>
                     <span className="text-[10px] text-slate-500 italic text-center w-full">
@@ -1262,12 +1907,12 @@ const NotebookTestItem = ({
                 <h5 className="text-[10px] font-bold text-slate-500 mb-2 uppercase text-center w-full">Gel Images</h5>
                 <div className="flex flex-col items-center gap-6 w-full">
                   {localTest.gelImages.map((imgSrc, idx) => (
-                    <div key={idx} className="flex flex-col items-center gap-2 bg-white p-3 border border-slate-200 rounded shadow-sm w-full max-w-[1500px]">
+                    <div key={idx} className="flex flex-col items-center gap-2 bg-white p-3 border border-slate-200 rounded shadow-sm w-full">
                       <a href={typeof imgSrc === 'string' ? imgSrc : imgSrc.url} target="_blank" rel="noopener noreferrer" className="flex justify-center w-full">
                         <img
                           src={getDirectImageUrl(typeof imgSrc === 'string' ? imgSrc : imgSrc.url)}
                           alt={`Gel ${idx + 1}`}
-                          style={{ maxWidth: '100%', maxHeight: '1125px', objectFit: 'contain' }}
+                          style={{ maxWidth: '100%', width: `${imageScale}%`, height: 'auto', maxHeight: '1125px', objectFit: 'contain' }}
                         />
                       </a>
                       <span className="text-[10px] text-slate-500 italic text-center w-full">Gel {idx + 1}</span>
@@ -1281,235 +1926,227 @@ const NotebookTestItem = ({
         )}
 
         <RemovablePanel title="Data" visible={showDataLocal} setVisible={setShowDataLocal}>
-          {isPlate && <PlateGridPreview test={localTest} />}
-          {isCD && <CDSpectraChart wavelengthData={localTest.wavelengthData} spectraColumns={localTest.spectraColumns} chartCfg={localTest.chartCfg} />}
-          
-          {isCloning && localTest.uvSpectra && localTest.uvSpectra.length > 0 && (
-            <CloningUvSpectraChart uvSpectra={localTest.uvSpectra} />
-          )}
-
-          {isCloning && localTest.dnaQuantification && localTest.dnaQuantification.length > 0 && (
-            <div className="overflow-x-auto text-xs border border-slate-200 rounded mt-2">
-              <table className="w-full text-left select-text bg-white" draggable="true">
-                <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
-                  <tr><th className="px-3 py-1.5">Sample</th><th className="px-3 py-1.5">Conc. ng/µL</th><th className="px-3 py-1.5">260/280</th><th className="px-3 py-1.5">Notes</th></tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {localTest.dnaQuantification.map(row => (
-                    <tr key={row.id}>
-                      <td className="px-3 py-1.5 font-bold">{row.sample}</td>
-                      <td className="px-3 py-1.5 text-blue-700 font-bold">{row.concentration}</td>
-                      <td className="px-3 py-1.5">{row.a260_280}</td>
-                      <td className="px-3 py-1.5">{row.notes}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {isProteinExp && (() => {
-            const chrs = Array.isArray(localTest.chromatograms) ? localTest.chromatograms : localTest.chromatogramRaw ? [{ id: 'chr_legacy', name: 'Chromatogram 1', method: 'Affinity', rawData: localTest.chromatogramRaw }] : [];
-            if (chrs.length > 0) return (
-               <div className="mb-4">
-                 <div className="overflow-x-auto text-xs border border-slate-200 rounded mt-2 mb-4">
-                   <table className="w-full text-left select-text bg-white" draggable="true">
-                     <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
-                       <tr>
-                         <th className="px-3 py-1.5 border-r">Run Name</th>
-                         <th className="px-3 py-1.5 border-r">Method Type</th>
-                         <th className="px-3 py-1.5">Running Buffer</th>
-                       </tr>
-                     </thead>
-                     <tbody className="divide-y divide-slate-100">
-                       {chrs.map((chr, idx) => (
-                         <tr key={chr.id || idx}>
-                           <td className="px-3 py-1.5 font-bold border-r">{chr.name || `Chromatogram ${idx + 1}`}</td>
-                           <td className="px-3 py-1.5 text-blue-700 font-bold border-r">{chr.method || '—'}</td>
-                           <td className="px-3 py-1.5">{chr.buffer || '—'}</td>
-                         </tr>
-                       ))}
-                     </tbody>
-                   </table>
-                 </div>
-                 <ProteinChromatogramChart chromatograms={chrs} />
-                 {localTest.chromatogramComment && <p className="text-[10px] text-slate-500 italic mt-2 text-center w-full">📝 {localTest.chromatogramComment}</p>}
-               </div>
-            );
-            return null;
-          })()}
-
-          {isProteinExp && localTest.yieldData && localTest.yieldData.length > 0 && (
-            <div className="mb-4">
-              <div className="overflow-x-auto text-xs border border-slate-200 rounded mt-2">
+       {isPlate && <PlateGridPreview test={localTest} />}
+       {isCD && <CDSpectraChart wavelengthData={localTest.wavelengthData} spectraColumns={localTest.spectraColumns} chartCfg={localTest.chartCfg} />}
+       {isCloning && localTest.uvSpectra && localTest.uvSpectra.length > 0 && (
+         <CloningUvSpectraChart uvSpectra={localTest.uvSpectra} />
+       )}
+       {isCloning && localTest.dnaQuantification && localTest.dnaQuantification.length > 0 && (
+         <div className="flex flex-col items-center w-full mt-2">
+           <ChunkedTable
+             data={localTest.dnaQuantification}
+             renderHeader={() => (
+               <tr><th className="px-3 py-1.5">Sample</th><th className="px-3 py-1.5">Conc. ng/µL</th><th className="px-3 py-1.5">260/280</th><th className="px-3 py-1.5">Notes</th></tr>
+             )}
+             renderRow={(row, i) => (
+               <tr key={row.id || i}>
+                 <td className="px-3 py-1.5 font-bold">{row.sample}</td>
+                 <td className="px-3 py-1.5 text-blue-700 font-bold">{row.concentration}</td>
+                 <td className="px-3 py-1.5">{row.a260_280}</td>
+                 <td className="px-3 py-1.5">{row.notes}</td>
+               </tr>
+             )}
+           />
+           {localTest.dnaQuantComment && <p className="text-[10px] text-slate-500 italic mt-2 text-center w-full">📝 {localTest.dnaQuantComment}</p>}
+         </div>
+       )}
+       {isProteinExp && (() => {
+         const chrs = Array.isArray(localTest.chromatograms) ? localTest.chromatograms : localTest.chromatogramRaw ? [{ id: 'chr_legacy', name: 'Chromatogram 1', method: 'Affinity', rawData: localTest.chromatogramRaw }] : [];
+         if (chrs.length > 0) return (
+            <div className="mb-4 flex flex-col items-center w-full">
+              <div className="overflow-x-auto text-xs border border-slate-200 rounded mt-2 mb-4 flex justify-center w-full bg-slate-50 shadow-sm">
                 <table className="w-full text-left select-text bg-white" draggable="true">
                   <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
-                    <tr><th className="px-3 py-1.5 border-r">Fraction</th><th className="px-3 py-1.5 border-r">Conc (mg/mL)</th><th className="px-3 py-1.5 border-r">Vol (mL)</th><th className="px-3 py-1.5 border-r">Total (mg)</th><th className="px-3 py-1.5">Purity %</th></tr>
+                    <tr>
+                      <th className="px-3 py-1.5 border-r">Run Name</th>
+                      <th className="px-3 py-1.5 border-r">Method Type</th>
+                      <th className="px-3 py-1.5">Running Buffer</th>
+                    </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {localTest.yieldData.map(row => (
-                      <tr key={row.id}>
-                        <td className="px-3 py-1.5 font-bold border-r">{row.fraction}</td>
-                        <td className="px-3 py-1.5 border-r">{row.concentration}</td>
-                        <td className="px-3 py-1.5 border-r">{row.volume}</td>
-                        <td className="px-3 py-1.5 text-blue-700 font-bold border-r">{row.totalMass}</td>
-                        <td className="px-3 py-1.5">{row.purity}</td>
+                    {chrs.map((chr, idx) => (
+                      <tr key={chr.id || idx}>
+                        <td className="px-3 py-1.5 font-bold border-r">{chr.name || `Chromatogram ${idx + 1}`}</td>
+                        <td className="px-3 py-1.5 text-blue-700 font-bold border-r">{chr.method || '—'}</td>
+                        <td className="px-3 py-1.5">{chr.buffer || '—'}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-              {localTest.yieldComment && <p className="text-[10px] text-slate-500 italic mt-2 text-center w-full">📝 {localTest.yieldComment}</p>}
+              <div className="w-full"><ProteinChromatogramChart chromatograms={chrs} /></div>
+              {localTest.chromatogramComment && <p className="text-[10px] text-slate-500 italic mt-2 text-center w-full">📝 {localTest.chromatogramComment}</p>}
             </div>
-          )}
-          
-          {isNMR && localTest.chemicalShifts && Object.keys(localTest.chemicalShifts).length > 0 && (
-            <div className="overflow-x-auto text-xs border border-slate-200 rounded max-w-md mt-2">
-              <table className="w-full text-left select-text bg-white" draggable="true">
-                <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
-                  <tr><th className="px-3 py-1.5">Atom</th><th className="px-3 py-1.5">Shift (ppm)</th></tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {Object.entries(localTest.chemicalShifts).map(([atom, shift]) => (
-                    <tr key={atom}>
-                      <td className="px-3 py-1.5 font-mono text-slate-700 font-semibold">{atom}</td>
-                      <td className="px-3 py-1.5 font-mono text-blue-700">{shift}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-          
-          {isNMRFitting && localTest.nmrTables && localTest.nmrTables.length > 0 && (
-            <div className="flex flex-col gap-4 mt-2">
-              <div className="flex justify-between items-center border-b border-slate-100 pb-2">
-                <span className="text-[10px] font-bold text-slate-500 uppercase">NMR Fitting Data</span>
-                <label className="flex items-center gap-1 text-[10px] font-bold text-slate-700 cursor-pointer bg-white px-2 py-1 rounded border border-slate-200 shadow-sm hover:bg-slate-50 transition-colors">
-                  <input type="checkbox" checked={showRawNmrData} onChange={(e) => setShowRawNmrData(e.target.checked)} className="accent-blue-600" /> Show Raw Data
-                </label>
-              </div>
-              <div className="flex flex-col gap-6">
-                {localTest.nmrTables.map((t, idx) => {
-                  const cols = localTest.savedFits?.[t.id] || [];
-                  return (
-                    <div key={t.id} className="flex flex-col gap-3">
-                      {showRawNmrData && (
-                        <div className="overflow-x-auto text-xs border border-slate-200 rounded max-w-3xl">
-                          <h5 className="text-[10px] font-bold text-slate-500 bg-slate-100 px-3 py-1 border-b border-slate-200">
-                            Table {idx + 1} Raw Data — {t.atom} ({t.relaxType})
-                          </h5>
-                          <table className="w-full text-center select-text bg-white" draggable="true">
-                            <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
-                              <tr>
-                                <th className="px-3 py-1.5 border-r border-slate-200">{t.relaxType === 'DOSY' ? 'b-value' : 'Delay'} ({t.delayUnit})</th>
-                                {Array.from({ length: t.nCols }, (_, c) => <th key={c} className="px-3 py-1.5">{t.colResidues[c] || `Col ${c + 1}`}</th>)}
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100">
-                              {Array.from({ length: t.nRows }, (_, r) => (
-                                <tr key={r}>
-                                  <td className="px-3 py-1.5 font-mono text-slate-700 border-r border-slate-200">{t.delays[r] !== '' && t.delays[r] !== undefined ? t.delays[r] : '-'}</td>
-                                  {Array.from({ length: t.nCols }, (_, c) => <td key={c} className="px-3 py-1.5 font-mono text-slate-600">{t.grid[r]?.[c] || '-'}</td>)}
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-
-                      {cols.length > 0 && (
-                        <div className="overflow-x-auto text-xs border border-slate-200 rounded max-w-3xl">
-                          <h5 className="text-[10px] font-bold text-slate-500 bg-slate-100 px-3 py-1 border-b border-slate-200">
-                            Table {idx + 1} Fitted Parameters
-                          </h5>
-                          <table className="w-full text-left select-text bg-white" draggable="true">
-                            <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
-                              <tr>
-                                <th className="px-3 py-1.5">Residue</th>
-                                <th className="px-3 py-1.5">Rate (s⁻¹)</th>
-                                <th className="px-3 py-1.5">Time (s)</th>
-                                <th className="px-3 py-1.5">R²</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100">
-                              {cols.map((cf, i) => cf.fit && (
-                                <tr key={i}>
-                                  <td className="px-3 py-1.5 font-mono text-slate-700 font-semibold">{cf.residue}</td>
-                                  <td className="px-3 py-1.5 font-mono text-blue-700">
-                                    {cf.fit.R_s ? cf.fit.R_s.toPrecision(4) : '-'}
-                                    {cf.effectiveError ? ` ± ${cf.effectiveError.toPrecision(2)}` : ''}
-                                  </td>
-                                  <td className="px-3 py-1.5 font-mono text-blue-700">
-                                    {cf.fit.T_s === Infinity ? '∞' : cf.fit.T_s ? cf.fit.T_s.toPrecision(4) : '-'}
-                                  </td>
-                                  <td className="px-3 py-1.5 font-mono text-slate-600">{cf.fit.r2 ? cf.fit.r2.toFixed(3) : '-'}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+         );
+         return null;
+       })()}
+       {isProteinExp && localTest.yieldData && localTest.yieldData.length > 0 && (
+         <div className="mb-4 flex flex-col items-center w-full">
+           <ChunkedTable
+             data={localTest.yieldData}
+             renderHeader={() => (
+               <tr><th className="px-3 py-1.5 border-r">Fraction</th><th className="px-3 py-1.5 border-r">Conc (mg/mL)</th><th className="px-3 py-1.5 border-r">Vol (mL)</th><th className="px-3 py-1.5 border-r">Total (mg)</th><th className="px-3 py-1.5">Purity %</th></tr>
+             )}
+             renderRow={(row, i) => (
+               <tr key={row.id || i}>
+                 <td className="px-3 py-1.5 font-bold border-r">{row.fraction}</td>
+                 <td className="px-3 py-1.5 border-r">{row.concentration}</td>
+                 <td className="px-3 py-1.5 border-r">{row.volume}</td>
+                 <td className="px-3 py-1.5 text-blue-700 font-bold border-r">{row.totalMass}</td>
+                 <td className="px-3 py-1.5">{row.purity}</td>
+               </tr>
+             )}
+           />
+           {localTest.yieldComment && <p className="text-[10px] text-slate-500 italic mt-2 text-center w-full">📝 {localTest.yieldComment}</p>}
+         </div>
+       )}
+       {isNMR && localTest.chemicalShifts && Object.keys(localTest.chemicalShifts).length > 0 && (
+         <div className="flex flex-col items-center w-full mt-2">
+           <ChunkedTable
+             data={Object.entries(localTest.chemicalShifts)}
+             renderHeader={() => (
+               <tr><th className="px-4 py-2 border-r">Atom</th><th className="px-4 py-2">Shift (ppm)</th></tr>
+             )}
+             renderRow={([atom, shift], i) => (
+               <tr key={atom || i}>
+                 <td className="px-4 py-2 font-mono text-slate-700 font-semibold border-r">{atom}</td>
+                 <td className="px-4 py-2 font-mono text-blue-700">{shift}</td>
+               </tr>
+             )}
+           />
+         </div>
+       )}
+       {isNMRFitting && localTest.nmrTables && localTest.nmrTables.length > 0 && (
+         <div className="flex flex-col gap-4 mt-2">
+           <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+             <span className="text-[10px] font-bold text-slate-500 uppercase">NMR Fitting Data</span>
+             <label className="flex items-center gap-1 text-[10px] font-bold text-slate-700 cursor-pointer bg-white px-2 py-1 rounded border border-slate-200 shadow-sm hover:bg-slate-50 transition-colors">
+               <input type="checkbox" checked={showRawNmrData} onChange={(e) => setShowRawNmrData(e.target.checked)} className="accent-blue-600" /> Show Raw Data
+             </label>
+           </div>
+           <div className="flex flex-col gap-6 items-center">
+             {localTest.nmrTables.map((t, idx) => {
+               const cols = localTest.savedFits?.[t.id] || [];
+               return (
+                 <div key={t.id} className="flex flex-col gap-3 w-full items-center">
+                   {showRawNmrData && (
+                     <div className="overflow-x-auto text-xs border border-slate-200 rounded flex flex-col items-center bg-slate-50 shadow-sm w-full">
+                       <h5 className="text-[10px] font-bold text-slate-500 bg-slate-100 px-3 py-1 border-b border-slate-200 w-full text-center">
+                         Table {idx + 1} Raw Data — {t.atom} ({t.relaxType})
+                       </h5>
+                       <table className="w-full text-center select-text bg-white" draggable="true">
+                         <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
+                           <tr>
+                             <th className="px-3 py-1.5 border-r border-slate-200">{t.relaxType === 'DOSY' ? 'b-value' : 'Delay'} ({t.delayUnit})</th>
+                             {Array.from({ length: t.nCols }, (_, c) => <th key={c} className="px-3 py-1.5">{t.colResidues[c] || `Col ${c + 1}`}</th>)}
+                           </tr>
+                         </thead>
+                         <tbody className="divide-y divide-slate-100">
+                           {Array.from({ length: t.nRows }, (_, r) => (
+                             <tr key={r}>
+                               <td className="px-3 py-1.5 font-mono text-slate-700 border-r border-slate-200">{t.delays[r] !== '' && t.delays[r] !== undefined ? t.delays[r] : '-'}</td>
+                               {Array.from({ length: t.nCols }, (_, c) => <td key={c} className="px-3 py-1.5 font-mono text-slate-600">{t.grid[r]?.[c] || '-'}</td>)}
+                             </tr>
+                           ))}
+                         </tbody>
+                       </table>
+                     </div>
+                   )}
+                   {cols.length > 0 && (
+                     <div className="flex flex-col items-center bg-slate-50 w-full rounded border border-slate-200 pb-2 shadow-sm">
+                       <h5 className="text-[10px] font-bold text-slate-500 bg-slate-100 px-3 py-1 border-b border-slate-200 w-full text-center mb-2">
+                         Table {idx + 1} Fitted Parameters
+                       </h5>
+                       <ChunkedTable
+                         data={cols.filter(cf => cf.fit)}
+                         renderHeader={() => (
+                           <tr>
+                             <th className="px-3 py-1.5 border-r">Residue</th>
+                             <th className="px-3 py-1.5 border-r">Rate (s⁻¹)</th>
+                             <th className="px-3 py-1.5 border-r">Time (s)</th>
+                             <th className="px-3 py-1.5">R²</th>
+                           </tr>
+                         )}
+                         renderRow={(cf, i) => (
+                           <tr key={i}>
+                             <td className="px-3 py-1.5 font-mono text-slate-700 font-semibold border-r">{cf.residue}</td>
+                             <td className="px-3 py-1.5 font-mono text-blue-700 border-r">
+                               {cf.fit.R_s ? cf.fit.R_s.toPrecision(4) : '-'}
+                               {cf.effectiveError ? ` ± ${cf.effectiveError.toPrecision(2)}` : ''}
+                             </td>
+                             <td className="px-3 py-1.5 font-mono text-blue-700 border-r">
+                               {cf.fit.T_s === Infinity ? '∞' : cf.fit.T_s ? cf.fit.T_s.toPrecision(4) : '-'}
+                             </td>
+                             <td className="px-3 py-1.5 font-mono text-slate-600">{cf.fit.r2 ? cf.fit.r2.toFixed(3) : '-'}</td>
+                           </tr>
+                         )}
+                       />
+                     </div>
+                   )}
+                 </div>
+               );
+             })}
+           </div>
+         </div>
+       )}
+       {isMD && (
+         <div className="flex flex-col gap-4 mt-2">
+           <MDParamsPreview test={localTest} />
+           <MDAtomTablePreview test={localTest} />
+         </div>
+       )}
         </RemovablePanel>
 
-        {(isCD || isNMR || isNMRFitting || isPlate) && (
-          <RemovablePanel title="Data Analysis Graphs" visible={showAnaLocal} setVisible={setShowAnaLocal}>
-            {isPlate && (
-              <div className="mt-2 text-center p-4 bg-slate-50 border border-dashed border-slate-300 rounded">
-                <p className="text-[10px] text-slate-400 italic">Plate analysis graphs will appear here.</p>
-              </div>
-            )}
-            {isCD && <CDAnalysisGraphsPreview test={localTest} instances={mockCtx.instances} />}
-            {isNMR && (
-              <div className="flex flex-col gap-4 mt-2">
-                <SecondaryShifts ctx={mockCtx} />
-                <Fitting ctx={mockCtx} />
-              </div>
-            )}
-            {isNMRFitting && (
-              <div className="mt-2">
-                <NMRFittingGraphsPreview test={localTest} />
-              </div>
-            )}
-          </RemovablePanel>
-        )}
+ 
 
-        {showSimImgLocal && (
-          <RemovablePanel title="Simulations & Generated Data" visible={showSimImgLocal} setVisible={setShowSimImgLocal}>
-            
-            {isCloning && localTest.sim && localTest.sim.sequence && (
-              <CloningSimChartPreview sim={localTest.sim} />
-            )}
-            
-            {(isNMR || isNMRFitting) && selectedSpectrumTypes.length > 0 && (
-              <div className="mt-4">
-                <h5 className="text-[10px] font-bold text-slate-500 mb-1 uppercase text-center w-full">NMR Spectra (Simulated)</h5>
-                <NMRSpectraPreview test={localTest} selectedTypes={selectedSpectrumTypes} />
-              </div>
-            )}
-            
-            {simImgList.length > 0 && (
-              <div className="flex flex-col items-center gap-6 mt-4 pt-4 border-t border-slate-100 w-full">
-                <h5 className="text-[10px] font-bold text-slate-500 mb-1 uppercase text-center w-full">Generic Simulation Images</h5>
-                {simImgList.map((src, idx) => (
-                  <div key={idx} className="flex flex-col items-center gap-2 w-full max-w-[1500px]">
-                    <img src={getDirectImageUrl(src)} alt={`Sim ${idx}`} style={{ maxWidth: '1500px', maxHeight: '1125px', width: '100%', objectFit: 'contain' }} className="rounded-lg shadow-sm border border-slate-200 bg-white" />
-                  </div>
-                ))}
-              </div>
-            )}
+     {(isCD || isNMR || isNMRFitting || isPlate || isMD) && (
+       <RemovablePanel title="Data Analysis Graphs" visible={showAnaLocal} setVisible={setShowAnaLocal}>
+         {isPlate && <PlateAnalysisPreview test={localTest} />}
+         {isCD && <CDAnalysisGraphsPreview test={localTest} instances={mockCtx.instances} />}
+         {isNMR && (
+           <div className="flex flex-col gap-4 mt-2">
+             <SecondaryShifts ctx={mockCtx} />
+             <Fitting ctx={mockCtx} />
+           </div>
+         )}
+         {isNMRFitting && (
+           <div className="mt-2">
+             <NMRFittingGraphsPreview test={localTest} />
+           </div>
+         )}
+         {isMD && <MDAnalysisPreview test={localTest} />}
+       </RemovablePanel>
+     )}
 
-            {!isNMRFitting && !(isCloning && localTest.sim?.sequence) && !((isNMR || isNMRFitting) && selectedSpectrumTypes.length > 0) && simImgList.length === 0 && (
-               <p className="text-[10px] text-slate-400 italic">No simulation data available for this experiment.</p>
-            )}
-          </RemovablePanel>
-        )}
+     {showSimImgLocal && (
+       <RemovablePanel title="Simulations & Generated Data" visible={showSimImgLocal} setVisible={setShowSimImgLocal}>
+         {isCloning && localTest.sim && localTest.sim.sequence && (
+           <CloningSimChartPreview sim={localTest.sim} />
+         )}
+         {isNMRFitting && (
+           <NMRFittingSimPreview test={localTest} />
+         )}
+         {isNMR && selectedSpectrumTypes.length > 0 && (
+           <div className="mt-4">
+             <h5 className="text-[10px] font-bold text-slate-500 mb-1 uppercase text-center w-full">NMR Spectra (Simulated)</h5>
+             <NMRSpectraPreview test={localTest} selectedTypes={selectedSpectrumTypes} />
+           </div>
+         )}
+         {simImgList.length > 0 && (
+           <div className="flex flex-col items-center gap-6 mt-4 pt-4 border-t border-slate-100 w-full">
+             <h5 className="text-[10px] font-bold text-slate-500 mb-1 uppercase text-center w-full">Generic Simulation Images</h5>
+             {simImgList.map((src, idx) => (
+               <div key={idx} className="flex flex-col items-center gap-2 w-full">
+                 <img src={getDirectImageUrl(src)} alt={`Sim ${idx}`} style={{ maxWidth: '100%', width: `${imageScale}%`, height: 'auto', maxHeight: '1125px', objectFit: 'contain' }} className="rounded-lg shadow-sm border border-slate-200 bg-white" />
+               </div>
+             ))}
+           </div>
+         )}
+         {!isNMRFitting && !(isCloning && localTest.sim?.sequence) && !(isNMR && selectedSpectrumTypes.length > 0) && simImgList.length === 0 && (
+            <p className="text-[10px] text-slate-400 italic">No simulation data available for this experiment.</p>
+         )}
+       </RemovablePanel>
+     )}
 
       </div>
     </div>
@@ -1544,6 +2181,8 @@ export const LabNotebook = ({
   const [bestOnly, setBestOnly] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('date_desc');
+  
+  const [imageScale, setImageScale] = useState(100);
 
   // Display Toggles
   const [showConditions, setShowConditions] = useState(true);
@@ -1809,14 +2448,23 @@ export const LabNotebook = ({
             <input type="checkbox" checked={showReport} onChange={(e) => setShowReport(e.target.checked)} className="accent-blue-600" /> Report
           </label>
           <label className="flex items-center gap-1 text-[10px] font-bold text-slate-700 cursor-pointer">
-            <input type="checkbox" checked={showImages} onChange={(e) => setShowImages(e.target.checked)} className="accent-blue-600" /> Images
-          </label>
-          <label className="flex items-center gap-1 text-[10px] font-bold text-slate-700 cursor-pointer">
             <input type="checkbox" checked={showData} onChange={(e) => setShowData(e.target.checked)} className="accent-blue-600" /> Data
           </label>
           <label className="flex items-center gap-1 text-[10px] font-bold text-slate-700 cursor-pointer">
             <input type="checkbox" checked={showDataAnalysisGraphs} onChange={(e) => setShowDataAnalysisGraphs(e.target.checked)} className="accent-blue-600" /> Data Analysis Graphs
           </label>
+          
+          <div className="flex items-center gap-3 border-l border-blue-200 pl-3 ml-1 bg-white px-2 py-1 rounded shadow-sm">
+            <label className="flex items-center gap-1 text-[10px] font-bold text-slate-700 cursor-pointer">
+              <input type="checkbox" checked={showImages} onChange={(e) => setShowImages(e.target.checked)} className="accent-blue-600" /> Images
+            </label>
+            <div className="h-3 w-px bg-slate-200 mx-1"></div>
+            <label className="text-[10px] font-bold text-slate-700 flex items-center gap-1">
+              🖼️ Size: {imageScale}%
+            </label>
+            <input type="range" min="20" max="200" step="10" value={imageScale} onChange={(e) => setImageScale(Number(e.target.value))} className="w-20 accent-blue-600" />
+          </div>
+
           <div className="flex items-center gap-2 border-l border-blue-200 pl-2 ml-1">
             <label className="flex items-center gap-1 text-[10px] font-bold text-slate-700 cursor-pointer">
               <input type="checkbox" checked={showSimImages} onChange={(e) => setShowSimImages(e.target.checked)} className="accent-blue-600" /> Sim. Images
@@ -1865,6 +2513,7 @@ export const LabNotebook = ({
                   showDataAnalysisGraphs={showDataAnalysisGraphs}
                   showSimImages={showSimImages}
                   selectedSpectrumTypes={selectedSpectrumTypes}
+                  imageScale={imageScale}
                 />
               ))}
             </>

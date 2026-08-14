@@ -136,6 +136,7 @@ const normalizeStructureSource = (raw) => {
 
 const getCarbonName = (molType, char, atom) => {
   if (!atom) return null;
+
   if (
     atom.startsWith('HN') ||
     atom.startsWith('NH') ||
@@ -146,32 +147,35 @@ const getCarbonName = (molType, char, atom) => {
   ) {
     return null;
   }
-  if (molType === 'organic') {
-    // Organic protons are named H{parentHeavyRank}[a..h]; the attached heavy atom
-    // is simply that rank without the stereochemical suffix (H5a -> C5).
-    return atom.replace('H', 'C').replace(/[a-z]+$/, '');
-  }
+
   if (molType === 'protein') {
     if (atom === 'Hε' && char === 'R') return null;
     if (char === 'W' && atom === 'Hδ1') return null;
+
     if (atom.includes('CH3')) {
       return atom.replace('H', 'C').replace('(CH3)', '');
     }
+
     const cName = atom.replace('H', 'C').replace(/\d+$/, '');
+
     if (['V', 'I', 'T'].includes(char) && atom.includes('γ')) {
       return atom.replace('H', 'C');
     }
+
     if (['L', 'I'].includes(char) && atom.includes('δ')) {
       return atom.replace('H', 'C');
     }
+
     if (
       ['F', 'Y', 'W', 'H'].includes(char) &&
       (atom.includes('δ') || atom.includes('ε') || atom.includes('ζ') || atom.includes('η'))
     ) {
       return atom.replace('H', 'C');
     }
+
     return cName;
   }
+
   return atom.replace('H', 'C');
 };
 
@@ -203,51 +207,43 @@ const buildKeys = (ri, tokens, molType, char) => {
   return [...set];
 };
 
-
-
-// Nucleic-acid PDB->NMR aliases: the protein PDB_TO_NMR table must NOT be applied to
-// DNA/RNA; all other nucleic names match the NMR database verbatim except that the
-// database carries a trailing space ("H1' "), so both key variants are emitted --
-// this is what makes clicking atoms in the 3D viewer select the table/2D entries.
-const NUCLEIC_NMR_ALIASES = {
-  "HO2'": "OH2'",
-  H71: 'H7(CH3)',
-  H72: 'H7(CH3)',
-  H73: 'H7(CH3)',
-};
 const mapPdbAtomToNmrKeys = (atomname, resno, parsedSeq, moleculeType) => {
   const ri = resno - 1;
+
   if (!parsedSeq || ri < 0 || ri >= parsedSeq.length) return null;
+
   const res = parsedSeq[ri];
   if (!res) return null;
+
   const upper = (atomname || '').trim().toUpperCase();
-  let nmrAtom;
-  if (moleculeType === 'dna' || moleculeType === 'rna') {
-    nmrAtom = NUCLEIC_NMR_ALIASES[upper] || upper;
-  } else {
-    nmrAtom = PDB_TO_NMR[upper];
-    if (!nmrAtom) {
-      if (upper === 'N') {
-        nmrAtom = 'N';
-      } else if (upper === 'CA') {
-        nmrAtom = 'Cα';
-      } else if (upper === 'C') {
-        nmrAtom = "C'";
-      } else if (upper === 'CB') {
-        nmrAtom = 'Cβ';
-      } else if (upper === 'O') {
-        nmrAtom = 'O';
+
+  let nmrAtom = PDB_TO_NMR[upper];
+
+  if (!nmrAtom) {
+    if (upper === 'N') {
+      nmrAtom = 'N';
+    } else if (upper === 'CA') {
+      nmrAtom = 'Cα';
+    } else if (upper === 'C') {
+      nmrAtom = "C'";
+    } else if (upper === 'CB') {
+      nmrAtom = 'Cβ';
+    } else if (upper === 'O') {
+      nmrAtom = 'O';
+    } else {
+      // Dynamically map heavy side-chain atoms (e.g., CG1 -> Cγ1, ND2 -> Nδ2)
+      const match = upper.match(/^([CNO])([ABGDEZH])(\d*)$/);
+
+      if (match) {
+        nmrAtom = `${match[1]}${GREEK_MAP[match[2]]}${match[3]}`;
       } else {
-        const match = upper.match(/^([CNO])([ABGDEZH])(\d*)$/);
-        nmrAtom = match ? `${match[1]}${GREEK_MAP[match[2]]}${match[3]}` : upper;
+        nmrAtom = upper;
       }
     }
   }
-  // Nucleic NMR database keys carry a trailing space ("H1' "); emit BOTH the plain
-  // and the trailing-space variant so 3D clicks highlight the table/2D entries.
-  const tokens = [nmrAtom];
-  if (moleculeType === 'dna' || moleculeType === 'rna') tokens.push(`${nmrAtom} `);
-  const keys = buildKeys(ri, tokens, moleculeType, res.char);
+
+  const keys = buildKeys(ri, [nmrAtom], moleculeType, res.char);
+
   return {
     ri,
     keys,
@@ -255,102 +251,50 @@ const mapPdbAtomToNmrKeys = (atomname, resno, parsedSeq, moleculeType) => {
     nmrAtom,
   };
 };
-// Unified click/hover dispatcher: organics are named from 3D bond connectivity (no residue
-// numbering involved), everything else keeps using the existing PDB-atom-name -> NMR-name mapping.
-const mapAtomToNmrKeys = (atom, parsedSeq, moleculeType) => {
-  if (moleculeType === 'organic') {
-    const nmrAtom = getOrganicAtomName(atom);
-    const keys = buildKeys(0, [nmrAtom], 'organic', 'O');
-    return { ri: 0, keys, label: `Org ${nmrAtom}`, nmrAtom };
-  }
-  return mapPdbAtomToNmrKeys(atom.atomname, atom.resno, parsedSeq, moleculeType);
-};
 
-// ---- Canonical (Morgan-style) graph ranks for organic molecules ----
-// Both the 2D depiction (RDKit molblock) and the 3D structure (an independently
-// fetched PDB/SDF) name their heavy atoms "{Element}{rank}". If "rank" were the
-// raw file atom order, the two files would disagree (they are produced by
-// different toolkits with different atom orderings) and 2D<->3D<->table atom
-// selection could never correlate. Instead the rank is computed from the
-// molecular graph itself (element + heavy-atom neighbors, iterated to a fixed
-// point = a simple Morgan algorithm), so the SAME physical atom gets the SAME
-// name in every representation of the same molecule. Symmetry-equivalent atoms
-// can still swap ranks between files, but those are chemically equivalent in
-// NMR anyway (identical shifts), so that is harmless.
-const computeMorganRanks = (elements, bonds) => {
-  const n = elements.length;
-  const isHeavy = elements.map((e) => e !== 'H');
-  const heavyIdx = [];
-  elements.forEach((e, i) => { if (e !== 'H') heavyIdx.push(i); });
-  const m = heavyIdx.length;
-  const posOf = {};
-  heavyIdx.forEach((gi, k) => { posOf[gi] = k; });
-  const adj = Array.from({ length: m }, () => []);
-  const hCount = new Array(m).fill(0);
-  bonds.forEach(([a, b]) => {
-    const ah = isHeavy[a], bh = isHeavy[b];
-    if (ah && bh) { adj[posOf[a]].push(posOf[b]); adj[posOf[b]].push(posOf[a]); }
-    else if (ah && !bh) hCount[posOf[a]]++;
-    else if (!ah && bh) hCount[posOf[b]]++;
-  });
-  let sig = heavyIdx.map((gi, k) => `${elements[gi]}(${hCount[k]})`);
-  for (let iter = 0; iter < n; iter++) {
-    const next = sig.map((s, i) => `${s}|${adj[i].map((j) => sig[j]).sort().join(',')}`);
-    const converged = next.join(';') === sig.join(';');
-    sig = next;
-    if (converged) break;
-  }
-  const order = Array.from({ length: m }, (_, k) => k).sort((x, y) =>
-    sig[x] < sig[y] ? -1 : sig[x] > sig[y] ? 1 : x - y
-  );
-  const ranks = new Array(n).fill(-1);
-  order.forEach((k, r) => { ranks[heavyIdx[k]] = r; });
-  return ranks;
-};
-
-const _organicNamingCache = new WeakMap();
-const getOrganicNaming = (structure) => {
-  if (_organicNamingCache.has(structure)) return _organicNamingCache.get(structure);
-  const elements = [];
-  const bondPairs = [];
-  structure.eachAtom((a) => { elements[a.index] = a.element || 'C'; });
-  structure.eachAtom((a) => {
-    a.eachBondedAtom((b) => { if (a.index < b.index) bondPairs.push([a.index, b.index]); });
-  });
-  const n = elements.length;
-  const ranks = computeMorganRanks(elements, bondPairs);
-  const parent = new Array(n).fill(-1);
-  bondPairs.forEach(([x, y]) => {
-    if (elements[x] === 'H' && elements[y] !== 'H') parent[x] = y;
-    if (elements[y] === 'H' && elements[x] !== 'H') parent[y] = x;
-  });
-  const groups = {};
-  for (let i = 0; i < n; i++) {
-    if (elements[i] !== 'H') continue;
-    const key = parent[i] >= 0 ? parent[i] : 'orphan';
-    (groups[key] = groups[key] || []).push(i);
-  }
-  const names = new Array(n);
-  for (let i = 0; i < n; i++) if (elements[i] !== 'H') names[i] = `${elements[i]}${ranks[i] >= 0 ? ranks[i] : i}`;
-  Object.entries(groups).forEach(([key, idxs]) => {
-    idxs.sort((x, y) => x - y);
-    const pr = key === 'orphan' ? null : ranks[Number(key)];
-    idxs.forEach((idx, j) => {
-      const suffix = idxs.length > 1 ? ('abcdefgh'[j] || String(j)) : '';
-      names[idx] = pr !== null ? `H${pr}${suffix}` : `H${idx}`;
-    });
-  });
-  _organicNamingCache.set(structure, names);
-  return names;
-};
-
-// Names an organic atom using the SAME canonical scheme the 2D SMILES viewer uses
-// (deriveOrganicAtomNaming in NMRSections.jsx): heavy atoms "{Element}{morganRank}",
-// hydrogens "H{parentMorganRank}[a/b/c]". Ranks come from the molecular graph, not
-// from file atom order, so 2D and 3D agree on which physical atom is which.
+// Names an organic atom using the SAME scheme the 2D SMILES viewer uses (see
+// deriveOrganicAtomNaming in NMRSections.jsx): heavy atoms as "{Element}{heavyRank}" where
+// heavyRank is that atom's position counting heavy atoms only, and hydrogens as
+// "H{parentHeavyRank}[a/b/c]" named after the heavy atom they're bonded to. Deriving names from
+// bond connectivity (rather than the raw file order) is what keeps 2D<->3D atom selection in sync
+// even though the 2D structure (RDKit) and the 3D structure (an independently fetched/generated
+// PDB or SDF) can order their atoms -- especially hydrogens -- differently.
 const getOrganicAtomName = (atom) => {
-  const names = getOrganicNaming(atom.structure);
-  return names[atom.index] || `X${atom.index}`;
+  const structure = atom.structure;
+  const elem = atom.element || 'C';
+
+  const heavyRankOf = (targetIndex) => {
+    let rank = -1, count = 0;
+    structure.eachAtom((a) => {
+      if (a.element !== 'H') {
+        if (a.index === targetIndex) rank = count;
+        count++;
+      }
+    });
+    return rank;
+  };
+
+  if (elem !== 'H') {
+    const rank = heavyRankOf(atom.index);
+    return `${elem}${rank >= 0 ? rank : atom.index}`;
+  }
+
+  let parentIndex = -1;
+  atom.eachBondedAtom((bonded) => { if (parentIndex < 0 && bonded.element !== 'H') parentIndex = bonded.index; });
+  if (parentIndex < 0) return `H${atom.index}`; // no bond info available; degrade gracefully
+
+  const parentRank = heavyRankOf(parentIndex);
+  const siblingIndices = [];
+  structure.eachAtom((a) => {
+    if (a.element !== 'H') return;
+    let bondedToSameParent = false;
+    a.eachBondedAtom((b) => { if (b.index === parentIndex) bondedToSameParent = true; });
+    if (bondedToSameParent) siblingIndices.push(a.index);
+  });
+  siblingIndices.sort((x, y) => x - y);
+  const pos = siblingIndices.indexOf(atom.index);
+  const suffix = siblingIndices.length > 1 ? ('abcdefgh'[pos] || String(pos)) : '';
+  return `H${parentRank >= 0 ? parentRank : parentIndex}${suffix}`;
 };
 
 // Unified click/hover dispatcher: organics are named from 3D bond connectivity (no residue
@@ -400,7 +344,14 @@ const ensureNGL = () => {
   return _nglLoadPromise;
 };
 
-
+const mapAtomToNmrKeys = (atom, parsedSeq, moleculeType) => {
+  if (moleculeType === 'organic') {
+    const nmrAtom = getOrganicAtomName(atom);
+    const keys = buildKeys(0, [nmrAtom], 'organic', 'O');
+    return { ri: 0, keys, label: `Org ${nmrAtom}`, nmrAtom };
+  }
+  return mapPdbAtomToNmrKeys(atom.atomname, atom.resno, parsedSeq, moleculeType);
+};
 
 // ============================================================================
 // MAIN COMPONENT
@@ -416,36 +367,37 @@ const NMRMoleculeViewer = ({
   manualKeys = [],
   moleculeType = 'protein',
   parsedSeq = [],
-  residueOffset = 0,
   height = '520px',
 }) => {
   const containerRef = useRef(null);
   const stageRef = useRef(null);
   const stageReadyRef = useRef(null); // Promise<Stage|null> -- resolves once the ONE persistent Stage for this component's lifetime is created
   const componentRef = useRef(null);
+
   const highlightCompRef = useRef(null);
   const manualHighlightCompRef = useRef(null);
   const labelCompRef = useRef(null);
   const sidechainCompRef = useRef(null);
+
   const [file, setFile] = useState(null);
   const [pdbId, setPdbId] = useState('');
   const [loadRequest, setLoadRequest] = useState(null);
+
   const [status, setStatus] = useState('idle');
   const [errorMsg, setErrorMsg] = useState('');
   const [hoverInfo, setHoverInfo] = useState(null);
   const [showLabels, setShowLabels] = useState(false);
   const [sidechainStyle, setSidechainStyle] = useState('licorice');
+
   const parsedSeqRef = useRef(parsedSeq);
   const moleculeTypeRef = useRef(moleculeType);
   const onAtomClickRef = useRef(onAtomClick);
-  const residueOffsetRef = useRef(residueOffset);
 
   useEffect(() => {
     parsedSeqRef.current = parsedSeq;
     moleculeTypeRef.current = moleculeType;
     onAtomClickRef.current = onAtomClick;
-    residueOffsetRef.current = residueOffset;
-  }, [parsedSeq, moleculeType, onAtomClick, residueOffset]);
+  }, [parsedSeq, moleculeType, onAtomClick]);
 
   // ---- Create the NGL Stage ONCE for this component's whole lifetime ----
   // Previously a brand new Stage (and WebGL context/renderer) was created on EVERY structure
@@ -457,20 +409,26 @@ const NMRMoleculeViewer = ({
   useEffect(() => {
     let cancelled = false;
     console.log('[NMRMoleculeViewer] mount effect: waiting for NGL...');
+
     stageReadyRef.current = (async () => {
       const NGL = await Promise.race([
         ensureNGL(),
         new Promise((_, reject) => setTimeout(() => reject(new Error('Timed out loading the NGL viewer library (20s). Check your network connection / that unpkg.com and cdn.jsdelivr.net are reachable.')), 20000)),
       ]);
+      console.log('[NMRMoleculeViewer] NGL loaded, creating Stage. containerRef ready:', !!containerRef.current, 'cancelled:', cancelled);
       if (cancelled || !containerRef.current) return null;
+
       const stage = new NGL.Stage(containerRef.current, { backgroundColor: '#f8fafc' });
       stageRef.current = stage;
+      console.log('[NMRMoleculeViewer] Stage created successfully');
+
       stage.signals.clicked.add((pickingProxy) => {
         if (!pickingProxy || !pickingProxy.atom) return;
         const atom = pickingProxy.atom;
-        const mapped = mapAtomToNmrKeys(atom, parsedSeqRef.current, moleculeTypeRef.current, residueOffsetRef.current);
+        const mapped = mapAtomToNmrKeys(atom, parsedSeqRef.current, moleculeTypeRef.current);
         if (mapped && onAtomClickRef.current) onAtomClickRef.current(mapped.ri, mapped.keys);
       });
+
       let lastHover = null;
       stage.signals.hovered.add((pickingProxy) => {
         if (!pickingProxy || !pickingProxy.atom) {
@@ -478,10 +436,11 @@ const NMRMoleculeViewer = ({
           return;
         }
         const atom = pickingProxy.atom;
-        const mapped = mapAtomToNmrKeys(atom, parsedSeqRef.current, moleculeTypeRef.current, residueOffsetRef.current);
+        const mapped = mapAtomToNmrKeys(atom, parsedSeqRef.current, moleculeTypeRef.current);
         const label = mapped ? mapped.label : `${atom.resname || ''} ${atom.resno || ''} ${atom.atomname || ''}`.trim();
         if (label !== lastHover) { lastHover = label; setHoverInfo(label); }
       });
+
       return stage;
     })().catch((err) => {
       if (!cancelled) {
@@ -491,6 +450,7 @@ const NMRMoleculeViewer = ({
       }
       return null;
     });
+
     return () => {
       cancelled = true;
       stageReadyRef.current = null;
@@ -504,7 +464,7 @@ const NMRMoleculeViewer = ({
       labelCompRef.current = null;
       sidechainCompRef.current = null;
     };
-  }, []); // mount/unmount only
+  }, []); // mount/unmount only -- deliberately not re-run per load
 
   // ---- Auto-load from parent-provided src/structureText ----
   // This viewer previously only ever loaded structures the user picked by hand (file picker or
@@ -654,48 +614,37 @@ const NMRMoleculeViewer = ({
 
         componentRef.current = component;
 
-       const isOrganicLike = ['organic', 'lipid', 'sugar'].includes(moleculeTypeRef.current);
-     const isNucleic = moleculeTypeRef.current === 'dna' || moleculeTypeRef.current === 'rna';
-     if (isOrganicLike) {
-       try {
-         component.addRepresentation('ball+stick', {
-           colorScheme: 'element',
-           multipleBond: true,
-           aspectRatio: 1.3,
-         });
-       } catch (e) {
-         console.warn('Ball+stick representation failed', e);
-       }
-     } else if (isNucleic) {
-       console.log('[patch] nucleic representation active');
-       try {
-         component.addRepresentation('ball+stick', {
-           sele: 'all',
-           colorScheme: 'element',
-           multipleBond: true,
-           aspectRatio: 1.1,
-         });
-       } catch (e) {
-         console.warn('Nucleic ball+stick representation failed', e);
-       }
-     } else {
-       try {
-         component.addRepresentation('cartoon', {
-           color: 'residueindex',
-           quality: 'high',
-         });
-       } catch (e) {
-         console.warn('Cartoon representation failed', e);
-       }
-       try {
-         component.addRepresentation('ball+stick', {
-           sele: 'hetero and not water',
-           aspectRatio: 1.1,
-         });
-       } catch (e) {
-         console.warn('Ball+stick representation failed', e);
-       }
-     }
+        const isOrganicLike = ['organic', 'lipid', 'sugar'].includes(moleculeTypeRef.current);
+
+        if (isOrganicLike) {
+          try {
+            component.addRepresentation('ball+stick', {
+              colorScheme: 'element',
+              multipleBond: true,
+              aspectRatio: 1.3,
+            });
+          } catch (e) {
+            console.warn('Ball+stick representation failed', e);
+          }
+        } else {
+          try {
+            component.addRepresentation('cartoon', {
+              color: 'residueindex',
+              quality: 'high',
+            });
+          } catch (e) {
+            console.warn('Cartoon representation failed', e);
+          }
+
+          try {
+            component.addRepresentation('ball+stick', {
+              sele: 'hetero and not water',
+              aspectRatio: 1.1,
+            });
+          } catch (e) {
+            console.warn('Ball+stick representation failed', e);
+          }
+        }
 
         component.autoView();
         // The container can be freshly revealed from a display:none state (e.g. just switched
@@ -815,112 +764,134 @@ const NMRMoleculeViewer = ({
     return clearSidechain;
   }, [sidechainStyle, status]);
 
-// Highlight selected and manually selected atoms
-useEffect(() => {
-  const component = componentRef.current;
-  if (!component || status !== 'ready') return;
-  const clearHighlights = () => {
-    if (highlightCompRef.current) {
-      try { component.removeRepresentation(highlightCompRef.current); } catch (e) { /* ignore */ }
-      highlightCompRef.current = null;
-    }
-    if (manualHighlightCompRef.current) {
-      try { component.removeRepresentation(manualHighlightCompRef.current); } catch (e) { /* ignore */ }
-      manualHighlightCompRef.current = null;
-    }
-  };
-  clearHighlights();
-  const sel = Array.isArray(selectedKeys) ? selectedKeys : [];
-  const man = Array.isArray(manualKeys)
-    ? manualKeys.filter((k) => !sel.includes(k))
-    : [];
-  if (sel.length === 0 && man.length === 0) return;
-  let organicNameToIndex = null;
-  const getOrganicNameToIndexMap = () => {
-    if (organicNameToIndex) return organicNameToIndex;
-    organicNameToIndex = {};
-    component.structure.eachAtom((a) => { organicNameToIndex[getOrganicAtomName(a)] = a.index; });
-    return organicNameToIndex;
-  };
-  const buildSele = (keys) => {
-    const parts = [];
-    keys.forEach((k) => {
-      const dashIdx = k.indexOf('-');
-      if (dashIdx < 0) return;
-      const ri = parseInt(k.substring(0, dashIdx), 10);
-      // Trim: nucleic NMR names carry a trailing space ("H1' ") that the table/2D
-      // ecosystem uses, but PDB/NGL atom names never have.
-      const atomName = k.substring(dashIdx + 1).trim();
-      const resno = ri + 1;
-      if (moleculeTypeRef.current === 'organic') {
-        const map = getOrganicNameToIndexMap();
-        if (Object.prototype.hasOwnProperty.call(map, atomName)) parts.push(`@${map[atomName]}`);
-        return;
-      }
-      if (moleculeTypeRef.current === 'dna' || moleculeType === 'rna' || moleculeTypeRef.current === 'rna') {
-        const names = [atomName];
-        if (atomName === "OH2'") names.push("HO2'");
-        if (atomName === 'H7(CH3)') names.push('H71', 'H72', 'H73');
-        names.forEach((pn) => parts.push(`${resno} and .${pn}`));
-        return;
-      }
-      const pdbNames = [];
-      Object.entries(PDB_TO_NMR).forEach(([pdb, nmr]) => {
-        if (nmr === atomName) pdbNames.push(pdb);
-      });
-      if (atomName === 'N') {
-        pdbNames.push('N');
-      } else if (atomName === 'Cα') {
-        pdbNames.push('CA');
-      } else if (atomName === 'Cβ') {
-        pdbNames.push('CB');
-      } else if (atomName === "C'") {
-        pdbNames.push('C');
-      } else if (atomName === 'O') {
-        pdbNames.push('O');
-      } else {
-        const match = atomName.match(/^([CNO])([αβγδεζη])(\d*)$/);
-        if (match) {
-          pdbNames.push(`${match[1]}${REVERSE_GREEK[match[2]]}${match[3]}`);
+  // Highlight selected and manually selected atoms
+  useEffect(() => {
+    const component = componentRef.current;
+    if (!component || status !== 'ready') return;
+
+    const clearHighlights = () => {
+      if (highlightCompRef.current) {
+        try {
+          component.removeRepresentation(highlightCompRef.current);
+        } catch (e) {
+          // ignore
         }
+        highlightCompRef.current = null;
       }
-      if (atomName.startsWith('H') && atomName.length > 1 && REVERSE_GREEK[atomName[1]]) {
-        const base = `H${REVERSE_GREEK[atomName[1]]}`;
-        pdbNames.push(base, `${base}1`, `${base}2`, `${base}3`);
+
+      if (manualHighlightCompRef.current) {
+        try {
+          component.removeRepresentation(manualHighlightCompRef.current);
+        } catch (e) {
+          // ignore
+        }
+        manualHighlightCompRef.current = null;
       }
-      if (pdbNames.length === 0) {
-        pdbNames.push(atomName);
-      }
-      pdbNames.forEach((pn) => {
-        parts.push(`${resno} and .${pn}`);
+    };
+
+    clearHighlights();
+
+    const sel = Array.isArray(selectedKeys) ? selectedKeys : [];
+    const man = Array.isArray(manualKeys)
+      ? manualKeys.filter((k) => !sel.includes(k))
+      : [];
+
+    if (sel.length === 0 && man.length === 0) return;
+
+    // For organics, build a name -> raw NGL atom index lookup ONCE (using the same
+    // bond-connectivity-based naming as getOrganicAtomName / the 2D SMILES viewer), so
+    // selection keys like "0-C5" or "0-H5a" resolve to the correct physical atom regardless of
+    // how the 3D structure's own file order happens to differ from the 2D depiction's.
+    let organicNameToIndex = null;
+    const getOrganicNameToIndexMap = () => {
+      if (organicNameToIndex) return organicNameToIndex;
+      organicNameToIndex = {};
+      component.structure.eachAtom((a) => { organicNameToIndex[getOrganicAtomName(a)] = a.index; });
+      return organicNameToIndex;
+    };
+
+    const buildSele = (keys) => {
+      const parts = [];
+
+      keys.forEach((k) => {
+        const dashIdx = k.indexOf('-');
+        if (dashIdx < 0) return;
+
+        const ri = parseInt(k.substring(0, dashIdx), 10);
+        const atomName = k.substring(dashIdx + 1);
+        const resno = ri + 1;
+
+        if (moleculeTypeRef.current === 'organic') {
+          const map = getOrganicNameToIndexMap();
+          if (Object.prototype.hasOwnProperty.call(map, atomName)) parts.push(`@${map[atomName]}`);
+          return;
+        }
+
+        const pdbNames = [];
+
+        Object.entries(PDB_TO_NMR).forEach(([pdb, nmr]) => {
+          if (nmr === atomName) pdbNames.push(pdb);
+        });
+
+        if (atomName === 'N') {
+          pdbNames.push('N');
+        } else if (atomName === 'Cα') {
+          pdbNames.push('CA');
+        } else if (atomName === 'Cβ') {
+          pdbNames.push('CB');
+        } else if (atomName === "C'") {
+          pdbNames.push('C');
+        } else if (atomName === 'O') {
+          pdbNames.push('O');
+        } else {
+          // Dynamically translate Greek back to PDB heavy atoms for highlighting
+          const match = atomName.match(/^([CNO])([αβγδεζη])(\d*)$/);
+
+          if (match) {
+            pdbNames.push(`${match[1]}${REVERSE_GREEK[match[2]]}${match[3]}`);
+          }
+        }
+
+        if (pdbNames.length === 0) {
+          pdbNames.push(atomName);
+        }
+
+        pdbNames.forEach((pn) => {
+          parts.push(`${resno} and .${pn}`);
+        });
       });
-    });
-    return parts.length > 0 ? parts.join(' or ') : null;
-  };
-  try {
-    const selSele = buildSele(sel);
-    if (selSele) {
-      highlightCompRef.current = component.addRepresentation('ball+stick', {
-        sele: selSele,
-        color: SELECT_COLOR_HEX,
-        aspectRatio: 1.5,
-        radius: 0.4,
-      });
+
+      return parts.length > 0 ? parts.join(' or ') : null;
+    };
+
+    try {
+      const selSele = buildSele(sel);
+
+      if (selSele) {
+        highlightCompRef.current = component.addRepresentation('ball+stick', {
+          sele: selSele,
+          color: SELECT_COLOR_HEX,
+          aspectRatio: 1.5,
+          radius: 0.4,
+        });
+      }
+
+      const manSele = buildSele(man);
+
+      if (manSele) {
+        manualHighlightCompRef.current = component.addRepresentation('ball+stick', {
+          sele: manSele,
+          color: MANUAL_COLOR_HEX,
+          aspectRatio: 1.5,
+          radius: 0.4,
+        });
+      }
+    } catch (e) {
+      console.warn('Highlight error:', e);
     }
-    const manSele = buildSele(man);
-    if (manSele) {
-      manualHighlightCompRef.current = component.addRepresentation('ball+stick', {
-        sele: manSele,
-        color: MANUAL_COLOR_HEX,
-        aspectRatio: 1.5,
-        radius: 0.4,
-      });
-    }
-  } catch (e) {
-    console.warn('Highlight error:', e);
-  }
-  return clearHighlights;
-}, [selectedKeys, manualKeys, status]);
+
+    return clearHighlights;
+  }, [selectedKeys, manualKeys, status]);
 
   const handleFileChange = useCallback((e) => {
     const f = e.target.files && e.target.files[0];

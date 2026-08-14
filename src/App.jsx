@@ -21,7 +21,7 @@ import { DefinitionsPanel } from './components/DefinitionsPanel';
 import { NMRFittingsTestRenderer } from './components/NMRFittingsTestRenderer';
 import { CloningTestRenderer } from './components/CloningTestRenderer';
 import { ProteinExpressionTestRenderer } from './components/ProteinExpressionTestRenderer';
-import { All as MDSectionsAll } from './components/MDSections';
+import { Setup, Data, Simulations, Analysis } from '/src/components/MDSections.jsx';
 import { SolventsManager, BuffersManager, AdditivesManager, NMRProbesManager, NMRInstrumentsManager, NMRExperimentsManager, BufferAdditiveFields } from './components/DefinitionsExtra';
 
 import {
@@ -32,6 +32,7 @@ import {
   NMR_FITTING_TAB_CONFIG,
   PROTEIN_EXPRESSION_TAB_CONFIG
 } from './components/tabConfigs.jsx';
+
 
 /* =========================================================
    MD SIMULATIONS CONFIG & RENDERER
@@ -289,7 +290,10 @@ const buildMDNotebookHtml = (checked, ctx) => {
 };
 
 const MD_CUSTOM = {
-  All: SafeMDSectionsAll,
+  MolecularStructure: Setup,
+  Simulations: Simulations,
+  Data: Data,
+  Analysis: Analysis,
   buildNotebookHtml: buildMDNotebookHtml
 };
 
@@ -7859,7 +7863,7 @@ const newProto = {
               </div>
             )}
 
-            {currentModule === 'calculations' && (
+{currentModule === 'calculations' && (
               <div className="h-full overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
                 <Calculations
                   compoundOptions={allCmpds}
@@ -7875,3 +7879,4 @@ const newProto = {
     </div>
   );
 }
+export const All = null;

@@ -2140,12 +2140,10 @@ const MDTestRenderer = ({
 
   const custom = useMemo(
     () => ({
-      All: MDAll,
       MolecularStructure: MDExperimentSetupSection,
-      ExperimentSetup: MDExperimentSetupSection,
+      Simulations: MDSimulationParamsSection,
       Data: MDDataSection,
       Analysis: MDAnalysisSection,
-      SimulationParameters: MDSimulationParamsSection,
       buildNotebookHtml:
         typeof buildMDNotebookHtmlFromSections === 'function'
           ? (checked, ctxArg) => buildMDNotebookHtmlFromSections(ctxArg, checked)

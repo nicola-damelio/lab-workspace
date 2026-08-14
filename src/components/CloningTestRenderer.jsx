@@ -145,6 +145,10 @@ const buildCloningNotebookHtml = (checked, ctx) => {
         </tr>`;
     });
     html += `</table>`;
+    
+    if (t.dnaQuantComment) {
+      html += `<p style="font-size: 11px; color: #64748b; font-style: italic; margin-bottom: 12px;">📝 ${t.dnaQuantComment}</p>`;
+    }
   }
 
   if (checked.uv && Array.isArray(t.uvSpectra) && t.uvSpectra.length) {
@@ -177,6 +181,10 @@ const buildCloningNotebookHtml = (checked, ctx) => {
     html += `
       <h4 style="font-size: 12px; color: #334155; margin-bottom: 4px;">🧬 Gel Images</h4>
       <p style="font-size: 11px; color: #64748b;">${t.gelImages.length} gel image(s) attached.</p>`;
+      
+    if (t.gelComment) {
+      html += `<p style="font-size: 11px; color: #64748b; font-style: italic; margin-bottom: 12px;">📝 ${t.gelComment}</p>`;
+    }
   }
 
   if (checked.sim && t.sim && t.sim.sequence) {

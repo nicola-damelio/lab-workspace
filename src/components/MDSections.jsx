@@ -1336,27 +1336,6 @@ export const MDSimulationParamsSection = ({ ctx }) => {
 };
 
 // ================= ALL =================
-export const All = ({ ctx }) => (
-  <div className="flex flex-col gap-6">
-    <CollapsibleSection title="Experiment Setup" icon="⚙️">
-      <MDSimulationParamsSection ctx={ctx} />
-    </CollapsibleSection>
-    
-    <CollapsibleSection title="Molecular system and simulations" icon="🧬">
-      <CollapsibleSection title="Molecular structure and visualization" icon="🔬" defaultOpen={false}>
-        <MDExperimentSetupSection ctx={ctx} />
-      </CollapsibleSection>
-    </CollapsibleSection>
-
-    <CollapsibleSection title="Data" icon="🔢">
-      <MDDataSection ctx={ctx} />
-    </CollapsibleSection>
-    
-    <CollapsibleSection title="Analysis" icon="📈" defaultOpen={false}>
-      <MDAnalysisSection ctx={ctx} />
-    </CollapsibleSection>
-  </div>
-);
 
 export const Setup = MDExperimentSetupSection;
 export const Data = MDDataSection;
