@@ -250,7 +250,41 @@ export const CD_TAB_CONFIG = {
     { id: 'spectra', label: 'Spectra Summary' }
   ]
 };
-
+export const SSNMR_TAB_CONFIG = {
+  typeKey: 'ssnmr',
+  typeLabel: 'ssNMR (²H)',
+  icon: '🧲',
+  fallbackCategories: [
+    'Solid-state NMR',
+    'Binding',
+    'Characterization'
+  ],
+  samples: {
+    compounds: true,
+    cellLines: false,
+    compoundLabel: 'Compound / Sample Label(s)',
+    cellLineLabel: 'Cell Lines / Biological Models'
+  },
+  imagesKey: 'images',
+  conditionFields: [
+    { key: 'experimentDate', label: 'Experiment Date', type: 'date' },
+    { key: 'temperature', label: 'Temperature', type: 'text', placeholder: 'e.g. 300', units: ['K', '°C'] },
+    { key: 'lipid', label: 'Lipid', type: 'text', placeholder: 'e.g. POPC / DPPC' },
+    { key: 'deuteration', label: 'Deuteration Pattern', type: 'text', placeholder: 'e.g. sn-1 perdeuterated' },
+    { key: 'hydration', label: 'Hydration', type: 'text', placeholder: 'e.g. 40% w/w' },
+    { key: 'ph', label: 'pH', type: 'text', placeholder: 'e.g. 7.4' },
+    { key: 'cholesterolRatio', label: 'Cholesterol (mol %)', type: 'text', placeholder: 'e.g. 30' },
+    { key: 'ratio', label: 'Peptide:Lipid Ratio', type: 'text', placeholder: 'e.g. 1:50' },
+    { key: 'solvent', label: 'Solvent / Buffer', type: 'solvent-select', placeholder: 'e.g. 20 mM HEPES' },
+    { key: 'otherMolecule', label: 'Other Molecule / Ligand', type: 'text', placeholder: 'e.g. Ligand X' }
+  ],
+  notebookChecks: [
+    { id: 'cond', label: 'Experimental Conditions' },
+    { id: 'instrument', label: 'Instrumental Setup' },
+    { id: 'struct', label: 'Quadrupolar Fit (Δν / S_CD)' },
+    { id: 'spectra', label: 'Spectra Summary' }
+  ]
+};
 export const PLATE_TAB_CONFIG = {
   typeKey: 'plate',
   typeLabel: 'Plate Assay',

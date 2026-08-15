@@ -14,6 +14,7 @@ import TestShellRenderer from './components/TestShellRenderer';
 import { NMRTestRenderer } from './components/NMRTestRenderer';
 import { PlateTestRenderer } from './components/PlateTestRenderer';
 import { CDTestRenderer } from './components/CDTestRenderer';
+import { ssNMRTestRenderer as SSNMRTestRenderer } from './components/ssNMRTestRenderer';
 import { LabNotebook } from './components/LabNotebook';
 import { RichTextEditor } from './components/RichTextEditor';
 import { StorageModals, StorageList, StorageDetail, BoxDetail } from './components/Storage';
@@ -25,12 +26,13 @@ import { Setup, Data, Simulations, Analysis } from '/src/components/MDSections.j
 import { SolventsManager, BuffersManager, AdditivesManager, NMRProbesManager, NMRInstrumentsManager, NMRExperimentsManager, BufferAdditiveFields } from './components/DefinitionsExtra';
 
 import {
-  CD_TAB_CONFIG,
-  PLATE_TAB_CONFIG,
-  NMR_TAB_CONFIG,
-  CLONING_TAB_CONFIG,
-  NMR_FITTING_TAB_CONFIG,
-  PROTEIN_EXPRESSION_TAB_CONFIG
+CD_TAB_CONFIG,
+PLATE_TAB_CONFIG,
+NMR_TAB_CONFIG,
+CLONING_TAB_CONFIG,
+NMR_FITTING_TAB_CONFIG,
+PROTEIN_EXPRESSION_TAB_CONFIG,
+SSNMR_TAB_CONFIG
 } from './components/tabConfigs.jsx';
 
 
@@ -200,6 +202,7 @@ const SPECIAL_PAGES = [
   { value: 'cd', label: 'CD', subsections: CD_TAB_CONFIG.notebookChecks || [] },
   { value: 'cloning', label: 'Cloning', subsections: CLONING_TAB_CONFIG.notebookChecks || [] },
   { value: 'protein_expression', label: 'Protein Purification', subsections: PROTEIN_EXPRESSION_TAB_CONFIG.notebookChecks || [] },
+  { value: 'ssnmr', label: 'ssNMR', subsections: SSNMR_TAB_CONFIG.notebookChecks || [] },
   { value: 'md_simulation', label: 'MD Simulations', subsections: MD_SIMULATION_TAB_CONFIG.notebookChecks || [] }
 ];
 
@@ -4542,7 +4545,30 @@ const baseTest = {
         }
       };
     }
-
+if (customType === 'ssnmr') {
+return {
+...baseTest,
+type: 'ssnmr',
+testCategory: 'Solid-state NMR',
+lipid: '',
+deuteration: '',
+hydration: '',
+cholesterolRatio: '',
+ratio: '',
+wavelengthData: '',
+spectraColumns: [],
+ssFits: {},
+brukerMeta: null,
+chartCfg: {
+yMin: '',
+yMax: '',
+xMin: '-250',
+xMax: '250',
+fontSize: 12,
+lineWidth: 2
+}
+};
+}
     if (customType === 'protein_expression') {
       return {
         ...baseTest,
@@ -7187,35 +7213,48 @@ setMandatoryFields(s.mandatoryFields || []);
     + Multiwell Plate tests
   </button>
 
-  <button
-    onClick={() => {
-      const id = 't' + Date.now();
-      setTests((prev) => [
-        ...prev,
-        createEmptyTest(id, prev.length + 1, 'cd')
-      ]);
-      setActiveTestId(id);
-      setCurrentModule('active-test');
-    }}
-    className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
-  >
-    + CD
-  </button>
-
-  <button
-    onClick={() => {
-      const id = 't' + Date.now();
-      setTests((prev) => [
-        ...prev,
-        createEmptyTest(id, prev.length + 1, 'nmr')
-      ]);
-      setActiveTestId(id);
-      setCurrentModule('active-test');
-    }}
-    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
-  >
-    + NMR
-  </button>
+<button
+onClick={() => {
+const id = 't' + Date.now();
+setTests((prev) => [
+...prev,
+createEmptyTest(id, prev.length + 1, 'cd')
+]);
+setActiveTestId(id);
+setCurrentModule('active-test');
+}}
+className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+>
++ CD
+</button>
+<button
+onClick={() => {
+const id = 't' + Date.now();
+setTests((prev) => [
+...prev,
+createEmptyTest(id, prev.length + 1, 'ssnmr')
+]);
+setActiveTestId(id);
+setCurrentModule('active-test');
+}}
+className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+>
++ ssNMR
+</button>
+<button
+onClick={() => {
+const id = 't' + Date.now();
+setTests((prev) => [
+...prev,
+createEmptyTest(id, prev.length + 1, 'nmr')
+]);
+setActiveTestId(id);
+setCurrentModule('active-test');
+}}
+className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+>
++ NMR
+</button>
 
   <button
     onClick={() => {
@@ -7396,15 +7435,16 @@ setMandatoryFields(s.mandatoryFields || []);
                                 </button>
                               )}
 
-                              <div className="absolute top-3 right-3 text-2xl opacity-80 group-hover:scale-110 transition-transform">
-                                {test.type === 'nmr' ? '📉'
-                                  : test.type === 'cd' ? '🌀'
-                                  : test.type === 'cloning' ? '🧬'
-                                  : test.type === 'plate-9x9box' ? '📦'
-                                  : test.type === 'nmr-fittings' ? '🧭'
-                                  : test.type === 'md_simulation' ? '🖥️'
-                                  : '🧫'}
-                              </div>
+<div className="absolute top-3 right-3 text-2xl opacity-80 group-hover:scale-110 transition-transform">
+{test.type === 'nmr' ? '📉'
+: test.type === 'cd' ? '🌀'
+: test.type === 'ssnmr' ? '🧲'
+: test.type === 'cloning' ? '🧬'
+: test.type === 'plate-9x9box' ? '📦'
+: test.type === 'nmr-fittings' ? '🧭'
+: test.type === 'md_simulation' ? '🖥️'
+: '🧫'}
+</div>
 
                               <span className="text-[10px] font-black uppercase tracking-wider text-blue-600 bg-blue-50 px-2 py-0.5 rounded self-start mb-2 border border-blue-100">
                                 {test.testCategory || 'Uncategorized'}
@@ -7426,12 +7466,13 @@ setMandatoryFields(s.mandatoryFields || []);
 
                               <div className="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center text-xs text-slate-500 font-medium">
                                 <span>📅 {test.date}</span>
-                                <span className="bg-slate-100 px-2 py-0.5 rounded font-bold text-slate-600">
-                                  {test.type === 'nmr-fittings' ? 'NMR FITTINGS'
-                                    : test.type === 'md_simulation' ? 'MD'
-                                    : test.type === 'protein_expression' ? 'PROTEIN'
-                                    : String(test.type || '').replace('plate-', '').toUpperCase()}
-                                </span>
+   <span className="bg-slate-100 px-2 py-0.5 rounded font-bold text-slate-600">
+{test.type === 'nmr-fittings' ? 'NMR FITTINGS'
+: test.type === 'md_simulation' ? 'MD'
+: test.type === 'protein_expression' ? 'PROTEIN'
+: test.type === 'ssnmr' ? 'SSNMR'
+: String(test.type || '').replace('plate-', '').toUpperCase()}
+</span>
                               </div>
 
                               {/* 🔒 Lock overlay */}
@@ -8553,7 +8594,36 @@ const newProto = {
                     />
                   );
                 }
-
+if (activeTest.type === 'ssnmr') {
+const updateInstance = (instId, updates) => {
+setTests((prev) => prev.map((t) => t.id === instId ? { ...t, ...updates } : t));
+};
+return (
+<SSNMRTestRenderer
+activeTest={activeTest}
+updateActiveTest={updateActiveTest}
+allTests={tests}
+appClipboard={appClipboard}
+setAppClipboard={setAppClipboard}
+TestHeader={TestHeader}
+datasetProtocols={datasetProtocols}
+jumpToProtocol={jumpToProtocolFn}
+allCmpds={allCmpds}
+allCellLines={allCellLines}
+customFields={customFields}
+testCategories={testCategories}
+operators={operatorNames}
+instances={siblingTests}
+updateInstance={updateInstance}
+solvents={solvents}
+buffers={buffers}
+additives={additives}
+compoundMeta={compoundMeta}
+mandatoryRules={mandatoryRules}
+mandatoryBehavior={mandatoryBehavior}
+/>
+);
+}
                 if (activeTest.type === 'plate-9x9box') {
                   return (
                     <BoxDetail

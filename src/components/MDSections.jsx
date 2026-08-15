@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+﻿import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell
 } from 'recharts';
@@ -7,8 +7,12 @@ import {
   CONTACT_DEFAULTS, parseTopology, computeContactRDF, demoFrames,
   resolveFrameSource, AWK_PALETTE
 } from './MDMembraneContacts';
+import { computeOrderAndDensity, parseChargeMap } from './MDMembraneProfiles';
 export { parseSimulationParameters };   
 import NMRMoleculeViewer from './NMRMoleculeViewer';
+import {
+  computeSecondaryStructure, SS_CODE_ORDER, SS_COLORS, SS_GROUP_COLORS
+} from './MDSecondaryStructure';
 
 import {
   AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB,
@@ -2063,6 +2067,583 @@ export const MDMembraneContactSection = ({ ctx }) => {
     </div>
   );
 };
+
+// ================= 6) ORDER PARAMETERS & MEMBRANE PROFILES =================
+const mdProfilesBlobFromDataUrl = (dataUrl) => {
+  const s = String(dataUrl || '');
+  const comma = s.indexOf(',');
+  if (comma < 0) return null;
+  const meta = s.slice(0, comma);
+  const b64 = s.slice(comma + 1);
+  const mime = /data:([^;,]+)/.exec(meta)?.[1] || 'application/octet-stream';
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+};
+
+const MDProfileChart = ({ rows, series, xKey, yLabel, xLabel, height = 380, rotateX = false, numericX = false }) => (
+  <div className="flex gap-3">
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <ResponsiveContainer width="100%" height={height}>
+        <LineChart data={rows} margin={{ top: 8, right: 8, bottom: rotateX ? 90 : 36, left: 8 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+          {numericX ? (
+            <XAxis dataKey={xKey} type="number" domain={['dataMin', 'dataMax']} tick={{ fontSize: 10 }}
+                   label={{ value: xLabel, position: 'insideBottom', offset: -18, style: { fontSize: 11 } }} />
+          ) : (
+            <XAxis dataKey={xKey} interval={0} height={rotateX ? 100 : 40}
+                   tick={{ fontSize: rotateX ? 9 : 10, angle: rotateX ? -90 : 0, textAnchor: rotateX ? 'end' : 'middle' }} />
+          )}
+          <YAxis tick={{ fontSize: 11 }} width={56}
+                 label={{ value: yLabel, angle: -90, position: 'insideLeft', style: { fontSize: 12 } }} />
+          <Tooltip />
+          {series.map((s, i) => (
+            <Line key={s.key} dataKey={s.key} stroke={AWK_PALETTE[i % AWK_PALETTE.length]} strokeWidth={2}
+                  dot={{ r: rotateX ? 2.5 : 0, strokeWidth: 0 }} connectNulls isAnimationActive={false} />
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+    <div className="w-48 shrink-0 overflow-y-auto custom-scrollbar border border-slate-200 rounded-lg p-2 text-[11px] font-mono bg-white"
+         style={{ maxHeight: height }}>
+      {series.map((s, i) => (
+        <div key={s.key} className="flex items-center gap-1.5 py-0.5">
+          <span className="inline-block w-3 h-3 rounded-full shrink-0" style={{ background: AWK_PALETTE[i % AWK_PALETTE.length] }} />
+          <span className="truncate" title={s.key}>{s.key}</span>
+        </div>
+      ))}
+    </div>
+  </div>
+);
+
+export const MDMembraneProfilesSection = ({ ctx }) => {
+  const { activeTest } = ctx;
+  const [cfg, setCfg] = useState({ bin: 0.02, centerMode: 'auto', signedSCD: false, scdResidues: '', stride: 1, startFrame: 0, maxFrames: 0 });
+  const [extraRuns, setExtraRuns] = useState([]);
+  const [chargeInfo, setChargeInfo] = useState({ map: null, count: 0, files: [] });
+  const [status, setStatus] = useState({ state: 'idle', msg: '', done: 0 });
+  const [outputs, setOutputs] = useState([]); // [{ name, result }]
+
+  const setOpt = (k, v) => setCfg((c) => ({ ...c, [k]: v }));
+
+  const handleChargeFiles = async (fileList) => {
+    const files = Array.from(fileList || []);
+    if (files.length === 0) { setChargeInfo({ map: null, count: 0, files: [] }); return; }
+    const texts = [];
+    for (const f of files) texts.push(await f.text());
+    const map = parseChargeMap(texts);
+    setChargeInfo({ map, count: map.size, files: files.map((f) => f.name) });
+  };
+
+  const runAll = async (useDemo = false) => {
+    setStatus({ state: 'busy', msg: 'Reading topology…', done: 0 });
+    setOutputs([]);
+    try {
+      if (!activeTest.structureFileData) throw new Error('Upload the simulation topology (.gro) in Experiment Setup → 3D Viewer mode first.');
+      const b64 = String(activeTest.structureFileData).split(',')[1] || '';
+      const text = new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
+      const topo = parseTopology(text);
+      if (!topo.box) throw new Error('The topology has no box vectors — a .gro with its final box line is required.');
+
+      const topoName = (activeTest.structureFileName || '').toLowerCase();
+      const topologyBlob = mdProfilesBlobFromDataUrl(activeTest.structureFileData);
+      const topologyExt = topoName.endsWith('.pdb') ? 'pdb' : 'gro';
+
+      const jobs = [];
+      if (!useDemo) {
+        const mainFile = localFileCache.get(activeTest.id)?.trajectory || null;
+        if (mainFile) jobs.push({ name: mainFile.name.replace(/\.(xtc|trr|dcd)$/i, ''), file: mainFile });
+        extraRuns.forEach((f) => jobs.push({ name: f.name.replace(/\.(xtc|trr|dcd)$/i, ''), file: f }));
+      }
+
+      const outs = [];
+      if (jobs.length === 0) {
+        const result = await computeOrderAndDensity(topo, demoFrames(topo, 40), cfg, chargeInfo.map,
+          (p) => setStatus({ state: 'busy', msg: `Demo: frame ${p.done}`, done: p.done }));
+        outs.push({ name: 'demo', result });
+      } else {
+        for (const job of jobs) {
+          const src = await resolveFrameSource(job.file, {
+            topologyBlob, topologyExt, topologyBox: topo.box,
+            onStatus: (m) => setStatus((s) => ({ ...s, msg: m })),
+          });
+          if (!src) throw new Error(`"${job.file.name}": could not be opened (.xtc / .dcd need the topology uploaded; .trr works standalone).`);
+          const frames = src.frames || src;
+          const result = await computeOrderAndDensity(topo, frames, cfg, chargeInfo.map,
+            (p) => setStatus({ state: 'busy', msg: `${job.name}: frame ${p.done}`, done: p.done }));
+          outs.push({ name: job.name, result });
+        }
+      }
+      setOutputs(outs);
+      setStatus({ state: 'done', msg: '', done: 0 });
+    } catch (e) {
+      setStatus({ state: 'error', msg: e.message, done: 0 });
+    }
+  };
+
+  /* ---- chart data (merged across runs) ---- */
+  const scdData = useMemo(() => {
+    if (outputs.length === 0) return null;
+    const rowMap = new Map();
+    const series = [];
+    outputs.forEach((o) => {
+      o.result.scdGroups.forEach((g) => {
+        const sKey = outputs.length > 1 ? `${o.name} · ${g.label}` : g.label;
+        series.push({ key: sKey });
+        g.carbons.forEach((c) => {
+          const rk = `${g.label}|${c.x}`;
+          if (!rowMap.has(rk)) rowMap.set(rk, { group: g.label, x: c.x, xNum: c.xNum });
+          rowMap.get(rk)[sKey] = c.scd;
+        });
+      });
+    });
+    const rows = [...rowMap.values()]
+      .sort((a, b) =>
+        a.group.localeCompare(b.group) ||
+        ((a.xNum ?? 1e9) - (b.xNum ?? 1e9)) ||
+        String(a.x).localeCompare(String(b.x), undefined, { numeric: true }))
+      .map((r) => ({ x: r.x, group: r.group, ...Object.fromEntries(series.map((s) => [s.key, r[s.key] ?? null])) }));
+    return { rows, series };
+  }, [outputs]);
+
+  const densityRows = useMemo(() => {
+    if (outputs.length === 0) return null;
+    const base = outputs[0].result.density;
+    return base.z.map((zz, i) => {
+      const row = { z: zz };
+      outputs.forEach((o) => { row[o.name] = o.result.density.rhoE[i]; });
+      return row;
+    });
+  }, [outputs]);
+
+  const potentialRows = useMemo(() => {
+    const withPot = outputs.filter((o) => o.result.density.potential);
+    if (withPot.length === 0) return null;
+    const base = withPot[0].result.density;
+    return base.z.map((zz, i) => {
+      const row = { z: zz };
+      withPot.forEach((o) => { row[o.name] = o.result.density.potential[i]; });
+      return row;
+    });
+  }, [outputs]);
+
+  const exportCSV = () => {
+    if (!scdData) return;
+    const lines = ['# Order parameters |SCD|'];
+    lines.push(['Lipid group', 'Carbon', ...scdData.series.map((s) => s.key)].join(','));
+    scdData.rows.forEach((r) => lines.push([r.group, r.x, ...scdData.series.map((s) => r[s.key] ?? '')].join(',')));
+    if (densityRows) {
+      lines.push('', '# Electron density (e/nm3)');
+      lines.push(['z (nm)', ...outputs.map((o) => o.name)].join(','));
+      densityRows.forEach((r) => lines.push([r.z, ...outputs.map((o) => r[o.name] ?? '')].join(',')));
+    }
+    if (potentialRows) {
+      lines.push('', '# Electrostatic potential (V)');
+      lines.push(['z (nm)', ...outputs.filter((o) => o.result.density.potential).map((o) => o.name)].join(','));
+      potentialRows.forEach((r) => lines.push([r.z, ...outputs.filter((o) => o.result.density.potential).map((o) => r[o.name] ?? '')].join(',')));
+    }
+    const url = URL.createObjectURL(new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = 'membrane_profiles.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const inp = 'border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500';
+  const anyMissing = outputs.length > 0 && outputs.some((o) => o.result.density.missingChargeResidues.length > 0);
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-xs text-indigo-800">
+        Two more Figures_CHD.pdf analysis types, in-browser:
+        <b> (1)</b> deuterium order parameter |SCD| per C–H bond (≙ <span className="font-mono">gmx order</span>;
+        default = lipid acyl chains, sn-1 = C2x, sn-2 = C3x — any residue list works, e.g. CHL1) and
+        <b> (2)</b> electron density + electrostatic potential across the membrane
+        (≙ <span className="font-mono">gmx density</span> + <span className="font-mono">gmx potential</span>; bilayer centre per
+        frame = median phosphate z, potential from double integration of the charge density, water baseline set to 0).
+      </div>
+
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="text-xs font-bold text-slate-600">Bin width (nm)
+          <input type="number" step="0.005" value={cfg.bin} onChange={(e) => setOpt('bin', Number(e.target.value))} className={`${inp} block mt-1 w-20`} />
+        </label>
+        <label className="text-xs font-bold text-slate-600">Bilayer centre
+          <select value={cfg.centerMode} onChange={(e) => setOpt('centerMode', e.target.value)} className={`${inp} block mt-1 font-semibold`}>
+            <option value="auto">Auto (median phosphate z)</option>
+            <option value="box">Box centre</option>
+          </select>
+        </label>
+        <label className="text-xs font-bold text-slate-600">SCD residues
+          <input value={cfg.scdResidues} onChange={(e) => setOpt('scdResidues', e.target.value)} placeholder="lipids only" className={`${inp} block mt-1 w-36 font-mono`} />
+        </label>
+        <label className="text-xs font-bold text-slate-600 flex items-center gap-1.5 pb-2">
+          <input type="checkbox" checked={cfg.signedSCD} onChange={(e) => setOpt('signedSCD', e.target.checked)} className="accent-indigo-600" />
+          signed SCD (default |SCD|)
+        </label>
+        <label className="text-xs font-bold text-slate-600">Stride
+          <input type="number" min="1" value={cfg.stride} onChange={(e) => setOpt('stride', Math.max(1, Number(e.target.value) || 1))} className={`${inp} block mt-1 w-16`} />
+        </label>
+        <label className="text-xs font-bold text-slate-600">Start frame
+          <input type="number" min="0" value={cfg.startFrame} onChange={(e) => setOpt('startFrame', Math.max(0, Number(e.target.value) || 0))} className={`${inp} block mt-1 w-20`} />
+        </label>
+        <label className="text-xs font-bold text-slate-600">Max frames (0=all)
+          <input type="number" min="0" value={cfg.maxFrames} onChange={(e) => setOpt('maxFrames', Math.max(0, Number(e.target.value) || 0))} className={`${inp} block mt-1 w-24`} />
+        </label>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <button onClick={() => runAll(false)} disabled={status.state === 'busy'}
+                className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold px-5 py-2 rounded-lg text-sm">
+          ▶ Compute profiles
+        </button>
+        <button onClick={() => runAll(true)} disabled={status.state === 'busy'}
+                className="bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 font-bold px-4 py-2 rounded-lg text-xs">
+          🧪 Test pipeline (demo frames)
+        </button>
+        <label className="text-xs font-bold text-slate-600">Additional runs to overlay
+          <input type="file" multiple accept=".xtc,.trr,.dcd" className={`${inp} block mt-1`}
+                 onChange={(e) => setExtraRuns(Array.from(e.target.files || []))} />
+        </label>
+        <label className="text-xs font-bold text-slate-600">Charges (.itp / .top, for the potential)
+          <input type="file" multiple accept=".itp,.top,.txt" className={`${inp} block mt-1`}
+                 onChange={(e) => handleChargeFiles(e.target.files)} />
+        </label>
+        {chargeInfo.count > 0 && (
+          <span className="text-xs text-emerald-700 font-semibold">✓ {chargeInfo.count} atom charges from {chargeInfo.files.join(', ')}</span>
+        )}
+        {outputs.length > 0 && (
+          <button onClick={exportCSV} className="bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 font-bold px-4 py-2 rounded-lg text-xs">
+            📊 Export CSV
+          </button>
+        )}
+      </div>
+
+      {!chargeInfo.map && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-lg p-2.5 text-[11px] font-semibold">
+          ⚠️ No charge file loaded: the electron density will be computed, but the electrostatic potential needs partial
+          charges — upload your lipid / solvent / ion / ligand .itp (or a processed .top) files.
+        </div>
+      )}
+      {anyMissing && chargeInfo.map && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-lg p-2.5 text-[11px] font-semibold">
+          ⚠️ Some residues have no charges in the uploaded files ({[...new Set(outputs.flatMap((o) => o.result.density.missingChargeResidues))].slice(0, 12).join(', ')}…) — the potential will be approximate until they are covered.
+        </div>
+      )}
+
+      {status.state === 'busy' && (
+        <div className="text-xs font-bold text-indigo-700 animate-pulse">⏳ {status.msg}</div>
+      )}
+      {status.state === 'error' && (
+        <div className="bg-red-50 border border-red-300 text-red-700 rounded-lg p-3 text-xs font-semibold">⚠️ {status.msg}</div>
+      )}
+
+      {outputs.length > 0 && scdData && (
+        <div className="border border-slate-200 rounded-xl p-4 bg-white shadow-sm space-y-4">
+          <div className="text-xs text-slate-500 font-semibold">
+            {outputs.map((o) => o.name).join(' · ')} · {outputs[0].result.nFramesUsed} frames · bin {outputs[0].result.density.binNm} nm
+          </div>
+          <div>
+            <div className="text-sm font-bold text-slate-700 mb-1">Order parameter |SCD| (≙ gmx order)</div>
+            <MDProfileChart rows={scdData.rows} series={scdData.series} xKey="x" rotateX
+                            yLabel={cfg.signedSCD ? 'SCD' : '|SCD|'} height={420} />
+          </div>
+          {densityRows && (
+            <div>
+              <div className="text-sm font-bold text-slate-700 mb-1">Electron density profile (≙ gmx density)</div>
+              <MDProfileChart rows={densityRows} series={outputs.map((o) => ({ key: o.name }))}
+                              xKey="z" numericX xLabel="Distance to bilayer center (nm)"
+                              yLabel="Electron density (e/nm³)" height={360} />
+            </div>
+          )}
+          {potentialRows ? (
+            <div>
+              <div className="text-sm font-bold text-slate-700 mb-1">Electrostatic potential (≙ gmx potential)</div>
+              <MDProfileChart rows={potentialRows}
+                              series={outputs.filter((o) => o.result.density.potential).map((o) => ({ key: o.name }))}
+                              xKey="z" numericX xLabel="Distance to bilayer center (nm)"
+                              yLabel="Potential (V)" height={360} />
+            </div>
+          ) : (
+            <div className="text-xs text-slate-400 font-semibold">Electrostatic potential: requires a charges file (.itp / .top).</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ================= 7) SECONDARY STRUCTURE (DSSP along the trajectory) =================
+const mdSSBlobFromDataUrl = (dataUrl) => {
+  const s = String(dataUrl || '');
+  const comma = s.indexOf(',');
+  if (comma < 0) return null;
+  const meta = s.slice(0, comma);
+  const b64 = s.slice(comma + 1);
+  const mime = /data:([^;,]+)/.exec(meta)?.[1] || 'application/octet-stream';
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+};
+
+const SS_LETTER_META = [
+  { k: 'H', label: 'α-helix (H)' }, { k: 'E', label: 'β-strand (E)' },
+  { k: 'G', label: '3-10 helix (G)' }, { k: 'I', label: 'π-helix (I)' },
+  { k: 'B', label: 'bridge (B)' }, { k: 'T', label: 'turn (T)' },
+  { k: 'S', label: 'bend (S)' }, { k: 'C', label: 'coil (C)' },
+];
+
+export const MDSecondaryStructureSection = ({ ctx }) => {
+  const { activeTest } = ctx;
+  const [cfg, setCfg] = useState({ stride: 1, startFrame: 0, maxFrames: 0, dtPs: 0, chartMode: 'grouped' });
+  const [extraRuns, setExtraRuns] = useState([]);
+  const [status, setStatus] = useState({ state: 'idle', msg: '', done: 0 });
+  const [outputs, setOutputs] = useState([]); // [{ name, result }]
+  const heatCanvasRef = useRef(null);
+
+  const setOpt = (k, v) => setCfg((c) => ({ ...c, [k]: v }));
+
+  const runAll = async (useDemo = false) => {
+    setStatus({ state: 'busy', msg: 'Reading topology…', done: 0 });
+    setOutputs([]);
+    try {
+      if (!activeTest.structureFileData) throw new Error('Upload the simulation topology (.gro) in Experiment Setup → 3D Viewer mode first.');
+      const b64 = String(activeTest.structureFileData).split(',')[1] || '';
+      const text = new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
+      const topo = parseTopology(text);
+      if (!topo.box) throw new Error('The topology has no box vectors — a .gro with its final box line is required.');
+
+      const topoName = (activeTest.structureFileName || '').toLowerCase();
+      const topologyBlob = mdSSBlobFromDataUrl(activeTest.structureFileData);
+      const topologyExt = topoName.endsWith('.pdb') ? 'pdb' : 'gro';
+
+      const jobs = [];
+      if (!useDemo) {
+        const mainFile = localFileCache.get(activeTest.id)?.trajectory || null;
+        if (mainFile) jobs.push({ name: mainFile.name.replace(/\.(xtc|trr|dcd)$/i, ''), file: mainFile });
+        extraRuns.forEach((f) => jobs.push({ name: f.name.replace(/\.(xtc|trr|dcd)$/i, ''), file: f }));
+      }
+
+      const outs = [];
+      if (jobs.length === 0) {
+        const result = await computeSecondaryStructure(topo, demoFrames(topo, 40), cfg,
+          (p) => setStatus({ state: 'busy', msg: `Demo: frame ${p.done}`, done: p.done }));
+        outs.push({ name: 'demo', result });
+      } else {
+        for (const job of jobs) {
+          const src = await resolveFrameSource(job.file, {
+            topologyBlob, topologyExt, topologyBox: topo.box,
+            onStatus: (m) => setStatus((s) => ({ ...s, msg: m })),
+          });
+          if (!src) throw new Error(`"${job.file.name}": could not be opened (.xtc / .dcd need the topology uploaded; .trr works standalone).`);
+          const frames = src.frames || src;
+          const result = await computeSecondaryStructure(topo, frames, cfg,
+            (p) => setStatus({ state: 'busy', msg: `${job.name}: frame ${p.done}`, done: p.done }));
+          outs.push({ name: job.name, result });
+        }
+      }
+      setOutputs(outs);
+      setStatus({ state: 'done', msg: '', done: 0 });
+    } catch (e) {
+      setStatus({ state: 'error', msg: e.message, done: 0 });
+    }
+  };
+
+  /* ---- content-vs-time chart data ---- */
+  const contentData = useMemo(() => {
+    if (outputs.length === 0) return null;
+    const keys = cfg.chartMode === 'letters'
+      ? SS_LETTER_META.map((m) => m.k)
+      : ['alpha', 'beta', 'coil'];
+    const keyLabel = (k) => (k === 'alpha' ? 'α-helix' : k === 'beta' ? 'β-sheet' : k === 'coil' ? 'coil/other' : k);
+    const series = [];
+    outputs.forEach((o) => {
+      keys.forEach((k) => series.push({ key: outputs.length > 1 ? `${o.name} · ${keyLabel(k)}` : keyLabel(k), k }));
+    });
+    const rows = outputs[0].result.series.map((s, si) => {
+      const row = { x: s.x };
+      outputs.forEach((o) => {
+        const fr = o.result.series[si];
+        keys.forEach((k) => {
+          const sKey = outputs.length > 1 ? `${o.name} · ${keyLabel(k)}` : keyLabel(k);
+          row[sKey] = fr ? (k === 'alpha' ? fr.alpha : k === 'beta' ? fr.beta : k === 'coil' ? fr.coil : +((100 * fr.counts[k] / o.result.nRes).toFixed(2))) : null;
+        });
+      });
+      return row;
+    });
+    return { rows, series };
+  }, [outputs, cfg.chartMode]);
+
+  const contentColor = (sKey, i) => {
+    if (outputs.length > 1) return AWK_PALETTE[i % AWK_PALETTE.length];
+    if (sKey === 'α-helix') return SS_GROUP_COLORS.alpha;
+    if (sKey === 'β-sheet') return SS_GROUP_COLORS.beta;
+    if (sKey === 'coil/other') return SS_GROUP_COLORS.coil;
+    const letter = sKey.charAt(0);
+    return SS_COLORS[letter] || '#64748b';
+  };
+
+  /* ---- DSSP heatmap (first run) ---- */
+  const heat = outputs[0]?.result.heat || null;
+  useEffect(() => {
+    const cv = heatCanvasRef.current;
+    if (!cv || !heat) return;
+    cv.width = heat.samples.length;
+    cv.height = heat.nRes;
+    const c2 = cv.getContext('2d');
+    heat.samples.forEach((codes, x) => {
+      for (let y = 0; y < codes.length; y++) {
+        c2.fillStyle = SS_COLORS[SS_CODE_ORDER[codes[y]]];
+        c2.fillRect(x, y, 1, 1);
+      }
+    });
+  }, [heat]);
+
+  const exportCSV = () => {
+    if (!contentData) return;
+    const head = [`time (${outputs[0].result.xUnit})`, ...contentData.series.map((s) => `${s.key} (%)`)];
+    const body = contentData.rows.map((r) => [r.x, ...contentData.series.map((s) => r[s.key] ?? '')]);
+    const csv = [head, ...body].map((row) => row.join(',')).join('\n');
+    const url = URL.createObjectURL(new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = 'secondary_structure_dssp.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const inp = 'border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500';
+  const occRows = outputs[0]?.result.occupancy || [];
+  const occInterval = Math.max(0, Math.floor(occRows.length / 40));
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs text-rose-800">
+        Secondary structure along the trajectory — in-browser port of <span className="font-mono">gmx do_dssp</span> (Kabsch–Sander):
+        backbone H-bond energies (E ≤ −0.5 kcal/mol), helix/turn/bend/β-bridge assignment with DSSP priority
+        H &gt; B &gt; E &gt; G &gt; I &gt; T &gt; S &gt; C. Requires a protein topology (N/CA/C/O); H positions are reconstructed,
+        so it also works with trajectories saved without hydrogens.
+      </div>
+
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="text-xs font-bold text-slate-600">Content chart
+          <select value={cfg.chartMode} onChange={(e) => setOpt('chartMode', e.target.value)} className={`${inp} block mt-1 font-semibold`}>
+            <option value="grouped">α / β / coil</option>
+            <option value="letters">All DSSP letters</option>
+          </select>
+        </label>
+        <label className="text-xs font-bold text-slate-600">Δt between frames (ps, 0 = frame axis)
+          <input type="number" min="0" step="10" value={cfg.dtPs} onChange={(e) => setOpt('dtPs', Number(e.target.value) || 0)} className={`${inp} block mt-1 w-28`} />
+        </label>
+        <label className="text-xs font-bold text-slate-600">Stride
+          <input type="number" min="1" value={cfg.stride} onChange={(e) => setOpt('stride', Math.max(1, Number(e.target.value) || 1))} className={`${inp} block mt-1 w-16`} />
+        </label>
+        <label className="text-xs font-bold text-slate-600">Start frame
+          <input type="number" min="0" value={cfg.startFrame} onChange={(e) => setOpt('startFrame', Math.max(0, Number(e.target.value) || 0))} className={`${inp} block mt-1 w-20`} />
+        </label>
+        <label className="text-xs font-bold text-slate-600">Max frames (0=all)
+          <input type="number" min="0" value={cfg.maxFrames} onChange={(e) => setOpt('maxFrames', Math.max(0, Number(e.target.value) || 0))} className={`${inp} block mt-1 w-24`} />
+        </label>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <button onClick={() => runAll(false)} disabled={status.state === 'busy'}
+                className="bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white font-bold px-5 py-2 rounded-lg text-sm">
+          ▶ Compute DSSP
+        </button>
+        <button onClick={() => runAll(true)} disabled={status.state === 'busy'}
+                className="bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 font-bold px-4 py-2 rounded-lg text-xs">
+          🧪 Test pipeline (demo frames)
+        </button>
+        <label className="text-xs font-bold text-slate-600">Additional runs to overlay
+          <input type="file" multiple accept=".xtc,.trr,.dcd" className={`${inp} block mt-1`}
+                 onChange={(e) => setExtraRuns(Array.from(e.target.files || []))} />
+        </label>
+        {extraRuns.length > 0 && (
+          <span className="text-xs text-slate-500 font-mono">{extraRuns.map((f) => f.name).join(', ')}</span>
+        )}
+        {outputs.length > 0 && (
+          <button onClick={exportCSV} className="bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 font-bold px-4 py-2 rounded-lg text-xs">
+            📊 Export CSV
+          </button>
+        )}
+      </div>
+
+      {status.state === 'busy' && (
+        <div className="text-xs font-bold text-rose-700 animate-pulse">⏳ {status.msg}</div>
+      )}
+      {status.state === 'error' && (
+        <div className="bg-red-50 border border-red-300 text-red-700 rounded-lg p-3 text-xs font-semibold">⚠️ {status.msg}</div>
+      )}
+
+      {outputs.length > 0 && contentData && (
+        <div className="border border-slate-200 rounded-xl p-4 bg-white shadow-sm space-y-5">
+          <div className="text-xs text-slate-500 font-semibold">
+            {outputs.map((o) => o.name).join(' · ')} · {outputs[0].result.nFramesUsed} frames · {outputs[0].result.nRes} protein residues
+          </div>
+
+          <div>
+            <div className="text-sm font-bold text-slate-700 mb-1">Secondary structure content vs time (≙ gmx do_dssp summary)</div>
+            <ResponsiveContainer width="100%" height={320}>
+              <LineChart data={contentData.rows} margin={{ top: 8, right: 8, bottom: 30, left: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis dataKey="x" type="number" domain={['dataMin', 'dataMax']} tick={{ fontSize: 10 }}
+                       label={{ value: outputs[0].result.xUnit === 'ns' ? 'Time (ns)' : 'Frame', position: 'insideBottom', offset: -18, style: { fontSize: 11 } }} />
+                <YAxis tick={{ fontSize: 11 }} width={48} unit="%"
+                       label={{ value: 'Residues (%)', angle: -90, position: 'insideLeft', style: { fontSize: 12 } }} />
+                <Tooltip />
+                {contentData.series.map((s, i) => (
+                  <Line key={s.key} dataKey={s.key} stroke={contentColor(s.key, i)} strokeWidth={2}
+                        dot={false} connectNulls isAnimationActive={false} />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          {heat && (
+            <div>
+              <div className="text-sm font-bold text-slate-700 mb-1">DSSP timeline map (residue × frame)</div>
+              <div className="overflow-x-auto custom-scrollbar">
+                <canvas ref={heatCanvasRef} style={{ width: '100%', minWidth: 640, imageRendering: 'pixelated' }} />
+              </div>
+              <div className="flex flex-wrap items-center gap-3 mt-2 text-[10px] font-mono text-slate-600">
+                {SS_LETTER_META.map((m) => (
+                  <span key={m.k} className="flex items-center gap-1">
+                    <span className="inline-block w-3 h-3 rounded-sm border border-slate-300" style={{ background: SS_COLORS[m.k] }} />
+                    {m.label}
+                  </span>
+                ))}
+                <span className="text-slate-400">
+                  · x: every {heat.frameStride} frame(s) of {heat.totalFrames} · y: residue 1 → {heat.nRes}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {occRows.length > 0 && (
+            <div>
+              <div className="text-sm font-bold text-slate-700 mb-1">Per-residue occupancy ({outputs[0].name})</div>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={occRows} margin={{ top: 8, right: 8, bottom: 70, left: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="label" interval={occInterval} height={80}
+                         tick={{ fontSize: 8, angle: -90, textAnchor: 'end' }} />
+                  <YAxis tick={{ fontSize: 11 }} width={48} unit="%" domain={[0, 100]} />
+                  <Tooltip />
+                  <Bar dataKey="alpha" stackId="ss" fill={SS_GROUP_COLORS.alpha} name="α-helix" isAnimationActive={false} />
+                  <Bar dataKey="beta" stackId="ss" fill={SS_GROUP_COLORS.beta} name="β-sheet" isAnimationActive={false} />
+                  <Bar dataKey="other" stackId="ss" fill="#e5e7eb" name="coil/other" isAnimationActive={false} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+// ================= ALL =================
+
 // ================= ALL =================
 
 export const Setup = MDExperimentSetupSection;
@@ -2070,6 +2651,8 @@ export const Data = MDDataSection;
 export const Simulations = MDSimulationParamsSection;
 export const Analysis = MDAnalysisSection;
 export const Contacts = MDMembraneContactSection;
+export const SecondaryStructure = MDSecondaryStructureSection;
+export const Profiles = MDMembraneProfilesSection; 
 
 // ================= NOTEBOOK EXTRA =================
 export const NotebookExtra = ({ ctx, checkId }) => {
