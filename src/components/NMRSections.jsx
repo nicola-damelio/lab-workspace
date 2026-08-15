@@ -4069,8 +4069,19 @@ export const DataSection = ({ ctx }) => {
       const newLayers = [...(activeTest.parameterLayers || [])];
       let layer = newLayers.find(l => l.label === layerName);
       if (!layer) {
-          layer = { key: makeLayerId(), label: layerName, unit: importConfig.metric === 'T_s' ? 's' : (importConfig.metric === 'R_s' ? (table.relaxType === 'DOSY' ? 'm²/s' : 's⁻¹') : '') };
+          layer = {
+            key: makeLayerId(),
+            label: layerName,
+            unit: importConfig.metric === 'T_s' ? 's' : (importConfig.metric === 'R_s' ? (table.relaxType === 'DOSY' ? 'm²/s' : 's⁻¹') : ''),
+            // Store source so we can show a link in the column header
+            source: { testId: selectedTest.id, testName: selectedTest.name, tableId: table.id, metric: importConfig.metric }
+          };
           newLayers.push(layer);
+      } else {
+          // Update source on existing layer too
+          layer = { ...layer, source: { testId: selectedTest.id, testName: selectedTest.name, tableId: table.id, metric: importConfig.metric } };
+          const idx = newLayers.findIndex(l => l.key === layer.key);
+          if (idx >= 0) newLayers[idx] = layer;
       }
       
       const newValues = { ...(activeTest.nmrValues || {}) };
@@ -4081,33 +4092,62 @@ export const DataSection = ({ ctx }) => {
 
       tableFits.forEach(colFit => {
           if (!colFit.fit || !colFit.residue) return;
-          const colResLower = String(colFit.residue).toLowerCase().trim();
+          const colResRaw = String(colFit.residue).toLowerCase().trim();
           let matchedKey = null;
+
+          // Resolve target atom in both IUPAC and Greek-letter form.
+          // table.atom may be "HA" (IUPAC) while atomOptions store "Hα" (Greek).
+          const targetAtomRaw = (table.atom || 'HN');
+          const targetAtomLower = targetAtomRaw.toLowerCase();
+          // Greek alias: ATOM_ALIASES["HA"] = "Hα"
+          const targetAtomAlias = (ATOM_ALIASES[normAtomName(targetAtomRaw)] || targetAtomRaw).toLowerCase();
+
+          // Users may label columns as "R1-HA", "R1-Hα", "R1", "ARG1", "1", etc.
+          // Strip a trailing "-<atom>" suffix (in either notation) to get the residue part.
+          let colResLower = colResRaw;
+          const dashIdx = colResRaw.lastIndexOf('-');
+          if (dashIdx > 0) {
+              const afterDash = colResRaw.slice(dashIdx + 1);
+              if (afterDash === targetAtomLower || afterDash === targetAtomAlias) {
+                  colResLower = colResRaw.slice(0, dashIdx);
+              }
+          }
 
           for (const opt of d.atomOptions) {
               const parts = opt.key.split('-');
-              const rIdx = parts[0];
+              const rIdx = parseInt(parts[0], 10);
               const aName = parts.slice(1).join('-');
-              const rId = d.parsedSeq[rIdx]?.id?.toLowerCase() || '';
-              
-              if (colResLower === rId) {
-                  if (aName.toLowerCase() === (table.atom || 'HN').toLowerCase()) {
-                      matchedKey = opt.key; break;
-                  }
-              } else if (colResLower === aName.toLowerCase() && d.parsedSeq.length === 1) {
+              const aNameLower = aName.toLowerCase();
+              const res = d.parsedSeq[rIdx];
+              if (!res) continue;
+              const rId = res.id?.toLowerCase() || '';
+              // one-letter + number format, e.g. "r1" for Arg1
+              const rShort = `${res.char?.toLowerCase() || ''}${rIdx + 1}`;
+              // pure index number, e.g. "1" for first residue
+              const rNum = String(rIdx + 1);
+
+              // Match atom: accept both "hα" (Greek, stored in atomOptions) and "ha" (IUPAC, from table.atom)
+              const atomMatches = aNameLower === targetAtomLower || aNameLower === targetAtomAlias;
+
+              if (!atomMatches) continue;
+
+              if (colResLower === rId ||       // "arg1"
+                  colResLower === rShort ||     // "r1"
+                  colResLower === rNum) {        // "1"
                   matchedKey = opt.key; break;
-              } else if (colResLower === `${rId} ${aName.toLowerCase()}`) {
+              } else if (colResLower === `${rId} ${aNameLower}` ||
+                         colResLower === `${rShort} ${aNameLower}`) {
+                  matchedKey = opt.key; break;
+              } else if (aNameLower === colResLower && d.parsedSeq.length === 1) {
                   matchedKey = opt.key; break;
               }
           }
-          
+
           if (matchedKey) {
               let val = null;
-              
               if (importConfig.metric === 'R_s') val = colFit.fit.R_s ?? colFit.fit.R ?? colFit.fit.rate;
               else if (importConfig.metric === 'T_s') val = colFit.fit.T_s ?? colFit.fit.T ?? colFit.fit.time;
               else if (importConfig.metric === 'error') val = selectedTest.manualErrors?.[table.id]?.[colFit.residue] ?? colFit.fit.seR_s ?? colFit.fit.seR ?? colFit.fit.error;
-              
               if (val !== '' && val !== undefined && val !== null && !Number.isNaN(val)) {
                   let formattedVal = val;
                   if (typeof val === 'number') {
@@ -4119,14 +4159,10 @@ export const DataSection = ({ ctx }) => {
           }
       });
       
-      const linkHtml = `Imported ${layerName} from NMR Fitting test: ${selectedTest.name}`;
-      const currentComments = activeTest.comments || '';
-      const newComments = currentComments.includes(selectedTest.name) ? currentComments : currentComments + (currentComments ? '<br/>' : '') + linkHtml;
-      
-      updateActiveTest({ parameterLayers: newLayers, nmrValues: newValues, comments: newComments });
+      updateActiveTest({ parameterLayers: newLayers, nmrValues: newValues });
       if (!visibleLayers.includes(layer.key)) setVisibleLayers([...visibleLayers, layer.key]);
       setShowImport(false);
-      alert(`Imported ${count} values successfully.`);
+      alert(`Imported ${count} values from "${selectedTest.name}" successfully.`);
   };
 
   // Publication Table Handlers
@@ -4263,7 +4299,19 @@ export const DataSection = ({ ctx }) => {
                     if (!layer) return null;
                     return (
                         <th key={lk} className="px-3 py-2 font-bold border-b border-slate-200 text-center min-w-[120px] relative group">
-                            {layer.label} {layer.unit ? `(${layer.unit})` : ''}
+                            <div className="flex flex-col items-center gap-0.5">
+                              <span>{layer.label} {layer.unit ? `(${layer.unit})` : ''}</span>
+                              {layer.source && (
+                                <button
+                                  type="button"
+                                  title={`Imported from: ${layer.source.testName}`}
+                                  onClick={() => ctx.jumpToTest?.(layer.source.testId)}
+                                  className="text-[9px] font-bold text-blue-500 hover:text-blue-700 hover:underline flex items-center gap-0.5 leading-none"
+                                >
+                                  🔗 {layer.source.testName}
+                                </button>
+                              )}
+                            </div>
                             {!layer.builtin && (
                                 <button onClick={(e) => { e.preventDefault(); removeLayer(lk); }} className="absolute top-1.5 right-1.5 bg-red-100 text-red-500 hover:text-red-700 hover:bg-red-200 rounded-full w-4 h-4 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" title="Delete column">✕</button>
                             )}
@@ -4595,6 +4643,26 @@ export const DataSection = ({ ctx }) => {
 
 
 // ================= SECONDARY SHIFTS SECTION =================
+const SCS_INST_COLORS = ['#3b82f6','#8b5cf6','#f59e0b','#22c55e','#ef4444','#0ea5e9','#ec4899','#14b8a6'];
+
+const computeSCSRows = (estSeq, cs, focusIdx) =>
+  estSeq.map((res, idx) => {
+    const rc = RANDOM_COIL_DB[res.char] || {};
+    const getVal = (k, estVal) => { const m = parseManual(cs[`${idx}-${k}`]); return m !== null ? m : estVal; };
+    const HA = getVal('Hα', res.estShifts?.['Hα']);
+    const CA = getVal('Cα', res.estUniqueC?.['Cα']);
+    const CB = getVal('Cβ', res.estUniqueC?.['Cβ']);
+    // C' (carbonyl): estCP is seeded from RANDOM_COIL_DB.CO, so Δ = estCP - rc.CO
+    const CO = getVal("C'", res.estCP);
+    return {
+      label: res.id, idx,
+      HA: HA != null && rc.HA != null ? +(HA - rc.HA).toFixed(3) : null,
+      CA: CA != null && rc.CA != null ? +(CA - rc.CA).toFixed(3) : null,
+      CB: CB != null && rc.CB != null ? +(CB - rc.CB).toFixed(3) : null,
+      CO: CO != null && rc.CO != null ? +(CO - rc.CO).toFixed(3) : null,
+    };
+  }).filter(r => focusIdx === undefined || focusIdx === 'ALL' || r.idx === focusIdx);
+
 export const SecondaryShiftsSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useNmrDerived(activeTest, ctx);
@@ -4604,33 +4672,79 @@ export const SecondaryShiftsSection = ({ ctx }) => {
   };
   const setCfg = (patch) => updateActiveTest({ scsCfg: { ...scsCfg, ...patch } });
   const [showConfig, setShowConfig] = useState(false);
+  // Condition-comparison state
+  const [diffMode, setDiffMode] = useState(false);
+  const [refInstId, setRefInstId] = useState(null);
+
   if (d.moleculeType !== 'protein' || !d.parsedSeq.length) return (<div className="text-center py-8 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed">SCS requires a protein sequence.</div>);
+
+  const focusIdx = activeTest.focusIdx !== undefined ? activeTest.focusIdx : 'ALL';
+
+  // Active-instance rows (normal mode)
   const cs = d.shifts;
-  const rows = d.estSeq.map((res, idx) => {
-    const rc = RANDOM_COIL_DB[res.char] || {};
-    const getVal = (k, estVal) => {
-      const manual = parseManual(cs[`${idx}-${k}`]);
-      return manual !== null ? manual : estVal;
-    };
-    const HA = getVal('Hα', res.estShifts?.['Hα']);
-    const CA = getVal('Cα', res.estUniqueC?.['Cα']);
-    const CB = getVal('Cβ', res.estUniqueC?.['Cβ']);
-    const CO = getVal("C'", res.estCP);
-    return {
-      label: res.id, idx,
-      HA: HA != null && rc.HA != null ? HA - rc.HA : null,
-      CA: CA != null && rc.CA != null ? CA - rc.CA : null,
-      CB: CB != null && rc.CB != null ? CB - rc.CB : null,
-      CO: CO != null && rc.CO != null ? CO - rc.CO : null
-    };
-  }).filter((r) => activeTest.focusIdx === undefined || activeTest.focusIdx === 'ALL' || r.idx === activeTest.focusIdx);
-  const mk = (k) => rows.map((r, i) => ({ label: r.label, v: r[k], idx: i })).filter((x) => x.v !== null);
-  const SCSPlot = ({ title, data, color, cfg }) => {
+  const rows = computeSCSRows(d.estSeq, cs, focusIdx);
+  const mk = (k) => rows.map((r) => ({ label: r.label, v: r[k] })).filter(x => x.v !== null);
+
+  // Multi-instance helpers
+  const allInsts = d.instances || [];
+  const effectiveRefId = refInstId || (allInsts.length > 0 ? allInsts[0].id : null);
+  const refInst = allInsts.find(i => i.id === effectiveRefId);
+
+  // Build diff data for a single nucleus key
+  const mkDiff = (k) => {
+    if (!refInst) return [];
+    const refCs = refInst.values?.cs || {};
+    const refRows = computeSCSRows(d.estSeq, refCs, focusIdx);
+    const refMap = Object.fromEntries(refRows.map(r => [r.label, r[k]]));
+    return allInsts
+      .filter(i => i.id !== effectiveRefId)
+      .map(inst => ({
+        name: inst.name,
+        color: SCS_INST_COLORS[allInsts.findIndex(x => x.id === inst.id) % SCS_INST_COLORS.length],
+        data: computeSCSRows(d.estSeq, inst.values?.cs || {}, focusIdx)
+          .map(r => ({ label: r.label, v: r[k] != null && refMap[r.label] != null ? +(r[k] - refMap[r.label]).toFixed(3) : null }))
+          .filter(x => x.v !== null)
+      }))
+      .filter(s => s.data.length > 0);
+  };
+
+  const SCSPlot = ({ title, data, color, cfg }) => (
+    <div className="bg-white p-4 border border-slate-200 rounded-lg shadow-sm">
+      <h4 className="font-bold text-xs text-slate-700 mb-2 text-center">{title}</h4>
+      <ResponsiveContainer width="100%" aspect={cfg.aspect}>
+        <BarChart data={data} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
+          <CartesianGrid strokeDasharray="3 3" vertical={false} />
+          <XAxis dataKey="label" tick={{ fontSize: cfg.fontSize }} />
+          <YAxis tick={{ fontSize: cfg.fontSize }} />
+          <Tooltip />
+          {cfg.showHLine && <ReferenceLine y={cfg.hLineVal} stroke="red" strokeDasharray="3 3" />}
+          {cfg.showHLine && <ReferenceLine y={-cfg.hLineVal} stroke="red" strokeDasharray="3 3" />}
+          <ReferenceLine y={0} stroke="#000" />
+          <Bar dataKey="v">
+            {data.map((entry, index) => (
+              <Cell key={`cell-${index}`} fill={entry.v < 0 ? cfg.negColor : color} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+
+  // Diff plot: overlaid bar series from multiple instances
+  const DiffPlot = ({ title, seriesList, cfg }) => {
+    if (!seriesList.length) return <div className="bg-slate-50 border border-dashed border-slate-300 rounded-lg p-4 text-center text-xs text-slate-400">No comparison data</div>;
+    // Merge all residue labels
+    const allLabels = [...new Set(seriesList.flatMap(s => s.data.map(p => p.label)))];
+    const merged = allLabels.map(label => {
+      const pt = { label };
+      seriesList.forEach(s => { const d2 = s.data.find(p => p.label === label); pt[s.name] = d2?.v ?? null; });
+      return pt;
+    });
     return (
       <div className="bg-white p-4 border border-slate-200 rounded-lg shadow-sm">
         <h4 className="font-bold text-xs text-slate-700 mb-2 text-center">{title}</h4>
         <ResponsiveContainer width="100%" aspect={cfg.aspect}>
-          <BarChart data={data} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
+          <BarChart data={merged} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey="label" tick={{ fontSize: cfg.fontSize }} />
             <YAxis tick={{ fontSize: cfg.fontSize }} />
@@ -4638,21 +4752,39 @@ export const SecondaryShiftsSection = ({ ctx }) => {
             {cfg.showHLine && <ReferenceLine y={cfg.hLineVal} stroke="red" strokeDasharray="3 3" />}
             {cfg.showHLine && <ReferenceLine y={-cfg.hLineVal} stroke="red" strokeDasharray="3 3" />}
             <ReferenceLine y={0} stroke="#000" />
-            <Bar dataKey="v">
-              {data.map((entry, index) => (
-                <Cell key={`cell-${index}`} fill={entry.v < 0 ? cfg.negColor : color} />
-              ))}
-            </Bar>
+            {seriesList.map((s) => (
+              <Bar key={s.name} dataKey={s.name} fill={s.color} />
+            ))}
+            <Legend wrapperStyle={{ fontSize: cfg.fontSize }} />
           </BarChart>
         </ResponsiveContainer>
       </div>
     );
   };
+
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-lg p-2 w-fit">
-        <button onClick={() => setShowConfig(!showConfig)} className="text-xs bg-white border border-slate-300 px-3 py-1.5 rounded shadow-sm font-bold text-slate-700 hover:bg-slate-100">⚙️ Customize SCS Graphs</button>
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center gap-3 bg-slate-50 border border-slate-200 rounded-lg p-2">
+        <button onClick={() => setShowConfig(!showConfig)} className="text-xs bg-white border border-slate-300 px-3 py-1.5 rounded shadow-sm font-bold text-slate-700 hover:bg-slate-100">⚙️ Customize</button>
+        {allInsts.length > 1 && (
+          <>
+            <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600 cursor-pointer">
+              <input type="checkbox" checked={diffMode} onChange={e => setDiffMode(e.target.checked)} className="accent-purple-600 w-3.5 h-3.5" />
+              Δ Condition comparison
+            </label>
+            {diffMode && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-bold text-slate-500 uppercase">Reference:</span>
+                <select value={effectiveRefId || ''} onChange={e => setRefInstId(e.target.value)} className="border border-slate-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-purple-500">
+                  {allInsts.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+                </select>
+              </div>
+            )}
+          </>
+        )}
       </div>
+
       {showConfig && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-white p-4 rounded-xl border border-slate-300 shadow-sm">
           <NumField label="Font size" value={scsCfg.fontSize} onChange={(v) => setCfg({ fontSize: v || 11 })} />
@@ -4672,12 +4804,27 @@ export const SecondaryShiftsSection = ({ ctx }) => {
           ))}
         </div>
       )}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <SCSPlot title="ΔHα (HA)" data={mk('HA')} color={scsCfg.barColorHA} cfg={{ ...scsCfg, barColor: scsCfg.barColorHA }} />
-        <SCSPlot title="ΔCα (CA)" data={mk('CA')} color={scsCfg.barColorCA} cfg={{ ...scsCfg, barColor: scsCfg.barColorCA }} />
-        <SCSPlot title="ΔCβ (CB)" data={mk('CB')} color={scsCfg.barColorCB} cfg={{ ...scsCfg, barColor: scsCfg.barColorCB }} />
-        <SCSPlot title="ΔC′ (CO)" data={mk('CO')} color={scsCfg.barColorCO} cfg={{ ...scsCfg, barColor: scsCfg.barColorCO }} />
-      </div>
+
+      {diffMode && allInsts.length > 1 ? (
+        /* ---- DIFFERENCE MODE ---- */
+        <div className="flex flex-col gap-2">
+          <p className="text-[11px] text-slate-500 italic">Showing Δδ (condition − <b>{refInst?.name || 'reference'}</b>) for each non-reference instance.</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <DiffPlot title="ΔΔHα" seriesList={mkDiff('HA')} cfg={scsCfg} />
+            <DiffPlot title="ΔΔCα" seriesList={mkDiff('CA')} cfg={scsCfg} />
+            <DiffPlot title="ΔΔCβ" seriesList={mkDiff('CB')} cfg={scsCfg} />
+            <DiffPlot title="ΔΔC′" seriesList={mkDiff('CO')} cfg={scsCfg} />
+          </div>
+        </div>
+      ) : (
+        /* ---- NORMAL MODE ---- */
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <SCSPlot title="ΔHα (HA)" data={mk('HA')} color={scsCfg.barColorHA} cfg={{ ...scsCfg }} />
+          <SCSPlot title="ΔCα (CA)" data={mk('CA')} color={scsCfg.barColorCA} cfg={{ ...scsCfg }} />
+          <SCSPlot title="ΔCβ (CB)" data={mk('CB')} color={scsCfg.barColorCB} cfg={{ ...scsCfg }} />
+          <SCSPlot title="ΔC′ (CO)" data={mk('CO')} color={scsCfg.barColorCO} cfg={{ ...scsCfg }} />
+        </div>
+      )}
     </div>
   );
 };

@@ -80,94 +80,69 @@ const normalizeStructureSource = (raw) => {
   const value = (raw || '').trim();
   if (!value) return null;
 
+  // Google Drive link detection
+  const driveMatch = value.match(/drive\.google\.com\/file\/d\/([^/?]+)/) || value.match(/drive\.google\.com\/(?:open|uc)[^#]*[?&]id=([^&#]+)/);
+  if (driveMatch) {
+    const id = driveMatch[1];
+    // Guess extension from the URL if present, otherwise default to 'pdb'
+    const path = value.split(/[?#]/)[0];
+    let ext = path.includes('.') ? path.split('.').pop().toLowerCase() : 'pdb';
+    if (!['pdb', 'cif', 'mmcif', 'bcif', 'mol2', 'sdf'].includes(ext)) {
+        ext = 'pdb';
+    }
+    
+    return {
+      url: `https://drive.google.com/uc?export=download&id=${id}`,
+      params: { ext: ext === 'mmcif' ? 'cif' : ext }
+    };
+  }
+
   // Direct URL: http, https, blob, data
   if (/^(https?:|blob:|data:)/i.test(value)) {
     const path = value.split(/[?#]/)[0];
     const ext = path.includes('.') ? path.split('.').pop().toLowerCase() : '';
 
-    if (ext === 'pdb' || ext === 'ent') {
-      return { url: value, params: { ext: 'pdb' } };
-    }
+    if (ext === 'pdb' || ext === 'ent') return { url: value, params: { ext: 'pdb' } };
+    if (ext === 'cif' || ext === 'mmcif') return { url: value, params: { ext: 'cif' } };
+    if (ext === 'bcif') return { url: value, params: { ext: 'bcif' } };
+    if (ext === 'mol2') return { url: value, params: { ext: 'mol2' } };
+    if (ext === 'sdf') return { url: value, params: { ext: 'sdf' } };
 
-    if (ext === 'cif' || ext === 'mmcif') {
-      return { url: value, params: { ext: 'cif' } };
-    }
-
-    if (ext === 'bcif') {
-      return { url: value, params: { ext: 'bcif' } };
-    }
-
-    if (ext === 'mol2') {
-      return { url: value, params: { ext: 'mol2' } };
-    }
-
-    if (ext === 'sdf') {
-      return { url: value, params: { ext: 'sdf' } };
-    }
-
-    // If the URL has no obvious extension, guess the format.
-    const guessed = /bcif/i.test(value)
-      ? 'bcif'
-      : /cif/i.test(value)
-        ? 'cif'
-        : 'pdb';
-
+    const guessed = /bcif/i.test(value) ? 'bcif' : /cif/i.test(value) ? 'cif' : 'pdb';
     return { url: value, params: { ext: guessed } };
   }
 
   // Already an RCSB-style URI
-  if (/^rcsb:/i.test(value)) {
-    return { url: value };
-  }
+  if (/^rcsb:/i.test(value)) return { url: value };
 
   // Plain 4-character PDB ID
   if (/^[0-9a-z]{4}$/i.test(value)) {
     const id = value.toUpperCase();
-
-    return {
-      url: `https://files.rcsb.org/download/${id}.cif`,
-      params: { ext: 'cif' },
-    };
+    return { url: `https://files.rcsb.org/download/${id}.cif`, params: { ext: 'cif' } };
   }
 
-  // Fallback: assume it is already a loadable path/URL
   return { url: value };
 };
 
 const getCarbonName = (molType, char, atom) => {
   if (!atom) return null;
   if (
-    atom.startsWith('HN') ||
-    atom.startsWith('NH') ||
-    atom.startsWith('OH') ||
-    atom.startsWith('NHAc') ||
-    atom.startsWith('Ac') ||
-    atom.includes('NH3')
+    atom.startsWith('HN') || atom.startsWith('NH') || atom.startsWith('OH') ||
+    atom.startsWith('NHAc') || atom.startsWith('Ac') || atom.includes('NH3')
   ) {
     return null;
   }
   if (molType === 'organic') {
-    // Organic protons are named H{parentHeavyRank}[a..h]; the attached heavy atom
-    // is simply that rank without the stereochemical suffix (H5a -> C5).
     return atom.replace('H', 'C').replace(/[a-z]+$/, '');
   }
   if (molType === 'protein') {
     if (atom === 'Hε' && char === 'R') return null;
     if (char === 'W' && atom === 'Hδ1') return null;
-    if (atom.includes('CH3')) {
-      return atom.replace('H', 'C').replace('(CH3)', '');
-    }
+    if (atom.includes('CH3')) return atom.replace('H', 'C').replace('(CH3)', '');
     const cName = atom.replace('H', 'C').replace(/\d+$/, '');
-    if (['V', 'I', 'T'].includes(char) && atom.includes('γ')) {
-      return atom.replace('H', 'C');
-    }
-    if (['L', 'I'].includes(char) && atom.includes('δ')) {
-      return atom.replace('H', 'C');
-    }
-    if (
-      ['F', 'Y', 'W', 'H'].includes(char) &&
-      (atom.includes('δ') || atom.includes('ε') || atom.includes('ζ') || atom.includes('η'))
-    ) {
+    if (['V', 'I', 'T'].includes(char) && atom.includes('γ')) return atom.replace('H', 'C');
+    if (['L', 'I'].includes(char) && atom.includes('δ')) return atom.replace('H', 'C');
+    if (['F', 'Y', 'W', 'H'].includes(char) && (atom.includes('δ') || atom.includes('ε') || atom.includes('ζ') || atom.includes('η'))) {
       return atom.replace('H', 'C');
     }
     return cName;
@@ -177,44 +152,26 @@ const getCarbonName = (molType, char, atom) => {
 
 const buildKeys = (ri, tokens, molType, char) => {
   const set = new Set();
-
   (tokens || []).forEach((tok) => {
     const variants = new Set([tok]);
-
     if (/\d$/.test(tok)) {
       [1, 2].forEach((n) => variants.add(tok + n));
-
       const stripped = tok.replace(/\d+$/, '');
-      if (stripped !== tok && stripped.length > 1) {
-        variants.add(stripped);
-      }
+      if (stripped !== tok && stripped.length > 1) variants.add(stripped);
     }
-
     variants.forEach((v) => {
       set.add(`${ri}-${v}`);
-
       if (v.startsWith('H')) {
         const c = getCarbonName(molType, char, v);
         if (c) set.add(`${ri}-${c}`);
       }
     });
   });
-
   return [...set];
 };
 
+const NUCLEIC_NMR_ALIASES = { "HO2'": "OH2'", H71: 'H7(CH3)', H72: 'H7(CH3)', H73: 'H7(CH3)' };
 
-
-// Nucleic-acid PDB->NMR aliases: the protein PDB_TO_NMR table must NOT be applied to
-// DNA/RNA; all other nucleic names match the NMR database verbatim except that the
-// database carries a trailing space ("H1' "), so both key variants are emitted --
-// this is what makes clicking atoms in the 3D viewer select the table/2D entries.
-const NUCLEIC_NMR_ALIASES = {
-  "HO2'": "OH2'",
-  H71: 'H7(CH3)',
-  H72: 'H7(CH3)',
-  H73: 'H7(CH3)',
-};
 const mapPdbAtomToNmrKeys = (atomname, resno, parsedSeq, moleculeType) => {
   const ri = resno - 1;
   if (!parsedSeq || ri < 0 || ri >= parsedSeq.length) return null;
@@ -227,36 +184,23 @@ const mapPdbAtomToNmrKeys = (atomname, resno, parsedSeq, moleculeType) => {
   } else {
     nmrAtom = PDB_TO_NMR[upper];
     if (!nmrAtom) {
-      if (upper === 'N') {
-        nmrAtom = 'N';
-      } else if (upper === 'CA') {
-        nmrAtom = 'Cα';
-      } else if (upper === 'C') {
-        nmrAtom = "C'";
-      } else if (upper === 'CB') {
-        nmrAtom = 'Cβ';
-      } else if (upper === 'O') {
-        nmrAtom = 'O';
-      } else {
+      if (upper === 'N') nmrAtom = 'N';
+      else if (upper === 'CA') nmrAtom = 'Cα';
+      else if (upper === 'C') nmrAtom = "C'";
+      else if (upper === 'CB') nmrAtom = 'Cβ';
+      else if (upper === 'O') nmrAtom = 'O';
+      else {
         const match = upper.match(/^([CNO])([ABGDEZH])(\d*)$/);
         nmrAtom = match ? `${match[1]}${GREEK_MAP[match[2]]}${match[3]}` : upper;
       }
     }
   }
-  // Nucleic NMR database keys carry a trailing space ("H1' "); emit BOTH the plain
-  // and the trailing-space variant so 3D clicks highlight the table/2D entries.
   const tokens = [nmrAtom];
   if (moleculeType === 'dna' || moleculeType === 'rna') tokens.push(`${nmrAtom} `);
   const keys = buildKeys(ri, tokens, moleculeType, res.char);
-  return {
-    ri,
-    keys,
-    label: `${res.id || res.char}${resno} ${nmrAtom}`,
-    nmrAtom,
-  };
+  return { ri, keys, label: `${res.id || res.char}${resno} ${nmrAtom}`, nmrAtom };
 };
-// Unified click/hover dispatcher: organics are named from 3D bond connectivity (no residue
-// numbering involved), everything else keeps using the existing PDB-atom-name -> NMR-name mapping.
+
 const mapAtomToNmrKeys = (atom, parsedSeq, moleculeType) => {
   if (moleculeType === 'organic') {
     const nmrAtom = getOrganicAtomName(atom);
@@ -266,17 +210,6 @@ const mapAtomToNmrKeys = (atom, parsedSeq, moleculeType) => {
   return mapPdbAtomToNmrKeys(atom.atomname, atom.resno, parsedSeq, moleculeType);
 };
 
-// ---- Canonical (Morgan-style) graph ranks for organic molecules ----
-// Both the 2D depiction (RDKit molblock) and the 3D structure (an independently
-// fetched PDB/SDF) name their heavy atoms "{Element}{rank}". If "rank" were the
-// raw file atom order, the two files would disagree (they are produced by
-// different toolkits with different atom orderings) and 2D<->3D<->table atom
-// selection could never correlate. Instead the rank is computed from the
-// molecular graph itself (element + heavy-atom neighbors, iterated to a fixed
-// point = a simple Morgan algorithm), so the SAME physical atom gets the SAME
-// name in every representation of the same molecule. Symmetry-equivalent atoms
-// can still swap ranks between files, but those are chemically equivalent in
-// NMR anyway (identical shifts), so that is harmless.
 const computeMorganRanks = (elements, bonds) => {
   const n = elements.length;
   const isHeavy = elements.map((e) => e !== 'H');
@@ -344,24 +277,11 @@ const getOrganicNaming = (structure) => {
   return names;
 };
 
-// Names an organic atom using the SAME canonical scheme the 2D SMILES viewer uses
-// (deriveOrganicAtomNaming in NMRSections.jsx): heavy atoms "{Element}{morganRank}",
-// hydrogens "H{parentMorganRank}[a/b/c]". Ranks come from the molecular graph, not
-// from file atom order, so 2D and 3D agree on which physical atom is which.
 const getOrganicAtomName = (atom) => {
   const names = getOrganicNaming(atom.structure);
   return names[atom.index] || `X${atom.index}`;
 };
 
-// Unified click/hover dispatcher: organics are named from 3D bond connectivity (no residue
-// numbering involved), everything else keeps using the existing PDB-atom-name -> NMR-name mapping.
-// NGL isn't installed as an npm module in this app (there's no bundler-resolvable 'ngl' package,
-// hence "Module not found: 'ngl'" from a dynamic import), and no <script> tag for it exists either
-// (window.NGL is unavailable). So it's loaded here on demand, directly from a CDN, the same way
-// NGL's own docs recommend for plain script-tag embedding: the SELF-CONTAINED dist/ngl.js build
-// (NOT dist/ngl.umd.js, which expects three.js/chroma-js/signals/sprintf-js as separate externals
-// and would silently break without them). Module-level + a shared promise so multiple viewer
-// instances mounting at once only ever trigger one script load.
 let _nglLoadPromise = null;
 const NGL_CDN_URLS = [
   'https://unpkg.com/ngl@2.4.0/dist/ngl.js',
@@ -383,24 +303,47 @@ const loadNGLFromUrl = (url) => new Promise((resolve, reject) => {
 const ensureNGL = () => {
   if (window.NGL) return Promise.resolve(window.NGL);
   if (_nglLoadPromise) return _nglLoadPromise;
-
   _nglLoadPromise = (async () => {
     let lastErr = null;
     for (const url of NGL_CDN_URLS) {
-      try {
-        return await loadNGLFromUrl(url);
-      } catch (e) {
-        lastErr = e;
-      }
+      try { return await loadNGLFromUrl(url); } catch (e) { lastErr = e; }
     }
-    _nglLoadPromise = null; // allow a future retry rather than caching a permanent failure
+    _nglLoadPromise = null;
     throw new Error(`Could not load the NGL viewer library from any CDN. ${lastErr ? lastErr.message : ''}`);
   })();
-
   return _nglLoadPromise;
 };
 
+// ================= TRAJECTORY HELPERS =================
+const getTrajectoryObject = (component) => {
+  if (!component) return null;
+  if (Array.isArray(component.trajList) && component.trajList.length > 0) {
+    const tComp = component.trajList[component.trajList.length - 1];
+    return tComp.trajectory || tComp;
+  }
+  if (Array.isArray(component.trajectories) && component.trajectories.length > 0) {
+    return component.trajectories[component.trajectories.length - 1];
+  }
+  return null;
+};
 
+const getNumFrames = (traj) => {
+  if (!traj) return 0;
+  return (
+    traj.frameCount || traj.numframes || traj.nFrames ||
+    (traj.trajectory && (traj.trajectory.frameCount || traj.trajectory.numframes || traj.trajectory.nFrames)) ||
+    (traj.trajectoryPlayer && (traj.trajectoryPlayer.frameCount || traj.trajectoryPlayer.numframes)) ||
+    0
+  );
+};
+
+const setFrameSafe = (traj, frame) => {
+  if (!traj) return;
+  try {
+    if (typeof traj.setFrame === 'function') traj.setFrame(frame);
+    else if (traj.trajectory && typeof traj.trajectory.setFrame === 'function') traj.trajectory.setFrame(frame);
+  } catch (e) {}
+};
 
 // ============================================================================
 // MAIN COMPONENT
@@ -411,6 +354,8 @@ const NMRMoleculeViewer = ({
   structureTextExt,
   externalLoading = false,
   externalError = null,
+  trajectorySrc,
+  trajectoryFormat = 'xtc',
   onAtomClick,
   selectedKeys,
   manualKeys = [],
@@ -421,12 +366,13 @@ const NMRMoleculeViewer = ({
 }) => {
   const containerRef = useRef(null);
   const stageRef = useRef(null);
-  const stageReadyRef = useRef(null); // Promise<Stage|null> -- resolves once the ONE persistent Stage for this component's lifetime is created
+  const stageReadyRef = useRef(null);
   const componentRef = useRef(null);
   const highlightCompRef = useRef(null);
   const manualHighlightCompRef = useRef(null);
   const labelCompRef = useRef(null);
   const sidechainCompRef = useRef(null);
+
   const [file, setFile] = useState(null);
   const [pdbId, setPdbId] = useState('');
   const [loadRequest, setLoadRequest] = useState(null);
@@ -435,6 +381,18 @@ const NMRMoleculeViewer = ({
   const [hoverInfo, setHoverInfo] = useState(null);
   const [showLabels, setShowLabels] = useState(false);
   const [sidechainStyle, setSidechainStyle] = useState('licorice');
+
+  // ---- Trajectory State ----
+  const [trajFile, setTrajFile] = useState(null);
+  const [trajStatus, setTrajStatus] = useState('none');
+  const [trajError, setTrajError] = useState('');
+  const [numFrames, setNumFrames] = useState(0);
+  const [currentFrame, setCurrentFrame] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(10);
+  const trajRef = useRef(null);
+  const blobUrlsRef = useRef([]);
+
   const parsedSeqRef = useRef(parsedSeq);
   const moleculeTypeRef = useRef(moleculeType);
   const onAtomClickRef = useRef(onAtomClick);
@@ -447,20 +405,12 @@ const NMRMoleculeViewer = ({
     residueOffsetRef.current = residueOffset;
   }, [parsedSeq, moleculeType, onAtomClick, residueOffset]);
 
-  // ---- Create the NGL Stage ONCE for this component's whole lifetime ----
-  // Previously a brand new Stage (and WebGL context/renderer) was created on EVERY structure
-  // load and disposed on every re-load, which is what caused loading a second/different
-  // structure to visually "stick" on whatever loaded first: repeatedly tearing down and
-  // recreating WebGL contexts in quick succession is unreliable, and wasteful even when it
-  // works. Now the Stage is created once on mount and reused for every subsequent load --
-  // switching structures just clears the existing Stage's components and loads into it fresh.
   useEffect(() => {
     let cancelled = false;
-    console.log('[NMRMoleculeViewer] mount effect: waiting for NGL...');
     stageReadyRef.current = (async () => {
       const NGL = await Promise.race([
         ensureNGL(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timed out loading the NGL viewer library (20s). Check your network connection / that unpkg.com and cdn.jsdelivr.net are reachable.')), 20000)),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timed out loading the NGL viewer library (20s).')), 20000)),
       ]);
       if (cancelled || !containerRef.current) return null;
       const stage = new NGL.Stage(containerRef.current, { backgroundColor: '#f8fafc' });
@@ -485,12 +435,12 @@ const NMRMoleculeViewer = ({
       return stage;
     })().catch((err) => {
       if (!cancelled) {
-        console.error('NMRMoleculeViewer init error:', err);
         setErrorMsg(err?.message || 'Failed to initialize the NGL viewer.');
         setStatus('error');
       }
       return null;
     });
+
     return () => {
       cancelled = true;
       stageReadyRef.current = null;
@@ -498,21 +448,11 @@ const NMRMoleculeViewer = ({
         stageRef.current.dispose();
         stageRef.current = null;
       }
-      componentRef.current = null;
-      highlightCompRef.current = null;
-      manualHighlightCompRef.current = null;
-      labelCompRef.current = null;
-      sidechainCompRef.current = null;
+      blobUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
+      blobUrlsRef.current = [];
     };
-  }, []); // mount/unmount only
+  }, []);
 
-  // ---- Auto-load from parent-provided src/structureText ----
-  // This viewer previously only ever loaded structures the user picked by hand (file picker or
-  // the "PDB ID or URL" field below); a `src`/`structureText` prop from the parent was silently
-  // ignored, so nothing generated or fetched upstream (e.g. an organic SMILES-derived PDB, or a
-  // generated protein/DNA/RNA backbone) ever actually appeared here. `manualOverride` makes sure
-  // an explicit manual load (file picker or the PDB ID field) still wins over auto-loading, but
-  // resets whenever the parent hands us a genuinely new src/structureText (a new molecule/test).
   const [manualOverride, setManualOverride] = useState(false);
   const lastLoadedTextRef = useRef(null);
   const lastSeenSrcRef = useRef(undefined);
@@ -550,38 +490,33 @@ const NMRMoleculeViewer = ({
     }
   }, [src, structureText, manualOverride]);
 
-  // Reflect the parent's own async fetch/generation progress (e.g. resolving an organic SMILES
-  // to a 3D structure) before any loadRequest exists yet, using the same loading/error UI.
   useEffect(() => {
     if (manualOverride || structureText || loadRequest) return;
     if (externalLoading) { setStatus('loading'); setErrorMsg(''); }
     else if (externalError) { setStatus('error'); setErrorMsg(externalError); }
   }, [externalLoading, externalError, structureText, loadRequest, manualOverride]);
 
-  // Main structure loading effect -- reuses the ONE persistent Stage created in the mount effect
-  // above; never creates or disposes a Stage/WebGL context itself.
+  // Main structure load
   useEffect(() => {
     if (!loadRequest || (!loadRequest.file && !loadRequest.url && !loadRequest.text)) return;
-
     let cancelled = false;
 
+    // Reset structure and trajectory state when loading a new structure
     setStatus('loading');
     setErrorMsg('');
+    setTrajFile(null);
+    setTrajStatus('none');
+    setNumFrames(0);
+    setCurrentFrame(0);
+    setPlaying(false);
+    setTrajError('');
+    trajRef.current = null;
 
     const run = async () => {
       try {
-        console.log('[NMRMoleculeViewer] waiting for stage...');
         const stage = await stageReadyRef.current;
-        if (cancelled || !stage) {
-          console.log('[NMRMoleculeViewer] no stage available (cancelled=%s, stage=%s) -- aborting load', cancelled, !!stage);
-          return;
-        }
-        console.log('[NMRMoleculeViewer] stage ready, clearing previous components');
+        if (cancelled || !stage) return;
 
-        // Clear out whatever was loaded before (e.g. a previously generated linear/backbone
-        // structure) on the SAME Stage, rather than tearing down and rebuilding the whole
-        // WebGL context -- this is what was causing a second/different structure to fail to
-        // replace the first one on screen.
         stage.removeAllComponents();
         componentRef.current = null;
         highlightCompRef.current = null;
@@ -590,58 +525,28 @@ const NMRMoleculeViewer = ({
         sidechainCompRef.current = null;
 
         let component;
-
         if (loadRequest.file) {
-          console.log('[NMRMoleculeViewer] loading local file:', loadRequest.file.name);
           component = await stage.loadFile(loadRequest.file);
         } else if (loadRequest.text) {
-          console.log('[NMRMoleculeViewer] loading in-memory text, ext:', loadRequest.ext);
-          // In-memory structure text (locally generated protein/DNA/RNA backbone, or an
-          // organic PDB/SDF fetched+validated by the parent) -- loaded as a Blob, no network
-          // request happens here at all.
           const blob = new Blob([loadRequest.text], { type: 'text/plain' });
           component = await stage.loadFile(blob, { ext: loadRequest.ext || 'pdb' });
         } else {
           const target = normalizeStructureSource(loadRequest.url);
-          console.log('[NMRMoleculeViewer] loading URL/ID:', loadRequest.url, '-> normalized:', target);
-
-          if (!target) {
-            throw new Error('No structure URL or PDB ID provided');
-          }
+          if (!target) throw new Error('No structure URL or PDB ID provided');
 
           try {
-            component = target.params
-              ? await stage.loadFile(target.url, target.params)
-              : await stage.loadFile(target.url);
-            console.log('[NMRMoleculeViewer] primary load succeeded:', target.url);
+            component = target.params ? await stage.loadFile(target.url, target.params) : await stage.loadFile(target.url);
           } catch (firstErr) {
-            console.log('[NMRMoleculeViewer] primary load FAILED for', target.url, '-> message:', firstErr && firstErr.message, 'name:', firstErr && firstErr.name);
             if (cancelled) throw firstErr;
-
-            // Fallback for a plain PDB ID OR a URL we built around one (e.g.
-            // "https://models.rcsb.org/1UBQ.mmtf" 404ing) -- pull the 4-character ID out of
-            // either shape instead of only matching a bare ID, otherwise this fallback silently
-            // never triggers for the exact case (our own generated mmtf URL) it exists for.
             const raw = (loadRequest.url || '').trim();
             const idMatch = raw.match(/([0-9][A-Za-z0-9]{3})(?:\.[A-Za-z0-9]+)?\/?$/);
-            console.log('[NMRMoleculeViewer] id extraction from', JSON.stringify(raw), '-> match:', idMatch && idMatch[1]);
-
             if (idMatch) {
               const id = idMatch[1].toUpperCase();
-
               try {
-                console.log('[NMRMoleculeViewer] fallback attempt: files.rcsb.org/download/' + id + '.pdb');
-                component = await stage.loadFile(
-                  `https://files.rcsb.org/download/${id}.pdb`,
-                  { ext: 'pdb' }
-                );
-                console.log('[NMRMoleculeViewer] fallback (files.rcsb.org) succeeded');
+                component = await stage.loadFile(`https://files.rcsb.org/download/${id}.pdb`, { ext: 'pdb' });
               } catch (secondErr) {
-                console.log('[NMRMoleculeViewer] fallback (files.rcsb.org) FAILED -> message:', secondErr && secondErr.message);
                 if (cancelled) throw secondErr;
-                console.log('[NMRMoleculeViewer] fallback attempt 2: rcsb://' + id);
                 component = await stage.loadFile(`rcsb://${id}`);
-                console.log('[NMRMoleculeViewer] fallback (rcsb://) succeeded');
               }
             } else {
               throw firstErr;
@@ -650,136 +555,173 @@ const NMRMoleculeViewer = ({
         }
 
         if (cancelled) return;
-        console.log('[NMRMoleculeViewer] component loaded, atomCount so far:', component.structure ? component.structure.atomCount : 'N/A');
-
         componentRef.current = component;
 
-       const isOrganicLike = ['organic', 'lipid', 'sugar'].includes(moleculeTypeRef.current);
-     const isNucleic = moleculeTypeRef.current === 'dna' || moleculeTypeRef.current === 'rna';
-     if (isOrganicLike) {
-       try {
-         component.addRepresentation('ball+stick', {
-           colorScheme: 'element',
-           multipleBond: true,
-           aspectRatio: 1.3,
-         });
-       } catch (e) {
-         console.warn('Ball+stick representation failed', e);
-       }
-     } else if (isNucleic) {
-       console.log('[patch] nucleic representation active');
-       try {
-         component.addRepresentation('ball+stick', {
-           sele: 'all',
-           colorScheme: 'element',
-           multipleBond: true,
-           aspectRatio: 1.1,
-         });
-       } catch (e) {
-         console.warn('Nucleic ball+stick representation failed', e);
-       }
-     } else {
-       try {
-         component.addRepresentation('cartoon', {
-           color: 'residueindex',
-           quality: 'high',
-         });
-       } catch (e) {
-         console.warn('Cartoon representation failed', e);
-       }
-       try {
-         component.addRepresentation('ball+stick', {
-           sele: 'hetero and not water',
-           aspectRatio: 1.1,
-         });
-       } catch (e) {
-         console.warn('Ball+stick representation failed', e);
-       }
-     }
+        const isOrganicLike = ['organic', 'lipid', 'sugar'].includes(moleculeTypeRef.current);
+        const isNucleic = moleculeTypeRef.current === 'dna' || moleculeTypeRef.current === 'rna';
+
+        if (isOrganicLike) {
+          try { component.addRepresentation('ball+stick', { colorScheme: 'element', multipleBond: true, aspectRatio: 1.3 }); } catch (e) {}
+        } else if (isNucleic) {
+          try { component.addRepresentation('ball+stick', { sele: 'all', colorScheme: 'element', multipleBond: true, aspectRatio: 1.1 }); } catch (e) {}
+        } else {
+          try { component.addRepresentation('cartoon', { color: 'residueindex', quality: 'high' }); } catch (e) {}
+          try { component.addRepresentation('ball+stick', { sele: 'hetero and not water', aspectRatio: 1.1 }); } catch (e) {}
+        }
 
         component.autoView();
-        // The container can be freshly revealed from a display:none state (e.g. just switched
-        // from the 2D tab to the 3D tab) whose dimensions weren't known to WebGL when the Stage
-        // was created; kick a resize so NGL recomputes the real viewport instead of rendering
-        // into a stale/zero-sized canvas (which looks like a blank/gray panel).
         requestAnimationFrame(() => {
           if (cancelled || !stageRef.current) return;
-          try { stageRef.current.handleResize(); } catch (e) { /* ignore */ }
-          try { component.autoView(); } catch (e) { /* ignore */ }
+          try { stageRef.current.handleResize(); } catch (e) {}
+          try { component.autoView(); } catch (e) {}
         });
 
-        const finalAtomCount = component.structure ? component.structure.atomCount : 0;
-        if (!finalAtomCount) {
+        if (!(component.structure ? component.structure.atomCount : 0)) {
           throw new Error('The structure loaded but contains no atoms (empty/invalid file content).');
         }
 
         setStatus('ready');
       } catch (err) {
-        console.error('NMRMoleculeViewer error:', err);
-
         if (!cancelled) {
           const raw = (err && err.message ? String(err.message) : '').trim();
-          const wasUrlLoad = !loadRequest.file && !loadRequest.text;
-
-          setErrorMsg(
-            raw
-              ? raw
-              : wasUrlLoad
-                ? "Failed to load this structure and the browser gave no specific reason (this can happen for a few different causes -- a cross-origin/CORS restriction on the server, a network problem, or an internal error -- the browser console (not just this message) will show which)."
-                : 'Failed to load structure.'
-          );
+          setErrorMsg(raw || 'Failed to load structure.');
           setStatus('error');
         }
       }
     };
-
     run();
-
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [loadRequest]);
+
+  // ---- Trajectory Loading Effect ----
+  useEffect(() => {
+    const component = componentRef.current;
+    if (!component || status !== 'ready') return;
+
+    const targetSrc = trajFile || trajectorySrc;
+    if (!targetSrc) return;
+
+    let cancelled = false;
+    setTrajStatus('loading');
+    setTrajError('');
+    setNumFrames(0);
+    setCurrentFrame(0);
+    setPlaying(false);
+
+    const initTraj = async () => {
+      try {
+        const NGL = await ensureNGL();
+        if (cancelled) return;
+
+        let targetCand = targetSrc;
+        let ext = trajectoryFormat || 'xtc';
+
+        if (typeof targetSrc === 'object' && targetSrc instanceof File) {
+          targetCand = URL.createObjectURL(targetSrc);
+          blobUrlsRef.current.push(targetCand);
+          const fileParts = targetSrc.name.split('.');
+          ext = fileParts.length > 1 ? fileParts.pop().toLowerCase() : ext;
+        }
+
+        const frames = await NGL.autoLoad(targetCand, { ext });
+        if (!frames) throw new Error('Could not parse trajectory frames');
+        if (cancelled) return;
+
+        const trajComp = component.addTrajectory(frames);
+        const traj = (trajComp && trajComp.trajectory) || getTrajectoryObject(component);
+
+        if (traj) {
+          trajRef.current = traj;
+          const initialFrames = getNumFrames(traj);
+
+          if (initialFrames > 0) {
+            setNumFrames(initialFrames);
+            setCurrentFrame(0);
+            setTrajStatus('ready');
+          } else {
+            const checkInterval = setInterval(() => {
+              const nf = getNumFrames(traj);
+              if (nf > 0) {
+                setNumFrames(nf);
+                setCurrentFrame(0);
+                setTrajStatus('ready');
+                clearInterval(checkInterval);
+              }
+            }, 250);
+
+            setTimeout(() => {
+              clearInterval(checkInterval);
+              if (getNumFrames(traj) === 0 && !cancelled) {
+                setTrajStatus('error');
+                setTrajError('Trajectory loaded but contains 0 frames. Verify that the PDB and XTC have the exact same atom count.');
+              }
+            }, 10000);
+          }
+        } else {
+          throw new Error('Could not attach trajectory');
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setTrajStatus('error');
+          setTrajError(err?.message || 'Failed to load trajectory. Check matching atom count.');
+        }
+      }
+    };
+
+    initTraj();
+    return () => { cancelled = true; };
+  }, [trajFile, trajectorySrc, trajectoryFormat, status]);
+
+  // ---- Trajectory Playback Loop ----
+  useEffect(() => {
+    if (!playing || !trajRef.current || numFrames === 0) return;
+    const interval = Math.max(16, 1000 / speed);
+    const id = setInterval(() => {
+      setCurrentFrame((prev) => {
+        const next = (prev + 1) % numFrames;
+        setFrameSafe(trajRef.current, next);
+        return next;
+      });
+    }, interval);
+    return () => clearInterval(id);
+  }, [playing, speed, numFrames]);
+
+  const togglePlay = () => {
+    if (trajStatus !== 'ready' || numFrames === 0) return;
+    setPlaying((p) => !p);
+  };
+
+  const handleFrameChange = (e) => {
+    const frame = parseInt(e.target.value, 10);
+    if (Number.isNaN(frame)) return;
+    setCurrentFrame(frame);
+    setFrameSafe(trajRef.current, frame);
+  };
 
   // Atom labels
   useEffect(() => {
     const component = componentRef.current;
     if (!component || status !== 'ready') return;
-
     const clearLabels = () => {
       if (labelCompRef.current) {
-        try {
-          component.removeRepresentation(labelCompRef.current);
-        } catch (e) {
-          // ignore
-        }
+        try { component.removeRepresentation(labelCompRef.current); } catch (e) {}
         labelCompRef.current = null;
       }
     };
-
     clearLabels();
-
     if (showLabels) {
       try {
         const isOrganicLike = ['organic', 'lipid', 'sugar'].includes(moleculeTypeRef.current);
         labelCompRef.current = component.addRepresentation('label', {
           sele: isOrganicLike ? 'not hydrogen' : 'protein and sidechain and not hydrogen',
-          labelType: 'atomname',
-          labelGrouping: 'atom',
-          color: 0x111827,
-          radius: 1.0,
-          opacity: 1,
-          depthTest: false,
+          labelType: 'atomname', labelGrouping: 'atom', color: 0x111827, radius: 1.0, opacity: 1, depthTest: false,
         });
-      } catch (e) {
-        console.warn('Label representation failed', e);
-      }
+      } catch (e) {}
     }
-
     return clearLabels;
   }, [showLabels, status]);
 
-  // Side-chain representation (protein/DNA/RNA only -- organics are already fully drawn by the
-  // main ball+stick representation added when the structure loads)
+  // Side-chain representation
   useEffect(() => {
     const component = componentRef.current;
     if (!component || status !== 'ready') return;
@@ -787,181 +729,134 @@ const NMRMoleculeViewer = ({
 
     const clearSidechain = () => {
       if (sidechainCompRef.current) {
-        try {
-          component.removeRepresentation(sidechainCompRef.current);
-        } catch (e) {
-          // ignore
-        }
+        try { component.removeRepresentation(sidechainCompRef.current); } catch (e) {}
         sidechainCompRef.current = null;
       }
     };
-
     clearSidechain();
-
     if (sidechainStyle !== 'none') {
       try {
         sidechainCompRef.current = component.addRepresentation(sidechainStyle, {
-          // Explicit grouping helps NGL draw CA-CB bonds correctly
-          sele: '(protein and sidechain) or (protein and .CA)',
-          color: 'element',
-          multipleBond: true,
+          sele: '(protein and sidechain) or (protein and .CA)', color: 'element', multipleBond: true,
           radiusSize: sidechainStyle === 'licorice' ? 0.25 : undefined,
         });
-      } catch (e) {
-        console.warn('Sidechain representation failed', e);
-      }
+      } catch (e) {}
     }
-
     return clearSidechain;
   }, [sidechainStyle, status]);
 
-// Highlight selected and manually selected atoms
-useEffect(() => {
-  const component = componentRef.current;
-  if (!component || status !== 'ready') return;
-  const clearHighlights = () => {
-    if (highlightCompRef.current) {
-      try { component.removeRepresentation(highlightCompRef.current); } catch (e) { /* ignore */ }
-      highlightCompRef.current = null;
-    }
-    if (manualHighlightCompRef.current) {
-      try { component.removeRepresentation(manualHighlightCompRef.current); } catch (e) { /* ignore */ }
-      manualHighlightCompRef.current = null;
-    }
-  };
-  clearHighlights();
-  const sel = Array.isArray(selectedKeys) ? selectedKeys : [];
-  const man = Array.isArray(manualKeys)
-    ? manualKeys.filter((k) => !sel.includes(k))
-    : [];
-  if (sel.length === 0 && man.length === 0) return;
-  let organicNameToIndex = null;
-  const getOrganicNameToIndexMap = () => {
-    if (organicNameToIndex) return organicNameToIndex;
-    organicNameToIndex = {};
-    component.structure.eachAtom((a) => { organicNameToIndex[getOrganicAtomName(a)] = a.index; });
-    return organicNameToIndex;
-  };
-  const buildSele = (keys) => {
-    const parts = [];
-    keys.forEach((k) => {
-      const dashIdx = k.indexOf('-');
-      if (dashIdx < 0) return;
-      const ri = parseInt(k.substring(0, dashIdx), 10);
-      // Trim: nucleic NMR names carry a trailing space ("H1' ") that the table/2D
-      // ecosystem uses, but PDB/NGL atom names never have.
-      const atomName = k.substring(dashIdx + 1).trim();
-      const resno = ri + 1;
-      if (moleculeTypeRef.current === 'organic') {
-        const map = getOrganicNameToIndexMap();
-        if (Object.prototype.hasOwnProperty.call(map, atomName)) parts.push(`@${map[atomName]}`);
-        return;
+  // Highlight selected and manually selected atoms
+  useEffect(() => {
+    const component = componentRef.current;
+    if (!component || status !== 'ready') return;
+    const clearHighlights = () => {
+      if (highlightCompRef.current) {
+        try { component.removeRepresentation(highlightCompRef.current); } catch (e) {}
+        highlightCompRef.current = null;
       }
-      if (moleculeTypeRef.current === 'dna' || moleculeType === 'rna' || moleculeTypeRef.current === 'rna') {
-        const names = [atomName];
-        if (atomName === "OH2'") names.push("HO2'");
-        if (atomName === 'H7(CH3)') names.push('H71', 'H72', 'H73');
-        names.forEach((pn) => parts.push(`${resno} and .${pn}`));
-        return;
+      if (manualHighlightCompRef.current) {
+        try { component.removeRepresentation(manualHighlightCompRef.current); } catch (e) {}
+        manualHighlightCompRef.current = null;
       }
-      const pdbNames = [];
-      Object.entries(PDB_TO_NMR).forEach(([pdb, nmr]) => {
-        if (nmr === atomName) pdbNames.push(pdb);
-      });
-      if (atomName === 'N') {
-        pdbNames.push('N');
-      } else if (atomName === 'Cα') {
-        pdbNames.push('CA');
-      } else if (atomName === 'Cβ') {
-        pdbNames.push('CB');
-      } else if (atomName === "C'") {
-        pdbNames.push('C');
-      } else if (atomName === 'O') {
-        pdbNames.push('O');
-      } else {
-        const match = atomName.match(/^([CNO])([αβγδεζη])(\d*)$/);
-        if (match) {
-          pdbNames.push(`${match[1]}${REVERSE_GREEK[match[2]]}${match[3]}`);
+    };
+    clearHighlights();
+    const sel = Array.isArray(selectedKeys) ? selectedKeys : [];
+    const man = Array.isArray(manualKeys) ? manualKeys.filter((k) => !sel.includes(k)) : [];
+    if (sel.length === 0 && man.length === 0) return;
+
+    let organicNameToIndex = null;
+    const getOrganicNameToIndexMap = () => {
+      if (organicNameToIndex) return organicNameToIndex;
+      organicNameToIndex = {};
+      component.structure.eachAtom((a) => { organicNameToIndex[getOrganicAtomName(a)] = a.index; });
+      return organicNameToIndex;
+    };
+
+    const buildSele = (keys) => {
+      const parts = [];
+      keys.forEach((k) => {
+        const dashIdx = k.indexOf('-');
+        if (dashIdx < 0) return;
+        const ri = parseInt(k.substring(0, dashIdx), 10);
+        const atomName = k.substring(dashIdx + 1).trim();
+        const resno = ri + 1;
+
+        if (moleculeTypeRef.current === 'organic') {
+          const map = getOrganicNameToIndexMap();
+          if (Object.prototype.hasOwnProperty.call(map, atomName)) parts.push(`@${map[atomName]}`);
+          return;
         }
-      }
-      if (atomName.startsWith('H') && atomName.length > 1 && REVERSE_GREEK[atomName[1]]) {
-        const base = `H${REVERSE_GREEK[atomName[1]]}`;
-        pdbNames.push(base, `${base}1`, `${base}2`, `${base}3`);
-      }
-      if (pdbNames.length === 0) {
-        pdbNames.push(atomName);
-      }
-      pdbNames.forEach((pn) => {
-        parts.push(`${resno} and .${pn}`);
+
+        if (moleculeTypeRef.current === 'dna' || moleculeType === 'rna' || moleculeTypeRef.current === 'rna') {
+          const names = [atomName];
+          if (atomName === "OH2'") names.push("HO2'");
+          if (atomName === 'H7(CH3)') names.push('H71', 'H72', 'H73');
+          names.forEach((pn) => parts.push(`${resno} and .${pn}`));
+          return;
+        }
+
+        const pdbNames = [];
+        Object.entries(PDB_TO_NMR).forEach(([pdb, nmr]) => { if (nmr === atomName) pdbNames.push(pdb); });
+        if (atomName === 'N') pdbNames.push('N');
+        else if (atomName === 'Cα') pdbNames.push('CA');
+        else if (atomName === 'Cβ') pdbNames.push('CB');
+        else if (atomName === "C'") pdbNames.push('C');
+        else if (atomName === 'O') pdbNames.push('O');
+        else {
+          const match = atomName.match(/^([CNO])([αβγδεζη])(\d*)$/);
+          if (match) pdbNames.push(`${match[1]}${REVERSE_GREEK[match[2]]}${match[3]}`);
+        }
+        if (atomName.startsWith('H') && atomName.length > 1 && REVERSE_GREEK[atomName[1]]) {
+          const base = `H${REVERSE_GREEK[atomName[1]]}`;
+          pdbNames.push(base, `${base}1`, `${base}2`, `${base}3`);
+        }
+        if (pdbNames.length === 0) pdbNames.push(atomName);
+        pdbNames.forEach((pn) => parts.push(`${resno} and .${pn}`));
       });
-    });
-    return parts.length > 0 ? parts.join(' or ') : null;
-  };
-  try {
-    const selSele = buildSele(sel);
-    if (selSele) {
-      highlightCompRef.current = component.addRepresentation('ball+stick', {
-        sele: selSele,
-        color: SELECT_COLOR_HEX,
-        aspectRatio: 1.5,
-        radius: 0.4,
-      });
-    }
-    const manSele = buildSele(man);
-    if (manSele) {
-      manualHighlightCompRef.current = component.addRepresentation('ball+stick', {
-        sele: manSele,
-        color: MANUAL_COLOR_HEX,
-        aspectRatio: 1.5,
-        radius: 0.4,
-      });
-    }
-  } catch (e) {
-    console.warn('Highlight error:', e);
-  }
-  return clearHighlights;
-}, [selectedKeys, manualKeys, status]);
+      return parts.length > 0 ? parts.join(' or ') : null;
+    };
+
+    try {
+      const selSele = buildSele(sel);
+      if (selSele) {
+        highlightCompRef.current = component.addRepresentation('ball+stick', { sele: selSele, color: SELECT_COLOR_HEX, aspectRatio: 1.5, radius: 0.4 });
+      }
+      const manSele = buildSele(man);
+      if (manSele) {
+        manualHighlightCompRef.current = component.addRepresentation('ball+stick', { sele: manSele, color: MANUAL_COLOR_HEX, aspectRatio: 1.5, radius: 0.4 });
+      }
+    } catch (e) {}
+    return clearHighlights;
+  }, [selectedKeys, manualKeys, status]);
 
   const handleFileChange = useCallback((e) => {
     const f = e.target.files && e.target.files[0];
     if (!f) return;
-
     setManualOverride(true);
     setFile(f);
     setPdbId('');
-
-    setLoadRequest({
-      file: f,
-      url: null,
-      ts: Date.now(),
-    });
-
-    // Allow selecting the same file again later
+    setTrajFile(null); // Clear trajectory when new topology is loaded natively
+    setLoadRequest({ file: f, url: null, ts: Date.now() });
     e.target.value = '';
   }, []);
 
   const handlePdbIdLoad = useCallback(() => {
     const value = pdbId.trim();
     if (!value) return;
-
     setManualOverride(true);
     setFile(null);
-
-    setLoadRequest({
-      file: null,
-      url: value,
-      ts: Date.now(),
-    });
+    setTrajFile(null); // Clear trajectory when new ID is loaded
+    setLoadRequest({ file: null, url: value, ts: Date.now() });
   }, [pdbId]);
 
   return (
     <div className="flex flex-col gap-3">
+      {/* Topology and Structure Controls */}
       <div className="flex flex-wrap items-end gap-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
         <div className="flex flex-col gap-1">
           <label className="text-[10px] font-bold text-slate-500 uppercase">
             Load local file
           </label>
-
           <label className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm transition-colors inline-flex items-center gap-2">
             📂 Choose PDB / CIF file
             <input
@@ -971,7 +866,6 @@ useEffect(() => {
               className="hidden"
             />
           </label>
-
           {file && (
             <span className="text-[10px] text-slate-500 max-w-[200px] truncate">
               {file.name}
@@ -983,7 +877,6 @@ useEffect(() => {
           <label className="text-[10px] font-bold text-slate-500 uppercase">
             PDB ID or URL
           </label>
-
           <div className="flex gap-1">
             <input
               type="text"
@@ -995,7 +888,6 @@ useEffect(() => {
               placeholder="1TUP or https://files.rcsb.org/download/1TUP.cif"
               className="border border-slate-300 rounded-lg px-3 py-2 text-xs w-72 bg-white outline-none focus:border-blue-500 font-mono"
             />
-
             <button
               type="button"
               onClick={handlePdbIdLoad}
@@ -1006,11 +898,35 @@ useEffect(() => {
           </div>
         </div>
 
+        {/* Trajectory Loader */}
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">
+            Load Trajectory
+          </label>
+          <label className="cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm transition-colors inline-flex items-center gap-2">
+            📂 Choose XTC / TRR
+            <input
+              type="file"
+              accept=".xtc,.trr,.dcd"
+              onChange={(e) => {
+                 const f = e.target.files && e.target.files[0];
+                 if (f) setTrajFile(f);
+                 e.target.value = '';
+              }}
+              className="hidden"
+            />
+          </label>
+          {trajFile && (
+            <span className="text-[10px] text-slate-500 max-w-[150px] truncate">
+              {trajFile.name}
+            </span>
+          )}
+        </div>
+
         <div className="flex flex-col gap-1">
           <label className="text-[10px] font-bold text-slate-500 uppercase">
             Labels
           </label>
-
           <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer h-8">
             <input
               type="checkbox"
@@ -1026,7 +942,6 @@ useEffect(() => {
           <label className="text-[10px] font-bold text-slate-500 uppercase">
             Side Chains
           </label>
-
           <select
             value={sidechainStyle}
             onChange={(e) => setSidechainStyle(e.target.value)}
@@ -1041,6 +956,54 @@ useEffect(() => {
         </div>
       </div>
 
+      {/* Trajectory Playback Controls */}
+      {(trajFile || trajectorySrc) && (
+        <div className="flex flex-wrap items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+          <button
+            type="button"
+            onClick={togglePlay}
+            disabled={trajStatus !== 'ready' || numFrames === 0}
+            className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm transition-colors inline-flex items-center gap-1"
+          >
+            {playing ? '⏸ Pause' : '▶ Play'}
+          </button>
+
+          <div className="flex items-center gap-2 flex-1 min-w-[220px]">
+            <span className="text-[10px] font-bold text-indigo-700 whitespace-nowrap">Frame</span>
+            <input
+              type="range"
+              min={0}
+              max={Math.max(0, numFrames - 1)}
+              value={currentFrame}
+              onChange={handleFrameChange}
+              disabled={trajStatus !== 'ready' || numFrames === 0}
+              className="flex-1 accent-indigo-600"
+            />
+            <span className="text-[10px] font-mono font-bold text-indigo-800 whitespace-nowrap">
+              {currentFrame} / {Math.max(0, numFrames - 1)}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-[10px] font-bold text-indigo-700 uppercase">Speed</label>
+            <select
+              value={speed}
+              onChange={(e) => setSpeed(Number(e.target.value) || 10)}
+              className="border border-indigo-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-indigo-500"
+            >
+              {[1, 5, 10, 20, 30, 60].map((s) => <option key={s} value={s}>{s} fps</option>)}
+            </select>
+          </div>
+
+          <div className="w-full">
+            {trajStatus === 'loading' && <span className="text-[11px] font-bold text-indigo-600">⏳ Loading trajectory ({trajectoryFormat.toUpperCase()})…</span>}
+            {trajStatus === 'ready' && <span className="text-[11px] font-bold text-emerald-600">✓ Trajectory loaded ({trajectoryFormat.toUpperCase()}, {numFrames} frames)</span>}
+            {trajStatus === 'error' && <span className="text-[11px] font-bold text-red-600">⚠️ {trajError}</span>}
+          </div>
+        </div>
+      )}
+
+      {/* 3D Viewport */}
       <div
         className="relative border border-slate-200 rounded-xl overflow-hidden bg-white"
         style={{ height }}

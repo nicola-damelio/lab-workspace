@@ -7642,6 +7642,7 @@ const newProto = {
                       TestHeader={TestHeader}
                       datasetProtocols={datasetProtocols}
                       jumpToProtocol={jumpToProtocolFn}
+                      jumpToTest={jumpToTest}
                       allCmpds={allCmpds}
                       allCellLines={allCellLines}
                       customFields={customFields}

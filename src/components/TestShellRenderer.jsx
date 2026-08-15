@@ -1816,43 +1816,57 @@ const details = [
           ))}
 
 {!mandatoryBlocked && SetupSection && !CustomAll && (
-            <CollapsibleSection title="Experiment Setup" icon="⚙️" defaultOpen={false}>
-              <SetupSection ctx={ctx} />
-            </CollapsibleSection>
-          )}
+  <CollapsibleSection title="Experiment Setup" icon="⚙️" defaultOpen={false}>
+    <SetupSection ctx={ctx} />
+  </CollapsibleSection>
+)}
+
+{isMdType && !mandatoryBlocked && !CustomAll && SimulationsSection && (
+  <CollapsibleSection title="Experiment setup" icon="⚙️" defaultOpen={false}>
+    <SimulationsSection ctx={ctx} />
+  </CollapsibleSection>
+)}
             </div>
           )}
         </div>
 
-        {/* ================= MOLECULAR SYSTEM & SIMULATIONS ================= */}
-        {(MolecularStructureSection || (!mandatoryBlocked && SimulationsSection)) && (
-          <div className="mb-8">
-            <button
-              type="button"
-              onClick={() => setShowMolSys(!showMolSys)}
-              className="w-full flex items-center justify-center gap-2 mb-4 border-b-2 border-slate-200 pb-2 cursor-pointer group outline-none bg-transparent"
-            >
-              <h2 className="text-lg font-black text-slate-800 uppercase tracking-widest group-hover:text-blue-600 transition-colors m-0">MOLECULAR SYSTEM AND SIMULATIONS</h2>
-              <span className="text-slate-400 group-hover:text-blue-600 transition-colors text-sm">{showMolSys ? '▼' : '▶'}</span>
-            </button>
-            
-            {showMolSys && (
-              <div className="flex flex-col gap-0">
-                {MolecularStructureSection && (
-              <CollapsibleSection title="Molecular structure and visualization" icon="🧬" defaultOpen={false}>
-                <MolecularStructureSection ctx={ctx} />
-              </CollapsibleSection>
-            )}
+{/* ================= MOLECULAR SYSTEM & SIMULATIONS ================= */}
+{(MolecularStructureSection || (!isMdType && !mandatoryBlocked && SimulationsSection)) && (
+  <div className="mb-8">
+    <button
+      type="button"
+      onClick={() => setShowMolSys(!showMolSys)}
+      className="w-full flex items-center justify-center gap-2 mb-4 border-b-2 border-slate-200 pb-2 cursor-pointer group outline-none bg-transparent"
+    >
+      <h2 className="text-lg font-black text-slate-800 uppercase tracking-widest group-hover:text-blue-600 transition-colors m-0">
+        MOLECULAR SYSTEM AND SIMULATIONS
+      </h2>
+      <span className="text-slate-400 group-hover:text-blue-600 transition-colors text-sm">
+        {showMolSys ? '▼' : '▶'}
+      </span>
+    </button>
 
-{!mandatoryBlocked && SimulationsSection && (
-              <CollapsibleSection title="Simulations" icon="🧪" defaultOpen={false}>
-                <SimulationsSection ctx={ctx} />
-              </CollapsibleSection>
-            )}
-              </div>
-            )}
-          </div>
+    {showMolSys && (
+      <div className="flex flex-col gap-0">
+        {MolecularStructureSection && (
+          <CollapsibleSection
+            title="Molecular structure and visualization"
+            icon="🧬"
+            defaultOpen={false}
+          >
+            <MolecularStructureSection ctx={ctx} />
+          </CollapsibleSection>
         )}
+
+        {!isMdType && !mandatoryBlocked && SimulationsSection && (
+          <CollapsibleSection title="Simulations" icon="🧪" defaultOpen={false}>
+            <SimulationsSection ctx={ctx} />
+          </CollapsibleSection>
+        )}
+      </div>
+    )}
+  </div>
+)}
 
         {/* ================= DATA AND ANALYSIS ================= */}
         {!mandatoryBlocked && (CustomAll || DataSection || DataAnalysisSection || FittingSection || FittingErrors || FittingGraphics) && (
@@ -1881,11 +1895,15 @@ const details = [
 {(DataAnalysisSection || FittingSection || FittingErrors || FittingGraphics) && (
                   <CollapsibleSection title="Data Analysis" icon="📉" defaultOpen={false}>
                     <div className="flex flex-col gap-6">
-                      {DataAnalysisSection && (
-                        <CollapsibleSection title="Secondary Shifts analysis" icon="📉" defaultOpen={false}>
-                          <DataAnalysisSection ctx={ctx} />
-                        </CollapsibleSection>
-                      )}
+      {DataAnalysisSection && (
+        <CollapsibleSection
+          title={isMdType ? 'MD general parameters' : 'Secondary Shifts analysis'}
+          icon={isMdType ? '⚙️' : '📉'}
+          defaultOpen={false}
+        >
+          <DataAnalysisSection ctx={ctx} />
+        </CollapsibleSection>
+      )}
 
                       {FittingSection ? (
                         <FittingSection ctx={ctx} />

@@ -3,6 +3,10 @@ import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell
 } from 'recharts';
 import { parseSimulationParameters } from './MDData';
+import {
+  CONTACT_DEFAULTS, parseTopology, computeContactRDF, demoFrames,
+  resolveFrameSource, AWK_PALETTE
+} from './MDMembraneContacts';
 export { parseSimulationParameters };   
 import MDMoleculeViewer from './MDMoleculeViewer';
 
@@ -1184,6 +1188,8 @@ const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color,
   );
 };
 
+
+
 export const MDAnalysisSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useMDDerived(activeTest, ctx);
@@ -1191,15 +1197,45 @@ export const MDAnalysisSection = ({ ctx }) => {
   const cfg = { ...DEFAULT_MD_CHART_STYLE, ...(activeTest.mdAnalysisCfg || {}) };
   const setCfg = (patch) => updateActiveTest({ mdAnalysisCfg: { ...cfg, ...patch } });
   const [showCfg, setShowCfg] = useState(false);
+  
+  // NEW: State for real imported data
+  const [importedData, setImportedData] = useState(null);
+  const [importError, setImportError] = useState('');
+
+  const handleAnalysisFileUpload = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const text = ev.target.result;
+        let data = JSON.parse(text);
+        if (!data.rmsd && !data.rmsf && !data.rg && !data.sasa && !data.energy) {
+           throw new Error('JSON must contain at least one of: rmsd, rmsf, rg, sasa, energy arrays.');
+        }
+        setImportedData(data);
+        setImportError('');
+      } catch (err) {
+        setImportError('Invalid JSON: ' + err.message);
+        setImportedData(null);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
 
   const nFrames = parseMDValue(activeTest.mdNumFrames) || 500;
   const nResidues = Math.max(1, d.parsedSeq.length || 20);
 
-  const rmsd = useMemo(() => generateRMSDData(nFrames), [nFrames]);
-  const rmsf = useMemo(() => generateRMSFData(nResidues).map((r) => ({ ...r, fill: r.value > 0.25 ? '#ef4444' : '#3b82f6' })), [nResidues]);
-  const rg = useMemo(() => generateRgData(nFrames), [nFrames]);
-  const sasa = useMemo(() => generateSASAData(nFrames), [nFrames]);
-  const energy = useMemo(() => generateEnergyData(nFrames), [nFrames]);
+  // Use imported data if available, otherwise fallback to simulated data
+  const rmsd = useMemo(() => importedData?.rmsd || generateRMSDData(nFrames), [nFrames, importedData]);
+  const rmsf = useMemo(() => {
+      if (importedData?.rmsf) return importedData.rmsf.map(r => ({ ...r, fill: r.value > 0.25 ? '#ef4444' : '#3b82f6' }));
+      return generateRMSFData(nResidues).map((r) => ({ ...r, fill: r.value > 0.25 ? '#ef4444' : '#3b82f6' }));
+  }, [nResidues, importedData]);
+  const rg = useMemo(() => importedData?.rg || generateRgData(nFrames), [nFrames, importedData]);
+  const sasa = useMemo(() => importedData?.sasa || generateSASAData(nFrames), [nFrames, importedData]);
+  const energy = useMemo(() => importedData?.energy || generateEnergyData(nFrames), [nFrames, importedData]);
 
   if (d.parsedSeq.length === 0) {
     return <div className="text-center py-8 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed">Enter a sequence (in Experiment Setup) to enable analysis.</div>;
@@ -1207,52 +1243,104 @@ export const MDAnalysisSection = ({ ctx }) => {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-3 flex-wrap bg-white border border-slate-200 rounded-lg px-3 py-2 w-fit">
-        <button type="button" onClick={() => setShowCfg(!showCfg)}
-          className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${showCfg ? 'bg-slate-200 border-slate-400 text-slate-900' : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'}`}>⚙️ Chart Parameters</button>
-        <div className="flex items-center gap-2 border-l border-slate-300 pl-3 ml-1">
-          <label className="text-[10px] font-bold text-slate-500 uppercase">Frames</label>
-          <input type="number" value={activeTest.mdNumFrames || 500} onChange={(e) => updateActiveTest({ mdNumFrames: e.target.value })}
-            className="border border-slate-300 rounded-md px-2 py-1 text-xs w-20 outline-none focus:border-blue-500" />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowCfg(!showCfg)}
+            className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${
+              showCfg ? 'bg-slate-200 border-slate-400 text-slate-900' : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'
+            }`}
+          >
+            ⚙️ Chart Parameters
+          </button>
+          
+          <label className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 rounded-lg text-xs cursor-pointer shadow-sm transition-colors flex items-center gap-2">
+            📂 Upload Real Analysis (JSON)
+            <input type="file" accept=".json" className="hidden" onChange={handleAnalysisFileUpload} />
+          </label>
+
+          {importedData && (
+             <button onClick={() => setImportedData(null)} className="text-xs font-bold text-red-500 hover:text-red-700 underline ml-2">
+               ✕ Clear Real Data
+             </button>
+          )}
         </div>
-        <span className="text-[10px] text-slate-400">Curves are simulated until a real trajectory analysis is attached.</span>
+
+        {!importedData && (
+          <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2">
+            Frames (Simulated)
+            <input
+              type="number"
+              value={activeTest.mdNumFrames || 500}
+              onChange={(e) => updateActiveTest({ mdNumFrames: e.target.value })}
+              className="border border-slate-300 rounded-md px-2 py-1 text-xs w-20 outline-none focus:border-blue-500"
+            />
+          </label>
+        )}
       </div>
 
+      {importError && (
+         <div className="bg-red-50 border border-red-200 text-red-700 text-xs font-bold p-2 rounded-lg">
+           ⚠️ Import Error: {importError}
+         </div>
+      )}
+
+      {importedData ? (
+         <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold p-2 rounded-lg flex items-center gap-2">
+           ✅ Plotting real imported data. (XTC trajectory is still playing in the 3D viewer above).
+         </div>
+      ) : (
+         <span className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 w-fit">
+           Curves are simulated. To see real graphs, upload an analysis JSON file.
+         </span>
+      )}
+
       {showCfg && (
-        <div className="p-4 bg-white border border-slate-300 rounded-xl grid grid-cols-2 md:grid-cols-4 gap-3 shadow-sm">
-          <div className="flex flex-col gap-1"><label className="text-[10px] font-bold text-slate-600">Font size (px)</label>
-            <input type="number" value={cfg.fontSize} onChange={(e) => setCfg({ fontSize: Number(e.target.value) || 12 })} className="border border-slate-300 rounded-md p-1.5 text-xs outline-none" /></div>
-          <div className="flex flex-col gap-1"><label className="text-[10px] font-bold text-slate-600">Aspect ratio (W÷H)</label>
-            <input type="number" step="0.1" value={cfg.aspect} onChange={(e) => setCfg({ aspect: Number(e.target.value) || 1.8 })} className="border border-slate-300 rounded-md p-1.5 text-xs outline-none" /></div>
-          <div className="flex flex-col gap-1"><label className="text-[10px] font-bold text-slate-600">Line style</label>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
+          <label className="text-[10px] font-bold text-slate-500 uppercase flex flex-col gap-1">
+            Font size (px)
+            <input type="number" value={cfg.fontSize} onChange={(e) => setCfg({ fontSize: Number(e.target.value) || 12 })} className="border border-slate-300 rounded-md p-1.5 text-xs outline-none" />
+          </label>
+          <label className="text-[10px] font-bold text-slate-500 uppercase flex flex-col gap-1">
+            Aspect ratio (W÷H)
+            <input type="number" step="0.1" value={cfg.aspect} onChange={(e) => setCfg({ aspect: Number(e.target.value) || 1.8 })} className="border border-slate-300 rounded-md p-1.5 text-xs outline-none" />
+          </label>
+          <label className="text-[10px] font-bold text-slate-500 uppercase flex flex-col gap-1">
+            Line style
             <select value={cfg.lineStyle} onChange={(e) => setCfg({ lineStyle: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs bg-white outline-none">
-              <option value="solid">Solid</option><option value="dashed">Dashed</option><option value="dotted">Dotted</option>
-            </select></div>
-          <div className="flex flex-col gap-1"><label className="text-[10px] font-bold text-slate-600">Line thickness</label>
-            <input type="number" step="0.5" value={cfg.lineThickness} onChange={(e) => setCfg({ lineThickness: Number(e.target.value) || 2 })} className="border border-slate-300 rounded-md p-1.5 text-xs outline-none" /></div>
+              <option value="solid">Solid</option>
+              <option value="dashed">Dashed</option>
+              <option value="dotted">Dotted</option>
+            </select>
+          </label>
+          <label className="text-[10px] font-bold text-slate-500 uppercase flex flex-col gap-1">
+            Line thickness
+            <input type="number" step="0.5" value={cfg.lineThickness} onChange={(e) => setCfg({ lineThickness: Number(e.target.value) || 2 })} className="border border-slate-300 rounded-md p-1.5 text-xs outline-none" />
+          </label>
         </div>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <MDAnalysisChart title="RMSD (backbone)" data={rmsd} dataKey="value" xKey="time" color="#3b82f6" cfg={cfg} yLabel="RMSD (nm)" xLabel="Time (ns)" />
-        <MDAnalysisChart title="RMSF per residue" data={rmsf} dataKey="value" xKey="residue" color="#3b82f6" cfg={cfg} yLabel="RMSF (nm)" xLabel="Residue" chartType="bar" />
-        <MDAnalysisChart title="Radius of Gyration (Rg)" data={rg} dataKey="value" xKey="time" color="#22c55e" cfg={cfg} yLabel="Rg (nm)" xLabel="Time (ns)" />
-        <MDAnalysisChart title="SASA" data={sasa} dataKey="value" xKey="time" color="#f59e0b" cfg={cfg} yLabel="SASA (nm²)" xLabel="Time (ns)" />
+        <MDAnalysisChart title="RMSD (backbone)" data={rmsd} cfg={cfg} color="#3b82f6" yLabel="nm" xLabel="Time (ns)" />
+        <MDAnalysisChart title="RMSF per residue" data={rmsf} xKey="residue" cfg={cfg} color="#3b82f6" yLabel="nm" xLabel="Residue" chartType="bar" />
+        <MDAnalysisChart title="Radius of Gyration (Rg)" data={rg} cfg={cfg} color="#22c55e" yLabel="nm" xLabel="Time (ns)" />
+        <MDAnalysisChart title="SASA" data={sasa} cfg={cfg} color="#f59e0b" yLabel="nm²" xLabel="Time (ns)" />
       </div>
-
-      <div className="bg-white rounded-lg border border-slate-200 p-2 flex flex-col relative">
-        <h5 className="text-[12px] font-bold text-slate-700 mb-1">Energy</h5>
-        <div className="w-full" style={{ aspectRatio: String(cfg.aspect || 1.8), minHeight: 220 }}>
+      
+      <div className="bg-white rounded-lg border border-slate-200 p-3">
+        <h5 className="text-xs font-bold text-slate-700 mb-1">Energy</h5>
+        <div style={{ height: 250 }}>
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={energy} margin={MD_CHART_MARGIN}>
+            <LineChart data={energy} margin={{ top: 5, right: 10, bottom: 25, left: 10 }}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="time" type="number" tick={{ fontSize: cfg.fontSize }} label={{ value: 'Time (ns)', position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
-              <YAxis tick={{ fontSize: cfg.fontSize }} label={{ value: 'Energy (kJ/mol)', angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+              <XAxis dataKey="time" tick={{ fontSize: 10 }} />
+              <YAxis tick={{ fontSize: 10 }} />
               <Tooltip />
-              <Legend verticalAlign="top" wrapperStyle={{ fontSize: cfg.fontSize }} />
-              <Line type="monotone" dataKey="potential" name="Potential" stroke="#ef4444" strokeWidth={cfg.lineThickness} dot={false} isAnimationActive={false} />
-              <Line type="monotone" dataKey="kinetic" name="Kinetic" stroke="#3b82f6" strokeWidth={cfg.lineThickness} dot={false} isAnimationActive={false} />
-              <Line type="monotone" dataKey="total" name="Total" stroke="#22c55e" strokeWidth={cfg.lineThickness} dot={false} isAnimationActive={false} />
+              <Legend verticalAlign="top" wrapperStyle={{ fontSize: 10 }} />
+              <Line type="monotone" dataKey="potential" stroke="#ef4444" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey="kinetic" stroke="#3b82f6" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey="total" stroke="#22c55e" strokeWidth={1.5} dot={false} isAnimationActive={false} />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -1260,87 +1348,445 @@ export const MDAnalysisSection = ({ ctx }) => {
     </div>
   );
 };
-
 // ================= 4) SIMULATION PARAMETERS =================
 export const MDSimulationParamsSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useMDDerived(activeTest, ctx);
 
-  const Sel = ({ label, value, onChange, options }) => (
-    <div className="flex flex-col gap-1">
-      <label className="text-[10px] font-bold text-slate-500 uppercase">{label}</label>
-      <select value={value} onChange={(e) => onChange(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
-        {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-      </select>
-    </div>
-  );
-
-  const Num = ({ label, value, onChange, step = 1, unit }) => (
-    <div className="flex flex-col gap-1">
-      <label className="text-[10px] font-bold text-slate-500 uppercase">{label}{unit ? ` (${unit})` : ''}</label>
-      <input type="number" step={step} value={value ?? ''} onChange={(e) => onChange(e.target.value)}
-        className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-500" />
-    </div>
-  );
+  const ffVersions = getFFVersions(d.ffKey);
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="space-y-6 p-4 bg-white border border-slate-200 rounded-xl shadow-sm">
+      <h2 className="text-lg font-bold text-slate-800 border-b pb-2">⚙️ Simulation Parameters</h2>
       
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex flex-wrap gap-2">
-          {MD_SIMULATION_PHASES.map((ph) => {
-            const active = (activeTest.simPhase || 'production') === ph.key;
-            return (
-              <button key={ph.key} onClick={() => updateActiveTest({ simPhase: ph.key })}
-                className={`px-3 py-1.5 rounded-lg text-sm font-bold border transition-colors flex items-center gap-1.5 ${active ? 'bg-blue-600 border-blue-700 text-white shadow' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
-                <span>{ph.icon}</span>{ph.label}
-              </button>
-            );
-          })}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Force Field */}
+        <div className="space-y-2">
+          <label className="block text-xs font-bold text-slate-600 uppercase tracking-wide">Force Field</label>
+          <select 
+            value={d.ffKey} 
+            onChange={(e) => updateActiveTest({ forceField: e.target.value, forceFieldVersion: getFFVersions(e.target.value)[0] || '' })}
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
+          >
+            {Object.keys(FORCE_FIELDS).map(k => <option key={k} value={k}>{FORCE_FIELDS[k].name}</option>)}
+          </select>
+          {ffVersions.length > 1 && (
+            <select
+              value={d.ffVersion}
+              onChange={(e) => updateActiveTest({ forceFieldVersion: e.target.value })}
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 mt-2"
+            >
+              {ffVersions.map(v => <option key={v} value={v}>Version: {v}</option>)}
+            </select>
+          )}
+        </div>
+
+        {/* Water Model */}
+        <div className="space-y-2">
+          <label className="block text-xs font-bold text-slate-600 uppercase tracking-wide">Water Model</label>
+          <select 
+            value={d.waterModel} 
+            onChange={(e) => updateActiveTest({ waterModel: e.target.value })}
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
+          >
+            {Object.keys(WATER_MODELS).map(k => <option key={k} value={k}>{WATER_MODELS[k].name}</option>)}
+          </select>
+        </div>
+
+        {/* Ensemble */}
+        <div className="space-y-2">
+          <label className="block text-xs font-bold text-slate-600 uppercase tracking-wide">Ensemble</label>
+          <select 
+            value={d.ensemble} 
+            onChange={(e) => updateActiveTest({ ensemble: e.target.value })}
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
+          >
+            {MD_ENSEMBLES.map(e => <option key={e} value={e}>{e}</option>)}
+          </select>
+        </div>
+
+        {/* Integrator */}
+        <div className="space-y-2">
+          <label className="block text-xs font-bold text-slate-600 uppercase tracking-wide">Integrator</label>
+          <select 
+            value={d.integrator} 
+            onChange={(e) => updateActiveTest({ integrator: e.target.value })}
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
+          >
+            {MD_INTEGRATORS.map(i => <option key={i} value={i}>{i}</option>)}
+          </select>
+        </div>
+
+        {/* Thermostat */}
+        <div className="space-y-2">
+          <label className="block text-xs font-bold text-slate-600 uppercase tracking-wide">Thermostat</label>
+          <select 
+            value={d.thermostat} 
+            onChange={(e) => updateActiveTest({ thermostat: e.target.value })}
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
+          >
+            {MD_THERMOSTATS.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
+
+        {/* Barostat */}
+        <div className="space-y-2">
+          <label className="block text-xs font-bold text-slate-600 uppercase tracking-wide">Barostat</label>
+          <select 
+            value={d.barostat} 
+            onChange={(e) => updateActiveTest({ barostat: e.target.value })}
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
+          >
+            {MD_BAROSTATS.map(b => <option key={b} value={b}>{b}</option>)}
+          </select>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
-        
-        <div className="flex flex-col gap-1">
-          <label className="text-[10px] font-bold text-slate-500 uppercase">Force Field</label>
-          <div className="flex gap-1">
-            <select value={d.ffKey} onChange={(e) => updateActiveTest({ forceField: e.target.value, forceFieldVersion: '' })} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
-              {Object.entries(FORCE_FIELDS).map(([k, v]) => <option key={k} value={k}>{v.name}</option>)}
-            </select>
-            <select value={d.ffVersion} onChange={(e) => updateActiveTest({ forceFieldVersion: e.target.value })} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
-              {getFFVersions(d.ffKey).map((v) => <option key={v} value={v}>{v}</option>)}
-            </select>
-          </div>
+      <h3 className="text-md font-bold text-slate-700 mt-6 border-b pb-2">🌡️ Physical Conditions & Duration</h3>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="space-y-1">
+          <label className="block text-xs font-bold text-slate-600">Temperature (K)</label>
+          <input 
+            type="number" 
+            value={activeTest.simTemperature ?? 300} 
+            onChange={(e) => updateActiveTest({ simTemperature: e.target.value })}
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
+          />
         </div>
-
-        <Sel label="Water Model" value={d.waterModel} onChange={(v) => updateActiveTest({ waterModel: v })} options={Object.entries(WATER_MODELS).map(([k, v]) => [k, `${v.name} (${v.sites}-site)`])} />
-        
-        <Sel label="Ensemble" value={d.ensemble} onChange={(v) => updateActiveTest({ ensemble: v })} options={MD_ENSEMBLES.map((e) => [e.key, e.label])} />
-        <Sel label="Integrator" value={d.integrator} onChange={(v) => updateActiveTest({ integrator: v })} options={MD_INTEGRATORS.map((i) => [i.key, i.label])} />
-        <Num label="Time step" value={d.timestep} onChange={(v) => updateActiveTest({ timestep: v })} step={0.5} unit="fs" />
-        <Num label="Number of steps" value={d.nSteps} onChange={(v) => updateActiveTest({ nSteps: v })} step={1000} />
-        <Num label="Temperature" value={d.temperature} onChange={(v) => updateActiveTest({ simTemperature: v })} step={1} unit="K" />
-        <Num label="Pressure" value={d.pressure} onChange={(v) => updateActiveTest({ simPressure: v })} step={0.1} unit="bar" />
-        <Sel label="Thermostat" value={d.thermostat} onChange={(v) => updateActiveTest({ thermostat: v })} options={MD_THERMOSTATS.map((t) => [t.key, t.label])} />
-        <Sel label="Barostat" value={d.barostat} onChange={(v) => updateActiveTest({ barostat: v })} options={MD_BAROSTATS.map((b) => [b.key, b.label])} />
+        <div className="space-y-1">
+          <label className="block text-xs font-bold text-slate-600">Pressure (bar)</label>
+          <input 
+            type="number" 
+            step="0.1"
+            value={activeTest.simPressure ?? 1.0} 
+            onChange={(e) => updateActiveTest({ simPressure: e.target.value })}
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="block text-xs font-bold text-slate-600">Timestep (fs)</label>
+          <input 
+            type="number" 
+            step="0.5"
+            value={activeTest.timestep ?? 2} 
+            onChange={(e) => updateActiveTest({ timestep: e.target.value })}
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="block text-xs font-bold text-slate-600">Total Steps</label>
+          <input 
+            type="number" 
+            value={activeTest.nSteps ?? 500000} 
+            onChange={(e) => updateActiveTest({ nSteps: e.target.value })}
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
+          />
+        </div>
       </div>
-
-      <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs text-slate-600 flex flex-col gap-2">
-        <p><b>Force field:</b> {d.ffInfo.name} {d.ffVersion} · <b>Water model:</b> {getWaterModelInfo(d.waterModel).name}</p>
-        <p><b>Ensemble:</b> {d.ensemble} · <b>Integrator:</b> {d.integrator} · <b>Δt:</b> {d.timestep} fs · <b>Steps:</b> {d.nSteps} (≈ {((parseMDValue(d.timestep) || 0) * (parseMDValue(d.nSteps) || 0) / 1e6).toFixed(3)} ns)</p>
-        <p><b>Thermostat:</b> {d.thermostat} · <b>Barostat:</b> {d.barostat} · <b>T:</b> {d.temperature} K · <b>P:</b> {d.pressure} bar</p>
+      
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800 mt-4">
+        <strong>Estimated Simulation Time:</strong> {((parseMDValue(activeTest.nSteps) || 500000) * (parseMDValue(activeTest.timestep) || 2) / 1000000).toFixed(2)} ns
       </div>
     </div>
   );
 };
+// ================= 5) MEMBRANE CONTACTS (port of from_gro_to_rdf awk) =================
+const mdDataUrlToBlob = (dataUrl) => {
+  const s = String(dataUrl || '');
+  const comma = s.indexOf(',');
+  if (comma < 0) return null;
+  const meta = s.slice(0, comma);
+  const b64 = s.slice(comma + 1);
+  const mime = /data:([^;,]+)/.exec(meta)?.[1] || 'application/octet-stream';
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+};
 
+const MDContactChart = ({ rows, series, yLabel, height = 480 }) => (
+  <div className="flex gap-3">
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <ResponsiveContainer width="100%" height={height}>
+        <LineChart data={rows} margin={{ top: 8, right: 8, bottom: 96, left: 8 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+          <XAxis dataKey="atom" interval={0} height={100}
+                 tick={{ fontSize: 9, angle: -90, textAnchor: 'end' }} />
+          <YAxis tick={{ fontSize: 11 }} width={56}
+                 label={{ value: yLabel, angle: -90, position: 'insideLeft', style: { fontSize: 12 } }} />
+          <Tooltip />
+          {series.map((s, i) => (
+            <Line key={s.key} dataKey={s.key} stroke={AWK_PALETTE[i % AWK_PALETTE.length]}
+                  strokeWidth={2} dot={{ r: 2.5, strokeWidth: 0 }} isAnimationActive={false} />
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+    <div className="w-52 shrink-0 overflow-y-auto custom-scrollbar border border-slate-200 rounded-lg p-2 text-[11px] font-mono bg-white"
+         style={{ maxHeight: height }}>
+      {series.map((s, i) => (
+        <div key={s.key} className="flex items-center gap-1.5 py-0.5">
+          <span className="inline-block w-3 h-3 rounded-full shrink-0"
+                style={{ background: AWK_PALETTE[i % AWK_PALETTE.length] }} />
+          <span className="truncate" title={s.key}>{s.key}</span>
+        </div>
+      ))}
+    </div>
+  </div>
+);
+
+export const MDMembraneContactSection = ({ ctx }) => {
+  const { activeTest } = ctx;
+  const [cfg, setCfg] = useState({ ...CONTACT_DEFAULTS });
+  const [extraRuns, setExtraRuns] = useState([]);
+  const [status, setStatus] = useState({ state: 'idle', msg: '', done: 0 });
+  const [output, setOutput] = useState(null);
+
+  const setOpt = (k, v) => setCfg((c) => ({ ...c, [k]: v }));
+
+  const topologyText = async () => {
+    if (!activeTest.structureFileData) return null;
+    const b64 = String(activeTest.structureFileData).split(',')[1] || '';
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  };
+
+  const metricOf = (p) => (cfg.metric === 'contactFreq' ? p.contactFreq : p.peakRDF);
+
+  const aggregatePairs = (pairs) => {
+    const map = new Map();
+    pairs.forEach((p) => {
+      const v = metricOf(p);
+      const e = map.get(p.mem) || { sum: 0, max: -Infinity, n: 0 };
+      e.sum += v; e.max = Math.max(e.max, v); e.n++;
+      map.set(p.mem, e);
+    });
+    const out = new Map();
+    map.forEach((e, k) => {
+      out.set(k, cfg.aggregate === 'max' ? e.max : cfg.aggregate === 'sum' ? e.sum : e.sum / e.n);
+    });
+    return out;
+  };
+
+  const buildAtomsOutput = (res) => {
+    const byKey = new Map(res.pairs.map((p) => [`${p.mem}|${p.mol}`, p]));
+    const rows = res.memLabels.map((m) => {
+      const row = { atom: m };
+      res.molLabels.forEach((mo) => {
+        const p = byKey.get(`${m}|${mo}`);
+        row[mo] = p ? +metricOf(p).toFixed(4) : 0;
+      });
+      return row;
+    });
+    setOutput({
+      mode: 'atoms', rows, pairs: res.pairs, memLabels: res.memLabels,
+      series: res.molLabels.map((k) => ({ key: k })), nFrames: res.nFramesUsed,
+      molResidues: res.molResidues,
+    });
+    setStatus({ state: 'done', msg: '', done: res.nFramesUsed });
+  };
+
+  const buildRunsOutput = (memLabels, seriesVals) => {
+    const names = Object.keys(seriesVals);
+    const rows = memLabels.map((m) => {
+      const row = { atom: m };
+      names.forEach((n) => { row[n] = +(seriesVals[n].get(m) || 0).toFixed(4); });
+      return row;
+    });
+    setOutput({
+      mode: 'runs', rows, memLabels,
+      series: names.map((k) => ({ key: k })),
+      nFrames: null, molResidues: [],
+    });
+    setStatus({ state: 'done', msg: '', done: 0 });
+  };
+
+  const runAll = async (useDemo = false) => {
+    setStatus({ state: 'busy', msg: 'Reading topology…', done: 0 });
+    setOutput(null);
+    try {
+      const text = await topologyText();
+      if (!text) throw new Error('Upload the simulation topology (.gro — same atom order as the trajectory) in Experiment Setup → 3D Viewer mode first.');
+      const topo = parseTopology(text);
+      if (!topo.box) throw new Error('The topology has no box vectors — a .gro file with its final box line is required.');
+
+      const topoName = (activeTest.structureFileName || '').toLowerCase();
+      const topoBlob = mdDataUrlToBlob(activeTest.structureFileData);
+      const topoExt = topoName.endsWith('.pdb') ? 'pdb' : topoName.endsWith('.gro') ? 'gro' : 'gro';
+
+      const openTrajectory = async (file) => {
+        const src = await resolveFrameSource(file, {
+          topologyBlob: topoBlob, topologyExt: topoExt, topologyBox: topo.box,
+          onStatus: (m) => setStatus((s) => ({ ...s, msg: m })),
+        });
+        if (!src) throw new Error(`"${file.name}": unsupported format, or no topology available to decode it (.xtc / .dcd need the system topology uploaded; .trr works standalone).`);
+        return src; // { frames, numframes, source }
+      };
+
+      const jobs = [];
+      if (!useDemo) {
+        const mainFile = localFileCache.get(activeTest.id)?.trajectory || null;
+        if (mainFile) jobs.push({ name: mainFile.name.replace(/\.(xtc|trr|dcd)$/i, ''), file: mainFile });
+        extraRuns.forEach((f) => jobs.push({ name: f.name.replace(/\.(xtc|trr|dcd)$/i, ''), file: f }));
+      }
+
+      if (jobs.length === 0) {
+        const res = await computeContactRDF(topo, demoFrames(topo, 40), cfg,
+          (p) => setStatus((s) => ({ ...s, msg: `Demo: frame ${p.done}`, done: p.done })));
+        buildAtomsOutput(res);
+        return;
+      }
+
+      if (jobs.length === 1) {
+        const { frames, numframes, source } = await openTrajectory(jobs[0].file);
+        const total = numframes ? ` / ${numframes}` : '';
+        const res = await computeContactRDF(topo, frames, cfg,
+          (p) => setStatus({ state: 'busy', msg: `${jobs[0].name} (${source}): frame ${p.done}${total}`, done: p.done }));
+        buildAtomsOutput(res);
+      } else {
+        const seriesVals = {};
+        let memLabels = null;
+        for (const job of jobs) {
+          const { frames, numframes, source } = await openTrajectory(job.file);
+          const total = numframes ? ` / ${numframes}` : '';
+          const res = await computeContactRDF(topo, frames, cfg,
+            (p) => setStatus({ state: 'busy', msg: `${job.name} (${source}): frame ${p.done}${total}`, done: p.done }));
+          if (!memLabels) memLabels = res.memLabels;
+          seriesVals[job.name] = aggregatePairs(res.pairs);
+        }
+        buildRunsOutput(memLabels, seriesVals);
+      }
+    } catch (e) {
+      setStatus({ state: 'error', msg: e.message, done: 0 });
+    }
+  };
+
+  const exportCSV = () => {
+    if (!output) return;
+    const head = ['Membrane atom', ...output.series.map((s) => s.key)];
+    const body = output.rows.map((r) => [r.atom, ...output.series.map((s) => r[s.key] ?? '')]);
+    const csv = [head, ...body].map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const url = URL.createObjectURL(new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = 'membrane_contacts.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const yLabel = cfg.metric === 'contactFreq'
+    ? `Contact frequency (fraction of frames, r < ${cfg.rMax} nm)`
+    : cfg.mode === 'vdW' ? 'Apolar contact recurrence' : cfg.mode === 'all' ? 'Contact recurrence' : 'Polar contact recurrence';
+
+  const inp = 'border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500';
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-800">
+        In-browser port of <span className="font-mono">from_gro_to_rdf-new-colors-r6.awk</span> (option=inter):
+        for every membrane atom, the maximum of g(r) inside the {cfg.rMin}–{cfg.rMax} nm shell
+        (gmx rdf, bin {cfg.bin} nm) against the molecule — the "contact recurrence" plot of Figures_CHD.pdf (p. 8).
+        Upload the system topology (.gro) in the 3D panel plus a trajectory: <b>.xtc / .dcd</b> are decoded in-browser
+        via the NGL library (the same one the 3D viewer uses), <b>.trr</b> is parsed natively.
+      </div>
+
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="text-xs font-bold text-slate-600">Mode
+          <select value={cfg.mode} onChange={(e) => setOpt('mode', e.target.value)} className={`${inp} block mt-1 font-semibold`}>
+            <option value="polar">Polar (O/N/S, awk vdW=no)</option>
+            <option value="vdW">Apolar vdW carbons (awk vdW=yes)</option>
+            <option value="all">All (polar + vdW)</option>
+          </select>
+        </label>
+        <label className="text-xs font-bold text-slate-600">Metric
+          <select value={cfg.metric} onChange={(e) => setOpt('metric', e.target.value)} className={`${inp} block mt-1 font-semibold`}>
+            <option value="peakRDF">Peak RDF in window (awk)</option>
+            <option value="contactFreq">Contact frequency (frames)</option>
+          </select>
+        </label>
+        <label className="text-xs font-bold text-slate-600">r min (nm)
+          <input type="number" step="0.01" value={cfg.rMin} onChange={(e) => setOpt('rMin', Number(e.target.value))} className={`${inp} block mt-1 w-20`} />
+        </label>
+        <label className="text-xs font-bold text-slate-600">r max (nm)
+          <input type="number" step="0.01" value={cfg.rMax} onChange={(e) => setOpt('rMax', Number(e.target.value))} className={`${inp} block mt-1 w-20`} />
+        </label>
+        <label className="text-xs font-bold text-slate-600">Bin (nm)
+          <input type="number" step="0.001" value={cfg.bin} onChange={(e) => setOpt('bin', Number(e.target.value))} className={`${inp} block mt-1 w-20`} />
+        </label>
+        <label className="text-xs font-bold text-slate-600">Stride
+          <input type="number" min="1" value={cfg.stride} onChange={(e) => setOpt('stride', Math.max(1, Number(e.target.value) || 1))} className={`${inp} block mt-1 w-16`} />
+        </label>
+        <label className="text-xs font-bold text-slate-600">Start frame
+          <input type="number" min="0" value={cfg.startFrame} onChange={(e) => setOpt('startFrame', Math.max(0, Number(e.target.value) || 0))} className={`${inp} block mt-1 w-20`} />
+        </label>
+        <label className="text-xs font-bold text-slate-600">Max frames (0=all)
+          <input type="number" min="0" value={cfg.maxFrames} onChange={(e) => setOpt('maxFrames', Math.max(0, Number(e.target.value) || 0))} className={`${inp} block mt-1 w-24`} />
+        </label>
+        <label className="text-xs font-bold text-slate-600">Molecule residue(s)
+          <input value={cfg.molResidues} onChange={(e) => setOpt('molResidues', e.target.value)} placeholder="auto" className={`${inp} block mt-1 w-32 font-mono`} />
+        </label>
+        <label className="text-xs font-bold text-slate-600 flex items-center gap-1.5 pb-2">
+          <input type="checkbox" checked={cfg.includeIons} onChange={(e) => setOpt('includeIons', e.target.checked)} className="accent-blue-600" />
+          include ions
+        </label>
+        <label className="text-xs font-bold text-slate-600">Run aggregation
+          <select value={cfg.aggregate} onChange={(e) => setOpt('aggregate', e.target.value)} className={`${inp} block mt-1 font-semibold`}>
+            <option value="max">max over molecule atoms</option>
+            <option value="mean">mean</option>
+            <option value="sum">sum</option>
+          </select>
+        </label>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <button onClick={() => runAll(false)} disabled={status.state === 'busy'}
+                className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold px-5 py-2 rounded-lg text-sm">
+          ▶ Compute contacts
+        </button>
+        <button onClick={() => runAll(true)} disabled={status.state === 'busy'}
+                className="bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 font-bold px-4 py-2 rounded-lg text-xs">
+          🧪 Test pipeline (demo frames)
+        </button>
+        <label className="text-xs font-bold text-slate-600">Additional runs to overlay (like POPC+CHD(1)…(3))
+          <input type="file" multiple accept=".xtc,.trr,.dcd" className={`${inp} block mt-1`}
+                 onChange={(e) => setExtraRuns(Array.from(e.target.files || []))} />
+        </label>
+        {extraRuns.length > 0 && (
+          <span className="text-xs text-slate-500 font-mono">{extraRuns.map((f) => f.name).join(', ')}</span>
+        )}
+        {output && (
+          <button onClick={exportCSV} className="bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 font-bold px-4 py-2 rounded-lg text-xs">
+            📊 Export CSV
+          </button>
+        )}
+      </div>
+
+      {status.state === 'busy' && (
+        <div className="text-xs font-bold text-blue-700 animate-pulse">⏳ {status.msg}</div>
+      )}
+      {status.state === 'error' && (
+        <div className="bg-red-50 border border-red-300 text-red-700 rounded-lg p-3 text-xs font-semibold">⚠️ {status.msg}</div>
+      )}
+
+      {output && (
+        <div className="border border-slate-200 rounded-xl p-4 bg-white shadow-sm space-y-2">
+          <div className="text-xs text-slate-500 font-semibold">
+            {output.nFrames ? `${output.nFrames} frames analysed · ` : ''}
+            {output.series.length} series · {output.rows.length} membrane atom groups
+            {output.molResidues?.length ? ` · molecule residue(s): ${output.molResidues.join(', ')}` : ''}
+          </div>
+          <MDContactChart rows={output.rows} series={output.series} yLabel={yLabel} />
+        </div>
+      )}
+    </div>
+  );
+};
 // ================= ALL =================
 
 export const Setup = MDExperimentSetupSection;
 export const Data = MDDataSection;
 export const Simulations = MDSimulationParamsSection;
 export const Analysis = MDAnalysisSection;
+export const Contacts = MDMembraneContactSection;
 
 // ================= NOTEBOOK EXTRA =================
 export const NotebookExtra = ({ ctx, checkId }) => {
