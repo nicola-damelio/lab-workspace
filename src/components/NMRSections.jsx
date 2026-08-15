@@ -3998,6 +3998,71 @@ export const DataSection = ({ ctx }) => {
   const actualLayerKeys = d.layers.map(l => l.key);
   const [visibleLayers, setVisibleLayers] = useState(actualLayerKeys);
 
+  // ---- Drag-to-select + copy/paste ----
+  const [dragSel, setDragSel] = useState(null); // { startRow, startAtom, startLk, endRow, endAtom, endLk }
+  const isDragging = useRef(false);
+  const [copiedMsg, setCopiedMsg] = useState('');
+  const tableRef = useRef(null);
+
+  const cellInDragSel = (rowIdx, atomName, lk) => {
+    if (!dragSel) return false;
+    const rows = [dragSel.startRow, dragSel.endRow].sort((a, b) => a - b);
+    if (rowIdx < rows[0] || rowIdx > rows[1]) return false;
+    return true; // simple row-range selection
+  };
+
+  const startDrag = (rowIdx, atomName, lk, e) => {
+    if (e.target && e.target.tagName === 'INPUT') return;
+    isDragging.current = true;
+    setDragSel({ startRow: rowIdx, startAtom: atomName, startLk: lk, endRow: rowIdx, endAtom: atomName, endLk: lk });
+    e.preventDefault();
+  };
+
+  const extendDrag = (rowIdx, atomName, lk) => {
+    if (!isDragging.current) return;
+    setDragSel(prev => prev ? { ...prev, endRow: rowIdx, endAtom: atomName, endLk: lk } : null);
+  };
+
+  useEffect(() => {
+    const onUp = () => { isDragging.current = false; };
+    window.addEventListener('mouseup', onUp);
+    return () => window.removeEventListener('mouseup', onUp);
+  }, []);
+
+  const copyCells = () => {
+    if (!dragSel) return;
+    const rows = [dragSel.startRow, dragSel.endRow].sort((a, b) => a - b);
+    const lks = visibleLayers; // use all visible layers
+    const header = ['Residue', ...lks.map(lk => { const l = d.layers.find(la => la.key === lk); return l ? l.label : lk; })].join('\t');
+    const dataRows = [];
+    for (let ri = rows[0]; ri <= rows[1]; ri++) {
+      const res = d.estSeq[ri];
+      if (!res) continue;
+      const atoms = Object.keys(d.atomOptions.filter ? d.atomOptions.filter(o => o.key.startsWith(`${ri}-`)).reduce((a, o) => { a[o.key.split('-').slice(1).join('-')] = true; return a; }, {}) : {});
+      const displayAtoms = res.atomList || [];
+      if (displayAtoms.length === 0) { dataRows.push(`${res.id}\t`); continue; }
+      displayAtoms.forEach(atomName => {
+        const vals = lks.map(lk => {
+          const valMap = lk === 'cs' ? (activeTest.chemicalShifts || {}) : (d.allLayerValues[lk] || {});
+          return valMap[`${ri}-${atomName}`] || '';
+        });
+        dataRows.push(`${res.id} ${atomName}\t${vals.join('\t')}`);
+      });
+    }
+    const tsv = [header, ...dataRows].join('\n');
+    navigator.clipboard.writeText(tsv).then(() => {
+      setCopiedMsg('Copied!');
+      setTimeout(() => setCopiedMsg(''), 2000);
+    }).catch(() => {
+      // Fallback
+      const ta = document.createElement('textarea');
+      ta.value = tsv; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+      setCopiedMsg('Copied!');
+      setTimeout(() => setCopiedMsg(''), 2000);
+    });
+  };
+
+
   const effTableMode = ['sugar', 'lipid', 'organic'].includes(d.moleculeType) ? 'all' : tableMode;
   
   const selectedKeys = getSelectedKeys(activeTest);
@@ -4266,6 +4331,14 @@ export const DataSection = ({ ctx }) => {
             <button onClick={openExportModal} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-50 border border-indigo-300 text-indigo-700 hover:bg-indigo-100">📄 Publication Table</button>
             <button onClick={fillEstimated} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-green-50 border border-green-300 text-green-700 hover:bg-green-100">✨ Fill Estimated</button>
             <button onClick={() => setShowImport(true)} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-50 border border-amber-300 text-amber-700 hover:bg-amber-100">📥 Import Fitted Parameters</button>
+            {dragSel && (
+              <button onClick={copyCells} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 border border-blue-700 text-white hover:bg-blue-700 flex items-center gap-1">
+                📋 Copy Selection {copiedMsg && <span className="text-blue-200">{copiedMsg}</span>}
+              </button>
+            )}
+            {dragSel && (
+              <button onClick={() => setDragSel(null)} className="px-2 py-1.5 text-xs font-bold text-slate-400 hover:text-slate-600">✕ Clear</button>
+            )}
           </div>
         </div>
 
@@ -4371,7 +4444,9 @@ export const DataSection = ({ ctx }) => {
                           
                           const isFillEstimated = hasValue && !isManuallyEdited;
 
-                          const tdClass = `px-2 py-1 cursor-pointer transition-colors border-r border-slate-100 ${
+                          const isDragSelected = cellInDragSel(idx, atomName, lk);
+                          const tdClass = `px-2 py-1 cursor-pointer transition-colors border-r border-slate-100 select-none ${
+                              isDragSelected ? 'bg-blue-100 ring-1 ring-inset ring-blue-400' :
                               isSel ? 'bg-amber-100 ring-1 ring-inset ring-amber-400' : 
                               isManuallyEdited ? 'bg-emerald-100' : 
                               isFillEstimated ? 'bg-green-50' : 'hover:bg-slate-50'
@@ -4384,7 +4459,11 @@ export const DataSection = ({ ctx }) => {
                           }`;
 
                           return (
-                              <td key={lk} className={tdClass} onClick={(e) => handleCellClick(e, idx, atomName)}>
+                              <td key={lk} className={tdClass}
+                                onClick={(e) => handleCellClick(e, idx, atomName)}
+                                onMouseDown={(e) => startDrag(idx, atomName, lk, e)}
+                                onMouseEnter={() => extendDrag(idx, atomName, lk)}
+                              >
                                   <input 
                                     type="text" 
                                     value={val || ''} 
@@ -5377,6 +5456,226 @@ const defaultPlotCfg = (n) => ({
   style: { ...DEFAULT_CHART_STYLE }
 });
 
+// ================= PER ATOM CHART PANEL =================
+// Configurable grouped bar chart: user picks a parameter layer + atoms → bars per residue
+const PAP_COLORS = ['#3b82f6','#8b5cf6','#f59e0b','#22c55e','#ef4444','#0ea5e9','#ec4899','#14b8a6','#f97316','#6366f1'];
+const makePapPresetId = () => `papPreset_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+const PerAtomChartPanel = ({ ctx, d, chart, updateChart, removeChart }) => {
+  const { activeTest, updateActiveTest } = ctx;
+  const [atomSearch, setAtomSearch] = useState('');
+  const [showCfg, setShowCfg] = useState(false);
+  const [presetName, setPresetName] = useState('');
+  const layerKey = chart.layerKey || 'cs';
+  const atoms = chart.atoms || [];
+  const cfg = { aspect: 2.5, fontSize: 11, ...(chart.style || {}) };
+  const setC = (p) => updateChart(chart.id, p);
+  const setCfg = (p) => updateChart(chart.id, { style: { ...cfg, ...p } });
+
+  const layer = d.layers.find(l => l.key === layerKey) || d.layers[0];
+  const valMap = layerKey === 'cs' ? (activeTest.chemicalShifts || {}) : (d.allLayerValues?.[layerKey] || {});
+
+  // Presets — shared namespace with ConditionPlot presets
+  const presets = Array.isArray(activeTest.atomSelectionPresets) ? activeTest.atomSelectionPresets : [];
+  const savePreset = () => {
+    const name = presetName.trim();
+    if (!name || atoms.length === 0) return;
+    updateActiveTest({ atomSelectionPresets: [...presets, { id: makePapPresetId(), name, atoms: [...atoms] }] });
+    setPresetName('');
+  };
+  const applyPreset = (id) => { const p = presets.find(x => x.id === id); if (p) setC({ atoms: [...(p.atoms || [])] }); };
+  const deletePreset = (id) => updateActiveTest({ atomSelectionPresets: presets.filter(x => x.id !== id) });
+
+  // Atom list — always in sequence order (index 0, 1, 2… as atoms appear in the sequence)
+  const filtered = d.atomOptions.filter(o => !atomSearch.trim() || o.label.toLowerCase().includes(atomSearch.toLowerCase()));
+  const toggleAtom = (k) => setC({ atoms: atoms.includes(k) ? atoms.filter(a => a !== k) : [...atoms, k] });
+  const selectAllFiltered = () => setC({ atoms: Array.from(new Set([...atoms, ...filtered.map(o => o.key)])) });
+
+  // atomMeta sorted by sequence order (d.atomOptions is already in sequence order)
+  const atomMeta = d.atomOptions
+    .filter(o => atoms.includes(o.key))
+    .map((o, _i) => {
+      const origIdx = atoms.indexOf(o.key);
+      return {
+        key: o.key,
+        label: o.label.split(' ').slice(1).join(' ') || o.key.split('-').slice(1).join('-'),
+        color: PAP_COLORS[origIdx % PAP_COLORS.length],
+      };
+    });
+
+  // Build chart data — X axis in sequence order (sorted by residue index)
+  const residueEntries = {};
+  atoms.forEach(atomKey => {
+    const val = parseManual(valMap[atomKey]);
+    if (val === null) return;
+    const resIdx = Number(atomKey.split('-')[0]);
+    const res = d.estSeq[resIdx];
+    if (!res) return;
+    if (!residueEntries[resIdx]) residueEntries[resIdx] = { _idx: resIdx, label: res.id };
+    residueEntries[resIdx][atomKey] = val;
+  });
+  // Sort by sequence index (always, regardless of selection order)
+  const chartData = Object.values(residueEntries)
+    .filter(r => Object.keys(r).length > 2) // has _idx + label + at least 1 value
+    .sort((a, b) => a._idx - b._idx);
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3">
+      {/* Title + controls */}
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <input type="text" value={chart.title || ''} onChange={e => setC({ title: e.target.value })}
+          placeholder="Chart title…" className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm font-bold text-slate-700 outline-none focus:border-blue-500 bg-transparent flex-1 min-w-[140px]" />
+        <div className="flex gap-2">
+          <button onClick={() => setShowCfg(!showCfg)} className="text-xs bg-slate-100 border border-slate-300 px-2 py-1 rounded font-bold text-slate-600 hover:bg-slate-200">⚙️</button>
+          <button onClick={() => removeChart(chart.id)} className="text-xs bg-red-50 border border-red-200 px-2 py-1 rounded font-bold text-red-600 hover:bg-red-100">🗑</button>
+        </div>
+      </div>
+
+      {/* Layer picker */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[10px] font-bold text-slate-500 uppercase">Parameter:</span>
+        {d.layers.map(l => (
+          <button key={l.key} onClick={() => setC({ layerKey: l.key })}
+            className={`text-xs font-bold px-2.5 py-1 rounded-full border transition-colors ${l.key === layerKey ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}>
+            {l.label}{l.unit ? ` (${l.unit})` : ''}
+          </button>
+        ))}
+      </div>
+
+      {showCfg && (
+        <div className="flex gap-4 flex-wrap">
+          <label className="text-[10px] font-bold text-slate-500 flex flex-col gap-1">Aspect<input type="number" step="0.1" value={cfg.aspect} onChange={e=>setCfg({aspect:+e.target.value||2.5})} className="border border-slate-300 rounded px-2 py-1 text-xs w-20" /></label>
+          <label className="text-[10px] font-bold text-slate-500 flex flex-col gap-1">Font<input type="number" value={cfg.fontSize} onChange={e=>setCfg({fontSize:+e.target.value||11})} className="border border-slate-300 rounded px-2 py-1 text-xs w-16" /></label>
+        </div>
+      )}
+
+      {/* Atom picker */}
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[10px] font-bold text-slate-500 uppercase">Atom(s) to plot ({atoms.length} selected)</span>
+          <button type="button" onClick={selectAllFiltered} className="text-[10px] font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100 px-2 py-0.5 rounded">☑ Select all (filtered)</button>
+          {atoms.length > 0 && <button type="button" onClick={() => setC({ atoms: [] })} className="text-[10px] font-bold text-red-500 hover:text-red-700 underline">Clear</button>}
+        </div>
+        <input type="text" value={atomSearch} onChange={e => setAtomSearch(e.target.value)}
+          placeholder="Search atom (e.g. Ala3 Hα)…" className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white" />
+        <div className="border border-slate-200 rounded-lg max-h-44 overflow-y-auto custom-scrollbar bg-white">
+          {filtered.length === 0 && <div className="p-3 text-xs text-slate-400 italic">No atoms — enter a sequence first.</div>}
+          {filtered.map(o => (
+            <label key={o.key} className="flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-blue-50 border-b border-slate-50 last:border-0">
+              <input type="checkbox" checked={atoms.includes(o.key)} onChange={() => toggleAtom(o.key)} className="w-3.5 h-3.5 accent-blue-600" />
+              <span className="text-xs text-slate-700">{o.label}</span>
+            </label>
+          ))}
+        </div>
+
+        {/* Selected atoms as coloured pills (sequence order) */}
+        {atomMeta.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {atomMeta.map(m => (
+              <span key={m.key} style={{ backgroundColor: m.color }} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold text-white">
+                {m.label}
+                <button type="button" onClick={() => toggleAtom(m.key)} className="hover:text-red-200 font-black">×</button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Preset save/load */}
+        <div className="flex flex-wrap gap-2 items-end pt-1 border-t border-slate-100">
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">Save selection as</label>
+            <div className="flex gap-1">
+              <input type="text" value={presetName} onChange={e => setPresetName(e.target.value)} placeholder="Selection name"
+                className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs w-36 outline-none focus:border-blue-500 bg-white" />
+              <button type="button" onClick={savePreset} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-2 py-1.5 rounded-lg text-xs">💾 Save</button>
+            </div>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">Load saved selection</label>
+            <select value="" onChange={e => { if (e.target.value) applyPreset(e.target.value); }}
+              className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 max-w-[180px]">
+              <option value="">-- Select --</option>
+              {presets.map(p => <option key={p.id} value={p.id}>{p.name} ({(p.atoms || []).length} atoms)</option>)}
+            </select>
+          </div>
+        </div>
+        {presets.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {presets.map(p => (
+              <span key={p.id} className="inline-flex items-center gap-1 bg-indigo-50 border border-indigo-200 text-indigo-800 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                {p.name}
+                <button type="button" onClick={() => deletePreset(p.id)} className="text-indigo-400 hover:text-red-600 font-black" title="Delete preset">×</button>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Chart — X axis always in sequence order */}
+      {chartData.length > 0 ? (
+        <ResponsiveContainer width="100%" aspect={cfg.aspect}>
+          <BarChart data={chartData} margin={{ top: 8, right: 8, bottom: 16, left: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="label" tick={{ fontSize: cfg.fontSize }} />
+            <YAxis tick={{ fontSize: cfg.fontSize }} label={{ value: layer?.unit || '', angle: -90, position: 'insideLeft', style: { fontSize: cfg.fontSize } }} />
+            <Tooltip />
+            <Legend wrapperStyle={{ fontSize: cfg.fontSize }} />
+            {atomMeta.map(m => <Bar key={m.key} dataKey={m.key} name={m.label} fill={m.color} isAnimationActive={false} />)}
+          </BarChart>
+        </ResponsiveContainer>
+      ) : (
+        <div className="bg-slate-50 border border-dashed border-slate-200 rounded-lg p-4 text-center text-xs text-slate-400">
+          {atoms.length === 0 ? 'Select atoms above to plot.' : 'No data for selected atoms in this layer.'}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ================= PER ATOM PLOT SECTION =================
+// Wraps SCS analysis (always shown) + user-configurable per-atom bar charts
+export const PerAtomPlotSection = ({ ctx }) => {
+  const { activeTest, updateActiveTest } = ctx;
+  const d = useNmrDerived(activeTest, ctx);
+  const charts = Array.isArray(activeTest.perAtomCharts) ? activeTest.perAtomCharts : [];
+
+  const addChart = () => {
+    const n = charts.length + 1;
+    const id = `pap_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    updateActiveTest({ perAtomCharts: [...charts, { id, title: `Chart ${n}`, layerKey: 'cs', atoms: [], style: {} }] });
+  };
+  const updateChart = (id, patch) => updateActiveTest({
+    perAtomCharts: charts.map(c => c.id === id ? { ...c, ...patch } : c)
+  });
+  const removeChart = (id) => updateActiveTest({ perAtomCharts: charts.filter(c => c.id !== id) });
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Secondary Shift Analysis — always at the top */}
+      <CollapsibleSection title="Secondary Chemical Shift Analysis" icon="📊" defaultOpen={true}>
+        <SecondaryShiftsSection ctx={ctx} />
+      </CollapsibleSection>
+      {/* Custom charts */}
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-bold text-slate-600 uppercase tracking-wide">Custom Per-Atom Charts</span>
+          <button onClick={addChart} className="text-xs bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg shadow-sm flex items-center gap-1.5 transition-colors">
+            + Add Chart
+          </button>
+        </div>
+        {charts.length === 0 && (
+          <div className="bg-slate-50 border border-dashed border-slate-200 rounded-lg p-4 text-center text-xs text-slate-400">
+            Click "+ Add Chart" to plot any parameter (Chemical Shift, T1, T2…) per residue with multiple atom bars.
+          </div>
+        )}
+        {charts.map(chart => (
+          <PerAtomChartPanel key={chart.id} ctx={ctx} d={d} chart={chart} updateChart={updateChart} removeChart={removeChart} />
+        ))}
+      </div>
+    </div>
+  );
+};
+
 // ================= FITTING SECTION =================
 export const FittingSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
@@ -5572,8 +5871,8 @@ export const All = ({ ctx }) => (
     <CollapsibleSection title="Data" icon="🔢" defaultOpen={false}><DataSection ctx={ctx} /></CollapsibleSection>
     <CollapsibleSection title="Data Analysis" icon="📉" defaultOpen={false}>
       <div className="flex flex-col gap-6">
-        <CollapsibleSection title="Secondary Shifts analysis" icon="📉" defaultOpen={false}>
-          <SecondaryShiftsSection ctx={ctx} />
+        <CollapsibleSection title="Per Atom Plot" icon="📊" defaultOpen={false}>
+          <PerAtomPlotSection ctx={ctx} />
         </CollapsibleSection>
         <CollapsibleSection title="Fitting" icon="📐" defaultOpen={false}>
           <FittingSection ctx={ctx} />
@@ -5591,6 +5890,7 @@ export const Data = DataSection;
 export const Fitting = FittingSection;
 export const Simulations = SimulationsSection;
 export const SecondaryShifts = SecondaryShiftsSection;
+export const PerAtomPlot = PerAtomPlotSection;
 
 // Building blocks reused by the Lab Notebook to re-render simulated spectra
 export { OneDSpectrumPlot, SpectrumPlot, HSQCPlot, useNmrDerived };

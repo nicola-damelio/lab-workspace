@@ -1,0 +1,534 @@
+export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlot }) => {
+  const { activeTest, updateActiveTest } = ctx;
+  const cfg = { ...DEFAULT_CHART_STYLE, ...(plot.style || {}) };
+  const [atomSearch, setAtomSearch] = useState('');
+  const [presetName, setPresetName] = useState('');
+  const [showErr, setShowErr] = useState(false);
+  const [showCfg, setShowCfg] = useState(false);
+  const chartRef = useRef(null);
+  const isHist = (plot.chartType || 'line') === 'hist';
+  const is3D = plot.chartType === '3d';
+  const set = (patch) => updatePlot(plot.id, patch);
+  const setCfg = (patch) => updatePlot(plot.id, { style: { ...cfg, ...patch } });
+  const plotLayer = d.layers.find((l) => l.key === plot.layerKey) || d.layers[0];
+  const experimentalFields = d.fields;
+  const effXField = experimentalFields.some((f) => f.key === plot.xField) ? plot.xField : (experimentalFields[0]?.key || 'temperature');
+  const xFieldLabel = experimentalFields.find((f) => f.key === effXField)?.label || effXField;
+  const filtered = d.atomOptions.filter((o) => !atomSearch.trim() || o.label.toLowerCase().includes(atomSearch.toLowerCase()));
+  const toggleAtom = (key) => set({ atoms: plot.atoms.includes(key) ? plot.atoms.filter((k) => k !== key) : [...plot.atoms, key] });
+  const selectAllFiltered = () => set({ atoms: Array.from(new Set([...plot.atoms, ...filtered.map((o) => o.key)])) });
+  const presets = Array.isArray(activeTest.atomSelectionPresets) ? activeTest.atomSelectionPresets : [];
+  const savePreset = () => {
+    const name = presetName.trim();
+    if (!name || plot.atoms.length === 0) return;
+    updateActiveTest({ atomSelectionPresets: [...presets, { id: makePlotId(), name, atoms: [...plot.atoms] }] });
+    setPresetName('');
+  };
+  const applyPreset = (id) => { const p = presets.find((x) => x.id === id); if (p) set({ atoms: [...(p.atoms || [])] }); };
+  const deletePreset = (id) => updateActiveTest({ atomSelectionPresets: presets.filter((x) => x.id !== id) });
+  const used = plot.usedInstances || {};
+  const toggleInstance = (iid) => set({ usedInstances: { ...used, [iid]: used[iid] === false ? undefined : false } });
+
+  const comparableInfo = useMemo(() => {
+    const xFieldKey = effXField;
+    const groupFields = experimentalFields.filter((f) =>
+      f.key !== xFieldKey && (!is3D || f.key !== plot.yField)
+    );
+    const usedInstances = d.instances.filter((inst) => used[inst.id] !== false);
+    const signatures = usedInstances.map((inst) => ({
+      inst,
+      sig: groupFields.map((f) => String(getExpValue(inst, f.key) ?? '')).join('|')
+    }));
+    const sigCounts = {};
+    signatures.forEach(({ sig }) => { sigCounts[sig] = (sigCounts[sig] || 0) + 1; });
+    const mostCommonSig = Object.keys(sigCounts).sort((a, b) => sigCounts[b] - sigCounts[a])[0];
+    const comparableInstIds = new Set(signatures.filter((s) => s.sig === mostCommonSig).map((s) => s.inst.id));
+    const varyingFields = groupFields.filter((f) => {
+      const vals = new Set(usedInstances.map((inst) => String(getExpValue(inst, f.key) ?? '')));
+      return vals.size > 1;
+    });
+    const nonComparableCount = signatures.filter((s) => s.sig !== mostCommonSig).length;
+    return { comparableInstIds, varyingFields, nonComparableCount, hasMismatch: nonComparableCount > 0 };
+  }, [d.instances, used, effXField, plot.yField, is3D, experimentalFields]);
+  const isComparable = (instId) => !plot.excludeNonComparable || comparableInfo.comparableInstIds.has(instId);
+
+  const series = useMemo(() => plot.atoms.map((ak) => {
+    const opt = d.atomOptions.find((o) => o.key === ak);
+    const pts = [];
+    d.instances.forEach((inst) => {
+      if (used[inst.id] === false) return;
+      if (!isComparable(inst.id)) return; 
+      const vals = getInstanceValues(inst, inst.id === d.activeInstanceId, activeTest, plot.layerKey);
+      const v = parseManual(vals[ak]);
+      if (v === null) return;
+      pts.push({
+        instId: inst.id, name: inst.name,
+        x: parseManual(getExpValue(inst, effXField)),
+        y: v,
+        y2: plot.yField ? parseManual(getExpValue(inst, plot.yField)) : null,
+        excluded: !!((plot.excluded[ak] || {})[inst.id])
+      });
+    });
+    pts.sort((a, b) => (a.x ?? 0) - (b.x ?? 0));
+    return { key: ak, label: opt ? opt.label : ak, pts };
+  }), [plot.atoms, plot.layerKey, d.instances, d.atomOptions, plot.excluded, effXField, plot.yField, used, activeTest.nmrValues, plot.excludeNonComparable, comparableInfo]);
+
+  const colorOf = (s) => seriesColor(cfg, s.key, series.findIndex((q) => q.key === s.key));
+  const includedPts = (s) => s.pts.filter((p) => !p.excluded);
+  const maxOf = (s) => { const v = includedPts(s).map((p) => p.y); return v.length ? Math.max(...v) : null; };
+  const effSD = (sKey, p) => {
+    const man = (plot.manualSD[sKey] || {})[p.instId];
+    if (typeof man === 'number' && Number.isFinite(man)) return man;
+    if (plot.useFixedSD) { const f = parseManual(plot.fixedSDStr); if (f !== null) return f; }
+    return null;
+  };
+  const fitOf = (s) => {
+    if (!plot.fitEnabled || is3D || isHist) return null;
+    const wpts = includedPts(s).filter((p) => p.x !== null).map((p) => {
+      const sd = effSD(s.key, p);
+      return { x: p.x, y: p.y, w: sd && sd > 0 ? 1 / (sd * sd) : 1 };
+    });
+    return runFit(plot.fitModel, plot.customExpr, wpts);
+  };
+  const fits = useMemo(() => {
+    const out = {};
+    series.forEach((s) => { out[s.key] = fitOf(s); });
+    return out;
+  }, [series, plot.fitEnabled, plot.fitModel, plot.customExpr, plot.chartType, plot.manualSD, plot.useFixedSD, plot.fixedSDStr]);
+  const setManualSD = (sKey, instId, val) => {
+    const inner = { ...(plot.manualSD[sKey] || {}) };
+    const n = parseManual(val);
+    if (n === null) delete inner[instId]; else inner[instId] = n;
+    set({ manualSD: { ...plot.manualSD, [sKey]: inner } });
+  };
+  const toggleExclude = (sKey, instId) => {
+    const inner = { ...(plot.excluded[sKey] || {}) };
+    if (inner[instId]) delete inner[instId]; else inner[instId] = true;
+    set({ excluded: { ...plot.excluded, [sKey]: inner } });
+  };
+  const autoTouch = (s) => {
+    const fit = fits[s.key] || fitOf(s);
+    if (!fit || !fit.f) return;
+    const inner = { ...(plot.manualSD[s.key] || {}) };
+    includedPts(s).forEach((p) => {
+      if (p.x === null) return;
+      inner[p.instId] = Math.ceil((Math.abs(p.y - fit.f(p.x)) * 1.02 + 0.01) * 100) / 100;
+    });
+    set({ manualSD: { ...plot.manualSD, [s.key]: inner } });
+  };
+  const resetSD = (sKey) => { const next = { ...plot.manualSD }; delete next[sKey]; set({ manualSD: next }); };
+  const cleanOutliers = (target) => {
+    const thresh = parseManual(plot.outlierThreshStr) || 2.5;
+    const excluded = JSON.parse(JSON.stringify(plot.excluded || {}));
+    const proc = (s) => {
+      for (let it = 0; it < 20; it++) {
+        const pts = s.pts.filter((p) => !((excluded[s.key] || {})[p.instId]) && p.x !== null);
+        if (pts.length < 4) break;
+        const wpts = pts.map((p) => { const sd = effSD(s.key, p); return { x: p.x, y: p.y, w: sd && sd > 0 ? 1 / (sd * sd) : 1, p }; });
+        const fit = runFit(plot.fitModel, plot.customExpr, wpts);
+        if (!fit || !fit.f) break;
+        let worst = null, maxR = 0;
+        wpts.forEach((q) => {
+          const sd = effSD(s.key, q.p);
+          const err = sd && sd > 0 ? sd : 1;
+          const ratio = Math.abs(q.p.y - fit.f(q.p.x)) / err;
+          if (ratio > thresh && ratio > maxR) { maxR = ratio; worst = q.p; }
+        });
+        if (!worst) break;
+        excluded[s.key] = { ...(excluded[s.key] || {}), [worst.instId]: true };
+      }
+    };
+    (target ? [target] : series).forEach(proc);
+    set({ excluded });
+  };
+  const restoreExcluded = () => set({ excluded: {} });
+  const visibleSeries = series.filter((s) => !plot.hiddenSeries[s.key]);
+  const xs = visibleSeries.flatMap((s) => includedPts(s).filter((p) => p.x !== null).map((p) => p.x));
+  const padX = xs.length ? ((Math.max(...xs) - Math.min(...xs)) * 0.05 || 1) : 1;
+  const dataXDomain = xs.length ? [Math.min(...xs) - padX, Math.max(...xs) + padX] : [0, 1];
+  const zoom = useXZoom(chartRef, dataXDomain);
+  const xTicks = makeTicks(zoom.domain, cfg.tickStep);
+  const catData = useMemo(() => {
+    return d.instances.filter((inst) => used[inst.id] !== false).map((inst) => {
+      const row = { __condition: inst.name };
+      series.forEach((s) => {
+        const p = s.pts.find((q) => q.instId === inst.id);
+        if (p && !p.excluded) { row[s.key] = p.y; row[`${s.key}__sd`] = effSD(s.key, p); }
+        else { row[s.key] = null; row[`${s.key}__sd`] = null; }
+      });
+      return row;
+    });
+  }, [d.instances, series, used, plot.manualSD, plot.useFixedSD, plot.fixedSDStr]);
+  const numData = (s) => includedPts(s).filter((p) => p.x !== null).sort((a, b) => a.x - b.x).map((p) => ({ x: p.x, y: p.y, sd: effSD(s.key, p), name: p.name }));
+  const fitData = (s) => {
+    const fit = fits[s.key];
+    if (!fit || !fit.f) return [];
+    const [mn, mx] = zoom.domain;
+    if (!(mx > mn)) return [];
+    const out = [];
+    for (let i = 0; i <= 60; i++) { const x = mn + ((mx - mn) * i) / 60; out.push({ x, y: fit.f(x) }); }
+    return out;
+  };
+  const makeDot = (color, s) => (props) => {
+    const { cx, cy, index } = props;
+    if (cx == null || cy == null) return <g key={`d-${s.key}-${index}`} />;
+    const r = cfg.ptSize || 5;
+    let el;
+    if (cfg.pointStyle === 'square') el = <rect x={cx - r} y={cy - r} width={2 * r} height={2 * r} fill={color} />;
+    else if (cfg.pointStyle === 'triangle') el = <polygon points={`${cx},${cy - r} ${cx - r},${cy + r} ${cx + r},${cy + r}`} fill={color} />;
+    else if (cfg.pointStyle === 'cross') el = <g><line x1={cx - r} y1={cy - r} x2={cx + r} y2={cy + r} stroke={color} strokeWidth={2} /><line x1={cx - r} y1={cy + r} x2={cx + r} y2={cy - r} stroke={color} strokeWidth={2} /></g>;
+    else el = <circle cx={cx} cy={cy} r={r} fill={color} />;
+    return <g key={`d-${s.key}-${index}`}>{el}</g>;
+  };
+  const xLab = cfg.xAxisLabel || xFieldLabel;
+  const yLab = cfg.yAxisLabel || `${plotLayer.label}${plotLayer.unit ? ` (${plotLayer.unit})` : ''}`;
+  const refLines = (
+    <>
+      {plot.showMaxLines && visibleSeries.map((s) => {
+        const m = maxOf(s);
+        if (m === null) return null;
+        const c = colorOf(s);
+        return <ReferenceLine key={`mx-${s.key}`} y={m} stroke={c} strokeDasharray="6 4" ifOverflow="extendDomain" label={{ value: `max ${s.label}=${m.toFixed(2)}`, fill: c, fontSize: Math.max(9, cfg.fontSize - 1), position: 'insideTopRight' }} />;
+      })}
+      {(plot.hLines || []).map((h) => {
+        const v = parseManual(h.value);
+        if (v === null) return null;
+        return <ReferenceLine key={h.id} y={v} stroke={h.color || '#64748b'} strokeDasharray="4 4" ifOverflow="extendDomain" label={{ value: h.label || `y=${v}`, fill: h.color || '#64748b', fontSize: Math.max(9, cfg.fontSize - 1), position: 'insideTopRight' }} />;
+      })}
+    </>
+  );
+  const paramKeys = useMemo(() => {
+    if (!plot.fitEnabled || is3D || isHist || !series.length) return [];
+    return fitParamOptions(plot.fitModel, plot.customExpr);
+  }, [plot.fitEnabled, plot.fitModel, plot.customExpr, series, is3D, isHist]);
+  const [paramGraphVar, setParamGraphVar] = useState('');
+  useEffect(() => { if (!paramKeys.includes(paramGraphVar)) setParamGraphVar(paramKeys[0] || ''); }, [paramKeys, paramGraphVar]);
+  const paramData = useMemo(() => {
+    if (!paramGraphVar) return [];
+    return series.map((s) => {
+      const f = fits[s.key];
+      if (!f) return null;
+      const val = extractFitParam(f, plot.fitModel, paramGraphVar);
+      const err = plot.fitModel === 'custom' ? f.paramsErr?.[paramGraphVar] : f[`${paramGraphVar}Err`];
+      if (val === undefined || val === null) return null;
+      return { name: s.label, val, err: err || 0, fill: colorOf(s) };
+    }).filter(Boolean);
+  }, [series, fits, paramGraphVar, plot.fitModel, cfg.colors]);
+  return (
+    <CollapsibleSection title={plot.title} icon="📈" defaultOpen={true}
+      headerExtra={
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={() => { const nn = window.prompt('Rename plot:', plot.title); if (nn && nn.trim()) set({ title: nn.trim() }); }} className="text-slate-400 hover:text-blue-600" title="Rename">✏️</button>
+          <button type="button" onClick={() => duplicatePlot(plot)} className="text-slate-400 hover:text-blue-600" title="Duplicate">⧉</button>
+          <button type="button" onClick={() => removePlot(plot.id)} className="text-slate-400 hover:text-red-500" title="Remove">×</button>
+        </div>
+      }>
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-wrap gap-3 items-end bg-slate-50 border border-slate-200 rounded-lg p-3">
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">Parameter (Y / Z)</label>
+            <select value={plot.layerKey} onChange={(e) => set({ layerKey: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
+              {d.layers.map((l) => <option key={l.key} value={l.key}>{l.label}{l.unit ? ` (${l.unit})` : ''}</option>)}
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">X axis (Experimental Condition)</label>
+            <select value={effXField} onChange={(e) => set({ xField: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
+              {experimentalFields.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">Type</label>
+            <select value={plot.chartType || 'line'} onChange={(e) => set({ chartType: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
+              <option value="line">Line / Scatter (zoomable)</option>
+              <option value="hist">Histogram (per instance)</option>
+              <option value="3d">3D Scatter</option>
+              <option value="3d-hist">3D Histogram</option>
+            </select>
+          </div>
+          {is3D && (
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-bold text-slate-500 uppercase">2nd Experimental Condition field (Y of 3D)</label>
+              <select value={plot.yField || ''} onChange={(e) => set({ yField: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
+                <option value="">-- select --</option>
+                {experimentalFields.filter((f) => f.key !== effXField).map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
+              </select>
+            </div>
+          )}
+          {!is3D && !isHist && (
+            <label className="flex items-center gap-2 text-xs font-bold text-slate-700 pb-1.5 cursor-pointer">
+              <input type="checkbox" checked={plot.fitEnabled} onChange={(e) => set({ fitEnabled: e.target.checked })} className="w-4 h-4 accent-blue-600" /> Fit curve
+            </label>
+          )}
+          {plot.fitEnabled && !is3D && !isHist && (
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-bold text-slate-500 uppercase">Model</label>
+              <div className="flex gap-2 items-center">
+                <select value={plot.fitModel} onChange={(e) => set({ fitModel: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold">
+                  <option value="linear">Linear (weighted)</option>
+                  <option value="4pl">4PL logistic (weighted)</option>
+                  <option value="custom">Custom Equation</option>
+                </select>
+                {plot.fitModel === 'custom' && (
+                  <input type="text" value={plot.customExpr || ''} onChange={(e) => set({ customExpr: e.target.value })} placeholder="e.g. a*x^2 + b" className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-500 w-32 bg-white" />
+                )}
+              </div>
+            </div>
+          )}
+          <div className="ml-auto flex gap-2">
+            <button type="button" onClick={() => setShowErr(!showErr)} className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${showErr ? 'bg-orange-100 border-orange-400 text-orange-800' : 'bg-white border-orange-300 text-orange-700 hover:bg-orange-50'}`}>⚠️ Error Management</button>
+            <button type="button" onClick={() => setShowCfg(!showCfg)} className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${showCfg ? 'bg-slate-200 border-slate-400 text-slate-900' : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'}`}>🎨 Graphical Parameters</button>
+          </div>
+        </div>
+
+        {comparableInfo.hasMismatch && !isHist && (
+          <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 text-xs text-amber-800 flex flex-col gap-2">
+            <div>
+              ⚠️ These experimental conditions differ between instances: <b>{comparableInfo.varyingFields.map((f) => f.label).join(', ')}</b>.
+              {' '}{comparableInfo.nonComparableCount} point(s) come from instances with different conditions and may not be comparable.
+            </div>
+            <label className="flex items-center gap-2 font-bold cursor-pointer">
+              <input type="checkbox" checked={!!plot.excludeNonComparable} onChange={(e) => set({ excludeNonComparable: e.target.checked })} className="accent-amber-600" />
+              Exclude non-comparable points
+            </label>
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2 bg-white border border-slate-200 rounded-lg p-2">
+          <span className="text-[10px] font-bold text-slate-500 uppercase">Conditions used:</span>
+          {d.instances.map((inst) => (
+            <label key={inst.id} className={`flex items-center gap-1.5 text-xs font-bold px-2 py-1 rounded-lg border cursor-pointer ${used[inst.id] === false ? 'bg-slate-100 border-slate-200 text-slate-400' : 'bg-blue-50 border-blue-200 text-blue-800'}`}>
+              <input type="checkbox" checked={used[inst.id] !== false} onChange={() => toggleInstance(inst.id)} className="w-3.5 h-3.5 accent-blue-600" />
+              {inst.name}
+              <span className="text-[9px] font-mono opacity-70">({xFieldLabel}: {getExpValue(inst, effXField) || '—'})</span>
+            </label>
+          ))}
+        </div>
+        <div className="flex flex-col lg:flex-row gap-6">
+          <div className="w-full lg:w-80 flex flex-col gap-2 shrink-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <label className="text-xs font-bold text-slate-600 uppercase">Atom(s) to plot</label>
+              <button type="button" onClick={selectAllFiltered} className="text-[10px] font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100 px-2 py-0.5 rounded">☑ Select all (filtered)</button>
+              <button type="button" onClick={() => set({ atoms: [] })} className="text-[10px] font-bold text-red-500 hover:text-red-700 underline">Clear</button>
+            </div>
+            <input type="text" value={atomSearch} onChange={(e) => setAtomSearch(e.target.value)} placeholder="Search atom (e.g. Ala3 HN)…" className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white" />
+            <div className="border border-slate-200 rounded-lg max-h-52 overflow-y-auto custom-scrollbar bg-white">
+              {filtered.length === 0 && <div className="p-3 text-xs text-slate-400 italic">No atoms (enter a sequence first).</div>}
+              {filtered.map((o) => (
+                <label key={o.key} className="flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-blue-50 border-b border-slate-50 last:border-0">
+                  <input type="checkbox" checked={plot.atoms.includes(o.key)} onChange={() => toggleAtom(o.key)} className="w-3.5 h-3.5 accent-blue-600" />
+                  <span className="text-xs text-slate-700">{o.label}</span>
+                </label>
+              ))}
+            </div>
+            {plot.atoms.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {series.map((s) => (
+                  <span key={s.key} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold text-white" style={{ backgroundColor: colorOf(s) }}>
+                    {s.label}
+                    <button type="button" onClick={() => toggleAtom(s.key)} className="hover:text-red-200 font-black">×</button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2 items-end pt-1 border-t border-slate-100">
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">Save current selection as</label>
+                <div className="flex gap-1">
+                  <input type="text" value={presetName} onChange={(e) => setPresetName(e.target.value)} placeholder="Selection name" className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs w-36 outline-none focus:border-blue-500 bg-white" />
+                  <button type="button" onClick={savePreset} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-2 py-1.5 rounded-lg text-xs">💾 Save</button>
+                </div>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">Load saved selection</label>
+                <select value="" onChange={(e) => { if (e.target.value) applyPreset(e.target.value); }} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 max-w-[180px]">
+                  <option value="">-- Select --</option>
+                  {presets.map((p) => <option key={p.id} value={p.id}>{p.name} ({(p.atoms || []).length})</option>)}
+                </select>
+              </div>
+            </div>
+            {presets.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {presets.map((p) => (
+                  <span key={p.id} className="inline-flex items-center gap-1 bg-indigo-50 border border-indigo-200 text-indigo-800 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                    {p.name}
+                    <button type="button" onClick={() => deletePreset(p.id)} className="text-indigo-400 hover:text-red-600 font-black" title="Delete preset">×</button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="flex-1 min-w-0 flex flex-col gap-3">
+            {visibleSeries.length > 0 && !is3D && (
+              <div className="flex flex-wrap gap-2">
+                {series.map((s) => (
+                  <label key={s.key} className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-2 py-1 rounded-lg text-xs font-bold text-slate-700 cursor-pointer">
+                    <input type="checkbox" checked={!plot.hiddenSeries[s.key]} onChange={() => set({ hiddenSeries: { ...plot.hiddenSeries, [s.key]: !plot.hiddenSeries[s.key] } })} className="w-3.5 h-3.5 accent-blue-600" />
+                    <span className="w-3 h-3 rounded-full inline-block" style={{ backgroundColor: colorOf(s) }} />
+                    {s.label}
+                  </label>
+                ))}
+              </div>
+            )}
+            {series.length === 0 ? (
+              <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">Select at least one atom to plot.</div>
+            ) : is3D ? (
+              <div className="bg-white border border-slate-200 rounded-xl p-3" style={{ height: Math.max(340, cfg.height) }}>
+                <ThreeDScatter cfg={cfg} xLabel={xFieldLabel} yLabel={experimentalFields.find((f) => f.key === plot.yField)?.label || '—'} zLabel={plotLayer.label}
+                  seriesList={visibleSeries.map((s) => ({ key: s.key, label: s.label, color: colorOf(s), pts: includedPts(s).filter((p) => p.x !== null && p.y2 !== null).map((p) => ({ x: p.x, y: p.y2, z: p.y, name: p.name })) }))} />
+              </div>
+            ) : (
+              <div className="select-none relative">
+                {!isHist && zoom.isZoomed && (
+                  <button type="button" onClick={zoom.reset} className="absolute top-2 right-2 z-10 text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>
+                )}
+                <div ref={chartRef} onMouseDown={isHist ? undefined : zoom.onMouseDown} style={chartBoxStyle(cfg)} className="bg-white border border-slate-200 rounded-xl p-3">
+                  <ResponsiveContainer width="100%" height="100%">
+                    {isHist ? (
+                      <BarChart data={catData} margin={{ top: 8, right: 16, bottom: 30, left: 12 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                        <XAxis dataKey="__condition" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} />} tickMargin={10} label={{ value: 'Condition', position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                        <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={{ value: yLab, angle: -90, position: 'insideLeft', offset: 6, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                        <Tooltip />
+                        {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 10 }} />}
+                        {refLines}
+                        {visibleSeries.map((s) => {
+                          const color = colorOf(s);
+                          return (
+                            <Bar key={s.key} dataKey={s.key} name={s.label} fill={color} radius={[cfg.barRadius || 3, cfg.barRadius || 3, 0, 0]} isAnimationActive={false}>
+                              {HAS_EB && plot.showErrors && <ErrorBar dataKey={`${s.key}__sd`} width={4} strokeWidth={1} direction="y" color={color} />}
+                            </Bar>
+                          );
+                        })}
+                      </BarChart>
+                    ) : (
+                      <LineChart margin={{ top: 8, right: 16, bottom: 30, left: 12 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                        <XAxis type="number" dataKey="x" domain={[dom(cfg.xMin) ?? zoom.domain[0], dom(cfg.xMax) ?? zoom.domain[1]]} ticks={xTicks}
+                          tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} />} tickMargin={10}
+                          label={{ value: xLab, position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                        <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={{ value: yLab, angle: -90, position: 'insideLeft', offset: 6, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                        <Tooltip />
+                        {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 10 }} />}
+                        {refLines}
+                        {visibleSeries.map((s) => {
+                          const color = colorOf(s);
+                          return (
+                            <React.Fragment key={s.key}>
+                              <Line data={numData(s)} type="monotone" dataKey="y" name={s.label} stroke={color} strokeWidth={cfg.lineThickness || 2} strokeDasharray={lineDash(cfg.lineStyle)} dot={plot.showPoints ? makeDot(color, s) : false} connectNulls isAnimationActive={false}>
+                                {HAS_EB && plot.showErrors && <ErrorBar dataKey="sd" width={4} strokeWidth={1} direction="y" color={color} />}
+                              </Line>
+                              {plot.fitEnabled && plot.showFit && fits[s.key] && (
+                                <Line data={fitData(s)} type="monotone" dataKey="y" name={`${s.label} (fit)`} stroke={color} strokeWidth={1.5} strokeDasharray="8 4" dot={false} legendType="none" isAnimationActive={false} />
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
+                        {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
+                      </LineChart>
+                    )}
+                  </ResponsiveContainer>
+                </div>
+                {!isHist && <p className="text-[10px] text-slate-400 mt-1">💡 Drag with the mouse across the graph to zoom into an X region.</p>}
+              </div>
+            )}
+            {plot.fitEnabled && !is3D && !isHist && series.length > 0 && (
+              <div className="flex flex-col gap-4">
+                <div className="overflow-x-auto border border-slate-200 rounded-lg">
+                  <table className="w-full text-xs text-left bg-white">
+                    <thead className="bg-slate-100 text-slate-500 uppercase">
+                      <tr><th className="px-3 py-2">Series</th><th className="px-3 py-2">Model</th><th className="px-3 py-2">Parameters (weighted)</th><th className="px-3 py-2">SE</th></tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {series.map((s) => {
+                        const f = fits[s.key];
+                        return (
+                          <tr key={s.key}>
+                            <td className="px-3 py-1.5 font-bold text-slate-700">{s.label}</td>
+                            <td className="px-3 py-1.5">{f ? (plot.fitModel === 'linear' ? 'Linear' : plot.fitModel === '4pl' ? '4PL' : 'Custom') : '—'}</td>
+                            <td className="px-3 py-1.5 font-mono text-slate-600">
+                              {f ? (plot.fitModel === 'linear' ? `slope=${f.slope.toFixed(4)}±${(f.slopeErr || 0).toFixed(4)}; int=${f.intercept.toFixed(4)}±${(f.interceptErr || 0).toFixed(4)}; R²=${f.r2.toFixed(3)}` : plot.fitModel === '4pl' ? `Top=${f.top.toFixed(3)}; Bottom=${f.bottom.toFixed(3)}; EC50=${f.ic50.toFixed(3)}; Hill=${f.hill.toFixed(3)}; R²=${f.r2.toFixed(3)}` : Object.entries(f.params || {}).map(([k, v]) => `${k}=${v.toFixed(4)}`).join('; ') + `; R²=${f.r2.toFixed(3)}`) : 'not enough points / missing numeric X'}
+                            </td>
+                            <td className="px-3 py-1.5 font-mono text-slate-600">{f ? (f.se ?? 0).toFixed(3) : '—'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {paramKeys.length > 0 && paramData.length > 0 && (
+                  <div className="bg-white border border-slate-200 rounded-lg p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-xs font-bold text-slate-700">Fitted Parameter Chart</label>
+                      <select value={paramGraphVar} onChange={(e) => setParamGraphVar(e.target.value)} className="border border-slate-300 rounded px-2 py-1 text-xs">
+                        {paramKeys.map((k) => <option key={k} value={k}>{k}</option>)}
+                      </select>
+                    </div>
+                    <div style={{ height: Math.min(280, cfg.height), aspectRatio: String(cfg.aspect || 2) }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={paramData} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                          <XAxis dataKey="name" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={Math.max(9, cfg.fontSize - 2)} />} />
+                          <YAxis tick={{ fontSize: Math.max(9, cfg.fontSize - 2) }} label={{ value: paramGraphVar, angle: -90, position: 'insideLeft', fontSize: cfg.fontSize, fill: '#64748b' }} />
+                          <Tooltip />
+                          <Bar dataKey="val" isAnimationActive={false}>
+                            {paramData.map((entry, idx) => <Cell key={idx} fill={entry.fill} />)}
+                            {HAS_EB && <ErrorBar dataKey="err" width={4} strokeWidth={1} color="#333" />}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+        {showErr && (
+          <div className="p-4 bg-orange-50 border border-orange-200 rounded-xl flex flex-col gap-4">
+            <div className="flex flex-wrap items-center gap-4">
+              <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
+                <input type="checkbox" checked={plot.useFixedSD} onChange={(e) => set({ useFixedSD: e.target.checked })} className="w-4 h-4 accent-blue-600" /> Fixed SD ±
+              </label>
+              <input type="number" step="0.1" min="0" value={plot.fixedSDStr} onChange={(e) => set({ fixedSDStr: e.target.value })} disabled={!plot.useFixedSD} className={`border border-slate-300 rounded-md p-1.5 w-16 text-xs outline-none ${plot.useFixedSD ? 'bg-white font-bold text-blue-700' : 'bg-slate-100 text-slate-400'}`} />
+              <label className="text-xs font-bold text-slate-600">Outlier threshold (×SD):</label>
+              <input type="number" step="0.1" min="0.1" value={plot.outlierThreshStr} onChange={(e) => set({ outlierThreshStr: e.target.value })} className="border border-slate-300 rounded-md p-1.5 w-16 text-xs outline-none" />
+              <button type="button" onClick={() => cleanOutliers(null)} className="bg-yellow-400 hover:bg-yellow-500 text-slate-900 font-black py-1.5 px-3 rounded-lg text-xs shadow-sm">🧹 Clean Outliers (all)</button>
+              <button type="button" onClick={restoreExcluded} className="text-xs bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 font-bold py-1.5 px-3 rounded-md shadow-sm">↩️ Restore excluded</button>
+            </div>
+            {series.map((s) => (
+              <div key={s.key} className="bg-white rounded-lg border border-orange-200 p-3">
+                <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                  <span className="text-sm font-bold text-slate-800">{s.label}</span>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => autoTouch(s)} className="text-xs text-orange-700 bg-orange-100 hover:bg-orange-200 px-2 py-1 rounded font-bold shadow-sm">🎯 Auto-Touch SD</button>
+                    <button type="button" onClick={() => cleanOutliers(s)} className="text-xs text-yellow-800 bg-yellow-100 hover:bg-yellow-200 px-2 py-1 rounded font-bold shadow-sm">🧹 Clean</button>
+                    <button type="button" onClick={() => resetSD(s.key)} className="text-xs text-orange-600 hover:underline font-bold">🔄 Reset SD</button>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {s.pts.length === 0 && <span className="text-xs text-slate-400 italic">No values for this atom.</span>}
+                  {s.pts.map((p) => {
+                    const sd = effSD(s.key, p);
+                    return (
+                      <div key={p.instId} className={`flex flex-col gap-1 p-1.5 rounded border ${p.excluded ? 'border-red-300 bg-red-50' : 'border-slate-200 bg-white'}`}>
+                        <span className="text-[9px] font-bold text-slate-500">{p.name}{p.x !== null ? ` (${xFieldLabel}=${p.x})` : ' (no numeric X)'}</span>
+                        <div className="flex items-center gap-1">
+                          <span className={`text-[10px] font-mono ${p.excluded ? 'line-through text-slate-400' : 'text-slate-700'}`}>{p.y}</span>
+                          <input type="number" step="0.01" value={(plot.manualSD[s.key] || {})[p.instId] ?? ''} onChange={(e) => setManualSD(s.key, p.instId, e.target.value)} placeholder="±SD" className="w-14 text-[10px] border border-slate-300 rounded p-0.5 text-center outline-none focus:border-orange-500" />
+                          <button type="button" onClick={() => toggleExclude(s.key, p.instId)} className={`text-[10px] font-black px-1 ${p.excluded ? 'text-red-600' : 'text-slate-400 hover:text-red-500'}`} title="Exclude / include point">{p.excluded ? 'EXCL' : '×'}</button>
+                        </div>
+                        {sd != null && <span className="text-[9px] text-orange-700 font-bold">± {sd}</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {showCfg && <ChartStylePanel cfg={cfg} setCfg={setCfg} series={series.map((s, i) => ({ key: s.key, label: s.label, color: seriesColor(cfg, s.key, i) }))} />}
+      </div>
+    </CollapsibleSection>
+  );
+};

@@ -14,6 +14,7 @@ TICKS_1H,
 TICKS_13C,
 TICKS_15N,
 SecondaryShifts,
+PerAtomPlot,
 Fitting
 } from './NMRSections';
 import { CD_FIT_COMPONENTS } from './CDSections';
@@ -2322,7 +2323,7 @@ const NotebookTestItem = ({
          {isCD && <CDAnalysisGraphsPreview test={localTest} instances={mockCtx.instances} />}
          {isNMR && (
            <div className="flex flex-col gap-4 mt-2">
-             <SecondaryShifts ctx={mockCtx} />
+             <PerAtomPlot ctx={mockCtx} />
              <Fitting ctx={mockCtx} />
            </div>
          )}
@@ -2375,8 +2376,9 @@ const NotebookTestItem = ({
 ========================================================================== */
 export const LabNotebook = ({ 
   tests, allCellLines, testCategories, jumpToTest, customConc, cmpColors, allCmpds, customFields, operators,
-  plasmidMeta, solvents, buffers, additives, nmrInstruments, nmrProbes, nmrExperiments 
+  plasmidMeta, solvents, buffers, additives, nmrInstruments, nmrProbes, nmrExperiments, currentUser
 }) => {
+  const isSuperuser = currentUser?.role === 'superuser';
   const [filterPrimary, setFilterPrimary] = useState('ALL');
   const [filterSecondary, setFilterSecondary] = useState('ALL');
   const [filterScientist, setFilterScientist] = useState('ALL');
@@ -2438,15 +2440,34 @@ export const LabNotebook = ({
   };
 
   const filteredTests = useMemo(() => {
+    // Helper: get all scientists assigned to a test (primary + co-scientists)
+    const getTestScientists = (t) => {
+      const all = [];
+      if (t.operator) all.push(t.operator);
+      if (Array.isArray(t.coScientists)) all.push(...t.coScientists);
+      return all;
+    };
+
     let result = tests.filter(t => {
-      if (t.type === 'plate-9x9box') return false; 
-      
+      if (t.type === 'plate-9x9box') return false;
+
+      // Normal users only see their own experiments (primary or co-scientist).
+      // Unassigned tests (no scientists) are superuser-only.
+      if (!isSuperuser && currentUser) {
+        const scientists = getTestScientists(t);
+        if (!scientists.includes(currentUser.name)) return false;
+      }
+
       const flatCompounds = [...new Set([...(t.selectedCompounds || []), ...(t.compoundsSelected || []), ...(t.compound ? t.compound.split(',') : [])])].map(s => s.trim());
       const flatPlasmids = [...new Set([...(t.plasmids || []), ...(t.plasmid ? [t.plasmid] : [])])];
 
       if (filterPrimary !== 'ALL' && t.testCategory !== filterPrimary) return false;
       if (filterSecondary !== 'ALL' && t.secondaryCategory !== filterSecondary) return false;
-      if (filterScientist !== 'ALL' && t.operator !== filterScientist) return false;
+      // Scientist filter: only active for superusers (normal users already pre-filtered above)
+      if (isSuperuser && filterScientist !== 'ALL') {
+        const scientists = getTestScientists(t);
+        if (!scientists.includes(filterScientist)) return false;
+      }
       if (filterType !== 'ALL' && t.type !== filterType) return false;
       if (filterCompound !== 'ALL' && !flatCompounds.includes(filterCompound)) return false;
       if (filterPlasmid !== 'ALL' && !flatPlasmids.includes(filterPlasmid)) return false;
@@ -2482,41 +2503,22 @@ export const LabNotebook = ({
     else if (sortBy === 'type') result.sort((a, b) => (a.type || '').localeCompare(b.type || ''));
 
     return result;
-  }, [tests, filterPrimary, filterSecondary, filterScientist, filterType, filterCompound, filterPlasmid, filterCellLine, showAdvanced, filterSolvent, filterBuffer, filterAdditive, filterInstrument, filterProbe, filterPulseSeq, dateFrom, dateTo, bestOnly, searchQuery, sortBy]);
+  }, [tests, isSuperuser, currentUser, filterPrimary, filterSecondary, filterScientist, filterType, filterCompound, filterPlasmid, filterCellLine, showAdvanced, filterSolvent, filterBuffer, filterAdditive, filterInstrument, filterProbe, filterPulseSeq, dateFrom, dateTo, bestOnly, searchQuery, sortBy]);
 
-  const exportPDF = async () => {
-    const el = document.getElementById('notebook-report-container');
-    if (!el) return;
-    const loader = document.getElementById('loader');
-    const loaderText = document.getElementById('loader-text');
-    if (loader) loader.style.display = 'flex';
-    if (loaderText) loaderText.innerText = 'Generating PDF...';
-
-    try {
-      const canvas = await html2canvas(el, { scale: 2, useCORS: true, allowTaint: true, backgroundColor: '#ffffff', logging: false });
-      const imgData = canvas.toDataURL('image/jpeg', 0.92);
-      const pdf = new jsPDF('p', 'pt', 'a4');
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const imgWidth = pageWidth;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      let heightLeft = imgHeight;
-      let position = 0;
-      pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight;
-      while (heightLeft > 0) {
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-        heightLeft -= pageHeight;
-      }
-      pdf.save(`Lab_Notebook_${new Date().toISOString().split('T')[0]}.pdf`);
-    } catch (e) {
-      console.error(e);
-      alert('Export Failed: ' + e.message);
-    } finally {
-      if (loader) loader.style.display = 'none';
-    }
+  const exportPDF = () => {
+    // Use window.print() with a notebook-specific body class.
+    // This avoids the oklch color parsing issue in html2canvas
+    // and gives proper multi-page PDF output.
+    document.body.classList.add('notebook-print-mode');
+    window.print();
+    // Clean up after print dialog closes
+    const cleanup = () => {
+      document.body.classList.remove('notebook-print-mode');
+      window.removeEventListener('afterprint', cleanup);
+    };
+    window.addEventListener('afterprint', cleanup);
+    // Fallback cleanup after 3s in case afterprint doesn't fire
+    setTimeout(cleanup, 3000);
   };
 
   return (
@@ -2547,7 +2549,7 @@ export const LabNotebook = ({
           </button>
         </div>
 
-        {/* MAIN FILTERS */}
+        {/* MAIN FILTERS — all users see all filters except Scientist which is superuser-only */}
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2">
           <div>
             <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Main classification</label>
@@ -2563,13 +2565,16 @@ export const LabNotebook = ({
               {allSecondaryCategories.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
-          <div>
-            <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Scientist</label>
-            <select value={filterScientist} onChange={(e) => setFilterScientist(e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
-              <option value="ALL">All</option>
-              {allScientists.map(o => <option key={o} value={o}>{o}</option>)}
-            </select>
-          </div>
+          {/* Scientist filter — superuser only */}
+          {isSuperuser && (
+            <div>
+              <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Scientist</label>
+              <select value={filterScientist} onChange={(e) => setFilterScientist(e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
+                <option value="ALL">All</option>
+                {allScientists.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </div>
+          )}
           <div>
             <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Experiment type</label>
             <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
@@ -2600,13 +2605,20 @@ export const LabNotebook = ({
           </div>
         </div>
 
-        {/* ADVANCED FILTERS TOGGLE */}
+        {/* Normal user info badge */}
+        {!isSuperuser && currentUser && (
+          <div className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5">
+            🧪 Showing your experiments — <strong>{currentUser.name}</strong>
+          </div>
+        )}
+
+        {/* ADVANCED FILTERS toggle — all users */}
         <div>
           <button onClick={() => setShowAdvanced(!showAdvanced)} className="text-xs font-bold text-blue-600 underline">
             {showAdvanced ? 'Hide Advanced Filters' : 'Show Advanced Filters'}
           </button>
         </div>
-        
+
         {showAdvanced && (
           <div className="grid grid-cols-2 md:grid-cols-6 gap-2 bg-slate-50 p-2 rounded border border-slate-200">
             <div>
@@ -2707,6 +2719,11 @@ export const LabNotebook = ({
       </div>
 
  <div className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
+        {/* Global image visibility CSS — covers ALL img tags including those in HTML content */}
+        <style>{`
+          #notebook-report-container img { display: ${showImages ? 'block' : 'none'} !important; }
+          #notebook-report-container figure { display: ${showImages ? 'block' : 'none'} !important; }
+        `}</style>
         <div id="notebook-report-container" className="flex flex-col gap-4 max-w-5xl mx-auto">
           {filteredTests.length === 0 ? (
             <div className="text-center py-16 text-slate-400 italic bg-white rounded-xl border border-dashed border-slate-300">

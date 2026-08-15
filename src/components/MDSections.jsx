@@ -8,7 +8,7 @@ import {
   resolveFrameSource, AWK_PALETTE
 } from './MDMembraneContacts';
 export { parseSimulationParameters };   
-import MDMoleculeViewer from './MDMoleculeViewer';
+import NMRMoleculeViewer from './NMRMoleculeViewer';
 
 import {
   AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB,
@@ -725,32 +725,31 @@ export const MDExperimentSetupSection = ({ ctx }) => {
 
           <div style={{ display: structureMode === '3d' ? 'block' : 'none' }} aria-hidden={structureMode !== '3d'}>
             {hasOpened3D && (
-              <MDMoleculeViewer
-                key={`${activeTest.structureSrc || 'no-src'}|${activeTest.structureFileName || 'no-file'}|${trajectoryFile ? trajectoryFile.name : 'no-traj-file'}|${d.trajectoryUrl || 'no-traj'}|${activeTest.smiles || 'no-smiles'}`}
-                structureSrc={activeTest.structureSrc}
-                structureFileData={activeTest.structureFileData}
-                structureFileName={activeTest.structureFileName}
-                structureFormat={activeTest.structureFormat || 'auto'}
-                
-                structureText={typeof organicFetch !== 'undefined' ? organicFetch.text : null}
-                structureTextExt={typeof organicFetch !== 'undefined' ? organicFetch.ext : null}
-                externalLoading={typeof organicFetch !== 'undefined' ? organicFetch.loading : false}
-                externalError={typeof organicFetch !== 'undefined' ? organicFetch.error : null}
-                
-                trajectorySrc={trajNorm.url}
-                trajectoryFile={trajectoryFile}
-                trajectoryFallbacks={trajNorm.fallbacks}
-                trajectoryFormat={d.trajectoryFormat}
-                moleculeType={d.moleculeType}
-                parsedSeq={d.parsedSeq}
-                selectedKeys={selectedKeys}
-                manualKeys={manualKeys}
-                onAtomClick={handleAtomClick}
-                residueOffset={residueOffset}
-                atomNameMap={atomNameMap}
-                labelMode={atomLabelMode}
-                height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '620px' : '520px'}
-              />
+              
+<NMRMoleculeViewer
+  key={`${activeTest.structureSrc || 'no-src'}|${activeTest.structureFileName || 'no-file'}|${trajectoryFile ? trajectoryFile.name : 'no-traj-file'}|${d.trajectoryUrl || 'no-traj'}|${activeTest.smiles || 'no-smiles'}`}
+  src={activeTest.structureSrc}
+  structureFileData={activeTest.structureFileData}
+  structureFileName={activeTest.structureFileName}
+  structureFormat={activeTest.structureFormat || 'auto'}
+  structureText={typeof organicFetch !== 'undefined' ? organicFetch.text : null}
+  structureTextExt={typeof organicFetch !== 'undefined' ? organicFetch.ext : null}
+  externalLoading={typeof organicFetch !== 'undefined' ? organicFetch.loading : false}
+  externalError={typeof organicFetch !== 'undefined' ? organicFetch.error : null}
+  trajectorySrc={trajNorm.url}
+  trajectoryFile={trajectoryFile}
+  trajectoryFallbacks={trajNorm.fallbacks}
+  trajectoryFormat={d.trajectoryFormat}
+  moleculeType={d.moleculeType}
+  parsedSeq={d.parsedSeq}
+  selectedKeys={selectedKeys}
+  manualKeys={manualKeys}
+  onAtomClick={handleAtomClick}
+  residueOffset={residueOffset}
+  atomNameMap={atomNameMap}
+  labelMode={atomLabelMode}
+  height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '620px' : '520px'}
+/>
             )}
           </div>
 
@@ -1190,6 +1189,276 @@ const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color,
 
 
 
+
+// ================= MD PER ATOM PLOT SECTION =================
+const MD_PAP_COLORS = ['#3b82f6','#8b5cf6','#f59e0b','#22c55e','#ef4444','#0ea5e9','#ec4899','#14b8a6','#f97316','#6366f1'];
+
+const MDPerAtomChartPanel = ({ d, chart, updateChart, removeChart, activeTest }) => {
+  const [atomSearch, setAtomSearch] = useState('');
+  const [showCfg, setShowCfg] = useState(false);
+  const layerKey = chart.layerKey || 'md';
+  const atoms = chart.atoms || [];
+  const cfg = { aspect: 2.5, fontSize: 11, ...(chart.style || {}) };
+  const setC = (p) => updateChart(chart.id, p);
+  const setCfg = (p) => updateChart(chart.id, { style: { ...cfg, ...p } });
+
+  const layer = d.layers.find(l => l.key === layerKey) || d.layers[0];
+  // Collect values from all instances (average across instances, or active instance only)
+  const valMap = getMDLayerValues(d.activeInstance, layerKey);
+
+  const atomMeta = atoms.map((k, i) => ({
+    key: k,
+    label: d.atomOptions.find(o => o.key === k)?.label.split(' ').slice(1).join(' ') || k.split('-').slice(1).join('-'),
+    color: MD_PAP_COLORS[i % MD_PAP_COLORS.length],
+  }));
+
+  const residueMap = {};
+  atoms.forEach(atomKey => {
+    const raw = valMap[atomKey];
+    const val = raw !== undefined && raw !== '' ? parseFloat(raw) : NaN;
+    if (isNaN(val)) return;
+    const resIdx = atomKey.split('-')[0];
+    const res = d.estSeq[Number(resIdx)];
+    if (!res) return;
+    if (!residueMap[res.id]) residueMap[res.id] = { label: res.id };
+    residueMap[res.id][atomKey] = val;
+  });
+  const chartData = Object.values(residueMap).filter(r => Object.keys(r).length > 1);
+  const filtered = d.atomOptions.filter(o => !atomSearch.trim() || o.label.toLowerCase().includes(atomSearch.toLowerCase()));
+  const toggleAtom = (k) => setC({ atoms: atoms.includes(k) ? atoms.filter(a => a !== k) : [...atoms, k] });
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <input type="text" value={chart.title || ''} onChange={e => setC({ title: e.target.value })}
+          placeholder="Chart title…" className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm font-bold text-slate-700 outline-none focus:border-blue-500 bg-transparent flex-1 min-w-[140px]" />
+        <div className="flex gap-2">
+          <button onClick={() => setShowCfg(!showCfg)} className="text-xs bg-slate-100 border border-slate-300 px-2 py-1 rounded font-bold text-slate-600 hover:bg-slate-200">⚙️</button>
+          <button onClick={() => removeChart(chart.id)} className="text-xs bg-red-50 border border-red-200 px-2 py-1 rounded font-bold text-red-600 hover:bg-red-100">🗑</button>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[10px] font-bold text-slate-500 uppercase">Parameter:</span>
+        {d.layers.map(l => (
+          <button key={l.key} onClick={() => setC({ layerKey: l.key })}
+            className={`text-xs font-bold px-2.5 py-1 rounded-full border transition-colors ${l.key === layerKey ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}>
+            {l.label}{l.unit ? ` (${l.unit})` : ''}
+          </button>
+        ))}
+      </div>
+      {showCfg && (
+        <div className="flex gap-4 flex-wrap">
+          <label className="text-[10px] font-bold text-slate-500 flex flex-col gap-1">Aspect<input type="number" step="0.1" value={cfg.aspect} onChange={e=>setCfg({aspect:+e.target.value||2.5})} className="border border-slate-300 rounded px-2 py-1 text-xs w-20" /></label>
+          <label className="text-[10px] font-bold text-slate-500 flex flex-col gap-1">Font<input type="number" value={cfg.fontSize} onChange={e=>setCfg({fontSize:+e.target.value||11})} className="border border-slate-300 rounded px-2 py-1 text-xs w-16" /></label>
+        </div>
+      )}
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-bold text-slate-500 uppercase">Atoms ({atoms.length} selected):</span>
+          <input type="text" value={atomSearch} onChange={e => setAtomSearch(e.target.value)} placeholder="Filter…" className="border border-slate-200 rounded px-2 py-1 text-xs flex-1 outline-none focus:border-blue-400" />
+          {atoms.length > 0 && <button onClick={() => setC({ atoms: [] })} className="text-xs text-red-500 hover:underline font-bold">Clear</button>}
+        </div>
+        <div className="max-h-28 overflow-y-auto flex flex-wrap gap-1 bg-slate-50 rounded p-2">
+          {filtered.map(o => (
+            <button key={o.key} onClick={() => toggleAtom(o.key)}
+              className={`text-[10px] font-bold px-2 py-0.5 rounded border transition-colors ${atoms.includes(o.key) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
+              {o.label}
+            </button>
+          ))}
+        </div>
+        {atoms.length > 0 && (
+          <div className="flex flex-wrap gap-1">{atomMeta.map(m => (
+            <span key={m.key} style={{ background: m.color }} className="text-[10px] text-white font-bold px-2 py-0.5 rounded-full">{m.label}</span>
+          ))}</div>
+        )}
+      </div>
+      {chartData.length > 0 ? (
+        <ResponsiveContainer width="100%" aspect={cfg.aspect}>
+          <BarChart data={chartData} margin={{ top: 8, right: 8, bottom: 16, left: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="label" tick={{ fontSize: cfg.fontSize }} />
+            <YAxis tick={{ fontSize: cfg.fontSize }} label={{ value: layer?.unit || '', angle: -90, position: 'insideLeft', style: { fontSize: cfg.fontSize } }} />
+            <Tooltip />
+            <Legend wrapperStyle={{ fontSize: cfg.fontSize }} />
+            {atomMeta.map(m => <Bar key={m.key} dataKey={m.key} name={m.label} fill={m.color} isAnimationActive={false} />)}
+          </BarChart>
+        </ResponsiveContainer>
+      ) : (
+        <div className="bg-slate-50 border border-dashed border-slate-200 rounded-lg p-4 text-center text-xs text-slate-400">
+          {atoms.length === 0 ? 'Select atoms above to plot.' : 'No data for selected atoms in this layer.'}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const MDPerAtomPlotSection = ({ ctx }) => {
+  const { activeTest, updateActiveTest } = ctx;
+  const d = useMDDerived(activeTest, ctx);
+  const charts = Array.isArray(activeTest.mdPerAtomCharts) ? activeTest.mdPerAtomCharts : [];
+  const addChart = () => {
+    const n = charts.length + 1;
+    const id = `mdpap_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    updateActiveTest({ mdPerAtomCharts: [...charts, { id, title: `Chart ${n}`, layerKey: 'md', atoms: [], style: {} }] });
+  };
+  const updateChart = (id, patch) => updateActiveTest({ mdPerAtomCharts: charts.map(c => c.id === id ? { ...c, ...patch } : c) });
+  const removeChart = (id) => updateActiveTest({ mdPerAtomCharts: charts.filter(c => c.id !== id) });
+
+  if (d.parsedSeq.length === 0) return <div className="text-center py-8 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed">Enter a sequence in Experiment Setup to enable per-atom charts.</div>;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-bold text-slate-600 uppercase tracking-wide">Per-Atom Parameter Charts</span>
+        <button onClick={addChart} className="text-xs bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg shadow-sm flex items-center gap-1.5 transition-colors">+ Add Chart</button>
+      </div>
+      {charts.length === 0 && (
+        <div className="bg-slate-50 border border-dashed border-slate-200 rounded-lg p-4 text-center text-xs text-slate-400">
+          Click "+ Add Chart" to plot any MD parameter (RMSD, charge, mass…) per atom/residue.
+        </div>
+      )}
+      {charts.map(chart => (
+        <MDPerAtomChartPanel key={chart.id} d={d} chart={chart} updateChart={updateChart} removeChart={removeChart} activeTest={activeTest} />
+      ))}
+    </div>
+  );
+};
+
+// ================= MD CONDITION PLOT SECTION =================
+// Plot MD parameter values vs. simulation conditions (across instances)
+const MD_COND_FIELDS = [
+  { key: 'simTemperature', label: 'Temperature (K)' },
+  { key: 'simPressure', label: 'Pressure (bar)' },
+  { key: 'timestep', label: 'Timestep (fs)' },
+  { key: 'nSteps', label: 'Steps' },
+];
+
+const getMDCondValue = (inst, key) => inst && inst.values ? (inst.values[key] ?? '') : '';
+
+const MDConditionPlotPanel = ({ d, chart, updateChart, removeChart, activeTest }) => {
+  const [atomSearch, setAtomSearch] = useState('');
+  const atoms = chart.atoms || [];
+  const layerKey = chart.layerKey || 'md';
+  const xField = chart.xField || 'simTemperature';
+  const cfg = { aspect: 2.5, fontSize: 11, ...(chart.style || {}) };
+  const setC = (p) => updateChart(chart.id, p);
+  const layer = d.layers.find(l => l.key === layerKey) || d.layers[0];
+  const filtered = d.atomOptions.filter(o => !atomSearch.trim() || o.label.toLowerCase().includes(atomSearch.toLowerCase()));
+  const toggleAtom = (k) => setC({ atoms: atoms.includes(k) ? atoms.filter(a => a !== k) : [...atoms, k] });
+
+  // Build line chart data: for each instance, get x = condition value, y = atom value
+  const series = atoms.map((ak, i) => {
+    const pts = d.instances
+      .map(inst => {
+        const vals = getMDLayerValues(inst, layerKey);
+        const y = vals[ak] !== undefined && vals[ak] !== '' ? parseFloat(vals[ak]) : NaN;
+        const xRaw = inst.values?.[xField] ?? activeTest[xField];
+        const x = xRaw !== undefined && xRaw !== '' ? parseFloat(xRaw) : NaN;
+        return { x, y, name: inst.name };
+      })
+      .filter(p => !isNaN(p.x) && !isNaN(p.y))
+      .sort((a, b) => a.x - b.x);
+    return {
+      key: ak,
+      label: d.atomOptions.find(o => o.key === ak)?.label.split(' ').slice(1).join(' ') || ak,
+      color: MD_PAP_COLORS[i % MD_PAP_COLORS.length],
+      pts,
+    };
+  }).filter(s => s.pts.length > 0);
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <input type="text" value={chart.title || ''} onChange={e => setC({ title: e.target.value })}
+          placeholder="Plot title…" className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm font-bold text-slate-700 outline-none focus:border-blue-500 bg-transparent flex-1 min-w-[140px]" />
+        <button onClick={() => removeChart(chart.id)} className="text-xs bg-red-50 border border-red-200 px-2 py-1 rounded font-bold text-red-600 hover:bg-red-100">🗑</button>
+      </div>
+      <div className="flex flex-wrap gap-3 items-center">
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">Parameter (Y)</label>
+          <select value={layerKey} onChange={e => setC({ layerKey: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none">
+            {d.layers.map(l => <option key={l.key} value={l.key}>{l.label}{l.unit ? ` (${l.unit})` : ''}</option>)}
+          </select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">X axis (Condition)</label>
+          <select value={xField} onChange={e => setC({ xField: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none">
+            {MD_COND_FIELDS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+          </select>
+        </div>
+      </div>
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-bold text-slate-500 uppercase">Atoms ({atoms.length} selected):</span>
+          <input type="text" value={atomSearch} onChange={e => setAtomSearch(e.target.value)} placeholder="Filter…" className="border border-slate-200 rounded px-2 py-1 text-xs flex-1 outline-none focus:border-blue-400" />
+          {atoms.length > 0 && <button onClick={() => setC({ atoms: [] })} className="text-xs text-red-500 hover:underline font-bold">Clear</button>}
+        </div>
+        <div className="max-h-24 overflow-y-auto flex flex-wrap gap-1 bg-slate-50 rounded p-2">
+          {filtered.map(o => (
+            <button key={o.key} onClick={() => toggleAtom(o.key)}
+              className={`text-[10px] font-bold px-2 py-0.5 rounded border transition-colors ${atoms.includes(o.key) ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
+              {o.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {series.length > 0 ? (
+        <ResponsiveContainer width="100%" aspect={cfg.aspect}>
+          <LineChart margin={{ top: 8, right: 16, bottom: 24, left: 16 }}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="x" type="number" allowDuplicatedCategory={false} tick={{ fontSize: cfg.fontSize }}
+              label={{ value: MD_COND_FIELDS.find(f => f.key === xField)?.label || xField, position: 'insideBottom', offset: -16, fill: '#64748b', fontSize: cfg.fontSize }} />
+            <YAxis tick={{ fontSize: cfg.fontSize }} label={{ value: layer?.unit || '', angle: -90, position: 'insideLeft', fill: '#64748b', fontSize: cfg.fontSize }} />
+            <Tooltip />
+            <Legend wrapperStyle={{ fontSize: cfg.fontSize }} />
+            {series.map(s => (
+              <Line key={s.key} data={s.pts} dataKey="y" name={s.label} stroke={s.color} strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      ) : (
+        <div className="bg-slate-50 border border-dashed border-slate-200 rounded-lg p-4 text-center text-xs text-slate-400">
+          {atoms.length === 0 ? 'Select atoms above.' : d.instances.length < 2 ? 'Add multiple simulation instances with different conditions to compare.' : 'No numeric data for selected atoms across instances.'}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const MDConditionPlotSection = ({ ctx }) => {
+  const { activeTest, updateActiveTest } = ctx;
+  const d = useMDDerived(activeTest, ctx);
+  const charts = Array.isArray(activeTest.mdConditionCharts) ? activeTest.mdConditionCharts : [];
+  const addChart = () => {
+    const n = charts.length + 1;
+    const id = `mdcp_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    updateActiveTest({ mdConditionCharts: [...charts, { id, title: `Condition Plot ${n}`, layerKey: 'md', xField: 'simTemperature', atoms: [], style: {} }] });
+  };
+  const updateChart = (id, patch) => updateActiveTest({ mdConditionCharts: charts.map(c => c.id === id ? { ...c, ...patch } : c) });
+  const removeChart = (id) => updateActiveTest({ mdConditionCharts: charts.filter(c => c.id !== id) });
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <span className="text-xs font-bold text-slate-600 uppercase tracking-wide">Condition Plots</span>
+          <p className="text-[10px] text-slate-400 mt-0.5">Plot MD parameter values vs. simulation conditions across instances.</p>
+        </div>
+        <button onClick={addChart} className="text-xs bg-purple-600 hover:bg-purple-700 text-white font-bold px-3 py-1.5 rounded-lg shadow-sm flex items-center gap-1.5 transition-colors">+ Add Plot</button>
+      </div>
+      {charts.length === 0 && (
+        <div className="bg-slate-50 border border-dashed border-slate-200 rounded-lg p-4 text-center text-xs text-slate-400">
+          Click "+ Add Plot" to compare parameter values across simulation instances (different temperatures, pressures…).
+        </div>
+      )}
+      {charts.map(chart => (
+        <MDConditionPlotPanel key={chart.id} d={d} chart={chart} updateChart={updateChart} removeChart={removeChart} activeTest={activeTest} />
+      ))}
+    </div>
+  );
+};
+
+
 export const MDAnalysisSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useMDDerived(activeTest, ctx);
@@ -1237,9 +1506,7 @@ export const MDAnalysisSection = ({ ctx }) => {
   const sasa = useMemo(() => importedData?.sasa || generateSASAData(nFrames), [nFrames, importedData]);
   const energy = useMemo(() => importedData?.energy || generateEnergyData(nFrames), [nFrames, importedData]);
 
-  if (d.parsedSeq.length === 0) {
-    return <div className="text-center py-8 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed">Enter a sequence (in Experiment Setup) to enable analysis.</div>;
-  }
+
 
   return (
     <div className="flex flex-col gap-4">
@@ -1321,30 +1588,46 @@ export const MDAnalysisSection = ({ ctx }) => {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <MDAnalysisChart title="RMSD (backbone)" data={rmsd} cfg={cfg} color="#3b82f6" yLabel="nm" xLabel="Time (ns)" />
-        <MDAnalysisChart title="RMSF per residue" data={rmsf} xKey="residue" cfg={cfg} color="#3b82f6" yLabel="nm" xLabel="Residue" chartType="bar" />
-        <MDAnalysisChart title="Radius of Gyration (Rg)" data={rg} cfg={cfg} color="#22c55e" yLabel="nm" xLabel="Time (ns)" />
-        <MDAnalysisChart title="SASA" data={sasa} cfg={cfg} color="#f59e0b" yLabel="nm²" xLabel="Time (ns)" />
-      </div>
-      
-      <div className="bg-white rounded-lg border border-slate-200 p-3">
-        <h5 className="text-xs font-bold text-slate-700 mb-1">Energy</h5>
-        <div style={{ height: 250 }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={energy} margin={{ top: 5, right: 10, bottom: 25, left: 10 }}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="time" tick={{ fontSize: 10 }} />
-              <YAxis tick={{ fontSize: 10 }} />
-              <Tooltip />
-              <Legend verticalAlign="top" wrapperStyle={{ fontSize: 10 }} />
-              <Line type="monotone" dataKey="potential" stroke="#ef4444" strokeWidth={1.5} dot={false} isAnimationActive={false} />
-              <Line type="monotone" dataKey="kinetic" stroke="#3b82f6" strokeWidth={1.5} dot={false} isAnimationActive={false} />
-              <Line type="monotone" dataKey="total" stroke="#22c55e" strokeWidth={1.5} dot={false} isAnimationActive={false} />
-            </LineChart>
-          </ResponsiveContainer>
+      {d.parsedSeq.length === 0 ? (
+        <div className="text-center py-8 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed">Enter a sequence in Experiment Setup to enable trajectory charts.</div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <MDAnalysisChart title="RMSD (backbone)" data={rmsd} cfg={cfg} color="#3b82f6" yLabel="nm" xLabel="Time (ns)" />
+          <MDAnalysisChart title="RMSF per residue" data={rmsf} xKey="residue" cfg={cfg} color="#3b82f6" yLabel="nm" xLabel="Residue" chartType="bar" />
+          <MDAnalysisChart title="Radius of Gyration (Rg)" data={rg} cfg={cfg} color="#22c55e" yLabel="nm" xLabel="Time (ns)" />
+          <MDAnalysisChart title="SASA" data={sasa} cfg={cfg} color="#f59e0b" yLabel="nm²" xLabel="Time (ns)" />
         </div>
-      </div>
+      )}
+      
+      {d.parsedSeq.length > 0 && (
+        <div className="bg-white rounded-lg border border-slate-200 p-3">
+          <h5 className="text-xs font-bold text-slate-700 mb-1">Energy</h5>
+          <div style={{ height: 250 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={energy} margin={{ top: 5, right: 10, bottom: 25, left: 10 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="time" tick={{ fontSize: 10 }} />
+                <YAxis tick={{ fontSize: 10 }} />
+                <Tooltip />
+                <Legend verticalAlign="top" wrapperStyle={{ fontSize: 10 }} />
+                <Line type="monotone" dataKey="potential" stroke="#ef4444" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                <Line type="monotone" dataKey="kinetic" stroke="#3b82f6" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                <Line type="monotone" dataKey="total" stroke="#22c55e" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {/* Per Atom Plot subsection */}
+      <CollapsibleSection title="Per Atom Plot" icon="📊" defaultOpen={false}>
+        <MDPerAtomPlotSection ctx={ctx} />
+      </CollapsibleSection>
+
+      {/* Condition Plot subsection */}
+      <CollapsibleSection title="Condition Plot" icon="📈" defaultOpen={false}>
+        <MDConditionPlotSection ctx={ctx} />
+      </CollapsibleSection>
     </div>
   );
 };

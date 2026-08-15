@@ -90,7 +90,7 @@ const NMR_CUSTOM = {
   MolecularStructure: withNmrExtras(NMRSections.MolecularStructure),
   ExperimentSetup: withNmrExtras(NMRSections.Setup),
   Data: withNmrExtras(NMRSections.Data),
-  DataAnalysis: withNmrExtras(NMRSections.SecondaryShiftsSection),
+  DataAnalysis: withNmrExtras(NMRSections.PerAtomPlotSection),
   Fitting: withNmrExtras(NMRSections.Fitting),
   Simulations: withNmrExtras(NMRSections.Simulations),
   InstrumentalSetup: withNmrExtras(NMRInstrumentalSetup),

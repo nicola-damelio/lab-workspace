@@ -35,6 +35,39 @@ import {
 
 
 /* =========================================================
+   AUTH UTILITIES
+========================================================= */
+
+/** Hash a plain-text password with SHA-256, returning a hex string. */
+const hashPassword = async (password) => {
+  if (!password) return '';
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password);
+  const hash = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+};
+
+/**
+ * Ensure every entry in an operators array is the new object format:
+ * { id, name, role, passwordHash }
+ * Legacy string entries become { role: 'user', passwordHash: '' }.
+ */
+const normalizeOperators = (ops) => {
+  if (!Array.isArray(ops)) return [];
+  return ops.map((op) => {
+    if (typeof op === 'string') {
+      return { id: 'op_' + Date.now() + '_' + Math.random().toString(36).slice(2), name: op, role: 'user', passwordHash: '' };
+    }
+    return { id: op.id || 'op_' + Date.now() + '_' + Math.random().toString(36).slice(2), name: op.name || '', role: op.role || 'user', passwordHash: op.passwordHash || '' };
+  });
+};
+
+/** Get the display label of an operator (object or legacy string). */
+const getOpLabel = (op) => (typeof op === 'string' ? op : op?.name || '');
+
+/* =========================================================
    MD SIMULATIONS CONFIG & RENDERER
 ========================================================= */
 const MD_SIMULATION_TAB_CONFIG = {
@@ -1747,8 +1780,11 @@ const Calculations = ({
   compoundOptions = [],
   compoundMeta = {},
   calculationEntries = {},
-  setCalculationEntries
+  setCalculationEntries,
+  currentUser
 }) => {
+  const isSuperuserCalc = currentUser?.role === 'superuser';
+  const myName = currentUser?.name || null;
   const options = useMemo(() => {
     return [...new Set(compoundOptions.filter(Boolean))];
   }, [compoundOptions]);
@@ -1832,7 +1868,8 @@ const Calculations = ({
       label: saveLabel.trim() || `${getTabLabel(tab)} — ${now.toLocaleString()}`,
       data: getCurrentData(),
       mw: effectiveMw ?? null,
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      operator: myName || 'unknown', // associate with the scientist who saved it
     };
 
     setCalculationEntries((prev) => {
@@ -1896,7 +1933,12 @@ const Calculations = ({
     }
   };
 
-  const entries = selectedCompound ? calculationEntries[selectedCompound] || [] : [];
+  // All entries for the selected compound
+  const allEntries = selectedCompound ? calculationEntries[selectedCompound] || [] : [];
+  // Normal users see only their own entries; superusers see all
+  const entries = isSuperuserCalc
+    ? allEntries
+    : allEntries.filter((e) => !e.operator || e.operator === myName);
 
   const formatEntryData = (data) => {
     return Object.entries(data || {})
@@ -2954,138 +2996,557 @@ const MandatoryParametersManager = ({
 
 const ScientistsOperatorsManager = ({
   operators = [],
-  setOperators
+  setOperators,
+  authSettings,
+  setAuthSettings,
+  currentUser,
 }) => {
-  const [operatorDraft, setOperatorDraft] = useState({
-    name: '',
-    surname: ''
-  });
+  const [draft, setDraft] = useState({ name: '', surname: '', role: 'user', password: '' });
+  const [editingId, setEditingId] = useState(null);
+  const [editPassword, setEditPassword] = useState('');
+  const [editRole, setEditRole] = useState('user');
+  const [saving, setSaving] = useState(false);
 
-  const getOperatorLabel = (op) => {
-    if (typeof op === 'string') return op;
-    return `${op?.name || ''} ${op?.surname || ''}`.trim();
-  };
+  const isSuperuser = currentUser?.role === 'superuser';
+  // Bootstrap: if no superuser exists yet, allow anyone to define roles
+  const hasSuperuserDefined = normalizeOperators(operators).some((op) => op.role === 'superuser');
+  const canManage = isSuperuser || !hasSuperuserDefined;
 
-  const addOperator = () => {
-    const fullName = `${operatorDraft.name.trim()} ${operatorDraft.surname.trim()}`.trim();
-
-    if (!fullName) {
-      alert('Please enter scientist name and/or surname.');
-      return;
+  const addOperator = async () => {
+    const fullName = `${draft.name.trim()} ${draft.surname.trim()}`.trim();
+    if (!fullName) { alert('Please enter scientist name and/or surname.'); return; }
+    if (operators.some((op) => op.name.toLowerCase() === fullName.toLowerCase())) {
+      alert('Scientist already exists.'); return;
     }
-
-    if (operators.some((op) => getOperatorLabel(op).toLowerCase() === fullName.toLowerCase())) {
-      alert('Operator already exists.');
-      return;
-    }
-
-    setOperators((prev) => [...prev, fullName].sort());
-
-    setOperatorDraft({
-      name: '',
-      surname: ''
-    });
+    if (!draft.password) { alert('Please set a password for this scientist.'); return; }
+    setSaving(true);
+    const hash = await hashPassword(draft.password);
+    setSaving(false);
+    const newOp = {
+      id: 'op_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+      name: fullName,
+      role: draft.role,
+      passwordHash: hash,
+    };
+    setOperators((prev) => [...normalizeOperators(prev), newOp].sort((a, b) => a.name.localeCompare(b.name)));
+    setDraft({ name: '', surname: '', role: 'user', password: '' });
   };
 
-  const removeOperator = (label) => {
-    setOperators((prev) => prev.filter((op) => getOperatorLabel(op) !== label));
+  const removeOperator = (id) => {
+    setOperators((prev) => normalizeOperators(prev).filter((op) => op.id !== id));
   };
+
+  const startEdit = (op) => {
+    setEditingId(op.id);
+    setEditRole(op.role);
+    setEditPassword('');
+  };
+
+  const saveEdit = async (id) => {
+    setSaving(true);
+    const hash = editPassword ? await hashPassword(editPassword) : null;
+    setSaving(false);
+    setOperators((prev) =>
+      normalizeOperators(prev).map((op) => {
+        if (op.id !== id) return op;
+        return {
+          ...op,
+          role: canManage ? editRole : op.role,
+          ...(hash ? { passwordHash: hash } : {}),
+        };
+      })
+    );
+    setEditingId(null);
+  };
+
+  const normalizedOps = normalizeOperators(operators);
+  // For normal users: only their own entry
+  const selfServiceOp = !canManage && currentUser
+    ? normalizedOps.find((op) => op.id === currentUser.id) || null
+    : null;
+  const [selfPw, setSelfPw] = useState('');
+  const [selfPwConfirm, setSelfPwConfirm] = useState('');
+  const [selfSaving, setSelfSaving] = useState(false);
+  const [selfMsg, setSelfMsg] = useState('');
+
+  const saveSelfPassword = async () => {
+    if (!selfPw) { setSelfMsg('⚠️ Enter a new password.'); return; }
+    if (selfPw !== selfPwConfirm) { setSelfMsg('⚠️ Passwords do not match.'); return; }
+    setSelfSaving(true); setSelfMsg('');
+    const hash = await hashPassword(selfPw);
+    setOperators((prev) => normalizeOperators(prev).map((op) =>
+      op.id === currentUser.id ? { ...op, passwordHash: hash } : op
+    ));
+    setSelfPw(''); setSelfPwConfirm('');
+    setSelfSaving(false);
+    setSelfMsg('✅ Password updated successfully.');
+    setTimeout(() => setSelfMsg(''), 3000);
+  };
+
+  // Self-service view for normal users
+  if (selfServiceOp) {
+    return (
+      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col gap-4">
+        <h3 className="text-sm font-bold text-slate-700 uppercase">My Account</h3>
+        <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${
+          selfServiceOp.role === 'superuser' ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200'
+        }`}>
+          <span className="text-lg">{selfServiceOp.role === 'superuser' ? '👑' : '🧪'}</span>
+          <div>
+            <p className="font-bold text-slate-800">{selfServiceOp.name}</p>
+            <p className="text-xs text-slate-500 capitalize">{selfServiceOp.role}</p>
+          </div>
+        </div>
+        <div>
+          <h4 className="text-xs font-bold text-slate-500 uppercase mb-2">Change My Password</h4>
+          <div className="flex flex-col gap-2">
+            <input type="password" value={selfPw} onChange={(e) => setSelfPw(e.target.value)}
+              placeholder="New password"
+              className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-full" />
+            <input type="password" value={selfPwConfirm} onChange={(e) => setSelfPwConfirm(e.target.value)}
+              placeholder="Confirm new password"
+              className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 w-full" />
+            <button onClick={saveSelfPassword} disabled={selfSaving}
+              className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm transition-colors disabled:opacity-50 w-full">
+              {selfSaving ? 'Saving…' : 'Update Password'}
+            </button>
+            {selfMsg && <p className="text-xs text-center mt-1">{selfMsg}</p>}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-6">
-      <div>
-        <h3 className="text-sm font-bold text-slate-700 uppercase mb-3">
-          Scientists / Operators
-        </h3>
 
+      {/* ── ADD SCIENTIST (superuser / bootstrap only) ── */}
+      {canManage && (
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3 mb-4">
-          <div className="md:col-span-4">
-            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-              Name
-            </label>
-
-            <input
-              type="text"
-              value={operatorDraft.name}
-              onChange={(e) =>
-                setOperatorDraft((prev) => ({
-                  ...prev,
-                  name: e.target.value
-                }))
-              }
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') addOperator();
-              }}
+          <div className="md:col-span-3">
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Name</label>
+            <input type="text" value={draft.name}
+              onChange={(e) => setDraft((p) => ({ ...p, name: e.target.value }))}
+              onKeyDown={(e) => { if (e.key === 'Enter') addOperator(); }}
               placeholder="e.g. Marie"
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
-            />
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500" />
           </div>
-
-          <div className="md:col-span-4">
-            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-              Surname
-            </label>
-
-            <input
-              type="text"
-              value={operatorDraft.surname}
-              onChange={(e) =>
-                setOperatorDraft((prev) => ({
-                  ...prev,
-                  surname: e.target.value
-                }))
-              }
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') addOperator();
-              }}
+          <div className="md:col-span-3">
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Surname</label>
+            <input type="text" value={draft.surname}
+              onChange={(e) => setDraft((p) => ({ ...p, surname: e.target.value }))}
+              onKeyDown={(e) => { if (e.key === 'Enter') addOperator(); }}
               placeholder="e.g. Curie"
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
-            />
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500" />
           </div>
-
-          <div className="md:col-span-4 flex items-end">
-            <button
-              type="button"
-              onClick={addOperator}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm shadow-sm transition-colors"
-            >
-              Add Scientist / Operator
+          <div className="md:col-span-2">
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Password</label>
+            <input type="password" value={draft.password}
+              onChange={(e) => setDraft((p) => ({ ...p, password: e.target.value }))}
+              onKeyDown={(e) => { if (e.key === 'Enter') addOperator(); }}
+              placeholder="Required"
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500" />
+          </div>
+          <div className="md:col-span-2">
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Role</label>
+            <select value={draft.role} onChange={(e) => setDraft((p) => ({ ...p, role: e.target.value }))}
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white">
+              <option value="user">User</option>
+              <option value="superuser">Superuser</option>
+            </select>
+          </div>
+          <div className="md:col-span-2 flex items-end">
+            <button type="button" onClick={addOperator} disabled={saving}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm shadow-sm transition-colors disabled:opacity-50">
+              {saving ? 'Saving…' : 'Add Scientist'}
             </button>
           </div>
         </div>
+      )}
 
-        <div className="flex flex-wrap gap-2">
-          {operators.length === 0 ? (
+        {/* ── SCIENTIST LIST ── */}
+        <div className="flex flex-col gap-2">
+          {!canManage && (
+            <div className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 italic">
+              👁️ Read-only — log in as a superuser to manage scientists and passwords.
+            </div>
+          )}
+          {normalizedOps.length === 0 ? (
             <div className="text-sm text-slate-400 italic bg-slate-50 border border-dashed border-slate-300 rounded-lg p-4">
               No scientists/operators defined.
             </div>
           ) : (
-            operators.map((op) => {
-              const label = getOperatorLabel(op);
+            normalizedOps.map((op) => (
+              <div key={op.id}
+                className={`flex items-center gap-3 px-4 py-3 rounded-xl border text-sm ${
+                  op.role === 'superuser'
+                    ? 'bg-amber-50 border-amber-200'
+                    : 'bg-slate-50 border-slate-200'
+                }`}>
+                <span className="text-lg">{op.role === 'superuser' ? '👑' : '🧪'}</span>
+                <div className="flex-1 min-w-0">
+                  <span className="font-bold text-slate-800">{op.name}</span>
+                  <span className={`ml-2 text-[10px] font-black uppercase px-2 py-0.5 rounded ${
+                    op.role === 'superuser' ? 'bg-amber-200 text-amber-800' : 'bg-slate-200 text-slate-600'
+                  }`}>
+                    {op.role === 'superuser' ? 'Superuser' : 'User'}
+                  </span>
+                  {canManage && (op.passwordHash ? (
+                    <span className="ml-2 text-[10px] text-emerald-600">🔐 Password set</span>
+                  ) : (
+                    <span className="ml-2 text-[10px] text-red-500">⚠️ No password</span>
+                  ))}
+                </div>
 
-              return (
-                <span
-                  key={label}
-                  className="bg-slate-50 border border-slate-200 text-slate-700 text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-2"
-                >
-                  {label}
-
-                  <button
-                    onClick={() => removeOperator(label)}
-                    className="text-red-500 hover:text-red-700 font-black"
-                    title="Remove operator"
-                  >
-                    ×
-                  </button>
-                </span>
-              );
-            })
+                {/* Edit controls — only for canManage users */}
+                {canManage && (
+                  editingId === op.id ? (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {canManage && (
+                        <select value={editRole} onChange={(e) => setEditRole(e.target.value)}
+                          className="border border-slate-300 rounded px-2 py-1 text-xs bg-white outline-none focus:border-blue-500">
+                          <option value="user">User</option>
+                          <option value="superuser">Superuser</option>
+                        </select>
+                      )}
+                      <input type="password" value={editPassword}
+                        onChange={(e) => setEditPassword(e.target.value)}
+                        placeholder="New password (optional)"
+                        className="border border-slate-300 rounded px-2 py-1 text-xs outline-none focus:border-blue-500 w-40" />
+                      <button onClick={() => saveEdit(op.id)} disabled={saving}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3 py-1 rounded transition-colors disabled:opacity-50">
+                        {saving ? '…' : 'Save'}
+                      </button>
+                      <button onClick={() => setEditingId(null)}
+                        className="bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold px-3 py-1 rounded transition-colors">
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex gap-2">
+                      <button onClick={() => startEdit(op)}
+                        className="text-blue-500 hover:text-blue-700 text-xs font-bold px-2 py-1 rounded hover:bg-blue-50 transition-colors"
+                        title="Edit role / change password">
+                        ✏️
+                      </button>
+                      <button onClick={() => removeOperator(op.id)}
+                        className="text-red-500 hover:text-red-700 text-xs font-bold px-2 py-1 rounded hover:bg-red-50 transition-colors"
+                        title="Remove scientist">
+                        ×
+                      </button>
+                    </div>
+                  )
+                )}
+              </div>
+            ))
           )}
         </div>
+
+
+      {/* ── AUTH SETTINGS (superuser only) ── */}
+      {(isSuperuser || (!hasSuperuserDefined)) && authSettings && setAuthSettings && (
+        <div className="border-t border-slate-200 pt-5">
+          <h3 className="text-sm font-bold text-amber-700 uppercase mb-3 flex items-center gap-2">
+            👑 Access Control Settings
+            {!hasSuperuserDefined && (
+              <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded font-normal">
+                ⚠️ Define a superuser first to lock these settings
+              </span>
+            )}
+          </h3>
+          <div className="flex flex-col gap-4">
+            <label className="flex items-start gap-3 cursor-pointer group">
+              <input type="checkbox"
+                checked={!!authSettings.requireLoginOnEntry}
+                onChange={(e) => setAuthSettings((p) => ({ ...p, requireLoginOnEntry: e.target.checked }))}
+                className="mt-0.5 rounded text-blue-600 focus:ring-blue-500 cursor-pointer" />
+              <div>
+                <span className="text-sm font-semibold text-slate-700 group-hover:text-blue-700 transition-colors">
+                  Require login before accessing the app
+                </span>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  When enabled, users must select a scientist and enter their password before seeing anything.
+                  When disabled, everyone can browse the Dashboard, Definitions, Agenda, etc. — but protected tests still require login.
+                </p>
+              </div>
+            </label>
+
+            <label className="flex items-start gap-3 cursor-pointer group">
+              <input type="checkbox"
+                checked={!!authSettings.hideOtherScientistTests}
+                onChange={(e) => setAuthSettings((p) => ({ ...p, hideOtherScientistTests: e.target.checked }))}
+                className="mt-0.5 rounded text-blue-600 focus:ring-blue-500 cursor-pointer" />
+              <div>
+                <span className="text-sm font-semibold text-slate-700 group-hover:text-blue-700 transition-colors">
+                  Hide other scientists' tests completely
+                </span>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  When enabled, users only see their own tests in the list.
+                  When disabled, all tests are visible — others' tests show a 🔒 icon and require authentication to open.
+                </p>
+              </div>
+            </label>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* =========================================================
+   SCIENTIST LOGIN GATE  (full-screen, mandatory)
+========================================================= */
+
+const ScientistLoginGate = ({ operators, onLogin, onRecovery }) => {
+  const normalizedOps = normalizeOperators(operators || []);
+  // Recovery mode: if nobody has a password set, allow emergency bypass
+  const noneHavePassword = normalizedOps.every((op) => !op.passwordHash);
+  const [selectedId, setSelectedId] = useState(normalizedOps.length === 1 ? normalizedOps[0].id : '');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const passwordRef = React.useRef(null);
+
+  React.useEffect(() => {
+    if (selectedId) setTimeout(() => passwordRef.current?.focus(), 80);
+  }, [selectedId]);
+
+  const handleSubmit = async (e) => {
+    e?.preventDefault();
+    if (!selectedId) { setError('Please select your name.'); return; }
+    if (!password) { setError('Please enter your password.'); return; }
+    setLoading(true);
+    setError('');
+    try {
+      const op = normalizedOps.find((o) => o.id === selectedId);
+      if (!op) { setError('Scientist not found.'); setLoading(false); return; }
+      if (!op.passwordHash) { setError('No password set for this account. Contact a superuser.'); setLoading(false); return; }
+      const hash = await hashPassword(password);
+      if (hash !== op.passwordHash) {
+        setError('Incorrect password. Try again.');
+        setPassword('');
+        setLoading(false);
+        return;
+      }
+      onLogin({ id: op.id, name: op.name, role: op.role });
+    } catch (err) {
+      setError('Login failed: ' + err.message);
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900">
+      {/* Background decoration */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-40 -left-40 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl" />
+        <div className="absolute -bottom-40 -right-40 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl" />
+      </div>
+
+      <form onSubmit={handleSubmit} className="relative z-10 w-full max-w-md mx-4">
+        {/* Card */}
+        <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl p-8 shadow-2xl">
+
+          {/* Logo / branding */}
+          <div className="text-center mb-8">
+            <div className="text-5xl mb-3">🔬</div>
+            <h1 className="text-2xl font-black text-white tracking-tight">Lab Workspace</h1>
+            <p className="text-blue-200 text-sm mt-1 font-medium">Secure access — please identify yourself</p>
+          </div>
+
+          {/* Special panel when no scientists are configured */}
+          {normalizedOps.length === 0 && (
+            <div className="mb-6 bg-amber-500/20 border border-amber-400/40 rounded-xl px-5 py-4 text-center">
+              <div className="text-2xl mb-2">⚠️</div>
+              <p className="text-amber-200 font-bold text-sm mb-1">No scientists configured</p>
+              <p className="text-amber-300/70 text-xs">
+                Scientist accounts were lost (e.g. from an HTML file load). Use recovery to re-configure.
+              </p>
+              {onRecovery && (
+                <button
+                  type="button"
+                  onClick={onRecovery}
+                  className="mt-3 bg-amber-500 hover:bg-amber-400 text-white font-black px-4 py-2 rounded-lg text-sm transition-colors w-full"
+                >
+                  🔓 Enter Recovery Mode
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Scientist selector */}
+          <div className="mb-4">
+            <label className="block text-xs font-bold text-blue-200 uppercase mb-1.5 tracking-wider">
+              Scientist
+            </label>
+            <select
+              value={selectedId}
+              onChange={(e) => { setSelectedId(e.target.value); setError(''); }}
+              className="w-full bg-white/10 border border-white/20 text-white rounded-xl px-4 py-3 text-sm outline-none focus:border-blue-400 focus:bg-white/15 transition-all"
+              style={{ colorScheme: 'dark' }}
+            >
+              <option value="" style={{ background: '#1e293b' }}>— Select your name —</option>
+              {normalizedOps.map((op) => (
+                <option key={op.id} value={op.id} style={{ background: '#1e293b' }}>
+                  {op.role === 'superuser' ? '👑 ' : '🧪 '}{op.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Password */}
+          <div className="mb-6">
+            <label className="block text-xs font-bold text-blue-200 uppercase mb-1.5 tracking-wider">
+              Password
+            </label>
+            <input
+              ref={passwordRef}
+              type="password"
+              value={password}
+              onChange={(e) => { setPassword(e.target.value); setError(''); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit(); }}
+              placeholder="Enter your password"
+              className="w-full bg-white/10 border border-white/20 text-white placeholder-blue-300/50 rounded-xl px-4 py-3 text-sm outline-none focus:border-blue-400 focus:bg-white/15 transition-all"
+            />
+          </div>
+
+          {/* Error */}
+          {error && (
+            <div className="mb-4 bg-red-500/20 border border-red-400/30 text-red-200 text-sm rounded-lg px-4 py-2.5 flex items-center gap-2">
+              <span>⚠️</span>{error}
+            </div>
+          )}
+
+          {/* Submit */}
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-blue-500 hover:bg-blue-400 disabled:bg-blue-800 text-white font-black py-3 px-6 rounded-xl text-sm shadow-lg hover:shadow-blue-500/40 transition-all transform hover:scale-[1.02] disabled:scale-100 disabled:opacity-60 flex items-center justify-center gap-2"
+          >
+            {loading ? (
+              <>
+                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                Verifying…
+              </>
+            ) : (
+              <>🔑 Enter Lab</>
+            )}
+          </button>
+
+          {/* Recovery bypass — shown only if no passwords are set at all */}
+          {noneHavePassword && onRecovery && (
+            <div className="mt-4 text-center">
+              <button
+                type="button"
+                onClick={onRecovery}
+                className="text-xs text-blue-300/70 hover:text-blue-200 underline transition-colors"
+              >
+                🔓 Emergency recovery (no passwords configured)
+              </button>
+            </div>
+          )}
+        </div>
+      </form>
+    </div>
+  );
+};
+
+/* =========================================================
+   SCIENTIST LOGIN MODAL
+========================================================= */
+
+const ScientistLoginModal = ({ operators, onLogin, onClose, title, subtitle }) => {
+  const normalizedOps = normalizeOperators(operators || []);
+  const [selectedId, setSelectedId] = useState(normalizedOps.length === 1 ? normalizedOps[0].id : '');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const inputRef = React.useRef(null);
+
+  // Focus the password field when modal opens
+  React.useEffect(() => { setTimeout(() => inputRef.current?.focus(), 50); }, []);
+
+  const handleSubmit = async (e) => {
+    e?.preventDefault();
+    if (!selectedId) { setError('Please select a scientist.'); return; }
+    if (!password) { setError('Please enter your password.'); return; }
+    setLoading(true);
+    setError('');
+    try {
+      const op = normalizedOps.find((o) => o.id === selectedId);
+      if (!op) { setError('Scientist not found.'); setLoading(false); return; }
+      if (!op.passwordHash) { setError('This scientist has no password set. Ask a superuser to set one.'); setLoading(false); return; }
+      const hash = await hashPassword(password);
+      if (hash !== op.passwordHash) {
+        setError('Incorrect password. Try again.');
+        setPassword('');
+        setLoading(false);
+        return;
+      }
+      onLogin({ id: op.id, name: op.name, role: op.role });
+    } catch (err) {
+      setError('Login failed: ' + err.message);
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[999999] flex items-center justify-center p-4" style={{ background: 'rgba(15,23,42,0.7)', backdropFilter: 'blur(4px)' }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-[fadeIn_0.15s_ease]">
+        {/* Header */}
+        <div className="bg-gradient-to-br from-blue-600 to-indigo-700 px-6 py-5 text-white">
+          <div className="text-2xl mb-2">🔐</div>
+          <h2 className="text-xl font-black">{title || 'Scientist Login'}</h2>
+          {subtitle && <p className="text-blue-100 text-sm mt-1">{subtitle}</p>}
+        </div>
+
+        {/* Form */}
+        <form onSubmit={handleSubmit} className="p-6 flex flex-col gap-4">
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Scientist</label>
+            <select value={selectedId} onChange={(e) => { setSelectedId(e.target.value); setError(''); }}
+              className="w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-500 bg-white font-medium">
+              <option value="">— Select scientist —</option>
+              {normalizedOps.map((op) => (
+                <option key={op.id} value={op.id}>
+                  {op.role === 'superuser' ? '👑 ' : '🧪 '}{op.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Password</label>
+            <input ref={inputRef} type="password" value={password}
+              onChange={(e) => { setPassword(e.target.value); setError(''); }}
+              placeholder="Enter your password"
+              className="w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-500" />
+          </div>
+
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-2.5 flex items-center gap-2">
+              ⚠️ {error}
+            </div>
+          )}
+
+          <div className="flex gap-3 pt-1">
+            <button type="submit" disabled={loading}
+              className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-xl text-sm shadow-sm transition-colors disabled:opacity-50">
+              {loading ? 'Verifying…' : 'Log In'}
+            </button>
+            {onClose && (
+              <button type="button" onClick={onClose}
+                className="px-5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold py-2.5 rounded-xl text-sm transition-colors">
+                Cancel
+              </button>
+            )}
+          </div>
+        </form>
       </div>
     </div>
   );
 };
+
 
 
 /* =========================================================
@@ -4189,10 +4650,34 @@ const baseTest = {
   const [customCellLines, setCustomCellLines] = useState([]);
   const [customConc, setCustomConc] = useState({});
   const [cmpColors, setCmpColors] = useState({});
-  const [operators, setOperators] = useState([]);
-  const [molecules, setMolecules] = useState([]);
+  const [operators, setOperators] = useState(() => {
+    try {
+      const saved = localStorage.getItem('labWorkspace_operators');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+  // ── AUTH STATE ──────────────────────────────────────────
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const stored = sessionStorage.getItem('labCurrentUser');
+      return stored ? JSON.parse(stored) : null;
+    } catch { return null; }
+  });
+  const [loginModal, setLoginModal] = useState(null); // null | { targetScientistName?: string, onSuccess?: fn, isEntryGate?: bool }
+  const [authSettings, setAuthSettings] = useState(() => {
+    try {
+      const saved = localStorage.getItem('labWorkspace_authSettings');
+      return saved ? JSON.parse(saved) : { requireLoginOnEntry: true, hideOtherScientistTests: false };
+    } catch { return { requireLoginOnEntry: true, hideOtherScientistTests: false }; }
+  });
+  const [unlockedTestIds, setUnlockedTestIds] = useState(new Set());
+  const [recoveryBypass, setRecoveryBypass] = useState(false); // transient — not persisted
+  // ────────────────────────────────────────────────────────
+
   const [customFields, setCustomFields] = useState([]);
+  const [molecules, setMolecules] = useState([]);
   const [solvents, setSolvents] = useState([]);
+
   const [buffers, setBuffers] = useState([]);
   const [additives, setAdditives] = useState([]);
   const [nmrInstruments, setNmrInstruments] = useState([]);
@@ -4221,6 +4706,7 @@ const baseTest = {
     'Analysis'
   ]);
   const [datasetProtocols, setDatasetProtocols] = useState([]);
+  const [protoImgInput, setProtoImgInput] = useState(''); // for inline image URL entry
 
   const historyRef = useRef([[createEmptyTest('t1', 1, 'plate-96')]]);
   const [historyIndex, setHistoryIndex] = useState(0);
@@ -4283,6 +4769,16 @@ const baseTest = {
       setReactTests(historyRef.current[newIdx]);
     }
   };
+
+  // ── PERSIST OPERATORS & AUTH SETTINGS to localStorage ────────────────
+  useEffect(() => {
+    try { localStorage.setItem('labWorkspace_operators', JSON.stringify(operators)); } catch {}
+  }, [operators]);
+
+  useEffect(() => {
+    try { localStorage.setItem('labWorkspace_authSettings', JSON.stringify(authSettings)); } catch {}
+  }, [authSettings]);
+  // ─────────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!auth) {
@@ -4388,7 +4884,16 @@ const baseTest = {
     }
   }, [user, db]);
 
+  // ── Derived string array for backward-compatible child components ──
+  // All child components (test renderers, LabNotebook, Storage, etc.) still
+  // expect operators as plain strings. This is the safe list to pass them.
+  const operatorNames = normalizeOperators(operators).map((op) => op.name);
+
+  // Bootstrap mode: if no superuser exists yet, allow anyone to define roles
+  const hasSuperuserDefined = normalizeOperators(operators).some((op) => op.role === 'superuser');
+
   const latestDataRef = useRef(null);
+
 
   latestDataRef.current = {
     tests,
@@ -4417,11 +4922,33 @@ const baseTest = {
     nmrExperiments,
     mandatoryFields,
     mandatoryRules,
-    mandatoryBehavior
+    mandatoryBehavior,
+    authSettings
   };
 
   const getCompressedPayload = () =>
     LZString.compressToUTF16(JSON.stringify(latestDataRef.current));
+
+  // ── Sync currentUser to sessionStorage ──────────────────
+  useEffect(() => {
+    try {
+      if (currentUser) {
+        sessionStorage.setItem('labCurrentUser', JSON.stringify(currentUser));
+      } else {
+        sessionStorage.removeItem('labCurrentUser');
+      }
+    } catch {}
+  }, [currentUser]);
+
+  // ── Validate currentUser still exists in operators list ─
+  useEffect(() => {
+    if (!currentUser) return;
+    const normalized = normalizeOperators(operators);
+    const stillExists = normalized.some((op) => op.id === currentUser.id);
+    if (!stillExists) {
+      setCurrentUser(null);
+    }
+  }, [operators, currentUser]);
 
   const saveTimeoutRef = useRef(null);
 
@@ -4480,8 +5007,9 @@ useEffect(() => {
   customFields, operators, molecules, compoundMeta, calculationEntries, 
   cellLineMeta, plasmidMeta, storages, solvents, buffers, additives, 
   nmrInstruments, nmrProbes, nmrExperiments, isCloudReady, appView, 
-  currentDatasetId, user
+  currentDatasetId, user, authSettings
 ]);
+
 
   const exportHTML = () => {
     try {
@@ -4642,7 +5170,9 @@ useEffect(() => {
       if (s.protocolCategories !== undefined) setProtocolCategories(s.protocolCategories);
       if (s.datasetProtocols !== undefined) setDatasetProtocols(s.datasetProtocols);
       if (s.storages !== undefined) setStorages(s.storages);
-      if (s.operators !== undefined) setOperators(s.operators);
+      // NOTE: operators and authSettings are NEVER imported from HTML
+      // They are global app-level identity/security state — not dataset state.
+      // if (s.operators !== undefined) setOperators(...);
       if (s.molecules !== undefined) setMolecules(s.molecules);
       if (s.compoundMeta !== undefined) setCompoundMeta(s.compoundMeta);
       if (s.calculationEntries !== undefined) setCalculationEntries(s.calculationEntries);
@@ -4653,6 +5183,8 @@ useEffect(() => {
         setMandatoryRules(normalizeMandatoryRules(s.mandatoryRules, s.mandatoryFields));
       }
       if (s.mandatoryBehavior !== undefined) setMandatoryBehavior(s.mandatoryBehavior);
+      // NOTE: authSettings not imported from HTML either — kept as global security config
+      // if (s.authSettings !== undefined) setAuthSettings(...);
       if (s.solvents !== undefined) setSolvents(s.solvents);
       if (s.buffers !== undefined) setBuffers(s.buffers);
       if (s.additives !== undefined) setAdditives(s.additives);
@@ -4755,9 +5287,7 @@ if (s.mandatoryFields !== undefined) setMandatoryFields((prev) => [...new Set([.
         });
       }
 
-      if (s.operators !== undefined) {
-        setOperators((prev) => [...new Set([...prev, ...s.operators])]);
-      }
+      // NOTE: operators NOT imported in append mode — they are global, not per-dataset
 
       if (s.molecules !== undefined) {
         setMolecules((prev) => {
@@ -4794,8 +5324,11 @@ if (s.mandatoryFields !== undefined) setMandatoryFields((prev) => [...new Set([.
     setCustomFields([]);
     setCompoundMeta({});
     setCalculationEntries({});
-    setOperators([]);
+    // NOTE: operators and authSettings are GLOBAL — never reset per dataset
+    // setOperators([]);  ← intentionally omitted
+    // setAuthSettings() ← intentionally omitted
     setMolecules([]);
+
     setCellLineMeta({});
     setPlasmidMeta({});
     setMandatoryFields([]);
@@ -4952,7 +5485,7 @@ if (s.mandatoryFields !== undefined) setMandatoryFields((prev) => [...new Set([.
       setCustomFields(normalizeCustomFields(s.customFields || []));
       setCompoundMeta(s.compoundMeta || {});
       setCalculationEntries(s.calculationEntries || {});
-      setOperators(Array.isArray(s.operators) ? s.operators : []);
+      // NOTE: operators NOT loaded from cloud dataset — they are global identity state
       setMolecules(Array.isArray(s.molecules) ? s.molecules : []);
       setCellLineMeta(s.cellLineMeta || {});
       setPlasmidMeta(s.plasmidMeta || {});
@@ -5202,17 +5735,34 @@ setMandatoryFields(s.mandatoryFields || []);
 
     tests.forEach((t) => {
       (t.plan || []).forEach((task) => {
-        all.push({ ...task, testName: t.name, testId: t.id, testOperator: t.operator || '' });
+        all.push({
+          ...task,
+          testName: t.name,
+          testId: t.id,
+          testOperator: t.operator || '',
+          testCoScientists: Array.isArray(t.coScientists) ? t.coScientists : [],
+        });
       });
     });
 
     let sorted = all.sort((a, b) => a.date.localeCompare(b.date));
 
     if (calFilterDate) sorted = sorted.filter((t) => t.date === calFilterDate);
-    if (agendaOpFilter !== 'ALL') sorted = sorted.filter((t) => (t.assignedTo || t.testOperator || '') === agendaOpFilter);
+
+    // Normal users are locked to their own agenda; superusers use the dropdown
+    const effectiveFilter = currentUser?.role !== 'superuser' && currentUser
+      ? currentUser.name
+      : agendaOpFilter;
+
+    if (effectiveFilter !== 'ALL') sorted = sorted.filter((t) => {
+      // Check direct assignment, test primary operator AND co-scientists
+      const assignedTo = t.assignedTo || t.testOperator || '';
+      const coScis = Array.isArray(t.testCoScientists) ? t.testCoScientists : [];
+      return assignedTo === effectiveFilter || coScis.includes(effectiveFilter);
+    });
 
     return sorted;
-  }, [tests, calFilterDate, agendaOpFilter]);
+  }, [tests, calFilterDate, agendaOpFilter, currentUser]);
 
   const agendaGrouped = useMemo(() => {
     const sorted = [...mergedPlan].sort((a, b) => a.date.localeCompare(b.date));
@@ -5256,7 +5806,19 @@ setMandatoryFields(s.mandatoryFields || []);
     if (window.innerWidth < 768) setIsSidebarOpen(false);
   };
 
-  const handlePrint = () => {
+  const handlePrint = async () => {
+    // Wait for all visible images to finish loading before printing
+    // This is the correct approach for public Drive/external images already in the browser
+    const imgs = Array.from(document.querySelectorAll('img'));
+    await Promise.all(imgs.map((img) => {
+      if (img.complete && img.naturalHeight !== 0) return Promise.resolve();
+      return new Promise((resolve) => {
+        img.addEventListener('load', resolve, { once: true });
+        img.addEventListener('error', resolve, { once: true });
+        setTimeout(resolve, 5000); // max 5s timeout per image
+      });
+    }));
+    await new Promise((r) => setTimeout(r, 150));
     window.print();
   };
 
@@ -5285,7 +5847,31 @@ setMandatoryFields(s.mandatoryFields || []);
   }
 
   return (
-    <div className="w-full relative flex flex-col h-screen overflow-hidden bg-slate-50">
+    <React.Fragment>
+
+    {/* ══════════════════════════════════════════════════════
+         FULL-SCREEN LOGIN GATE
+         Blocks everything when requireLoginOnEntry is on.
+    ══════════════════════════════════════════════════════ */}
+    {authSettings.requireLoginOnEntry && !currentUser && !recoveryBypass && (
+      <ScientistLoginGate
+        operators={normalizeOperators(operators)}
+        onLogin={(user) => {
+          setCurrentUser(user);
+          try { sessionStorage.setItem('labCurrentUser', JSON.stringify(user)); } catch {}
+        }}
+        onRecovery={() => {
+          // Transient bypass — does NOT touch requireLoginOnEntry in localStorage
+          // On next page load, the gate will show again normally
+          setRecoveryBypass(true);
+        }}
+      />
+    )}
+
+    {/* Main app — hidden (but preserved) while gate is shown */}
+    <div className={`w-full relative flex flex-col h-screen overflow-hidden bg-slate-50${
+      authSettings.requireLoginOnEntry && !currentUser && !recoveryBypass ? ' hidden' : ''
+    }`}>
 <style>{`
         @media print {
           @page {
@@ -5384,6 +5970,56 @@ setMandatoryFields(s.mandatoryFields || []);
             margin-top: 0.4cm;
             margin-bottom: 0.4cm;
           }
+
+          /* Charts and canvases: prevent cutting in half */
+          .recharts-wrapper,
+          .recharts-surface,
+          canvas,
+          svg {
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+            max-width: 100% !important;
+          }
+
+          /* NMR sidebar controls hidden when printing */
+          .no-print {
+            display: none !important;
+          }
+        }
+
+        /* ── Notebook-only print mode ─────────────────────────────────
+           Applied by exportPDF() in LabNotebook to print only the
+           notebook report, hiding all sidebar and navigation chrome.
+           Uses display:none (not visibility:hidden) so Recharts SVGs render correctly. */
+        @media print {
+          body.notebook-print-mode > * > * {
+            display: none !important;
+          }
+          body.notebook-print-mode #notebook-report-container {
+            display: block !important;
+            position: static !important;
+            width: 100% !important;
+            padding: 0 !important;
+            background: white !important;
+          }
+          body.notebook-print-mode #notebook-report-container * {
+            display: revert !important;
+          }
+        }
+        /* Screen preview: isolate just the container */
+        body.notebook-print-mode > * > *:not(:has(#notebook-report-container)) {
+          visibility: hidden;
+        }
+        body.notebook-print-mode #notebook-report-container {
+          position: fixed;
+          left: 0;
+          top: 0;
+          width: 100%;
+          height: 100%;
+          overflow-y: auto;
+          padding: 1cm;
+          background: white;
+          z-index: 99999;
         }
       `}</style>
 
@@ -5496,7 +6132,7 @@ setMandatoryFields(s.mandatoryFields || []);
         setMoveModal={setMoveModal}
         tests={tests}
         setTests={setTests}
-        operators={operators}
+        operators={operatorNames}
       />
 
       {/* ===== EXPLORER VIEW ===== */}
@@ -5513,17 +6149,23 @@ setMandatoryFields(s.mandatoryFields || []);
                 environment.
               </p>
 
-              <button
-                onClick={createNewDataset}
-                disabled={!isCloudReady}
-                className={`font-black py-3 md:py-4 px-6 md:px-10 rounded-full shadow-lg transition-all transform hover:scale-105 flex items-center gap-3 text-base md:text-lg w-full md:w-auto justify-center ${
-                  isCloudReady
-                    ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                    : 'bg-slate-300 text-slate-500 cursor-not-allowed'
-                }`}
-              >
-                <span className="text-2xl">+</span> Create New Dataset
-              </button>
+              {currentUser?.role === 'superuser' ? (
+                <button
+                  onClick={createNewDataset}
+                  disabled={!isCloudReady}
+                  className={`font-black py-3 md:py-4 px-6 md:px-10 rounded-full shadow-lg transition-all transform hover:scale-105 flex items-center gap-3 text-base md:text-lg w-full md:w-auto justify-center ${
+                    isCloudReady
+                      ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                      : 'bg-slate-300 text-slate-500 cursor-not-allowed'
+                  }`}
+                >
+                  <span className="text-2xl">+</span> Create New Dataset
+                </button>
+              ) : (
+                <div className="flex items-center gap-2 text-slate-400 bg-slate-100 border border-slate-200 rounded-full px-5 py-3 text-sm font-semibold">
+                  ?? Creating datasets requires superuser access
+                </div>
+              )}
 
               {!isCloudReady && (
                 <div className="mt-6 flex flex-col items-center gap-3">
@@ -5531,8 +6173,56 @@ setMandatoryFields(s.mandatoryFields || []);
                   <p className="text-sm font-bold text-slate-500">Connecting to Cloud...</p>
                 </div>
               )}
+
+              {/* ── USER IDENTITY BAR on landing page ── */}
+              {operatorNames.length > 0 && (
+                <div className="mt-6 flex items-center gap-3">
+                  {currentUser ? (
+                    <div className="flex items-center gap-3 bg-white border border-slate-200 rounded-full px-4 py-2 shadow-sm">
+                      <span className="text-base">
+                        {currentUser.role === 'superuser' ? '👑' : '🧪'}
+                      </span>
+                      <div className="flex flex-col leading-tight">
+                        <span className="text-sm font-bold text-slate-800">{currentUser.name}</span>
+                        <span className={`text-[10px] font-black uppercase ${
+                          currentUser.role === 'superuser' ? 'text-amber-600' : 'text-slate-500'
+                        }`}>
+                          {currentUser.role === 'superuser' ? 'Superuser' : 'Scientist'}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setCurrentUser(null);
+                          try { sessionStorage.removeItem('labCurrentUser'); } catch {}
+                        }}
+                        className="ml-2 text-xs text-slate-400 hover:text-red-500 font-bold transition-colors px-2 py-1 rounded hover:bg-red-50"
+                        title="Log out"
+                      >
+                        Sign out
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setLoginModal({})}
+                      className="flex items-center gap-2 bg-white border border-blue-200 text-blue-700 hover:bg-blue-50 font-bold px-5 py-2.5 rounded-full shadow-sm transition-all hover:shadow-md text-sm"
+                    >
+                      🔑 Sign In as Scientist
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
+            {/* Recent Datasets — hidden from unauthenticated users when scientists are configured */}
+            {operatorNames.length > 0 && !currentUser ? (
+              <div className="bg-white p-8 rounded-2xl shadow-xl border border-slate-200 flex flex-col items-center justify-center gap-4 py-16">
+                <div className="text-5xl">🔒</div>
+                <h2 className="text-xl font-bold text-slate-700">Login required to view datasets</h2>
+                <p className="text-slate-400 text-sm text-center max-w-sm">
+                  Please log in using the button above to access your lab data.
+                </p>
+              </div>
+            ) : (
             <div className="bg-white p-4 md:p-8 rounded-2xl shadow-xl border border-slate-200">
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 border-b border-slate-100 pb-4 gap-4">
                 <h2 className="text-xl md:text-2xl font-bold text-slate-800">
@@ -5540,17 +6230,23 @@ setMandatoryFields(s.mandatoryFields || []);
                 </h2>
 
                 <div className="flex flex-wrap gap-2 w-full md:w-auto">
-                  <button
-                    onClick={deleteEmptyDatasets}
-                    className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex-1 md:flex-none items-center justify-center gap-2 cursor-pointer text-sm"
-                  >
-                    🗑️ Delete Empty
-                  </button>
+                  {/* Delete Empty — superuser only */}
+                  {currentUser?.role === 'superuser' && (
+                    <button
+                      onClick={deleteEmptyDatasets}
+                      className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex-1 md:flex-none items-center justify-center gap-2 cursor-pointer text-sm"
+                    >
+                      🗑️ Delete Empty
+                    </button>
+                  )}
 
-                  <label className="bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex-1 md:flex-none flex items-center justify-center gap-2 cursor-pointer text-sm">
-                    📂 Load HTML File
-                    <input type="file" accept=".html" onChange={loadHTML} className="hidden" />
-                  </label>
+                  {/* Load HTML — superuser only */}
+                  {currentUser?.role === 'superuser' && (
+                    <label className="bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex-1 md:flex-none flex items-center justify-center gap-2 cursor-pointer text-sm">
+                      📂 Load HTML File
+                      <input type="file" accept=".html" onChange={loadHTML} className="hidden" />
+                    </label>
+                  )}
                 </div>
               </div>
 
@@ -5609,26 +6305,29 @@ setMandatoryFields(s.mandatoryFields || []);
                                   </span>
                                 </div>
 
-                                <div className="flex flex-col gap-1 opacity-100 md:opacity-0 group-hover/item:opacity-100 transition-all shrink-0 ml-2">
-                                  <button
-                                    onClick={(e) =>
-                                      renameDataset(e, dset.id, dset.title || groupTitle)
-                                    }
-                                    className="text-slate-500 hover:text-blue-600 hover:bg-blue-50 px-2 py-1 rounded text-xs font-bold transition-colors text-right"
-                                  >
-                                    Rename
-                                  </button>
+                                {/* Rename / Delete — superuser only */}
+                                {currentUser?.role === 'superuser' && (
+                                  <div className="flex flex-col gap-1 opacity-100 md:opacity-0 group-hover/item:opacity-100 transition-all shrink-0 ml-2">
+                                    <button
+                                      onClick={(e) =>
+                                        renameDataset(e, dset.id, dset.title || groupTitle)
+                                      }
+                                      className="text-slate-500 hover:text-blue-600 hover:bg-blue-50 px-2 py-1 rounded text-xs font-bold transition-colors text-right"
+                                    >
+                                      Rename
+                                    </button>
 
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      deleteDataset(e, dset.id);
-                                    }}
-                                    className="text-slate-500 hover:text-red-600 hover:bg-red-50 px-2 py-1 rounded text-xs font-bold transition-colors text-right"
-                                  >
-                                    Delete
-                                  </button>
-                                </div>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        deleteDataset(e, dset.id);
+                                      }}
+                                      className="text-slate-500 hover:text-red-600 hover:bg-red-50 px-2 py-1 rounded text-xs font-bold transition-colors text-right"
+                                    >
+                                      Delete
+                                    </button>
+                                  </div>
+                                )}
                               </div>
                             ))}
 
@@ -5649,6 +6348,7 @@ setMandatoryFields(s.mandatoryFields || []);
                 </div>
               )}
             </div>
+            )} {/* end: login-required ternary */}
           </div>
         </div>
       )}
@@ -5748,6 +6448,58 @@ setMandatoryFields(s.mandatoryFields || []);
                 isSidebarOpen ? 'px-2' : 'px-1 items-center'
               }`}
             >
+              {/* ── User identity bar ── */}
+              {isSidebarOpen ? (
+                <div className={`mb-3 rounded-xl border px-3 py-2.5 flex items-center gap-2 text-sm ${
+                  currentUser?.role === 'superuser'
+                    ? 'bg-amber-50 border-amber-200'
+                    : currentUser
+                    ? 'bg-blue-50 border-blue-200'
+                    : 'bg-slate-50 border-slate-200'
+                }`}>
+                  <span className="text-base shrink-0">
+                    {currentUser?.role === 'superuser' ? '👑' : currentUser ? '🧪' : '👤'}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[11px] font-black uppercase text-slate-400">Logged in as</div>
+                    <div className="font-bold text-slate-700 truncate text-xs">
+                      {currentUser ? currentUser.name : <span className="text-slate-400 italic">Guest</span>}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (currentUser) {
+                        setCurrentUser(null);
+                        setUnlockedTestIds(new Set());
+                      } else {
+                        setLoginModal({ isEntryGate: false });
+                      }
+                    }}
+                    className={`shrink-0 text-[10px] font-bold px-2 py-1 rounded transition-colors ${
+                      currentUser
+                        ? 'bg-slate-200 hover:bg-red-100 text-slate-600 hover:text-red-700'
+                        : 'bg-blue-600 hover:bg-blue-700 text-white'
+                    }`}
+                  >
+                    {currentUser ? 'Logout' : 'Login'}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => {
+                    if (currentUser) { setCurrentUser(null); setUnlockedTestIds(new Set()); }
+                    else setLoginModal({ isEntryGate: false });
+                  }}
+                  title={currentUser ? `Logged in as ${currentUser.name} — click to logout` : 'Login'}
+                  className={`w-10 h-10 rounded-xl border flex items-center justify-center text-base mb-2 transition-colors ${
+                    currentUser?.role === 'superuser' ? 'bg-amber-50 border-amber-200' :
+                    currentUser ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-slate-200 hover:bg-blue-50'
+                  }`}
+                >
+                  {currentUser?.role === 'superuser' ? '👑' : currentUser ? '🧪' : '🔐'}
+                </button>
+              )}
+
               {[
                 { id: 'dashboard', icon: '📊', label: 'Dataset Overview' },
                 { id: 'notebook', icon: '📓', label: 'Lab Notebook' },
@@ -5795,27 +6547,30 @@ setMandatoryFields(s.mandatoryFields || []);
                   <span>🖨️</span> {isSidebarOpen ? 'Print / Export PDF' : ''}
                 </button>
 
-                <div className={`flex ${isSidebarOpen ? 'gap-2' : 'flex-col gap-2 w-full'}`}>
-                  <label
-                    className={`flex-1 text-center bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-200 font-bold py-1.5 rounded text-xs cursor-pointer shadow-sm transition-colors ${
-                      !isSidebarOpen ? 'py-2 px-0 text-[10px]' : ''
-                    }`}
-                    title="Load HTML"
-                  >
-                    {isSidebarOpen ? '📂 Load HTML' : '📂'}
-                    <input type="file" accept=".html" onChange={loadHTML} className="hidden" />
-                  </label>
+                {/* Load HTML + Save HTML — superuser only */}
+                {currentUser?.role === 'superuser' && (
+                  <div className={`flex ${isSidebarOpen ? 'gap-2' : 'flex-col gap-2 w-full'}`}>
+                    <label
+                      className={`flex-1 text-center bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-200 font-bold py-1.5 rounded text-xs cursor-pointer shadow-sm transition-colors ${
+                        !isSidebarOpen ? 'py-2 px-0 text-[10px]' : ''
+                      }`}
+                      title="Load HTML"
+                    >
+                      {isSidebarOpen ? '📂 Load HTML' : '📂'}
+                      <input type="file" accept=".html" onChange={loadHTML} className="hidden" />
+                    </label>
 
-                  <button
-                    onClick={exportHTML}
-                    className={`flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors ${
-                      !isSidebarOpen ? 'py-2 px-0 text-[10px]' : ''
-                    }`}
-                    title="Save HTML"
-                  >
-                    {isSidebarOpen ? '💾 Save HTML' : '💾'}
-                  </button>
-                </div>
+                    <button
+                      onClick={exportHTML}
+                      className={`flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors ${
+                        !isSidebarOpen ? 'py-2 px-0 text-[10px]' : ''
+                      }`}
+                      title="Save HTML"
+                    >
+                      {isSidebarOpen ? '💾 Save HTML' : '💾'}
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className="flex gap-2 justify-center mt-2">
@@ -6071,9 +6826,22 @@ setMandatoryFields(s.mandatoryFields || []);
                     <NMRExperimentsManager nmrExperiments={nmrExperiments} setNmrExperiments={setNmrExperiments} selectedId={activeLibrarySelection.type === 'nmrExperiment' ? activeLibrarySelection.id : null} onSelect={(id) => setActiveLibrarySelection({ type: 'nmrExperiment', id })} />
                   </CollapsibleSection>
 
-                  <CollapsibleSection title="Scientists / Operators" subtitle="Add scientist name and surname." defaultOpen={false}>
-                    <ScientistsOperatorsManager operators={operators} setOperators={setOperators} />
+                  <CollapsibleSection
+                    title="Scientists / Operators"
+                    subtitle={currentUser?.role === 'superuser'
+                      ? "Manage scientists, roles, passwords, and access control settings."
+                      : "Scientists defined in this dataset. Log in or contact a superuser to manage."}
+                    defaultOpen={false}
+                  >
+                    <ScientistsOperatorsManager
+                      operators={normalizeOperators(operators)}
+                      setOperators={setOperators}
+                      authSettings={authSettings}
+                      setAuthSettings={setAuthSettings}
+                      currentUser={currentUser}
+                    />
                   </CollapsibleSection>
+
 
                   <CollapsibleSection title="Custom Metadata Fields" subtitle="Add custom fields for plate, NMR, CD, Cloning, or all tabs — and target the exact subsection of each page they appear in." defaultOpen={false}>
                     <CustomMetadataFieldsManager customFields={customFields} setCustomFields={handleSetCustomFields} />
@@ -6108,13 +6876,17 @@ setMandatoryFields(s.mandatoryFields || []);
                   <div className="flex flex-wrap gap-2 items-center">
 <div className="flex flex-col gap-1">
   <label className="text-[10px] font-bold text-slate-500 uppercase">Filter by Scientist</label>
-  <select value={agendaOpFilter} onChange={(e) => setAgendaOpFilter(e.target.value)}
-    className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm bg-white outline-none focus:border-blue-500 font-semibold shadow-sm">
-    <option value="ALL">All Users</option>
-    {(operators || []).map((op) => (
-      <option key={op} value={op}>{op}</option>
-    ))}
-  </select>
+  {currentUser?.role === 'superuser' ? (
+    <select value={agendaOpFilter} onChange={(e) => setAgendaOpFilter(e.target.value)}
+      className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm bg-white outline-none focus:border-blue-500 font-semibold shadow-sm">
+      <option value="ALL">All Users</option>
+      {(operatorNames || []).map((op) => (<option key={`agenda-${op}`} value={op}>{op}</option>))}
+    </select>
+  ) : (
+    <div className="text-sm font-semibold text-slate-700 bg-slate-100 border border-slate-200 rounded-lg px-3 py-1.5">
+      🧪 {currentUser?.name || 'You'}
+    </div>
+  )}
 </div>
                     <button
                       onClick={handlePrint}
@@ -6250,7 +7022,7 @@ setMandatoryFields(s.mandatoryFields || []);
     <StorageFinder
       tests={tests}
       storages={storages}
-      operators={operators}
+      operators={operatorNames}
       onOpenTest={(testId) => {
         setActiveTestId(testId);
         setCurrentModule('active-test');
@@ -6270,7 +7042,7 @@ setMandatoryFields(s.mandatoryFields || []);
         setActiveStorageId={setActiveStorageId}
         setCurrentModule={setCurrentModule}
         handlePrint={handlePrint}
-        operators={operators}
+        operators={operatorNames}
       />
     </div>
   </div>
@@ -6287,7 +7059,7 @@ setMandatoryFields(s.mandatoryFields || []);
                 setMoveModal={setMoveModal}
                 createEmptyTest={createEmptyTest}
                 setActiveTestId={setActiveTestId}
-                operators={operators}
+                operators={operatorNames}
               />
             )}
 
@@ -6298,8 +7070,35 @@ setMandatoryFields(s.mandatoryFields || []);
                 const showCatMgr = expandedGroups['showTestCatMgr'] || false;
                 const newCatInput = expandedGroups['newTestCatInput'] || '';
 
+
+                // ── Auth helpers ──────────────────────────────
+                const isSuperuserSession = currentUser?.role === 'superuser';
+                // Get all scientists assigned to a test
+                const getTestScientists = (test) => {
+                  const all = [];
+                  if (test.operator) all.push(test.operator);
+                  if (Array.isArray(test.coScientists)) all.push(...test.coScientists);
+                  return all;
+                };
+                const isTestOwner = (test) => {
+                  const scientists = getTestScientists(test);
+                  if (isSuperuserSession) return true;
+                  if (scientists.length === 0) return false; // unassigned → only superuser
+                  return currentUser && scientists.includes(currentUser.name);
+                };
+                const isTestLocked = (test) => !isTestOwner(test) && !unlockedTestIds.has(test.id);
+                // ─────────────────────────────────────────────
+
                 const filteredTestsRaw = tests.filter((t) => {
                   if (t.type === 'plate-9x9box') return false;
+
+                  // Normal users always see only their own tests.
+                  // Superusers see all tests unless hideOtherScientistTests is enabled.
+                  if (!isSuperuserSession) {
+                    if (!isTestOwner(t)) return false;
+                  } else if (authSettings.hideOtherScientistTests && !isTestOwner(t)) {
+                    return false;
+                  }
 
                   const matchesSearch =
                     t.name.toLowerCase().includes(testSearch.toLowerCase()) ||
@@ -6320,6 +7119,7 @@ setMandatoryFields(s.mandatoryFields || []);
                     filteredTests.push(t);
                   }
                 });
+
 
                 return (
                   <div className="p-4 md:p-6 h-full flex flex-col">
@@ -6550,46 +7350,59 @@ setMandatoryFields(s.mandatoryFields || []);
                         </div>
                       ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                          {filteredTests.map((test) => (
+                          {filteredTests.map((test) => {
+                            const locked = isTestLocked(test);
+                            return (
                             <div
                               key={test.id}
-                              className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:shadow-md hover:border-blue-400 cursor-pointer transition-all flex flex-col group relative"
+                              className={`bg-white border rounded-xl p-4 shadow-sm transition-all flex flex-col group relative overflow-hidden ${
+                                locked
+                                  ? 'border-slate-300 cursor-pointer hover:border-amber-400 hover:shadow-md'
+                                  : 'border-slate-200 cursor-pointer hover:shadow-md hover:border-blue-400'
+                              }`}
                               onClick={() => {
-                                setActiveTestId(test.id);
-                                setCurrentModule('active-test');
+                                if (locked) {
+                                  // prompt authentication for this scientist
+                                  setLoginModal({
+                                    isEntryGate: false,
+                                    targetScientistName: test.operator,
+                                    onSuccess: (user) => {
+                                      setCurrentUser(user);
+                                      setLoginModal(null);
+                                      // Navigate into the test after login
+                                      setActiveTestId(test.id);
+                                      setCurrentModule('active-test');
+                                    }
+                                  });
+                                } else {
+                                  setActiveTestId(test.id);
+                                  setCurrentModule('active-test');
+                                }
                               }}
                             >
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-
-                                  if (
-                                    window.confirm(
-                                      `Eliminare definitivamente il test "${test.name}"?`
-                                    )
-                                  ) {
-                                    setTests((prev) => prev.filter((t) => t.id !== test.id));
-                                  }
-                                }}
-                                className="absolute top-3 right-10 text-slate-300 hover:text-red-500 text-xl opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity no-print z-10"
-                                title="Elimina Test"
-                              >
-                                &times;
-                              </button>
+                              {/* Delete button (only if owner/superuser) */}
+                              {!locked && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (window.confirm(`Eliminare definitivamente il test "${test.name}"?`)) {
+                                      setTests((prev) => prev.filter((t) => t.id !== test.id));
+                                    }
+                                  }}
+                                  className="absolute top-3 right-10 text-slate-300 hover:text-red-500 text-xl opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity no-print z-10"
+                                  title="Elimina Test"
+                                >
+                                  &times;
+                                </button>
+                              )}
 
                               <div className="absolute top-3 right-3 text-2xl opacity-80 group-hover:scale-110 transition-transform">
-                                {test.type === 'nmr'
-                                  ? '📉'
-                                  : test.type === 'cd'
-                                  ? '🌀'
-                                  : test.type === 'cloning'
-                                  ? '🧬'  
-                                  : test.type === 'plate-9x9box'
-                                  ? '📦'
-                                  : test.type === 'nmr-fittings'
-                                  ? '🧭'
-                                  : test.type === 'md_simulation'
-                                  ? '🖥️'
+                                {test.type === 'nmr' ? '📉'
+                                  : test.type === 'cd' ? '🌀'
+                                  : test.type === 'cloning' ? '🧬'
+                                  : test.type === 'plate-9x9box' ? '📦'
+                                  : test.type === 'nmr-fittings' ? '🧭'
+                                  : test.type === 'md_simulation' ? '🖥️'
                                   : '🧫'}
                               </div>
 
@@ -6605,22 +7418,38 @@ setMandatoryFields(s.mandatoryFields || []);
                                 Instance: {test.instanceName || 'Primary'}
                               </p>
 
+                              {test.operator && (
+                                <p className="text-xs text-slate-400 mt-0.5">
+                                  🧪 {[test.operator, ...(test.coScientists || [])].join(', ')}
+                                </p>
+                              )}
+
                               <div className="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center text-xs text-slate-500 font-medium">
                                 <span>📅 {test.date}</span>
-
                                 <span className="bg-slate-100 px-2 py-0.5 rounded font-bold text-slate-600">
-                                  {test.type === 'nmr-fittings'
-                                    ? 'NMR FITTINGS'
-                                    : test.type === 'md_simulation'
-                                    ? 'MD'
-                                    : test.type === 'protein_expression'
-                                    ? 'PROTEIN'
-                                    // BUG FIX: Wrap test.type in String() to prevent crashes
+                                  {test.type === 'nmr-fittings' ? 'NMR FITTINGS'
+                                    : test.type === 'md_simulation' ? 'MD'
+                                    : test.type === 'protein_expression' ? 'PROTEIN'
                                     : String(test.type || '').replace('plate-', '').toUpperCase()}
                                 </span>
                               </div>
+
+                              {/* 🔒 Lock overlay */}
+                              {locked && (
+                                <div className="absolute inset-0 bg-white/80 backdrop-blur-[2px] flex flex-col items-center justify-center gap-2 rounded-xl">
+                                  <div className="text-3xl">🔒</div>
+                                  <div className="text-xs font-bold text-slate-600 text-center px-4">
+                                    {[test.operator, ...(test.coScientists || [])].filter(Boolean).join(' / ')}'s test
+                                  </div>
+                                  <div className="text-[10px] text-slate-400 text-center px-4">
+                                    Log in as one of the assigned scientists to access
+                                  </div>
+                                </div>
+                              )}
                             </div>
-                          ))}
+                            );
+                          })}
+
                         </div>
                       )}
                     </div>
@@ -6767,54 +7596,51 @@ const getProtocolImageFallback = (url) => {
   />
 
   <div className="mt-6 border border-slate-200 rounded-xl bg-slate-50 p-4 shadow-sm">
-    <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-3">
+    <div className="flex flex-col gap-3 mb-3">
       <div>
         <h4 className="text-xs font-bold text-slate-500 uppercase">
           Protocol Images
         </h4>
         <p className="text-xs text-slate-400">
-          Add Google Drive image links. Previews appear immediately.
+          Paste Google Drive image links. Previews appear immediately.
         </p>
       </div>
 
-      <button
-        type="button"
-        onClick={() => {
-          const urlsText = prompt(
-            'Paste one or more Google Drive image links, separated by commas:'
-          );
-
-          if (!urlsText || !urlsText.trim()) return;
-
-          const urls = urlsText
-            .split(/[,\n]+/)
-            .map((s) => s.trim())
-            .filter(Boolean);
-
-          if (!urls.length) return;
-
-          const existingCount = (activeProtocol.images || []).length;
-
-          const newImages = urls.map((url, idx) => ({
-            id: `proto_img_${Date.now()}_${idx}_${Math.random()
-              .toString(36)
-              .slice(2, 8)}`,
-            name: `Image ${existingCount + idx + 1}`,
-            url
-          }));
-
-          setDatasetProtocols(
-            datasetProtocols.map((p) =>
-              p.id === activeProtocol.id
-                ? { ...p, images: [...(p.images || []), ...newImages] }
-                : p
-            )
-          );
-        }}
-        className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-xs shadow-sm transition-colors no-print"
-      >
-        + Add Image Link(s)
-      </button>
+      {/* Inline URL input — no prompt() required */}
+      <div className="flex gap-2 items-center no-print">
+        <input
+          type="text"
+          value={protoImgInput}
+          onChange={(e) => setProtoImgInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              const urls = protoImgInput.split(/[,\n]+/).map(s => s.trim()).filter(Boolean);
+              if (!urls.length) return;
+              const existingCount = (activeProtocol.images || []).length;
+              const newImgs = urls.map((url, idx) => ({ id: `proto_img_${Date.now()}_${idx}`, name: `Image ${existingCount + idx + 1}`, url }));
+              setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? { ...p, images: [...(p.images || []), ...newImgs] } : p));
+              setProtoImgInput('');
+            }
+          }}
+          placeholder="Paste Google Drive URL(s), comma-separated… then press Enter or Add"
+          className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 bg-white"
+        />
+        <button
+          type="button"
+          onClick={() => {
+            const urls = protoImgInput.split(/[,\n]+/).map(s => s.trim()).filter(Boolean);
+            if (!urls.length) return;
+            const existingCount = (activeProtocol.images || []).length;
+            const newImgs = urls.map((url, idx) => ({ id: `proto_img_${Date.now()}_${idx}`, name: `Image ${existingCount + idx + 1}`, url }));
+            setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? { ...p, images: [...(p.images || []), ...newImgs] } : p));
+            setProtoImgInput('');
+          }}
+          className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-xs shadow-sm transition-colors whitespace-nowrap"
+        >
+          + Add
+        </button>
+      </div>
     </div>
 
     {(activeProtocol.images || []).length === 0 ? (
@@ -7335,6 +8161,16 @@ const newProto = {
 
                 if (!activeTest) return <div className="p-6">Test not found.</div>;
 
+                // ── Auth gate ─────────────────────────────────────
+                const isSuperuserSession = currentUser?.role === 'superuser';
+                const activeTestOwned = !activeTest.operator || isSuperuserSession || (currentUser && currentUser.name === activeTest.operator) || unlockedTestIds.has(activeTest.id);
+                if (!activeTestOwned) {
+                  // Redirect to test list — user should use the login modal from there
+                  setCurrentModule('tests');
+                  return null;
+                }
+                // ─────────────────────────────────────────────────
+
                 const updateActiveTest = (updates) => {
                   setTests((prev) =>
                     prev.map((t) => (t.id === activeTestId ? { ...t, ...updates } : t))
@@ -7463,17 +8299,14 @@ const newProto = {
         className="bg-slate-50 border border-slate-200 text-xs px-2 py-2 rounded-lg outline-none focus:border-blue-500"
       >
         <option value="">Select Box Owner...</option>
-        {operators.map((op) => (
-          <option key={op} value={op}>
-            {op}
-          </option>
-        ))}
+        {operatorNames.map((op) => (<option key={`owner-${op}`} value={op}>{op}</option>))}
       </select>
     </div>
   ) : (
+    <>
     <div className="flex flex-col flex-1 min-w-[160px]">
       <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
-        Scientist
+        Primary Scientist
       </label>
       <select
         value={activeTest.operator || ''}
@@ -7481,13 +8314,41 @@ const newProto = {
         className="bg-slate-50 border border-slate-200 text-xs px-2 py-2 rounded-lg outline-none focus:border-blue-500"
       >
         <option value="">Select Scientist...</option>
-        {operators.map((op) => (
-          <option key={op} value={op}>
-            {op}
-          </option>
-        ))}
+        {operatorNames.map((op) => (<option key={`sci-${op}`} value={op}>{op}</option>))}
       </select>
     </div>
+    {/* Co-scientists multi-select */}
+    <div className="flex flex-col flex-1 min-w-[180px]">
+      <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
+        Co-Scientists
+      </label>
+      <div className="flex flex-wrap gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 min-h-[32px]">
+        {(activeTest.coScientists || []).map((cs) => (
+          <span key={cs} className="flex items-center gap-1 bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
+            {cs}
+            <button type="button" onClick={() => updateActiveTest({ coScientists: (activeTest.coScientists || []).filter(x => x !== cs) })} className="hover:text-red-500 font-black leading-none">×</button>
+          </span>
+        ))}
+        <select
+          value=""
+          onChange={(e) => {
+            const v = e.target.value;
+            if (!v) return;
+            const existing = activeTest.coScientists || [];
+            if (!existing.includes(v) && v !== activeTest.operator) {
+              updateActiveTest({ coScientists: [...existing, v] });
+            }
+          }}
+          className="text-[10px] bg-transparent outline-none text-slate-400 flex-1 min-w-[80px]"
+        >
+          <option value="">+ Add co-scientist…</option>
+          {operatorNames.filter(op => op !== activeTest.operator && !(activeTest.coScientists || []).includes(op)).map(op => (
+            <option key={op} value={op}>{op}</option>
+          ))}
+        </select>
+      </div>
+    </div>
+    </>
   )}
 </React.Fragment>
 
@@ -7622,7 +8483,7 @@ const newProto = {
                       customFields={customFields}
                       testCategories={testCategories}
                       instances={siblingTests}
-                      operators={operators}
+                      operators={operatorNames}
                       solvents={solvents}
                       buffers={buffers}
                       additives={additives}
@@ -7648,7 +8509,7 @@ const newProto = {
                       customFields={customFields}
                       testCategories={testCategories}
                       instances={siblingTests}
-                      operators={operators}
+                      operators={operatorNames}
                       solvents={solvents}
                       buffers={buffers}
                       additives={additives}
@@ -7680,7 +8541,7 @@ const newProto = {
                       allCellLines={allCellLines}
                       customFields={customFields}
                       testCategories={testCategories}
-                      operators={operators}
+                      operators={operatorNames}
                       instances={siblingTests}
                       updateInstance={updateInstance}
                       solvents={solvents}
@@ -7706,7 +8567,7 @@ const newProto = {
                       jumpToTest={jumpToTest}
                       setMoveModal={setMoveModal}
                       TestHeader={TestHeader}
-                      operators={operators}
+                      operators={operatorNames}
                     />
                   );
                 }
@@ -7724,7 +8585,7 @@ const newProto = {
                       allCellLines={allCellLines}
                       customFields={customFields}
                       testCategories={testCategories}
-                      operators={operators}
+                      operators={operatorNames}
                       instances={siblingTests}
                       compoundMeta={compoundMeta}
                       plasmidMeta={plasmidMeta}
@@ -7745,7 +8606,7 @@ const newProto = {
                       updateActiveTest={updateActiveTest}
                       allTests={tests}
                       TestHeader={TestHeader}
-                      operators={operators}
+                      operators={operatorNames}
                       molecules={molecules}
                       compoundMeta={compoundMeta}
                       allCmpds={allCmpds}
@@ -7787,7 +8648,7 @@ const newProto = {
                       allCellLines={allCellLines}
                       customFields={customFields}
                       testCategories={testCategories}
-                      operators={operators}
+                      operators={operatorNames}
                       instances={siblingTests}
                       solvents={solvents}
                       buffers={buffers}
@@ -7826,7 +8687,7 @@ const newProto = {
                       TestHeader={TestHeader}
                       datasetProtocols={datasetProtocols}
                       jumpToProtocol={jumpToProtocolFn}
-                      operators={operators}
+                      operators={operatorNames}
                       solvents={solvents}
                       buffers={buffers}
                       additives={additives}
@@ -7852,7 +8713,7 @@ const newProto = {
                   cmpColors={cmpColors}
                   allCmpds={allCmpds}
                   customFields={customFields}
-                  operators={operators}
+                  operators={operatorNames}
                   plasmidMeta={plasmidMeta}
                   solvents={solvents}
                   buffers={buffers}
@@ -7860,17 +8721,19 @@ const newProto = {
                   nmrInstruments={nmrInstruments}
                   nmrProbes={nmrProbes}
                   nmrExperiments={nmrExperiments}
+                  currentUser={currentUser}
                 />
               </div>
             )}
 
-{currentModule === 'calculations' && (
+            {currentModule === 'calculations' && (
               <div className="h-full overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
                 <Calculations
                   compoundOptions={allCmpds}
                   compoundMeta={compoundMeta}
                   calculationEntries={calculationEntries}
                   setCalculationEntries={setCalculationEntries}
+                  currentUser={currentUser}
                 />
               </div>
             )}
@@ -7878,6 +8741,33 @@ const newProto = {
         </div>
       )}
     </div>
+
+    {/* The new ScientistLoginGate above (fixed full-screen) handles requireLoginOnEntry for ALL views */}
+
+    {/* ── Generic Login Modal (triggered by sidebar or locked tests) ── */}
+    {loginModal && !(authSettings.requireLoginOnEntry && !currentUser) && (
+      <ScientistLoginModal
+        operators={
+          loginModal.targetScientistName
+            ? normalizeOperators(operators).filter((op) => op.name === loginModal.targetScientistName)
+            : normalizeOperators(operators)
+        }
+        title={loginModal.targetScientistName ? `Log in as ${loginModal.targetScientistName}` : 'Scientist Login'}
+        subtitle={loginModal.targetScientistName
+          ? `This test belongs to ${loginModal.targetScientistName}. Enter their password to continue.`
+          : 'Select your name and enter your password to access protected data.'}
+        onLogin={(user) => {
+          if (loginModal.onSuccess) {
+            loginModal.onSuccess(user);
+          } else {
+            setCurrentUser(user);
+            setLoginModal(null);
+          }
+        }}
+        onClose={() => setLoginModal(null)}
+      />
+    )}
+    </React.Fragment>
   );
 }
 export const All = null;

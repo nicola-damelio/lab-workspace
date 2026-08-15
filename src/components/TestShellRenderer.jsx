@@ -1442,41 +1442,8 @@ const details = [
                   Definitions & Labels.
                 </p>
               </div>
-
- <div>
-  <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
-    Scientist who performed the experiment
-  </label>
-  {operators.length === 0 ? (
-    <p className="text-sm text-slate-400 italic">
-      No scientists defined. Add them in Definitions & Labels →
-      Scientists / Operators.
-    </p>
-  ) : (
-    <select
-      value={testOperator}
-      onChange={(e) => update({ operator: e.target.value })}
-      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
-    >
-      <option value="">— Select Scientist —</option>
-      {operators.map((op) => (
-        <option key={op} value={op}>
-          {op}
-        </option>
-      ))}
-    </select>
-  )}
-  {testOperator && (
-    <button
-      type="button"
-      onClick={() => update({ operator: '' })}
-      className="mt-2 text-xs font-bold text-red-500 hover:text-red-700 underline"
-    >
-      Clear scientist
-    </button>
-  )}
-</div>
             </div>
+
           </CollapsibleSection>
 
           {(showCompoundsSection || CompoundsSection) && (
@@ -1897,8 +1864,8 @@ const details = [
                     <div className="flex flex-col gap-6">
       {DataAnalysisSection && (
         <CollapsibleSection
-          title={isMdType ? 'MD general parameters' : 'Secondary Shifts analysis'}
-          icon={isMdType ? '⚙️' : '📉'}
+          title={isMdType ? 'MD general parameters' : 'Per Atom Plot'}
+          icon={isMdType ? '⚙️' : '📊'}
           defaultOpen={false}
         >
           <DataAnalysisSection ctx={ctx} />

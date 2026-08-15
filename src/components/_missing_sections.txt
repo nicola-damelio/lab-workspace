@@ -1,0 +1,198 @@
+const makePlotId = () => `cp_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+const defaultPlotCfg = (n) => ({
+  id: makePlotId(), title: `Condition Plot ${n}`, layerKey: 'cs', atoms: [],
+  xField: 'temperature', yField: '', chartType: 'line',
+  fitEnabled: false, fitModel: 'linear', customExpr: '',
+  showPoints: true, showErrors: true, showFit: true,
+  useFixedSD: false, fixedSDStr: '', outlierThreshStr: '2.5',
+  excludeNonComparable: false,
+  hiddenSeries: {}, excluded: {}, manualSD: {}, usedInstances: {}, hLines: [], showMaxLines: false,
+  style: { ...DEFAULT_CHART_STYLE }
+});
+
+// ================= FITTING SECTION =================
+export const FittingSection = ({ ctx }) => {
+  const { activeTest, updateActiveTest } = ctx;
+  const d = useNmrDerived(activeTest, ctx);
+  const plots = Array.isArray(activeTest.conditionPlots) && activeTest.conditionPlots.length ? activeTest.conditionPlots : [defaultPlotCfg(1)];
+  const updatePlot = (id, patch) => updateActiveTest({ conditionPlots: plots.map((p) => (p.id === id ? { ...p, ...patch } : p)) });
+  const addPlot = () => updateActiveTest({ conditionPlots: [...plots, defaultPlotCfg(plots.length + 1)] });
+  const removePlot = (id) => {
+    if (plots.length <= 1) { alert('At least one condition plot is required.'); return; }
+    updateActiveTest({ conditionPlots: plots.filter((p) => p.id !== id) });
+  };
+  const duplicatePlot = (p) => updateActiveTest({ conditionPlots: [...plots, { ...JSON.parse(JSON.stringify(p)), id: makePlotId(), title: `${p.title} (copy)` }] });
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <span className="text-xs font-bold text-slate-500 uppercase">Condition plots — X = Experimental Condition · zoomable · aspect ratio adjustable</span>
+        <button type="button" onClick={addPlot} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm">+ Add Condition Plot</button>
+      </div>
+      {plots.map((p) => (
+        <ConditionPlotPanel key={p.id} ctx={ctx} d={d} plot={p} updatePlot={updatePlot} removePlot={removePlot} duplicatePlot={duplicatePlot} />
+      ))}
+    </div>
+  );
+};
+
+// ================= CLASSIFICATION SECTION =================
+export const ClassificationSection = ({ ctx }) => {
+  const { activeTest, updateActiveTest } = ctx;
+  const testCategories = Array.isArray(ctx?.testCategories) ? ctx.testCategories : [];
+  const operators = (Array.isArray(ctx?.operators) ? ctx.operators : []).map(opLabel).filter(Boolean);
+  const classification = activeTest.classification || {};
+  const set = (patch) => updateActiveTest({ classification: { ...classification, ...patch } });
+  const selectedOperators = Array.isArray(classification.operators) ? classification.operators : [];
+  const toggleOperator = (name) => {
+    if (selectedOperators.includes(name)) set({ operators: selectedOperators.filter((o) => o !== name) });
+    else set({ operators: [...selectedOperators, name] });
+  };
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">Experiment Type (from Definitions)</label>
+          <select value={classification.experimentType || ''} onChange={(e) => set({ experimentType: e.target.value })}
+            className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500">
+            <option value="">-- Select --</option>
+            {testCategories.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">Operator(s) (from Definitions)</label>
+          <div className="flex flex-wrap gap-2">
+            {operators.map((name) => (
+              <label key={name} className={`flex items-center gap-1.5 text-xs font-bold px-2.5 py-1.5 rounded-lg border cursor-pointer ${selectedOperators.includes(name) ? 'bg-blue-600 border-blue-700 text-white' : 'bg-white border-slate-300 text-slate-700'}`}>
+                <input type="checkbox" checked={selectedOperators.includes(name)} onChange={() => toggleOperator(name)} className="accent-blue-600" />
+                {name}
+              </label>
+            ))}
+            {operators.length === 0 && <span className="text-xs text-amber-600">⚠️ No operators found. Add them in Definitions → Scientists/Operators.</span>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ================= SIMULATIONS SECTION =================
+export const SimulationsSection = ({ ctx }) => {
+  const { activeTest, updateActiveTest } = ctx;
+  const d = useNmrDerived(activeTest, ctx);
+  const [expandedPanel, setExpandedPanel] = useState(null);
+  const [showCfg, setShowCfg] = useState(false);
+  const focusIdx = activeTest.focusIdx !== undefined ? activeTest.focusIdx : 'ALL';
+  const setFocusIdx = (val) => updateActiveTest({ focusIdx: val });
+  const selectedKeys = getSelectedKeys(activeTest);
+  const manualKeys = useMemo(() => getManualKeys(d.shifts), [d.shifts]);
+  const simCfg = { fontSize: 11, h1D: 300, aspect2D: 1, simShowLabels: false, simLabelFormat: 'resNum_code_atom', simLabelDim: 'both', simLabelFontSize: 10, ...(activeTest.simChartCfg || {}) };
+  const setCfg = (patch) => updateActiveTest({ simChartCfg: { ...simCfg, ...patch } });
+  if (d.parsedSeq.length === 0 && d.moleculeType !== 'organic') {
+    return <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">Enter a sequence / select a molecule (in Experiment Setup) to generate simulated spectra.</div>;
+  }
+  const fP = (arr) => {
+    if (focusIdx === 'ALL' || !arr) return arr || [];
+    const targetRes = d.parsedSeq[focusIdx];
+    if (!targetRes) return arr;
+    const resId = targetRes.id;
+    return arr.filter((p) => {
+      if (p.label && p.label.includes(resId)) return true;
+      if (p.type && typeof p.type === 'string' && p.type.includes(resId)) return true;
+      if (p.keys && p.keys.some((k) => String(k).split('-')[0] === String(focusIdx))) return true;
+      return false;
+    }).sort((a, b) => a.x - b.x);
+  };
+  const filteredRanges1H = focusIdx === 'ALL'
+    ? d.ranges.ranges1H
+    : d.ranges.ranges1H.filter(r => r.res === (d.parsedSeq[focusIdx]?.code3 || d.parsedSeq[focusIdx]?.char)).map(r => ({ ...r, y: 0 }));
+  const filteredRanges13C = focusIdx === 'ALL'
+    ? d.ranges.ranges13C
+    : d.ranges.ranges13C.filter(r => r.res === (d.parsedSeq[focusIdx]?.code3 || d.parsedSeq[focusIdx]?.char)).map(r => ({ ...r, y: 0 }));
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center gap-3 flex-wrap bg-white border border-slate-200 rounded-lg px-3 py-2 w-fit">
+        <button type="button" onClick={() => setShowCfg(!showCfg)} className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${showCfg ? 'bg-slate-200 border-slate-400 text-slate-900' : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'}`}>⚙️ Chart Parameters</button>
+        <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer ml-1 border-l border-slate-200 pl-3">
+          <input type="checkbox" checked={simCfg.simShowLabels} onChange={(e) => setCfg({ simShowLabels: e.target.checked })} className="accent-blue-600 w-4 h-4" />
+          Show Peak Labels
+        </label>
+        <span className="text-[10px] text-slate-400 ml-2">13C axis: 0–220 ppm · 2D spectra: square (aspect {simCfg.aspect2D}) · HSQC side by side</span>
+      </div>
+      {showCfg && (
+        <div className="p-4 bg-white border border-slate-300 rounded-xl grid grid-cols-1 md:grid-cols-3 gap-4 shadow-sm">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-bold text-slate-600">Font size (ticks & axis labels): {simCfg.fontSize}</label>
+            <input type="range" min="8" max="18" step="1" value={simCfg.fontSize} onChange={(e) => setCfg({ fontSize: parseInt(e.target.value, 10) })} className="accent-blue-600 mt-2" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-bold text-slate-600">1D spectra height (px): {simCfg.h1D}</label>
+            <input type="range" min="200" max="600" step="20" value={simCfg.h1D} onChange={(e) => setCfg({ h1D: parseInt(e.target.value, 10) })} className="accent-blue-600 mt-2" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-bold text-slate-600">2D aspect ratio (H/W): {simCfg.aspect2D} (1 = square)</label>
+            <div className="flex gap-2">
+              <input type="range" min="0.5" max="1.5" step="0.05" value={simCfg.aspect2D} onChange={(e) => setCfg({ aspect2D: parseFloat(e.target.value) })} className="accent-blue-600 mt-2 flex-1" />
+              <button type="button" onClick={() => setCfg({ aspect2D: 1 })} className="text-[10px] font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100 px-2 py-1 rounded shrink-0">⬛ Square</button>
+            </div>
+          </div>
+          {simCfg.simShowLabels && (
+            <div className="flex flex-col gap-3 md:col-span-3 pt-4 border-t border-slate-100 mt-2">
+              <h5 className="text-xs font-bold text-slate-600 uppercase">Label Format Options</h5>
+              <div className="flex flex-wrap gap-4">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-slate-500">Label Format</label>
+                  <select value={simCfg.simLabelFormat} onChange={(e) => setCfg({ simLabelFormat: e.target.value })} className="border border-slate-300 rounded-md px-2 py-1.5 text-xs outline-none bg-white font-semibold">
+                    <option value="resNum">Residue Number Only (e.g. 1)</option>
+                    <option value="resNum_code">Residue Number + Code (e.g. 1A)</option>
+                    <option value="resNum_code_atom">Res Num + Code + Atom (e.g. 1A Hα)</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-slate-500">Label Dimension (2D Spectra)</label>
+                  <select value={simCfg.simLabelDim} onChange={(e) => setCfg({ simLabelDim: e.target.value })} className="border border-slate-300 rounded-md px-2 py-1.5 text-xs outline-none bg-white font-semibold">
+                    <option value="direct">Direct Dimension Only (F2)</option>
+                    <option value="indirect">Indirect Dimension Only (F1)</option>
+                    <option value="both">Both Dimensions</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-slate-500">Peak Label Font Size: {simCfg.simLabelFontSize}</label>
+                  <input type="range" min="6" max="24" step="1" value={simCfg.simLabelFontSize} onChange={(e) => setCfg({ simLabelFontSize: parseInt(e.target.value, 10) })} className="accent-blue-600 mt-1" />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      {selectedKeys && (
+        <span className="text-xs font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded-lg px-3 py-1.5 w-fit">🎯 Highlighting: {selectionLabel(d, selectedKeys)}</span>
+      )}
+      <div className="text-xs font-bold text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 w-fit">
+        Spectra are simulated from the <span className="text-indigo-700">{d.activeInstance ? d.activeInstance.name : '—'}</span> instance's Chemical Shift layer.
+      </div>
+      {d.moleculeType !== 'organic' && (
+        <div className="grid grid-cols-1 gap-4">
+          <RangeBarChart title="Theoretical ¹H Ranges" ranges={filteredRanges1H} domain={[0, 11]} ticks={Array.from({ length: 12 }, (_, i) => i)} xAxisLabel="¹H (ppm)" rowCount={focusIdx === 'ALL' ? d.uniqueTypes.length : 1} rowLabels={focusIdx === 'ALL' ? d.uniqueTypes.map((c) => d.DB[c]?.code3 || c) : [d.parsedSeq[focusIdx]?.code3 || d.parsedSeq[focusIdx]?.char]} />
+          <RangeBarChart title="Theoretical ¹³C Ranges" ranges={filteredRanges13C} domain={[0, 220]} ticks={Array.from({ length: 23 }, (_, i) => i * 10)} xAxisLabel="¹³C (ppm)" rowCount={focusIdx === 'ALL' ? d.uniqueTypes.length : 1} rowLabels={focusIdx === 'ALL' ? d.uniqueTypes.map((c) => d.DB[c]?.code3 || c) : [d.parsedSeq[focusIdx]?.code3 || d.parsedSeq[focusIdx]?.char]} />
+        </div>
+      )}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <OneDSpectrumPlot key={`1d1h-${focusIdx}`} title="Simulated ¹H 1D Spectrum" data={fP(d.peaks.data1H)} fullDomain={[0, 11]} ticks={TICKS_1H} TickComponent={CustomXTick1H} xLabel="¹H (ppm)" panelId="1D_1H" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={simCfg} />
+        <OneDSpectrumPlot key={`1d13c-${focusIdx}`} title="Simulated ¹³C 1D Spectrum" data={fP(d.peaks.data13C)} fullDomain={[0, 220]} ticks={TICKS_13C} TickComponent={CustomXTick13C} xLabel="¹³C (ppm)" panelId="1D_13C" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={simCfg} />
+        {d.hasPhosphorus && d.selNuc.includes('P') && fP(d.peaks.p31Data).length > 0 && (
+          <OneDSpectrumPlot key={`1dp31-${focusIdx}`} title="Simulated ³¹P 1D Spectrum" data={fP(d.peaks.p31Data)} fullDomain={[-5, 5]} ticks={Array.from({ length: 11 }, (_, i) => i - 5)} TickComponent={CustomXTick1H} xLabel="³¹P (ppm)" panelId="1D_31P" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={simCfg} />
+        )}
+        <SpectrumPlot key={`cosy-${focusIdx}`} title="Simulated COSY Spectrum" diagonalData={fP(d.peaks.diagonalData)} crossPeakData={fP(d.peaks.cosyPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="cosy" diagonalColor="#22c55e" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={simCfg} />
+        <SpectrumPlot key={`noesy-${focusIdx}`} title="Simulated NOESY Spectrum" diagonalData={fP(d.peaks.diagonalData)} crossPeakData={fP(d.peaks.noesyPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="noesy" diagonalColor="#ef4444" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={simCfg} />
+        <SpectrumPlot key={`tocsy-${focusIdx}`} title="Simulated TOCSY Spectrum" diagonalData={fP(d.peaks.diagonalData)} crossPeakData={fP(d.peaks.tocsyPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="tocsy" diagonalColor="#1e3a8a" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={simCfg} />
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <HSQCPlot key={`hsqc-${focusIdx}`} title="Simulated ¹H-¹³C HSQC Spectrum" crossPeakData={fP(d.peaks.hsqcPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="hsqc" selectedKeys={selectedKeys} manualKeys={manualKeys} yAxisLabel="¹³C F1 (ppm)" yDomainInit={[0, 220]} yTicks={TICKS_13C} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={simCfg} />
+        {d.moleculeType === 'protein' && d.selNuc.includes('N') && fP(d.peaks.hsqc15NPeaks).length > 0 && (
+          <HSQCPlot key={`hsqc15n-${focusIdx}`} title="Simulated ¹H-¹⁵N HSQC Spectrum" crossPeakData={fP(d.peaks.hsqc15NPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="hsqc15n" selectedKeys={selectedKeys} manualKeys={manualKeys} yAxisLabel="¹⁵N F1 (ppm)" yDomainInit={[95, 135]} yTicks={TICKS_15N} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={simCfg} />
+        )}
+      </div>
+    </div>
+  );
+};
+
