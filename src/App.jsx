@@ -1584,7 +1584,13 @@ async function loadRDKit() {
     });
   }
 
-  window.__RDKit = await window.initRDKitModule();
+  if (!window.initRDKitModule) return null;
+
+  // FIX: Explicitly point to the WASM file on the CDN so the browser doesn't search your local server
+  window.__RDKit = await window.initRDKitModule({
+    locateFile: () => 'https://unpkg.com/@rdkit/rdkit/dist/RDKit_minimal.wasm'
+  });
+  
   return window.__RDKit;
 }
 
