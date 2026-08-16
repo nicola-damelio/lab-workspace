@@ -1336,8 +1336,10 @@ const AxisScrollbar = ({ domain, fullDomain, onChange, vertical = false, reverse
   );
 };
 
-const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel, selectedKeys, manualKeys = [], heightPx = 300, fs = 11, aspect = null, simCfg = {} }) => {
-  const { simShowLabels, simLabelFormat, simLabelDim, simLabelFontSize = 10 } = simCfg;
+const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel, selectedKeys, manualKeys = [], heightPx = 300, fs = 11, aspect = null, simCfg }) => {
+// Default: peak labels ON, so the Lab Notebook's 1D spectra show them automatically.
+// The NMR Simulations page always passes its own simCfg, so its checkbox keeps full control.
+const { simShowLabels = true, simLabelFormat = 'resNum_code_atom', simLabelDim = 'both', simLabelFontSize = 10 } = simCfg || {};
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState(fullDomain);
   const [refAreaLeft, setRefAreaLeft] = useState(null);
@@ -4912,22 +4914,31 @@ export const DataSection = ({ ctx }) => {
               </div>
               <div ref={brukerChartRef} className="select-none" style={{height: PANEL_H, backgroundColor: 'white', position: 'relative'}}
                    onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData} margin={{top: topMargin + labelAreaH, right: CHART_MARGIN.right, bottom: CHART_MARGIN.bottom, left: CHART_MARGIN.left}}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    <XAxis type="number" dataKey="x" domain={dom} reversed={true} allowDataOverflow
-                      tick={{fontSize:9, fill:'#64748b'}}
-                      label={{value:'Chemical Shift (ppm)', position:'insideBottom', offset:-12, fontSize:9, fill:'#64748b'}} />
-                    <YAxis hide domain={[-0.05,1.05]} />
-                    <Tooltip formatter={v => v.toFixed(4)} labelFormatter={v => Number(v).toFixed(3) + ' ppm'} />
-                    <Line type="monotone" dataKey="y" stroke="#3b82f6" strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls />
-                    {brukerRefL!==null && brukerRefR!==null && <ReferenceArea x1={brukerRefL} x2={brukerRefR} fill="#cbd5e1" fillOpacity={0.4} />}
-                    {/* Thin vertical tick at each peak position */}
-                    {showPeakLabels && peakMarkers.map((pm,i) => (
-                      <ReferenceLine key={i} x={pm.ppm} stroke="#ef444488" strokeWidth={1} />
-                    ))}
-                  </LineChart>
-                </ResponsiveContainer>
+             <ResponsiveContainer width="100%" height="100%">
+               <LineChart data={chartData} margin={{top: topMargin + labelAreaH, right: CHART_MARGIN.right, bottom: CHART_MARGIN.bottom, left: CHART_MARGIN.left}}>
+                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                 <XAxis type="number" dataKey="x" domain={dom} reversed={true} allowDataOverflow
+                   ticks={(() => {
+                     // Clean, rounded tick values so the ppm axis never shows long decimals
+                     const lo = Math.min(dom[0], dom[1]);
+                     const hi = Math.max(dom[0], dom[1]);
+                     const raw = (hi - lo) / 8;
+                     const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+                     const norm = raw / mag;
+                     const st = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag;
+                     const out = [];
+                     for (let v = Math.ceil(lo / st) * st; v <= hi + 1e-9; v += st) out.push(+v.toFixed(4));
+                     return out;
+                   })()}
+                   tickFormatter={v => Number(v).toFixed(2)}
+                   tick={{fontSize:9, fill:'#64748b'}}
+                   label={{value:'Chemical Shift (ppm)', position:'insideBottom', offset:-12, fontSize:9, fill:'#64748b'}} />
+                 <YAxis hide domain={[-0.05,1.05]} />
+                 <Tooltip formatter={v => Number(v).toFixed(3)} labelFormatter={v => Number(v).toFixed(2) + ' ppm'} />
+                 <Line type="monotone" dataKey="y" stroke="#3b82f6" strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls />
+                 {brukerRefL!==null && brukerRefR!==null && <ReferenceArea x1={brukerRefL} x2={brukerRefR} fill="#cbd5e1" fillOpacity={0.4} />}
+               </LineChart>
+             </ResponsiveContainer>
                 {/* Arrow + free-space label overlay */}
                 {showPeakLabels && peakMarkers.length > 0 && (
                   <PeakLabelOverlay

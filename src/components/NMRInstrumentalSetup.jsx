@@ -1,212 +1,381 @@
-import React, { useState } from 'react';
+import React from 'react';
 
-/* ============================================================
-   NMRInstrumentalSetup — Instrument, Probe, Pulse Program,
-   dynamic acquisition parameters, and dataset rows.
-   Works for both NMRTestRenderer and NMRFittingsTestRenderer.
-   Props: ctx (with activeTest, updateActiveTest), nmrInstruments,
-          nmrProbes, nmrExperiments (all from Definitions & Labels)
-   ============================================================ */
+const makeNmrInstrumentalDatasetId = () =>
+  `instrumental_dataset_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
-const NUCLEUS_OPTIONS = ['1H', '13C', '15N', '31P', '19F', '2H'];
-const cls = 'border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white outline-none focus:border-blue-500';
-const lblCls = 'text-[10px] font-bold text-slate-600 uppercase tracking-wide';
+const itemName = (item) => {
+  if (!item) return '';
+  if (typeof item === 'string') return item;
+  return item.name || item.label || '';
+};
 
-const Field = ({ label, children, className = '' }) => (
-  <div className={`flex flex-col gap-1 ${className}`}>
-    <label className={lblCls}>{label}</label>
-    {children}
-  </div>
-);
+const operatorLabel = (op) => {
+  if (!op) return '';
+  if (typeof op === 'string') return op;
+  return `${op.name || ''} ${op.surname || ''}`.trim();
+};
+
+const LABEL_CLS = 'text-[10px] font-bold text-slate-500 uppercase';
+const INPUT_CLS =
+  'border border-slate-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-500 bg-white';
 
 export const NMRInstrumentalSetup = ({ ctx }) => {
-  const { activeTest: t, updateActiveTest: update } = ctx;
-  const nmrInstruments = Array.isArray(ctx.nmrInstruments) ? ctx.nmrInstruments : [];
-  const nmrProbes = Array.isArray(ctx.nmrProbes) ? ctx.nmrProbes : [];
-  const nmrExperiments = Array.isArray(ctx.nmrExperiments) ? ctx.nmrExperiments : [];
+  const {
+    activeTest = {},
+    updateActiveTest
+  } = ctx || {};
 
-  const selectedInstrument = nmrInstruments.find(i => i.name === t.nmrInstrumentName) || null;
-  const availableProbes = selectedInstrument
-    ? nmrProbes.filter(p => (selectedInstrument.availableProbes || []).includes(p.name))
-    : nmrProbes;
+  const instruments = Array.isArray(ctx?.nmrInstruments)
+    ? ctx.nmrInstruments
+    : [];
 
-  const selectedProbe = nmrProbes.find(p => p.name === t.nmrProbeName) || null;
-  const selectedExp = nmrExperiments.find(e => e.name === t.nmrPulseProgram) || null;
+  const probes = Array.isArray(ctx?.nmrProbes)
+    ? ctx.nmrProbes
+    : [];
 
-  const dimCount = selectedExp
-    ? (selectedExp.dimensions === '3D' ? 3 : selectedExp.dimensions === '2D' ? 2 : 1)
-    : 1;
+  const experiments = Array.isArray(ctx?.nmrExperiments)
+    ? ctx.nmrExperiments
+    : [];
 
-  const isSolid = selectedProbe?.state === 'solid';
-  const isNoesy = selectedExp?.expType === 'NOESY';
-  const isTocsy = selectedExp?.expType === 'TOCSY';
+  const operators = Array.isArray(ctx?.operators)
+    ? ctx.operators
+    : [];
 
-  const datasets = t.nmrDatasets || [];
-  const addDataset = () => update({ nmrDatasets: [...datasets, { id: Date.now().toString(), name: '', expNo: '', link: '' }] });
-  const updateDataset = (id, patch) => update({ nmrDatasets: datasets.map(d => d.id === id ? { ...d, ...patch } : d) });
-  const removeDataset = (id) => update({ nmrDatasets: datasets.filter(d => d.id !== id) });
+  const datasets = Array.isArray(activeTest.instrumentalDatasets)
+    ? activeTest.instrumentalDatasets
+    : [];
+
+  const update = (patch) => {
+    if (typeof updateActiveTest === 'function') {
+      updateActiveTest(patch);
+    }
+  };
+
+  const nextExperimentNumber = () => {
+    const nums = datasets
+      .map((d) => parseInt(d.experimentNumber, 10))
+      .filter((n) => Number.isFinite(n));
+
+    return String(nums.length ? Math.max(...nums) + 1 : datasets.length + 1);
+  };
+
+  const addDataset = () => {
+    const expNum = nextExperimentNumber();
+
+    const nextDataset = {
+      id: makeNmrInstrumentalDatasetId(),
+      experimentNumber: expNum,
+      name: `Dataset ${expNum}`,
+      date: new Date().toISOString().split('T')[0],
+      operator: activeTest.operator || '',
+      link: '',
+      comments: ''
+    };
+
+    update({
+      instrumentalDatasets: [...datasets, nextDataset]
+    });
+  };
+
+  const patchDataset = (id, patch) => {
+    update({
+      instrumentalDatasets: datasets.map((d) =>
+        d.id === id ? { ...d, ...patch } : d
+      )
+    });
+  };
+
+  const removeDataset = (id) => {
+    update({
+      instrumentalDatasets: datasets.filter((d) => d.id !== id)
+    });
+  };
 
   return (
-    <div className="flex flex-col gap-5">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Field label="Instrument">
-          <select value={t.nmrInstrumentName || ''} onChange={e => update({ nmrInstrumentName: e.target.value, nmrFieldMHz: nmrInstruments.find(i => i.name === e.target.value)?.frequency || t.nmrFieldMHz })} className={cls}>
-            <option value="">— Select instrument —</option>
-            {[...nmrInstruments].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(i => (
-              <option key={i.id} value={i.name}>{i.name}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Field (MHz)">
-          <input type="number" value={t.nmrFieldMHz || ''} onChange={e => update({ nmrFieldMHz: e.target.value })}
-            className={cls} placeholder="e.g. 600" />
-        </Field>
-        <Field label="Probe">
-          <select value={t.nmrProbeName || ''} onChange={e => update({ nmrProbeName: e.target.value })} className={cls}>
-            <option value="">— Select probe —</option>
-            {[...availableProbes].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(p => (
-              <option key={p.id} value={p.name}>{p.name} ({p.subtype}, {p.state})</option>
-            ))}
-          </select>
-        </Field>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Field label="Probe type (L/S)">
-          <select value={t.nmrProbeType || selectedProbe?.state || 'liquid'} onChange={e => update({ nmrProbeType: e.target.value })} className={cls}>
-            <option value="liquid">Liquid</option>
-            <option value="solid">Solid</option>
-          </select>
-        </Field>
-        <Field label="Probe subtype">
-          <select value={t.nmrProbeSubtype || selectedProbe?.subtype || ''} onChange={e => update({ nmrProbeSubtype: e.target.value })} className={cls}>
+    <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="flex flex-col gap-1">
+          <label className={LABEL_CLS}>Instrument</label>
+          <select
+            value={activeTest.instrument || ''}
+            onChange={(e) => update({ instrument: e.target.value })}
+            className={INPUT_CLS}
+          >
             <option value="">—</option>
-            {['TCI','TXI','HCN','BBO','BBF','QNP','CPTCI','CPTXO','MAS','HX','HXY'].map(s => <option key={s} value={s}>{s}</option>)}
+            {instruments.map((instrument) => {
+              const name = itemName(instrument);
+              return (
+                <option key={instrument.id || name} value={name}>
+                  {name}
+                </option>
+              );
+            })}
           </select>
-        </Field>
-        {isSolid && (
-          <Field label="MAS Rate (kHz)">
-            <input type="number" value={t.nmrMasRate || ''} onChange={e => update({ nmrMasRate: e.target.value })}
-              className={cls} placeholder="e.g. 10" />
-          </Field>
-        )}
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Field label="Pulse program">
-          <select value={t.nmrPulseProgram || ''} onChange={e => update({ nmrPulseProgram: e.target.value })} className={cls}>
-            <option value="">— Select or type —</option>
-            {[...nmrExperiments].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(e => (
-              <option key={e.id} value={e.name}>{e.name} ({e.dimensions}, {e.expType})</option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Or type pulse program">
-          <input type="text" value={t.nmrPulseProgramFreeText || ''} onChange={e => update({ nmrPulseProgramFreeText: e.target.value })}
-            className={cls} placeholder="e.g. hsqcetgpsi2" />
-        </Field>
-      </div>
-
-      {(selectedExp || t.nmrPulseProgram) && (
-        <div className="border-t border-slate-100 pt-4">
-          <p className="text-[10px] font-black text-slate-500 uppercase mb-3">Acquisition Parameters</p>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {Array.from({ length: dimCount }).map((_, i) => (
-              <Field key={i} label={i === 0 ? 'Nucleus (F2/direct)' : i === 1 ? 'Nucleus F1 (indirect)' : 'Nucleus F3'}>
-                <select value={(t.nmrNuclei || [])[i] || NUCLEUS_OPTIONS[i === 0 ? 0 : 1]} onChange={e => {
-                  const n = [...(t.nmrNuclei || ['1H', '13C', '15N'])]; n[i] = e.target.value;
-                  update({ nmrNuclei: n });
-                }} className={cls}>
-                  {NUCLEUS_OPTIONS.map(n => <option key={n} value={n}>{n}</option>)}
-                </select>
-              </Field>
-            ))}
-
-            <Field label="TD (direct)">
-              <input type="number" value={t.nmrTD || ''} onChange={e => update({ nmrTD: e.target.value })} className={cls} placeholder="e.g. 2048" />
-            </Field>
-            {dimCount >= 2 && (
-              <Field label="TD1 (indirect)">
-                <input type="number" value={t.nmrTD1 || ''} onChange={e => update({ nmrTD1: e.target.value })} className={cls} placeholder="e.g. 256" />
-              </Field>
-            )}
-            {dimCount >= 3 && (
-              <Field label="TD2 (third dim)">
-                <input type="number" value={t.nmrTD2 || ''} onChange={e => update({ nmrTD2: e.target.value })} className={cls} placeholder="e.g. 64" />
-              </Field>
-            )}
-
-            {isNoesy && (
-              <Field label="NOESY mixing d8 (ms)">
-                <input type="number" value={t.nmrNoesyD8 || ''} onChange={e => update({ nmrNoesyD8: e.target.value })} className={cls} placeholder="e.g. 100" />
-              </Field>
-            )}
-
-            {isTocsy && (
-              <Field label="TOCSY mixing d9 (ms)">
-                <input type="number" value={t.nmrTocsyD9 || ''} onChange={e => update({ nmrTocsyD9: e.target.value })} className={cls} placeholder="e.g. 80" />
-              </Field>
-            )}
-
-            {selectedExp?.param1Name && (
-              <Field label={selectedExp.param1Name}>
-                <input type="text" value={t.nmrCustomParam1 || ''} onChange={e => update({ nmrCustomParam1: e.target.value })} className={cls} />
-              </Field>
-            )}
-            {selectedExp?.param2Name && (
-              <Field label={selectedExp.param2Name}>
-                <input type="text" value={t.nmrCustomParam2 || ''} onChange={e => update({ nmrCustomParam2: e.target.value })} className={cls} />
-              </Field>
-            )}
-            {selectedExp?.param3Name && (
-              <Field label={selectedExp.param3Name}>
-                <input type="text" value={t.nmrCustomParam3 || ''} onChange={e => update({ nmrCustomParam3: e.target.value })} className={cls} />
-              </Field>
-            )}
-
-            <Field label="Relaxation delay D1 (s)">
-              <input type="number" value={t.nmrD1 || ''} onChange={e => update({ nmrD1: e.target.value })} className={cls} placeholder="e.g. 1.5" />
-            </Field>
-
-            <Field label="Number of Scans (NS)">
-              <input type="number" value={t.nmrNS || ''} onChange={e => update({ nmrNS: e.target.value })} className={cls} placeholder="e.g. 16" />
-            </Field>
-
-            <Field label="Dummy Scans (DS)">
-              <input type="number" value={t.nmrDS || ''} onChange={e => update({ nmrDS: e.target.value })} className={cls} placeholder="e.g. 4" />
-            </Field>
-
-            {isSolid && (
-              <Field label="MAS Rate (kHz)">
-                <input type="number" value={t.nmrMasRate || ''} onChange={e => update({ nmrMasRate: e.target.value })} className={cls} placeholder="e.g. 10" />
-              </Field>
-            )}
-          </div>
         </div>
-      )}
 
-      <div className="border-t border-slate-100 pt-4">
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-[10px] font-black text-slate-500 uppercase">Datasets</p>
-          <button type="button" onClick={addDataset}
-            className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1 rounded-lg text-xs transition-colors">
+        <div className="flex flex-col gap-1">
+          <label className={LABEL_CLS}>Probe</label>
+          <select
+            value={activeTest.probe || ''}
+            onChange={(e) => update({ probe: e.target.value })}
+            className={INPUT_CLS}
+          >
+            <option value="">—</option>
+            {probes.map((probe) => {
+              const name = itemName(probe);
+              return (
+                <option key={probe.id || name} value={name}>
+                  {name}
+                </option>
+              );
+            })}
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label className={LABEL_CLS}>Pulse Program / Experiment</label>
+          <select
+            value={activeTest.pulseProgram || ''}
+            onChange={(e) => update({ pulseProgram: e.target.value })}
+            className={INPUT_CLS}
+          >
+            <option value="">—</option>
+            {experiments.map((experiment) => {
+              const name = itemName(experiment);
+              return (
+                <option key={experiment.id || name} value={name}>
+                  {name}
+                </option>
+              );
+            })}
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label className={LABEL_CLS}>Acquisition Date</label>
+          <input
+            type="date"
+            value={activeTest.experimentDate || ''}
+            onChange={(e) => update({ experimentDate: e.target.value })}
+            className={INPUT_CLS}
+          />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label className={LABEL_CLS}>Operator</label>
+          <select
+            value={activeTest.operator || ''}
+            onChange={(e) => update({ operator: e.target.value })}
+            className={INPUT_CLS}
+          >
+            <option value="">—</option>
+            {operators.map((op, idx) => {
+              const name = operatorLabel(op);
+              return (
+                <option key={name || idx} value={name}>
+                  {name}
+                </option>
+              );
+            })}
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label className={LABEL_CLS}>Temperature</label>
+          <input
+            type="text"
+            value={activeTest.temperature || ''}
+            onChange={(e) => update({ temperature: e.target.value })}
+            placeholder="e.g. 298 K"
+            className={INPUT_CLS}
+          />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label className={LABEL_CLS}>Sample Tube</label>
+          <input
+            type="text"
+            value={activeTest.sampleTube || ''}
+            onChange={(e) => update({ sampleTube: e.target.value })}
+            placeholder="e.g. 5 mm NMR tube"
+            className={INPUT_CLS}
+          />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label className={LABEL_CLS}>Lock Solvent</label>
+          <input
+            type="text"
+            value={activeTest.lockSolvent || ''}
+            onChange={(e) => update({ lockSolvent: e.target.value })}
+            placeholder="e.g. D2O, CDCl3"
+            className={INPUT_CLS}
+          />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label className={LABEL_CLS}>Data Path / Link</label>
+          <input
+            type="text"
+            value={activeTest.datasetLink || ''}
+            onChange={(e) => update({ datasetLink: e.target.value })}
+            placeholder="e.g. TopSpin path or Drive link"
+            className={INPUT_CLS}
+          />
+        </div>
+      </div>
+
+      <div className="border border-slate-200 rounded-xl bg-slate-50 p-4 flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h4 className="text-sm font-bold text-slate-700">Datasets</h4>
+            <p className="text-[10px] text-slate-400">
+              Add instrumental datasets associated with this NMR condition.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={addDataset}
+            disabled={typeof updateActiveTest !== 'function'}
+            className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm transition-colors"
+          >
             + Add Dataset
           </button>
         </div>
-        {datasets.length === 0 && <p className="text-xs text-slate-400 italic">No datasets added.</p>}
-        {datasets.map(d => (
-          <div key={d.id} className="flex gap-2 items-center mb-2 flex-wrap">
-            <input type="text" value={d.name} onChange={e => updateDataset(d.id, { name: e.target.value })}
-              placeholder="Dataset name..." className={`${cls} flex-1 min-w-[140px]`} />
-            <input type="number" value={d.expNo} onChange={e => updateDataset(d.id, { expNo: e.target.value })}
-              placeholder="Exp. #" className={`${cls} w-24`} />
-            <input type="text" value={d.link} onChange={e => updateDataset(d.id, { link: e.target.value })}
-              placeholder="Link (URL)..." className={`${cls} flex-1 min-w-[120px]`} />
-            <button type="button" onClick={() => removeDataset(d.id)}
-              className="text-slate-400 hover:text-red-500 font-bold px-2">×</button>
+
+        {datasets.length === 0 ? (
+          <div className="text-xs text-slate-400 italic bg-white border border-dashed border-slate-300 rounded-lg p-4 text-center">
+            No datasets added yet.
           </div>
-        ))}
+        ) : (
+          <div className="flex flex-col gap-3">
+            {datasets.map((ds) => (
+              <div
+                key={ds.id}
+                className="border border-slate-200 rounded-lg bg-white p-3 flex flex-col gap-2 shadow-sm"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-slate-700 uppercase">
+                    Dataset
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={() => removeDataset(ds.id)}
+                    className="text-red-500 hover:text-red-700 font-black text-sm px-1"
+                    title="Remove dataset"
+                  >
+                    ×
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                  <div className="flex flex-col gap-1">
+                    <label className={LABEL_CLS}>Experiment Number</label>
+                    <input
+                      type="text"
+                      value={ds.experimentNumber || ''}
+                      onChange={(e) =>
+                        patchDataset(ds.id, { experimentNumber: e.target.value })
+                      }
+                      className={INPUT_CLS}
+                      placeholder="e.g. 1"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <label className={LABEL_CLS}>Dataset Name</label>
+                    <input
+                      type="text"
+                      value={ds.name || ''}
+                      onChange={(e) =>
+                        patchDataset(ds.id, { name: e.target.value })
+                      }
+                      className={INPUT_CLS}
+                      placeholder="e.g. Dataset 1"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <label className={LABEL_CLS}>Date</label>
+                    <input
+                      type="date"
+                      value={ds.date || ''}
+                      onChange={(e) =>
+                        patchDataset(ds.id, { date: e.target.value })
+                      }
+                      className={INPUT_CLS}
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <label className={LABEL_CLS}>Operator</label>
+                    {operators.length > 0 ? (
+                      <select
+                        value={ds.operator || ''}
+                        onChange={(e) =>
+                          patchDataset(ds.id, { operator: e.target.value })
+                        }
+                        className={INPUT_CLS}
+                      >
+                        <option value="">—</option>
+                        {operators.map((op, idx) => {
+                          const name = operatorLabel(op);
+                          return (
+                            <option key={name || idx} value={name}>
+                              {name}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        value={ds.operator || ''}
+                        onChange={(e) =>
+                          patchDataset(ds.id, { operator: e.target.value })
+                        }
+                        className={INPUT_CLS}
+                        placeholder="Operator name"
+                      />
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className={LABEL_CLS}>Link / Path</label>
+                  <input
+                    type="text"
+                    value={ds.link || ''}
+                    onChange={(e) =>
+                      patchDataset(ds.id, { link: e.target.value })
+                    }
+                    className={INPUT_CLS}
+                    placeholder="e.g. Drive link, folder path, or dataset URL"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className={LABEL_CLS}>Comments</label>
+                  <textarea
+                    value={ds.comments || ''}
+                    onChange={(e) =>
+                      patchDataset(ds.id, { comments: e.target.value })
+                    }
+                    className={`${INPUT_CLS} h-16 custom-scrollbar`}
+                    placeholder="Optional dataset notes"
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
+
+      <p className="text-[10px] text-slate-400">
+        NMR instrumental setup and datasets are saved per active condition.
+      </p>
     </div>
   );
 };
