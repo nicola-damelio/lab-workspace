@@ -1,4 +1,5 @@
 import NMRMoleculeViewer from './NMRMoleculeViewer';
+import { ChartControlBar, SharedChartStylePanel } from './SharedAnalysisTools';
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -16,6 +17,39 @@ const SELECT_COLOR = '#f59e0b';
 const MANUAL_COLOR = '#16a34a';
 const CHART_MARGIN = { top: 20, right: 20, bottom: 45, left: 50 };
 const CHART_MARGIN_1D = { top: 10, right: 15, bottom: 45, left: 15 };
+
+// ---- Global RDKit readiness singleton ----
+// A single polling interval shared across ALL OrganicViewer instances.
+// Prevents N independent intervals causing cascading re-renders → Firebase write exhaustion.
+const _rdkitListeners = new Set();
+let _rdkitStatus = window.__RDKit ? 'ready' : 'loading'; // 'loading' | 'ready' | 'failed'
+if (_rdkitStatus === 'loading') {
+  let _attempts = 0;
+  const _interval = setInterval(() => {
+    _attempts++;
+    if (window.__RDKit) {
+      _rdkitStatus = 'ready';
+      clearInterval(_interval);
+      _rdkitListeners.forEach(fn => fn('ready'));
+      _rdkitListeners.clear();
+    } else if (_attempts > 33) {
+      _rdkitStatus = 'failed';
+      clearInterval(_interval);
+      _rdkitListeners.forEach(fn => fn('failed'));
+      _rdkitListeners.clear();
+    }
+  }, 300);
+}
+const useRdkitReady = () => {
+  const [status, setStatus] = useState(_rdkitStatus);
+  useEffect(() => {
+    if (_rdkitStatus !== 'loading') { setStatus(_rdkitStatus); return; }
+    const fn = (s) => setStatus(s);
+    _rdkitListeners.add(fn);
+    return () => _rdkitListeners.delete(fn);
+  }, []);
+  return { rdkitReady: status === 'ready', rdkitFailed: status === 'failed' };
+};
 
 const CollapsibleSection = ({ title, icon, defaultOpen = false, children, headerExtra, className = '' }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
@@ -3535,8 +3569,10 @@ const ChartStylePanel = ({ cfg, setCfg, series = [] }) => (
 const OrganicViewer = ({ smiles, selectedKeys, manualKeys = [], onAtomClick }) => {
   const [model, setModel] = useState(null);
   const [isZoomed, setIsZoomed] = useState(false);
+  const { rdkitReady, rdkitFailed } = useRdkitReady(); // global singleton — no per-instance interval
+
   useEffect(() => {
-    if (!smiles || !window.__RDKit) { setModel(null); return; }
+    if (!smiles || !rdkitReady) { setModel(null); return; }
     try {
       const mol = getMolWithExplicitHs(smiles);
       if (!mol) throw new Error('RDKit could not parse this SMILES');
@@ -3570,10 +3606,10 @@ const OrganicViewer = ({ smiles, selectedKeys, manualKeys = [], onAtomClick }) =
         if (B.isH && !A.isH) parentName[a2] = A.name;
       });
       const pad = 34;
-      console.log('[patch] OrganicViewer self-drawn SVG active');
       setModel({ atoms, bonds, parentName, viewBox: `${minX - pad} ${minY - pad} ${Math.max(60, maxX - minX + 2 * pad)} ${Math.max(60, maxY - minY + 2 * pad)}` });
     } catch (e) { setModel(null); }
-  }, [smiles]);
+  }, [smiles, rdkitReady]);
+
   const keysFor = (idx) => {
     if (!model) return [];
     const a = model.atoms[idx];
@@ -3629,14 +3665,29 @@ const OrganicViewer = ({ smiles, selectedKeys, manualKeys = [], onAtomClick }) =
     );
   };
   const fallbackUrl = smiles ? `https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(smiles)}/image?width=1500&height=1500` : '';
+
+  const content = () => {
+    if (model) return <div className="w-full h-full flex items-center justify-center">{renderSvg({ height: '100%', maxWidth: '100%' })}</div>;
+    if (!smiles) return <p className="text-xs text-slate-400 italic">Enter a valid SMILES.</p>;
+    if (!rdkitReady && !rdkitFailed) return (
+      <div className="flex flex-col items-center gap-3 text-slate-400">
+        <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-500 rounded-full animate-spin" />
+        <span className="text-xs font-semibold">Loading 2D renderer…</span>
+      </div>
+    );
+    // RDKit definitively failed or parse error — show Cactus image with note
+    return (
+      <div className="relative w-full h-full flex items-center justify-center">
+        <img src={fallbackUrl} alt="2D Structure" className="max-w-full h-full object-contain" />
+        <span className="absolute bottom-1 right-1 text-[9px] text-slate-400 bg-white/80 px-1 rounded">Labels unavailable (RDKit failed)</span>
+      </div>
+    );
+  };
+
   return (
     <>
       <div className="flex flex-col items-center justify-center bg-white p-4 rounded-xl shadow-sm border border-slate-200 group relative h-[350px]">
-        {model ? (
-          <div className="w-full h-full flex items-center justify-center">{renderSvg({ height: '100%', maxWidth: '100%' })}</div>
-        ) : (
-          smiles ? <img src={fallbackUrl} alt="2D Structure" className="max-w-full h-full object-contain" /> : <p className="text-xs text-slate-400 italic">Enter a valid SMILES.</p>
-        )}
+        {content()}
         <div onClick={() => setIsZoomed(true)} className="cursor-pointer absolute inset-0 bg-black/5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded-xl">
           <span className="bg-white/90 text-slate-800 px-3 py-1.5 rounded-lg font-bold text-sm shadow-sm pointer-events-none">🔍 Click to zoom structure</span>
         </div>
@@ -3978,6 +4029,134 @@ return null;
   );
 };
 
+
+/* ============================================================================
+   PEAK LABEL OVERLAY
+   Renders peak labels above the spectrum using arrows and free-space placement.
+   Uses absolute positioning over the Recharts canvas.
+   ============================================================================ */
+const PeakLabelOverlay = ({ markers, dom, marginLeft, marginRight, marginTop, marginBottom, labelAreaH }) => {
+  const containerRef = useRef(null);
+  const [size, setSize] = useState({ w: 0, h: 0 });
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const obs = new ResizeObserver(([e]) => {
+      setSize({ w: e.contentRect.width, h: e.contentRect.height });
+    });
+    obs.observe(containerRef.current);
+    return () => obs.disconnect();
+  }, []);
+
+  const { w, h } = size;
+  const plotW = w - marginLeft - marginRight;
+  const plotH = h - marginTop - marginBottom;
+  if (plotW <= 0 || plotH <= 0 || markers.length === 0) {
+    return <div ref={containerRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />;
+  }
+
+  // Map ppm to pixel x (axis is reversed: high ppm on left)
+  const domLo = Math.min(dom[0], dom[1]);
+  const domHi = Math.max(dom[0], dom[1]);
+  const ppmToX = (ppm) => {
+    if (domHi === domLo) return marginLeft + plotW / 2;
+    const frac = (ppm - domLo) / (domHi - domLo);
+    // reversed: high ppm at left (x=marginLeft), low ppm at right (x=marginLeft+plotW)
+    return marginLeft + plotW * (1 - frac);
+  };
+
+  // Filter to visible markers only
+  const visible = markers.filter(m => m.ppm >= domLo && m.ppm <= domHi);
+
+  // Greedy free-space placement for labels
+  // Label box: 7px font, ~6ch wide, 12px high
+  const LABEL_H = 14;
+  const LABEL_PAD = 4;
+  const FONT_SIZE = 7;
+  const ARROW_LEN = 10;
+  const TICK_LEN = 6;
+
+  // Available label area: top portion of the plot (labelAreaH px from the top of the chart)
+  // Place labels in rows from top downwards
+  const placed = [];
+  // Sort by x position so we can check horizontal overlaps
+  const sorted = [...visible].sort((a, b) => ppmToX(a.ppm) - ppmToX(b.ppm));
+
+  sorted.forEach(m => {
+    const cx = ppmToX(m.ppm);
+    const textW = m.label.length * FONT_SIZE * 0.55 + LABEL_PAD * 2;
+    // Try rows from top (y = marginTop - TICK_LEN - ARROW_LEN - LABEL_H, going up)
+    let bestY = null;
+    for (let row = 0; row < 5; row++) {
+      const candidateY = marginTop - TICK_LEN - ARROW_LEN - LABEL_H - row * (LABEL_H + 2);
+      if (candidateY < 2) continue;
+      // Check horizontal overlap with already placed labels at same row
+      const overlap = placed.some(p => p.row === row && Math.abs(p.cx - cx) < (textW / 2 + p.tw / 2 + 2));
+      if (!overlap) {
+        bestY = candidateY;
+        placed.push({ cx, cy: candidateY, tw: textW, row, label: m.label });
+        break;
+      }
+    }
+    // If no free slot found, just place at first row (will overlap, but at least visible)
+    if (bestY === null) {
+      bestY = marginTop - TICK_LEN - ARROW_LEN - LABEL_H;
+      placed.push({ cx, cy: bestY, tw: textW, row: 0, label: m.label });
+    }
+  });
+
+  return (
+    <div ref={containerRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+      {w > 0 && (
+        <svg width={w} height={h} style={{ position: 'absolute', top: 0, left: 0, overflow: 'visible' }}>
+          <defs>
+            <marker id="pk-arrow" markerWidth="5" markerHeight="5" refX="2" refY="2.5" orient="auto">
+              <path d="M0,0 L0,5 L4,2.5 z" fill="#dc2626" />
+            </marker>
+          </defs>
+          {placed.map((p, i) => {
+            const arrowStartY = p.cy + LABEL_H + 1;
+            const arrowEndY = marginTop - TICK_LEN - 1;
+            return (
+              <g key={i}>
+                {/* Tick at peak position */}
+                <line x1={p.cx} y1={marginTop} x2={p.cx} y2={marginTop - TICK_LEN} stroke="#ef4444" strokeWidth={1.5} />
+                {/* Arrow from label to peak */}
+                {arrowStartY < arrowEndY && (
+                  <line x1={p.cx} y1={arrowStartY} x2={p.cx} y2={arrowEndY} stroke="#dc2626" strokeWidth={1} markerEnd="url(#pk-arrow)" />
+                )}
+                {/* Label background */}
+                <rect
+                  x={p.cx - p.tw / 2}
+                  y={p.cy}
+                  width={p.tw}
+                  height={LABEL_H}
+                  rx={2}
+                  fill="white"
+                  stroke="#fca5a5"
+                  strokeWidth={0.8}
+                  opacity={0.95}
+                />
+                {/* Label text */}
+                <text
+                  x={p.cx}
+                  y={p.cy + LABEL_H / 2 + FONT_SIZE / 2 - 1}
+                  textAnchor="middle"
+                  fontSize={FONT_SIZE}
+                  fontFamily="monospace"
+                  fontWeight="bold"
+                  fill="#b91c1c"
+                >
+                  {p.label}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      )}
+    </div>
+  );
+};
 
 /* ============================================================================
    BRUKER 1R → PPM AXIS  (shared helpers for the NMR page import)
@@ -4708,7 +4887,9 @@ export const DataSection = ({ ctx }) => {
           };
 
           const PANEL_H = expandedBruker ? '100%' : 260;
-          const topMargin = (showPeakLabels && peakMarkers.length > 0) ? 70 : 10;
+          // No extra top margin needed for labels — they go in the overlay
+          const topMargin = 10;
+          const labelAreaH = (showPeakLabels && peakMarkers.length > 0) ? 55 : 0;
 
           return (
             <div className={'bg-white border border-sky-200 rounded-xl p-3 flex flex-col gap-2' + (expandedBruker ? ' fixed inset-2 z-50 shadow-2xl' : '')}>
@@ -4729,10 +4910,10 @@ export const DataSection = ({ ctx }) => {
                   <button type="button" onClick={() => { updateActiveTest({nmr1dSpectrum: null}); setBrukerZoomDom(null); setNmrBrukerMsg(''); }} className="text-[10px] text-red-400 hover:text-red-600 font-bold">× Remove</button>
                 </div>
               </div>
-              <div ref={brukerChartRef} className="select-none" style={{height: PANEL_H}}
+              <div ref={brukerChartRef} className="select-none" style={{height: PANEL_H, backgroundColor: 'white', position: 'relative'}}
                    onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData} margin={{top: topMargin, right: CHART_MARGIN.right, bottom: CHART_MARGIN.bottom, left: CHART_MARGIN.left}}>
+                  <LineChart data={chartData} margin={{top: topMargin + labelAreaH, right: CHART_MARGIN.right, bottom: CHART_MARGIN.bottom, left: CHART_MARGIN.left}}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                     <XAxis type="number" dataKey="x" domain={dom} reversed={true} allowDataOverflow
                       tick={{fontSize:9, fill:'#64748b'}}
@@ -4741,12 +4922,24 @@ export const DataSection = ({ ctx }) => {
                     <Tooltip formatter={v => v.toFixed(4)} labelFormatter={v => Number(v).toFixed(3) + ' ppm'} />
                     <Line type="monotone" dataKey="y" stroke="#3b82f6" strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls />
                     {brukerRefL!==null && brukerRefR!==null && <ReferenceArea x1={brukerRefL} x2={brukerRefR} fill="#cbd5e1" fillOpacity={0.4} />}
+                    {/* Thin vertical tick at each peak position */}
                     {showPeakLabels && peakMarkers.map((pm,i) => (
-                      <ReferenceLine key={i} x={pm.ppm} stroke="#ef444455" strokeWidth={1}
-                        label={{value: pm.label, position:'top', angle:-65, fill:'#dc2626', fontSize:8, offset: (i%3)*18}} />
+                      <ReferenceLine key={i} x={pm.ppm} stroke="#ef444488" strokeWidth={1} />
                     ))}
                   </LineChart>
                 </ResponsiveContainer>
+                {/* Arrow + free-space label overlay */}
+                {showPeakLabels && peakMarkers.length > 0 && (
+                  <PeakLabelOverlay
+                    markers={peakMarkers}
+                    dom={dom}
+                    marginLeft={CHART_MARGIN.left}
+                    marginRight={CHART_MARGIN.right}
+                    marginTop={topMargin + labelAreaH}
+                    marginBottom={CHART_MARGIN.bottom}
+                    labelAreaH={labelAreaH}
+                  />
+                )}
               </div>
               <p className="text-[9px] text-slate-400">
                 {xs.length.toLocaleString()} pts · SW={spec.meta?.swPpm ? spec.meta.swPpm.toFixed(2) : '?'} ppm ·
@@ -5506,10 +5699,10 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
               </div>
             </div>
           )}
-          <div className="ml-auto flex gap-2">
-            <button type="button" onClick={() => setShowErr(!showErr)} className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${showErr ? 'bg-orange-100 border-orange-400 text-orange-800' : 'bg-white border-orange-300 text-orange-700 hover:bg-orange-50'}`}>⚠️ Error Management</button>
-            <button type="button" onClick={() => setShowCfg(!showCfg)} className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${showCfg ? 'bg-slate-200 border-slate-400 text-slate-900' : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'}`}>🎨 Graphical Parameters</button>
-          </div>
+          <ChartControlBar
+            showErr={showErr} onToggleErr={() => setShowErr(!showErr)}
+            showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)}
+          />
         </div>
 
         {comparableInfo.hasMismatch && !isHist && (
@@ -5758,7 +5951,7 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
             ))}
           </div>
         )}
-        {showCfg && <ChartStylePanel cfg={cfg} setCfg={setCfg} series={series.map((s, i) => ({ key: s.key, label: s.label, color: seriesColor(cfg, s.key, i) }))} />}
+        {showCfg && <SharedChartStylePanel cfg={cfg} setCfg={setCfg} series={series.map((s, i) => ({ key: s.key, label: s.label, color: seriesColor(cfg, s.key, i) }))} />}
       </div>
     </CollapsibleSection>
   );
@@ -5845,8 +6038,8 @@ const PerAtomChartPanel = ({ ctx, d, chart, updateChart, removeChart }) => {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <input type="text" value={chart.title || ''} onChange={e => setC({ title: e.target.value })}
           placeholder="Chart title…" className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm font-bold text-slate-700 outline-none focus:border-blue-500 bg-transparent flex-1 min-w-[140px]" />
-        <div className="flex gap-2">
-          <button onClick={() => setShowCfg(!showCfg)} className="text-xs bg-slate-100 border border-slate-300 px-2 py-1 rounded font-bold text-slate-600 hover:bg-slate-200">⚙️</button>
+        <div className="flex gap-2 items-center">
+          <ChartControlBar showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)} className="flex gap-2" />
           <button onClick={() => removeChart(chart.id)} className="text-xs bg-red-50 border border-red-200 px-2 py-1 rounded font-bold text-red-600 hover:bg-red-100">🗑</button>
         </div>
       </div>
@@ -5862,12 +6055,8 @@ const PerAtomChartPanel = ({ ctx, d, chart, updateChart, removeChart }) => {
         ))}
       </div>
 
-      {showCfg && (
-        <div className="flex gap-4 flex-wrap">
-          <label className="text-[10px] font-bold text-slate-500 flex flex-col gap-1">Aspect<input type="number" step="0.1" value={cfg.aspect} onChange={e=>setCfg({aspect:+e.target.value||2.5})} className="border border-slate-300 rounded px-2 py-1 text-xs w-20" /></label>
-          <label className="text-[10px] font-bold text-slate-500 flex flex-col gap-1">Font<input type="number" value={cfg.fontSize} onChange={e=>setCfg({fontSize:+e.target.value||11})} className="border border-slate-300 rounded px-2 py-1 text-xs w-16" /></label>
-        </div>
-      )}
+      {showCfg && <SharedChartStylePanel cfg={cfg} setCfg={setCfg} series={[]} showHeightSlider={false} />}
+
 
       {/* Atom picker */}
       <div className="flex flex-col gap-2">

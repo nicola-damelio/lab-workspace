@@ -1,14 +1,46 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ReferenceLine
+  ResponsiveContainer, ReferenceLine, ReferenceArea
 } from 'recharts';
+import { useXZoom } from './SharedAnalysisTools';
 import { CollapsibleSection } from './TestShellRenderer';
 import {
   uid, toNumber, round, GAUSS, DS_DNA_HYPOCHROMICITY, DNA_BASE_EPS,
   analyzeDnaSequence, analyzeProteinSequence, absorbanceAt,
   INPUT_CLS
 } from './cloningUtils';
+
+const SIM_UV_MARGIN = { top: 8, right: 10, bottom: 30, left: 50 };
+const SimUvZoomChart = ({ data }) => {
+  const chartRef = useRef(null);
+  const xs = data.map(p => p.wavelength);
+  const dataDomain = xs.length > 1 ? [xs[0], xs[xs.length - 1]] : [220, 320];
+  const zoom = useXZoom(chartRef, dataDomain, SIM_UV_MARGIN);
+  return (
+    <div className="flex flex-col gap-1">
+      <div ref={chartRef} onMouseDown={zoom.onMouseDown} className="select-none" style={{ height: 300 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={data} margin={SIM_UV_MARGIN}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+            <XAxis dataKey="wavelength" type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow
+              tick={{ fontSize: 11, fill: '#64748b' }}
+              label={{ value: 'Wavelength (nm)', position: 'insideBottom', offset: -15, fontSize: 11, fill: '#64748b' }} />
+            <YAxis tick={{ fontSize: 11, fill: '#64748b' }} label={{ value: 'Absorbance', angle: -90, position: 'insideLeft', fontSize: 11, fill: '#64748b' }} />
+            <Tooltip formatter={(v) => Number(v).toFixed(4)} labelFormatter={(l) => `${l} nm`} />
+            <ReferenceLine x={260} stroke="#3b82f6" strokeDasharray="4 4" />
+            <ReferenceLine x={280} stroke="#ef4444" strokeDasharray="4 4" />
+            <Line type="monotone" dataKey="absorbance" stroke="#7c3aed" strokeWidth={2} dot={false} isAnimationActive={false} />
+            {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+      {zoom.isZoomed && (
+        <button type="button" onClick={zoom.reset} className="self-end text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>
+      )}
+    </div>
+  );
+};
 
 /* ==========================================================================
    SIMULATIONS — DNA / PROTEIN UV SPECTRUM SIMULATOR
@@ -189,21 +221,7 @@ export const CloningSimulationsSection = ({ ctx }) => {
         {/* chart + readouts */}
         <div className="lg:col-span-2">
           {data.length ? (
-            <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={data} margin={{ top: 8, right: 10, bottom: 18, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis
-                  dataKey="wavelength" type="number" domain={[data[0].wavelength, data[data.length - 1].wavelength]}
-                  tick={{ fontSize: 11, fill: '#64748b' }}
-                  label={{ value: 'Wavelength (nm)', position: 'insideBottom', offset: -12, fontSize: 11, fill: '#64748b' }}
-                />
-                <YAxis tick={{ fontSize: 11, fill: '#64748b' }} label={{ value: 'Absorbance', angle: -90, position: 'insideLeft', fontSize: 11, fill: '#64748b' }} />
-                <Tooltip formatter={(v) => Number(v).toFixed(4)} labelFormatter={(l) => `${l} nm`} />
-                <ReferenceLine x={260} stroke="#3b82f6" strokeDasharray="4 4" />
-                <ReferenceLine x={280} stroke="#ef4444" strokeDasharray="4 4" />
-                <Line type="monotone" dataKey="absorbance" stroke="#7c3aed" strokeWidth={2} dot={false} isAnimationActive={false} />
-              </LineChart>
-            </ResponsiveContainer>
+            <SimUvZoomChart data={data} />
           ) : (
             <div className="h-[300px] flex items-center justify-center text-slate-400 italic text-sm bg-slate-50 rounded-lg border border-dashed border-slate-300">
               Enter a sequence and concentration to simulate the UV spectrum.

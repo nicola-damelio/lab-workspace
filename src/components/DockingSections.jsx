@@ -1,8 +1,9 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Legend, Cell, ScatterChart, Scatter
+  Tooltip, ResponsiveContainer, Legend, Cell, ScatterChart, Scatter, ReferenceArea
 } from 'recharts';
+import { ChartControlBar, SharedChartStylePanel, useXZoom } from './SharedAnalysisTools';
 
 import NMRMoleculeViewer from './NMRMoleculeViewer';
 import {
@@ -154,6 +155,27 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
     const t = setTimeout(() => window.dispatchEvent(new Event('resize')), 100);
     return () => clearTimeout(t);
   }, [structureMode, hasOpened3D]);
+
+  // Auto-fill sequence / SMILES from compound metadata when a compound is selected
+  const firstSelectedCmp = activeTest.selectedCompounds?.[0];
+  useEffect(() => {
+    if (!firstSelectedCmp || !ctx.compoundMeta) return;
+    const meta = ctx.compoundMeta[firstSelectedCmp];
+    if (!meta) return;
+    const updates = {};
+    let needsUpdate = false;
+    if (meta.smiles && meta.smiles !== activeTest.smiles) {
+      updates.smiles = meta.smiles;
+      updates.moleculeType = 'organic';
+      needsUpdate = true;
+    }
+    if (meta.sequence && meta.sequence !== activeTest.proteinSequence) {
+      updates.proteinSequence = meta.sequence;
+      updates.moleculeType = meta.type || 'protein';
+      needsUpdate = true;
+    }
+    if (needsUpdate) updateActiveTest(updates);
+  }, [firstSelectedCmp, ctx.compoundMeta, activeTest.smiles, activeTest.proteinSequence, updateActiveTest]);
 
   const selectedKeys = getSelectedKeys(activeTest);
   const manualKeys = useMemo(() => getManualKeys(d.activeValues), [d.activeValues]);
@@ -611,6 +633,7 @@ export const DockingAnalysisSection = ({ ctx }) => {
   const cfg = { ...DEFAULT_DOCKING_CHART_STYLE, ...(activeTest.dockingAnalysisCfg || {}) };
   const setCfg = (patch) => updateActiveTest({ dockingAnalysisCfg: { ...cfg, ...patch } });
   const [showCfg, setShowCfg] = useState(false);
+  const scatterRef = useRef(null);
 
   const isHADDOCK = d.dockingProgram === 'haddock';
   const unit = d.programInfo.energyUnit;
@@ -639,31 +662,13 @@ export const DockingAnalysisSection = ({ ctx }) => {
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-center gap-3">
-        <button
-          onClick={() => setShowCfg(!showCfg)}
-          className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${
-            showCfg ? 'bg-slate-200 border-slate-400 text-slate-900' : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'
-          }`}
-        >
-          ⚙️ Chart Parameters
-        </button>
+        <ChartControlBar showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)} className="flex gap-2" />
         <span className="text-xs text-slate-500 font-bold">
           {isHADDOCK ? 'HADDOCK scoring terms' : 'Binding energy / RMSD'} · {d.poses.length} poses
         </span>
       </div>
 
-      {showCfg && (
-        <div className="flex flex-wrap gap-4 bg-slate-50 border border-slate-200 rounded-lg p-3 items-end">
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold text-slate-500 uppercase">Font size (px)</label>
-            <input type="number" value={cfg.fontSize} onChange={(e) => setCfg({ fontSize: Number(e.target.value) || 12 })} className="border border-slate-300 rounded-md p-1.5 text-xs outline-none w-20" />
-          </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold text-slate-500 uppercase">Aspect ratio</label>
-            <input type="number" step="0.1" value={cfg.aspect} onChange={(e) => setCfg({ aspect: Number(e.target.value) || 1.8 })} className="border border-slate-300 rounded-md p-1.5 text-xs outline-none w-20" />
-          </div>
-        </div>
-      )}
+      {showCfg && <SharedChartStylePanel cfg={cfg} setCfg={setCfg} series={[]} />}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Affinity bar chart */}
@@ -687,7 +692,7 @@ export const DockingAnalysisSection = ({ ctx }) => {
 
         {/* Affinity vs RMSD scatter */}
         <CollapsibleSection title="Affinity vs. RMSD" icon="🎯" defaultOpen>
-          <div style={dockChartBoxStyle(cfg)}>
+          <div ref={scatterRef} style={dockChartBoxStyle(cfg)} className="select-none relative">
             <ResponsiveContainer width="100%" height="100%">
               <ScatterChart margin={DOCK_CHART_MARGIN}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
