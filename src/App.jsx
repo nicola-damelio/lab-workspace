@@ -1565,56 +1565,63 @@ const generateDnaFromProtein = (sequence, host = 'bacterial', { addStop = false 
   return dna;
 };
 
-
 let rdkitPromise = null;
 
-async function loadRDKit() {
-  if (typeof window === 'undefined') return null;
+function loadRDKit() {
+  if (typeof window === 'undefined') return Promise.resolve(null);
+  if (window.__RDKit) return Promise.resolve(window.__RDKit);
 
-  if (window.__RDKit) return window.__RDKit;
-
-  if (!window.initRDKitModule) {
-    await new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = 'https://unpkg.com/@rdkit/rdkit/dist/RDKit_minimal.js';
-      script.async = true;
-      script.onload = resolve;
-      script.onerror = reject;
-      document.head.appendChild(script);
+  if (!rdkitPromise) {
+    rdkitPromise = new Promise((resolve, reject) => {
+      if (window.initRDKitModule) {
+        resolve();
+      } else {
+        const script = document.createElement('script');
+        script.src = 'https://unpkg.com/@rdkit/rdkit/dist/RDKit_minimal.js';
+        script.onload = resolve;
+        script.onerror = () => reject(new Error('Failed to load RDKit script from unpkg'));
+        document.head.appendChild(script);
+      }
+    }).then(() => {
+      if (!window.initRDKitModule) throw new Error('initRDKitModule not found');
+      return window.initRDKitModule({
+        locateFile: () => 'https://unpkg.com/@rdkit/rdkit/dist/RDKit_minimal.wasm'
+      });
+    }).then((instance) => {
+      window.__RDKit = instance;
+      return instance;
+    }).catch((err) => {
+      rdkitPromise = null;
+      throw err;
     });
   }
-
-  if (!window.initRDKitModule) return null;
-
-  // FIX: Explicitly point to the WASM file on the CDN so the browser doesn't search your local server
-  window.__RDKit = await window.initRDKitModule({
-    locateFile: () => 'https://unpkg.com/@rdkit/rdkit/dist/RDKit_minimal.wasm'
-  });
-  
-  return window.__RDKit;
+  return rdkitPromise;
 }
 
 async function calculateSmilesInfoAsync(smiles) {
-  if (!smiles) return null;
+  if (!smiles) return { error: 'Empty SMILES string' };
 
   try {
     const RDKit = await loadRDKit();
-    if (!RDKit) return null;
+    if (!RDKit) return { error: 'RDKit failed to initialize' };
 
     const mol = RDKit.get_mol(smiles);
-    if (!mol) return null;
+    if (!mol) return { error: 'Invalid SMILES structure (could not be parsed)' };
 
     let mw = null;
 
     try {
-      const desc = JSON.parse(mol.get_descriptors());
-      mw = desc.MolWt || desc.AMW || desc.exactmolwt || null;
+      const descStr = mol.get_descriptors();
+      const desc = JSON.parse(descStr);
+      // RDKit Minimal outputs lowercase keys like "amw" and "exactmw"
+      mw = desc.amw || desc.AMW || desc.MolWt || desc.exactmw || desc.exactmolwt || null;
     } catch (err) {
       console.warn('RDKit descriptor parsing failed:', err);
-    }
-
-    if (mol && typeof mol.delete === 'function') {
-      mol.delete();
+      return { error: 'Failed to extract MW from descriptors' };
+    } finally {
+      if (mol && typeof mol.delete === 'function') {
+        mol.delete();
+      }
     }
 
     return {
@@ -1623,8 +1630,8 @@ async function calculateSmilesInfoAsync(smiles) {
       length: null
     };
   } catch (err) {
-    console.warn('RDKit unavailable. Falling back to manual MW entry.', err);
-    return null;
+    console.error('RDKit exception:', err);
+    return { error: err.message || 'Exception during calculation' };
   }
 }
 
