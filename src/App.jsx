@@ -4699,43 +4699,42 @@ const StorageFinder = ({
 const DatabaseCleanupManager = ({
   tests, setTests,
   allCmpds, allCellLines,
-  setCustomCmpds, setCompoundMeta,
-  setCustomCellLines, setCellLineMeta
+  setCustomCmpds, setCompoundMeta, compoundMeta,
+  setCustomCellLines, setCellLineMeta, cellLineMeta
 }) => {
+  // Merge state
   const [oldName, setOldName] = useState('');
   const [newName, setNewName] = useState('');
 
-  // Combine compounds and cell lines so users can fix misclassifications across categories
+  // Rename state
+  const [renameTarget, setRenameTarget] = useState('');
+  const [renameValue, setRenameValue] = useState('');
+
+  // Combine compounds and cell lines
   const allResources = [...new Set([...allCmpds, ...allCellLines])].sort((a, b) => a.localeCompare(b));
 
-  const handleMergeReplace = () => {
-    if (!oldName || !newName) return alert("Please select both the item to delete and the item to replace it with.");
-    if (oldName === newName) return alert("The old name and new name must be different.");
-    
-    if (!window.confirm(`WARNING: This will scan ALL your tests, plates, and wells.\n\nEvery instance of "${oldName}" will be permanently rewritten to "${newName}".\n\n"${oldName}" will then be DELETED from the library.\n\nAre you sure you want to proceed?`)) return;
-
-    // 1. Rewrite all occurrences in Tests and Plates
+  const replaceInTests = (oldVal, newVal) => {
     setTests(prevTests => prevTests.map(t => {
       let updated = { ...t };
       
       // Standard string fields
-      if (updated.compound === oldName) updated.compound = newName;
-      if (updated.otherMolecule === oldName) updated.otherMolecule = newName;
-      if (updated.lipid === oldName) updated.lipid = newName;
-      if (updated.moleculeName === oldName) updated.moleculeName = newName;
+      if (updated.compound === oldVal) updated.compound = newVal;
+      if (updated.otherMolecule === oldVal) updated.otherMolecule = newVal;
+      if (updated.lipid === oldVal) updated.lipid = newVal;
+      if (updated.moleculeName === oldVal) updated.moleculeName = newVal;
 
       // Arrays of strings
       if (Array.isArray(updated.selectedCompounds)) {
-        updated.selectedCompounds = updated.selectedCompounds.map(c => c === oldName ? newName : c);
+        updated.selectedCompounds = updated.selectedCompounds.map(c => c === oldVal ? newVal : c);
       }
       if (Array.isArray(updated.cellLines)) {
-        updated.cellLines = updated.cellLines.map(c => c === oldName ? newName : c);
+        updated.cellLines = updated.cellLines.map(c => c === oldVal ? newVal : c);
       }
       if (Array.isArray(updated.compounds)) {
-        updated.compounds = updated.compounds.map(c => c === oldName ? newName : c);
+        updated.compounds = updated.compounds.map(c => c === oldVal ? newVal : c);
       }
       if (Array.isArray(updated.rowCompounds)) {
-        updated.rowCompounds = updated.rowCompounds.map(c => c === oldName ? newName : c);
+        updated.rowCompounds = updated.rowCompounds.map(c => c === oldVal ? newVal : c);
       }
 
       // 2D Grid (Plate Boxes and Multiwell assays)
@@ -4745,13 +4744,13 @@ const DatabaseCleanupManager = ({
             if (!cell) return cell;
             
             if (typeof cell === 'string') {
-              if (cell === oldName) return newName;
+              if (cell === oldVal) return newVal;
               // Handle JSON stringified wells
               if (cell.startsWith('{')) {
                 try {
                   let parsed = JSON.parse(cell);
-                  if (parsed.compound === oldName) {
-                    parsed.compound = newName;
+                  if (parsed.compound === oldVal) {
+                    parsed.compound = newVal;
                     return JSON.stringify(parsed);
                   }
                 } catch(e) {}
@@ -4760,8 +4759,8 @@ const DatabaseCleanupManager = ({
             }
             
             // Handle Object wells
-            if (typeof cell === 'object' && cell.compound === oldName) {
-              return { ...cell, compound: newName };
+            if (typeof cell === 'object' && cell.compound === oldVal) {
+              return { ...cell, compound: newVal };
             }
             return cell;
           })
@@ -4770,8 +4769,17 @@ const DatabaseCleanupManager = ({
 
       return updated;
     }));
+  };
 
-    // 2. Delete the old item from Compound and Cell Line definitions
+  const handleMergeReplace = () => {
+    if (!oldName || !newName) return alert("Please select both the item to delete and the item to replace it with.");
+    if (oldName === newName) return alert("The old name and new name must be different.");
+    
+    if (!window.confirm(`WARNING: Every instance of "${oldName}" will be permanently rewritten to "${newName}".\n\n"${oldName}" will then be DELETED from the library.\n\nAre you sure you want to proceed?`)) return;
+
+    replaceInTests(oldName, newName);
+
+    // Delete the old item
     setCustomCmpds(prev => prev.filter(c => c !== oldName));
     setCompoundMeta(prev => { const next = {...prev}; delete next[oldName]; return next; });
     
@@ -4780,44 +4788,136 @@ const DatabaseCleanupManager = ({
 
     setOldName('');
     setNewName('');
-    alert(`Success! All tests have been updated and "${oldName}" has been removed from the library.`);
+    alert(`Success! "${oldName}" merged into "${newName}".`);
+  };
+
+  const handleGlobalRename = () => {
+    const val = renameValue.trim();
+    if (!renameTarget || !val) return alert("Please select an item and enter a new name.");
+    if (renameTarget === val) return alert("The new name is the same as the old name.");
+    if (allResources.includes(val)) return alert(`"${val}" already exists in the library! If you want to combine them, use the 'Merge & Delete Duplicate' tool below.`);
+
+    if (!window.confirm(`This will rename "${renameTarget}" to "${val}" in the library AND update it across all your existing tests/plates.\n\nMetadata (MW, sequence, etc.) will be preserved.\n\nProceed?`)) return;
+
+    replaceInTests(renameTarget, val);
+
+    // Rename in Compound Library
+    if (allCmpds.includes(renameTarget)) {
+      setCustomCmpds(prev => {
+        const arr = prev.filter(c => c !== renameTarget);
+        arr.push(val);
+        return arr;
+      });
+      setCompoundMeta(prev => {
+        const next = {...prev};
+        const oldMeta = next[renameTarget] || {};
+        next[val] = { ...oldMeta, name: val, updatedAt: Date.now() };
+        delete next[renameTarget];
+        return next;
+      });
+    }
+
+    // Rename in Cell Line Library
+    if (allCellLines.includes(renameTarget)) {
+      setCustomCellLines(prev => {
+        const arr = prev.filter(c => c !== renameTarget);
+        arr.push(val);
+        return arr;
+      });
+      setCellLineMeta(prev => {
+        const next = {...prev};
+        const oldMeta = next[renameTarget] || {};
+        next[val] = { ...oldMeta, name: val, updatedAt: Date.now() };
+        delete next[renameTarget];
+        return next;
+      });
+    }
+
+    setRenameTarget('');
+    setRenameValue('');
+    alert(`Success! "${renameTarget}" renamed to "${val}".`);
   };
 
   return (
-    <div className="bg-red-50 border border-red-200 rounded-xl p-5 shadow-sm">
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
-        <div className="md:col-span-4">
-          <label className="block text-xs font-bold text-red-700 uppercase mb-1">Bad / Duplicate Item (To Delete)</label>
-          <select value={oldName} onChange={e => setOldName(e.target.value)} className="w-full border border-red-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-red-500 text-red-900 font-semibold">
-            <option value="">-- Select item to remove --</option>
-            {allResources.map(r => <option key={`old-${r}`} value={r}>{r}</option>)}
-          </select>
-        </div>
+    <div className="flex flex-col gap-6">
+      {/* --- RENAME TOOL --- */}
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-5 shadow-sm">
+        <h4 className="font-bold text-blue-800 mb-3 text-sm">Global Rename</h4>
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+          <div className="md:col-span-4">
+            <label className="block text-xs font-bold text-blue-700 uppercase mb-1">Item to Rename</label>
+            <select value={renameTarget} onChange={e => setRenameTarget(e.target.value)} className="w-full border border-blue-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 text-slate-800 font-semibold">
+              <option value="">-- Select item --</option>
+              {allResources.map(r => <option key={`ren-${r}`} value={r}>{r}</option>)}
+            </select>
+          </div>
 
-        <div className="md:col-span-1 flex justify-center pb-2 text-red-400 font-black text-xl">
-          ➔
-        </div>
+          <div className="md:col-span-1 flex justify-center pb-2 text-blue-400 font-black text-xl">
+            ➔
+          </div>
 
-        <div className="md:col-span-4">
-          <label className="block text-xs font-bold text-emerald-700 uppercase mb-1">Good Item (To Keep)</label>
-          <select value={newName} onChange={e => setNewName(e.target.value)} className="w-full border border-emerald-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-emerald-500 text-emerald-900 font-semibold">
-            <option value="">-- Select correct item --</option>
-            {allResources.map(r => <option key={`new-${r}`} value={r}>{r}</option>)}
-          </select>
-        </div>
+          <div className="md:col-span-4">
+            <label className="block text-xs font-bold text-blue-700 uppercase mb-1">New Name</label>
+            <input 
+              type="text" 
+              value={renameValue} 
+              onChange={e => setRenameValue(e.target.value)} 
+              placeholder="Type new name..." 
+              className="w-full border border-blue-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 text-slate-800 font-semibold"
+            />
+          </div>
 
-        <div className="md:col-span-3">
-          <button 
-            onClick={handleMergeReplace}
-            className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg shadow-sm transition-colors text-sm"
-          >
-            Merge & Replace Everywhere
-          </button>
+          <div className="md:col-span-3">
+            <button 
+              onClick={handleGlobalRename}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow-sm transition-colors text-sm"
+            >
+              Rename Everywhere
+            </button>
+          </div>
         </div>
+        <p className="text-xs text-blue-600 mt-3 font-medium">
+          Use this to fix typos. The item will keep all its properties (MW, sequence, etc.) and its name will be updated instantly in all tests.
+        </p>
       </div>
-      <p className="text-xs text-red-500 mt-3 font-medium">
-        <strong>Tip to fix misclassifications:</strong> If you accidentally saved a Cell Line as a Chemical Compound, simply recreate it correctly in the Cell Line section, then use this tool to merge the bad chemical compound into the new cell line.
-      </p>
+
+      {/* --- MERGE TOOL --- */}
+      <div className="bg-red-50 border border-red-200 rounded-xl p-5 shadow-sm">
+        <h4 className="font-bold text-red-800 mb-3 text-sm">Merge & Delete Duplicate</h4>
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+          <div className="md:col-span-4">
+            <label className="block text-xs font-bold text-red-700 uppercase mb-1">Bad Item (To Delete)</label>
+            <select value={oldName} onChange={e => setOldName(e.target.value)} className="w-full border border-red-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-red-500 text-red-900 font-semibold">
+              <option value="">-- Select duplicate --</option>
+              {allResources.map(r => <option key={`old-${r}`} value={r}>{r}</option>)}
+            </select>
+          </div>
+
+          <div className="md:col-span-1 flex justify-center pb-2 text-red-400 font-black text-xl">
+            ➔
+          </div>
+
+          <div className="md:col-span-4">
+            <label className="block text-xs font-bold text-emerald-700 uppercase mb-1">Good Item (To Keep)</label>
+            <select value={newName} onChange={e => setNewName(e.target.value)} className="w-full border border-emerald-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-emerald-500 text-emerald-900 font-semibold">
+              <option value="">-- Select correct item --</option>
+              {allResources.map(r => <option key={`new-${r}`} value={r}>{r}</option>)}
+            </select>
+          </div>
+
+          <div className="md:col-span-3">
+            <button 
+              onClick={handleMergeReplace}
+              className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg shadow-sm transition-colors text-sm"
+            >
+              Merge & Replace
+            </button>
+          </div>
+        </div>
+        <p className="text-xs text-red-500 mt-3 font-medium">
+          Use this if you have two identical items (e.g., "BadH" and "Bad_H") or accidentally saved a Cell Line as a Chemical. Create the correct one, then merge the bad one into it.
+        </p>
+      </div>
     </div>
   );
 };
@@ -7419,7 +7519,7 @@ const openDataset = (dset) => {
                     </div>
                   </CollapsibleSection>
 
-                  <CollapsibleSection title="Database Cleanup & Merging" subtitle="Fix misclassifications and merge duplicate items globally across all tests and multiwell plates." defaultOpen={false}>
+<CollapsibleSection title="Database Cleanup & Merging" subtitle="Fix misclassifications, rename items globally, and merge duplicates across all tests and multiwell plates." defaultOpen={false}>
                      <DatabaseCleanupManager 
                         tests={tests}
                         setTests={setTests}
@@ -7427,8 +7527,10 @@ const openDataset = (dset) => {
                         allCellLines={allCellLines}
                         setCustomCmpds={setCustomCmpds}
                         setCompoundMeta={setCompoundMeta}
+                        compoundMeta={compoundMeta}
                         setCustomCellLines={setCustomCellLines}
                         setCellLineMeta={setCellLineMeta}
+                        cellLineMeta={cellLineMeta}
                      />
                   </CollapsibleSection>
 
