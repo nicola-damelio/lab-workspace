@@ -1876,6 +1876,7 @@ const NotebookTestItem = ({
   const isPlate = localTest.type && localTest.type.startsWith('plate-') && localTest.type !== 'plate-9x9box';
   const isNMR = localTest.type === 'nmr';
   const isCD = localTest.type === 'cd';
+  const isDocking = localTest.type === 'docking';
   const isNMRFitting = localTest.type === 'nmr-fittings';
   const isCloning = localTest.type === 'cloning';
   const isProteinExp = localTest.type === 'protein_expression';
@@ -2233,8 +2234,34 @@ const NotebookTestItem = ({
              )}
            />
          </div>
-       )}
-       {isNMRFitting && localTest.nmrTables && localTest.nmrTables.length > 0 && (
+        )}
+        {/* 1D imported Bruker spectrum in LabNotebook (Data tick) */}
+        {isNMR && localTest.nmr1dSpectrum && localTest.nmr1dSpectrum.xs && localTest.nmr1dSpectrum.xs.length > 0 && (() => {
+          const spec = localTest.nmr1dSpectrum;
+          const xs = spec.xs;
+          const ys = spec.ys;
+          const maxY = Math.max(...ys.map(Math.abs), 1);
+          const svgW = 480, svgH = 120;
+          const xMin = Math.min(...xs), xMax = Math.max(...xs);
+          const step = Math.max(1, Math.floor(xs.length / 1200));
+          const pts = [];
+          for (let i = 0; i < xs.length; i += step) {
+            const px = svgW - ((xs[i] - xMin) / (xMax - xMin)) * svgW; // reversed (high ppm left)
+            const py = svgH - ((ys[i] / maxY) * 0.9 + 0.05) * svgH;
+            pts.push(`${px.toFixed(1)},${py.toFixed(1)}`);
+          }
+          return (
+            <div className="flex flex-col items-center w-full mt-2 gap-1">
+              <span className="text-[10px] font-bold text-slate-500 uppercase">Imported 1r Spectrum — {spec.meta?.nucleus || 'NMR'}{spec.meta?.sfo1 ? ` (${spec.meta.sfo1.toFixed(0)} MHz)` : ''}</span>
+              <svg width="100%" viewBox={`0 0 ${svgW} ${svgH + 20}`} className="border border-slate-200 rounded bg-white">
+                <polyline points={pts.join(' ')} fill="none" stroke="#3b82f6" strokeWidth="1" />
+                <text x={svgW} y={svgH + 15} textAnchor="end" fontSize="8" fill="#94a3b8">{xMin.toFixed(1)} ppm</text>
+                <text x="0" y={svgH + 15} textAnchor="start" fontSize="8" fill="#94a3b8">{xMax.toFixed(1)} ppm</text>
+              </svg>
+            </div>
+          );
+        })()}
+        {isNMRFitting && localTest.nmrTables && localTest.nmrTables.length > 0 && (
          <div className="flex flex-col gap-4 mt-2">
            <div className="flex justify-between items-center border-b border-slate-100 pb-2">
              <span className="text-[10px] font-bold text-slate-500 uppercase">NMR Fitting Data</span>

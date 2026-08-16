@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+﻿import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import LZString from 'lz-string';
 import {
   DEFAULT_FIREBASE_CONFIG,
@@ -22,6 +22,7 @@ import { DefinitionsPanel } from './components/DefinitionsPanel';
 import { NMRFittingsTestRenderer } from './components/NMRFittingsTestRenderer';
 import { CloningTestRenderer } from './components/CloningTestRenderer';
 import { ProteinExpressionTestRenderer } from './components/ProteinExpressionTestRenderer';
+import DockingTestRenderer, { DOCKING_TAB_CONFIG } from './components/DockingTestRenderer';
 import { Setup, Data, Simulations, Analysis } from '/src/components/MDSections.jsx';
 import { SolventsManager, BuffersManager, AdditivesManager, NMRProbesManager, NMRInstrumentsManager, NMRExperimentsManager, BufferAdditiveFields } from './components/DefinitionsExtra';
 
@@ -203,7 +204,8 @@ const SPECIAL_PAGES = [
   { value: 'cloning', label: 'Cloning', subsections: CLONING_TAB_CONFIG.notebookChecks || [] },
   { value: 'protein_expression', label: 'Protein Purification', subsections: PROTEIN_EXPRESSION_TAB_CONFIG.notebookChecks || [] },
   { value: 'ssnmr', label: 'ssNMR', subsections: SSNMR_TAB_CONFIG.notebookChecks || [] },
-  { value: 'md_simulation', label: 'MD Simulations', subsections: MD_SIMULATION_TAB_CONFIG.notebookChecks || [] }
+  { value: 'md_simulation', label: 'MD Simulations', subsections: MD_SIMULATION_TAB_CONFIG.notebookChecks || [] },
+  { value: 'docking', label: 'Docking', subsections: DOCKING_TAB_CONFIG.notebookChecks || [] }
 ];
 
 const CUSTOM_FIELD_TAB_OPTIONS = [
@@ -4584,7 +4586,25 @@ lineWidth: 2
       };
     }
 
-    if (customType === 'nmr-fittings') {
+    
+    if (customType === 'docking') {
+      return {
+        ...baseTest,
+        type: 'docking',
+        testCategory: 'Blind Docking',
+        dockingProgram: '',
+        scoringFunction: '',
+        searchAlgorithm: '',
+        exhaustiveness: '',
+        numModes: '',
+        boxCenter: '',
+        boxSize: '',
+        bestAffinity: '',
+        dockingImages: [],
+        dockingResults: []
+      };
+    }
+if (customType === 'nmr-fittings') {
       const rows = 8;
       const cols = 12;
 
@@ -4796,7 +4816,8 @@ lineWidth: 2
     }
   };
 
-  // ── PERSIST OPERATORS & AUTH SETTINGS to localStorage ────────────────
+  // ── PERSIST OPERATORS & AUTH SETTINGS ─────────────────────────────────
+  // Always keep localStorage in sync (works offline / as cache)
   useEffect(() => {
     try { localStorage.setItem('labWorkspace_operators', JSON.stringify(operators)); } catch {}
   }, [operators]);
@@ -4804,6 +4825,23 @@ lineWidth: 2
   useEffect(() => {
     try { localStorage.setItem('labWorkspace_authSettings', JSON.stringify(authSettings)); } catch {}
   }, [authSettings]);
+
+  // Sync operators + authSettings TO Firestore whenever they change (cloud persistence)
+  const appConfigSaveRef = useRef(null);
+  useEffect(() => {
+    if (!db || !user) return; // only sync when logged into Firebase
+    if (appConfigSaveRef.current) clearTimeout(appConfigSaveRef.current);
+    appConfigSaveRef.current = setTimeout(async () => {
+      try {
+        await db.collection(`artifacts/${appId}/public/data/appConfig`).doc('global').set({
+          operators: JSON.stringify(operators),
+          authSettings: JSON.stringify(authSettings),
+          updatedAt: window.firebase ? window.firebase.firestore.FieldValue.serverTimestamp() : Date.now()
+        }, { merge: true });
+      } catch (e) { console.warn('Could not sync app config to Firestore:', e.message); }
+    }, 1500);
+    return () => { if (appConfigSaveRef.current) clearTimeout(appConfigSaveRef.current); };
+  }, [operators, authSettings, user, db]);
   // ─────────────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -4828,7 +4866,42 @@ lineWidth: 2
     initAuth();
   }, []);
 
-  const handleManualLogin = async () => {
+  // ── LOAD operators + authSettings FROM Firestore on login ─────────────
+  useEffect(() => {
+    if (!db || !user) return;
+    const unsubscribe = db
+      .collection(`artifacts/${appId}/public/data/appConfig`)
+      .doc('global')
+      .onSnapshot(
+        (doc) => {
+          if (!doc.exists) return;
+          const data = doc.data();
+          try {
+            if (data.operators) {
+              const parsed = JSON.parse(data.operators);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                setOperators(parsed);
+                localStorage.setItem('labWorkspace_operators', data.operators);
+              }
+            }
+          } catch {}
+          try {
+            if (data.authSettings) {
+              const parsed = JSON.parse(data.authSettings);
+              if (parsed && typeof parsed === 'object') {
+                setAuthSettings(parsed);
+                localStorage.setItem('labWorkspace_authSettings', data.authSettings);
+              }
+            }
+          } catch {}
+        },
+        (err) => console.warn('AppConfig Firestore listener error:', err.message)
+      );
+    return () => unsubscribe();
+  }, [user, db]);
+  // ──────────────────────────────────────────────────────────────────────
+
+    const handleManualLogin = async () => {
     const provider = new window.firebase.auth.GoogleAuthProvider();
 
     try {
@@ -7285,6 +7358,20 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 ro
   >
     + MD Simulations
   </button>
+  <button
+    onClick={() => {
+      const id = 't' + Date.now();
+      setTests((prev) => [
+        ...prev,
+        createEmptyTest(id, prev.length + 1, 'docking')
+      ]);
+      setActiveTestId(id);
+      setCurrentModule('active-test');
+    }}
+    className="bg-rose-600 hover:bg-rose-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+  >
+    + Docking
+  </button>
 </div>
                     </div>
 
@@ -7443,6 +7530,7 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 ro
 : test.type === 'plate-9x9box' ? '📦'
 : test.type === 'nmr-fittings' ? '🧭'
 : test.type === 'md_simulation' ? '🖥️'
+: test.type === 'docking' ? '🎯'
 : '🧫'}
 </div>
 
@@ -7471,6 +7559,7 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 ro
 : test.type === 'md_simulation' ? 'MD'
 : test.type === 'protein_expression' ? 'PROTEIN'
 : test.type === 'ssnmr' ? 'SSNMR'
+: test.type === 'docking' ? 'DOCKING'
 : String(test.type || '').replace('plate-', '').toUpperCase()}
 </span>
                               </div>
@@ -8758,6 +8847,30 @@ mandatoryBehavior={mandatoryBehavior}
                       datasetProtocols={datasetProtocols}
                       jumpToProtocol={jumpToProtocolFn}
                       operators={operatorNames}
+                      solvents={solvents}
+                      buffers={buffers}
+                      additives={additives}
+                      mandatoryRules={mandatoryRules}
+                      mandatoryBehavior={mandatoryBehavior}
+                    />
+                  );
+                }
+
+                if (activeTest.type === 'docking') {
+                  return (
+                    <DockingTestRenderer
+                      activeTest={activeTest}
+                      updateActiveTest={updateActiveTest}
+                      allTests={tests}
+                      TestHeader={TestHeader}
+                      datasetProtocols={datasetProtocols}
+                      jumpToProtocol={jumpToProtocolFn}
+                      allCmpds={allCmpds}
+                      allCellLines={allCellLines}
+                      customFields={customFields}
+                      testCategories={testCategories}
+                      operators={operatorNames}
+                      instances={siblingTests}
                       solvents={solvents}
                       buffers={buffers}
                       additives={additives}
