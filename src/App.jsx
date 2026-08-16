@@ -24,8 +24,7 @@ import { CloningTestRenderer } from './components/CloningTestRenderer';
 import { ProteinExpressionTestRenderer } from './components/ProteinExpressionTestRenderer';
 import DockingTestRenderer, { DOCKING_TAB_CONFIG } from './components/DockingTestRenderer';
 import { Setup, Data, Simulations, Analysis } from '/src/components/MDSections.jsx';
-import { SolventsManager, BuffersManager, AdditivesManager, NMRProbesManager, NMRInstrumentsManager, NMRExperimentsManager, BufferAdditiveFields } from './components/DefinitionsExtra';
-
+import { SolventsManager, BuffersManager, AdditivesManager, NMRProbesManager, NMRInstrumentsManager, NMRExperimentsManager, BufferAdditiveFields, getMolecularWeightFromFormula } from './components/DefinitionsExtra';
 import {
 CD_TAB_CONFIG,
 PLATE_TAB_CONFIG,
@@ -563,9 +562,8 @@ const CellLineDefinitionSection = ({
   );
 };
 
-/* =========================================================
-   PLASMID DEFINITION SECTION
-========================================================= */
+
+
 /* =========================================================
    PLASMID DEFINITION SECTION
 ========================================================= */
@@ -580,6 +578,7 @@ const PlasmidDefinitionSection = ({
   const [backbone, setBackbone] = useState('');
   const [promoter, setPromoter] = useState('');
   const [marker, setMarker] = useState('');
+  const [molecularWeight, setMolecularWeight] = useState('');
   const [insertSequence, setInsertSequence] = useState('');
   const [notes, setNotes] = useState('');
   const [links, setLinks] = useState([]);
@@ -597,6 +596,7 @@ const PlasmidDefinitionSection = ({
       setBackbone('');
       setPromoter('');
       setMarker('');
+      setMolecularWeight('');
       setInsertSequence('');
       setNotes('');
       setLinks([]);
@@ -608,6 +608,7 @@ const PlasmidDefinitionSection = ({
     setBackbone(meta.backbone || '');
     setPromoter(meta.promoter || '');
     setMarker(meta.marker || '');
+    setMolecularWeight(meta.molecularWeight || '');
     setInsertSequence(meta.insertSequence || '');
     setNotes(meta.notes || '');
     setLinks(meta.links || []);
@@ -620,7 +621,7 @@ const PlasmidDefinitionSection = ({
 
     setPlasmidMeta((prev) => ({
       ...prev,
-      [name]: { name, backbone, promoter, marker, insertSequence, notes, links, updatedAt: Date.now() }
+      [name]: { name, backbone, promoter, marker, molecularWeight, insertSequence, notes, links, updatedAt: Date.now() }
     }));
     setSelectedName(name);
   };
@@ -652,17 +653,21 @@ const PlasmidDefinitionSection = ({
           <label className={CALC_LABEL_CLS}>New Plasmid Name</label>
           <input type="text" value={selectedName ? '' : newName} disabled={!!selectedName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. pEGFP-C1" className={`${CALC_INPUT_CLS} disabled:bg-slate-50`} />
         </div>
-        <div className="lg:col-span-4">
+        <div className="lg:col-span-3">
           <label className={CALC_LABEL_CLS}>Backbone</label>
           <input type="text" value={backbone} onChange={(e) => setBackbone(e.target.value)} placeholder="e.g. pUC19" className={CALC_INPUT_CLS} />
         </div>
-        <div className="lg:col-span-4">
+        <div className="lg:col-span-3">
           <label className={CALC_LABEL_CLS}>Promoter</label>
           <input type="text" value={promoter} onChange={(e) => setPromoter(e.target.value)} placeholder="e.g. CMV, T7" className={CALC_INPUT_CLS} />
         </div>
-        <div className="lg:col-span-4">
+        <div className="lg:col-span-3">
           <label className={CALC_LABEL_CLS}>Resistance Marker</label>
           <input type="text" value={marker} onChange={(e) => setMarker(e.target.value)} placeholder="e.g. Ampicillin" className={CALC_INPUT_CLS} />
+        </div>
+        <div className="lg:col-span-3">
+          <label className={CALC_LABEL_CLS}>Molecular Weight (Da)</label>
+          <input type="number" value={molecularWeight} onChange={(e) => setMolecularWeight(e.target.value)} placeholder="e.g. 3000000" className={CALC_INPUT_CLS} />
         </div>
         <div className="lg:col-span-12">
           <label className={CALC_LABEL_CLS}>Insert Sequence (DNA)</label>
@@ -750,9 +755,6 @@ const LibraryDirectory = ({
   const cellLines = [...new Set([...(customCellLines || []), ...Object.keys(cellLineMeta || {})])].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
   const plasmids = [...new Set([...(customPlasmids || []), ...Object.keys(plasmidMeta || {})])].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 
-  // Solvents/Buffers/Additives/NMR Probes/NMR Instruments/NMR Experiments are
-  // stored as objects ({ id, name, comments, links, ... }) — but tolerate
-  // plain strings too, for any legacy data saved before that existed.
   const asRows = (items) =>
     (Array.isArray(items) ? items : [])
       .map((item) => (typeof item === 'string' ? { id: item, name: item } : item))
@@ -763,10 +765,11 @@ const LibraryDirectory = ({
     if (meta?.type === 'protein') return 'Peptide / Protein';
     if (['dna', 'rna'].includes(meta?.type)) return 'Nucleic Acid';
     if (meta?.type === 'smiles') return 'Small Molecule (SMILES)';
+    if (meta?.type === 'formula') return 'Chemical Formula';
     return meta?.type ? meta.type : 'Unclassified';
   };
 
- const compoundRows = compounds.map((name) => {
+  const compoundRows = compounds.map((name) => {
     const meta = compoundMeta[name] || {};
     return {
       id: name,
@@ -797,6 +800,7 @@ const LibraryDirectory = ({
       name,
       backbone: meta.backbone || '—',
       marker: meta.marker || '—',
+      mw: meta.molecularWeight ? `${Number(meta.molecularWeight).toFixed(1)} Da` : '—',
       linkCount: Array.isArray(meta.links) ? meta.links.length : 0,
       links: Array.isArray(meta.links) ? meta.links : []
     };
@@ -806,6 +810,7 @@ const LibraryDirectory = ({
     id: s.id || s.name,
     name: s.name,
     density: s.density || '—',
+    mw: s.molecularWeight ? `${Number(s.molecularWeight).toFixed(1)} Da` : '—',
     comments: s.comments || '',
     linkCount: Array.isArray(s.links) ? s.links.length : 0,
     links: Array.isArray(s.links) ? s.links : []
@@ -815,6 +820,7 @@ const LibraryDirectory = ({
     id: b.id || b.name,
     name: b.name,
     description: b.description || '—',
+    mw: b.molecularWeight ? `${Number(b.molecularWeight).toFixed(1)} Da` : '—',
     comments: b.comments || '',
     linkCount: Array.isArray(b.links) ? b.links.length : 0,
     links: Array.isArray(b.links) ? b.links : []
@@ -824,6 +830,7 @@ const LibraryDirectory = ({
     id: a.id || a.name,
     name: a.name,
     description: a.description || '—',
+    mw: a.molecularWeight ? `${Number(a.molecularWeight).toFixed(1)} Da` : '—',
     comments: a.comments || '',
     linkCount: Array.isArray(a.links) ? a.links.length : 0,
     links: Array.isArray(a.links) ? a.links : []
@@ -879,7 +886,6 @@ const LibraryDirectory = ({
     ) : (
       <span className="text-slate-300">—</span>
     );
-
 
   const commentsCell = (row) =>
     row.comments && row.comments.trim() ? (
@@ -937,6 +943,7 @@ const LibraryDirectory = ({
               { key: 'name', label: 'Name', render: nameCell },
               { key: 'backbone', label: 'Backbone' },
               { key: 'marker', label: 'Marker' },
+              { key: 'mw', label: 'MW' },
               { key: 'linkCount', label: 'Links', render: linksCell }
             ]}
             rows={plasmidRows}
@@ -947,13 +954,14 @@ const LibraryDirectory = ({
       </div>
 
       {/* SOLVENTS / BUFFERS / ADDITIVES */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
         <div>
           <h4 className="text-xs font-bold text-slate-500 mb-2">Solvents & Media ({solventRows.length})</h4>
           <LibraryTable
             columns={[
               { key: 'name', label: 'Name', render: nameCell },
               { key: 'density', label: 'Density' },
+              { key: 'mw', label: 'MW' },
               { key: 'comments', label: 'Comments', render: commentsCell },
               { key: 'linkCount', label: 'Links', render: linksCell }
             ]}
@@ -969,6 +977,7 @@ const LibraryDirectory = ({
             columns={[
               { key: 'name', label: 'Name', render: nameCell },
               { key: 'description', label: 'Description' },
+              { key: 'mw', label: 'MW' },
               { key: 'comments', label: 'Comments', render: commentsCell },
               { key: 'linkCount', label: 'Links', render: linksCell }
             ]}
@@ -984,6 +993,7 @@ const LibraryDirectory = ({
             columns={[
               { key: 'name', label: 'Name', render: nameCell },
               { key: 'description', label: 'Description' },
+              { key: 'mw', label: 'MW' },
               { key: 'comments', label: 'Comments', render: commentsCell },
               { key: 'linkCount', label: 'Links', render: linksCell }
             ]}
@@ -995,7 +1005,7 @@ const LibraryDirectory = ({
       </div>
 
       {/* NMR INSTRUMENTS / NMR PROBES / NMR EXPERIMENTS (PULSE PROGRAMS) */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
         <div>
           <h4 className="text-xs font-bold text-slate-500 mb-2">NMR Instruments ({nmrInstrumentRows.length})</h4>
           <LibraryTable
@@ -1047,6 +1057,7 @@ const LibraryDirectory = ({
     </div>
   );
 };
+
 const normalizeCustomFields = (fields) => {
   if (!Array.isArray(fields)) return [];
 
@@ -2208,9 +2219,6 @@ const Calculations = ({
 };
 
 
-/* =========================================================
-   COMPOUND DEFINITION SECTION
-========================================================= */
 
 /* =========================================================
    COMPOUND DEFINITION SECTION
@@ -2283,7 +2291,7 @@ const CompoundDefinitionSection = ({
   };
 
   const computed = useMemo(() => {
-    if (type === 'smiles') return null;
+    if (type === 'smiles' || type === 'formula') return null;
     if (!sequence.trim()) return null;
 
     return calculateSequenceInfo({
@@ -2305,6 +2313,11 @@ const CompoundDefinitionSection = ({
       return manual;
     }
 
+    if (type === 'formula' && sequence.trim()) {
+      const calc = getMolecularWeightFromFormula(sequence.trim());
+      if (calc) return Number(calc);
+    }
+
     if (computed?.molecularWeight) {
       return Number(computed.molecularWeight);
     }
@@ -2314,7 +2327,7 @@ const CompoundDefinitionSection = ({
     }
 
     return null;
-  }, [manualMw, computed, selectedMw]);
+  }, [manualMw, type, sequence, computed, selectedMw]);
 
   const addQuickModification = (mod) => {
     setModText((prev) => {
@@ -2354,7 +2367,7 @@ const CompoundDefinitionSection = ({
       type,
       host: type === 'protein' ? host : undefined,
       sequence: type === 'smiles' ? '' : sequence,
-      modifications: type === 'smiles' ? '' : modText,
+      modifications: (type === 'smiles' || type === 'formula') ? '' : modText,
       smiles: type === 'smiles' ? smiles : '',
       notes,
       links,
@@ -2413,7 +2426,7 @@ const CompoundDefinitionSection = ({
       </h3>
 
       <p className="text-xs text-slate-500 mb-4">
-        Define a compound by one-letter sequence, modifications, or SMILES. Molecular weight and
+        Define a compound by one-letter sequence, modifications, SMILES, or Chemical Formula. Molecular weight and
         length are calculated automatically. For proteins, an optimized DNA sequence can be
         generated.
       </p>
@@ -2459,6 +2472,7 @@ const CompoundDefinitionSection = ({
             <option value="rna">RNA</option>
             <option value="polysaccharide">Polysaccharide</option>
             <option value="smiles">SMILES small molecule</option>
+            <option value="formula">Chemical Formula</option>
           </select>
         </div>
 
@@ -2502,6 +2516,19 @@ const CompoundDefinitionSection = ({
           </div>
 
           <div className="lg:col-span-12 text-xs text-slate-500">{smilesStatus}</div>
+        </div>
+      ) : type === 'formula' ? (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 mb-4">
+          <div className="lg:col-span-12">
+            <label className={CALC_LABEL_CLS}>Chemical Formula</label>
+            <input
+              type="text"
+              value={sequence}
+              onChange={(e) => setSequence(e.target.value)}
+              placeholder="e.g. C6H12O6 or CuSO4.5H2O"
+              className={CALC_INPUT_CLS}
+            />
+          </div>
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 mb-4">
@@ -9040,17 +9067,34 @@ if (activeTest.type === 'ssnmr') {
               </div>
             )}
 
-            {currentModule === 'calculations' && (
-              <div className="h-full overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
-                <Calculations
-                  compoundOptions={allCmpds}
-                  compoundMeta={compoundMeta}
-                  calculationEntries={calculationEntries}
-                  setCalculationEntries={setCalculationEntries}
-                  currentUser={currentUser}
-                />
-              </div>
-            )}
+{currentModule === 'calculations' && (() => {
+                // Merge everything into a unified dataset for the Calculations page
+                const combinedMeta = { ...compoundMeta };
+                Object.keys(plasmidMeta || {}).forEach(k => { if(!combinedMeta[k]) combinedMeta[k] = plasmidMeta[k]; });
+                (solvents || []).forEach(s => { if(s.name && !combinedMeta[s.name]) combinedMeta[s.name] = s; });
+                (buffers || []).forEach(b => { if(b.name && !combinedMeta[b.name]) combinedMeta[b.name] = b; });
+                (additives || []).forEach(a => { if(a.name && !combinedMeta[a.name]) combinedMeta[a.name] = a; });
+                
+                const combinedOptions = [...new Set([
+                    ...allCmpds,
+                    ...Object.keys(plasmidMeta || {}),
+                    ...(solvents || []).map(s => s.name),
+                    ...(buffers || []).map(b => b.name),
+                    ...(additives || []).map(a => a.name)
+                ].filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+
+                return (
+                  <div className="h-full overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
+                    <Calculations
+                      compoundOptions={combinedOptions}
+                      compoundMeta={combinedMeta}
+                      calculationEntries={calculationEntries}
+                      setCalculationEntries={setCalculationEntries}
+                      currentUser={currentUser}
+                    />
+                  </div>
+                );
+            })()}
           </div>
         </div>
       )}
