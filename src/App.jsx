@@ -714,14 +714,15 @@ const LibraryDirectory = ({
     return meta?.type ? meta.type : 'Unclassified';
   };
 
-  const compoundRows = compounds.map((name) => {
+ const compoundRows = compounds.map((name) => {
     const meta = compoundMeta[name] || {};
     return {
       id: name,
       name,
       category: compoundCategoryLabel(meta),
       mw: meta.molecularWeight ? `${Number(meta.molecularWeight).toFixed(1)} g/mol` : '—',
-      linkCount: Array.isArray(meta.links) ? meta.links.length : 0
+      linkCount: Array.isArray(meta.links) ? meta.links.length : 0,
+      links: Array.isArray(meta.links) ? meta.links : []
     };
   });
 
@@ -732,7 +733,8 @@ const LibraryDirectory = ({
       name,
       organism: meta.organism || '—',
       tissue: meta.tissue || '—',
-      linkCount: Array.isArray(meta.links) ? meta.links.length : 0
+      linkCount: Array.isArray(meta.links) ? meta.links.length : 0,
+      links: Array.isArray(meta.links) ? meta.links : []
     };
   });
 
@@ -743,7 +745,8 @@ const LibraryDirectory = ({
       name,
       backbone: meta.backbone || '—',
       marker: meta.marker || '—',
-      linkCount: Array.isArray(meta.links) ? meta.links.length : 0
+      linkCount: Array.isArray(meta.links) ? meta.links.length : 0,
+      links: Array.isArray(meta.links) ? meta.links : []
     };
   });
 
@@ -752,7 +755,8 @@ const LibraryDirectory = ({
     name: s.name,
     density: s.density || '—',
     comments: s.comments || '',
-    linkCount: Array.isArray(s.links) ? s.links.length : 0
+    linkCount: Array.isArray(s.links) ? s.links.length : 0,
+    links: Array.isArray(s.links) ? s.links : []
   }));
 
   const bufferRows = asRows(buffers).map((b) => ({
@@ -760,7 +764,8 @@ const LibraryDirectory = ({
     name: b.name,
     description: b.description || '—',
     comments: b.comments || '',
-    linkCount: Array.isArray(b.links) ? b.links.length : 0
+    linkCount: Array.isArray(b.links) ? b.links.length : 0,
+    links: Array.isArray(b.links) ? b.links : []
   }));
 
   const additiveRows = asRows(additives).map((a) => ({
@@ -768,7 +773,8 @@ const LibraryDirectory = ({
     name: a.name,
     description: a.description || '—',
     comments: a.comments || '',
-    linkCount: Array.isArray(a.links) ? a.links.length : 0
+    linkCount: Array.isArray(a.links) ? a.links.length : 0,
+    links: Array.isArray(a.links) ? a.links : []
   }));
 
   const nmrInstrumentRows = asRows(nmrInstruments).map((i) => ({
@@ -777,7 +783,8 @@ const LibraryDirectory = ({
     frequency: i.frequency || '—',
     manufacturer: i.manufacturer || '—',
     comments: i.comments || '',
-    linkCount: Array.isArray(i.links) ? i.links.length : 0
+    linkCount: Array.isArray(i.links) ? i.links.length : 0,
+    links: Array.isArray(i.links) ? i.links : []
   }));
 
   const nmrProbeRows = asRows(nmrProbes).map((p) => ({
@@ -786,7 +793,8 @@ const LibraryDirectory = ({
     type: [p.type, p.subtype].filter(Boolean).join(' / ') || '—',
     field: p.field || '—',
     comments: p.comments || '',
-    linkCount: Array.isArray(p.links) ? p.links.length : 0
+    linkCount: Array.isArray(p.links) ? p.links.length : 0,
+    links: Array.isArray(p.links) ? p.links : []
   }));
 
   const nmrExperimentRows = asRows(nmrExperiments).map((e) => ({
@@ -795,15 +803,31 @@ const LibraryDirectory = ({
     dimensions: e.dimensions || '—',
     nuclei: Array.isArray(e.nuclei) ? e.nuclei.filter(Boolean).join(', ') || '—' : '—',
     comments: e.comments || '',
-    linkCount: Array.isArray(e.links) ? e.links.length : 0
+    linkCount: Array.isArray(e.links) ? e.links.length : 0,
+    links: Array.isArray(e.links) ? e.links : []
   }));
 
   const linksCell = (row) =>
     row.linkCount > 0 ? (
-      <span className="inline-flex items-center gap-1 text-blue-600 font-semibold">🔗 {row.linkCount}</span>
+      <div className="flex flex-col gap-1">
+        {row.links.map((link, i) => (
+          <a 
+            key={i} 
+            href={link.url} 
+            target="_blank" 
+            rel="noopener noreferrer" 
+            onClick={(e) => e.stopPropagation()}
+            className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 font-semibold text-xs transition-colors"
+            title={link.url}
+          >
+            🔗 {link.description || 'Link'}
+          </a>
+        ))}
+      </div>
     ) : (
       <span className="text-slate-300">—</span>
     );
+
 
   const commentsCell = (row) =>
     row.comments && row.comments.trim() ? (
@@ -5543,7 +5567,7 @@ if (s.mandatoryFields !== undefined) setMandatoryFields((prev) => [...new Set([.
     setAppView('explorer');
   };
 
-  const openDataset = (dset) => {
+const openDataset = (dset) => {
     const s = parsePayload(dset);
 
     if (!s) return;
@@ -5588,9 +5612,16 @@ if (s.mandatoryFields !== undefined) setMandatoryFields((prev) => [...new Set([.
       setMolecules(Array.isArray(s.molecules) ? s.molecules : []);
       setCellLineMeta(s.cellLineMeta || {});
       setPlasmidMeta(s.plasmidMeta || {});
-setMandatoryFields(s.mandatoryFields || []);
+      setMandatoryFields(s.mandatoryFields || []);
       setMandatoryRules(normalizeMandatoryRules(s.mandatoryRules, s.mandatoryFields));
       setMandatoryBehavior(s.mandatoryBehavior || {});
+      setSolvents(s.solvents || []);
+      setBuffers(s.buffers || []);
+      setAdditives(s.additives || []);
+      setNmrInstruments(s.nmrInstruments || []);
+      setNmrProbes(s.nmrProbes || []);
+      setNmrExperiments(s.nmrExperiments || []);
+      
       setTestCategories(
         s.testCategories || [
           'Activity',
