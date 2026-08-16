@@ -1337,9 +1337,7 @@ const AxisScrollbar = ({ domain, fullDomain, onChange, vertical = false, reverse
 };
 
 const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel, selectedKeys, manualKeys = [], heightPx = 300, fs = 11, aspect = null, simCfg }) => {
-// Default: peak labels ON, so the Lab Notebook's 1D spectra show them automatically.
-// The NMR Simulations page always passes its own simCfg, so its checkbox keeps full control.
-const { simShowLabels = true, simLabelFormat = 'resNum_code_atom', simLabelDim = 'both', simLabelFontSize = 10 } = simCfg || {};
+  const { simShowLabels = true, simLabelFormat = 'resNum_code_atom', simLabelDim = 'both', simLabelFontSize = 10 } = simCfg || {};
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState(fullDomain);
   const [refAreaLeft, setRefAreaLeft] = useState(null);
@@ -1407,34 +1405,28 @@ const { simShowLabels = true, simLabelFormat = 'resNum_code_atom', simLabelDim =
         multipletMeta[label] = { minX, maxX, centerX, peakXs: xs };
     });
 
-    // Mark the tallest peak as the anchor for the label.
-    // Use 'multipletBounds' instead of 'multiplet' so we don't overwrite the string data property the Tooltip uses.
-    const withAnchorFlag = data.map(p => ({
+    // Mark the tallest peak as the anchor. Staggering logic is removed in favor of the PeakLabelOverlay.
+    return data.map(p => ({
         ...p,
         isLabelAnchor: p.label && maxPeaks[p.label] === p,
         multipletBounds: p.label ? multipletMeta[p.label] : null
     }));
-
-    // Stagger overlapping labels using centerX
-    const anchors = withAnchorFlag.filter(p => p.isLabelAnchor).sort((a, b) => b.multipletBounds.centerX - a.multipletBounds.centerX);
-    const levels = [];
-    
-    anchors.forEach(p => {
-        const cx = p.multipletBounds.centerX;
-        let l = 0;
-        while(levels[l] !== undefined && Math.abs(cx - levels[l]) < 0.35) l++;
-        levels[l] = cx;
-        p.labelLevel = l;
-    });
-
-    return withAnchorFlag.map(p => {
-        if (p.isLabelAnchor) {
-            const anchor = anchors.find(a => a === p);
-            return { ...p, labelLevel: anchor ? anchor.labelLevel : 0 };
-        }
-        return { ...p, labelLevel: 0 };
-    });
   }, [data]);
+
+  const peakMarkers = useMemo(() => {
+    if (!simShowLabels) return [];
+    const markers = [];
+    processedData.forEach(p => {
+      if (p.isLabelAnchor) {
+        const textStr = getPeakLabelText(p, simLabelFormat, simLabelDim);
+        if (textStr) markers.push({ ppm: p.multipletBounds.centerX, label: textStr });
+      }
+    });
+    return markers;
+  }, [processedData, simShowLabels, simLabelFormat, simLabelDim]);
+
+  const labelAreaH = (simShowLabels && peakMarkers.length > 0) ? 55 : 0;
+  const activeMargin = { ...CHART_MARGIN_1D, top: CHART_MARGIN_1D.top + labelAreaH };
   
   return (
     <>
@@ -1450,7 +1442,7 @@ const { simShowLabels = true, simLabelFormat = 'resNum_code_atom', simLabelDim =
         <div className="flex-1 min-h-0 select-none relative" ref={(n) => { chartRef.current = n; boxRef.current = n; }}>
           <div onMouseDown={handleMouseDown} style={{ width: '100%', height: '100%' }}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={processedData} margin={CHART_MARGIN_1D}>
+              <BarChart data={processedData} margin={activeMargin}>
                 <CartesianGrid strokeDasharray="3 3" vertical={true} horizontal={false} stroke="#f1f5f9" />
                 <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : ticks} interval={0} tickLine={false} tick={<TickComponent isZoomed={isZoomed} fs={fs} />} label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} axisLine={{ stroke: '#cbd5e1' }} />
                 <YAxis type="number" dataKey="y" domain={[0, 'auto']} hide={true} />
@@ -1462,65 +1454,37 @@ const { simShowLabels = true, simLabelFormat = 'resNum_code_atom', simLabelDim =
                   const isMan = manualKeys && payload.keys && payload.keys.some((k) => manualKeys.includes(k));
                   const dimmed = selectedKeys && !isSel && !isMan;
                   
-                  const textStr = (simShowLabels && payload.isLabelAnchor) ? getPeakLabelText(payload, simLabelFormat, simLabelDim) : '';
                   const barElem = <line x1={centerX} y1={y + height} x2={centerX} y2={y} stroke={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : payload.color} strokeWidth={isSel ? 3 : isMan ? 2.5 : 1.5} />;
                   
-                  if (!textStr || !payload.multipletBounds) {
+                  if (!payload.multipletBounds || !payload.isLabelAnchor) {
                     return <g opacity={dimmed ? 0.2 : 1}>{barElem}</g>;
                   }
 
                   const m = payload.multipletBounds;
-                  const labelY = y - 16 - (payload.labelLevel || 0) * 22; 
-                  
-                  const plotW = boxW ? (boxW - CHART_MARGIN_1D.left - CHART_MARGIN_1D.right) : 0;
+                  const plotW = boxW ? (boxW - activeMargin.left - activeMargin.right) : 0;
                   const scale = (plotW && (xDomain[1] - xDomain[0]) !== 0) ? plotW / (xDomain[1] - xDomain[0]) : 0;
 
                   let annotationElem = null;
 
                   if (scale > 0) {
                       const getPixelX = (val) => centerX + (payload.x - val) * scale;
-                      
                       const pxMinX = getPixelX(m.minX);
                       const pxMaxX = getPixelX(m.maxX);
-                      const pxCenterX = getPixelX(m.centerX);
                       const isSinglet = Math.abs(pxMinX - pxMaxX) < 2;
 
-                      if (isSinglet) {
+                      if (!isSinglet) {
+                          const multiY = y - 6;
                           annotationElem = (
                               <g>
-                                  <line x1={pxCenterX} y1={y} x2={pxCenterX} y2={labelY} stroke="#94a3b8" strokeWidth={1} strokeDasharray="2 2" />
-                                  <text x={pxCenterX} y={labelY - 4} textAnchor="middle" fontSize={simLabelFontSize} fill="white" stroke="white" strokeWidth={3} strokeLinejoin="round" fontWeight="bold">{textStr}</text>
-                                  <text x={pxCenterX} y={labelY - 4} textAnchor="middle" fontSize={simLabelFontSize} fill="#475569" fontWeight="bold">{textStr}</text>
-                              </g>
-                          );
-                      } else {
-                          annotationElem = (
-                              <g>
-                                  {/* Leader line from the max peak up to the label bar */}
-                                  <line x1={centerX} y1={y} x2={centerX} y2={labelY} stroke="#94a3b8" strokeWidth={1} strokeDasharray="2 2" />
-                                  
                                   {/* Horizontal bar spanning the multiplet */}
-                                  <line x1={pxMinX} y1={labelY} x2={pxMaxX} y2={labelY} stroke="#475569" strokeWidth={1.5} />
-                                  
+                                  <line x1={pxMinX} y1={multiY} x2={pxMaxX} y2={multiY} stroke="#475569" strokeWidth={1.5} />
                                   {/* Vertical ticks for each component dropping down from the horizontal bar */}
                                   {m.peakXs.map((px, i) => (
-                                      <line key={i} x1={getPixelX(px)} y1={labelY} x2={getPixelX(px)} y2={labelY + 4} stroke="#475569" strokeWidth={1.5} />
+                                      <line key={i} x1={getPixelX(px)} y1={multiY} x2={getPixelX(px)} y2={multiY + 4} stroke="#475569" strokeWidth={1.5} />
                                   ))}
-                                  
-                                  {/* Label text centered above the horizontal bar */}
-                                  <text x={pxCenterX} y={labelY - 4} textAnchor="middle" fontSize={simLabelFontSize} fill="white" stroke="white" strokeWidth={3} strokeLinejoin="round" fontWeight="bold">{textStr}</text>
-                                  <text x={pxCenterX} y={labelY - 4} textAnchor="middle" fontSize={simLabelFontSize} fill="#475569" fontWeight="bold">{textStr}</text>
                               </g>
                           );
                       }
-                  } else {
-                      annotationElem = (
-                          <g>
-                              <line x1={centerX} y1={y} x2={centerX} y2={labelY} stroke="#94a3b8" strokeWidth={1} strokeDasharray="2 2" />
-                              <text x={centerX} y={labelY - 4} textAnchor="middle" fontSize={simLabelFontSize} fill="white" stroke="white" strokeWidth={3} strokeLinejoin="round" fontWeight="bold">{textStr}</text>
-                              <text x={centerX} y={labelY - 4} textAnchor="middle" fontSize={simLabelFontSize} fill="#475569" fontWeight="bold">{textStr}</text>
-                          </g>
-                      );
                   }
 
                   return (
@@ -1534,8 +1498,19 @@ const { simShowLabels = true, simLabelFormat = 'resNum_code_atom', simLabelDim =
               </BarChart>
             </ResponsiveContainer>
           </div>
+          {simShowLabels && peakMarkers.length > 0 && (
+            <PeakLabelOverlay
+              markers={peakMarkers}
+              dom={xDomain}
+              marginLeft={activeMargin.left}
+              marginRight={activeMargin.right}
+              marginTop={activeMargin.top}
+              marginBottom={activeMargin.bottom}
+              labelAreaH={labelAreaH}
+            />
+          )}
           {isZoomed && (
-            <div className="absolute left-0 right-0 z-10 flex items-center" style={{ bottom: '0px', paddingLeft: CHART_MARGIN_1D.left, paddingRight: CHART_MARGIN_1D.right }}>
+            <div className="absolute left-0 right-0 z-10 flex items-center" style={{ bottom: '0px', paddingLeft: activeMargin.left, paddingRight: activeMargin.right }}>
               <AxisScrollbar domain={xDomain} fullDomain={fullDomain} onChange={setXDomain} />
             </div>
           )}
@@ -4037,128 +4012,7 @@ return null;
    Renders peak labels above the spectrum using arrows and free-space placement.
    Uses absolute positioning over the Recharts canvas.
    ============================================================================ */
-const PeakLabelOverlay = ({ markers, dom, marginLeft, marginRight, marginTop, marginBottom, labelAreaH }) => {
-  const containerRef = useRef(null);
-  const [size, setSize] = useState({ w: 0, h: 0 });
 
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const obs = new ResizeObserver(([e]) => {
-      setSize({ w: e.contentRect.width, h: e.contentRect.height });
-    });
-    obs.observe(containerRef.current);
-    return () => obs.disconnect();
-  }, []);
-
-  const { w, h } = size;
-  const plotW = w - marginLeft - marginRight;
-  const plotH = h - marginTop - marginBottom;
-  if (plotW <= 0 || plotH <= 0 || markers.length === 0) {
-    return <div ref={containerRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />;
-  }
-
-  // Map ppm to pixel x (axis is reversed: high ppm on left)
-  const domLo = Math.min(dom[0], dom[1]);
-  const domHi = Math.max(dom[0], dom[1]);
-  const ppmToX = (ppm) => {
-    if (domHi === domLo) return marginLeft + plotW / 2;
-    const frac = (ppm - domLo) / (domHi - domLo);
-    // reversed: high ppm at left (x=marginLeft), low ppm at right (x=marginLeft+plotW)
-    return marginLeft + plotW * (1 - frac);
-  };
-
-  // Filter to visible markers only
-  const visible = markers.filter(m => m.ppm >= domLo && m.ppm <= domHi);
-
-  // Greedy free-space placement for labels
-  // Label box: 7px font, ~6ch wide, 12px high
-  const LABEL_H = 14;
-  const LABEL_PAD = 4;
-  const FONT_SIZE = 7;
-  const ARROW_LEN = 10;
-  const TICK_LEN = 6;
-
-  // Available label area: top portion of the plot (labelAreaH px from the top of the chart)
-  // Place labels in rows from top downwards
-  const placed = [];
-  // Sort by x position so we can check horizontal overlaps
-  const sorted = [...visible].sort((a, b) => ppmToX(a.ppm) - ppmToX(b.ppm));
-
-  sorted.forEach(m => {
-    const cx = ppmToX(m.ppm);
-    const textW = m.label.length * FONT_SIZE * 0.55 + LABEL_PAD * 2;
-    // Try rows from top (y = marginTop - TICK_LEN - ARROW_LEN - LABEL_H, going up)
-    let bestY = null;
-    for (let row = 0; row < 5; row++) {
-      const candidateY = marginTop - TICK_LEN - ARROW_LEN - LABEL_H - row * (LABEL_H + 2);
-      if (candidateY < 2) continue;
-      // Check horizontal overlap with already placed labels at same row
-      const overlap = placed.some(p => p.row === row && Math.abs(p.cx - cx) < (textW / 2 + p.tw / 2 + 2));
-      if (!overlap) {
-        bestY = candidateY;
-        placed.push({ cx, cy: candidateY, tw: textW, row, label: m.label });
-        break;
-      }
-    }
-    // If no free slot found, just place at first row (will overlap, but at least visible)
-    if (bestY === null) {
-      bestY = marginTop - TICK_LEN - ARROW_LEN - LABEL_H;
-      placed.push({ cx, cy: bestY, tw: textW, row: 0, label: m.label });
-    }
-  });
-
-  return (
-    <div ref={containerRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
-      {w > 0 && (
-        <svg width={w} height={h} style={{ position: 'absolute', top: 0, left: 0, overflow: 'visible' }}>
-          <defs>
-            <marker id="pk-arrow" markerWidth="5" markerHeight="5" refX="2" refY="2.5" orient="auto">
-              <path d="M0,0 L0,5 L4,2.5 z" fill="#dc2626" />
-            </marker>
-          </defs>
-          {placed.map((p, i) => {
-            const arrowStartY = p.cy + LABEL_H + 1;
-            const arrowEndY = marginTop - TICK_LEN - 1;
-            return (
-              <g key={i}>
-                {/* Tick at peak position */}
-                <line x1={p.cx} y1={marginTop} x2={p.cx} y2={marginTop - TICK_LEN} stroke="#ef4444" strokeWidth={1.5} />
-                {/* Arrow from label to peak */}
-                {arrowStartY < arrowEndY && (
-                  <line x1={p.cx} y1={arrowStartY} x2={p.cx} y2={arrowEndY} stroke="#dc2626" strokeWidth={1} markerEnd="url(#pk-arrow)" />
-                )}
-                {/* Label background */}
-                <rect
-                  x={p.cx - p.tw / 2}
-                  y={p.cy}
-                  width={p.tw}
-                  height={LABEL_H}
-                  rx={2}
-                  fill="white"
-                  stroke="#fca5a5"
-                  strokeWidth={0.8}
-                  opacity={0.95}
-                />
-                {/* Label text */}
-                <text
-                  x={p.cx}
-                  y={p.cy + LABEL_H / 2 + FONT_SIZE / 2 - 1}
-                  textAnchor="middle"
-                  fontSize={FONT_SIZE}
-                  fontFamily="monospace"
-                  fontWeight="bold"
-                  fill="#b91c1c"
-                >
-                  {p.label}
-                </text>
-              </g>
-            );
-          })}
-        </svg>
-      )}
-    </div>
-  );
-};
 
 /* ============================================================================
    BRUKER 1R → PPM AXIS  (shared helpers for the NMR page import)
