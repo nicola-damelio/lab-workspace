@@ -417,6 +417,9 @@ const LinksManager = ({ links = [], setLinks }) => {
 /* =========================================================
    CELL LINE DEFINITION SECTION
 ========================================================= */
+/* =========================================================
+   CELL LINE DEFINITION SECTION
+========================================================= */
 const CellLineDefinitionSection = ({
   cellLineOptions = [],
   customCellLines = [],
@@ -450,6 +453,10 @@ const CellLineDefinitionSection = ({
     if (!name) {
       setSelectedName('');
       setNewName('');
+      setOrganism('');
+      setTissue('');
+      setCultureMedium('');
+      setNotes('');
       setLinks([]);
       return;
     }
@@ -492,6 +499,20 @@ const CellLineDefinitionSection = ({
     setSelectedName(name);
   };
 
+  const handleDelete = () => {
+    if (!selectedName) return;
+    if (window.confirm(`Are you sure you want to delete cell line ${selectedName}?`)) {
+      setCellLineMeta((prev) => {
+        const next = { ...prev };
+        delete next[selectedName];
+        return next;
+      });
+      setCustomCellLines((prev) => prev.filter(c => c !== selectedName));
+      chooseCellLine('');
+      if (onSelect) onSelect('');
+    }
+  };
+
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 mb-4">
@@ -527,7 +548,12 @@ const CellLineDefinitionSection = ({
         
         <LinksManager links={links} setLinks={setLinks} />
 
-        <div className="lg:col-span-12 flex justify-end mt-2">
+        <div className="lg:col-span-12 flex justify-end gap-2 mt-2">
+          {selectedName && (
+            <button type="button" onClick={handleDelete} className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold py-2 px-4 rounded-lg text-sm shadow-sm transition-colors">
+              Delete
+            </button>
+          )}
           <button type="button" onClick={saveCellLine} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm shadow-sm transition-colors">
             Save Cell Line
           </button>
@@ -537,6 +563,9 @@ const CellLineDefinitionSection = ({
   );
 };
 
+/* =========================================================
+   PLASMID DEFINITION SECTION
+========================================================= */
 /* =========================================================
    PLASMID DEFINITION SECTION
 ========================================================= */
@@ -565,6 +594,11 @@ const PlasmidDefinitionSection = ({
     if (!name) {
       setSelectedName('');
       setNewName('');
+      setBackbone('');
+      setPromoter('');
+      setMarker('');
+      setInsertSequence('');
+      setNotes('');
       setLinks([]);
       return;
     }
@@ -589,6 +623,19 @@ const PlasmidDefinitionSection = ({
       [name]: { name, backbone, promoter, marker, insertSequence, notes, links, updatedAt: Date.now() }
     }));
     setSelectedName(name);
+  };
+
+  const handleDelete = () => {
+    if (!selectedName) return;
+    if (window.confirm(`Are you sure you want to delete plasmid ${selectedName}?`)) {
+      setPlasmidMeta((prev) => {
+        const next = { ...prev };
+        delete next[selectedName];
+        return next;
+      });
+      choosePlasmid('');
+      if (onSelect) onSelect('');
+    }
   };
 
   return (
@@ -628,7 +675,12 @@ const PlasmidDefinitionSection = ({
 
         <LinksManager links={links} setLinks={setLinks} />
 
-        <div className="lg:col-span-12 flex justify-end mt-2">
+        <div className="lg:col-span-12 flex justify-end gap-2 mt-2">
+          {selectedName && (
+            <button type="button" onClick={handleDelete} className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold py-2 px-4 rounded-lg text-sm shadow-sm transition-colors">
+              Delete
+            </button>
+          )}
           <button type="button" onClick={savePlasmid} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm shadow-sm transition-colors">
             Save Plasmid
           </button>
@@ -2160,6 +2212,10 @@ const Calculations = ({
    COMPOUND DEFINITION SECTION
 ========================================================= */
 
+/* =========================================================
+   COMPOUND DEFINITION SECTION
+========================================================= */
+
 const CompoundDefinitionSection = ({
   compoundOptions = [],
   customCmpds = [],
@@ -2201,6 +2257,12 @@ const CompoundDefinitionSection = ({
     if (!name) {
       setSelectedName('');
       setNewName('');
+      setType('protein');
+      setSequence('');
+      setModText('');
+      setSmiles('');
+      setHost('bacterial');
+      setManualMw('');
       setNotes('');
       setLinks([]);
       return;
@@ -2317,6 +2379,20 @@ const CompoundDefinitionSection = ({
 
     if (!alreadyInCustomCompounds) {
       setCustomCmpds((prev) => [...prev, name]);
+    }
+  };
+
+  const deleteCompound = () => {
+    if (!selectedName) return;
+    if (window.confirm(`Are you sure you want to delete ${selectedName}?`)) {
+      setCompoundMeta((prev) => {
+        const next = { ...prev };
+        delete next[selectedName];
+        return next;
+      });
+      setCustomCmpds((prev) => prev.filter((c) => (typeof c === 'string' ? c : c?.name) !== selectedName));
+      chooseCompound('');
+      if (onSelect) onSelect('');
     }
   };
 
@@ -2518,13 +2594,22 @@ const CompoundDefinitionSection = ({
           </div>
         </div>
 
-        <div className="md:col-span-4 flex items-end justify-end">
+        <div className="md:col-span-4 flex items-end justify-end gap-2">
+          {selectedName && (
+            <button
+              type="button"
+              onClick={deleteCompound}
+              className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold py-2 px-4 rounded-lg text-sm shadow-sm transition-colors"
+            >
+              Delete
+            </button>
+          )}
           <button
             type="button"
             onClick={saveCompound}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm shadow-sm transition-colors"
+            className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm shadow-sm transition-colors"
           >
-            Save Compound Definition
+            Save Compound
           </button>
         </div>
       </div>
