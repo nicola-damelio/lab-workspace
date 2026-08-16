@@ -3148,6 +3148,32 @@ const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => 
   );
 };
 
+<CollapsibleSection title="Custom Metadata Fields" subtitle="Add custom fields for plate, NMR, CD, Cloning, or all tabs — and target the exact subsection of each page they appear in." defaultOpen={false}>
+                    <CustomMetadataFieldsManager customFields={customFields} setCustomFields={handleSetCustomFields} />
+
+                    <div className="mt-6 pt-6 border-t border-slate-200">
+                      <MandatoryParametersManager
+                        mandatoryRules={mandatoryRules}
+                        setMandatoryRules={setMandatoryRules}
+                        mandatoryBehavior={mandatoryBehavior}
+                        setMandatoryBehavior={setMandatoryBehavior}
+                      />
+                    </div>
+                  </CollapsibleSection>
+
+                  {/* ADD THIS NEW BLOCK RIGHT HERE */}
+                  <CollapsibleSection title="Database Cleanup & Merging" subtitle="Fix misclassifications and merge duplicate items globally across all tests and multiwell plates." defaultOpen={false}>
+                     <DatabaseCleanupManager 
+                        tests={tests}
+                        setTests={setTests}
+                        allCmpds={allCmpds}
+                        allCellLines={allCellLines}
+                        setCustomCmpds={setCustomCmpds}
+                        setCompoundMeta={setCompoundMeta}
+                        setCustomCellLines={setCustomCellLines}
+                        setCellLineMeta={setCellLineMeta}
+                     />
+                  </CollapsibleSection>
 /* =========================================================
    MANDATORY PARAMETERS MANAGER
    Rules are scoped to a special page (or "all") + an optional named
@@ -4691,7 +4717,134 @@ const StorageFinder = ({
     </div>
   );
 };
+/* =========================================================
+   DATABASE CLEANUP & MERGING
+========================================================= */
+const DatabaseCleanupManager = ({
+  tests, setTests,
+  allCmpds, allCellLines,
+  setCustomCmpds, setCompoundMeta,
+  setCustomCellLines, setCellLineMeta
+}) => {
+  const [oldName, setOldName] = useState('');
+  const [newName, setNewName] = useState('');
 
+  // Combine compounds and cell lines so users can fix misclassifications across categories
+  const allResources = [...new Set([...allCmpds, ...allCellLines])].sort((a, b) => a.localeCompare(b));
+
+  const handleMergeReplace = () => {
+    if (!oldName || !newName) return alert("Please select both the item to delete and the item to replace it with.");
+    if (oldName === newName) return alert("The old name and new name must be different.");
+    
+    if (!window.confirm(`WARNING: This will scan ALL your tests, plates, and wells.\n\nEvery instance of "${oldName}" will be permanently rewritten to "${newName}".\n\n"${oldName}" will then be DELETED from the library.\n\nAre you sure you want to proceed?`)) return;
+
+    // 1. Rewrite all occurrences in Tests and Plates
+    setTests(prevTests => prevTests.map(t => {
+      let updated = { ...t };
+      
+      // Standard string fields
+      if (updated.compound === oldName) updated.compound = newName;
+      if (updated.otherMolecule === oldName) updated.otherMolecule = newName;
+      if (updated.lipid === oldName) updated.lipid = newName;
+      if (updated.moleculeName === oldName) updated.moleculeName = newName;
+
+      // Arrays of strings
+      if (Array.isArray(updated.selectedCompounds)) {
+        updated.selectedCompounds = updated.selectedCompounds.map(c => c === oldName ? newName : c);
+      }
+      if (Array.isArray(updated.cellLines)) {
+        updated.cellLines = updated.cellLines.map(c => c === oldName ? newName : c);
+      }
+      if (Array.isArray(updated.compounds)) {
+        updated.compounds = updated.compounds.map(c => c === oldName ? newName : c);
+      }
+      if (Array.isArray(updated.rowCompounds)) {
+        updated.rowCompounds = updated.rowCompounds.map(c => c === oldName ? newName : c);
+      }
+
+      // 2D Grid (Plate Boxes and Multiwell assays)
+      if (Array.isArray(updated.grid)) {
+        updated.grid = updated.grid.map(row => 
+          row.map(cell => {
+            if (!cell) return cell;
+            
+            if (typeof cell === 'string') {
+              if (cell === oldName) return newName;
+              // Handle JSON stringified wells
+              if (cell.startsWith('{')) {
+                try {
+                  let parsed = JSON.parse(cell);
+                  if (parsed.compound === oldName) {
+                    parsed.compound = newName;
+                    return JSON.stringify(parsed);
+                  }
+                } catch(e) {}
+              }
+              return cell;
+            }
+            
+            // Handle Object wells
+            if (typeof cell === 'object' && cell.compound === oldName) {
+              return { ...cell, compound: newName };
+            }
+            return cell;
+          })
+        );
+      }
+
+      return updated;
+    }));
+
+    // 2. Delete the old item from Compound and Cell Line definitions
+    setCustomCmpds(prev => prev.filter(c => c !== oldName));
+    setCompoundMeta(prev => { const next = {...prev}; delete next[oldName]; return next; });
+    
+    setCustomCellLines(prev => prev.filter(c => c !== oldName));
+    setCellLineMeta(prev => { const next = {...prev}; delete next[oldName]; return next; });
+
+    setOldName('');
+    setNewName('');
+    alert(`Success! All tests have been updated and "${oldName}" has been removed from the library.`);
+  };
+
+  return (
+    <div className="bg-red-50 border border-red-200 rounded-xl p-5 shadow-sm">
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+        <div className="md:col-span-4">
+          <label className="block text-xs font-bold text-red-700 uppercase mb-1">Bad / Duplicate Item (To Delete)</label>
+          <select value={oldName} onChange={e => setOldName(e.target.value)} className="w-full border border-red-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-red-500 text-red-900 font-semibold">
+            <option value="">-- Select item to remove --</option>
+            {allResources.map(r => <option key={`old-${r}`} value={r}>{r}</option>)}
+          </select>
+        </div>
+
+        <div className="md:col-span-1 flex justify-center pb-2 text-red-400 font-black text-xl">
+          ➔
+        </div>
+
+        <div className="md:col-span-4">
+          <label className="block text-xs font-bold text-emerald-700 uppercase mb-1">Good Item (To Keep)</label>
+          <select value={newName} onChange={e => setNewName(e.target.value)} className="w-full border border-emerald-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-emerald-500 text-emerald-900 font-semibold">
+            <option value="">-- Select correct item --</option>
+            {allResources.map(r => <option key={`new-${r}`} value={r}>{r}</option>)}
+          </select>
+        </div>
+
+        <div className="md:col-span-3">
+          <button 
+            onClick={handleMergeReplace}
+            className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg shadow-sm transition-colors text-sm"
+          >
+            Merge & Replace Everywhere
+          </button>
+        </div>
+      </div>
+      <p className="text-xs text-red-500 mt-3 font-medium">
+        <strong>Tip to fix misclassifications:</strong> If you accidentally saved a Cell Line as a Chemical Compound, simply recreate it correctly in the Cell Line section, then use this tool to merge the bad chemical compound into the new cell line.
+      </p>
+    </div>
+  );
+};
 /* =========================================================
 MAIN APP
 ========================================================= */
