@@ -8684,34 +8684,49 @@ const newProto = {
                   );
                 }
 if (activeTest.type === 'ssnmr') {
-const updateInstance = (instId, updates) => {
-setTests((prev) => prev.map((t) => t.id === instId ? { ...t, ...updates } : t));
-};
-return (
-<SSNMRTestRenderer
-activeTest={activeTest}
-updateActiveTest={updateActiveTest}
-allTests={tests}
-appClipboard={appClipboard}
-setAppClipboard={setAppClipboard}
-TestHeader={TestHeader}
-datasetProtocols={datasetProtocols}
-jumpToProtocol={jumpToProtocolFn}
-allCmpds={allCmpds}
-allCellLines={allCellLines}
-customFields={customFields}
-testCategories={testCategories}
-operators={operatorNames}
-instances={siblingTests}
-updateInstance={updateInstance}
-solvents={solvents}
-buffers={buffers}
-additives={additives}
-compoundMeta={compoundMeta}
-mandatoryRules={mandatoryRules}
-mandatoryBehavior={mandatoryBehavior}
-/>
-);
+  const ssNmrInstances = (() => {
+    const base = Array.isArray(siblingTests) && siblingTests.length
+      ? siblingTests
+      : [activeTest];
+
+    const filtered = base.filter(
+      (t) => t && (t.id === activeTest.id || t.type === 'ssnmr')
+    );
+
+    return filtered.length ? filtered : [activeTest];
+  })();
+
+  const updateInstance = (instId, updates) => {
+    setTests((prev) =>
+      prev.map((t) => (t.id === instId ? { ...t, ...updates } : t))
+    );
+  };
+
+  return (
+    <SSNMRTestRenderer
+      activeTest={activeTest}
+      updateActiveTest={updateActiveTest}
+      allTests={tests}
+      appClipboard={appClipboard}
+      setAppClipboard={setAppClipboard}
+      TestHeader={TestHeader}
+      datasetProtocols={datasetProtocols}
+      jumpToProtocol={jumpToProtocolFn}
+      allCmpds={allCmpds}
+      allCellLines={allCellLines}
+      customFields={customFields}
+      testCategories={testCategories}
+      operators={operatorNames}
+      instances={ssNmrInstances}
+      updateInstance={updateInstance}
+      solvents={solvents}
+      buffers={buffers}
+      additives={additives}
+      compoundMeta={compoundMeta}
+      mandatoryRules={mandatoryRules}
+      mandatoryBehavior={mandatoryBehavior}
+    />
+  );
 }
                 if (activeTest.type === 'plate-9x9box') {
                   return (

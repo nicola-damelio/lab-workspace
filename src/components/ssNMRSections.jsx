@@ -121,6 +121,7 @@ export const SSNMR_DEFAULT_UNITS = SSNMR_EXPERIMENTAL_FIELDS.reduce((acc, f) => 
 }, {});
 
 export const SSNMR_INSTRUMENTAL_FIELDS = [
+  { key: 'experimentNumber', label: 'Experiment Number', type: 'text', placeholder: 'e.g. 1' },
   { key: 'instrumentModel', label: 'Spectrometer', type: 'text', placeholder: 'e.g. Bruker Avance III 500' },
   { key: 'deutFreq', label: '²H Frequency', type: 'text', placeholder: 'e.g. 76.8', units: ['MHz'] },
   { key: 'probe', label: 'Probe', type: 'text', placeholder: 'e.g. 5 mm static broadband' },
@@ -186,7 +187,13 @@ const patchInstance = (ctx, activeTest, instId, updates) => {
     ctx.updateInstance(instId, updates);
     return;
   }
-  if (instId === activeTest.id) ctx.updateActiveTest(updates);
+
+  // Fallback for shells that only expose updateActiveTest.
+  // This prevents updates from being silently dropped when per-instance
+  // updating is not available.
+  if (typeof ctx?.updateActiveTest === 'function') {
+    ctx.updateActiveTest(updates);
+  }
 };
 
 /* ========================================================================
@@ -1148,13 +1155,21 @@ export const Data = ({ ctx }) => {
   const yUnit = instTest.yUnit || 'raw';
 
   // Write helper: route updates through patchInstance so they land on the right condition
-  const patchActive = (updates) => {
-    if (activeInstance) {
-      patchInstance(ctx, activeTest, activeInstance.id, updates);
-    } else {
-      updateActiveTest(updates);
-    }
-  };
+const patchActive = (updates) => {
+  if (activeInstance && typeof ctx.updateInstance === 'function') {
+    ctx.updateInstance(activeInstance.id, updates);
+    return;
+  }
+
+  if (typeof updateActiveTest === 'function') {
+    updateActiveTest(updates);
+    return;
+  }
+
+  if (typeof ctx.updateActiveTest === 'function') {
+    ctx.updateActiveTest(updates);
+  }
+};
 
   const updateWavelengthData = (val) => patchActive({ wavelengthData: val });
   const addSpectrumColumn = () => {
@@ -1260,19 +1275,36 @@ const applyBruker = (parsed) => {
 
 
 const importBrukerLocal = async () => {
-  if (!brukerDataFile) { setBrukerMsg('⚠️ Choose the 1r file first.'); return; }
+  if (!brukerDataFile) {
+    setBrukerMsg('⚠️ Choose the 1r file first.');
+    return;
+  }
+
   setBrukerBusy(true);
+  setBrukerMsg('');
+
   try {
     const dataBuffer = await brukerDataFile.arrayBuffer();
     const acqusText = brukerAcqusFile ? await brukerAcqusFile.text() : '';
-    applyBruker(importBruker1r({
-      dataBuffer, acqusText,
+
+    const title = brukerDataFile.name
+      .replace(/1r$/i, '')
+      .replace(/\s+$/, '');
+
+    const parsed = importBruker1r({
+      dataBuffer,
+      acqusText,
       manualSWkHz: parseManual(brukerSw),
       manualOffsetKHz: parseManual(brukerOffset) || 0,
-      title: brukerDataFile.name.replace(/1r$/i, '').replace(/\/+$/, '')
-    }));
-  } catch (e) { setBrukerMsg(`⚠️ ${e.message}`); }
-  setBrukerBusy(false);
+      title
+    });
+
+    applyBruker(parsed);
+  } catch (e) {
+    setBrukerMsg(`⚠️ Import failed: ${e?.message || String(e)}`);
+  } finally {
+    setBrukerBusy(false);
+  }
 };
 
 const importBrukerFromUrl = async () => {
@@ -1506,14 +1538,22 @@ const revertNormalization = () => {
               <button type="button" onClick={exportCSV} className="bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm hover:bg-emerald-100">📊 Export CSV (all conditions)</button>
             </div>
           </div>
-          <div className="flex flex-col gap-1">
-            <label className={LABEL_CLS}>Frequencies (kHz) — comma, space or newline separated</label>
-            <textarea
-              value={activeTest.wavelengthData || ''} onChange={(e) => updateWavelengthData(e.target.value)} placeholder={'-100, -99.5, -99, ...'}
-              className="w-full border border-slate-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-blue-500 h-20 custom-scrollbar"
-            />
-            <span className="text-[10px] text-slate-400">{activeParsed.parsedWavelengths.length} valid frequency points parsed.</span>
-          </div>
+<div className="flex flex-col gap-1">
+  <label className={LABEL_CLS}>
+    Frequencies (kHz) — comma, space or newline separated
+  </label>
+
+  <textarea
+    value={instTest.wavelengthData || ''}
+    onChange={(e) => updateWavelengthData(e.target.value)}
+    placeholder={'-100, -99.5, -99, ...'}
+    className="w-full border border-slate-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-blue-500 h-20 custom-scrollbar"
+  />
+
+  <span className="text-[10px] text-slate-400">
+    {activeParsed.parsedWavelengths.length} valid frequency points parsed.
+  </span>
+</div>
           {spectraColumns.map((col, idx) => (
             <div key={col.id} className="border border-slate-200 rounded-lg p-3 bg-slate-50 flex flex-col gap-2">
               <div className="flex flex-wrap items-center gap-2">
@@ -1540,22 +1580,80 @@ const revertNormalization = () => {
   </div>
 
   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-    <div className="bg-white border border-sky-200 rounded-lg p-3 flex flex-col gap-2">
-      <span className="text-xs font-bold text-sky-800">💻 From this PC</span>
-      <label className="bg-white border border-sky-300 hover:bg-sky-100 text-sky-800 font-bold px-3 py-2 rounded-lg text-xs cursor-pointer shadow-sm transition-colors">
-        📄 Choose 1r file…
-        <input ref={brukerFileRef} type="file" onChange={(e) => setBrukerDataFile(e.target.files && e.target.files[0] ? e.target.files[0] : null)} className="hidden" />
-      </label>
-      {brukerDataFile && <span className="text-[10px] font-mono text-sky-700 truncate">{brukerDataFile.name} · {(brukerDataFile.size / 1024).toFixed(0)} KB</span>}
-      <label className="bg-white border border-sky-300 hover:bg-sky-100 text-sky-800 font-bold px-3 py-2 rounded-lg text-xs cursor-pointer shadow-sm transition-colors">
-        📄 Choose acqus file (recommended)…
-        <input ref={brukerAcqusFileRef} type="file" onChange={(e) => setBrukerAcqusFile(e.target.files && e.target.files[0] ? e.target.files[0] : null)} className="hidden" />
-      </label>
-      {brukerAcqusFile && <span className="text-[10px] font-mono text-sky-700 truncate">{brukerAcqusFile.name}</span>}
-      <button type="button" onClick={importBrukerLocal} disabled={brukerBusy} className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm">
-        {brukerBusy ? 'Importing…' : 'Import local files'}
-      </button>
-    </div>
+<div className="bg-white border border-sky-200 rounded-lg p-3 flex flex-col gap-2">
+  <span className="text-xs font-bold text-sky-800">💻 From this PC</span>
+
+  <button
+    type="button"
+    onClick={() => brukerFileRef.current?.click()}
+    className="bg-white border border-sky-300 hover:bg-sky-100 text-sky-800 font-bold px-3 py-2 rounded-lg text-xs cursor-pointer shadow-sm transition-colors text-left"
+  >
+    📄 Choose 1r file…
+  </button>
+
+  <input
+    ref={brukerFileRef}
+    type="file"
+    accept=".1r,application/octet-stream"
+    className="hidden"
+    onChange={(e) => {
+      const f = e.target.files && e.target.files[0] ? e.target.files[0] : null;
+      setBrukerDataFile(f);
+
+      // Allows selecting the same file again later.
+      e.target.value = '';
+    }}
+  />
+
+  {brukerDataFile && (
+    <span className="text-[10px] font-mono text-sky-700 truncate">
+      {brukerDataFile.name} · {(brukerDataFile.size / 1024).toFixed(0)} KB
+    </span>
+  )}
+
+  <button
+    type="button"
+    onClick={() => brukerAcqusFileRef.current?.click()}
+    className="bg-white border border-sky-300 hover:bg-sky-100 text-sky-800 font-bold px-3 py-2 rounded-lg text-xs cursor-pointer shadow-sm transition-colors text-left"
+  >
+    📄 Choose acqus file (recommended)…
+  </button>
+
+  <input
+    ref={brukerAcqusFileRef}
+    type="file"
+    accept=".acqus,text/plain"
+    className="hidden"
+    onChange={(e) => {
+      const f = e.target.files && e.target.files[0] ? e.target.files[0] : null;
+      setBrukerAcqusFile(f);
+
+      // Allows selecting the same file again later.
+      e.target.value = '';
+    }}
+  />
+
+  {brukerAcqusFile && (
+    <span className="text-[10px] font-mono text-sky-700 truncate">
+      {brukerAcqusFile.name}
+    </span>
+  )}
+
+  <button
+    type="button"
+    onClick={importBrukerLocal}
+    disabled={brukerBusy || !brukerDataFile}
+    className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm"
+  >
+    {brukerBusy ? 'Importing…' : 'Import local files'}
+  </button>
+
+  {!brukerDataFile && (
+    <span className="text-[10px] text-sky-600">
+      Select the 1r file first. The acqus file is optional but strongly recommended.
+    </span>
+  )}
+</div>
 
     <div className="bg-white border border-sky-200 rounded-lg p-3 flex flex-col gap-2">
       <span className="text-xs font-bold text-sky-800">🔗 From Google Drive link</span>
@@ -3166,17 +3264,72 @@ export const InstrumentalSetup = ({ ctx }) => {
   const { activeTest = {}, updateActiveTest } = ctx || {};
   const LABEL_CLS = 'text-[10px] font-bold text-slate-500 uppercase';
   const INPUT_CLS = 'border border-slate-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-500 bg-white';
-  const update = (u) => { if (updateActiveTest) updateActiveTest(u); };
+
+  const update = (u) => {
+    if (updateActiveTest) updateActiveTest(u);
+  };
+
+  const datasets = Array.isArray(activeTest.instrumentalDatasets)
+    ? activeTest.instrumentalDatasets
+    : [];
+
+  const nextExperimentNumber = () => {
+    const nums = datasets
+      .map((d) => parseInt(d.experimentNumber, 10))
+      .filter((n) => Number.isFinite(n));
+
+    return String(nums.length ? Math.max(...nums) + 1 : datasets.length + 1);
+  };
+
+  const addDataset = () => {
+    const expNum = nextExperimentNumber();
+
+    const nextDataset = {
+      id: makeId('instrumental_dataset'),
+      experimentNumber: expNum,
+      name: `Dataset ${expNum}`,
+      date: new Date().toISOString().split('T')[0],
+      operator: '',
+      link: '',
+      comments: ''
+    };
+
+    update({
+      instrumentalDatasets: [...datasets, nextDataset]
+    });
+  };
+
+  const patchDataset = (id, patch) => {
+    update({
+      instrumentalDatasets: datasets.map((d) =>
+        d.id === id ? { ...d, ...patch } : d
+      )
+    });
+  };
+
+  const removeDataset = (id) => {
+    update({
+      instrumentalDatasets: datasets.filter((d) => d.id !== id)
+    });
+  };
+
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         {SSNMR_INSTRUMENTAL_FIELDS.map((f) => (
           <div key={f.key} className="flex flex-col gap-1">
             <label className={LABEL_CLS}>{f.label}</label>
+
             {f.type === 'select' ? (
-              <select value={activeTest[f.key] || ''} onChange={(e) => update({ [f.key]: e.target.value })} className={INPUT_CLS}>
+              <select
+                value={activeTest[f.key] || ''}
+                onChange={(e) => update({ [f.key]: e.target.value })}
+                className={INPUT_CLS}
+              >
                 <option value="">—</option>
-                {f.options.map((o) => <option key={o} value={o}>{o}</option>)}
+                {f.options.map((o) => (
+                  <option key={o} value={o}>{o}</option>
+                ))}
               </select>
             ) : (
               <div className={f.units ? 'flex gap-1' : ''}>
@@ -3188,13 +3341,22 @@ export const InstrumentalSetup = ({ ctx }) => {
                   placeholder={f.placeholder}
                   className={`${INPUT_CLS} ${f.units ? 'flex-1 min-w-0' : 'w-full'}`}
                 />
+
                 {f.units && (
                   f.units.length > 1 ? (
-                    <select value={activeTest[`${f.key}Unit`] || f.units[0]} onChange={(e) => update({ [`${f.key}Unit`]: e.target.value })} className={`${INPUT_CLS} w-24 shrink-0`}>
-                      {f.units.map((u) => <option key={u} value={u}>{u}</option>)}
+                    <select
+                      value={activeTest[`${f.key}Unit`] || f.units[0]}
+                      onChange={(e) => update({ [`${f.key}Unit`]: e.target.value })}
+                      className={`${INPUT_CLS} w-24 shrink-0`}
+                    >
+                      {f.units.map((u) => (
+                        <option key={u} value={u}>{u}</option>
+                      ))}
                     </select>
                   ) : (
-                    <span className="text-[10px] font-bold text-slate-400 self-center px-1 shrink-0">{f.units[0]}</span>
+                    <span className="text-[10px] font-bold text-slate-400 self-center px-1 shrink-0">
+                      {f.units[0]}
+                    </span>
                   )
                 )}
               </div>
@@ -3202,7 +3364,125 @@ export const InstrumentalSetup = ({ ctx }) => {
           </div>
         ))}
       </div>
-      <p className="text-[10px] text-slate-400">Spectrometer configuration used to acquire the spectra for this condition — saved per condition, like the other experimental fields.</p>
+
+      <div className="border border-slate-200 rounded-xl bg-slate-50 p-4 flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h4 className="text-sm font-bold text-slate-700">Datasets</h4>
+            <p className="text-[10px] text-slate-400">
+              Add instrumental datasets associated with this condition.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={addDataset}
+            className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm transition-colors"
+          >
+            + Add Dataset
+          </button>
+        </div>
+
+        {datasets.length === 0 ? (
+          <div className="text-xs text-slate-400 italic bg-white border border-dashed border-slate-300 rounded-lg p-4 text-center">
+            No datasets added yet.
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {datasets.map((ds) => (
+              <div
+                key={ds.id}
+                className="border border-slate-200 rounded-lg bg-white p-3 flex flex-col gap-2 shadow-sm"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-slate-700 uppercase">
+                    Dataset
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={() => removeDataset(ds.id)}
+                    className="text-red-500 hover:text-red-700 font-black text-sm px-1"
+                    title="Remove dataset"
+                  >
+                    ×
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                  <div className="flex flex-col gap-1">
+                    <label className={LABEL_CLS}>Experiment Number</label>
+                    <input
+                      type="text"
+                      value={ds.experimentNumber || ''}
+                      onChange={(e) => patchDataset(ds.id, { experimentNumber: e.target.value })}
+                      className={INPUT_CLS}
+                      placeholder="e.g. 1"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <label className={LABEL_CLS}>Dataset Name</label>
+                    <input
+                      type="text"
+                      value={ds.name || ''}
+                      onChange={(e) => patchDataset(ds.id, { name: e.target.value })}
+                      className={INPUT_CLS}
+                      placeholder="e.g. Dataset 1"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <label className={LABEL_CLS}>Date</label>
+                    <input
+                      type="date"
+                      value={ds.date || ''}
+                      onChange={(e) => patchDataset(ds.id, { date: e.target.value })}
+                      className={INPUT_CLS}
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <label className={LABEL_CLS}>Operator</label>
+                    <input
+                      type="text"
+                      value={ds.operator || ''}
+                      onChange={(e) => patchDataset(ds.id, { operator: e.target.value })}
+                      className={INPUT_CLS}
+                      placeholder="Operator name"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className={LABEL_CLS}>Link / Path</label>
+                  <input
+                    type="text"
+                    value={ds.link || ''}
+                    onChange={(e) => patchDataset(ds.id, { link: e.target.value })}
+                    className={INPUT_CLS}
+                    placeholder="e.g. Drive link, folder path, or dataset URL"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className={LABEL_CLS}>Comments</label>
+                  <textarea
+                    value={ds.comments || ''}
+                    onChange={(e) => patchDataset(ds.id, { comments: e.target.value })}
+                    className={`${INPUT_CLS} h-16 custom-scrollbar`}
+                    placeholder="Optional dataset notes"
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <p className="text-[10px] text-slate-400">
+        Spectrometer configuration used to acquire the spectra for this condition — saved per condition, like the other experimental fields.
+      </p>
     </div>
   );
 };
