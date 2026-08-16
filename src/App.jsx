@@ -653,25 +653,31 @@ const PlasmidDefinitionSection = ({
           <label className={CALC_LABEL_CLS}>New Plasmid Name</label>
           <input type="text" value={selectedName ? '' : newName} disabled={!!selectedName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. pEGFP-C1" className={`${CALC_INPUT_CLS} disabled:bg-slate-50`} />
         </div>
-        <div className="lg:col-span-3">
+        <div className="lg:col-span-4">
           <label className={CALC_LABEL_CLS}>Backbone</label>
           <input type="text" value={backbone} onChange={(e) => setBackbone(e.target.value)} placeholder="e.g. pUC19" className={CALC_INPUT_CLS} />
         </div>
-        <div className="lg:col-span-3">
+        <div className="lg:col-span-4">
           <label className={CALC_LABEL_CLS}>Promoter</label>
           <input type="text" value={promoter} onChange={(e) => setPromoter(e.target.value)} placeholder="e.g. CMV, T7" className={CALC_INPUT_CLS} />
         </div>
-        <div className="lg:col-span-3">
+        <div className="lg:col-span-4">
           <label className={CALC_LABEL_CLS}>Resistance Marker</label>
           <input type="text" value={marker} onChange={(e) => setMarker(e.target.value)} placeholder="e.g. Ampicillin" className={CALC_INPUT_CLS} />
         </div>
-        <div className="lg:col-span-3">
+        <div className="lg:col-span-12">
           <label className={CALC_LABEL_CLS}>Molecular Weight (Da)</label>
           <input type="number" value={molecularWeight} onChange={(e) => setMolecularWeight(e.target.value)} placeholder="e.g. 3000000" className={CALC_INPUT_CLS} />
         </div>
         <div className="lg:col-span-12">
           <label className={CALC_LABEL_CLS}>Insert Sequence (DNA)</label>
-          <textarea value={insertSequence} onChange={(e) => setInsertSequence(e.target.value)} placeholder="ATGC..." className={`${CALC_INPUT_CLS} h-24 font-mono`} />
+          <div className="border border-slate-300 rounded-lg overflow-hidden bg-white font-mono">
+            <RichTextEditor
+              value={insertSequence}
+              onChange={(val) => setInsertSequence(val)}
+              placeholder="ATGC..."
+            />
+          </div>
         </div>
         <div className="lg:col-span-12">
           <label className={CALC_LABEL_CLS}>Additional Notes</label>
@@ -1266,12 +1272,16 @@ const modificationMass = (mods = []) => {
   return mods.reduce((sum, m) => sum + (Number(m.delta) || 0), 0);
 };
 
+const stripHtml = (str) => String(str || '').replace(/<[^>]*>?/gm, '').replace(/&nbsp;/g, ' ');
+
 const calculateSequenceInfo = ({ type = 'protein', sequence = '', modifications = '' }) => {
   const mods = parseModifications(modifications);
   const modMass = modificationMass(mods);
 
+  const plainSeq = stripHtml(sequence);
+
   if (type === 'protein') {
-    const clean = String(sequence || '')
+    const clean = plainSeq
       .toUpperCase()
       .replace(/\s/g, '');
 
@@ -1300,7 +1310,7 @@ const calculateSequenceInfo = ({ type = 'protein', sequence = '', modifications 
   }
 
   if (type === 'dna' || type === 'rna') {
-    let clean = String(sequence || '')
+    let clean = plainSeq
       .toUpperCase()
       .replace(/[^AGCTU]/g, '');
 
@@ -1336,7 +1346,7 @@ const calculateSequenceInfo = ({ type = 'protein', sequence = '', modifications 
   }
 
   if (type === 'polysaccharide') {
-    const raw = String(sequence || '').trim();
+    const raw = plainSeq.trim();
 
     if (!raw) {
       return {
@@ -1445,7 +1455,8 @@ const CODON_TABLES = {
 };
 
 const generateDnaFromProtein = (sequence, host = 'bacterial', { addStop = false } = {}) => {
-  const clean = String(sequence || '')
+  const plainSeq = stripHtml(sequence);
+  const clean = plainSeq
     .toUpperCase()
     .replace(/[^A-Z*]/g, '');
 
@@ -2219,7 +2230,6 @@ const Calculations = ({
 };
 
 
-
 /* =========================================================
    COMPOUND DEFINITION SECTION
 ========================================================= */
@@ -2292,7 +2302,7 @@ const CompoundDefinitionSection = ({
 
   const computed = useMemo(() => {
     if (type === 'smiles' || type === 'formula') return null;
-    if (!sequence.trim()) return null;
+    if (!stripHtml(sequence).trim()) return null;
 
     return calculateSequenceInfo({
       type,
@@ -2302,7 +2312,7 @@ const CompoundDefinitionSection = ({
   }, [type, sequence, modText]);
 
   const dnaPreview = useMemo(() => {
-    if (type !== 'protein' || !sequence.trim()) return '';
+    if (type !== 'protein' || !stripHtml(sequence).trim()) return '';
     return generateDnaFromProtein(sequence, host);
   }, [type, sequence, host]);
 
@@ -2313,8 +2323,8 @@ const CompoundDefinitionSection = ({
       return manual;
     }
 
-    if (type === 'formula' && sequence.trim()) {
-      const calc = getMolecularWeightFromFormula(sequence.trim());
+    if (type === 'formula' && stripHtml(sequence).trim()) {
+      const calc = getMolecularWeightFromFormula(stripHtml(sequence).trim());
       if (calc) return Number(calc);
     }
 
@@ -2407,6 +2417,68 @@ const CompoundDefinitionSection = ({
       chooseCompound('');
       if (onSelect) onSelect('');
     }
+  };
+
+  // ---- CSV BULK IMPORT HANDLER ----
+  const handleCsvImport = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target.result;
+      const lines = text.split(/\r?\n/);
+      
+      let addedCount = 0;
+      
+      setCompoundMeta((prevMeta) => {
+        const nextMeta = { ...prevMeta };
+        const newNames = [];
+        
+        lines.forEach((line, i) => {
+          if (i === 0 && line.toLowerCase().includes('name')) return; // Skip header
+          if (!line.trim()) return;
+          
+          // Split by comma, tab, or semicolon
+          const cols = line.split(/[,;\t]/).map(s => s.trim());
+          const name = cols[0];
+          const seq = cols[1] || '';
+          const importedType = cols[2] ? cols[2].toLowerCase() : 'protein';
+          
+          if (name) {
+            nextMeta[name] = {
+              ...(nextMeta[name] || {}),
+              name,
+              type: importedType,
+              sequence: importedType !== 'smiles' && importedType !== 'formula' ? seq : '',
+              smiles: importedType === 'smiles' ? seq : '',
+              formula: importedType === 'formula' ? seq : '',
+              notes: 'Imported from CSV',
+              updatedAt: Date.now()
+            };
+            newNames.push(name);
+            addedCount++;
+          }
+        });
+        
+        // Update the global custom compounds list
+        setCustomCmpds((prevCustom) => {
+          const nextCustom = [...prevCustom];
+          newNames.forEach(n => {
+            if (!nextCustom.includes(n) && !nextCustom.some(c => typeof c === 'object' && c.name === n)) {
+              nextCustom.push(n);
+            }
+          });
+          return nextCustom;
+        });
+        
+        return nextMeta;
+      });
+
+      setTimeout(() => alert(`Successfully imported ${addedCount} compounds!`), 100);
+    };
+    reader.readAsText(file);
+    e.target.value = ''; // Reset input
   };
 
   const quickMods = [
@@ -2538,20 +2610,21 @@ const CompoundDefinitionSection = ({
               {type === 'polysaccharide' ? ' or tokens' : ''}
             </label>
 
-            <textarea
-              value={sequence}
-              onChange={(e) => setSequence(e.target.value)}
-              placeholder={
-                type === 'protein'
-                  ? 'e.g. MTEYKLVVVGAGGVGKSALTIQLIQNHFVDEYDPTIEDSYRKQVVIDGETCLLDILDTAGQEEYSAMRDQYMRTGEGFLCVFAINNTKSFEDIHQYREQIKRVKDSDDVPMVLVGNKCDLPSRTVDTKQAQDLARSYGIPFIETSAKTRQGVEDAFYTLVREIRQHKLRKLNPPDESGPGCMSCKCVLS'
-                  : type === 'dna'
-                  ? 'e.g. ATGGCTGAC...'
-                  : type === 'rna'
-                  ? 'e.g. AUGGCUGAC...'
-                  : 'e.g. G-M-N-F-S or GMNFS'
-              }
-              className={`${CALC_INPUT_CLS} h-32 font-mono`}
-            />
+            <div className="border border-slate-300 rounded-lg overflow-hidden bg-white font-mono">
+              <RichTextEditor
+                value={sequence}
+                onChange={(val) => setSequence(val)}
+                placeholder={
+                  type === 'protein'
+                    ? 'e.g. MTEYKLVVVGAGGVGKSALTIQLIQNHFVDEYDPTIEDSYRKQVVIDGETCLLDILDTAGQEEYSAMRDQYMRTGEGFLCVFAINNTKSFEDIHQYREQIKRVKDSDDVPMVLVGNKCDLPSRTVDTKQAQDLARSYGIPFIETSAKTRQGVEDAFYTLVREIRQHKLRKLNPPDESGPGCMSCKCVLS'
+                    : type === 'dna'
+                    ? 'e.g. ATGGCTGAC...'
+                    : type === 'rna'
+                    ? 'e.g. AUGGCUGAC...'
+                    : 'e.g. G-M-N-F-S or GMNFS'
+                }
+              />
+            </div>
           </div>
 
           <div className="lg:col-span-5">
@@ -2561,7 +2634,7 @@ const CompoundDefinitionSection = ({
               value={modText}
               onChange={(e) => setModText(e.target.value)}
               placeholder="e.g. Phosphorylation, Acetylation, Amidation:2"
-              className={`${CALC_INPUT_CLS} h-32`}
+              className={`${CALC_INPUT_CLS} h-[138px]`}
             />
 
             <div className="flex flex-wrap gap-2 mt-2">
@@ -2622,6 +2695,12 @@ const CompoundDefinitionSection = ({
         </div>
 
         <div className="md:col-span-4 flex items-end justify-end gap-2">
+          {/* BULK IMPORT BUTTON */}
+          <label className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-2 px-4 rounded-lg text-sm shadow-sm transition-colors cursor-pointer text-center">
+            Import CSV
+            <input type="file" accept=".csv,.txt" onChange={handleCsvImport} className="hidden" />
+          </label>
+
           {selectedName && (
             <button
               type="button"
