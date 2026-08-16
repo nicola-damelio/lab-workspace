@@ -70,6 +70,36 @@ const normalizeOperators = (ops) => {
 const getOpLabel = (op) => (typeof op === 'string' ? op : op?.name || '');
 
 /* =========================================================
+   COLLAPSIBLE SECTION
+========================================================= */
+
+const CollapsibleSection = ({ id, title, subtitle, defaultOpen = false, children }) => {
+  const [open, setOpen] = useState(defaultOpen);
+
+  useEffect(() => {
+    setOpen(defaultOpen);
+  }, [defaultOpen]);
+
+  return (
+    <div id={id} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-visible scroll-mt-6">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between gap-3 p-4 text-left"
+      >
+        <div>
+          <h3 className="text-sm font-bold text-slate-700 uppercase">{title}</h3>
+          {subtitle && <p className="text-xs text-slate-500 mt-1">{subtitle}</p>}
+        </div>
+        <span className="text-slate-400 text-lg">{open ? '▲' : '▼'}</span>
+      </button>
+
+      {open && <div className="px-4 pb-4 overflow-visible">{children}</div>}
+    </div>
+  );
+};
+
+/* =========================================================
    MD SIMULATIONS CONFIG & RENDERER
 ========================================================= */
 const MD_SIMULATION_TAB_CONFIG = {
@@ -3148,32 +3178,6 @@ const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => 
   );
 };
 
-<CollapsibleSection title="Custom Metadata Fields" subtitle="Add custom fields for plate, NMR, CD, Cloning, or all tabs — and target the exact subsection of each page they appear in." defaultOpen={false}>
-                    <CustomMetadataFieldsManager customFields={customFields} setCustomFields={handleSetCustomFields} />
-
-                    <div className="mt-6 pt-6 border-t border-slate-200">
-                      <MandatoryParametersManager
-                        mandatoryRules={mandatoryRules}
-                        setMandatoryRules={setMandatoryRules}
-                        mandatoryBehavior={mandatoryBehavior}
-                        setMandatoryBehavior={setMandatoryBehavior}
-                      />
-                    </div>
-                  </CollapsibleSection>
-
-                  {/* ADD THIS NEW BLOCK RIGHT HERE */}
-                  <CollapsibleSection title="Database Cleanup & Merging" subtitle="Fix misclassifications and merge duplicate items globally across all tests and multiwell plates." defaultOpen={false}>
-                     <DatabaseCleanupManager 
-                        tests={tests}
-                        setTests={setTests}
-                        allCmpds={allCmpds}
-                        allCellLines={allCellLines}
-                        setCustomCmpds={setCustomCmpds}
-                        setCompoundMeta={setCompoundMeta}
-                        setCustomCellLines={setCustomCellLines}
-                        setCellLineMeta={setCellLineMeta}
-                     />
-                  </CollapsibleSection>
 /* =========================================================
    MANDATORY PARAMETERS MANAGER
    Rules are scoped to a special page (or "all") + an optional named
@@ -3908,35 +3912,7 @@ const ScientistLoginModal = ({ operators, onLogin, onClose, title, subtitle }) =
 
 
 
-/* =========================================================
-   COLLAPSIBLE SECTION
-========================================================= */
 
-const CollapsibleSection = ({ id, title, subtitle, defaultOpen = false, children }) => {
-  const [open, setOpen] = useState(defaultOpen);
-
-  useEffect(() => {
-    setOpen(defaultOpen);
-  }, [defaultOpen]);
-
-  return (
-    <div id={id} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-visible scroll-mt-6">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center justify-between gap-3 p-4 text-left"
-      >
-        <div>
-          <h3 className="text-sm font-bold text-slate-700 uppercase">{title}</h3>
-          {subtitle && <p className="text-xs text-slate-500 mt-1">{subtitle}</p>}
-        </div>
-        <span className="text-slate-400 text-lg">{open ? '▲' : '▼'}</span>
-      </button>
-
-      {open && <div className="px-4 pb-4 overflow-visible">{children}</div>}
-    </div>
-  );
-};
 
 /* =========================================================
    MIGRATION UTILITIES
@@ -7430,7 +7406,7 @@ const openDataset = (dset) => {
                   </CollapsibleSection>
 
 
-                  <CollapsibleSection title="Custom Metadata Fields" subtitle="Add custom fields for plate, NMR, CD, Cloning, or all tabs — and target the exact subsection of each page they appear in." defaultOpen={false}>
+  <CollapsibleSection title="Custom Metadata Fields" subtitle="Add custom fields for plate, NMR, CD, Cloning, or all tabs — and target the exact subsection of each page they appear in." defaultOpen={false}>
                     <CustomMetadataFieldsManager customFields={customFields} setCustomFields={handleSetCustomFields} />
 
                     <div className="mt-6 pt-6 border-t border-slate-200">
@@ -7441,6 +7417,19 @@ const openDataset = (dset) => {
                         setMandatoryBehavior={setMandatoryBehavior}
                       />
                     </div>
+                  </CollapsibleSection>
+
+                  <CollapsibleSection title="Database Cleanup & Merging" subtitle="Fix misclassifications and merge duplicate items globally across all tests and multiwell plates." defaultOpen={false}>
+                     <DatabaseCleanupManager 
+                        tests={tests}
+                        setTests={setTests}
+                        allCmpds={allCmpds}
+                        allCellLines={allCellLines}
+                        setCustomCmpds={setCustomCmpds}
+                        setCompoundMeta={setCompoundMeta}
+                        setCustomCellLines={setCustomCellLines}
+                        setCellLineMeta={setCellLineMeta}
+                     />
                   </CollapsibleSection>
 
                 </div>
