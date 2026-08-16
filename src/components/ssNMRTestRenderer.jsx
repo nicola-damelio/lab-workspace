@@ -45,6 +45,8 @@ export const ssNMRTestRenderer = (props) => {
         }
       }}
       testCategories={appCategories}
+      datasetProtocols={props.datasetProtocols || []}
+      jumpToProtocol={props.jumpToProtocol || null}
     />
   );
 };
