@@ -94,6 +94,19 @@ export const SolventsManager = ({ solvents = [], setSolvents, selectedId, onSele
     if (onSelect) onSelect(name);
   };
 
+  const handleDelete = () => {
+    if (!selectedName) return;
+    if (window.confirm(`Are you sure you want to delete ${selectedName}?`)) {
+      setSolvents(normalized.filter(s => s.name !== selectedName));
+      setSelectedName('');
+      setNewName('');
+      setDensity('');
+      setComments('');
+      setLinks([]);
+      if (onSelect) onSelect('');
+    }
+  };
+
   return (
     <div className="flex flex-col gap-4">
       <p className="text-xs text-slate-500">Define solvents, density, and resources.</p>
@@ -114,7 +127,10 @@ export const SolventsManager = ({ solvents = [], setSolvents, selectedId, onSele
         <div className="md:col-span-12">
           <LinksManager links={links} setLinks={setLinks} />
         </div>
-        <div className="md:col-span-12 flex justify-end mt-2">
+        <div className="md:col-span-12 flex justify-end gap-2 mt-2">
+          {selectedName && (
+            <button type="button" onClick={handleDelete} className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold px-4 py-2 rounded-lg text-sm transition-colors shadow-sm">Delete</button>
+          )}
           <button type="button" onClick={handleSave} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm transition-colors shadow-sm">Save Solvent</button>
         </div>
       </div>
@@ -160,6 +176,19 @@ export const BuffersManager = ({ buffers = [], setBuffers, selectedId, onSelect 
     if (onSelect) onSelect(name);
   };
 
+  const handleDelete = () => {
+    if (!selectedName) return;
+    if (window.confirm(`Are you sure you want to delete ${selectedName}?`)) {
+      setBuffers(buffers.filter(b => b.name !== selectedName));
+      setSelectedName('');
+      setNewName('');
+      setDesc('');
+      setComments('');
+      setLinks([]);
+      if (onSelect) onSelect('');
+    }
+  };
+
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
@@ -179,7 +208,10 @@ export const BuffersManager = ({ buffers = [], setBuffers, selectedId, onSelect 
         <div className="md:col-span-12">
           <LinksManager links={links} setLinks={setLinks} />
         </div>
-        <div className="md:col-span-12 flex justify-end mt-2">
+        <div className="md:col-span-12 flex justify-end gap-2 mt-2">
+          {selectedName && (
+            <button type="button" onClick={handleDelete} className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold px-4 py-2 rounded-lg text-sm transition-colors shadow-sm">Delete</button>
+          )}
           <button type="button" onClick={handleSave} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm transition-colors shadow-sm">Save Buffer</button>
         </div>
       </div>
@@ -225,6 +257,19 @@ export const AdditivesManager = ({ additives = [], setAdditives, selectedId, onS
     if (onSelect) onSelect(name);
   };
 
+  const handleDelete = () => {
+    if (!selectedName) return;
+    if (window.confirm(`Are you sure you want to delete ${selectedName}?`)) {
+      setAdditives(additives.filter(a => a.name !== selectedName));
+      setSelectedName('');
+      setNewName('');
+      setDesc('');
+      setComments('');
+      setLinks([]);
+      if (onSelect) onSelect('');
+    }
+  };
+
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
@@ -244,7 +289,10 @@ export const AdditivesManager = ({ additives = [], setAdditives, selectedId, onS
         <div className="md:col-span-12">
           <LinksManager links={links} setLinks={setLinks} />
         </div>
-        <div className="md:col-span-12 flex justify-end mt-2">
+        <div className="md:col-span-12 flex justify-end gap-2 mt-2">
+          {selectedName && (
+            <button type="button" onClick={handleDelete} className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold px-4 py-2 rounded-lg text-sm transition-colors shadow-sm">Delete</button>
+          )}
           <button type="button" onClick={handleSave} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm transition-colors shadow-sm">Save Additive</button>
         </div>
       </div>
@@ -300,6 +348,24 @@ export const NMRProbesManager = ({ nmrProbes = [], setNmrProbes, selectedId, onS
     if (onSelect) onSelect(name);
   };
 
+  const handleDelete = () => {
+    if (!selectedName) return;
+    if (window.confirm(`Are you sure you want to delete ${selectedName}?`)) {
+      setNmrProbes(nmrProbes.filter(p => p.name !== selectedName));
+      setSelectedName('');
+      setNewName('');
+      setField('');
+      setType('inverse');
+      setSubtype('TCI');
+      setDiameter('5');
+      setCryo(false);
+      setState('liquid');
+      setComments('');
+      setLinks([]);
+      if (onSelect) onSelect('');
+    }
+  };
+
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
@@ -337,7 +403,10 @@ export const NMRProbesManager = ({ nmrProbes = [], setNmrProbes, selectedId, onS
         <div className="md:col-span-12">
           <LinksManager links={links} setLinks={setLinks} />
         </div>
-        <div className="md:col-span-12 flex justify-end mt-2">
+        <div className="md:col-span-12 flex justify-end gap-2 mt-2">
+          {selectedName && (
+            <button type="button" onClick={handleDelete} className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold px-4 py-2 rounded-lg text-sm transition-colors shadow-sm">Delete</button>
+          )}
           <button type="button" onClick={handleSave} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm transition-colors shadow-sm">Save Probe</button>
         </div>
       </div>
@@ -387,6 +456,21 @@ export const NMRInstrumentsManager = ({ nmrInstruments = [], setNmrInstruments, 
     if (onSelect) onSelect(name);
   };
 
+  const handleDelete = () => {
+    if (!selectedName) return;
+    if (window.confirm(`Are you sure you want to delete ${selectedName}?`)) {
+      setNmrInstruments(nmrInstruments.filter(i => i.name !== selectedName));
+      setSelectedName('');
+      setNewName('');
+      setFrequency('');
+      setManufacturer('');
+      setAvailableProbes([]);
+      setComments('');
+      setLinks([]);
+      if (onSelect) onSelect('');
+    }
+  };
+
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
@@ -423,7 +507,10 @@ export const NMRInstrumentsManager = ({ nmrInstruments = [], setNmrInstruments, 
         <div className="md:col-span-12">
           <LinksManager links={links} setLinks={setLinks} />
         </div>
-        <div className="md:col-span-12 flex justify-end mt-2">
+        <div className="md:col-span-12 flex justify-end gap-2 mt-2">
+          {selectedName && (
+            <button type="button" onClick={handleDelete} className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold px-4 py-2 rounded-lg text-sm transition-colors shadow-sm">Delete</button>
+          )}
           <button type="button" onClick={handleSave} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm transition-colors shadow-sm">Save Instrument</button>
         </div>
       </div>
@@ -487,6 +574,24 @@ export const NMRExperimentsManager = ({ nmrExperiments = [], setNmrExperiments, 
     if (onSelect) onSelect(name);
   };
 
+  const handleDelete = () => {
+    if (!selectedName) return;
+    if (window.confirm(`Are you sure you want to delete ${selectedName}?`)) {
+      setNmrExperiments(nmrExperiments.filter(e => e.name !== selectedName));
+      setSelectedName('');
+      setNewName('');
+      setDimensions('2D');
+      setExpType('Other');
+      setNuclei(['1H', '13C', '']);
+      setParam1Name('');
+      setParam2Name('');
+      setParam3Name('');
+      setComments('');
+      setLinks([]);
+      if (onSelect) onSelect('');
+    }
+  };
+
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
@@ -523,7 +628,10 @@ export const NMRExperimentsManager = ({ nmrExperiments = [], setNmrExperiments, 
         <div className="md:col-span-12">
           <LinksManager links={links} setLinks={setLinks} />
         </div>
-        <div className="md:col-span-12 flex justify-end mt-2">
+        <div className="md:col-span-12 flex justify-end gap-2 mt-2">
+          {selectedName && (
+            <button type="button" onClick={handleDelete} className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold px-4 py-2 rounded-lg text-sm transition-colors shadow-sm">Delete</button>
+          )}
           <button type="button" onClick={handleSave} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm transition-colors shadow-sm">Save Experiment</button>
         </div>
       </div>
