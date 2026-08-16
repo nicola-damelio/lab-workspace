@@ -1,7 +1,8 @@
-﻿import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
-  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell
+  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, ReferenceArea
 } from 'recharts';
+import { ChartControlBar, SharedChartStylePanel, useXZoom } from './SharedAnalysisTools';
 import { parseSimulationParameters } from './MDData';
 import {
   CONTACT_DEFAULTS, parseTopology, computeContactRDF, demoFrames,
@@ -39,6 +40,28 @@ import {
 
 // Cache to retain local File objects when switching tabs within the same session
 const localFileCache = new Map();
+
+// ---- Global RDKit readiness singleton (shared across all OrganicViewer instances) ----
+const _rdkitMDListeners = new Set();
+let _rdkitMDStatus = window.__RDKit ? 'ready' : 'loading';
+if (_rdkitMDStatus === 'loading') {
+  let _att = 0;
+  const _iv = setInterval(() => {
+    _att++;
+    if (window.__RDKit) { _rdkitMDStatus = 'ready'; clearInterval(_iv); _rdkitMDListeners.forEach(f => f('ready')); _rdkitMDListeners.clear(); }
+    else if (_att > 33) { _rdkitMDStatus = 'failed'; clearInterval(_iv); _rdkitMDListeners.forEach(f => f('failed')); _rdkitMDListeners.clear(); }
+  }, 300);
+}
+const useMDRdkitReady = () => {
+  const [status, setStatus] = useState(_rdkitMDStatus);
+  useEffect(() => {
+    if (_rdkitMDStatus !== 'loading') { setStatus(_rdkitMDStatus); return; }
+    const fn = (s) => setStatus(s);
+    _rdkitMDListeners.add(fn);
+    return () => _rdkitMDListeners.delete(fn);
+  }, []);
+  return { rdkitReady: status === 'ready', rdkitFailed: status === 'failed' };
+};
 
 /* ============================================================================
    MDSections — MD page content sections.
@@ -189,11 +212,24 @@ const useMDDerived = (activeTest, ctx = {}) => {
   // ---- atom options for selectors / plots ----
   const atomOptions = useMemo(() => {
     const opts = [];
-    estSeq.forEach((res, idx) => {
-      (res.ffAtoms || []).forEach((a) => opts.push({ key: `${idx}-${a.atom}`, label: `${res.id} ${a.atom}` }));
-    });
+    // For organic molecules, derive atom names from SMILES via RDKit
+    if (moleculeType === 'organic' && activeTest.smiles && window.__RDKit) {
+      try {
+        const mol = getMolWithExplicitHs(activeTest.smiles);
+        if (mol) {
+          const molblock = mol.get_molblock();
+          const { atomNameList } = deriveOrganicAtomNaming(molblock);
+          mol.delete();
+          atomNameList.forEach(name => opts.push({ key: `0-${name}`, label: `ORG1 ${name}` }));
+        }
+      } catch (e) { /* RDKit not ready or parse error — opts stays empty */ }
+    } else {
+      estSeq.forEach((res, idx) => {
+        (res.ffAtoms || []).forEach((a) => opts.push({ key: `${idx}-${a.atom}`, label: `${res.id} ${a.atom}` }));
+      });
+    }
     return opts;
-  }, [estSeq]);
+  }, [estSeq, moleculeType, activeTest.smiles]);
 
   // ---- instances / layers (MD model) ----
   const instances = getMDInstances(activeTest);
@@ -280,9 +316,10 @@ const OrganicViewer = ({ smiles, selectedKeys, onAtomClick }) => {
     const [isZoomed, setIsZoomed] = useState(false);
     const svgRef = useRef(null);
     const zoomedSvgRef = useRef(null);
-    
+    const { rdkitReady, rdkitFailed } = useMDRdkitReady(); // global singleton — no per-instance interval
+
     useEffect(() => {
-        if (smiles && window.__RDKit) {
+        if (smiles && rdkitReady) {
             try {
                 const mol = getMolWithExplicitHs(smiles);
                 if (!mol) throw new Error('RDKit could not parse this SMILES');
@@ -317,7 +354,7 @@ const OrganicViewer = ({ smiles, selectedKeys, onAtomClick }) => {
                 mol.delete();
             } catch(e) { setSvg(''); }
         } else { setSvg(''); }
-    }, [smiles, selectedKeys]);
+    }, [smiles, selectedKeys, rdkitReady]);
 
     const attachListeners = (containerEl) => {
         if (!containerEl || !onAtomClick || !window.__RDKit) return;
@@ -355,8 +392,16 @@ const OrganicViewer = ({ smiles, selectedKeys, onAtomClick }) => {
             <div ref={svgRef} className="flex flex-col items-center justify-center bg-white p-4 rounded-xl shadow-sm border border-slate-200 group relative h-[350px]">
                 {svg ? (
                     <div dangerouslySetInnerHTML={{__html: svg}} className="w-full h-full flex items-center justify-center [&>svg]:w-full [&>svg]:h-full" />
+                ) : smiles && !rdkitReady && !rdkitFailed ? (
+                    <div className="flex flex-col items-center gap-3 text-slate-400">
+                      <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-500 rounded-full animate-spin" />
+                      <span className="text-xs font-semibold">Loading 2D renderer…</span>
+                    </div>
                 ) : (
-                    <img src={fallbackUrl} alt="2D Structure" className="max-w-full h-full object-contain" />
+                    <div className="relative w-full h-full flex items-center justify-center">
+                      <img src={fallbackUrl} alt="2D Structure" className="max-w-full h-full object-contain" />
+                      {rdkitFailed && <span className="absolute bottom-1 right-1 text-[9px] text-slate-400 bg-white/80 px-1 rounded">Labels unavailable (RDKit failed)</span>}
+                    </div>
                 )}
                 <div onClick={() => setIsZoomed(true)} className="cursor-pointer absolute inset-0 bg-black/5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded-xl">
                     <span className="bg-white/90 text-slate-800 px-3 py-1.5 rounded-lg font-bold text-sm shadow-sm pointer-events-none">🔍 Click to zoom structure</span>
@@ -1152,20 +1197,31 @@ export const MDDataSection = ({ ctx }) => {
 };
 
 // ================= 3) ANALYSIS (RMSD / RMSF / Rg / SASA / Energy) =================
+const MD_CHART_M_ZOOM = { top: 10, right: 15, bottom: 45, left: 55 };
+
 const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color, cfg, yLabel, xLabel, chartType = 'line' }) => {
   const fSize = cfg.fontSize || 12;
   const aspect = cfg.aspect || 1.8;
   const lineColor = color || '#3b82f6';
+  const chartRef = useRef(null);
+
+  // derive x data domain for zoom
+  const xs = data.map(d => typeof d[xKey] === 'number' ? d[xKey] : 0);
+  const dataDomain = xs.length > 1 ? [Math.min(...xs), Math.max(...xs)] : [0, 1];
+  const zoom = useXZoom(chartRef, dataDomain, MD_CHART_M_ZOOM);
 
   return (
     <div className="bg-white rounded-lg border border-slate-200 p-2 flex flex-col relative">
       <div className="flex justify-between items-center mb-1">
         <h5 className="text-[12px] font-bold text-slate-700">{title}</h5>
+        {zoom.isZoomed && (
+          <button type="button" onClick={zoom.reset} className="text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>
+        )}
       </div>
-      <div className="flex-1 w-full" style={{ aspectRatio: String(aspect), minHeight: 200 }}>
+      <div ref={chartRef} onMouseDown={chartType !== 'bar' ? zoom.onMouseDown : undefined} className="flex-1 w-full select-none" style={{ aspectRatio: String(aspect), minHeight: 200 }}>
         <ResponsiveContainer width="100%" height="100%">
           {chartType === 'bar' ? (
-            <BarChart data={data} margin={MD_CHART_MARGIN}>
+            <BarChart data={data} margin={MD_CHART_M_ZOOM}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey={xKey} tick={{ fontSize: fSize }} label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fSize + 1 }} />
               <YAxis tick={{ fontSize: fSize }} label={{ value: yLabel, angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fSize + 1 }} />
@@ -1175,14 +1231,15 @@ const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color,
               </Bar>
             </BarChart>
           ) : (
-            <LineChart data={data} margin={MD_CHART_MARGIN}>
+            <LineChart data={data} margin={MD_CHART_M_ZOOM}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey={xKey} type="number" domain={[mdDom(cfg.xMin) ?? 'auto', mdDom(cfg.xMax) ?? 'auto']} tick={{ fontSize: fSize }}
+              <XAxis dataKey={xKey} type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow tick={{ fontSize: fSize }}
                 label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fSize + 1 }} />
               <YAxis type="number" domain={[mdDom(cfg.yMin) ?? 'auto', mdDom(cfg.yMax) ?? 'auto']} tick={{ fontSize: fSize }}
                 label={{ value: yLabel, angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fSize + 1 }} />
               <Tooltip />
               <Line type="monotone" dataKey={dataKey} stroke={lineColor} strokeWidth={cfg.lineThickness || 2} strokeDasharray={mdLineDash(cfg.lineStyle)} dot={false} isAnimationActive={false} />
+              {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
             </LineChart>
           )}
         </ResponsiveContainer>
@@ -1190,7 +1247,6 @@ const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color,
     </div>
   );
 };
-
 
 
 
@@ -1236,8 +1292,8 @@ const MDPerAtomChartPanel = ({ d, chart, updateChart, removeChart, activeTest })
       <div className="flex items-center justify-between flex-wrap gap-2">
         <input type="text" value={chart.title || ''} onChange={e => setC({ title: e.target.value })}
           placeholder="Chart title…" className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm font-bold text-slate-700 outline-none focus:border-blue-500 bg-transparent flex-1 min-w-[140px]" />
-        <div className="flex gap-2">
-          <button onClick={() => setShowCfg(!showCfg)} className="text-xs bg-slate-100 border border-slate-300 px-2 py-1 rounded font-bold text-slate-600 hover:bg-slate-200">⚙️</button>
+        <div className="flex gap-2 items-center">
+          <ChartControlBar showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)} className="flex gap-2" />
           <button onClick={() => removeChart(chart.id)} className="text-xs bg-red-50 border border-red-200 px-2 py-1 rounded font-bold text-red-600 hover:bg-red-100">🗑</button>
         </div>
       </div>
@@ -1250,12 +1306,7 @@ const MDPerAtomChartPanel = ({ d, chart, updateChart, removeChart, activeTest })
           </button>
         ))}
       </div>
-      {showCfg && (
-        <div className="flex gap-4 flex-wrap">
-          <label className="text-[10px] font-bold text-slate-500 flex flex-col gap-1">Aspect<input type="number" step="0.1" value={cfg.aspect} onChange={e=>setCfg({aspect:+e.target.value||2.5})} className="border border-slate-300 rounded px-2 py-1 text-xs w-20" /></label>
-          <label className="text-[10px] font-bold text-slate-500 flex flex-col gap-1">Font<input type="number" value={cfg.fontSize} onChange={e=>setCfg({fontSize:+e.target.value||11})} className="border border-slate-300 rounded px-2 py-1 text-xs w-16" /></label>
-        </div>
-      )}
+      {showCfg && <SharedChartStylePanel cfg={cfg} setCfg={setCfg} series={[]} showHeightSlider={false} />}
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-2">
           <span className="text-[10px] font-bold text-slate-500 uppercase">Atoms ({atoms.length} selected):</span>
@@ -1516,15 +1567,7 @@ export const MDAnalysisSection = ({ ctx }) => {
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setShowCfg(!showCfg)}
-            className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${
-              showCfg ? 'bg-slate-200 border-slate-400 text-slate-900' : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'
-            }`}
-          >
-            ⚙️ Chart Parameters
-          </button>
+          <ChartControlBar showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)} className="flex gap-2" />
           
           <label className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 rounded-lg text-xs cursor-pointer shadow-sm transition-colors flex items-center gap-2">
             📂 Upload Real Analysis (JSON)
@@ -1567,30 +1610,7 @@ export const MDAnalysisSection = ({ ctx }) => {
          </span>
       )}
 
-      {showCfg && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
-          <label className="text-[10px] font-bold text-slate-500 uppercase flex flex-col gap-1">
-            Font size (px)
-            <input type="number" value={cfg.fontSize} onChange={(e) => setCfg({ fontSize: Number(e.target.value) || 12 })} className="border border-slate-300 rounded-md p-1.5 text-xs outline-none" />
-          </label>
-          <label className="text-[10px] font-bold text-slate-500 uppercase flex flex-col gap-1">
-            Aspect ratio (W÷H)
-            <input type="number" step="0.1" value={cfg.aspect} onChange={(e) => setCfg({ aspect: Number(e.target.value) || 1.8 })} className="border border-slate-300 rounded-md p-1.5 text-xs outline-none" />
-          </label>
-          <label className="text-[10px] font-bold text-slate-500 uppercase flex flex-col gap-1">
-            Line style
-            <select value={cfg.lineStyle} onChange={(e) => setCfg({ lineStyle: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs bg-white outline-none">
-              <option value="solid">Solid</option>
-              <option value="dashed">Dashed</option>
-              <option value="dotted">Dotted</option>
-            </select>
-          </label>
-          <label className="text-[10px] font-bold text-slate-500 uppercase flex flex-col gap-1">
-            Line thickness
-            <input type="number" step="0.5" value={cfg.lineThickness} onChange={(e) => setCfg({ lineThickness: Number(e.target.value) || 2 })} className="border border-slate-300 rounded-md p-1.5 text-xs outline-none" />
-          </label>
-        </div>
-      )}
+      {showCfg && <SharedChartStylePanel cfg={cfg} setCfg={setCfg} series={[]} />}
 
       {d.parsedSeq.length === 0 ? (
         <div className="text-center py-8 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed">Enter a sequence in Experiment Setup to enable trajectory charts.</div>

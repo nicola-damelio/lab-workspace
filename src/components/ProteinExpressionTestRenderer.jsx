@@ -1,8 +1,9 @@
-import React, { useRef, useMemo } from 'react';
+import React, { useRef, useMemo, useState } from 'react';
 import {
 LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-ResponsiveContainer
+ResponsiveContainer, ReferenceArea
 } from 'recharts';
+import { useXZoom } from './SharedAnalysisTools';
 import TestShellRenderer, {
 CollapsibleSection,
 SmartImage
@@ -73,6 +74,36 @@ className="w-full border border-slate-200 rounded-lg p-2.5 text-xs outline-none 
 />
 </div>
 );
+
+const CHROMA_MARGIN = { top: 10, right: 10, bottom: 35, left: 50 };
+const ChromaZoomChart = ({ data, stroke }) => {
+  const chartRef = useRef(null);
+  const xs = data.map(p => p.volume);
+  const dataDomain = xs.length > 1 ? [Math.min(...xs), Math.max(...xs)] : [0, 1];
+  const zoom = useXZoom(chartRef, dataDomain, CHROMA_MARGIN);
+  return (
+    <div className="flex flex-col gap-1">
+      <div ref={chartRef} onMouseDown={zoom.onMouseDown} className="select-none" style={{ height: 230 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={data} margin={CHROMA_MARGIN}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+            <XAxis dataKey="volume" type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow
+              tick={{ fontSize: 11, fill: '#64748b' }}
+              label={{ value: 'Elution Volume (mL)', position: 'insideBottom', offset: -15, fontSize: 11, fill: '#64748b' }} />
+            <YAxis tick={{ fontSize: 11, fill: '#64748b' }}
+              label={{ value: 'Absorbance', angle: -90, position: 'insideLeft', fontSize: 11, fill: '#64748b' }} />
+            <Tooltip formatter={(v) => Number(v).toFixed(2)} labelFormatter={(l) => `${l} mL`} />
+            <Line type="monotone" dataKey="absorbance" stroke={stroke} strokeWidth={2} dot={false} isAnimationActive={false} />
+            {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+      {zoom.isZoomed && (
+        <button type="button" onClick={zoom.reset} className="self-end text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>
+      )}
+    </div>
+  );
+};
 
 /* ============================================================================
 CHROMATOGRAM CARD (one card = one run, method is mandatory)
@@ -165,34 +196,7 @@ return (
     <div className="lg:col-span-2 bg-slate-50 p-4 rounded-xl border border-slate-200 min-h-[280px]">
       <h4 className="text-xs font-bold text-slate-700 uppercase mb-3">Elution Profile</h4>
       {chartData.length > 0 ? (
-        <ResponsiveContainer width="100%" height={230}>
-          <LineChart data={chartData} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-            <XAxis
-              dataKey="volume"
-              type="number"
-              domain={['auto', 'auto']}
-              tick={{ fontSize: 11, fill: '#64748b' }}
-              label={{ value: 'Elution Volume (mL)', position: 'insideBottom', offset: -12, fontSize: 11, fill: '#64748b' }}
-            />
-            <YAxis
-              tick={{ fontSize: 11, fill: '#64748b' }}
-              label={{ value: 'Absorbance', angle: -90, position: 'insideLeft', fontSize: 11, fill: '#64748b' }}
-            />
-            <Tooltip
-              formatter={(value) => Number(value).toFixed(2)}
-              labelFormatter={(label) => `${label} mL`}
-            />
-            <Line
-              type="monotone"
-              dataKey="absorbance"
-              stroke={stroke}
-              strokeWidth={2}
-              dot={false}
-              isAnimationActive={false}
-            />
-          </LineChart>
-        </ResponsiveContainer>
+        <ChromaZoomChart data={chartData} stroke={stroke} />
       ) : (
         <div className="flex h-full items-center justify-center text-slate-400 italic text-sm">
           Paste data to view the chromatogram.

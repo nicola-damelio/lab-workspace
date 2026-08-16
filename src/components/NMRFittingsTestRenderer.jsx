@@ -5,7 +5,7 @@ import TestShellRenderer, { CollapsibleSection } from './TestShellRenderer';
 import { NMR_FITTING_TAB_CONFIG } from './tabConfigs';
 import { PALETTE, toHex, errBarPlugin } from '../data/constants';
 import { NMRInstrumentalSetup } from './NMRInstrumentalSetup';
-import { SharedGraphConfig } from './SharedAnalysisTools';
+import { SharedGraphConfig, ChartControlBar, SharedChartStylePanel } from './SharedAnalysisTools';
 const DIPOLAR_SIM_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1265,17 +1265,20 @@ const renderTableAnalysis = (t, tIndex) => {
                                 <option value="hist">Histogram</option>
                             </select>
                         </div>
-                        <button onClick={() => setShowChartCfg(showChartCfg === t.id ? false : t.id)} className={`font-bold py-1.5 px-3 rounded-lg text-xs transition-colors shadow-sm ${showChartCfg === t.id ? 'bg-slate-200 border border-slate-400 text-slate-900' : 'bg-white hover:bg-slate-50 text-slate-800 border border-slate-300'}`}>
-                            ⚙️ Chart Config
-                        </button>
+                        <ChartControlBar
+                            showCfg={showChartCfg === t.id}
+                            onToggleCfg={() => setShowChartCfg(showChartCfg === t.id ? false : t.id)}
+                            className="flex gap-2"
+                        />
                     </div>
 
                     {showChartCfg === t.id && (
-                        <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 mb-2">
-                            <SharedGraphConfig 
-                                activeTest={activeTest}
-                                updateActiveTest={update}
-                                showLayoutOptions={false}
+                        <div className="mb-2">
+                            <SharedChartStylePanel
+                                cfg={{ ...activeTest.chartCfg }}
+                                setCfg={(patch) => update({ chartCfg: { ...(activeTest.chartCfg || {}), ...patch } })}
+                                series={[]}
+                                showHeightSlider={false}
                             />
                         </div>
                     )}

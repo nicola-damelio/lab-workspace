@@ -2238,25 +2238,56 @@ const NotebookTestItem = ({
         {/* 1D imported Bruker spectrum in LabNotebook (Data tick) */}
         {isNMR && localTest.nmr1dSpectrum && localTest.nmr1dSpectrum.xs && localTest.nmr1dSpectrum.xs.length > 0 && (() => {
           const spec = localTest.nmr1dSpectrum;
-          const xs = spec.xs;
-          const ys = spec.ys;
+          const xs = spec.xs, ys = spec.ys;
           const maxY = Math.max(...ys.map(Math.abs), 1);
-          const svgW = 480, svgH = 120;
+          const svgW = 480, plotH = 100, axisH = 26, totalH = plotH + axisH;
+          const padL = 6, padR = 6;
+          const plotW = svgW - padL - padR;
           const xMin = Math.min(...xs), xMax = Math.max(...xs);
           const step = Math.max(1, Math.floor(xs.length / 1200));
           const pts = [];
           for (let i = 0; i < xs.length; i += step) {
-            const px = svgW - ((xs[i] - xMin) / (xMax - xMin)) * svgW; // reversed (high ppm left)
-            const py = svgH - ((ys[i] / maxY) * 0.9 + 0.05) * svgH;
+            // reversed: high ppm on left
+            const px = padL + plotW - ((xs[i] - xMin) / (xMax - xMin)) * plotW;
+            const py = plotH - ((ys[i] / maxY) * 0.9 + 0.05) * plotH;
             pts.push(`${px.toFixed(1)},${py.toFixed(1)}`);
           }
+          // Nice ticks
+          const range = xMax - xMin;
+          const rawStep = range / 5;
+          const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+          const niceStep = [0.1,0.2,0.5,1,2,5,10,20,50].map(s => s * mag).find(s => s >= rawStep) || rawStep;
+          const tickStart = Math.ceil(xMin / niceStep) * niceStep;
+          const ticks = [];
+          for (let t = tickStart; t <= xMax + niceStep * 0.01; t += niceStep) ticks.push(+t.toFixed(3));
+          const ppmToPx = (ppm) => padL + plotW - ((ppm - xMin) / (xMax - xMin)) * plotW;
           return (
             <div className="flex flex-col items-center w-full mt-2 gap-1">
-              <span className="text-[10px] font-bold text-slate-500 uppercase">Imported 1r Spectrum — {spec.meta?.nucleus || 'NMR'}{spec.meta?.sfo1 ? ` (${spec.meta.sfo1.toFixed(0)} MHz)` : ''}</span>
-              <svg width="100%" viewBox={`0 0 ${svgW} ${svgH + 20}`} className="border border-slate-200 rounded bg-white">
+              <span className="text-[10px] font-bold text-slate-500 uppercase">
+                Imported 1r Spectrum — {spec.meta?.nucleus || 'NMR'}{spec.meta?.sfo1 ? ` (${spec.meta.sfo1.toFixed(0)} MHz)` : ''}
+              </span>
+              <svg width="100%" viewBox={`0 0 ${svgW} ${totalH}`} className="border border-slate-200 rounded bg-white">
+                {/* Spectrum line */}
                 <polyline points={pts.join(' ')} fill="none" stroke="#3b82f6" strokeWidth="1" />
-                <text x={svgW} y={svgH + 15} textAnchor="end" fontSize="8" fill="#94a3b8">{xMin.toFixed(1)} ppm</text>
-                <text x="0" y={svgH + 15} textAnchor="start" fontSize="8" fill="#94a3b8">{xMax.toFixed(1)} ppm</text>
+                {/* X axis line */}
+                <line x1={padL} y1={plotH} x2={padL + plotW} y2={plotH} stroke="#94a3b8" strokeWidth={1} />
+                {/* X axis ticks + labels */}
+                {ticks.map((t, i) => {
+                  const px = ppmToPx(t);
+                  if (px < padL - 1 || px > padL + plotW + 1) return null;
+                  return (
+                    <g key={i}>
+                      <line x1={px} y1={plotH} x2={px} y2={plotH + 5} stroke="#94a3b8" strokeWidth={1} />
+                      <text x={px} y={plotH + 14} textAnchor="middle" fontSize="7" fill="#94a3b8">
+                        {t % 1 === 0 ? t.toFixed(0) : t.toFixed(1)}
+                      </text>
+                    </g>
+                  );
+                })}
+                {/* Axis label */}
+                <text x={svgW / 2} y={totalH - 3} textAnchor="middle" fontSize="7" fill="#64748b" fontWeight="bold">
+                  Chemical Shift (ppm)
+                </text>
               </svg>
             </div>
           );
@@ -2532,20 +2563,56 @@ export const LabNotebook = ({
     return result;
   }, [tests, isSuperuser, currentUser, filterPrimary, filterSecondary, filterScientist, filterType, filterCompound, filterPlasmid, filterCellLine, showAdvanced, filterSolvent, filterBuffer, filterAdditive, filterInstrument, filterProbe, filterPulseSeq, dateFrom, dateTo, bestOnly, searchQuery, sortBy]);
 
-  const exportPDF = () => {
-    // Use window.print() with a notebook-specific body class.
-    // This avoids the oklch color parsing issue in html2canvas
-    // and gives proper multi-page PDF output.
-    document.body.classList.add('notebook-print-mode');
-    window.print();
-    // Clean up after print dialog closes
-    const cleanup = () => {
-      document.body.classList.remove('notebook-print-mode');
-      window.removeEventListener('afterprint', cleanup);
-    };
-    window.addEventListener('afterprint', cleanup);
-    // Fallback cleanup after 3s in case afterprint doesn't fire
-    setTimeout(cleanup, 3000);
+  const exportPDF = async () => {
+    // Find the scrollable notebook content area
+    const el = document.getElementById('lab-notebook-print-area');
+    if (!el) { window.print(); return; }
+    try {
+      // Temporarily make content fully visible for capture
+      const prevOverflow = el.style.overflow;
+      const prevHeight = el.style.maxHeight;
+      el.style.overflow = 'visible';
+      el.style.maxHeight = 'none';
+
+      const canvas = await html2canvas(el, {
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#ffffff',
+        ignoreElements: (node) => node.classList?.contains('no-print'),
+        logging: false,
+      });
+
+      el.style.overflow = prevOverflow;
+      el.style.maxHeight = prevHeight;
+
+      const imgW = 595.28; // A4 width in points
+      const imgH = (canvas.height / canvas.width) * imgW;
+      const pdf = new jsPDF('p', 'pt', 'a4');
+      const pageH = pdf.internal.pageSize.getHeight();
+      let offsetY = 0;
+      while (offsetY < imgH) {
+        if (offsetY > 0) pdf.addPage();
+        const sliceH = Math.min(pageH, imgH - offsetY);
+        // Crop the canvas for this page
+        const pageCanvas = document.createElement('canvas');
+        pageCanvas.width = canvas.width;
+        pageCanvas.height = Math.round((sliceH / imgW) * canvas.width);
+        const ctx = pageCanvas.getContext('2d');
+        ctx.drawImage(canvas, 0, Math.round((offsetY / imgW) * canvas.width), canvas.width, pageCanvas.height, 0, 0, canvas.width, pageCanvas.height);
+        pdf.addImage(pageCanvas.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, imgW, sliceH);
+        offsetY += pageH;
+      }
+      pdf.save('lab_notebook.pdf');
+    } catch (err) {
+      console.error('PDF export error:', err);
+      // Fallback to print
+      document.body.classList.add('notebook-print-mode');
+      window.print();
+      const cleanup = () => { document.body.classList.remove('notebook-print-mode'); window.removeEventListener('afterprint', cleanup); };
+      window.addEventListener('afterprint', cleanup);
+      setTimeout(cleanup, 3000);
+    }
   };
 
   return (
@@ -2745,7 +2812,7 @@ export const LabNotebook = ({
         </div>
       </div>
 
- <div className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
+ <div id="lab-notebook-print-area" className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
         {/* Global image visibility CSS — covers ALL img tags including those in HTML content */}
         <style>{`
           #notebook-report-container img { display: ${showImages ? 'block' : 'none'} !important; }

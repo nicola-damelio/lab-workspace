@@ -10,7 +10,7 @@ import {
   ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line,
   Legend, ErrorBar, Cell, PieChart, Pie
 } from 'recharts';
-import { SharedGraphConfig, SharedErrorTreatment } from './SharedAnalysisTools';
+import { SharedGraphConfig, SharedErrorTreatment, ChartControlBar, SharedChartStylePanel } from './SharedAnalysisTools';
 
 const HAS_EB = typeof ErrorBar !== 'undefined';
 
@@ -1722,7 +1722,7 @@ export const SpectraVisualization = ({ ctx }) => {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h4 className="text-sm font-bold text-slate-700">📈 Spectra Visualization — all conditions overlaid</h4>
         <div className="flex gap-2">
-          <button type="button" onClick={() => setShowCfg(!showCfg)} className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${showCfg ? 'bg-slate-200 border-slate-400 text-slate-900' : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'}`}>🎨 Chart Config</button>
+          <ChartControlBar showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)} className="flex gap-2" />
           <button type="button" onClick={() => setFs(!fs)} className="font-bold py-1.5 px-3 rounded-lg text-xs border border-slate-300 bg-white text-slate-800 hover:bg-slate-50">{fs ? '↙️ Exit' : '↗️ Fullscreen'}</button>
         </div>
       </div>
@@ -1747,7 +1747,7 @@ export const SpectraVisualization = ({ ctx }) => {
         )}
         {chartBody}
       </div>
-      {showCfg && <GraphConfigPanel cfg={cfg} setCfg={setCfg} series={seriesList.map((s) => ({ key: s.key, label: s.label, color: s.color }))} unit="nm" />}
+      {showCfg && <SharedChartStylePanel cfg={cfg} setCfg={setCfg} series={seriesList.map((s) => ({ key: s.key, label: s.label, color: s.color }))} unit="nm" />}
       
       {seriesList.length > 0 && (
         <div className="mt-2 p-4 bg-slate-50 border border-slate-200 rounded-lg shadow-sm">
@@ -1906,7 +1906,7 @@ export const SpectrumFitting = ({ ctx }) => {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h4 className="text-sm font-bold text-slate-700">🧬 Fitting — Pure Component Decomposition</h4>
         <div className="flex gap-2 items-center">
-          <button type="button" onClick={() => setShowCfg(!showCfg)} className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${showCfg ? 'bg-slate-200 border-slate-400 text-slate-900' : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'}`}>🎨 Chart Config</button>
+          <ChartControlBar showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)} className="flex gap-2" />
           <span className="text-[9px] bg-purple-100 text-purple-800 px-2 py-0.5 rounded font-bold">Customizable Pure Components</span>
         </div>
       </div>
@@ -2027,7 +2027,7 @@ export const SpectrumFitting = ({ ctx }) => {
           </table>
         </div>
       )}
-      {showCfg && <GraphConfigPanel cfg={cfg} setCfg={setCfg} series={[{ key: 'exp', label: 'Experimental', color: '#3b82f6' }, { key: 'sim', label: 'Simulated (fit)', color: '#ef4444' }]} unit="nm" />}
+      {showCfg && <SharedChartStylePanel cfg={cfg} setCfg={setCfg} series={[{ key: 'exp', label: 'Experimental', color: '#3b82f6' }, { key: 'sim', label: 'Simulated (fit)', color: '#ef4444' }]} unit="nm" />}
     </div>
   );
 };
@@ -2650,10 +2650,10 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
               </div>
             </div>
           )}
-          <div className="ml-auto flex gap-2">
-            <button type="button" onClick={() => setShowErr(!showErr)} className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${showErr ? 'bg-orange-100 border-orange-400 text-orange-800' : 'bg-white border-orange-300 text-orange-700 hover:bg-orange-50'}`}>⚠️ Error Management</button>
-            <button type="button" onClick={() => setShowCfg(!showCfg)} className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${showCfg ? 'bg-slate-200 border-slate-400 text-slate-900' : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'}`}>🎨 Graphical Parameters</button>
-          </div>
+          <ChartControlBar
+            showErr={showErr} onToggleErr={() => setShowErr(!showErr)}
+            showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)}
+          />
         </div>
 
         <div className="flex flex-wrap items-center gap-2 bg-white border border-slate-200 rounded-lg p-2">
@@ -2872,7 +2872,7 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
         </div>
 
         {showCfg && (
-          <GraphConfigPanel
+          <SharedChartStylePanel
             cfg={cfg}
             setCfg={setCfg}
             series={series.map((s) => ({ key: s.key, label: s.label, color: colorOf(s) }))}

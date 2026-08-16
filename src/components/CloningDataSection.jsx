@@ -1,14 +1,47 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ReferenceLine
+  ResponsiveContainer, ReferenceLine, ReferenceArea
 } from 'recharts';
+import { useXZoom, ChartControlBar, SharedChartStylePanel } from './SharedAnalysisTools';
 import { CollapsibleSection, SmartImage } from './TestShellRenderer';
 import {
   uid, toNumber, round,
   parseSpectrumText, analyzeSpectrum, effectiveSpectrumProps,
   INPUT_CLS
 } from './cloningUtils';
+
+const UV_CHART_MARGIN = { top: 8, right: 10, bottom: 30, left: 40 };
+
+const UvZoomChart = ({ pts }) => {
+  const chartRef = useRef(null);
+  const wavelengths = pts.map(p => p.wavelength);
+  const dataDomain = wavelengths.length > 1 ? [Math.min(...wavelengths), Math.max(...wavelengths)] : [220, 320];
+  const zoom = useXZoom(chartRef, dataDomain, UV_CHART_MARGIN);
+  return (
+    <div className="flex flex-col gap-1">
+      <div ref={chartRef} onMouseDown={zoom.onMouseDown} className="select-none" style={{ height: 220 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={pts} margin={UV_CHART_MARGIN}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+            <XAxis dataKey="wavelength" type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow
+              tick={{ fontSize: 11, fill: '#64748b' }}
+              label={{ value: 'Wavelength (nm)', position: 'insideBottom', offset: -15, fontSize: 11, fill: '#64748b' }} />
+            <YAxis tick={{ fontSize: 11, fill: '#64748b' }} />
+            <Tooltip formatter={(v) => Number(v).toFixed(4)} labelFormatter={(l) => `${l} nm`} />
+            <ReferenceLine x={260} stroke="#3b82f6" strokeDasharray="4 4" />
+            <ReferenceLine x={280} stroke="#ef4444" strokeDasharray="4 4" />
+            <Line type="monotone" dataKey="absorbance" stroke="#1e40af" strokeWidth={2} dot={false} isAnimationActive={false} />
+            {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+      {zoom.isZoomed && (
+        <button type="button" onClick={zoom.reset} className="self-end text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>
+      )}
+    </div>
+  );
+};
 
 /* ==========================================================================
    UV SPECTRUM CARD
@@ -141,25 +174,9 @@ const UvSpectrumCard = ({ spec, onChange, onRemove, onSendToQuant }) => {
         </div>
 
         {/* chart */}
-        <div className="lg:col-span-2">
+        <div className="lg:col-span-2 flex flex-col gap-1">
           {an ? (
-            <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={an.pts} margin={{ top: 8, right: 10, bottom: 18, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis
-                  dataKey="wavelength"
-                  type="number"
-                  domain={['dataMin', 'dataMax']}
-                  tick={{ fontSize: 11, fill: '#64748b' }}
-                  label={{ value: 'Wavelength (nm)', position: 'insideBottom', offset: -12, fontSize: 11, fill: '#64748b' }}
-                />
-                <YAxis tick={{ fontSize: 11, fill: '#64748b' }} />
-                <Tooltip formatter={(v) => Number(v).toFixed(4)} labelFormatter={(l) => `${l} nm`} />
-                <ReferenceLine x={260} stroke="#3b82f6" strokeDasharray="4 4" />
-                <ReferenceLine x={280} stroke="#ef4444" strokeDasharray="4 4" />
-                <Line type="monotone" dataKey="absorbance" stroke="#1e40af" strokeWidth={2} dot={false} isAnimationActive={false} />
-              </LineChart>
-            </ResponsiveContainer>
+            <UvZoomChart pts={an.pts} />
           ) : (
             <div className="h-[220px] flex items-center justify-center text-slate-400 italic text-sm">
               Not enough data points.
