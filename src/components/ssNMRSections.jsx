@@ -3156,6 +3156,12 @@ export const InstrumentalSetup = ({ ctx }) => {
   const LABEL_CLS = 'text-[10px] font-bold text-slate-500 uppercase';
   const INPUT_CLS = 'border border-slate-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-500 bg-white';
   const update = (u) => { if (updateActiveTest) updateActiveTest(u); };
+  
+  const datasets = activeTest.ssnmrDatasets || [];
+  const addDataset = () => update({ ssnmrDatasets: [...datasets, { id: Date.now().toString(), name: '', expNo: '', link: '' }] });
+  const updateDataset = (id, patch) => update({ ssnmrDatasets: datasets.map(d => d.id === id ? { ...d, ...patch } : d) });
+  const removeDataset = (id) => update({ ssnmrDatasets: datasets.filter(d => d.id !== id) });
+  
   return (
     <div className="flex flex-col gap-3">
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -3192,6 +3198,29 @@ export const InstrumentalSetup = ({ ctx }) => {
         ))}
       </div>
       <p className="text-[10px] text-slate-400">Spectrometer configuration used to acquire the spectra for this condition — saved per condition, like the other experimental fields.</p>
+      
+      <div className="border-t border-slate-100 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-[10px] font-black text-slate-500 uppercase">Datasets</p>
+          <button type="button" onClick={addDataset}
+            className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1 rounded-lg text-xs transition-colors">
+            + Add Dataset
+          </button>
+        </div>
+        {datasets.length === 0 && <p className="text-xs text-slate-400 italic">No datasets added.</p>}
+        {datasets.map(d => (
+          <div key={d.id} className="flex gap-2 items-center mb-2 flex-wrap">
+            <input type="text" value={d.name} onChange={(e) => updateDataset(d.id, { name: e.target.value })}
+              placeholder="Dataset name..." className={`${INPUT_CLS} flex-1 min-w-[140px]`} />
+            <input type="number" value={d.expNo} onChange={(e) => updateDataset(d.id, { expNo: e.target.value })}
+              placeholder="Exp. #" className={`${INPUT_CLS} w-24`} />
+            <input type="text" value={d.link} onChange={(e) => updateDataset(d.id, { link: e.target.value })}
+              placeholder="Link (URL)..." className={`${INPUT_CLS} flex-1 min-w-[120px]`} />
+            <button type="button" onClick={() => removeDataset(d.id)}
+              className="text-slate-400 hover:text-red-500 font-bold px-2">×</button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 };
