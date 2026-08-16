@@ -701,6 +701,7 @@ const PlasmidDefinitionSection = ({
   );
 };
 
+
 /* =========================================================
    LIBRARY DIRECTORY
 ========================================================= */
@@ -774,6 +775,88 @@ const LibraryDirectory = ({
     if (meta?.type === 'formula') return 'Chemical Formula';
     return meta?.type ? meta.type : 'Unclassified';
   };
+
+  // --- FULL CSV EXPORT LOGIC ---
+  const handleExportCSV = () => {
+    let csv = [];
+    
+    // Helper to escape commas and quotes for CSV format
+    const escapeCsv = (str) => {
+      if (str === null || str === undefined) return '';
+      const s = String(str).replace(/"/g, '""');
+      return `"${s}"`;
+    };
+
+    // Strip HTML from rich text sequences before exporting
+    const stripHtml = (str) => String(str || '').replace(/<[^>]*>?/gm, '').replace(/&nbsp;/g, ' ');
+
+    csv.push("--- COMPOUNDS ---");
+    csv.push("Name,Type,Sequence/Formula,MW,Notes");
+    compounds.forEach(name => {
+      const m = compoundMeta[name] || {};
+      const seq = stripHtml(m.sequence || m.formula || m.smiles || '');
+      csv.push(`${escapeCsv(name)},${escapeCsv(m.type)},${escapeCsv(seq)},${escapeCsv(m.molecularWeight)},${escapeCsv(m.notes)}`);
+    });
+
+    csv.push("");
+    csv.push("--- CELL LINES ---");
+    csv.push("Name,Organism,Tissue,Medium,Notes");
+    cellLines.forEach(name => {
+      const m = cellLineMeta[name] || {};
+      csv.push(`${escapeCsv(name)},${escapeCsv(m.organism)},${escapeCsv(m.tissue)},${escapeCsv(m.cultureMedium)},${escapeCsv(m.notes)}`);
+    });
+
+    csv.push("");
+    csv.push("--- PLASMIDS ---");
+    csv.push("Name,Backbone,Promoter,Marker,MW,Notes");
+    plasmids.forEach(name => {
+      const m = plasmidMeta[name] || {};
+      const seq = stripHtml(m.insertSequence || '');
+      csv.push(`${escapeCsv(name)},${escapeCsv(m.backbone)},${escapeCsv(m.promoter)},${escapeCsv(m.marker)},${escapeCsv(m.molecularWeight)},${escapeCsv(m.notes)}`);
+    });
+
+    csv.push("");
+    csv.push("--- SOLVENTS ---");
+    csv.push("Name,Density,MW,Comments");
+    (solvents || []).forEach(s => {
+      const name = typeof s === 'string' ? s : s.name;
+      const den = typeof s === 'string' ? '' : s.density;
+      const mw = typeof s === 'string' ? '' : s.molecularWeight;
+      const comments = typeof s === 'string' ? '' : s.comments;
+      csv.push(`${escapeCsv(name)},${escapeCsv(den)},${escapeCsv(mw)},${escapeCsv(comments)}`);
+    });
+
+    csv.push("");
+    csv.push("--- BUFFERS ---");
+    csv.push("Name,Description,MW,Comments");
+    (buffers || []).forEach(b => {
+      const name = typeof b === 'string' ? b : b.name;
+      const desc = typeof b === 'string' ? '' : b.description;
+      const mw = typeof b === 'string' ? '' : b.molecularWeight;
+      const comments = typeof b === 'string' ? '' : b.comments;
+      csv.push(`${escapeCsv(name)},${escapeCsv(desc)},${escapeCsv(mw)},${escapeCsv(comments)}`);
+    });
+
+    csv.push("");
+    csv.push("--- ADDITIVES ---");
+    csv.push("Name,Description,MW,Comments");
+    (additives || []).forEach(a => {
+      const name = typeof a === 'string' ? a : a.name;
+      const desc = typeof a === 'string' ? '' : a.description;
+      const mw = typeof a === 'string' ? '' : a.molecularWeight;
+      const comments = typeof a === 'string' ? '' : a.comments;
+      csv.push(`${escapeCsv(name)},${escapeCsv(desc)},${escapeCsv(mw)},${escapeCsv(comments)}`);
+    });
+
+    const blob = new Blob([csv.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Lab_Library_Export_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  // ------------------------------
 
   const compoundRows = compounds.map((name) => {
     const meta = compoundMeta[name] || {};
@@ -906,9 +989,17 @@ const LibraryDirectory = ({
 
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-6">
-      <h3 className="text-sm font-bold text-slate-700 uppercase mb-1 border-b pb-2">
-        Defined Resources Library
-      </h3>
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b pb-3 gap-3">
+        <h3 className="text-sm font-bold text-slate-700 uppercase">
+          Defined Resources Library
+        </h3>
+        <button 
+          onClick={handleExportCSV}
+          className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1.5 px-3 rounded-lg text-xs shadow-sm transition-colors flex items-center gap-2"
+        >
+          📥 Export Full Library (CSV)
+        </button>
+      </div>
 
       {/* COMPOUND / CELL LINE / PLASMID */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -1228,6 +1319,8 @@ const MODIFICATIONS = [
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const normalizeKey = (s) => String(s || '').toLowerCase().replace(/[\s_-]+/g, '');
 
+const stripHtml = (str) => String(str || '').replace(/<[^>]*>?/gm, '').replace(/&nbsp;/g, ' ');
+
 const parseModifications = (input = '') => {
   if (!input) return [];
 
@@ -1272,8 +1365,6 @@ const modificationMass = (mods = []) => {
   return mods.reduce((sum, m) => sum + (Number(m.delta) || 0), 0);
 };
 
-const stripHtml = (str) => String(str || '').replace(/<[^>]*>?/gm, '').replace(/&nbsp;/g, ' ');
-
 const calculateSequenceInfo = ({ type = 'protein', sequence = '', modifications = '' }) => {
   const mods = parseModifications(modifications);
   const modMass = modificationMass(mods);
@@ -1281,7 +1372,7 @@ const calculateSequenceInfo = ({ type = 'protein', sequence = '', modifications 
   const plainSeq = stripHtml(sequence);
 
   if (type === 'protein') {
-    const clean = plainSeq
+    const clean = String(plainSeq || '')
       .toUpperCase()
       .replace(/\s/g, '');
 
@@ -1310,7 +1401,7 @@ const calculateSequenceInfo = ({ type = 'protein', sequence = '', modifications 
   }
 
   if (type === 'dna' || type === 'rna') {
-    let clean = plainSeq
+    let clean = String(plainSeq || '')
       .toUpperCase()
       .replace(/[^AGCTU]/g, '');
 
@@ -1346,7 +1437,7 @@ const calculateSequenceInfo = ({ type = 'protein', sequence = '', modifications 
   }
 
   if (type === 'polysaccharide') {
-    const raw = plainSeq.trim();
+    const raw = String(plainSeq || '').trim();
 
     if (!raw) {
       return {
@@ -1456,7 +1547,7 @@ const CODON_TABLES = {
 
 const generateDnaFromProtein = (sequence, host = 'bacterial', { addStop = false } = {}) => {
   const plainSeq = stripHtml(sequence);
-  const clean = plainSeq
+  const clean = String(plainSeq || '')
     .toUpperCase()
     .replace(/[^A-Z*]/g, '');
 
@@ -1473,6 +1564,7 @@ const generateDnaFromProtein = (sequence, host = 'bacterial', { addStop = false 
 
   return dna;
 };
+
 
 let rdkitPromise = null;
 

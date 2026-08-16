@@ -11,7 +11,7 @@ const PROBE_SUBTYPES = ['TCI', 'TXI', 'HCN', 'BBO', 'BBF', 'QNP', 'HSQC', 'CPTCI
 
 export const getMolecularWeightFromFormula = (formulaStr) => {
   const ATOMIC_WEIGHTS = {
-    H: 1.008, He: 4.003, Li: 6.94, Be: 9.012, B: 10.81, C: 12.011, N: 14.007, 
+    H: 1.008, D: 2.014, T: 3.016, He: 4.003, Li: 6.94, Be: 9.012, B: 10.81, C: 12.011, N: 14.007, 
     O: 15.999, F: 18.998, Ne: 20.180, Na: 22.990, Mg: 24.305, Al: 26.982, 
     Si: 28.085, P: 30.974, S: 32.065, Cl: 35.45, K: 39.098, Ca: 40.078, 
     Mn: 54.938, Fe: 55.845, Co: 58.933, Ni: 58.693, Cu: 63.546, Zn: 65.38, 
@@ -22,8 +22,8 @@ export const getMolecularWeightFromFormula = (formulaStr) => {
   if (!formulaStr) return '';
   
   try {
-    // Handle split for hydrates (e.g. CuSO4.5H2O)
-    const parts = formulaStr.replace(/\s+/g, '').split(/[\.·*]/);
+    const cleanStr = formulaStr.replace(/\s+/g, '');
+    const parts = cleanStr.split(/[\.·*]/);
     let totalMW = 0;
     
     for (let part of parts) {
@@ -43,6 +43,7 @@ export const getMolecularWeightFromFormula = (formulaStr) => {
           stack.push({ weight: 0 });
           i++;
         } else if (char === ')' || char === ']') {
+          if (stack.length < 2) return ''; 
           let top = stack.pop();
           i++;
           let numStr = '';
@@ -68,12 +69,13 @@ export const getMolecularWeightFromFormula = (formulaStr) => {
           if (ATOMIC_WEIGHTS[elem] !== undefined) {
             stack[stack.length - 1].weight += ATOMIC_WEIGHTS[elem] * count;
           } else {
-            return ''; // Unknown element
+            return ''; 
           }
         } else {
-          return ''; // Invalid syntax
+          return ''; 
         }
       }
+      if (stack.length !== 1) return ''; 
       totalMW += stack[0].weight * multiplier;
     }
     return totalMW > 0 ? totalMW.toFixed(2) : '';
