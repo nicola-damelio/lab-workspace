@@ -9,6 +9,80 @@ const UNIT_OPTIONS = ['mM', 'µM', 'nM', 'M', 'mg/mL', 'µg/mL', 'ng/mL', 'g/L',
 const NUCLEUS_OPTIONS = ['1H', '13C', '15N', '31P', '19F', '2H', '17O'];
 const PROBE_SUBTYPES = ['TCI', 'TXI', 'HCN', 'BBO', 'BBF', 'QNP', 'HSQC', 'CPTCI', 'CPTXO', 'MAS', 'HX', 'HXY'];
 
+export const getMolecularWeightFromFormula = (formulaStr) => {
+  const ATOMIC_WEIGHTS = {
+    H: 1.008, He: 4.003, Li: 6.94, Be: 9.012, B: 10.81, C: 12.011, N: 14.007, 
+    O: 15.999, F: 18.998, Ne: 20.180, Na: 22.990, Mg: 24.305, Al: 26.982, 
+    Si: 28.085, P: 30.974, S: 32.065, Cl: 35.45, K: 39.098, Ca: 40.078, 
+    Mn: 54.938, Fe: 55.845, Co: 58.933, Ni: 58.693, Cu: 63.546, Zn: 65.38, 
+    Br: 79.904, Ag: 107.87, I: 126.90, Ba: 137.33, Pt: 195.08, Au: 196.97, 
+    Hg: 200.59, Pb: 207.2
+  };
+
+  if (!formulaStr) return '';
+  
+  try {
+    // Handle split for hydrates (e.g. CuSO4.5H2O)
+    const parts = formulaStr.replace(/\s+/g, '').split(/[\.·*]/);
+    let totalMW = 0;
+    
+    for (let part of parts) {
+      if (!part) continue;
+      let multiplier = 1;
+      const leadingNumMatch = part.match(/^(\d+)(.*)/);
+      if (leadingNumMatch) {
+        multiplier = parseFloat(leadingNumMatch[1]);
+        part = leadingNumMatch[2];
+      }
+      
+      let stack = [{ weight: 0 }];
+      let i = 0;
+      while (i < part.length) {
+        let char = part[i];
+        if (char === '(' || char === '[') {
+          stack.push({ weight: 0 });
+          i++;
+        } else if (char === ')' || char === ']') {
+          let top = stack.pop();
+          i++;
+          let numStr = '';
+          while (i < part.length && /[0-9.]/.test(part[i])) {
+            numStr += part[i];
+            i++;
+          }
+          let count = numStr === '' ? 1 : parseFloat(numStr);
+          stack[stack.length - 1].weight += top.weight * count;
+        } else if (/[A-Z]/.test(char)) {
+          let elem = char;
+          i++;
+          if (i < part.length && /[a-z]/.test(part[i])) {
+            elem += part[i];
+            i++;
+          }
+          let numStr = '';
+          while (i < part.length && /[0-9.]/.test(part[i])) {
+            numStr += part[i];
+            i++;
+          }
+          let count = numStr === '' ? 1 : parseFloat(numStr);
+          if (ATOMIC_WEIGHTS[elem] !== undefined) {
+            stack[stack.length - 1].weight += ATOMIC_WEIGHTS[elem] * count;
+          } else {
+            return ''; // Unknown element
+          }
+        } else {
+          return ''; // Invalid syntax
+        }
+      }
+      totalMW += stack[0].weight * multiplier;
+    }
+    return totalMW > 0 ? totalMW.toFixed(2) : '';
+  } catch (e) {
+    return '';
+  }
+};
+
+
 /* ---- Small helpers ---- */
 const Input = ({ label, value, onChange, type = 'text', placeholder = '', disabled = false, className = '' }) => (
   <div className={`flex flex-col gap-1 ${className}`}>
@@ -58,11 +132,12 @@ export const LinksManager = ({ links = [], setLinks }) => {
 export const SolventsManager = ({ solvents = [], setSolvents, selectedId, onSelect }) => {
   const [selectedName, setSelectedName] = useState('');
   const [newName, setNewName] = useState('');
+  const [formula, setFormula] = useState('');
   const [density, setDensity] = useState('');
+  const [molecularWeight, setMolecularWeight] = useState('');
   const [comments, setComments] = useState('');
   const [links, setLinks] = useState([]);
 
-  // Migrate legacy string array to objects
   const normalized = solvents.map(s => typeof s === 'string' ? { id: s, name: s } : s);
   const existingNames = normalized.map(s => s.name).sort((a, b) => a.localeCompare(b));
 
@@ -72,18 +147,26 @@ export const SolventsManager = ({ solvents = [], setSolvents, selectedId, onSele
       if (item) {
         setSelectedName(item.name);
         setNewName('');
+        setFormula(item.formula || '');
         setDensity(item.density || '');
+        setMolecularWeight(item.molecularWeight || '');
         setComments(item.comments || '');
         setLinks(item.links || []);
       }
     }
   }, [selectedId, solvents]);
 
+  const handleFormulaChange = (val) => {
+    setFormula(val);
+    const calcMW = getMolecularWeightFromFormula(val);
+    if (calcMW) setMolecularWeight(calcMW);
+  };
+
   const handleSave = () => {
     const name = selectedName || newName.trim();
     if (!name) return alert('Please enter a solvent name.');
     const existing = normalized.find(s => s.name === name);
-    const newItem = { id: existing ? existing.id : Date.now().toString(), name, density, comments, links };
+    const newItem = { id: existing ? existing.id : Date.now().toString(), name, formula, density, molecularWeight, comments, links };
     
     if (existing) {
       setSolvents(normalized.map(s => s.name === name ? newItem : s));
@@ -100,7 +183,9 @@ export const SolventsManager = ({ solvents = [], setSolvents, selectedId, onSele
       setSolvents(normalized.filter(s => s.name !== selectedName));
       setSelectedName('');
       setNewName('');
+      setFormula('');
       setDensity('');
+      setMolecularWeight('');
       setComments('');
       setLinks([]);
       if (onSelect) onSelect('');
@@ -109,7 +194,7 @@ export const SolventsManager = ({ solvents = [], setSolvents, selectedId, onSele
 
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-xs text-slate-500">Define solvents, density, and resources.</p>
+      <p className="text-xs text-slate-500">Define solvents, formula, density, MW, and resources.</p>
       <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
         <div className="md:col-span-6">
           <Select label="Existing Solvent" value={selectedName} onChange={n => { setSelectedName(n); if (onSelect) onSelect(n); }} options={[{ value: '', label: 'New solvent...' }, ...existingNames]} />
@@ -117,8 +202,14 @@ export const SolventsManager = ({ solvents = [], setSolvents, selectedId, onSele
         <div className="md:col-span-6">
           <Input label="New Solvent Name" value={selectedName ? '' : newName} onChange={setNewName} disabled={!!selectedName} placeholder="e.g. D2O, DMSO-d6" />
         </div>
-        <div className="md:col-span-6">
+        <div className="md:col-span-4">
+          <Input label="Formula" value={formula} onChange={handleFormulaChange} placeholder="e.g. H2O" />
+        </div>
+        <div className="md:col-span-4">
           <Input label="Density at RT (g/mL)" value={density} onChange={setDensity} placeholder="e.g. 1.11" />
+        </div>
+        <div className="md:col-span-4">
+          <Input label="Molecular Weight (Da)" value={molecularWeight} onChange={setMolecularWeight} type="number" placeholder="e.g. 18.02" />
         </div>
         <div className="md:col-span-12">
           <label className="text-[10px] font-bold text-slate-600 uppercase">Comments / Notes</label>
@@ -145,6 +236,8 @@ export const BuffersManager = ({ buffers = [], setBuffers, selectedId, onSelect 
   const [selectedName, setSelectedName] = useState('');
   const [newName, setNewName] = useState('');
   const [desc, setDesc] = useState('');
+  const [formula, setFormula] = useState('');
+  const [molecularWeight, setMolecularWeight] = useState('');
   const [comments, setComments] = useState('');
   const [links, setLinks] = useState([]);
 
@@ -157,17 +250,25 @@ export const BuffersManager = ({ buffers = [], setBuffers, selectedId, onSelect 
         setSelectedName(item.name);
         setNewName('');
         setDesc(item.description || '');
+        setFormula(item.formula || '');
+        setMolecularWeight(item.molecularWeight || '');
         setComments(item.comments || '');
         setLinks(item.links || []);
       }
     }
   }, [selectedId, buffers]);
 
+  const handleFormulaChange = (val) => {
+    setFormula(val);
+    const calcMW = getMolecularWeightFromFormula(val);
+    if (calcMW) setMolecularWeight(calcMW);
+  };
+
   const handleSave = () => {
     const name = selectedName || newName.trim();
     if (!name) return alert('Please enter a buffer name.');
     const existing = buffers.find(b => b.name === name);
-    const newItem = { id: existing ? existing.id : Date.now().toString(), name, description: desc, comments, links };
+    const newItem = { id: existing ? existing.id : Date.now().toString(), name, description: desc, formula, molecularWeight, comments, links };
     
     if (existing) setBuffers(buffers.map(b => b.name === name ? newItem : b));
     else setBuffers([...buffers, newItem]);
@@ -183,6 +284,8 @@ export const BuffersManager = ({ buffers = [], setBuffers, selectedId, onSelect 
       setSelectedName('');
       setNewName('');
       setDesc('');
+      setFormula('');
+      setMolecularWeight('');
       setComments('');
       setLinks([]);
       if (onSelect) onSelect('');
@@ -198,8 +301,14 @@ export const BuffersManager = ({ buffers = [], setBuffers, selectedId, onSelect 
         <div className="md:col-span-6">
           <Input label="New Buffer Name" value={selectedName ? '' : newName} onChange={setNewName} disabled={!!selectedName} placeholder="e.g. PBS" />
         </div>
-        <div className="md:col-span-12">
+        <div className="md:col-span-4">
           <Input label="Description (e.g. pH)" value={desc} onChange={setDesc} placeholder="e.g. pH 7.4" />
+        </div>
+        <div className="md:col-span-4">
+          <Input label="Formula" value={formula} onChange={handleFormulaChange} placeholder="e.g. NaH2PO4" />
+        </div>
+        <div className="md:col-span-4">
+          <Input label="Molecular Weight (Da)" value={molecularWeight} onChange={setMolecularWeight} type="number" placeholder="e.g. 119.12" />
         </div>
         <div className="md:col-span-12">
           <label className="text-[10px] font-bold text-slate-600 uppercase">Comments</label>
@@ -226,6 +335,8 @@ export const AdditivesManager = ({ additives = [], setAdditives, selectedId, onS
   const [selectedName, setSelectedName] = useState('');
   const [newName, setNewName] = useState('');
   const [desc, setDesc] = useState('');
+  const [formula, setFormula] = useState('');
+  const [molecularWeight, setMolecularWeight] = useState('');
   const [comments, setComments] = useState('');
   const [links, setLinks] = useState([]);
 
@@ -238,17 +349,25 @@ export const AdditivesManager = ({ additives = [], setAdditives, selectedId, onS
         setSelectedName(item.name);
         setNewName('');
         setDesc(item.description || '');
+        setFormula(item.formula || '');
+        setMolecularWeight(item.molecularWeight || '');
         setComments(item.comments || '');
         setLinks(item.links || []);
       }
     }
   }, [selectedId, additives]);
 
+  const handleFormulaChange = (val) => {
+    setFormula(val);
+    const calcMW = getMolecularWeightFromFormula(val);
+    if (calcMW) setMolecularWeight(calcMW);
+  };
+
   const handleSave = () => {
     const name = selectedName || newName.trim();
     if (!name) return alert('Please enter an additive name.');
     const existing = additives.find(a => a.name === name);
-    const newItem = { id: existing ? existing.id : Date.now().toString(), name, description: desc, comments, links };
+    const newItem = { id: existing ? existing.id : Date.now().toString(), name, description: desc, formula, molecularWeight, comments, links };
     
     if (existing) setAdditives(additives.map(a => a.name === name ? newItem : a));
     else setAdditives([...additives, newItem]);
@@ -264,6 +383,8 @@ export const AdditivesManager = ({ additives = [], setAdditives, selectedId, onS
       setSelectedName('');
       setNewName('');
       setDesc('');
+      setFormula('');
+      setMolecularWeight('');
       setComments('');
       setLinks([]);
       if (onSelect) onSelect('');
@@ -279,8 +400,14 @@ export const AdditivesManager = ({ additives = [], setAdditives, selectedId, onS
         <div className="md:col-span-6">
           <Input label="New Additive Name" value={selectedName ? '' : newName} onChange={setNewName} disabled={!!selectedName} placeholder="e.g. NaN3" />
         </div>
-        <div className="md:col-span-12">
+        <div className="md:col-span-4">
           <Input label="Description" value={desc} onChange={setDesc} placeholder="e.g. preservative" />
+        </div>
+        <div className="md:col-span-4">
+          <Input label="Formula" value={formula} onChange={handleFormulaChange} placeholder="e.g. NaN3" />
+        </div>
+        <div className="md:col-span-4">
+          <Input label="Molecular Weight (Da)" value={molecularWeight} onChange={setMolecularWeight} type="number" placeholder="e.g. 65.01" />
         </div>
         <div className="md:col-span-12">
           <label className="text-[10px] font-bold text-slate-600 uppercase">Comments</label>
