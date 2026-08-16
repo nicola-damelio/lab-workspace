@@ -1329,7 +1329,8 @@ const parseModifications = (input = '') => {
     .map((s) => s.trim())
     .filter(Boolean)
     .flatMap((token) => {
-      const match = token.match(/^(.*?)(?:[:*x](\d+))?$/i);
+      // Improved regex to catch multipliers even with spaces, e.g. "Amidation: 2" or "Phos x 3"
+      const match = token.match(/^(.*?)(?:[:*x]\s*(\d+))?$/i);
       const rawName = (match?.[1] || token).trim();
       const parsedCount = parseInt(match?.[2] || '1', 10);
       const count = Number.isFinite(parsedCount) && parsedCount >= 0 ? parsedCount : 1;
@@ -1343,21 +1344,28 @@ const parseModifications = (input = '') => {
         return idNorm === norm || labelNorm === norm || aliasNorms.includes(norm);
       });
 
-      return Array.from({ length: count }, () => {
-        if (found) {
-          return {
-            label: found.label,
-            delta: found.delta,
-            known: true
-          };
-        }
+      let delta = 0;
+      let known = false;
+      let label = rawName;
 
-        return {
-          label: rawName,
-          delta: 0,
-          known: false
-        };
-      });
+      if (found) {
+        delta = found.delta;
+        known = true;
+        label = found.label;
+      } else {
+        // Fallback: If it's a custom chemical formula (e.g. C2H3O), calculate its MW!
+        const formulaMw = getMolecularWeightFromFormula(rawName);
+        if (formulaMw && !isNaN(parseFloat(formulaMw))) {
+          delta = parseFloat(formulaMw);
+          known = true;
+        }
+      }
+
+      return Array.from({ length: count }, () => ({
+        label,
+        delta,
+        known
+      }));
     });
 };
 
@@ -9286,7 +9294,7 @@ if (activeTest.type === 'ssnmr') {
 
     {/* The new ScientistLoginGate above (fixed full-screen) handles requireLoginOnEntry for ALL views */}
 
-    {/* ── Generic Login Modal (triggered by sidebar or locked tests) ── */}
+{/* ── Generic Login Modal (triggered by sidebar or locked tests) ── */}
     {loginModal && !(authSettings.requireLoginOnEntry && !currentUser) && (
       <ScientistLoginModal
         operators={
