@@ -1301,7 +1301,199 @@ const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, row
     </div>
   );
 };
+/* ============================================================================
+   PEAK LABEL OVERLAYS (1D & 2D)
+   Renders peak labels searching for free space to avoid collisions.
+   ============================================================================ */
+const PeakLabelOverlay = ({ markers, dom, marginLeft, marginRight, marginTop, marginBottom, labelAreaH }) => {
+  const containerRef = useRef(null);
+  const [size, setSize] = useState({ w: 0, h: 0 });
 
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const obs = new ResizeObserver(([e]) => {
+      setSize({ w: e.contentRect.width, h: e.contentRect.height });
+    });
+    obs.observe(containerRef.current);
+    return () => obs.disconnect();
+  }, []);
+
+  const { w, h } = size;
+  const plotW = w - marginLeft - marginRight;
+  const plotH = h - marginTop - marginBottom;
+  if (plotW <= 0 || plotH <= 0 || markers.length === 0) {
+    return <div ref={containerRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />;
+  }
+
+  const domLo = Math.min(dom[0], dom[1]);
+  const domHi = Math.max(dom[0], dom[1]);
+  const ppmToX = (ppm) => {
+    if (domHi === domLo) return marginLeft + plotW / 2;
+    const frac = (ppm - domLo) / (domHi - domLo);
+    return marginLeft + plotW * (1 - frac);
+  };
+
+  const visible = markers.filter(m => m.ppm >= domLo && m.ppm <= domHi);
+
+  const LABEL_H = 14;
+  const LABEL_PAD = 4;
+  const FONT_SIZE = 7;
+  const ARROW_LEN = 10;
+  const TICK_LEN = 6;
+
+  const placed = [];
+  const sorted = [...visible].sort((a, b) => ppmToX(a.ppm) - ppmToX(b.ppm));
+
+  sorted.forEach(m => {
+    const cx = ppmToX(m.ppm);
+    const textW = m.label.length * FONT_SIZE * 0.55 + LABEL_PAD * 2;
+    let bestY = null;
+    for (let row = 0; row < 5; row++) {
+      const candidateY = marginTop - TICK_LEN - ARROW_LEN - LABEL_H - row * (LABEL_H + 2);
+      if (candidateY < 2) continue;
+      const overlap = placed.some(p => p.row === row && Math.abs(p.cx - cx) < (textW / 2 + p.tw / 2 + 2));
+      if (!overlap) {
+        bestY = candidateY;
+        placed.push({ cx, cy: candidateY, tw: textW, row, label: m.label });
+        break;
+      }
+    }
+    if (bestY === null) {
+      bestY = marginTop - TICK_LEN - ARROW_LEN - LABEL_H;
+      placed.push({ cx, cy: bestY, tw: textW, row: 0, label: m.label });
+    }
+  });
+
+  return (
+    <div ref={containerRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+      {w > 0 && (
+        <svg width={w} height={h} style={{ position: 'absolute', top: 0, left: 0, overflow: 'visible' }}>
+          <defs>
+            <marker id="pk-arrow" markerWidth="5" markerHeight="5" refX="2" refY="2.5" orient="auto">
+              <path d="M0,0 L0,5 L4,2.5 z" fill="#dc2626" />
+            </marker>
+          </defs>
+          {placed.map((p, i) => {
+            const arrowStartY = p.cy + LABEL_H + 1;
+            const arrowEndY = marginTop - TICK_LEN - 1;
+            return (
+              <g key={i}>
+                <line x1={p.cx} y1={marginTop} x2={p.cx} y2={marginTop - TICK_LEN} stroke="#ef4444" strokeWidth={1.5} />
+                {arrowStartY < arrowEndY && (
+                  <line x1={p.cx} y1={arrowStartY} x2={p.cx} y2={arrowEndY} stroke="#dc2626" strokeWidth={1} markerEnd="url(#pk-arrow)" />
+                )}
+                <rect x={p.cx - p.tw / 2} y={p.cy} width={p.tw} height={LABEL_H} rx={2} fill="white" stroke="#fca5a5" strokeWidth={0.8} opacity={0.95} />
+                <text x={p.cx} y={p.cy + LABEL_H / 2 + FONT_SIZE / 2 - 1} textAnchor="middle" fontSize={FONT_SIZE} fontFamily="monospace" fontWeight="bold" fill="#b91c1c">
+                  {p.label}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      )}
+    </div>
+  );
+};
+
+const PeakLabelOverlay2D = ({ markers, xDom, yDom, marginLeft, marginRight, marginTop, marginBottom, fontSize = 9 }) => {
+  const containerRef = useRef(null);
+  const [size, setSize] = useState({ w: 0, h: 0 });
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const obs = new ResizeObserver(([e]) => {
+      setSize({ w: e.contentRect.width, h: e.contentRect.height });
+    });
+    obs.observe(containerRef.current);
+    return () => obs.disconnect();
+  }, []);
+
+  const { w, h } = size;
+  const plotW = w - marginLeft - marginRight;
+  const plotH = h - marginTop - marginBottom;
+  
+  if (plotW <= 0 || plotH <= 0 || markers.length === 0) {
+    return <div ref={containerRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />;
+  }
+
+  const xLo = Math.min(xDom[0], xDom[1]);
+  const xHi = Math.max(xDom[0], xDom[1]);
+  const yLo = Math.min(yDom[0], yDom[1]);
+  const yHi = Math.max(yDom[0], yDom[1]);
+
+  const ppmToX = (ppm) => marginLeft + plotW * (1 - (ppm - xLo) / (xHi - xLo));
+  const ppmToY = (ppm) => marginTop + plotH * (1 - (ppm - yLo) / (yHi - yLo));
+
+  const visible = markers.filter(m => m.x >= xLo && m.x <= xHi && m.y >= yLo && m.y <= yHi);
+  
+  const FONT_SIZE = fontSize;
+  const LABEL_PAD_X = 4;
+  const LABEL_H = fontSize + 5;
+  const placed = [];
+
+  visible.forEach(m => {
+    const cx = ppmToX(m.x);
+    const cy = ppmToY(m.y);
+    const tw = m.label.length * FONT_SIZE * 0.55 + LABEL_PAD_X * 2;
+    const th = LABEL_H;
+
+    let best = null;
+    let rad = 1;
+    const angles = [Math.PI/4, 7*Math.PI/4, 3*Math.PI/4, 5*Math.PI/4, 0, Math.PI/2, Math.PI, 3*Math.PI/2];
+
+    while(rad < 15 && !best) {
+      for(let a of angles) {
+         const dist = 8 + rad * 12;
+         const px = cx + dist * Math.cos(a);
+         const py = cy + dist * Math.sin(a);
+         
+         const left = px - tw/2;
+         const right = px + tw/2;
+         const top = py - th/2;
+         const bottom = py + th/2;
+
+         if(left < marginLeft || right > w - marginRight || top < marginTop || bottom > h - marginBottom) continue;
+
+         const overlap = placed.some(p => !(right < p.left - 2 || left > p.right + 2 || bottom < p.top - 2 || top > p.bottom + 2));
+
+         if(!overlap) {
+           best = { cx: px, cy: py, left, right, top, bottom };
+           break;
+         }
+      }
+      rad++;
+    }
+
+    if(!best) {
+       best = { cx: cx + 15, cy: cy - 15, left: cx+15-tw/2, right: cx+15+tw/2, top: cy-15-th/2, bottom: cy-15+th/2 };
+    }
+
+    placed.push({ ...best, originX: cx, originY: cy, label: m.label });
+  });
+
+  return (
+    <div ref={containerRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+      {w > 0 && (
+        <svg width={w} height={h} style={{ position: 'absolute', top: 0, left: 0, overflow: 'visible' }}>
+          <defs>
+            <marker id="pk-arrow-2d" markerWidth="4" markerHeight="4" refX="2" refY="2" orient="auto">
+              <path d="M0,0 L0,4 L4,2 z" fill="#94a3b8" />
+            </marker>
+          </defs>
+          {placed.map((p, i) => (
+            <g key={i}>
+              <line x1={p.cx} y1={p.cy} x2={p.originX} y2={p.originY} stroke="#94a3b8" strokeWidth={1} strokeDasharray="2 2" markerEnd="url(#pk-arrow-2d)" />
+              <rect x={p.left} y={p.top} width={p.right - p.left} height={p.bottom - p.top} rx={2} fill="white" stroke="#cbd5e1" strokeWidth={0.8} opacity={0.85} />
+              <text x={p.cx} y={p.cy + FONT_SIZE/2 - 1} textAnchor="middle" fontSize={FONT_SIZE} fontFamily="sans-serif" fontWeight="bold" fill="#475569">
+                {p.label}
+              </text>
+            </g>
+          ))}
+        </svg>
+      )}
+    </div>
+  );
+};
 // ================= ZOOMABLE PLOTS & SCROLLBARS =================
 const AxisScrollbar = ({ domain, fullDomain, onChange, vertical = false, reversed = true }) => {
   const [min, max] = domain;
