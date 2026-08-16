@@ -1142,10 +1142,21 @@ export const Data = ({ ctx }) => {
   const d = usessNMRDerived(activeTest, ctx);
   const { activeInstance, activeParsed, instances, mw, compoundMW } = d;
 
-  const spectraColumns = activeTest.spectraColumns || [];
-  const yUnit = activeTest.yUnit || 'raw';
+  // Read spectrum data from activeInstance.test (the correct per-condition store)
+  const instTest = (activeInstance && activeInstance.test) ? activeInstance.test : activeTest;
+  const spectraColumns = instTest.spectraColumns || [];
+  const yUnit = instTest.yUnit || 'raw';
 
-  const updateWavelengthData = (val) => updateActiveTest({ wavelengthData: val });
+  // Write helper: route updates through patchInstance so they land on the right condition
+  const patchActive = (updates) => {
+    if (activeInstance) {
+      patchInstance(ctx, activeTest, activeInstance.id, updates);
+    } else {
+      updateActiveTest(updates);
+    }
+  };
+
+  const updateWavelengthData = (val) => patchActive({ wavelengthData: val });
   const addSpectrumColumn = () => {
     const cols = [...spectraColumns];
     cols.push({
@@ -1155,12 +1166,12 @@ export const Data = ({ ctx }) => {
       color: SPECTRA_PALETTE[cols.length % SPECTRA_PALETTE.length],
       visible: true
     });
-    updateActiveTest({ spectraColumns: cols });
+    patchActive({ spectraColumns: cols });
   };
   const patchColumn = (id, patch) =>
-    updateActiveTest({ spectraColumns: spectraColumns.map((c) => (c.id === id ? { ...c, ...patch } : c)) });
+    patchActive({ spectraColumns: spectraColumns.map((c) => (c.id === id ? { ...c, ...patch } : c)) });
   const removeSpectrumColumn = (id) =>
-    updateActiveTest({ spectraColumns: spectraColumns.filter((c) => c.id !== id) });
+    patchActive({ spectraColumns: spectraColumns.filter((c) => c.id !== id) });
 
 const [brukerDataFile, setBrukerDataFile] = useState(null);
 const [brukerAcqusFile, setBrukerAcqusFile] = useState(null);
@@ -1242,8 +1253,8 @@ const applyBruker = (parsed) => {
         brukerMeta: parsed.meta
     };
     
-    // Apply the updates to your state and optionally clear previous errors
-    updateActiveTest(updates); // Added the missing state update call to actually commit the imported data
+    // Route through patchActive so data lands on the correct condition instance
+    patchActive(updates);
     setBrukerMsg(`✅ Imported ${parsed.xs.length} points (${parsed.nPoints} in file)${parsed.autoEndian ? ` · byte order auto-detected (${parsed.littleEndian ? 'little' : 'big'}-endian)` : ''} · SW = ${parsed.meta.swKHz} kHz.`);
 };
 
@@ -1287,21 +1298,21 @@ const importBrukerFromUrl = async () => {
 };
 
 const normalizeActiveSpectrum = () => {
-  const parsed = computeParsed(activeTest);
+  const parsed = computeParsed(instTest);
   if (!parsed.parsedSpectra.length) { alert('No spectrum to normalize.'); return; }
   const maxAbs = Math.max(1e-9, ...parsed.parsedSpectra.flatMap((s) => s.values.map((v) => Math.abs(v))));
-  const cols = (activeTest.spectraColumns || []).map((c) => ({
+  const cols = (instTest.spectraColumns || []).map((c) => ({
     ...c,
     data: String(c.data || '').split(/[\n,]+/).map((s) => {
       const n = parseFloat(String(s).trim());
       return Number.isFinite(n) ? String(n / maxAbs) : s;
     }).join('\n')
   }));
-  updateActiveTest({ spectraColumns: cols, rawSpectraColumns: activeTest.spectraColumns, yUnit: 'norm' });
+  patchActive({ spectraColumns: cols, rawSpectraColumns: instTest.spectraColumns, yUnit: 'norm' });
 };
 const revertNormalization = () => {
-  if (!Array.isArray(activeTest.rawSpectraColumns)) return;
-  updateActiveTest({ spectraColumns: activeTest.rawSpectraColumns, rawSpectraColumns: undefined, yUnit: 'raw' });
+  if (!Array.isArray(instTest.rawSpectraColumns)) return;
+  patchActive({ spectraColumns: instTest.rawSpectraColumns, rawSpectraColumns: undefined, yUnit: 'raw' });
 };
 
   const [blankId, setBlankId] = useState('');

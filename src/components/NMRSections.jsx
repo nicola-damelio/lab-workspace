@@ -3979,6 +3979,88 @@ return null;
 };
 
 
+/* ============================================================================
+   BRUKER 1R → PPM AXIS  (shared helpers for the NMR page import)
+   ============================================================================ */
+const _nmrParseBrukerParams = (text) => {
+  const p = {}; let key = null;
+  for (const line of String(text).split(/\r?\n/)) {
+    const m = line.match(/^##\$([A-Za-z0-9_]+)=(.*)$/);
+    if (m) { key = m[1]; let v = m[2].trim(); if (v.startsWith('<') && v.endsWith('>')) v = v.slice(1,-1).trim(); p[key] = v; }
+    else if (key && line && !line.startsWith('##')) p[key] += '\n' + line;
+  }
+  return p;
+};
+const _nmrBrukerNum = (p, k, d=0) => { const v = parseFloat(p[k]); return Number.isFinite(v) ? v : d; };
+const _nmrDecode1r = (buf, le) => { const n = Math.floor(buf.byteLength/4); const dv = new DataView(buf); const y = new Float64Array(n); for (let i=0;i<n;i++) y[i]=dv.getInt32(i*4,le); return y; };
+const _nmrDecode1rAuto = (buf, forceLE=null) => {
+  if (forceLE !== null) return {y:_nmrDecode1r(buf,forceLE), littleEndian:forceLE, autoEndian:false};
+  const be=_nmrDecode1r(buf,false); const le=_nmrDecode1r(buf,true);
+  const p99 = arr => { const a=Array.from(arr,Math.abs).sort((x,y)=>x-y); return a[Math.min(a.length-1,Math.floor(a.length*0.99))]; };
+  const littleEndian = p99(le)<p99(be);
+  return {y: littleEndian?le:be, littleEndian, autoEndian:true};
+};
+// Build ppm axis: point 0 = high-ppm edge = (O1 + SW_h/2) / SFO1
+const _nmrPpmAxis = (swHz, o1Hz, sfo1MHz, n) => {
+  const left = (o1Hz + swHz/2) / (sfo1MHz * 1e6) * 1e6; // ppm = Hz/SFO1[Hz] * 1e6
+  const step = swHz / n / (sfo1MHz * 1e6) * 1e6;
+  const xs = new Float64Array(n);
+  for (let i=0;i<n;i++) xs[i] = left - i*step;
+  return xs;
+};
+const _nmrDownsample = (xs, ys, max=6000) => {
+  if (ys.length <= max) return {xs:Array.from(xs), ys:Array.from(ys)};
+  const out = {xs:[], ys:[]}; const bucket = ys.length/max;
+  for (let b=0;b<max;b++) {
+    const s=Math.floor(b*bucket); const e=Math.max(s+1,Math.floor((b+1)*bucket));
+    let iMin=s, iMax=s;
+    for (let i=s;i<e;i++) { if(ys[i]<ys[iMin]) iMin=i; if(ys[i]>ys[iMax]) iMax=i; }
+    const [a,z] = iMin<iMax ? [iMin,iMax] : [iMax,iMin];
+    out.xs.push(xs[a],xs[z]); out.ys.push(ys[a],ys[z]);
+  }
+  return out;
+};
+const _nmrResolveDrive = (url) => {
+  const u = String(url||'').trim(); if (!u) return '';
+  let m = u.match(/drive\.google\.com\/file\/d\/([\w-]+)/);
+  if (m) return `https://drive.google.com/uc?export=download&id=${m[1]}`;
+  m = u.match(/[?&]id=([\w-]+)/);
+  if (m && /drive\.google\.com/.test(u)) return `https://drive.google.com/uc?export=download&id=${m[1]}`;
+  return u;
+};
+// Main import — returns { xs:ppmArray, ys:intensityArray, meta, nPoints, error? }
+const importBruker1rPpm = ({dataBuffer, acqusText='', manualSWppm=null, manualO1ppm=0, title='', forceLE=null}) => {
+  if (!dataBuffer || dataBuffer.byteLength < 16) return {error:'Empty or invalid 1r file.'};
+  if (new TextDecoder().decode(new Uint8Array(dataBuffer.slice(0,32))).includes('<!DOC'))
+    return {error:'Drive returned a web page — set sharing to "Anyone with the link".' };
+  const acqus = acqusText && acqusText.trim().startsWith('##') ? _nmrParseBrukerParams(acqusText) : {};
+  const {y, littleEndian, autoEndian} = _nmrDecode1rAuto(dataBuffer, forceLE);
+  const swHz = _nmrBrukerNum(acqus,'SW_h');
+  const sfo1 = _nmrBrukerNum(acqus,'SFO1');      // MHz
+  const o1Hz = _nmrBrukerNum(acqus,'O1');          // Hz
+  let xs;
+  if (swHz > 0 && sfo1 > 0) {
+    xs = _nmrPpmAxis(swHz, o1Hz, sfo1, y.length);
+  } else if (manualSWppm) {
+    // manual: centre at manualO1ppm, width manualSWppm
+    const left = manualO1ppm + manualSWppm/2;
+    xs = new Float64Array(y.length);
+    for (let i=0;i<y.length;i++) xs[i] = left - i*(manualSWppm/y.length);
+  } else {
+    return {error:'No valid acqus (need SFO1 + SW_h + O1) and no manual spectral width — cannot build the ppm axis.'};
+  }
+  const ds = _nmrDownsample(xs, y, 6000);
+  return {
+    xs: ds.xs, ys: ds.ys, littleEndian, autoEndian, nPoints: y.length,
+    meta: {
+      swPpm: swHz>0&&sfo1>0 ? swHz/(sfo1*1e6)*1e6 : manualSWppm,
+      o1Ppm: sfo1>0 ? o1Hz/(sfo1*1e6)*1e6 : manualO1ppm,
+      sfo1, nucleus: acqus.NUC1 || '', temperatureK: _nmrBrukerNum(acqus,'TE') || null,
+      title: title || acqus.TITLE || ''
+    }
+  };
+};
+
 // ================= DATA SECTION =================
 export const DataSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
@@ -3989,6 +4071,26 @@ export const DataSection = ({ ctx }) => {
   const [newLayerUnit, setNewLayerUnit] = useState('');
   const [showImport, setShowImport] = useState(false);
   const [importConfig, setImportConfig] = useState({ testId: '', tableId: '', metric: 'R_s' });
+
+  // ---- Bruker 1r import (ppm axis) ----
+  const [nmrBrukerDataFile, setNmrBrukerDataFile] = useState(null);
+  const [nmrBrukerAcqusFile, setNmrBrukerAcqusFile] = useState(null);
+  const [nmrBrukerDataUrl, setNmrBrukerDataUrl] = useState('');
+  const [nmrBrukerAcqusUrl, setNmrBrukerAcqusUrl] = useState('');
+  const [nmrBrukerSwPpm, setNmrBrukerSwPpm] = useState('');
+  const [nmrBrukerO1Ppm, setNmrBrukerO1Ppm] = useState('');
+  const [nmrBrukerMsg, setNmrBrukerMsg] = useState('');
+  const [nmrBrukerBusy, setNmrBrukerBusy] = useState(false);
+  const [showPeakLabels, setShowPeakLabels] = useState(true);
+  const [expandedBruker, setExpandedBruker] = useState(false);
+  // zoom state for the 1r viewer
+  const [brukerZoomDom, setBrukerZoomDom] = useState(null);
+  const [brukerRefL, setBrukerRefL] = useState(null);
+  const [brukerRefR, setBrukerRefR] = useState(null);
+  const brukerDragRef = useRef(false);
+  const brukerChartRef = useRef(null);
+  const nmrBrukerFileRef = useRef(null);
+  const nmrBrukerAcqusFileRef = useRef(null);
   
   // Publication Table Export States
   const [showExportModal, setShowExportModal] = useState(false);
@@ -4497,6 +4599,224 @@ export const DataSection = ({ ctx }) => {
           <button type="button" onClick={addLayer} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm shadow-sm h-fit">+ Add Parameter</button>
         </div>
       </div>
+
+      {/* ===== Bruker 1r spectrum import (ppm) ===== */}
+      {(() => {
+        // --- helpers scoped here ---
+        const spec = activeTest.nmr1dSpectrum;
+        const hasSpec = spec && Array.isArray(spec.xs) && spec.xs.length > 0;
+        const CHART_MARGIN = {top: 10, right: 20, bottom: 30, left: 10};
+
+        const applyNmrBruker = (parsed) => {
+          if (parsed.error) { setNmrBrukerMsg('\u26a0\ufe0f ' + parsed.error); return; }
+          setNmrBrukerMsg('\u2705 Imported ' + parsed.nPoints + ' pts' +
+            (parsed.autoEndian ? ' \u00b7 endian auto-detected (' + (parsed.littleEndian ? 'LE' : 'BE') + ')' : '') +
+            ' \u00b7 SW = ' + (parsed.meta.swPpm ? parsed.meta.swPpm.toFixed(2) : '?') + ' ppm');
+          updateActiveTest({ nmr1dSpectrum: { xs: parsed.xs, ys: parsed.ys, meta: parsed.meta, title: parsed.meta.title || 'Imported 1r' } });
+          setBrukerZoomDom(null);
+        };
+
+        const importLocal = async () => {
+          if (!nmrBrukerDataFile) { setNmrBrukerMsg('\u26a0\ufe0f Choose the 1r file first.'); return; }
+          setNmrBrukerBusy(true);
+          try {
+            applyNmrBruker(importBruker1rPpm({
+              dataBuffer: await nmrBrukerDataFile.arrayBuffer(),
+              acqusText: nmrBrukerAcqusFile ? await nmrBrukerAcqusFile.text() : '',
+              manualSWppm: parseManual(nmrBrukerSwPpm),
+              manualO1ppm: parseManual(nmrBrukerO1Ppm) || 0,
+              title: nmrBrukerDataFile.name.replace(/1r$/i,'').replace(/\/+$/,'')
+            }));
+          } catch(e) { setNmrBrukerMsg('\u26a0\ufe0f ' + e.message); }
+          setNmrBrukerBusy(false);
+        };
+
+        const importFromUrl = async () => {
+          if (!nmrBrukerDataUrl.trim()) { setNmrBrukerMsg('\u26a0\ufe0f Paste the Google Drive link.'); return; }
+          setNmrBrukerBusy(true);
+          try {
+            const res = await fetch(_nmrResolveDrive(nmrBrukerDataUrl));
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            let acqusText = '';
+            if (nmrBrukerAcqusUrl.trim()) {
+              try { acqusText = await (await fetch(_nmrResolveDrive(nmrBrukerAcqusUrl))).text(); } catch { acqusText = ''; }
+            }
+            applyNmrBruker(importBruker1rPpm({ dataBuffer: await res.arrayBuffer(), acqusText, manualSWppm: parseManual(nmrBrukerSwPpm), manualO1ppm: parseManual(nmrBrukerO1Ppm)||0 }));
+          } catch(e) { setNmrBrukerMsg('\u26a0\ufe0f Fetch failed: ' + e.message); }
+          setNmrBrukerBusy(false);
+        };
+
+        // ---- Spectrum viewer ----
+        const renderSpectrum = () => {
+          if (!hasSpec) return null;
+          const xs = spec.xs, ys = spec.ys;
+          const xFull = [Math.min(...xs), Math.max(...xs)];
+          const dom = brukerZoomDom || [xFull[1], xFull[0]]; // reversed: high on left
+          const isZoomed = !!(brukerZoomDom);
+
+          // collect peak markers from assignment table
+          const csMap = activeTest.chemicalShifts || {};
+          const peakMarkers = [];
+          const lo = Math.min(dom[0],dom[1]), hi = Math.max(dom[0],dom[1]);
+          d.estSeq.forEach((res, ri) => {
+            d.atomOptions.filter(o => o.key.startsWith(ri + '-')).forEach(o => {
+              const ppm = parseManual(csMap[o.key]);
+              if (ppm === null || ppm < lo || ppm > hi) return;
+              const atom = o.key.slice(String(ri).length + 1);
+              peakMarkers.push({ppm, label: res.id + ' ' + atom});
+            });
+          });
+
+          // decimate to at most 4000 pts within visible domain
+          const visible = [];
+          for (let i=0;i<xs.length;i++) {
+            const x = xs[i];
+            if (x >= lo && x <= hi) visible.push({x, y: ys[i]});
+          }
+          const maxY = visible.reduce((m, p) => Math.max(m, Math.abs(p.y)), 1);
+          const step = Math.max(1, Math.ceil(visible.length / 4000));
+          const chartData = visible.filter((_,i) => i%step===0).map(p => ({x: p.x, y: p.y/maxY}));
+
+          // mouse zoom helpers
+          const getX = (clientX) => {
+            if (!brukerChartRef.current) return null;
+            const w = brukerChartRef.current.querySelector('.recharts-wrapper');
+            if (!w) return null;
+            const r = w.getBoundingClientRect();
+            const plotW = r.width - CHART_MARGIN.left - CHART_MARGIN.right;
+            if (plotW <= 0) return null;
+            const fx = Math.min(1, Math.max(0, (clientX - r.left - CHART_MARGIN.left) / plotW));
+            // axis reversed: dom[0] is high-ppm left
+            return dom[0] - fx*(dom[0]-dom[1]);
+          };
+          const onDown = (e) => {
+            const v = getX(e.clientX); if (v===null) return;
+            brukerDragRef.current = true; setBrukerRefL(v); setBrukerRefR(v);
+          };
+          const onMove = (e) => {
+            if (!brukerDragRef.current) return;
+            const v = getX(e.clientX); if (v!==null) setBrukerRefR(v);
+          };
+          const onUp = () => {
+            if (!brukerDragRef.current) return;
+            brukerDragRef.current = false;
+            if (brukerRefL!==null && brukerRefR!==null && Math.abs(brukerRefL-brukerRefR)>0.01) {
+              const lo2=Math.min(brukerRefL,brukerRefR), hi2=Math.max(brukerRefL,brukerRefR);
+              setBrukerZoomDom([hi2, lo2]); // keep reversed
+            }
+            setBrukerRefL(null); setBrukerRefR(null);
+          };
+
+          const PANEL_H = expandedBruker ? '100%' : 260;
+          const topMargin = (showPeakLabels && peakMarkers.length > 0) ? 70 : 10;
+
+          return (
+            <div className={'bg-white border border-sky-200 rounded-xl p-3 flex flex-col gap-2' + (expandedBruker ? ' fixed inset-2 z-50 shadow-2xl' : '')}>
+              {expandedBruker && <div className="fixed inset-0 bg-black/40 -z-10" onClick={() => setExpandedBruker(false)} />}
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <h5 className="text-xs font-bold text-slate-700">
+                  {String.fromCodePoint(0x1F4C8)} {spec.title || 'Imported 1r'}
+                  {spec.meta?.nucleus ? ' — ' + spec.meta.nucleus : ''}
+                  {spec.meta?.sfo1 ? ' (' + spec.meta.sfo1.toFixed(0) + ' MHz)' : ''}
+                </h5>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {isZoomed && <button type="button" onClick={() => setBrukerZoomDom(null)} className="text-xs bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded font-bold">Reset zoom</button>}
+                  <label className="flex items-center gap-1 text-xs font-bold text-slate-600 cursor-pointer">
+                    <input type="checkbox" checked={showPeakLabels} onChange={e => setShowPeakLabels(e.target.checked)} className="accent-blue-600" />
+                    Peak labels
+                  </label>
+                  <button type="button" onClick={() => setExpandedBruker(b => !b)} className="text-slate-400 hover:text-blue-600 text-lg px-1" title={expandedBruker ? 'Collapse' : 'Expand'}>{expandedBruker ? '\u2199\ufe0f' : '\u2197\ufe0f'}</button>
+                  <button type="button" onClick={() => { updateActiveTest({nmr1dSpectrum: null}); setBrukerZoomDom(null); setNmrBrukerMsg(''); }} className="text-[10px] text-red-400 hover:text-red-600 font-bold">× Remove</button>
+                </div>
+              </div>
+              <div ref={brukerChartRef} className="select-none" style={{height: PANEL_H}}
+                   onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={chartData} margin={{top: topMargin, right: CHART_MARGIN.right, bottom: CHART_MARGIN.bottom, left: CHART_MARGIN.left}}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis type="number" dataKey="x" domain={dom} reversed={true} allowDataOverflow
+                      tick={{fontSize:9, fill:'#64748b'}}
+                      label={{value:'Chemical Shift (ppm)', position:'insideBottom', offset:-12, fontSize:9, fill:'#64748b'}} />
+                    <YAxis hide domain={[-0.05,1.05]} />
+                    <Tooltip formatter={v => v.toFixed(4)} labelFormatter={v => Number(v).toFixed(3) + ' ppm'} />
+                    <Line type="monotone" dataKey="y" stroke="#3b82f6" strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls />
+                    {brukerRefL!==null && brukerRefR!==null && <ReferenceArea x1={brukerRefL} x2={brukerRefR} fill="#cbd5e1" fillOpacity={0.4} />}
+                    {showPeakLabels && peakMarkers.map((pm,i) => (
+                      <ReferenceLine key={i} x={pm.ppm} stroke="#ef444455" strokeWidth={1}
+                        label={{value: pm.label, position:'top', angle:-65, fill:'#dc2626', fontSize:8, offset: (i%3)*18}} />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <p className="text-[9px] text-slate-400">
+                {xs.length.toLocaleString()} pts · SW={spec.meta?.swPpm ? spec.meta.swPpm.toFixed(2) : '?'} ppm ·
+                {isZoomed ? ' Zoomed — drag to re-zoom' : ' Drag to zoom'}
+              </p>
+            </div>
+          );
+        };
+
+        return (
+          <>
+            {renderSpectrum()}
+            <div className="bg-sky-50 border border-sky-200 rounded-xl p-4 flex flex-col gap-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <h4 className="text-sm font-bold text-sky-900">{String.fromCodePoint(0x1F4E5)} Bruker Import — 1r processed spectrum (ppm axis)</h4>
+                {hasSpec && <span className="text-[9px] bg-green-100 text-green-800 px-2 py-0.5 rounded font-bold">Spectrum loaded</span>}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="bg-white border border-sky-200 rounded-lg p-3 flex flex-col gap-2">
+                  <span className="text-xs font-bold text-sky-800">{String.fromCodePoint(0x1F4BB)} From this PC</span>
+                  <label className="bg-white border border-sky-300 hover:bg-sky-100 text-sky-800 font-bold px-3 py-2 rounded-lg text-xs cursor-pointer shadow-sm transition-colors">
+                    {String.fromCodePoint(0x1F4C4)} Choose 1r file…
+                    <input ref={nmrBrukerFileRef} type="file" onChange={e => setNmrBrukerDataFile(e.target.files?.[0]||null)} className="hidden" />
+                  </label>
+                  {nmrBrukerDataFile && <span className="text-[10px] font-mono text-sky-700 truncate">{nmrBrukerDataFile.name} · {(nmrBrukerDataFile.size/1024).toFixed(0)} KB</span>}
+                  <label className="bg-white border border-sky-300 hover:bg-sky-100 text-sky-800 font-bold px-3 py-2 rounded-lg text-xs cursor-pointer shadow-sm transition-colors">
+                    {String.fromCodePoint(0x1F4C4)} Choose acqus file (recommended)…
+                    <input ref={nmrBrukerAcqusFileRef} type="file" onChange={e => setNmrBrukerAcqusFile(e.target.files?.[0]||null)} className="hidden" />
+                  </label>
+                  {nmrBrukerAcqusFile && <span className="text-[10px] font-mono text-sky-700 truncate">{nmrBrukerAcqusFile.name}</span>}
+                  <button type="button" onClick={importLocal} disabled={nmrBrukerBusy}
+                    className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm">
+                    {nmrBrukerBusy ? 'Importing\u2026' : 'Import local files'}
+                  </button>
+                </div>
+
+                <div className="bg-white border border-sky-200 rounded-lg p-3 flex flex-col gap-2">
+                  <span className="text-xs font-bold text-sky-800">{String.fromCodePoint(0x1F517)} From Google Drive link</span>
+                  <input type="text" value={nmrBrukerDataUrl} onChange={e => setNmrBrukerDataUrl(e.target.value)}
+                    placeholder="Link to 1r (…/file/d/…/view)" className="border border-sky-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-sky-500 bg-white" />
+                  <input type="text" value={nmrBrukerAcqusUrl} onChange={e => setNmrBrukerAcqusUrl(e.target.value)}
+                    placeholder="Link to acqus (optional)" className="border border-sky-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-sky-500 bg-white" />
+                  <button type="button" onClick={importFromUrl} disabled={nmrBrukerBusy}
+                    className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm">
+                    {nmrBrukerBusy ? 'Importing\u2026' : 'Import from links'}
+                  </button>
+                  <span className="text-[9px] text-sky-600">Both files must be shared as "Anyone with the link".</span>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-end gap-3 bg-white border border-sky-200 rounded-lg p-3">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-sky-800">Manual SW (ppm) — only if no acqus</label>
+                  <input type="number" step="0.1" value={nmrBrukerSwPpm} onChange={e => setNmrBrukerSwPpm(e.target.value)}
+                    onWheel={e => e.target.blur()} className="border border-sky-300 rounded-lg p-1.5 text-xs outline-none focus:border-sky-500 w-28" />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-sky-800">Centre O1 (ppm)</label>
+                  <input type="number" step="0.01" value={nmrBrukerO1Ppm} onChange={e => setNmrBrukerO1Ppm(e.target.value)}
+                    onWheel={e => e.target.blur()} className="border border-sky-300 rounded-lg p-1.5 text-xs outline-none focus:border-sky-500 w-28" />
+                </div>
+                <span className="text-[9px] text-sky-600 max-w-xs">If an acqus file is provided, SFO1 + SW_h + O1 are read automatically and the manual fields are ignored.</span>
+              </div>
+
+              {nmrBrukerMsg && <span className="text-xs font-bold text-sky-900">{nmrBrukerMsg}</span>}
+            </div>
+          </>
+        );
+      })()}
 
       {/* Import NMR Fitting Modal */}
       {showImport && (
