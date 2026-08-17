@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 /* ============================================================
    DefinitionsExtra — Solvents, Buffers, Additives,
@@ -648,11 +648,809 @@ export const NMRInstrumentsManager = ({ nmrInstruments = [], setNmrInstruments, 
 };
 
 /* ============================================================
-   NMR EXPERIMENTS MANAGER
-   ============================================================ */
-const EXPERIMENT_TYPES = ['NOESY', 'TOCSY', 'COSY', 'HSQC', 'HMBC', 'DEPT', 'T1', 'T2', 'DOSY', 'NOE', 'ROESY', 'TROSY', 'CRINEPT', 'Other'];
+NMR EXPERIMENTS MANAGER
+============================================================ */
+const EXPERIMENT_TYPES = [
+  'NOESY',
+  'TOCSY',
+  'COSY',
+  'HSQC',
+  'HMBC',
+  'DEPT',
+  'T1',
+  'T2',
+  'DOSY',
+  'NOE',
+  'ROESY',
+  'TROSY',
+  'CRINEPT',
+  'Other'
+];
 
-export const NMRExperimentsManager = ({ nmrExperiments = [], setNmrExperiments, selectedId, onSelect }) => {
+const normalizePulseLinkUrl = (url) => {
+  const raw = String(url || '').trim();
+  if (!raw) return '#';
+  if (/^(https?:|mailto:|file:)/i.test(raw)) return raw;
+  if (raw.startsWith('//')) return `https:${raw}`;
+  return `https://${raw}`;
+};
+
+const extractPulseDriveId = (url) => {
+  try {
+    const u = String(url || '');
+    const fileMatch = u.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+    if (fileMatch) return fileMatch[1];
+
+    const idMatch = u.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+    if (idMatch) return idMatch[1];
+
+    const openMatch = u.match(/\/d\/([a-zA-Z0-9_-]+)/);
+    if (openMatch) return openMatch[1];
+  } catch (e) {}
+
+  return '';
+};
+
+const looksLikePulseProgramText = (text) => {
+  const sample = String(text || '').slice(0, 80000);
+
+  const hasPulseTokens = /(^|\n)\s*(p\d+|d\d+|go|ze|aq|acquire|adc|fid|ph\d+|gp\d*|gradient)/i.test(sample);
+
+  const looksHtmlOnly =
+    /<html|<!doctype|<body|<head/i.test(sample) && !hasPulseTokens;
+
+  return hasPulseTokens && !looksHtmlOnly;
+};
+
+const fetchPulseSequenceFromLink = async (url) => {
+  const candidates = [];
+  const driveId = extractPulseDriveId(url);
+
+  if (driveId) {
+    candidates.push(`https://drive.google.com/uc?export=download&id=${driveId}`);
+    candidates.push(`https://drive.usercontent.google.com/download?id=${driveId}&export=download`);
+  }
+
+  candidates.push(normalizePulseLinkUrl(url));
+
+  let lastError = null;
+
+  for (const candidate of candidates) {
+    try {
+      const res = await fetch(candidate, { redirect: 'follow' });
+      if (!res.ok) {
+        lastError = new Error(`Request failed with status ${res.status}`);
+        continue;
+      }
+
+      const text = await res.text();
+
+      if (looksLikePulseProgramText(text)) {
+        return text;
+      }
+
+      lastError = new Error('The file does not look like a pulse program.');
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error('Could not fetch the pulse sequence file.');
+};
+
+const parseBrukerPulseProgram = (text) => {
+  const lines = String(text || '').split(/\r?\n/);
+  const events = [];
+  const laneSet = new Set();
+  const laneOrder = [];
+
+  const addLane = (lane) => {
+    if (!laneSet.has(lane)) {
+      laneSet.add(lane);
+      laneOrder.push(lane);
+    }
+  };
+
+  const channelFromText = (txt) => {
+    const s = String(txt || '').toLowerCase();
+
+    if (/(^|\b)(1h|proton|f1|pl1|ch1)(\b|$)/.test(s)) return '1H / F1';
+    if (/(^|\b)(13c|carbon|f2|pl2|ch2)(\b|$)/.test(s)) return '13C / F2';
+    if (/(^|\b)(15n|nitrogen|f3|pl3|ch3)(\b|$)/.test(s)) return '15N / F3';
+    if (/(^|\b)(31p|phosphorus|f4|pl4|ch4)(\b|$)/.test(s)) return '31P / F4';
+    if (/(^|\b)(2h|deuterium|f5|pl5|ch5)(\b|$)/.test(s)) return '2H / F5';
+    if (/(^|\b)(19f|fluorine|f6|pl6|ch6)(\b|$)/.test(s)) return '19F / F6';
+
+    return '';
+  };
+
+  const parseInlineDuration = (token) => {
+    const m = String(token).match(/=([\d.]+)(s|ms|us|µs)?/i);
+    if (!m) return null;
+
+    const val = parseFloat(m[1]);
+    if (!Number.isFinite(val)) return null;
+
+    const unit = String(m[2] || '').toLowerCase();
+
+    if (unit === 's') return val;
+    if (unit === 'ms') return val / 1000;
+    if (unit === 'us' || unit === 'µs') return val / 1000000;
+
+    return val;
+  };
+
+  lines.forEach((rawLine, lineIdx) => {
+    const line = String(rawLine || '')
+      .split(';')[0]
+      .trim();
+
+    if (!line) return;
+
+    const channel = channelFromText(line);
+    const tokens = line.split(/\s+/);
+    let lineHadEvent = false;
+
+    tokens.forEach((token, tokenIdx) => {
+      const t = String(token || '').replace(/[;,]+$/g, '');
+      const lower = t.toLowerCase();
+
+      if (!lower) return;
+
+      const duration = parseInlineDuration(t);
+
+      if (/^(go|aq|acquire|adc|fid|detect)$/.test(lower)) {
+        addLane('Acquisition');
+        events.push({
+          type: 'acquisition',
+          label: t,
+          lane: 'Acquisition',
+          duration,
+          line: lineIdx + 1,
+          raw: line
+        });
+        lineHadEvent = true;
+        return;
+      }
+
+      if (/^d\d+(?:=|$)/.test(lower)) {
+        addLane('Delays');
+        events.push({
+          type: 'delay',
+          label: t,
+          lane: 'Delays',
+          duration,
+          line: lineIdx + 1,
+          raw: line
+        });
+        lineHadEvent = true;
+        return;
+      }
+
+      if (/^p\d+(?::[\w.-]+)?(?:=|$)/.test(lower)) {
+        const lane = channel || 'RF';
+        addLane(lane);
+
+        const next = tokens[tokenIdx + 1] || '';
+        const phase = /^ph/i.test(next) ? next : '';
+
+        events.push({
+          type: 'pulse',
+          label: t,
+          phase,
+          lane,
+          duration,
+          line: lineIdx + 1,
+          raw: line
+        });
+
+        lineHadEvent = true;
+        return;
+      }
+
+      if (/^(gp|grad|gradient|z\d+)/.test(lower)) {
+        addLane('Gradients');
+        events.push({
+          type: 'gradient',
+          label: t,
+          lane: 'Gradients',
+          duration,
+          line: lineIdx + 1,
+          raw: line
+        });
+        lineHadEvent = true;
+        return;
+      }
+
+      if (/^ph\d+$/.test(lower)) {
+        const prev = events[events.length - 1];
+
+        if (prev && prev.type === 'pulse' && !prev.phase) {
+          prev.phase = t;
+        } else {
+          addLane('Phase');
+          events.push({
+            type: 'phase',
+            label: t,
+            lane: 'Phase',
+            duration,
+            line: lineIdx + 1,
+            raw: line
+          });
+        }
+
+        lineHadEvent = true;
+        return;
+      }
+
+      if (
+        /^(ze|lo|loop|if|endif|goto|label|wr|exit|return|cp|cpd|dec|on|off|mc|qsin)$/.test(
+          lower
+        )
+      ) {
+        addLane('Control');
+        events.push({
+          type: 'control',
+          label: t,
+          lane: 'Control',
+          duration,
+          line: lineIdx + 1,
+          raw: line
+        });
+        lineHadEvent = true;
+        return;
+      }
+    });
+
+    if (!lineHadEvent && line.length < 140 && events.length < 700) {
+      addLane('Control');
+      events.push({
+        type: 'control',
+        label: line.slice(0, 28),
+        lane: 'Control',
+        duration: null,
+        line: lineIdx + 1,
+        raw: line
+      });
+    }
+  });
+
+  const channelLanes = laneOrder.filter((lane) => /\/F\d+/.test(lane));
+  const fixedLanes = [
+    'RF',
+    'Delays',
+    'Gradients',
+    'Acquisition',
+    'Phase',
+    'Control'
+  ].filter((lane) => laneSet.has(lane));
+
+  const lanes = [...new Set([...channelLanes, ...fixedLanes, ...laneOrder])];
+
+  return { events, lanes };
+};
+
+export const BrukerPulseSequenceViewer = ({
+  open,
+  onClose,
+  name,
+  pulseSequence = '',
+  pulseSequenceLink = ''
+}) => {
+  const [showRaw, setShowRaw] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const [isPanning, setIsPanning] = useState(false);
+
+  const scrollRef = useRef(null);
+  const panStart = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
+
+  const clampZoom = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 1;
+    return Math.min(10, Math.max(0.25, n));
+  };
+
+  useEffect(() => {
+    if (open) {
+      setShowRaw(false);
+      setZoom(1);
+      setIsPanning(false);
+
+      if (scrollRef.current) {
+        scrollRef.current.scrollTo({ top: 0, left: 0 });
+      }
+    }
+  }, [open]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+
+    if (!open || !el) return undefined;
+
+    const handleWheel = (e) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+
+      e.preventDefault();
+
+      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+
+      setZoom((prev) => {
+        const next = prev * factor;
+        return Math.min(10, Math.max(0.25, next));
+      });
+    };
+
+    el.addEventListener('wheel', handleWheel, { passive: false });
+
+    return () => {
+      el.removeEventListener('wheel', handleWheel);
+    };
+  }, [open]);
+
+  if (!open) return null;
+
+  const parsed = parseBrukerPulseProgram(pulseSequence);
+  const events = parsed.events.slice(0, 800);
+  const lanes = parsed.lanes.length ? parsed.lanes : ['RF'];
+
+  const laneHeight = 104;
+  const labelWidth = 190;
+  const topPadding = 56;
+  const eventGap = 36;
+
+  const truncate = (text, max = 16) => {
+    const s = String(text || '');
+    return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+  };
+
+  const eventWidth = (e) => {
+    if (e.type === 'acquisition') return 116;
+    if (e.type === 'delay') return 82;
+    if (e.type === 'pulse') return 36;
+    if (e.type === 'gradient') return 58;
+    if (e.type === 'phase') return 34;
+    return 56;
+  };
+
+  let x = labelWidth + 36;
+
+  const placed = events.map((e, i) => {
+    const w = eventWidth(e);
+    const laneIndex = Math.max(0, lanes.indexOf(e.lane));
+    const y = topPadding + laneIndex * laneHeight;
+    const centerY = y + laneHeight / 2;
+
+    const item = {
+      ...e,
+      key: `evt_${i}_${e.line}`,
+      x,
+      y,
+      w,
+      centerY
+    };
+
+    x += w + eventGap;
+    return item;
+  });
+
+  const svgWidth = Math.max(1100, x + 120);
+  const svgHeight = topPadding + lanes.length * laneHeight + 80;
+
+  const zoomIn = () => {
+    setZoom((prev) => clampZoom(prev * 1.25));
+  };
+
+  const zoomOut = () => {
+    setZoom((prev) => clampZoom(prev / 1.25));
+  };
+
+  const resetView = () => {
+    setZoom(1);
+    setIsPanning(false);
+
+    if (scrollRef.current) {
+      scrollRef.current.scrollTo({ top: 0, left: 0 });
+    }
+  };
+
+  const fitWidth = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const available = el.clientWidth - 32;
+    const nextZoom = clampZoom(available / svgWidth);
+
+    setZoom(nextZoom);
+    setIsPanning(false);
+
+    el.scrollTo({ top: 0, left: 0 });
+  };
+
+  const handleDiagramMouseDown = (e) => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    setIsPanning(true);
+    panStart.current = {
+      x: e.clientX,
+      y: e.clientY,
+      scrollLeft: el.scrollLeft,
+      scrollTop: el.scrollTop
+    };
+  };
+
+  const handleDiagramMouseMove = (e) => {
+    const el = scrollRef.current;
+    if (!el || !isPanning) return;
+
+    el.scrollLeft = panStart.current.scrollLeft - (e.clientX - panStart.current.x);
+    el.scrollTop = panStart.current.scrollTop - (e.clientY - panStart.current.y);
+  };
+
+  const stopPanning = () => {
+    setIsPanning(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[1000000] bg-slate-900/75 backdrop-blur-sm p-3 md:p-8 flex items-center justify-center">
+      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-[98vw] h-full max-h-[96vh] flex flex-col overflow-hidden">
+        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3 px-5 py-4 border-b border-slate-200 bg-slate-50">
+          <div>
+            <h3 className="text-lg font-black text-slate-800">
+              Pulse Sequence Viewer
+            </h3>
+            <p className="text-xs text-slate-500 font-medium mt-0.5">
+              {name || 'Unnamed pulse program'} · {events.length} parsed events ·{' '}
+              {lanes.length} lanes
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {!showRaw && (
+              <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg px-2 py-1 shadow-sm">
+                <button
+                  type="button"
+                  onClick={zoomOut}
+                  className="w-7 h-7 flex items-center justify-center rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-black transition-colors"
+                  title="Zoom out"
+                >
+                  −
+                </button>
+
+                <input
+                  type="range"
+                  min={25}
+                  max={1000}
+                  value={Math.round(zoom * 100)}
+                  onChange={(e) => setZoom(clampZoom(Number(e.target.value) / 100))}
+                  className="w-28 accent-blue-600"
+                  title="Zoom level"
+                />
+
+                <span className="text-[11px] font-bold text-slate-600 w-10 text-center">
+                  {Math.round(zoom * 100)}%
+                </span>
+
+                <button
+                  type="button"
+                  onClick={zoomIn}
+                  className="w-7 h-7 flex items-center justify-center rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-black transition-colors"
+                  title="Zoom in"
+                >
+                  +
+                </button>
+
+                <button
+                  type="button"
+                  onClick={fitWidth}
+                  className="h-7 px-2 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-[11px] font-bold transition-colors"
+                  title="Fit diagram width"
+                >
+                  Fit
+                </button>
+
+                <button
+                  type="button"
+                  onClick={resetView}
+                  className="h-7 px-2 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold transition-colors"
+                  title="Reset zoom and scroll"
+                >
+                  1:1
+                </button>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setShowRaw((v) => !v)}
+              className="bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 font-bold py-2 px-3 rounded-lg text-xs shadow-sm transition-colors"
+            >
+              {showRaw ? 'Show Diagram' : 'Show Raw Text'}
+            </button>
+
+            {String(pulseSequenceLink || '').trim() && (
+              <a
+                href={normalizePulseLinkUrl(pulseSequenceLink)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 font-bold py-2 px-3 rounded-lg text-xs shadow-sm transition-colors"
+              >
+                Open Drive File
+              </a>
+            )}
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="bg-slate-800 hover:bg-slate-900 text-white font-bold py-2 px-4 rounded-lg text-xs shadow-sm transition-colors"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+
+        {showRaw ? (
+          <pre className="flex-1 overflow-auto custom-scrollbar bg-slate-950 text-slate-100 text-xs p-5 font-mono whitespace-pre-wrap">
+            {String(pulseSequence || '')}
+          </pre>
+        ) : (
+          <>
+            <div className="px-5 py-2 border-b border-slate-100 bg-white text-[11px] font-semibold text-slate-500">
+              Zoom with Ctrl/Cmd + mouse wheel, use the zoom slider, or drag the diagram to pan.
+            </div>
+
+            {events.length === 0 ? (
+              <div className="flex-1 overflow-auto custom-scrollbar p-6">
+                <div className="text-sm text-slate-500 bg-slate-50 border border-dashed border-slate-300 rounded-xl p-6">
+                  No recognizable Bruker pulse-program tokens were found. Try pasting
+                  the actual pulse program text, for example lines containing{' '}
+                  <code>d1</code>, <code>p1 ph1</code>, <code>d11</code>,{' '}
+                  <code>go</code>, etc.
+                </div>
+              </div>
+            ) : (
+              <div
+                ref={scrollRef}
+                className="flex-1 overflow-auto custom-scrollbar bg-slate-100 relative select-none"
+                style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
+                onMouseDown={handleDiagramMouseDown}
+                onMouseMove={handleDiagramMouseMove}
+                onMouseUp={stopPanning}
+                onMouseLeave={stopPanning}
+              >
+                <div
+                  style={{
+                    width: Math.ceil(svgWidth * zoom),
+                    height: Math.ceil(svgHeight * zoom),
+                    position: 'relative'
+                  }}
+                >
+                  <div
+                    style={{
+                      transform: `scale(${zoom})`,
+                      transformOrigin: 'top left',
+                      width: svgWidth,
+                      height: svgHeight
+                    }}
+                  >
+                    <svg
+                      width={svgWidth}
+                      height={svgHeight}
+                      viewBox={`0 0 ${svgWidth} ${svgHeight}`}
+                    >
+                      {lanes.map((lane, i) => {
+                        const y = topPadding + i * laneHeight;
+                        const centerY = y + laneHeight / 2;
+
+                        return (
+                          <g key={`lane_${lane}_${i}`}>
+                            <rect
+                              x={0}
+                              y={y}
+                              width={svgWidth}
+                              height={laneHeight}
+                              fill={i % 2 === 1 ? '#f8fafc' : '#ffffff'}
+                            />
+                            <text
+                              x={14}
+                              y={centerY}
+                              dominantBaseline="middle"
+                              fontSize={12}
+                              fontWeight={800}
+                              fill="#475569"
+                            >
+                              {truncate(lane, 22)}
+                            </text>
+                            <line
+                              x1={labelWidth}
+                              y1={centerY}
+                              x2={svgWidth}
+                              y2={centerY}
+                              stroke="#e2e8f0"
+                              strokeWidth={2}
+                            />
+                          </g>
+                        );
+                      })}
+
+                      {placed.map((e) => {
+                        const centerX = e.x + e.w / 2;
+
+                        const title = `${e.label || e.type}${
+                          e.phase ? ` ${e.phase}` : ''
+                        } | line ${e.line}\n${e.raw}`;
+
+                        if (e.type === 'pulse') {
+                          const rectX = e.x + (e.w - 18) / 2;
+
+                          return (
+                            <g key={e.key}>
+                              <title>{title}</title>
+                              <rect
+                                x={rectX}
+                                y={e.y + 24}
+                                width={18}
+                                height={laneHeight - 48}
+                                rx={5}
+                                fill="#3b82f6"
+                              />
+                              {e.phase && (
+                                <text
+                                  x={centerX}
+                                  y={e.y + 18}
+                                  textAnchor="middle"
+                                  fontSize={10}
+                                  fontWeight={800}
+                                  fill="#1d4ed8"
+                                >
+                                  {truncate(e.phase, 12)}
+                                </text>
+                              )}
+                              <text
+                                x={centerX}
+                                y={e.y + laneHeight - 12}
+                                textAnchor="middle"
+                                fontSize={11}
+                                fontWeight={800}
+                                fill="#1e293b"
+                              >
+                                {truncate(e.label, 12)}
+                              </text>
+                            </g>
+                          );
+                        }
+
+                        if (e.type === 'delay') {
+                          return (
+                            <g key={e.key}>
+                              <title>{title}</title>
+                              <line
+                                x1={e.x}
+                                y1={e.centerY}
+                                x2={e.x + e.w}
+                                y2={e.centerY}
+                                stroke="#94a3b8"
+                                strokeWidth={8}
+                                strokeLinecap="round"
+                                strokeDasharray="8 7"
+                              />
+                              <text
+                                x={centerX}
+                                y={e.centerY - 16}
+                                textAnchor="middle"
+                                fontSize={11}
+                                fontWeight={800}
+                                fill="#475569"
+                              >
+                                {truncate(e.label, 14)}
+                              </text>
+                            </g>
+                          );
+                        }
+
+                        if (e.type === 'acquisition') {
+                          return (
+                            <g key={e.key}>
+                              <title>{title}</title>
+                              <rect
+                                x={e.x}
+                                y={e.y + 28}
+                                width={e.w}
+                                height={laneHeight - 56}
+                                rx={12}
+                                fill="rgba(16,185,129,0.18)"
+                                stroke="#10b981"
+                                strokeWidth={2}
+                              />
+                              <text
+                                x={centerX}
+                                y={e.centerY + 4}
+                                textAnchor="middle"
+                                fontSize={12}
+                                fontWeight={900}
+                                fill="#047857"
+                              >
+                                {truncate(e.label, 18)}
+                              </text>
+                            </g>
+                          );
+                        }
+
+                        if (e.type === 'gradient') {
+                          const points = [
+                            `${e.x},${e.centerY + 20}`,
+                            `${e.x + e.w * 0.25},${e.centerY - 20}`,
+                            `${e.x + e.w * 0.75},${e.centerY - 20}`,
+                            `${e.x + e.w},${e.centerY + 20}`
+                          ].join(' ');
+
+                          return (
+                            <g key={e.key}>
+                              <title>{title}</title>
+                              <polygon
+                                points={points}
+                                fill="rgba(139,92,246,0.22)"
+                                stroke="#8b5cf6"
+                                strokeWidth={2}
+                              />
+                              <text
+                                x={centerX}
+                                y={e.y + laneHeight - 12}
+                                textAnchor="middle"
+                                fontSize={11}
+                                fontWeight={800}
+                                fill="#6d28d9"
+                              >
+                                {truncate(e.label, 14)}
+                              </text>
+                            </g>
+                          );
+                        }
+
+                        return (
+                          <g key={e.key}>
+                            <title>{title}</title>
+                            <rect
+                              x={e.x}
+                              y={e.centerY - 18}
+                              width={e.w}
+                              height={36}
+                              rx={10}
+                              fill="#f8fafc"
+                              stroke="#cbd5e1"
+                              strokeWidth={2}
+                            />
+                            <text
+                              x={centerX}
+                              y={e.centerY + 4}
+                              textAnchor="middle"
+                              fontSize={10}
+                              fontWeight={800}
+                              fill="#475569"
+                            >
+                              {truncate(e.label, 10)}
+                            </text>
+                          </g>
+                        );
+                      })}
+                    </svg>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export const NMRExperimentsManager = ({
+  nmrExperiments = [],
+  setNmrExperiments,
+  selectedId,
+  onSelect
+}) => {
   const [selectedName, setSelectedName] = useState('');
   const [newName, setNewName] = useState('');
   const [dimensions, setDimensions] = useState('2D');
@@ -664,14 +1462,31 @@ export const NMRExperimentsManager = ({ nmrExperiments = [], setNmrExperiments, 
   const [comments, setComments] = useState('');
   const [links, setLinks] = useState([]);
 
-  const existingNames = nmrExperiments.map(e => e.name).filter(Boolean).sort((a, b) => a.localeCompare(b));
+  const [pulseSequence, setPulseSequence] = useState('');
+  const [pulseSequenceLink, setPulseSequenceLink] = useState('');
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [loadingFromLink, setLoadingFromLink] = useState(false);
+  const [pulseStatus, setPulseStatus] = useState('');
+
+  const normalized = (Array.isArray(nmrExperiments) ? nmrExperiments : []).map(
+    (exp) => (typeof exp === 'string' ? { id: exp, name: exp } : exp)
+  );
+
+  const existingNames = normalized
+    .map((e) => e.name)
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+
   const nucleiCount = dimensions === '1D' ? 1 : dimensions === '2D' ? 2 : 3;
 
   useEffect(() => {
     if (selectedId) {
-      const item = nmrExperiments.find(e => e.name === selectedId || e.id === selectedId);
+      const item = normalized.find(
+        (e) => e.name === selectedId || e.id === selectedId
+      );
+
       if (item) {
-        setSelectedName(item.name);
+        setSelectedName(item.name || '');
         setNewName('');
         setDimensions(item.dimensions || '2D');
         setExpType(item.expType || 'Other');
@@ -681,89 +1496,243 @@ export const NMRExperimentsManager = ({ nmrExperiments = [], setNmrExperiments, 
         setParam3Name(item.param3Name || '');
         setComments(item.comments || '');
         setLinks(item.links || []);
+        setPulseSequence(item.pulseSequence || '');
+        setPulseSequenceLink(item.pulseSequenceLink || '');
+        setViewerOpen(false);
+        setPulseStatus('');
       }
     }
   }, [selectedId, nmrExperiments]);
 
-  const handleSave = () => {
-    const name = selectedName || newName.trim();
-    if (!name) return alert('Please enter an experiment name.');
-    const existing = nmrExperiments.find(e => e.name === name);
-    const newItem = { 
-      id: existing ? existing.id : Date.now().toString(), 
-      name, dimensions, expType, 
-      nuclei: nuclei.slice(0, nucleiCount).filter(Boolean), 
-      param1Name, param2Name, param3Name, comments, links 
-    };
-    
-    if (existing) setNmrExperiments(nmrExperiments.map(e => e.name === name ? newItem : e));
-    else setNmrExperiments([...nmrExperiments, newItem]);
-    
-    setSelectedName(name);
-    if (onSelect) onSelect(name);
+  const loadPulseFromLink = async () => {
+    const url = pulseSequenceLink.trim();
+
+    if (!url) {
+      setPulseStatus('Enter a Drive/file link first.');
+      return;
+    }
+
+    setLoadingFromLink(true);
+    setPulseStatus('Trying to load pulse sequence from link...');
+
+    try {
+      const text = await fetchPulseSequenceFromLink(url);
+      setPulseSequence(text);
+      setPulseStatus('Pulse sequence loaded from link.');
+    } catch (err) {
+      setPulseStatus(
+        'Could not automatically load the file. This can happen because of Google Drive permissions/CORS. Paste the pulse-sequence text manually if needed.'
+      );
+    } finally {
+      setLoadingFromLink(false);
+    }
   };
 
-  const handleDelete = () => {
-    if (!selectedName) return;
-    if (window.confirm(`Are you sure you want to delete ${selectedName}?`)) {
-      setNmrExperiments(nmrExperiments.filter(e => e.name !== selectedName));
-      setSelectedName('');
-      setNewName('');
-      setDimensions('2D');
-      setExpType('Other');
-      setNuclei(['1H', '13C', '']);
-      setParam1Name('');
-      setParam2Name('');
-      setParam3Name('');
-      setComments('');
-      setLinks([]);
-      if (onSelect) onSelect('');
+  const handleSave = () => {
+    const name = selectedName || newName.trim();
+
+    if (!name) return alert('Please enter an experiment name.');
+
+    const existing = normalized.find((e) => e.name === name);
+
+    const newItem = {
+      id: existing ? existing.id : Date.now().toString(),
+      name,
+      dimensions,
+      expType,
+      nuclei: nuclei.slice(0, nucleiCount).filter(Boolean),
+      param1Name,
+      param2Name,
+      param3Name,
+      comments,
+      links,
+      pulseSequence,
+      pulseSequenceLink
+    };
+
+    if (existing) {
+      setNmrExperiments(normalized.map((e) => (e.name === name ? newItem : e)));
+    } else {
+      setNmrExperiments([...normalized, newItem]);
     }
+
+    setSelectedName(name);
+    if (onSelect) onSelect(name);
   };
 
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
         <div className="md:col-span-6">
-          <Select label="Existing Pulse Program" value={selectedName} onChange={n => { setSelectedName(n); if (onSelect) onSelect(n); }} options={[{ value: '', label: 'New experiment...' }, ...existingNames]} />
+          <Select
+            label="Existing Pulse Program"
+            value={selectedName}
+            onChange={(n) => {
+              setSelectedName(n);
+              if (onSelect) onSelect(n);
+            }}
+            options={[{ value: '', label: 'New experiment...' }, ...existingNames]}
+          />
         </div>
+
         <div className="md:col-span-6">
-          <Input label="New Program Name" value={selectedName ? '' : newName} onChange={setNewName} disabled={!!selectedName} placeholder="e.g. noesygpph" />
+          <Input
+            label="New Program Name"
+            value={selectedName ? '' : newName}
+            onChange={setNewName}
+            disabled={!!selectedName}
+            placeholder="e.g. noesygpph"
+          />
         </div>
+
         <div className="md:col-span-4">
-          <Select label="Dimensions" value={dimensions} onChange={setDimensions} options={['1D','2D','3D']} />
+          <Select
+            label="Dimensions"
+            value={dimensions}
+            onChange={setDimensions}
+            options={['1D', '2D', '3D']}
+          />
         </div>
+
         <div className="md:col-span-8">
-          <Select label="Experiment Type" value={expType} onChange={setExpType} options={EXPERIMENT_TYPES} />
+          <Select
+            label="Experiment Type"
+            value={expType}
+            onChange={setExpType}
+            options={EXPERIMENT_TYPES}
+          />
         </div>
-        
+
         {Array.from({ length: nucleiCount }).map((_, i) => (
           <div key={i} className="md:col-span-4">
-            <Select label={i === 0 ? 'Nucleus (direct)' : `Nucleus ${i+1} (indirect)`}
-              value={nuclei[i] || '1H'} onChange={v => { const n = [...nuclei]; n[i] = v; setNuclei(n); }} options={NUCLEUS_OPTIONS} />
+            <Select
+              label={i === 0 ? 'Nucleus (direct)' : `Nucleus ${i + 1} (indirect)`}
+              value={nuclei[i] || '1H'}
+              onChange={(v) => {
+                const n = [...nuclei];
+                n[i] = v;
+                setNuclei(n);
+              }}
+              options={NUCLEUS_OPTIONS}
+            />
           </div>
         ))}
-        
+
         <div className="md:col-span-12 grid grid-cols-1 md:grid-cols-3 gap-3 border-t border-slate-100 pt-3 mt-1">
-           <Input label="Custom param 1 name" value={param1Name} onChange={setParam1Name} placeholder="e.g. mixing time (ms)" />
-           <Input label="Custom param 2 name" value={param2Name} onChange={setParam2Name} placeholder="optional" />
-           <Input label="Custom param 3 name" value={param3Name} onChange={setParam3Name} placeholder="optional" />
+          <Input
+            label="Custom param 1 name"
+            value={param1Name}
+            onChange={setParam1Name}
+            placeholder="e.g. mixing time (ms)"
+          />
+          <Input
+            label="Custom param 2 name"
+            value={param2Name}
+            onChange={setParam2Name}
+            placeholder="optional"
+          />
+          <Input
+            label="Custom param 3 name"
+            value={param3Name}
+            onChange={setParam3Name}
+            placeholder="optional"
+          />
         </div>
-        
+
+        <div className="md:col-span-12 border-t border-slate-100 pt-3 mt-1">
+          <label className="text-[10px] font-bold text-slate-600 uppercase">
+            Bruker Pulse Sequence Text
+          </label>
+          <textarea
+            value={pulseSequence}
+            onChange={(e) => setPulseSequence(e.target.value)}
+            placeholder={`Paste the Bruker pulse program here...\n\nExamples:\n;d1\np1 ph1\nd11\np2 ph2\ngo`}
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 mt-1 font-mono bg-slate-50/50 h-44"
+          />
+        </div>
+
+        <div className="md:col-span-7">
+          <Input
+            label="Pulse Sequence File Link (Google Drive / raw text)"
+            value={pulseSequenceLink}
+            onChange={setPulseSequenceLink}
+            placeholder="https://drive.google.com/file/d/..."
+          />
+        </div>
+
+        <div className="md:col-span-5 flex flex-wrap items-end gap-2">
+          <button
+            type="button"
+            onClick={loadPulseFromLink}
+            disabled={loadingFromLink || !pulseSequenceLink.trim()}
+            className="bg-slate-100 hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed border border-slate-300 text-slate-700 font-bold px-3 py-2 rounded-lg text-xs shadow-sm transition-colors"
+          >
+            {loadingFromLink ? 'Loading...' : 'Load from Link'}
+          </button>
+
+          {pulseSequenceLink.trim() && (
+            <a
+              href={normalizePulseLinkUrl(pulseSequenceLink)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 font-bold px-3 py-2 rounded-lg text-xs shadow-sm transition-colors"
+            >
+              Open Drive File
+            </a>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setViewerOpen(true)}
+            disabled={!pulseSequence.trim()}
+            className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm transition-colors"
+          >
+            Show Graphical
+          </button>
+        </div>
+
+        {pulseStatus && (
+          <div className="md:col-span-12 text-xs font-semibold text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+            {pulseStatus}
+          </div>
+        )}
+
         <div className="md:col-span-12 mt-2">
-          <label className="text-[10px] font-bold text-slate-600 uppercase">Comments</label>
-          <textarea value={comments} onChange={e => setComments(e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-blue-500 mt-1" rows={2} />
+          <label className="text-[10px] font-bold text-slate-600 uppercase">
+            Comments
+          </label>
+          <textarea
+            value={comments}
+            onChange={(e) => setComments(e.target.value)}
+            className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-blue-500 mt-1"
+            rows={2}
+          />
         </div>
+
         <div className="md:col-span-12">
           <LinksManager links={links} setLinks={setLinks} />
         </div>
-        <div className="md:col-span-12 flex justify-end gap-2 mt-2">
-          {selectedName && (
-            <button type="button" onClick={handleDelete} className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold px-4 py-2 rounded-lg text-sm transition-colors shadow-sm">Delete</button>
-          )}
-          <button type="button" onClick={handleSave} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm transition-colors shadow-sm">Save Experiment</button>
+
+        <div className="md:col-span-12 flex justify-end mt-2">
+          <button
+            type="button"
+            onClick={handleSave}
+            className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm transition-colors shadow-sm"
+          >
+            Save Experiment
+          </button>
         </div>
       </div>
+
+      {viewerOpen && (
+        <BrukerPulseSequenceViewer
+          open={viewerOpen}
+          onClose={() => setViewerOpen(false)}
+          name={selectedName || newName}
+          pulseSequence={pulseSequence}
+          pulseSequenceLink={pulseSequenceLink}
+        />
+      )}
     </div>
   );
 };
