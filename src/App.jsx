@@ -24,7 +24,7 @@ import { CloningTestRenderer } from './components/CloningTestRenderer';
 import { ProteinExpressionTestRenderer } from './components/ProteinExpressionTestRenderer';
 import DockingTestRenderer, { DOCKING_TAB_CONFIG } from './components/DockingTestRenderer';
 import { Setup, Data, Simulations, Analysis } from '/src/components/MDSections.jsx';
-import { SolventsManager, BuffersManager, AdditivesManager, NMRProbesManager, NMRInstrumentsManager, NMRExperimentsManager, BufferAdditiveFields, getMolecularWeightFromFormula } from './components/DefinitionsExtra';
+import { SolventsManager, BuffersManager, AdditivesManager, NMRProbesManager, NMRInstrumentsManager, NMRExperimentsManager, BufferAdditiveFields, getMolecularWeightFromFormula, BrukerPulseSequenceViewer} from './components/DefinitionsExtra';
 import {
 CD_TAB_CONFIG,
 PLATE_TAB_CONFIG,
@@ -8479,161 +8479,287 @@ const getProtocolImageFallback = (url) => {
     </div>
   </div>
 </div>
-                        <div className="w-full lg:w-80 flex flex-col gap-4 lg:overflow-y-auto custom-scrollbar shrink-0 lg:border-l border-t lg:border-t-0 border-slate-100 pt-4 lg:pt-0 lg:pl-4 no-print">
-                          <label className="text-xs font-bold text-slate-500 uppercase">
-                            Attached Resources
-                          </label>
+{(() => {
+  const pulsePrograms = (Array.isArray(nmrExperiments) ? nmrExperiments : [])
+    .map((exp) => (typeof exp === 'string' ? { name: exp } : exp))
+    .filter((exp) => exp && exp.name)
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 
-                          <div className="flex flex-col gap-2">
-                            {(activeProtocol.links || []).length === 0 && (
-                              <span className="text-sm text-slate-400 italic">
-                                No external links or documents attached.
-                              </span>
-                            )}
+  const linkedPulseName = activeProtocol.linkedPulseProgramName || '';
+  const linkedPulse = pulsePrograms.find((exp) => exp.name === linkedPulseName) || null;
 
-                            {(activeProtocol.links || []).map((link) => (
-                              <div
-                                key={link.id}
-                                className="bg-slate-50 border border-slate-200 p-2.5 rounded-lg flex items-center justify-between group shadow-sm"
-                              >
-                                <div
-                                  className="flex items-center gap-2 overflow-hidden cursor-pointer flex-1"
-                                  onClick={() => {
-                                    const newName = prompt('Rename link:', link.name);
+  const normalizeProtocolPulseLinkUrl = (url) => {
+    const raw = String(url || '').trim();
+    if (!raw) return '#';
+    if (/^(https?:|mailto:|file:)/i.test(raw)) return raw;
+    if (raw.startsWith('//')) return `https:${raw}`;
+    return `https://${raw}`;
+  };
 
-                                    if (newName) {
-                                      setDatasetProtocols(
-                                        datasetProtocols.map((p) =>
-                                          p.id === activeProtocol.id
-                                            ? {
-                                                ...p,
-                                                links: p.links.map((l) =>
-                                                  l.id === link.id
-                                                    ? { ...l, name: newName }
-                                                    : l
-                                                )
-                                              }
-                                            : p
-                                        )
-                                      );
-                                    }
-                                  }}
-                                >
-                                  <span className="text-lg">
-                                    {link.url.match(/\.(jpeg|jpg|gif|png|svg)$/i)
-                                      ? '🖼️'
-                                      : '🔗'}
-                                  </span>
+  const openLinkedPulseInDefinitions = () => {
+    if (!linkedPulseName) return;
 
-                                  <a
-                                    href={link.url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-sm font-bold text-slate-700 truncate group-hover:text-blue-600"
-                                    onClick={(e) => e.stopPropagation()}
-                                  >
-                                    {link.name}
-                                  </a>
-                                </div>
+    setActiveLibrarySelection({ type: 'nmrExperiment', id: linkedPulseName });
+    setCurrentModule('definitions');
 
-                                <button
-                                  onClick={() =>
-                                    setDatasetProtocols(
-                                      datasetProtocols.map((p) =>
-                                        p.id === activeProtocol.id
-                                          ? {
-                                              ...p,
-                                              links: p.links.filter((l) => l.id !== link.id)
-                                            }
-                                          : p
-                                      )
-                                    )
-                                  }
-                                  className="text-slate-400 hover:text-red-500 font-bold px-2 py-1 transition-opacity"
-                                >
-                                  &times;
-                                </button>
-                              </div>
-                            ))}
-                          </div>
+    setTimeout(() => {
+      const el = document.getElementById('section-nmrExperiment');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 180);
+  };
 
-                          <div className="flex flex-col gap-2">
-                            <button
-                              onClick={() => {
-                                const urlsText = prompt(
-                                  'Paste external link(s) separated by commas (Drive, PDF, Image URL):'
-                                );
+  return (
+    <div className="w-full lg:w-80 flex flex-col gap-4 lg:overflow-y-auto custom-scrollbar shrink-0 lg:border-l border-t lg:border-t-0 border-slate-100 pt-4 lg:pt-0 lg:pl-4 no-print">
+      <label className="text-xs font-bold text-slate-500 uppercase">
+        Attached Resources
+      </label>
 
-                                if (urlsText && urlsText.trim()) {
-                                  const urls = urlsText
-                                    .split(',')
-                                    .map((s) => s.trim())
-                                    .filter(Boolean);
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 flex flex-col gap-2">
+        <label className="text-[10px] font-bold text-blue-700 uppercase">
+          Pulse Sequence Link (Definitions & Labels)
+        </label>
 
-                                  const newLinks = urls.map((url, idx) => ({
-                                    id: Date.now().toString() + idx + Math.random(),
-                                    name: 'Linked Resource',
-                                    url
-                                  }));
+        <select
+          value={linkedPulseName}
+          onChange={(e) => {
+            const value = e.target.value;
 
-                                  setDatasetProtocols(
-                                    datasetProtocols.map((p) =>
-                                      p.id === activeProtocol.id
-                                        ? { ...p, links: [...(p.links || []), ...newLinks] }
-                                        : p
-                                    )
-                                  );
-                                }
-                              }}
-                              className="border-2 border-dashed border-blue-200 text-blue-600 bg-blue-50 hover:bg-blue-100 font-bold rounded-lg p-3 text-center transition-colors shadow-sm text-sm"
-                            >
-                              + Add External Link(s)
-                            </button>
+            setDatasetProtocols(
+              datasetProtocols.map((p) =>
+                p.id === activeProtocol.id
+                  ? { ...p, linkedPulseProgramName: value }
+                  : p
+              )
+            );
 
-                            <label className="border-2 border-dashed border-emerald-200 text-emerald-600 bg-emerald-50 hover:bg-emerald-100 font-bold rounded-lg p-3 text-center transition-colors shadow-sm text-sm cursor-pointer block">
-                              + Attach Multiple Files
+            setExpandedGroups((prev) => ({
+              ...prev,
+              protoPulseViewerOpen: false
+            }));
+          }}
+          className="w-full border border-blue-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold text-slate-700"
+        >
+          <option value="">— No pulse program linked —</option>
+          {pulsePrograms.map((exp) => (
+            <option key={exp.name} value={exp.name}>
+              {exp.name}
+            </option>
+          ))}
+        </select>
 
-                              <input
-                                type="file"
-                                multiple
-                                onChange={(e) => {
-                                  const files = Array.from(e.target.files);
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={openLinkedPulseInDefinitions}
+            disabled={!linkedPulseName}
+            className="bg-white border border-blue-300 hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed text-blue-700 font-bold py-1.5 px-3 rounded-lg text-xs shadow-sm transition-colors"
+          >
+            Open in Definitions
+          </button>
 
-                                  if (!files.length) return;
+          <button
+            type="button"
+            onClick={() =>
+              setExpandedGroups((prev) => ({
+                ...prev,
+                protoPulseViewerOpen: true
+              }))
+            }
+            disabled={!linkedPulse || !String(linkedPulse.pulseSequence || '').trim()}
+            className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-1.5 px-3 rounded-lg text-xs shadow-sm transition-colors"
+          >
+            Preview Graphical
+          </button>
 
-                                  const newLinksPromises = files.map(
-                                    (file) =>
-                                      new Promise((resolve) => {
-                                        const reader = new FileReader();
+          {linkedPulse && String(linkedPulse.pulseSequenceLink || '').trim() && (
+            <a
+              href={normalizeProtocolPulseLinkUrl(linkedPulse.pulseSequenceLink)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="bg-white border border-blue-300 hover:bg-blue-100 text-blue-700 font-bold py-1.5 px-3 rounded-lg text-xs shadow-sm transition-colors"
+            >
+              Open Drive
+            </a>
+          )}
+        </div>
 
-                                        reader.onload = (ev) =>
-                                          resolve({
-                                            id: Date.now().toString() + Math.random(),
-                                            name: file.name,
-                                            url: ev.target.result
-                                          });
+        {!linkedPulse && (
+          <p className="text-[11px] text-blue-700/80">
+            Choose a pulse program defined under Definitions & Labels → NMR
+            Experiments / Pulse Programs.
+          </p>
+        )}
 
-                                        reader.readAsDataURL(file);
-                                      })
-                                  );
+        {linkedPulse && !String(linkedPulse.pulseSequence || '').trim() && (
+          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
+            This pulse program is linked, but it does not contain pulse-sequence
+            text yet. Open it in Definitions & Labels and paste the Bruker
+            pulse-program text.
+          </p>
+        )}
+      </div>
 
-                                  Promise.all(newLinksPromises).then((newLinks) => {
-                                    setDatasetProtocols(
-                                      datasetProtocols.map((p) =>
-                                        p.id === activeProtocol.id
-                                          ? { ...p, links: [...(p.links || []), ...newLinks] }
-                                          : p
-                                      )
-                                    );
-                                  });
+      <div className="flex flex-col gap-2">
+        {(activeProtocol.links || []).length === 0 && (
+          <span className="text-sm text-slate-400 italic">
+            No external links or documents attached.
+          </span>
+        )}
 
-                                  e.target.value = '';
-                                }}
-                                className="hidden"
-                              />
-                            </label>
-                          </div>
-                        </div>
+        {(activeProtocol.links || []).map((link) => (
+          <div
+            key={link.id}
+            className="bg-slate-50 border border-slate-200 p-2.5 rounded-lg flex items-center justify-between group shadow-sm"
+          >
+            <div
+              className="flex items-center gap-2 overflow-hidden cursor-pointer flex-1"
+              onClick={() => {
+                const newName = prompt('Rename link:', link.name);
+                if (newName) {
+                  setDatasetProtocols(
+                    datasetProtocols.map((p) =>
+                      p.id === activeProtocol.id
+                        ? {
+                            ...p,
+                            links: p.links.map((l) =>
+                              l.id === link.id ? { ...l, name: newName } : l
+                            )
+                          }
+                        : p
+                    )
+                  );
+                }
+              }}
+            >
+              <span className="text-lg">
+                {link.url.match(/\.(jpeg|jpg|gif|png|svg)$/i) ? '🖼️' : '🔗'}
+              </span>
+              <a
+                href={link.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm font-bold text-slate-700 truncate group-hover:text-blue-600"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {link.name}
+              </a>
+            </div>
+
+            <button
+              onClick={() =>
+                setDatasetProtocols(
+                  datasetProtocols.map((p) =>
+                    p.id === activeProtocol.id
+                      ? {
+                          ...p,
+                          links: p.links.filter((l) => l.id !== link.id)
+                        }
+                      : p
+                  )
+                )
+              }
+              className="text-slate-400 hover:text-red-500 font-bold px-2 py-1 transition-opacity"
+            >
+              &times;
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <button
+          onClick={() => {
+            const urlsText = prompt(
+              'Paste external link(s) separated by commas (Drive, PDF, Image URL):'
+            );
+
+            if (urlsText && urlsText.trim()) {
+              const urls = urlsText
+                .split(',')
+                .map((s) => s.trim())
+                .filter(Boolean);
+
+              const newLinks = urls.map((url, idx) => ({
+                id: Date.now().toString() + idx + Math.random(),
+                name: 'Linked Resource',
+                url
+              }));
+
+              setDatasetProtocols(
+                datasetProtocols.map((p) =>
+                  p.id === activeProtocol.id
+                    ? { ...p, links: [...(p.links || []), ...newLinks] }
+                    : p
+                )
+              );
+            }
+          }}
+          className="border-2 border-dashed border-blue-200 text-blue-600 bg-blue-50 hover:bg-blue-100 font-bold rounded-lg p-3 text-center transition-colors shadow-sm text-sm"
+        >
+          + Add External Link(s)
+        </button>
+
+        <label className="border-2 border-dashed border-emerald-200 text-emerald-600 bg-emerald-50 hover:bg-emerald-100 font-bold rounded-lg p-3 text-center transition-colors shadow-sm text-sm cursor-pointer block">
+          + Attach Multiple Files
+          <input
+            type="file"
+            multiple
+            onChange={(e) => {
+              const files = Array.from(e.target.files);
+              if (!files.length) return;
+
+              const newLinksPromises = files.map(
+                (file) =>
+                  new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onload = (ev) =>
+                      resolve({
+                        id: Date.now().toString() + Math.random(),
+                        name: file.name,
+                        url: ev.target.result
+                      });
+                    reader.readAsDataURL(file);
+                  })
+              );
+
+              Promise.all(newLinksPromises).then((newLinks) => {
+                setDatasetProtocols(
+                  datasetProtocols.map((p) =>
+                    p.id === activeProtocol.id
+                      ? { ...p, links: [...(p.links || []), ...newLinks] }
+                      : p
+                  )
+                );
+              });
+
+              e.target.value = '';
+            }}
+            className="hidden"
+          />
+        </label>
+      </div>
+
+      {expandedGroups['protoPulseViewerOpen'] &&
+        linkedPulse &&
+        String(linkedPulse.pulseSequence || '').trim() && (
+          <BrukerPulseSequenceViewer
+            open={true}
+            onClose={() =>
+              setExpandedGroups((prev) => ({
+                ...prev,
+                protoPulseViewerOpen: false
+              }))
+            }
+            name={linkedPulse.name}
+            pulseSequence={linkedPulse.pulseSequence || ''}
+            pulseSequenceLink={linkedPulse.pulseSequenceLink || ''}
+          />
+        )}
+    </div>
+  );
+})()}
                       </div>
                     </div>
                   );
@@ -8811,52 +8937,81 @@ const newProto = {
                         </div>
                       ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                          {filteredProtocols.map((proto) => (
-                            <div
-                              key={proto.id}
-                              className="bg-white border border-slate-200 rounded-xl p-4 md:p-5 shadow-sm hover:shadow-md hover:border-emerald-400 cursor-pointer transition-all flex flex-col group relative"
-                              onClick={() =>
-                                setExpandedGroups((p) => ({
-                                  ...p,
-                                  activeProtoId: proto.id
-                                }))
-                              }
-                            >
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
+{filteredProtocols.map((proto) => (
+  <div
+    key={proto.id}
+    className="bg-white border border-slate-200 rounded-xl p-4 md:p-5 shadow-sm hover:shadow-md hover:border-emerald-400 cursor-pointer transition-all flex flex-col group relative"
+    onClick={() =>
+      setExpandedGroups((p) => ({
+        ...p,
+        activeProtoId: proto.id
+      }))
+    }
+  >
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        if (confirm('Delete this protocol?')) {
+          setDatasetProtocols(
+            datasetProtocols.filter((p) => p.id !== proto.id)
+          );
+        }
+      }}
+      className="absolute top-3 right-3 text-slate-300 hover:text-red-500 text-lg md:opacity-0 group-hover:opacity-100 transition-opacity no-print"
+      title="Delete Protocol"
+    >
+      &times;
+    </button>
 
-                                  if (confirm('Delete this protocol?')) {
-                                    setDatasetProtocols(
-                                      datasetProtocols.filter((p) => p.id !== proto.id)
-                                    );
-                                  }
-                                }}
-                                className="absolute top-3 right-3 text-slate-300 hover:text-red-500 text-lg md:opacity-0 group-hover:opacity-100 transition-opacity no-print"
-                                title="Delete Protocol"
-                              >
-                                &times;
-                              </button>
+    <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded self-start mb-3 border border-emerald-200">
+      {proto.category}
+    </span>
 
-                              <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded self-start mb-3 border border-emerald-200">
-                                {proto.category}
-                              </span>
+    <h3 className="font-bold text-slate-800 text-lg truncate pr-6">
+      {proto.title}
+    </h3>
 
-                              <h3 className="font-bold text-slate-800 text-lg truncate pr-6">
-                                {proto.title}
-                              </h3>
+    {proto.linkedPulseProgramName && (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
 
-                              <div className="mt-4 pt-4 border-t border-slate-100 flex gap-4 text-xs font-bold text-slate-500">
-                                <span className="flex items-center gap-1">
-                                  🔗 {(proto.links || []).length} Links
-                                </span>
+          setActiveLibrarySelection({
+            type: 'nmrExperiment',
+            id: proto.linkedPulseProgramName
+          });
 
-                                <span className="flex items-center gap-1">
-                                  📝 {proto.content ? 'Has Content' : 'Empty'}
-                                </span>
-                              </div>
-                            </div>
-                          ))}
+          setCurrentModule('definitions');
+
+          setTimeout(() => {
+            const el = document.getElementById('section-nmrExperiment');
+            if (el) {
+              el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+          }, 180);
+        }}
+        className="mt-3 self-start bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm transition-colors flex items-center gap-1"
+      >
+        🎛️ {proto.linkedPulseProgramName}
+      </button>
+    )}
+
+    <div className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap gap-x-4 gap-y-2 text-xs font-bold text-slate-500">
+      <span className="flex items-center gap-1">
+        🔗 {(proto.links || []).length} Links
+      </span>
+      <span className="flex items-center gap-1">
+        📝 {proto.content ? 'Has Content' : 'Empty'}
+      </span>
+      {proto.linkedPulseProgramName && (
+        <span className="flex items-center gap-1 text-blue-600">
+          📡 Pulse Linked
+        </span>
+      )}
+    </div>
+  </div>
+))}
                         </div>
                       )}
                     </div>
