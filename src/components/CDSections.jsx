@@ -245,15 +245,30 @@ JASCO FILE PARSER
 ======================================================================== */
 const parseJascoDate = (value) => {
   if (!value) return '';
-  const s = String(value);
-  let m = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  const s = String(value).trim().replace(/^["']|["']$/g, '');
+  
+  // Try YYYY-MM-DD or YYYY/MM/DD
+  let m = s.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  
+  // Try DD/MM/YYYY or MM/DD/YYYY
+  m = s.match(/(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
   if (m) return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
-  m = s.match(/^(\d{2})\/(\d{2})\/(\d{2})$/);
+  
+  // Try YY/MM/DD (e.g. 25/11/26)
+  m = s.match(/^(\d{2})[-/](\d{2})[-/](\d{2})$/);
   if (m) return `20${m[1]}-${m[2]}-${m[3]}`;
+  
   return '';
 };
 
 const parseJascoCDText = (text) => {
+  if (!text) return { xs: [], ys: [], meta: {} };
+  
+  // Clean BOM and standardize line endings
+  const cleanText = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const lines = cleanText.split('\n');
+  
   const meta = {};
   let xs = [];
   let ys = [];
@@ -261,49 +276,83 @@ const parseJascoCDText = (text) => {
 
   const addMeta = (line) => {
     if (!line) return;
-    if (line.includes('\t')) {
-      const parts = line.split('\t');
+    const unquoted = line.replace(/^"|"$/g, '');
+    
+    if (unquoted.includes('\t')) {
+      const parts = unquoted.split('\t');
       const key = parts[0].trim();
       const value = parts.slice(1).join('\t').trim();
       if (key) meta[key] = value;
       return;
     }
-    if (line.includes(',') && !/^[-+]?\d/.test(line)) {
-      const idx = line.indexOf(',');
-      const key = line.slice(0, idx).trim();
-      const value = line.slice(idx + 1).trim();
+    if (unquoted.includes(',') && !/^[-+]?\d/.test(unquoted)) {
+      const idx = unquoted.indexOf(',');
+      const key = unquoted.slice(0, idx).trim();
+      const value = unquoted.slice(idx + 1).trim();
       if (key) meta[key] = value;
       return;
     }
-    const m = line.match(/^([A-Za-z0-9\/.()\- ]{2,60}?)\s{2,}(.*)$/);
+    const m = unquoted.match(/^([A-Za-z0-9/.()\- ]{2,60}?)\s{2,}(.*)$/);
     if (m && !/^\d/.test(m[1])) meta[m[1].trim()] = m[2].trim();
   };
 
-  for (const rawLine of text.split(/\r?\n/)) {
-    const line = rawLine.trim();
+  for (const rawLine of lines) {
+    let line = rawLine.trim();
     if (!line) continue;
-    if (line.startsWith('#####')) { inData = false; continue; }
-    if (line.startsWith('[')) continue;
-    if (/^XYDATA/i.test(line)) { inData = true; continue; }
-    if (inData) {
-      const cols = line.split(/[,\s]+/).filter(Boolean);
-      if (cols.length >= 2) {
-        const x = parseFloat(cols[0]);
-        const y = parseFloat(cols[1]);
-        if (!isNaN(x) && !isNaN(y)) { xs.push(x); ys.push(y); }
-      }
+    
+    // Check for end of data block
+    if (line.startsWith('#####')) { 
+      inData = false; 
+      continue; 
+    }
+
+    // Detect data start marker: XYDATA, [XYDATA], DATA, [DATA]
+    if (/^\[?\s*(?:XYDATA|DATA)\s*\]?$/i.test(line.replace(/["']/g, ''))) { 
+      inData = true; 
+      continue; 
+    }
+
+    // Ignore other section headers like [Header], [Comments], etc.
+    if (line.startsWith('[') && line.endsWith(']')) {
       continue;
     }
-    addMeta(line);
-  }
-  if (xs.length > 1 && xs[0] > xs[xs.length - 1]) { xs.reverse(); ys.reverse(); }
+    
+    // Parse numeric XY row (either inside explicit XYDATA block or auto-detected raw 2-column numbers)
+    const cleanTokens = line
+      .replace(/^"|"$/g, '')
+      .split(/[,\t;\s]+/)
+      .filter(Boolean);
 
+    if (cleanTokens.length >= 2) {
+      const x = parseFloat(cleanTokens[0].replace(',', '.'));
+      const y = parseFloat(cleanTokens[1].replace(',', '.'));
+      
+      if (!isNaN(x) && !isNaN(y)) {
+        xs.push(x);
+        ys.push(y);
+        continue;
+      }
+    }
+    
+    if (!inData) {
+      addMeta(line);
+    }
+  }
+  
+  // Reverse if X is descending (e.g. 260 nm down to 190 nm)
+  if (xs.length > 1 && xs[0] > xs[xs.length - 1]) { 
+    xs.reverse(); 
+    ys.reverse(); 
+  }
+  
   return {
-    xs, ys, meta,
-    title: meta['Sample name'] || meta['TITLE'] || '',
-    experimentDate: parseJascoDate(meta['Measurement date'] || meta['DATE'] || ''),
-    temperature: meta['Temperature'] ? meta['Temperature'].replace(/\sC\s*$/, ' °C') : '',
-    pathLength: (meta['Cell length'] || '').match(/(-?\d+(?:\.\d+)?)/)?.[1] || (meta['Cell length'] || ''),
+    xs, 
+    ys, 
+    meta,
+    title: meta['Sample name'] || meta['TITLE'] || meta['Sample Name'] || meta['Title'] || '',
+    experimentDate: parseJascoDate(meta['Measurement date'] || meta['DATE'] || meta['Date'] || ''),
+    temperature: meta['Temperature'] ? meta['Temperature'].replace(/\s*C\s*$/i, ' °C') : '',
+    pathLength: (meta['Cell length'] || meta['Pathlength'] || '').match(/(-?\d+(?:\.\d+)?)/)?.[1] || (meta['Cell length'] || meta['Pathlength'] || ''),
     concentration: meta['Concentration'] || ''
   };
 };
@@ -1237,12 +1286,41 @@ export const Data = ({ ctx }) => {
     updateActiveTest(updates);
     setJascoMsg(`✅ Imported ${parsed.xs.length} points${parsed.title ? ` — "${parsed.title}"` : ''}.`);
   };
-  const handleJascoFile = async (e) => {
+const handleJascoFile = async (e) => {
     const f = e.target.files && e.target.files[0];
     if (!f) return;
-    applyJasco(parseJascoCDText(await f.text()));
+
+    if (f.name.toLowerCase().endsWith('.jws')) {
+      setJascoMsg('⚠️ .jws is a proprietary binary format. Please export as ASCII Text (.txt) or CSV (.csv) in Jasco Spectra Manager.');
+      if (jascoFileRef.current) jascoFileRef.current.value = '';
+      return;
+    }
+
+    try {
+      const text = await f.text();
+      const parsed = parseJascoCDText(text);
+      applyJasco(parsed);
+    } catch (err) {
+      setJascoMsg(`⚠️ Error reading file: ${err.message}`);
+      console.error('Jasco file read error:', err);
+    }
     if (jascoFileRef.current) jascoFileRef.current.value = '';
   };
+
+const handlePasteImport = () => {
+  if (!jascoText.trim()) {
+    setJascoMsg('⚠️ Please paste some text first.');
+    return;
+  }
+  try {
+    const parsed = parseJascoCDText(jascoText);
+    applyJasco(parsed);
+    setJascoText(''); // <-- Clears the massive text from the DOM immediately
+  } catch (err) {
+    setJascoMsg(`⚠️ Error parsing text: ${err.message}`);
+    console.error('Jasco paste parse error:', err);
+  }
+};
 
   const mwSource = (() => {
     const manual = parseManual(activeTest.manualMW);
@@ -1521,10 +1599,10 @@ export const Data = ({ ctx }) => {
             value={jascoText} onChange={(e) => setJascoText(e.target.value)} placeholder={'Paste Jasco export here (metadata block + XYDATA)…'}
             className="w-full border border-sky-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-sky-500 h-24 custom-scrollbar bg-white"
           />
-          <div className="flex items-center gap-3">
-            <button type="button" onClick={() => applyJasco(parseJascoCDText(jascoText))} disabled={!jascoText.trim()} className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm">Import pasted data</button>
-            {jascoMsg && <span className="text-xs font-bold text-sky-900">{jascoMsg}</span>}
-          </div>
+       <div className="flex items-center gap-3">
+         <button type="button" onClick={handlePasteImport} disabled={!jascoText.trim()} className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm">Import pasted data</button>
+         {jascoMsg && <span className="text-xs font-bold text-sky-900">{jascoMsg}</span>}
+       </div>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3">
