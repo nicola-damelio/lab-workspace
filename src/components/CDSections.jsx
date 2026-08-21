@@ -130,12 +130,13 @@ export const CD_DEFAULT_UNITS = CD_EXPERIMENTAL_FIELDS.reduce((acc, f) => {
 export const CD_INSTRUMENTAL_FIELDS = [
   { key: 'instrumentModel', label: 'Instrument Model', type: 'text', placeholder: 'e.g. Jasco J-1500' },
   { key: 'scanMode', label: 'Scan Mode', type: 'select', options: ['Continuous Scan', 'Step Scan'] },
-  { key: 'scanSpeed', label: 'Scan Speed', type: 'text', placeholder: 'e.g. 50', units: ['nm/min'] },
+  { key: 'scanSpeed', label: 'Scan Speed', type: 'text', placeholder: 'e.g. 20', units: ['nm/min'] },
   { key: 'dataPitch', label: 'Data Pitch', type: 'text', placeholder: 'e.g. 0.5', units: ['nm'] },
   { key: 'bandwidth', label: 'Bandwidth', type: 'text', placeholder: 'e.g. 1', units: ['nm'] },
-  { key: 'responseTime', label: 'Response Time (D.I.T.)', type: 'text', placeholder: 'e.g. 1', units: ['sec', 'msec'] },
+  { key: 'responseTime', label: 'Response Time (D.I.T.)', type: 'text', placeholder: 'e.g. 2', units: ['sec', 'msec'] },
   { key: 'accumulations', label: 'Accumulations', type: 'number', placeholder: 'e.g. 3' },
-  { key: 'sensitivity', label: 'Sensitivity (full scale)', type: 'text', placeholder: 'e.g. 100', units: ['mdeg'] },
+  { key: 'sensitivity', label: 'Sensitivity (full scale)', type: 'text', placeholder: 'e.g. 200', units: ['mdeg'] },
+  { key: 'photometricMode', label: 'Photometric Mode', type: 'text', placeholder: 'e.g. CD, HT, Abs' },
   { key: 'detectorHT', label: 'Detector HT Voltage', type: 'text', placeholder: 'e.g. 400', units: ['V'] },
   { key: 'purgeGas', label: 'N₂ Purge Flow', type: 'text', placeholder: 'e.g. 5', units: ['L/min'] },
   { key: 'cellType', label: 'Cell Type / Material', type: 'select', options: ['Quartz cuvette', 'Demountable cell', 'Strain-free cell', 'Other'] }
@@ -246,26 +247,22 @@ JASCO FILE PARSER
 const parseJascoDate = (value) => {
   if (!value) return '';
   const s = String(value).trim().replace(/^["']|["']$/g, '');
-  
-  // Try YYYY-MM-DD or YYYY/MM/DD
   let m = s.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
   if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
-  
-  // Try DD/MM/YYYY or MM/DD/YYYY
   m = s.match(/(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
   if (m) return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
-  
-  // Try YY/MM/DD (e.g. 25/11/26)
   m = s.match(/^(\d{2})[-/](\d{2})[-/](\d{2})$/);
-  if (m) return `20${m[1]}-${m[2]}-${m[3]}`;
-  
+  if (m) {
+    const p1 = parseInt(m[1], 10);
+    // If the first digit is >12, it must be DD/MM/YY format (e.g. 25/06/06)
+    return p1 > 12 ? `20${m[3]}-${m[2]}-${m[1]}` : `20${m[1]}-${m[2]}-${m[3]}`;
+  }
   return '';
 };
 
 const parseJascoCDText = (text) => {
   if (!text) return { xs: [], ys: [], meta: {} };
   
-  // Clean BOM and standardize line endings
   const cleanText = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   const lines = cleanText.split('\n');
   
@@ -278,55 +275,44 @@ const parseJascoCDText = (text) => {
     if (!line) return;
     const unquoted = line.replace(/^"|"$/g, '');
     
+    // 1. Try Tab
     if (unquoted.includes('\t')) {
       const parts = unquoted.split('\t');
       const key = parts[0].trim();
       const value = parts.slice(1).join('\t').trim();
-      if (key) meta[key] = value;
-      return;
+      if (key && !/^[-+]?\d/.test(key)) { meta[key] = value; return; }
     }
-    if (unquoted.includes(',') && !/^[-+]?\d/.test(unquoted)) {
+    // 2. Try Comma
+    if (unquoted.includes(',')) {
       const idx = unquoted.indexOf(',');
       const key = unquoted.slice(0, idx).trim();
       const value = unquoted.slice(idx + 1).trim();
-      if (key) meta[key] = value;
-      return;
+      if (key && !/^[-+]?\d/.test(key)) { meta[key] = value; return; }
     }
+    // 3. Try Colon (some European Jasco exports)
+    if (unquoted.includes(':')) {
+      const idx = unquoted.indexOf(':');
+      const key = unquoted.slice(0, idx).trim();
+      const value = unquoted.slice(idx + 1).trim();
+      if (key && !/^[-+]?\d/.test(key)) { meta[key] = value; return; }
+    }
+    // 4. Try multiple spaces
     const m = unquoted.match(/^([A-Za-z0-9/.()\- ]{2,60}?)\s{2,}(.*)$/);
-    if (m && !/^\d/.test(m[1])) meta[m[1].trim()] = m[2].trim();
+    if (m && !/^\d/.test(m[1])) { meta[m[1].trim()] = m[2].trim(); return; }
   };
 
   for (const rawLine of lines) {
     let line = rawLine.trim();
     if (!line) continue;
     
-    // Check for end of data block
-    if (line.startsWith('#####')) { 
-      inData = false; 
-      continue; 
-    }
-
-    // Detect data start marker: XYDATA, [XYDATA], DATA, [DATA]
-    if (/^\[?\s*(?:XYDATA|DATA)\s*\]?$/i.test(line.replace(/["']/g, ''))) { 
-      inData = true; 
-      continue; 
-    }
-
-    // Ignore other section headers like [Header], [Comments], etc.
-    if (line.startsWith('[') && line.endsWith(']')) {
-      continue;
-    }
+    if (line.startsWith('#####')) { inData = false; continue; }
+    if (/^\[?\s*(?:XYDATA|DATA)\s*\]?$/i.test(line.replace(/["']/g, ''))) { inData = true; continue; }
+    if (line.startsWith('[') && line.endsWith(']')) continue;
     
-    // Parse numeric XY row (either inside explicit XYDATA block or auto-detected raw 2-column numbers)
-    const cleanTokens = line
-      .replace(/^"|"$/g, '')
-      .split(/[,\t;\s]+/)
-      .filter(Boolean);
-
+    const cleanTokens = line.replace(/^"|"$/g, '').split(/[,\t;\s]+/).filter(Boolean);
     if (cleanTokens.length >= 2) {
       const x = parseFloat(cleanTokens[0].replace(',', '.'));
       const y = parseFloat(cleanTokens[1].replace(',', '.'));
-      
       if (!isNaN(x) && !isNaN(y)) {
         xs.push(x);
         ys.push(y);
@@ -334,21 +320,16 @@ const parseJascoCDText = (text) => {
       }
     }
     
-    if (!inData) {
-      addMeta(line);
-    }
+    if (!inData) addMeta(line);
   }
   
-  // Reverse if X is descending (e.g. 260 nm down to 190 nm)
   if (xs.length > 1 && xs[0] > xs[xs.length - 1]) { 
     xs.reverse(); 
     ys.reverse(); 
   }
   
   return {
-    xs, 
-    ys, 
-    meta,
+    xs, ys, meta,
     title: meta['Sample name'] || meta['TITLE'] || meta['Sample Name'] || meta['Title'] || '',
     experimentDate: parseJascoDate(meta['Measurement date'] || meta['DATE'] || meta['Date'] || ''),
     temperature: meta['Temperature'] ? meta['Temperature'].replace(/\s*C\s*$/i, ' °C') : '',
@@ -1270,7 +1251,8 @@ export const Data = ({ ctx }) => {
   const [jascoText, setJascoText] = useState('');
   const [jascoMsg, setJascoMsg] = useState('');
   const jascoFileRef = useRef(null);
-  const applyJasco = (parsed) => {
+  
+const applyJasco = (parsed) => {
     if (!parsed || !parsed.xs.length) { setJascoMsg('⚠️ No XY data found in the Jasco file.'); return; }
     const updates = {
       wavelengthData: parsed.xs.join('\n'),
@@ -1283,10 +1265,51 @@ export const Data = ({ ctx }) => {
     if (pNum !== null) updates.pathLength = String(pNum);
     if (parsed.temperature) updates.temperature = String(parsed.temperature);
     if (parsed.experimentDate) updates.experimentDate = parsed.experimentDate;
+
+    // --- AUTO-FILL EXPANDED INSTRUMENTAL SETUP FIELDS ---
+    const normMeta = {};
+    Object.entries(parsed.meta || {}).forEach(([k, v]) => {
+      normMeta[k.toLowerCase().replace(/[^a-z0-9]/g, '')] = String(v);
+    });
+
+    const setIfEmpty = (key, val) => {
+      if (!activeTest[key] && val !== undefined && val !== null && !Number.isNaN(val) && String(val).trim() !== '') {
+        updates[key] = String(val);
+      }
+    };
+
+    setIfEmpty('instrumentModel', normMeta['model'] || normMeta['modelname'] || normMeta['spectrometer'] || normMeta['spectrometerdatasystem']);
+    
+    const scanModeRaw = normMeta['scanmode'] || normMeta['scanningmode'];
+    if (scanModeRaw && !activeTest.scanMode) {
+      updates.scanMode = scanModeRaw.toLowerCase().includes('step') ? 'Step Scan' : 'Continuous Scan';
+    }
+
+    // Parses speeds like "20 nm/min" by checking both "scanningspeed" and "scanspeed"
+    const spd = parseFloat(normMeta['scanningspeed'] || normMeta['scanspeed']);
+    if (!Number.isNaN(spd)) setIfEmpty('scanSpeed', spd);
+
+    const dp = parseFloat(normMeta['datapitch'] || normMeta['deltax']);
+    if (!Number.isNaN(dp)) setIfEmpty('dataPitch', Math.abs(dp));
+    
+    const bw = parseFloat(normMeta['bandwidth'] || normMeta['band'] || normMeta['bandwidth']);
+    if (!Number.isNaN(bw)) setIfEmpty('bandwidth', bw);
+
+    // Parses response times like "2 sec" or just "2"
+    const rt = parseFloat(normMeta['dit'] || normMeta['responsetime'] || normMeta['response']);
+    if (!Number.isNaN(rt)) setIfEmpty('responseTime', rt);
+
+    setIfEmpty('accumulations', parseInt(normMeta['accumulations'] || normMeta['scans'], 10));
+    setIfEmpty('photometricMode', normMeta['photometricmode']);
+
+    const sens = parseFloat(normMeta['sensitivity'] || normMeta['cdscale'] || normMeta['flscale']);
+    if (!Number.isNaN(sens)) setIfEmpty('sensitivity', sens);
+
     updateActiveTest(updates);
-    setJascoMsg(`✅ Imported ${parsed.xs.length} points${parsed.title ? ` — "${parsed.title}"` : ''}.`);
+    setJascoMsg(`✅ Imported ${parsed.xs.length} points${parsed.title ? ` — "${parsed.title}"` : ''}. All instrumental parameters populated.`);
   };
-const handleJascoFile = async (e) => {
+
+  const handleJascoFile = async (e) => {
     const f = e.target.files && e.target.files[0];
     if (!f) return;
 
@@ -1307,20 +1330,20 @@ const handleJascoFile = async (e) => {
     if (jascoFileRef.current) jascoFileRef.current.value = '';
   };
 
-const handlePasteImport = () => {
-  if (!jascoText.trim()) {
-    setJascoMsg('⚠️ Please paste some text first.');
-    return;
-  }
-  try {
-    const parsed = parseJascoCDText(jascoText);
-    applyJasco(parsed);
-    setJascoText(''); // <-- Clears the massive text from the DOM immediately
-  } catch (err) {
-    setJascoMsg(`⚠️ Error parsing text: ${err.message}`);
-    console.error('Jasco paste parse error:', err);
-  }
-};
+  const handlePasteImport = () => {
+    if (!jascoText.trim()) {
+      setJascoMsg('⚠️ Please paste some text first.');
+      return;
+    }
+    try {
+      const parsed = parseJascoCDText(jascoText);
+      applyJasco(parsed);
+      setJascoText(''); // Clears massive text from the DOM instantly
+    } catch (err) {
+      setJascoMsg(`⚠️ Error parsing text: ${err.message}`);
+      console.error('Jasco paste parse error:', err);
+    }
+  };
 
   const mwSource = (() => {
     const manual = parseManual(activeTest.manualMW);
