@@ -2482,7 +2482,7 @@ const secondaryOptions = useMemo(() => {
   }
   return CLASSIFICATION_MAP[filterPrimary] || [];
 }, [filterPrimary]);
-  const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t => t.operator)].filter(Boolean))].sort(), [tests, operators]);
+const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t => t.operator)].filter(Boolean))].sort(), [tests, operators]);
   const allTypes = useMemo(() => [...new Set(tests.map(t => t.type).filter(Boolean))].sort(), [tests]);
   const allPlasmids = useMemo(() => Object.keys(plasmidMeta || {}).sort(), [plasmidMeta]);
   const allSolvents = useMemo(() => (solvents || []).map(s => s.name || s).filter(Boolean).sort(), [solvents]);
@@ -2499,11 +2499,24 @@ const secondaryOptions = useMemo(() => {
     );
 
   const typeLabels = {
-    'plate-96': 'Plate 96', 'plate-48': 'Plate 48', 'plate-24': 'Plate 24', 'plate-12': 'Plate 12', 'plate-6': 'Plate 6', 'plate-1': 'Petri Dish',
+    'plate-96': 'Multiwell plate essay', 'plate-48': 'Multiwell plate essay', 'plate-24': 'Multiwell plate essay', 'plate-12': 'Multiwell plate essay', 'plate-6': 'Multiwell plate essay', 'plate-1': 'Multiwell plate essay',
     'plate-9x9box': 'Storage Box',
     'nmr': 'NMR', 'cd': 'Circular Dichroism', 'nmr-fittings': 'NMR Fitting',
-    'cloning': 'Cloning', 'protein_expression': 'Protein Expression', 'md_simulation': 'MD Simulation'
+    'cloning': 'Cloning', 'protein_expression': 'Protein expression & Purification', 'md_simulation': 'MD Simulation',
+    'ssnmr': 'Solid State NMR', 'docking': 'Molecular Docking'
   };
+
+  const EXPERIMENT_TYPES = [
+    "Cloning",
+    "Protein expression & Purification",
+    "Multiwell plate essay",
+    "Circular Dichroism",
+    "NMR",
+    "NMR Fitting",
+    "Solid State NMR",
+    "MD Simulation",
+    "Molecular Docking"
+  ];
 
   const filteredTests = useMemo(() => {
     // Helper: get all scientists assigned to a test (primary + co-scientists)
@@ -2527,6 +2540,8 @@ const secondaryOptions = useMemo(() => {
       const flatCompounds = [...new Set([...(t.selectedCompounds || []), ...(t.compoundsSelected || []), ...(t.compound ? t.compound.split(',') : [])])].map(s => s.trim());
       const flatPlasmids = [...new Set([...(t.plasmids || []), ...(t.plasmid ? [t.plasmid] : [])])];
 
+      const testLabel = typeLabels[t.type] || t.type;
+
       if (filterPrimary !== 'ALL' && t.testCategory !== filterPrimary) return false;
       if (filterSecondary !== 'ALL' && t.secondaryCategory !== filterSecondary) return false;
       // Scientist filter: only active for superusers (normal users already pre-filtered above)
@@ -2534,7 +2549,7 @@ const secondaryOptions = useMemo(() => {
         const scientists = getTestScientists(t);
         if (!scientists.includes(filterScientist)) return false;
       }
-      if (filterType !== 'ALL' && t.type !== filterType) return false;
+      if (filterType !== 'ALL' && testLabel !== filterType) return false;
       if (filterCompound !== 'ALL' && !flatCompounds.includes(filterCompound)) return false;
       if (filterPlasmid !== 'ALL' && !flatPlasmids.includes(filterPlasmid)) return false;
       if (filterCellLine !== 'ALL' && (!t.cellLines || !t.cellLines.includes(filterCellLine))) return false;
@@ -2570,7 +2585,6 @@ const secondaryOptions = useMemo(() => {
 
     return result;
   }, [tests, isSuperuser, currentUser, filterPrimary, filterSecondary, filterScientist, filterType, filterCompound, filterPlasmid, filterCellLine, showAdvanced, filterSolvent, filterBuffer, filterAdditive, filterInstrument, filterProbe, filterPulseSeq, dateFrom, dateTo, bestOnly, searchQuery, sortBy]);
-
   const exportPDF = async () => {
     // Find the scrollable notebook content area
     const el = document.getElementById('lab-notebook-print-area');
@@ -2677,11 +2691,11 @@ const secondaryOptions = useMemo(() => {
               </select>
             </div>
           )}
-          <div>
+<div>
             <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Experiment type</label>
             <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
               <option value="ALL">All</option>
-              {allTypes.map(t => <option key={t} value={t}>{typeLabels[t] || t}</option>)}
+              {EXPERIMENT_TYPES.map(label => <option key={label} value={label}>{label}</option>)}
             </select>
           </div>
           <div>
