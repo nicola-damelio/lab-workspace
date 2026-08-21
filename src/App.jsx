@@ -442,10 +442,6 @@ const LinksManager = ({ links = [], setLinks }) => {
   );
 };
 
-
-/* =========================================================
-   CELL LINE DEFINITION SECTION
-========================================================= */
 /* =========================================================
    CELL LINE DEFINITION SECTION
 ========================================================= */
@@ -4922,6 +4918,28 @@ const DatabaseCleanupManager = ({
   );
 };
 /* =========================================================
+CLASSIFICATION CONSTANTS
+========================================================= */
+export const CLASSIFICATION_MAP = {
+  "Protein production": ["Cloning", "Protein Expression and Purification", "Organic Purifications"],
+  "Molecular Structure and Dynamics": ["Structure by NMR, CD, IR", "MD & Modeling", "Dynamics by NMR Relaxation, ssNMR", "Diffusion by DLS, NMR"],
+  "Interactions": ["Association Constant", "Molecular Docking", "MD interactions", "Chromatography"],
+  "Activity": ["Antibacterial activity", "Anticancer activity", "Antifungal activity", "Antiviral activity", "Toxicity"]
+};
+export const PRIMARY_CATEGORIES = Object.keys(CLASSIFICATION_MAP);
+
+export const EXPERIMENT_TYPES = [
+  "Cloning",
+  "Protein expression & Purification",
+  "Multiwell plate essay",
+  "Circular Dichroism",
+  "NMR",
+  "NMR Fitting",
+  "Solid State NMR",
+  "MD Simulation",
+  "Molecular Docking"
+];
+/* =========================================================
 MAIN APP
 ========================================================= */
 export default function App() {
@@ -5296,13 +5314,7 @@ if (customType === 'nmr-fittings') {
   const [activeStorageId, setActiveStorageId] = useState(null);
   const [storageModal, setStorageModal] = useState(null);
   const [moveModal, setMoveModal] = useState(null);
-  const [testCategories, setTestCategories] = useState([
-    'Activity',
-    'Toxicity',
-    'Microscopy',
-    'Flow Cytometry',
-    'Viability'
-  ]);
+ const [testCategories, setTestCategories] = useState(PRIMARY_CATEGORIES);
   const [protocolCategories, setProtocolCategories] = useState([
     'Preparation',
     'Measurement',
@@ -5606,33 +5618,32 @@ if (customType === 'nmr-fittings') {
     }
   }, [operators, currentUser]);
 
-  const saveTimeoutRef = useRef(null);
-
+const saveTimeoutRef = useRef(null);
 useEffect(() => {
   if (!isCloudReady || appView !== 'dataset' || !currentDatasetId) return;
   setSaveStatus('saving');
-  
   if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-  
   saveTimeoutRef.current = setTimeout(async () => {
     try {
+      const rawData = latestDataRef.current;
+      // Compress payload to prevent Firestore 1MB limit and write stream exhaustion
+      const compressedPayload = LZString.compressToUTF16(JSON.stringify(rawData));
+
       const updatedPayload = {
         title: datasetTitle || 'Untitled Dataset',
         subtitle: datasetSubtitle || '',
-        date: tests[0]?.date || new Date().toISOString().split('T')[0],
-        testCount: tests.length,
+        date: rawData.tests?.[0]?.date || new Date().toISOString().split('T')[0],
+        testCount: rawData.tests?.length || 0,
         updatedAt: window.firebase
           ? window.firebase.firestore.FieldValue.serverTimestamp()
           : Date.now(),
-        payload: JSON.stringify(latestDataRef.current),
-        isCompressed: false
+        payload: compressedPayload,
+        isCompressed: true
       };
-      
       if (db && user) {
         const docRef = db
           .collection(`artifacts/${appId}/public/data/datasets`)
           .doc(currentDatasetId);
-          
         await docRef
           .set(updatedPayload, { merge: true })
           .then(() => {
@@ -5642,27 +5653,42 @@ useEffect(() => {
           .catch((err) => {
             setSaveStatus('error');
             setSaveErrorMsg(err.message);
+            console.error('Firestore save error:', err);
           });
       } else {
-        // Local Storage fallback logic remains the same
+        let stored = [];
+        try {
+          stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
+        } catch (e) {}
+        const existingIdx = stored.findIndex((e) => e.id === currentDatasetId);
+        if (existingIdx >= 0) {
+          stored[existingIdx] = { ...stored[existingIdx], ...updatedPayload };
+        } else {
+          stored.push({ id: currentDatasetId, ...updatedPayload });
+        }
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
+        setDatasetsList(
+          [...stored].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+        );
+        setSaveStatus('saved');
       }
     } catch (e) {
       setSaveStatus('error');
       setSaveErrorMsg(e.message);
+      console.error('Save error:', e);
     }
   }, 1500);
-
   return () => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
     }
   };
 }, [
-  tests, datasetTitle, datasetSubtitle, customCmpds, customCellLines, 
-  customConc, cmpColors, testCategories, protocolCategories, datasetProtocols, 
-  customFields, operators, molecules, compoundMeta, calculationEntries, 
-  cellLineMeta, plasmidMeta, storages, solvents, buffers, additives, 
-  nmrInstruments, nmrProbes, nmrExperiments, isCloudReady, appView, 
+  tests, datasetTitle, datasetSubtitle, customCmpds, customCellLines,
+  customConc, cmpColors, testCategories, protocolCategories, datasetProtocols,
+  customFields, operators, molecules, compoundMeta, calculationEntries,
+  cellLineMeta, plasmidMeta, storages, solvents, buffers, additives,
+  nmrInstruments, nmrProbes, nmrExperiments, isCloudReady, appView,
   currentDatasetId, user, authSettings
 ]);
 
@@ -5961,7 +5987,7 @@ if (s.mandatoryFields !== undefined) setMandatoryFields((prev) => [...new Set([.
     if (window.innerWidth < 768) setIsSidebarOpen(false);
   };
 
-  const createNewDataset = async () => {
+const createNewDataset = async () => {
     const newId = 'ds_' + Date.now();
     const freshTests = [createEmptyTest('t1', 1, 'plate-96')];
 
@@ -5980,9 +6006,6 @@ if (s.mandatoryFields !== undefined) setMandatoryFields((prev) => [...new Set([.
     setCustomFields([]);
     setCompoundMeta({});
     setCalculationEntries({});
-    // NOTE: operators and authSettings are GLOBAL — never reset per dataset
-    // setOperators([]);  ← intentionally omitted
-    // setAuthSettings() ← intentionally omitted
     setMolecules([]);
 
     setCellLineMeta({});
@@ -5995,13 +6018,7 @@ if (s.mandatoryFields !== undefined) setMandatoryFields((prev) => [...new Set([.
     setNmrProbes([]);
     setNmrExperiments([]);
 
-    setTestCategories([
-      'Activity',
-      'Toxicity',
-      'Microscopy',
-      'Flow Cytometry',
-      'Viability'
-    ]);
+     setTestCategories(PRIMARY_CATEGORIES);
 
     setProtocolCategories(['Preparation', 'Measurement', 'Analysis']);
     setDatasetProtocols([]);
@@ -6048,65 +6065,80 @@ if (s.mandatoryFields !== undefined) setMandatoryFields((prev) => [...new Set([.
     }
   };
 
-  const handleBackToExplorer = async () => {
-    if (currentDatasetId) {
-      setSaveStatus('saving');
-
-      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-
-      try {
-        const updatedPayload = {
-          title: datasetTitle || 'Untitled Dataset',
-          subtitle: datasetSubtitle || '',
-          date: tests[0]?.date || new Date().toISOString().split('T')[0],
-          testCount: tests.length,
-          updatedAt: window.firebase
-            ? window.firebase.firestore.FieldValue.serverTimestamp()
-            : Date.now(),
-          payload: JSON.stringify(latestDataRef.current),
-          isCompressed: false
-        };
-
-        if (db && user) {
-          await db
-            .collection(`artifacts/${appId}/public/data/datasets`)
-            .doc(currentDatasetId)
-            .set(updatedPayload, { merge: true });
+const handleBackToExplorer = async () => {
+  if (currentDatasetId) {
+    setSaveStatus('saving');
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    try {
+      const rawData = latestDataRef.current;
+      const compressedPayload = LZString.compressToUTF16(JSON.stringify(rawData));
+      
+      const updatedPayload = {
+        title: datasetTitle || 'Untitled Dataset',
+        subtitle: datasetSubtitle || '',
+        date: rawData.tests?.[0]?.date || new Date().toISOString().split('T')[0],
+        testCount: rawData.tests?.length || 0,
+        updatedAt: window.firebase
+          ? window.firebase.firestore.FieldValue.serverTimestamp()
+          : Date.now(),
+        payload: compressedPayload,
+        isCompressed: true
+      };
+      if (db && user) {
+        await db
+          .collection(`artifacts/${appId}/public/data/datasets`)
+          .doc(currentDatasetId)
+          .set(updatedPayload, { merge: true });
+      } else {
+        let stored = [];
+        try {
+          stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
+        } catch (e) {}
+        const existingIdx = stored.findIndex((e) => e.id === currentDatasetId);
+        if (existingIdx >= 0) {
+          stored[existingIdx] = { ...stored[existingIdx], ...updatedPayload };
         } else {
-          let stored = [];
-
-          try {
-            stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
-          } catch (e) {}
-
-          const existingIdx = stored.findIndex((e) => e.id === currentDatasetId);
-
-          if (existingIdx >= 0) {
-            stored[existingIdx] = { ...stored[existingIdx], ...updatedPayload };
-          } else {
-            stored.push({ id: currentDatasetId, ...updatedPayload });
-          }
-
-          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
-
-          setDatasetsList(
-            [...stored].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-          );
+          stored.push({ id: currentDatasetId, ...updatedPayload });
         }
-      } catch (e) {}
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stored));
+        setDatasetsList(
+          [...stored].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+        );
+      }
+    } catch (e) {
+      console.error('Back to explorer save error:', e);
     }
-
-    window.history.pushState({}, '', window.location.pathname);
-    setAppView('explorer');
-  };
+  }
+  window.history.pushState({}, '', window.location.pathname);
+  setAppView('explorer');
+};
 
 const openDataset = (dset) => {
-    const s = parsePayload(dset);
+  let s = null;
+  try {
+    // Defensively handle compressed payloads in case parsePayload doesn't already
+    if (dset.isCompressed && typeof dset.payload === 'string') {
+      const decompressed = LZString.decompressFromUTF16(dset.payload);
+      s = decompressed ? JSON.parse(decompressed) : null;
+    } else {
+      s = parsePayload(dset);
+    }
+  } catch (e) {
+    console.error('Dataset parse error:', e);
+    s = null;
+  }
 
-    if (!s) return;
+  if (!s) {
+    setDialog({
+      type: 'alert',
+      title: 'Error',
+      message: 'Error reading dataset structure. The payload may be corrupted or too large.'
+    });
+    return;
+  }
 
-    try {
-      const migrated = migrateLoadedDataset(s);
+  try {
+    const migrated = migrateLoadedDataset(s);
       const loadedTests = migrated.tests;
 
       if (loadedTests.length > 0) {
@@ -6155,15 +6187,7 @@ const openDataset = (dset) => {
       setNmrProbes(s.nmrProbes || []);
       setNmrExperiments(s.nmrExperiments || []);
       
-      setTestCategories(
-        s.testCategories || [
-          'Activity',
-          'Toxicity',
-          'Microscopy',
-          'Flow Cytometry',
-          'Viability'
-        ]
-      );
+   setTestCategories(s.testCategories || PRIMARY_CATEGORIES);
 
       setProtocolCategories(
         s.protocolCategories || ['Preparation', 'Measurement', 'Analysis']
@@ -9081,7 +9105,7 @@ const newProto = {
                   setActiveTestId(id);
                 };
 
-                const TestHeader = (
+const TestHeader = (
                   <div className="flex flex-col shrink-0 z-20 no-print">
                     <div className="bg-white border-b border-slate-200 px-4 md:px-6 py-4 flex flex-col lg:flex-row justify-between items-start lg:items-center shadow-sm gap-4">
                       <div className="flex flex-col md:flex-row md:items-center gap-3 md:gap-4 w-full lg:w-auto">
@@ -9108,23 +9132,16 @@ const newProto = {
                           />
 
                           <div className="text-xs text-slate-500 font-medium px-1 mt-1 flex flex-wrap items-center gap-2">
-                            <span className="uppercase text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
-                              {activeTest.testCategory}
-                            </span>
+                            {activeTest.testCategory && (
+                              <span className="uppercase text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
+                                {activeTest.testCategory}
+                              </span>
+                            )}
                             {activeTest.secondaryCategory && (
                               <span className="uppercase text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
                                 {activeTest.secondaryCategory}
                               </span>
                             )}
-                            <span className="uppercase text-slate-600 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
-                              {activeTest.type === 'nmr-fittings'
-                                ? 'NMR FITTINGS'
-                                : activeTest.type === 'md_simulation'
-                                ? 'MD SIMULATION'
-                                : activeTest.type === 'protein_expression'
-                                ? 'PROTEIN EXPRESSION'
-                                : String(activeTest.type || '').replace('plate-', '')}
-                            </span>
                             {activeTest.bestMeasurement && (
                               <span className="uppercase text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 font-bold">
                                 ⭐ Best
@@ -9181,7 +9198,6 @@ const newProto = {
         {operatorNames.map((op) => (<option key={`sci-${op}`} value={op}>{op}</option>))}
       </select>
     </div>
-    {/* Co-scientists multi-select */}
     <div className="flex flex-col flex-1 min-w-[180px]">
       <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
         Co-Scientists
@@ -9216,17 +9232,69 @@ const newProto = {
   )}
 </React.Fragment>
 
-                        <div className="flex flex-col flex-1 min-w-[120px]">
+                    <div className="flex flex-col flex-1 min-w-[140px]">
+                       <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
+                         Primary Class.
+                       </label>
+                       <select
+                         value={activeTest.testCategory || ''}
+                         onChange={(e) => {
+                           updateActiveTest({ 
+                             testCategory: e.target.value,
+                             secondaryCategory: '' 
+                           });
+                         }}
+                         className="bg-slate-50 border border-slate-200 text-xs px-2 py-2 rounded-lg outline-none focus:border-blue-500"
+                       >
+                         <option value="">Select...</option>
+                         {PRIMARY_CATEGORIES.map((cat) => (
+                           <option key={cat} value={cat}>{cat}</option>
+                         ))}
+                       </select>
+                     </div>
+                     <div className="flex flex-col flex-1 min-w-[140px]">
+                       <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
+                         Sec. Class.
+                       </label>
+                       <select
+                         value={activeTest.secondaryCategory || ''}
+                         onChange={(e) => updateActiveTest({ secondaryCategory: e.target.value })}
+                         className="bg-slate-50 border border-slate-200 text-xs px-2 py-2 rounded-lg outline-none focus:border-blue-500"
+                         disabled={!activeTest.testCategory || !CLASSIFICATION_MAP[activeTest.testCategory]}
+                       >
+                         <option value="">Select...</option>
+                         {activeTest.testCategory && CLASSIFICATION_MAP[activeTest.testCategory] ? 
+                           CLASSIFICATION_MAP[activeTest.testCategory].map((cat, idx) => (
+                             <option key={idx} value={cat}>{cat}</option>
+                           )) 
+                           : null
+                         }
+                       </select>
+                     </div>
+
+                        <div className="flex flex-col flex-1 min-w-[140px]">
                           <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
-                            Sec. Category
+                            Experiment Type
                           </label>
-                          <input
-                            type="text"
-                            value={activeTest.secondaryCategory || ''}
-                            onChange={(e) => updateActiveTest({ secondaryCategory: e.target.value })}
-                            className="bg-slate-50 border border-slate-200 text-xs px-2 py-2 rounded-lg outline-none focus:border-blue-500"
-                            placeholder="e.g. Profiling"
-                          />
+                          <select
+                            value={
+                              activeTest.type === 'plate-96' || activeTest.type === 'plate-384' || activeTest.type === 'plate-24' ? 'Multiwell plate essay' : 
+                              activeTest.type === 'nmr-fittings' ? 'NMR Fitting' :
+                              activeTest.type === 'md_simulation' ? 'MD Simulation' :
+                              activeTest.type === 'protein_expression' ? 'Protein expression & Purification' :
+                              activeTest.type === 'ssnmr' ? 'Solid State NMR' :
+                              activeTest.type === 'cd' ? 'Circular Dichroism' :
+                              activeTest.type === 'nmr' ? 'NMR' :
+                              activeTest.type === 'cloning' ? 'Cloning' :
+                              activeTest.type === 'docking' ? 'Molecular Docking' : 'Multiwell plate essay'
+                            }
+                            disabled
+                            className="bg-slate-100 border border-slate-200 text-xs px-2 py-2 rounded-lg outline-none text-slate-500 cursor-not-allowed"
+                          >
+                            {EXPERIMENT_TYPES.map(type => (
+                              <option key={type} value={type}>{type}</option>
+                            ))}
+                          </select>
                         </div>
 
                         <div className="flex flex-col flex-1 min-w-[110px]">
