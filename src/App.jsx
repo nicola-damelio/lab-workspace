@@ -5435,7 +5435,7 @@ if (customType === 'nmr-fittings') {
     initAuth();
   }, []);
 
-  // ── LOAD operators + authSettings FROM Firestore on login ─────────────
+// ── LOAD operators + authSettings FROM Firestore on login ─────────────
   useEffect(() => {
     if (!db || !user) return;
     const unsubscribe = db
@@ -5445,21 +5445,30 @@ if (customType === 'nmr-fittings') {
         (doc) => {
           if (!doc.exists) return;
           const data = doc.data();
+          
+          // Fix infinite loop: only update state if cloud data differs from current local string
           try {
             if (data.operators) {
-              const parsed = JSON.parse(data.operators);
-              if (Array.isArray(parsed) && parsed.length > 0) {
-                setOperators(parsed);
-                localStorage.setItem('labWorkspace_operators', data.operators);
+              const currentLocal = localStorage.getItem('labWorkspace_operators');
+              if (currentLocal !== data.operators) {
+                const parsed = JSON.parse(data.operators);
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                  setOperators(parsed);
+                  localStorage.setItem('labWorkspace_operators', data.operators);
+                }
               }
             }
           } catch {}
+
           try {
             if (data.authSettings) {
-              const parsed = JSON.parse(data.authSettings);
-              if (parsed && typeof parsed === 'object') {
-                setAuthSettings(parsed);
-                localStorage.setItem('labWorkspace_authSettings', data.authSettings);
+              const currentLocal = localStorage.getItem('labWorkspace_authSettings');
+              if (currentLocal !== data.authSettings) {
+                const parsed = JSON.parse(data.authSettings);
+                if (parsed && typeof parsed === 'object') {
+                  setAuthSettings(parsed);
+                  localStorage.setItem('labWorkspace_authSettings', data.authSettings);
+                }
               }
             }
           } catch {}
@@ -5469,6 +5478,7 @@ if (customType === 'nmr-fittings') {
     return () => unsubscribe();
   }, [user, db]);
   // ──────────────────────────────────────────────────────────────────────
+
 
     const handleManualLogin = async () => {
     const provider = new window.firebase.auth.GoogleAuthProvider();

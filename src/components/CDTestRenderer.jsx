@@ -16,32 +16,19 @@ export const CDTestRenderer = (props) => {
     samples: { ...CD_TAB_CONFIG.samples, cellLines: false }
   };
 
-  const enrichCtx = (ctxProps) => ({
-    ...(ctxProps.ctx || {}),
-    instances: props.instances || [],
-    updateInstance: props.updateInstance || null,
-    compoundMeta: props.compoundMeta || {}
-  });
-
   return (
     <TestShellRenderer
       {...props}
       config={config}
       custom={{
-        All: (ctxProps) => <All {...ctxProps} ctx={enrichCtx(ctxProps)} />,
-        InstrumentalSetup: (ctxProps) => <InstrumentalSetup ctx={enrichCtx(ctxProps)} />,
+        All: All,
+        InstrumentalSetup: InstrumentalSetup,
         buildNotebookHtml: (checked, ctx) => {
           let html = '';
-          const enhanced = {
-            ...ctx,
-            instances: props.instances || [],
-            updateInstance: props.updateInstance || null,
-            compoundMeta: props.compoundMeta || {}
-          };
-          if (checked.cond) html += NotebookExtra({ ctx: enhanced, checkId: 'cond' });
-          if (checked.instrument) html += NotebookExtra({ ctx: enhanced, checkId: 'instrument' });
-          if (checked.spectra) html += NotebookExtra({ ctx: enhanced, checkId: 'spectra' });
-          if (checked.struct) html += NotebookExtra({ ctx: enhanced, checkId: 'struct' });
+          if (checked.cond) html += NotebookExtra({ ctx, checkId: 'cond' });
+          if (checked.instrument) html += NotebookExtra({ ctx, checkId: 'instrument' });
+          if (checked.spectra) html += NotebookExtra({ ctx, checkId: 'spectra' });
+          if (checked.struct) html += NotebookExtra({ ctx, checkId: 'struct' });
           return html;
         }
       }}
