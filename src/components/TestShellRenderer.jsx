@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { RichTextEditor } from './RichTextEditor';
 import { BufferAdditiveFields } from './DefinitionsExtra';
 import { parseSimulationParameters } from './MDData';
+import { CLASSIFICATION_MAP } from '../App.jsx';
 
 /* ============================================================================
 HELPERS
@@ -1397,23 +1398,23 @@ const details = [
                 </select>
               </div>
 
-              <div>
-                <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
-                  Secondary Classification / Sub-category
-                </label>
-
-                <select
-                  value={t.secondaryCategory || ''}
-                  onChange={(e) => update({ secondaryCategory: e.target.value })}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
-                >
-                  <option value="">— None —</option>
-                  {sortAlpha(categories).map((cat) => (
-                    <option key={`secondary-${cat}`} value={cat}>
-                      {cat}
-                    </option>
-                  ))}
-                </select>
+                         <div>
+             <label className="text-xs font-bold text-slate-600 uppercase mb-2 block">
+               Secondary Classification / Sub-category
+             </label>
+             <select
+               value={t.secondaryCategory || ''}
+               onChange={(e) => update({ secondaryCategory: e.target.value })}
+               className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold"
+               disabled={!testCategory || !CLASSIFICATION_MAP[testCategory]}
+             >
+               <option value="">— None —</option>
+               {(CLASSIFICATION_MAP[testCategory] || []).map((cat) => (
+                 <option key={`secondary-${cat}`} value={cat}>
+                   {cat}
+                 </option>
+               ))}
+             </select>
 
                 <div className="mt-2 flex items-center gap-3">
                   {t.secondaryCategory ? (

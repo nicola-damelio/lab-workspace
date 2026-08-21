@@ -18,6 +18,7 @@ PerAtomPlot,
 Fitting
 } from './NMRSections';
 import { CD_FIT_COMPONENTS } from './CDSections';
+import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES } from '../App.jsx';
 import {
 generateRMSDData, generateRMSFData, generateRgData, generateSASAData, generateEnergyData,
 parseMDValue, getForceFieldInfo, getWaterModelInfo, getTrajectoryFormatInfo
@@ -2472,8 +2473,15 @@ export const LabNotebook = ({
   const [showSimImages, setShowSimImages] = useState(false);
   
   // Option Lists
-  const allPrimaryCategories = useMemo(() => [...new Set(tests.map(t => t.testCategory).filter(Boolean))].sort(), [tests]);
-  const allSecondaryCategories = useMemo(() => [...new Set(tests.map(t => t.secondaryCategory).filter(Boolean))].sort(), [tests]);
+const primaryOptions = PRIMARY_CATEGORIES || Object.keys(CLASSIFICATION_MAP || {});
+const secondaryOptions = useMemo(() => {
+  if (filterPrimary === 'ALL' || !CLASSIFICATION_MAP) {
+    const allSec = new Set();
+    Object.values(CLASSIFICATION_MAP || {}).forEach(arr => arr.forEach(s => allSec.add(s)));
+    return Array.from(allSec).sort();
+  }
+  return CLASSIFICATION_MAP[filterPrimary] || [];
+}, [filterPrimary]);
   const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t => t.operator)].filter(Boolean))].sort(), [tests, operators]);
   const allTypes = useMemo(() => [...new Set(tests.map(t => t.type).filter(Boolean))].sort(), [tests]);
   const allPlasmids = useMemo(() => Object.keys(plasmidMeta || {}).sort(), [plasmidMeta]);
@@ -2645,20 +2653,20 @@ export const LabNotebook = ({
 
         {/* MAIN FILTERS — all users see all filters except Scientist which is superuser-only */}
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2">
-          <div>
-            <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Main classification</label>
-            <select value={filterPrimary} onChange={(e) => setFilterPrimary(e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
-              <option value="ALL">All</option>
-              {allPrimaryCategories.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Sub-classification</label>
-            <select value={filterSecondary} onChange={(e) => setFilterSecondary(e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
-              <option value="ALL">All</option>
-              {allSecondaryCategories.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </div>
+       <div>
+         <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Main classification</label>
+         <select value={filterPrimary} onChange={(e) => { setFilterPrimary(e.target.value); setFilterSecondary('ALL'); }} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
+           <option value="ALL">All</option>
+           {primaryOptions.map(c => <option key={c} value={c}>{c}</option>)}
+         </select>
+       </div>
+       <div>
+         <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Sub-classification</label>
+         <select value={filterSecondary} onChange={(e) => setFilterSecondary(e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
+           <option value="ALL">All</option>
+           {secondaryOptions.map(c => <option key={c} value={c}>{c}</option>)}
+         </select>
+       </div>
           {/* Scientist filter — superuser only */}
           {isSuperuser && (
             <div>
