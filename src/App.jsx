@@ -26,14 +26,16 @@ import DockingTestRenderer, { DOCKING_TAB_CONFIG } from './components/DockingTes
 import { Setup, Data, Simulations, Analysis } from '/src/components/MDSections.jsx';
 import { SolventsManager, BuffersManager, AdditivesManager, NMRProbesManager, NMRInstrumentsManager, NMRExperimentsManager, BufferAdditiveFields, getMolecularWeightFromFormula, BrukerPulseSequenceViewer} from './components/DefinitionsExtra';
 import {
-CD_TAB_CONFIG,
-PLATE_TAB_CONFIG,
-NMR_TAB_CONFIG,
-CLONING_TAB_CONFIG,
-NMR_FITTING_TAB_CONFIG,
-PROTEIN_EXPRESSION_TAB_CONFIG,
-SSNMR_TAB_CONFIG
+  CD_TAB_CONFIG,
+  PLATE_TAB_CONFIG,
+  NMR_TAB_CONFIG,
+  CLONING_TAB_CONFIG,
+  NMR_FITTING_TAB_CONFIG,
+  PROTEIN_EXPRESSION_TAB_CONFIG,
+  SSNMR_TAB_CONFIG,
+  FLOW_CYTOMETRY_TAB_CONFIG
 } from './components/tabConfigs.jsx';
+import { FlowCytometryTestRenderer } from './components/FlowCytometryTestRenderer';
 
 
 /* =========================================================
@@ -234,7 +236,8 @@ const SPECIAL_PAGES = [
   { value: 'protein_expression', label: 'Protein Purification', subsections: PROTEIN_EXPRESSION_TAB_CONFIG.notebookChecks || [] },
   { value: 'ssnmr', label: 'ssNMR', subsections: SSNMR_TAB_CONFIG.notebookChecks || [] },
   { value: 'md_simulation', label: 'MD Simulations', subsections: MD_SIMULATION_TAB_CONFIG.notebookChecks || [] },
-  { value: 'docking', label: 'Docking', subsections: DOCKING_TAB_CONFIG.notebookChecks || [] }
+  { value: 'docking', label: 'Docking', subsections: DOCKING_TAB_CONFIG.notebookChecks || [] },
+  { value: 'flow_cytometry', label: 'Flow Cytometry', subsections: FLOW_CYTOMETRY_TAB_CONFIG.notebookChecks || [] }
 ];
 
 const CUSTOM_FIELD_TAB_OPTIONS = [
@@ -4929,15 +4932,16 @@ export const CLASSIFICATION_MAP = {
 export const PRIMARY_CATEGORIES = Object.keys(CLASSIFICATION_MAP);
 
 export const EXPERIMENT_TYPES = [
-  "Cloning",
-  "Protein expression & Purification",
-  "Multiwell plate essay",
-  "Circular Dichroism",
-  "NMR",
-  "NMR Fitting",
-  "Solid State NMR",
-  "MD Simulation",
-  "Molecular Docking"
+ "Cloning ",
+ "Protein expression  & Purification ",
+ "Multiwell plate essay ",
+ "Flow Cytometry ",
+ "Circular Dichroism ",
+ "NMR ",
+ "NMR Fitting ",
+ "Solid State NMR ",
+ "MD Simulation ",
+ "Molecular Docking "
 ];
 /* =========================================================
 MAIN APP
@@ -5162,23 +5166,38 @@ lineWidth: 2
     }
 
     
-    if (customType === 'docking') {
-      return {
-        ...baseTest,
-        type: 'docking',
-        testCategory: 'Blind Docking',
-        dockingProgram: '',
-        scoringFunction: '',
-        searchAlgorithm: '',
-        exhaustiveness: '',
-        numModes: '',
-        boxCenter: '',
-        boxSize: '',
-        bestAffinity: '',
-        dockingImages: [],
-        dockingResults: []
-      };
-    }
+if (customType === 'docking') {
+   return {
+     ...baseTest,
+     type: 'docking',
+     testCategory: 'Blind Docking',
+     dockingProgram: '',
+     scoringFunction: '',
+     searchAlgorithm: '',
+     exhaustiveness: '',
+     numModes: '',
+     boxCenter: '',
+     boxSize: '',
+     bestAffinity: '',
+     dockingImages: [],
+     dockingResults: []
+   };
+ }
+ if (customType === 'flow_cytometry') {
+   return {
+     ...baseTest,
+     type: 'flow_cytometry',
+     testCategory: 'Immunophenotyping',
+     cellNumber: '',
+     liveDeadStain: '',
+     fixation: 'None',
+     permeabilization: 'None',
+     fcMachine: '',
+     acquisitionSoftware: '',
+     fcPanel: [],
+     fcPopulations: []
+   };
+ }
 if (customType === 'nmr-fittings') {
       const rows = 8;
       const cols = 12;
@@ -7898,6 +7917,20 @@ const openDataset = (dset) => {
   >
     + Multiwell Plate tests
   </button>
+  <button
+onClick={() => {
+const id = 't' + Date.now();
+setTests((prev) => [
+...prev,
+createEmptyTest(id, prev.length + 1, 'flow_cytometry')
+]);
+setActiveTestId(id);
+setCurrentModule('active-test');
+}}
+className="bg-pink-600 hover:bg-pink-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+>
++ Flow Cytometry
+</button>
 
 <button
 onClick={() => {
@@ -8144,6 +8177,7 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 ro
 : test.type === 'nmr-fittings' ? '🧭'
 : test.type === 'md_simulation' ? '🖥️'
 : test.type === 'docking' ? '🎯'
+: test.type === 'flow_cytometry' ? '🩸'
 : '🧫'}
 </div>
 
@@ -8167,12 +8201,13 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 ro
 
                               <div className="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center text-xs text-slate-500 font-medium">
                                 <span>📅 {test.date}</span>
-   <span className="bg-slate-100 px-2 py-0.5 rounded font-bold text-slate-600">
+<span className="bg-slate-100 px-2 py-0.5 rounded font-bold text-slate-600">
 {test.type === 'nmr-fittings' ? 'NMR FITTINGS'
 : test.type === 'md_simulation' ? 'MD'
 : test.type === 'protein_expression' ? 'PROTEIN'
 : test.type === 'ssnmr' ? 'SSNMR'
 : test.type === 'docking' ? 'DOCKING'
+: test.type === 'flow_cytometry' ? 'FLOW'
 : String(test.type || '').replace('plate-', '').toUpperCase()}
 </span>
                               </div>
@@ -9288,16 +9323,17 @@ const TestHeader = (
                           </label>
                           <select
                             value={
-                              activeTest.type === 'plate-96' || activeTest.type === 'plate-384' || activeTest.type === 'plate-24' ? 'Multiwell plate essay' : 
-                              activeTest.type === 'nmr-fittings' ? 'NMR Fitting' :
-                              activeTest.type === 'md_simulation' ? 'MD Simulation' :
-                              activeTest.type === 'protein_expression' ? 'Protein expression & Purification' :
-                              activeTest.type === 'ssnmr' ? 'Solid State NMR' :
-                              activeTest.type === 'cd' ? 'Circular Dichroism' :
-                              activeTest.type === 'nmr' ? 'NMR' :
-                              activeTest.type === 'cloning' ? 'Cloning' :
-                              activeTest.type === 'docking' ? 'Molecular Docking' : 'Multiwell plate essay'
-                            }
+                           activeTest.type === 'plate-96' || activeTest.type === 'plate-384' || activeTest.type === 'plate-24' ? 'Multiwell plate essay' : 
+                           activeTest.type === 'nmr-fittings' ? 'NMR Fitting' :
+                           activeTest.type === 'md_simulation' ? 'MD Simulation' :
+                           activeTest.type === 'protein_expression' ? 'Protein expression & Purification' :
+                           activeTest.type === 'ssnmr' ? 'Solid State NMR' :
+                           activeTest.type === 'cd' ? 'Circular Dichroism' :
+                           activeTest.type === 'nmr' ? 'NMR' :
+                           activeTest.type === 'cloning' ? 'Cloning' :
+                           activeTest.type === 'docking' ? 'Molecular Docking' :
+                           activeTest.type === 'flow_cytometry' ? 'Flow Cytometry' : 'Multiwell plate essay'
+                         }
                             disabled
                             className="bg-slate-100 border border-slate-200 text-xs px-2 py-2 rounded-lg outline-none text-slate-500 cursor-not-allowed"
                           >
@@ -9557,7 +9593,30 @@ if (activeTest.type === 'ssnmr') {
                     />
                   );
                 }
-
+if (activeTest.type === 'flow_cytometry') {
+               return (
+                 <FlowCytometryTestRenderer
+                   activeTest={activeTest}
+                   updateActiveTest={updateActiveTest}
+                   allTests={tests}
+                   TestHeader={TestHeader}
+                   datasetProtocols={datasetProtocols}
+                   jumpToProtocol={jumpToProtocolFn}
+                   allCmpds={allCmpds}
+                   allCellLines={allCellLines}
+                   customFields={customFields}
+                   testCategories={testCategories}
+                   operators={operatorNames}
+                   instances={siblingTests}
+                   solvents={solvents}
+                   buffers={buffers}
+                   additives={additives}
+                   compoundMeta={compoundMeta}
+                   mandatoryRules={mandatoryRules}
+                   mandatoryBehavior={mandatoryBehavior}
+                 />
+               );
+             }
                 if (activeTest.type === 'cloning') {
                   return (
                     <CloningTestRenderer

@@ -424,3 +424,47 @@ export const MD_SIMULATION_TAB_CONFIG = {
     { id: 'results', label: 'Results Summary' }
   ]
 };
+export const FLOW_CYTOMETRY_TAB_CONFIG = {
+  typeKey: 'flow_cytometry',
+  typeLabel: 'Flow Cytometry',
+  icon: '🩸',
+  fallbackCategories: [
+    'Immunophenotyping',
+    'Cell Viability',
+    'Apoptosis',
+    'Cell Cycle',
+    'Intracellular Cytokines',
+    'Calcium Flux'
+  ],
+  samples: {
+    compounds: true,
+    cellLines: true,
+    compoundLabel: 'Antibodies / Reagents',
+    cellLineLabel: 'Cell Type / Line'
+  },
+  imagesKey: 'images',
+  conditionFields: [
+    { key: 'experimentDate', label: 'Experiment Date', type: 'date' },
+    { key: 'cellNumber', label: 'Cells per Sample', type: 'text', placeholder: 'e.g. 1x10^6' },
+    { key: 'liveDeadStain', label: 'Live/Dead Stain', type: 'text', placeholder: 'e.g. Zombie NIR' },
+    { key: 'fixation', label: 'Fixation', type: 'select', options: ['None', '1% PFA', '4% PFA', 'BD Cytofix', 'eBioscience Foxp3'] },
+    { key: 'permeabilization', label: 'Permeabilization', type: 'select', options: ['None', '0.1% Saponin', '0.1% Triton X-100', 'BD Perm', 'eBioscience Perm'] },
+    { key: 'fcMachine', label: 'Flow Cytometer', type: 'text', placeholder: 'e.g. BD FACSCanto II' },
+    { key: 'acquisitionSoftware', label: 'Acquisition Software', type: 'text', placeholder: 'e.g. FACSDiva' }
+  ],
+  instrumentalFields: [
+    { key: 'cytometerModel', label: 'Cytometer Model', type: 'text', placeholder: 'e.g. FACSCanto II' },
+    { key: 'cytometerSerial', label: 'Cytometer Serial Number', type: 'text', placeholder: 'e.g. V96300734' },
+    { key: 'lasers', label: 'Lasers Config', type: 'textarea', placeholder: 'e.g. Blue (488nm), Red (633nm), Violet (405nm)' },
+    { key: 'threshold', label: 'Threshold', type: 'text', placeholder: 'e.g. FSC, 5000' },
+    { key: 'compensationApplied', label: 'Compensation Applied', type: 'select', options: ['Yes', 'No', 'Unknown'] },
+    { key: 'plateName', label: 'Plate Name / ID', type: 'text', placeholder: 'e.g. 96 Well - Flat bottom' },
+    { key: 'wellId', label: 'Well ID', type: 'text', placeholder: 'e.g. H01' }
+  ],
+  notebookChecks: [
+    { id: 'cond', label: 'Experimental Conditions' },
+    { id: 'instrument', label: 'Instrumental Setup' },
+    { id: 'panel', label: 'Staining Panel' },
+    { id: 'gating', label: 'Gating Strategy & Results' }
+  ]
+};
