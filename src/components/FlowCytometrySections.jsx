@@ -287,7 +287,7 @@ const isPointInPoly = (px, py, poly) => {
 // =========================================================================
 // CANVAS 2D OVERLAY
 // =========================================================================
-const Canvas2DPlotOverlay = ({ series, xParam, yParam, xLabel, yLabel, logX, logY, cfg, fs, gates, onAddGate }) => {
+const Canvas2DPlotOverlay = ({ series, xParam, yParam, xLabel, yLabel, logX, logY, cfg, fs, gates, onAddGate, interactionMode, xDomain, yDomain, onZoom }) => {
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
   const mappingRef = useRef(null);
@@ -323,8 +323,8 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, xLabel, yLabel, logX, log
 
       if (!validSeries.length) return;
 
-      let minX = Infinity, maxX = -Infinity;
-      let minY = Infinity, maxY = -Infinity;
+      let dataMinX = Infinity, dataMaxX = -Infinity;
+      let dataMinY = Infinity, dataMaxY = -Infinity;
 
       validSeries.forEach(s => {
         for (let i = 0; i < s.fcs.numEvents; i++) {
@@ -333,10 +333,10 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, xLabel, yLabel, logX, log
             const gXIdx = s.fcs.params.findIndex(p => (p.name||'').toUpperCase() === g.xParam || (p.label||'').toUpperCase() === g.xParam);
             const gYIdx = s.fcs.params.findIndex(p => (p.name||'').toUpperCase() === g.yParam || (p.label||'').toUpperCase() === g.yParam);
             if (gXIdx >= 0 && gYIdx >= 0) {
-              const xR = s.fcs.events[i * s.fcs.numParams + gXIdx];
-              const yR = s.fcs.events[i * s.fcs.numParams + gYIdx];
-              const gx = g.logX ? Math.log10(Math.max(0, xR) + 1) : xR;
-              const gy = g.logY ? Math.log10(Math.max(0, yR) + 1) : yR;
+              const xRaw = s.fcs.events[i * s.fcs.numParams + gXIdx];
+              const yRaw = s.fcs.events[i * s.fcs.numParams + gYIdx];
+              const gx = g.logX ? Math.log10(Math.max(0, xRaw) + 1) : xRaw;
+              const gy = g.logY ? Math.log10(Math.max(0, yRaw) + 1) : yRaw;
               if (!isPointInPoly(gx, gy, g.vertices)) { pass = false; break; }
             }
           }
@@ -344,14 +344,19 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, xLabel, yLabel, logX, log
 
           const x = transformValue(s.fcs.events[i * s.fcs.numParams + s.pX], logX);
           const y = transformValue(s.fcs.events[i * s.fcs.numParams + s.pY], logY);
-          if (x < minX) minX = x; if (x > maxX) maxX = x;
-          if (y < minY) minY = y; if (y > maxY) maxY = y;
+          if (x < dataMinX) dataMinX = x; if (x > dataMaxX) dataMaxX = x;
+          if (y < dataMinY) dataMinY = y; if (y > dataMaxY) dataMaxY = y;
         }
       });
 
-      if (minX === Infinity) { minX = 0; maxX = 1000; minY = 0; maxY = 1000; }
+      if (dataMinX === Infinity) { dataMinX = 0; dataMaxX = 1000; dataMinY = 0; dataMaxY = 1000; }
 
-      const pad = { top: 20, right: 20, bottom: 45, left: 60 };
+      const minX = xDomain ? xDomain[0] : dataMinX;
+      const maxX = xDomain ? xDomain[1] : dataMaxX;
+      const minY = yDomain ? yDomain[0] : dataMinY;
+      const maxY = yDomain ? yDomain[1] : dataMaxY;
+
+      const pad = { top: 20, right: 20, bottom: 45, left: 75 }; // Extended left padding to prevent Y-Axis cutoff
       const plotW = W - pad.left - pad.right;
       const plotH = H - pad.top - pad.bottom;
       if (plotW <= 0 || plotH <= 0) return;
@@ -377,10 +382,10 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, xLabel, yLabel, logX, log
             const gXIdx = s.fcs.params.findIndex(p => (p.name||'').toUpperCase() === g.xParam || (p.label||'').toUpperCase() === g.xParam);
             const gYIdx = s.fcs.params.findIndex(p => (p.name||'').toUpperCase() === g.yParam || (p.label||'').toUpperCase() === g.yParam);
             if (gXIdx >= 0 && gYIdx >= 0) {
-              const xR = s.fcs.events[i * s.fcs.numParams + gXIdx];
-              const yR = s.fcs.events[i * s.fcs.numParams + gYIdx];
-              const gx = g.logX ? Math.log10(Math.max(0, xR) + 1) : xR;
-              const gy = g.logY ? Math.log10(Math.max(0, yR) + 1) : yR;
+              const xRaw = s.fcs.events[i * s.fcs.numParams + gXIdx];
+              const yRaw = s.fcs.events[i * s.fcs.numParams + gYIdx];
+              const gx = g.logX ? Math.log10(Math.max(0, xRaw) + 1) : xRaw;
+              const gy = g.logY ? Math.log10(Math.max(0, yRaw) + 1) : yRaw;
               if (!isPointInPoly(gx, gy, g.vertices)) { pass = false; break; }
             }
           }
@@ -388,6 +393,9 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, xLabel, yLabel, logX, log
 
           const x = transformValue(s.fcs.events[i * s.fcs.numParams + s.pX], logX);
           const y = transformValue(s.fcs.events[i * s.fcs.numParams + s.pY], logY);
+          
+          if (x < minX || x > maxX || y < minY || y > maxY) continue;
+
           const px = pad.left + ((x - minX) / (maxX - minX || 1)) * plotW;
           const py = pad.top + plotH - ((y - minY) / (maxY - minY || 1)) * plotH;
           ctx.fillRect(px, py, 1.5, 1.5);
@@ -414,16 +422,28 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, xLabel, yLabel, logX, log
       });
 
       if (drawPath && drawPath.length > 0) {
-        ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 2; ctx.setLineDash([5, 5]);
-        ctx.beginPath(); ctx.moveTo(drawPath[0].x, drawPath[0].y);
-        for (let i = 1; i < drawPath.length; i++) ctx.lineTo(drawPath[i].x, drawPath[i].y);
-        ctx.stroke(); ctx.setLineDash([]);
+        if (interactionMode === 'zoom' && drawPath.length === 2) {
+            const x = Math.min(drawPath[0].x, drawPath[1].x);
+            const y = Math.min(drawPath[0].y, drawPath[1].y);
+            const w = Math.abs(drawPath[0].x - drawPath[1].x);
+            const h = Math.abs(drawPath[0].y - drawPath[1].y);
+            ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 2; ctx.setLineDash([5, 5]);
+            ctx.strokeRect(x, y, w, h);
+            ctx.fillStyle = 'rgba(59, 130, 246, 0.15)';
+            ctx.fillRect(x, y, w, h);
+            ctx.setLineDash([]);
+        } else if (interactionMode === 'gate') {
+            ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2; ctx.setLineDash([5, 5]);
+            ctx.beginPath(); ctx.moveTo(drawPath[0].x, drawPath[0].y);
+            for (let i = 1; i < drawPath.length; i++) ctx.lineTo(drawPath[i].x, drawPath[i].y);
+            ctx.stroke(); ctx.setLineDash([]);
+        }
       }
 
       ctx.fillStyle = '#334155'; ctx.font = `bold ${cfg.fontSize || 12}px sans-serif`; ctx.textAlign = 'center';
       ctx.fillText(`${xLabel}${logX ? ' (Log)' : ''}`, pad.left + plotW / 2, H - 10);
       
-      ctx.save(); ctx.translate(15, pad.top + plotH / 2); ctx.rotate(-Math.PI / 2);
+      ctx.save(); ctx.translate(20, pad.top + plotH / 2); ctx.rotate(-Math.PI / 2); // Shifted Y-label rightward
       ctx.fillText(`${yLabel}${logY ? ' (Log)' : ''}`, 0, 0); ctx.restore();
       
       ctx.fillStyle = '#64748b'; ctx.font = `${Math.max(9, (cfg.fontSize || 12) - 2)}px sans-serif`;
@@ -439,40 +459,63 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, xLabel, yLabel, logX, log
     const ro = new ResizeObserver(draw);
     ro.observe(wrap);
     return () => ro.disconnect();
-  }, [series, xParam, yParam, xLabel, yLabel, logX, logY, cfg, fs, drawPath, gates]);
+  }, [series, xParam, yParam, xLabel, yLabel, logX, logY, cfg, fs, drawPath, gates, interactionMode, xDomain, yDomain]);
 
   const handleMouseDown = (e) => {
-    if (!mappingRef.current || !onAddGate) return;
+    if (!mappingRef.current) return;
     const rect = wrapRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     const m = mappingRef.current;
     if (x >= m.pad.left && x <= m.pad.left + m.plotW && y >= m.pad.top && y <= m.pad.top + m.plotH) {
-      setDrawPath([{x, y}]);
+      if (interactionMode === 'zoom') {
+          setDrawPath([{x, y}, {x, y}]); 
+      } else {
+          setDrawPath([{x, y}]); 
+      }
     }
   };
 
   const handleMouseMove = (e) => {
     if (!drawPath) return;
     const rect = wrapRef.current.getBoundingClientRect();
-    setDrawPath(prev => [...prev, {x: e.clientX - rect.left, y: e.clientY - rect.top}]);
+    if (interactionMode === 'zoom') {
+        setDrawPath(prev => [prev[0], {x: e.clientX - rect.left, y: e.clientY - rect.top}]);
+    } else {
+        setDrawPath(prev => [...prev, {x: e.clientX - rect.left, y: e.clientY - rect.top}]);
+    }
   };
 
   const handleMouseUp = () => {
     if (!drawPath || !mappingRef.current) return;
-    if (drawPath.length > 5) {
-      const m = mappingRef.current;
-      const toDataX = (px) => m.minX + ((px - m.pad.left) / m.plotW) * (m.maxX - m.minX);
-      const toDataY = (py) => m.minY + ((m.pad.top + m.plotH - py) / m.plotH) * (m.maxY - m.minY);
-      
-      const polyData = drawPath.map(p => ({ x: toDataX(p.x), y: toDataY(p.y) }));
-      const xs = polyData.map(p => p.x); const ys = polyData.map(p => p.y);
-      const w = Math.max(...xs) - Math.min(...xs);
-      const h = Math.max(...ys) - Math.min(...ys);
-      
-      if (w > (m.maxX - m.minX) * 0.01 && h > (m.maxY - m.minY) * 0.01) {
-        onAddGate({ id: `gate_${Date.now()}`, xParam: m.xParam, yParam: m.yParam, logX: m.logX, logY: m.logY, vertices: polyData });
-      }
+    const m = mappingRef.current;
+    const toDataX = (px) => m.minX + ((px - m.pad.left) / m.plotW) * (m.maxX - m.minX);
+    const toDataY = (py) => m.minY + ((m.pad.top + m.plotH - py) / m.plotH) * (m.maxY - m.minY);
+    
+    if (interactionMode === 'zoom') {
+        if (drawPath.length === 2 && onZoom) {
+            const startX = toDataX(drawPath[0].x);
+            const curX = toDataX(drawPath[1].x);
+            const startY = toDataY(drawPath[0].y);
+            const curY = toDataY(drawPath[1].y);
+            const minX = Math.min(startX, curX);
+            const maxX = Math.max(startX, curX);
+            const minY = Math.min(startY, curY);
+            const maxY = Math.max(startY, curY);
+            if (maxX - minX > (m.maxX - m.minX) * 0.01 && maxY - minY > (m.maxY - m.minY) * 0.01) {
+                onZoom({ xDomain: [minX, maxX], yDomain: [minY, maxY] });
+            }
+        }
+    } else if (interactionMode === 'gate' && onAddGate) {
+        if (drawPath.length > 5) {
+          const polyData = drawPath.map(p => ({ x: toDataX(p.x), y: toDataY(p.y) }));
+          const xs = polyData.map(p => p.x); const ys = polyData.map(p => p.y);
+          const w = Math.max(...xs) - Math.min(...xs);
+          const h = Math.max(...ys) - Math.min(...ys);
+          if (w > (m.maxX - m.minX) * 0.01 && h > (m.maxY - m.minY) * 0.01) {
+            onAddGate({ id: `gate_${Date.now()}`, xParam: m.xParam, yParam: m.yParam, logX: m.logX, logY: m.logY, vertices: polyData });
+          }
+        }
     }
     setDrawPath(null);
   };
@@ -481,19 +524,10 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, xLabel, yLabel, logX, log
     <div 
       ref={wrapRef} 
       onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}
-      style={{ width: '100%', aspectRatio: fs ? undefined : String(cfg.aspect || 1.8), height: fs ? '100%' : (cfg.height || 380) }} 
-      className="relative rounded-lg border border-slate-200 bg-white overflow-hidden min-h-[300px] cursor-crosshair"
+      style={fs ? { width: '100%', height: '100%' } : { width: '100%', aspectRatio: String(cfg.aspect || 1.8), height: cfg.height || 380 }} 
+      className={`relative rounded-lg border border-slate-200 bg-white overflow-hidden cursor-crosshair ${fs ? 'flex-1 min-h-0' : 'min-h-[300px]'}`}
     >
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
-      {drawPath && (
-        <div style={{
-          position: 'absolute',
-          left: Math.min(...drawPath.map(p=>p.x)), top: Math.min(...drawPath.map(p=>p.y)),
-          width: Math.max(...drawPath.map(p=>p.x)) - Math.min(...drawPath.map(p=>p.x)),
-          height: Math.max(...drawPath.map(p=>p.y)) - Math.min(...drawPath.map(p=>p.y)),
-          border: '2px dashed rgba(239, 68, 68, 0.4)', backgroundColor: 'transparent', pointerEvents: 'none'
-        }} />
-      )}
     </div>
   );
 };
@@ -520,6 +554,11 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
   const [showRenamer, setShowRenamer] = useState(false);
   const [hiddenSeries, setHiddenSeries] = useState({});
   const [gates, setGates] = useState([]);
+
+  // 2D Interaction States
+  const [interactionMode, setInteractionMode] = useState('gate'); 
+  const [xDomain2D, setXDomain2D] = useState(null);
+  const [yDomain2D, setYDomain2D] = useState(null);
 
   const localColors = activeTest.fcColors || {};
   const updateColor = (id, color) => updateActiveTest({ fcColors: { ...localColors, [id]: color } });
@@ -580,7 +619,12 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
     }
   }, [rawSharedParams, overlayParam1D, xParam2D, yParam2D]);
 
-const chartData1D = useMemo(() => {
+  useEffect(() => {
+    setXDomain2D(null);
+    setYDomain2D(null);
+  }, [xParam2D, yParam2D, logX2D, logY2D]);
+
+  const chartData1D = useMemo(() => {
     if (!overlayParam1D || !visibleInstances.length) return { bins: [], domain: [0, 1] };
     let globalMin = Infinity; let globalMax = -Infinity;
     const transformValue = (val) => log1D ? Math.log10(Math.max(0, val) + 1) : val;
@@ -599,7 +643,7 @@ const chartData1D = useMemo(() => {
              const xRaw = s.fcs.events[i * s.fcs.numParams + gXIdx];
              const yRaw = s.fcs.events[i * s.fcs.numParams + gYIdx];
              const gx = g.logX ? Math.log10(Math.max(0, xRaw) + 1) : xRaw;
-             const gy = g.logY ? Math.log10(Math.max(0, yRaw) + 1) : yRaw; // <-- Fixed the typo here
+             const gy = g.logY ? Math.log10(Math.max(0, yRaw) + 1) : yRaw;
              if (!isPointInPoly(gx, gy, g.vertices)) { pass = false; break; }
           }
         }
@@ -693,12 +737,12 @@ const chartData1D = useMemo(() => {
         )}
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 z-10 w-full">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 z-10 w-full mt-2">
         
         {/* 1D HISTOGRAM */}
         <>
-          {fs1D && <div className={OVERLAY_CLASSES} onClick={() => setFs1D(false)} />}
-          <div className={`flex flex-col gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm w-full ${fs1D ? FS_CLASSES + ' z-[999999]' : ''}`}>
+          {fs1D && <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[99990]" onClick={() => setFs1D(false)} />}
+          <div className={fs1D ? "fixed inset-4 z-[99999] bg-white p-6 rounded-2xl shadow-2xl flex flex-col gap-3 overflow-hidden" : "flex flex-col gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm w-full"}>
             <div className="flex justify-between items-center z-10 shrink-0 border-b border-slate-100 pb-2">
               <h5 className="text-sm font-bold text-slate-700">1D Histogram</h5>
               <div className="flex items-center gap-2">
@@ -733,10 +777,10 @@ const chartData1D = useMemo(() => {
 
         {/* 2D SCATTER */}
         <>
-          {fs2D && <div className={OVERLAY_CLASSES} onClick={() => setFs2D(false)} />}
-          <div className={`flex flex-col gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm w-full ${fs2D ? FS_CLASSES + ' z-[999999]' : ''}`}>
-            <div className="flex justify-between items-center shrink-0 border-b border-slate-100 pb-2">
-              <h5 className="text-sm font-bold text-slate-700">2D Scatter (Drag to Gate)</h5>
+          {fs2D && <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[99990]" onClick={() => setFs2D(false)} />}
+          <div className={fs2D ? "fixed inset-4 z-[99999] bg-white p-6 rounded-2xl shadow-2xl flex flex-col gap-3 overflow-hidden" : "flex flex-col gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm w-full"}>
+            <div className="flex justify-between items-center z-10 shrink-0 border-b border-slate-100 pb-2">
+              <h5 className="text-sm font-bold text-slate-700">2D Scatter</h5>
               <div className="flex items-center gap-2">
                 <select value={xParam2D} onChange={e => setXParam2D(e.target.value)} className="border border-slate-300 rounded px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-bold text-blue-700 max-w-[90px]">
                   {rawSharedParams.map(p => <option key={p.name} value={(p.name||'').toUpperCase()}>{getParamLabel(p, panelArray, paramRenames)}</option>)}
@@ -758,7 +802,33 @@ const chartData1D = useMemo(() => {
             
             {showCfg2D && <SharedChartStylePanel cfg={cfg2D} setCfg={setVizCfg2D} series={visibleInstances.map(s => ({ key: s.id, label: s.name, color: s.color }))} unit="a.u." />}
             
-            <Canvas2DPlotOverlay series={visibleInstances} xParam={xParam2D} yParam={yParam2D} xLabel={labelX2D} yLabel={labelY2D} logX={logX2D} logY={logY2D} cfg={cfg2D} fs={fs2D} gates={gates} onAddGate={(g) => setGates(prev => [...prev, g])} />
+            <div className="flex justify-between items-center bg-slate-50 p-2 rounded-lg border border-slate-200">
+              <div className="flex gap-2">
+                  <button onClick={() => setInteractionMode('gate')} className={`text-xs font-bold px-3 py-1 rounded shadow-sm transition-colors ${interactionMode === 'gate' ? 'bg-red-600 text-white' : 'bg-white border border-slate-300 text-slate-600 hover:bg-slate-100'}`}>🎯 Draw Gate</button>
+                  <button onClick={() => setInteractionMode('zoom')} className={`text-xs font-bold px-3 py-1 rounded shadow-sm transition-colors ${interactionMode === 'zoom' ? 'bg-blue-600 text-white' : 'bg-white border border-slate-300 text-slate-600 hover:bg-slate-100'}`}>🔍 Zoom</button>
+              </div>
+              {xDomain2D && yDomain2D && (
+                  <button onClick={() => { setXDomain2D(null); setYDomain2D(null); }} className="text-[10px] font-bold bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded shadow-sm">Reset Zoom</button>
+              )}
+            </div>
+
+            <Canvas2DPlotOverlay 
+               series={visibleInstances} 
+               xParam={xParam2D} 
+               yParam={yParam2D} 
+               xLabel={labelX2D} 
+               yLabel={labelY2D} 
+               logX={logX2D} 
+               logY={logY2D} 
+               cfg={cfg2D} 
+               fs={fs2D} 
+               gates={gates} 
+               onAddGate={(g) => setGates(prev => [...prev, g])} 
+               interactionMode={interactionMode}
+               xDomain={xDomain2D}
+               yDomain={yDomain2D}
+               onZoom={({ xDomain, yDomain }) => { setXDomain2D(xDomain); setYDomain2D(yDomain); }}
+            />
           </div>
         </>
 
@@ -766,6 +836,7 @@ const chartData1D = useMemo(() => {
     </div>
   );
 };
+
 
 // =========================================================================
 // INSTRUMENTAL SETUP COMPONENT
@@ -848,7 +919,7 @@ export const Data = ({ ctx }) => {
   const [updater, setUpdater] = useState(0);
   const [fcsMsg, setFcsMsg] = useState('');
 
-  const handleFCSUpload = (e) => {
+const handleFCSUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
     setFcsMsg('Parsing FCS file...');
@@ -864,6 +935,9 @@ export const Data = ({ ctx }) => {
         globalFcsCache[activeTest.id] = parsed;
         
         const metadataUpdates = mapFCSMetadata(parsed.textDict);
+        
+        // Auto-rename the instance to the file name (stripping the .fcs extension)
+        metadataUpdates.instanceName = file.name.replace(/\.[^/.]+$/, "");
         
         // Auto-build Staining Panel if empty
         const currentPanel = Array.isArray(t.fcPanel) ? t.fcPanel : [];
@@ -1037,6 +1111,7 @@ export const FCSOverlayVisualization = ({ ctx }) => {
   const hiddenSeries = activeTest.hiddenSeries || {}; 
   const localColors = activeTest.fcColors || {};
   const paramRenames = activeTest.paramRenames || {};
+  const panelArray = activeTest.fcPanel || [];
 
   const instances = useMemo(() => {
     let list = null;
@@ -1121,13 +1196,12 @@ export const FCSOverlayVisualization = ({ ctx }) => {
 
   if (!loadedInstances.length) return null;
 
-  const panelArray = activeTest.fcPanel || [];
   const label1D = getParamLabel({name: overlayParam}, panelArray, paramRenames);
 
   return (
     <>
-      {fs && <div className={OVERLAY_CLASSES} onClick={() => setFs(false)} />}
-      <div className={`flex flex-col gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm w-full ${fs ? FS_CLASSES + ' z-[999999]' : ''}`}>
+      {fs && <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[99990]" onClick={() => setFs(false)} />}
+      <div className={fs ? "fixed inset-4 z-[99999] bg-white p-6 rounded-2xl shadow-2xl flex flex-col gap-3 overflow-hidden" : "flex flex-col gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm w-full"}>
         <div className="flex justify-between items-center z-10 shrink-0 border-b border-slate-100 pb-2">
           <h5 className="text-sm font-bold text-slate-700">1D Histogram (Data Analysis)</h5>
           <div className="flex items-center gap-2">
@@ -1144,7 +1218,7 @@ export const FCSOverlayVisualization = ({ ctx }) => {
         
         {showCfg && <SharedChartStylePanel cfg={cfgAna} setCfg={setVizCfgAna} series={visibleInstances.map(s => ({ key: s.id, label: s.name, color: s.color }))} unit="a.u." />}
         
-        <div ref={chartRef} onMouseDown={zoom.onMouseDown} className={`bg-slate-50 rounded border border-slate-200 p-2 select-none relative overflow-hidden cursor-crosshair ${fs ? 'flex-1 min-h-0' : 'h-[300px]'}`}>
+        <div ref={chartRef} onMouseDown={zoom.onMouseDown} className={`bg-slate-50 rounded border border-slate-200 p-2 select-none relative overflow-hidden cursor-crosshair w-full ${fs ? 'flex-1 min-h-0' : 'h-[300px]'}`}>
           {zoom.isZoomed && <button type="button" onClick={zoom.reset} className="absolute top-2 right-2 z-10 text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData.bins} margin={{ top: 10, right: 10, left: 10, bottom: 20 }}>
