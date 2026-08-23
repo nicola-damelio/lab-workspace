@@ -209,6 +209,9 @@ const formatTickVal = (val) => {
 // =========================================================================
 // CUSTOM DOM-BASED X-ZOOM HOOK (Highly reliable for continuous axes)
 // =========================================================================
+// =========================================================================
+// CUSTOM DOM-BASED X-ZOOM & POLYGON MATH
+// =========================================================================
 const useXZoom = (chartRef, dataDomain, margin = { top: 10, right: 10, bottom: 20, left: 20 }) => {
   const [domain, setDomain] = useState(null);
   const [lo, setLo] = useState(null);
@@ -262,9 +265,6 @@ const useXZoom = (chartRef, dataDomain, margin = { top: 10, right: 10, bottom: 2
   return { domain: eff, refLo: lo, refHi: hi, onMouseDown, isZoomed: !!domain, reset: () => setDomain(null) };
 };
 
-// =========================================================================
-// HIGH-PERFORMANCE 2D CANVAS SCATTER PLOT (Multi-File Overlay + Gating)
-// =========================================================================
 const hexToRgba = (hex, alpha) => {
   const h = (hex || '#3b82f6').replace('#', '');
   const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
@@ -274,11 +274,27 @@ const hexToRgba = (hex, alpha) => {
   return `rgba(${Number.isNaN(r) ? 59 : r}, ${Number.isNaN(g) ? 130 : g}, ${Number.isNaN(b) ? 246 : b}, ${alpha})`;
 };
 
-const Canvas2DPlotOverlay = ({ series, xParam, yParam, logX, logY, cfg, fs, gate, onGate }) => {
+// Ray-casting algorithm to check if a point is inside a polygon
+const isPointInPoly = (px, py, poly) => {
+  let isInside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x, yi = poly[i].y;
+    const xj = poly[j].x, yj = poly[j].y;
+    const intersect = ((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi);
+    if (intersect) isInside = !isInside;
+  }
+  return isInside;
+};
+
+
+// =========================================================================
+// HIGH-PERFORMANCE 2D CANVAS SCATTER PLOT (Multi-File Overlay + Polygon Gating)
+// =========================================================================
+const Canvas2DPlotOverlay = ({ series, xParam, yParam, logX, logY, cfg, fs, gates, onAddGate }) => {
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
   const mappingRef = useRef(null);
-  const [dragBox, setDragBox] = useState(null);
+  const [drawPath, setDrawPath] = useState(null); // Tracks the freehand drawn polygon
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -313,8 +329,23 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, logX, logY, cfg, fs, gate
       let minX = Infinity, maxX = -Infinity;
       let minY = Infinity, maxY = -Infinity;
 
+      // Only calculate bounds based on events that pass ALL gates
       validSeries.forEach(s => {
         for (let i = 0; i < s.fcs.numEvents; i++) {
+          let pass = true;
+          for (let g of gates) {
+            const gXIdx = s.fcs.params.findIndex(p => (p.name||'').toUpperCase() === g.xParam || (p.label||'').toUpperCase() === g.xParam);
+            const gYIdx = s.fcs.params.findIndex(p => (p.name||'').toUpperCase() === g.yParam || (p.label||'').toUpperCase() === g.yParam);
+            if (gXIdx >= 0 && gYIdx >= 0) {
+              const xR = s.fcs.events[i * s.fcs.numParams + gXIdx];
+              const yR = s.fcs.events[i * s.fcs.numParams + gYIdx];
+              const gx = g.logX ? Math.log10(Math.max(0, xR) + 1) : xR;
+              const gy = g.logY ? Math.log10(Math.max(0, yR) + 1) : yR;
+              if (!isPointInPoly(gx, gy, g.vertices)) { pass = false; break; }
+            }
+          }
+          if (!pass) continue;
+
           const x = transformValue(s.fcs.events[i * s.fcs.numParams + s.pX], logX);
           const y = transformValue(s.fcs.events[i * s.fcs.numParams + s.pY], logY);
           if (x < minX) minX = x; if (x > maxX) maxX = x;
@@ -332,8 +363,7 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, logX, logY, cfg, fs, gate
       // Save mapping metrics for mouse event coordinate conversion
       mappingRef.current = { minX, maxX, minY, maxY, pad, plotW, plotH, logX, logY, xParam, yParam };
 
-      ctx.strokeStyle = '#f1f5f9';
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = '#f1f5f9'; ctx.lineWidth = 1;
       for (let i = 0; i <= 5; i++) {
         const gx = pad.left + (plotW * i) / 5;
         const gy = pad.top + (plotH * i) / 5;
@@ -341,17 +371,26 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, logX, logY, cfg, fs, gate
         ctx.beginPath(); ctx.moveTo(pad.left, gy); ctx.lineTo(pad.left + plotW, gy); ctx.stroke();
       }
 
-      ctx.strokeStyle = '#94a3b8';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(pad.left, pad.top);
-      ctx.lineTo(pad.left, pad.top + plotH);
-      ctx.lineTo(pad.left + plotW, pad.top + plotH);
-      ctx.stroke();
+      ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1.5; ctx.beginPath();
+      ctx.moveTo(pad.left, pad.top); ctx.lineTo(pad.left, pad.top + plotH); ctx.lineTo(pad.left + plotW, pad.top + plotH); ctx.stroke();
 
       validSeries.forEach(s => {
         ctx.fillStyle = hexToRgba(s.color, 0.35); 
         for (let i = 0; i < s.fcs.numEvents; i++) {
+          let pass = true;
+          for (let g of gates) {
+            const gXIdx = s.fcs.params.findIndex(p => (p.name||'').toUpperCase() === g.xParam || (p.label||'').toUpperCase() === g.xParam);
+            const gYIdx = s.fcs.params.findIndex(p => (p.name||'').toUpperCase() === g.yParam || (p.label||'').toUpperCase() === g.yParam);
+            if (gXIdx >= 0 && gYIdx >= 0) {
+              const xR = s.fcs.events[i * s.fcs.numParams + gXIdx];
+              const yR = s.fcs.events[i * s.fcs.numParams + gYIdx];
+              const gx = g.logX ? Math.log10(Math.max(0, xR) + 1) : xR;
+              const gy = g.logY ? Math.log10(Math.max(0, yR) + 1) : yR;
+              if (!isPointInPoly(gx, gy, g.vertices)) { pass = false; break; }
+            }
+          }
+          if (!pass) continue;
+
           const x = transformValue(s.fcs.events[i * s.fcs.numParams + s.pX], logX);
           const y = transformValue(s.fcs.events[i * s.fcs.numParams + s.pY], logY);
           const px = pad.left + ((x - minX) / (maxX - minX || 1)) * plotW;
@@ -360,20 +399,40 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, logX, logY, cfg, fs, gate
         }
       });
 
-      // Draw the applied gate if it belongs to these axes
-      if (gate && gate.xParam === xParam && gate.yParam === yParam) {
-        const px1 = pad.left + ((gate.minX - minX) / (maxX - minX || 1)) * plotW;
-        const px2 = pad.left + ((gate.maxX - minX) / (maxX - minX || 1)) * plotW;
-        const py1 = pad.top + plotH - ((gate.minY - minY) / (maxY - minY || 1)) * plotH;
-        const py2 = pad.top + plotH - ((gate.maxY - minY) / (maxY - minY || 1)) * plotH;
-        
-        const rX = Math.min(px1, px2); const rY = Math.min(py1, py2);
-        const rW = Math.abs(px2 - px1); const rH = Math.abs(py2 - py1);
+      // Draw all established gates that apply to the current axis
+      const toPxX = (dx) => pad.left + ((dx - minX) / (maxX - minX || 1)) * plotW;
+      const toPxY = (dy) => pad.top + plotH - ((dy - minY) / (maxY - minY || 1)) * plotH;
 
-        ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2; ctx.setLineDash([5, 5]);
-        ctx.strokeRect(rX, rY, rW, rH);
-        ctx.setLineDash([]);
-        ctx.fillStyle = 'rgba(239, 68, 68, 0.1)'; ctx.fillRect(rX, rY, rW, rH);
+      gates.forEach((g, idx) => {
+        if (g.xParam === xParam && g.yParam === yParam) {
+          ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2;
+          ctx.fillStyle = 'rgba(239, 68, 68, 0.05)';
+          ctx.beginPath();
+          g.vertices.forEach((v, i) => {
+            const px = toPxX(v.x);
+            const py = toPxY(v.y);
+            if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+          });
+          ctx.closePath();
+          ctx.fill(); ctx.stroke();
+          
+          // Draw Gate Name
+          ctx.fillStyle = '#ef4444';
+          ctx.font = 'bold 11px sans-serif';
+          ctx.textAlign = 'left';
+          ctx.fillText(`Gate ${idx + 1}`, toPxX(g.vertices[0].x), toPxY(g.vertices[0].y) - 5);
+        }
+      });
+
+      // Draw the active freehand line being drawn
+      if (drawPath && drawPath.length > 0) {
+        ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 2; ctx.setLineDash([5, 5]);
+        ctx.beginPath();
+        ctx.moveTo(drawPath[0].x, drawPath[0].y);
+        for (let i = 1; i < drawPath.length; i++) {
+          ctx.lineTo(drawPath[i].x, drawPath[i].y);
+        }
+        ctx.stroke(); ctx.setLineDash([]);
       }
 
       ctx.fillStyle = '#334155'; ctx.font = `bold ${cfg.fontSize || 12}px sans-serif`; ctx.textAlign = 'center';
@@ -395,64 +454,68 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, logX, logY, cfg, fs, gate
     const ro = new ResizeObserver(draw);
     ro.observe(wrap);
     return () => ro.disconnect();
-  }, [series, xParam, yParam, logX, logY, cfg, fs, gate]);
+  }, [series, xParam, yParam, logX, logY, cfg, fs, drawPath, gates]);
 
   const handleMouseDown = (e) => {
-    if (!mappingRef.current || !onGate) return;
+    if (!mappingRef.current || !onAddGate) return;
     const rect = wrapRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     const m = mappingRef.current;
     if (x >= m.pad.left && x <= m.pad.left + m.plotW && y >= m.pad.top && y <= m.pad.top + m.plotH) {
-      setDragBox({ startX: x, startY: y, curX: x, curY: y });
+      setDrawPath([{x, y}]);
     }
   };
 
   const handleMouseMove = (e) => {
-    if (!dragBox) return;
+    if (!drawPath) return;
     const rect = wrapRef.current.getBoundingClientRect();
-    setDragBox(prev => ({ ...prev, curX: e.clientX - rect.left, curY: e.clientY - rect.top }));
+    setDrawPath(prev => [...prev, {x: e.clientX - rect.left, y: e.clientY - rect.top}]);
   };
 
   const handleMouseUp = () => {
-    if (!dragBox || !mappingRef.current) return;
-    const { startX, startY, curX, curY } = dragBox;
-    const m = mappingRef.current;
-    
-    // Inverse projection: Pixels to Data Values
-    const toDataX = (px) => m.minX + ((px - m.pad.left) / m.plotW) * (m.maxX - m.minX);
-    const toDataY = (py) => m.minY + ((m.pad.top + m.plotH - py) / m.plotH) * (m.maxY - m.minY);
-    
-    const minX = Math.min(toDataX(startX), toDataX(curX));
-    const maxX = Math.max(toDataX(startX), toDataX(curX));
-    const minY = Math.min(toDataY(startY), toDataY(curY));
-    const maxY = Math.max(toDataY(startY), toDataY(curY));
-    
-    if (maxX - minX > (m.maxX - m.minX) * 0.01 && maxY - minY > (m.maxY - m.minY) * 0.01) {
-      onGate({ xParam: m.xParam, yParam: m.yParam, logX: m.logX, logY: m.logY, minX, maxX, minY, maxY });
-    } else {
-      onGate(null); // Click to clear gate
+    if (!drawPath || !mappingRef.current) return;
+    if (drawPath.length > 5) {
+      const m = mappingRef.current;
+      const toDataX = (px) => m.minX + ((px - m.pad.left) / m.plotW) * (m.maxX - m.minX);
+      const toDataY = (py) => m.minY + ((m.pad.top + m.plotH - py) / m.plotH) * (m.maxY - m.minY);
+      
+      const polyData = drawPath.map(p => ({ x: toDataX(p.x), y: toDataY(p.y) }));
+      
+      // Calculate bounding box area to ensure it's not an accidental click
+      const xs = polyData.map(p => p.x); const ys = polyData.map(p => p.y);
+      const w = Math.max(...xs) - Math.min(...xs);
+      const h = Math.max(...ys) - Math.min(...ys);
+      
+      if (w > (m.maxX - m.minX) * 0.01 && h > (m.maxY - m.minY) * 0.01) {
+        onAddGate({
+          id: `gate_${Date.now()}`,
+          xParam: m.xParam, yParam: m.yParam,
+          logX: m.logX, logY: m.logY,
+          vertices: polyData
+        });
+      }
     }
-    setDragBox(null);
+    setDrawPath(null);
   };
 
   return (
     <div 
       ref={wrapRef} 
       onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}
-      style={{ width: '100%', aspectRatio: fs ? undefined : String(cfg.aspect || 1.8), height: fs ? '100%' : (cfg.height || 380) }} 
+      style={{ width: '100%', aspectRatio: fs ? undefined : String(cfg.aspect || 1.8), height: fs ? 500 : (cfg.height || 380) }} 
       className="relative rounded-lg border border-slate-200 bg-white overflow-hidden min-h-[300px] cursor-crosshair"
     >
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
-      {dragBox && (
+      {drawPath && (
         <div style={{
           position: 'absolute',
-          left: Math.min(dragBox.startX, dragBox.curX),
-          top: Math.min(dragBox.startY, dragBox.curY),
-          width: Math.abs(dragBox.curX - dragBox.startX),
-          height: Math.abs(dragBox.curY - dragBox.startY),
-          border: '2px dashed #ef4444',
-          backgroundColor: 'rgba(239, 68, 68, 0.2)',
+          left: Math.min(...drawPath.map(p=>p.x)),
+          top: Math.min(...drawPath.map(p=>p.y)),
+          width: Math.max(...drawPath.map(p=>p.x)) - Math.min(...drawPath.map(p=>p.x)),
+          height: Math.max(...drawPath.map(p=>p.y)) - Math.min(...drawPath.map(p=>p.y)),
+          border: '2px dashed rgba(239, 68, 68, 0.4)',
+          backgroundColor: 'transparent',
           pointerEvents: 'none'
         }} />
       )}
@@ -460,10 +523,8 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, logX, logY, cfg, fs, gate
   );
 };
 
-
-
 // =========================================================================
-// UNIFIED DATA SECTION OVERLAYS (1D + 2D)
+// UNIFIED DATA SECTION OVERLAYS (1D + 2D with Nested Gating)
 // =========================================================================
 const FCSDataVisualizations = ({ ctx, updater }) => {
   const { activeTest, updateActiveTest } = ctx;
@@ -475,7 +536,7 @@ const FCSDataVisualizations = ({ ctx, updater }) => {
   const [fs, setFs] = useState(false);
   const [localColors, setLocalColors] = useState(vizCfg.colors || {});
   const [hiddenSeries, setHiddenSeries] = useState({});
-  const [gate, setGate] = useState(null); // Gating state
+  const [gates, setGates] = useState([]); // Array of nested gates
 
   const updateColor = (id, color) => {
     const next = { ...localColors, [id]: color };
@@ -506,7 +567,7 @@ const FCSDataVisualizations = ({ ctx, updater }) => {
     return {
       ...inst, 
       fcs, 
-      name: fcs.filename || inst.name, // Use original filename!
+      name: fcs.filename || inst.name, 
       color: localColors[inst.id] || COLORS[idx % COLORS.length]
     };
   });
@@ -545,24 +606,21 @@ const FCSDataVisualizations = ({ ctx, updater }) => {
       const pIdx = s.fcs.params.findIndex(p => (p.name || '').toUpperCase() === overlayParam1D || (p.label || '').toUpperCase() === overlayParam1D);
       if (pIdx < 0) return { id: s.id, data: null };
 
-      let gXIdx = -1, gYIdx = -1;
-      if (gate) {
-        gXIdx = s.fcs.params.findIndex(p => (p.name || '').toUpperCase() === gate.xParam || (p.label || '').toUpperCase() === gate.xParam);
-        gYIdx = s.fcs.params.findIndex(p => (p.name || '').toUpperCase() === gate.yParam || (p.label || '').toUpperCase() === gate.yParam);
-      }
-
       const channelData = [];
       for (let i = 0; i < s.fcs.numEvents; i++) {
-        // Apply 2D Gate Filtering to 1D Histogram
-        if (gate && gXIdx >= 0 && gYIdx >= 0) {
-           const xRaw = s.fcs.events[i * s.fcs.numParams + gXIdx];
-           const yRaw = s.fcs.events[i * s.fcs.numParams + gYIdx];
-           const gx = gate.logX ? Math.log10(Math.max(0, xRaw) + 1) : xRaw;
-           const gy = gate.logY ? Math.log10(Math.max(0, yRaw) + 1) : yRaw;
-           if (gx < gate.minX || gx > gate.maxX || gy < gate.minY || gy > gate.maxY) {
-               continue; // Drop event
-           }
+        let pass = true;
+        for (let g of gates) {
+          const gXIdx = s.fcs.params.findIndex(p => (p.name||'').toUpperCase() === g.xParam || (p.label||'').toUpperCase() === g.xParam);
+          const gYIdx = s.fcs.params.findIndex(p => (p.name||'').toUpperCase() === g.yParam || (p.label||'').toUpperCase() === g.yParam);
+          if (gXIdx >= 0 && gYIdx >= 0) {
+             const xRaw = s.fcs.events[i * s.fcs.numParams + gXIdx];
+             const yRaw = s.fcs.events[i * s.fcs.numParams + gYIdx];
+             const gx = g.logX ? Math.log10(Math.max(0, xRaw) + 1) : xRaw;
+             const gy = g.logY ? Math.log10(Math.max(0, yRaw) + 1) : yRaw;
+             if (!isPointInPoly(gx, gy, g.vertices)) { pass = false; break; }
+          }
         }
+        if (!pass) continue;
         
         let val = transformValue(s.fcs.events[i * s.fcs.numParams + pIdx]);
         channelData.push(val);
@@ -589,7 +647,7 @@ const FCSDataVisualizations = ({ ctx, updater }) => {
     });
 
     return { bins, domain: [globalMin, globalMax] };
-  }, [overlayParam1D, visibleInstances, log1D, gate]);
+  }, [overlayParam1D, visibleInstances, log1D, gates]);
 
   const chartRef1D = useRef(null);
   const zoom1D = useXZoom(chartRef1D, chartData1D.domain);
@@ -604,10 +662,10 @@ const FCSDataVisualizations = ({ ctx, updater }) => {
       <div className="flex justify-between items-center z-10 sticky top-0 bg-slate-50 py-2 border-b border-slate-200 mb-2">
         <div className="flex items-center gap-3">
           <h4 className="text-sm font-bold text-slate-700">📈 Overlaid Flow Cytometry Visualizations</h4>
-          {gate && (
+          {gates.length > 0 && (
             <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 px-3 py-1 rounded-lg text-xs font-bold w-fit ml-4 shadow-sm">
-              <span>🎯 Gated on {gate.xParam} vs {gate.yParam}</span>
-              <button onClick={() => setGate(null)} className="ml-2 bg-white text-red-600 px-2 py-0.5 rounded border border-red-200 hover:bg-red-100">Clear</button>
+              <span>🎯 {gates.length} Active Gate{gates.length > 1 ? 's' : ''}</span>
+              <button onClick={() => setGates([])} className="ml-2 bg-white text-red-600 px-2 py-0.5 rounded border border-red-200 hover:bg-red-100">Clear</button>
             </div>
           )}
         </div>
@@ -617,29 +675,45 @@ const FCSDataVisualizations = ({ ctx, updater }) => {
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2 z-10">
-        <span className="text-[10px] font-bold text-slate-500 uppercase self-center mr-2">Files:</span>
-        {loadedInstances.map((inst, idx) => {
-          const c = localColors[inst.id] || COLORS[idx % COLORS.length];
-          const isHidden = hiddenSeries[inst.id];
-          const displayName = globalFcsCache[inst.id]?.filename || inst.name;
-          return (
-            <div key={inst.id} className={`flex items-center gap-2 px-2 py-1 rounded-lg text-xs font-bold border ${isHidden ? 'bg-slate-200 border-slate-300 text-slate-400' : 'bg-white border-slate-300 text-slate-700 shadow-sm'}`}>
-              <input type="checkbox" checked={!isHidden} onChange={() => setHiddenSeries(p => ({ ...p, [inst.id]: !p[inst.id] }))} className="w-3.5 h-3.5 accent-blue-600 cursor-pointer" />
-              <input type="color" value={c} onChange={(e) => updateColor(inst.id, e.target.value)} className="w-5 h-5 rounded cursor-pointer border border-slate-300 p-0" />
-              <span className="truncate max-w-[200px] cursor-pointer select-none" onClick={() => setHiddenSeries(p => ({ ...p, [inst.id]: !p[inst.id] }))}>{displayName}</span>
-            </div>
-          );
-        })}
+      <div className="flex flex-col gap-3 z-10 flex-shrink-0">
+        <div className="flex flex-wrap gap-2">
+          <span className="text-[10px] font-bold text-slate-500 uppercase self-center mr-2">Files:</span>
+          {loadedInstances.map((inst, idx) => {
+            const c = localColors[inst.id] || COLORS[idx % COLORS.length];
+            const isHidden = hiddenSeries[inst.id];
+            const displayName = globalFcsCache[inst.id]?.filename || inst.name;
+            return (
+              <div key={inst.id} className={`flex items-center gap-2 px-2 py-1 rounded-lg text-xs font-bold border ${isHidden ? 'bg-slate-200 border-slate-300 text-slate-400' : 'bg-white border-slate-300 text-slate-700 shadow-sm'}`}>
+                <input type="checkbox" checked={!isHidden} onChange={() => setHiddenSeries(p => ({ ...p, [inst.id]: !p[inst.id] }))} className="w-3.5 h-3.5 accent-blue-600 cursor-pointer" />
+                <input type="color" value={c} onChange={(e) => updateColor(inst.id, e.target.value)} className="w-5 h-5 rounded cursor-pointer border border-slate-300 p-0" />
+                <span className="truncate max-w-[200px] cursor-pointer select-none" onClick={() => setHiddenSeries(p => ({ ...p, [inst.id]: !p[inst.id] }))}>{displayName}</span>
+              </div>
+            );
+          })}
+        </div>
+        
+        {gates.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 bg-red-50 border border-red-200 p-2 rounded-lg">
+            <span className="text-[10px] font-bold text-red-600 uppercase">Active Gates:</span>
+            {gates.map((g, idx) => (
+              <div key={g.id} className="flex items-center gap-1.5 bg-white border border-red-200 text-red-700 px-2 py-1 rounded shadow-sm text-xs font-bold">
+                <span>🎯 Gate {idx + 1}: {g.xParam} vs {g.yParam}</span>
+                <button onClick={() => setGates(gates.filter(x => x.id !== g.id))} className="text-red-400 hover:text-red-600 font-black ml-1">×</button>
+              </div>
+            ))}
+            <button onClick={() => setGates([])} className="text-[10px] text-slate-500 hover:text-red-600 ml-auto font-bold underline">Clear All</button>
+          </div>
+        )}
       </div>
 
       {showCfg && <SharedChartStylePanel cfg={cfg} setCfg={setVizCfg} series={visibleInstances.map(s => ({ key: s.id, label: s.name, color: s.color }))} unit="a.u." />}
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 z-10">
+      {/* Grid Layout restored! */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 z-10 mt-2">
         
         {/* 1D HISTOGRAM */}
         <div className="flex flex-col gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-          <div className="flex justify-between items-center">
+          <div className="flex justify-between items-center shrink-0">
             <h5 className="text-xs font-bold text-slate-700">1D Histogram</h5>
             <div className="flex items-center gap-3">
               <select value={overlayParam1D} onChange={e => setOverlayParam1D(e.target.value)} className="border border-slate-300 rounded px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-bold text-blue-700">
@@ -651,7 +725,7 @@ const FCSDataVisualizations = ({ ctx, updater }) => {
             </div>
           </div>
           
-          <div ref={chartRef1D} onMouseDown={zoom1D.onMouseDown} style={{ width: '100%', aspectRatio: fs ? undefined : String(cfg.aspect || 1.8), height: fs ? '100%' : (cfg.height || 300) }} className="bg-slate-50 rounded border border-slate-200 p-2 select-none relative overflow-hidden cursor-crosshair min-h-[300px]">
+          <div ref={chartRef1D} onMouseDown={zoom1D.onMouseDown} style={{ width: '100%', aspectRatio: fs ? undefined : String(cfg.aspect || 1.8), height: fs ? 500 : (cfg.height || 300) }} className="bg-slate-50 rounded border border-slate-200 p-2 select-none relative overflow-hidden cursor-crosshair min-h-[300px]">
             {zoom1D.isZoomed && <button type="button" onClick={zoom1D.reset} className="absolute top-2 right-2 z-10 text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData1D.bins} margin={{ top: 10, right: 10, left: 10, bottom: 20 }}>
@@ -668,31 +742,33 @@ const FCSDataVisualizations = ({ ctx, updater }) => {
 
         {/* 2D SCATTER */}
         <div className="flex flex-col gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-          <div className="flex justify-between items-center">
-            <h5 className="text-xs font-bold text-slate-700">2D Scatter</h5>
+          <div className="flex justify-between items-center shrink-0">
+            <h5 className="text-xs font-bold text-slate-700">2D Scatter (Drag to Gate)</h5>
             <div className="flex items-center gap-3">
-              <select value={xParam2D} onChange={e => { setXParam2D(e.target.value); setGate(null); }} className="border border-slate-300 rounded px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-bold text-blue-700 max-w-[90px]">
+              <select value={xParam2D} onChange={e => setXParam2D(e.target.value)} className="border border-slate-300 rounded px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-bold text-blue-700 max-w-[90px]">
                 {sharedParams.map(p => <option key={p} value={p}>{p}</option>)}
               </select>
               <label className="flex items-center gap-1 text-xs font-bold text-slate-700 cursor-pointer">
-                <input type="checkbox" checked={logX2D} onChange={e => { setLogX2D(e.target.checked); setGate(null); }} className="w-3.5 h-3.5 accent-blue-600" /> Log
+                <input type="checkbox" checked={logX2D} onChange={e => setLogX2D(e.target.checked)} className="w-3.5 h-3.5 accent-blue-600" /> Log
               </label>
               <span className="text-slate-300">|</span>
-              <select value={yParam2D} onChange={e => { setYParam2D(e.target.value); setGate(null); }} className="border border-slate-300 rounded px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-bold text-blue-700 max-w-[90px]">
+              <select value={yParam2D} onChange={e => setYParam2D(e.target.value)} className="border border-slate-300 rounded px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-bold text-blue-700 max-w-[90px]">
                 {sharedParams.map(p => <option key={p} value={p}>{p}</option>)}
               </select>
               <label className="flex items-center gap-1 text-xs font-bold text-slate-700 cursor-pointer">
-                <input type="checkbox" checked={logY2D} onChange={e => { setLogY2D(e.target.checked); setGate(null); }} className="w-3.5 h-3.5 accent-blue-600" /> Log
+                <input type="checkbox" checked={logY2D} onChange={e => setLogY2D(e.target.checked)} className="w-3.5 h-3.5 accent-blue-600" /> Log
               </label>
             </div>
           </div>
-          <Canvas2DPlotOverlay series={visibleInstances} xParam={xParam2D} yParam={yParam2D} logX={logX2D} logY={logY2D} cfg={cfg} fs={fs} gate={gate} onGate={setGate} />
+          <Canvas2DPlotOverlay series={visibleInstances} xParam={xParam2D} yParam={yParam2D} logX={logX2D} logY={logY2D} cfg={cfg} fs={fs} gates={gates} onAddGate={(g) => setGates(prev => [...prev, g])} />
         </div>
 
       </div>
     </div>
   );
 };
+
+
 
 // =========================================================================
 // INSTRUMENTAL SETUP COMPONENT
