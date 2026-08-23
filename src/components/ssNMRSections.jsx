@@ -31,7 +31,17 @@ const LINE_COLORS = [
   '#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6',
   '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16'
 ];
-
+export const VIS_PALETTES = {
+  default: ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'],
+  viridis: ['#440154', '#482878', '#3e4a89', '#31688e', '#26828e', '#1f9e89', '#35b779', '#6ece58', '#b5de2b', '#fde725'],
+  magma: ['#000004', '#3b0f70', '#8c2981', '#de4968', '#fe9f6d', '#fcfdbf'],
+  ocean: ['#082f49', '#1e3a8a', '#1d4ed8', '#2563eb', '#3b82f6', '#60a5fa', '#93c5fd'],
+  warm: ['#7f1d1d', '#991b1b', '#b91c1c', '#dc2626', '#ef4444', '#f87171', '#fca5a5'],
+  neon: ['#ff00ff', '#00ffff', '#00ff00', '#ffff00', '#ff0000', '#0000ff'],
+  pastel: ['#fbcfe8', '#fecaca', '#fde68a', '#bbf7d0', '#a7f3d0', '#bfdbfe', '#c7d2fe', '#e9d5ff'],
+  earth: ['#78350f', '#92400e', '#b45309', '#d97706', '#f59e0b', '#fbbf24', '#fcd34d'],
+  monochrome: ['#0f172a', '#1e293b', '#334155', '#475569', '#64748b', '#94a3b8', '#cbd5e1']
+};
 const DEFAULT_ssNMR_CHART_CFG = {
   yMin: '', yMax: '', xMin: '-250', xMax: '250',
   fontSize: 12, lineWidth: 2
@@ -1140,36 +1150,31 @@ const usessNMRDerived = (activeTest, ctx = {}) => {
   const compoundMW = getCompoundMW(activeInstance, ctx);
   return { instances, activeInstance, conditionFields, activeParsed, mw, compoundMW };
 };
-
-/* ========================================================================
-DATA SECTION 
-======================================================================== */
+// =========================================================================
+// ssNMRSections.jsx - REPLACE Data COMPONENT
+// =========================================================================
 export const Data = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = usessNMRDerived(activeTest, ctx);
   const { activeInstance, activeParsed, instances, mw, compoundMW } = d;
 
-  // Read spectrum data from activeInstance.test (the correct per-condition store)
   const instTest = (activeInstance && activeInstance.test) ? activeInstance.test : activeTest;
   const spectraColumns = instTest.spectraColumns || [];
   const yUnit = instTest.yUnit || 'raw';
 
-  // Write helper: route updates through patchInstance so they land on the right condition
-const patchActive = (updates) => {
-  if (activeInstance && typeof ctx.updateInstance === 'function') {
-    ctx.updateInstance(activeInstance.id, updates);
-    return;
-  }
-
-  if (typeof updateActiveTest === 'function') {
-    updateActiveTest(updates);
-    return;
-  }
-
-  if (typeof ctx.updateActiveTest === 'function') {
-    ctx.updateActiveTest(updates);
-  }
-};
+  const patchActive = (updates) => {
+    if (activeInstance && typeof ctx.updateInstance === 'function') {
+      ctx.updateInstance(activeInstance.id, updates);
+      return;
+    }
+    if (typeof updateActiveTest === 'function') {
+      updateActiveTest(updates);
+      return;
+    }
+    if (typeof ctx.updateActiveTest === 'function') {
+      ctx.updateActiveTest(updates);
+    }
+  };
 
   const updateWavelengthData = (val) => patchActive({ wavelengthData: val });
   const addSpectrumColumn = () => {
@@ -1188,51 +1193,44 @@ const patchActive = (updates) => {
   const removeSpectrumColumn = (id) =>
     patchActive({ spectraColumns: spectraColumns.filter((c) => c.id !== id) });
 
-const [brukerDataFile, setBrukerDataFile] = useState(null);
-const [brukerAcqusFile, setBrukerAcqusFile] = useState(null);
-const [brukerDataUrl, setBrukerDataUrl] = useState('');
-const [brukerAcqusUrl, setBrukerAcqusUrl] = useState('');
-const [brukerSw, setBrukerSw] = useState('');
-const [brukerOffset, setBrukerOffset] = useState('0');
-const [brukerStartKHz, setBrukerStartKHz] = useState('');
-const [brukerEndKHz, setBrukerEndKHz] = useState('');
-const [brukerNumPoints, setBrukerNumPoints] = useState('');
-const [brukerMsg, setBrukerMsg] = useState('');
-const [brukerBusy, setBrukerBusy] = useState(false);
-const brukerFileRef = useRef(null);
-const brukerAcqusFileRef = useRef(null);
+  const [brukerDataUrl, setBrukerDataUrl] = useState('');
+  const [brukerAcqusUrl, setBrukerAcqusUrl] = useState('');
+  const [brukerSw, setBrukerSw] = useState('');
+  const [brukerOffset, setBrukerOffset] = useState('0');
+  const [brukerStartKHz, setBrukerStartKHz] = useState('');
+  const [brukerEndKHz, setBrukerEndKHz] = useState('');
+  const [brukerNumPoints, setBrukerNumPoints] = useState('');
+  const [brukerMsg, setBrukerMsg] = useState('');
+  const [brukerBusy, setBrukerBusy] = useState(false);
+  const brukerFileRef = useRef(null);
 
-// Linear interpolation function missing from the original code
-const interpolateY = (xs, ys, targetX) => {
-  const n = xs.length;
-  if (n === 0) return null;
-  // Handle bounds
-  if (xs[0] < xs[n - 1]) {
-    if (targetX <= xs[0]) return ys[0];
-    if (targetX >= xs[n - 1]) return ys[n - 1];
-  } else {
-    if (targetX >= xs[0]) return ys[0];
-    if (targetX <= xs[n - 1]) return ys[n - 1];
-  }
-  // Find interval and interpolate
-  for (let i = 0; i < n - 1; i++) {
-    const minX = Math.min(xs[i], xs[i + 1]);
-    const maxX = Math.max(xs[i], xs[i + 1]);
-    if (targetX >= minX && targetX <= maxX) {
-      const span = xs[i + 1] - xs[i];
-      if (span === 0) return ys[i];
-      return ys[i] + ((targetX - xs[i]) * (ys[i + 1] - ys[i])) / span;
+  const interpolateY = (xs, ys, targetX) => {
+    const n = xs.length;
+    if (n === 0) return null;
+    if (xs[0] < xs[n - 1]) {
+      if (targetX <= xs[0]) return ys[0];
+      if (targetX >= xs[n - 1]) return ys[n - 1];
+    } else {
+      if (targetX >= xs[0]) return ys[0];
+      if (targetX <= xs[n - 1]) return ys[n - 1];
     }
-  }
-  return null;
-};
+    for (let i = 0; i < n - 1; i++) {
+      const minX = Math.min(xs[i], xs[i + 1]);
+      const maxX = Math.max(xs[i], xs[i + 1]);
+      if (targetX >= minX && targetX <= maxX) {
+        const span = xs[i + 1] - xs[i];
+        if (span === 0) return ys[i];
+        return ys[i] + ((targetX - xs[i]) * (ys[i + 1] - ys[i])) / span;
+      }
+    }
+    return null;
+  };
 
-const applyBruker = (parsed) => {
+  const applyBruker = (parsed, filename) => {
     if (parsed.error) { setBrukerMsg(`⚠️ ${parsed.error}`); return; }
     
     let finalXs = parsed.xs;
     let finalYs = parsed.ys;
-    
     const hasCustomRange = (brukerStartKHz !== '' && brukerEndKHz !== '') || (brukerNumPoints !== '' && Number(brukerNumPoints) > 0);
     
     if (hasCustomRange) {
@@ -1268,87 +1266,148 @@ const applyBruker = (parsed) => {
         brukerMeta: parsed.meta
     };
     
-    // Route through patchActive so data lands on the correct condition instance
+    if (filename) updates.instanceName = filename.replace(/\.[^/.]+$/, "");
+    
     patchActive(updates);
-    setBrukerMsg(`✅ Imported ${parsed.xs.length} points (${parsed.nPoints} in file)${parsed.autoEndian ? ` · byte order auto-detected (${parsed.littleEndian ? 'little' : 'big'}-endian)` : ''} · SW = ${parsed.meta.swKHz} kHz.`);
-};
+  };
 
+  // Folder Import logic
+  const importFolder = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    
+    setBrukerBusy(true);
+    setBrukerMsg(`Scanning ${files.length} files...`);
+    
+    try {
+      const oneRFiles = files.filter(f => f.name === '1r');
+      if (!oneRFiles.length) throw new Error("No '1r' files found in the selected folder.");
 
-const importBrukerLocal = async () => {
-  if (!brukerDataFile) {
-    setBrukerMsg('⚠️ Choose the 1r file first.');
-    return;
-  }
+      const results = [];
+      for (let oneR of oneRFiles) {
+        const pathParts = oneR.webkitRelativePath.split('/');
+        const pdataIndex = pathParts.lastIndexOf('pdata');
+        
+        let acqusFile = null;
+        let title = 'Bruker 1r';
+        
+        if (pdataIndex > 0) {
+          const expDir = pathParts.slice(0, pdataIndex).join('/');
+          const targetAcqusPath = expDir + '/acqus';
+          acqusFile = files.find(f => f.webkitRelativePath === targetAcqusPath);
+          
+          const expNum = pathParts[pdataIndex - 1];
+          const procNum = pathParts[pdataIndex + 1];
+          title = `Exp ${expNum}${procNum && procNum !== '1' ? ` (Proc ${procNum})` : ''}`;
+        }
+        
+        const dataBuffer = await oneR.arrayBuffer();
+        const acqusText = acqusFile ? await acqusFile.text() : '';
+        
+        const parsed = importBruker1r({ 
+          dataBuffer, 
+          acqusText, 
+          manualSWkHz: parseManual(brukerSw), 
+          manualOffsetKHz: parseManual(brukerOffset) || 0, 
+          title 
+        });
+        
+        if (!parsed.error) {
+          parsed.filename = title;
+          results.push(parsed);
+        }
+      }
+      
+      if (results.length === 0) throw new Error("Could not parse any valid 1r spectra.");
 
-  setBrukerBusy(true);
-  setBrukerMsg('');
+      applyBruker(results[0], results[0].filename);
 
-  try {
-    const dataBuffer = await brukerDataFile.arrayBuffer();
-    const acqusText = brukerAcqusFile ? await brukerAcqusFile.text() : '';
+      if (results.length > 1 && ctx.setTests) {
+          ctx.setTests(prevTests => {
+              const newTests = [];
+              for (let i = 1; i < results.length; i++) {
+                  const parsed = results[i];
+                  const newId = 't' + Date.now() + i + Math.random().toString(36).substring(2,5);
+                  const cloned = JSON.parse(JSON.stringify(activeTest));
+                  cloned.id = newId;
+                  cloned.instanceName = parsed.filename;
+                  
+                  let finalXs = parsed.xs; let finalYs = parsed.ys;
+                  const hasCustomRange = (brukerStartKHz !== '' && brukerEndKHz !== '') || (brukerNumPoints !== '' && Number(brukerNumPoints) > 0);
+                  if (hasCustomRange) {
+                      const xMin = Math.min(...parsed.xs); const xMax = Math.max(...parsed.xs); const isDesc = parsed.xs[0] > parsed.xs[parsed.xs.length - 1];
+                      const sK = brukerStartKHz !== '' ? Number(brukerStartKHz) : (isDesc ? xMax : xMin);
+                      const eK = brukerEndKHz !== '' ? Number(brukerEndKHz) : (isDesc ? xMin : xMax);
+                      const nPts = brukerNumPoints !== '' && Number(brukerNumPoints) > 1 ? Number(brukerNumPoints) : parsed.xs.length;
+                      const newXs = []; const newYs = [];
+                      for (let j = 0; j < nPts; j++) {
+                          const x = sK + (eK - sK) * (j / (nPts - 1 || 1));
+                          newXs.push(x);
+                          const y = interpolateY(parsed.xs, parsed.ys, x);
+                          newYs.push(y !== null && Number.isFinite(y) ? y : 0);
+                      }
+                      finalXs = newXs; finalYs = newYs;
+                  }
 
-    const title = brukerDataFile.name
-      .replace(/1r$/i, '')
-      .replace(/\s+$/, '');
-
-    const parsed = importBruker1r({
-      dataBuffer,
-      acqusText,
-      manualSWkHz: parseManual(brukerSw),
-      manualOffsetKHz: parseManual(brukerOffset) || 0,
-      title
-    });
-
-    applyBruker(parsed);
-  } catch (e) {
-    setBrukerMsg(`⚠️ Import failed: ${e?.message || String(e)}`);
-  } finally {
-    setBrukerBusy(false);
-  }
-};
-
-const importBrukerFromUrl = async () => {
-  if (!brukerDataUrl.trim()) { setBrukerMsg('⚠️ Paste the Google Drive link to the 1r file.'); return; }
-  setBrukerBusy(true);
-  try {
-    const res = await fetch(resolveDriveUrl(brukerDataUrl));
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const dataBuffer = await res.arrayBuffer();
-    let acqusText = '';
-    if (brukerAcqusUrl.trim()) {
-      try { acqusText = await (await fetch(resolveDriveUrl(brukerAcqusUrl))).text(); } catch { acqusText = ''; }
+                  cloned.wavelengthData = finalXs.map((x) => (+x.toFixed(4))).join('\n');
+                  cloned.spectraColumns = [{ id: makeId('spec'), title: parsed.meta.title || 'Bruker 1r spectrum', data: Array.from(finalYs).map(String).join('\n'), color: SPECTRA_PALETTE[i % SPECTRA_PALETTE.length], visible: true }];
+                  cloned.yUnit = 'raw';
+                  cloned.brukerMeta = parsed.meta;
+                  newTests.push(cloned);
+              }
+              return [...prevTests, ...newTests];
+          });
+      }
+      setBrukerMsg(`✅ Successfully imported ${results.length} spectrum/spectra.`);
+    } catch (err) {
+      setBrukerMsg(`⚠️ ${err.message}`);
     }
-    applyBruker(importBruker1r({
-      dataBuffer, acqusText,
-      manualSWkHz: parseManual(brukerSw),
-      manualOffsetKHz: parseManual(brukerOffset) || 0
-    }));
-  } catch (e) {
-    setBrukerMsg(`⚠️ Fetch failed: ${e.message} — the file must be shared as "Anyone with the link".`);
-  }
-  setBrukerBusy(false);
-};
+    setBrukerBusy(false);
+    if (brukerFileRef.current) brukerFileRef.current.value = '';
+  };
 
-const normalizeActiveSpectrum = () => {
-  const parsed = computeParsed(instTest);
-  if (!parsed.parsedSpectra.length) { alert('No spectrum to normalize.'); return; }
-  const maxAbs = Math.max(1e-9, ...parsed.parsedSpectra.flatMap((s) => s.values.map((v) => Math.abs(v))));
-  const cols = (instTest.spectraColumns || []).map((c) => ({
-    ...c,
-    data: String(c.data || '').split(/[\n,]+/).map((s) => {
-      const n = parseFloat(String(s).trim());
-      return Number.isFinite(n) ? String(n / maxAbs) : s;
-    }).join('\n')
-  }));
-  patchActive({ spectraColumns: cols, rawSpectraColumns: instTest.spectraColumns, yUnit: 'norm' });
-};
-const revertNormalization = () => {
-  if (!Array.isArray(instTest.rawSpectraColumns)) return;
-  patchActive({ spectraColumns: instTest.rawSpectraColumns, rawSpectraColumns: undefined, yUnit: 'raw' });
-};
+  const importBrukerFromUrl = async () => {
+    if (!brukerDataUrl.trim()) { setBrukerMsg('⚠️ Paste the Google Drive link to the 1r file.'); return; }
+    setBrukerBusy(true);
+    try {
+      const res = await fetch(resolveDriveUrl(brukerDataUrl));
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const dataBuffer = await res.arrayBuffer();
+      let acqusText = '';
+      if (brukerAcqusUrl.trim()) {
+        try { acqusText = await (await fetch(resolveDriveUrl(brukerAcqusUrl))).text(); } catch { acqusText = ''; }
+      }
+      applyBruker(importBruker1r({
+        dataBuffer, acqusText,
+        manualSWkHz: parseManual(brukerSw),
+        manualOffsetKHz: parseManual(brukerOffset) || 0
+      }), null);
+    } catch (e) {
+      setBrukerMsg(`⚠️ Fetch failed: ${e.message} — the file must be shared as "Anyone with the link".`);
+    }
+    setBrukerBusy(false);
+  };
+
+  const normalizeActiveSpectrum = () => {
+    const parsed = computeParsed(instTest);
+    if (!parsed.parsedSpectra.length) { alert('No spectrum to normalize.'); return; }
+    const maxAbs = Math.max(1e-9, ...parsed.parsedSpectra.flatMap((s) => s.values.map((v) => Math.abs(v))));
+    const cols = (instTest.spectraColumns || []).map((c) => ({
+      ...c,
+      data: String(c.data || '').split(/[\n,]+/).map((s) => {
+        const n = parseFloat(String(s).trim());
+        return Number.isFinite(n) ? String(n / maxAbs) : s;
+      }).join('\n')
+    }));
+    patchActive({ spectraColumns: cols, rawSpectraColumns: instTest.spectraColumns, yUnit: 'norm' });
+  };
+  const revertNormalization = () => {
+    if (!Array.isArray(instTest.rawSpectraColumns)) return;
+    patchActive({ spectraColumns: instTest.rawSpectraColumns, rawSpectraColumns: undefined, yUnit: 'raw' });
+  };
 
   const [blankId, setBlankId] = useState('');
-  const [blankScope, setBlankScope] = useState('all'); // 'all' | 'current'
+  const [blankScope, setBlankScope] = useState('all'); 
   const canRevertBlank = blankScope === 'current'
     ? !!(activeInstance && Array.isArray(activeInstance.test.preBlankSpectraColumns))
     : instances.some((i) => Array.isArray(i.test.preBlankSpectraColumns));
@@ -1380,8 +1439,6 @@ const revertNormalization = () => {
           }).join('\n')
         };
       });
-      // Keep the OLDEST backup if one already exists, so a single revert undoes
-      // the whole chain of un-reverted blank subtractions, not just the last one.
       const backup = Array.isArray(inst.test.preBlankSpectraColumns) ? inst.test.preBlankSpectraColumns : (inst.test.spectraColumns || []);
       patchInstance(ctx, activeTest, inst.id, { spectraColumns: cols, preBlankSpectraColumns: backup, blankSubtractedFrom: blank.name });
       touched++;
@@ -1402,10 +1459,10 @@ const revertNormalization = () => {
 
   const [mathA, setMathA] = useState('');
   const [mathB, setMathB] = useState('');
-  const [mathOp, setMathOp] = useState('subtract'); // 'add' | 'subtract' | 'multiply' | 'addConstant'
+  const [mathOp, setMathOp] = useState('subtract'); 
   const [mathFactor, setMathFactor] = useState('1');
   const [mathConstant, setMathConstant] = useState('0');
-  const [mathScope, setMathScope] = useState('single'); // 'single' | 'all'
+  const [mathScope, setMathScope] = useState('single'); 
   const mathOptions = useMemo(() => {
     const out = [];
     instances.forEach((inst) => {
@@ -1465,8 +1522,6 @@ const revertNormalization = () => {
         return mathOp === 'add' ? v + bv : v - bv;
       });
       const cols = (inst.test.spectraColumns || []).map((c, ci) => ci === idx ? { ...c, data: newYs.map((v) => (Number.isFinite(v) ? String(v) : '')).join('\n') } : c);
-      // Keep the OLDEST backup so a single revert undoes the whole chain of
-      // un-reverted operations on this condition, not just the last one.
       const backup = Array.isArray(inst.test.preMathSpectraColumns) ? inst.test.preMathSpectraColumns : (inst.test.spectraColumns || []);
       patchInstance(ctx, activeTest, inst.id, { spectraColumns: cols, preMathSpectraColumns: backup });
       touched++;
@@ -1492,7 +1547,7 @@ const revertNormalization = () => {
     });
     if (!allWl.size) { alert('No data to export.'); return; }
     const wls = [...allWl].sort((a, b) => a - b);
-    const header = ['Wavelength (nm)', ...seriesDefs.map(({ inst, spec }) => `${inst.name} — ${spec.title}`)];
+    const header = ['Frequency (kHz)', ...seriesDefs.map(({ inst, spec }) => `${inst.name} — ${spec.title}`)];
     const rows = wls.map((w) => {
       const row = [w];
       seriesDefs.forEach(({ spec, parsed }) => {
@@ -1538,22 +1593,20 @@ const revertNormalization = () => {
               <button type="button" onClick={exportCSV} className="bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm hover:bg-emerald-100">📊 Export CSV (all conditions)</button>
             </div>
           </div>
-<div className="flex flex-col gap-1">
-  <label className={LABEL_CLS}>
-    Frequencies (kHz) — comma, space or newline separated
-  </label>
-
-  <textarea
-    value={instTest.wavelengthData || ''}
-    onChange={(e) => updateWavelengthData(e.target.value)}
-    placeholder={'-100, -99.5, -99, ...'}
-    className="w-full border border-slate-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-blue-500 h-20 custom-scrollbar"
-  />
-
-  <span className="text-[10px] text-slate-400">
-    {activeParsed.parsedWavelengths.length} valid frequency points parsed.
-  </span>
-</div>
+          <div className="flex flex-col gap-1">
+            <label className={LABEL_CLS}>
+              Frequencies (kHz) — comma, space or newline separated
+            </label>
+            <textarea
+              value={instTest.wavelengthData || ''}
+              onChange={(e) => updateWavelengthData(e.target.value)}
+              placeholder={'-100, -99.5, -99, ...'}
+              className="w-full border border-slate-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-blue-500 h-20 custom-scrollbar"
+            />
+            <span className="text-[10px] text-slate-400">
+              {activeParsed.parsedWavelengths.length} valid frequency points parsed.
+            </span>
+          </div>
           {spectraColumns.map((col, idx) => (
             <div key={col.id} className="border border-slate-200 rounded-lg p-3 bg-slate-50 flex flex-col gap-2">
               <div className="flex flex-wrap items-center gap-2">
@@ -1570,158 +1623,108 @@ const revertNormalization = () => {
               />
             </div>
           ))}
-          {spectraColumns.length === 0 && <div className="text-xs text-slate-400 italic bg-slate-50 border border-dashed border-slate-300 rounded-lg p-4 text-center">No spectra yet. Add a spectrum manually or import a Bruker 1r file below.</div>}
+          {spectraColumns.length === 0 && <div className="text-xs text-slate-400 italic bg-slate-50 border border-dashed border-slate-300 rounded-lg p-4 text-center">No spectra yet. Add a spectrum manually or import a Bruker 1r folder below.</div>}
         </div>
 
-<div className="bg-sky-50 border border-sky-200 rounded-xl p-4 flex flex-col gap-3">
-  <div className="flex items-center justify-between flex-wrap gap-2">
-    <h4 className="text-sm font-bold text-sky-900">📥 Bruker Import — 1r processed spectrum</h4>
-    <span className="text-[9px] bg-sky-200 text-sky-900 px-2 py-0.5 rounded font-bold">imports into the ACTIVE condition</span>
-  </div>
+        <div className="bg-sky-50 border border-sky-200 rounded-xl p-4 flex flex-col gap-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <h4 className="text-sm font-bold text-sky-900">📥 Bruker Import — 1r processed spectrum</h4>
+            <span className="text-[9px] bg-sky-200 text-sky-900 px-2 py-0.5 rounded font-bold">imports into the ACTIVE condition</span>
+          </div>
 
-  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-<div className="bg-white border border-sky-200 rounded-lg p-3 flex flex-col gap-2">
-  <span className="text-xs font-bold text-sky-800">💻 From this PC</span>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="bg-white border border-sky-200 rounded-lg p-3 flex flex-col gap-2">
+              <span className="text-xs font-bold text-sky-800">💻 From this PC</span>
 
-  <button
-    type="button"
-    onClick={() => brukerFileRef.current?.click()}
-    className="bg-white border border-sky-300 hover:bg-sky-100 text-sky-800 font-bold px-3 py-2 rounded-lg text-xs cursor-pointer shadow-sm transition-colors text-left"
-  >
-    📄 Choose 1r file…
-  </button>
+              <label className="bg-white border border-sky-300 hover:bg-sky-100 text-sky-800 font-bold px-3 py-2 rounded-lg text-xs cursor-pointer shadow-sm transition-colors text-left flex items-center gap-2">
+                <span className="text-xl">📁</span>
+                <div>
+                  <div>Choose Bruker Folder...</div>
+                  <div className="text-[9px] font-normal opacity-70">Select the experiment folder (or a parent folder)</div>
+                </div>
+                <input 
+                  ref={brukerFileRef} 
+                  type="file" 
+                  webkitdirectory="true" 
+                  directory="true" 
+                  multiple 
+                  onChange={importFolder} 
+                  className="hidden" 
+                />
+              </label>
+              <span className="text-[9px] text-sky-700 mt-1 max-w-sm">
+                This will automatically locate the 1r file(s) and their corresponding acqus parameter files, instantly importing the correct ppm axis. If multiple experiments are selected, they will automatically be loaded into separate condition tabs.
+              </span>
+            </div>
 
-  <input
-    ref={brukerFileRef}
-    type="file"
-    accept=".1r,application/octet-stream"
-    className="hidden"
-    onChange={(e) => {
-      const f = e.target.files && e.target.files[0] ? e.target.files[0] : null;
-      setBrukerDataFile(f);
+            <div className="bg-white border border-sky-200 rounded-lg p-3 flex flex-col gap-2">
+              <span className="text-xs font-bold text-sky-800">🔗 From Google Drive link</span>
+              <input type="text" value={brukerDataUrl} onChange={(e) => setBrukerDataUrl(e.target.value)} placeholder="Link to 1r (…/file/d/…/view)" className="border border-sky-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-sky-500 bg-white" />
+              <input type="text" value={brukerAcqusUrl} onChange={(e) => setBrukerAcqusUrl(e.target.value)} placeholder="Link to acqus (optional)" className="border border-sky-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-sky-500 bg-white" />
+              <button type="button" onClick={importBrukerFromUrl} disabled={brukerBusy} className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm">
+                {brukerBusy ? 'Importing…' : 'Import from links'}
+              </button>
+              <span className="text-[9px] text-sky-600">Both files must be shared as "Anyone with the link". Paste plain share links — they are converted automatically.</span>
+            </div>
+          </div>
 
-      // Allows selecting the same file again later.
-      e.target.value = '';
-    }}
-  />
+          <div className="flex flex-wrap items-end gap-3 bg-white border border-sky-200 rounded-lg p-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-bold text-sky-800">Manual SW (kHz) — only if no acqus</label>
+              <input type="number" step="0.1" value={brukerSw} onChange={(e) => setBrukerSw(e.target.value)} onWheel={(e) => e.target.blur()} className="border border-sky-300 rounded-lg p-1.5 text-xs outline-none focus:border-sky-500 w-32" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-bold text-sky-800">Carrier offset (kHz)</label>
+              <input type="number" step="0.1" value={brukerOffset} onChange={(e) => setBrukerOffset(e.target.value)} onWheel={(e) => e.target.blur()} className="border border-sky-300 rounded-lg p-1.5 text-xs outline-none focus:border-sky-500 w-32" />
+            </div>
+            <span className="text-[9px] text-sky-600 max-w-md">If an acqus file is provided, SW_h / O1 / TE are read from it automatically and the manual fields are ignored.</span>
+          </div>
+          
+          <div className="flex flex-wrap items-end gap-3 bg-violet-50 border border-violet-200 rounded-lg p-3">
+            <span className="text-[10px] font-bold text-violet-800 w-full">✂️ Crop & Resample upon import (optional)</span>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-bold text-violet-800">From (kHz)</label>
+              <input type="number" step="0.1" value={brukerStartKHz} onChange={(e) => setBrukerStartKHz(e.target.value)} onWheel={(e) => e.target.blur()} placeholder="auto" className="border border-violet-300 rounded-lg p-1.5 text-xs outline-none focus:border-violet-500 w-24 bg-white" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-bold text-violet-800">To (kHz)</label>
+              <input type="number" step="0.1" value={brukerEndKHz} onChange={(e) => setBrukerEndKHz(e.target.value)} onWheel={(e) => e.target.blur()} placeholder="auto" className="border border-violet-300 rounded-lg p-1.5 text-xs outline-none focus:border-violet-500 w-24 bg-white" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-bold text-violet-800">Number of points</label>
+              <input type="number" step="1" value={brukerNumPoints} onChange={(e) => setBrukerNumPoints(e.target.value)} onWheel={(e) => e.target.blur()} placeholder="all" className="border border-violet-300 rounded-lg p-1.5 text-xs outline-none focus:border-violet-500 w-24 bg-white" />
+            </div>
+            <span className="text-[9px] text-violet-600 max-w-xs">Leave blank to import the full spectrum exactly as acquired. Interpolates to the specified grid.</span>
+          </div>
+          {brukerMsg && <span className="text-xs font-bold text-sky-900">{brukerMsg}</span>}
+        </div>
 
-  {brukerDataFile && (
-    <span className="text-[10px] font-mono text-sky-700 truncate">
-      {brukerDataFile.name} · {(brukerDataFile.size / 1024).toFixed(0)} KB
-    </span>
-  )}
-
-  <button
-    type="button"
-    onClick={() => brukerAcqusFileRef.current?.click()}
-    className="bg-white border border-sky-300 hover:bg-sky-100 text-sky-800 font-bold px-3 py-2 rounded-lg text-xs cursor-pointer shadow-sm transition-colors text-left"
-  >
-    📄 Choose acqus file (recommended)…
-  </button>
-
-  <input
-    ref={brukerAcqusFileRef}
-    type="file"
-    accept=".acqus,text/plain"
-    className="hidden"
-    onChange={(e) => {
-      const f = e.target.files && e.target.files[0] ? e.target.files[0] : null;
-      setBrukerAcqusFile(f);
-
-      // Allows selecting the same file again later.
-      e.target.value = '';
-    }}
-  />
-
-  {brukerAcqusFile && (
-    <span className="text-[10px] font-mono text-sky-700 truncate">
-      {brukerAcqusFile.name}
-    </span>
-  )}
-
-  <button
-    type="button"
-    onClick={importBrukerLocal}
-    disabled={brukerBusy || !brukerDataFile}
-    className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm"
-  >
-    {brukerBusy ? 'Importing…' : 'Import local files'}
-  </button>
-
-  {!brukerDataFile && (
-    <span className="text-[10px] text-sky-600">
-      Select the 1r file first. The acqus file is optional but strongly recommended.
-    </span>
-  )}
-</div>
-
-    <div className="bg-white border border-sky-200 rounded-lg p-3 flex flex-col gap-2">
-      <span className="text-xs font-bold text-sky-800">🔗 From Google Drive link</span>
-      <input type="text" value={brukerDataUrl} onChange={(e) => setBrukerDataUrl(e.target.value)} placeholder="Link to 1r (…/file/d/…/view)" className="border border-sky-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-sky-500 bg-white" />
-      <input type="text" value={brukerAcqusUrl} onChange={(e) => setBrukerAcqusUrl(e.target.value)} placeholder="Link to acqus (optional)" className="border border-sky-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-sky-500 bg-white" />
-      <button type="button" onClick={importBrukerFromUrl} disabled={brukerBusy} className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm">
-        {brukerBusy ? 'Importing…' : 'Import from links'}
-      </button>
-      <span className="text-[9px] text-sky-600">Both files must be shared as "Anyone with the link". Paste plain share links — they are converted automatically.</span>
-    </div>
-  </div>
-
-<div className="flex flex-wrap items-end gap-3 bg-white border border-sky-200 rounded-lg p-3">
-  <div className="flex flex-col gap-1">
-    <label className="text-[10px] font-bold text-sky-800">Manual SW (kHz) — only if no acqus</label>
-    <input type="number" step="0.1" value={brukerSw} onChange={(e) => setBrukerSw(e.target.value)} onWheel={(e) => e.target.blur()} className="border border-sky-300 rounded-lg p-1.5 text-xs outline-none focus:border-sky-500 w-32" />
-  </div>
-  <div className="flex flex-col gap-1">
-    <label className="text-[10px] font-bold text-sky-800">Carrier offset (kHz)</label>
-    <input type="number" step="0.1" value={brukerOffset} onChange={(e) => setBrukerOffset(e.target.value)} onWheel={(e) => e.target.blur()} className="border border-sky-300 rounded-lg p-1.5 text-xs outline-none focus:border-sky-500 w-32" />
-  </div>
-  <span className="text-[9px] text-sky-600 max-w-md">If an acqus file is provided, SW_h / O1 / TE are read from it automatically and the manual fields are ignored.</span>
-</div>
-<div className="flex flex-wrap items-end gap-3 bg-violet-50 border border-violet-200 rounded-lg p-3">
-  <span className="text-[10px] font-bold text-violet-800 w-full">✂️ Crop & Resample upon import (optional)</span>
-  <div className="flex flex-col gap-1">
-    <label className="text-[10px] font-bold text-violet-800">From (kHz)</label>
-    <input type="number" step="0.1" value={brukerStartKHz} onChange={(e) => setBrukerStartKHz(e.target.value)} onWheel={(e) => e.target.blur()} placeholder="auto" className="border border-violet-300 rounded-lg p-1.5 text-xs outline-none focus:border-violet-500 w-24 bg-white" />
-  </div>
-  <div className="flex flex-col gap-1">
-    <label className="text-[10px] font-bold text-violet-800">To (kHz)</label>
-    <input type="number" step="0.1" value={brukerEndKHz} onChange={(e) => setBrukerEndKHz(e.target.value)} onWheel={(e) => e.target.blur()} placeholder="auto" className="border border-violet-300 rounded-lg p-1.5 text-xs outline-none focus:border-violet-500 w-24 bg-white" />
-  </div>
-  <div className="flex flex-col gap-1">
-    <label className="text-[10px] font-bold text-violet-800">Number of points</label>
-    <input type="number" step="1" value={brukerNumPoints} onChange={(e) => setBrukerNumPoints(e.target.value)} onWheel={(e) => e.target.blur()} placeholder="all" className="border border-violet-300 rounded-lg p-1.5 text-xs outline-none focus:border-violet-500 w-24 bg-white" />
-  </div>
-  <span className="text-[9px] text-violet-600 max-w-xs">Leave blank to import the full spectrum exactly as acquired. Interpolates to the specified grid.</span>
-</div>
-  {brukerMsg && <span className="text-xs font-bold text-sky-900">{brukerMsg}</span>}
-</div>
-
-  <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3">
-  <h4 className="text-sm font-bold text-slate-700">📐 Scaling & Acquisition Metadata</h4>
-  <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
-    {['swKHz', 'o1KHz', 'sfo1', 'temperatureK'].map((k) => {
-      const labels = { swKHz: 'Spectral Width (kHz)', o1KHz: 'Carrier O1 (kHz)', sfo1: 'Observe Freq. (MHz)', temperatureK: 'Acq. Temperature (K)' };
-      const v = activeTest.brukerMeta ? activeTest.brukerMeta[k] : null;
-      return (
-        <div key={k} className="flex flex-col gap-1">
-          <label className={LABEL_CLS}>{labels[k]}</label>
-          <div className="border border-slate-200 bg-slate-50 rounded-lg px-3 py-2 text-sm font-bold text-slate-700">
-            {v !== null && v !== undefined && v !== '' ? v : '— (import a 1r with acqus)'}
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3">
+          <h4 className="text-sm font-bold text-slate-700">📐 Scaling & Acquisition Metadata</h4>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+            {['swKHz', 'o1KHz', 'sfo1', 'temperatureK'].map((k) => {
+              const labels = { swKHz: 'Spectral Width (kHz)', o1KHz: 'Carrier O1 (kHz)', sfo1: 'Observe Freq. (MHz)', temperatureK: 'Acq. Temperature (K)' };
+              const v = activeTest.brukerMeta ? activeTest.brukerMeta[k] : null;
+              return (
+                <div key={k} className="flex flex-col gap-1">
+                  <label className={LABEL_CLS}>{labels[k]}</label>
+                  <div className="border border-slate-200 bg-slate-50 rounded-lg px-3 py-2 text-sm font-bold text-slate-700">
+                    {v !== null && v !== undefined && v !== '' ? v : '— (import a 1r with acqus)'}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-3 mt-2">
+            <span className={`text-xs font-bold px-2 py-1 rounded ${yUnit === 'norm' ? 'bg-violet-100 text-violet-800' : 'bg-slate-100 text-slate-600'}`}>
+              Current Y unit: {yUnit === 'norm' ? 'Normalized intensity' : 'Intensity (a.u.)'}
+            </span>
+            <button type="button" onClick={normalizeActiveSpectrum} className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-3 py-2 rounded-lg text-xs shadow-sm">Normalize to max (ACTIVE)</button>
+            {yUnit === 'norm' && Array.isArray(instTest.rawSpectraColumns) && (
+              <button type="button" onClick={revertNormalization} className="text-xs font-bold bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 px-3 py-1.5 rounded-lg shadow-sm">↩️ Revert to raw intensity</button>
+            )}
           </div>
         </div>
-      );
-    })}
-  </div>
-  <div className="flex items-center gap-3 mt-2">
-    <span className={`text-xs font-bold px-2 py-1 rounded ${yUnit === 'norm' ? 'bg-violet-100 text-violet-800' : 'bg-slate-100 text-slate-600'}`}>
-      Current Y unit: {yUnit === 'norm' ? 'Normalized intensity' : 'Intensity (a.u.)'}
-    </span>
-    <button type="button" onClick={normalizeActiveSpectrum} className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-3 py-2 rounded-lg text-xs shadow-sm">Normalize to max (ACTIVE)</button>
-    {yUnit === 'norm' && Array.isArray(activeTest.rawSpectraColumns) && (
-      <button type="button" onClick={revertNormalization} className="text-xs font-bold bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 px-3 py-1.5 rounded-lg shadow-sm">↩️ Revert to raw intensity</button>
-    )}
-  </div>
-</div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3">
           <h4 className="text-sm font-bold text-slate-700">🧹 Blank Subtraction</h4>
@@ -1806,9 +1809,12 @@ const revertNormalization = () => {
   );
 };
 
-/* ========================================================================
-DATA ANALYSIS — SPECTRA VISUALIZATION
-======================================================================== */
+
+
+
+// =========================================================================
+// ssNMRSections.jsx - REPLACE SpectraVisualization COMPONENT
+// =========================================================================
 export const SpectraVisualization = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = usessNMRDerived(activeTest, ctx);
@@ -1822,16 +1828,33 @@ export const SpectraVisualization = ({ ctx }) => {
   const [fsSmall, setFsSmall] = useState(null);
   const [hidden, setHidden] = useState({});
 
+  const [localColors, setLocalColors] = useState(activeTest.instanceColors || {});
+  const [customPaletteInput, setCustomPaletteInput] = useState('#ef4444, #3b82f6, #22c55e');
+
+  const applyPalette = (paletteKey) => {
+    let palette;
+    if (paletteKey === 'custom') {
+      palette = customPaletteInput.split(',').map(s => s.trim()).filter(s => /^#([0-9A-F]{3}){1,2}$/i.test(s));
+      if (!palette.length) return alert('Enter valid hex codes (e.g. #ff0000, #00ff00)');
+    } else {
+      palette = VIS_PALETTES[paletteKey] || VIS_PALETTES.default;
+    }
+    const nextColors = { ...localColors };
+    instances.forEach((inst, idx) => { nextColors[inst.id] = palette[idx % palette.length]; });
+    setLocalColors(nextColors);
+    updateActiveTest({ instanceColors: nextColors });
+  };
+
   const seriesList = useMemo(() => {
     const out = [];
-    instances.forEach((inst) => {
+    instances.forEach((inst, idx) => {
       const parsed = computeParsed(inst.test);
-      parsed.parsedSpectra.forEach((s, idx) => {
+      parsed.parsedSpectra.forEach((s) => {
         if (s.visible === false || !s.values.length) return;
         out.push({
           key: `${inst.id}__${s.id}`,
-          label: `${inst.name} — ${s.title || `Spectrum ${idx + 1}`}`,
-          color: s.color || SPECTRA_PALETTE[idx % SPECTRA_PALETTE.length],
+          label: `${inst.name} — ${s.title || 'Spectrum'}`,
+          color: localColors[inst.id] || s.color || SPECTRA_PALETTE[idx % SPECTRA_PALETTE.length],
           active: inst.id === activeTest.id,
           yUnit: inst.test.yUnit || 'mdeg',
           data: parsed.parsedWavelengths
@@ -1841,7 +1864,7 @@ export const SpectraVisualization = ({ ctx }) => {
       });
     });
     return out;
-  }, [instances, activeTest.id]);
+  }, [instances, activeTest.id, localColors]);
 
   const visible = seriesList.filter((s) => !hidden[s.key]);
   const allXs = visible.flatMap((s) => s.data.map((p) => p.x));
@@ -1873,6 +1896,19 @@ export const SpectraVisualization = ({ ctx }) => {
 
   return (
     <div className="flex flex-col gap-4 border border-slate-200 rounded-xl p-4 bg-white shadow-sm">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 bg-slate-50 p-2 rounded-lg border border-slate-200">
+        <span className="text-[10px] font-bold text-slate-500 uppercase self-center mr-2 shrink-0">Colors:</span>
+        <div className="flex flex-wrap items-center gap-2">
+          <select onChange={(e) => { if(e.target.value && e.target.value !== 'custom') applyPalette(e.target.value); e.target.value=''; }} className="text-[10px] font-bold bg-white border border-slate-300 px-2 py-1 rounded shadow-sm hover:bg-slate-50 outline-none cursor-pointer">
+            <option value="">🎨 Apply Palette...</option>
+            {Object.keys(VIS_PALETTES).map(k => <option key={k} value={k}>{k.charAt(0).toUpperCase() + k.slice(1)}</option>)}
+          </select>
+          <span className="text-slate-300 hidden md:inline">|</span>
+          <input type="text" placeholder="#f00, #0f0..." value={customPaletteInput} onChange={e => setCustomPaletteInput(e.target.value)} className="text-[10px] border border-slate-300 px-2 py-1 rounded w-32 outline-none focus:border-blue-500" />
+          <button onClick={() => applyPalette('custom')} className="text-[10px] font-bold bg-white border border-slate-300 px-2 py-1 rounded shadow-sm hover:bg-slate-50">Apply Custom</button>
+        </div>
+      </div>
+
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h4 className="text-sm font-bold text-slate-700">📈 Spectra Visualization — all conditions overlaid</h4>
         <div className="flex gap-2">

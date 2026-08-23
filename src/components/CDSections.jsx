@@ -31,7 +31,17 @@ const LINE_COLORS = [
   '#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6',
   '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16'
 ];
-
+export const VIS_PALETTES = {
+  default: ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'],
+  viridis: ['#440154', '#482878', '#3e4a89', '#31688e', '#26828e', '#1f9e89', '#35b779', '#6ece58', '#b5de2b', '#fde725'],
+  magma: ['#000004', '#3b0f70', '#8c2981', '#de4968', '#fe9f6d', '#fcfdbf'],
+  ocean: ['#082f49', '#1e3a8a', '#1d4ed8', '#2563eb', '#3b82f6', '#60a5fa', '#93c5fd'],
+  warm: ['#7f1d1d', '#991b1b', '#b91c1c', '#dc2626', '#ef4444', '#f87171', '#fca5a5'],
+  neon: ['#ff00ff', '#00ffff', '#00ff00', '#ffff00', '#ff0000', '#0000ff'],
+  pastel: ['#fbcfe8', '#fecaca', '#fde68a', '#bbf7d0', '#a7f3d0', '#bfdbfe', '#c7d2fe', '#e9d5ff'],
+  earth: ['#78350f', '#92400e', '#b45309', '#d97706', '#f59e0b', '#fbbf24', '#fcd34d'],
+  monochrome: ['#0f172a', '#1e293b', '#334155', '#475569', '#64748b', '#94a3b8', '#cbd5e1']
+};
 const DEFAULT_CD_CHART_CFG = {
   yMin: '', yMax: '', xMin: '190', xMax: '260',
   fontSize: 12, lineWidth: 2
@@ -1220,9 +1230,12 @@ const useCdDerived = (activeTest, ctx = {}) => {
   return { instances, activeInstance, conditionFields, activeParsed, mw, compoundMW };
 };
 
-/* ========================================================================
-DATA SECTION 
-======================================================================== */
+// =========================================================================
+// CDSections.jsx - REPLACE Data COMPONENT
+// =========================================================================
+// =========================================================================
+// CDSections.jsx - REPLACE Data COMPONENT
+// =========================================================================
 export const Data = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useCdDerived(activeTest, ctx);
@@ -1252,13 +1265,18 @@ export const Data = ({ ctx }) => {
   const [jascoMsg, setJascoMsg] = useState('');
   const jascoFileRef = useRef(null);
   
-const applyJasco = (parsed) => {
+  // FIXED: Combines the filename update with the spectra update to avoid race conditions
+  const applyJasco = (parsed, filename) => {
     if (!parsed || !parsed.xs.length) { setJascoMsg('⚠️ No XY data found in the Jasco file.'); return; }
     const updates = {
       wavelengthData: parsed.xs.join('\n'),
       spectraColumns: [{ id: makeId('spec'), title: parsed.title || 'Imported Spectrum', data: parsed.ys.join('\n'), color: SPECTRA_PALETTE[0], visible: true }],
       yUnit: 'mdeg'
     };
+    
+    // Assign instanceName safely in the same state update
+    if (filename) updates.instanceName = filename.replace(/\.[^/.]+$/, "");
+
     const cNum = parseManual(parsed.concentration);
     if (cNum !== null) updates.concentration = String(cNum);
     const pNum = parseManual(parsed.pathLength);
@@ -1266,7 +1284,6 @@ const applyJasco = (parsed) => {
     if (parsed.temperature) updates.temperature = String(parsed.temperature);
     if (parsed.experimentDate) updates.experimentDate = parsed.experimentDate;
 
-    // --- AUTO-FILL EXPANDED INSTRUMENTAL SETUP FIELDS ---
     const normMeta = {};
     Object.entries(parsed.meta || {}).forEach(([k, v]) => {
       normMeta[k.toLowerCase().replace(/[^a-z0-9]/g, '')] = String(v);
@@ -1279,13 +1296,11 @@ const applyJasco = (parsed) => {
     };
 
     setIfEmpty('instrumentModel', normMeta['model'] || normMeta['modelname'] || normMeta['spectrometer'] || normMeta['spectrometerdatasystem']);
-    
     const scanModeRaw = normMeta['scanmode'] || normMeta['scanningmode'];
     if (scanModeRaw && !activeTest.scanMode) {
       updates.scanMode = scanModeRaw.toLowerCase().includes('step') ? 'Step Scan' : 'Continuous Scan';
     }
 
-    // Parses speeds like "20 nm/min" by checking both "scanningspeed" and "scanspeed"
     const spd = parseFloat(normMeta['scanningspeed'] || normMeta['scanspeed']);
     if (!Number.isNaN(spd)) setIfEmpty('scanSpeed', spd);
 
@@ -1295,7 +1310,6 @@ const applyJasco = (parsed) => {
     const bw = parseFloat(normMeta['bandwidth'] || normMeta['band'] || normMeta['bandwidth']);
     if (!Number.isNaN(bw)) setIfEmpty('bandwidth', bw);
 
-    // Parses response times like "2 sec" or just "2"
     const rt = parseFloat(normMeta['dit'] || normMeta['responsetime'] || normMeta['response']);
     if (!Number.isNaN(rt)) setIfEmpty('responseTime', rt);
 
@@ -1310,23 +1324,52 @@ const applyJasco = (parsed) => {
   };
 
   const handleJascoFile = async (e) => {
-    const f = e.target.files && e.target.files[0];
-    if (!f) return;
+    const files = Array.from(e.target.files);
+    if (!files.length) return;
+    setJascoMsg(`Parsing ${files.length} Jasco file(s)...`);
 
-    if (f.name.toLowerCase().endsWith('.jws')) {
-      setJascoMsg('⚠️ .jws is a proprietary binary format. Please export as ASCII Text (.txt) or CSV (.csv) in Jasco Spectra Manager.');
+    const results = [];
+    for (const f of files) {
+      if (f.name.toLowerCase().endsWith('.jws')) continue;
+      try {
+        const text = await f.text();
+        const parsed = parseJascoCDText(text);
+        parsed.filename = f.name;
+        results.push(parsed);
+      } catch (err) { console.error('Parse error:', err); }
+    }
+
+    if (results.length === 0) {
+      setJascoMsg('⚠️ No valid text/csv files found (skipped .jws).');
       if (jascoFileRef.current) jascoFileRef.current.value = '';
       return;
     }
 
-    try {
-      const text = await f.text();
-      const parsed = parseJascoCDText(text);
-      applyJasco(parsed);
-    } catch (err) {
-      setJascoMsg(`⚠️ Error reading file: ${err.message}`);
-      console.error('Jasco file read error:', err);
+    applyJasco(results[0], results[0].filename);
+
+    if (results.length > 1 && ctx.setTests) {
+      ctx.setTests(prevTests => {
+        const newTests = [];
+        for (let i = 1; i < results.length; i++) {
+          const parsed = results[i];
+          const newId = 't' + Date.now() + i + Math.random().toString(36).substring(2,5);
+          const cloned = JSON.parse(JSON.stringify(activeTest));
+          cloned.id = newId;
+          cloned.instanceName = parsed.filename.replace(/\.[^/.]+$/, "");
+          cloned.wavelengthData = parsed.xs.join('\n');
+          cloned.spectraColumns = [{ id: makeId('spec'), title: parsed.title || 'Imported Spectrum', data: parsed.ys.join('\n'), color: SPECTRA_PALETTE[i % SPECTRA_PALETTE.length], visible: true }];
+          cloned.yUnit = 'mdeg';
+          
+          const cNum = parseManual(parsed.concentration); if (cNum !== null) cloned.concentration = String(cNum);
+          const pNum = parseManual(parsed.pathLength); if (pNum !== null) cloned.pathLength = String(pNum);
+          if (parsed.temperature) cloned.temperature = String(parsed.temperature);
+          if (parsed.experimentDate) cloned.experimentDate = parsed.experimentDate;
+          newTests.push(cloned);
+        }
+        return [...prevTests, ...newTests];
+      });
     }
+    setJascoMsg(`✅ Imported ${results.length} file(s).`);
     if (jascoFileRef.current) jascoFileRef.current.value = '';
   };
 
@@ -1337,8 +1380,8 @@ const applyJasco = (parsed) => {
     }
     try {
       const parsed = parseJascoCDText(jascoText);
-      applyJasco(parsed);
-      setJascoText(''); // Clears massive text from the DOM instantly
+      applyJasco(parsed, null);
+      setJascoText('');
     } catch (err) {
       setJascoMsg(`⚠️ Error parsing text: ${err.message}`);
       console.error('Jasco paste parse error:', err);
@@ -1379,8 +1422,6 @@ const applyJasco = (parsed) => {
   };
   const revertConversion = () => {
     if (!Array.isArray(activeTest.rawSpectraColumns)) return;
-    // Cache the theta version being left behind so the user can jump straight
-    // back to it later instead of having to re-run the conversion.
     updateActiveTest({ spectraColumns: activeTest.rawSpectraColumns, rawSpectraColumns: undefined, thetaSpectraColumns: activeTest.spectraColumns, yUnit: 'mdeg' });
   };
   const restoreMolarEllipticity = () => {
@@ -1389,7 +1430,7 @@ const applyJasco = (parsed) => {
   };
 
   const [blankId, setBlankId] = useState('');
-  const [blankScope, setBlankScope] = useState('all'); // 'all' | 'current'
+  const [blankScope, setBlankScope] = useState('all'); 
   const canRevertBlank = blankScope === 'current'
     ? !!(activeInstance && Array.isArray(activeInstance.test.preBlankSpectraColumns))
     : instances.some((i) => Array.isArray(i.test.preBlankSpectraColumns));
@@ -1421,8 +1462,6 @@ const applyJasco = (parsed) => {
           }).join('\n')
         };
       });
-      // Keep the OLDEST backup if one already exists, so a single revert undoes
-      // the whole chain of un-reverted blank subtractions, not just the last one.
       const backup = Array.isArray(inst.test.preBlankSpectraColumns) ? inst.test.preBlankSpectraColumns : (inst.test.spectraColumns || []);
       patchInstance(ctx, activeTest, inst.id, { spectraColumns: cols, preBlankSpectraColumns: backup, blankSubtractedFrom: blank.name });
       touched++;
@@ -1443,10 +1482,10 @@ const applyJasco = (parsed) => {
 
   const [mathA, setMathA] = useState('');
   const [mathB, setMathB] = useState('');
-  const [mathOp, setMathOp] = useState('subtract'); // 'add' | 'subtract' | 'multiply' | 'addConstant'
+  const [mathOp, setMathOp] = useState('subtract');
   const [mathFactor, setMathFactor] = useState('1');
   const [mathConstant, setMathConstant] = useState('0');
-  const [mathScope, setMathScope] = useState('single'); // 'single' | 'all'
+  const [mathScope, setMathScope] = useState('single');
   const mathOptions = useMemo(() => {
     const out = [];
     instances.forEach((inst) => {
@@ -1506,8 +1545,6 @@ const applyJasco = (parsed) => {
         return mathOp === 'add' ? v + bv : v - bv;
       });
       const cols = (inst.test.spectraColumns || []).map((c, ci) => ci === idx ? { ...c, data: newYs.map((v) => (Number.isFinite(v) ? String(v) : '')).join('\n') } : c);
-      // Keep the OLDEST backup so a single revert undoes the whole chain of
-      // un-reverted operations on this condition, not just the last one.
       const backup = Array.isArray(inst.test.preMathSpectraColumns) ? inst.test.preMathSpectraColumns : (inst.test.spectraColumns || []);
       patchInstance(ctx, activeTest, inst.id, { spectraColumns: cols, preMathSpectraColumns: backup });
       touched++;
@@ -1613,8 +1650,8 @@ const applyJasco = (parsed) => {
           </div>
           <div className="flex flex-wrap items-end gap-3">
             <label className="bg-white border border-sky-300 hover:bg-sky-100 text-sky-800 font-bold px-3 py-2 rounded-lg text-xs cursor-pointer shadow-sm transition-colors">
-              📄 Choose Jasco file…
-              <input ref={jascoFileRef} type="file" accept=".txt,.csv,.jws" onChange={handleJascoFile} className="hidden" />
+              📄 Choose Jasco file(s)…
+              <input ref={jascoFileRef} type="file" accept=".txt,.csv,.jws" multiple onChange={handleJascoFile} className="hidden" />
             </label>
             <span className="text-[10px] text-sky-700">…or paste the file content below and press Import.</span>
           </div>
@@ -1753,9 +1790,9 @@ const applyJasco = (parsed) => {
   );
 };
 
-/* ========================================================================
-DATA ANALYSIS — SPECTRA VISUALIZATION
-======================================================================== */
+// =========================================================================
+// CDSections.jsx - REPLACE SpectraVisualization COMPONENT
+// =========================================================================
 export const SpectraVisualization = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useCdDerived(activeTest, ctx);
@@ -1769,26 +1806,41 @@ export const SpectraVisualization = ({ ctx }) => {
   const [fsSmall, setFsSmall] = useState(null);
   const [hidden, setHidden] = useState({});
 
+  const [localColors, setLocalColors] = useState(activeTest.instanceColors || {});
+  const [customPaletteInput, setCustomPaletteInput] = useState('#ef4444, #3b82f6, #22c55e');
+
+  const applyPalette = (paletteKey) => {
+    let palette;
+    if (paletteKey === 'custom') {
+      palette = customPaletteInput.split(',').map(s => s.trim()).filter(s => /^#([0-9A-F]{3}){1,2}$/i.test(s));
+      if (!palette.length) return alert('Enter valid hex codes (e.g. #ff0000, #00ff00)');
+    } else {
+      palette = VIS_PALETTES[paletteKey] || VIS_PALETTES.default;
+    }
+    const nextColors = { ...localColors };
+    instances.forEach((inst, idx) => { nextColors[inst.id] = palette[idx % palette.length]; });
+    setLocalColors(nextColors);
+    updateActiveTest({ instanceColors: nextColors });
+  };
+
   const seriesList = useMemo(() => {
     const out = [];
-    instances.forEach((inst) => {
+    instances.forEach((inst, idx) => {
       const parsed = computeParsed(inst.test);
-      parsed.parsedSpectra.forEach((s, idx) => {
+      parsed.parsedSpectra.forEach((s) => {
         if (s.visible === false || !s.values.length) return;
         out.push({
           key: `${inst.id}__${s.id}`,
-          label: `${inst.name} — ${s.title || `Spectrum ${idx + 1}`}`,
-          color: s.color || SPECTRA_PALETTE[idx % SPECTRA_PALETTE.length],
+          label: `${inst.name} — ${s.title || 'Spectrum'}`,
+          color: localColors[inst.id] || s.color || SPECTRA_PALETTE[idx % SPECTRA_PALETTE.length],
           active: inst.id === activeTest.id,
           yUnit: inst.test.yUnit || 'mdeg',
-          data: parsed.parsedWavelengths
-            .map((w, i) => ({ x: w, y: Number.isFinite(s.values[i]) ? s.values[i] : null }))
-            .filter((p) => p.y !== null)
+          data: parsed.parsedWavelengths.map((w, i) => ({ x: w, y: Number.isFinite(s.values[i]) ? s.values[i] : null })).filter((p) => p.y !== null)
         });
       });
     });
     return out;
-  }, [instances, activeTest.id]);
+  }, [instances, activeTest.id, localColors]);
 
   const visible = seriesList.filter((s) => !hidden[s.key]);
   const allXs = visible.flatMap((s) => s.data.map((p) => p.x));
@@ -1820,6 +1872,19 @@ export const SpectraVisualization = ({ ctx }) => {
 
   return (
     <div className="flex flex-col gap-4 border border-slate-200 rounded-xl p-4 bg-white shadow-sm">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 bg-slate-50 p-2 rounded-lg border border-slate-200">
+        <span className="text-[10px] font-bold text-slate-500 uppercase self-center mr-2 shrink-0">Colors:</span>
+        <div className="flex flex-wrap items-center gap-2">
+          <select onChange={(e) => { if(e.target.value && e.target.value !== 'custom') applyPalette(e.target.value); e.target.value=''; }} className="text-[10px] font-bold bg-white border border-slate-300 px-2 py-1 rounded shadow-sm hover:bg-slate-50 outline-none cursor-pointer">
+            <option value="">🎨 Apply Palette...</option>
+            {Object.keys(VIS_PALETTES).map(k => <option key={k} value={k}>{k.charAt(0).toUpperCase() + k.slice(1)}</option>)}
+          </select>
+          <span className="text-slate-300 hidden md:inline">|</span>
+          <input type="text" placeholder="#f00, #0f0..." value={customPaletteInput} onChange={e => setCustomPaletteInput(e.target.value)} className="text-[10px] border border-slate-300 px-2 py-1 rounded w-32 outline-none focus:border-blue-500" />
+          <button onClick={() => applyPalette('custom')} className="text-[10px] font-bold bg-white border border-slate-300 px-2 py-1 rounded shadow-sm hover:bg-slate-50">Apply Custom</button>
+        </div>
+      </div>
+
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h4 className="text-sm font-bold text-slate-700">📈 Spectra Visualization — all conditions overlaid</h4>
         <div className="flex gap-2">

@@ -10,7 +10,17 @@ const COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899'
 const FS_CLASSES = 'fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col';
 const OVERLAY_CLASSES = 'fixed top-0 left-0 w-screen h-screen bg-slate-900/50 backdrop-blur-sm z-[999990]';
 const DEFAULT_CHART_STYLE = { height: 380, aspect: 1.8, fontSize: 12, tickStep: '', tickAngle: 0, ptStyle: 'circle', ptSize: 5, lineStyle: 'solid', lineThickness: 2, legend: 'top', colors: {}, barRadius: 3, xMin: '', xMax: '', yMin: '', yMax: '', xAxisLabel: '', yAxisLabel: '' };
-
+export const VIS_PALETTES = {
+  default: ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'],
+  viridis: ['#440154', '#482878', '#3e4a89', '#31688e', '#26828e', '#1f9e89', '#35b779', '#6ece58', '#b5de2b', '#fde725'],
+  magma: ['#000004', '#3b0f70', '#8c2981', '#de4968', '#fe9f6d', '#fcfdbf'],
+  ocean: ['#082f49', '#1e3a8a', '#1d4ed8', '#2563eb', '#3b82f6', '#60a5fa', '#93c5fd'],
+  warm: ['#7f1d1d', '#991b1b', '#b91c1c', '#dc2626', '#ef4444', '#f87171', '#fca5a5'],
+  neon: ['#ff00ff', '#00ffff', '#00ff00', '#ffff00', '#ff0000', '#0000ff'],
+  pastel: ['#fbcfe8', '#fecaca', '#fde68a', '#bbf7d0', '#a7f3d0', '#bfdbfe', '#c7d2fe', '#e9d5ff'],
+  earth: ['#78350f', '#92400e', '#b45309', '#d97706', '#f59e0b', '#fbbf24', '#fcd34d'],
+  monochrome: ['#0f172a', '#1e293b', '#334155', '#475569', '#64748b', '#94a3b8', '#cbd5e1']
+};
 const CollapsibleSection = ({ title, icon, defaultOpen = true, children, className = '' }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   return (
@@ -533,6 +543,203 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, xLabel, yLabel, logX, log
 };
 
 // =========================================================================
+// COLOR PALETTES
+// =========================================================================
+const FC_PALETTES = {
+  default: ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'],
+  viridis: ['#440154', '#482878', '#3e4a89', '#31688e', '#26828e', '#1f9e89', '#35b779', '#6ece58', '#b5de2b', '#fde725'],
+  magma: ['#000004', '#3b0f70', '#8c2981', '#de4968', '#fe9f6d', '#fcfdbf'],
+  ocean: ['#082f49', '#1e3a8a', '#1d4ed8', '#2563eb', '#3b82f6', '#60a5fa', '#93c5fd'],
+  warm: ['#7f1d1d', '#991b1b', '#b91c1c', '#dc2626', '#ef4444', '#f87171', '#fca5a5'],
+  neon: ['#ff00ff', '#00ffff', '#00ff00', '#ffff00', '#ff0000', '#0000ff']
+};
+
+// =========================================================================
+// EXPORTED: DATA ANALYSIS: FCS OVERLAY (1D Histogram specific for Analysis Tab)
+// =========================================================================
+// =========================================================================
+// EXPORTED: DATA ANALYSIS: FCS OVERLAY (1D Histogram specific for Analysis Tab)
+// =========================================================================
+export const FCSOverlayVisualization = ({ ctx }) => {
+  const { activeTest, updateActiveTest } = ctx;
+  const vizCfgAna = activeTest.vizCfgAnalysis || {};
+  const setVizCfgAna = (patch) => updateActiveTest({ vizCfgAnalysis: { ...vizCfgAna, ...patch } });
+  const cfgAna = { ...DEFAULT_CHART_STYLE, ...vizCfgAna };
+
+  const [fs, setFs] = useState(false);
+  const [showCfg, setShowCfg] = useState(false);
+
+  const hiddenSeries = activeTest.hiddenSeries || {}; 
+  const paramRenames = activeTest.paramRenames || {};
+  const panelArray = activeTest.fcPanel || [];
+
+  const [localColors, setLocalColors] = useState(activeTest.fcColors || {});
+  const [customPaletteInput, setCustomPaletteInput] = useState('#ef4444, #3b82f6, #22c55e');
+
+  const instances = useMemo(() => {
+    let list = null;
+    if (ctx) {
+      if (typeof ctx.getInstances === 'function') { try { list = ctx.getInstances(); } catch {} }
+      if (!list && Array.isArray(ctx.instances) && ctx.instances.length) list = ctx.instances;
+    }
+    if (!list || !list.length) list = [activeTest];
+    const norm = list.filter(Boolean).map(t => ({ id: t.id, name: t.instanceName || t.name, test: t }));
+    if (!norm.some(i => i.id === activeTest.id)) norm.unshift({ id: activeTest.id, name: activeTest.name, test: activeTest });
+    return norm;
+  }, [ctx, activeTest]);
+
+  const loadedInstances = instances.filter(inst => globalFcsCache[inst.id]);
+  const visibleInstances = loadedInstances.filter(inst => !hiddenSeries[inst.id]).map((inst, idx) => {
+    const fcs = globalFcsCache[inst.id];
+    return { ...inst, fcs, name: fcs.filename || inst.name, color: localColors[inst.id] || COLORS[idx % COLORS.length] };
+  });
+
+  const rawSharedParams = useMemo(() => {
+    if (!loadedInstances.length) return [];
+    const map = new Map();
+    loadedInstances.forEach(inst => {
+      globalFcsCache[inst.id].params.forEach(p => {
+        const key = (p.name || '').toUpperCase();
+        if (key && !map.has(key)) map.set(key, p);
+      });
+    });
+    return Array.from(map.values()).sort((a,b) => (a.name||'').localeCompare(b.name||''));
+  }, [loadedInstances]);
+
+  const [overlayParam, setOverlayParam] = useState('');
+  const [logScale, setLogScale] = useState(false);
+
+  useEffect(() => {
+    if (rawSharedParams.length > 0 && !rawSharedParams.find(p => p.name.toUpperCase() === overlayParam)) {
+      setOverlayParam(rawSharedParams[0].name.toUpperCase());
+    }
+  }, [rawSharedParams, overlayParam]);
+
+  const chartData = useMemo(() => {
+    if (!overlayParam || !visibleInstances.length) return { bins: [], domain: [0, 1] };
+    let globalMin = Infinity; let globalMax = -Infinity;
+    const transformValue = (val) => logScale ? Math.log10(Math.max(0, val) + 1) : val;
+
+    const rawSeries = visibleInstances.map(s => {
+      const pIdx = s.fcs.params.findIndex(p => (p.name || '').toUpperCase() === overlayParam || (p.label || '').toUpperCase() === overlayParam);
+      if (pIdx < 0) return { id: s.id, data: null };
+
+      const channelData = new Float32Array(s.fcs.numEvents);
+      for (let i = 0; i < s.fcs.numEvents; i++) {
+        let val = transformValue(s.fcs.events[i * s.fcs.numParams + pIdx]);
+        channelData[i] = val;
+        if (val < globalMin) globalMin = val;
+        if (val > globalMax) globalMax = val;
+      }
+      return { id: s.id, data: channelData };
+    });
+
+    if (globalMin === Infinity) { globalMin = 0; globalMax = 1000; }
+    const BINS = 200;
+    const binWidth = (globalMax - globalMin) / BINS || 1;
+    const bins = Array.from({ length: BINS }, (_, i) => ({ x: globalMin + (i + 0.5) * binWidth }));
+
+    rawSeries.forEach(series => {
+      if (!series.data) return;
+      bins.forEach(b => b[series.id] = 0);
+      for (let i = 0; i < series.data.length; i++) {
+        let bIdx = Math.floor((series.data[i] - globalMin) / binWidth);
+        if (bIdx >= BINS) bIdx = BINS - 1;
+        if (bIdx < 0) bIdx = 0;
+        bins[bIdx][series.id]++;
+      }
+    });
+
+    return { bins, domain: [globalMin, globalMax] };
+  }, [overlayParam, visibleInstances, logScale]);
+
+  const chartRef = useRef(null);
+  const zoom = useXZoom(chartRef, chartData.domain);
+  useEffect(() => { zoom.reset(); }, [overlayParam, logScale]); 
+
+  const applyPalette = (paletteKey) => {
+    let palette;
+    if (paletteKey === 'custom') {
+      palette = customPaletteInput.split(',').map(s => s.trim()).filter(s => /^#([0-9A-F]{3}){1,2}$/i.test(s));
+      if (!palette.length) return alert('Enter valid hex codes (e.g. #ff0000, #00ff00)');
+    } else {
+      palette = VIS_PALETTES[paletteKey] || VIS_PALETTES.default;
+    }
+    const nextColors = { ...localColors };
+    loadedInstances.forEach((inst, idx) => {
+      nextColors[inst.id] = palette[idx % palette.length];
+    });
+    setLocalColors(nextColors);
+    updateActiveTest({ fcColors: nextColors });
+  };
+
+  if (!loadedInstances.length) return null;
+
+  const label1D = getParamLabel({name: overlayParam}, panelArray, paramRenames);
+
+  return (
+    <>
+      {fs && <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[99990]" onClick={() => setFs(false)} />}
+      <div className={fs ? "fixed inset-4 z-[99999] bg-white p-6 rounded-2xl shadow-2xl flex flex-col gap-3 overflow-hidden" : "flex flex-col gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm w-full"}>
+        
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 bg-slate-50 p-2 rounded-lg border border-slate-200 mb-2">
+          <span className="text-[10px] font-bold text-slate-500 uppercase self-center mr-2 shrink-0">Colors:</span>
+          
+          <div className="flex flex-wrap items-center gap-2">
+            <select onChange={(e) => { if(e.target.value && e.target.value !== 'custom') applyPalette(e.target.value); e.target.value=''; }} className="text-[10px] font-bold bg-white border border-slate-300 px-2 py-1 rounded shadow-sm hover:bg-slate-50 outline-none cursor-pointer">
+              <option value="">🎨 Apply Palette...</option>
+              {Object.keys(VIS_PALETTES).map(k => <option key={k} value={k}>{k.charAt(0).toUpperCase() + k.slice(1)}</option>)}
+            </select>
+            <span className="text-slate-300 hidden md:inline">|</span>
+            <input 
+              type="text" 
+              placeholder="#f00, #0f0..." 
+              value={customPaletteInput} 
+              onChange={e => setCustomPaletteInput(e.target.value)} 
+              className="text-[10px] border border-slate-300 px-2 py-1 rounded w-32 outline-none focus:border-blue-500" 
+            />
+            <button onClick={() => applyPalette('custom')} className="text-[10px] font-bold bg-white border border-slate-300 px-2 py-1 rounded shadow-sm hover:bg-slate-50">Apply Custom</button>
+          </div>
+        </div>
+
+        <div className="flex justify-between items-center z-10 shrink-0 border-b border-slate-100 pb-2">
+          <h5 className="text-sm font-bold text-slate-700">1D Histogram (Data Analysis)</h5>
+          <div className="flex items-center gap-2">
+            <select value={overlayParam} onChange={e => setOverlayParam(e.target.value)} className="border border-slate-300 rounded px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-bold text-blue-700 max-w-[120px]">
+              {rawSharedParams.map(p => <option key={p.name} value={(p.name||'').toUpperCase()}>{getParamLabel(p, panelArray, paramRenames)}</option>)}
+            </select>
+            <label className="flex items-center gap-1 text-xs font-bold text-slate-700 cursor-pointer mr-2">
+              <input type="checkbox" checked={logScale} onChange={e => setLogScale(e.target.checked)} className="w-3.5 h-3.5 accent-blue-600" /> Log
+            </label>
+            <ChartControlBar showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)} />
+            <button type="button" onClick={() => setFs(!fs)} className="font-bold py-1 px-2 rounded-lg text-[10px] border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 shadow-sm">{fs ? '↙️ Exit' : '↗️ Fullscreen'}</button>
+          </div>
+        </div>
+        
+        {showCfg && <SharedChartStylePanel cfg={cfgAna} setCfg={setVizCfgAna} series={visibleInstances.map(s => ({ key: s.id, label: s.name, color: s.color }))} unit="a.u." />}
+        
+        <div ref={chartRef} onMouseDown={zoom.onMouseDown} className={`bg-slate-50 rounded border border-slate-200 p-2 select-none relative overflow-hidden cursor-crosshair ${fs ? 'flex-1 min-h-0' : 'h-[300px]'}`}>
+          {zoom.isZoomed && <button type="button" onClick={zoom.reset} className="absolute top-2 right-2 z-10 text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={chartData.bins} margin={{ top: 10, right: 10, left: 10, bottom: 20 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+              <XAxis dataKey="x" type="number" domain={zoom.domain} allowDataOverflow tickFormatter={(v) => v.toFixed(logScale ? 1 : 0)} tick={{ fontSize: Math.max(9, cfgAna.fontSize - 2) }} label={{ value: `${label1D}${logScale ? ' (Log)' : ''}`, position: 'insideBottom', offset: -10, fontSize: cfgAna.fontSize }} />
+              <YAxis tick={{ fontSize: Math.max(9, cfgAna.fontSize - 2) }} label={{ value: 'Count', angle: -90, position: 'insideLeft', offset: -5, fontSize: cfgAna.fontSize }} />
+              <Tooltip labelFormatter={(label) => `Value: ${Number(label).toFixed(logScale ? 2 : 0)}`} formatter={(value) => [value, 'Events']} />
+              {visibleInstances.map(s => <Line key={s.id} type="monotone" dataKey={s.id} name={s.name} stroke={s.color} strokeWidth={cfgAna.lineThickness || 2} dot={false} isAnimationActive={false} />)}
+              {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+    </>
+  );
+};
+
+// =========================================================================
+// EXPORTED: DATA TAB VISUALIZATIONS (1D + 2D)
+// =========================================================================
+// =========================================================================
 // EXPORTED: DATA TAB VISUALIZATIONS (1D + 2D)
 // =========================================================================
 export const FCSDataVisualizations = ({ ctx, updater }) => {
@@ -555,13 +762,18 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
   const [hiddenSeries, setHiddenSeries] = useState({});
   const [gates, setGates] = useState([]);
 
-  // 2D Interaction States
   const [interactionMode, setInteractionMode] = useState('gate'); 
   const [xDomain2D, setXDomain2D] = useState(null);
   const [yDomain2D, setYDomain2D] = useState(null);
 
-  const localColors = activeTest.fcColors || {};
-  const updateColor = (id, color) => updateActiveTest({ fcColors: { ...localColors, [id]: color } });
+  const [localColors, setLocalColors] = useState(activeTest.fcColors || {});
+  const [customPaletteInput, setCustomPaletteInput] = useState('#ef4444, #3b82f6, #22c55e');
+
+  const updateColor = (id, color) => {
+    const next = { ...localColors, [id]: color };
+    setLocalColors(next);
+    updateActiveTest({ fcColors: next });
+  };
   
   const paramRenames = activeTest.paramRenames || {};
   const setParamRenames = (patch) => updateActiveTest({ paramRenames: { ...paramRenames, ...patch } });
@@ -601,6 +813,22 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
     });
     return Array.from(map.values()).sort((a,b) => (a.name||'').localeCompare(b.name||''));
   }, [loadedInstances]);
+
+  const applyPalette = (paletteKey) => {
+    let palette;
+    if (paletteKey === 'custom') {
+      palette = customPaletteInput.split(',').map(s => s.trim()).filter(s => /^#([0-9A-F]{3}){1,2}$/i.test(s));
+      if (!palette.length) return alert('Enter valid hex codes (e.g. #ff0000, #00ff00)');
+    } else {
+      palette = VIS_PALETTES[paletteKey] || VIS_PALETTES.default;
+    }
+    const nextColors = { ...localColors };
+    loadedInstances.forEach((inst, idx) => {
+      nextColors[inst.id] = palette[idx % palette.length];
+    });
+    setLocalColors(nextColors);
+    updateActiveTest({ fcColors: nextColors });
+  };
 
   const [overlayParam1D, setOverlayParam1D] = useState('');
   const [xParam2D, setXParam2D] = useState('');
@@ -689,10 +917,29 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
   return (
     <div className="flex flex-col gap-4 mt-2 w-full">
       <div className="flex flex-col gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200 shadow-sm">
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] font-bold text-slate-500 uppercase self-center mr-2">Loaded Files:</span>
-          <button onClick={() => setShowRenamer(!showRenamer)} className="text-[10px] font-bold bg-white border border-slate-300 px-2 py-1 rounded shadow-sm hover:bg-slate-50">✏️ Rename Parameters</button>
+        
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 mb-2 border-b border-slate-200 pb-3">
+          <span className="text-[10px] font-bold text-slate-500 uppercase self-center mr-2 shrink-0">Colors:</span>
+          
+          <div className="flex flex-wrap items-center gap-2">
+            <select onChange={(e) => { if(e.target.value && e.target.value !== 'custom') applyPalette(e.target.value); e.target.value=''; }} className="text-[10px] font-bold bg-white border border-slate-300 px-2 py-1 rounded shadow-sm hover:bg-slate-50 outline-none cursor-pointer">
+              <option value="">🎨 Apply Palette...</option>
+              {Object.keys(VIS_PALETTES).map(k => <option key={k} value={k}>{k.charAt(0).toUpperCase() + k.slice(1)}</option>)}
+            </select>
+            <span className="text-slate-300 hidden md:inline">|</span>
+            <input 
+              type="text" 
+              placeholder="#f00, #0f0..." 
+              value={customPaletteInput} 
+              onChange={e => setCustomPaletteInput(e.target.value)} 
+              className="text-[10px] border border-slate-300 px-2 py-1 rounded w-32 outline-none focus:border-blue-500" 
+            />
+            <button onClick={() => applyPalette('custom')} className="text-[10px] font-bold bg-white border border-slate-300 px-2 py-1 rounded shadow-sm hover:bg-slate-50">Apply Custom</button>
+            <span className="text-slate-300 hidden md:inline">|</span>
+            <button onClick={() => setShowRenamer(!showRenamer)} className="text-[10px] font-bold bg-white border border-slate-300 px-2 py-1 rounded shadow-sm hover:bg-slate-50">✏️ Rename Parameters</button>
+          </div>
         </div>
+
         <div className="flex flex-wrap gap-2">
           {loadedInstances.map((inst, idx) => {
             const c = localColors[inst.id] || COLORS[idx % COLORS.length];
@@ -892,6 +1139,12 @@ export const globalFcsCache = {};
 // =========================================================================
 // MAIN DATA SECTION
 // =========================================================================
+// =========================================================================
+// MAIN DATA SECTION
+// =========================================================================
+// =========================================================================
+// MAIN DATA SECTION
+// =========================================================================
 export const Data = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const t = activeTest || {};
@@ -919,55 +1172,80 @@ export const Data = ({ ctx }) => {
   const [updater, setUpdater] = useState(0);
   const [fcsMsg, setFcsMsg] = useState('');
 
-const handleFCSUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setFcsMsg('Parsing FCS file...');
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      try {
-        const parsed = parseFCSFile(ev.target.result);
-        if (!parsed || typeof parsed.numEvents !== 'number') {
-          throw new Error('Parser returned invalid data structure.');
-        }
-        
-        parsed.filename = file.name;
-        globalFcsCache[activeTest.id] = parsed;
-        
-        const metadataUpdates = mapFCSMetadata(parsed.textDict);
-        
-        // Auto-rename the instance to the file name (stripping the .fcs extension)
-        metadataUpdates.instanceName = file.name.replace(/\.[^/.]+$/, "");
-        
-        // Auto-build Staining Panel if empty
-        const currentPanel = Array.isArray(t.fcPanel) ? t.fcPanel : [];
-        if (currentPanel.length === 0) {
-            const newPanel = [];
-            parsed.params.forEach((p, i) => {
-                const n = (p.name || '').toUpperCase();
-                if (n.includes('FSC') || n.includes('SSC') || n.includes('TIME')) return;
-                newPanel.push({
-                    id: `ch_${Date.now()}_${i}`,
-                    channel: p.name || `FL${i}`,
-                    fluorochrome: '',
-                    antibody: p.label ? p.label.replace(/[/\\]+$/, '').trim() : '',
-                    clone: '',
-                    vendor: ''
-                });
-            });
-            if (newPanel.length > 0) metadataUpdates.fcPanel = newPanel;
-        }
+  const handleFCSUpload = async (e) => {
+    const files = Array.from(e.target.files);
+    if (!files.length) return;
+    setFcsMsg(`Parsing ${files.length} FCS file(s)...`);
 
-        updateActiveTest(metadataUpdates);
-        setFcsMsg(`✅ Loaded ${parsed.numEvents.toLocaleString()} events. Fields auto-filled!`);
-        setUpdater(u => u + 1);
-      } catch (err) {
-        setFcsMsg(`⚠️ Error: ${err.message}`);
-        console.error('FCS Parse Error:', err);
+    const parseFile = (file) => new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const parsed = parseFCSFile(ev.target.result);
+          if (!parsed || typeof parsed.numEvents !== 'number') throw new Error('Parser returned invalid data structure.');
+          parsed.filename = file.name;
+          resolve({ parsed, file });
+        } catch (err) {
+          reject(err);
+        }
+      };
+      reader.onerror = () => reject(new Error('File read error'));
+      reader.readAsArrayBuffer(file);
+    });
+
+    try {
+      const results = [];
+      for (let file of files) {
+        const res = await parseFile(file);
+        results.push(res);
       }
-    };
-    reader.onerror = () => setFcsMsg('⚠️ Error reading file from disk.');
-    reader.readAsArrayBuffer(file);
+
+      // Handle the FIRST file directly onto the active test tab
+      const first = results[0].parsed;
+      globalFcsCache[activeTest.id] = first;
+      const metadataUpdates = mapFCSMetadata(first.textDict);
+      metadataUpdates.instanceName = first.filename.replace(/\.[^/.]+$/, "");
+      
+      const currentPanel = Array.isArray(t.fcPanel) ? t.fcPanel : [];
+      if (currentPanel.length === 0) {
+          const newPanel = [];
+          first.params.forEach((p, i) => {
+              const n = (p.name || '').toUpperCase();
+              if (n.includes('FSC') || n.includes('SSC') || n.includes('TIME')) return;
+              newPanel.push({ id: `ch_${Date.now()}_${i}`, channel: p.name || `FL${i}`, fluorochrome: '', antibody: p.label ? p.label.replace(/[/\\]+$/, '').trim() : '', clone: '', vendor: '' });
+          });
+          if (newPanel.length > 0) metadataUpdates.fcPanel = newPanel;
+      }
+      updateActiveTest(metadataUpdates);
+
+      // Handle SUBSEQUENT files by dynamically creating new tabs/instances
+      if (results.length > 1 && ctx.setTests) {
+          ctx.setTests(prevTests => {
+              const newTests = [];
+              for (let i = 1; i < results.length; i++) {
+                  const parsed = results[i].parsed;
+                  const newId = 't' + Date.now() + i + Math.random().toString(36).substring(2,5);
+                  
+                  globalFcsCache[newId] = parsed;
+                  const meta = mapFCSMetadata(parsed.textDict);
+                  
+                  const cloned = JSON.parse(JSON.stringify(activeTest));
+                  cloned.id = newId;
+                  cloned.instanceName = parsed.filename.replace(/\.[^/.]+$/, "");
+                  Object.assign(cloned, meta); 
+                  
+                  newTests.push(cloned);
+              }
+              return [...prevTests, ...newTests];
+          });
+      }
+
+      setFcsMsg(`✅ Successfully loaded ${results.length} file(s).`);
+      setUpdater(u => u + 1);
+    } catch (err) {
+      setFcsMsg(`⚠️ Error: ${err.message}`);
+      console.error('FCS Parse Error:', err);
+    }
     e.target.value = '';
   };
 
@@ -1018,8 +1296,8 @@ const handleFCSUpload = (e) => {
           </div>
           <div className="flex flex-wrap items-end gap-3">
             <label className="bg-white border border-indigo-300 hover:bg-indigo-100 text-indigo-800 font-bold px-3 py-2 rounded-lg text-xs cursor-pointer shadow-sm transition-colors">
-              📄 Choose .fcs file…
-              <input type="file" accept=".fcs" onChange={handleFCSUpload} className="hidden" />
+              📄 Choose .fcs file(s)…
+              <input type="file" accept=".fcs" multiple onChange={handleFCSUpload} className="hidden" />
             </label>
             {fcsMsg && <span className="text-xs font-bold text-indigo-900">{fcsMsg}</span>}
           </div>
@@ -1096,145 +1374,6 @@ const handleFCSUpload = (e) => {
   );
 };
 
-// =========================================================================
-// EXPORTED: DATA ANALYSIS: FCS OVERLAY (1D Histogram specific for Analysis Tab)
-// =========================================================================
-export const FCSOverlayVisualization = ({ ctx }) => {
-  const { activeTest, updateActiveTest } = ctx;
-  const vizCfgAna = activeTest.vizCfgAnalysis || {};
-  const setVizCfgAna = (patch) => updateActiveTest({ vizCfgAnalysis: { ...vizCfgAna, ...patch } });
-  const cfgAna = { ...DEFAULT_CHART_STYLE, ...vizCfgAna };
-
-  const [fs, setFs] = useState(false);
-  const [showCfg, setShowCfg] = useState(false);
-
-  const hiddenSeries = activeTest.hiddenSeries || {}; 
-  const localColors = activeTest.fcColors || {};
-  const paramRenames = activeTest.paramRenames || {};
-  const panelArray = activeTest.fcPanel || [];
-
-  const instances = useMemo(() => {
-    let list = null;
-    if (ctx) {
-      if (typeof ctx.getInstances === 'function') { try { list = ctx.getInstances(); } catch {} }
-      if (!list && Array.isArray(ctx.instances) && ctx.instances.length) list = ctx.instances;
-    }
-    if (!list || !list.length) list = [activeTest];
-    const norm = list.filter(Boolean).map(t => ({ id: t.id, name: t.instanceName || t.name, test: t }));
-    if (!norm.some(i => i.id === activeTest.id)) norm.unshift({ id: activeTest.id, name: activeTest.name, test: activeTest });
-    return norm;
-  }, [ctx, activeTest]);
-
-  const loadedInstances = instances.filter(inst => globalFcsCache[inst.id]);
-  const visibleInstances = loadedInstances.filter(inst => !hiddenSeries[inst.id]).map((inst, idx) => {
-    const fcs = globalFcsCache[inst.id];
-    return { ...inst, fcs, name: fcs.filename || inst.name, color: localColors[inst.id] || COLORS[idx % COLORS.length] };
-  });
-
-  const rawSharedParams = useMemo(() => {
-    if (!loadedInstances.length) return [];
-    const map = new Map();
-    loadedInstances.forEach(inst => {
-      globalFcsCache[inst.id].params.forEach(p => {
-        const key = (p.name || '').toUpperCase();
-        if (key && !map.has(key)) map.set(key, p);
-      });
-    });
-    return Array.from(map.values()).sort((a,b) => (a.name||'').localeCompare(b.name||''));
-  }, [loadedInstances]);
-
-  const [overlayParam, setOverlayParam] = useState('');
-  const [logScale, setLogScale] = useState(false);
-
-  useEffect(() => {
-    if (rawSharedParams.length > 0 && !rawSharedParams.find(p => p.name.toUpperCase() === overlayParam)) {
-      setOverlayParam(rawSharedParams[0].name.toUpperCase());
-    }
-  }, [rawSharedParams, overlayParam]);
-
-  const chartData = useMemo(() => {
-    if (!overlayParam || !visibleInstances.length) return { bins: [], domain: [0, 1] };
-    let globalMin = Infinity; let globalMax = -Infinity;
-    const transformValue = (val) => logScale ? Math.log10(Math.max(0, val) + 1) : val;
-
-    const rawSeries = visibleInstances.map(s => {
-      const pIdx = s.fcs.params.findIndex(p => (p.name || '').toUpperCase() === overlayParam || (p.label || '').toUpperCase() === overlayParam);
-      if (pIdx < 0) return { id: s.id, data: null };
-
-      const channelData = new Float32Array(s.fcs.numEvents);
-      for (let i = 0; i < s.fcs.numEvents; i++) {
-        let val = transformValue(s.fcs.events[i * s.fcs.numParams + pIdx]);
-        channelData[i] = val;
-        if (val < globalMin) globalMin = val;
-        if (val > globalMax) globalMax = val;
-      }
-      return { id: s.id, data: channelData };
-    });
-
-    if (globalMin === Infinity) { globalMin = 0; globalMax = 1000; }
-    const BINS = 200;
-    const binWidth = (globalMax - globalMin) / BINS || 1;
-    const bins = Array.from({ length: BINS }, (_, i) => ({ x: globalMin + (i + 0.5) * binWidth }));
-
-    rawSeries.forEach(series => {
-      if (!series.data) return;
-      bins.forEach(b => b[series.id] = 0);
-      for (let i = 0; i < series.data.length; i++) {
-        let bIdx = Math.floor((series.data[i] - globalMin) / binWidth);
-        if (bIdx >= BINS) bIdx = BINS - 1;
-        if (bIdx < 0) bIdx = 0;
-        bins[bIdx][series.id]++;
-      }
-    });
-
-    return { bins, domain: [globalMin, globalMax] };
-  }, [overlayParam, visibleInstances, logScale]);
-
-  const chartRef = useRef(null);
-  const zoom = useXZoom(chartRef, chartData.domain);
-  useEffect(() => { zoom.reset(); }, [overlayParam, logScale]); 
-
-  if (!loadedInstances.length) return null;
-
-  const label1D = getParamLabel({name: overlayParam}, panelArray, paramRenames);
-
-  return (
-    <>
-      {fs && <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[99990]" onClick={() => setFs(false)} />}
-      <div className={fs ? "fixed inset-4 z-[99999] bg-white p-6 rounded-2xl shadow-2xl flex flex-col gap-3 overflow-hidden" : "flex flex-col gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm w-full"}>
-        <div className="flex justify-between items-center z-10 shrink-0 border-b border-slate-100 pb-2">
-          <h5 className="text-sm font-bold text-slate-700">1D Histogram (Data Analysis)</h5>
-          <div className="flex items-center gap-2">
-            <select value={overlayParam} onChange={e => setOverlayParam(e.target.value)} className="border border-slate-300 rounded px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-bold text-blue-700 max-w-[120px]">
-              {rawSharedParams.map(p => <option key={p.name} value={(p.name||'').toUpperCase()}>{getParamLabel(p, panelArray, paramRenames)}</option>)}
-            </select>
-            <label className="flex items-center gap-1 text-xs font-bold text-slate-700 cursor-pointer mr-2">
-              <input type="checkbox" checked={logScale} onChange={e => setLogScale(e.target.checked)} className="w-3.5 h-3.5 accent-blue-600" /> Log
-            </label>
-            <ChartControlBar showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)} />
-            <button type="button" onClick={() => setFs(!fs)} className="font-bold py-1 px-2 rounded-lg text-[10px] border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 shadow-sm">{fs ? '↙️ Exit' : '↗️ Fullscreen'}</button>
-          </div>
-        </div>
-        
-        {showCfg && <SharedChartStylePanel cfg={cfgAna} setCfg={setVizCfgAna} series={visibleInstances.map(s => ({ key: s.id, label: s.name, color: s.color }))} unit="a.u." />}
-        
-        <div ref={chartRef} onMouseDown={zoom.onMouseDown} className={`bg-slate-50 rounded border border-slate-200 p-2 select-none relative overflow-hidden cursor-crosshair w-full ${fs ? 'flex-1 min-h-0' : 'h-[300px]'}`}>
-          {zoom.isZoomed && <button type="button" onClick={zoom.reset} className="absolute top-2 right-2 z-10 text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData.bins} margin={{ top: 10, right: 10, left: 10, bottom: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="x" type="number" domain={zoom.domain} allowDataOverflow tickFormatter={(v) => v.toFixed(logScale ? 1 : 0)} tick={{ fontSize: Math.max(9, cfgAna.fontSize - 2) }} label={{ value: `${label1D}${logScale ? ' (Log)' : ''}`, position: 'insideBottom', offset: -10, fontSize: cfgAna.fontSize }} />
-              <YAxis tick={{ fontSize: Math.max(9, cfgAna.fontSize - 2) }} label={{ value: 'Count', angle: -90, position: 'insideLeft', offset: -5, fontSize: cfgAna.fontSize }} />
-              <Tooltip labelFormatter={(label) => `Value: ${Number(label).toFixed(logScale ? 2 : 0)}`} formatter={(value) => [value, 'Events']} />
-              {visibleInstances.map(s => <Line key={s.id} type="monotone" dataKey={s.id} name={s.name} stroke={s.color} strokeWidth={cfgAna.lineThickness || 2} dot={false} isAnimationActive={false} />)}
-              {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-    </>
-  );
-};
 
 export const DataAnalysis = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
