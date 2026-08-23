@@ -449,8 +449,7 @@ export const FLOW_CYTOMETRY_TAB_CONFIG = {
     { key: 'liveDeadStain', label: 'Live/Dead Stain', type: 'text', placeholder: 'e.g. Zombie NIR' },
     { key: 'fixation', label: 'Fixation', type: 'select', options: ['None', '1% PFA', '4% PFA', 'BD Cytofix', 'eBioscience Foxp3'] },
     { key: 'permeabilization', label: 'Permeabilization', type: 'select', options: ['None', '0.1% Saponin', '0.1% Triton X-100', 'BD Perm', 'eBioscience Perm'] },
-    { key: 'fcMachine', label: 'Flow Cytometer', type: 'text', placeholder: 'e.g. BD FACSCanto II' },
-    { key: 'acquisitionSoftware', label: 'Acquisition Software', type: 'text', placeholder: 'e.g. FACSDiva' }
+    { key: 'otherConditions', label: 'Other Conditions', type: 'text', placeholder: 'e.g. Stimulated with PMA/Iono' }
   ],
   instrumentalFields: [
     { key: 'cytometerModel', label: 'Cytometer Model', type: 'text', placeholder: 'e.g. FACSCanto II' },

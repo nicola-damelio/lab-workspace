@@ -11,7 +11,6 @@ const FS_CLASSES = 'fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2x
 const OVERLAY_CLASSES = 'fixed top-0 left-0 w-screen h-screen bg-slate-900/50 backdrop-blur-sm z-[999990]';
 const DEFAULT_CHART_STYLE = { height: 380, aspect: 1.8, fontSize: 12, tickStep: '', tickAngle: 0, ptStyle: 'circle', ptSize: 5, lineStyle: 'solid', lineThickness: 2, legend: 'top', colors: {}, barRadius: 3, xMin: '', xMax: '', yMin: '', yMax: '', xAxisLabel: '', yAxisLabel: '' };
 
-
 const CollapsibleSection = ({ title, icon, defaultOpen = true, children, className = '' }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   return (
@@ -29,7 +28,7 @@ const CollapsibleSection = ({ title, icon, defaultOpen = true, children, classNa
 };
 
 // =========================================================================
-// FCS BINARY PARSER (Supports Offset Safety & Endianness Detection)
+// FCS BINARY PARSER 
 // =========================================================================
 const parseFCSFile = (buffer) => {
   const decoder = new TextDecoder();
@@ -38,7 +37,6 @@ const parseFCSFile = (buffer) => {
     return decoder.decode(new Uint8Array(buffer, start, length)).trim();
   };
 
-  // 1. Parse Header
   const version = readStr(0, 6);
   if (!version.startsWith('FCS')) throw new Error('Not a valid FCS file format.');
 
@@ -47,7 +45,6 @@ const parseFCSFile = (buffer) => {
   let dataStart = parseInt(readStr(26, 8), 10);
   let dataEnd = parseInt(readStr(34, 8), 10);
 
-  // FCS 3.0 64-bit offset fallback
   if (!textStart || !textEnd) {
     textStart = parseInt(readStr(58, 8), 10);
     textEnd = parseInt(readStr(66, 8), 10);
@@ -59,19 +56,32 @@ const parseFCSFile = (buffer) => {
     throw new Error('Could not locate TEXT segment in FCS header.');
   }
 
-  // 2. Parse TEXT Segment (using the stable delimiter logic)
   const textStr = decoder.decode(new Uint8Array(buffer, textStart, textEnd - textStart + 1));
+  
+  // 1. Bulletproof Delimiter Detection
+  // The FCS standard guarantees the delimiter is the character immediately preceding the first keyword (which starts with $)
+  const firstDollar = textStr.indexOf('$');
+  let delimiter = '/';
+  if (firstDollar >= 1) {
+    delimiter = textStr[firstDollar - 1];
+  } else {
+    delimiter = textStr[0] || '/';
+  }
+
+  // 2. Safe Parsing (Preserves empty values to prevent key/value misalignment)
+  const rawParts = textStr.split(delimiter);
   const textDict = {};
-  
-  let delimiter = textStr[0];
-  if (delimiter === ' ' || !delimiter) delimiter = '/';
-  
-  const parts = textStr.split(delimiter).map(p => p.trim()).filter(p => p);
-  
-  for (let i = 0; i < parts.length - 1; i += 2) {
-    const key = parts[i].toUpperCase();
-    const val = parts[i + 1];
-    if (key) textDict[key] = val;
+  let currentKey = null;
+
+  // Start at index 1 to skip the empty split before the first delimiter
+  for (let i = 1; i < rawParts.length; i++) {
+    const part = rawParts[i].trim();
+    if (currentKey === null) {
+      currentKey = part.toUpperCase();
+    } else {
+      if (currentKey) textDict[currentKey] = part;
+      currentKey = null;
+    }
   }
 
   const numParams = parseInt(textDict['$PAR'] || '0', 10);
@@ -92,7 +102,6 @@ const parseFCSFile = (buffer) => {
     });
   }
 
-  // 3. Parse DATA Segment
   if (!dataStart || !dataEnd || dataEnd < dataStart || dataEnd >= buffer.byteLength) {
     throw new Error('Could not locate DATA segment in FCS header.');
   }
@@ -100,39 +109,27 @@ const parseFCSFile = (buffer) => {
   const dataLength = dataEnd - dataStart + 1;
   let events = null;
 
-  // Use DataView directly on the buffer at the EXACT dataStart offset (fixes the offset bug)
   const dataView = new DataView(buffer, dataStart, dataLength);
-
-  // Check file Endianness to prevent float scrambling (fixes the barcode dispersion bug)
   const byteOrd = textDict['$BYTEORD'] || '1,2,3,4';
   const isLittleEndian = byteOrd.trim() === '1,2,3,4';
-  
   const numTotalValues = numParams * numEvents;
 
   try {
     if (dataType === 'F') {
       events = new Float32Array(numTotalValues);
-      for (let i = 0; i < numTotalValues; i++) {
-        events[i] = dataView.getFloat32(i * 4, isLittleEndian);
-      }
+      for (let i = 0; i < numTotalValues; i++) events[i] = dataView.getFloat32(i * 4, isLittleEndian);
     } else if (dataType === 'I') {
       const bits = params[0]?.bits || 16;
       if (bits <= 16) {
         events = new Uint16Array(numTotalValues);
-        for (let i = 0; i < numTotalValues; i++) {
-          events[i] = dataView.getUint16(i * 2, isLittleEndian);
-        }
+        for (let i = 0; i < numTotalValues; i++) events[i] = dataView.getUint16(i * 2, isLittleEndian);
       } else {
         events = new Uint32Array(numTotalValues);
-        for (let i = 0; i < numTotalValues; i++) {
-          events[i] = dataView.getUint32(i * 4, isLittleEndian);
-        }
+        for (let i = 0; i < numTotalValues; i++) events[i] = dataView.getUint32(i * 4, isLittleEndian);
       }
     } else if (dataType === 'D') {
       events = new Float64Array(numTotalValues);
-      for (let i = 0; i < numTotalValues; i++) {
-        events[i] = dataView.getFloat64(i * 8, isLittleEndian);
-      }
+      for (let i = 0; i < numTotalValues; i++) events[i] = dataView.getFloat64(i * 8, isLittleEndian);
     } else {
       throw new Error(`Unsupported FCS data type: ${dataType}`);
     }
@@ -144,12 +141,11 @@ const parseFCSFile = (buffer) => {
 };
 
 // =========================================================================
-// METADATA MAPPER (Auto-fills Experimental & Instrumental fields)
+// METADATA MAPPER (Separates Experimental & Instrumental Cleanly)
 // =========================================================================
 const mapFCSMetadata = (textDict) => {
   const updates = {};
   
-  // 1. Experimental Conditions
   if (textDict['$DATE']) {
     const months = { JAN: '01', FEB: '02', MAR: '03', APR: '04', MAY: '05', JUN: '06', JUL: '07', AUG: '08', SEP: '09', OCT: '10', NOV: '11', DEC: '12' };
     const parts = textDict['$DATE'].split('-');
@@ -160,22 +156,11 @@ const mapFCSMetadata = (textDict) => {
       updates.experimentDate = `${year}-${month}-${day}`;
     }
   }
+  if (textDict['$TOT']) updates.cellNumber = parseInt(textDict['$TOT'], 10).toLocaleString();
   
-  if (textDict['$TOT']) {
-    updates.cellNumber = parseInt(textDict['$TOT'], 10).toLocaleString();
-  }
-  
-  if (textDict['$CYT'] || textDict['CYTNUM']) {
-    updates.fcMachine = `${textDict['$CYT'] || ''} ${textDict['CYTNUM'] || ''}`.trim();
-  }
-  
-  if (textDict['CREATOR']) {
-    updates.acquisitionSoftware = textDict['CREATOR'];
-  }
-
-  // 2. Instrumental Setup
   if (textDict['$CYT']) updates.cytometerModel = textDict['$CYT'];
   if (textDict['CYTNUM']) updates.cytometerSerial = textDict['CYTNUM'];
+  if (textDict['CREATOR']) updates.acquisitionSoftware = textDict['CREATOR'];
   
   const lasers = [];
   if (textDict['LASER1NAME']) lasers.push(`${textDict['LASER1NAME']} Laser`);
@@ -192,7 +177,9 @@ const mapFCSMetadata = (textDict) => {
   return updates;
 };
 
-// Helper to format axis ticks cleanly (removes excessive decimals, adds 'k' for thousands)
+// =========================================================================
+// HELPERS
+// =========================================================================
 const formatTickVal = (val) => {
   if (isNaN(val) || !isFinite(val)) return '';
   if (val === 0) return '0';
@@ -203,15 +190,30 @@ const formatTickVal = (val) => {
   return Number(val.toFixed(2)).toString();
 };
 
-// =========================================================================
-// HIGH-PERFORMANCE 2D CANVAS SCATTER PLOT (Multi-File Overlay)
-// =========================================================================
-// =========================================================================
-// CUSTOM DOM-BASED X-ZOOM HOOK (Highly reliable for continuous axes)
-// =========================================================================
-// =========================================================================
-// CUSTOM DOM-BASED X-ZOOM & POLYGON MATH
-// =========================================================================
+const getParamLabel = (p, panel = [], renames = {}) => {
+  const key = (p.name || '').toUpperCase();
+  if (renames[key]) return renames[key]; 
+  
+  // Link automatically to the Staining Panel if defined
+  const panelMatch = panel.find(ch => (ch.channel || '').toUpperCase() === key);
+  if (panelMatch && (panelMatch.antibody || panelMatch.fluorochrome)) {
+    const parts = [];
+    if (panelMatch.antibody) parts.push(panelMatch.antibody);
+    if (panelMatch.fluorochrome) parts.push(panelMatch.fluorochrome);
+    return `${parts.join(' ')} (${p.name})`;
+  }
+
+  const name = p.name || '';
+  let label = p.label || '';
+  label = label.replace(/[/\\]+$/, '').trim(); 
+
+  if (/^P\d+$/.test(name) && label) return label; 
+  if (name && label && name !== label && !label.includes(name) && !name.includes(label)) {
+    return `${label} (${name})`;
+  }
+  return label || name || key || 'Unknown';
+};
+
 const useXZoom = (chartRef, dataDomain, margin = { top: 10, right: 10, bottom: 20, left: 20 }) => {
   const [domain, setDomain] = useState(null);
   const [lo, setLo] = useState(null);
@@ -251,10 +253,7 @@ const useXZoom = (chartRef, dataDomain, margin = { top: 10, right: 10, bottom: 2
     };
     window.addEventListener('mousemove', mv);
     window.addEventListener('mouseup', up);
-    return () => {
-      window.removeEventListener('mousemove', mv);
-      window.removeEventListener('mouseup', up);
-    };
+    return () => { window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); };
   }, [margin.left, margin.right]);
 
   const onMouseDown = (e) => {
@@ -274,7 +273,6 @@ const hexToRgba = (hex, alpha) => {
   return `rgba(${Number.isNaN(r) ? 59 : r}, ${Number.isNaN(g) ? 130 : g}, ${Number.isNaN(b) ? 246 : b}, ${alpha})`;
 };
 
-// Ray-casting algorithm to check if a point is inside a polygon
 const isPointInPoly = (px, py, poly) => {
   let isInside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
@@ -286,15 +284,14 @@ const isPointInPoly = (px, py, poly) => {
   return isInside;
 };
 
-
 // =========================================================================
-// HIGH-PERFORMANCE 2D CANVAS SCATTER PLOT (Multi-File Overlay + Polygon Gating)
+// CANVAS 2D OVERLAY
 // =========================================================================
-const Canvas2DPlotOverlay = ({ series, xParam, yParam, logX, logY, cfg, fs, gates, onAddGate }) => {
+const Canvas2DPlotOverlay = ({ series, xParam, yParam, xLabel, yLabel, logX, logY, cfg, fs, gates, onAddGate }) => {
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
   const mappingRef = useRef(null);
-  const [drawPath, setDrawPath] = useState(null); // Tracks the freehand drawn polygon
+  const [drawPath, setDrawPath] = useState(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -329,7 +326,6 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, logX, logY, cfg, fs, gate
       let minX = Infinity, maxX = -Infinity;
       let minY = Infinity, maxY = -Infinity;
 
-      // Only calculate bounds based on events that pass ALL gates
       validSeries.forEach(s => {
         for (let i = 0; i < s.fcs.numEvents; i++) {
           let pass = true;
@@ -360,7 +356,6 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, logX, logY, cfg, fs, gate
       const plotH = H - pad.top - pad.bottom;
       if (plotW <= 0 || plotH <= 0) return;
 
-      // Save mapping metrics for mouse event coordinate conversion
       mappingRef.current = { minX, maxX, minY, maxY, pad, plotW, plotH, logX, logY, xParam, yParam };
 
       ctx.strokeStyle = '#f1f5f9'; ctx.lineWidth = 1;
@@ -399,7 +394,6 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, logX, logY, cfg, fs, gate
         }
       });
 
-      // Draw all established gates that apply to the current axis
       const toPxX = (dx) => pad.left + ((dx - minX) / (maxX - minX || 1)) * plotW;
       const toPxY = (dy) => pad.top + plotH - ((dy - minY) / (maxY - minY || 1)) * plotH;
 
@@ -409,37 +403,28 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, logX, logY, cfg, fs, gate
           ctx.fillStyle = 'rgba(239, 68, 68, 0.05)';
           ctx.beginPath();
           g.vertices.forEach((v, i) => {
-            const px = toPxX(v.x);
-            const py = toPxY(v.y);
+            const px = toPxX(v.x); const py = toPxY(v.y);
             if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
           });
-          ctx.closePath();
-          ctx.fill(); ctx.stroke();
+          ctx.closePath(); ctx.fill(); ctx.stroke();
           
-          // Draw Gate Name
-          ctx.fillStyle = '#ef4444';
-          ctx.font = 'bold 11px sans-serif';
-          ctx.textAlign = 'left';
+          ctx.fillStyle = '#ef4444'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'left';
           ctx.fillText(`Gate ${idx + 1}`, toPxX(g.vertices[0].x), toPxY(g.vertices[0].y) - 5);
         }
       });
 
-      // Draw the active freehand line being drawn
       if (drawPath && drawPath.length > 0) {
         ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 2; ctx.setLineDash([5, 5]);
-        ctx.beginPath();
-        ctx.moveTo(drawPath[0].x, drawPath[0].y);
-        for (let i = 1; i < drawPath.length; i++) {
-          ctx.lineTo(drawPath[i].x, drawPath[i].y);
-        }
+        ctx.beginPath(); ctx.moveTo(drawPath[0].x, drawPath[0].y);
+        for (let i = 1; i < drawPath.length; i++) ctx.lineTo(drawPath[i].x, drawPath[i].y);
         ctx.stroke(); ctx.setLineDash([]);
       }
 
       ctx.fillStyle = '#334155'; ctx.font = `bold ${cfg.fontSize || 12}px sans-serif`; ctx.textAlign = 'center';
-      ctx.fillText(`${xParam}${logX ? ' (Log)' : ''}`, pad.left + plotW / 2, H - 10);
+      ctx.fillText(`${xLabel}${logX ? ' (Log)' : ''}`, pad.left + plotW / 2, H - 10);
       
       ctx.save(); ctx.translate(15, pad.top + plotH / 2); ctx.rotate(-Math.PI / 2);
-      ctx.fillText(`${yParam}${logY ? ' (Log)' : ''}`, 0, 0); ctx.restore();
+      ctx.fillText(`${yLabel}${logY ? ' (Log)' : ''}`, 0, 0); ctx.restore();
       
       ctx.fillStyle = '#64748b'; ctx.font = `${Math.max(9, (cfg.fontSize || 12) - 2)}px sans-serif`;
       for (let i = 0; i <= 5; i++) {
@@ -454,7 +439,7 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, logX, logY, cfg, fs, gate
     const ro = new ResizeObserver(draw);
     ro.observe(wrap);
     return () => ro.disconnect();
-  }, [series, xParam, yParam, logX, logY, cfg, fs, drawPath, gates]);
+  }, [series, xParam, yParam, xLabel, yLabel, logX, logY, cfg, fs, drawPath, gates]);
 
   const handleMouseDown = (e) => {
     if (!mappingRef.current || !onAddGate) return;
@@ -481,19 +466,12 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, logX, logY, cfg, fs, gate
       const toDataY = (py) => m.minY + ((m.pad.top + m.plotH - py) / m.plotH) * (m.maxY - m.minY);
       
       const polyData = drawPath.map(p => ({ x: toDataX(p.x), y: toDataY(p.y) }));
-      
-      // Calculate bounding box area to ensure it's not an accidental click
       const xs = polyData.map(p => p.x); const ys = polyData.map(p => p.y);
       const w = Math.max(...xs) - Math.min(...xs);
       const h = Math.max(...ys) - Math.min(...ys);
       
       if (w > (m.maxX - m.minX) * 0.01 && h > (m.maxY - m.minY) * 0.01) {
-        onAddGate({
-          id: `gate_${Date.now()}`,
-          xParam: m.xParam, yParam: m.yParam,
-          logX: m.logX, logY: m.logY,
-          vertices: polyData
-        });
+        onAddGate({ id: `gate_${Date.now()}`, xParam: m.xParam, yParam: m.yParam, logX: m.logX, logY: m.logY, vertices: polyData });
       }
     }
     setDrawPath(null);
@@ -503,20 +481,17 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, logX, logY, cfg, fs, gate
     <div 
       ref={wrapRef} 
       onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}
-      style={{ width: '100%', aspectRatio: fs ? undefined : String(cfg.aspect || 1.8), height: fs ? 500 : (cfg.height || 380) }} 
+      style={{ width: '100%', aspectRatio: fs ? undefined : String(cfg.aspect || 1.8), height: fs ? '100%' : (cfg.height || 380) }} 
       className="relative rounded-lg border border-slate-200 bg-white overflow-hidden min-h-[300px] cursor-crosshair"
     >
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
       {drawPath && (
         <div style={{
           position: 'absolute',
-          left: Math.min(...drawPath.map(p=>p.x)),
-          top: Math.min(...drawPath.map(p=>p.y)),
+          left: Math.min(...drawPath.map(p=>p.x)), top: Math.min(...drawPath.map(p=>p.y)),
           width: Math.max(...drawPath.map(p=>p.x)) - Math.min(...drawPath.map(p=>p.x)),
           height: Math.max(...drawPath.map(p=>p.y)) - Math.min(...drawPath.map(p=>p.y)),
-          border: '2px dashed rgba(239, 68, 68, 0.4)',
-          backgroundColor: 'transparent',
-          pointerEvents: 'none'
+          border: '2px dashed rgba(239, 68, 68, 0.4)', backgroundColor: 'transparent', pointerEvents: 'none'
         }} />
       )}
     </div>
@@ -524,25 +499,34 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, logX, logY, cfg, fs, gate
 };
 
 // =========================================================================
-// UNIFIED DATA SECTION OVERLAYS (1D + 2D with Nested Gating)
+// EXPORTED: DATA TAB VISUALIZATIONS (1D + 2D)
 // =========================================================================
-const FCSDataVisualizations = ({ ctx, updater }) => {
+export const FCSDataVisualizations = ({ ctx, updater }) => {
   const { activeTest, updateActiveTest } = ctx;
-  const vizCfg = activeTest.vizCfg || {};
-  const setVizCfg = (patch) => updateActiveTest({ vizCfg: { ...vizCfg, ...patch } });
-  const cfg = { ...DEFAULT_CHART_STYLE, ...vizCfg };
+  
+  const vizCfg1D = activeTest.vizCfg1D || {};
+  const setVizCfg1D = (patch) => updateActiveTest({ vizCfg1D: { ...vizCfg1D, ...patch } });
+  const cfg1D = { ...DEFAULT_CHART_STYLE, ...vizCfg1D };
 
-  const [showCfg, setShowCfg] = useState(false);
-  const [fs, setFs] = useState(false);
-  const [localColors, setLocalColors] = useState(vizCfg.colors || {});
+  const vizCfg2D = activeTest.vizCfg2D || {};
+  const setVizCfg2D = (patch) => updateActiveTest({ vizCfg2D: { ...vizCfg2D, ...patch } });
+  const cfg2D = { ...DEFAULT_CHART_STYLE, ...vizCfg2D };
+
+  const [fs1D, setFs1D] = useState(false);
+  const [showCfg1D, setShowCfg1D] = useState(false);
+  const [fs2D, setFs2D] = useState(false);
+  const [showCfg2D, setShowCfg2D] = useState(false);
+  
+  const [showRenamer, setShowRenamer] = useState(false);
   const [hiddenSeries, setHiddenSeries] = useState({});
-  const [gates, setGates] = useState([]); // Array of nested gates
+  const [gates, setGates] = useState([]);
 
-  const updateColor = (id, color) => {
-    const next = { ...localColors, [id]: color };
-    setLocalColors(next);
-    setVizCfg({ colors: next });
-  };
+  const localColors = activeTest.fcColors || {};
+  const updateColor = (id, color) => updateActiveTest({ fcColors: { ...localColors, [id]: color } });
+  
+  const paramRenames = activeTest.paramRenames || {};
+  const setParamRenames = (patch) => updateActiveTest({ paramRenames: { ...paramRenames, ...patch } });
+  const panelArray = activeTest.fcPanel || [];
 
   const instances = useMemo(() => {
     let list = null;
@@ -564,21 +548,19 @@ const FCSDataVisualizations = ({ ctx, updater }) => {
   const loadedInstances = instances.filter(inst => globalFcsCache[inst.id]);
   const visibleInstances = loadedInstances.filter(inst => !hiddenSeries[inst.id]).map((inst, idx) => {
     const fcs = globalFcsCache[inst.id];
-    return {
-      ...inst, 
-      fcs, 
-      name: fcs.filename || inst.name, 
-      color: localColors[inst.id] || COLORS[idx % COLORS.length]
-    };
+    return { ...inst, fcs, name: fcs.filename || inst.name, color: localColors[inst.id] || COLORS[idx % COLORS.length] };
   });
 
-  const sharedParams = useMemo(() => {
+  const rawSharedParams = useMemo(() => {
     if (!loadedInstances.length) return [];
-    const union = new Set();
+    const map = new Map();
     loadedInstances.forEach(inst => {
-      globalFcsCache[inst.id].params.forEach(p => union.add((p.name || p.label || '').toUpperCase()));
+      globalFcsCache[inst.id].params.forEach(p => {
+        const key = (p.name || '').toUpperCase();
+        if (key && !map.has(key)) map.set(key, p);
+      });
     });
-    return Array.from(union).filter(Boolean).sort();
+    return Array.from(map.values()).sort((a,b) => (a.name||'').localeCompare(b.name||''));
   }, [loadedInstances]);
 
   const [overlayParam1D, setOverlayParam1D] = useState('');
@@ -590,14 +572,15 @@ const FCSDataVisualizations = ({ ctx, updater }) => {
   const [logY2D, setLogY2D] = useState(false);
 
   useEffect(() => {
-    if (sharedParams.length > 0) {
-      if (!sharedParams.includes(overlayParam1D)) setOverlayParam1D(sharedParams[0]);
-      if (!sharedParams.includes(xParam2D)) setXParam2D(sharedParams.find(p => p.includes('FSC')) || sharedParams[0]);
-      if (!sharedParams.includes(yParam2D)) setYParam2D(sharedParams.find(p => p.includes('SSC')) || sharedParams[1] || sharedParams[0]);
+    if (rawSharedParams.length > 0) {
+      const keys = rawSharedParams.map(p => p.name.toUpperCase());
+      if (!keys.includes(overlayParam1D)) setOverlayParam1D(keys[0]);
+      if (!keys.includes(xParam2D)) setXParam2D(keys.find(k => k.includes('FSC')) || keys[0]);
+      if (!keys.includes(yParam2D)) setYParam2D(keys.find(k => k.includes('SSC')) || keys[1] || keys[0]);
     }
-  }, [sharedParams, overlayParam1D, xParam2D, yParam2D]);
+  }, [rawSharedParams, overlayParam1D, xParam2D, yParam2D]);
 
-  const chartData1D = useMemo(() => {
+const chartData1D = useMemo(() => {
     if (!overlayParam1D || !visibleInstances.length) return { bins: [], domain: [0, 1] };
     let globalMin = Infinity; let globalMax = -Infinity;
     const transformValue = (val) => log1D ? Math.log10(Math.max(0, val) + 1) : val;
@@ -616,7 +599,7 @@ const FCSDataVisualizations = ({ ctx, updater }) => {
              const xRaw = s.fcs.events[i * s.fcs.numParams + gXIdx];
              const yRaw = s.fcs.events[i * s.fcs.numParams + gYIdx];
              const gx = g.logX ? Math.log10(Math.max(0, xRaw) + 1) : xRaw;
-             const gy = g.logY ? Math.log10(Math.max(0, yRaw) + 1) : yRaw;
+             const gy = g.logY ? Math.log10(Math.max(0, yRaw) + 1) : yRaw; // <-- Fixed the typo here
              if (!isPointInPoly(gx, gy, g.vertices)) { pass = false; break; }
           }
         }
@@ -655,29 +638,18 @@ const FCSDataVisualizations = ({ ctx, updater }) => {
 
   if (!loadedInstances.length) return null;
 
-  return (
-    <div className={`flex flex-col gap-4 bg-slate-50 border border-slate-200 rounded-xl p-4 shadow-sm ${fs ? FS_CLASSES + ' overflow-y-auto z-[999999]' : ''}`}>
-      {fs && <div className={OVERLAY_CLASSES} onClick={() => setFs(false)} />}
-      
-      <div className="flex justify-between items-center z-10 sticky top-0 bg-slate-50 py-2 border-b border-slate-200 mb-2">
-        <div className="flex items-center gap-3">
-          <h4 className="text-sm font-bold text-slate-700">📈 Overlaid Flow Cytometry Visualizations</h4>
-          {gates.length > 0 && (
-            <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 px-3 py-1 rounded-lg text-xs font-bold w-fit ml-4 shadow-sm">
-              <span>🎯 {gates.length} Active Gate{gates.length > 1 ? 's' : ''}</span>
-              <button onClick={() => setGates([])} className="ml-2 bg-white text-red-600 px-2 py-0.5 rounded border border-red-200 hover:bg-red-100">Clear</button>
-            </div>
-          )}
-        </div>
-        <div className="flex gap-2">
-          <ChartControlBar showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)} />
-          <button type="button" onClick={() => setFs(!fs)} className="font-bold py-1.5 px-3 rounded-lg text-xs border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 shadow-sm">{fs ? '↙️ Exit Fullscreen' : '↗️ Fullscreen'}</button>
-        </div>
-      </div>
+  const label1D = getParamLabel({name: overlayParam1D}, panelArray, paramRenames);
+  const labelX2D = getParamLabel({name: xParam2D}, panelArray, paramRenames);
+  const labelY2D = getParamLabel({name: yParam2D}, panelArray, paramRenames);
 
-      <div className="flex flex-col gap-3 z-10 flex-shrink-0">
+  return (
+    <div className="flex flex-col gap-4 mt-2 w-full">
+      <div className="flex flex-col gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200 shadow-sm">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] font-bold text-slate-500 uppercase self-center mr-2">Loaded Files:</span>
+          <button onClick={() => setShowRenamer(!showRenamer)} className="text-[10px] font-bold bg-white border border-slate-300 px-2 py-1 rounded shadow-sm hover:bg-slate-50">✏️ Rename Parameters</button>
+        </div>
         <div className="flex flex-wrap gap-2">
-          <span className="text-[10px] font-bold text-slate-500 uppercase self-center mr-2">Files:</span>
           {loadedInstances.map((inst, idx) => {
             const c = localColors[inst.id] || COLORS[idx % COLORS.length];
             const isHidden = hiddenSeries[inst.id];
@@ -692,12 +664,27 @@ const FCSDataVisualizations = ({ ctx, updater }) => {
           })}
         </div>
         
+        {showRenamer && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 bg-indigo-50 p-3 rounded-lg border border-indigo-200 mt-2">
+            {rawSharedParams.map(p => {
+              const key = p.name.toUpperCase();
+              const defaultLabel = getParamLabel(p, panelArray, {});
+              return (
+                <div key={key} className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-indigo-800">{key} (Default: {defaultLabel})</label>
+                  <input type="text" value={paramRenames[key] || ''} onChange={e => setParamRenames({ [key]: e.target.value })} placeholder={defaultLabel} className="border border-indigo-200 rounded px-2 py-1 text-xs" />
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         {gates.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 bg-red-50 border border-red-200 p-2 rounded-lg">
+          <div className="flex flex-wrap items-center gap-2 bg-red-50 border border-red-200 p-2 rounded-lg mt-2">
             <span className="text-[10px] font-bold text-red-600 uppercase">Active Gates:</span>
             {gates.map((g, idx) => (
               <div key={g.id} className="flex items-center gap-1.5 bg-white border border-red-200 text-red-700 px-2 py-1 rounded shadow-sm text-xs font-bold">
-                <span>🎯 Gate {idx + 1}: {g.xParam} vs {g.yParam}</span>
+                <span>🎯 Gate {idx + 1}: {getParamLabel({name: g.xParam}, panelArray, paramRenames)} vs {getParamLabel({name: g.yParam}, panelArray, paramRenames)}</span>
                 <button onClick={() => setGates(gates.filter(x => x.id !== g.id))} className="text-red-400 hover:text-red-600 font-black ml-1">×</button>
               </div>
             ))}
@@ -706,69 +693,79 @@ const FCSDataVisualizations = ({ ctx, updater }) => {
         )}
       </div>
 
-      {showCfg && <SharedChartStylePanel cfg={cfg} setCfg={setVizCfg} series={visibleInstances.map(s => ({ key: s.id, label: s.name, color: s.color }))} unit="a.u." />}
-
-      {/* Grid Layout restored! */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 z-10 mt-2">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 z-10 w-full">
         
         {/* 1D HISTOGRAM */}
-        <div className="flex flex-col gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-          <div className="flex justify-between items-center shrink-0">
-            <h5 className="text-xs font-bold text-slate-700">1D Histogram</h5>
-            <div className="flex items-center gap-3">
-              <select value={overlayParam1D} onChange={e => setOverlayParam1D(e.target.value)} className="border border-slate-300 rounded px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-bold text-blue-700">
-                {sharedParams.map(p => <option key={p} value={p}>{p}</option>)}
-              </select>
-              <label className="flex items-center gap-1 text-xs font-bold text-slate-700 cursor-pointer">
-                <input type="checkbox" checked={log1D} onChange={e => setLog1D(e.target.checked)} className="w-3.5 h-3.5 accent-blue-600" /> Log
-              </label>
+        <>
+          {fs1D && <div className={OVERLAY_CLASSES} onClick={() => setFs1D(false)} />}
+          <div className={`flex flex-col gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm w-full ${fs1D ? FS_CLASSES + ' z-[999999]' : ''}`}>
+            <div className="flex justify-between items-center z-10 shrink-0 border-b border-slate-100 pb-2">
+              <h5 className="text-sm font-bold text-slate-700">1D Histogram</h5>
+              <div className="flex items-center gap-2">
+                <select value={overlayParam1D} onChange={e => setOverlayParam1D(e.target.value)} className="border border-slate-300 rounded px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-bold text-blue-700 max-w-[120px]">
+                  {rawSharedParams.map(p => <option key={p.name} value={(p.name||'').toUpperCase()}>{getParamLabel(p, panelArray, paramRenames)}</option>)}
+                </select>
+                <label className="flex items-center gap-1 text-xs font-bold text-slate-700 cursor-pointer mr-2">
+                  <input type="checkbox" checked={log1D} onChange={e => setLog1D(e.target.checked)} className="w-3.5 h-3.5 accent-blue-600" /> Log
+                </label>
+                <ChartControlBar showCfg={showCfg1D} onToggleCfg={() => setShowCfg1D(!showCfg1D)} />
+                <button type="button" onClick={() => setFs1D(!fs1D)} className="font-bold py-1 px-2 rounded-lg text-[10px] border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 shadow-sm">{fs1D ? '↙️ Exit' : '↗️ Fullscreen'}</button>
+              </div>
+            </div>
+            
+            {showCfg1D && <SharedChartStylePanel cfg={cfg1D} setCfg={setVizCfg1D} series={visibleInstances.map(s => ({ key: s.id, label: s.name, color: s.color }))} unit="a.u." />}
+            
+            <div ref={chartRef1D} onMouseDown={zoom1D.onMouseDown} className={`bg-slate-50 rounded border border-slate-200 p-2 select-none relative overflow-hidden cursor-crosshair w-full ${fs1D ? 'flex-1 min-h-0' : 'h-[300px]'}`}>
+              {zoom1D.isZoomed && <button type="button" onClick={zoom1D.reset} className="absolute top-2 right-2 z-10 text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData1D.bins} margin={{ top: 10, right: 10, left: 10, bottom: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="x" type="number" domain={zoom1D.domain} allowDataOverflow tickFormatter={(v) => v.toFixed(log1D ? 1 : 0)} tick={{ fontSize: Math.max(9, cfg1D.fontSize - 2) }} label={{ value: `${label1D}${log1D ? ' (Log)' : ''}`, position: 'insideBottom', offset: -10, fontSize: cfg1D.fontSize }} />
+                  <YAxis tick={{ fontSize: Math.max(9, cfg1D.fontSize - 2) }} label={{ value: 'Count', angle: -90, position: 'insideLeft', offset: -5, fontSize: cfg1D.fontSize }} />
+                  <Tooltip labelFormatter={(label) => `Value: ${Number(label).toFixed(log1D ? 2 : 0)}`} formatter={(value) => [value, 'Events']} />
+                  {visibleInstances.map(s => <Line key={s.id} type="monotone" dataKey={s.id} name={s.name} stroke={s.color} strokeWidth={cfg1D.lineThickness || 2} dot={false} isAnimationActive={false} />)}
+                  {zoom1D.refLo !== null && zoom1D.refHi !== null && <ReferenceArea x1={zoom1D.refLo} x2={zoom1D.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
+                </LineChart>
+              </ResponsiveContainer>
             </div>
           </div>
-          
-          <div ref={chartRef1D} onMouseDown={zoom1D.onMouseDown} style={{ width: '100%', aspectRatio: fs ? undefined : String(cfg.aspect || 1.8), height: fs ? 500 : (cfg.height || 300) }} className="bg-slate-50 rounded border border-slate-200 p-2 select-none relative overflow-hidden cursor-crosshair min-h-[300px]">
-            {zoom1D.isZoomed && <button type="button" onClick={zoom1D.reset} className="absolute top-2 right-2 z-10 text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData1D.bins} margin={{ top: 10, right: 10, left: 10, bottom: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="x" type="number" domain={zoom1D.domain} allowDataOverflow tickFormatter={(v) => v.toFixed(log1D ? 1 : 0)} tick={{ fontSize: Math.max(9, cfg.fontSize - 2) }} label={{ value: `${overlayParam1D}${log1D ? ' (Log)' : ''}`, position: 'insideBottom', offset: -10, fontSize: cfg.fontSize }} />
-                <YAxis tick={{ fontSize: Math.max(9, cfg.fontSize - 2) }} label={{ value: 'Count', angle: -90, position: 'insideLeft', offset: -5, fontSize: cfg.fontSize }} />
-                <Tooltip labelFormatter={(label) => `Value: ${Number(label).toFixed(log1D ? 2 : 0)}`} formatter={(value) => [value, 'Events']} />
-                {visibleInstances.map(s => <Line key={s.id} type="monotone" dataKey={s.id} name={s.name} stroke={s.color} strokeWidth={cfg.lineThickness || 2} dot={false} isAnimationActive={false} />)}
-                {zoom1D.refLo !== null && zoom1D.refHi !== null && <ReferenceArea x1={zoom1D.refLo} x2={zoom1D.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
+        </>
 
         {/* 2D SCATTER */}
-        <div className="flex flex-col gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-          <div className="flex justify-between items-center shrink-0">
-            <h5 className="text-xs font-bold text-slate-700">2D Scatter (Drag to Gate)</h5>
-            <div className="flex items-center gap-3">
-              <select value={xParam2D} onChange={e => setXParam2D(e.target.value)} className="border border-slate-300 rounded px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-bold text-blue-700 max-w-[90px]">
-                {sharedParams.map(p => <option key={p} value={p}>{p}</option>)}
-              </select>
-              <label className="flex items-center gap-1 text-xs font-bold text-slate-700 cursor-pointer">
-                <input type="checkbox" checked={logX2D} onChange={e => setLogX2D(e.target.checked)} className="w-3.5 h-3.5 accent-blue-600" /> Log
-              </label>
-              <span className="text-slate-300">|</span>
-              <select value={yParam2D} onChange={e => setYParam2D(e.target.value)} className="border border-slate-300 rounded px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-bold text-blue-700 max-w-[90px]">
-                {sharedParams.map(p => <option key={p} value={p}>{p}</option>)}
-              </select>
-              <label className="flex items-center gap-1 text-xs font-bold text-slate-700 cursor-pointer">
-                <input type="checkbox" checked={logY2D} onChange={e => setLogY2D(e.target.checked)} className="w-3.5 h-3.5 accent-blue-600" /> Log
-              </label>
+        <>
+          {fs2D && <div className={OVERLAY_CLASSES} onClick={() => setFs2D(false)} />}
+          <div className={`flex flex-col gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm w-full ${fs2D ? FS_CLASSES + ' z-[999999]' : ''}`}>
+            <div className="flex justify-between items-center shrink-0 border-b border-slate-100 pb-2">
+              <h5 className="text-sm font-bold text-slate-700">2D Scatter (Drag to Gate)</h5>
+              <div className="flex items-center gap-2">
+                <select value={xParam2D} onChange={e => setXParam2D(e.target.value)} className="border border-slate-300 rounded px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-bold text-blue-700 max-w-[90px]">
+                  {rawSharedParams.map(p => <option key={p.name} value={(p.name||'').toUpperCase()}>{getParamLabel(p, panelArray, paramRenames)}</option>)}
+                </select>
+                <label className="flex items-center gap-1 text-xs font-bold text-slate-700 cursor-pointer">
+                  <input type="checkbox" checked={logX2D} onChange={e => setLogX2D(e.target.checked)} className="w-3.5 h-3.5 accent-blue-600" /> Log
+                </label>
+                <span className="text-slate-300 px-1">|</span>
+                <select value={yParam2D} onChange={e => setYParam2D(e.target.value)} className="border border-slate-300 rounded px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-bold text-blue-700 max-w-[90px]">
+                  {rawSharedParams.map(p => <option key={p.name} value={(p.name||'').toUpperCase()}>{getParamLabel(p, panelArray, paramRenames)}</option>)}
+                </select>
+                <label className="flex items-center gap-1 text-xs font-bold text-slate-700 cursor-pointer mr-2">
+                  <input type="checkbox" checked={logY2D} onChange={e => setLogY2D(e.target.checked)} className="w-3.5 h-3.5 accent-blue-600" /> Log
+                </label>
+                <ChartControlBar showCfg={showCfg2D} onToggleCfg={() => setShowCfg2D(!showCfg2D)} />
+                <button type="button" onClick={() => setFs2D(!fs2D)} className="font-bold py-1 px-2 rounded-lg text-[10px] border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 shadow-sm">{fs2D ? '↙️ Exit' : '↗️ Fullscreen'}</button>
+              </div>
             </div>
+            
+            {showCfg2D && <SharedChartStylePanel cfg={cfg2D} setCfg={setVizCfg2D} series={visibleInstances.map(s => ({ key: s.id, label: s.name, color: s.color }))} unit="a.u." />}
+            
+            <Canvas2DPlotOverlay series={visibleInstances} xParam={xParam2D} yParam={yParam2D} xLabel={labelX2D} yLabel={labelY2D} logX={logX2D} logY={logY2D} cfg={cfg2D} fs={fs2D} gates={gates} onAddGate={(g) => setGates(prev => [...prev, g])} />
           </div>
-          <Canvas2DPlotOverlay series={visibleInstances} xParam={xParam2D} yParam={yParam2D} logX={logX2D} logY={logY2D} cfg={cfg} fs={fs} gates={gates} onAddGate={(g) => setGates(prev => [...prev, g])} />
-        </div>
+        </>
 
       </div>
     </div>
   );
 };
-
-
 
 // =========================================================================
 // INSTRUMENTAL SETUP COMPONENT
@@ -782,6 +779,7 @@ export const InstrumentalSetup = ({ ctx }) => {
   const instrumentalFields = [
     { key: 'cytometerModel', label: 'Cytometer Model', type: 'text', placeholder: 'e.g. FACSCanto II' },
     { key: 'cytometerSerial', label: 'Cytometer Serial Number', type: 'text', placeholder: 'e.g. V96300734' },
+    { key: 'acquisitionSoftware', label: 'Acquisition Software', type: 'text', placeholder: 'e.g. FACSDiva' },
     { key: 'lasers', label: 'Lasers Config', type: 'textarea', placeholder: 'e.g. Blue (488nm), Red (633nm), Violet (405nm)' },
     { key: 'threshold', label: 'Threshold', type: 'text', placeholder: 'e.g. FSC, 5000' },
     { key: 'compensationApplied', label: 'Compensation Applied', type: 'select', options: ['Yes', 'No', 'Unknown'] },
@@ -814,6 +812,7 @@ export const InstrumentalSetup = ({ ctx }) => {
     </div>
   );
 };
+
 // =========================================================================
 // GLOBAL CACHE (Ties loaded files to their specific condition tab)
 // =========================================================================
@@ -846,7 +845,6 @@ export const Data = ({ ctx }) => {
   const updatePopulation = (id, field, value) => updatePopulations(populations.map(p => p.id === id ? { ...p, [field]: value } : p));
   const removePopulation = (id) => updatePopulations(populations.filter(p => p.id !== id));
 
-  // --- FCS GLOBAL CACHE STATE ---
   const [updater, setUpdater] = useState(0);
   const [fcsMsg, setFcsMsg] = useState('');
 
@@ -862,17 +860,32 @@ export const Data = ({ ctx }) => {
           throw new Error('Parser returned invalid data structure.');
         }
         
-        parsed.filename = file.name; // Use file.name for graph labels!
-        
-        // Save to global session cache keyed by condition ID
+        parsed.filename = file.name;
         globalFcsCache[activeTest.id] = parsed;
         
-        // Auto-fill experimental conditions and instrumental setup
         const metadataUpdates = mapFCSMetadata(parsed.textDict);
-        updateActiveTest(metadataUpdates);
         
+        // Auto-build Staining Panel if empty
+        const currentPanel = Array.isArray(t.fcPanel) ? t.fcPanel : [];
+        if (currentPanel.length === 0) {
+            const newPanel = [];
+            parsed.params.forEach((p, i) => {
+                const n = (p.name || '').toUpperCase();
+                if (n.includes('FSC') || n.includes('SSC') || n.includes('TIME')) return;
+                newPanel.push({
+                    id: `ch_${Date.now()}_${i}`,
+                    channel: p.name || `FL${i}`,
+                    fluorochrome: '',
+                    antibody: p.label ? p.label.replace(/[/\\]+$/, '').trim() : '',
+                    clone: '',
+                    vendor: ''
+                });
+            });
+            if (newPanel.length > 0) metadataUpdates.fcPanel = newPanel;
+        }
+
+        updateActiveTest(metadataUpdates);
         setFcsMsg(`✅ Loaded ${parsed.numEvents.toLocaleString()} events. Fields auto-filled!`);
-        // Force UI update
         setUpdater(u => u + 1);
       } catch (err) {
         setFcsMsg(`⚠️ Error: ${err.message}`);
@@ -884,7 +897,6 @@ export const Data = ({ ctx }) => {
     e.target.value = '';
   };
 
-  // --- CSV IMPORT STATE ---
   const [importText, setImportText] = useState('');
   const [importMsg, setImportMsg] = useState('');
 
@@ -925,34 +937,6 @@ export const Data = ({ ctx }) => {
   return (
     <CollapsibleSection title="Flow Cytometry Data" icon="🩸" defaultOpen={true}>
       <div className="flex flex-col gap-6">
-        {/* Staining Panel */}
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-          <div className="flex justify-between items-center mb-3">
-            <h4 className="text-sm font-bold text-blue-900">🧪 Staining Panel</h4>
-            <button onClick={addChannel} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm">+ Add Channel</button>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left bg-white rounded-lg overflow-hidden">
-              <thead className="bg-blue-100 text-blue-800 uppercase">
-                <tr><th className="px-3 py-2">Channel</th><th className="px-3 py-2">Fluorochrome</th><th className="px-3 py-2">Antibody / Target</th><th className="px-3 py-2">Clone</th><th className="px-3 py-2">Vendor</th><th className="px-3 py-2"></th></tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {panel.length === 0 ? (<tr><td colSpan="6" className="px-3 py-4 text-center text-slate-400 italic">No channels defined.</td></tr>) : panel.map((ch) => (
-                  <tr key={ch.id} className="hover:bg-slate-50">
-                    <td className="px-3 py-1.5"><input type="text" value={ch.channel} onChange={e => updateChannel(ch.id, 'channel', e.target.value)} className="border border-slate-300 rounded px-2 py-1 w-20" /></td>
-                    <td className="px-3 py-1.5"><input type="text" value={ch.fluorochrome} onChange={e => updateChannel(ch.id, 'fluorochrome', e.target.value)} className="border border-slate-300 rounded px-2 py-1 w-24" placeholder="e.g. FITC" /></td>
-                    <td className="px-3 py-1.5"><input type="text" value={ch.antibody} onChange={e => updateChannel(ch.id, 'antibody', e.target.value)} className="border border-slate-300 rounded px-2 py-1 w-32" placeholder="e.g. anti-CD4" /></td>
-                    <td className="px-3 py-1.5"><input type="text" value={ch.clone} onChange={e => updateChannel(ch.id, 'clone', e.target.value)} className="border border-slate-300 rounded px-2 py-1 w-24" /></td>
-                    <td className="px-3 py-1.5"><input type="text" value={ch.vendor} onChange={e => updateChannel(ch.id, 'vendor', e.target.value)} className="border border-slate-300 rounded px-2 py-1 w-24" /></td>
-                    <td className="px-3 py-1.5"><button onClick={() => removeChannel(ch.id)} className="text-red-500 hover:text-red-700 font-bold">×</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* FCS RAW DATA IMPORTER */}
         <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 flex flex-col gap-3">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <h4 className="text-sm font-bold text-indigo-900">🧬 Import Raw FCS File (.fcs)</h4>
@@ -967,10 +951,34 @@ export const Data = ({ ctx }) => {
           </div>
         </div>
 
-        {/* NEW UNIFIED DATA VISUALIZATIONS */}
         <FCSDataVisualizations ctx={ctx} updater={updater} />
 
-        {/* CSV TEXT IMPORTER */}
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+          <div className="flex justify-between items-center mb-3">
+            <h4 className="text-sm font-bold text-blue-900">🧪 Staining Panel</h4>
+            <button onClick={addChannel} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm">+ Add Channel</button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left bg-white rounded-lg overflow-hidden">
+              <thead className="bg-blue-100 text-blue-800 uppercase">
+                <tr><th className="px-3 py-2">Channel</th><th className="px-3 py-2">Fluorochrome</th><th className="px-3 py-2">Antibody / Target</th><th className="px-3 py-2">Clone</th><th className="px-3 py-2">Vendor</th><th className="px-3 py-2"></th></tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {panel.length === 0 ? (<tr><td colSpan="6" className="px-3 py-4 text-center text-slate-400 italic">No channels defined. (Load an FCS file to auto-populate)</td></tr>) : panel.map((ch) => (
+                  <tr key={ch.id} className="hover:bg-slate-50">
+                    <td className="px-3 py-1.5"><input type="text" value={ch.channel} onChange={e => updateChannel(ch.id, 'channel', e.target.value)} className="border border-slate-300 rounded px-2 py-1 w-20" /></td>
+                    <td className="px-3 py-1.5"><input type="text" value={ch.fluorochrome} onChange={e => updateChannel(ch.id, 'fluorochrome', e.target.value)} className="border border-slate-300 rounded px-2 py-1 w-24" placeholder="e.g. FITC" /></td>
+                    <td className="px-3 py-1.5"><input type="text" value={ch.antibody} onChange={e => updateChannel(ch.id, 'antibody', e.target.value)} className="border border-slate-300 rounded px-2 py-1 w-32" placeholder="e.g. anti-CD4" /></td>
+                    <td className="px-3 py-1.5"><input type="text" value={ch.clone} onChange={e => updateChannel(ch.id, 'clone', e.target.value)} className="border border-slate-300 rounded px-2 py-1 w-24" /></td>
+                    <td className="px-3 py-1.5"><input type="text" value={ch.vendor} onChange={e => updateChannel(ch.id, 'vendor', e.target.value)} className="border border-slate-300 rounded px-2 py-1 w-24" /></td>
+                    <td className="px-3 py-1.5"><button onClick={() => removeChannel(ch.id)} className="text-red-500 hover:text-red-700 font-bold">×</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
         <div className="bg-sky-50 border border-sky-200 rounded-xl p-4 flex flex-col gap-3">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <h4 className="text-sm font-bold text-sky-900">📥 Import Summary Table (CSV / Text)</h4>
@@ -983,7 +991,6 @@ export const Data = ({ ctx }) => {
           </div>
         </div>
 
-        {/* Populations & Gating Table */}
         <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
           <div className="flex justify-between items-center mb-3">
             <h4 className="text-sm font-bold text-emerald-900">🎯 Populations & Gating Results</h4>
@@ -1015,26 +1022,27 @@ export const Data = ({ ctx }) => {
   );
 };
 
-
 // =========================================================================
-// FCS MULTI-FILE OVERLAY VISUALIZATION
+// EXPORTED: DATA ANALYSIS: FCS OVERLAY (1D Histogram specific for Analysis Tab)
 // =========================================================================
-const FCSOverlayVisualization = ({ ctx }) => {
+export const FCSOverlayVisualization = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
-  const vizCfg = activeTest.vizCfg || {};
-  const setVizCfg = (patch) => updateActiveTest({ vizCfg: { ...vizCfg, ...patch } });
+  const vizCfgAna = activeTest.vizCfgAnalysis || {};
+  const setVizCfgAna = (patch) => updateActiveTest({ vizCfgAnalysis: { ...vizCfgAna, ...patch } });
+  const cfgAna = { ...DEFAULT_CHART_STYLE, ...vizCfgAna };
 
-  // Gather all available condition instances
+  const [fs, setFs] = useState(false);
+  const [showCfg, setShowCfg] = useState(false);
+
+  const hiddenSeries = activeTest.hiddenSeries || {}; 
+  const localColors = activeTest.fcColors || {};
+  const paramRenames = activeTest.paramRenames || {};
+
   const instances = useMemo(() => {
     let list = null;
     if (ctx) {
       if (typeof ctx.getInstances === 'function') { try { list = ctx.getInstances(); } catch {} }
       if (!list && Array.isArray(ctx.instances) && ctx.instances.length) list = ctx.instances;
-      if (!list && Array.isArray(ctx.siblings) && ctx.siblings.length) list = ctx.siblings;
-      if (!list && (Array.isArray(ctx.tests) || Array.isArray(ctx.allTests))) {
-        const all = ctx.tests || ctx.allTests;
-        list = activeTest.name ? all.filter((t) => t && t.name === activeTest.name) : all;
-      }
     }
     if (!list || !list.length) list = [activeTest];
     const norm = list.filter(Boolean).map(t => ({ id: t.id, name: t.instanceName || t.name, test: t }));
@@ -1042,54 +1050,56 @@ const FCSOverlayVisualization = ({ ctx }) => {
     return norm;
   }, [ctx, activeTest]);
 
-  // Only show instances that have uploaded FCS data in the current session
   const loadedInstances = instances.filter(inst => globalFcsCache[inst.id]);
+  const visibleInstances = loadedInstances.filter(inst => !hiddenSeries[inst.id]).map((inst, idx) => {
+    const fcs = globalFcsCache[inst.id];
+    return { ...inst, fcs, name: fcs.filename || inst.name, color: localColors[inst.id] || COLORS[idx % COLORS.length] };
+  });
 
-  // Find common parameters across loaded files
-  const sharedParams = useMemo(() => {
+  const rawSharedParams = useMemo(() => {
     if (!loadedInstances.length) return [];
-    const union = new Set();
+    const map = new Map();
     loadedInstances.forEach(inst => {
-      globalFcsCache[inst.id].params.forEach(p => union.add(p.name.toUpperCase()));
+      globalFcsCache[inst.id].params.forEach(p => {
+        const key = (p.name || '').toUpperCase();
+        if (key && !map.has(key)) map.set(key, p);
+      });
     });
-    return Array.from(union).sort();
+    return Array.from(map.values()).sort((a,b) => (a.name||'').localeCompare(b.name||''));
   }, [loadedInstances]);
 
   const [overlayParam, setOverlayParam] = useState('');
+  const [logScale, setLogScale] = useState(false);
+
   useEffect(() => {
-    if (sharedParams.length > 0 && !sharedParams.includes(overlayParam)) setOverlayParam(sharedParams[0]);
-  }, [sharedParams, overlayParam]);
+    if (rawSharedParams.length > 0 && !rawSharedParams.find(p => p.name.toUpperCase() === overlayParam)) {
+      setOverlayParam(rawSharedParams[0].name.toUpperCase());
+    }
+  }, [rawSharedParams, overlayParam]);
 
-  const [hiddenSeries, setHiddenSeries] = useState({});
-  const visibleInstances = loadedInstances.filter(inst => !hiddenSeries[inst.id]);
-
-  // Generate binned histogram data
   const chartData = useMemo(() => {
-    if (!overlayParam || !visibleInstances.length) return [];
+    if (!overlayParam || !visibleInstances.length) return { bins: [], domain: [0, 1] };
     let globalMin = Infinity; let globalMax = -Infinity;
+    const transformValue = (val) => logScale ? Math.log10(Math.max(0, val) + 1) : val;
 
-    const rawSeries = visibleInstances.map(inst => {
-      const fcs = globalFcsCache[inst.id];
-      const paramIdx = fcs.params.findIndex(p => (p.name || '').toUpperCase() === overlayParam);
-      if (paramIdx < 0) return { id: inst.id, data: null };
+    const rawSeries = visibleInstances.map(s => {
+      const pIdx = s.fcs.params.findIndex(p => (p.name || '').toUpperCase() === overlayParam || (p.label || '').toUpperCase() === overlayParam);
+      if (pIdx < 0) return { id: s.id, data: null };
 
-      const channelData = new Float32Array(fcs.numEvents);
-      for (let i = 0; i < fcs.numEvents; i++) {
-        const val = fcs.events[i * fcs.numParams + paramIdx];
+      const channelData = new Float32Array(s.fcs.numEvents);
+      for (let i = 0; i < s.fcs.numEvents; i++) {
+        let val = transformValue(s.fcs.events[i * s.fcs.numParams + pIdx]);
         channelData[i] = val;
         if (val < globalMin) globalMin = val;
         if (val > globalMax) globalMax = val;
       }
-      return { id: inst.id, data: channelData };
+      return { id: s.id, data: channelData };
     });
 
-    if (globalMin === Infinity || globalMax === -Infinity) return [];
-
+    if (globalMin === Infinity) { globalMin = 0; globalMax = 1000; }
     const BINS = 200;
     const binWidth = (globalMax - globalMin) / BINS || 1;
-    const bins = Array.from({ length: BINS }, (_, i) => ({
-      x: globalMin + (i + 0.5) * binWidth
-    }));
+    const bins = Array.from({ length: BINS }, (_, i) => ({ x: globalMin + (i + 0.5) * binWidth }));
 
     rawSeries.forEach(series => {
       if (!series.data) return;
@@ -1102,106 +1112,98 @@ const FCSOverlayVisualization = ({ ctx }) => {
       }
     });
 
-    return bins;
-  }, [overlayParam, visibleInstances]);
+    return { bins, domain: [globalMin, globalMax] };
+  }, [overlayParam, visibleInstances, logScale]);
 
-  const [refAreaLeft, setRefAreaLeft] = useState('');
-  const [refAreaRight, setRefAreaRight] = useState('');
-  const [xDomain, setXDomain] = useState(null);
-
-  const zoom = () => {
-    if (refAreaLeft === refAreaRight || refAreaLeft === '' || refAreaRight === '') {
-      setRefAreaLeft(''); setRefAreaRight(''); return;
-    }
-    let [left, right] = [refAreaLeft, refAreaRight];
-    if (left > right) [left, right] = [right, left];
-    setXDomain([left, right]);
-    setRefAreaLeft(''); setRefAreaRight('');
-  };
+  const chartRef = useRef(null);
+  const zoom = useXZoom(chartRef, chartData.domain);
+  useEffect(() => { zoom.reset(); }, [overlayParam, logScale]); 
 
   if (!loadedInstances.length) return null;
 
-  const colors = vizCfg.colors || {};
+  const panelArray = activeTest.fcPanel || [];
+  const label1D = getParamLabel({name: overlayParam}, panelArray, paramRenames);
 
   return (
-    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-4">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <h4 className="text-sm font-bold text-slate-700">📈 Overlay 1D Histograms (Cross-Condition)</h4>
-        <div className="flex items-center gap-3">
-          <label className="text-[10px] font-bold text-slate-500 uppercase">Parameter:</label>
-          <select value={overlayParam} onChange={e => { setOverlayParam(e.target.value); setXDomain(null); }} className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-indigo-500 font-bold text-indigo-700">
-            {sharedParams.map(p => <option key={p} value={p}>{p}</option>)}
-          </select>
-          {xDomain && <button onClick={() => setXDomain(null)} className="text-[10px] font-bold bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>}
+    <>
+      {fs && <div className={OVERLAY_CLASSES} onClick={() => setFs(false)} />}
+      <div className={`flex flex-col gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm w-full ${fs ? FS_CLASSES + ' z-[999999]' : ''}`}>
+        <div className="flex justify-between items-center z-10 shrink-0 border-b border-slate-100 pb-2">
+          <h5 className="text-sm font-bold text-slate-700">1D Histogram (Data Analysis)</h5>
+          <div className="flex items-center gap-2">
+            <select value={overlayParam} onChange={e => setOverlayParam(e.target.value)} className="border border-slate-300 rounded px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-bold text-blue-700 max-w-[120px]">
+              {rawSharedParams.map(p => <option key={p.name} value={(p.name||'').toUpperCase()}>{getParamLabel(p, panelArray, paramRenames)}</option>)}
+            </select>
+            <label className="flex items-center gap-1 text-xs font-bold text-slate-700 cursor-pointer mr-2">
+              <input type="checkbox" checked={logScale} onChange={e => setLogScale(e.target.checked)} className="w-3.5 h-3.5 accent-blue-600" /> Log
+            </label>
+            <ChartControlBar showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)} />
+            <button type="button" onClick={() => setFs(!fs)} className="font-bold py-1 px-2 rounded-lg text-[10px] border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 shadow-sm">{fs ? '↙️ Exit' : '↗️ Fullscreen'}</button>
+          </div>
+        </div>
+        
+        {showCfg && <SharedChartStylePanel cfg={cfgAna} setCfg={setVizCfgAna} series={visibleInstances.map(s => ({ key: s.id, label: s.name, color: s.color }))} unit="a.u." />}
+        
+        <div ref={chartRef} onMouseDown={zoom.onMouseDown} className={`bg-slate-50 rounded border border-slate-200 p-2 select-none relative overflow-hidden cursor-crosshair ${fs ? 'flex-1 min-h-0' : 'h-[300px]'}`}>
+          {zoom.isZoomed && <button type="button" onClick={zoom.reset} className="absolute top-2 right-2 z-10 text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={chartData.bins} margin={{ top: 10, right: 10, left: 10, bottom: 20 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+              <XAxis dataKey="x" type="number" domain={zoom.domain} allowDataOverflow tickFormatter={(v) => v.toFixed(logScale ? 1 : 0)} tick={{ fontSize: Math.max(9, cfgAna.fontSize - 2) }} label={{ value: `${label1D}${logScale ? ' (Log)' : ''}`, position: 'insideBottom', offset: -10, fontSize: cfgAna.fontSize }} />
+              <YAxis tick={{ fontSize: Math.max(9, cfgAna.fontSize - 2) }} label={{ value: 'Count', angle: -90, position: 'insideLeft', offset: -5, fontSize: cfgAna.fontSize }} />
+              <Tooltip labelFormatter={(label) => `Value: ${Number(label).toFixed(logScale ? 2 : 0)}`} formatter={(value) => [value, 'Events']} />
+              {visibleInstances.map(s => <Line key={s.id} type="monotone" dataKey={s.id} name={s.name} stroke={s.color} strokeWidth={cfgAna.lineThickness || 2} dot={false} isAnimationActive={false} />)}
+              {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
+            </LineChart>
+          </ResponsiveContainer>
         </div>
       </div>
-
-      <div className="flex flex-wrap gap-2">
-        {loadedInstances.map((inst, idx) => {
-          const c = colors[inst.id] || COLORS[idx % COLORS.length];
-          return (
-            <label key={inst.id} className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs font-bold border cursor-pointer ${hiddenSeries[inst.id] ? 'bg-slate-100 border-slate-200 text-slate-400' : 'bg-white border-slate-200 text-slate-700'}`}>
-              <input type="checkbox" checked={!hiddenSeries[inst.id]} onChange={() => setHiddenSeries(p => ({ ...p, [inst.id]: !p[inst.id] }))} className="hidden" />
-              <input type="color" value={c} onChange={(e) => setVizCfg({ colors: { ...colors, [inst.id]: e.target.value } })} onClick={(e) => e.stopPropagation()} className="w-4 h-4 rounded cursor-pointer border border-slate-300 p-0" />
-              <span className="truncate max-w-[200px]">{inst.name}</span>
-            </label>
-          );
-        })}
-      </div>
-
-      <div className="w-full h-80 bg-slate-50 rounded border border-slate-200 p-2 select-none relative">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart
-            data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 20 }}
-            onMouseDown={(e) => e && setRefAreaLeft(e.activeLabel)}
-            onMouseMove={(e) => e && refAreaLeft && setRefAreaRight(e.activeLabel)}
-            onMouseUp={zoom}
-          >
-            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-            <XAxis dataKey="x" type="number" domain={xDomain || ['dataMin', 'dataMax']} allowDataOverflow tickFormatter={(v) => formatTickVal(v)} tick={{ fontSize: 10 }} label={{ value: overlayParam, position: 'insideBottom', offset: -10, fontSize: 11 }} />
-            <YAxis tick={{ fontSize: 10 }} label={{ value: 'Count', angle: -90, position: 'insideLeft', fontSize: 11 }} />
-            <Tooltip labelFormatter={(label) => `Value: ${formatTickVal(label)}`} formatter={(value) => [value, 'Events']} />
-            {visibleInstances.map((inst, idx) => (
-              <Line key={inst.id} type="monotone" dataKey={inst.id} name={inst.name} stroke={colors[inst.id] || COLORS[idx % COLORS.length]} strokeWidth={2} dot={false} isAnimationActive={false} />
-            ))}
-            {refAreaLeft && refAreaRight && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} strokeOpacity={0.3} fill="#cbd5e1" />}
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-      <p className="text-[10px] text-slate-500 mt-1">💡 Drag horizontally across the graph to zoom into a region. Click color pickers to customize each trace.</p>
-    </div>
+    </>
   );
 };
 
 export const DataAnalysis = ({ ctx }) => {
-  const { activeTest } = ctx;
+  const { activeTest, updateActiveTest } = ctx;
   const populations = Array.isArray(activeTest.fcPopulations) ? activeTest.fcPopulations : [];
   
   const chartData = populations.filter(p => p.percentParent !== '' && p.percentParent !== undefined).map(p => ({
     name: p.name, value: parseFloat(p.percentParent) || 0, fill: p.color || '#3b82f6'
   }));
 
+  const vizCfgFreq = activeTest.vizCfgFreq || {};
+  const setVizCfgFreq = (patch) => updateActiveTest({ vizCfgFreq: { ...vizCfgFreq, ...patch } });
+  const cfgFreq = { ...DEFAULT_CHART_STYLE, ...vizCfgFreq };
+  const [fsFreq, setFsFreq] = useState(false);
+  const [showCfgFreq, setShowCfgFreq] = useState(false);
+
   return (
     <CollapsibleSection title="Data Analysis & Visualization" icon="📊" defaultOpen={true}>
       <div className="flex flex-col gap-6">
-        
-        {/* Dynamic Multi-File Overlay added here! */}
         <FCSOverlayVisualization ctx={ctx} />
-
         {chartData.length > 0 ? (
-          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
-            <h4 className="text-sm font-bold text-slate-700 mb-4">Population Frequencies (% of Parent)</h4>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 50 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="name" tick={{ fontSize: 12 }} angle={-15} textAnchor="end" />
-                <YAxis label={{ value: '% of Parent', angle: -90, position: 'insideLeft' }} />
-                <Tooltip formatter={(value) => `${value}%`} />
-                <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                  {chartData.map((entry, index) => (<Cell key={`cell-${index}`} fill={entry.fill} />))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+          <div className={`bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3 ${fsFreq ? FS_CLASSES + ' z-[999999]' : ''}`}>
+            {fsFreq && <div className={OVERLAY_CLASSES} onClick={() => setFsFreq(false)} />}
+            <div className="flex justify-between items-center shrink-0 z-10 border-b border-slate-100 pb-2">
+              <h4 className="text-sm font-bold text-slate-700">Population Frequencies (% of Parent)</h4>
+              <div className="flex items-center gap-2">
+                <ChartControlBar showCfg={showCfgFreq} onToggleCfg={() => setShowCfgFreq(!showCfgFreq)} />
+                <button type="button" onClick={() => setFsFreq(!fsFreq)} className="font-bold py-1 px-2 rounded-lg text-[10px] border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 shadow-sm">{fsFreq ? '↙️ Exit' : '↗️ Fullscreen'}</button>
+              </div>
+            </div>
+            {showCfgFreq && <SharedChartStylePanel cfg={cfgFreq} setCfg={setVizCfgFreq} series={chartData.map(c => ({key: c.name, label: c.name, color: c.fill}))} unit="%" />  }
+            <div className={`relative ${fsFreq ? 'flex-1 min-h-0' : 'h-[300px]'}`}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 50 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="name" tick={{ fontSize: Math.max(9, cfgFreq.fontSize - 2) }} angle={-15} textAnchor="end" />
+                  <YAxis tick={{ fontSize: Math.max(9, cfgFreq.fontSize - 2) }} label={{ value: '% of Parent', angle: -90, position: 'insideLeft', fontSize: cfgFreq.fontSize }} />
+                  <Tooltip formatter={(value) => `${value}%`} />
+                  <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                    {chartData.map((entry, index) => (<Cell key={`cell-${index}`} fill={entry.fill} />))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         ) : (
           <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">
@@ -1218,12 +1220,20 @@ export const NotebookExtra = ({ ctx, checkId }) => {
   const t = activeTest || {};
   
   if (checkId === 'cond') {
-    return `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;"><b>Flow Cytometry Conditions:</b> Date: ${t.experimentDate || 'N/A'} | Cells: ${t.cellNumber || 'N/A'} | Machine: ${t.fcMachine || 'N/A'} | Software: ${t.acquisitionSoftware || 'N/A'}</p>`;
+    const parts = [];
+    if (t.experimentDate) parts.push(`Date: ${t.experimentDate}`);
+    if (t.cellNumber) parts.push(`Cells: ${t.cellNumber}`);
+    if (t.liveDeadStain) parts.push(`Live/Dead: ${t.liveDeadStain}`);
+    if (t.fixation && t.fixation !== 'None') parts.push(`Fixation: ${t.fixation}`);
+    if (t.permeabilization && t.permeabilization !== 'None') parts.push(`Perm: ${t.permeabilization}`);
+    if (t.otherConditions) parts.push(`Other: ${t.otherConditions}`);
+    return `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;"><b>Flow Cytometry Conditions:</b> ${parts.join(' | ') || 'N/A'}</p>`;
   }
   if (checkId === 'instrument') {
     const instr = [];
     if (t.cytometerModel) instr.push(`Model: ${t.cytometerModel}`);
     if (t.cytometerSerial) instr.push(`Serial: ${t.cytometerSerial}`);
+    if (t.acquisitionSoftware) instr.push(`Software: ${t.acquisitionSoftware}`);
     if (t.lasers) instr.push(`Lasers: ${t.lasers}`);
     if (t.threshold) instr.push(`Threshold: ${t.threshold}`);
     if (t.compensationApplied) instr.push(`Compensation: ${t.compensationApplied}`);
