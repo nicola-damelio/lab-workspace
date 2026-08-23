@@ -1038,6 +1038,28 @@ const elementsToSVG = (structure, height = 320) => {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${structure.viewBox}" style="height:${height}px;max-width:100%;font-family:sans-serif;background:white;">${inner}</svg>`;
 };
 
+// =========================================================================
+// ORGANIC ATOM NAMING (Robust fallback for RDKit molblocks)
+// =========================================================================
+const deriveOrganicAtomNaming = (molblock) => {
+  const lines = molblock.split('\n');
+  const counts = lines[3] || '';
+  const nA = parseInt(counts.substring(0, 3).trim(), 10) || 0;
+  const atomNameList = [];
+  const elements = [];
+  const elementCounts = {};
+  for (let i = 0; i < nA; i++) {
+    const l = lines[4 + i] || '';
+    // MDL Molfile V2000: element symbol is at columns 31-33 (0-indexed)
+    let elem = l.substring(31, 34).trim();
+    if (!elem || !/^[A-Za-z]+$/.test(elem)) elem = 'C'; // fallback
+    elements.push(elem);
+    elementCounts[elem] = (elementCounts[elem] || 0) + 1;
+    atomNameList.push(`${elem}${elementCounts[elem]}`);
+  }
+  return { atomNameList, elements };
+};
+
 const normalizeImageCandidates = (url) => {
   const u = (url || '').trim();
   let m = u.match(/drive.google.com\/file\/d\/([^/?]+)/);
@@ -1075,8 +1097,8 @@ const StructureSVGView = ({ structure, minWidth, isExpanded, onToggleExpand, sel
             {structure.elements.filter((e) => e.type === 'path').map((el, idx) => (<path key={`pa${idx}`} d={el.d} fill="none" stroke={el.color} strokeWidth={el.width || 1.8} pointerEvents="none" />))}
             {structure.elements.filter((e) => e.type === 'polygon').map((el, idx) => (<polygon key={`po${idx}`} points={el.points} fill="white" stroke={el.color} strokeWidth={el.width || 1.8} pointerEvents="none" />))}
             {structure.elements.filter((e) => e.type === 'circle').map((el, idx) => {
-              const isSel = selectedKeys && el.keys && el.keys.some((k) => selectedKeys.includes(k));
-              const isMan = manualKeys && el.keys && el.keys.some((k) => manualKeys.includes(k));
+const isSel = selectedKeys && el.keys && el.keys.some((k) => selectedKeys.includes(k));
+const isMan = manualKeys && el.keys && el.keys.some((k) => manualKeys.includes(k));
               return (
                 <g key={`c${idx}`} pointerEvents="none">
                   {isSel && <circle cx={el.x} cy={el.y} r={el.r + 5} fill={SELECT_COLOR} opacity={0.25} />}
@@ -1085,9 +1107,9 @@ const StructureSVGView = ({ structure, minWidth, isExpanded, onToggleExpand, sel
                 </g>
               );
             })}
-            {structure.elements.filter((e) => e.type === 'text').map((el, idx) => {
-              const isSel = selectedKeys && el.keys && el.keys.some((k) => selectedKeys.includes(k));
-              const isMan = manualKeys && el.keys && el.keys.some((k) => manualKeys.includes(k));
+{structure.elements.filter((e) => e.type === 'text').map((el, idx) => {
+const isSel = selectedKeys && el.keys && el.keys.some((k) => selectedKeys.some(sk => String(sk).trim().toUpperCase() === String(k).trim().toUpperCase()));
+const isMan = manualKeys && el.keys && el.keys.some((k) => manualKeys.some(mk => String(mk).trim().toUpperCase() === String(k).trim().toUpperCase()));
               return (
                 <g key={`t${idx}`} pointerEvents="none">
                   {isSel && <circle cx={el.x} cy={el.y} r={el.text.length * 4 + 8} fill={SELECT_COLOR} opacity={0.25} />}
@@ -1214,7 +1236,7 @@ const NMRTooltip = ({ active, payload, diagonalColor, selectedKeys }) => {
         </div>
       );
     }
-    const isSel = selectedKeys && data.keys && data.keys.some((k) => selectedKeys.includes(k));
+  const isSel = selectedKeys && data.keys && data.keys.some((k) => selectedKeys.some(sk => String(sk).trim().toUpperCase() === String(k).trim().toUpperCase()));
     if (data.type === '1D') {
       return (
         <div className="bg-white p-2 border border-slate-200 shadow-md rounded text-xs z-50">
@@ -1652,9 +1674,9 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
                 <Tooltip cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} content={<NMRTooltip selectedKeys={selectedKeys} />} />
                 <Bar dataKey="y" barSize={2} shape={(props) => {
                   const { x, y, width, height, payload } = props;
-                  const centerX = x + width / 2;
-                  const isSel = selectedKeys && payload.keys && payload.keys.some((k) => selectedKeys.includes(k));
-                  const isMan = manualKeys && payload.keys && payload.keys.some((k) => manualKeys.includes(k));
+const centerX = x + width / 2;
+const isSel = selectedKeys && payload.keys && payload.keys.some((k) => selectedKeys.some(sk => String(sk).trim().toUpperCase() === String(k).trim().toUpperCase()));
+const isMan = manualKeys && payload.keys && payload.keys.some((k) => manualKeys.some(mk => String(mk).trim().toUpperCase() === String(k).trim().toUpperCase()));
                   const dimmed = selectedKeys && !isSel && !isMan;
                   
                   const barElem = <line x1={centerX} y1={y + height} x2={centerX} y2={y} stroke={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : payload.color} strokeWidth={isSel ? 3 : isMan ? 2.5 : 1.5} />;
@@ -1791,11 +1813,11 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
     });
   }, [crossPeakData]);
   
-  const shape = (props) => {
-    const { cx, cy, fill, payload } = props;
-    if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
-    const isSel = selectedKeys && payload.keys && payload.keys.some((k) => selectedKeys.includes(k));
-    const isMan = manualKeys && payload.keys && payload.keys.some((k) => manualKeys.includes(k));
+ const shape = (props) => {
+const { cx, cy, fill, payload } = props;
+if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
+const isSel = selectedKeys && payload.keys && payload.keys.some((k) => selectedKeys.some(sk => String(sk).trim().toUpperCase() === String(k).trim().toUpperCase()));
+const isMan = manualKeys && payload.keys && payload.keys.some((k) => manualKeys.some(mk => String(mk).trim().toUpperCase() === String(k).trim().toUpperCase()));
     const dimmed = selectedKeys && !isSel && !isMan && payload.type !== 'Diagonal';
     const textStr = simShowLabels && payload.type !== 'Diagonal' ? getPeakLabelText(payload, simLabelFormat, simLabelDim) : '';
     
@@ -1955,11 +1977,11 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
                 <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} />
                 <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : yTicks} interval={0} tickLine={false} tick={<CustomYTick13C isZoomed={isZoomed} fs={fs} />} label={{ value: yAxisLabel, angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fs + 1 }} />
                 <Tooltip content={<NMRTooltip diagonalColor="#8b5cf6" selectedKeys={selectedKeys} />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
-                <Scatter data={processedCrossPeaks} shape={(props) => {
-                  const { cx, cy, payload } = props;
-                  if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
-                  const isSel = selectedKeys && payload.keys && payload.keys.some((k) => selectedKeys.includes(k));
-                  const isMan = manualKeys && payload.keys && payload.keys.some((k) => manualKeys.includes(k));
+<Scatter data={processedCrossPeaks} shape={(props) => {
+const { cx, cy, payload } = props;
+if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
+const isSel = selectedKeys && payload.keys && payload.keys.some((k) => selectedKeys.some(sk => String(sk).trim().toUpperCase() === String(k).trim().toUpperCase()));
+const isMan = manualKeys && payload.keys && payload.keys.some((k) => manualKeys.some(mk => String(mk).trim().toUpperCase() === String(k).trim().toUpperCase()));
                   const dimmed = selectedKeys && !isSel && !isMan;
                   const textStr = simShowLabels ? getPeakLabelText(payload, simLabelFormat, simLabelDim) : '';
                   
@@ -2971,9 +2993,9 @@ const useNmrDerived = (activeTest, ctx = {}) => {
         try {
           const mol = getMolWithExplicitHs(activeTest.smiles);
           if (!mol) throw new Error('RDKit could not parse this SMILES');
-          const molblock = mol.get_molblock();
-          atoms = deriveOrganicAtomNaming(molblock).atomNameList;
-          mol.delete();
+                  const molblock = mol.get_molblock();
+                  atoms = deriveOrganicAtomNaming(molblock).atomNameList.map(a => normAtomName(a));
+                  mol.delete();
         } catch (e) {
           atoms = Array.from({ length: 40 }, (_, i) => `Atom-${i}`);
         }
@@ -3763,10 +3785,10 @@ const OrganicViewer = ({ smiles, selectedKeys, manualKeys = [], onAtomClick }) =
       const nA = parseInt(counts.substring(0, 3).trim(), 10) || 0;
       const nB = parseInt(counts.substring(3, 6).trim(), 10) || 0;
       const atoms = [];
-      for (let i = 0; i < nA; i++) {
-        const l = lines[4 + i] || '';
-        atoms.push({ x: parseFloat(l.substring(0, 10)) || 0, y: parseFloat(l.substring(10, 20)) || 0, elem: elements[i] || 'C', name: atomNameList[i] || `X${i}` });
-      }
+                  for (let i = 0; i < nA; i++) {
+              const l = lines[4 + i] || '';
+              atoms.push({ x: parseFloat(l.substring(0, 10)) || 0, y: parseFloat(l.substring(10, 20)) || 0, elem: elements[i] || 'C', name: normAtomName(atomNameList[i] || `X${i}`) });
+            }
       const bonds = [];
       for (let i = 0; i < nB; i++) {
         const l = lines[4 + nA + i] || '';
@@ -3820,10 +3842,10 @@ const OrganicViewer = ({ smiles, selectedKeys, manualKeys = [], onAtomClick }) =
           }
           return (<g key={`b${i}`}>{strokes.map((s, j) => (<line key={j} x1={s[0]} y1={s[1]} x2={s[2]} y2={s[3]} stroke="#475569" strokeWidth={1.8} pointerEvents="none" />))}</g>);
         })}
-        {model.atoms.map((a, idx) => {
-          const key = `0-${a.name}`;
-          const isSel = selectedKeys && selectedKeys.includes(key);
-          const isMan = manualKeys && manualKeys.includes(key);
+{model.atoms.map((a, idx) => {
+const key = `0-${a.name}`;
+const isSel = selectedKeys && selectedKeys.some(sk => String(sk).trim().toUpperCase() === String(key).trim().toUpperCase());
+const isMan = manualKeys && manualKeys.some(mk => String(mk).trim().toUpperCase() === String(key).trim().toUpperCase());
           const r = a.isH ? 9 : 14;
           return (
             <g key={`a${idx}`}>
@@ -4012,12 +4034,15 @@ return null;
   const selectedKeys = getSelectedKeys(activeTest);
   const manualKeys = useMemo(() => getManualKeys(d.shifts), [d.shifts]);
   
-  const handleAtomClick = (ri, keys) => {
-    if (ri === null || !keys) return;
-    const cur = getSelectedKeys(activeTest);
-    if (cur && cur.join('|') === keys.join('|')) updateActiveTest({ selectedAtomKeys: [] });
-    else updateActiveTest({ selectedAtomKeys: keys });
-  };
+const handleAtomClick = (ri, keys) => {
+  if (ri === null || !keys) return;
+  // Normalize keys to uppercase/trimmed to prevent PDB/molblock spacing mismatches
+  const normalizedKeys = keys.map(k => String(k).trim().toUpperCase());
+  const cur = getSelectedKeys(activeTest);
+  const curNormalized = cur ? cur.map(k => String(k).trim().toUpperCase()) : [];
+  if (curNormalized.join('|') === normalizedKeys.join('|')) updateActiveTest({ selectedAtomKeys: [] });
+  else updateActiveTest({ selectedAtomKeys: normalizedKeys });
+};
   
   const paintSSAt = (i, letter) => { const arr = d.seq.split('').map((_, j) => d.getSSAt(j)); arr[i] = letter; updateActiveTest({ secondaryStructure: arr.join('') }); };
   const setAllSS = (letter) => updateActiveTest({ secondaryStructure: d.seq.split('').map(() => letter).join('') });
@@ -4664,7 +4689,10 @@ export const DataSection = ({ ctx }) => {
     else updateActiveTest({ selectedAtomKeys: keys });
   };
   
-  const cellIsSelected = (idx, atom) => Boolean(selectedKeys && selectedKeys.includes(`${idx}-${atom}`));
+  const cellIsSelected = (idx, atom) => {
+  const target = `${idx}-${normAtomName(atom)}`;
+  return Boolean(selectedKeys && selectedKeys.some(k => String(k).trim().toUpperCase() === target));
+};
 
   const fillEstimated = () => {
     const cs = { ...(activeTest.chemicalShifts || {}) };
