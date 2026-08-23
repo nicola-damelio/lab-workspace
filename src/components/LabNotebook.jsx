@@ -17,6 +17,7 @@ SecondaryShifts,
 PerAtomPlot,
 Fitting
 } from './NMRSections';
+import { FCSDataVisualizations, FCSOverlayVisualization } from './FlowCytometrySections';
 import { CD_FIT_COMPONENTS } from './CDSections';
 import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES } from '../App.jsx';
 import {
@@ -1834,6 +1835,18 @@ renderRow={([key, val], i) => (
 );
 };
 /* ============================================================================
+   IMAGE NORMALIZATION HELPER (For Google Drive links in Notebook)
+========================================================================== */
+const normalizeImagePreview = (url) => {
+  let u = (url || '').trim();
+  if (u && !/^https?:\/\//i.test(u)) u = `https://${u}`;
+  let m = u.match(/drive\.google\.com\/file\/d\/([^\/?#]+)/) || u.match(/drive\.google\.com\/(?:open|uc)[^#]*[?&]id=([^&#]+)/);
+  if (m) return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w1600`;
+  if (u.includes('dropbox.com')) return u.replace(/[?&]dl=0/g, '') + (u.includes('?') ? '&raw=1' : '?raw=1');
+  return u;
+};
+
+/* ============================================================================
    NOTEBOOK TEST ITEM
 ========================================================================== */
 const NotebookTestItem = ({
@@ -1882,8 +1895,10 @@ const NotebookTestItem = ({
   const isCloning = localTest.type === 'cloning';
   const isProteinExp = localTest.type === 'protein_expression';
   const isMD = localTest.type === 'md_simulation';
-  const typeLabel = isPlate ? 'Plate Assay' : isNMR ? 'NMR' : isCD ? 'Circular Dichroism' : isNMRFitting ? 'NMR Fitting' : isCloning ? 'Cloning' : isProteinExp ? 'Protein Expression' : isMD ? 'MD Simulation' : 'Experiment';
-  const typeIcon = isPlate ? '🧫' : isNMR ? '📉' : isCD ? '🌀' : isNMRFitting ? '🧭' : isCloning ? '🧬' : isProteinExp ? '🧫' : isMD ? '🖥️' : '🧪';
+  const isFlow = localTest.type === 'flow_cytometry';
+  
+  const typeLabel = isPlate ? 'Plate Assay' : isNMR ? 'NMR' : isCD ? 'Circular Dichroism' : isNMRFitting ? 'NMR Fitting' : isCloning ? 'Cloning' : isProteinExp ? 'Protein Expression' : isMD ? 'MD Simulation' : isFlow ? 'Flow Cytometry' : 'Experiment';
+  const typeIcon = isPlate ? '🧫' : isNMR ? '📉' : isCD ? '🌀' : isNMRFitting ? '🧭' : isCloning ? '🧬' : isProteinExp ? '🧫' : isMD ? '🖥️' : isFlow ? '🩸' : '🧪';
   
   const compounds = [...new Set([...(localTest.selectedCompounds || []), ...(localTest.compoundsSelected || []), ...(localTest.compound ? localTest.compound.split(',') : [])])].map(s => s.trim()).filter(Boolean);
   const plasmids = [...new Set([...(localTest.plasmids || []), ...(localTest.plasmid ? [localTest.plasmid] : [])])].filter(Boolean);
@@ -1986,6 +2001,18 @@ const NotebookTestItem = ({
             {localTest.otherMolecule && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Ligand: {localTest.otherMolecule}</span>}
             {localTest.ratio && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Ratio: {localTest.ratio}</span>}
             
+            {/* Flow Cytometry specific fields */}
+            {isFlow && (
+              <>
+                {localTest.experimentDate && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Date: {localTest.experimentDate}</span>}
+                {localTest.cellNumber && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Cells: {localTest.cellNumber}</span>}
+                {localTest.liveDeadStain && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Live/Dead: {localTest.liveDeadStain}</span>}
+                {localTest.fixation && localTest.fixation !== 'None' && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Fixation: {localTest.fixation}</span>}
+                {localTest.permeabilization && localTest.permeabilization !== 'None' && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Permeabilization: {localTest.permeabilization}</span>}
+                {localTest.otherConditions && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Other: {localTest.otherConditions}</span>}
+              </>
+            )}
+
             {/* Protein Expression specific fields */}
             {isProteinExp && (
               <>
@@ -2038,6 +2065,20 @@ const NotebookTestItem = ({
             {(localTest.probe || localTest.nmrProbe) && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Probe: {localTest.probe || localTest.nmrProbe}</span>}
             {(localTest.pulseSequence || localTest.experiment || localTest.nmrExperiment) && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Pulse Seq: {localTest.pulseSequence || localTest.experiment || localTest.nmrExperiment}</span>}
             {localTest.pathLength && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Path Length: {localTest.pathLength}</span>}
+            
+            {/* Flow Cytometry specific fields */}
+            {isFlow && (
+              <>
+                {localTest.cytometerModel && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Model: {localTest.cytometerModel}</span>}
+                {localTest.cytometerSerial && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Serial: {localTest.cytometerSerial}</span>}
+                {localTest.acquisitionSoftware && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Software: {localTest.acquisitionSoftware}</span>}
+                {localTest.lasers && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Lasers: {localTest.lasers}</span>}
+                {localTest.threshold && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Threshold: {localTest.threshold}</span>}
+                {localTest.compensationApplied && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Compensation: {localTest.compensationApplied}</span>}
+                {localTest.plateName && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Plate: {localTest.plateName}</span>}
+                {localTest.wellId && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Well: {localTest.wellId}</span>}
+              </>
+            )}
           </div>
         </RemovablePanel>
 
@@ -2109,8 +2150,9 @@ const NotebookTestItem = ({
                   <div key={idx} className="flex flex-col items-center gap-2 w-full">
                     <a href={typeof img === 'string' ? img : img.url} target="_blank" rel="noopener noreferrer" className="flex justify-center w-full">
                       <img
-                        src={getDirectImageUrl(typeof img === 'string' ? img : img.url)}
+                        src={getDirectImageUrl(normalizeImagePreview(typeof img === 'string' ? img : img.url))}
                         alt={`Image ${idx + 1}`}
+                        referrerPolicy="no-referrer"
                         style={{ maxWidth: '100%', width: `${imageScale}%`, height: 'auto', maxHeight: '1125px', objectFit: 'contain', border: '1px solid #e2e8f0', borderRadius: '6px', background: 'white' }}
                       />
                     </a>
@@ -2130,8 +2172,9 @@ const NotebookTestItem = ({
                     <div key={idx} className="flex flex-col items-center gap-2 bg-white p-3 border border-slate-200 rounded shadow-sm w-full">
                       <a href={typeof imgSrc === 'string' ? imgSrc : imgSrc.url} target="_blank" rel="noopener noreferrer" className="flex justify-center w-full">
                         <img
-                          src={getDirectImageUrl(typeof imgSrc === 'string' ? imgSrc : imgSrc.url)}
+                          src={getDirectImageUrl(normalizeImagePreview(typeof imgSrc === 'string' ? imgSrc : imgSrc.url))}
                           alt={`Gel ${idx + 1}`}
+                          referrerPolicy="no-referrer"
                           style={{ maxWidth: '100%', width: `${imageScale}%`, height: 'auto', maxHeight: '1125px', objectFit: 'contain' }}
                         />
                       </a>
@@ -2146,285 +2189,278 @@ const NotebookTestItem = ({
         )}
 
         <RemovablePanel title="Data" visible={showDataLocal} setVisible={setShowDataLocal}>
-       {isPlate && <PlateGridPreview test={localTest} />}
-       {isCD && <CDSpectraChart wavelengthData={localTest.wavelengthData} spectraColumns={localTest.spectraColumns} chartCfg={localTest.chartCfg} />}
-       {isCloning && localTest.uvSpectra && localTest.uvSpectra.length > 0 && (
-         <CloningUvSpectraChart uvSpectra={localTest.uvSpectra} />
-       )}
-       {isCloning && localTest.dnaQuantification && localTest.dnaQuantification.length > 0 && (
-         <div className="flex flex-col items-center w-full mt-2">
-           <ChunkedTable
-             data={localTest.dnaQuantification}
-             renderHeader={() => (
-               <tr><th className="px-3 py-1.5">Sample</th><th className="px-3 py-1.5">Conc. ng/µL</th><th className="px-3 py-1.5">260/280</th><th className="px-3 py-1.5">Notes</th></tr>
-             )}
-             renderRow={(row, i) => (
-               <tr key={row.id || i}>
-                 <td className="px-3 py-1.5 font-bold">{row.sample}</td>
-                 <td className="px-3 py-1.5 text-blue-700 font-bold">{row.concentration}</td>
-                 <td className="px-3 py-1.5">{row.a260_280}</td>
-                 <td className="px-3 py-1.5">{row.notes}</td>
-               </tr>
-             )}
-           />
-           {localTest.dnaQuantComment && <p className="text-[10px] text-slate-500 italic mt-2 text-center w-full">📝 {localTest.dnaQuantComment}</p>}
-         </div>
-       )}
-       {isProteinExp && (() => {
-         const chrs = Array.isArray(localTest.chromatograms) ? localTest.chromatograms : localTest.chromatogramRaw ? [{ id: 'chr_legacy', name: 'Chromatogram 1', method: 'Affinity', rawData: localTest.chromatogramRaw }] : [];
-         if (chrs.length > 0) return (
-            <div className="mb-4 flex flex-col items-center w-full">
-              <div className="overflow-x-auto text-xs border border-slate-200 rounded mt-2 mb-4 flex justify-center w-full bg-slate-50 shadow-sm">
-                <table className="w-full text-left select-text bg-white" draggable="true">
-                  <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
-                    <tr>
-                      <th className="px-3 py-1.5 border-r">Run Name</th>
-                      <th className="px-3 py-1.5 border-r">Method Type</th>
-                      <th className="px-3 py-1.5">Running Buffer</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {chrs.map((chr, idx) => (
-                      <tr key={chr.id || idx}>
-                        <td className="px-3 py-1.5 font-bold border-r">{chr.name || `Chromatogram ${idx + 1}`}</td>
-                        <td className="px-3 py-1.5 text-blue-700 font-bold border-r">{chr.method || '—'}</td>
-                        <td className="px-3 py-1.5">{chr.buffer || '—'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="w-full"><ProteinChromatogramChart chromatograms={chrs} /></div>
-              {localTest.chromatogramComment && <p className="text-[10px] text-slate-500 italic mt-2 text-center w-full">📝 {localTest.chromatogramComment}</p>}
+          {isPlate && <PlateGridPreview test={localTest} />}
+          {isCD && <CDSpectraChart wavelengthData={localTest.wavelengthData} spectraColumns={localTest.spectraColumns} chartCfg={localTest.chartCfg} />}
+          {isFlow && <FCSDataVisualizations ctx={mockCtx} updater={0} />}
+          {isCloning && localTest.uvSpectra && localTest.uvSpectra.length > 0 && (
+            <CloningUvSpectraChart uvSpectra={localTest.uvSpectra} />
+          )}
+          {isCloning && localTest.dnaQuantification && localTest.dnaQuantification.length > 0 && (
+            <div className="flex flex-col items-center w-full mt-2">
+              <ChunkedTable
+                data={localTest.dnaQuantification}
+                renderHeader={() => (
+                  <tr><th className="px-3 py-1.5">Sample</th><th className="px-3 py-1.5">Conc. ng/µL</th><th className="px-3 py-1.5">260/280</th><th className="px-3 py-1.5">Notes</th></tr>
+                )}
+                renderRow={(row, i) => (
+                  <tr key={row.id || i}>
+                    <td className="px-3 py-1.5 font-bold">{row.sample}</td>
+                    <td className="px-3 py-1.5 text-blue-700 font-bold">{row.concentration}</td>
+                    <td className="px-3 py-1.5">{row.a260_280}</td>
+                    <td className="px-3 py-1.5">{row.notes}</td>
+                  </tr>
+                )}
+              />
+              {localTest.dnaQuantComment && <p className="text-[10px] text-slate-500 italic mt-2 text-center w-full">📝 {localTest.dnaQuantComment}</p>}
             </div>
-         );
-         return null;
-       })()}
-       {isProteinExp && localTest.yieldData && localTest.yieldData.length > 0 && (
-         <div className="mb-4 flex flex-col items-center w-full">
-           <ChunkedTable
-             data={localTest.yieldData}
-             renderHeader={() => (
-               <tr><th className="px-3 py-1.5 border-r">Fraction</th><th className="px-3 py-1.5 border-r">Conc (mg/mL)</th><th className="px-3 py-1.5 border-r">Vol (mL)</th><th className="px-3 py-1.5 border-r">Total (mg)</th><th className="px-3 py-1.5">Purity %</th></tr>
-             )}
-             renderRow={(row, i) => (
-               <tr key={row.id || i}>
-                 <td className="px-3 py-1.5 font-bold border-r">{row.fraction}</td>
-                 <td className="px-3 py-1.5 border-r">{row.concentration}</td>
-                 <td className="px-3 py-1.5 border-r">{row.volume}</td>
-                 <td className="px-3 py-1.5 text-blue-700 font-bold border-r">{row.totalMass}</td>
-                 <td className="px-3 py-1.5">{row.purity}</td>
-               </tr>
-             )}
-           />
-           {localTest.yieldComment && <p className="text-[10px] text-slate-500 italic mt-2 text-center w-full">📝 {localTest.yieldComment}</p>}
-         </div>
-       )}
-       {isNMR && localTest.chemicalShifts && Object.keys(localTest.chemicalShifts).length > 0 && (
-         <div className="flex flex-col items-center w-full mt-2">
-           <ChunkedTable
-             data={Object.entries(localTest.chemicalShifts)}
-             renderHeader={() => (
-               <tr><th className="px-4 py-2 border-r">Atom</th><th className="px-4 py-2">Shift (ppm)</th></tr>
-             )}
-             renderRow={([atom, shift], i) => (
-               <tr key={atom || i}>
-                 <td className="px-4 py-2 font-mono text-slate-700 font-semibold border-r">{atom}</td>
-                 <td className="px-4 py-2 font-mono text-blue-700">{shift}</td>
-               </tr>
-             )}
-           />
-         </div>
-        )}
-        {/* 1D imported Bruker spectrum in LabNotebook (Data tick) */}
-        {isNMR && localTest.nmr1dSpectrum && localTest.nmr1dSpectrum.xs && localTest.nmr1dSpectrum.xs.length > 0 && (() => {
-          const spec = localTest.nmr1dSpectrum;
-          const xs = spec.xs, ys = spec.ys;
-          const maxY = Math.max(...ys.map(Math.abs), 1);
-          const svgW = 480, plotH = 100, axisH = 26, totalH = plotH + axisH;
-          const padL = 6, padR = 6;
-          const plotW = svgW - padL - padR;
-          const xMin = Math.min(...xs), xMax = Math.max(...xs);
-          const step = Math.max(1, Math.floor(xs.length / 1200));
-          const pts = [];
-          for (let i = 0; i < xs.length; i += step) {
-            // reversed: high ppm on left
-            const px = padL + plotW - ((xs[i] - xMin) / (xMax - xMin)) * plotW;
-            const py = plotH - ((ys[i] / maxY) * 0.9 + 0.05) * plotH;
-            pts.push(`${px.toFixed(1)},${py.toFixed(1)}`);
-          }
-          // Nice ticks
-          const range = xMax - xMin;
-          const rawStep = range / 5;
-          const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
-          const niceStep = [0.1,0.2,0.5,1,2,5,10,20,50].map(s => s * mag).find(s => s >= rawStep) || rawStep;
-          const tickStart = Math.ceil(xMin / niceStep) * niceStep;
-          const ticks = [];
-          for (let t = tickStart; t <= xMax + niceStep * 0.01; t += niceStep) ticks.push(+t.toFixed(3));
-          const ppmToPx = (ppm) => padL + plotW - ((ppm - xMin) / (xMax - xMin)) * plotW;
-          return (
-            <div className="flex flex-col items-center w-full mt-2 gap-1">
-              <span className="text-[10px] font-bold text-slate-500 uppercase">
-                Imported 1r Spectrum — {spec.meta?.nucleus || 'NMR'}{spec.meta?.sfo1 ? ` (${spec.meta.sfo1.toFixed(0)} MHz)` : ''}
-              </span>
-              <svg width="100%" viewBox={`0 0 ${svgW} ${totalH}`} className="border border-slate-200 rounded bg-white">
-                {/* Spectrum line */}
-                <polyline points={pts.join(' ')} fill="none" stroke="#3b82f6" strokeWidth="1" />
-                {/* X axis line */}
-                <line x1={padL} y1={plotH} x2={padL + plotW} y2={plotH} stroke="#94a3b8" strokeWidth={1} />
-                {/* X axis ticks + labels */}
-                {ticks.map((t, i) => {
-                  const px = ppmToPx(t);
-                  if (px < padL - 1 || px > padL + plotW + 1) return null;
+          )}
+          {isProteinExp && (() => {
+            const chrs = Array.isArray(localTest.chromatograms) ? localTest.chromatograms : localTest.chromatogramRaw ? [{ id: 'chr_legacy', name: 'Chromatogram 1', method: 'Affinity', rawData: localTest.chromatogramRaw }] : [];
+            if (chrs.length > 0) return (
+               <div className="mb-4 flex flex-col items-center w-full">
+                 <div className="overflow-x-auto text-xs border border-slate-200 rounded mt-2 mb-4 flex justify-center w-full bg-slate-50 shadow-sm">
+                   <table className="w-full text-left select-text bg-white" draggable="true">
+                     <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
+                       <tr>
+                         <th className="px-3 py-1.5 border-r">Run Name</th>
+                         <th className="px-3 py-1.5 border-r">Method Type</th>
+                         <th className="px-3 py-1.5">Running Buffer</th>
+                       </tr>
+                     </thead>
+                     <tbody className="divide-y divide-slate-100">
+                       {chrs.map((chr, idx) => (
+                         <tr key={chr.id || idx}>
+                           <td className="px-3 py-1.5 font-bold border-r">{chr.name || `Chromatogram ${idx + 1}`}</td>
+                           <td className="px-3 py-1.5 text-blue-700 font-bold border-r">{chr.method || '—'}</td>
+                           <td className="px-3 py-1.5">{chr.buffer || '—'}</td>
+                         </tr>
+                       ))}
+                     </tbody>
+                   </table>
+                 </div>
+                 <div className="w-full"><ProteinChromatogramChart chromatograms={chrs} /></div>
+                 {localTest.chromatogramComment && <p className="text-[10px] text-slate-500 italic mt-2 text-center w-full">📝 {localTest.chromatogramComment}</p>}
+               </div>
+            );
+            return null;
+          })()}
+          {isProteinExp && localTest.yieldData && localTest.yieldData.length > 0 && (
+            <div className="mb-4 flex flex-col items-center w-full">
+              <ChunkedTable
+                data={localTest.yieldData}
+                renderHeader={() => (
+                  <tr><th className="px-3 py-1.5 border-r">Fraction</th><th className="px-3 py-1.5 border-r">Conc (mg/mL)</th><th className="px-3 py-1.5 border-r">Vol (mL)</th><th className="px-3 py-1.5 border-r">Total (mg)</th><th className="px-3 py-1.5">Purity %</th></tr>
+                )}
+                renderRow={(row, i) => (
+                  <tr key={row.id || i}>
+                    <td className="px-3 py-1.5 font-bold border-r">{row.fraction}</td>
+                    <td className="px-3 py-1.5 border-r">{row.concentration}</td>
+                    <td className="px-3 py-1.5 border-r">{row.volume}</td>
+                    <td className="px-3 py-1.5 text-blue-700 font-bold border-r">{row.totalMass}</td>
+                    <td className="px-3 py-1.5">{row.purity}</td>
+                  </tr>
+                )}
+              />
+              {localTest.yieldComment && <p className="text-[10px] text-slate-500 italic mt-2 text-center w-full">📝 {localTest.yieldComment}</p>}
+            </div>
+          )}
+          {isNMR && localTest.chemicalShifts && Object.keys(localTest.chemicalShifts).length > 0 && (
+            <div className="flex flex-col items-center w-full mt-2">
+              <ChunkedTable
+                data={Object.entries(localTest.chemicalShifts)}
+                renderHeader={() => (
+                  <tr><th className="px-4 py-2 border-r">Atom</th><th className="px-4 py-2">Shift (ppm)</th></tr>
+                )}
+                renderRow={([atom, shift], i) => (
+                  <tr key={atom || i}>
+                    <td className="px-4 py-2 font-mono text-slate-700 font-semibold border-r">{atom}</td>
+                    <td className="px-4 py-2 font-mono text-blue-700">{shift}</td>
+                  </tr>
+                )}
+              />
+            </div>
+           )}
+           {/* 1D imported Bruker spectrum in LabNotebook (Data tick) */}
+           {isNMR && localTest.nmr1dSpectrum && localTest.nmr1dSpectrum.xs && localTest.nmr1dSpectrum.xs.length > 0 && (() => {
+             const spec = localTest.nmr1dSpectrum;
+             const xs = spec.xs, ys = spec.ys;
+             const maxY = Math.max(...ys.map(Math.abs), 1);
+             const svgW = 480, plotH = 100, axisH = 26, totalH = plotH + axisH;
+             const padL = 6, padR = 6;
+             const plotW = svgW - padL - padR;
+             const xMin = Math.min(...xs), xMax = Math.max(...xs);
+             const step = Math.max(1, Math.floor(xs.length / 1200));
+             const pts = [];
+             for (let i = 0; i < xs.length; i += step) {
+               const px = padL + plotW - ((xs[i] - xMin) / (xMax - xMin)) * plotW;
+               const py = plotH - ((ys[i] / maxY) * 0.9 + 0.05) * plotH;
+               pts.push(`${px.toFixed(1)},${py.toFixed(1)}`);
+             }
+             const range = xMax - xMin;
+             const rawStep = range / 5;
+             const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+             const niceStep = [0.1,0.2,0.5,1,2,5,10,20,50].map(s => s * mag).find(s => s >= rawStep) || rawStep;
+             const tickStart = Math.ceil(xMin / niceStep) * niceStep;
+             const ticks = [];
+             for (let t = tickStart; t <= xMax + niceStep * 0.01; t += niceStep) ticks.push(+t.toFixed(3));
+             const ppmToPx = (ppm) => padL + plotW - ((ppm - xMin) / (xMax - xMin)) * plotW;
+             return (
+               <div className="flex flex-col items-center w-full mt-2 gap-1">
+                 <span className="text-[10px] font-bold text-slate-500 uppercase">
+                   Imported 1r Spectrum — {spec.meta?.nucleus || 'NMR'}{spec.meta?.sfo1 ? ` (${spec.meta.sfo1.toFixed(0)} MHz)` : ''}
+                 </span>
+                 <svg width="100%" viewBox={`0 0 ${svgW} ${totalH}`} className="border border-slate-200 rounded bg-white">
+                   <polyline points={pts.join(' ')} fill="none" stroke="#3b82f6" strokeWidth="1" />
+                   <line x1={padL} y1={plotH} x2={padL + plotW} y2={plotH} stroke="#94a3b8" strokeWidth={1} />
+                   {ticks.map((t, i) => {
+                     const px = ppmToPx(t);
+                     if (px < padL - 1 || px > padL + plotW + 1) return null;
+                     return (
+                       <g key={i}>
+                         <line x1={px} y1={plotH} x2={px} y2={plotH + 5} stroke="#94a3b8" strokeWidth={1} />
+                         <text x={px} y={plotH + 14} textAnchor="middle" fontSize="7" fill="#94a3b8">
+                           {t % 1 === 0 ? t.toFixed(0) : t.toFixed(1)}
+                         </text>
+                       </g>
+                     );
+                   })}
+                   <text x={svgW / 2} y={totalH - 3} textAnchor="middle" fontSize="7" fill="#64748b" fontWeight="bold">
+                     Chemical Shift (ppm)
+                   </text>
+                 </svg>
+               </div>
+             );
+           })()}
+           {isNMRFitting && localTest.nmrTables && localTest.nmrTables.length > 0 && (
+            <div className="flex flex-col gap-4 mt-2">
+              <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+                <span className="text-[10px] font-bold text-slate-500 uppercase">NMR Fitting Data</span>
+                <label className="flex items-center gap-1 text-[10px] font-bold text-slate-700 cursor-pointer bg-white px-2 py-1 rounded border border-slate-200 shadow-sm hover:bg-slate-50 transition-colors">
+                  <input type="checkbox" checked={showRawNmrData} onChange={(e) => setShowRawNmrData(e.target.checked)} className="accent-blue-600" /> Show Raw Data
+                </label>
+              </div>
+              <div className="flex flex-col gap-6 items-center">
+                {localTest.nmrTables.map((t, idx) => {
+                  const cols = localTest.savedFits?.[t.id] || [];
                   return (
-                    <g key={i}>
-                      <line x1={px} y1={plotH} x2={px} y2={plotH + 5} stroke="#94a3b8" strokeWidth={1} />
-                      <text x={px} y={plotH + 14} textAnchor="middle" fontSize="7" fill="#94a3b8">
-                        {t % 1 === 0 ? t.toFixed(0) : t.toFixed(1)}
-                      </text>
-                    </g>
+                    <div key={t.id} className="flex flex-col gap-3 w-full items-center">
+                      {showRawNmrData && (
+                        <div className="overflow-x-auto text-xs border border-slate-200 rounded flex flex-col items-center bg-slate-50 shadow-sm w-full">
+                          <h5 className="text-[10px] font-bold text-slate-500 bg-slate-100 px-3 py-1 border-b border-slate-200 w-full text-center">
+                            Table {idx + 1} Raw Data — {t.atom} ({t.relaxType})
+                          </h5>
+                          <table className="w-full text-center select-text bg-white" draggable="true">
+                            <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
+                              <tr>
+                                <th className="px-3 py-1.5 border-r border-slate-200">{t.relaxType === 'DOSY' ? 'b-value' : 'Delay'} ({t.delayUnit})</th>
+                                {Array.from({ length: t.nCols }, (_, c) => <th key={c} className="px-3 py-1.5">{t.colResidues[c] || `Col ${c + 1}`}</th>)}
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {Array.from({ length: t.nRows }, (_, r) => (
+                                <tr key={r}>
+                                  <td className="px-3 py-1.5 font-mono text-slate-700 border-r border-slate-200">{t.delays[r] !== '' && t.delays[r] !== undefined ? t.delays[r] : '-'}</td>
+                                  {Array.from({ length: t.nCols }, (_, c) => <td key={c} className="px-3 py-1.5 font-mono text-slate-600">{t.grid[r]?.[c] || '-'}</td>)}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                      {cols.length > 0 && (
+                        <div className="flex flex-col items-center bg-slate-50 w-full rounded border border-slate-200 pb-2 shadow-sm">
+                          <h5 className="text-[10px] font-bold text-slate-500 bg-slate-100 px-3 py-1 border-b border-slate-200 w-full text-center mb-2">
+                            Table {idx + 1} Fitted Parameters
+                          </h5>
+                          <ChunkedTable
+                            data={cols.filter(cf => cf.fit)}
+                            renderHeader={() => (
+                              <tr>
+                                <th className="px-3 py-1.5 border-r">Residue</th>
+                                <th className="px-3 py-1.5 border-r">Rate (s⁻¹)</th>
+                                <th className="px-3 py-1.5 border-r">Time (s)</th>
+                                <th className="px-3 py-1.5">R²</th>
+                              </tr>
+                            )}
+                            renderRow={(cf, i) => (
+                              <tr key={i}>
+                                <td className="px-3 py-1.5 font-mono text-slate-700 font-semibold border-r">{cf.residue}</td>
+                                <td className="px-3 py-1.5 font-mono text-blue-700 border-r">
+                                  {cf.fit.R_s ? cf.fit.R_s.toPrecision(4) : '-'}
+                                  {cf.effectiveError ? ` ± ${cf.effectiveError.toPrecision(2)}` : ''}
+                                </td>
+                                <td className="px-3 py-1.5 font-mono text-blue-700 border-r">
+                                  {cf.fit.T_s === Infinity ? '∞' : cf.fit.T_s ? cf.fit.T_s.toPrecision(4) : '-'}
+                                </td>
+                                <td className="px-3 py-1.5 font-mono text-slate-600">{cf.fit.r2 ? cf.fit.r2.toFixed(3) : '-'}</td>
+                              </tr>
+                            )}
+                          />
+                        </div>
+                      )}
+                    </div>
                   );
                 })}
-                {/* Axis label */}
-                <text x={svgW / 2} y={totalH - 3} textAnchor="middle" fontSize="7" fill="#64748b" fontWeight="bold">
-                  Chemical Shift (ppm)
-                </text>
-              </svg>
+              </div>
             </div>
-          );
-        })()}
-        {isNMRFitting && localTest.nmrTables && localTest.nmrTables.length > 0 && (
-         <div className="flex flex-col gap-4 mt-2">
-           <div className="flex justify-between items-center border-b border-slate-100 pb-2">
-             <span className="text-[10px] font-bold text-slate-500 uppercase">NMR Fitting Data</span>
-             <label className="flex items-center gap-1 text-[10px] font-bold text-slate-700 cursor-pointer bg-white px-2 py-1 rounded border border-slate-200 shadow-sm hover:bg-slate-50 transition-colors">
-               <input type="checkbox" checked={showRawNmrData} onChange={(e) => setShowRawNmrData(e.target.checked)} className="accent-blue-600" /> Show Raw Data
-             </label>
-           </div>
-           <div className="flex flex-col gap-6 items-center">
-             {localTest.nmrTables.map((t, idx) => {
-               const cols = localTest.savedFits?.[t.id] || [];
-               return (
-                 <div key={t.id} className="flex flex-col gap-3 w-full items-center">
-                   {showRawNmrData && (
-                     <div className="overflow-x-auto text-xs border border-slate-200 rounded flex flex-col items-center bg-slate-50 shadow-sm w-full">
-                       <h5 className="text-[10px] font-bold text-slate-500 bg-slate-100 px-3 py-1 border-b border-slate-200 w-full text-center">
-                         Table {idx + 1} Raw Data — {t.atom} ({t.relaxType})
-                       </h5>
-                       <table className="w-full text-center select-text bg-white" draggable="true">
-                         <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
-                           <tr>
-                             <th className="px-3 py-1.5 border-r border-slate-200">{t.relaxType === 'DOSY' ? 'b-value' : 'Delay'} ({t.delayUnit})</th>
-                             {Array.from({ length: t.nCols }, (_, c) => <th key={c} className="px-3 py-1.5">{t.colResidues[c] || `Col ${c + 1}`}</th>)}
-                           </tr>
-                         </thead>
-                         <tbody className="divide-y divide-slate-100">
-                           {Array.from({ length: t.nRows }, (_, r) => (
-                             <tr key={r}>
-                               <td className="px-3 py-1.5 font-mono text-slate-700 border-r border-slate-200">{t.delays[r] !== '' && t.delays[r] !== undefined ? t.delays[r] : '-'}</td>
-                               {Array.from({ length: t.nCols }, (_, c) => <td key={c} className="px-3 py-1.5 font-mono text-slate-600">{t.grid[r]?.[c] || '-'}</td>)}
-                             </tr>
-                           ))}
-                         </tbody>
-                       </table>
-                     </div>
-                   )}
-                   {cols.length > 0 && (
-                     <div className="flex flex-col items-center bg-slate-50 w-full rounded border border-slate-200 pb-2 shadow-sm">
-                       <h5 className="text-[10px] font-bold text-slate-500 bg-slate-100 px-3 py-1 border-b border-slate-200 w-full text-center mb-2">
-                         Table {idx + 1} Fitted Parameters
-                       </h5>
-                       <ChunkedTable
-                         data={cols.filter(cf => cf.fit)}
-                         renderHeader={() => (
-                           <tr>
-                             <th className="px-3 py-1.5 border-r">Residue</th>
-                             <th className="px-3 py-1.5 border-r">Rate (s⁻¹)</th>
-                             <th className="px-3 py-1.5 border-r">Time (s)</th>
-                             <th className="px-3 py-1.5">R²</th>
-                           </tr>
-                         )}
-                         renderRow={(cf, i) => (
-                           <tr key={i}>
-                             <td className="px-3 py-1.5 font-mono text-slate-700 font-semibold border-r">{cf.residue}</td>
-                             <td className="px-3 py-1.5 font-mono text-blue-700 border-r">
-                               {cf.fit.R_s ? cf.fit.R_s.toPrecision(4) : '-'}
-                               {cf.effectiveError ? ` ± ${cf.effectiveError.toPrecision(2)}` : ''}
-                             </td>
-                             <td className="px-3 py-1.5 font-mono text-blue-700 border-r">
-                               {cf.fit.T_s === Infinity ? '∞' : cf.fit.T_s ? cf.fit.T_s.toPrecision(4) : '-'}
-                             </td>
-                             <td className="px-3 py-1.5 font-mono text-slate-600">{cf.fit.r2 ? cf.fit.r2.toFixed(3) : '-'}</td>
-                           </tr>
-                         )}
-                       />
-                     </div>
-                   )}
-                 </div>
-               );
-             })}
-           </div>
-         </div>
-       )}
-       {isMD && (
-         <div className="flex flex-col gap-4 mt-2">
-           <MDParamsPreview test={localTest} />
-           <MDAtomTablePreview test={localTest} />
-         </div>
-       )}
+          )}
+          {isMD && (
+            <div className="flex flex-col gap-4 mt-2">
+              <MDParamsPreview test={localTest} />
+              <MDAtomTablePreview test={localTest} />
+            </div>
+          )}
         </RemovablePanel>
 
- 
+        {(isCD || isNMR || isNMRFitting || isPlate || isMD || isFlow) && (
+          <RemovablePanel title="Data Analysis Graphs" visible={showAnaLocal} setVisible={setShowAnaLocal}>
+            {isPlate && <PlateAnalysisPreview test={localTest} />}
+            {isFlow && <FCSOverlayVisualization ctx={mockCtx} />}
+            {isCD && <CDAnalysisGraphsPreview test={localTest} instances={mockCtx.instances} />}
+            {isNMR && (
+              <div className="flex flex-col gap-4 mt-2">
+                <PerAtomPlot ctx={mockCtx} />
+                <Fitting ctx={mockCtx} />
+              </div>
+            )}
+            {isNMRFitting && (
+              <div className="mt-2">
+                <NMRFittingGraphsPreview test={localTest} />
+              </div>
+            )}
+            {isMD && <MDAnalysisPreview test={localTest} />}
+          </RemovablePanel>
+        )}
 
-     {(isCD || isNMR || isNMRFitting || isPlate || isMD) && (
-       <RemovablePanel title="Data Analysis Graphs" visible={showAnaLocal} setVisible={setShowAnaLocal}>
-         {isPlate && <PlateAnalysisPreview test={localTest} />}
-         {isCD && <CDAnalysisGraphsPreview test={localTest} instances={mockCtx.instances} />}
-         {isNMR && (
-           <div className="flex flex-col gap-4 mt-2">
-             <PerAtomPlot ctx={mockCtx} />
-             <Fitting ctx={mockCtx} />
-           </div>
-         )}
-         {isNMRFitting && (
-           <div className="mt-2">
-             <NMRFittingGraphsPreview test={localTest} />
-           </div>
-         )}
-         {isMD && <MDAnalysisPreview test={localTest} />}
-       </RemovablePanel>
-     )}
-
-     {showSimImgLocal && (
-       <RemovablePanel title="Simulations & Generated Data" visible={showSimImgLocal} setVisible={setShowSimImgLocal}>
-         {isCloning && localTest.sim && localTest.sim.sequence && (
-           <CloningSimChartPreview sim={localTest.sim} />
-         )}
-         {isNMRFitting && (
-           <NMRFittingSimPreview test={localTest} />
-         )}
-         {isNMR && selectedSpectrumTypes.length > 0 && (
-           <div className="mt-4">
-             <h5 className="text-[10px] font-bold text-slate-500 mb-1 uppercase text-center w-full">NMR Spectra (Simulated)</h5>
-             <NMRSpectraPreview test={localTest} selectedTypes={selectedSpectrumTypes} />
-           </div>
-         )}
-         {simImgList.length > 0 && (
-           <div className="flex flex-col items-center gap-6 mt-4 pt-4 border-t border-slate-100 w-full">
-             <h5 className="text-[10px] font-bold text-slate-500 mb-1 uppercase text-center w-full">Generic Simulation Images</h5>
-             {simImgList.map((src, idx) => (
-               <div key={idx} className="flex flex-col items-center gap-2 w-full">
-                 <img src={getDirectImageUrl(src)} alt={`Sim ${idx}`} style={{ maxWidth: '100%', width: `${imageScale}%`, height: 'auto', maxHeight: '1125px', objectFit: 'contain' }} className="rounded-lg shadow-sm border border-slate-200 bg-white" />
-               </div>
-             ))}
-           </div>
-         )}
-         {!isNMRFitting && !(isCloning && localTest.sim?.sequence) && !(isNMR && selectedSpectrumTypes.length > 0) && simImgList.length === 0 && (
-            <p className="text-[10px] text-slate-400 italic">No simulation data available for this experiment.</p>
-         )}
-       </RemovablePanel>
-     )}
-
+        {showSimImgLocal && (
+          <RemovablePanel title="Simulations & Generated Data" visible={showSimImgLocal} setVisible={setShowSimImgLocal}>
+            {isCloning && localTest.sim && localTest.sim.sequence && (
+              <CloningSimChartPreview sim={localTest.sim} />
+            )}
+            {isNMRFitting && (
+              <NMRFittingSimPreview test={localTest} />
+            )}
+            {isNMR && selectedSpectrumTypes.length > 0 && (
+              <div className="mt-4">
+                <h5 className="text-[10px] font-bold text-slate-500 mb-1 uppercase text-center w-full">NMR Spectra (Simulated)</h5>
+                <NMRSpectraPreview test={localTest} selectedTypes={selectedSpectrumTypes} />
+              </div>
+            )}
+            {simImgList.length > 0 && (
+              <div className="flex flex-col items-center gap-6 mt-4 pt-4 border-t border-slate-100 w-full">
+                <h5 className="text-[10px] font-bold text-slate-500 mb-1 uppercase text-center w-full">Generic Simulation Images</h5>
+                {simImgList.map((src, idx) => (
+                  <div key={idx} className="flex flex-col items-center gap-2 w-full">
+                    <img src={getDirectImageUrl(normalizeImagePreview(src))} referrerPolicy="no-referrer" alt={`Sim ${idx}`} style={{ maxWidth: '100%', width: `${imageScale}%`, height: 'auto', maxHeight: '1125px', objectFit: 'contain' }} className="rounded-lg shadow-sm border border-slate-200 bg-white" />
+                  </div>
+                ))}
+              </div>
+            )}
+            {!isNMRFitting && !(isCloning && localTest.sim?.sequence) && !(isNMR && selectedSpectrumTypes.length > 0) && simImgList.length === 0 && (
+               <p className="text-[10px] text-slate-400 italic">No simulation data available for this experiment.</p>
+            )}
+          </RemovablePanel>
+        )}
       </div>
     </div>
   );
