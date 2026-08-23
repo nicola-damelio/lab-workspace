@@ -4328,8 +4328,13 @@ const NMRSpectraVisualization = ({ ctx }) => {
   const [showOverlay, setShowOverlay] = useState(true);
   const [hiddenSeries, setHiddenSeries] = useState({});
   const [localColors, setLocalColors] = useState(activeTest.nmrInstanceColors || {});
-  const [savedPalettes, setSavedPalettes] = useState(activeTest.nmrSavedPalettes || {});
-  const [newPaletteName, setNewPaletteName] = useState('');
+const [savedPalettes, setSavedPalettes] = useState(activeTest.nmrSavedPalettes || {});
+const [newPaletteName, setNewPaletteName] = useState('');
+const [zoomDom, setZoomDom] = useState(null);
+const [refL, setRefL] = useState(null);
+const [refR, setRefR] = useState(null);
+const dragRef = useRef(false);
+const chartRef = useRef(null);
   
   // Visual Custom Palette State (Replaces the text input)
   const [customPalette, setCustomPalette] = useState(['#ef4444', '#3b82f6', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899']);
@@ -4415,12 +4420,39 @@ const NMRSpectraVisualization = ({ ctx }) => {
     return out;
   }, [instances, localColors]);
 
-  const allXs = seriesList.flatMap(s => s.data.map(p => p.x));
-  const allYs = seriesList.flatMap(s => s.data.map(p => p.y));
-  const xDomain = allXs.length ? [Math.min(...allXs), Math.max(...allXs)] : [0, 10];
-  const yDomain = allYs.length ? [Math.min(...allYs), Math.max(...allYs)] : [0, 1];
-
-  const visibleSeries = seriesList.filter(s => !hiddenSeries[s.key]);
+const allXs = seriesList.flatMap(s => s.data.map(p => p.x));
+const allYs = seriesList.flatMap(s => s.data.map(p => p.y));
+const xFull = allXs.length ? [Math.min(...allXs), Math.max(...allXs)] : [0, 10];
+const yDomain = allYs.length ? [Math.min(...allYs), Math.max(...allYs)] : [0, 1];
+const dom = zoomDom || xFull;
+const visibleSeries = seriesList.filter(s => !hiddenSeries[s.key]);
+const getX = (clientX) => {
+  if (!chartRef.current) return null;
+  const w = chartRef.current.querySelector('.recharts-wrapper');
+  if (!w) return null;
+  const r = w.getBoundingClientRect();
+  const plotW = r.width - 40; // left 20 + right 20
+  if (plotW <= 0) return null;
+  const fx = Math.min(1, Math.max(0, (clientX - r.left - 20) / plotW));
+  return dom[1] - fx * (dom[1] - dom[0]);
+};
+const onDown = (e) => {
+  const v = getX(e.clientX); if (v===null) return;
+  dragRef.current = true; setRefL(v); setRefR(v);
+};
+const onMove = (e) => {
+  if (!dragRef.current) return;
+  const v = getX(e.clientX); if (v!==null) setRefR(v);
+};
+const onUp = () => {
+  if (!dragRef.current) return;
+  dragRef.current = false;
+  if (refL!==null && refR!==null && Math.abs(refL-refR)>0.01) {
+    const lo2=Math.min(refL,refR), hi2=Math.max(refL,refR);
+    setZoomDom([lo2, hi2]);
+  }
+  setRefL(null); setRefR(null);
+};
 
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3 mt-4">
@@ -4432,22 +4464,47 @@ const NMRSpectraVisualization = ({ ctx }) => {
         </label>
       </div>
 
-      {showOverlay && seriesList.length > 0 && (
-        <div className="h-[300px] w-full border border-slate-200 rounded-lg bg-slate-50 p-2">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart margin={{ top: 10, right: 20, bottom: 20, left: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis type="number" dataKey="x" domain={xDomain} reversed={true} allowDataOverflow tick={{ fontSize: 10 }} label={{ value: 'Chemical Shift (ppm)', position: 'insideBottom', offset: -5 }} />
-              <YAxis domain={yDomain} hide />
-              <Tooltip />
-              <Legend />
-              {visibleSeries.map(s => (
-                <Line key={s.key} data={s.data} type="monotone" dataKey="y" name={s.label} stroke={s.color} strokeWidth={1.5} dot={false} isAnimationActive={false} />
-              ))}
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      )}
+ {showOverlay && seriesList.length > 0 && (
+     <div className="h-[300px] w-full border border-slate-200 rounded-lg bg-slate-50 p-2 flex flex-col">
+       <div className="flex justify-end mb-1 shrink-0">
+         {zoomDom && (
+           <button type="button" onClick={() => setZoomDom(null)} className="text-xs bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded font-bold">Reset zoom</button>
+         )}
+       </div>
+       <div ref={chartRef} className="select-none flex-1 w-full" style={{ position: 'relative' }}
+            onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}>
+         <ResponsiveContainer width="100%" height="100%">
+           <LineChart margin={{ top: 10, right: 20, bottom: 20, left: 20 }}>
+             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+             <XAxis type="number" dataKey="x" domain={dom} reversed={true} allowDataOverflow
+               ticks={(() => {
+                 const lo = Math.min(dom[0], dom[1]);
+                 const hi = Math.max(dom[0], dom[1]);
+                 const raw = (hi - lo) / 8;
+                 if (raw <= 0) return [];
+                 const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+                 const norm = raw / mag;
+                 const st = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag;
+                 const out = [];
+                 for (let v = Math.ceil(lo / st) * st; v <= hi + 1e-9; v += st) out.push(+v.toFixed(4));
+                 return out;
+               })()}
+               tickFormatter={v => Number(v).toFixed(2)}
+               tick={{ fontSize: 10 }} 
+               label={{ value: 'Chemical Shift (ppm)', position: 'insideBottom', offset: -5 }} 
+             />
+             <YAxis domain={yDomain} hide />
+             <Tooltip formatter={v => Number(v).toFixed(3)} labelFormatter={v => Number(v).toFixed(2) + ' ppm'} />
+             <Legend />
+             {visibleSeries.map(s => (
+               <Line key={s.key} data={s.data} type="monotone" dataKey="y" name={s.label} stroke={s.color} strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls />
+             ))}
+             {refL!==null && refR!==null && <ReferenceArea x1={refL} x2={refR} fill="#cbd5e1" fillOpacity={0.4} />}
+           </LineChart>
+         </ResponsiveContainer>
+       </div>
+     </div>
+   )}
 
       <div className="flex flex-col gap-3 border-t border-slate-200 pt-3">
         
@@ -4967,8 +5024,8 @@ export const DataSection = ({ ctx }) => {
     const hasSpec = spec && Array.isArray(spec.xs) && spec.xs.length > 0;
     if (!hasSpec) return null;
     const xs = spec.xs, ys = spec.ys;
-    const xFull = [Math.min(...xs), Math.max(...xs)];
-    const dom = brukerZoomDom || [xFull[1], xFull[0]]; 
+   const xFull = [Math.min(...xs), Math.max(...xs)];
+const dom = brukerZoomDom || xFull;
     const isZoomed = !!(brukerZoomDom);
 
     const csMap = activeTest.chemicalShifts || {};
@@ -4999,8 +5056,8 @@ export const DataSection = ({ ctx }) => {
       const r = w.getBoundingClientRect();
       const plotW = r.width - CHART_MARGIN.left - CHART_MARGIN.right;
       if (plotW <= 0) return null;
-      const fx = Math.min(1, Math.max(0, (clientX - r.left - CHART_MARGIN.left) / plotW));
-      return dom[0] - fx*(dom[0]-dom[1]);
+  const fx = Math.min(1, Math.max(0, (clientX - r.left - CHART_MARGIN.left) / plotW));
+   return dom[1] - fx * (dom[1] - dom[0]);
     };
     const onDown = (e) => {
       const v = getX(e.clientX); if (v===null) return;
@@ -5013,10 +5070,10 @@ export const DataSection = ({ ctx }) => {
     const onUp = () => {
       if (!brukerDragRef.current) return;
       brukerDragRef.current = false;
-      if (brukerRefL!==null && brukerRefR!==null && Math.abs(brukerRefL-brukerRefR)>0.01) {
-        const lo2=Math.min(brukerRefL,brukerRefR), hi2=Math.max(brukerRefL,brukerRefR);
-        setBrukerZoomDom([hi2, lo2]);
-      }
+   if (brukerRefL!==null && brukerRefR!==null && Math.abs(brukerRefL-brukerRefR)>0.01) {
+     const lo2=Math.min(brukerRefL,brukerRefR), hi2=Math.max(brukerRefL,brukerRefR);
+     setBrukerZoomDom([lo2, hi2]);
+   }
       setBrukerRefL(null); setBrukerRefR(null);
     };
 
