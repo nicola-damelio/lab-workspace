@@ -204,71 +204,133 @@ return { ri: 0, keys, label: `Org ${nmrAtom}`, nmrAtom };
 return mapPdbAtomToNmrKeys(atom.atomname, atom.resno, parsedSeq, moleculeType, namingConvention);
 };
 
+// ================= RDKit Helper Functions =================
 const computeMorganRanks = (elements, bonds) => {
-const n = elements.length;
-const isHeavy = elements.map((e) => e !== 'H');
-const heavyIdx = [];
-elements.forEach((e, i) => { if (e !== 'H') heavyIdx.push(i); });
-const m = heavyIdx.length;
-const posOf = {};
-heavyIdx.forEach((gi, k) => { posOf[gi] = k; });
-const adj = Array.from({ length: m }, () => []);
-const hCount = new Array(m).fill(0);
-bonds.forEach(([a, b]) => {
-const ah = isHeavy[a], bh = isHeavy[b];
-if (ah && bh) { adj[posOf[a]].push(posOf[b]); adj[posOf[b]].push(posOf[a]); }
-else if (ah && !bh) hCount[posOf[a]]++;
-else if (!ah && bh) hCount[posOf[b]]++;
-});
-let sig = heavyIdx.map((gi, k) => `${elements[gi]}(${hCount[k]})`);
-for (let iter = 0; iter < n; iter++) {
-const next = sig.map((s, i) => `${s}|${adj[i].map((j) => sig[j]).sort().join(',')}`);
-const converged = next.join(';') === sig.join(';');
-sig = next;
-if (converged) break;
-}
-const order = Array.from({ length: m }, (_, k) => k).sort((x, y) =>
-sig[x] < sig[y] ? -1 : sig[x] > sig[y] ? 1 : x - y
-);
-const ranks = new Array(n).fill(-1);
-order.forEach((k, r) => { ranks[heavyIdx[k]] = r; });
-return ranks;
+  const n = elements.length;
+  const isHeavy = elements.map((e) => e !== 'H');
+  const heavyIdx = [];
+  elements.forEach((e, i) => { if (e !== 'H') heavyIdx.push(i); });
+  const m = heavyIdx.length;
+  const posOf = {};
+  heavyIdx.forEach((gi, k) => { posOf[gi] = k; });
+  const adj = Array.from({ length: m }, () => []);
+  const hCount = new Array(m).fill(0);
+  bonds.forEach(([a, b]) => {
+    const ah = isHeavy[a], bh = isHeavy[b];
+    if (ah && bh) { adj[posOf[a]].push(posOf[b]); adj[posOf[b]].push(posOf[a]); }
+    else if (ah && !bh) hCount[posOf[a]]++;
+    else if (!ah && bh) hCount[posOf[b]]++;
+  });
+  let sig = heavyIdx.map((gi, k) => `${elements[gi]}_${hCount[k]}`);
+  for (let iter = 0; iter < n; iter++) {
+    const next = sig.map((s, i) => {
+      const neighbors = adj[i].map((j) => sig[j]).sort().join(',');
+      const str = s + '|' + neighbors;
+      let hash = 0;
+      for (let k = 0; k < str.length; k++) {
+        hash = ((hash << 5) - hash) + str.charCodeAt(k);
+        hash |= 0;
+      }
+      return Math.abs(hash).toString(36) + '_' + elements[heavyIdx[i]];
+    });
+    const converged = next.join(';') === sig.join(';');
+    sig = next;
+    if (converged) break;
+  }
+  const order = Array.from({ length: m }, (_, k) => k).sort((x, y) =>
+    sig[x] < sig[y] ? -1 : sig[x] > sig[y] ? 1 : x - y
+  );
+  const ranks = new Array(n).fill(-1);
+  order.forEach((k, r) => { ranks[heavyIdx[k]] = r; });
+  return ranks;
 };
+
+const deriveOrganicAtomNaming = (molblock) => {
+  const lines = molblock.split('\n');
+  const countsLine = lines[3] || '';
+  const nA = parseInt(countsLine.substring(0, 3).trim(), 10) || 0;
+  const nB = parseInt(countsLine.substring(3, 6).trim(), 10) || 0;
+  
+  const elements = [];
+  const bonds = [];
+  
+  for (let i = 0; i < nA; i++) {
+    const line = lines[4 + i] || '';
+    const elem = line.substring(31, 34).trim();
+    elements.push(elem || 'C');
+  }
+  for (let i = 0; i < nB; i++) {
+    const line = lines[4 + nA + i] || '';
+    const a1 = parseInt(line.substring(0, 3).trim(), 10) - 1;
+    const a2 = parseInt(line.substring(3, 6).trim(), 10) - 1;
+    if (!isNaN(a1) && !isNaN(a2)) bonds.push([a1, a2]);
+  }
+  
+  const ranks = computeMorganRanks(elements, bonds);
+  const atomNameList = new Array(nA).fill('');
+  const parentOfH = new Array(nA).fill(-1);
+  
+  bonds.forEach(([a1, a2]) => {
+    if (elements[a1] === 'H' && elements[a2] !== 'H') parentOfH[a1] = a2;
+    if (elements[a2] === 'H' && elements[a1] !== 'H') parentOfH[a2] = a1;
+  });
+  
+  const keepAtom = new Array(nA).fill(true);
+  const seenHForParent = new Set();
+  
+  for (let i = 0; i < nA; i++) {
+    if (elements[i] !== 'H') {
+      atomNameList[i] = `${elements[i]}${ranks[i] >= 0 ? ranks[i] : i}`;
+    } else {
+      const pr = parentOfH[i] >= 0 ? ranks[parentOfH[i]] : null;
+      // Name it H{parentRank} without a,b,c suffix
+      atomNameList[i] = pr !== null ? `H${pr}` : `H${i}`;
+      
+      // Only keep the FIRST hydrogen for each parent to avoid visual clutter
+      if (parentOfH[i] !== -1) {
+        if (seenHForParent.has(parentOfH[i])) {
+          keepAtom[i] = false;
+        } else {
+          seenHForParent.add(parentOfH[i]);
+        }
+      }
+    }
+  }
+  
+  return { atomNameList, elements, keepAtom };
+};
+// ==========================================================
 
 const _organicNamingCache = new WeakMap();
 const getOrganicNaming = (structure) => {
-if (_organicNamingCache.has(structure)) return _organicNamingCache.get(structure);
-const elements = [];
-const bondPairs = [];
-structure.eachAtom((a) => { elements[a.index] = a.element || 'C'; });
-structure.eachAtom((a) => {
-a.eachBondedAtom((b) => { if (a.index < b.index) bondPairs.push([a.index, b.index]); });
-});
-const n = elements.length;
-const ranks = computeMorganRanks(elements, bondPairs);
-const parent = new Array(n).fill(-1);
-bondPairs.forEach(([x, y]) => {
-if (elements[x] === 'H' && elements[y] !== 'H') parent[x] = y;
-if (elements[y] === 'H' && elements[x] !== 'H') parent[y] = x;
-});
-const groups = {};
-for (let i = 0; i < n; i++) {
-if (elements[i] !== 'H') continue;
-const key = parent[i] >= 0 ? parent[i] : 'orphan';
-(groups[key] = groups[key] || []).push(i);
-}
-const names = new Array(n);
-for (let i = 0; i < n; i++) if (elements[i] !== 'H') names[i] = `${elements[i]}${ranks[i] >= 0 ? ranks[i] : i}`;
-Object.entries(groups).forEach(([key, idxs]) => {
-idxs.sort((x, y) => x - y);
-const pr = key === 'orphan' ? null : ranks[Number(key)];
-idxs.forEach((idx, j) => {
-const suffix = idxs.length > 1 ? ('abcdefgh'[j] || String(j)) : '';
-names[idx] = pr !== null ? `H${pr}${suffix}` : `H${idx}`;
-});
-});
-_organicNamingCache.set(structure, names);
-return names;
+  if (_organicNamingCache.has(structure)) return _organicNamingCache.get(structure);
+  const elements = [];
+  const bondPairs = [];
+  structure.eachAtom((a) => { elements[a.index] = a.element || 'C'; });
+  structure.eachAtom((a) => {
+    a.eachBondedAtom((b) => { if (a.index < b.index) bondPairs.push([a.index, b.index]); });
+  });
+  const n = elements.length;
+  const ranks = computeMorganRanks(elements, bondPairs);
+  const parent = new Array(n).fill(-1);
+  bondPairs.forEach(([x, y]) => {
+    if (elements[x] === 'H' && elements[y] !== 'H') parent[x] = y;
+    if (elements[y] === 'H' && elements[x] !== 'H') parent[y] = x;
+  });
+  
+  const names = new Array(n);
+  for (let i = 0; i < n; i++) {
+    if (elements[i] !== 'H') {
+      names[i] = `${elements[i]}${ranks[i] >= 0 ? ranks[i] : i}`;
+    } else {
+      const pr = parent[i] >= 0 ? ranks[parent[i]] : null;
+      // Removed suffix logic to match 2D viewer and avoid a,b,c clutter for equivalent protons
+      names[i] = pr !== null ? `H${pr}` : `H${i}`;
+    }
+  }
+  
+  _organicNamingCache.set(structure, names);
+  return names;
 };
 
 const getOrganicAtomName = (atom) => {
@@ -596,6 +658,9 @@ throw firstErr;
 
 if (cancelled) return;
 componentRef.current = component;
+
+// Note: NGL viewer structures from PDB/SDF already contain hydrogens when generated correctly.
+// We skip addHydrogens() to prevent "is not a function" errors in this NGL version.
 
 const isOrganicLike = ['organic', 'lipid', 'sugar'].includes(moleculeTypeRef.current);
 const isNucleic = moleculeTypeRef.current === 'dna' || moleculeTypeRef.current === 'rna';
