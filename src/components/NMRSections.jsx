@@ -29,28 +29,68 @@ export const VIS_PALETTES = {
   monochrome: ['#0f172a', '#1e293b', '#334155', '#475569', '#64748b', '#94a3b8', '#cbd5e1']
 };
 
-// ---- Global RDKit readiness singleton ----
-// A single polling interval shared across ALL OrganicViewer instances.
-// Prevents N independent intervals causing cascading re-renders → Firebase write exhaustion.
+// ================= RDKit Auto-Loader & Singleton =================
 const _rdkitListeners = new Set();
-let _rdkitStatus = window.__RDKit ? 'ready' : 'loading'; // 'loading' | 'ready' | 'failed'
-if (_rdkitStatus === 'loading') {
-  let _attempts = 0;
-  const _interval = setInterval(() => {
-    _attempts++;
-    if (window.__RDKit) {
+let _rdkitStatus = 'loading'; 
+
+const loadRDKitScript = () => {
+  if (window.__RDKit) {
+    _rdkitStatus = 'ready';
+    _rdkitListeners.forEach(fn => fn('ready'));
+    _rdkitListeners.clear();
+    return;
+  }
+  if (document.getElementById('rdkit-wasm-script')) return;
+  
+  const script = document.createElement('script');
+  script.id = 'rdkit-wasm-script';
+script.src = 'https://unpkg.com/@rdkit/rdkit/dist/RDKit.js'; // Full build includes addHs
+  script.async = true;
+  
+  script.onload = () => {
+    if (typeof window.initRDKitModule === 'function') {
+      window.initRDKitModule().then((Module) => {
+        window.__RDKit = Module;
+        _rdkitStatus = 'ready';
+        _rdkitListeners.forEach(fn => fn('ready'));
+        _rdkitListeners.clear();
+      }).catch(() => {
+        _rdkitStatus = 'failed';
+        _rdkitListeners.forEach(fn => fn('failed'));
+        _rdkitListeners.clear();
+      });
+    } else if (window.__RDKit) {
       _rdkitStatus = 'ready';
-      clearInterval(_interval);
       _rdkitListeners.forEach(fn => fn('ready'));
       _rdkitListeners.clear();
-    } else if (_attempts > 33) {
-      _rdkitStatus = 'failed';
-      clearInterval(_interval);
-      _rdkitListeners.forEach(fn => fn('failed'));
-      _rdkitListeners.clear();
+    } else {
+      let _attempts = 0;
+      const _interval = setInterval(() => {
+        _attempts++;
+        if (window.__RDKit) {
+          _rdkitStatus = 'ready';
+          clearInterval(_interval);
+          _rdkitListeners.forEach(fn => fn('ready'));
+          _rdkitListeners.clear();
+        } else if (_attempts > 50) {
+          _rdkitStatus = 'failed';
+          clearInterval(_interval);
+          _rdkitListeners.forEach(fn => fn('failed'));
+          _rdkitListeners.clear();
+        }
+      }, 300);
     }
-  }, 300);
-}
+  };
+  script.onerror = () => {
+    _rdkitStatus = 'failed';
+    _rdkitListeners.forEach(fn => fn('failed'));
+    _rdkitListeners.clear();
+  };
+  document.head.appendChild(script);
+};
+
+loadRDKitScript();
+
 const useRdkitReady = () => {
   const [status, setStatus] = useState(_rdkitStatus);
   useEffect(() => {
@@ -61,6 +101,7 @@ const useRdkitReady = () => {
   }, []);
   return { rdkitReady: status === 'ready', rdkitFailed: status === 'failed' };
 };
+// =====================================================================
 
 const CollapsibleSection = ({ title, icon, defaultOpen = false, children, headerExtra, className = '' }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
@@ -2967,17 +3008,25 @@ const useNmrDerived = (activeTest, ctx = {}) => {
       
       let atoms = [];
       // Dynamically extract elements (including explicit Hs) from SMILES if RDKit is ready
-      if (window.__RDKit) {
-        try {
-          const mol = getMolWithExplicitHs(activeTest.smiles);
-          if (!mol) throw new Error('RDKit could not parse this SMILES');
-          const molblock = mol.get_molblock();
-          atoms = deriveOrganicAtomNaming(molblock).atomNameList;
-          mol.delete();
-        } catch (e) {
-          atoms = Array.from({ length: 40 }, (_, i) => `Atom-${i}`);
-        }
-      } else {
+   if (window.__RDKit) {
+     try {
+       const mol = getMolWithExplicitHs(activeTest.smiles);
+       if (!mol) throw new Error('RDKit could not parse this SMILES');
+       
+       // Safely call get_molblock with a fallback
+       if (typeof mol.get_molblock === 'function') {
+         const molblock = mol.get_molblock();
+         atoms = deriveOrganicAtomNaming(molblock).atomNameList;
+       } else {
+         throw new Error('mol.get_molblock is not a function in this RDKit version');
+       }
+       
+       if (typeof mol.delete === 'function') mol.delete();
+     } catch (e) {
+       console.warn("RDKit organic parsing failed, using fallback atoms:", e);
+       atoms = Array.from({ length: 40 }, (_, i) => `Atom-${i}`);
+     }
+   } else {
         atoms = Array.from({ length: 40 }, (_, i) => `Atom-${i}`);
       }
 
@@ -3166,9 +3215,37 @@ const useNmrDerived = (activeTest, ctx = {}) => {
       Object.keys(res.simShifts).forEach((atom) => {
         diag.push({ x: res.simShifts[atom], y: res.simShifts[atom], label: `${res.id} ${atom}`, type: 'Diagonal', size: 4, keys: buildKeys(index, [atom], moleculeType, res.char), resNum: rN, resCode: rC, atom1: atom, atom2: atom });
       });
-      if (res.cosy) res.cosy.forEach(([a1, a2]) => {
-        if (res.simShifts[a1] !== undefined && res.simShifts[a2] !== undefined) addPair(cosy, res.simShifts[a1], res.simShifts[a2], res.id, `${a1}-${a2} (COSY)`, 'cosy', 4, buildKeys(index, [a1, a2], moleculeType, res.char), a1, a2, index, res.char);
-      });
+// COSY: 3-bond (from DB) + 2-bond (geminal) couplings
+const cosyPairs = new Set();
+if (res.cosy) res.cosy.forEach(([a1, a2]) => cosyPairs.add([a1, a2].sort().join('-')));
+
+// Add geminal protons (2-bond separation, e.g., Hβ1 and Hβ2)
+const hAtoms = Object.keys(res.simShifts).filter(a => a.startsWith('H'));
+const geminalGroups = {};
+hAtoms.forEach(a => {
+  const baseMatch = a.match(/^(H.+?)(\d+)$/);
+  if (baseMatch) {
+    const base = baseMatch[1];
+    if (!geminalGroups[base]) geminalGroups[base] = [];
+    geminalGroups[base].push(a);
+  }
+});
+Object.values(geminalGroups).forEach(group => {
+  if (group.length > 1) {
+    for (let i = 0; i < group.length; i++) {
+      for (let j = i + 1; j < group.length; j++) {
+        cosyPairs.add([group[i], group[j]].sort().join('-'));
+      }
+    }
+  }
+});
+
+cosyPairs.forEach(pairStr => {
+  const [a1, a2] = pairStr.split('-');
+  if (res.simShifts[a1] !== undefined && res.simShifts[a2] !== undefined) {
+    addPair(cosy, res.simShifts[a1], res.simShifts[a2], res.id, `${a1}-${a2} (COSY)`, 'cosy', 4, buildKeys(index, [a1, a2], moleculeType, res.char), a1, a2, index, res.char);
+  }
+});
       if (res.spinSystems) res.spinSystems.forEach((sys) => {
         for (let i = 0; i < sys.length; i++) for (let j = i + 1; j < sys.length; j++) {
           if (res.simShifts[sys[i]] !== undefined && res.simShifts[sys[j]] !== undefined) {
@@ -3205,9 +3282,9 @@ const useNmrDerived = (activeTest, ctx = {}) => {
           hsqc.push({ x: res.simShifts[atom], y: res.simShifts13C[atom], label: `${res.id} ${atom}-${cn}`, type: 'HSQC', colorClass: 'hsqc', size: 4, keys: [...buildKeys(index, [atom], moleculeType, res.char), `${index}-${cn}`], resNum: rN, resCode: rC, atom1: atom, atom2: cn });
         }
       });
-      if (moleculeType === 'protein' && res.simN !== null && res.simN !== undefined && res.simShifts['HN'] !== undefined) {
-        hsqc15n.push({ x: res.simShifts['HN'], y: res.simN, label: `${res.id} HN-N`, type: 'HSQC', colorClass: 'hsqc15n', size: 4, keys: [...buildKeys(index, ['HN'], moleculeType, res.char), `${index}-N`], resNum: rN, resCode: rC, atom1: 'HN', atom2: 'N' });
-      }
+if (moleculeType === 'protein' && res.simN !== null && res.simN !== undefined && res.simShifts['HN'] !== undefined) {
+  hsqc15n.push({ x: res.simShifts['HN'], y: res.simN, label: `${res.id} HN-N`, type: 'HSQC', colorClass: 'hsqc15n', size: 4, keys: [...buildKeys(index, ['HN'], moleculeType, res.char), `${index}-N` ], resNum: rN, resCode: rC, atom1: 'HN', atom2: 'N' });
+}
       if (hasPhosphorus && res.p31 !== null) {
         p31.push({ x: res.p31, y: 0.8 + Math.random() * 0.4, label: `${res.id} P`, color: res.color, type: '1D', colorClass: 'p31', keys: [`${index}-P`], resNum: rN, resCode: rC, atom1: null, atom2: 'P' });
       }
@@ -3744,7 +3821,110 @@ const ChartStylePanel = ({ cfg, setCfg, series = [] }) => (
     <p className="col-span-2 lg:col-span-4 text-[9px] text-slate-400">💡 Drag with the mouse over any graph to zoom into a region. Use "Reset Zoom" to restore.</p>
   </div>
 );
+const getMolWithExplicitHs = (smiles) => {
+  if (!window.__RDKit) return null;
+  try {
+    const mol = window.__RDKit.get_mol(smiles);
+    if (!mol) return null;
+    
+    // 1. Genera coordinate 2D iniziali
+    if (typeof mol.compute_2d_coords === 'function') {
+      mol.compute_2d_coords();
+    } else if (typeof mol.set_new_coords === 'function') {
+      mol.set_new_coords();
+    }
+    
+    // 2. Aggiungi idrogeni espliciti
+    // In alcune build di RDKit JS, add_hs() restituisce una NUOVA stringa molblock 
+    // invece di modificare l'oggetto in place. Dobbiamo gestire entrambi i casi.
+    let molWithHs = mol;
+    if (typeof mol.add_hs === 'function') {
+      const result = mol.add_hs();
+      if (typeof result === 'string') {
+        molWithHs = window.__RDKit.get_mol(result);
+      }
+    } else if (typeof mol.addHs === 'function') {
+      const result = mol.addHs();
+      if (typeof result === 'string') {
+        molWithHs = window.__RDKit.get_mol(result);
+      }
+    }
+    
+    // 3. Ricalcola le coordinate dopo l'aggiunta degli H per posizionarli correttamente
+    if (typeof molWithHs.compute_2d_coords === 'function') {
+      molWithHs.compute_2d_coords();
+    } else if (typeof molWithHs.set_new_coords === 'function') {
+      molWithHs.set_new_coords();
+    }
+    
+    return molWithHs;
+  } catch (e) {
+    console.error('RDKit parse error:', e);
+    return null;
+  }
+};
 
+const deriveOrganicAtomNaming = (molblock) => {
+  const lines = molblock.split('\n');
+  const countsLine = lines[3] || '';
+  const nA = parseInt(countsLine.substring(0, 3).trim(), 10) || 0;
+  const nB = parseInt(countsLine.substring(3, 6).trim(), 10) || 0;
+  
+  const elements = [];
+  const atomNameList = new Array(nA).fill('');
+  const heavyAtomCounts = {};
+  
+  // 1. Analizza gli atomi
+  for (let i = 0; i < nA; i++) {
+    const line = lines[4 + i] || '';
+    const elem = line.substring(31, 34).trim();
+    elements.push(elem || 'C');
+  }
+  
+  // 2. Analizza i legami per trovare l'atomo pesante genitore di ogni idrogeno
+  const parentHeavyAtom = new Array(nA).fill(-1);
+  for (let i = 0; i < nB; i++) {
+    const line = lines[4 + nA + i] || '';
+    const a1 = parseInt(line.substring(0, 3).trim(), 10) - 1;
+    const a2 = parseInt(line.substring(3, 6).trim(), 10) - 1;
+    
+    if (a1 >= 0 && a1 < nA && a2 >= 0 && a2 < nA) {
+      if (elements[a1] === 'H' && elements[a2] !== 'H') {
+        parentHeavyAtom[a1] = a2;
+      } else if (elements[a2] === 'H' && elements[a1] !== 'H') {
+        parentHeavyAtom[a2] = a1;
+      }
+    }
+  }
+  
+  // 3. Genera i nomi basati sul genitore (es. "H0a", "H0b")
+  const hCounts = {};
+  for (let i = 0; i < nA; i++) {
+    const elem = elements[i];
+    if (elem === 'H') {
+      const parent = parentHeavyAtom[i];
+      if (parent !== -1) {
+        if (!hCounts[parent]) hCounts[parent] = 0;
+        const suffix = String.fromCharCode(97 + hCounts[parent]); // 'a', 'b', 'c'...
+        atomNameList[i] = `H${parent}${suffix}`;
+        hCounts[parent]++;
+      } else {
+        // Fallback per idrogeni orfani (senza legami con atomi pesanti)
+        if (!hCounts['orphan']) hCounts['orphan'] = 0;
+        atomNameList[i] = `H_orphan${hCounts['orphan']}`;
+        hCounts['orphan']++;
+      }
+    } else {
+      if (!heavyAtomCounts[elem]) heavyAtomCounts[elem] = 0;
+      heavyAtomCounts[elem]++;
+      atomNameList[i] = `${elem}${heavyAtomCounts[elem]}`;
+    }
+  }
+  
+  return { atomNameList, elements };
+};
+// ==========================================================
+// ==========================================================
 // ================= ORGANIC VIEWER =================
 const OrganicViewer = ({ smiles, selectedKeys, manualKeys = [], onAtomClick }) => {
   const [model, setModel] = useState(null);
@@ -3767,26 +3947,46 @@ const OrganicViewer = ({ smiles, selectedKeys, manualKeys = [], onAtomClick }) =
         const l = lines[4 + i] || '';
         atoms.push({ x: parseFloat(l.substring(0, 10)) || 0, y: parseFloat(l.substring(10, 20)) || 0, elem: elements[i] || 'C', name: atomNameList[i] || `X${i}` });
       }
-      const bonds = [];
-      for (let i = 0; i < nB; i++) {
-        const l = lines[4 + nA + i] || '';
-        const a1 = parseInt(l.substring(0, 3).trim(), 10) - 1;
-        const a2 = parseInt(l.substring(3, 6).trim(), 10) - 1;
-        const order = parseInt(l.substring(6, 9).trim(), 10) || 1;
-        if (!isNaN(a1) && !isNaN(a2)) bonds.push([a1, a2, order]);
-      }
-      mol.delete();
-      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-      atoms.forEach((a) => { minX = Math.min(minX, a.x); maxX = Math.max(maxX, a.x); minY = Math.min(minY, a.y); maxY = Math.max(maxY, a.y); });
-      atoms.forEach((a) => { a.y = minY + maxY - a.y; a.isH = a.elem === 'H'; });
-      const parentName = {};
-      bonds.forEach(([a1, a2]) => {
-        const A = atoms[a1], B = atoms[a2];
-        if (A.isH && !B.isH) parentName[a1] = B.name;
-        if (B.isH && !A.isH) parentName[a2] = A.name;
-      });
-      const pad = 34;
-      setModel({ atoms, bonds, parentName, viewBox: `${minX - pad} ${minY - pad} ${Math.max(60, maxX - minX + 2 * pad)} ${Math.max(60, maxY - minY + 2 * pad)}` });
+const bonds = [];
+for (let i = 0; i < nB; i++) {
+  const l = lines[4 + nA + i] || '';
+  const a1 = parseInt(l.substring(0, 3).trim(), 10) - 1;
+  const a2 = parseInt(l.substring(3, 6).trim(), 10) - 1;
+  const order = parseInt(l.substring(6, 9).trim(), 10) || 1;
+  if (!isNaN(a1) && !isNaN(a2)) bonds.push([a1, a2, order]);
+}
+// Debug log to verify RDKit is actually providing bond data
+console.log('2D Viewer Debug: Atoms=', nA, 'Expected Bonds=', nB, 'Parsed Bonds=', bonds.length);
+mol.delete();
+let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+atoms.forEach((a) => { minX = Math.min(minX, a.x); maxX = Math.max(maxX, a.x); minY = Math.min(minY, a.y); maxY = Math.max(maxY, a.y); });
+
+// Normalize coordinates to a fixed target size so hardcoded font/radii look correct
+const spanX = maxX - minX || 1;
+const spanY = maxY - minY || 1;
+const maxSpan = Math.max(spanX, spanY, 0.1);
+const targetSize = 600; // Increased from 250 to make bonds much longer
+const scale = targetSize / maxSpan;
+atoms.forEach((a) => {
+a.x = (a.x - minX) * scale + 60; // Increased padding offset
+// Flip Y axis so it displays correctly (SVG Y goes down)
+a.y = (maxY - a.y) * scale + 60; // Increased padding offset
+a.isH = a.elem === 'H';
+});
+const finalWidth = spanX * scale + 120; // Increased padding
+const finalHeight = spanY * scale + 120; // Increased padding
+const pad = 60; // Increased padding
+
+const parentName = {};
+bonds.forEach(([a1, a2]) => {
+  const A = atoms[a1], B = atoms[a2];
+  if (A.isH && !B.isH) parentName[a1] = B.name;
+  if (B.isH && !A.isH) parentName[a2] = A.name;
+});
+// Pass 'scale' to the model so renderSvg can proportionally size everything
+setModel({ atoms, bonds, parentName, viewBox: `${-pad} ${-pad} ${finalWidth + 2 * pad} ${finalHeight + 2 * pad}`, scale });
+
+setModel({ atoms, bonds, parentName, viewBox: `${-pad} ${-pad} ${finalWidth + 2 * pad} ${finalHeight + 2 * pad}` });
     } catch (e) { setModel(null); }
   }, [smiles, rdkitReady]);
 
@@ -3797,53 +3997,66 @@ const OrganicViewer = ({ smiles, selectedKeys, manualKeys = [], onAtomClick }) =
     if (a.isH && model.parentName[idx]) keys.push(`0-${model.parentName[idx]}`);
     return keys;
   };
-  const renderSvg = (heightStyle) => {
-    if (!model) return null;
-    return (
-      <svg viewBox={model.viewBox} className="font-sans" style={heightStyle}>
-        {model.bonds.map(([a1, a2, order], i) => {
-          const A = model.atoms[a1], B = model.atoms[a2];
-          const dx = B.x - A.x, dy = B.y - A.y;
-          const L = Math.hypot(dx, dy) || 1;
-          const nx = -dy / L, ny = dx / L;
-          const off = 2.4;
-          const strokes = [];
-          if (order === 2 || order === 4) {
-            strokes.push([A.x + nx * off, A.y + ny * off, B.x + nx * off, B.y + ny * off]);
-            strokes.push([A.x - nx * off, A.y - ny * off, B.x - nx * off, B.y - ny * off]);
-          } else if (order === 3) {
-            strokes.push([A.x, A.y, B.x, B.y]);
-            strokes.push([A.x + nx * off, A.y + ny * off, B.x + nx * off, B.y + ny * off]);
-            strokes.push([A.x - nx * off, A.y - ny * off, B.x - nx * off, B.y - ny * off]);
-          } else {
-            strokes.push([A.x, A.y, B.x, B.y]);
-          }
-          return (<g key={`b${i}`}>{strokes.map((s, j) => (<line key={j} x1={s[0]} y1={s[1]} x2={s[2]} y2={s[3]} stroke="#475569" strokeWidth={1.8} pointerEvents="none" />))}</g>);
-        })}
-        {model.atoms.map((a, idx) => {
-          const key = `0-${a.name}`;
-          const isSel = selectedKeys && selectedKeys.includes(key);
-          const isMan = manualKeys && manualKeys.includes(key);
-          const r = a.isH ? 9 : 14;
-          return (
-            <g key={`a${idx}`}>
-              {isSel && <circle cx={a.x} cy={a.y} r={r + 6} fill={SELECT_COLOR} opacity={0.28} />}
-              {isMan && !isSel && <circle cx={a.x} cy={a.y} r={r + 6} fill={MANUAL_COLOR} opacity={0.22} />}
-              <circle cx={a.x} cy={a.y} r={r} fill="white" stroke={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : '#334155'} strokeWidth={isSel || isMan ? 2.2 : 1.4} />
-              <text x={a.x} y={a.y} textAnchor="middle" dominantBaseline="central" fontSize={a.isH ? 7 : 9.5} fontWeight="bold" fill={isSel ? '#92400e' : isMan ? '#166534' : '#1e3a8a'} pointerEvents="none">{a.name}</text>
-            </g>
-          );
-        })}
-        {model.atoms.map((a, idx) => (
-          <circle key={`hit${idx}`} cx={a.x} cy={a.y} r={a.isH ? 12 : 17} fill="transparent"
-            style={{ cursor: onAtomClick ? 'pointer' : 'default', pointerEvents: 'all' }}
-            onClick={onAtomClick ? (e) => { e.stopPropagation(); onAtomClick(0, keysFor(idx)); } : undefined}>
-            <title>{a.name}</title>
-          </circle>
-        ))}
-      </svg>
-    );
-  };
+const renderSvg = (heightStyle) => {
+  if (!model) return null;
+  return (
+    <svg viewBox={model.viewBox} className="font-sans" style={heightStyle}>
+      {model.bonds.map(([a1, a2, order], i) => {
+        const A = model.atoms[a1], B = model.atoms[a2];
+        const dx = B.x - A.x, dy = B.y - A.y;
+        const L = Math.hypot(dx, dy) || 1;
+        const ux = dx / L, uy = dy / L;
+        const nx = -uy, ny = ux;
+        const off = 2.4;
+        const rA = A.isH ? 9 : 14;
+        const rB = B.isH ? 9 : 14;
+        const startX = A.x + ux * rA;
+        const startY = A.y + uy * rA;
+        const endX = B.x - ux * rB;
+        const endY = B.y - uy * rB;
+        const strokes = [];
+        if (order === 2 || order === 4) {
+          strokes.push([startX + nx * off, startY + ny * off, endX + nx * off, endY + ny * off]);
+          strokes.push([startX - nx * off, startY - ny * off, endX - nx * off, endY - ny * off]);
+        } else if (order === 3) {
+          strokes.push([startX, startY, endX, endY]);
+          strokes.push([startX + nx * off, startY + ny * off, endX + nx * off, endY + ny * off]);
+          strokes.push([startX - nx * off, startY - ny * off, endX - nx * off, endY - ny * off]);
+        } else {
+          strokes.push([startX, startY, endX, endY]);
+        }
+        return (
+          <g key={`b${i}`}>
+            {strokes.map((s, j) => (
+              <line key={j} x1={s[0]} y1={s[1]} x2={s[2]} y2={s[3]} stroke="#475569" strokeWidth={1.8} pointerEvents="none" />
+            ))}
+          </g>
+        );
+      })}
+      {model.atoms.map((a, idx) => {
+        const key = `0-${a.name}`;
+        const isSel = selectedKeys && selectedKeys.includes(key);
+        const isMan = manualKeys && manualKeys.includes(key);
+        const r = a.isH ? 9 : 14;
+        return (
+          <g key={`a${idx}`}>
+            {isSel && <circle cx={a.x} cy={a.y} r={r + 6} fill={SELECT_COLOR} opacity={0.28} />}
+            {isMan && !isSel && <circle cx={a.x} cy={a.y} r={r + 6} fill={MANUAL_COLOR} opacity={0.22} />}
+            <circle cx={a.x} cy={a.y} r={r} fill="white" stroke={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : '#334155'} strokeWidth={isSel || isMan ? 2.2 : 1.4} />
+            <text x={a.x} y={a.y} textAnchor="middle" dominantBaseline="central" fontSize={a.isH ? 7 : 9.5} fontWeight="bold" fill={isSel ? '#92400e' : isMan ? '#166534' : '#1e3a8a'} pointerEvents="none">{a.name}</text>
+          </g>
+        );
+      })}
+      {model.atoms.map((a, idx) => (
+        <circle key={`hit${idx}`} cx={a.x} cy={a.y} r={a.isH ? 12 : 17} fill="transparent"
+          style={{ cursor: onAtomClick ? 'pointer' : 'default', pointerEvents: 'all' }}
+          onClick={onAtomClick ? (e) => { e.stopPropagation(); onAtomClick(0, keysFor(idx)); } : undefined}>
+          <title>{a.name}</title>
+        </circle>
+      ))}
+    </svg>
+  );
+};
   const fallbackUrl = smiles ? `https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(smiles)}/image?width=1500&height=1500` : '';
 
   const content = () => {
@@ -3945,25 +4158,31 @@ export const MolecularStructureSection = ({ ctx }) => {
   // sugar-phosphate backbone trace for DNA/RNA. Only used when the user hasn't provided an
   // explicit override (structureSrc/pdbId) and there's an actual sequence to build from.
 const generatedStructure = useMemo(() => {
-if (hasExplicitOverride) return null;
-try {
-if (d.moleculeType === 'protein' && d.seq) {
-return { text: proteinSequenceToPdbText(d.seq, activeTest.secondaryStructure || '', activeTest.name || 'PROTEIN'), ext: 'pdb' };
-}
-if ((d.moleculeType === 'dna' || d.moleculeType === 'rna') && d.seq) {
-return { text: nucleicSequenceToPdbText(d.seq, d.moleculeType, activeTest.name || 'NUCLEIC_ACID'), ext: 'pdb' };
-}
-if (d.moleculeType === 'sugar') {
-return { text: sugarSequenceToPdbText(activeTest.sugarChoice || 'GLC', activeTest.sugarConf || 'chair', activeTest.sugarAnomer || 'alpha', activeTest.name || 'SUGAR'), ext: 'pdb' };
-}
-if (d.moleculeType === 'lipid') {
-return { text: lipidSequenceToPdbText(activeTest.lipidChoice || 'POPC', activeTest.name || 'LIPID'), ext: 'pdb' };
-}
-} catch (e) {
-console.error('3D structure generation failed:', e);
-}
-return null;
-}, [hasExplicitOverride, d.moleculeType, d.seq, activeTest.secondaryStructure, activeTest.name, activeTest.sugarChoice, activeTest.sugarConf, activeTest.sugarAnomer, activeTest.lipidChoice]);
+  if (hasExplicitOverride) {
+    console.log('⚠️ 3D Generation skipped: hasExplicitOverride is true (check PDB ID / Structure Src inputs)');
+    return null;
+  }
+  
+  try {
+    console.log('🔄 3D Generation attempt. moleculeType:', d.moleculeType, 'seq length:', d.seq?.length);
+    
+    if (d.moleculeType === 'protein' && d.seq) {
+      console.log('✅ Generating protein structure...');
+      return { text: proteinSequenceToPdbText(d.seq, activeTest.secondaryStructure || '', activeTest.name || 'PROTEIN'), ext: 'pdb' };
+    }
+    
+    if ((d.moleculeType === 'dna' || d.moleculeType === 'rna') && d.seq) {
+      console.log('✅ Generating nucleic acid structure...');
+      return { text: nucleicSequenceToPdbText(d.seq, d.moleculeType, activeTest.name || 'NUCLEIC_ACID'), ext: 'pdb' };
+    }
+    
+    console.log('ℹ️ 3D Generation skipped: No valid sequence provided for this molecule type.');
+  } catch (e) {
+    console.error('❌ 3D structure generation failed with error:', e);
+  }
+  
+  return null;
+}, [hasExplicitOverride, d.moleculeType, d.seq, activeTest.secondaryStructure, activeTest.name]);
 
   // Organic molecules with no override: fetch + validate a real 3D structure ourselves (Cactus,
   // falling back to PubChem) instead of handing NGL a raw URL to fetch on its own -- this is what
@@ -6714,16 +6933,16 @@ export const SimulationsSection = ({ ctx }) => {
           <RangeBarChart title="Theoretical ¹³C Ranges" ranges={filteredRanges13C} domain={[0, 220]} ticks={Array.from({ length: 23 }, (_, i) => i * 10)} xAxisLabel="¹³C (ppm)" rowCount={focusIdx === 'ALL' ? d.uniqueTypes.length : 1} rowLabels={focusIdx === 'ALL' ? d.uniqueTypes.map((c) => d.DB[c]?.code3 || c) : [d.parsedSeq[focusIdx]?.code3 || d.parsedSeq[focusIdx]?.char]} />
         </div>
       )}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <OneDSpectrumPlot key={`1d1h-${focusIdx}`} title="Simulated ¹H 1D Spectrum" data={fP(d.peaks.data1H)} fullDomain={[0, 11]} ticks={TICKS_1H} TickComponent={CustomXTick1H} xLabel="¹H (ppm)" panelId="1D_1H" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={simCfg} />
-        <OneDSpectrumPlot key={`1d13c-${focusIdx}`} title="Simulated ¹³C 1D Spectrum" data={fP(d.peaks.data13C)} fullDomain={[0, 220]} ticks={TICKS_13C} TickComponent={CustomXTick13C} xLabel="¹³C (ppm)" panelId="1D_13C" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={simCfg} />
-        {d.hasPhosphorus && d.selNuc.includes('P') && fP(d.peaks.p31Data).length > 0 && (
-          <OneDSpectrumPlot key={`1dp31-${focusIdx}`} title="Simulated ³¹P 1D Spectrum" data={fP(d.peaks.p31Data)} fullDomain={[-5, 5]} ticks={Array.from({ length: 11 }, (_, i) => i - 5)} TickComponent={CustomXTick1H} xLabel="³¹P (ppm)" panelId="1D_31P" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={simCfg} />
-        )}
-        <SpectrumPlot key={`cosy-${focusIdx}`} title="Simulated COSY Spectrum" diagonalData={fP(d.peaks.diagonalData)} crossPeakData={fP(d.peaks.cosyPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="cosy" diagonalColor="#22c55e" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={simCfg} />
-        <SpectrumPlot key={`noesy-${focusIdx}`} title="Simulated NOESY Spectrum" diagonalData={fP(d.peaks.diagonalData)} crossPeakData={fP(d.peaks.noesyPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="noesy" diagonalColor="#ef4444" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={simCfg} />
-        <SpectrumPlot key={`tocsy-${focusIdx}`} title="Simulated TOCSY Spectrum" diagonalData={fP(d.peaks.diagonalData)} crossPeakData={fP(d.peaks.tocsyPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="tocsy" diagonalColor="#1e3a8a" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={simCfg} />
-      </div>
+ <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+   <OneDSpectrumPlot key={`1d1h-${focusIdx}`} title="Simulated ¹H 1D Spectrum" data={fP(d.peaks.data1H).filter(p => p.atom1 && p.atom1.startsWith('H'))} fullDomain={[0, 11]} ticks={TICKS_1H} TickComponent={CustomXTick1H} xLabel="¹H (ppm)" panelId="1D_1H" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={simCfg} />
+   <OneDSpectrumPlot key={`1d13c-${focusIdx}`} title="Simulated ¹³C 1D Spectrum" data={fP(d.peaks.data13C).filter(p => p.atom2 && p.atom2.startsWith('C'))} fullDomain={[0, 220]} ticks={TICKS_13C} TickComponent={CustomXTick13C} xLabel="¹³C (ppm)" panelId="1D_13C" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={simCfg} />
+   {d.hasPhosphorus && d.selNuc.includes('P') && fP(d.peaks.p31Data).length > 0 && (
+     <OneDSpectrumPlot key={`1dp31-${focusIdx}`} title="Simulated ³¹P 1D Spectrum" data={fP(d.peaks.p31Data)} fullDomain={[-5, 5]} ticks={Array.from({ length: 11 }, (_, i) => i - 5)} TickComponent={CustomXTick1H} xLabel="³¹P (ppm)" panelId="1D_31P" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={simCfg} />
+   )}
+   <SpectrumPlot key={`cosy-${focusIdx}`} title="Simulated COSY Spectrum" diagonalData={fP(d.peaks.diagonalData).filter(p => p.atom1 && p.atom1.startsWith('H'))} crossPeakData={fP(d.peaks.cosyPeaks).filter(p => p.atom1 && p.atom1.startsWith('H') && p.atom2 && p.atom2.startsWith('H'))} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="cosy" diagonalColor="#22c55e" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={simCfg} />
+   <SpectrumPlot key={`noesy-${focusIdx}`} title="Simulated NOESY Spectrum" diagonalData={fP(d.peaks.diagonalData).filter(p => p.atom1 && p.atom1.startsWith('H'))} crossPeakData={fP(d.peaks.noesyPeaks).filter(p => p.atom1 && p.atom1.startsWith('H') && p.atom2 && p.atom2.startsWith('H'))} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="noesy" diagonalColor="#ef4444" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={simCfg} />
+   <SpectrumPlot key={`tocsy-${focusIdx}`} title="Simulated TOCSY Spectrum" diagonalData={fP(d.peaks.diagonalData).filter(p => p.atom1 && p.atom1.startsWith('H'))} crossPeakData={fP(d.peaks.tocsyPeaks).filter(p => p.atom1 && p.atom1.startsWith('H') && p.atom2 && p.atom2.startsWith('H'))} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="tocsy" diagonalColor="#1e3a8a" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={simCfg} />
+ </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <HSQCPlot key={`hsqc-${focusIdx}`} title="Simulated ¹H-¹³C HSQC Spectrum" crossPeakData={fP(d.peaks.hsqcPeaks)} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="hsqc" selectedKeys={selectedKeys} manualKeys={manualKeys} yAxisLabel="¹³C F1 (ppm)" yDomainInit={[0, 220]} yTicks={TICKS_13C} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={simCfg} />
         {d.moleculeType === 'protein' && d.selNuc.includes('N') && fP(d.peaks.hsqc15NPeaks).length > 0 && (
