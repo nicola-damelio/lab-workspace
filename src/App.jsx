@@ -23,7 +23,7 @@ import { NMRFittingsTestRenderer } from './components/NMRFittingsTestRenderer';
 import { CloningTestRenderer } from './components/CloningTestRenderer';
 import { ProteinExpressionTestRenderer } from './components/ProteinExpressionTestRenderer';
 import DockingTestRenderer, { DOCKING_TAB_CONFIG } from './components/DockingTestRenderer';
-import { Setup, Data, Simulations, Analysis } from '/src/components/MDSections.jsx';
+import { Setup, Data, Simulations, Analysis, MD_ANALYSIS_SECTIONS } from '/src/components/MDSections.jsx';
 import { SolventsManager, BuffersManager, AdditivesManager, NMRProbesManager, NMRInstrumentsManager, NMRExperimentsManager, BufferAdditiveFields, getMolecularWeightFromFormula, BrukerPulseSequenceViewer} from './components/DefinitionsExtra';
 import {
   CD_TAB_CONFIG,
@@ -364,6 +364,7 @@ const MD_CUSTOM = {
   Simulations: Simulations,
   Data: Data,
   Analysis: Analysis,
+  AnalysisSections: MD_ANALYSIS_SECTIONS,
   buildNotebookHtml: buildMDNotebookHtml
 };
 

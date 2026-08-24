@@ -44,16 +44,6 @@ export const ensureNGL = () => {
   return _nglPromise;
 };
 
-/* --------------------------- hidden NGL stage -------------------------- */
-
-const makeHiddenStage = (NGL) => {
-  const host = document.createElement('div');
-  host.style.cssText = 'position:fixed;left:-10000px;top:0;width:48px;height:48px;pointer-events:none;opacity:0;';
-  document.body.appendChild(host);
-  const stage = new NGL.Stage(host, { backgroundColor: '#ffffff', sampleLevel: 0, hoverTimeout: 0 });
-  return { stage, host };
-};
-
 /* ------------------------------ TRR reader ------------------------------ */
 
 export async function* readTrrFrames(file) {
@@ -91,138 +81,100 @@ export async function* readTrrFrames(file) {
 
 /* --------------------- NGL-backed XTC / DCD reader ---------------------- */
 
-const nglTrajectoryFrames = async (file, ext, topoBlob, topoExt, topoBoxNm, onStatus) => {
+// NGL 2.4's autoLoad() parses trajectory files into a "Frames" object
+// ({ coordinates:[Float32Array…], boxes:[…], times:[…] }) WITHOUT needing a
+// Stage / WebGL context. The topology is already parsed by the app
+// (parseTopology → atoms in nm), so we only need autoLoad + unit detection.
+const nglTrajectoryFrames = async (file, ext, topoAtoms, topoBoxNm, onStatus) => {
   const NGL = await ensureNGL();
-  const { stage, host } = makeHiddenStage(NGL);
-  const cleanup = () => {
-    try { stage.removeAllComponents(); } catch (e) {}
-    try { if (typeof stage.dispose === 'function') stage.dispose(); } catch (e) {}
-    try { host.remove(); } catch (e) {}
-  };
+  const natoms = Array.isArray(topoAtoms) ? topoAtoms.length : 0;
+  if (!natoms) throw new Error('No topology atoms available to anchor the trajectory.');
 
+  onStatus?.('NGL: parsing trajectory frames…');
+  let framesObj = null;
   try {
-    onStatus?.('NGL: loading topology…');
-    const sComp = await stage.loadFile(topoBlob, { ext: topoExt, defaultRepresentation: false });
-    if (!sComp || typeof sComp.addTrajectory !== 'function') {
-      throw new Error('NGL topology component lacks addTrajectory() — cannot attach the trajectory.');
-    }
-
-    onStatus?.('NGL: attaching trajectory…');
-    let tComp = null;
-    const TrajFileCls = { xtc: NGL.XtcTrajectoryFile, trr: NGL.TrrTrajectoryFile, dcd: NGL.DcdTrajectoryFile }[ext];
-    try {
-      if (!TrajFileCls) throw new Error(`NGL trajectory class for .${ext} not found`);
-      tComp = sComp.addTrajectory(new TrajFileCls(file));
-    } catch (e1) {
-      try {
-        const loaded = await stage.loadFile(file, { ext });
-        tComp = sComp.addTrajectory(loaded);
-      } catch (e2) {
-        throw new Error(`NGL could not attach the trajectory (${e1.message} / ${e2.message}).`);
-      }
-    }
-
-    const trajectory = tComp?.trajectory || tComp?.traj || tComp;
-    const natoms = sComp.structure?.atomCount;
-    if (!natoms) throw new Error('NGL topology contains no atoms.');
-
-    // frame count can be reported asynchronously (XTC has no index)
-    let numframes = 0;
-    for (let t = 0; t < 40 && numframes === 0; t++) {
-      const n = trajectory?.numframes ?? trajectory?.frameCount;
-      if (Number.isFinite(n) && n > 0) numframes = n;
-      else await new Promise((r) => setTimeout(r, 250));
-    }
-    const knownCount = numframes > 0;
-    if (!knownCount) numframes = Infinity;
-
-    const xyz = new Float32Array(natoms * 3);
-    const box = topoBoxNm || null;
-
-    const fillFromAtomstore = () => {
-      const as = sComp.structure.atomstore;
-      for (let i = 0; i < natoms; i++) {
-        xyz[3 * i] = as.x[i] / 10;        // NGL keeps Å; the engine expects nm
-        xyz[3 * i + 1] = as.y[i] / 10;
-        xyz[3 * i + 2] = as.z[i] / 10;
-      }
-    };
-
-    // NGL's trajectory API differs slightly between versions — try the known
-    // shapes in order: promise getFrame, callback getFrame, then setFrame.
-    const readFrame = async (i) => {
-      if (typeof trajectory.getFrame === 'function') {
-        try {
-          const r = trajectory.getFrame(i);
-          if (r && typeof r.then === 'function') {
-            const c = await r;
-            if (c && c.length) { for (let k = 0; k < xyz.length && k < c.length; k++) xyz[k] = c[k] / 10; return; }
-          }
-        } catch (e) { /* next strategy */ }
-        try {
-          const c = await new Promise((resolve, reject) => {
-            const to = setTimeout(() => reject(new Error('getFrame callback timeout')), 60000);
-            try { trajectory.getFrame(i, (coords) => { clearTimeout(to); resolve(coords); }); }
-            catch (e) { clearTimeout(to); reject(e); }
-          });
-          if (c && c.length) { for (let k = 0; k < xyz.length && k < c.length; k++) xyz[k] = c[k] / 10; return; }
-        } catch (e) { /* next strategy */ }
-      }
-      if (typeof trajectory.setFrame === 'function') {
-        await new Promise((resolve) => {
-          let done = false;
-          const fin = () => { if (!done) { done = true; resolve(); } };
-          const to = setTimeout(fin, 5000);
-          try { trajectory.signals?.frameChanged?.add(() => { clearTimeout(to); fin(); }); } catch (e) {}
-          try { trajectory.setFrame(i); } catch (e) { clearTimeout(to); fin(); }
-        });
-        fillFromAtomstore();
-        return;
-      }
-      throw new Error(`No usable NGL frame accessor (trajectory keys: ${Object.keys(trajectory || {}).join(', ')}).`);
-    };
-
-    const frames = (async function* () {
-      let read = 0;
-      try {
-        for (let i = 0; i < numframes; i++) {
-          let ok = true;
-          try { await readFrame(i); }
-          catch (e) { if (knownCount) throw e; ok = false; }
-          if (!ok) break;
-          read++;
-          // stop NGL from retaining the whole trajectory in its frame cache
-          try {
-            if (Array.isArray(trajectory.frameCache) && trajectory.frameCache.length > 64) {
-              trajectory.frameCache.splice(0, trajectory.frameCache.length - 1);
-            }
-          } catch (e) {}
-          yield { xyz, box };   // reused buffer; the engine consumes it synchronously
-        }
-      } finally { cleanup(); }
-      if (read === 0) throw new Error('Trajectory contained no readable frames.');
-    })();
-
-    return { frames, numframes: knownCount ? numframes : null };
+    framesObj = await NGL.autoLoad(file, { ext });
   } catch (e) {
-    cleanup();
-    throw e;
+    throw new Error(`NGL could not parse the trajectory: ${e.message}`);
   }
+  if (!framesObj || !Array.isArray(framesObj.coordinates) || framesObj.coordinates.length === 0) {
+    throw new Error(
+      'NGL did not parse the trajectory into frames (check the topology / trajectory format). ' +
+      `Parsed object: ${framesObj ? Object.keys(framesObj).join(', ') : 'empty'}.`
+    );
+  }
+
+  const coords = framesObj.coordinates;
+  const boxes = Array.isArray(framesObj.boxes) ? framesObj.boxes : [];
+  const expected = natoms * 3;
+  if (coords[0].length !== expected) {
+    throw new Error(
+      `Trajectory / topology atom mismatch: trajectory frames have ${coords[0].length / 3} atoms, ` +
+      `but the topology has ${natoms}. Use a topology (.gro/.pdb) with the exact same atom order and count.`
+    );
+  }
+
+  // ---- coordinate scale: NGL's trajectory parsers are inconsistent (some XTC
+  // builds keep nm, DCD is Å). The topology from parseTopology() is in nm, so
+  // compare the spread of the first frame with the topology spread:
+  // ratio ≈ 1 → nm (use as-is); ratio ≈ 10 → Å (divide by 10 to get nm).
+  const spread = (arr) => {
+    const n = Math.floor(arr.length / 3);
+    if (n <= 0) return 0;
+    let mx = 0, my = 0, mz = 0;
+    for (let i = 0; i < n; i++) { mx += arr[3 * i]; my += arr[3 * i + 1]; mz += arr[3 * i + 2]; }
+    mx /= n; my /= n; mz /= n;
+    let s = 0;
+    for (let i = 0; i < n; i++) {
+      const dx = arr[3 * i] - mx, dy = arr[3 * i + 1] - my, dz = arr[3 * i + 2] - mz;
+      s += dx * dx + dy * dy + dz * dz;
+    }
+    return Math.sqrt(s / n);
+  };
+  const topoArr = new Float32Array(expected);
+  for (let i = 0; i < natoms; i++) {
+    topoArr[3 * i] = topoAtoms[i].x;
+    topoArr[3 * i + 1] = topoAtoms[i].y;
+    topoArr[3 * i + 2] = topoAtoms[i].z;
+  }
+  const refSpread = spread(topoArr);
+  const frameSpread = spread(coords[0]);
+  const nmScale = !(refSpread > 0 && frameSpread > 0 && frameSpread / refSpread > 3);
+
+  const frames = (async function* () {
+    let read = 0;
+    for (let i = 0; i < coords.length; i++) {
+      const c = coords[i];
+      const xyz = new Float32Array(c.length);
+      for (let k = 0; k < c.length; k++) xyz[k] = nmScale ? c[k] : c[k] / 10; // → nm
+      let box = topoBoxNm || null;
+      const b = boxes[i];
+      if (b && b.length >= 9) {
+        box = new Float32Array(9);
+        for (let k = 0; k < 9; k++) box[k] = b[k] / 10; // NGL boxes are Å → nm
+      }
+      yield { xyz, box };
+      read++;
+    }
+    if (read === 0) throw new Error('Trajectory contained no readable frames.');
+  })();
+
+  return { frames, numframes: coords.length, source: `NGL ${ext.toUpperCase()}` };
 };
 
 /* ----------------------------- public entry ----------------------------- */
 
 export const resolveFrameSource = async (file, opts = {}) => {
   const name = (file?.name || '').toLowerCase();
-  const { topologyBlob, topologyExt, topologyBox, onStatus } = opts;
+  const { topoAtoms, topologyBox, onStatus } = opts;
 
   if (name.endsWith('.trr')) {
     return { frames: readTrrFrames(file), numframes: null, source: 'native TRR' };
   }
   const ext = name.endsWith('.xtc') ? 'xtc' : name.endsWith('.dcd') ? 'dcd' : null;
-  if (ext && topologyBlob) {
+  if (ext && Array.isArray(topoAtoms) && topoAtoms.length > 0) {
     const { frames, numframes } = await nglTrajectoryFrames(
-      file, ext, topologyBlob, topologyExt || 'gro', topologyBox, onStatus
+      file, ext, topoAtoms, topologyBox, onStatus
     );
     return { frames, numframes, source: `NGL ${ext.toUpperCase()}` };
   }

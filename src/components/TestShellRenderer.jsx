@@ -1312,6 +1312,8 @@ const details = [
   const FittingErrors = custom.FittingErrors || null;
   const FittingGraphics = custom.FittingGraphics || null;
 
+  const AnalysisSections = custom.AnalysisSections || null;
+
   const SimulationsSection =
     config.SimulationsSection || custom.Simulations || null;
 
@@ -1872,6 +1874,12 @@ const details = [
           <DataAnalysisSection ctx={ctx} />
         </CollapsibleSection>
       )}
+
+                      {Array.isArray(AnalysisSections) && AnalysisSections.map((s) => (
+                        <CollapsibleSection key={s.title} title={s.title} icon={s.icon} defaultOpen={!!s.defaultOpen}>
+                          <s.Component ctx={ctx} />
+                        </CollapsibleSection>
+                      ))}
 
                       {FittingSection ? (
                         <FittingSection ctx={ctx} />
