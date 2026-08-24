@@ -258,6 +258,8 @@ export const computeSecondaryStructure = async (topo, frames, opts, onProgress) 
     samples: allCodes.filter((_, i) => i % heatStride === 0),
     frameStride: heatStride,
     totalFrames: used,
+    dtPs,
+    resIds: bb.map((r) => r.resnr),
   };
 
   const occupancy = labels.map((label, i) => ({

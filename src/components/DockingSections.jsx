@@ -379,9 +379,8 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
       )}
 
       {/* 2D / 3D structure view */}
-      {d.structure && (
-        <div>
-          <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+      <div>
+        <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
             <div className="flex bg-slate-200 p-1 rounded-lg">
               <button
                 onClick={() => updateActiveTest({ structureMode: '2d' })}
@@ -445,7 +444,6 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
             />
           </div>
         </div>
-      )}
     </div>
   );
 };

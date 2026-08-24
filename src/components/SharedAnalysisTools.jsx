@@ -210,6 +210,7 @@ export const SharedErrorTreatment = ({ activeTest, updateActiveTest, showFitTogg
 export const ChartControlBar = ({
     showErr, onToggleErr,
     showCfg, onToggleCfg,
+    showFs, onToggleFs,
     extraButtons,
     className
 }) => (
@@ -218,17 +219,114 @@ export const ChartControlBar = ({
         {onToggleErr && (
             <button type="button" onClick={onToggleErr}
                 className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${showErr ? 'bg-orange-100 border-orange-400 text-orange-800' : 'bg-white border-orange-300 text-orange-700 hover:bg-orange-50'}`}>
-                Error Management
+                ⚠️ Error Management
             </button>
         )}
         {onToggleCfg && (
             <button type="button" onClick={onToggleCfg}
                 className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${showCfg ? 'bg-slate-200 border-slate-400 text-slate-900' : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'}`}>
-                Graphical Parameters
+                🎨 Graphical Parameters
+            </button>
+        )}
+        {onToggleFs && (
+            <button type="button" onClick={onToggleFs}
+                className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${showFs ? 'bg-indigo-100 border-indigo-400 text-indigo-800' : 'bg-white border-indigo-300 text-indigo-700 hover:bg-indigo-50'}`}>
+                {showFs ? '↙️ Exit' : '↗️ Fullzoom'}
             </button>
         )}
     </div>
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FULLSCREEN / FULLZOOM  -- shared classes used by ChartPanel and any chart
+// panel that opts into the "Fullzoom" button.
+// ─────────────────────────────────────────────────────────────────────────────
+export const CHART_FS_CLASSES =
+    'fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-auto flex flex-col';
+
+// Fullscreen context: any chart inside a ChartPanel can read whether the panel
+// is in Fullzoom mode and enlarge itself accordingly (recharts needs an
+// explicit pixel height, so in fullscreen we grow the charts to fill the viewport).
+export const ChartFsContext = React.createContext(false);
+export const useChartFs = () => React.useContext(ChartFsContext);
+
+// helper: sensible chart height for the current fullscreen state
+export const useChartFsHeight = (normalHeight) => {
+    const isFs = useChartFs();
+    if (!isFs) return normalHeight;
+    if (typeof window === 'undefined') return normalHeight;
+    return Math.max(480, window.innerHeight - 210);
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CHART PANEL  -- fully generalised wrapper for every chart / graph / spectrum.
+// Renders the standard header (title + Error Management / Graphical Parameters /
+// Fullzoom buttons) plus the optional panels, and supports fullscreen mode.
+//
+// Props:
+//   title, icon      -- header title
+//   children         -- the chart / spectrum / table body
+//   errPanel         -- JSX rendered when "Error Management" is open (optional)
+//   cfgPanel         -- JSX rendered when "Graphical Parameters" is open (optional)
+//   footer           -- legend / metadata below the body (optional)
+//   headerExtra      -- extra buttons rendered before the standard ones
+//   bodyClassName, className
+//   defaultOpenErr, defaultOpenCfg, defaultFs
+// ─────────────────────────────────────────────────────────────────────────────
+export const ChartPanel = ({
+    title = '',
+    icon = '📊',
+    children,
+    errPanel = null,
+    cfgPanel = null,
+    footer = null,
+    headerExtra = null,
+    bodyClassName = '',
+    className = '',
+    defaultOpenErr = false,
+    defaultOpenCfg = false,
+    defaultFs = false,
+}) => {
+    const [showErr, setShowErr] = useState(defaultOpenErr);
+    const [showCfg, setShowCfg] = useState(defaultOpenCfg);
+    const [isFs, setIsFs] = useState(defaultFs);
+    const toggleFs = () => setIsFs((v) => !v);
+
+    return (
+        <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-3 flex flex-col min-h-0 ${isFs ? CHART_FS_CLASSES : ''} ${className}`}>
+            <div className="flex items-center justify-between flex-wrap gap-2 mb-2 shrink-0">
+                <div className="flex items-center gap-2 min-w-0">
+                    {icon && <span className="text-base shrink-0">{icon}</span>}
+                    <h4 className="text-sm font-bold text-slate-700 truncate">{title}</h4>
+                </div>
+                <div className="ml-auto flex flex-wrap items-center gap-2">
+                    {headerExtra}
+                    <ChartControlBar
+                        showErr={showErr}
+                        onToggleErr={errPanel ? () => setShowErr((v) => !v) : null}
+                        showCfg={showCfg}
+                        onToggleCfg={cfgPanel ? () => setShowCfg((v) => !v) : null}
+                        showFs={isFs}
+                        onToggleFs={toggleFs}
+                        className="flex items-center gap-2"
+                    />
+                </div>
+            </div>
+
+            {showErr && errPanel && (
+                <div className="mb-3 p-4 bg-orange-50 border border-orange-200 rounded-lg shadow-sm shrink-0">{errPanel}</div>
+            )}
+            {showCfg && cfgPanel && (
+                <div className="mb-3 p-4 bg-slate-50 border border-slate-200 rounded-lg shadow-sm shrink-0">{cfgPanel}</div>
+            )}
+
+            <ChartFsContext.Provider value={isFs}>
+                <div className={`flex-1 min-h-0 ${bodyClassName}`}>{children}</div>
+            </ChartFsContext.Provider>
+            {footer && <div className="mt-2 shrink-0">{footer}</div>}
+        </div>
+    );
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SHARED CHART STYLE PANEL  -- full graphical-parameters panel

@@ -417,6 +417,9 @@ trajectorySrc,
 trajectoryFile,
 trajectoryFallbacks = [],
 trajectoryFormat = 'xtc',
+onStructureFile,
+onStructureSrc,
+onTrajectoryFile,
 onAtomClick,
 selectedKeys,
 manualKeys = [],
@@ -776,7 +779,7 @@ setTrajError(err?.message || 'Failed to load trajectory. Check matching atom cou
 };
 initTraj();
 return () => { cancelled = true; };
-}, [trajFile, trajectorySrc, trajectoryFormat, status]);
+}, [trajFile, trajectoryFile, trajectorySrc, trajectoryFormat, status]);
 
 // ---- Trajectory Playback Loop ----
 useEffect(() => {
@@ -956,8 +959,9 @@ setFile(f);
 setPdbId('');
 setTrajFile(null);
 setLoadRequest({ file: f, url: null, ts: Date.now() });
+onStructureFile?.(f);   // share the chosen topology with the analysis sections
 e.target.value = '';
-}, []);
+}, [onStructureFile]);
 
 const handlePdbIdLoad = useCallback(() => {
 const value = pdbId.trim();
@@ -966,7 +970,8 @@ setManualOverride(true);
 setFile(null);
 setTrajFile(null);
 setLoadRequest({ file: null, url: value, ts: Date.now() });
-}, [pdbId]);
+onStructureSrc?.(value);   // share the web/PDB topology with the analysis sections
+}, [pdbId, onStructureSrc]);
 
 return (
 <div className="flex flex-col gap-3">
@@ -1029,15 +1034,18 @@ type="file"
 accept=".xtc,.trr,.dcd"
 onChange={(e) => {
 const f = e.target.files && e.target.files[0];
-if (f) setTrajFile(f);
+if (f) {
+setTrajFile(f);
+onTrajectoryFile?.(f);   // share the chosen trajectory with the analysis sections
+}
 e.target.value = '';
 }}
 className="hidden"
 />
 </label>
-{trajFile && (
+{(trajFile || trajectoryFile) && (
 <span className="text-[10px] text-slate-500 max-w-[150px] truncate">
-{trajFile.name}
+{(trajFile || trajectoryFile).name}
 </span>
 )}
 </div>
@@ -1076,7 +1084,7 @@ className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline
 </div>
 
 {/* Trajectory Playback Controls */}
-{(trajFile || trajectorySrc) && (
+{(trajFile || trajectoryFile || trajectorySrc) && (
 <div className="flex flex-wrap items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg p-3">
 <button
 type="button"

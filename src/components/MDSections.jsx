@@ -2,11 +2,11 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, ReferenceArea
 } from 'recharts';
-import { ChartControlBar, SharedChartStylePanel, useXZoom } from './SharedAnalysisTools';
+import { ChartControlBar, SharedChartStylePanel, useXZoom, useYZoom, ChartPanel, CHART_FS_CLASSES, useChartFsHeight } from './SharedAnalysisTools';
 import { parseSimulationParameters } from './MDData';
 import {
   CONTACT_DEFAULTS, parseTopology, computeContactRDF, demoFrames,
-  resolveFrameSource, AWK_PALETTE
+  resolveFrameSource, AWK_PALETTE, contactSeriesStyle
 } from './MDMembraneContacts';
 import { computeOrderAndDensity, parseChargeMap } from './MDMembraneProfiles';
 export { parseSimulationParameters };   
@@ -45,11 +45,29 @@ const localFileCache = new Map();
 const _rdkitMDListeners = new Set();
 let _rdkitMDStatus = window.__RDKit ? 'ready' : 'loading';
 if (_rdkitMDStatus === 'loading') {
+  // Load RDKit ourselves (minimal build — the only file published in @rdkit/rdkit)
+  // so the 2D formula works even when no other page loaded it first.
+  try {
+    if (!document.getElementById('rdkit-md-wasm-script')) {
+      const s = document.createElement('script');
+      s.id = 'rdkit-md-wasm-script';
+      s.src = 'https://unpkg.com/@rdkit/rdkit/dist/RDKit_minimal.js';
+      s.async = true;
+      s.onload = () => {
+        if (typeof window.initRDKitModule === 'function') {
+          window.initRDKitModule({ locateFile: () => 'https://unpkg.com/@rdkit/rdkit/dist/RDKit_minimal.wasm' })
+            .then((M) => { window.__RDKit = M; })
+            .catch(() => {});
+        }
+      };
+      document.head.appendChild(s);
+    }
+  } catch (e) { /* RDKit stays unavailable — fallback image will be shown */ }
   let _att = 0;
   const _iv = setInterval(() => {
     _att++;
     if (window.__RDKit) { _rdkitMDStatus = 'ready'; clearInterval(_iv); _rdkitMDListeners.forEach(f => f('ready')); _rdkitMDListeners.clear(); }
-    else if (_att > 33) { _rdkitMDStatus = 'failed'; clearInterval(_iv); _rdkitMDListeners.forEach(f => f('failed')); _rdkitMDListeners.clear(); }
+    else if (_att > 66) { _rdkitMDStatus = 'failed'; clearInterval(_iv); _rdkitMDListeners.forEach(f => f('failed')); _rdkitMDListeners.clear(); }
   }, 300);
 }
 const useMDRdkitReady = () => {
@@ -637,15 +655,14 @@ export const MDExperimentSetupSection = ({ ctx }) => {
         </div>
       )}
 
-      {(d.structure || d.moleculeType === 'organic') && (
-        <div>
-          <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-            <div className="flex bg-slate-200 p-1 rounded-lg">
-              <button onClick={() => updateActiveTest({ structureMode: '2d' })}
-                className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${structureMode === '2d' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>2D Formula</button>
-              <button onClick={() => updateActiveTest({ structureMode: '3d' })}
-                className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${structureMode === '3d' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>3D Viewer + Trajectory</button>
-            </div>
+      <div>
+        <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+          <div className="flex bg-slate-200 p-1 rounded-lg">
+            <button onClick={() => updateActiveTest({ structureMode: '2d' })}
+              className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${structureMode === '2d' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>2D Formula</button>
+            <button onClick={() => updateActiveTest({ structureMode: '3d' })}
+              className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${structureMode === '3d' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>3D Viewer + Trajectory</button>
+          </div>
 
             <div className="flex items-center gap-2 flex-wrap justify-end">
               <label className="text-[10px] font-bold text-slate-500 uppercase">🔍 Focus</label>
@@ -663,26 +680,22 @@ export const MDExperimentSetupSection = ({ ctx }) => {
 
           {structureMode === '3d' && (
             <div className="mb-3 flex flex-col gap-3 bg-slate-50 border border-slate-200 rounded-xl p-3">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase">Topology (PDB ID / Drive Link)</label>
-                  <input type="text" value={activeTest.structureSrc || ''} onChange={(e) => updateActiveTest({ structureSrc: e.target.value })}
-                    placeholder="e.g. 1UBQ or Google Drive link" className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500" />
-                </div>
-
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase">Topology file from PC</label>
-                  <input
-                    type="file"
-                    accept=".pdb,.ent,.gro,.cif,.mmcif,.bcif,.mol2,.sdf,.xyz"
-                    onChange={(e) => handleStructureFile(e.target.files && e.target.files[0] ? e.target.files[0] : null)}
-                    className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 file:mr-2 file:px-2 file:py-0.5 file:rounded file:border-0 file:bg-blue-50 file:text-blue-700 file:text-[10px] file:font-bold"
-                  />
-                  {activeTest.structureFileName && (
-                    <span className="text-[10px] font-bold text-emerald-700 mt-0.5 flex items-center">
-                      ✓ {activeTest.structureFileName}
-                      <button type="button" onClick={() => handleStructureFile(null)} className="ml-2 text-red-500 hover:text-red-700 font-black">✕</button>
-                    </span>
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <span className="text-[10px] font-bold text-slate-500 uppercase">
+                  🧬 System files — loaded with the 3D viewer buttons below
+                </span>
+                <div className="flex items-center gap-3 flex-wrap text-[10px] font-bold">
+                  {activeTest.structureFileName ? (
+                    <span className="text-emerald-700">✓ Topology: {activeTest.structureFileName}</span>
+                  ) : activeTest.structureSrc ? (
+                    <span className="text-emerald-700">✓ Topology (web): {activeTest.structureSrc}</span>
+                  ) : (
+                    <span className="text-slate-400">No topology yet — use "Choose PDB/CIF" or "PDB ID or URL"</span>
+                  )}
+                  {trajectoryFile ? (
+                    <span className="text-emerald-700">✓ Trajectory: {trajectoryFile.name}</span>
+                  ) : (
+                    <span className="text-slate-400">No trajectory yet — use "Choose XTC / TRR"</span>
                   )}
                 </div>
               </div>
@@ -721,29 +734,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3 pt-3 border-t border-slate-200">
                 <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase">Trajectory file from PC (.xtc / .trr)</label>
-                  <input
-                    type="file"
-                    accept=".xtc,.trr,.dcd,.nc,.gro,.pdb"
-                    onChange={(e) => handleTrajectoryFile(e.target.files && e.target.files[0] ? e.target.files[0] : null)}
-                    className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 file:mr-2 file:px-2 file:py-0.5 file:rounded file:border-0 file:bg-blue-50 file:text-blue-700 file:text-[10px] file:font-bold"
-                  />
-                  {trajectoryFile ? (
-                    <span className="text-[10px] font-bold text-emerald-700 mt-0.5 flex items-center">
-                      ✓ {trajectoryFile.name} (Ready)
-                      <button type="button" onClick={() => handleTrajectoryFile(null)} className="ml-2 text-red-500 hover:text-red-700 font-black">✕</button>
-                    </span>
-                  ) : activeTest.trajectoryFileName ? (
-                    <span className="text-[10px] font-bold text-amber-600 mt-0.5 flex flex-col">
-                      <span>⚠️ {activeTest.trajectoryFileName}</span>
-                      <span className="font-normal text-slate-500">Please re-select this file to view it in 3D.</span>
-                      <button type="button" onClick={() => updateActiveTest({ trajectoryFileName: null })} className="self-start mt-1 text-red-500 hover:text-red-700 font-bold underline">Clear saved name</button>
-                    </span>
-                  ) : null}
-                </div>
-
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase">🎞️ Trajectory online link</label>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase">🎞️ Trajectory online link (web / Drive)</label>
                   <input 
                     type="text" 
                     value={d.trajectoryUrl} 
@@ -765,6 +756,24 @@ export const MDExperimentSetupSection = ({ ctx }) => {
                       </a>
                     )}
                   </div>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase">Trajectory from PC</label>
+                  {trajectoryFile ? (
+                    <span className="text-[10px] font-bold text-emerald-700 mt-0.5 flex items-center">
+                      ✓ {trajectoryFile.name} (Ready)
+                      <button type="button" onClick={() => handleTrajectoryFile(null)} className="ml-2 text-red-500 hover:text-red-700 font-black">✕</button>
+                    </span>
+                  ) : activeTest.trajectoryFileName ? (
+                    <span className="text-[10px] font-bold text-amber-600 mt-0.5 flex flex-col">
+                      <span>⚠️ {activeTest.trajectoryFileName}</span>
+                      <span className="font-normal text-slate-500">Please re-select this file with the "Choose XTC / TRR" button in the 3D viewer.</span>
+                      <button type="button" onClick={() => updateActiveTest({ trajectoryFileName: null })} className="self-start mt-1 text-red-500 hover:text-red-700 font-bold underline">Clear saved name</button>
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-slate-400 mt-0.5">Use the "Choose XTC / TRR" button in the 3D viewer below.</span>
+                  )}
                 </div>
               </div>
             </div>
@@ -794,6 +803,9 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   selectedKeys={selectedKeys}
   manualKeys={manualKeys}
   onAtomClick={handleAtomClick}
+  onStructureFile={handleStructureFile}
+  onStructureSrc={(v) => updateActiveTest({ structureSrc: v })}
+  onTrajectoryFile={handleTrajectoryFile}
   residueOffset={residueOffset}
   atomNameMap={atomNameMap}
   labelMode={atomLabelMode}
@@ -819,7 +831,6 @@ export const MDExperimentSetupSection = ({ ctx }) => {
             ) : null}
           </div>
         </div>
-      )}
     </div>
   );
 };
@@ -1224,7 +1235,7 @@ const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color,
             <BarChart data={data} margin={MD_CHART_M_ZOOM}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey={xKey} tick={{ fontSize: fSize }} label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fSize + 1 }} />
-              <YAxis tick={{ fontSize: fSize }} label={{ value: yLabel, angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fSize + 1 }} />
+              <YAxis width={70} tick={{ fontSize: fSize }} label={{ value: yLabel, angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fSize + 1 }} />
               <Tooltip />
               <Bar dataKey={dataKey} isAnimationActive={false}>
                 {data.map((entry, index) => <Cell key={index} fill={entry.fill || lineColor} />)}
@@ -1235,7 +1246,7 @@ const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color,
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey={xKey} type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow tick={{ fontSize: fSize }}
                 label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fSize + 1 }} />
-              <YAxis type="number" domain={[mdDom(cfg.yMin) ?? 'auto', mdDom(cfg.yMax) ?? 'auto']} tick={{ fontSize: fSize }}
+              <YAxis type="number" width={70} domain={[mdDom(cfg.yMin) ?? 'auto', mdDom(cfg.yMax) ?? 'auto']} tick={{ fontSize: fSize }}
                 label={{ value: yLabel, angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fSize + 1 }} />
               <Tooltip />
               <Line type="monotone" dataKey={dataKey} stroke={lineColor} strokeWidth={cfg.lineThickness || 2} strokeDasharray={mdLineDash(cfg.lineStyle)} dot={false} isAnimationActive={false} />
@@ -1256,6 +1267,7 @@ const MD_PAP_COLORS = ['#3b82f6','#8b5cf6','#f59e0b','#22c55e','#ef4444','#0ea5e
 const MDPerAtomChartPanel = ({ d, chart, updateChart, removeChart, activeTest }) => {
   const [atomSearch, setAtomSearch] = useState('');
   const [showCfg, setShowCfg] = useState(false);
+  const [isFs, setIsFs] = useState(false);
   const layerKey = chart.layerKey || 'md';
   const atoms = chart.atoms || [];
   const cfg = { aspect: 2.5, fontSize: 11, ...(chart.style || {}) };
@@ -1288,12 +1300,13 @@ const MDPerAtomChartPanel = ({ d, chart, updateChart, removeChart, activeTest })
   const toggleAtom = (k) => setC({ atoms: atoms.includes(k) ? atoms.filter(a => a !== k) : [...atoms, k] });
 
   return (
-    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3">
+    <div className={`bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3 ${isFs ? CHART_FS_CLASSES : ''}`}>
       <div className="flex items-center justify-between flex-wrap gap-2">
         <input type="text" value={chart.title || ''} onChange={e => setC({ title: e.target.value })}
           placeholder="Chart title…" className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm font-bold text-slate-700 outline-none focus:border-blue-500 bg-transparent flex-1 min-w-[140px]" />
         <div className="flex gap-2 items-center">
-          <ChartControlBar showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)} className="flex gap-2" />
+          <ChartControlBar showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)}
+                           showFs={isFs} onToggleFs={() => setIsFs(v => !v)} className="flex gap-2" />
           <button onClick={() => removeChart(chart.id)} className="text-xs bg-red-50 border border-red-200 px-2 py-1 rounded font-bold text-red-600 hover:bg-red-100">🗑</button>
         </div>
       </div>
@@ -1392,11 +1405,14 @@ const getMDCondValue = (inst, key) => inst && inst.values ? (inst.values[key] ??
 
 const MDConditionPlotPanel = ({ d, chart, updateChart, removeChart, activeTest }) => {
   const [atomSearch, setAtomSearch] = useState('');
+  const [showCfg, setShowCfg] = useState(false);
+  const [isFs, setIsFs] = useState(false);
   const atoms = chart.atoms || [];
   const layerKey = chart.layerKey || 'md';
   const xField = chart.xField || 'simTemperature';
   const cfg = { aspect: 2.5, fontSize: 11, ...(chart.style || {}) };
   const setC = (p) => updateChart(chart.id, p);
+  const setCfg = (p) => updateChart(chart.id, { style: { ...cfg, ...p } });
   const layer = d.layers.find(l => l.key === layerKey) || d.layers[0];
   const filtered = d.atomOptions.filter(o => !atomSearch.trim() || o.label.toLowerCase().includes(atomSearch.toLowerCase()));
   const toggleAtom = (k) => setC({ atoms: atoms.includes(k) ? atoms.filter(a => a !== k) : [...atoms, k] });
@@ -1422,12 +1438,17 @@ const MDConditionPlotPanel = ({ d, chart, updateChart, removeChart, activeTest }
   }).filter(s => s.pts.length > 0);
 
   return (
-    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3">
+    <div className={`bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3 ${isFs ? CHART_FS_CLASSES : ''}`}>
       <div className="flex items-center justify-between flex-wrap gap-2">
         <input type="text" value={chart.title || ''} onChange={e => setC({ title: e.target.value })}
           placeholder="Plot title…" className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm font-bold text-slate-700 outline-none focus:border-blue-500 bg-transparent flex-1 min-w-[140px]" />
-        <button onClick={() => removeChart(chart.id)} className="text-xs bg-red-50 border border-red-200 px-2 py-1 rounded font-bold text-red-600 hover:bg-red-100">🗑</button>
+        <div className="flex gap-2 items-center">
+          <ChartControlBar showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)}
+                           showFs={isFs} onToggleFs={() => setIsFs(v => !v)} className="flex gap-2" />
+          <button onClick={() => removeChart(chart.id)} className="text-xs bg-red-50 border border-red-200 px-2 py-1 rounded font-bold text-red-600 hover:bg-red-100">🗑</button>
+        </div>
       </div>
+      {showCfg && <SharedChartStylePanel cfg={cfg} setCfg={setCfg} series={[]} showHeightSlider={false} />}
       <div className="flex flex-wrap gap-3 items-center">
         <div className="flex flex-col gap-1">
           <label className="text-[10px] font-bold text-slate-500 uppercase">Parameter (Y)</label>
@@ -1521,6 +1542,7 @@ export const MDAnalysisSection = ({ ctx }) => {
   const cfg = { ...DEFAULT_MD_CHART_STYLE, ...(activeTest.mdAnalysisCfg || {}) };
   const setCfg = (patch) => updateActiveTest({ mdAnalysisCfg: { ...cfg, ...patch } });
   const [showCfg, setShowCfg] = useState(false);
+  const [isFs, setIsFs] = useState(false);
   
   // NEW: State for real imported data
   const [importedData, setImportedData] = useState(null);
@@ -1561,13 +1583,12 @@ export const MDAnalysisSection = ({ ctx }) => {
   const sasa = useMemo(() => importedData?.sasa || generateSASAData(nFrames), [nFrames, importedData]);
   const energy = useMemo(() => importedData?.energy || generateEnergyData(nFrames), [nFrames, importedData]);
 
-
-
   return (
-    <div className="flex flex-col gap-4">
+    <div className={`flex flex-col gap-4 ${isFs ? CHART_FS_CLASSES : ''}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          <ChartControlBar showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)} className="flex gap-2" />
+          <ChartControlBar showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)}
+                           showFs={isFs} onToggleFs={() => setIsFs((v) => !v)} className="flex gap-2" />
           
           <label className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 rounded-lg text-xs cursor-pointer shadow-sm transition-colors flex items-center gap-2">
             📂 Upload Real Analysis (JSON)
@@ -1643,15 +1664,6 @@ export const MDAnalysisSection = ({ ctx }) => {
         </div>
       )}
 
-      {/* Per Atom Plot subsection */}
-      <CollapsibleSection title="Per Atom Plot" icon="📊" defaultOpen={false}>
-        <MDPerAtomPlotSection ctx={ctx} />
-      </CollapsibleSection>
-
-      {/* Condition Plot subsection */}
-      <CollapsibleSection title="Condition Plot" icon="📈" defaultOpen={false}>
-        <MDConditionPlotSection ctx={ctx} />
-      </CollapsibleSection>
     </div>
   );
 };
@@ -1798,49 +1810,173 @@ export const MDSimulationParamsSection = ({ ctx }) => {
   );
 };
 // ================= 5) MEMBRANE CONTACTS (port of from_gro_to_rdf awk) =================
-const mdDataUrlToBlob = (dataUrl) => {
-  const s = String(dataUrl || '');
-  const comma = s.indexOf(',');
-  if (comma < 0) return null;
-  const meta = s.slice(0, comma);
-  const b64 = s.slice(comma + 1);
-  const mime = /data:([^;,]+)/.exec(meta)?.[1] || 'application/octet-stream';
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new Blob([bytes], { type: mime });
+/* ---------- shared MD analysis sources (local file + web + Drive) ---------- */
+
+// Turn a PDB ID / http(s) URL / Google Drive / Dropbox link into fetchable
+// topology candidates (text formats only: .pdb / .gro / .cif).
+const getTopologyCandidates = (raw) => {
+  const u = String(raw || '').trim();
+  if (!u) return [];
+  if (/^[0-9a-z]{4}$/i.test(u)) {
+    const id = u.toUpperCase();
+    return [
+      `https://files.rcsb.org/download/${id}.pdb`,
+      `https://files.rcsb.org/download/${id}.cif`,
+    ];
+  }
+  if (/^https?:\/\//i.test(u)) {
+    const norm = normalizeTrajectoryUrl(u) || {};
+    return [norm.url, ...(norm.fallbacks || [])].filter(Boolean);
+  }
+  return [];
 };
 
-const MDContactChart = ({ rows, series, yLabel, height = 480 }) => (
-  <div className="flex gap-3">
-    <div style={{ flex: 1, minWidth: 0 }}>
-      <ResponsiveContainer width="100%" height={height}>
-        <LineChart data={rows} margin={{ top: 8, right: 8, bottom: 96, left: 8 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-          <XAxis dataKey="atom" interval={0} height={100}
-                 tick={{ fontSize: 9, angle: -90, textAnchor: 'end' }} />
-          <YAxis tick={{ fontSize: 11 }} width={56}
-                 label={{ value: yLabel, angle: -90, position: 'insideLeft', style: { fontSize: 12 } }} />
-          <Tooltip />
-          {series.map((s, i) => (
-            <Line key={s.key} dataKey={s.key} stroke={AWK_PALETTE[i % AWK_PALETTE.length]}
-                  strokeWidth={2} dot={{ r: 2.5, strokeWidth: 0 }} isAnimationActive={false} />
-          ))}
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
-    <div className="w-52 shrink-0 overflow-y-auto custom-scrollbar border border-slate-200 rounded-lg p-2 text-[11px] font-mono bg-white"
-         style={{ maxHeight: height }}>
-      {series.map((s, i) => (
-        <div key={s.key} className="flex items-center gap-1.5 py-0.5">
-          <span className="inline-block w-3 h-3 rounded-full shrink-0"
-                style={{ background: AWK_PALETTE[i % AWK_PALETTE.length] }} />
-          <span className="truncate" title={s.key}>{s.key}</span>
+// Resolve the MD system topology from a local upload (data URL, set by the
+// viewer's "Choose PDB/CIF" button) OR from the web (PDB ID / URL / Drive
+// link, set by the viewer's "PDB ID or URL" box). Returns null when nothing
+// is available.
+const resolveMDTopology = async (activeTest) => {
+  let text = null;
+  let source = 'local';
+
+  if (activeTest.structureFileData) {
+    const b64 = String(activeTest.structureFileData).split(',')[1] || '';
+    text = new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
+  } else {
+    for (const url of getTopologyCandidates(activeTest.structureSrc)) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) continue;
+        text = await res.text();
+        source = 'web';
+        break;
+      } catch (e) { /* try next candidate */ }
+    }
+  }
+
+  if (!text) return null;
+  const topo = parseTopology(text);
+  if (!topo || !Array.isArray(topo.atoms) || topo.atoms.length === 0) return null;
+  return { topo, source };
+};
+
+// Build the list of trajectory jobs to analyse: local cached File(s) first,
+// then a trajectory fetched from the web / Drive URL (set in the setup panel).
+const buildMDTrajectoryJobs = async (activeTest, extraRuns) => {
+  const jobs = [];
+  const runs = Array.isArray(extraRuns) ? extraRuns : [];
+  const mainFile = localFileCache.get(activeTest.id)?.trajectory || null;
+  if (mainFile) jobs.push({ name: mainFile.name.replace(/\.(xtc|trr|dcd)$/i, ''), file: mainFile });
+  runs.forEach((f) => jobs.push({ name: f.name.replace(/\.(xtc|trr|dcd)$/i, ''), file: f }));
+  if (jobs.length === 0) {
+    const norm = normalizeTrajectoryUrl(activeTest.trajectoryUrl) || {};
+    const cands = [norm.url, ...(norm.fallbacks || [])].filter(Boolean);
+    for (const url of cands) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) continue;
+        const buf = await res.arrayBuffer();
+        const name = (String(url).split(/[?#]/)[0].split('/').pop() || 'trajectory.xtc').toLowerCase();
+        jobs.push({
+          name: name.replace(/\.(xtc|trr|dcd)$/i, ''),
+          file: new File([buf], name, { type: 'application/octet-stream' }),
+        });
+        break;
+      } catch (e) { /* try next candidate */ }
+    }
+  }
+  return jobs;
+};
+
+// custom recharts dot: draws a coloured symbol per series (awk pt_group style)
+const contactDot = (symbol, color) => (props) => {
+  const { cx, cy } = props;
+  if (cx == null || cy == null) return <g />;
+  const fill = color || '#3b82f6';
+  const s = 4;
+  const shapes = {
+    circle: <circle cx={cx} cy={cy} r={s} fill={fill} stroke="none" />,
+    square: <rect x={cx - s} y={cy - s} width={2 * s} height={2 * s} fill={fill} />,
+    diamond: <rect x={cx - s} y={cy - s} width={2 * s} height={2 * s} fill={fill} transform={`rotate(45 ${cx} ${cy})`} />,
+    triangle: <polygon points={`${cx},${cy - s} ${cx - s},${cy + s} ${cx + s},${cy + s}`} fill={fill} />,
+    'triangle-down': <polygon points={`${cx},${cy + s} ${cx - s},${cy - s} ${cx + s},${cy - s}`} fill={fill} />,
+    cross: (
+      <g stroke={fill} strokeWidth={1.6}>
+        <line x1={cx - s} y1={cy - s} x2={cx + s} y2={cy + s} />
+        <line x1={cx + s} y1={cy - s} x2={cx - s} y2={cy + s} />
+      </g>
+    ),
+    star: (
+      <g fill={fill}>
+        {[0, 72, 144, 216, 288].map((a) => {
+          const x = cx + s * 1.25 * Math.cos((a * Math.PI) / 180);
+          const y = cy + s * 1.25 * Math.sin((a * Math.PI) / 180);
+          return <circle key={a} cx={x} cy={y} r={s * 0.75} />;
+        })}
+      </g>
+    ),
+    hexagon: (
+      <polygon fill={fill}
+        points={[
+          [cx, cy - s], [cx + s * 0.87, cy - s * 0.5], [cx + s * 0.87, cy + s * 0.5],
+          [cx, cy + s], [cx - s * 0.87, cy + s * 0.5], [cx - s * 0.87, cy - s * 0.5],
+        ].map((p) => p.join(',')).join(' ')} />
+    ),
+  };
+  return <g>{shapes[symbol] || shapes.circle}</g>;
+};
+
+const MDContactChart = ({ rows, series, yLabel, height = 480, fontSize = 9 }) => {
+  const effHeight = useChartFsHeight(height);
+  const ref = useRef(null);
+  let yMax = 0;
+  rows.forEach((r) => series.forEach((s) => { const v = r[s.key]; if (typeof v === 'number' && v > yMax) yMax = v; }));
+  const yZoom = useYZoom(ref, [0, yMax || 1], { top: 8, right: 8, bottom: 96, left: 8 });
+  return (
+    <div className="flex flex-col gap-1">
+      {yZoom.isZoomed && (
+        <div className="flex justify-end">
+          <button type="button" onClick={yZoom.reset} className="text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">↩ Reset Zoom</button>
         </div>
-      ))}
+      )}
+      <div className="flex gap-3">
+        <div ref={ref} onMouseDown={yZoom.onMouseDown} style={{ flex: 1, minWidth: 0 }} className="select-none">
+          <ResponsiveContainer width="100%" height={effHeight}>
+            <LineChart data={rows} margin={{ top: 8, right: 8, bottom: 96, left: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+              <XAxis dataKey="atom" interval={0} height={100}
+                     tick={{ fontSize, angle: -90, textAnchor: 'end' }} />
+              <YAxis tick={{ fontSize: fontSize + 1 }} width={70}
+                     domain={[yZoom.domain[0], yZoom.domain[1]]} allowDataOverflow
+                     label={{ value: yLabel, angle: -90, position: 'insideLeft', style: { fontSize: fontSize + 2 } }} />
+              <Tooltip />
+              {series.map((s, i) => {
+                const color = s.color || AWK_PALETTE[i % AWK_PALETTE.length];
+                return (
+                  <Line key={s.key} dataKey={s.key} stroke={color}
+                        strokeWidth={2} dot={contactDot(s.symbol || 'circle', color)} isAnimationActive={false} />
+                );
+              })}
+              {yZoom.refLo !== null && yZoom.refHi !== null && (
+                <ReferenceArea y1={yZoom.refLo} y2={yZoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />
+              )}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="w-52 shrink-0 overflow-y-auto custom-scrollbar border border-slate-200 rounded-lg p-2 text-[11px] font-mono bg-white"
+             style={{ maxHeight: effHeight }}>
+          {series.map((s, i) => (
+            <div key={s.key} className="flex items-center gap-1.5 py-0.5">
+              <span className="inline-block w-3 h-3 shrink-0"
+                    style={{ background: s.color || AWK_PALETTE[i % AWK_PALETTE.length] }} />
+              <span className="truncate" title={s.key}>{s.key}</span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 export const MDMembraneContactSection = ({ ctx }) => {
   const { activeTest } = ctx;
@@ -1848,25 +1984,20 @@ export const MDMembraneContactSection = ({ ctx }) => {
   const [extraRuns, setExtraRuns] = useState([]);
   const [status, setStatus] = useState({ state: 'idle', msg: '', done: 0 });
   const [output, setOutput] = useState(null);
+  const [chartStyle, setChartStyle] = useState({ height: 480, fontSize: 9 });
 
   const setOpt = (k, v) => setCfg((c) => ({ ...c, [k]: v }));
 
-  const topologyText = async () => {
-    if (!activeTest.structureFileData) return null;
-    const b64 = String(activeTest.structureFileData).split(',')[1] || '';
-    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-    return new TextDecoder().decode(bytes);
-  };
-
   const metricOf = (p) => (cfg.metric === 'contactFreq' ? p.contactFreq : p.peakRDF);
 
-  const aggregatePairs = (pairs) => {
+  const aggregatePairs = (pairs, keySel = (p) => p.mem) => {
     const map = new Map();
     pairs.forEach((p) => {
       const v = metricOf(p);
-      const e = map.get(p.mem) || { sum: 0, max: -Infinity, n: 0 };
+      const k = keySel(p);
+      const e = map.get(k) || { sum: 0, max: -Infinity, n: 0 };
       e.sum += v; e.max = Math.max(e.max, v); e.n++;
-      map.set(p.mem, e);
+      map.set(k, e);
     });
     const out = new Map();
     map.forEach((e, k) => {
@@ -1877,33 +2008,39 @@ export const MDMembraneContactSection = ({ ctx }) => {
 
   const buildAtomsOutput = (res) => {
     const byKey = new Map(res.pairs.map((p) => [`${p.mem}|${p.mol}`, p]));
-    const rows = res.memLabels.map((m) => {
+    const xIsPeptide = cfg.xAxis === 'peptide';
+    // awk option="inter": X axis = peptide atoms, one curve per membrane atom
+    const rowsLabels = xIsPeptide ? res.molLabels : res.memLabels;
+    const seriesLabels = xIsPeptide ? res.memLabels : res.molLabels;
+    const rows = rowsLabels.map((m) => {
       const row = { atom: m };
-      res.molLabels.forEach((mo) => {
-        const p = byKey.get(`${m}|${mo}`);
-        row[mo] = p ? +metricOf(p).toFixed(4) : 0;
+      seriesLabels.forEach((s) => {
+        const p = xIsPeptide ? byKey.get(`${s}|${m}`) : byKey.get(`${m}|${s}`);
+        row[s] = p ? +metricOf(p).toFixed(4) : 0;
       });
       return row;
     });
     setOutput({
       mode: 'atoms', rows, pairs: res.pairs, memLabels: res.memLabels,
-      series: res.molLabels.map((k) => ({ key: k })), nFrames: res.nFramesUsed,
-      molResidues: res.molResidues,
+      series: seriesLabels.map((k) => xIsPeptide
+        ? { key: k, ...contactSeriesStyle(k, cfg.mode) }
+        : { key: k }),
+      nFrames: res.nFramesUsed, molResidues: res.molResidues, xIsPeptide,
     });
     setStatus({ state: 'done', msg: '', done: res.nFramesUsed });
   };
 
-  const buildRunsOutput = (memLabels, seriesVals) => {
+  const buildRunsOutput = (labels, seriesVals) => {
     const names = Object.keys(seriesVals);
-    const rows = memLabels.map((m) => {
+    const rows = labels.map((m) => {
       const row = { atom: m };
       names.forEach((n) => { row[n] = +(seriesVals[n].get(m) || 0).toFixed(4); });
       return row;
     });
     setOutput({
-      mode: 'runs', rows, memLabels,
+      mode: 'runs', rows, memLabels: labels,
       series: names.map((k) => ({ key: k })),
-      nFrames: null, molResidues: [],
+      nFrames: null, molResidues: [], xIsPeptide: cfg.xAxis === 'peptide',
     });
     setStatus({ state: 'done', msg: '', done: 0 });
   };
@@ -1912,30 +2049,21 @@ export const MDMembraneContactSection = ({ ctx }) => {
     setStatus({ state: 'busy', msg: 'Reading topology…', done: 0 });
     setOutput(null);
     try {
-      const text = await topologyText();
-      if (!text) throw new Error('Upload the simulation topology (.gro — same atom order as the trajectory) in Experiment Setup → 3D Viewer mode first.');
-      const topo = parseTopology(text);
-      if (!topo.box) throw new Error('The topology has no box vectors — a .gro file with its final box line is required.');
-
-      const topoName = (activeTest.structureFileName || '').toLowerCase();
-      const topoBlob = mdDataUrlToBlob(activeTest.structureFileData);
-      const topoExt = topoName.endsWith('.pdb') ? 'pdb' : topoName.endsWith('.gro') ? 'gro' : 'gro';
+      const tl = await resolveMDTopology(activeTest);
+      if (!tl) throw new Error('Upload the simulation topology (.gro/.pdb — same atom order as the trajectory). Use the "Choose PDB/CIF" button in the 3D viewer, or paste a PDB ID / URL / Drive link.');
+      const { topo } = tl;
+      if (!topo.box) throw new Error('The topology has no box vectors — a .gro file with its final box line (or a PDB CRYST1 line) is required.');
 
       const openTrajectory = async (file) => {
         const src = await resolveFrameSource(file, {
-          topologyBlob: topoBlob, topologyExt: topoExt, topologyBox: topo.box,
+          topoAtoms: topo.atoms, topologyBox: topo.box,
           onStatus: (m) => setStatus((s) => ({ ...s, msg: m })),
         });
         if (!src) throw new Error(`"${file.name}": unsupported format, or no topology available to decode it (.xtc / .dcd need the system topology uploaded; .trr works standalone).`);
         return src; // { frames, numframes, source }
       };
 
-      const jobs = [];
-      if (!useDemo) {
-        const mainFile = localFileCache.get(activeTest.id)?.trajectory || null;
-        if (mainFile) jobs.push({ name: mainFile.name.replace(/\.(xtc|trr|dcd)$/i, ''), file: mainFile });
-        extraRuns.forEach((f) => jobs.push({ name: f.name.replace(/\.(xtc|trr|dcd)$/i, ''), file: f }));
-      }
+      const jobs = useDemo ? [] : await buildMDTrajectoryJobs(activeTest, extraRuns);
 
       if (jobs.length === 0) {
         const res = await computeContactRDF(topo, demoFrames(topo, 40), cfg,
@@ -1952,16 +2080,17 @@ export const MDMembraneContactSection = ({ ctx }) => {
         buildAtomsOutput(res);
       } else {
         const seriesVals = {};
-        let memLabels = null;
+        let xLabels = null;
+        const keySel = cfg.xAxis === 'peptide' ? (p) => p.mol : (p) => p.mem;
         for (const job of jobs) {
           const { frames, numframes, source } = await openTrajectory(job.file);
           const total = numframes ? ` / ${numframes}` : '';
           const res = await computeContactRDF(topo, frames, cfg,
             (p) => setStatus({ state: 'busy', msg: `${job.name} (${source}): frame ${p.done}${total}`, done: p.done }));
-          if (!memLabels) memLabels = res.memLabels;
-          seriesVals[job.name] = aggregatePairs(res.pairs);
+          if (!xLabels) xLabels = cfg.xAxis === 'peptide' ? res.molLabels : res.memLabels;
+          seriesVals[job.name] = aggregatePairs(res.pairs, keySel);
         }
-        buildRunsOutput(memLabels, seriesVals);
+        buildRunsOutput(xLabels, seriesVals);
       }
     } catch (e) {
       setStatus({ state: 'error', msg: e.message, done: 0 });
@@ -1970,7 +2099,7 @@ export const MDMembraneContactSection = ({ ctx }) => {
 
   const exportCSV = () => {
     if (!output) return;
-    const head = ['Membrane atom', ...output.series.map((s) => s.key)];
+    const head = [output.xIsPeptide ? 'Peptide atom' : 'Membrane atom', ...output.series.map((s) => s.key)];
     const body = output.rows.map((r) => [r.atom, ...output.series.map((s) => r[s.key] ?? '')]);
     const csv = [head, ...body].map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
     const url = URL.createObjectURL(new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' }));
@@ -2002,6 +2131,12 @@ export const MDMembraneContactSection = ({ ctx }) => {
             <option value="polar">Polar (O/N/S, awk vdW=no)</option>
             <option value="vdW">Apolar vdW carbons (awk vdW=yes)</option>
             <option value="all">All (polar + vdW)</option>
+          </select>
+        </label>
+        <label className="text-xs font-bold text-slate-600">X axis
+          <select value={cfg.xAxis} onChange={(e) => setOpt('xAxis', e.target.value)} className={`${inp} block mt-1 font-semibold`}>
+            <option value="lipid">Membrane (lipid) atoms</option>
+            <option value="peptide">Peptide atoms (awk inter)</option>
           </select>
         </label>
         <label className="text-xs font-bold text-slate-600">Metric
@@ -2075,67 +2210,103 @@ export const MDMembraneContactSection = ({ ctx }) => {
       )}
 
       {output && (
-        <div className="border border-slate-200 rounded-xl p-4 bg-white shadow-sm space-y-2">
-          <div className="text-xs text-slate-500 font-semibold">
+        <ChartPanel title="Membrane contact recurrence" icon="🫧"
+                    cfgPanel={(
+                      <div className="flex flex-col gap-3">
+                        <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
+                          Chart height — {chartStyle.height}px
+                          <input type="range" min="260" max="900" step="10" value={chartStyle.height}
+                                 onChange={(e) => setChartStyle((c) => ({ ...c, height: parseInt(e.target.value) }))} className="accent-blue-600" />
+                        </label>
+                        <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
+                          Font size — {chartStyle.fontSize}
+                          <input type="range" min="7" max="16" step="1" value={chartStyle.fontSize}
+                                 onChange={(e) => setChartStyle((c) => ({ ...c, fontSize: parseInt(e.target.value) }))} className="accent-blue-600" />
+                        </label>
+                      </div>
+                    )}>
+          <div className="text-xs text-slate-500 font-semibold mb-2">
             {output.nFrames ? `${output.nFrames} frames analysed · ` : ''}
-            {output.series.length} series · {output.rows.length} membrane atom groups
+            {output.series.length} series · {output.rows.length} {output.xIsPeptide ? 'peptide' : 'membrane'} atom groups
             {output.molResidues?.length ? ` · molecule residue(s): ${output.molResidues.join(', ')}` : ''}
           </div>
-          <MDContactChart rows={output.rows} series={output.series} yLabel={yLabel} />
-        </div>
+          <MDContactChart rows={output.rows} series={output.series} yLabel={yLabel}
+                          height={chartStyle.height} fontSize={chartStyle.fontSize} />
+        </ChartPanel>
       )}
     </div>
   );
 };
 
 // ================= 6) ORDER PARAMETERS & MEMBRANE PROFILES =================
-const mdProfilesBlobFromDataUrl = (dataUrl) => {
-  const s = String(dataUrl || '');
-  const comma = s.indexOf(',');
-  if (comma < 0) return null;
-  const meta = s.slice(0, comma);
-  const b64 = s.slice(comma + 1);
-  const mime = /data:([^;,]+)/.exec(meta)?.[1] || 'application/octet-stream';
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new Blob([bytes], { type: mime });
-};
 
-const MDProfileChart = ({ rows, series, xKey, yLabel, xLabel, height = 380, rotateX = false, numericX = false }) => (
-  <div className="flex gap-3">
-    <div style={{ flex: 1, minWidth: 0 }}>
-      <ResponsiveContainer width="100%" height={height}>
-        <LineChart data={rows} margin={{ top: 8, right: 8, bottom: rotateX ? 90 : 36, left: 8 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-          {numericX ? (
-            <XAxis dataKey={xKey} type="number" domain={['dataMin', 'dataMax']} tick={{ fontSize: 10 }}
-                   label={{ value: xLabel, position: 'insideBottom', offset: -18, style: { fontSize: 11 } }} />
-          ) : (
-            <XAxis dataKey={xKey} interval={0} height={rotateX ? 100 : 40}
-                   tick={{ fontSize: rotateX ? 9 : 10, angle: rotateX ? -90 : 0, textAnchor: rotateX ? 'end' : 'middle' }} />
-          )}
-          <YAxis tick={{ fontSize: 11 }} width={56}
-                 label={{ value: yLabel, angle: -90, position: 'insideLeft', style: { fontSize: 12 } }} />
-          <Tooltip />
-          {series.map((s, i) => (
-            <Line key={s.key} dataKey={s.key} stroke={AWK_PALETTE[i % AWK_PALETTE.length]} strokeWidth={2}
-                  dot={{ r: rotateX ? 2.5 : 0, strokeWidth: 0 }} connectNulls isAnimationActive={false} />
-          ))}
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
-    <div className="w-48 shrink-0 overflow-y-auto custom-scrollbar border border-slate-200 rounded-lg p-2 text-[11px] font-mono bg-white"
-         style={{ maxHeight: height }}>
-      {series.map((s, i) => (
-        <div key={s.key} className="flex items-center gap-1.5 py-0.5">
-          <span className="inline-block w-3 h-3 rounded-full shrink-0" style={{ background: AWK_PALETTE[i % AWK_PALETTE.length] }} />
-          <span className="truncate" title={s.key}>{s.key}</span>
+const MDProfileChart = ({ rows, series, xKey, yLabel, xLabel, height = 380, rotateX = false, numericX = false, fontSize = 10 }) => {
+  const effHeight = useChartFsHeight(height);
+  const ref = useRef(null);
+  let yMin = 0, yMax = 0;
+  rows.forEach((r) => series.forEach((s) => {
+    const v = r[s.key];
+    if (typeof v === 'number') { if (v > yMax) yMax = v; if (v < yMin) yMin = v; }
+  }));
+  const xVals = rows.map((r) => (typeof r[xKey] === 'number' ? r[xKey] : NaN)).filter(Number.isFinite);
+  const xDomain = xVals.length > 1 ? [Math.min(...xVals), Math.max(...xVals)] : [0, 1];
+  // both hooks are called unconditionally (rules of hooks); only one is used
+  const zoomX = useXZoom(ref, xDomain, { top: 8, right: 8, bottom: 36, left: 8 });
+  const zoomY = useYZoom(ref, [yMin, yMax || 1], { top: 8, right: 8, bottom: rotateX ? 90 : 36, left: 8 });
+  const activeZoomX = numericX ? zoomX : null;
+  const activeZoomY = numericX ? null : zoomY;
+  const onMouseDown = (activeZoomX && activeZoomX.onMouseDown) || (activeZoomY && activeZoomY.onMouseDown);
+  const isZoomed = !!(activeZoomX && activeZoomX.isZoomed) || !!(activeZoomY && activeZoomY.isZoomed);
+  const reset = (activeZoomX && activeZoomX.reset) || (activeZoomY && activeZoomY.reset);
+  return (
+    <div className="flex flex-col gap-1">
+      {isZoomed && reset && (
+        <div className="flex justify-end">
+          <button type="button" onClick={reset} className="text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">↩ Reset Zoom</button>
         </div>
-      ))}
+      )}
+      <div className="flex gap-3">
+        <div ref={ref} onMouseDown={onMouseDown} style={{ flex: 1, minWidth: 0 }} className="select-none">
+          <ResponsiveContainer width="100%" height={effHeight}>
+            <LineChart data={rows} margin={{ top: 8, right: 8, bottom: rotateX ? 90 : 36, left: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+              {numericX ? (
+                <XAxis dataKey={xKey} type="number" domain={activeZoomX ? [activeZoomX.domain[0], activeZoomX.domain[1]] : ['dataMin', 'dataMax']} allowDataOverflow={!!activeZoomX} tick={{ fontSize }}
+                       label={{ value: xLabel, position: 'insideBottom', offset: -18, style: { fontSize: fontSize + 1 } }} />
+              ) : (
+                <XAxis dataKey={xKey} interval={0} height={rotateX ? 100 : 40}
+                       tick={{ fontSize: rotateX ? fontSize - 1 : fontSize, angle: rotateX ? -90 : 0, textAnchor: rotateX ? 'end' : 'middle' }} />
+              )}
+              <YAxis tick={{ fontSize: fontSize + 1 }} width={70}
+                     domain={activeZoomY ? [activeZoomY.domain[0], activeZoomY.domain[1]] : undefined} allowDataOverflow={!!activeZoomY}
+                     label={{ value: yLabel, angle: -90, position: 'insideLeft', style: { fontSize: fontSize + 2 } }} />
+              <Tooltip />
+              {series.map((s, i) => (
+                <Line key={s.key} dataKey={s.key} stroke={AWK_PALETTE[i % AWK_PALETTE.length]} strokeWidth={2}
+                      dot={{ r: rotateX ? 2.5 : 0, strokeWidth: 0 }} connectNulls isAnimationActive={false} />
+              ))}
+              {activeZoomX && activeZoomX.refLo !== null && activeZoomX.refHi !== null && (
+                <ReferenceArea x1={activeZoomX.refLo} x2={activeZoomX.refHi} strokeOpacity={0.3} fill="#cbd5e1" />
+              )}
+              {activeZoomY && activeZoomY.refLo !== null && activeZoomY.refHi !== null && (
+                <ReferenceArea y1={activeZoomY.refLo} y2={activeZoomY.refHi} strokeOpacity={0.3} fill="#cbd5e1" />
+              )}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="w-48 shrink-0 overflow-y-auto custom-scrollbar border border-slate-200 rounded-lg p-2 text-[11px] font-mono bg-white"
+             style={{ maxHeight: effHeight }}>
+          {series.map((s, i) => (
+            <div key={s.key} className="flex items-center gap-1.5 py-0.5">
+              <span className="inline-block w-3 h-3 rounded-full shrink-0" style={{ background: AWK_PALETTE[i % AWK_PALETTE.length] }} />
+              <span className="truncate" title={s.key}>{s.key}</span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 export const MDMembraneProfilesSection = ({ ctx }) => {
   const { activeTest } = ctx;
@@ -2144,6 +2315,7 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
   const [chargeInfo, setChargeInfo] = useState({ map: null, count: 0, files: [] });
   const [status, setStatus] = useState({ state: 'idle', msg: '', done: 0 });
   const [outputs, setOutputs] = useState([]); // [{ name, result }]
+  const [chartStyle, setChartStyle] = useState({ scdH: 420, densH: 360, potH: 360, fontSize: 10 });
 
   const setOpt = (k, v) => setCfg((c) => ({ ...c, [k]: v }));
 
@@ -2160,22 +2332,12 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
     setStatus({ state: 'busy', msg: 'Reading topology…', done: 0 });
     setOutputs([]);
     try {
-      if (!activeTest.structureFileData) throw new Error('Upload the simulation topology (.gro) in Experiment Setup → 3D Viewer mode first.');
-      const b64 = String(activeTest.structureFileData).split(',')[1] || '';
-      const text = new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
-      const topo = parseTopology(text);
+      const tl = await resolveMDTopology(activeTest);
+      if (!tl) throw new Error('Upload the simulation topology (.gro/.pdb — same atom order as the trajectory). Use the "Choose PDB/CIF" button in the 3D viewer, or paste a PDB ID / URL / Drive link.');
+      const { topo } = tl;
       if (!topo.box) throw new Error('The topology has no box vectors — a .gro with its final box line is required.');
 
-      const topoName = (activeTest.structureFileName || '').toLowerCase();
-      const topologyBlob = mdProfilesBlobFromDataUrl(activeTest.structureFileData);
-      const topologyExt = topoName.endsWith('.pdb') ? 'pdb' : 'gro';
-
-      const jobs = [];
-      if (!useDemo) {
-        const mainFile = localFileCache.get(activeTest.id)?.trajectory || null;
-        if (mainFile) jobs.push({ name: mainFile.name.replace(/\.(xtc|trr|dcd)$/i, ''), file: mainFile });
-        extraRuns.forEach((f) => jobs.push({ name: f.name.replace(/\.(xtc|trr|dcd)$/i, ''), file: f }));
-      }
+      const jobs = useDemo ? [] : await buildMDTrajectoryJobs(activeTest, extraRuns);
 
       const outs = [];
       if (jobs.length === 0) {
@@ -2185,7 +2347,7 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
       } else {
         for (const job of jobs) {
           const src = await resolveFrameSource(job.file, {
-            topologyBlob, topologyExt, topologyBox: topo.box,
+            topoAtoms: topo.atoms, topologyBox: topo.box,
             onStatus: (m) => setStatus((s) => ({ ...s, msg: m })),
           });
           if (!src) throw new Error(`"${job.file.name}": could not be opened (.xtc / .dcd need the topology uploaded; .trr works standalone).`);
@@ -2363,27 +2525,55 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
           <div className="text-xs text-slate-500 font-semibold">
             {outputs.map((o) => o.name).join(' · ')} · {outputs[0].result.nFramesUsed} frames · bin {outputs[0].result.density.binNm} nm
           </div>
-          <div>
-            <div className="text-sm font-bold text-slate-700 mb-1">Order parameter |SCD| (≙ gmx order)</div>
+          <ChartPanel title="Order parameter |SCD|" icon="📐"
+                      cfgPanel={(
+                        <div className="flex flex-col gap-3">
+                          <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
+                            Chart height — {chartStyle.scdH}px
+                            <input type="range" min="260" max="900" step="10" value={chartStyle.scdH}
+                                   onChange={(e) => setChartStyle((c) => ({ ...c, scdH: parseInt(e.target.value) }))} className="accent-indigo-600" />
+                          </label>
+                          <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
+                            Font size — {chartStyle.fontSize}
+                            <input type="range" min="8" max="18" step="1" value={chartStyle.fontSize}
+                                   onChange={(e) => setChartStyle((c) => ({ ...c, fontSize: parseInt(e.target.value) }))} className="accent-indigo-600" />
+                          </label>
+                        </div>
+                      )}>
             <MDProfileChart rows={scdData.rows} series={scdData.series} xKey="x" rotateX
-                            yLabel={cfg.signedSCD ? 'SCD' : '|SCD|'} height={420} />
-          </div>
+                            yLabel={cfg.signedSCD ? 'SCD' : '|SCD|'}
+                            height={chartStyle.scdH} fontSize={chartStyle.fontSize} />
+          </ChartPanel>
           {densityRows && (
-            <div>
-              <div className="text-sm font-bold text-slate-700 mb-1">Electron density profile (≙ gmx density)</div>
+            <ChartPanel title="Electron density profile" icon="📈"
+                        cfgPanel={(
+                          <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
+                            Chart height — {chartStyle.densH}px
+                            <input type="range" min="260" max="900" step="10" value={chartStyle.densH}
+                                   onChange={(e) => setChartStyle((c) => ({ ...c, densH: parseInt(e.target.value) }))} className="accent-indigo-600" />
+                          </label>
+                        )}>
               <MDProfileChart rows={densityRows} series={outputs.map((o) => ({ key: o.name }))}
                               xKey="z" numericX xLabel="Distance to bilayer center (nm)"
-                              yLabel="Electron density (e/nm³)" height={360} />
-            </div>
+                              yLabel="Electron density (e/nm³)"
+                              height={chartStyle.densH} fontSize={chartStyle.fontSize} />
+            </ChartPanel>
           )}
           {potentialRows ? (
-            <div>
-              <div className="text-sm font-bold text-slate-700 mb-1">Electrostatic potential (≙ gmx potential)</div>
+            <ChartPanel title="Electrostatic potential" icon="⚡"
+                        cfgPanel={(
+                          <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
+                            Chart height — {chartStyle.potH}px
+                            <input type="range" min="260" max="900" step="10" value={chartStyle.potH}
+                                   onChange={(e) => setChartStyle((c) => ({ ...c, potH: parseInt(e.target.value) }))} className="accent-indigo-600" />
+                          </label>
+                        )}>
               <MDProfileChart rows={potentialRows}
                               series={outputs.filter((o) => o.result.density.potential).map((o) => ({ key: o.name }))}
                               xKey="z" numericX xLabel="Distance to bilayer center (nm)"
-                              yLabel="Potential (V)" height={360} />
-            </div>
+                              yLabel="Potential (V)"
+                              height={chartStyle.potH} fontSize={chartStyle.fontSize} />
+            </ChartPanel>
           ) : (
             <div className="text-xs text-slate-400 font-semibold">Electrostatic potential: requires a charges file (.itp / .top).</div>
           )}
@@ -2394,18 +2584,6 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
 };
 
 // ================= 7) SECONDARY STRUCTURE (DSSP along the trajectory) =================
-const mdSSBlobFromDataUrl = (dataUrl) => {
-  const s = String(dataUrl || '');
-  const comma = s.indexOf(',');
-  if (comma < 0) return null;
-  const meta = s.slice(0, comma);
-  const b64 = s.slice(comma + 1);
-  const mime = /data:([^;,]+)/.exec(meta)?.[1] || 'application/octet-stream';
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new Blob([bytes], { type: mime });
-};
 
 const SS_LETTER_META = [
   { k: 'H', label: 'α-helix (H)' }, { k: 'E', label: 'β-strand (E)' },
@@ -2414,13 +2592,225 @@ const SS_LETTER_META = [
   { k: 'S', label: 'bend (S)' }, { k: 'C', label: 'coil (C)' },
 ];
 
+// Interactive DSSP timeline map: a real "plot" instead of a static image.
+// Supports mouse drag-to-zoom (select a region), hover tooltip with the
+// residue / frame / DSSP letter, double-click or button to reset the zoom.
+const DSSPHeatmap = ({ heat, height = 520, width = 0, cellPx = 2 }) => {
+  const canvasRef = useRef(null);
+  const [zoom, setZoom] = useState(null);   // { x0, x1, y0, y1 } sample/residue indices
+  const [hover, setHover] = useState(null); // { x, y, sx, sy, letter } display px + cells
+  const [sel, setSel] = useState(null);     // { x, y, w, h } display px selection rectangle
+  const dragRef = useRef(null);             // { startX, startY, startSx, startSy, lastSx, lastSy }
+  const geomRef = useRef({ padL: 52, padR: 8, padT: 10, padB: 42 });
+  const heatRef = useRef(heat);
+  heatRef.current = heat;
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+
+  useEffect(() => {
+    const cv = canvasRef.current;
+    if (!cv || !heat) return;
+    const { padL, padR, padT, padB } = geomRef.current;
+    const px = Math.max(1, Math.min(6, cellPx || 2));
+    const samples = heat.samples || [];
+    const nRes = Math.max(1, heat.nRes || 0);
+    const frameStride = Math.max(1, heat.frameStride || 1);
+    const dtPs = Number(heat.dtPs) || 0;
+    const resIds = Array.isArray(heat.resIds) ? heat.resIds : [];
+    const vis = zoomRef.current || { x0: 0, x1: samples.length - 1, y0: 0, y1: nRes - 1 };
+    const visW = Math.max(1, vis.x1 - vis.x0 + 1);
+    const visH = Math.max(1, vis.y1 - vis.y0 + 1);
+    cv.width = visW * px + padL + padR;
+    cv.height = visH * px + padT + padB;
+
+    const c2 = cv.getContext('2d');
+    c2.fillStyle = '#ffffff';
+    c2.fillRect(0, 0, cv.width, cv.height);
+
+    for (let x = 0; x < visW; x++) {
+      const codes = samples[vis.x0 + x];
+      if (!codes) continue;
+      for (let y = 0; y < visH; y++) {
+        c2.fillStyle = SS_COLORS[SS_CODE_ORDER[codes[vis.y0 + y]]];
+        c2.fillRect(padL + x * px, padT + y * px, px, px);
+      }
+    }
+
+    c2.strokeStyle = '#94a3b8';
+    c2.strokeRect(padL - 0.5, padT - 0.5, visW * px + 1, visH * px + 1);
+
+    // display size: explicit width/height (shape adjustable), otherwise fill panel
+    const containerW = (cv.parentElement && cv.parentElement.clientWidth) || 800;
+    const autoW = Math.max(320, Math.min(containerW - 8, 1400));
+    const propH = (w) => Math.round((w * cv.height) / cv.width);
+    let dispW, dispH;
+    if (width > 0 && height > 0) { dispW = width; dispH = height; }
+    else if (width > 0) { dispW = width; dispH = propH(width); }
+    else { dispW = autoW; dispH = propH(autoW); if (dispH > (height || 520)) { dispH = height || 520; dispW = Math.round((dispH * cv.width) / cv.height); } }
+    cv.style.width = `${dispW}px`;
+    cv.style.height = `${dispH}px`;
+    cv.style.imageRendering = 'pixelated';
+    cv.style.cursor = 'crosshair';
+
+    const niceCeil = (raw) => {
+      if (raw <= 1) return 1;
+      const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+      const norm = raw / mag;
+      return (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag;
+    };
+    c2.font = '9px monospace';
+    c2.fillStyle = '#475569';
+
+    const maxYTicks = Math.max(3, Math.floor((dispH * 0.88) / 15));
+    const yStep = niceCeil(visH / maxYTicks);
+    const drawYLabel = (y) => {
+      const ypx = padT + y * px;
+      c2.fillRect(padL - 4, ypx, 4, 1);
+      const r = vis.y0 + y;
+      const res = resIds[r] != null ? resIds[r] : r + 1;
+      c2.textAlign = 'right';
+      c2.fillText(String(res), padL - 6, ypx + 3);
+    };
+    for (let y = 0; y < visH; y += yStep) drawYLabel(y);
+    if ((visH - 1) % yStep !== 0) drawYLabel(visH - 1);
+
+    c2.save();
+    c2.font = 'bold 10px sans-serif';
+    c2.textAlign = 'center';
+    c2.translate(15, padT + (visH * px) / 2);
+    c2.rotate(-Math.PI / 2);
+    c2.fillText('Residue', 0, 0);
+    c2.restore();
+
+    const maxXTicks = Math.max(3, Math.floor((dispW * 0.92) / 36));
+    const xStep = niceCeil(visW / maxXTicks);
+    const toXLabel = (x) => {
+      const u = (vis.x0 + x) * frameStride;
+      if (dtPs > 0) { const ns = (u * dtPs) / 1000; return ns >= 100 ? ns.toFixed(0) : ns.toFixed(1); }
+      return String(u);
+    };
+    const drawXLabel = (x) => {
+      const xpx = padL + x * px;
+      c2.fillRect(xpx, padT + visH * px, 1, 4);
+      c2.textAlign = 'center';
+      c2.fillText(toXLabel(x), xpx, padT + visH * px + 13);
+    };
+    for (let x = 0; x < visW; x += xStep) drawXLabel(x);
+    if ((visW - 1) % xStep !== 0) drawXLabel(visW - 1);
+
+    c2.font = 'bold 10px sans-serif';
+    c2.textAlign = 'center';
+    c2.fillText(dtPs > 0 ? 'Time (ns)' : 'Frame', padL + (visW * px) / 2, cv.height - 8);
+  }, [heat, zoom, height, width, cellPx]);
+
+  const evtToCell = (e) => {
+    const cv = canvasRef.current;
+    if (!cv || !heatRef.current) return null;
+    const rect = cv.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    const { padL, padT } = geomRef.current;
+    const px = Math.max(1, Math.min(6, cellPx || 2));
+    const vis = zoomRef.current || { x0: 0, x1: (heatRef.current.samples || []).length - 1, y0: 0, y1: (heatRef.current.nRes || 1) - 1 };
+    const dx = e.clientX - rect.left;
+    const dy = e.clientY - rect.top;
+    const cx = Math.floor(dx / (rect.width / cv.width) / px - padL / px);
+    const cy = Math.floor(dy / (rect.height / cv.height) / px - padT / px);
+    return { sx: vis.x0 + cx, sy: vis.y0 + cy, dx, dy };
+  };
+
+  const onMouseDown = (e) => {
+    const c = evtToCell(e);
+    if (!c) return;
+    dragRef.current = { startX: c.dx, startY: c.dy, startSx: c.sx, startSy: c.sy, lastSx: c.sx, lastSy: c.sy };
+    setSel({ x: c.dx, y: c.dy, w: 0, h: 0 });
+    setHover(null);
+  };
+
+  const onMouseMove = (e) => {
+    const c = evtToCell(e);
+    if (!c) return;
+    if (!dragRef.current) {
+      const samples = heatRef.current?.samples || [];
+      const codes = samples[c.sx];
+      const letter = codes ? SS_CODE_ORDER[codes[c.sy]] : null;
+      if (letter) setHover({ x: c.dx, y: c.dy, sx: c.sx, sy: c.sy, letter });
+      else setHover(null);
+      return;
+    }
+    const d = dragRef.current;
+    d.lastSx = c.sx; d.lastSy = c.sy;
+    setSel({ x: Math.min(d.startX, c.dx), y: Math.min(d.startY, c.dy), w: Math.abs(c.dx - d.startX), h: Math.abs(c.dy - d.startY) });
+  };
+
+  const onMouseUp = () => {
+    const d = dragRef.current;
+    dragRef.current = null;
+    setSel(null);
+    if (!d) return;
+    const w = Math.abs(d.lastSx - d.startSx);
+    const h = Math.abs(d.lastSy - d.startSy);
+    if (w >= 2 && h >= 2) {
+      setZoom({
+        x0: Math.min(d.startSx, d.lastSx),
+        x1: Math.max(d.startSx, d.lastSx),
+        y0: Math.min(d.startSy, d.lastSy),
+        y1: Math.max(d.startSy, d.lastSy),
+      });
+    }
+  };
+
+  const onDoubleClick = () => setZoom(null);
+  const onMouseLeave = () => { setHover(null); setSel(null); dragRef.current = null; };
+
+  const frameStride = Math.max(1, heat?.frameStride || 1);
+  const dtPs = Number(heat?.dtPs) || 0;
+  const resIds = Array.isArray(heat?.resIds) ? heat.resIds : [];
+  const hoverRes = hover && resIds[hover.sy] != null ? resIds[hover.sy] : (hover ? hover.sy + 1 : null);
+  const hoverU = hover ? hover.sx * frameStride : 0;
+  const hoverTime = dtPs > 0 ? `${(hoverU * dtPs / 1000).toFixed(2)} ns` : `frame ${hoverU}`;
+  const hoverMeta = hover ? SS_LETTER_META.find((m) => m.k === hover.letter) : null;
+
+  return (
+    <div className="flex flex-col gap-1">
+      {zoom && (
+        <div className="flex justify-end">
+          <button type="button" onClick={() => setZoom(null)} className="text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">↩ Reset Zoom (double-click also resets)</button>
+        </div>
+      )}
+      <div style={{ position: 'relative', width: 'fit-content', maxWidth: '100%' }}>
+        <canvas ref={canvasRef}
+                onMouseDown={onMouseDown}
+                onMouseMove={onMouseMove}
+                onMouseUp={onMouseUp}
+                onMouseLeave={onMouseLeave}
+                onDoubleClick={onDoubleClick}
+                style={{ display: 'block', maxWidth: '100%' }} />
+        {sel && sel.w > 2 && sel.h > 2 && (
+          <div style={{ position: 'absolute', left: sel.x, top: sel.y, width: sel.w, height: sel.h, border: '1px dashed #334155', background: 'rgba(100,116,139,0.25)', pointerEvents: 'none', zIndex: 5 }} />
+        )}
+        {hover && hoverMeta && (
+          <div style={{ position: 'absolute', left: Math.min(hover.x + 12, (canvasRef.current?.parentElement?.clientWidth || 300) - 160), top: hover.y + 14, pointerEvents: 'none', zIndex: 6 }}
+               className="bg-slate-900/90 text-white text-[10px] font-mono px-2 py-1 rounded shadow-lg whitespace-nowrap">
+            <span className="inline-block w-2.5 h-2.5 rounded-sm mr-1 align-middle" style={{ background: SS_COLORS[hover.letter] }} />
+            Res {hoverRes} · {hoverTime} · {hoverMeta.label}
+          </div>
+        )}
+      </div>
+      <div className="text-[10px] text-slate-400">💡 Drag to select a region and zoom · hover for details · double-click to reset</div>
+    </div>
+  );
+};
+
 export const MDSecondaryStructureSection = ({ ctx }) => {
   const { activeTest } = ctx;
   const [cfg, setCfg] = useState({ stride: 1, startFrame: 0, maxFrames: 0, dtPs: 0, chartMode: 'grouped' });
   const [extraRuns, setExtraRuns] = useState([]);
   const [status, setStatus] = useState({ state: 'idle', msg: '', done: 0 });
   const [outputs, setOutputs] = useState([]); // [{ name, result }]
-  const heatCanvasRef = useRef(null);
+  const [heatHeight, setHeatHeight] = useState(520);
+  const [heatWidth, setHeatWidth] = useState(0); // 0 = auto (fill panel width)
+  const [heatCellPx, setHeatCellPx] = useState(2);
+  const [dsspChartCfg, setDsspChartCfg] = useState({ contentH: 380, occH: 320, fontSize: 10 });
 
   const setOpt = (k, v) => setCfg((c) => ({ ...c, [k]: v }));
 
@@ -2428,22 +2818,12 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
     setStatus({ state: 'busy', msg: 'Reading topology…', done: 0 });
     setOutputs([]);
     try {
-      if (!activeTest.structureFileData) throw new Error('Upload the simulation topology (.gro) in Experiment Setup → 3D Viewer mode first.');
-      const b64 = String(activeTest.structureFileData).split(',')[1] || '';
-      const text = new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
-      const topo = parseTopology(text);
+      const tl = await resolveMDTopology(activeTest);
+      if (!tl) throw new Error('Upload the simulation topology (.gro/.pdb — same atom order as the trajectory). Use the "Choose PDB/CIF" button in the 3D viewer, or paste a PDB ID / URL / Drive link.');
+      const { topo } = tl;
       if (!topo.box) throw new Error('The topology has no box vectors — a .gro with its final box line is required.');
 
-      const topoName = (activeTest.structureFileName || '').toLowerCase();
-      const topologyBlob = mdSSBlobFromDataUrl(activeTest.structureFileData);
-      const topologyExt = topoName.endsWith('.pdb') ? 'pdb' : 'gro';
-
-      const jobs = [];
-      if (!useDemo) {
-        const mainFile = localFileCache.get(activeTest.id)?.trajectory || null;
-        if (mainFile) jobs.push({ name: mainFile.name.replace(/\.(xtc|trr|dcd)$/i, ''), file: mainFile });
-        extraRuns.forEach((f) => jobs.push({ name: f.name.replace(/\.(xtc|trr|dcd)$/i, ''), file: f }));
-      }
+      const jobs = useDemo ? [] : await buildMDTrajectoryJobs(activeTest, extraRuns);
 
       const outs = [];
       if (jobs.length === 0) {
@@ -2453,7 +2833,7 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
       } else {
         for (const job of jobs) {
           const src = await resolveFrameSource(job.file, {
-            topologyBlob, topologyExt, topologyBox: topo.box,
+            topoAtoms: topo.atoms, topologyBox: topo.box,
             onStatus: (m) => setStatus((s) => ({ ...s, msg: m })),
           });
           if (!src) throw new Error(`"${job.file.name}": could not be opened (.xtc / .dcd need the topology uploaded; .trr works standalone).`);
@@ -2504,21 +2884,18 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
     return SS_COLORS[letter] || '#64748b';
   };
 
-  /* ---- DSSP heatmap (first run) ---- */
+  // ---- drag-to-zoom for the content and occupancy charts ----
+  const contentRef = useRef(null);
+  const occRef = useRef(null);
+  const contentXs = (contentData?.rows || []).map((r) => r.x).filter((x) => typeof x === 'number');
+  const contentDomain = contentXs.length > 1 ? [Math.min(...contentXs), Math.max(...contentXs)] : [0, 1];
+  const contentZoom = useXZoom(contentRef, contentDomain, { top: 8, right: 8, bottom: 30, left: 8 });
+  const occZoom = useYZoom(occRef, [0, 100], { top: 8, right: 8, bottom: 70, left: 8 });
+  const contentH = useChartFsHeight(dsspChartCfg.contentH || 380);
+  const occH = useChartFsHeight(dsspChartCfg.occH || 320);
+
+  /* ---- DSSP heatmap ---- */
   const heat = outputs[0]?.result.heat || null;
-  useEffect(() => {
-    const cv = heatCanvasRef.current;
-    if (!cv || !heat) return;
-    cv.width = heat.samples.length;
-    cv.height = heat.nRes;
-    const c2 = cv.getContext('2d');
-    heat.samples.forEach((codes, x) => {
-      for (let y = 0; y < codes.length; y++) {
-        c2.fillStyle = SS_COLORS[SS_CODE_ORDER[codes[y]]];
-        c2.fillRect(x, y, 1, 1);
-      }
-    });
-  }, [heat]);
 
   const exportCSV = () => {
     if (!contentData) return;
@@ -2602,60 +2979,114 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
             {outputs.map((o) => o.name).join(' · ')} · {outputs[0].result.nFramesUsed} frames · {outputs[0].result.nRes} protein residues
           </div>
 
-          <div>
-            <div className="text-sm font-bold text-slate-700 mb-1">Secondary structure content vs time (≙ gmx do_dssp summary)</div>
-            <ResponsiveContainer width="100%" height={320}>
-              <LineChart data={contentData.rows} margin={{ top: 8, right: 8, bottom: 30, left: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="x" type="number" domain={['dataMin', 'dataMax']} tick={{ fontSize: 10 }}
-                       label={{ value: outputs[0].result.xUnit === 'ns' ? 'Time (ns)' : 'Frame', position: 'insideBottom', offset: -18, style: { fontSize: 11 } }} />
-                <YAxis tick={{ fontSize: 11 }} width={48} unit="%"
-                       label={{ value: 'Residues (%)', angle: -90, position: 'insideLeft', style: { fontSize: 12 } }} />
-                <Tooltip />
-                {contentData.series.map((s, i) => (
-                  <Line key={s.key} dataKey={s.key} stroke={contentColor(s.key, i)} strokeWidth={2}
-                        dot={false} connectNulls isAnimationActive={false} />
-                ))}
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
+          <ChartPanel title="Secondary structure content vs time" icon="📈"
+                      headerExtra={contentZoom.isZoomed ? (
+                        <button type="button" onClick={contentZoom.reset} className="text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">↩ Reset Zoom</button>
+                      ) : null}
+                      cfgPanel={(
+                        <div className="flex flex-col gap-3">
+                          <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
+                            Chart height — {dsspChartCfg.contentH || 380}px
+                            <input type="range" min="180" max="900" step="10" value={dsspChartCfg.contentH || 380}
+                                   onChange={(e) => setDsspChartCfg((c) => ({ ...c, contentH: parseInt(e.target.value) }))} className="accent-blue-600" />
+                          </label>
+                          <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
+                            Font size — {dsspChartCfg.fontSize || 10}
+                            <input type="range" min="8" max="18" step="1" value={dsspChartCfg.fontSize || 10}
+                                   onChange={(e) => setDsspChartCfg((c) => ({ ...c, fontSize: parseInt(e.target.value) }))} className="accent-blue-600" />
+                          </label>
+                        </div>
+                      )}>
+            <div ref={contentRef} onMouseDown={contentZoom.onMouseDown} className="select-none">
+              <ResponsiveContainer width="100%" height={contentH}>
+                <LineChart data={contentData.rows} margin={{ top: 8, right: 8, bottom: 30, left: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="x" type="number" domain={[contentZoom.domain[0], contentZoom.domain[1]]} allowDataOverflow tick={{ fontSize: dsspChartCfg.fontSize || 10 }}
+                         label={{ value: outputs[0].result.xUnit === 'ns' ? 'Time (ns)' : 'Frame', position: 'insideBottom', offset: -18, style: { fontSize: (dsspChartCfg.fontSize || 10) + 1 } }} />
+                  <YAxis tick={{ fontSize: (dsspChartCfg.fontSize || 10) + 1 }} width={70} unit="%"
+                         label={{ value: 'Residues (%)', angle: -90, position: 'insideLeft', style: { fontSize: (dsspChartCfg.fontSize || 10) + 2 } }} />
+                  <Tooltip />
+                  {contentData.series.map((s, i) => (
+                    <Line key={s.key} dataKey={s.key} stroke={contentColor(s.key, i)} strokeWidth={2}
+                          dot={false} connectNulls isAnimationActive={false} />
+                  ))}
+                  {contentZoom.refLo !== null && contentZoom.refHi !== null && (
+                    <ReferenceArea x1={contentZoom.refLo} x2={contentZoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />
+                  )}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </ChartPanel>
 
           {heat && (
-            <div>
-              <div className="text-sm font-bold text-slate-700 mb-1">DSSP timeline map (residue × frame)</div>
-              <div className="overflow-x-auto custom-scrollbar">
-                <canvas ref={heatCanvasRef} style={{ width: '100%', minWidth: 640, imageRendering: 'pixelated' }} />
-              </div>
-              <div className="flex flex-wrap items-center gap-3 mt-2 text-[10px] font-mono text-slate-600">
-                {SS_LETTER_META.map((m) => (
-                  <span key={m.k} className="flex items-center gap-1">
-                    <span className="inline-block w-3 h-3 rounded-sm border border-slate-300" style={{ background: SS_COLORS[m.k] }} />
-                    {m.label}
-                  </span>
-                ))}
-                <span className="text-slate-400">
-                  · x: every {heat.frameStride} frame(s) of {heat.totalFrames} · y: residue 1 → {heat.nRes}
-                </span>
-              </div>
-            </div>
+            <ChartPanel title="DSSP timeline map (residue × frame)" icon="🧬"
+                        cfgPanel={(
+                          <div className="flex flex-col gap-3">
+                            <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
+                              Width — {heatWidth > 0 ? `${heatWidth}px` : 'Auto (fill panel)'}
+                              <input type="range" min="0" max="1400" step="20" value={heatWidth}
+                                     onChange={(e) => setHeatWidth(parseInt(e.target.value))} className="accent-blue-600" />
+                            </label>
+                            <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
+                              Height — {heatHeight}px
+                              <input type="range" min="220" max="900" step="10" value={heatHeight}
+                                     onChange={(e) => setHeatHeight(parseInt(e.target.value))} className="accent-blue-600" />
+                            </label>
+                            <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
+                              Cell size (resolution) — {heatCellPx}px
+                              <input type="range" min="1" max="6" step="1" value={heatCellPx}
+                                     onChange={(e) => setHeatCellPx(parseInt(e.target.value))} className="accent-blue-600" />
+                            </label>
+                          </div>
+                        )}
+                        footer={(
+                          <div className="flex flex-wrap items-center gap-3 text-[10px] font-mono text-slate-600">
+                            {SS_LETTER_META.map((m) => (
+                              <span key={m.k} className="flex items-center gap-1">
+                                <span className="inline-block w-3 h-3 rounded-sm border border-slate-300" style={{ background: SS_COLORS[m.k] }} />
+                                {m.label}
+                              </span>
+                            ))}
+                            <span className="text-slate-400">
+                              · x: every {heat.frameStride} frame(s) of {heat.totalFrames} · y: residue 1 → {heat.nRes}
+                            </span>
+                          </div>
+                        )}>
+              <DSSPHeatmap heat={heat} height={heatHeight} width={heatWidth} cellPx={heatCellPx} />
+            </ChartPanel>
           )}
 
           {occRows.length > 0 && (
-            <div>
-              <div className="text-sm font-bold text-slate-700 mb-1">Per-residue occupancy ({outputs[0].name})</div>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={occRows} margin={{ top: 8, right: 8, bottom: 70, left: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="label" interval={occInterval} height={80}
-                         tick={{ fontSize: 8, angle: -90, textAnchor: 'end' }} />
-                  <YAxis tick={{ fontSize: 11 }} width={48} unit="%" domain={[0, 100]} />
-                  <Tooltip />
-                  <Bar dataKey="alpha" stackId="ss" fill={SS_GROUP_COLORS.alpha} name="α-helix" isAnimationActive={false} />
-                  <Bar dataKey="beta" stackId="ss" fill={SS_GROUP_COLORS.beta} name="β-sheet" isAnimationActive={false} />
-                  <Bar dataKey="other" stackId="ss" fill="#e5e7eb" name="coil/other" isAnimationActive={false} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            <ChartPanel title={`Per-residue occupancy (${outputs[0].name})`} icon="📊"
+                        headerExtra={occZoom.isZoomed ? (
+                          <button type="button" onClick={occZoom.reset} className="text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">↩ Reset Zoom</button>
+                        ) : null}
+                        cfgPanel={(
+                          <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
+                            Chart height — {dsspChartCfg.occH || 320}px
+                            <input type="range" min="180" max="900" step="10" value={dsspChartCfg.occH || 320}
+                                   onChange={(e) => setDsspChartCfg((c) => ({ ...c, occH: parseInt(e.target.value) }))} className="accent-blue-600" />
+                          </label>
+                        )}>
+              <div ref={occRef} onMouseDown={occZoom.onMouseDown} className="select-none">
+                <ResponsiveContainer width="100%" height={occH}>
+                  <BarChart data={occRows} margin={{ top: 8, right: 8, bottom: 70, left: 8 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                    <XAxis dataKey="label" interval={occInterval} height={80}
+                           tick={{ fontSize: dsspChartCfg.fontSize || 8, angle: -90, textAnchor: 'end' }} />
+                    <YAxis tick={{ fontSize: (dsspChartCfg.fontSize || 10) + 1 }} width={70} unit="%"
+                           domain={[occZoom.domain[0], occZoom.domain[1]]} allowDataOverflow />
+                    <Tooltip />
+                    <Bar dataKey="alpha" stackId="ss" fill={SS_GROUP_COLORS.alpha} name="α-helix" isAnimationActive={false} />
+                    <Bar dataKey="beta" stackId="ss" fill={SS_GROUP_COLORS.beta} name="β-sheet" isAnimationActive={false} />
+                    <Bar dataKey="other" stackId="ss" fill="#e5e7eb" name="coil/other" isAnimationActive={false} />
+                    {occZoom.refLo !== null && occZoom.refHi !== null && (
+                      <ReferenceArea y1={occZoom.refLo} y2={occZoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />
+                    )}
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </ChartPanel>
           )}
         </div>
       )}
@@ -2672,7 +3103,18 @@ export const Simulations = MDSimulationParamsSection;
 export const Analysis = MDAnalysisSection;
 export const Contacts = MDMembraneContactSection;
 export const SecondaryStructure = MDSecondaryStructureSection;
-export const Profiles = MDMembraneProfilesSection; 
+export const Profiles = MDMembraneProfilesSection;
+
+// ================= EXTRA ANALYSIS SECTIONS =================
+// Rendered directly under "Data Analysis" (after "MD general parameters")
+// in the MD Simulations tab. Per Atom Plot and Condition Plot are last.
+export const MD_ANALYSIS_SECTIONS = [
+  { title: 'Secondary Structure (DSSP)', icon: '🧬', defaultOpen: false, Component: MDSecondaryStructureSection },
+  { title: 'Membrane Contacts', icon: '🫧', defaultOpen: false, Component: MDMembraneContactSection },
+  { title: 'Membrane Profiles', icon: '📉', defaultOpen: false, Component: MDMembraneProfilesSection },
+  { title: 'Per Atom Plot', icon: '📊', defaultOpen: false, Component: MDPerAtomPlotSection },
+  { title: 'Condition Plot', icon: '📈', defaultOpen: false, Component: MDConditionPlotSection }
+]; 
 
 // ================= NOTEBOOK EXTRA =================
 export const NotebookExtra = ({ ctx, checkId }) => {

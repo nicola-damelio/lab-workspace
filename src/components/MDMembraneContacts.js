@@ -27,6 +27,9 @@ export const CONTACT_DEFAULTS = {
   molResidues: '',        // override auto-detection, e.g. "CHD,LIG"
   includeIons: false,     // awk: include_ions
   aggregate: 'max',       // run-comparison mode: max|mean|sum over molecule atoms
+  xAxis: 'lipid',         // 'lipid' = membrane atoms on the X axis (app default),
+                          // 'peptide' = peptide atoms on the X axis, one curve per
+                          // membrane atom, coloured like from_gro_to_rdf*.awk (inter)
 };
 
 const RE_LIPID  = /^(POP|CHL|ERG|STIG|SITO|TOCL|FOS|PSM|DLIP|SELIP|ECLIP)/;
@@ -358,4 +361,90 @@ export const computeContactRDF = async (topo, frames, opts, onProgress) => {
     molResidues: [...molRes],
     pairs,
   };
+};
+
+/* ----------------------------------------------------------------------------
+   awk from_gro_to_rdf*.awk colour / symbol tables (option="inter").
+   In the awk script each reference group is a MEMBRANE atom and the X axis
+   shows the SELECTION (peptide) atoms. The "polar" colours are gnuplot line
+   types per lipid type; the "vdW" colours are the explicit hex gradients per
+   carbon position. pt_group maps to point symbols (approximated here).
+   -------------------------------------------------------------------------- */
+
+// gnuplot "classic" default line colours for lt 1..8 (used by the awk polar case)
+const GPLT = {
+  1: '#ff0000', 2: '#0000ff', 3: '#00c000', 4: '#ff00ff',
+  5: '#00c0c0', 6: '#c00000', 7: '#c0c000', 8: '#0000c0',
+};
+
+export const LIPID_POLAR_LT = {
+  POPC: 8, POPE: 2, DLIPE: 2, DLIP: 2, POPG: 1, POPS: 5, POPI: 3,
+  TOCL: 7, TOCL2: 7, FOS: 6, FOS12: 6, CHL: 7, CHL1: 7,
+  STIG: 2, SITO: 3, ERG: 4, PSM: 6, LIG: 1,
+};
+
+// polar mode: colour of a membrane atom label, by lipid type (awk lt_group)
+export const lipidPolarColor = (label) => {
+  const res = String(label || '').split('-')[0].toUpperCase();
+  const lt = LIPID_POLAR_LT[res];
+  return lt ? GPLT[lt] : null;
+};
+
+// vdW mode: explicit hex gradients from the awk (per acyl carbon position)
+const VDW_C3 = { 1:'#b3ffb3', 2:'#aadc32', 3:'#09ad00', 4:'#00ad14', 5:'#00ad31', 6:'#00ad4e', 7:'#00ad6b', 8:'#00ad88', 9:'#00ada4', 10:'#0099ad', 11:'#007cad', 12:'#0060ad', 13:'#0042ad', 14:'#0025ad', 15:'#000066', 16:'#000033' };
+const VDW_C2 = { 1:'#FACC27', 2:'#F8BD24', 3:'#F7AF21', 4:'#F5A01F', 5:'#F4911C', 6:'#F28319', 7:'#F17416', 8:'#EF6613', 9:'#EE5710', 10:'#EC480E', 11:'#EB3A0B', 12:'#E92B08', 13:'#E81D05', 14:'#E60E02', 15:'#E50000', 16:'#cc0000', 17:'#990000', 18:'#660000' };
+const VDW_PINK = { 1:'#ffe6ff', 2:'#ffccff', 3:'#ffb3ff', 4:'#ff99ff', 5:'#ff80ff', 6:'#ff66ff', 7:'#ff4dff', 8:'#ff33ff', 9:'#ff1aff', 10:'#ff00ff', 11:'#e600e6', 12:'#cc00cc', 13:'#b300b3', 14:'#990099', 15:'#800080', 16:'#660066', 17:'#4d004d', 18:'#330033' };
+const VDW_STEROL = { 1:'#eeccff', 2:'#f7e6ff', 3:'#f2e6ff', 4:'#e6ccff', 5:'#d9b3ff', 6:'#d580ff', 7:'#bf80ff', 8:'#c44dff', 9:'#b366ff', 10:'#dd99ff', 11:'#c44dff', 12:'#a64dff', 13:'#bb33ff', 14:'#c44dff', 15:'#9933ff', 16:'#8c1aff', 17:'#b31aff', 18:'#a64dff', 19:'#cc99ff', 20:'#aa00ff', 21:'#9900e6', 22:'#7300e6', 23:'#8800cc', 24:'#7700b3', 25:'#660099', 26:'#550080', 27:'#440066', 28:'#4d0099' };
+
+export const getVdwCarbonColor = (label) => {
+  const [res, atm] = String(label || '').split('-');
+  const resU = (res || '').toUpperCase();
+  const m = /^C([ABCD]?)(\d+)$/.exec(atm || '');
+  if (!m) return null;
+  const n = parseInt(m[2], 10);
+  if (m[1] === '3') return VDW_C3[n] || null;
+  if (m[1] === '2') return VDW_C2[n] || null;
+  if (/^(ERG|SITO|CHL|CHL1|STIG|PSM)/.test(resU)) return VDW_STEROL[n] || null;
+  if ((/^TOCL/.test(resU) && /^C[ABCD]/.test(atm || '')) || (/LIP/.test(resU) && /^C\d/.test(atm || ''))) return VDW_PINK[n] || null;
+  return null;
+};
+
+// polar mode point symbols (awk pt_group → shape key used by the chart)
+export const getLipidPolarSymbol = (label) => {
+  const [res, atm] = String(label || '').split('-');
+  const u = String(label || '').toUpperCase();
+  if (/^TOCL/.test(u)) {
+    if (/(OP12|OP32)$/.test(u)) return 'triangle';
+    if (/(OP11|OP31)$/.test(u)) return 'cross';
+    if (/(OP13|OP33)$/.test(u)) return 'diamond';
+    if (/(OP14|OP34)$/.test(u)) return 'triangle-down';
+    if (/(O13|O33)$/.test(u)) return 'square';
+    if (/(OB1|OD1)$/.test(u)) return 'star';
+    if (/(O12|O32)$/.test(u)) return 'circle';
+    if (/(OA1|OC1)$/.test(u)) return 'hexagon';
+    return 'circle';
+  }
+  if (/^POPI/.test(u)) {
+    const m = { O2: 'cross', O3: 'square', O4: 'diamond', O5: 'star', O6: 'triangle' };
+    return m[atm] || 'circle';
+  }
+  if (atm === 'O3' && /^(CHL|CHL1|STIG|SITO|ERG|PSM)/.test(String(res || '').toUpperCase())) return 'square';
+  if (atm === 'N') return 'triangle';
+  if (atm === 'O11' || atm === 'O21') return 'cross';
+  if (atm === 'O12' || atm === 'O22') return 'square';
+  if (atm === 'O13' || atm === 'O31' || atm === 'OC2') return 'diamond';
+  if (atm === 'O14' || atm === 'O32' || atm === 'OC3') return 'triangle';
+  if (atm === 'O13A') return 'star';
+  if (atm === 'O13B') return 'hexagon';
+  return 'circle';
+};
+
+// unified per-series style for a membrane atom label, used when the X axis
+// shows the peptide atoms (awk option="inter")
+export const contactSeriesStyle = (label, mode) => {
+  const color = mode === 'vdW'
+    ? getVdwCarbonColor(label)
+    : lipidPolarColor(label);
+  const symbol = mode === 'vdW' ? 'diamond' : getLipidPolarSymbol(label);
+  return { color: color || null, symbol };
 };
