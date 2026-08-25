@@ -419,9 +419,10 @@ export const MD_SIMULATION_TAB_CONFIG = {
     { key: 'otherConditions', label: 'Other Conditions', type: 'text', placeholder: 'e.g. Replica exchange' }
   ],
   notebookChecks: [
-    { id: 'cond', label: 'Simulation Parameters' },
+    { id: 'cond', label: 'Experimental Conditions (Simulation Parameters)' },
     { id: 'setup', label: 'System Setup' },
-    { id: 'results', label: 'Results Summary' }
+    { id: 'results', label: 'Results Summary (RMSD, RMSF, Rg, SASA, Energy)' },
+    { id: 'analysis', label: 'Data Analysis (DSSP, Membrane Contacts, Profiles)' }
   ]
 };
 export const FLOW_CYTOMETRY_TAB_CONFIG = {

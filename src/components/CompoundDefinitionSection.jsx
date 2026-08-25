@@ -1,4 +1,5 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
+import { SearchableSelect } from './SearchableSelect';
 import {
 calculateSequenceInfo,
 generateDnaFromProtein,
@@ -298,10 +299,7 @@ Define a compound by one-letter sequence, modifications, or SMILES. Molecular we
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 mb-4">
        <div className="lg:col-span-3">
          <label className={labelCls}>Existing compound</label>
-         <select value={selectedName} onChange={(e) => chooseCompound(e.target.value)} className={inputCls}>
-           <option value="">New compound...</option>
-           {existingNames.map((name) => <option key={name} value={name}>{name}</option>)}
-         </select>
+         <SearchableSelect value={selectedName} onChange={(v) => chooseCompound(v)} options={existingNames} placeholder="New compound..." onClear={() => chooseCompound('')} />
        </div>
        <div className="lg:col-span-3">
          <label className={labelCls}>New compound name</label>

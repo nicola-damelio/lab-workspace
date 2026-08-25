@@ -26,6 +26,7 @@ import { ProteinExpressionTestRenderer } from './components/ProteinExpressionTes
 import DockingTestRenderer, { DOCKING_TAB_CONFIG } from './components/DockingTestRenderer';
 import { Setup, Data, Simulations, Analysis, MD_ANALYSIS_SECTIONS } from '/src/components/MDSections.jsx';
 import { SolventsManager, BuffersManager, AdditivesManager, NMRProbesManager, NMRInstrumentsManager, NMRExperimentsManager, BufferAdditiveFields, getMolecularWeightFromFormula, BrukerPulseSequenceViewer} from './components/DefinitionsExtra';
+import { SearchableSelect } from './components/SearchableSelect';
 import {
   CD_TAB_CONFIG,
   PLATE_TAB_CONFIG,
@@ -332,6 +333,7 @@ const SafeMDSectionsAll = (props) => {
 
 const buildMDNotebookHtml = (checked, ctx) => {
   const t = ctx?.activeTest || {};
+  const charts = (t && t.mdNotebookCharts) || {};
 
   let html = '';
 
@@ -353,8 +355,29 @@ const buildMDNotebookHtml = (checked, ctx) => {
     } | Other conditions ${t.otherConditions || 'N/A'}</p>`;
   }
 
+  const chartFigure = (src, label) => (src
+    ? `<figure style="margin: 12px 0; text-align:center; break-inside:avoid;"><img src="${src}" alt="${label}" style="max-width:100%; border:1px solid #e2e8f0; border-radius:8px; background:#fff; box-shadow:0 1px 3px rgba(15,23,42,0.08);"/><figcaption style="font-size:11px;color:#64748b;margin-top:4px;"><b>${label}</b></figcaption></figure>`
+    : '');
+
   if (checked.results) {
-    html += `<p style="font-size:12px;color:#475569;margin-bottom:8px;"><b>Results Summary:</b> See the MD Analysis section for RMSD, RMSF, Rg, SASA, and energy plots.</p>`;
+    html += `<p style="font-size:12px;color:#475569;margin-bottom:8px;"><b>Results Summary:</b> RMSD, RMSF, Rg, SASA and energy curves.</p>`;
+    html += chartFigure(charts.rmsd, 'RMSD (backbone)');
+    html += chartFigure(charts.rmsf, 'RMSF per residue');
+    html += chartFigure(charts.rg, 'Radius of Gyration (Rg)');
+    html += chartFigure(charts.sasa, 'SASA');
+    html += chartFigure(charts.energy, 'Energy');
+  }
+
+  if (checked.analysis) {
+    html += `<p style="font-size:12px;color:#475569;margin-bottom:8px;"><b>Data Analysis:</b> membrane contacts (polar + apolar), membrane profiles and secondary structure (DSSP).</p>`;
+    html += chartFigure(charts.contactPolar, 'Membrane contacts — Polar');
+    html += chartFigure(charts.contactApolar, 'Membrane contacts — Apolar (van der Waals)');
+    html += chartFigure(charts.scd, 'Order parameter |SCD|');
+    html += chartFigure(charts.density, 'Electron density profile');
+    html += chartFigure(charts.potential, 'Electrostatic potential');
+    html += chartFigure(charts.dsspContent, 'Secondary structure content vs time');
+    html += chartFigure(charts.dsspHeat, 'DSSP timeline map (residue × frame)');
+    html += chartFigure(charts.dsspOcc, 'Per-residue occupancy');
   }
 
   return html;
@@ -548,12 +571,13 @@ const CellLineDefinitionSection = ({
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 mb-4">
         <div className="lg:col-span-6">
           <label className={CALC_LABEL_CLS}>Existing Cell Line</label>
-          <select value={selectedName} onChange={(e) => chooseCellLine(e.target.value)} className={CALC_INPUT_CLS}>
-            <option value="">New cell line...</option>
-            {existingNames.map((name) => (
-              <option key={name} value={name}>{name}</option>
-            ))}
-          </select>
+          <SearchableSelect
+            value={selectedName}
+            onChange={(v) => chooseCellLine(v)}
+            options={existingNames}
+            placeholder="New cell line..."
+            onClear={() => chooseCellLine('')}
+          />
         </div>
         <div className="lg:col-span-6">
           <label className={CALC_LABEL_CLS}>New Cell Line Name</label>
@@ -675,10 +699,13 @@ const PlasmidDefinitionSection = ({
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 mb-4">
         <div className="lg:col-span-6">
           <label className={CALC_LABEL_CLS}>Existing Plasmid</label>
-          <select value={selectedName} onChange={(e) => choosePlasmid(e.target.value)} className={CALC_INPUT_CLS}>
-            <option value="">New plasmid...</option>
-            {existingNames.map((n) => <option key={n} value={n}>{n}</option>)}
-          </select>
+          <SearchableSelect
+            value={selectedName}
+            onChange={(v) => choosePlasmid(v)}
+            options={existingNames}
+            placeholder="New plasmid..."
+            onClear={() => choosePlasmid('')}
+          />
         </div>
         <div className="lg:col-span-6">
           <label className={CALC_LABEL_CLS}>New Plasmid Name</label>
@@ -2206,19 +2233,13 @@ const Calculations = ({
           <div className="md:col-span-4">
             <label className={CALC_LABEL_CLS}>Compound</label>
 
-            <select
+            <SearchableSelect
               value={selectedCompound}
-              onChange={(e) => setSelectedCompound(e.target.value)}
-              className={CALC_INPUT_CLS}
-            >
-              <option value="">Manual only</option>
-
-              {options.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
+              onChange={(v) => setSelectedCompound(v)}
+              options={options}
+              placeholder="Manual only — type to search"
+              onClear={() => setSelectedCompound('')}
+            />
           </div>
 
           <div className="md:col-span-3">
@@ -2651,19 +2672,13 @@ const CompoundDefinitionSection = ({
         <div className="lg:col-span-3">
           <label className={CALC_LABEL_CLS}>Existing compound</label>
 
-          <select
+          <SearchableSelect
             value={selectedName}
-            onChange={(e) => chooseCompound(e.target.value)}
-            className={CALC_INPUT_CLS}
-          >
-            <option value="">New compound...</option>
-
-            {existingNames.map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
+            onChange={(v) => chooseCompound(v)}
+            options={existingNames}
+            placeholder="New compound..."
+            onClear={() => chooseCompound('')}
+          />
         </div>
 
         <div className="lg:col-span-3">
@@ -5351,11 +5366,11 @@ if (customType === 'nmr-fittings') {
   const tests = reactTests;
 
   const allCmpds = useMemo(() => {
-    return [...new Set([...DEF_COMPOUNDS, ...customCmpds])];
+    return [...new Set([...DEF_COMPOUNDS, ...customCmpds])].filter(Boolean);
   }, [customCmpds]);
 
   const allCellLines = useMemo(() => {
-    return [...new Set([...DEF_CELL_LINES, ...customCellLines])];
+    return [...new Set([...DEF_CELL_LINES, ...customCellLines])].filter(Boolean);
   }, [customCellLines]);
 
   const [activeTestId, setActiveTestId] = useState('t1');

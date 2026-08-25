@@ -9,6 +9,7 @@ import {
   resolveFrameSource, AWK_PALETTE, contactSeriesStyle
 } from './MDMembraneContacts';
 import { computeOrderAndDensity, parseChargeMap } from './MDMembraneProfiles';
+import html2canvas from 'html2canvas';
 export { parseSimulationParameters };   
 import NMRMoleculeViewer from './NMRMoleculeViewer';
 import {
@@ -40,6 +41,43 @@ import {
 
 // Cache to retain local File objects when switching tabs within the same session
 const localFileCache = new Map();
+
+/* ---- Lab Notebook chart snapshots ----------------------------------------
+   The MD analysis charts live inside collapsed CollapsibleSections, so they
+   cannot be captured at "Append to Lab Notebook" time. Instead we snapshot
+   each chart (as a base64 PNG) right after it renders / is computed and store
+   the data-URLs in activeTest.mdNotebookCharts. buildNotebookHtml then embeds
+   those images into the notebook entry (selected by the respective tick).
+--------------------------------------------------------------------------- */
+const captureChartToDataUrl = async (id) => {
+  const el = document.getElementById(id);
+  if (!el) return null;
+  try {
+    const canvas = await html2canvas(el, {
+      scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false,
+      imageTimeout: 15000
+    });
+    return canvas.toDataURL('image/png');
+  } catch (e) {
+    return null;
+  }
+};
+
+const storeChartSnapshots = (updateActiveTest, activeTest, entries) => {
+  (async () => {
+    const urls = {};
+    await Promise.all(
+      (entries || []).map(async ({ id, key }) => {
+        const u = await captureChartToDataUrl(id);
+        if (u) urls[key] = u;
+      })
+    );
+    if (Object.keys(urls).length && typeof updateActiveTest === 'function') {
+      const prev = (activeTest && activeTest.mdNotebookCharts) || {};
+      updateActiveTest({ mdNotebookCharts: { ...prev, ...urls } });
+    }
+  })();
+};
 
 // ---- Global RDKit readiness singleton (shared across all OrganicViewer instances) ----
 const _rdkitMDListeners = new Set();
@@ -808,6 +846,8 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   onTrajectoryFile={handleTrajectoryFile}
   residueOffset={residueOffset}
   atomNameMap={atomNameMap}
+  atomRenames={activeTest.atomRenames || {}}
+  onAtomRenames={(map) => updateActiveTest({ atomRenames: map })}
   labelMode={atomLabelMode}
   height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '620px' : '520px'}
 />
@@ -1210,7 +1250,7 @@ export const MDDataSection = ({ ctx }) => {
 // ================= 3) ANALYSIS (RMSD / RMSF / Rg / SASA / Energy) =================
 const MD_CHART_M_ZOOM = { top: 10, right: 15, bottom: 45, left: 55 };
 
-const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color, cfg, yLabel, xLabel, chartType = 'line' }) => {
+const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color, cfg, yLabel, xLabel, chartType = 'line', id }) => {
   const fSize = cfg.fontSize || 12;
   const aspect = cfg.aspect || 1.8;
   const lineColor = color || '#3b82f6';
@@ -1222,7 +1262,7 @@ const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color,
   const zoom = useXZoom(chartRef, dataDomain, MD_CHART_M_ZOOM);
 
   return (
-    <div className="bg-white rounded-lg border border-slate-200 p-2 flex flex-col relative">
+    <div id={id} className="bg-white rounded-lg border border-slate-200 p-2 flex flex-col relative">
       <div className="flex justify-between items-center mb-1">
         <h5 className="text-[12px] font-bold text-slate-700">{title}</h5>
         {zoom.isZoomed && (
@@ -1583,6 +1623,22 @@ export const MDAnalysisSection = ({ ctx }) => {
   const sasa = useMemo(() => importedData?.sasa || generateSASAData(nFrames), [nFrames, importedData]);
   const energy = useMemo(() => importedData?.energy || generateEnergyData(nFrames), [nFrames, importedData]);
 
+  // Snapshot the main analysis charts for the Lab Notebook "Results Summary" tick.
+  useEffect(() => {
+    if (d.parsedSeq.length === 0) return;
+    const t = setTimeout(() => {
+      storeChartSnapshots(updateActiveTest, activeTest, [
+        { id: 'md-rmsd', key: 'rmsd' },
+        { id: 'md-rmsf', key: 'rmsf' },
+        { id: 'md-rg', key: 'rg' },
+        { id: 'md-sasa', key: 'sasa' },
+        { id: 'md-energy', key: 'energy' }
+      ]);
+    }, 500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rmsd, rmsf, rg, sasa, energy, d.parsedSeq.length]);
+
   return (
     <div className={`flex flex-col gap-4 ${isFs ? CHART_FS_CLASSES : ''}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1637,15 +1693,15 @@ export const MDAnalysisSection = ({ ctx }) => {
         <div className="text-center py-8 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed">Enter a sequence in Experiment Setup to enable trajectory charts.</div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <MDAnalysisChart title="RMSD (backbone)" data={rmsd} cfg={cfg} color="#3b82f6" yLabel="nm" xLabel="Time (ns)" />
-          <MDAnalysisChart title="RMSF per residue" data={rmsf} xKey="residue" cfg={cfg} color="#3b82f6" yLabel="nm" xLabel="Residue" chartType="bar" />
-          <MDAnalysisChart title="Radius of Gyration (Rg)" data={rg} cfg={cfg} color="#22c55e" yLabel="nm" xLabel="Time (ns)" />
-          <MDAnalysisChart title="SASA" data={sasa} cfg={cfg} color="#f59e0b" yLabel="nm²" xLabel="Time (ns)" />
+          <MDAnalysisChart id="md-rmsd" title="RMSD (backbone)" data={rmsd} cfg={cfg} color="#3b82f6" yLabel="nm" xLabel="Time (ns)" />
+          <MDAnalysisChart id="md-rmsf" title="RMSF per residue" data={rmsf} xKey="residue" cfg={cfg} color="#3b82f6" yLabel="nm" xLabel="Residue" chartType="bar" />
+          <MDAnalysisChart id="md-rg" title="Radius of Gyration (Rg)" data={rg} cfg={cfg} color="#22c55e" yLabel="nm" xLabel="Time (ns)" />
+          <MDAnalysisChart id="md-sasa" title="SASA" data={sasa} cfg={cfg} color="#f59e0b" yLabel="nm²" xLabel="Time (ns)" />
         </div>
       )}
       
       {d.parsedSeq.length > 0 && (
-        <div className="bg-white rounded-lg border border-slate-200 p-3">
+        <div id="md-energy" className="bg-white rounded-lg border border-slate-200 p-3">
           <h5 className="text-xs font-bold text-slate-700 mb-1">Energy</h5>
           <div style={{ height: 250 }}>
             <ResponsiveContainer width="100%" height="100%">
@@ -1990,11 +2046,11 @@ const MDContactChart = ({ rows, series, yLabel, cfg }) => {
 };
 
 export const MDMembraneContactSection = ({ ctx }) => {
-  const { activeTest } = ctx;
-  const [cfg, setCfg] = useState({ ...CONTACT_DEFAULTS });
+  const { activeTest, updateActiveTest } = ctx;
+  const [cfg, setCfg] = useState({ ...CONTACT_DEFAULTS, mode: 'all' });
   const [extraRuns, setExtraRuns] = useState([]);
   const [status, setStatus] = useState({ state: 'idle', msg: '', done: 0 });
-  const [output, setOutput] = useState(null);
+  const [outputs, setOutputs] = useState(null); // { polar, apolar }
   const [chartCfg, setChartCfg] = useState({ ...DEFAULT_MD_CHART_STYLE, height: 480, fontSize: 9 });
   // SharedChartStylePanel calls setCfg(patch) — merge into the current object
   // instead of replacing it (a plain useState setter would wipe every other field).
@@ -2020,7 +2076,7 @@ export const MDMembraneContactSection = ({ ctx }) => {
     return out;
   };
 
-  const buildAtomsOutput = (res) => {
+  const buildOutputFor = (mode, res) => {
     const byKey = new Map(res.pairs.map((p) => [`${p.mem}|${p.mol}`, p]));
     const xIsPeptide = cfg.xAxis === 'peptide';
     // awk option="inter": X axis = peptide atoms, one curve per membrane atom
@@ -2034,98 +2090,125 @@ export const MDMembraneContactSection = ({ ctx }) => {
       });
       return row;
     });
-    setOutput({
+    return {
       mode: 'atoms', rows, pairs: res.pairs, memLabels: res.memLabels,
       series: seriesLabels.map((k) => xIsPeptide
-        ? { key: k, ...contactSeriesStyle(k, cfg.mode) }
+        ? { key: k, ...contactSeriesStyle(k, mode) }
         : { key: k }),
       nFrames: res.nFramesUsed, molResidues: res.molResidues, xIsPeptide,
-    });
-    setStatus({ state: 'done', msg: '', done: res.nFramesUsed });
+      contactMode: mode,
+    };
   };
 
-  const buildRunsOutput = (labels, seriesVals) => {
+  const buildRunsOutputFor = (mode, labels, seriesVals) => {
     const names = Object.keys(seriesVals);
     const rows = labels.map((m) => {
       const row = { atom: m };
       names.forEach((n) => { row[n] = +(seriesVals[n].get(m) || 0).toFixed(4); });
       return row;
     });
-    setOutput({
+    return {
       mode: 'runs', rows, memLabels: labels,
       series: names.map((k) => ({ key: k })),
       nFrames: null, molResidues: [], xIsPeptide: cfg.xAxis === 'peptide',
-    });
-    setStatus({ state: 'done', msg: '', done: 0 });
+      contactMode: mode,
+    };
+  };
+
+  // Run the whole pipeline once for a given interaction mode.
+  const runMode = async (mode, useDemo) => {
+    const tl = await resolveMDTopology(activeTest);
+    if (!tl) throw new Error('Upload the simulation topology (.gro/.pdb — same atom order as the trajectory). Use the "Choose PDB/CIF" button in the 3D viewer, or paste a PDB ID / URL / Drive link.');
+    const { topo } = tl;
+    if (!topo.box) throw new Error('The topology has no box vectors — a .gro file with its final box line (or a PDB CRYST1 line) is required.');
+
+    const runCfg = { ...cfg, mode };
+    const openTrajectory = async (file) => {
+      const src = await resolveFrameSource(file, {
+        topoAtoms: topo.atoms, topologyBox: topo.box,
+        onStatus: (m) => setStatus((s) => ({ ...s, msg: m })),
+      });
+      if (!src) throw new Error(`"${file.name}": unsupported format, or no topology available to decode it (.xtc / .dcd need the system topology uploaded; .trr works standalone).`);
+      return src; // { frames, numframes, source }
+    };
+
+    const jobs = useDemo ? [] : await buildMDTrajectoryJobs(activeTest, extraRuns);
+
+    if (jobs.length === 0) {
+      const res = await computeContactRDF(topo, demoFrames(topo, 40), runCfg,
+        (p) => setStatus((s) => ({ ...s, msg: `Demo: frame ${p.done}`, done: p.done })));
+      return buildOutputFor(mode, res);
+    }
+
+    if (jobs.length === 1) {
+      const { frames, numframes, source } = await openTrajectory(jobs[0].file);
+      const total = numframes ? ` / ${numframes}` : '';
+      const res = await computeContactRDF(topo, frames, runCfg,
+        (p) => setStatus({ state: 'busy', msg: `${jobs[0].name} (${source}): frame ${p.done}${total}`, done: p.done }));
+      return buildOutputFor(mode, res);
+    }
+
+    const seriesVals = {};
+    let xLabels = null;
+    const keySel = cfg.xAxis === 'peptide' ? (p) => p.mol : (p) => p.mem;
+    for (const job of jobs) {
+      const { frames, numframes, source } = await openTrajectory(job.file);
+      const total = numframes ? ` / ${numframes}` : '';
+      const res = await computeContactRDF(topo, frames, runCfg,
+        (p) => setStatus({ state: 'busy', msg: `${job.name} (${source}): frame ${p.done}${total}`, done: p.done }));
+      if (!xLabels) xLabels = cfg.xAxis === 'peptide' ? res.molLabels : res.memLabels;
+      seriesVals[job.name] = aggregatePairs(res.pairs, keySel);
+    }
+    return buildRunsOutputFor(mode, xLabels, seriesVals);
   };
 
   const runAll = async (useDemo = false) => {
     setStatus({ state: 'busy', msg: 'Reading topology…', done: 0 });
-    setOutput(null);
+    setOutputs(null);
     try {
-      const tl = await resolveMDTopology(activeTest);
-      if (!tl) throw new Error('Upload the simulation topology (.gro/.pdb — same atom order as the trajectory). Use the "Choose PDB/CIF" button in the 3D viewer, or paste a PDB ID / URL / Drive link.');
-      const { topo } = tl;
-      if (!topo.box) throw new Error('The topology has no box vectors — a .gro file with its final box line (or a PDB CRYST1 line) is required.');
-
-      const openTrajectory = async (file) => {
-        const src = await resolveFrameSource(file, {
-          topoAtoms: topo.atoms, topologyBox: topo.box,
-          onStatus: (m) => setStatus((s) => ({ ...s, msg: m })),
-        });
-        if (!src) throw new Error(`"${file.name}": unsupported format, or no topology available to decode it (.xtc / .dcd need the system topology uploaded; .trr works standalone).`);
-        return src; // { frames, numframes, source }
-      };
-
-      const jobs = useDemo ? [] : await buildMDTrajectoryJobs(activeTest, extraRuns);
-
-      if (jobs.length === 0) {
-        const res = await computeContactRDF(topo, demoFrames(topo, 40), cfg,
-          (p) => setStatus((s) => ({ ...s, msg: `Demo: frame ${p.done}`, done: p.done })));
-        buildAtomsOutput(res);
-        return;
+      const modes = cfg.mode === 'polar' ? ['polar'] : cfg.mode === 'vdW' ? ['vdW'] : ['polar', 'vdW'];
+      const out = {};
+      for (const mode of modes) {
+        out[mode] = await runMode(mode, useDemo);
       }
-
-      if (jobs.length === 1) {
-        const { frames, numframes, source } = await openTrajectory(jobs[0].file);
-        const total = numframes ? ` / ${numframes}` : '';
-        const res = await computeContactRDF(topo, frames, cfg,
-          (p) => setStatus({ state: 'busy', msg: `${jobs[0].name} (${source}): frame ${p.done}${total}`, done: p.done }));
-        buildAtomsOutput(res);
-      } else {
-        const seriesVals = {};
-        let xLabels = null;
-        const keySel = cfg.xAxis === 'peptide' ? (p) => p.mol : (p) => p.mem;
-        for (const job of jobs) {
-          const { frames, numframes, source } = await openTrajectory(job.file);
-          const total = numframes ? ` / ${numframes}` : '';
-          const res = await computeContactRDF(topo, frames, cfg,
-            (p) => setStatus({ state: 'busy', msg: `${job.name} (${source}): frame ${p.done}${total}`, done: p.done }));
-          if (!xLabels) xLabels = cfg.xAxis === 'peptide' ? res.molLabels : res.memLabels;
-          seriesVals[job.name] = aggregatePairs(res.pairs, keySel);
-        }
-        buildRunsOutput(xLabels, seriesVals);
-      }
+      setOutputs(out);
+      setStatus({ state: 'done', msg: '', done: 0 });
     } catch (e) {
       setStatus({ state: 'error', msg: e.message, done: 0 });
     }
   };
 
+  // Snapshot the contact charts for the Lab Notebook ("Data Analysis" tick).
+  useEffect(() => {
+    if (!outputs || !outputs.polar || !outputs.apolar) return;
+    const t = setTimeout(() => {
+      storeChartSnapshots(updateActiveTest, activeTest, [
+        { id: 'md-contact-polar', key: 'contactPolar' },
+        { id: 'md-contact-apolar', key: 'contactApolar' }
+      ]);
+    }, 600);
+    return () => clearTimeout(t);
+  }, [outputs]);
+
   const exportCSV = () => {
-    if (!output) return;
-    const head = [output.xIsPeptide ? 'Peptide atom' : 'Membrane atom', ...output.series.map((s) => s.key)];
-    const body = output.rows.map((r) => [r.atom, ...output.series.map((s) => r[s.key] ?? '')]);
-    const csv = [head, ...body].map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
-    const url = URL.createObjectURL(new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' }));
-    const a = document.createElement('a');
-    a.href = url; a.download = 'membrane_contacts.csv';
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    if (!outputs) return;
+    Object.keys(outputs).forEach((mode) => {
+      const out = outputs[mode];
+      if (!out) return;
+      const head = [out.xIsPeptide ? 'Peptide atom' : 'Membrane atom', ...out.series.map((s) => s.key)];
+      const body = out.rows.map((r) => [r.atom, ...out.series.map((s) => r[s.key] ?? '')]);
+      const csv = [head, ...body].map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+      const url = URL.createObjectURL(new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' }));
+      const a = document.createElement('a');
+      a.href = url; a.download = `membrane_contacts_${mode}.csv`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
   };
 
-  const yLabel = cfg.metric === 'contactFreq'
+  const yLabelFor = (mode) => (cfg.metric === 'contactFreq'
     ? `Contact frequency (fraction of frames, r < ${cfg.rMax} nm)`
-    : cfg.mode === 'vdW' ? 'Apolar contact recurrence' : cfg.mode === 'all' ? 'Contact recurrence' : 'Polar contact recurrence';
+    : mode === 'vdW' ? 'Apolar contact recurrence' : 'Polar contact recurrence');
 
   const inp = 'border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500';
 
@@ -2140,11 +2223,11 @@ export const MDMembraneContactSection = ({ ctx }) => {
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
-        <label className="text-xs font-bold text-slate-600">Mode
+        <label className="text-xs font-bold text-slate-600">Charts
           <select value={cfg.mode} onChange={(e) => setOpt('mode', e.target.value)} className={`${inp} block mt-1 font-semibold`}>
-            <option value="polar">Polar (O/N/S, awk vdW=no)</option>
-            <option value="vdW">Apolar vdW carbons (awk vdW=yes)</option>
-            <option value="all">All (polar + vdW)</option>
+            <option value="all">Both — Polar + Apolar (2 charts)</option>
+            <option value="polar">Polar only (O/N/S, awk vdW=no)</option>
+            <option value="vdW">Apolar only (vdW carbons, awk vdW=yes)</option>
           </select>
         </label>
         <label className="text-xs font-bold text-slate-600">X axis
@@ -2209,7 +2292,7 @@ export const MDMembraneContactSection = ({ ctx }) => {
         {extraRuns.length > 0 && (
           <span className="text-xs text-slate-500 font-mono">{extraRuns.map((f) => f.name).join(', ')}</span>
         )}
-        {output && (
+        {outputs && (
           <button onClick={exportCSV} className="bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 font-bold px-4 py-2 rounded-lg text-xs">
             📊 Export CSV
           </button>
@@ -2223,27 +2306,38 @@ export const MDMembraneContactSection = ({ ctx }) => {
         <div className="bg-red-50 border border-red-300 text-red-700 rounded-lg p-3 text-xs font-semibold">⚠️ {status.msg}</div>
       )}
 
-      {output && (
-        <ChartPanel title="Membrane contact recurrence" icon="🫧"
-                    cfgPanel={(
-                      <div className="flex flex-col gap-3">
-                        <SharedChartStylePanel cfg={chartCfg} setCfg={setChartCfgMerged}
-                                               series={(output.series || []).map((s, i) => ({ key: s.key, label: s.key, color: s.color || AWK_PALETTE[i % AWK_PALETTE.length] }))}
-                                               showHeightSlider={false} />
-                        <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
-                          Chart height — {chartCfg.height}px
-                          <input type="range" min="260" max="900" step="10" value={chartCfg.height}
-                                 onChange={(e) => setChartCfg((c) => ({ ...c, height: parseInt(e.target.value) }))} className="accent-blue-600" />
-                        </label>
-                      </div>
-                    )}>
-          <div className="text-xs text-slate-500 font-semibold mb-2">
-            {output.nFrames ? `${output.nFrames} frames analysed · ` : ''}
-            {output.series.length} series · {output.rows.length} {output.xIsPeptide ? 'peptide' : 'membrane'} atom groups
-            {output.molResidues?.length ? ` · molecule residue(s): ${output.molResidues.join(', ')}` : ''}
-          </div>
-          <MDContactChart rows={output.rows} series={output.series} yLabel={yLabel} cfg={chartCfg} />
-        </ChartPanel>
+      {outputs && (
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          {['polar', 'vdW']
+            .filter((m) => outputs[m])
+            .map((m) => (
+              <ChartPanel
+                key={m}
+                title={m === 'polar' ? 'Polar contacts' : 'Apolar (van der Waals) contacts'}
+                icon="🫧"
+                cfgPanel={(
+                  <div className="flex flex-col gap-3">
+                    <SharedChartStylePanel cfg={chartCfg} setCfg={setChartCfgMerged}
+                                           series={(outputs[m].series || []).map((s, i) => ({ key: s.key, label: s.key, color: s.color || AWK_PALETTE[i % AWK_PALETTE.length] }))}
+                                           showHeightSlider={false} />
+                    <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
+                      Chart height — {chartCfg.height}px
+                      <input type="range" min="260" max="900" step="10" value={chartCfg.height}
+                             onChange={(e) => setChartCfg((c) => ({ ...c, height: parseInt(e.target.value) }))} className="accent-blue-600" />
+                    </label>
+                  </div>
+                )}>
+                <div className="text-xs text-slate-500 font-semibold mb-2">
+                  {outputs[m].nFrames ? `${outputs[m].nFrames} frames analysed · ` : ''}
+                  {outputs[m].series.length} series · {outputs[m].rows.length} {outputs[m].xIsPeptide ? 'peptide' : 'membrane'} atom groups
+                  {outputs[m].molResidues?.length ? ` · molecule residue(s): ${outputs[m].molResidues.join(', ')}` : ''}
+                </div>
+                <div id={m === 'polar' ? 'md-contact-polar' : 'md-contact-apolar'}>
+                  <MDContactChart rows={outputs[m].rows} series={outputs[m].series} yLabel={yLabelFor(m)} cfg={chartCfg} />
+                </div>
+              </ChartPanel>
+            ))}
+        </div>
       )}
     </div>
   );
@@ -2322,7 +2416,7 @@ const MDProfileChart = ({ rows, series, xKey, yLabel, xLabel, height = 380, rota
 };
 
 export const MDMembraneProfilesSection = ({ ctx }) => {
-  const { activeTest } = ctx;
+  const { activeTest, updateActiveTest } = ctx;
   const [cfg, setCfg] = useState({ bin: 0.02, centerMode: 'auto', signedSCD: false, scdResidues: '', stride: 1, startFrame: 0, maxFrames: 0 });
   const [extraRuns, setExtraRuns] = useState([]);
   const [chargeInfo, setChargeInfo] = useState({ map: null, count: 0, files: [] });
@@ -2332,6 +2426,19 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
   const [profCfg, setProfCfg] = useState({ ...DEFAULT_MD_CHART_STYLE, fontSize: 10 });
   // Merge semantics for SharedChartStylePanel (see setChartCfgMerged above).
   const setProfCfgMerged = (patch) => setProfCfg((c) => ({ ...(c || {}), ...patch }));
+
+  // Snapshot the profile charts for the Lab Notebook ("Data Analysis" tick).
+  useEffect(() => {
+    if (!outputs.length) return;
+    const t = setTimeout(() => {
+      storeChartSnapshots(updateActiveTest, activeTest, [
+        { id: 'md-scd', key: 'scd' },
+        { id: 'md-density', key: 'density' },
+        { id: 'md-potential', key: 'potential' }
+      ]);
+    }, 600);
+    return () => clearTimeout(t);
+  }, [outputs]);
 
   const setOpt = (k, v) => setCfg((c) => ({ ...c, [k]: v }));
 
@@ -2554,9 +2661,11 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
                           </label>
                         </div>
                       )}>
-            <MDProfileChart rows={scdData.rows} series={scdData.series} xKey="x" rotateX
-                            yLabel={cfg.signedSCD ? 'SCD' : '|SCD|'}
-                            height={chartStyle.scdH} cfg={profCfg} />
+            <div id="md-scd">
+              <MDProfileChart rows={scdData.rows} series={scdData.series} xKey="x" rotateX
+                              yLabel={cfg.signedSCD ? 'SCD' : '|SCD|'}
+                              height={chartStyle.scdH} cfg={profCfg} />
+            </div>
           </ChartPanel>
           {densityRows && (
             <ChartPanel title="Electron density profile" icon="📈"
@@ -2572,10 +2681,12 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
                             </label>
                           </div>
                         )}>
-              <MDProfileChart rows={densityRows} series={outputs.map((o) => ({ key: o.name }))}
-                              xKey="z" numericX xLabel="Distance to bilayer center (nm)"
-                              yLabel="Electron density (e/nm³)"
-                              height={chartStyle.densH} cfg={profCfg} />
+              <div id="md-density">
+                <MDProfileChart rows={densityRows} series={outputs.map((o) => ({ key: o.name }))}
+                                xKey="z" numericX xLabel="Distance to bilayer center (nm)"
+                                yLabel="Electron density (e/nm³)"
+                                height={chartStyle.densH} cfg={profCfg} />
+              </div>
             </ChartPanel>
           )}
           {potentialRows ? (
@@ -2592,11 +2703,13 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
                             </label>
                           </div>
                         )}>
-              <MDProfileChart rows={potentialRows}
-                              series={outputs.filter((o) => o.result.density.potential).map((o) => ({ key: o.name }))}
-                              xKey="z" numericX xLabel="Distance to bilayer center (nm)"
-                              yLabel="Potential (V)"
-                              height={chartStyle.potH} cfg={profCfg} />
+              <div id="md-potential">
+                <MDProfileChart rows={potentialRows}
+                                series={outputs.filter((o) => o.result.density.potential).map((o) => ({ key: o.name }))}
+                                xKey="z" numericX xLabel="Distance to bilayer center (nm)"
+                                yLabel="Potential (V)"
+                                height={chartStyle.potH} cfg={profCfg} />
+              </div>
             </ChartPanel>
           ) : (
             <div className="text-xs text-slate-400 font-semibold">Electrostatic potential: requires a charges file (.itp / .top).</div>
@@ -2822,11 +2935,24 @@ const DSSPHeatmap = ({ heat, height = 520, width = 0, fontSize = 9 }) => {
 };
 
 export const MDSecondaryStructureSection = ({ ctx }) => {
-  const { activeTest } = ctx;
+  const { activeTest, updateActiveTest } = ctx;
   const [cfg, setCfg] = useState({ stride: 1, startFrame: 0, maxFrames: 0, dtPs: 0, chartMode: 'grouped' });
   const [extraRuns, setExtraRuns] = useState([]);
   const [status, setStatus] = useState({ state: 'idle', msg: '', done: 0 });
   const [outputs, setOutputs] = useState([]); // [{ name, result }]
+
+  // Snapshot the DSSP charts for the Lab Notebook ("Data Analysis" tick).
+  useEffect(() => {
+    if (!outputs.length) return;
+    const t = setTimeout(() => {
+      storeChartSnapshots(updateActiveTest, activeTest, [
+        { id: 'md-dssp-content', key: 'dsspContent' },
+        { id: 'md-dssp-heat', key: 'dsspHeat' },
+        { id: 'md-dssp-occ', key: 'dsspOcc' }
+      ]);
+    }, 600);
+    return () => clearTimeout(t);
+  }, [outputs]);
   const [heatHeight, setHeatHeight] = useState(520);
   const [heatWidth, setHeatWidth] = useState(0); // 0 = auto (fill panel width)
   const [dsspChartCfg, setDsspChartCfg] = useState({ contentH: 380, occH: 320, fontSize: 10 });
@@ -3023,9 +3149,10 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
                           </label>
                         </div>
                       )}>
-            <div ref={contentRef} onMouseDown={contentZoom.onMouseDown} className="select-none">
-              <ResponsiveContainer width="100%" height={contentH}>
-                <LineChart data={contentData.rows} margin={{ top: 8, right: 8, bottom: 30, left: 8 }}>
+            <div id="md-dssp-content">
+              <div ref={contentRef} onMouseDown={contentZoom.onMouseDown} className="select-none">
+                <ResponsiveContainer width="100%" height={contentH}>
+                  <LineChart data={contentData.rows} margin={{ top: 8, right: 8, bottom: 30, left: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                   <XAxis dataKey="x" type="number" domain={[contentZoom.domain[0], contentZoom.domain[1]]} allowDataOverflow tick={{ fontSize: dsspCfg.fontSize || 10 }}
                          label={{ value: dsspCfg.xAxisLabel || (outputs[0].result.xUnit === 'ns' ? 'Time (ns)' : 'Frame'), position: 'insideBottom', offset: -18, style: { fontSize: (dsspCfg.fontSize || 10) + 1 } }} />
@@ -3045,6 +3172,7 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
                   )}
                 </LineChart>
               </ResponsiveContainer>
+              </div>
             </div>
           </ChartPanel>
 
@@ -3084,7 +3212,9 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
                             </span>
                           </div>
                         )}>
-              <DSSPHeatmap heat={heat} height={heatHeight} width={heatWidth} fontSize={dsspCfg.fontSize || 9} />
+              <div id="md-dssp-heat">
+                <DSSPHeatmap heat={heat} height={heatHeight} width={heatWidth} fontSize={dsspCfg.fontSize || 9} />
+              </div>
             </ChartPanel>
           )}
 
@@ -3109,8 +3239,9 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
                             </label>
                           </div>
                         )}>
-              <div ref={occRef} onMouseDown={occZoom.onMouseDown} className="select-none">
-                <ResponsiveContainer width="100%" height={occH}>
+              <div id="md-dssp-occ">
+                <div ref={occRef} onMouseDown={occZoom.onMouseDown} className="select-none">
+                  <ResponsiveContainer width="100%" height={occH}>
                   <BarChart data={occRowsWithXi} margin={{ top: 8, right: 8, bottom: 70, left: 8 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                     <XAxis dataKey="__xi" type="number" domain={[occZoom.domain[0], occZoom.domain[1]]} allowDataOverflow
@@ -3127,6 +3258,7 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
                     )}
                   </BarChart>
                 </ResponsiveContainer>
+              </div>
               </div>
             </ChartPanel>
           )}

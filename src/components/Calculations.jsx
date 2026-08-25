@@ -1,6 +1,7 @@
 // src/components/Calculations.jsx
 
 import React, { useMemo, useState } from 'react';
+import { SearchableSelect } from './SearchableSelect';
 
 const inputCls =
   'w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white';
@@ -436,18 +437,13 @@ export function Calculations({ compoundOptions = [], compoundMeta = {} }) {
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
           <div className="md:col-span-4">
             <label className={labelCls}>Compound</label>
-            <select
+            <SearchableSelect
               value={selectedCompound}
-              onChange={(e) => setSelectedCompound(e.target.value)}
-              className={inputCls}
-            >
-              <option value="">Manual only</option>
-              {options.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
+              onChange={(v) => setSelectedCompound(v)}
+              options={options}
+              placeholder="Manual only — type to search"
+              onClear={() => setSelectedCompound('')}
+            />
           </div>
 
           <div className="md:col-span-3">
