@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { RichTextEditor } from './RichTextEditor';
 import { BufferAdditiveFields } from './DefinitionsExtra';
+import { SearchableSelect } from './SearchableSelect';
 import { parseSimulationParameters } from './MDData';
 import { CLASSIFICATION_MAP } from '../App.jsx';
 
@@ -124,6 +125,7 @@ export const MultiSelectDropdown = ({
   accent = 'blue'
 }) => {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const ref = useRef(null);
 
   useEffect(() => {
@@ -140,6 +142,12 @@ export const MultiSelectDropdown = ({
 
   const optionsSafe = uniqueOptions(Array.isArray(options) ? options : []);
   const selectedSafe = Array.isArray(selected) ? selected : [];
+
+  // Type-ahead: as the user types, only matching options remain.
+  const q = query.trim().toLowerCase();
+  const visibleOptions = q
+    ? optionsSafe.filter((o) => String(o).toLowerCase().includes(q))
+    : optionsSafe;
 
   const emerald = accent === 'emerald';
 
@@ -198,7 +206,10 @@ export const MultiSelectDropdown = ({
       <button
         type="button"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          setOpen((v) => !v);
+          setQuery('');
+        }}
         className={`w-full border rounded-md p-2 text-sm bg-white outline-none flex items-center justify-between gap-3 shadow-sm ${buttonCls}`}
       >
         <span
@@ -213,12 +224,26 @@ export const MultiSelectDropdown = ({
 
       {open && (
         <div
-          className={`absolute top-full left-3 right-3 mt-1 z-50 bg-white border rounded-lg shadow-xl max-h-56 overflow-y-auto custom-scrollbar ${menuCls}`}
+          className={`absolute top-full left-3 right-3 mt-1 z-50 bg-white border rounded-lg shadow-xl max-h-72 overflow-y-auto custom-scrollbar ${menuCls}`}
         >
+          <div className="sticky top-0 bg-white border-b border-slate-100 p-2 z-10">
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Type to filter…"
+              autoFocus
+              className="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm outline-none focus:border-blue-500"
+            />
+          </div>
           {optionsSafe.length === 0 ? (
             <div className="p-3 text-sm text-slate-400 italic">{emptyHint}</div>
+          ) : visibleOptions.length === 0 ? (
+            <div className="p-3 text-sm text-slate-400 italic">
+              No option matches “{query.trim()}”.
+            </div>
           ) : (
-            optionsSafe.map((opt, idx) => (
+            visibleOptions.map((opt, idx) => (
               <label
                 key={`${String(opt)}-${idx}`}
                 className={`flex items-center gap-2 px-3 py-2 cursor-pointer border-b border-slate-100 last:border-b-0 ${optionHoverCls}`}
@@ -753,13 +778,10 @@ const [showGeneral, setShowGeneral] = useState(true);
       ['solvent', 'medium', 'media'].includes(f.key);
 
     if (isSolventMedia) {
-      const options = sortAlpha(
-        uniqueOptions([
-          ...solventsFromDefs.map((s) =>
-            typeof s === 'string' ? s : s?.name || ''
-          ),
-          val
-        ])
+      const options = uniqueOptions(
+        solventsFromDefs.map((s) =>
+          typeof s === 'string' ? s : s?.name || ''
+        )
       );
 
       return (
@@ -767,29 +789,14 @@ const [showGeneral, setShowGeneral] = useState(true);
           <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
             {f.label}
           </label>
-
-          <div className="flex gap-1">
-            <select
-              value={options.includes(val) ? val : ''}
-              onChange={(e) => update({ [f.key]: e.target.value })}
-              className="border border-slate-300 rounded-l-lg p-2 text-sm bg-white outline-none focus:border-blue-500 flex-1"
-            >
-              <option value="">— Select —</option>
-              {options.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-
-            <input
-              type="text"
-              value={val}
-              onChange={(e) => update({ [f.key]: e.target.value })}
-              className="border border-slate-300 rounded-r-lg p-2 text-sm outline-none focus:border-blue-500 flex-1"
-              placeholder="or type..."
-            />
-          </div>
+          <SearchableSelect
+            value={val}
+            onChange={(v) => update({ [f.key]: v })}
+            options={options}
+            placeholder={f.placeholder || 'Select or type…'}
+            allowCustom
+            onClear={() => update({ [f.key]: '' })}
+          />
         </div>
       );
     }
@@ -798,36 +805,21 @@ const [showGeneral, setShowGeneral] = useState(true);
       f.type === 'compound-select' || f.key === 'otherMolecule';
 
     if (isOtherMolecule) {
-      const options = sortAlpha(uniqueOptions([...sortedCompounds, val]));
+      const options = uniqueOptions(sortedCompounds);
 
       return (
         <div key={f.key}>
           <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
             {f.label}
           </label>
-
-          <div className="flex gap-1">
-            <select
-              value={options.includes(val) ? val : ''}
-              onChange={(e) => update({ [f.key]: e.target.value })}
-              className="border border-slate-300 rounded-l-lg p-2 text-sm bg-white outline-none focus:border-blue-500 flex-1"
-            >
-              <option value="">— Select compound —</option>
-              {options.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-
-            <input
-              type="text"
-              value={val}
-              onChange={(e) => update({ [f.key]: e.target.value })}
-              className="border border-slate-300 rounded-r-lg p-2 text-sm outline-none focus:border-blue-500 flex-1"
-              placeholder="or type..."
-            />
-          </div>
+          <SearchableSelect
+            value={val}
+            onChange={(v) => update({ [f.key]: v })}
+            options={options}
+            placeholder={f.placeholder || 'Select or type a compound…'}
+            allowCustom
+            onClear={() => update({ [f.key]: '' })}
+          />
         </div>
       );
     }

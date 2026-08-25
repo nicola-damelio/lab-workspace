@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { SearchableSelect } from './SearchableSelect';
 
 /* ============================================================
    DefinitionsExtra — Solvents, Buffers, Additives,
@@ -94,15 +95,28 @@ const Input = ({ label, value, onChange, type = 'text', placeholder = '', disabl
   </div>
 );
 
-const Select = ({ label, value, onChange, options, className = '' }) => (
-  <div className={`flex flex-col gap-1 ${className}`}>
-    {label && <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wide">{label}</label>}
-    <select value={value} onChange={e => onChange(e.target.value)}
-      className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white outline-none focus:border-blue-500">
-      {options.map(o => <option key={o.value ?? o} value={o.value ?? o}>{o.label ?? o}</option>)}
-    </select>
-  </div>
-);
+const Select = ({ label, value, onChange, options, className = '' }) => {
+  const opts = options || [];
+  const newEntry = opts.find(
+    (o) => o && typeof o === 'object' && o.value === '' && o.label
+  );
+  const placeholder = newEntry
+    ? newEntry.label
+    : `Select ${(label || '').toLowerCase()}…`;
+
+  return (
+    <div className={`flex flex-col gap-1 ${className}`}>
+      {label && <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wide">{label}</label>}
+      <SearchableSelect
+        value={value}
+        onChange={onChange}
+        options={opts}
+        placeholder={placeholder}
+        onClear={newEntry ? () => onChange('') : undefined}
+      />
+    </div>
+  );
+};
 
 export const LinksManager = ({ links = [], setLinks }) => {
   const addLink = () => setLinks([...links, { url: '', description: '' }]);
@@ -1748,18 +1762,37 @@ export const BufferAdditiveFields = ({ t, update, buffers = [], additives = [] }
   const additiveConc = t.additiveConc || '';
   const additiveUnit = t.additiveUnit || 'mM';
 
-  const sortedBuffers = [...buffers].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  const sortedAdditives = [...additives].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  const bufferNames = (buffers || [])
+    .map((b) => (b && typeof b === 'object' ? b.name : b))
+    .filter((n) => n && String(n).trim());
+  const additiveNames = (additives || [])
+    .map((a) => (a && typeof a === 'object' ? a.name : a))
+    .filter((n) => n && String(n).trim());
 
   return (
     <div className="flex flex-wrap gap-3 mt-2">
       <div className="flex flex-col gap-1 min-w-[140px] flex-1">
         <label className="text-[10px] font-bold text-slate-600 uppercase">Buffer</label>
-        <select value={bufferName} onChange={e => update({ bufferName: e.target.value })}
-          className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white outline-none focus:border-blue-500">
-          <option value="">— None —</option>
-          {sortedBuffers.map(b => <option key={b.id} value={b.name}>{b.name}</option>)}
-        </select>
+        <div className="flex items-center gap-1.5">
+          <SearchableSelect
+            value={bufferName}
+            onChange={(v) => update({ bufferName: v })}
+            options={bufferNames}
+            placeholder="— None —"
+            allowCustom
+            className="flex-1"
+          />
+          {bufferName && (
+            <button
+              type="button"
+              title="Clear buffer"
+              onClick={() => update({ bufferName: '' })}
+              className="text-red-400 hover:text-red-600 font-bold px-1"
+            >
+              ✕
+            </button>
+          )}
+        </div>
       </div>
       <div className="flex flex-col gap-1 w-24">
         <label className="text-[10px] font-bold text-slate-600 uppercase">Conc.</label>
@@ -1775,11 +1808,26 @@ export const BufferAdditiveFields = ({ t, update, buffers = [], additives = [] }
       </div>
       <div className="flex flex-col gap-1 min-w-[140px] flex-1">
         <label className="text-[10px] font-bold text-slate-600 uppercase">Additive</label>
-        <select value={additiveName} onChange={e => update({ additiveName: e.target.value })}
-          className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white outline-none focus:border-blue-500">
-          <option value="">— None —</option>
-          {sortedAdditives.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}
-        </select>
+        <div className="flex items-center gap-1.5">
+          <SearchableSelect
+            value={additiveName}
+            onChange={(v) => update({ additiveName: v })}
+            options={additiveNames}
+            placeholder="— None —"
+            allowCustom
+            className="flex-1"
+          />
+          {additiveName && (
+            <button
+              type="button"
+              title="Clear additive"
+              onClick={() => update({ additiveName: '' })}
+              className="text-red-400 hover:text-red-600 font-bold px-1"
+            >
+              ✕
+            </button>
+          )}
+        </div>
       </div>
       <div className="flex flex-col gap-1 w-24">
         <label className="text-[10px] font-bold text-slate-600 uppercase">Conc.</label>

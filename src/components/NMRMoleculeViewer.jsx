@@ -75,6 +75,48 @@ const REVERSE_GREEK = {
 η: 'H',
 };
 
+// ============================================================================
+// PyMOL-style helpers — colour parsing, selection translation, script subset
+// ============================================================================
+const PYMOL_COLORS = {
+  red: '#ff0000', green: '#00ff00', blue: '#0000ff', yellow: '#ffff00',
+  orange: '#ff8000', purple: '#800080', pink: '#ff00ff', cyan: '#00ffff',
+  marine: '#000080', white: '#ffffff', gray: '#808080', grey: '#808080',
+  gray20: '#333333', gray30: '#4d4d4d', gray40: '#666666', gray50: '#808080',
+  gray60: '#999999', gray70: '#b3b3b3', gray80: '#cccccc', black: '#000000',
+  gold: '#ffd700', salmon: '#fa8072', greencyan: '#00ffcc', tv_red: '#ff0000',
+  tv_orange: '#ff8000', tv_yellow: '#ffff00', tv_green: '#00ff00',
+  tv_blue: '#0000ff', tv_purple: '#800080', slate: '#708090',
+};
+const parseColorInt = (c) => {
+  const s = String(c || '').trim();
+  if (!s) return null;
+  if (/^\[/.test(s)) {
+    const m = s.match(/\[([^\]]+)\]/);
+    if (m) {
+      const parts = m[1].split(/[\s,]+/).map(Number).filter((n) => !isNaN(n));
+      if (parts.length >= 3) return ((parts[0] & 255) << 16) | ((parts[1] & 255) << 8) | (parts[2] & 255);
+    }
+    return null;
+  }
+  if (/^#?[0-9a-f]{6}$/i.test(s)) return parseInt(s.replace('#', ''), 16);
+  const base = String(s).split('_')[0].toLowerCase();
+  return PYMOL_COLORS[base] ? parseInt(PYMOL_COLORS[base].slice(1), 16) : null;
+};
+
+// Convert a common PyMOL selection expression to NGL selection syntax.
+const translateSelection = (expr) => {
+  const s = String(expr || '')
+    .replace(/\bpolymer\.protein\b/g, 'protein')
+    .replace(/\bpolymer\.nucleic\b/g, 'nucleic')
+    .replace(/\bbyres\b/g, '')
+    .replace(/\bbycalpha\b/g, '')
+    .replace(/\+/g, ' ')
+    .replace(/,(?=\s*name|\s*resn|\s*resid|\s*protein|\s*not)/g, '')
+    .trim();
+  return s || 'all';
+};
+
 const normalizeStructureSource = (raw) => {
 const value = (raw || '').trim();
 if (!value) return null;
@@ -427,6 +469,8 @@ moleculeType = 'protein',
 parsedSeq = [],
 residueOffset = 0,
 atomNameMap,
+atomRenames,
+onAtomRenames,
 labelMode,
 namingConvention = 'nmr',
 height = '520px',
@@ -448,6 +492,47 @@ const [errorMsg, setErrorMsg] = useState('');
 const [hoverInfo, setHoverInfo] = useState(null);
 const [showLabels, setShowLabels] = useState(false);
 const [sidechainStyle, setSidechainStyle] = useState('licorice');
+const [backboneStyle, setBackboneStyle] = useState('cartoon');
+
+// ---- Atom renaming (3D, post-generation) ----
+const [renames, setRenames] = useState(() => (atomRenames && typeof atomRenames === 'object' ? { ...atomRenames } : {}));
+const renamesRef = useRef(renames);
+renamesRef.current = renames;
+const [renameMode, setRenameMode] = useState(false);
+const [renameTarget, setRenameTarget] = useState(null); // atom index being renamed
+const [renameDraft, setRenameDraft] = useState('');
+const [atomList, setAtomList] = useState([]);          // [{ idx, element, name, resno, resname }]
+const [atomSearch, setAtomSearch] = useState('');
+const [showAtomPanel, setShowAtomPanel] = useState(false);
+
+// ---- PyMOL-style selections & effects ----
+const [selections, setSelections] = useState([]);      // [{ name, expr }]
+const [selStyles, setSelStyles] = useState({});        // key -> { cartoon, stick, sphere, surface, color, transparency, sphereScale }
+const [pymolActive, setPymolActive] = useState(false);
+const [pymolScript, setPymolScript] = useState('');
+const [pymolLog, setPymolLog] = useState('');
+const [showPymolPanel, setShowPymolPanel] = useState(false);
+const [autoShowSel, setAutoShowSel] = useState(true); // auto-visibility of parsed selections
+const [hideAll, setHideAll] = useState(false);        // remove every representation
+const [bgColor, setBgColor] = useState('#f8fafc');
+const [qualityHigh, setQualityHigh] = useState(false);
+
+const persistRenames = (next) => {
+  setRenames(next);
+  if (typeof onAtomRenames === 'function') onAtomRenames(next);
+};
+const displayAtomName = (atom) => {
+  if (!atom) return '';
+  const idx = typeof atom.index === 'number' ? atom.index : -1;
+  const over = renamesRef.current[idx];
+  if (over && String(over).trim()) return String(over).trim();
+  // For organic/lipid/sugar molecules, use the same connectivity-based name as
+  // the 2D structure (so the 3D labels automatically match the 2D formula).
+  if (['organic', 'lipid', 'sugar'].includes(moleculeTypeRef.current)) {
+    try { return getOrganicAtomName(atom); } catch (e) { /* fall through */ }
+  }
+  return atom.atomname || atom.name || '';
+};
 
 // ---- Trajectory State ----
 const [trajFile, setTrajFile] = useState(null);
@@ -457,14 +542,33 @@ const [numFrames, setNumFrames] = useState(0);
 const [currentFrame, setCurrentFrame] = useState(0);
 const [playing, setPlaying] = useState(false);
 const [speed, setSpeed] = useState(10);
+const [stride, setStride] = useState(1);        // play every Nth frame (keeps total time)
+const [maxFrames, setMaxFrames] = useState(0);  // 0 = keep all frames
 const trajRef = useRef(null);
 const blobUrlsRef = useRef([]);
+
+// Number of frames we actually step through (the trajectory's total time span is
+// preserved because we jump by `effStride` frames each step). When a "Max frames"
+// cap is set, the stride is raised automatically so the full time range still fits
+// inside the cap.
+const effStride = numFrames > 0 && maxFrames > 0
+  ? Math.max(stride, Math.ceil(numFrames / Math.max(1, maxFrames)))
+  : stride;
+const keptFrames = numFrames > 0 ? Math.max(1, Math.ceil(numFrames / effStride)) : 0;
+const toActualFrame = (keptIdx) => Math.min(numFrames - 1, keptIdx * effStride);
 
 const parsedSeqRef = useRef(parsedSeq);
 const moleculeTypeRef = useRef(moleculeType);
 const onAtomClickRef = useRef(onAtomClick);
 const residueOffsetRef = useRef(residueOffset);
 const namingConventionRef = useRef(namingConvention);
+const renameModeRef = useRef(renameMode);
+renameModeRef.current = renameMode;
+const displayNameRef = useRef(displayAtomName);
+displayNameRef.current = displayAtomName;
+const backboneStyleRef = useRef(backboneStyle);
+backboneStyleRef.current = backboneStyle;
+const prevBackboneRef = useRef(backboneStyle);
 
 useEffect(() => {
 parsedSeqRef.current = parsedSeq;
@@ -488,6 +592,11 @@ stageRef.current = stage;
 stage.signals.clicked.add((pickingProxy) => {
 if (!pickingProxy || !pickingProxy.atom) return;
 const atom = pickingProxy.atom;
+if (renameModeRef.current) {
+setRenameTarget(atom.index);
+setRenameDraft(displayNameRef.current(atom));
+return;
+}
 const mapped = mapAtomToNmrKeys(atom, parsedSeqRef.current, moleculeTypeRef.current, namingConventionRef.current);
 if (mapped && onAtomClickRef.current) onAtomClickRef.current(mapped.ri, mapped.keys);
 });
@@ -500,7 +609,7 @@ return;
 }
 const atom = pickingProxy.atom;
 const mapped = mapAtomToNmrKeys(atom, parsedSeqRef.current, moleculeTypeRef.current, namingConventionRef.current);
-const label = mapped ? mapped.label : `${atom.resname || ''} ${atom.resno || ''} ${atom.atomname || ''}`.trim();
+const label = mapped ? mapped.label : `${atom.resname || ''} ${atom.resno || ''} ${displayNameRef.current(atom)}`.trim();
 if (label !== lastHover) { lastHover = label; setHoverInfo(label); }
 });
 
@@ -592,6 +701,33 @@ if (externalLoading) { setStatus('loading'); setErrorMsg(''); }
 else if (externalError) { setStatus('error'); setErrorMsg(externalError); }
 }, [externalLoading, externalError, structureText, loadRequest, manualOverride]);
 
+// Add the default (backbone + sidechain + hetero) representations, honouring the
+// current "Backbone" style selector. Called on load and when restoring from "Hide all".
+const addDefaultReps = (component) => {
+  if (!component || !component.structure) return;
+  baseCompsRef.current = [];
+  const trackBase = (r) => { if (r) baseCompsRef.current.push(r); };
+  const organicLike = ['organic', 'lipid', 'sugar'].includes(moleculeTypeRef.current);
+  if (organicLike) {
+    try { trackBase(component.addRepresentation('ball+stick', { colorScheme: 'element', multipleBond: true, aspectRatio: 1.3 })); } catch (e) {}
+    return;
+  }
+  const isNucleic = moleculeTypeRef.current === 'dna' || moleculeTypeRef.current === 'rna';
+  if (isNucleic) {
+    try { trackBase(component.addRepresentation('ball+stick', { sele: 'all', colorScheme: 'element', multipleBond: true, aspectRatio: 1.1 })); } catch (e) {}
+    return;
+  }
+  const bb = backboneStyleRef.current || 'cartoon';
+  try {
+    if (bb === 'cartoon') trackBase(component.addRepresentation('cartoon', { sele: 'protein', color: 'residueindex', quality: 'high' }));
+    else if (bb === 'tube') trackBase(component.addRepresentation('cartoon', { sele: 'protein', color: 'residueindex', radius: 0.3, quality: 'high' }));
+    else if (bb === 'sticks') trackBase(component.addRepresentation('ball+stick', { sele: 'protein and not sidechain', colorScheme: 'element', multipleBond: true, aspectRatio: 1.1 }));
+    else if (bb === 'lines') trackBase(component.addRepresentation('line', { sele: 'protein', colorScheme: 'element' }));
+    else if (bb === 'spheres') trackBase(component.addRepresentation('spacefill', { sele: 'protein', colorScheme: 'element', scale: 0.6 }));
+  } catch (e) {}
+  try { trackBase(component.addRepresentation('ball+stick', { sele: 'hetero and not water', aspectRatio: 1.1 })); } catch (e) {}
+};
+
 // Main structure load
 useEffect(() => {
 if (!loadRequest || (!loadRequest.file && !loadRequest.url && !loadRequest.text)) return;
@@ -665,16 +801,7 @@ componentRef.current = component;
 // Note: NGL viewer structures from PDB/SDF already contain hydrogens when generated correctly.
 // We skip addHydrogens() to prevent "is not a function" errors in this NGL version.
 
-const isOrganicLike = ['organic', 'lipid', 'sugar'].includes(moleculeTypeRef.current);
-const isNucleic = moleculeTypeRef.current === 'dna' || moleculeTypeRef.current === 'rna';
-if (isOrganicLike) {
-try { component.addRepresentation('ball+stick', { colorScheme: 'element', multipleBond: true, aspectRatio: 1.3 }); } catch (e) {}
-} else if (isNucleic) {
-try { component.addRepresentation('ball+stick', { sele: 'all', colorScheme: 'element', multipleBond: true, aspectRatio: 1.1 }); } catch (e) {}
-} else {
-try { component.addRepresentation('cartoon', { color: 'residueindex', quality: 'high' }); } catch (e) {}
-try { component.addRepresentation('ball+stick', { sele: 'hetero and not water', aspectRatio: 1.1 }); } catch (e) {}
-}
+addDefaultReps(component);
 
 component.autoView();
 requestAnimationFrame(() => {
@@ -783,29 +910,326 @@ return () => { cancelled = true; };
 
 // ---- Trajectory Playback Loop ----
 useEffect(() => {
-if (!playing || !trajRef.current || numFrames === 0) return;
+if (!playing || !trajRef.current || keptFrames === 0) return;
 const interval = Math.max(16, 1000 / speed);
 const id = setInterval(() => {
 setCurrentFrame((prev) => {
-const next = (prev + 1) % numFrames;
-setFrameSafe(trajRef.current, next);
+const next = (prev + 1) % keptFrames;
+setFrameSafe(trajRef.current, toActualFrame(next));
 return next;
 });
 }, interval);
 return () => clearInterval(id);
-}, [playing, speed, numFrames]);
+}, [playing, speed, keptFrames, stride, numFrames, maxFrames]);
 
 const togglePlay = () => {
-if (trajStatus !== 'ready' || numFrames === 0) return;
+if (trajStatus !== 'ready' || keptFrames === 0) return;
 setPlaying((p) => !p);
 };
 
 const handleFrameChange = (e) => {
-const frame = parseInt(e.target.value, 10);
-if (Number.isNaN(frame)) return;
-setCurrentFrame(frame);
-setFrameSafe(trajRef.current, frame);
+const idx = parseInt(e.target.value, 10);
+if (Number.isNaN(idx)) return;
+setCurrentFrame(idx);
+setFrameSafe(trajRef.current, toActualFrame(idx));
 };
+
+// Jump back to the start when the stride / max-frames controls change.
+useEffect(() => {
+if (trajRef.current && numFrames > 0) {
+setCurrentFrame(0);
+setFrameSafe(trajRef.current, toActualFrame(0));
+}
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, [stride, maxFrames]);
+
+// Sync externally-provided atom renames (e.g. restored from the active test)
+useEffect(() => {
+  if (atomRenames && typeof atomRenames === 'object') {
+    setRenames((prev) => {
+      const next = { ...prev, ...atomRenames };
+      return JSON.stringify(next) === JSON.stringify(prev) ? prev : next;
+    });
+  }
+}, [atomRenames]);
+
+// Collect the atom list once the structure is ready (for the rename panel)
+useEffect(() => {
+  const component = componentRef.current;
+  if (!component || status !== 'ready' || !component.structure) return;
+  const list = [];
+  try {
+    component.structure.eachAtom((a) => {
+      list.push({ idx: a.index, element: a.element || '', name: a.atomname || '', resno: a.resno || 0, resname: a.resname || '' });
+    });
+  } catch (e) {}
+  setAtomList(list);
+}, [status]);
+
+// ---- PyMOL-style selections & effects ----
+const selCompsRef = useRef({});       // key -> [representations]
+const baseCompsRef = useRef([]);      // default representations added at load
+const selStylesRef = useRef(selStyles);
+selStylesRef.current = selStyles;
+
+// Resolved NGL expression for a selection key (named selection or raw expr),
+// with references to other named selections expanded inline (like PyMOL sets).
+const selKeyExpr = (key) => {
+  const named = selections.find((s) => s.name === key);
+  let raw = named ? named.expr : key;
+  for (let pass = 0; pass < 4; pass++) {
+    let changed = false;
+    selections.forEach((s) => {
+      const re = new RegExp(`\\b${s.name}\\b`, 'g');
+      if (re.test(raw)) {
+        raw = raw.replace(re, `(${translateSelection(s.expr)})`);
+        changed = true;
+      }
+    });
+    if (!changed) break;
+  }
+  return translateSelection(raw);
+};
+
+// Number of atoms matching a selection key (null when unsupported by NGL).
+const selectionAtomCount = (key) => {
+  const component = componentRef.current;
+  if (!component || !component.structure) return null;
+  try {
+    const sel = component.structure.getSelection(selKeyExpr(key));
+    return sel.count != null ? sel.count : (sel.length != null ? sel.length : null);
+  } catch (e) {
+    return null;
+  }
+};
+
+// Rebuild all selection representations from selStyles.
+useEffect(() => {
+  const component = componentRef.current;
+  if (!component || status !== 'ready') return;
+  Object.keys(selCompsRef.current).forEach((k) => {
+    (selCompsRef.current[k] || []).forEach((r) => { try { component.removeRepresentation(r); } catch (e) {} });
+  });
+  selCompsRef.current = {};
+  // Base representations: removed in "hide all" or PyMOL-script mode, and rebuilt
+  // when the backbone style changes or when restoring from "hide all".
+  const backboneChanged = prevBackboneRef.current !== backboneStyle;
+  if (hideAll || pymolActive) {
+    baseCompsRef.current.forEach((r) => { try { component.removeRepresentation(r); } catch (e) {} });
+    baseCompsRef.current = [];
+  } else if (backboneChanged || baseCompsRef.current.length === 0) {
+    baseCompsRef.current.forEach((r) => { try { component.removeRepresentation(r); } catch (e) {} });
+    baseCompsRef.current = [];
+    addDefaultReps(component);
+  }
+  prevBackboneRef.current = backboneStyle;
+  if (hideAll) return;
+  const styles = selStylesRef.current || {};
+  Object.keys(styles).forEach((key) => {
+    const st = styles[key] || {};
+    const expr = selKeyExpr(key);
+    if (!expr || expr === '') return;
+    const color = st.color != null ? st.color : undefined;
+    const opacity = st.transparency != null ? Math.max(0, Math.min(1, 1 - st.transparency)) : undefined;
+    const reps = [];
+    const add = (type, params) => {
+      try { reps.push(component.addRepresentation(type, { sele: expr, ...params })); } catch (e) {}
+    };
+    if (st.cartoon) add('cartoon', { color, opacity });
+    if (st.sphere) add('spacefill', { scale: st.sphereScale || 1, color, opacity, multipleBond: true });
+    if (st.stick) add('ball+stick', { color, opacity, multipleBond: true });
+    if (st.surface) add('surface', { color, opacity: opacity != null ? opacity : 0.5 });
+    selCompsRef.current[key] = reps;
+  });
+  return () => {
+    Object.keys(selCompsRef.current).forEach((k) => {
+      (selCompsRef.current[k] || []).forEach((r) => { try { component.removeRepresentation(r); } catch (e) {} });
+    });
+    selCompsRef.current = {};
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [status, selections, selStyles, pymolActive, hideAll, backboneStyle]);
+
+// Background colour + quality ("ray shadows" approximation)
+useEffect(() => {
+  const stage = stageRef.current;
+  if (!stage) return;
+  try { stage.setParameters({ backgroundColor: bgColor }); } catch (e) {}
+  try { stage.setQuality(qualityHigh ? 'high' : 'medium'); } catch (e) {}
+}, [bgColor, qualityHigh, status]);
+
+const parsePyMOL = (text) => {
+  const sels = [];
+  const acts = [];
+  const colorDefs = {};
+  String(text || '').split(/\r?\n/).forEach((raw) => {
+    const line = (raw.split('#')[0] || '').trim();
+    if (!line) return;
+    // PyMOL puts the command AND its first argument before the first comma,
+    // e.g. "select water, resn TIP3", "show sphere, resn POPC", "set sphere_scale, 1.0, sel".
+    const commaIdx = line.indexOf(',');
+    const head = (commaIdx >= 0 ? line.slice(0, commaIdx) : line).trim();
+    const rest = commaIdx >= 0 ? line.slice(commaIdx + 1).split(',').map((p) => p.trim()) : [];
+    const cmdMatch = head.match(/^([A-Za-z_.]+)\s*(.*)$/);
+    const cmd = (cmdMatch ? cmdMatch[1] : head).toLowerCase();
+    const arg1 = (cmdMatch ? cmdMatch[2] : '').trim();
+
+    if (cmd === 'select') {
+      // select <name>, <expr>   (the name is arg1)
+      const name = arg1 || rest[0] || '';
+      const expr = arg1 ? rest.join(',') : rest.slice(1).join(',');
+      if (name && expr) sels.push({ name, expr });
+    } else if (cmd === 'set_color') {
+      const m = line.match(/set_color\s+(\S+)\s*,\s*\[([^\]]+)\]/i);
+      if (m) {
+        const rgb = m[2].split(/[\s,]+/).map(Number);
+        if (rgb.length >= 3) colorDefs[m[1].trim()] = ((rgb[0] & 255) << 16) | ((rgb[1] & 255) << 8) | (rgb[2] & 255);
+      }
+    } else if (cmd === 'show' || cmd === 'hide') {
+      const style = (arg1 || rest[0] || 'all').toLowerCase();
+      const sel = (arg1 ? rest[0] : rest[1]) || 'all';
+      acts.push({ type: cmd, style, sel });
+    } else if (cmd === 'color') {
+      const color = arg1 || rest[0];
+      const sel = (arg1 ? rest[0] : rest[1]) || 'all';
+      acts.push({ type: 'color', color, sel });
+    } else if (cmd === 'bg_color') {
+      acts.push({ type: 'bg_color', color: arg1 || rest[0] });
+    } else if (cmd === 'cartoon') {
+      const mode = (arg1 || 'automatic').toLowerCase();
+      const sel = (arg1 ? rest[0] : rest[1]) || 'all';
+      acts.push({ type: 'cartoon', mode, sel });
+    } else if (cmd === 'surface') {
+      acts.push({ type: 'surface', sel: arg1 || rest[0] || 'all' });
+    } else if (cmd === 'set') {
+      const prop = (arg1 || '').toLowerCase();
+      const val = rest[0];
+      const sel = rest[1] || 'all';
+      if (prop === 'sphere_scale') acts.push({ type: 'sphere_scale', val: parseFloat(val), sel });
+      else if (prop === 'transparency' || prop === 'sphere_transparency') acts.push({ type: 'transparency', val: parseFloat(val), sel });
+    } else if (cmd === 'spectrum') {
+      acts.push({ type: 'spectrum', sel: rest[2] || 'all' });
+    } else if (cmd.startsWith('util.ray_shadows') || /util\.ray_shadows/.test(line)) {
+      acts.push({ type: 'ray_shadows' });
+    } else if (cmd === 'dist') {
+      acts.push({ type: 'dist' }); // distance objects are reported, not drawn
+    }
+  });
+  return { sels, acts, colorDefs };
+};
+
+const applyPyMOLScript = (text) => {
+  const log = [];
+  try {
+    const { sels, acts, colorDefs } = parsePyMOL(text);
+    const names = new Set(sels.map((s) => s.name));
+    const nextSels = [
+      ...selections.filter((s) => !names.has(s.name)),
+      ...sels,
+    ];
+    setSelections(nextSels);
+    const styleOf = (st) => (st === 'sphere' ? 'sphere' : st === 'stick' || st === 'sticks' ? 'stick' : st === 'cartoon' ? 'cartoon' : st === 'surface' ? 'surface' : st === 'line' || st === 'lines' ? 'line' : null);
+    const next = { ...selStylesRef.current };
+    // Reset every selection the script mentions to "hidden", then apply commands
+    sels.forEach((s) => {
+      const cur = next[s.name] || {};
+      next[s.name] = { ...cur, cartoon: false, stick: false, sphere: false, surface: false };
+    });
+    acts.forEach((a) => {
+      const key = names.has(a.sel) ? a.sel : (a.sel === 'all' ? 'all' : a.sel);
+      const cur = next[key] || {};
+      if (a.type === 'show' || a.type === 'hide') {
+        const st = styleOf(a.style);
+        if (st) next[key] = { ...cur, [st]: a.type === 'show' };
+        if (a.style === 'everything' || a.style === 'all') {
+          next[key] = { ...cur, cartoon: a.type === 'show', stick: a.type === 'show', sphere: a.type === 'show', surface: a.type === 'show' };
+        }
+      } else if (a.type === 'color') {
+        const c = colorDefs[a.color] || parseColorInt(a.color);
+        if (c != null) next[key] = { ...cur, color: c };
+      } else if (a.type === 'sphere_scale') {
+        next[key] = { ...cur, sphereScale: a.val || 1 };
+      } else if (a.type === 'transparency') {
+        next[key] = { ...cur, transparency: Math.max(0, Math.min(1, a.val || 0)) };
+      } else if (a.type === 'bg_color') {
+        const c = colorDefs[a.color] || parseColorInt(a.color);
+        if (c != null) setBgColor(`#${c.toString(16).padStart(6, '0')}`);
+      } else if (a.type === 'ray_shadows') {
+        setQualityHigh(true);
+        log.push('• util.ray_shadows → rendering quality set to High');
+      } else if (a.type === 'dist') {
+        log.push('• dist (distance measurements) are not drawn in the viewer');
+      } else if (a.type === 'cartoon') {
+        next[key] = { ...cur, cartoon: true };
+      } else if (a.type === 'surface') {
+        next[key] = { ...cur, surface: true };
+      } else if (a.type === 'spectrum') {
+        log.push('• spectrum (by residue) approximated with per-residue rainbow colour');
+      }
+    });
+    setSelStyles(next);
+    setPymolActive(true);
+    setHideAll(false);
+    // Reproduce every selection the script defines: selections that received no
+    // explicit style from the script are shown as a subtle semi-transparent
+    // sphere so the user can see exactly which atoms each one captures.
+    if (autoShowSel && sels.length) {
+      const PAL = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#06b6d4', '#a3e635', '#f472b6', '#6366f1', '#84cc16', '#eab308', '#0ea5e9', '#f43f5e'];
+      let ci = 0;
+      const shown = {};
+      Object.keys(next).forEach((k) => {
+        const s = next[k] || {};
+        if (s.cartoon || s.stick || s.sphere || s.surface) shown[k] = true;
+      });
+      const patch = {};
+      sels.forEach((s) => {
+        if (shown[s.name]) return;
+        patch[s.name] = { ...(next[s.name] || {}), sphere: true, transparency: 0.6, sphereScale: 0.6, color: parseInt(PAL[ci % PAL.length].slice(1), 16) };
+        ci++;
+      });
+      Object.assign(next, patch);
+      setSelStyles({ ...next });
+      log.push(`• Auto-shown ${Object.keys(patch).length} selection(s) as subtle spheres (toggle in the list below).`);
+    } else {
+      setSelStyles(next);
+    }
+    log.push(`✓ Parsed ${sels.length} selection(s) and ${acts.length} command(s).`);
+  } catch (e) {
+    log.push(`⚠️ ${e?.message || 'Failed to parse script.'}`);
+  }
+  setPymolLog(log.join('\n'));
+};
+
+const clearPyMOL = () => {
+  setSelections([]);
+  setSelStyles({});
+  setPymolActive(false);
+  setPymolLog('');
+  setPymolScript('');
+};
+
+// Atom rename helpers
+const applyRename = () => {
+  if (renameTarget === null) return;
+  const val = renameDraft.trim();
+  const next = { ...renames };
+  if (val) next[renameTarget] = val; else delete next[renameTarget];
+  persistRenames(next);
+  setRenameTarget(null);
+  setRenameDraft('');
+};
+const autoNameFrom2D = () => {
+  const component = componentRef.current;
+  if (!component || !component.structure) return;
+  const next = {};
+  try {
+    component.structure.eachAtom((a) => {
+      next[a.index] = getOrganicAtomName(a);
+    });
+  } catch (e) {}
+  persistRenames(next);
+};
+const clearRenames = () => persistRenames({});
 
 // Atom labels
 useEffect(() => {
@@ -823,12 +1247,13 @@ try {
 const isOrganicLike = ['organic', 'lipid', 'sugar'].includes(moleculeTypeRef.current);
 labelCompRef.current = component.addRepresentation('label', {
 sele: isOrganicLike ? 'not hydrogen' : 'protein and sidechain and not hydrogen',
-labelType: 'atomname', labelGrouping: 'atom', color: 0x111827, radius: 1.0, opacity: 1, depthTest: false,
+labelType: 'custom', labelGrouping: 'atom', color: 0x111827, radius: 1.0, opacity: 1, depthTest: false,
+customLabel: (a) => displayNameRef.current(a),
 });
 } catch (e) {}
 }
 return clearLabels;
-}, [showLabels, status]);
+}, [showLabels, status, renames]);
 
 // Side-chain representation
 useEffect(() => {
@@ -842,7 +1267,7 @@ sidechainCompRef.current = null;
 }
 };
 clearSidechain();
-if (sidechainStyle !== 'none') {
+if (sidechainStyle !== 'none' && !hideAll && !pymolActive) {
 try {
 sidechainCompRef.current = component.addRepresentation(sidechainStyle, {
 sele: '(protein and sidechain) or (protein and .CA)', color: 'element', multipleBond: true,
@@ -851,7 +1276,7 @@ radiusSize: sidechainStyle === 'licorice' ? 0.25 : undefined,
 } catch (e) {}
 }
 return clearSidechain;
-}, [sidechainStyle, status]);
+}, [sidechainStyle, status, hideAll, pymolActive]);
 
 // Highlight selected and manually selected atoms
 useEffect(() => {
@@ -1081,7 +1506,127 @@ className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline
 <option value="spacefill">Spacefill</option>
 </select>
 </div>
+
+<div className="flex flex-col gap-1">
+<label className="text-[10px] font-bold text-slate-500 uppercase">
+Backbone
+</label>
+<select
+value={backboneStyle}
+onChange={(e) => setBackboneStyle(e.target.value)}
+className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 h-8"
+>
+<option value="cartoon">Cartoon</option>
+<option value="tube">Cartoon (Tube)</option>
+<option value="sticks">Sticks</option>
+<option value="lines">Lines</option>
+<option value="spheres">Spheres</option>
+<option value="hidden">Hidden</option>
+</select>
 </div>
+</div>
+
+{/* View enhancement panels: Atom renaming + Selections / PyMOL */}
+<div className="flex flex-wrap items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg p-2">
+  <button type="button" onClick={() => setShowAtomPanel((v) => !v)}
+    className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors ${showAtomPanel ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}>
+    ✏️ Atom names{Object.keys(renames).length ? ` (${Object.keys(renames).length})` : ''}
+  </button>
+  <button type="button" onClick={() => setShowPymolPanel((v) => !v)}
+    className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors ${showPymolPanel ? 'bg-violet-100 border-violet-400 text-violet-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}>
+    🧪 Selections & PyMOL
+  </button>
+  <button type="button" onClick={() => setHideAll((v) => !v)}
+    className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors ${hideAll ? 'bg-red-100 border-red-400 text-red-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}>
+    {hideAll ? '👁️ Show default' : '🙈 Hide everything'}
+  </button>
+</div>
+
+{showAtomPanel && (
+  <div className="bg-amber-50/40 border border-amber-200 rounded-lg p-3 flex flex-col gap-2">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <span className="text-[10px] font-black text-amber-700 uppercase tracking-wide">Atom names (3D only — the 2D formula is not touched)</span>
+      <div className="flex flex-wrap gap-1.5">
+        <button type="button" onClick={() => setRenameMode((v) => !v)}
+          className={`px-2 py-1 text-[10px] font-bold rounded border ${renameMode ? 'bg-amber-600 text-white border-amber-600' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-100'}`}>
+          {renameMode ? '● Click an atom…' : 'Click-to-rename'}
+        </button>
+        <button type="button" onClick={autoNameFrom2D} className="px-2 py-1 text-[10px] font-bold rounded bg-white border border-amber-300 text-amber-700 hover:bg-amber-100">Auto-name (2D)</button>
+        <button type="button" onClick={clearRenames} className="px-2 py-1 text-[10px] font-bold rounded bg-white border border-red-300 text-red-600 hover:bg-red-50">Clear overrides</button>
+      </div>
+    </div>
+    <p className="text-[10px] text-slate-500">
+      {renameMode ? 'Click any atom in the 3D viewer, then type its new name below.' : 'Search the atom list and edit names directly. Changes are stored with the test and persist.'}
+    </p>
+    {renameTarget !== null && (
+      <div className="flex items-center gap-2 bg-white border border-amber-300 rounded-lg p-2">
+        <span className="text-xs font-bold text-slate-700">Atom #{renameTarget}:</span>
+        <input value={renameDraft} onChange={(e) => setRenameDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') applyRename(); }} className="border border-slate-300 rounded px-2 py-1 text-xs outline-none focus:border-amber-500" />
+        <button type="button" onClick={applyRename} className="px-2 py-1 text-[10px] font-bold rounded bg-amber-600 text-white">OK</button>
+        <button type="button" onClick={() => setRenameTarget(null)} className="px-2 py-1 text-[10px] font-bold rounded bg-slate-200 text-slate-700">Cancel</button>
+      </div>
+    )}
+    <div className="flex items-center gap-2">
+      <input value={atomSearch} onChange={(e) => setAtomSearch(e.target.value)} placeholder="Filter atoms…" className="border border-slate-300 rounded px-2 py-1 text-xs w-44 outline-none focus:border-amber-500" />
+      <span className="text-[10px] text-slate-400">{atomList.length} atoms</span>
+    </div>
+    <div className="max-h-48 overflow-y-auto custom-scrollbar border border-amber-200 rounded-lg bg-white">
+      <table className="w-full text-xs">
+        <thead className="sticky top-0 bg-amber-50">
+          <tr>
+            <th className="text-left px-2 py-1 text-[9px] uppercase text-amber-700">#</th>
+            <th className="text-left px-2 py-1 text-[9px] uppercase text-amber-700">El</th>
+            <th className="text-left px-2 py-1 text-[9px] uppercase text-amber-700">Current</th>
+            <th className="text-left px-2 py-1 text-[9px] uppercase text-amber-700">New name</th>
+          </tr>
+        </thead>
+        <tbody>
+          {atomList
+            .filter((a) => !atomSearch || (a.name || '').toLowerCase().includes(atomSearch.toLowerCase()) || (renames[a.idx] || '').toLowerCase().includes(atomSearch.toLowerCase()))
+            .slice(0, 200)
+            .map((a) => (
+              <tr key={a.idx} className="border-t border-amber-100">
+                <td className="px-2 py-1 text-slate-400">{a.idx}</td>
+                <td className="px-2 py-1 font-bold text-slate-600">{a.element}</td>
+                <td className="px-2 py-1 font-mono text-slate-500">{a.name}</td>
+                <td className="px-2 py-1">
+                  <input value={renames[a.idx] || a.name} onChange={(e) => { const next = { ...renames }; if (e.target.value.trim()) next[a.idx] = e.target.value; else delete next[a.idx]; persistRenames(next); }} className="w-20 border border-slate-300 rounded px-1.5 py-0.5 text-xs outline-none focus:border-amber-500" />
+                </td>
+              </tr>
+            ))}
+        </tbody>
+      </table>
+    </div>
+  </div>
+)}
+
+{showPymolPanel && (
+  <div className="bg-violet-50/40 border border-violet-200 rounded-lg p-3 flex flex-col gap-2">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <span className="text-[10px] font-black text-violet-700 uppercase tracking-wide">Selections & PyMOL</span>
+      <div className="flex gap-1.5">
+        <button type="button" onClick={() => applyPyMOLScript(pymolScript)} className="px-2 py-1 text-[10px] font-bold rounded bg-violet-600 text-white hover:bg-violet-700">▶ Run script</button>
+        <button type="button" onClick={clearPyMOL} className="px-2 py-1 text-[10px] font-bold rounded bg-white border border-red-300 text-red-600 hover:bg-red-50">Clear</button>
+      </div>
+    </div>
+    <label className="text-[10px] font-bold text-slate-500 uppercase">Paste a PyMOL script (select / show / hide / color / set sphere_scale·transparency / bg_color / cartoon / surface / spectrum / util.ray_shadows)</label>
+    <textarea value={pymolScript} onChange={(e) => setPymolScript(e.target.value)} rows={6}
+      className="w-full border border-violet-300 rounded-lg p-2 text-[11px] font-mono outline-none focus:border-violet-500 bg-white"
+      placeholder={'select peptide, polymer.protein\nshow cartoon, peptide\ncolor gold, name CA and peptide\nset sphere_scale, 0.6, headgroups\nset sphere_transparency, 0.3, upper_headgroups\nbg_color white'} />
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-[10px] font-bold text-slate-500 uppercase">Effects</span>
+      <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600"><input type="checkbox" checked={autoShowSel} onChange={(e) => setAutoShowSel(e.target.checked)} className="accent-violet-600" /> Auto-show parsed selections</label>
+      <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600"><input type="checkbox" checked={qualityHigh} onChange={(e) => setQualityHigh(e.target.checked)} className="accent-violet-600" /> High quality (ray-shadows approx.)</label>
+      <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600">BG <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)} className="w-8 h-6 border border-slate-300 rounded cursor-pointer" /></label>
+    </div>
+    {pymolLog && <pre className="text-[10px] text-slate-600 bg-white border border-violet-200 rounded-lg p-2 whitespace-pre-wrap max-h-24 overflow-y-auto">{pymolLog}</pre>}
+    {selections.length > 0 && (
+      <p className="text-[10px] text-violet-600 font-bold">
+        ✓ {selections.length} selection(s) parsed — toggle them in the vertical bar on the right of the 3D viewer.
+      </p>
+    )}
+  </div>
+)}
 
 {/* Trajectory Playback Controls */}
 {(trajFile || trajectoryFile || trajectorySrc) && (
@@ -1089,7 +1634,7 @@ className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline
 <button
 type="button"
 onClick={togglePlay}
-disabled={trajStatus !== 'ready' || numFrames === 0}
+disabled={trajStatus !== 'ready' || keptFrames === 0}
 className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm transition-colors inline-flex items-center gap-1"
 >
 {playing ? '⏸ Pause' : '▶ Play'}
@@ -1099,14 +1644,14 @@ className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font
 <input
 type="range"
 min={0}
-max={Math.max(0, numFrames - 1)}
+max={Math.max(0, keptFrames - 1)}
 value={currentFrame}
 onChange={handleFrameChange}
-disabled={trajStatus !== 'ready' || numFrames === 0}
+disabled={trajStatus !== 'ready' || keptFrames === 0}
 className="flex-1 accent-indigo-600"
 />
 <span className="text-[10px] font-mono font-bold text-indigo-800 whitespace-nowrap">
-{currentFrame} / {Math.max(0, numFrames - 1)}
+{currentFrame} / {Math.max(0, keptFrames - 1)}
 </span>
 </div>
 <div className="flex items-center gap-2">
@@ -1119,9 +1664,35 @@ className="border border-indigo-300 rounded-lg px-2 py-1 text-xs bg-white outlin
 {[1, 5, 10, 20, 30, 60].map((s) => <option key={s} value={s}>{s} fps</option>)}
 </select>
 </div>
+<div className="flex items-center gap-2">
+<label className="text-[10px] font-bold text-indigo-700 uppercase">Load every</label>
+<select
+value={stride}
+onChange={(e) => setStride(Math.max(1, parseInt(e.target.value, 10) || 1))}
+className="border border-indigo-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-indigo-500"
+title="Play every Nth frame — keeps the same total trajectory time with fewer frames"
+>
+{[1, 2, 5, 10, 20, 50, 100, 200, 500, 1000].map((s) => <option key={s} value={s}>{s}×</option>)}
+</select>
+</div>
+<div className="flex items-center gap-2">
+<label className="text-[10px] font-bold text-indigo-700 uppercase">Max frames</label>
+<input
+type="number"
+min="0"
+value={maxFrames}
+onChange={(e) => setMaxFrames(Math.max(0, parseInt(e.target.value, 10) || 0))}
+className="border border-indigo-300 rounded-lg px-2 py-1 text-xs w-20 bg-white outline-none focus:border-indigo-500"
+title="Limit the number of frames actually played (0 = keep all)"
+/>
+</div>
 <div className="w-full">
 {trajStatus === 'loading' && <span className="text-[11px] font-bold text-indigo-600">⏳ Loading trajectory ({trajectoryFormat.toUpperCase()})…</span>}
-{trajStatus === 'ready' && <span className="text-[11px] font-bold text-emerald-600">✓ Trajectory loaded ({trajectoryFormat.toUpperCase()}, {numFrames} frames)</span>}
+{trajStatus === 'ready' && (
+  <span className="text-[11px] font-bold text-emerald-600">
+    ✓ {trajectoryFormat.toUpperCase()}: {numFrames} frames total → playing {keptFrames} (stride {effStride})
+  </span>
+)}
 {trajStatus === 'error' && <span className="text-[11px] font-bold text-red-600">⚠️ {trajError}</span>}
 </div>
 </div>
@@ -1133,6 +1704,53 @@ className="relative border border-slate-200 rounded-xl overflow-hidden bg-white"
 style={{ height }}
 >
 <div ref={containerRef} className="w-full h-full" />
+
+{/* Vertical selections bar (right side of the viewer) */}
+{selections.length > 0 && status === 'ready' && (
+  <div className="absolute top-2 right-2 bottom-2 w-60 z-10 flex flex-col gap-2 bg-white/95 border border-violet-200 rounded-xl shadow-lg p-2 overflow-hidden">
+    <div className="flex items-center justify-between gap-2 shrink-0">
+      <span className="text-[10px] font-black text-violet-700 uppercase tracking-wide">Selections</span>
+      <button type="button" onClick={() => setHideAll((v) => !v)}
+        className={`px-2 py-0.5 text-[9px] font-bold rounded border ${hideAll ? 'bg-red-600 text-white border-red-600' : 'bg-white border-red-300 text-red-600 hover:bg-red-50'}`}
+        title={hideAll ? 'Show everything again' : 'Hide every representation'}>
+        {hideAll ? 'Show all' : '🙈 Hide all'}
+      </button>
+    </div>
+    <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1.5">
+      {selections.map((s) => {
+        const st = selStyles[s.name] || {};
+        const n = selectionAtomCount(s.name);
+        return (
+          <div key={s.name} className="flex flex-col gap-1 border border-slate-100 rounded-lg p-1.5 bg-white">
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-[10px] font-bold text-slate-700 truncate" title={s.expr}>{s.name}</span>
+              <span className="text-[8px] text-slate-400 font-mono shrink-0">{n != null ? `${n} atoms` : '—'}</span>
+            </div>
+            <div className="flex items-center gap-1 flex-wrap">
+              {['cartoon', 'stick', 'sphere', 'surface'].map((style) => (
+                <button key={style} type="button"
+                  onClick={() => setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), [style]: !((selStylesRef.current[s.name] || {})[style]) } })}
+                  className={`px-1.5 py-0.5 text-[8px] font-bold rounded border ${st[style] ? 'bg-violet-600 text-white border-violet-600' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-violet-50'}`}>
+                  {style}
+                </button>
+              ))}
+              <input type="color" value={st.color != null ? `#${st.color.toString(16).padStart(6, '0')}` : '#000000'}
+                onChange={(e) => { const c = parseInt(e.target.value.slice(1), 16); setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), color: c } }); }}
+                className="w-5 h-5 border border-slate-300 rounded cursor-pointer" title="Colour" />
+            </div>
+            <label className="flex items-center gap-1 text-[8px] text-slate-500">
+              transp
+              <input type="range" min="0" max="1" step="0.05" value={st.transparency || 0}
+                onChange={(e) => setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), transparency: parseFloat(e.target.value) } })}
+                className="accent-violet-600 w-full" />
+            </label>
+          </div>
+        );
+      })}
+    </div>
+  </div>
+)}
+
 {hoverInfo && status === 'ready' && (
 <div className="absolute top-2 left-2 bg-white/90 border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-bold text-slate-700 shadow-sm pointer-events-none z-10">
 {hoverInfo}

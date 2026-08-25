@@ -20,6 +20,7 @@ Fitting
 import { FCSDataVisualizations, FCSOverlayVisualization } from './FlowCytometrySections';
 import { CD_FIT_COMPONENTS } from './CDSections';
 import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES } from '../App.jsx';
+import { SearchableSelect } from './SearchableSelect';
 import {
 generateRMSDData, generateRMSFData, generateRgData, generateSASAData, generateEnergyData,
 parseMDValue, getForceFieldInfo, getWaterModelInfo, getTrajectoryFormatInfo
@@ -2736,24 +2737,33 @@ const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t =>
           </div>
           <div>
             <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Compound</label>
-            <select value={filterCompound} onChange={(e) => setFilterCompound(e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
-              <option value="ALL">All</option>
-              {allCmpds.map(p => <option key={p} value={p}>{p}</option>)}
-            </select>
+            <SearchableSelect
+              value={filterCompound}
+              onChange={(v) => setFilterCompound(v)}
+              options={allCmpds || []}
+              placeholder="All"
+              onClear={() => setFilterCompound('ALL')}
+            />
           </div>
           <div>
             <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Plasmid</label>
-            <select value={filterPlasmid} onChange={(e) => setFilterPlasmid(e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
-              <option value="ALL">All</option>
-              {allPlasmids.map(p => <option key={p} value={p}>{p}</option>)}
-            </select>
+            <SearchableSelect
+              value={filterPlasmid}
+              onChange={(v) => setFilterPlasmid(v)}
+              options={allPlasmids || []}
+              placeholder="All"
+              onClear={() => setFilterPlasmid('ALL')}
+            />
           </div>
           <div>
             <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Cell Line</label>
-            <select value={filterCellLine} onChange={(e) => setFilterCellLine(e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
-              <option value="ALL">All</option>
-              {(allCellLines || []).map(cl => <option key={cl} value={cl}>{cl}</option>)}
-            </select>
+            <SearchableSelect
+              value={filterCellLine}
+              onChange={(v) => setFilterCellLine(v)}
+              options={allCellLines || []}
+              placeholder="All"
+              onClear={() => setFilterCellLine('ALL')}
+            />
           </div>
         </div>
 
