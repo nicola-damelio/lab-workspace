@@ -7,6 +7,7 @@ import React from 'react';
 import { LibraryDirectory } from './libraryDirectory';
 import { CompoundDefinitionSection } from './compoundDefinitionSection';
 import { CustomMetadataFieldsManager, MandatoryParametersManager, ScientistsOperatorsManager } from './definitionsManagers';
+import { DatabaseCleanupManager } from './storageModules';
 
 export const DefinitionsModule = ({
   allCmpds, onSelectResource,

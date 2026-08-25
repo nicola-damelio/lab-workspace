@@ -18,7 +18,7 @@ const SSNMRTestRenderer = lazy(() => import('./components/ssNMRTestRenderer').th
 const LabNotebook = lazy(() => import('./components/LabNotebook').then(m => ({ default: m.LabNotebook })));
 const PublicationsSection = lazy(() => import('./components/Publications').then(m => ({ default: m.PublicationsSection })));
 import { RichTextEditor } from './components/RichTextEditor';
-import { StorageModals, StorageList, StorageDetail, BoxDetail } from './components/Storage';
+import { StorageModals, BoxDetail } from './components/Storage';
 const NMRFittingsTestRenderer = lazy(() => import('./components/NMRFittingsTestRenderer').then(m => ({ default: m.NMRFittingsTestRenderer })));
 const CloningTestRenderer = lazy(() => import('./components/CloningTestRenderer').then(m => ({ default: m.CloningTestRenderer })));
 const ProteinExpressionTestRenderer = lazy(() => import('./components/ProteinExpressionTestRenderer').then(m => ({ default: m.ProteinExpressionTestRenderer })));
@@ -32,13 +32,13 @@ import { AppSidebar } from './components/AppModules/appSidebar';
 import { AgendaModule } from './components/AppModules/agendaModule';
 import { DashboardModule } from './components/AppModules/dashboardModule';
 import { DefinitionsModule } from './components/AppModules/definitionsModule';
+import { StorageModule } from './components/AppModules/storageModuleViews';
 const FlowCytometryTestRenderer = lazy(() => import('./components/FlowCytometryTestRenderer').then(m => ({ default: m.FlowCytometryTestRenderer })));
 import { hashPassword, normalizeOperators, getOpLabel } from './utils/auth';
 import { CALC_INPUT_CLS, CALC_LABEL_CLS } from './utils/styles';
 import { ScientistLoginGate, ScientistLoginModal } from './components/AppModules/definitionsManagers';
 import { Calculations } from './components/AppModules/calculationsModule';
 import { CollapsibleSectionPanel as CollapsibleSection } from './components/ui';
-import { StorageFinder, DatabaseCleanupManager } from './components/AppModules/storageModules';
 
 
 // Auth utilities now live in ./utils/auth (see import above).
@@ -2706,51 +2706,13 @@ const openDataset = (dset) => {
               agendaGrouped={agendaGrouped} jumpToTest={jumpToTest}
             />)}
 
-{currentModule === 'storage' && (
-  <div className="h-full min-h-0 flex flex-col overflow-hidden bg-slate-50">
-    <StorageFinder
-      tests={tests}
-      storages={storages}
-      operators={operatorNames}
-      onOpenTest={(testId) => {
-        setActiveTestId(testId);
-        setCurrentModule('active-test');
-      }}
-      onOpenStorage={(storageId) => {
-        if (!storageId) return;
-        setActiveStorageId(storageId);
-        setCurrentModule('storage-detail');
-      }}
-    />
-
-    <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
-      <StorageList
-        storages={storages}
-        tests={tests}
-        setStorageModal={setStorageModal}
-        setActiveStorageId={setActiveStorageId}
-        setCurrentModule={setCurrentModule}
-        handlePrint={handlePrint}
-        operators={operatorNames}
-      />
-    </div>
-  </div>
-)}
-            {currentModule === 'storage-detail' && (
-              <StorageDetail
-                storages={storages}
-                activeStorageId={activeStorageId}
-                tests={tests}
-                setTests={setTests}
-                setCurrentModule={setCurrentModule}
-                handlePrint={handlePrint}
-                jumpToTest={jumpToTest}
-                setMoveModal={setMoveModal}
-                createEmptyTest={createEmptyTest}
-                setActiveTestId={setActiveTestId}
-                operators={operatorNames}
-              />
-            )}
+            <StorageModule
+              currentModule={currentModule} tests={tests} setTests={setTests} storages={storages}
+              operatorNames={operatorNames} setActiveTestId={setActiveTestId} setCurrentModule={setCurrentModule}
+              setActiveStorageId={setActiveStorageId} setStorageModal={setStorageModal}
+              handlePrint={handlePrint} activeStorageId={activeStorageId}
+              jumpToTest={jumpToTest} setMoveModal={setMoveModal} createEmptyTest={createEmptyTest}
+            />
 
             {currentModule === 'tests' &&
               (() => {
