@@ -15,10 +15,13 @@ if($appStart -lt 0){ 'App function not found'; exit 1 }
 # The App function is the last top-level function; body = appStart..end of file.
 $body = $appLines[$appStart..($appLines.Count-1)] -join "`n"
 
-# App-local names: any `const/let/var/function NAME` inside the App body.
+# App-local names: any `const/let/var/function NAME` inside the App body,
+# INCLUDING destructured state (`const [a, setA] = useState(...)`).
 $appNames = @()
 foreach($m in [regex]::Matches($body, '\b(?:const|let|var|function)\s+([A-Za-z_$][\w$]*)')){ $appNames += $m.Groups[1].Value }
-# Also names defined via `export default function App` itself and helper closures are not relevant.
+foreach($m in [regex]::Matches($body, '\bconst\s*\[([^\]]+)\]\s*=')){
+  ($m.Groups[1].Value -split ',') | ForEach-Object { $t = $_.Trim(); if($t -match '^([A-Za-z_$][\w$]*)'){ $appNames += $Matches[1] } }
+}
 $appNames = $appNames | Sort-Object -Unique
 
 $globals = @('window','document','console','alert','confirm','prompt','setTimeout','clearTimeout','setInterval','clearInterval','fetch','URL','FileReader','TextEncoder','TextDecoder','crypto','Promise','JSON','Math','Date','String','Number','Boolean','Array','Object','Symbol','RegExp','Map','Set','WeakMap','WeakSet','parseInt','parseFloat','isNaN','encodeURIComponent','decodeURIComponent','localStorage','sessionStorage','Blob','FormData','btoa','atob','structuredClone','performance','location','navigator','history','requestAnimationFrame','cancelAnimationFrame','CustomEvent','Event','KeyboardEvent','MouseEvent','Image','DOMParser','AbortController','IntersectionObserver','ResizeObserver','MutationObserver','File','FileList','React','useState','useEffect','useRef','useMemo','useCallback','useReducer','useContext','useLayoutEffect','useImperativeHandle','useTransition','useDeferredValue','useId','useSyncExternalStore','Fragment','Suspense','lazy','memo','Children','isValidElement','createElement','createContext','createRef','forwardRef','startTransition','useDebugValue','alert','confirm')

@@ -10,7 +10,7 @@ import { CustomMetadataFieldsManager, MandatoryParametersManager, ScientistsOper
 import { DatabaseCleanupManager } from './storageModules';
 
 export const DefinitionsModule = ({
-  allCmpds, onSelectResource,
+  allCmpds, setActiveLibrarySelection,
   compoundMeta, setCompoundMeta, cellLineMeta, setCellLineMeta,
   plasmidMeta, setPlasmidMeta, customCmpds, setCustomCmpds,
   customCellLines, setCustomCellLines,
