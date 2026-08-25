@@ -57,7 +57,7 @@ export const StorageFinder = ({
       if (trimmed.startsWith('{')) {
         try {
           return JSON.parse(trimmed);
-        } catch (e) {
+        } catch {
           return null;
         }
       }
@@ -665,7 +665,7 @@ export const DatabaseCleanupManager = ({
                     parsed.compound = newVal;
                     return JSON.stringify(parsed);
                   }
-                } catch(e) {}
+                } catch {}
               }
               return cell;
             }

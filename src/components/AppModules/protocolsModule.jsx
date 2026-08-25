@@ -47,7 +47,7 @@ const extractGoogleDriveId = (url) => {
 
     const openMatch = u.match(/\/d\/([a-zA-Z0-9_-]+)/);
     if (openMatch) return openMatch[1];
-  } catch (e) {}
+  } catch {}
 
   return '';
 };

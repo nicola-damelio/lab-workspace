@@ -10,7 +10,7 @@ import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES, EXPERIMENT_TYPES } from '../../
 const NMRTestRenderer = lazy(() => import('../NMRTestRenderer').then(m => ({ default: m.NMRTestRenderer })));
 const PlateTestRenderer = lazy(() => import('../PlateTestRenderer').then(m => ({ default: m.PlateTestRenderer })));
 const CDTestRenderer = lazy(() => import('../CDTestRenderer').then(m => ({ default: m.CDTestRenderer })));
-const SSNMRTestRenderer = lazy(() => import('../ssNMRTestRenderer').then(m => ({ default: m.ssNMRTestRenderer })));
+const SSNMRTestRenderer = lazy(() => import('../ssNMRTestRenderer').then(m => ({ default: m.SSNMRTestRenderer })));
 const NMRFittingsTestRenderer = lazy(() => import('../NMRFittingsTestRenderer').then(m => ({ default: m.NMRFittingsTestRenderer })));
 const CloningTestRenderer = lazy(() => import('../CloningTestRenderer').then(m => ({ default: m.CloningTestRenderer })));
 const ProteinExpressionTestRenderer = lazy(() => import('../ProteinExpressionTestRenderer').then(m => ({ default: m.ProteinExpressionTestRenderer })));

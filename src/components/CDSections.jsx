@@ -4,7 +4,7 @@
 // plots) · Simulations.
 // ============================================================================
 
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, {useState, useEffect, useRef, useMemo} from 'react';
 import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line,
@@ -641,7 +641,7 @@ const fitGeneric = (pts, f0, P0) => {
       const col = gaussSolve(A, e);
       if (col) P_err[i] = Math.sqrt(Math.max(0, col[i] * (cur / df)));
     }
-  } catch (err) { /* ignore */ }
+  } catch { /* ignore */ }
   return { params: P, paramsErr: P_err, r2, se, f: (x) => f(x, P) };
 };
 
@@ -669,7 +669,7 @@ const fit4PL = (pts) => {
 
 const fitCustomEquation = (expr, pts) => {
   let ast, par;
-  try { ast = parseExpression(expr); par = collectParams(ast); } catch (e) { return null; }
+  try { ast = parseExpression(expr); par = collectParams(ast); } catch { return null; }
   if (!par.length || pts.length < par.length + 1) return null;
   const init = par.map((_, i) => (i === 0 ? pts.reduce((s, p) => s + p.y, 0) / Math.max(1, pts.length) : 1));
   const res = fitGeneric(pts, (x, P) => {
@@ -1275,7 +1275,7 @@ export const Data = ({ ctx }) => {
         const parsed = parseJascoCDText(text);
         parsed.filename = f.name;
         results.push(parsed);
-      } catch (err) { console.error('Parse error:', err); }
+      } catch { console.error('Parse error:', err); }
     }
 
     if (results.length === 0) {
@@ -1321,7 +1321,7 @@ export const Data = ({ ctx }) => {
       const parsed = parseJascoCDText(jascoText);
       applyJasco(parsed, null);
       setJascoText('');
-    } catch (err) {
+    } catch {
       setJascoMsg(`⚠️ Error parsing text: ${err.message}`);
       console.error('Jasco paste parse error:', err);
     }
@@ -3132,7 +3132,10 @@ const ProteinCDMixer = ({ isExpanded, onToggleExpand }) => {
     const W = width, H = height;
     const wavelengths = [], values = [];
     const pA = compositions.helix / 100, pB = compositions.sheet / 100, pT = compositions.turn / 100, pC = compositions.coil / 100;
-    for (let w = 176; w <= 260; w += 1) wavelengths.push(w), values.push(splineAlpha.at(w) * pA + splineBeta.at(w) * pB + splineTurn.at(w) * pT + splineCoil.at(w) * pC);
+    for (let w = 176; w <= 260; w += 1) {
+      wavelengths.push(w);
+      values.push(splineAlpha.at(w) * pA + splineBeta.at(w) * pB + splineTurn.at(w) * pT + splineCoil.at(w) * pC);
+    }
     
     const pad = { top: 20, right: 20, bottom: 40, left: 60 };
     const plotW = W - pad.left - pad.right, plotH = H - pad.top - pad.bottom;

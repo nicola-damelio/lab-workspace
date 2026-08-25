@@ -2709,14 +2709,14 @@ const proteinSequenceToPdbText = (seq, ssString, title = 'GENERATED') => {
       } else if (char !== 'P') {
         bbH.push({ name: 'H', pos: nerfPlace(residues[i - 1].C, r.N, r.CA, 1.01, _deg2rad(120), _deg2rad(180)) });
       }
-    } catch (e) {
+    } catch {
       console.warn(`Backbone-H placement failed for residue ${i + 1} (${char}), continuing without them:`, e);
     }
     // Side chain -- never let one residue's spec kill the whole structure
     let sidechain = [];
     try {
       sidechain = placeSidechainAtoms(char, r);
-    } catch (e) {
+    } catch {
       console.warn(`Side-chain generation failed for residue ${i + 1} (${char}), keeping backbone only:`, e);
     }
     const ordered = [];
@@ -2931,11 +2931,11 @@ const resolveOrganicStructureText = async (smiles) => {
   try {
     const text = await fetchCactusPdb(smiles);
     return { text, ext: 'pdb' };
-  } catch (e) { errors.push(`Cactus: ${e.message}`); }
+  } catch { errors.push(`Cactus: ${e.message}`); }
   try {
     const { sdf } = await fetchPubchemPdb(smiles);
     return { text: sdf, ext: 'sdf' };
-  } catch (e) { errors.push(`PubChem: ${e.message}`); }
+  } catch { errors.push(`PubChem: ${e.message}`); }
   throw new Error(`No 3D structure could be resolved for this SMILES.\n${errors.join('\n')}`);
 };
 
@@ -2997,7 +2997,7 @@ const useNmrDerived = (activeTest, ctx = {}) => {
        }
        
        if (typeof mol.delete === 'function') mol.delete();
-     } catch (e) {
+     } catch {
        console.warn("RDKit organic parsing failed, using fallback atoms:", e);
        atoms = Array.from({ length: 40 }, (_, i) => `Atom-${i}`);
      }
@@ -3581,7 +3581,7 @@ export const fitGeneric = (pts, f0, P0) => {
       const col = gaussSolve(A, e);
       if (col) P_err[i] = Math.sqrt(Math.max(0, col[i] * (cur / df)));
     }
-  } catch (err) { /* ignore */ }
+  } catch { /* ignore */ }
   return { params: P, paramsErr: P_err, r2, se, f: (x) => f(x, P) };
 };
 export const fitLinear = (pts) => {
@@ -3598,7 +3598,7 @@ export const fit4PL = (pts) => {
 };
 export const fitCustomEquation = (expr, pts) => {
   let ast, par;
-  try { ast = parseExpression(expr); par = collectParams(ast); } catch (e) { return null; }
+  try { ast = parseExpression(expr); par = collectParams(ast); } catch { return null; }
   if (!par.length || pts.length < par.length + 1) return null;
   const init = par.map((_, i) => (i === 0 ? pts.reduce((s, p) => s + p.y, 0) / Math.max(1, pts.length) : 1));
   const res = fitGeneric(pts, (x, P) => { const s = { x }; par.forEach((n, i) => s[n] = P[i]); return evalAST(ast, s); }, init);
@@ -3822,7 +3822,7 @@ const getMolWithExplicitHs = (smiles) => {
     }
     
     return molWithHs;
-  } catch (e) {
+  } catch {
     console.error('RDKit parse error:', e);
     return null;
   }
@@ -3951,7 +3951,7 @@ bonds.forEach(([a1, a2]) => {
 setModel({ atoms, bonds, parentName, viewBox: `${-pad} ${-pad} ${finalWidth + 2 * pad} ${finalHeight + 2 * pad}`, scale });
 
 setModel({ atoms, bonds, parentName, viewBox: `${-pad} ${-pad} ${finalWidth + 2 * pad} ${finalHeight + 2 * pad}` });
-    } catch (e) { setModel(null); }
+    } catch { setModel(null); }
   }, [smiles, rdkitReady]);
 
   const keysFor = (idx) => {
@@ -4141,7 +4141,7 @@ const generatedStructure = useMemo(() => {
     }
     
     console.log('ℹ️ 3D Generation skipped: No valid sequence provided for this molecule type.');
-  } catch (e) {
+  } catch {
     console.error('❌ 3D structure generation failed with error:', e);
   }
   
@@ -4229,7 +4229,7 @@ const generatedStructure = useMemo(() => {
       try {
         const { text, ext } = await resolveOrganicStructureText(targetSmiles);
         triggerDownload(text, `${activeTest.name || 'molecule'}_3D.${ext}`);
-      } catch (e) {
+      } catch {
         alert('Failed to generate a 3D structure for this SMILES: ' + e.message);
       }
     } else if ((d.moleculeType === 'protein' || d.moleculeType === 'dna' || d.moleculeType === 'rna') && d.seq) {
@@ -4239,7 +4239,7 @@ const generatedStructure = useMemo(() => {
           ? proteinSequenceToPdbText(d.seq, activeTest.secondaryStructure || '', activeTest.name || 'PROTEIN')
           : nucleicSequenceToPdbText(d.seq, d.moleculeType, activeTest.name || 'NUCLEIC_ACID');
         triggerDownload(text, `${activeTest.name || d.moleculeType}_3D.pdb`);
-      } catch (e) {
+      } catch {
         alert('Failed to generate structure: ' + e.message);
       }
     } else {
@@ -5049,7 +5049,7 @@ export const DataSection = ({ ctx }) => {
       document.execCommand('copy');
       window.getSelection().removeAllRanges();
       alert('Table copied to clipboard!');
-    } catch (err) {
+    } catch {
       alert('Failed to copy automatically. Please select the table manually and press Ctrl+C.');
     }
   };
@@ -5180,7 +5180,7 @@ export const DataSection = ({ ctx }) => {
          });
       }
       setNmrBrukerMsg(`✅ Successfully imported ${results.length} spectrum/spectra.`);
-    } catch (err) {
+    } catch {
       setNmrBrukerMsg(`⚠️ ${err.message}`);
     }
     setNmrBrukerBusy(false);
@@ -5198,7 +5198,7 @@ export const DataSection = ({ ctx }) => {
         try { acqusText = await (await fetch(_nmrResolveDrive(nmrBrukerAcqusUrl))).text(); } catch { acqusText = ''; }
       }
       applyNmrBruker(importBruker1rPpm({ dataBuffer: await res.arrayBuffer(), acqusText, manualSWppm: parseManual(nmrBrukerSwPpm), manualO1ppm: parseManual(nmrBrukerO1Ppm)||0 }), null);
-    } catch(e) { setNmrBrukerMsg('\u26a0\ufe0f Fetch failed: ' + e.message); }
+    } catch { setNmrBrukerMsg('\u26a0\ufe0f Fetch failed: ' + e.message); }
     setNmrBrukerBusy(false);
   };
 

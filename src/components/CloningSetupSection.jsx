@@ -1,5 +1,5 @@
 import React from 'react';
-import { CollapsibleSection } from './TestShellRenderer';
+
 import { toNumber, round, uid, INPUT_CLS, INPUT_BAD_CLS } from './cloningUtils';
 import { CloningStrategyPlanner } from './CloningStrategyPlanner';
 

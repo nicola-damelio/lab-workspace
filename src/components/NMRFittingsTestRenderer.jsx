@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, {useState, useEffect, useRef} from 'react';
 import Chart from 'chart.js/auto';
 import * as XLSX from 'xlsx';
 import TestShellRenderer, { CollapsibleSection } from './TestShellRenderer';
 import { NMR_FITTING_TAB_CONFIG } from './tabConfigs';
 import { PALETTE, toHex, errBarPlugin } from '../data/constants';
 import { NMRInstrumentalSetup } from './NMRInstrumentalSetup';
-import { SharedGraphConfig, ChartControlBar, SharedChartStylePanel } from './SharedAnalysisTools';
+import {ChartControlBar, SharedChartStylePanel} from './SharedAnalysisTools';
 const DIPOLAR_SIM_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>

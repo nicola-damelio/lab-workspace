@@ -1827,7 +1827,7 @@ renderRow={([key, val], i) => (
 export const normalizeImagePreview = (url) => {
   let u = (url || '').trim();
   if (u && !/^https?:\/\//i.test(u)) u = `https://${u}`;
-  let m = u.match(/drive\.google\.com\/file\/d\/([^\/?#]+)/) || u.match(/drive\.google\.com\/(?:open|uc)[^#]*[?&]id=([^&#]+)/);
+  let m = u.match(/drive\.google\.com\/file\/d\/([^/?#]+)/) || u.match(/drive\.google\.com\/(?:open|uc)[^#]*[?&]id=([^&#]+)/);
   if (m) return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w1600`;
   if (u.includes('dropbox.com')) return u.replace(/[?&]dl=0/g, '') + (u.includes('?') ? '&raw=1' : '?raw=1');
   return u;

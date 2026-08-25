@@ -58,7 +58,7 @@ const extractStructureSequence = (component) => {
           .replace(/[^A-Za-z]/g, '');
         if (seq) return seq;
       }
-    } catch (e) { /* fall through */ }
+    } catch { /* fall through */ }
   }
   let seq = '';
   try {
@@ -67,7 +67,7 @@ const extractStructureSequence = (component) => {
       const code = AA3_TO_1[name] || (name.length === 1 && /[ACGTU]/.test(name) ? name : '');
       if (code) seq += code;
     });
-  } catch (e) { /* fall through */ }
+  } catch { /* fall through */ }
   return seq;
 };
 
@@ -82,7 +82,7 @@ const detectFirstChainSelection = (component) => {
       });
     }
     return chain ? `:${chain}` : null;
-  } catch (e) {
+  } catch {
     return null;
   }
 };
@@ -497,7 +497,7 @@ if (!traj) return;
 try {
 if (typeof traj.setFrame === 'function') traj.setFrame(frame);
 else if (traj.trajectory && typeof traj.trajectory.setFrame === 'function') traj.trajectory.setFrame(frame);
-} catch (e) {}
+} catch {}
 };
 
 // ============================================================================
@@ -606,7 +606,7 @@ largeModeRef.current = largeMode;
 useEffect(() => {
   const component = componentRef.current;
   if (!component || status !== 'ready') return;
-  baseCompsRef.current.forEach((r) => { try { component.removeRepresentation(r); } catch (e) {} });
+  baseCompsRef.current.forEach((r) => { try { component.removeRepresentation(r); } catch {} });
   baseCompsRef.current = [];
   addDefaultReps(component);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -648,7 +648,7 @@ const displayAtomName = (atom) => {
   // For organic/lipid/sugar molecules, use the same connectivity-based name as
   // the 2D structure (so the 3D labels automatically match the 2D formula).
   if (['organic', 'lipid', 'sugar'].includes(moleculeTypeRef.current)) {
-    try { return getOrganicAtomName(atom); } catch (e) { /* fall through */ }
+    try { return getOrganicAtomName(atom); } catch { /* fall through */ }
   }
   return atom.atomname || atom.name || '';
 };
@@ -785,7 +785,7 @@ const blob = new Blob([bytes], { type: mime });
 const ext = structureFormat !== 'auto' ? structureFormat : (structureFileName || 'structure.pdb').split('.').pop();
 const fakeFile = new File([blob], structureFileName || 'structure.pdb', { type: mime });
 requestStructureLoad({ file: fakeFile, url: null, ts: Date.now() });
-} catch (e) {
+} catch {
 setErrorMsg('Failed to decode structure file data.');
 setStatus('error');
 }
@@ -830,20 +830,20 @@ const addDefaultReps = (component) => {
   const trackBase = (r) => { if (r) baseCompsRef.current.push(r); };
   const organicLike = ['organic', 'lipid', 'sugar'].includes(moleculeTypeRef.current);
   if (organicLike) {
-    try { trackBase(component.addRepresentation('ball+stick', { colorScheme: 'element', multipleBond: true, aspectRatio: 1.3 })); } catch (e) {}
+    try { trackBase(component.addRepresentation('ball+stick', { colorScheme: 'element', multipleBond: true, aspectRatio: 1.3 })); } catch {}
     return;
   }
   const isNucleic = moleculeTypeRef.current === 'dna' || moleculeTypeRef.current === 'rna';
   if (isNucleic) {
-    try { trackBase(component.addRepresentation('ball+stick', { sele: 'all', colorScheme: 'element', multipleBond: true, aspectRatio: 1.1 })); } catch (e) {}
+    try { trackBase(component.addRepresentation('ball+stick', { sele: 'all', colorScheme: 'element', multipleBond: true, aspectRatio: 1.1 })); } catch {}
     return;
   }
   // Very large systems: render only the first chain (light representation) so
   // the view stays usable — the rest of the structure stays loaded, just hidden.
   if (largeModeRef.current) {
     const sele = firstChainSelRef.current || 'protein';
-    try { trackBase(component.addRepresentation('line', { sele, colorScheme: 'element' })); } catch (e) {}
-    try { trackBase(component.addRepresentation('ball+stick', { sele: `${sele} and hetero`, aspectRatio: 1.1 })); } catch (e) {}
+    try { trackBase(component.addRepresentation('line', { sele, colorScheme: 'element' })); } catch {}
+    try { trackBase(component.addRepresentation('ball+stick', { sele: `${sele} and hetero`, aspectRatio: 1.1 })); } catch {}
     return;
   }
   const bb = backboneStyleRef.current || 'cartoon';
@@ -853,8 +853,8 @@ const addDefaultReps = (component) => {
     else if (bb === 'sticks') trackBase(component.addRepresentation('ball+stick', { sele: 'protein and not sidechain', colorScheme: 'element', multipleBond: true, aspectRatio: 1.1 }));
     else if (bb === 'lines') trackBase(component.addRepresentation('line', { sele: 'protein', colorScheme: 'element' }));
     else if (bb === 'spheres') trackBase(component.addRepresentation('spacefill', { sele: 'protein', colorScheme: 'element', scale: 0.6 }));
-  } catch (e) {}
-  try { trackBase(component.addRepresentation('ball+stick', { sele: 'hetero and not water', aspectRatio: 1.1 })); } catch (e) {}
+  } catch {}
+  try { trackBase(component.addRepresentation('ball+stick', { sele: 'hetero and not water', aspectRatio: 1.1 })); } catch {}
 };
 
 // Main structure load
@@ -903,7 +903,7 @@ try {
 component = fb.params ? await stage.loadFile(fb.url, fb.params) : await stage.loadFile(fb.url);
 loaded = true;
 break;
-} catch (fbErr) { /* try next fallback */ }
+} catch { /* try next fallback */ }
 }
 }
 if (!loaded) {
@@ -956,8 +956,8 @@ if (seq) onStructureSequence(seq);
 component.autoView();
 requestAnimationFrame(() => {
 if (cancelled || !stageRef.current) return;
-try { stageRef.current.handleResize(); } catch (e) {}
-try { component.autoView(); } catch (e) {}
+try { stageRef.current.handleResize(); } catch {}
+try { component.autoView(); } catch {}
 });
 
 if (!(component.structure ? component.structure.atomCount : 0)) {
@@ -1012,7 +1012,7 @@ if (cancelled) return;
 try {
 frames = await NGL.autoLoad(cand, { ext });
 if (frames) break;
-} catch (e) { lastTrajErr = e; }
+} catch { lastTrajErr = e; }
 }
 if (!frames) throw lastTrajErr || new Error('Could not parse trajectory frames from any candidate URL');
 
@@ -1168,7 +1168,7 @@ useEffect(() => {
       if (!resMap.has(rawResno)) resMap.set(rawResno, { resno: rawResno, resname: a.resname || '', count: 0 });
       resMap.get(rawResno).count++;
     });
-  } catch (e) {}
+  } catch {}
   setAtomList(list);
   setResidueInfo([...resMap.values()]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1206,7 +1206,7 @@ const selectionAtomCount = (key) => {
   try {
     const sel = component.structure.getSelection(selKeyExpr(key));
     return sel.count != null ? sel.count : (sel.length != null ? sel.length : null);
-  } catch (e) {
+  } catch {
     return null;
   }
 };
@@ -1216,17 +1216,17 @@ useEffect(() => {
   const component = componentRef.current;
   if (!component || status !== 'ready') return;
   Object.keys(selCompsRef.current).forEach((k) => {
-    (selCompsRef.current[k] || []).forEach((r) => { try { component.removeRepresentation(r); } catch (e) {} });
+    (selCompsRef.current[k] || []).forEach((r) => { try { component.removeRepresentation(r); } catch {} });
   });
   selCompsRef.current = {};
   // Base representations: removed in "hide all" or PyMOL-script mode, and rebuilt
   // when the backbone style changes or when restoring from "hide all".
   const backboneChanged = prevBackboneRef.current !== backboneStyle;
   if (hideAll || pymolActive) {
-    baseCompsRef.current.forEach((r) => { try { component.removeRepresentation(r); } catch (e) {} });
+    baseCompsRef.current.forEach((r) => { try { component.removeRepresentation(r); } catch {} });
     baseCompsRef.current = [];
   } else if (backboneChanged || baseCompsRef.current.length === 0) {
-    baseCompsRef.current.forEach((r) => { try { component.removeRepresentation(r); } catch (e) {} });
+    baseCompsRef.current.forEach((r) => { try { component.removeRepresentation(r); } catch {} });
     baseCompsRef.current = [];
     addDefaultReps(component);
   }
@@ -1241,7 +1241,7 @@ useEffect(() => {
     const opacity = st.transparency != null ? Math.max(0, Math.min(1, 1 - st.transparency)) : undefined;
     const reps = [];
     const add = (type, params) => {
-      try { reps.push(component.addRepresentation(type, { sele: expr, ...params })); } catch (e) {}
+      try { reps.push(component.addRepresentation(type, { sele: expr, ...params })); } catch {}
     };
     if (st.cartoon) add('cartoon', { color, opacity });
     if (st.sphere) add('spacefill', { scale: st.sphereScale || 1, color, opacity, multipleBond: true });
@@ -1251,7 +1251,7 @@ useEffect(() => {
   });
   return () => {
     Object.keys(selCompsRef.current).forEach((k) => {
-      (selCompsRef.current[k] || []).forEach((r) => { try { component.removeRepresentation(r); } catch (e) {} });
+      (selCompsRef.current[k] || []).forEach((r) => { try { component.removeRepresentation(r); } catch {} });
     });
     selCompsRef.current = {};
   };
@@ -1262,8 +1262,8 @@ useEffect(() => {
 useEffect(() => {
   const stage = stageRef.current;
   if (!stage) return;
-  try { stage.setParameters({ backgroundColor: bgColor }); } catch (e) {}
-  try { stage.setQuality(qualityHigh ? 'high' : 'medium'); } catch (e) {}
+  try { stage.setParameters({ backgroundColor: bgColor }); } catch {}
+  try { stage.setQuality(qualityHigh ? 'high' : 'medium'); } catch {}
 }, [bgColor, qualityHigh, status]);
 
 const parsePyMOL = (text) => {
@@ -1402,7 +1402,7 @@ const applyPyMOLScript = (text) => {
       setSelStyles(next);
     }
     log.push(`✓ Parsed ${sels.length} selection(s) and ${acts.length} command(s).`);
-  } catch (e) {
+  } catch {
     log.push(`⚠️ ${e?.message || 'Failed to parse script.'}`);
   }
   setPymolLog(log.join('\n'));
@@ -1434,7 +1434,7 @@ const autoNameFrom2D = () => {
     component.structure.eachAtom((a) => {
       next[a.index] = getOrganicAtomName(a);
     });
-  } catch (e) {}
+  } catch {}
   persistRenames(next);
 };
 const clearRenames = () => persistRenames({});
@@ -1445,7 +1445,7 @@ const component = componentRef.current;
 if (!component || status !== 'ready') return;
 const clearLabels = () => {
 if (labelCompRef.current) {
-try { component.removeRepresentation(labelCompRef.current); } catch (e) {}
+try { component.removeRepresentation(labelCompRef.current); } catch {}
 labelCompRef.current = null;
 }
 };
@@ -1458,7 +1458,7 @@ sele: isOrganicLike ? 'not hydrogen' : 'protein and sidechain and not hydrogen',
 labelType: 'custom', labelGrouping: 'atom', color: 0x111827, radius: 1.0, opacity: 1, depthTest: false,
 customLabel: (a) => displayNameRef.current(a),
 });
-} catch (e) {}
+} catch {}
 }
 return clearLabels;
 }, [showLabels, status, renames]);
@@ -1470,7 +1470,7 @@ if (!component || status !== 'ready') return;
 if (['organic', 'lipid', 'sugar'].includes(moleculeTypeRef.current)) return;
 const clearSidechain = () => {
 if (sidechainCompRef.current) {
-try { component.removeRepresentation(sidechainCompRef.current); } catch (e) {}
+try { component.removeRepresentation(sidechainCompRef.current); } catch {}
 sidechainCompRef.current = null;
 }
 };
@@ -1482,7 +1482,7 @@ sidechainCompRef.current = component.addRepresentation(sidechainStyle, {
 sele: '(protein and sidechain) or (protein and .CA)', color: 'element', multipleBond: true,
 radiusSize: sidechainStyle === 'licorice' ? 0.25 : undefined,
 });
-} catch (e) {}
+} catch {}
 }
 return clearSidechain;
 }, [sidechainStyle, status, hideAll, pymolActive, largeMode]);
@@ -1494,11 +1494,11 @@ if (!component || status !== 'ready') return;
 
 const clearHighlights = () => {
 if (highlightCompRef.current) {
-try { component.removeRepresentation(highlightCompRef.current); } catch (e) {}
+try { component.removeRepresentation(highlightCompRef.current); } catch {}
 highlightCompRef.current = null;
 }
 if (manualHighlightCompRef.current) {
-try { component.removeRepresentation(manualHighlightCompRef.current); } catch (e) {}
+try { component.removeRepresentation(manualHighlightCompRef.current); } catch {}
 manualHighlightCompRef.current = null;
 }
 };
@@ -1580,7 +1580,7 @@ const manSele = buildSele(man);
 if (manSele) {
 manualHighlightCompRef.current = component.addRepresentation('ball+stick', { sele: manSele, color: MANUAL_COLOR_HEX, aspectRatio: 1.5, radius: 0.4 });
 }
-} catch (e) {}
+} catch {}
 
 return clearHighlights;
 }, [selectedKeys, manualKeys, status]);

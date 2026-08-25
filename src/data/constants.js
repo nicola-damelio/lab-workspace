@@ -227,7 +227,7 @@ export const getDirectImageUrl = (url) => {
             if (match) return `https://drive.google.com/thumbnail?id=${match[0]}&sz=w800`;
         }
         return url;
-    } catch(e) { return url; }
+    } catch { return url; }
 };
 
 export const parsePayload = (exp) => {
@@ -239,7 +239,7 @@ export const parsePayload = (exp) => {
             catch(err) { console.error("Decompression fail", err); }
         }
         return JSON.parse(pStr);
-    } catch(e) { return null; }
+    } catch { return null; }
 };
 
 export const fetchWithRetry = async (url, options, retries = 5) => {
@@ -249,7 +249,7 @@ export const fetchWithRetry = async (url, options, retries = 5) => {
             const res = await fetch(url, options);
             if (!res.ok) {
                 let detail = '';
-                try { detail = (await res.clone().json())?.error?.message || ''; } catch (_) {}
+                try { detail = (await res.clone().json())?.error?.message || ''; } catch {}
                 throw new Error(`HTTP ${res.status}${detail ? ' - ' + detail : ''}`);
             }
             return res;

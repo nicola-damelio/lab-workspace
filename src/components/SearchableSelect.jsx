@@ -91,7 +91,7 @@ export const SearchableSelect = ({
           } else if (e.key === 'Escape') {
             setOpen(false);
             setQuery('');
-            inputRef.current && inputRef.current.blur();
+            if (inputRef.current) inputRef.current.blur();
           }
         }}
         className="w-full border border-slate-300 rounded-lg px-2 py-1.5 pr-7 text-sm bg-white outline-none focus:border-blue-500 disabled:bg-slate-50 disabled:text-slate-400"
@@ -103,7 +103,7 @@ export const SearchableSelect = ({
         onClick={() => {
           if (disabled) return;
           setOpen((v) => !v);
-          inputRef.current && inputRef.current.focus();
+          if (inputRef.current) inputRef.current.focus();
         }}
         className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 font-bold px-1"
       >

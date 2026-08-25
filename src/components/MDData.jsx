@@ -1,19 +1,5 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import {
-  ScatterChart,
-  Scatter,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  ReferenceArea,
-  BarChart,
-  Bar,
-  LineChart,
-  Line,
-  Legend
-} from 'recharts';
+
+
 
 import { MD_TAB_CONFIG } from './tabConfigs';
 

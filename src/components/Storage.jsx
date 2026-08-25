@@ -343,7 +343,7 @@ const getWellData = (r, c) => {
         sampleOwner: parsed.sampleOwner || parsed.operator || ''
       };
     }
-  } catch (e) {}
+  } catch {}
 
   return defaults;
 };
@@ -465,7 +465,7 @@ const printBoxLabel = () => {
     setTimeout(() => {
       try {
         printWin.print();
-      } catch (e) {}
+      } catch {}
     }, 300);
   } catch (err) {
     alert('Print failed: ' + err.message);

@@ -4,12 +4,8 @@
 // plots) · Simulations.
 // ============================================================================
 
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import {
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line,
-  Legend, ErrorBar, Cell, PieChart, Pie
-} from 'recharts';
+import React, {useState, useEffect, useRef, useMemo} from 'react';
+import {XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar, Cell} from 'recharts';
 import { SharedGraphConfig, SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, AngledTick } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, LINE_COLORS } from '../utils/chartStyle';
@@ -643,7 +639,7 @@ const fitGeneric = (pts, f0, P0) => {
       const col = gaussSolve(A, e);
       if (col) P_err[i] = Math.sqrt(Math.max(0, col[i] * (cur / df)));
     }
-  } catch (err) { /* ignore */ }
+  } catch { /* ignore */ }
   return { params: P, paramsErr: P_err, r2, se, f: (x) => f(x, P) };
 };
 
@@ -671,7 +667,7 @@ const fit4PL = (pts) => {
 
 const fitCustomEquation = (expr, pts) => {
   let ast, par;
-  try { ast = parseExpression(expr); par = collectParams(ast); } catch (e) { return null; }
+  try { ast = parseExpression(expr); par = collectParams(ast); } catch { return null; }
   if (!par.length || pts.length < par.length + 1) return null;
   const init = par.map((_, i) => (i === 0 ? pts.reduce((s, p) => s + p.y, 0) / Math.max(1, pts.length) : 1));
   const res = fitGeneric(pts, (x, P) => {
@@ -1079,7 +1075,7 @@ const useElementSize = (ref) => {
   return size;
 };
 
-const usessNMRDerived = (activeTest, ctx = {}) => {
+const useSSNMRDerived = (activeTest, ctx = {}) => {
   const instances = getInstances(ctx, activeTest);
   const activeInstance =
     instances.find((i) => i.id === activeTest.id) || instances[0] || null;
@@ -1094,7 +1090,7 @@ const usessNMRDerived = (activeTest, ctx = {}) => {
 // =========================================================================
 export const Data = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
-  const d = usessNMRDerived(activeTest, ctx);
+  const d = useSSNMRDerived(activeTest, ctx);
   const { activeInstance, activeParsed, instances, mw, compoundMW } = d;
 
   const instTest = (activeInstance && activeInstance.test) ? activeInstance.test : activeTest;
@@ -1298,7 +1294,7 @@ export const Data = ({ ctx }) => {
           });
       }
       setBrukerMsg(`✅ Successfully imported ${results.length} spectrum/spectra.`);
-    } catch (err) {
+    } catch {
       setBrukerMsg(`⚠️ ${err.message}`);
     }
     setBrukerBusy(false);
@@ -1321,7 +1317,7 @@ export const Data = ({ ctx }) => {
         manualSWkHz: parseManual(brukerSw),
         manualOffsetKHz: parseManual(brukerOffset) || 0
       }), null);
-    } catch (e) {
+    } catch {
       setBrukerMsg(`⚠️ Fetch failed: ${e.message} — the file must be shared as "Anyone with the link".`);
     }
     setBrukerBusy(false);
@@ -1756,7 +1752,7 @@ export const Data = ({ ctx }) => {
 // =========================================================================
 export const SpectraVisualization = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
-  const d = usessNMRDerived(activeTest, ctx);
+  const d = useSSNMRDerived(activeTest, ctx);
   const { instances } = d;
 
   const cfg = { ...DEFAULT_CHART_STYLE, ...(activeTest.vizCfg || {}) };
@@ -1943,7 +1939,7 @@ const OrderProfileChart = ({ res }) => {
 
 export const QuadrupolarFitting = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
-  const d = usessNMRDerived(activeTest, ctx);
+  const d = useSSNMRDerived(activeTest, ctx);
   const { instances } = d;
   const [fitInstId, setFitInstId] = useState(activeTest.id);
   const [fitSpecIdx, setFitSpecIdx] = useState(0);
@@ -3068,7 +3064,7 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
 
 const ConditionFittingSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
-  const d = usessNMRDerived(activeTest, ctx);
+  const d = useSSNMRDerived(activeTest, ctx);
   const plots = Array.isArray(activeTest.conditionPlots) && activeTest.conditionPlots.length
     ? activeTest.conditionPlots
     : [defaultssNMRConditionPlot(1)];
@@ -3464,7 +3460,7 @@ export const InstrumentalSetup = ({ ctx }) => {
 
 export const NotebookExtra = ({ ctx, checkId }) => {
   const { activeTest } = ctx;
-  const d = usessNMRDerived(activeTest, ctx);
+  const d = useSSNMRDerived(activeTest, ctx);
   if (checkId === 'cond') {
     const expStr = SSNMR_EXPERIMENTAL_FIELDS
       .map((f) => {

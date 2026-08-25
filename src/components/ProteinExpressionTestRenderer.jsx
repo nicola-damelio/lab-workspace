@@ -1,4 +1,4 @@
-import React, { useRef, useMemo, useState } from 'react';
+import React, {useRef, useMemo} from 'react';
 import {
 LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
 ResponsiveContainer, ReferenceArea

@@ -1,21 +1,13 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import LZString from 'lz-string';
-import {
-  DEFAULT_FIREBASE_CONFIG,
-  LOCAL_STORAGE_KEY,
-  PLATES_DEF,
-  DEF_COMPOUNDS,
-  DEF_CELL_LINES,
-  parsePayload,
-  BOX_ROW_LABELS
-} from './data/constants';
+import {LOCAL_STORAGE_KEY, PLATES_DEF, DEF_COMPOUNDS, DEF_CELL_LINES, parsePayload} from './data/constants';
 const TestShellRenderer = lazy(() => import('./components/TestShellRenderer'));
 import { StorageModals } from './components/Storage';
 import { Setup, Data, Simulations, Analysis, MD_ANALYSIS_SECTIONS } from '/src/components/MDSections.jsx';
-import { SolventsManager, BuffersManager, AdditivesManager, NMRProbesManager, NMRInstrumentsManager, NMRExperimentsManager } from './components/DefinitionsExtra';
-import { SearchableSelect } from './components/SearchableSelect';
+
+
 import { MD_SIMULATION_TAB_CONFIG } from './data/specialPages';
-import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES, EXPERIMENT_TYPES } from './data/testTypes';
+import {PRIMARY_CATEGORIES} from './data/testTypes';
 import { AppSidebar } from './components/AppModules/appSidebar';
 import { AgendaModule } from './components/AppModules/agendaModule';
 import { DashboardModule } from './components/AppModules/dashboardModule';
@@ -25,11 +17,11 @@ import { TestsModule } from './components/AppModules/testsModule';
 import { ProtocolsModule } from './components/AppModules/protocolsModule';
 import { ActiveTestModule } from './components/AppModules/activeTestModule';
 import { NotebookModule, CalculationsModule, PublicationsModule } from './components/AppModules/miscModules';
-import { hashPassword, normalizeOperators, getOpLabel } from './utils/auth';
-import { CALC_INPUT_CLS, CALC_LABEL_CLS } from './utils/styles';
+import {normalizeOperators} from './utils/auth';
+
 import { ScientistLoginGate, ScientistLoginModal } from './components/AppModules/definitionsManagers';
-import { Calculations } from './components/AppModules/calculationsModule';
-import { CollapsibleSectionPanel as CollapsibleSection } from './components/ui';
+
+
 
 
 // Auth utilities now live in ./utils/auth (see import above).
@@ -45,86 +37,6 @@ import { CollapsibleSectionPanel as CollapsibleSection } from './components/ui';
    MD SIMULATIONS CONFIG & RENDERER
 ========================================================= */
 // MD_SIMULATION_TAB_CONFIG + SPECIAL_PAGES registry now live in ./data/specialPages (see import above).
-class MDSectionErrorBoundary extends React.Component {
-  constructor(props) {
-    super(props);
-    this.state = { error: null };
-  }
-
-  static getDerivedStateFromError(error) {
-    return { error };
-  }
-
-  componentDidCatch(error, info) {
-    console.error('MD sections crashed:', error, info);
-  }
-
-  render() {
-    if (this.state.error) {
-      return (
-        <div
-          style={{
-            margin: 20,
-            padding: 16,
-            border: '3px solid #ef4444',
-            background: '#fef2f2',
-            borderRadius: 12
-          }}
-        >
-          <div
-            style={{
-              fontWeight: 900,
-              color: '#b91c1c',
-              marginBottom: 8
-            }}
-          >
-            ❌ MD sections crashed
-          </div>
-
-          <pre
-            style={{
-              whiteSpace: 'pre-wrap',
-              fontSize: 12,
-              color: '#b91c1c'
-            }}
-          >
-            {String(this.state.error?.message || this.state.error)}
-            {'\n\n'}
-            {String(this.state.error?.stack || '')}
-          </pre>
-        </div>
-      );
-    }
-
-    return this.props.children;
-  }
-}
-
-const SafeMDSectionsAll = (props) => {
-  if (!MDSectionsAll) {
-    return (
-      <div
-        style={{
-          margin: 20,
-          padding: 16,
-          border: '3px solid #f59e0b',
-          background: '#fffbeb',
-          borderRadius: 12,
-          fontWeight: 900,
-          color: '#92400e'
-        }}
-      >
-        ⚠️ MDSections.All was not found. Check the import path in App.jsx.
-      </div>
-    );
-  }
-
-  return (
-    <MDSectionErrorBoundary>
-      <MDSectionsAll {...props} />
-    </MDSectionErrorBoundary>
-  );
-};
 
 const buildMDNotebookHtml = (checked, ctx) => {
   const t = ctx?.activeTest || {};
@@ -487,7 +399,7 @@ try {
     auth = window.firebase.auth();
     db = window.firebase.firestore();
   }
-} catch (e) {
+} catch {
   console.error('Firebase init error. Falling back to local storage.', e);
 }
 // StorageFinder + DatabaseCleanupManager now live in ./components/AppModules/storageModules (see import above).
@@ -978,7 +890,7 @@ if (customType === 'nmr-fittings') {
           authSettings: JSON.stringify(authSettings),
           updatedAt: window.firebase ? window.firebase.firestore.FieldValue.serverTimestamp() : Date.now()
         }, { merge: true });
-      } catch (e) { console.warn('Could not sync app config to Firestore:', e.message); }
+      } catch { console.warn('Could not sync app config to Firestore:', e.message); }
     }, 1500);
     return () => { if (appConfigSaveRef.current) clearTimeout(appConfigSaveRef.current); };
   }, [operators, authSettings, user, db]);
@@ -1056,7 +968,7 @@ if (customType === 'nmr-fittings') {
 
     try {
       await auth.signInWithPopup(provider);
-    } catch (e) {
+    } catch {
       console.error('Errore login:', e);
     }
   };
@@ -1109,7 +1021,7 @@ if (customType === 'nmr-fittings') {
                 JSON.parse(stored).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
               );
             }
-          } catch (e) {}
+          } catch {}
 
           setIsCloudReady(true);
         }
@@ -1127,7 +1039,7 @@ if (customType === 'nmr-fittings') {
             JSON.parse(stored).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
           );
         }
-      } catch (e) {}
+      } catch {}
 
       setIsCloudReady(true);
     }
@@ -1240,7 +1152,7 @@ useEffect(() => {
         let stored = [];
         try {
           stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
-        } catch (e) {}
+        } catch {}
         const existingIdx = stored.findIndex((e) => e.id === currentDatasetId);
         if (existingIdx >= 0) {
           stored[existingIdx] = { ...stored[existingIdx], ...updatedPayload };
@@ -1253,7 +1165,7 @@ useEffect(() => {
         );
         setSaveStatus('saved');
       }
-    } catch (e) {
+    } catch {
       setSaveStatus('error');
       setSaveErrorMsg(e.message);
       console.error('Save error:', e);
@@ -1315,7 +1227,7 @@ useEffect(() => {
       document.body.removeChild(a);
 
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch (e) {
+    } catch {
       setDialog({
         type: 'alert',
         title: 'Save Failed',
@@ -1634,7 +1546,7 @@ const createNewDataset = async () => {
 
       try {
         stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
-      } catch (e) {}
+      } catch {}
 
       stored.push({ id: newId, ...updatedPayload });
 
@@ -1674,7 +1586,7 @@ const handleBackToExplorer = async () => {
         let stored = [];
         try {
           stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
-        } catch (e) {}
+        } catch {}
         const existingIdx = stored.findIndex((e) => e.id === currentDatasetId);
         if (existingIdx >= 0) {
           stored[existingIdx] = { ...stored[existingIdx], ...updatedPayload };
@@ -1686,7 +1598,7 @@ const handleBackToExplorer = async () => {
           [...stored].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
         );
       }
-    } catch (e) {
+    } catch {
       console.error('Back to explorer save error:', e);
     }
   }
@@ -1704,7 +1616,7 @@ const openDataset = (dset) => {
     } else {
       s = parsePayload(dset);
     }
-  } catch (e) {
+  } catch {
     console.error('Dataset parse error:', e);
     s = null;
   }
@@ -1782,7 +1694,7 @@ const openDataset = (dset) => {
       setCurrentModule('dashboard');
 
       window.history.pushState({}, '', '?dataset=' + dset.id);
-    } catch (e) {
+    } catch {
       setDialog({
         type: 'alert',
         title: 'Error',
@@ -1806,7 +1718,7 @@ const openDataset = (dset) => {
 
           try {
             stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
-          } catch (e) {}
+          } catch {}
 
           stored = stored.filter((d) => d.id !== id);
 
@@ -1837,7 +1749,7 @@ const openDataset = (dset) => {
 
             try {
               stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
-            } catch (e) {}
+            } catch {}
 
             const idx = stored.findIndex((d) => d.id === id);
 
@@ -1874,7 +1786,7 @@ const openDataset = (dset) => {
               }
             }
           }
-        } catch (e) {
+        } catch {
           return false;
         }
       }
@@ -1910,7 +1822,7 @@ const openDataset = (dset) => {
             });
 
             await batch.commit();
-          } catch (e) {
+          } catch {
             console.error('Batch delete failed', e);
 
             setDialog({
@@ -1924,7 +1836,7 @@ const openDataset = (dset) => {
 
           try {
             stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
-          } catch (e) {}
+          } catch {}
 
           const emptyIds = emptyDatasets.map((d) => d.id);
 
@@ -1962,7 +1874,7 @@ const openDataset = (dset) => {
             }
           });
         }
-      } catch (e) {}
+      } catch {}
 
       const catStr = Array.from(catSet).sort().join(', ');
       const cellStr = Array.from(cellSet).sort().join(', ');

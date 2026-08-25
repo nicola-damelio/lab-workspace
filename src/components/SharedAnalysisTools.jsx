@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ReferenceArea } from 'recharts';
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SHARED GRAPH CONFIGURATION  (legacy — used by Plate page)

@@ -3,7 +3,7 @@ import TestShellRenderer from './TestShellRenderer';
 import { SSNMR_TAB_CONFIG } from './tabConfigs';
 import { All, InstrumentalSetup, NotebookExtra } from './ssNMRSections';
 
-export const ssNMRTestRenderer = (props) => {
+export const SSNMRTestRenderer = (props) => {
   const propsRef = useRef(props);
   propsRef.current = props;
 
@@ -98,4 +98,4 @@ export const ssNMRTestRenderer = (props) => {
   );
 };
 
-export default ssNMRTestRenderer;
+export default SSNMRTestRenderer;

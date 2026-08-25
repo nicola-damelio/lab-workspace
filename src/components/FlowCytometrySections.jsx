@@ -1,9 +1,6 @@
 // components/FlowCytometrySections.jsx
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
-  LineChart, Line, Legend, ReferenceArea
-} from 'recharts';
+import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LineChart, Line, ReferenceArea} from 'recharts';
 import { ChartControlBar, SharedChartStylePanel } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES } from '../utils/chartStyle';

@@ -18,28 +18,7 @@ import {
   computeSecondaryStructure, SS_CODE_ORDER, SS_COLORS, SS_GROUP_COLORS
 } from './MDSecondaryStructure';
 
-import {
-  AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB,
-  SS_META, FORM_META, RESIDUE_COLORS,
-  SELECT_COLOR, MANUAL_COLOR, FS_CLASSES, OVERLAY_CLASSES,
-  parseManual, buildKeys, getCarbonName,
-  buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure,
-  elementsToSVG,
-  StructureSVGView, CollapsibleSection, SequencePaintStrip,
-  getSelectedKeys, selectionLabel, getManualKeys,
-
-  FORCE_FIELDS, FF_ATOM_TYPES, WATER_MODELS, MD_ENSEMBLES, MD_INTEGRATORS,
-  MD_THERMOSTATS, MD_BAROSTATS, MD_ANALYSIS_METRICS, TRAJECTORY_FORMATS, MD_SIMULATION_PHASES,
-  parseMDValue, getForceFieldInfo, getFFVersions, getWaterModelInfo,
-  getFFBackboneAtoms, findFFAtom,
-  normalizeTrajectoryUrl, detectTrajectoryFormat, getTrajectoryFormatInfo,
-  getMDInstances, getMDActiveInstance, getMDLayers, getMDActiveLayerKey, getMDLayerValues,
-  writeMDCellValue, MD_ANALYSIS_LAYERS,
-  generateRMSDData, generateRMSFData, generateRgData, generateSASAData,
-  generateEnergyData, generateTemperatureData,
-  DEFAULT_MD_CHART_STYLE, mdLineDash, mdSeriesColor, mdDom, mdMakeTicks, mdChartBoxStyle,
-  MD_CHART_MARGIN
-} from './MDData';
+import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, FORM_META, RESIDUE_COLORS, buildKeys, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, SequencePaintStrip, getSelectedKeys, selectionLabel, getManualKeys, FORCE_FIELDS, WATER_MODELS, MD_ENSEMBLES, MD_INTEGRATORS, MD_THERMOSTATS, MD_BAROSTATS, TRAJECTORY_FORMATS, parseMDValue, getForceFieldInfo, getFFVersions, getWaterModelInfo, getFFBackboneAtoms, normalizeTrajectoryUrl, detectTrajectoryFormat, getTrajectoryFormatInfo, getMDInstances, getMDActiveInstance, getMDLayers, getMDActiveLayerKey, getMDLayerValues, writeMDCellValue, MD_ANALYSIS_LAYERS, generateRMSDData, generateRMSFData, generateRgData, generateSASAData, generateEnergyData, DEFAULT_MD_CHART_STYLE, mdLineDash, mdDom} from './MDData';
 
 // Cache to retain local File objects when switching tabs within the same session
 const localFileCache = new Map();
@@ -60,7 +39,7 @@ const captureChartToDataUrl = async (id) => {
       imageTimeout: 15000
     });
     return canvas.toDataURL('image/png');
-  } catch (e) {
+  } catch {
     return null;
   }
 };
@@ -102,7 +81,7 @@ if (_rdkitMDStatus === 'loading') {
       };
       document.head.appendChild(s);
     }
-  } catch (e) { /* RDKit stays unavailable — fallback image will be shown */ }
+  } catch { /* RDKit stays unavailable — fallback image will be shown */ }
   let _att = 0;
   const _iv = setInterval(() => {
     _att++;
@@ -149,8 +128,8 @@ const fetchPubchemPdb = async (smiles) => {
 
 const resolveOrganicStructureText = async (smiles) => {
   const errors = [];
-  try { return { text: await fetchCactusPdb(smiles), ext: 'pdb' }; } catch (e) { errors.push(`Cactus: ${e.message}`); }
-  try { const { sdf } = await fetchPubchemPdb(smiles); return { text: sdf, ext: 'sdf' }; } catch (e) { errors.push(`PubChem: ${e.message}`); }
+  try { return { text: await fetchCactusPdb(smiles), ext: 'pdb' }; } catch { errors.push(`Cactus: ${e.message}`); }
+  try { const { sdf } = await fetchPubchemPdb(smiles); return { text: sdf, ext: 'sdf' }; } catch { errors.push(`PubChem: ${e.message}`); }
   throw new Error(`No 3D structure could be resolved for this SMILES.\n${errors.join('\n')}`);
 };
 
@@ -280,7 +259,7 @@ const useMDDerived = (activeTest, ctx = {}) => {
           mol.delete();
           atomNameList.forEach(name => opts.push({ key: `0-${name}`, label: `ORG1 ${name}` }));
         }
-      } catch (e) { /* RDKit not ready or parse error — opts stays empty */ }
+      } catch { /* RDKit not ready or parse error — opts stays empty */ }
     } else {
       estSeq.forEach((res, idx) => {
         (res.ffAtoms || []).forEach((a) => opts.push({ key: `${idx}-${a.atom}`, label: `${res.id} ${a.atom}` }));
@@ -424,7 +403,7 @@ const OrganicViewer = ({ smiles, selectedKeys, onAtomClick }) => {
                 
                 setSvg(mol.get_svg_with_highlights(details));
                 mol.delete();
-            } catch(e) { setSvg(''); }
+            } catch { setSvg(''); }
         } else { setSvg(''); }
     }, [smiles, selectedKeys, rdkitReady]);
 
@@ -451,7 +430,7 @@ const OrganicViewer = ({ smiles, selectedKeys, onAtomClick }) => {
                     }
                 };
             });
-        } catch (e) {}
+        } catch {}
     };
 
     useEffect(() => { attachListeners(svgRef.current); }, [svg, onAtomClick]);
@@ -2075,7 +2054,7 @@ const resolveMDTopology = async (activeTest) => {
         text = await res.text();
         source = 'web';
         break;
-      } catch (e) { /* try next candidate */ }
+      } catch { /* try next candidate */ }
     }
   }
 
@@ -2107,7 +2086,7 @@ const buildMDTrajectoryJobs = async (activeTest, extraRuns) => {
           file: new File([buf], name, { type: 'application/octet-stream' }),
         });
         break;
-      } catch (e) { /* try next candidate */ }
+      } catch { /* try next candidate */ }
     }
   }
   return jobs;
@@ -2372,7 +2351,7 @@ export const MDMembraneContactSection = ({ ctx }) => {
       }
       setOutputs(out);
       setStatus({ state: 'done', msg: '', done: 0 });
-    } catch (e) {
+    } catch {
       setStatus({ state: 'error', msg: e.message, done: 0 });
     }
   };
@@ -2692,7 +2671,7 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
       });
       storeAnalysisToAtomTable(activeTest, updateActiveTest, { analysis_scd: scdCells });
       setStatus({ state: 'done', msg: '', done: 0 });
-    } catch (e) {
+    } catch {
       setStatus({ state: 'error', msg: e.message, done: 0 });
     }
   };
@@ -3203,7 +3182,7 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
       }
       setOutputs(outs);
       setStatus({ state: 'done', msg: '', done: 0 });
-    } catch (e) {
+    } catch {
       setStatus({ state: 'error', msg: e.message, done: 0 });
     }
   };

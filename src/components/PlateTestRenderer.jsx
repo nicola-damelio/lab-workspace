@@ -3,7 +3,7 @@ import React, { useRef, useMemo, useCallback } from 'react';
 import TestShellRenderer from './TestShellRenderer';
 import { PLATE_TAB_CONFIG } from './tabConfigs';
 import * as PlateSections from './PlateSections';
-import { SharedGraphConfig, SharedErrorTreatment } from './SharedAnalysisTools';
+
 
 /**
 Plate tab — thin wrapper around the shared shell.

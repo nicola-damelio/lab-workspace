@@ -4,7 +4,7 @@
    Scientists/Operators, ScientistLoginGate/Modal) extracted from App.jsx.
    ========================================================================= */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, {useState} from 'react';
 import { normalizeOperators, hashPassword } from '../../utils/auth';
 import { SPECIAL_PAGES, CUSTOM_FIELD_TAB_OPTIONS, getSubsectionsForPage } from '../../data/specialPages';
 

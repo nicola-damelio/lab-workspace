@@ -1,28 +1,9 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import {
-  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Legend, Cell, ScatterChart, Scatter, ReferenceArea
-} from 'recharts';
-import { ChartControlBar, SharedChartStylePanel, useXZoom } from './SharedAnalysisTools';
+import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, ScatterChart, Scatter} from 'recharts';
+import {ChartControlBar, SharedChartStylePanel} from './SharedAnalysisTools';
 
 import NMRMoleculeViewer from './NMRMoleculeViewer';
-import {
-  AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB,
-  SS_META, FORM_META, RESIDUE_COLORS,
-  SELECT_COLOR, MANUAL_COLOR,
-  buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure,
-  elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip,
-  getSelectedKeys, selectionLabel, getManualKeys,
-
-  DOCKING_PROGRAMS, DOCKING_METRICS, DOCKING_FILE_FORMATS, DOCKING_PIPELINE_STAGES,
-  parseDockingValue, getProgramInfo, getProgramVersions, getScoringFunctions, getSearchAlgorithms,
-  parseDockingFile, normalizeDockingUrl, detectDockingFormat,
-  getDockingInstances, getDockingActiveInstance, getDockingLayers,
-  getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue,
-  generateDockingPoses, generateHADDOCKPoses,
-  DEFAULT_DOCKING_CHART_STYLE, dockSeriesColor, dockChartBoxStyle,
-  DOCK_CHART_MARGIN
-} from './DockingData';
+import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_PROGRAMS, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, getScoringFunctions, getSearchAlgorithms, parseDockingFile, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, DOCK_CHART_MARGIN} from './DockingData';
 
 const localFileCache = new Map();
 

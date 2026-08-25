@@ -260,7 +260,7 @@ const normalizeImageCandidates = (url) => {
     u = `https://${u}`;
   }
 
-  let m = u.match(/drive\.google\.com\/file\/d\/([^\/?#]+)/);
+  let m = u.match(/drive\.google\.com\/file\/d\/([^/?#]+)/);
   if (m) {
     const id = m[1];
     return [
@@ -866,7 +866,7 @@ const [showGeneral, setShowGeneral] = useState(true);
         } else {
           setMdParamFileReport({ ok: false, count: 0, name: file.name });
         }
-      } catch (err) {
+      } catch {
         setMdParamFileReport({
           ok: false,
           count: 0,

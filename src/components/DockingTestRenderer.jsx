@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import TestShellRenderer, { CollapsibleSection } from './TestShellRenderer';
+
 import {
   buildNotebookHtml as buildDockingNotebookHtmlFromSections,
   DockingExperimentSetupSection,
