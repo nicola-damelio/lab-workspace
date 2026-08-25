@@ -595,6 +595,12 @@ useEffect(() => {
   }
 }, [resRenumber]);
 
+// ---- Large-structure mode (declared before the effects below use it) ----
+const [largeMode, setLargeMode] = useState(false);     // true → only the first chain is rendered (big system)
+const [largeInfo, setLargeInfo] = useState(null);      // { nAtoms, size } → shows the non-blocking warning banner
+const largeModeRef = useRef(false);                    // synchronous mirror for addDefaultReps / sidechain effect
+largeModeRef.current = largeMode;
+
 // Rebuild the base representations when the large-structure mode toggles
 // ("Show everything" / reload of a big system).
 useEffect(() => {
@@ -658,10 +664,6 @@ const [speed, setSpeed] = useState(10);
 const [stride, setStride] = useState(1);        // play every Nth frame (keeps total time)
 const [maxFrames, setMaxFrames] = useState(0);  // 0 = keep all frames
 const [pendingTraj, setPendingTraj] = useState(null); // { file, estFrames, suggested } awaiting user confirmation
-const [largeMode, setLargeMode] = useState(false);     // true → only the first chain is rendered (big system)
-const [largeInfo, setLargeInfo] = useState(null);      // { nAtoms, size } → shows the non-blocking warning banner
-const largeModeRef = useRef(false);                    // synchronous mirror for addDefaultReps / sidechain effect
-largeModeRef.current = largeMode;
 const firstChainSelRef = useRef(null);                 // NGL selection of the first chain (":A")
 const trajRef = useRef(null);
 const blobUrlsRef = useRef([]);
