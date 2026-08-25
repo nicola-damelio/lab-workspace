@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import LZString from 'lz-string';
 import {
   DEFAULT_FIREBASE_CONFIG,
@@ -10,27 +10,26 @@ import {
   parsePayload,
   BOX_ROW_LABELS
 } from './data/constants';
-import TestShellRenderer from './components/TestShellRenderer';
-import { NMRTestRenderer } from './components/NMRTestRenderer';
-import { PlateTestRenderer } from './components/PlateTestRenderer';
-import { CDTestRenderer } from './components/CDTestRenderer';
-import { ssNMRTestRenderer as SSNMRTestRenderer } from './components/ssNMRTestRenderer';
-import { LabNotebook } from './components/LabNotebook';
-import { PublicationsSection } from './components/Publications';
+const TestShellRenderer = lazy(() => import('./components/TestShellRenderer'));
+const NMRTestRenderer = lazy(() => import('./components/NMRTestRenderer').then(m => ({ default: m.NMRTestRenderer })));
+const PlateTestRenderer = lazy(() => import('./components/PlateTestRenderer').then(m => ({ default: m.PlateTestRenderer })));
+const CDTestRenderer = lazy(() => import('./components/CDTestRenderer').then(m => ({ default: m.CDTestRenderer })));
+const SSNMRTestRenderer = lazy(() => import('./components/ssNMRTestRenderer').then(m => ({ default: m.ssNMRTestRenderer })));
+const LabNotebook = lazy(() => import('./components/LabNotebook').then(m => ({ default: m.LabNotebook })));
+const PublicationsSection = lazy(() => import('./components/Publications').then(m => ({ default: m.PublicationsSection })));
 import { RichTextEditor } from './components/RichTextEditor';
 import { StorageModals, StorageList, StorageDetail, BoxDetail } from './components/Storage';
-import { DefinitionsPanel } from './components/DefinitionsPanel';
-import { NMRFittingsTestRenderer } from './components/NMRFittingsTestRenderer';
-import { CloningTestRenderer } from './components/CloningTestRenderer';
-import { ProteinExpressionTestRenderer } from './components/ProteinExpressionTestRenderer';
-import DockingTestRenderer from './components/DockingTestRenderer';
+const NMRFittingsTestRenderer = lazy(() => import('./components/NMRFittingsTestRenderer').then(m => ({ default: m.NMRFittingsTestRenderer })));
+const CloningTestRenderer = lazy(() => import('./components/CloningTestRenderer').then(m => ({ default: m.CloningTestRenderer })));
+const ProteinExpressionTestRenderer = lazy(() => import('./components/ProteinExpressionTestRenderer').then(m => ({ default: m.ProteinExpressionTestRenderer })));
+const DockingTestRenderer = lazy(() => import('./components/DockingTestRenderer'));
 import { Setup, Data, Simulations, Analysis, MD_ANALYSIS_SECTIONS } from '/src/components/MDSections.jsx';
 import { SolventsManager, BuffersManager, AdditivesManager, NMRProbesManager, NMRInstrumentsManager, NMRExperimentsManager, BrukerPulseSequenceViewer } from './components/DefinitionsExtra';
 import { SearchableSelect } from './components/SearchableSelect';
 import { MD_SIMULATION_TAB_CONFIG } from './data/specialPages';
 import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES, EXPERIMENT_TYPES } from './data/testTypes';
 import { CompoundDefinitionSection } from './components/AppModules/compoundDefinitionSection';
-import { FlowCytometryTestRenderer } from './components/FlowCytometryTestRenderer';
+const FlowCytometryTestRenderer = lazy(() => import('./components/FlowCytometryTestRenderer').then(m => ({ default: m.FlowCytometryTestRenderer })));
 import { hashPassword, normalizeOperators, getOpLabel } from './utils/auth';
 import { CALC_INPUT_CLS, CALC_LABEL_CLS } from './utils/styles';
 import { LinksManager, LibraryTable, CellLineDefinitionSection, PlasmidDefinitionSection } from './components/AppModules/librarySections';
@@ -2124,6 +2123,7 @@ const openDataset = (dset) => {
   }
 
   return (
+    <Suspense fallback={<div className="flex items-center justify-center h-screen text-slate-400 text-sm">Loading…</div>}>
     <React.Fragment>
 
     {/* ══════════════════════════════════════════════════════
@@ -5440,5 +5440,6 @@ if (activeTest.type === 'flow_cytometry') {
       />
     )}
     </React.Fragment>
+    </Suspense>
   );
 }
