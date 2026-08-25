@@ -1,5 +1,5 @@
 import NMRMoleculeViewer from './NMRMoleculeViewer';
-import { ChartControlBar, SharedChartStylePanel } from './SharedAnalysisTools';
+import { ChartControlBar, SharedChartStylePanel, AngledTick } from './SharedAnalysisTools';
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -3714,17 +3714,6 @@ const catInterval = (stepStr) => {
 const dom = (v) => (v === '' || v == null || parseManual(v) === null ? undefined : parseManual(v));
 const chartBoxStyle = (cfg) => ({ width: '100%', aspectRatio: String(cfg.aspect || 1.8), maxHeight: cfg.height || 380, minHeight: 220 });
 
-const AngledTick = ({ x, y, payload, angle = 0, fontSize = 11, anchor = 'middle' }) => {
-  const a = Number(angle) || 0;
-  return (
-    <g transform={`translate(${x || 0},${y || 0})`}>
-      <text transform={a ? `rotate(${a})` : undefined} textAnchor={a < 0 ? 'end' : a > 0 ? 'start' : anchor}
-        dy={a ? 4 : 12} dx={a ? (a > 0 ? 4 : -4) : 0} fill="#64748b" fontSize={fontSize}>
-        {String(payload.value)}
-      </text>
-    </g>
-  );
-};
 
 const NumField = ({ label, value, onChange, step = 1, w = 'w-full' }) => (
   <div className="flex flex-col gap-1">

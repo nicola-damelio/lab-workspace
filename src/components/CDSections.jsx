@@ -10,7 +10,7 @@ import {
   ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line,
   Legend, ErrorBar, Cell, PieChart, Pie
 } from 'recharts';
-import { SharedGraphConfig, SharedErrorTreatment, ChartControlBar, SharedChartStylePanel } from './SharedAnalysisTools';
+import { SharedGraphConfig, SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, AngledTick } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, LINE_COLORS } from '../utils/chartStyle';
 export { CollapsibleSection };
@@ -904,23 +904,6 @@ const chartBoxStyle = (cfg) => ({
   minHeight: 220
 });
 
-const AngledTick = ({ x, y, payload, angle = 0, fontSize = 11, anchor = 'middle' }) => {
-  const a = Number(angle) || 0;
-  return (
-    <g transform={`translate(${x || 0},${y || 0})`}>
-      <text
-        transform={a ? `rotate(${a})` : undefined}
-        textAnchor={a < 0 ? 'end' : a > 0 ? 'start' : anchor}
-        dy={a ? 4 : 12}
-        dx={a ? (a > 0 ? 4 : -4) : 0}
-        fill="#64748b"
-        fontSize={fontSize}
-      >
-        {String(payload.value)}
-      </text>
-    </g>
-  );
-};
 
 const NumField = ({ label, value, onChange, step = 1, w = 'w-full' }) => {
   const [local, setLocal] = useState(value ?? '');
