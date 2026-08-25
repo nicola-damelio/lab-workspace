@@ -18,12 +18,9 @@ import {
     fit4PL,
     errBarPlugin
 } from '../data/constants';
+import { FS_CLASSES, OVERLAY_CLASSES } from '../utils/chartStyle';
 
-const FS_CLASSES =
-    'fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col';
-
-const OVERLAY_CLASSES =
-    'fixed top-0 left-0 w-screen h-screen bg-slate-900/50 backdrop-blur-sm z-[999990]';
+// Chart/style constants now live in ../utils/chartStyle.
 
 // ================= ERROR INPUT =================
 export const ErrInput = ({ label, value, sdRaw, isOverridden, onSave, onReset }) => {
