@@ -16,6 +16,7 @@ import { PlateTestRenderer } from './components/PlateTestRenderer';
 import { CDTestRenderer } from './components/CDTestRenderer';
 import { ssNMRTestRenderer as SSNMRTestRenderer } from './components/ssNMRTestRenderer';
 import { LabNotebook } from './components/LabNotebook';
+import { PublicationsSection } from './components/Publications';
 import { RichTextEditor } from './components/RichTextEditor';
 import { StorageModals, StorageList, StorageDetail, BoxDetail } from './components/Storage';
 import { DefinitionsPanel } from './components/DefinitionsPanel';
@@ -7225,7 +7226,8 @@ const openDataset = (dset) => {
                 { id: 'agenda', icon: '🗓️', label: 'Agenda (Timeline)' },
                 { id: 'protocols', icon: '📝', label: 'Protocols' },
                 { id: 'storage', icon: '📦', label: 'Storage & Boxes' },
-                { id: 'calculations', icon: '🧮', label: 'Calculations' }
+                { id: 'calculations', icon: '🧮', label: 'Calculations' },
+                { id: 'publications', icon: '📰', label: 'Publications' }
               ].map((nav) => (
                 <button
                   key={nav.id}
@@ -7436,6 +7438,12 @@ const openDataset = (dset) => {
                         icon: '🧮',
                         title: 'Calculations',
                         desc: 'Mass, volume, and preparation calculators.'
+                      },
+                      {
+                        id: 'publications',
+                        icon: '📰',
+                        title: 'Publications & Journals',
+                        desc: 'Target journals, impact factors, links and notes.'
                       }
                     ].map((mod) => (
                       <button
@@ -9828,6 +9836,20 @@ if (activeTest.type === 'flow_cytometry') {
                   </div>
                 );
             })()}
+
+            {currentModule === 'publications' && (
+              <div className="h-full overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
+                <div className="max-w-6xl mx-auto flex flex-col gap-4 pb-10">
+                  <PublicationsSection
+                    scientists={[...new Set([
+                      ...operatorNames,
+                      ...(tests || []).map((t) => t.operator).filter(Boolean)
+                    ])]}
+                    defaultScientist={currentUser?.name || ''}
+                  />
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
