@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { ensureNGL } from '../utils/ngl';
 
 const SELECT_COLOR_HEX = 0xf59e0b;
 const MANUAL_COLOR_HEX = 0x16a34a;
@@ -380,37 +381,7 @@ const names = getOrganicNaming(atom.structure);
 return names[atom.index] || `X${atom.index}`;
 };
 
-let _nglLoadPromise = null;
-const NGL_CDN_URLS = [
-'https://unpkg.com/ngl@2.4.0/dist/ngl.js',
-'https://cdn.jsdelivr.net/npm/ngl@2.4.0/dist/ngl.js',
-];
-
-const loadNGLFromUrl = (url) => new Promise((resolve, reject) => {
-const script = document.createElement('script');
-script.src = url;
-script.async = true;
-script.onload = () => {
-if (window.NGL) resolve(window.NGL);
-else reject(new Error(`Script loaded from ${url} but did not set window.NGL`));
-};
-script.onerror = () => reject(new Error(`Failed to fetch NGL script from ${url}`));
-document.head.appendChild(script);
-});
-
-const ensureNGL = () => {
-if (window.NGL) return Promise.resolve(window.NGL);
-if (_nglLoadPromise) return _nglLoadPromise;
-_nglLoadPromise = (async () => {
-let lastErr = null;
-for (const url of NGL_CDN_URLS) {
-try { return await loadNGLFromUrl(url); } catch (e) { lastErr = e; }
-}
-_nglLoadPromise = null;
-throw new Error(`Could not load the NGL viewer library from any CDN. ${lastErr ? lastErr.message : ''}`);
-})();
-return _nglLoadPromise;
-};
+// NGL is loaded via the shared loader in ../utils/ngl.js (see import above).
 
 // ================= TRAJECTORY HELPERS =================
 const getTrajectoryObject = (component) => {
