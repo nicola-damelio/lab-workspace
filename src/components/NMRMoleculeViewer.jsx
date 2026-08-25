@@ -374,61 +374,6 @@ const computeMorganRanks = (elements, bonds) => {
   return ranks;
 };
 
-const deriveOrganicAtomNaming = (molblock) => {
-  const lines = molblock.split('\n');
-  const countsLine = lines[3] || '';
-  const nA = parseInt(countsLine.substring(0, 3).trim(), 10) || 0;
-  const nB = parseInt(countsLine.substring(3, 6).trim(), 10) || 0;
-  
-  const elements = [];
-  const bonds = [];
-  
-  for (let i = 0; i < nA; i++) {
-    const line = lines[4 + i] || '';
-    const elem = line.substring(31, 34).trim();
-    elements.push(elem || 'C');
-  }
-  for (let i = 0; i < nB; i++) {
-    const line = lines[4 + nA + i] || '';
-    const a1 = parseInt(line.substring(0, 3).trim(), 10) - 1;
-    const a2 = parseInt(line.substring(3, 6).trim(), 10) - 1;
-    if (!isNaN(a1) && !isNaN(a2)) bonds.push([a1, a2]);
-  }
-  
-  const ranks = computeMorganRanks(elements, bonds);
-  const atomNameList = new Array(nA).fill('');
-  const parentOfH = new Array(nA).fill(-1);
-  
-  bonds.forEach(([a1, a2]) => {
-    if (elements[a1] === 'H' && elements[a2] !== 'H') parentOfH[a1] = a2;
-    if (elements[a2] === 'H' && elements[a1] !== 'H') parentOfH[a2] = a1;
-  });
-  
-  const keepAtom = new Array(nA).fill(true);
-  const seenHForParent = new Set();
-  
-  for (let i = 0; i < nA; i++) {
-    if (elements[i] !== 'H') {
-      atomNameList[i] = `${elements[i]}${ranks[i] >= 0 ? ranks[i] : i}`;
-    } else {
-      const pr = parentOfH[i] >= 0 ? ranks[parentOfH[i]] : null;
-      // Name it H{parentRank} without a,b,c suffix
-      atomNameList[i] = pr !== null ? `H${pr}` : `H${i}`;
-      
-      // Only keep the FIRST hydrogen for each parent to avoid visual clutter
-      if (parentOfH[i] !== -1) {
-        if (seenHForParent.has(parentOfH[i])) {
-          keepAtom[i] = false;
-        } else {
-          seenHForParent.add(parentOfH[i]);
-        }
-      }
-    }
-  }
-  
-  return { atomNameList, elements, keepAtom };
-};
-// ==========================================================
 
 const _organicNamingCache = new WeakMap();
 const getOrganicNaming = (structure) => {
@@ -525,10 +470,8 @@ manualKeys = [],
 moleculeType = 'protein',
 parsedSeq = [],
 residueOffset = 0,
-atomNameMap,
 atomRenames,
 onAtomRenames,
-labelMode,
 namingConvention = 'nmr',
 resRenumber,
 onResRenumber,
@@ -782,7 +725,6 @@ const bin = atob(b64);
 const bytes = new Uint8Array(bin.length);
 for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
 const blob = new Blob([bytes], { type: mime });
-const ext = structureFormat !== 'auto' ? structureFormat : (structureFileName || 'structure.pdb').split('.').pop();
 const fakeFile = new File([blob], structureFileName || 'structure.pdb', { type: mime });
 requestStructureLoad({ file: fakeFile, url: null, ts: Date.now() });
 } catch {
@@ -1131,7 +1073,6 @@ setPendingTraj(null);
 // large systems (the structure is still loaded in full for the analysis).
 const requestStructureLoad = (payload) => {
 const file = payload.file;
-const name = file ? file.name : (payload.name || 'structure.pdb');
 const size = file ? file.size : (payload.text ? payload.text.length : 0);
 setLoadRequest({ ...payload, size });
 };

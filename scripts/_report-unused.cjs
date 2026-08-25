@@ -1,6 +1,11 @@
 const fs = require('fs');
 const { execSync } = require('child_process');
-const out = execSync('npx oxlint --format json 2>nul', { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+let out;
+try {
+  out = execSync('npx oxlint --format json 2>nul', { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
+} catch (e) {
+  out = String(e.stdout || '');
+}
 const d = JSON.parse(out).diagnostics || [];
 const uv = d.filter(x => x.code === 'eslint(no-unused-vars)');
 const cache = {};

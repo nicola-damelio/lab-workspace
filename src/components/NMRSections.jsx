@@ -340,8 +340,6 @@ const SS_CORRECTIONS = {
 const RANDOM_COIL_DB = { A: { HA: 4.35, CA: 52.5, CB: 19.1, CO: 177.8 }, C: { HA: 4.55, CA: 58.2, CB: 28.0, CO: 175.9 }, D: { HA: 4.76, CA: 54.5, CB: 40.8, CO: 177.5 }, E: { HA: 4.37, CA: 56.9, CB: 29.8, CO: 177.6 }, F: { HA: 4.66, CA: 57.9, CB: 39.8, CO: 177.4 }, G: { HA: 3.96, CA: 45.2, CB: null, CO: 174.6 }, H: { HA: 4.76, CA: 55.3, CB: 31.3, CO: 175.3 }, I: { HA: 4.20, CA: 61.3, CB: 38.3, CO: 177.8 }, K: { HA: 4.38, CA: 56.6, CB: 32.4, CO: 177.9 }, L: { HA: 4.47, CA: 55.4, CB: 41.9, CO: 178.9 }, M: { HA: 4.52, CA: 55.5, CB: 32.6, CO: 177.5 }, N: { HA: 4.75, CA: 53.3, CB: 38.6, CO: 176.6 }, P: { HA: 4.44, CA: 63.1, CB: 31.9, CO: 178.1 }, Q: { HA: 4.39, CA: 56.2, CB: 29.5, CO: 177.2 }, R: { HA: 4.51, CA: 56.5, CB: 30.4, CO: 177.2 }, S: { HA: 4.51, CA: 58.4, CB: 63.6, CO: 175.6 }, T: { HA: 4.39, CA: 62.0, CB: 69.6, CO: 175.7 }, V: { HA: 4.16, CA: 62.1, CB: 32.1, CO: 177.4 }, W: { HA: 4.70, CA: 57.4, CB: 29.5, CO: 177.2 }, Y: { HA: 4.66, CA: 57.9, CB: 38.9, CO: 177.2 } };
 
 const SS_META = { C: { label: 'Random coil', color: '#64748b' }, H: { label: 'α-Helix', color: '#8b5cf6' }, E: { label: 'β-Sheet', color: '#f59e0b' } };
-const FORM_META = { A: { label: 'A-form', color: '#0ea5e9' }, B: { label: 'B-form', color: '#22c55e' }, Z: { label: 'Z-form', color: '#f43f5e' } };
-const DNA_FORM_OFFSETS = { B: { "H1'": 0, "H2'": 0, "H3'": 0, "H2''": 0 }, A: { "H1'": 0.2, "H2'": -0.3, "H3'": 0.15, "H2''": -0.25 }, Z: { "H1'": -0.15, "H2'": 0.25, "H3'": -0.1, "H2''": 0.2 } };
 const SUGAR_ANOMER_OFFSETS = { alpha: { H1: 0.25 }, beta: { H1: -0.15 } };
 const RESIDUE_COLORS = ['#3b82f6', '#8b5cf6', '#d946ef', '#ec4899', '#f43f5e', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#6366f1'];
 
@@ -1332,7 +1330,7 @@ const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, row
    PEAK LABEL OVERLAYS (1D & 2D)
    Renders peak labels searching for free space to avoid collisions.
    ============================================================================ */
-const PeakLabelOverlay = ({ markers, dom, marginLeft, marginRight, marginTop, marginBottom, labelAreaH }) => {
+const PeakLabelOverlay = ({ markers, dom, marginLeft, marginRight, marginTop, marginBottom }) => {
   const containerRef = useRef(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
 
@@ -1422,105 +1420,6 @@ const PeakLabelOverlay = ({ markers, dom, marginLeft, marginRight, marginTop, ma
   );
 };
 
-const PeakLabelOverlay2D = ({ markers, xDom, yDom, marginLeft, marginRight, marginTop, marginBottom, fontSize = 9 }) => {
-  const containerRef = useRef(null);
-  const [size, setSize] = useState({ w: 0, h: 0 });
-
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const obs = new ResizeObserver(([e]) => {
-      setSize({ w: e.contentRect.width, h: e.contentRect.height });
-    });
-    obs.observe(containerRef.current);
-    return () => obs.disconnect();
-  }, []);
-
-  const { w, h } = size;
-  const plotW = w - marginLeft - marginRight;
-  const plotH = h - marginTop - marginBottom;
-  
-  if (plotW <= 0 || plotH <= 0 || markers.length === 0) {
-    return <div ref={containerRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />;
-  }
-
-  const xLo = Math.min(xDom[0], xDom[1]);
-  const xHi = Math.max(xDom[0], xDom[1]);
-  const yLo = Math.min(yDom[0], yDom[1]);
-  const yHi = Math.max(yDom[0], yDom[1]);
-
-  const ppmToX = (ppm) => marginLeft + plotW * (1 - (ppm - xLo) / (xHi - xLo));
-  const ppmToY = (ppm) => marginTop + plotH * (1 - (ppm - yLo) / (yHi - yLo));
-
-  const visible = markers.filter(m => m.x >= xLo && m.x <= xHi && m.y >= yLo && m.y <= yHi);
-  
-  const FONT_SIZE = fontSize;
-  const LABEL_PAD_X = 4;
-  const LABEL_H = fontSize + 5;
-  const placed = [];
-
-  visible.forEach(m => {
-    const cx = ppmToX(m.x);
-    const cy = ppmToY(m.y);
-    const tw = m.label.length * FONT_SIZE * 0.55 + LABEL_PAD_X * 2;
-    const th = LABEL_H;
-
-    let best = null;
-    let rad = 1;
-    const angles = [Math.PI/4, 7*Math.PI/4, 3*Math.PI/4, 5*Math.PI/4, 0, Math.PI/2, Math.PI, 3*Math.PI/2];
-
-    while(rad < 15 && !best) {
-      for(let a of angles) {
-         const dist = 8 + rad * 12;
-         const px = cx + dist * Math.cos(a);
-         const py = cy + dist * Math.sin(a);
-         
-         const left = px - tw/2;
-         const right = px + tw/2;
-         const top = py - th/2;
-         const bottom = py + th/2;
-
-         if(left < marginLeft || right > w - marginRight || top < marginTop || bottom > h - marginBottom) continue;
-
-         const overlap = placed.some(p => !(right < p.left - 2 || left > p.right + 2 || bottom < p.top - 2 || top > p.bottom + 2));
-
-         if(!overlap) {
-           best = { cx: px, cy: py, left, right, top, bottom };
-           break;
-         }
-      }
-      rad++;
-    }
-
-    if(!best) {
-       best = { cx: cx + 15, cy: cy - 15, left: cx+15-tw/2, right: cx+15+tw/2, top: cy-15-th/2, bottom: cy-15+th/2 };
-    }
-
-    placed.push({ ...best, originX: cx, originY: cy, label: m.label });
-  });
-
-  return (
-    <div ref={containerRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
-      {w > 0 && (
-        <svg width={w} height={h} style={{ position: 'absolute', top: 0, left: 0, overflow: 'visible' }}>
-          <defs>
-            <marker id="pk-arrow-2d" markerWidth="4" markerHeight="4" refX="2" refY="2" orient="auto">
-              <path d="M0,0 L0,4 L4,2 z" fill="#94a3b8" />
-            </marker>
-          </defs>
-          {placed.map((p, i) => (
-            <g key={i}>
-              <line x1={p.cx} y1={p.cy} x2={p.originX} y2={p.originY} stroke="#94a3b8" strokeWidth={1} strokeDasharray="2 2" markerEnd="url(#pk-arrow-2d)" />
-              <rect x={p.left} y={p.top} width={p.right - p.left} height={p.bottom - p.top} rx={2} fill="white" stroke="#cbd5e1" strokeWidth={0.8} opacity={0.85} />
-              <text x={p.cx} y={p.cy + FONT_SIZE/2 - 1} textAnchor="middle" fontSize={FONT_SIZE} fontFamily="sans-serif" fontWeight="bold" fill="#475569">
-                {p.label}
-              </text>
-            </g>
-          ))}
-        </svg>
-      )}
-    </div>
-  );
-};
 // ================= ZOOMABLE PLOTS & SCROLLBARS =================
 const AxisScrollbar = ({ domain, fullDomain, onChange, vertical = false, reversed = true }) => {
   const [min, max] = domain;
@@ -1556,7 +1455,7 @@ const AxisScrollbar = ({ domain, fullDomain, onChange, vertical = false, reverse
 };
 
 const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel, selectedKeys, manualKeys = [], heightPx = 300, fs = 11, aspect = null, simCfg }) => {
-  const { simShowLabels = true, simLabelFormat = 'resNum_code_atom', simLabelDim = 'both', simLabelFontSize = 10 } = simCfg || {};
+  const { simShowLabels = true, simLabelFormat = 'resNum_code_atom', simLabelDim = 'both' } = simCfg || {};
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState(fullDomain);
   const [refAreaLeft, setRefAreaLeft] = useState(null);
@@ -3341,123 +3240,6 @@ const buildResLookup = (parsedSeq) => {
   });
   return map;
 };
-const parseTableText = (text) => {
-  const delim = text.includes('\t') ? '\t' : (text.split(';').length > text.split(',').length ? ';' : ',');
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  if (!lines.length) return [];
-  const split = (l) => l.split(delim).map((c) => c.replace(/^"|"$/g, '').trim());
-  const head = split(lines[0]).map((h) => h.toLowerCase());
-  const iRes = head.findIndex((h) => /(res|position|seq|#)/.test(h));
-  const iAtom = head.findIndex((h) => /(atom|nucleus|group|assignment)/.test(h));
-  const iVal = head.findIndex((h) => /(value|shift|ppm|assign|intens|delta)/.test(h));
-  const hasHeader = iAtom >= 0 || iVal >= 0;
-  const rows = (hasHeader ? lines.slice(1) : lines).map(split);
-  return rows.map((r) => ({
-    res: r[hasHeader && iRes >= 0 ? iRes : 0],
-    atom: r[hasHeader ? (iAtom >= 0 ? iAtom : 1) : 1],
-    value: r[hasHeader ? (iVal >= 0 ? iVal : 2) : 2]
-  })).filter((r) => r.atom);
-};
-const importRowsToValues = (rows, parsedSeq, nameMap = {}) => {
-  const lookup = buildResLookup(parsedSeq);
-  const out = {}; const missed = [];
-  rows.forEach((r) => {
-    const ri = lookup[String(r.res).toLowerCase().trim()];
-    if (ri === undefined) { missed.push(r); return; }
-    const atom = resolveAtom(parsedSeq[ri], r.atom, nameMap);
-    if (!atom) { missed.push(r); return; }
-    out[`${ri}-${atom}`] = String(r.value);
-  });
-  return { out, missed };
-};
-const remapAtomKeys = (values, parsedSeq, nameMap = {}) => {
-  const out = {};
-  Object.entries(values || {}).forEach(([k, v]) => {
-    const parts = k.split('-');
-    if (parts.length < 2) return;
-    const ri = Number(parts[0]);
-    const res = parsedSeq[ri];
-    if (!res) return;
-    const atom = resolveAtom(res, parts.slice(1).join('-'), nameMap);
-    if (atom) out[`${ri}-${atom}`] = String(v);
-  });
-  return out;
-};
-const detectSparkyFormat = (text) => {
-  if (/^\s*VARS/im.test(text) || /^\s*FORMAT/im.test(text) || /^\s*S\s+[\d-]/im.test(text)) return 'peaklist';
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
-  let hits = 0;
-  lines.forEach((l) => { if (/^[A-Za-z]+\s?\d+[\s,]+[A-Za-z0-9'″"αβγδεζ]+[\s,]+[-+0-9.]+$/.test(l)) hits++; });
-  return hits > 0 ? 'assignments' : 'peaklist';
-};
-const parseSparkyPeakList = (text) => {
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
-  let vars = null;
-  const raw = [];
-  for (const line of lines) {
-    const up = line.toUpperCase();
-    if (up.startsWith('VARS')) { vars = line.replace(/^VARS/i, '').trim().split(/[\s,]+/).map((v) => v.toUpperCase()); continue; }
-    if (/^(FORMAT|TITL|TITLE|AXES|TYPE|NE|NP|NC|SW|SF|XMIN|XMAX|YMIN|YMAX|XP|YP|FP|HZPPM|DATASET)/.test(up)) continue;
-    const cleaned = line.replace(/^S\s+/i, '');
-    const parts = cleaned.split(/[\s,]+/).filter(Boolean);
-    if (parts.length >= 2) raw.push(parts);
-  }
-  const idx = (names) => (vars ? vars.findIndex((v) => names.includes(v)) : -1);
-  const iXf = idx(['X_PPM', 'X_AXIS', 'W2', 'X', 'PPM2', 'F2_PPM', 'F2']);
-  const iX = iXf >= 0 ? iXf : 0;
-  const iY = idx(['Y_PPM', 'Y_AXIS', 'W1', 'Y', 'PPM1', 'F1_PPM', 'F1']);
-  const iInt = idx(['DATA', 'DATA1', 'INT', 'INTENSITY', 'HEIGHT', 'H']);
-  const iVol = idx(['VOL', 'VOLUME', 'INTEGRAL', 'INTG']);
-  const iAss = idx(['ASS', 'ASSIGNS', 'ASSIGNMENT', 'ASSIGNMENTS', 'ASSIGN', 'LABEL']);
-  const isNum = (s) => s !== undefined && /^[-+0-9.eE]+$/.test(s) && !isNaN(parseFloat(s));
-  return raw.map((parts) => {
-    if (vars) {
-      return {
-        x: parseManual(parts[iX]),
-        y: iY >= 0 ? parseManual(parts[iY]) : null,
-        int: iInt >= 0 ? parseManual(parts[iInt]) : null,
-        vol: iVol >= 0 ? parseManual(parts[iVol]) : null,
-        ass: iAss >= 0 ? parts[iAss] : ''
-      };
-    }
-    const nums = parts.filter(isNum).map(parseFloat);
-    const strs = parts.filter((p) => !isNum(p));
-    return { x: nums[0] ?? null, y: nums[1] ?? null, int: nums[2] ?? null, vol: nums[3] ?? null, ass: strs.join(' ') };
-  }).filter((p) => p.x !== null || p.y !== null);
-};
-const parseAssignmentString = (str) => {
-  const pieces = String(str || '').split(/[,;|]+/).map((s) => s.trim()).filter(Boolean);
-  const out = []; let lastRes = null;
-  pieces.forEach((pc) => {
-    const toks = pc.replace(/[-–]/g, ' ').split(/\s+/).filter(Boolean);
-    if (!toks.length) return;
-    let res = null, atom = null;
-    if (toks.length === 1) {
-      const mm = toks[0].match(/^([A-Za-z]+)(\d+)$/);
-      if (mm) { lastRes = toks[0]; return; }
-      if (lastRes) { res = lastRes; atom = toks[0]; }
-    } else {
-      if (/^[A-Za-z]+\d+$/.test(toks[0])) { res = toks[0]; atom = toks.slice(1).join(' '); lastRes = res; }
-      else if (/^\d+$/.test(toks[0]) && toks.length > 1 && /^[A-Za-z]/.test(toks[1])) { res = toks[0]; atom = toks.slice(1).join(' '); }
-      else if (toks.length > 1 && /^\d+$/.test(toks[1])) { res = toks[0] + toks[1]; atom = toks.slice(2).join(' '); lastRes = res; }
-      else if (lastRes) { res = lastRes; atom = toks.join(' '); }
-    }
-    if (res && atom) out.push({ res, atom });
-  });
-  return out;
-};
-const parseSparkyAssignments = (text) => {
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  const out = [];
-  lines.forEach((line) => {
-    if (line.startsWith('#') || /^(VARS|FORMAT)/i.test(line)) return;
-    let m = line.match(/^([A-Za-z]+[\s-]?\d+)[\s,]+([A-Za-z0-9'″"αβγδεζ]+)[\s,]+([-+0-9.]+)/);
-    if (m) { out.push({ res: m[1], atom: m[2], value: m[3] }); return; }
-    m = line.match(/^([A-Za-z]+\d+[-_][A-Za-z0-9'″"αβγδεζ]+)[\s,]+([-+0-9.]+)/);
-    if (m) { const pieces = m[1].split(/[-_]/); out.push({ res: pieces[0], atom: pieces[1], value: m[2] }); }
-  });
-  return out;
-};
 
 // ================= FITTING ENGINE =================
 const gaussSolve = (A, b) => {
@@ -3672,24 +3454,6 @@ const useXZoom = (chartRef, dataDomain, margin = CHART_MARGIN) => {
   return { domain: eff, refLo: lo, refHi: hi, onMouseDown, isZoomed: !!domain, reset: () => setDomain(null) };
 };
 
-const useCatZoom = (names) => {
-  const [range, setRange] = useState(null);
-  const [d0, setD0] = useState(null);
-  const [d1, setD1] = useState(null);
-  const idxOf = (label) => names.indexOf(label);
-  const onMouseDown = (st) => { if (st && st.activeLabel != null) { setD0(String(st.activeLabel)); setD1(String(st.activeLabel)); } };
-  const onMouseMove = (st) => { if (d0 != null && st && st.activeLabel != null) setD1(String(st.activeLabel)); };
-  const onMouseUp = (st) => {
-    if (d0 == null) return;
-    const end = st && st.activeLabel != null ? String(st.activeLabel) : d1;
-    const i0 = idxOf(d0), i1 = idxOf(end);
-    setD0(null); setD1(null);
-    if (i0 >= 0 && i1 >= 0 && i0 !== i1) setRange([Math.min(i0, i1), Math.max(i0, i1)]);
-  };
-  const visible = range ? names.slice(range[0], range[1] + 1) : names;
-  return { visible, drag: [d0, d1], onMouseDown, onMouseMove, onMouseUp, reset: () => setRange(null), isZoomed: !!range };
-};
-
 const DEFAULT_CHART_STYLE = {
   height: 380, aspect: 1.8, fontSize: 12, tickStep: '', tickAngle: 0,
   pointStyle: 'circle', ptSize: 5, lineStyle: 'solid', lineThickness: 2,
@@ -3713,7 +3477,6 @@ const catInterval = (stepStr) => {
 };
 const dom = (v) => (v === '' || v == null || parseManual(v) === null ? undefined : parseManual(v));
 const chartBoxStyle = (cfg) => ({ width: '100%', aspectRatio: String(cfg.aspect || 1.8), maxHeight: cfg.height || 380, minHeight: 220 });
-
 
 const NumField = ({ label, value, onChange, step = 1, w = 'w-full' }) => (
   <div className="flex flex-col gap-1">
@@ -3740,51 +3503,6 @@ const SelField = ({ label, value, onChange, options }) => (
   </div>
 );
 
-const ChartStylePanel = ({ cfg, setCfg, series = [] }) => (
-  <div className="p-4 bg-white border border-slate-300 rounded-xl grid grid-cols-2 lg:grid-cols-4 gap-3 shadow-sm">
-    <NumField label="Font size (px)" value={cfg.fontSize} onChange={(v) => setCfg({ fontSize: v || 12 })} />
-    <NumField label="Chart height (px)" value={cfg.height} onChange={(v) => setCfg({ height: v || 380 })} />
-    <NumField label="Aspect ratio X/Y (W÷H) — rectangularity" step={0.1} value={cfg.aspect} onChange={(v) => setCfg({ aspect: v || 1.8 })} />
-    <TxtField label="Tick step (num: spacing · cat: every N)" value={cfg.tickStep} onChange={(v) => setCfg({ tickStep: v })} placeholder="auto" />
-    <SelField label="Tick label orientation" value={String(cfg.tickAngle || 0)} onChange={(v) => setCfg({ tickAngle: Number(v) })}
-      options={[['0', '0° (horizontal)'], ['-30', '-30°'], ['-45', '-45°'], ['-60', '-60°'], ['-90', '-90° (vertical)'], ['30', '30°'], ['45', '45°'], ['90', '90°']]} />
-    <SelField label="Point style" value={cfg.pointStyle} onChange={(v) => setCfg({ pointStyle: v })}
-      options={[['circle', 'Circle'], ['square', 'Square'], ['triangle', 'Triangle'], ['cross', 'Cross']]} />
-    <NumField label="Point size" value={cfg.ptSize} onChange={(v) => setCfg({ ptSize: v || 5 })} />
-    <SelField label="Line style" value={cfg.lineStyle} onChange={(v) => setCfg({ lineStyle: v })}
-      options={[['solid', 'Solid'], ['dashed', 'Dashed'], ['dotted', 'Dotted']]} />
-    <NumField label="Line thickness" step={0.5} value={cfg.lineThickness} onChange={(v) => setCfg({ lineThickness: v || 2 })} />
-    <SelField label="Legend" value={cfg.legend} onChange={(v) => setCfg({ legend: v })} options={[['top', 'Top'], ['bottom', 'Bottom'], ['none', 'None']]} />
-    <div className="flex flex-col gap-1"> <label className="text-[10px] font-bold text-slate-600">X Min / Max</label>
-      <div className="flex gap-1">
-        <input type="number" placeholder="auto" value={cfg.xMin} onChange={(e) => setCfg({ xMin: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none" />
-        <input type="number" placeholder="auto" value={cfg.xMax} onChange={(e) => setCfg({ xMax: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none" />
-      </div> </div>
-    <div className="flex flex-col gap-1"> <label className="text-[10px] font-bold text-slate-600">Y Min / Max</label>
-      <div className="flex gap-1">
-        <input type="number" placeholder="auto" value={cfg.yMin} onChange={(e) => setCfg({ yMin: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none" />
-        <input type="number" placeholder="auto" value={cfg.yMax} onChange={(e) => setCfg({ yMax: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none" />
-      </div> </div>
-    <TxtField label="X axis label" value={cfg.xAxisLabel} onChange={(v) => setCfg({ xAxisLabel: v })} />
-    <TxtField label="Y axis label" value={cfg.yAxisLabel} onChange={(v) => setCfg({ yAxisLabel: v })} />
-    {series.length > 0 && (
-      <div className="col-span-2 lg:col-span-4 pt-2 border-t border-slate-100 flex flex-col gap-2">
-        <label className="text-[10px] font-bold text-slate-600 uppercase">Series colors (points / lines / bars)</label>
-        <div className="flex flex-wrap gap-3">
-          {series.map((s) => (
-            <label key={s.key} className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
-              <input type="color" value={(cfg.colors && cfg.colors[s.key]) || s.color || '#3b82f6'}
-                onChange={(e) => setCfg({ colors: { ...(cfg.colors || {}), [s.key]: e.target.value } })}
-                className="w-6 h-6 rounded cursor-pointer border border-slate-300" />
-              {s.label}
-            </label>
-          ))}
-        </div>
-      </div>
-    )}
-    <p className="col-span-2 lg:col-span-4 text-[9px] text-slate-400">💡 Drag with the mouse over any graph to zoom into a region. Use "Reset Zoom" to restore.</p>
-  </div>
-);
 const getMolWithExplicitHs = (smiles) => {
   if (!window.__RDKit) return null;
   try {
@@ -4392,13 +4110,11 @@ const generatedStructure = useMemo(() => {
   );
 };
 
-
 /* ============================================================================
    PEAK LABEL OVERLAY
    Renders peak labels above the spectrum using arrows and free-space placement.
    Uses absolute positioning over the Recharts canvas.
    ============================================================================ */
-
 
 /* ============================================================================
    BRUKER 1R → PPM AXIS  (shared helpers for the NMR page import)
@@ -5761,7 +5477,6 @@ const dom = brukerZoomDom || xFull;
   );
 };
 
-
 // ================= SECONDARY SHIFTS SECTION =================
 const SCS_INST_COLORS = PER_ATOM_COLORS.slice(0, 8);
 
@@ -6603,7 +6318,6 @@ const PerAtomChartPanel = ({ ctx, d, chart, updateChart, removeChart }) => {
 
       {showCfg && <SharedChartStylePanel cfg={cfg} setCfg={setCfg} series={[]} showHeightSlider={false} />}
 
-
       {/* Atom picker */}
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-2 flex-wrap">
@@ -6951,7 +6665,6 @@ export const PerAtomPlot = PerAtomPlotSection;
 export { OneDSpectrumPlot, SpectrumPlot, HSQCPlot, useNmrDerived };
 export { CustomXTick1H, CustomYTick1H, CustomXTick13C, CustomYTick13C };
 export { TICKS_1H, TICKS_13C, TICKS_15N };
-
 
 // ================= NOTEBOOK EXTRA =================
 export const NotebookExtra = ({ ctx, checkId }) => {

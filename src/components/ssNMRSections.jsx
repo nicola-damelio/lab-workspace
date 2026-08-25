@@ -25,10 +25,6 @@ const SPECTRA_PALETTE = [
   '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#06b6d4',
   '#84cc16', '#e11d48', '#0ea5e9', '#a855f7', '#10b981'
 ];
-const DEFAULT_ssNMR_CHART_CFG = {
-  yMin: '', yMax: '', xMin: '-250', xMax: '250',
-  fontSize: 12, lineWidth: 2
-};
 
 /* CollapsibleSection now lives in ./ui (single shared definition). */
 // Chart/style constants (FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES)
@@ -95,8 +91,6 @@ export const SSNMR_INSTRUMENTAL_FIELDS = [
   { key: 'spectralWidthKHz', label: 'Spectral Width', type: 'text', placeholder: 'e.g. 250', units: ['kHz'] },
   { key: 'lineBroadening', label: 'Line Broadening', type: 'text', placeholder: 'e.g. 100', units: ['Hz'] }
 ];
-
-
 
 const getExpValue = (inst, key) => {
   const t = inst?.test || inst || {};
@@ -344,14 +338,6 @@ const pathLengthToCm = (vStr, unit) => {
   return String(unit || 'cm') === 'mm' ? v / 10 : v;
 };
 
-const molarEllipticityFactor = (inst, mw) => {
-  const t = inst?.test || inst || {};
-  const cMg = concentrationToMgPerMl(t.concentration, t.concentrationUnit, mw);
-  const lCm = pathLengthToCm(t.pathLength, t.pathLengthUnit);
-  if (!cMg || !lCm || !mw) return null;
-  return mw / (10 * cMg * lCm);
-};
-
 const getCompoundMW = (inst, ctx) => {
   const t = inst?.test || inst || {};
   const meta = ctx?.compoundMeta || {};
@@ -382,55 +368,6 @@ const getMWForInstance = (inst, ctx) => {
 /* ========================================================================
 NATURAL CUBIC SPLINE
 ======================================================================== */
-class NaturalCubicSpline {
-  constructor(xs, ys) {
-    this.xs = xs; this.ys = ys; this.n = xs.length;
-    this.a = ys.slice();
-    this.b = new Array(this.n).fill(0);
-    this.c = new Array(this.n).fill(0);
-    this.d = new Array(this.n).fill(0);
-    this.calculateCoefficients();
-  }
-  calculateCoefficients() {
-    const h = [];
-    for (let i = 0; i < this.n - 1; i++) h.push(this.xs[i + 1] - this.xs[i]);
-    const alpha = new Array(this.n - 1).fill(0);
-    for (let i = 1; i < this.n - 1; i++) {
-      alpha[i] = (3 / h[i]) * (this.a[i + 1] - this.a[i]) - (3 / h[i - 1]) * (this.a[i] - this.a[i - 1]);
-    }
-    const l = new Array(this.n).fill(0);
-    const mu = new Array(this.n).fill(0);
-    const z = new Array(this.n).fill(0);
-    l[0] = 1;
-    for (let i = 1; i < this.n - 1; i++) {
-      l[i] = 2 * (this.xs[i + 1] - this.xs[i - 1]) - h[i - 1] * mu[i - 1];
-      mu[i] = h[i] / l[i];
-      z[i] = (alpha[i] - h[i - 1] * z[i - 1]) / l[i];
-    }
-    l[this.n - 1] = 1;
-    for (let j = this.n - 2; j >= 0; j--) {
-      this.c[j] = z[j] - mu[j] * this.c[j + 1];
-      this.b[j] = (this.a[j + 1] - this.a[j]) / h[j] - (h[j] * (this.c[j + 1] + 2 * this.c[j])) / 3;
-      this.d[j] = (this.c[j + 1] - this.c[j]) / (3 * h[j]);
-    }
-  }
-  at(x) {
-    let i = 0;
-    if (x >= this.xs[this.n - 1]) i = this.n - 2;
-    else if (x <= this.xs[0]) i = 0;
-    else {
-      let low = 0, high = this.n - 1;
-      while (low <= high) {
-        const mid = Math.floor((low + high) / 2);
-        if (this.xs[mid] < x) low = mid + 1; else high = mid - 1;
-      }
-      i = Math.max(0, high);
-    }
-    if (i >= this.n - 1) i = this.n - 2;
-    const dx = x - this.xs[i];
-    return this.a[i] + this.b[i] * dx + this.c[i] * dx * dx + this.d[i] * dx * dx * dx;
-  }
-}
 
 /* ========================================================================
    DEUTERIUM QUADRUPOULAR MODEL
@@ -778,7 +715,6 @@ const buildSimulatedCurve = (fitRes, xs) => {
     });
 };
 
-
 /* ========================================================================
 SHARED CHART STYLE SYSTEM + DRAG-TO-ZOOM
 ======================================================================== */
@@ -821,7 +757,6 @@ const chartBoxStyle = (cfg) => ({
   minHeight: 220
 });
 
-
 const NumField = ({ label, value, onChange, step = 1, w = 'w-full' }) => {
   const [local, setLocal] = useState(value ?? '');
   useEffect(() => { setLocal(value ?? ''); }, [value]);
@@ -858,21 +793,6 @@ const TxtField = ({ label, value, onChange, placeholder = '', w = 'w-full' }) =>
   );
 };
 
-const CfgNumInput = ({ value, onCommit, placeholder = 'auto' }) => {
-  const [local, setLocal] = useState(value ?? '');
-  useEffect(() => { setLocal(value ?? ''); }, [value]);
-  return (
-    <input
-      type="number" placeholder={placeholder} value={local}
-      onWheel={(e) => e.target.blur()}
-      onChange={(e) => setLocal(e.target.value)}
-      onBlur={(e) => onCommit(e.target.value)}
-      onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
-      className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none"
-    />
-  );
-};
-
 const SelField = ({ label, value, onChange, options }) => (
   <div className="flex flex-col gap-1">
     <label className="text-[10px] font-bold text-slate-600">{label}</label>
@@ -882,48 +802,6 @@ const SelField = ({ label, value, onChange, options }) => (
     >
       {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
     </select>
-  </div>
-);
-
-const GraphConfigPanel = ({ cfg, setCfg, series = [], unit = 'a.u.' }) => (
-  <div className="flex flex-col gap-3">
-    <SharedGraphConfig
-      activeTest={{ chartCfg: cfg }}
-      updateActiveTest={(u) => setCfg(u.chartCfg || {})}
-      unit={unit}
-      showHeightSlider
-      chartH={cfg.height}
-      setChartH={(h) => setCfg({ height: h })}
-    />
-    <div className="p-4 bg-white border border-slate-300 rounded-xl grid grid-cols-2 lg:grid-cols-4 gap-3 shadow-sm">
-      <NumField label="Aspect ratio X/Y (W÷H)" step={0.1} value={cfg.aspect} onChange={(v) => setCfg({ aspect: v || 1.8 })} />
-      <TxtField label="Tick step (num: spacing · cat: every N)" value={cfg.tickStep} onChange={(v) => setCfg({ tickStep: v })} placeholder="auto" />
-      <SelField
-        label="Tick label orientation" value={String(cfg.tickAngle || 0)}
-        onChange={(v) => setCfg({ tickAngle: Number(v) })}
-        options={[['0', '0° (horizontal)'], ['-30', '-30°'], ['-45', '-45°'], ['-60', '-60°'], ['-90', '-90° (vertical)'], ['30', '30°'], ['45', '45°'], ['90', '90°']]}
-      />
-      <SelField label="Legend" value={cfg.legend} onChange={(v) => setCfg({ legend: v })} options={[['top', 'Top'], ['bottom', 'Bottom'], ['none', 'None']]} />
-      {series.length > 0 && (
-        <div className="col-span-2 lg:col-span-4 pt-2 border-t border-slate-100 flex flex-col gap-2">
-          <label className="text-[10px] font-bold text-slate-600 uppercase">Series colors (points / lines / bars)</label>
-          <div className="flex flex-wrap gap-3">
-            {series.map((s) => (
-              <label key={s.key} className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
-                <input
-                  type="color"
-                  value={(cfg.colors && cfg.colors[s.key]) || s.color || '#3b82f6'}
-                  onChange={(e) => setCfg({ colors: { ...(cfg.colors || {}), [s.key]: e.target.value } })}
-                  className="w-6 h-6 rounded cursor-pointer border border-slate-300"
-                />
-                {s.label}
-              </label>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-    <p className="text-[9px] text-slate-400">💡 Drag with the mouse over any graph to zoom into a region. Use "Reset Zoom" to restore.</p>
   </div>
 );
 
@@ -942,7 +820,6 @@ const ErrorTreatmentPanel = ({ plot, set, showFitToggle = true, customActions })
   };
   return <SharedErrorTreatment activeTest={shimTest} updateActiveTest={shimUpdate} showFitToggle={showFitToggle} customActions={customActions} />;
 };
-
 
 const useXZoom = (chartRef, dataDomain, margin = CHART_MARGIN) => {
   const [domain, setDomain] = useState(null);
@@ -1091,7 +968,7 @@ const useSSNMRDerived = (activeTest, ctx = {}) => {
 export const Data = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useSSNMRDerived(activeTest, ctx);
-  const { activeInstance, activeParsed, instances, mw, compoundMW } = d;
+  const { activeInstance, activeParsed, instances } = d;
 
   const instTest = (activeInstance && activeInstance.test) ? activeInstance.test : activeTest;
   const spectraColumns = instTest.spectraColumns || [];
@@ -1744,9 +1621,6 @@ export const Data = ({ ctx }) => {
   );
 };
 
-
-
-
 // =========================================================================
 // ssNMRSections.jsx - REPLACE SpectraVisualization COMPONENT
 // =========================================================================
@@ -1911,7 +1785,6 @@ export const SpectraVisualization = ({ ctx }) => {
 DATA ANALYSIS — FITTING (DYNAMIC PURE COMPONENTS)
 ======================================================================== */
 
-
 const OrderProfileChart = ({ res }) => {
   const data = (res.activeBases || []).map((k) => ({
     name: SSNMR_FIT_COMPONENTS[k]?.label || k,
@@ -1994,8 +1867,6 @@ export const QuadrupolarFitting = ({ ctx }) => {
 
   const overlayRef = useRef(null);
   const allXs = [...expData.map((p) => p.x), ...simData.map((p) => p.x)];
-  const allYs = [...expData.map((p) => p.y), ...simData.map((p) => p.y)].filter((y) => Number.isFinite(y));
-  const padX = allXs.length ? ((Math.max(...allXs) - Math.min(...allXs)) * 0.03 || 1) : 1;
   const resolvedXDomain = [
     dom(cfg.xMin) !== undefined ? dom(cfg.xMin) : (allXs.length ? Math.min(...allXs) - padX : -80),
     dom(cfg.xMax) !== undefined ? dom(cfg.xMax) : (allXs.length ? Math.max(...allXs) + padX : 80)
@@ -2369,7 +2240,7 @@ const Condition3DScatter = ({ series, colorOf, includedPts, xLabel, yLabel, zLab
   );
 };
 
-const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlot }) => {
+const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) => {
   const cfg = { ...DEFAULT_CHART_STYLE, ...(plot.style || {}) };
   const set = (patch) => updatePlot(plot.id, patch);
   const setCfg = (patch) => updatePlot(plot.id, { style: { ...cfg, ...patch } });
@@ -3098,7 +2969,6 @@ export const DataAnalysis = ({ ctx }) => (
   </CollapsibleSection>
 );
 
-
 /* ========================================================================
    SIMULATIONS — DEUTERIUM SPECTRUM SIMULATOR
    ======================================================================== */
@@ -3132,7 +3002,7 @@ const DeuteriumMixer = ({ isExpanded, onToggleExpand }) => {
     for (let x = xMin; x <= xMax; x += 0.25) {
       xs.push(x);
       let v = 0;
-      Object.entries(scProfile).forEach(([k, scPct]) => {
+      Object.entries(scProfile).forEach(([, scPct]) => {
         const dNu = 1.5 * chi * (scPct / 100);
         if (dNu > 0.01) v += doubletAt(x, dNu, 1, sigma);
       });

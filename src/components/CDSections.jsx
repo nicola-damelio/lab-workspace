@@ -29,10 +29,6 @@ const SPECTRA_PALETTE = [
   '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#06b6d4',
   '#84cc16', '#e11d48', '#0ea5e9', '#a855f7', '#10b981'
 ];
-const DEFAULT_CD_CHART_CFG = {
-  yMin: '', yMax: '', xMin: '190', xMax: '260',
-  fontSize: 12, lineWidth: 2
-};
 
 /* CollapsibleSection now lives in ./ui (single shared definition). */
 // Chart/style constants (FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES)
@@ -904,7 +900,6 @@ const chartBoxStyle = (cfg) => ({
   minHeight: 220
 });
 
-
 const NumField = ({ label, value, onChange, step = 1, w = 'w-full' }) => {
   const [local, setLocal] = useState(value ?? '');
   useEffect(() => { setLocal(value ?? ''); }, [value]);
@@ -941,21 +936,6 @@ const TxtField = ({ label, value, onChange, placeholder = '', w = 'w-full' }) =>
   );
 };
 
-const CfgNumInput = ({ value, onCommit, placeholder = 'auto' }) => {
-  const [local, setLocal] = useState(value ?? '');
-  useEffect(() => { setLocal(value ?? ''); }, [value]);
-  return (
-    <input
-      type="number" placeholder={placeholder} value={local}
-      onWheel={(e) => e.target.blur()}
-      onChange={(e) => setLocal(e.target.value)}
-      onBlur={(e) => onCommit(e.target.value)}
-      onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
-      className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none"
-    />
-  );
-};
-
 const SelField = ({ label, value, onChange, options }) => (
   <div className="flex flex-col gap-1">
     <label className="text-[10px] font-bold text-slate-600">{label}</label>
@@ -965,48 +945,6 @@ const SelField = ({ label, value, onChange, options }) => (
     >
       {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
     </select>
-  </div>
-);
-
-const GraphConfigPanel = ({ cfg, setCfg, series = [], unit = 'a.u.' }) => (
-  <div className="flex flex-col gap-3">
-    <SharedGraphConfig
-      activeTest={{ chartCfg: cfg }}
-      updateActiveTest={(u) => setCfg(u.chartCfg || {})}
-      unit={unit}
-      showHeightSlider
-      chartH={cfg.height}
-      setChartH={(h) => setCfg({ height: h })}
-    />
-    <div className="p-4 bg-white border border-slate-300 rounded-xl grid grid-cols-2 lg:grid-cols-4 gap-3 shadow-sm">
-      <NumField label="Aspect ratio X/Y (W÷H)" step={0.1} value={cfg.aspect} onChange={(v) => setCfg({ aspect: v || 1.8 })} />
-      <TxtField label="Tick step (num: spacing · cat: every N)" value={cfg.tickStep} onChange={(v) => setCfg({ tickStep: v })} placeholder="auto" />
-      <SelField
-        label="Tick label orientation" value={String(cfg.tickAngle || 0)}
-        onChange={(v) => setCfg({ tickAngle: Number(v) })}
-        options={[['0', '0° (horizontal)'], ['-30', '-30°'], ['-45', '-45°'], ['-60', '-60°'], ['-90', '-90° (vertical)'], ['30', '30°'], ['45', '45°'], ['90', '90°']]}
-      />
-      <SelField label="Legend" value={cfg.legend} onChange={(v) => setCfg({ legend: v })} options={[['top', 'Top'], ['bottom', 'Bottom'], ['none', 'None']]} />
-      {series.length > 0 && (
-        <div className="col-span-2 lg:col-span-4 pt-2 border-t border-slate-100 flex flex-col gap-2">
-          <label className="text-[10px] font-bold text-slate-600 uppercase">Series colors (points / lines / bars)</label>
-          <div className="flex flex-wrap gap-3">
-            {series.map((s) => (
-              <label key={s.key} className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
-                <input
-                  type="color"
-                  value={(cfg.colors && cfg.colors[s.key]) || s.color || '#3b82f6'}
-                  onChange={(e) => setCfg({ colors: { ...(cfg.colors || {}), [s.key]: e.target.value } })}
-                  className="w-6 h-6 rounded cursor-pointer border border-slate-300"
-                />
-                {s.label}
-              </label>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-    <p className="text-[9px] text-slate-400">💡 Drag with the mouse over any graph to zoom into a region. Use "Reset Zoom" to restore.</p>
   </div>
 );
 
@@ -1025,7 +963,6 @@ const ErrorTreatmentPanel = ({ plot, set, showFitToggle = true, customActions })
   };
   return <SharedErrorTreatment activeTest={shimTest} updateActiveTest={shimUpdate} showFitToggle={showFitToggle} customActions={customActions} />;
 };
-
 
 const useXZoom = (chartRef, dataDomain, margin = CHART_MARGIN) => {
   const [domain, setDomain] = useState(null);
@@ -1990,8 +1927,6 @@ export const SpectrumFitting = ({ ctx }) => {
   const allXs = [...expData.map((p) => p.x), ...simData.map((p) => p.x)];
   const allYs = [...expData.map((p) => p.y), ...simData.map((p) => p.y)].filter((y) => Number.isFinite(y));
   const padX = allXs.length ? ((Math.max(...allXs) - Math.min(...allXs)) * 0.03 || 1) : 1;
-  const padY = allYs.length ? ((Math.max(...allYs) - Math.min(...allYs)) * 0.05 || 1) : 1;
-  const resolvedXDomain = [dom(cfg.xMin) !== undefined ? dom(cfg.xMin) : (allXs.length ? Math.min(...allXs) - padX : 190), dom(cfg.xMax) !== undefined ? dom(cfg.xMax) : (allXs.length ? Math.max(...allXs) + padX : 260)];
   const zoomFit = useXZoom(overlayRef, resolvedXDomain);
 
   const allSaved = useMemo(() => {
@@ -2364,7 +2299,7 @@ const Condition3DScatter = ({ series, colorOf, includedPts, xLabel, yLabel, zLab
   );
 };
 
-const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlot }) => {
+const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) => {
   const cfg = { ...DEFAULT_CHART_STYLE, ...(plot.style || {}) };
   const set = (patch) => updatePlot(plot.id, patch);
   const setCfg = (patch) => updatePlot(plot.id, { style: { ...cfg, ...patch } });

@@ -538,19 +538,9 @@ const GAMMA_H = 2.6752218744e8;
 const GAMMA = { '15N': -2.7126e7, '13C': 6.7283e7, '1H': 2.6752218744e8, '31P': 1.083e8 };
 const DEFAULT_DIST = { '15N': 1.02, '13C': 1.09, '1H': 1.09 };
 const DEFAULT_CSA = { '15N': -160, '13C': -20, '1H': 0 };
-const STANDARD_ATOMS = ['HN', 'N', 'HA', 'CA', 'CB', 'CG', 'CD', 'CE', 'CZ', 'CO', "C'", 'Cα', 'Cβ', 'Cγ', 'Cδ', 'CH3', 'NH', 'NH2', 'OG', 'OD', 'OE'];
 const BOLTZMANN = 1.380649e-23;
 
-const nucleusFromAtom = (atom) => {
-    const a = (atom || '').toUpperCase().replace(/[′']/g, '').trim();
-    if (!a) return '15N';
-    if (a === 'HN' || a.startsWith('N') || a === 'NH' || a === 'NH2' || a.startsWith('O')) return '15N';
-    if (a.startsWith('C') || a === "C'") return '13C';
-    if (a.startsWith('H')) return '1H';
-    return '15N';
-};
 
-const residuesFromSequence = (seq) => Array.from((seq || '').replace(/[^a-zA-Z]/g, '').toUpperCase()).map((aa, i) => `${aa}${i + 1}`);
 
 function spectralDensity(w, tau_c, S2, useInternal, tau_e) {
     let val = (S2 * tau_c) / (1 + (w * tau_c) ** 2);
@@ -591,9 +581,6 @@ function tauFromMW(MW_Da, eta_PaS, T_K, vbar_cm3g = 0.73, hydration = 0.3) {
     return (eta_PaS * (MW_Da * 1e-3 * (vbar_cm3g * 1e-3 + hydration * 1e-3))) / (RGAS * T_K);
 }
 
-function mwFromTau(tau_s, eta_PaS, T_K, vbar_cm3g = 0.73, hydration = 0.3) {
-    return (((tau_s * RGAS * T_K) / eta_PaS) / (vbar_cm3g * 1e-3 + hydration * 1e-3)) * 1e3;
-}
 
 // Stokes-Einstein diffusion coefficient
 function stokesEinsteinD(T_K, eta_PaS, r_m) {
@@ -737,7 +724,7 @@ function fitInversionRecovery(xs, ys) {
 /* ---------------------------------------------------------------------------
 ERROR INPUT UI
 --------------------------------------------------------------------------- */
-export const ErrInput = ({ label, value, sdRaw, isOverridden, onSave, onReset }) => {
+export const ErrInput = ({ label, value, isOverridden, onSave, onReset }) => {
     const [tempVal, setTempVal] = useState(value !== undefined ? value : '');
     useEffect(() => { setTempVal(value !== undefined ? value : ''); }, [value]);
     return (
@@ -926,7 +913,7 @@ const makeTable = (overrides = {}) => ({
 /* ---------------------------------------------------------------------------
 SIMULATION SECTION
 --------------------------------------------------------------------------- */
-function SimulationSection({ sim, setSim, solvents = [], activeTest }) {
+function SimulationSection({ sim, setSim, activeTest }) {
     const [simType, setSimType] = useState('diffusion');
     const solventName = activeTest?.solvent || '';
     const temperature = parseFloat(activeTest?.temperature) || 298;

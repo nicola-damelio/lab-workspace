@@ -56,7 +56,7 @@ const parsedWavelengths = useMemo(() => {
   }, [wavelengthData]);
 
 const parsedSpectra = useMemo(() => {
-    return (spectraColumns || []).map((col, idx) => {
+    return (spectraColumns || []).map((col) => {
 const values = (col.data || '').split(/[\n,]+/).map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
       return { ...col, values, color: col.color || '#3b82f6' };
     });
@@ -1472,7 +1472,7 @@ scales: {
 x: {
 type: 'logarithmic',
 title: { display: true, text: 'τc (ns)', font: { size: 11, weight: 'bold' }, color: '#334155' },
-ticks: { font: { size: 9 }, color: '#64748b', callback: (v) => { const log = Math.log10(v); if ([0.1,1,10,50].includes(v)) return v; return null; } },
+ticks: { font: { size: 9 }, color: '#64748b', callback: (v) => { if ([0.1,1,10,50].includes(v)) return v; return null; } },
 grid: { color: '#f1f5f9' }
 },
 y: {
@@ -1840,7 +1840,7 @@ export const normalizeImagePreview = (url) => {
    (plus its preview component) instead of editing an if/else chain.
    ========================================================================== */
 export const NOTEBOOK_ANALYSIS_PREVIEWS = {
-  plate: [(test, ctx) => <PlateAnalysisPreview test={test} />],
+  plate: [(test) => <PlateAnalysisPreview test={test} />],
   flow_cytometry: [(test, ctx) => <FCSOverlayVisualization ctx={ctx} />],
   cd: [(test, ctx) => <CDAnalysisGraphsPreview test={test} instances={ctx.instances} />],
   nmr: [(test, ctx) => (
@@ -1849,10 +1849,10 @@ export const NOTEBOOK_ANALYSIS_PREVIEWS = {
       <Fitting ctx={ctx} />
     </div>
   )],
-  'nmr-fittings': [(test, ctx) => (
+  'nmr-fittings': [(test) => (
     <div className="mt-2">
       <NMRFittingGraphsPreview test={test} />
     </div>
   )],
-  md_simulation: [(test, ctx) => <MDAnalysisPreview test={test} />],
+  md_simulation: [(test) => <MDAnalysisPreview test={test} />],
 };
