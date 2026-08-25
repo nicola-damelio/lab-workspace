@@ -4,7 +4,7 @@
    Scientists/Operators, ScientistLoginGate/Modal) extracted from App.jsx.
    ========================================================================= */
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { normalizeOperators, hashPassword } from '../../utils/auth';
 
 export const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => {
