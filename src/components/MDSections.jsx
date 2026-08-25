@@ -849,6 +849,8 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   atomNameMap={atomNameMap}
   atomRenames={activeTest.atomRenames || {}}
   onAtomRenames={(map) => updateActiveTest({ atomRenames: map })}
+  resRenumber={activeTest.resRenumber || {}}
+  onResRenumber={(map) => updateActiveTest({ resRenumber: map })}
   labelMode={atomLabelMode}
   height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '620px' : '520px'}
 />
@@ -1611,7 +1613,7 @@ export const MDAnalysisSection = ({ ctx }) => {
       if (!src) throw new Error(`"${jobs[0].file.name}": unsupported format, or the topology could not anchor it (XTC/DCD need the exact matching topology; TRR works standalone).`);
       const res = await computeMDTrajectoryAnalysis(
         topo, src.frames,
-        { stride: calcOpts.stride, maxFrames: calcOpts.maxFrames, doSasa: calcOpts.sasa, doRg: true },
+        { stride: calcOpts.stride, maxFrames: calcOpts.maxFrames, doSasa: calcOpts.sasa, doRg: true, renumber: activeTest.resRenumber || {} },
         (p) => setCalc((s) => ({ ...s, done: p.done, total: p.total, msg: p.msg }))
       );
       setCalcData(res);

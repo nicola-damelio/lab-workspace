@@ -302,7 +302,7 @@ const yieldUI = () => new Promise((r) => setTimeout(r, 0));
  *            sasa:[{time,value}], nFrames }
  */
 export async function computeMDTrajectoryAnalysis(topo, frames, opts = {}, onStatus) {
-  const { stride = 1, maxFrames = 500, doSasa = true, doRg = true } = opts;
+  const { stride = 1, maxFrames = 500, doSasa = true, doRg = true, renumber } = opts;
   const atoms = Array.isArray(topo.atoms) ? topo.atoms : [];
   if (atoms.length === 0) throw new Error('No topology atoms.');
 
@@ -394,8 +394,9 @@ export async function computeMDTrajectoryAnalysis(topo, frames, opts = {}, onSta
   }
   const rmsf = [];
   for (let r = 0; r < nResidues; r++) {
+    const origResno = residueNos[r];
     rmsf.push({
-      residue: residueNos[r],
+      residue: renumber && renumber[String(origResno)] != null && renumber[String(origResno)] !== '' ? renumber[String(origResno)] : origResno,
       value: countByRes[r] > 0 ? Math.sqrt(msfByRes[r] / countByRes[r]) : 0
     });
   }

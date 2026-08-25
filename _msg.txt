@@ -1,0 +1,15 @@
+feat(viewer/md): large-structure auto-handling + arbitrary residue renumbering
+
+- NMRMoleculeViewer: structures above ~1.5 MB of PDB text are intercepted
+  BEFORE NGL parses them (file picker, structureFileData data-URL and
+  structureText all funnel through requestStructureLoad). A modal offers to
+  load only the first chain or the first 500 residues (PDB text is filtered
+  up front), load everything, or cancel. Non-PDB formats get a warning.
+  Structures above 25,000 atoms render with a light 'line' representation and
+  no side-chains so the view stays usable.
+- Residue renumbering: new "Renumber residues" panel in the 3D viewer lists
+  every residue with an editable number, plus "Renumber from 1" (fixes PDBs
+  that do not start at 1) and "Clear". The {originalResno: newResno} map is
+  applied to the viewer's atom list, persisted via onResRenumber to
+  activeTest.resRenumber, and used by the MD analysis: the calculated RMSF
+  per-residue axis now shows the renumbered residues too.

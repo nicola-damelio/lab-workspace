@@ -21,6 +21,48 @@ const estimateTrajectoryFrames = (file, atomCount) => {
   return Math.max(1, Math.round(file.size / bytesPerFrame));
 };
 
+// ---- Large-structure detection & PDB subsetting ----------------------------
+// Large systems freeze NGL during parse AND render. When a structure source is
+// big, ask the user whether to load only the first chain / first N residues
+// (PDB text is filtered BEFORE parsing), or everything.
+const LARGE_STRUCT_BYTES = 1.5 * 1024 * 1024;   // ~1.5 MB of PDB text
+const LARGE_ATOM_COUNT = 25000;                 // lighter rendering above this
+
+// Keep only the first chain (or first N distinct residues) of a PDB text so
+// NGL does not have to parse / render a huge system.
+const filterPdbText = (text, mode, limit = 500) => {
+  const lines = String(text || '').split(/\r?\n/);
+  const kept = [];
+  let chain = null;
+  const seenRes = new Set();
+  let inCoords = false;
+  for (const line of lines) {
+    const rec = line.slice(0, 6).trim();
+    if (rec === 'ATOM' || rec === 'HETATM') {
+      inCoords = true;
+      const resSeq = parseInt(line.slice(22, 26), 10) || 0;
+      const ch = line.slice(21, 22).trim();
+      if (mode === 'chain') {
+        if (chain === null) chain = ch || 'A';
+        if ((ch || 'A') !== chain) continue;
+      } else {
+        if (seenRes.size >= limit) continue;
+        seenRes.add(resSeq);
+      }
+      kept.push(line);
+    } else if (rec === 'TER' || rec === 'END' || rec === 'ENDMDL') {
+      if (inCoords) kept.push(line);
+      if (rec === 'END') break;
+    } else if (inCoords) {
+      if (rec === 'CONECT' || rec === 'CRYST1') kept.push(line);
+    } else {
+      kept.push(line); // header records before the first ATOM/HETATM
+    }
+  }
+  if (!kept.some((l) => l.trim().startsWith('END'))) kept.push('END');
+  return kept.join('\n');
+};
+
 const SELECT_COLOR_HEX = 0xf59e0b;
 const MANUAL_COLOR_HEX = 0x16a34a;
 
@@ -464,6 +506,8 @@ atomRenames,
 onAtomRenames,
 labelMode,
 namingConvention = 'nmr',
+resRenumber,
+onResRenumber,
 height = '520px',
 }) => {
 const containerRef = useRef(null);
@@ -489,6 +533,31 @@ const [backboneStyle, setBackboneStyle] = useState('cartoon');
 const [renames, setRenames] = useState(() => (atomRenames && typeof atomRenames === 'object' ? { ...atomRenames } : {}));
 const renamesRef = useRef(renames);
 renamesRef.current = renames;
+
+// ---- Residue renumbering (3D labels / analysis numbering) ----
+// Map of { originalResno: newResno } — lets the user renumber residues when a
+// PDB does not start at 1 (or any custom renumbering).
+const [renumberMap, setRenumberMap] = useState(() => (resRenumber && typeof resRenumber === 'object' ? { ...resRenumber } : {}));
+const [showRenumberPanel, setShowRenumberPanel] = useState(false);
+const [residueInfo, setResidueInfo] = useState([]); // [{ resno, resname, count }]
+const displayResno = (resno) => {
+  const v = renumberMap[String(resno)];
+  return v != null ? v : resno;
+};
+const commitRenumber = (next) => {
+  setRenumberMap(next);
+  if (typeof onResRenumber === 'function') onResRenumber(next);
+};
+
+// Sync externally-provided residue renumbering (e.g. restored from the active test)
+useEffect(() => {
+  if (resRenumber && typeof resRenumber === 'object') {
+    setRenumberMap((prev) => {
+      const next = { ...resRenumber };
+      return JSON.stringify(next) === JSON.stringify(prev) ? prev : next;
+    });
+  }
+}, [resRenumber]);
 const [renameMode, setRenameMode] = useState(false);
 const [renameTarget, setRenameTarget] = useState(null); // atom index being renamed
 const [renameDraft, setRenameDraft] = useState('');
@@ -536,6 +605,8 @@ const [speed, setSpeed] = useState(10);
 const [stride, setStride] = useState(1);        // play every Nth frame (keeps total time)
 const [maxFrames, setMaxFrames] = useState(0);  // 0 = keep all frames
 const [pendingTraj, setPendingTraj] = useState(null); // { file, estFrames, suggested } awaiting user confirmation
+const [pendingStructure, setPendingStructure] = useState(null); // large-structure confirmation { file|text|url, name, ext, text?, size }
+const largeStructureRef = useRef(false); // true when the loaded structure has very many atoms
 const trajRef = useRef(null);
 const blobUrlsRef = useRef([]);
 
@@ -655,7 +726,7 @@ for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
 const blob = new Blob([bytes], { type: mime });
 const ext = structureFormat !== 'auto' ? structureFormat : (structureFileName || 'structure.pdb').split('.').pop();
 const fakeFile = new File([blob], structureFileName || 'structure.pdb', { type: mime });
-setLoadRequest({ file: fakeFile, url: null, ts: Date.now() });
+requestStructureLoad({ file: fakeFile, url: null, ts: Date.now() });
 } catch (e) {
 setErrorMsg('Failed to decode structure file data.');
 setStatus('error');
@@ -675,7 +746,7 @@ if (!structureText) { lastLoadedTextRef.current = null; return; }
 if (structureText !== lastLoadedTextRef.current) {
 lastLoadedTextRef.current = structureText;
 setFile(null);
-setLoadRequest({ file: null, url: null, text: structureText, ext: structureTextExt || 'pdb', ts: Date.now() });
+requestStructureLoad({ file: null, url: null, text: structureText, ext: structureTextExt || 'pdb', ts: Date.now() });
 }
 }, [structureText, structureTextExt, manualOverride]);
 
@@ -707,6 +778,12 @@ const addDefaultReps = (component) => {
   const isNucleic = moleculeTypeRef.current === 'dna' || moleculeTypeRef.current === 'rna';
   if (isNucleic) {
     try { trackBase(component.addRepresentation('ball+stick', { sele: 'all', colorScheme: 'element', multipleBond: true, aspectRatio: 1.1 })); } catch (e) {}
+    return;
+  }
+  // Very large systems: use a light representation so the view stays usable.
+  if (largeStructureRef.current) {
+    try { trackBase(component.addRepresentation('line', { sele: 'protein', colorScheme: 'element' })); } catch (e) {}
+    try { trackBase(component.addRepresentation('line', { sele: 'hetero and not water', colorScheme: 'element' })); } catch (e) {}
     return;
   }
   const bb = backboneStyleRef.current || 'cartoon';
@@ -793,6 +870,7 @@ componentRef.current = component;
 // Note: NGL viewer structures from PDB/SDF already contain hydrogens when generated correctly.
 // We skip addHydrogens() to prevent "is not a function" errors in this NGL version.
 
+largeStructureRef.current = !!(component.structure && component.structure.atomCount > LARGE_ATOM_COUNT);
 addDefaultReps(component);
 
 component.autoView();
@@ -959,6 +1037,48 @@ onTrajectoryFile?.(pendingTraj.file);
 setPendingTraj(null);
 };
 
+// ---- Large-structure confirmation ------------------------------------------
+// All structure sources funnel through here so a big PDB can be subset BEFORE
+// NGL parses it (which is what freezes the browser).
+const requestStructureLoad = (payload) => {
+const file = payload.file;
+const name = file ? file.name : (payload.name || 'structure.pdb');
+const ext = (name.split('.').pop() || 'pdb').toLowerCase();
+const size = file ? file.size : (payload.text ? payload.text.length : 0);
+const isPdb = ext === 'pdb' || ext === 'ent';
+if (size >= LARGE_STRUCT_BYTES) {
+if (file && isPdb) {
+file.text()
+.then((text) => setPendingStructure({ ...payload, name, ext, text, size }))
+.catch(() => setLoadRequest(payload));
+} else {
+setPendingStructure({ ...payload, name, ext, size });
+}
+return;
+}
+setLoadRequest(payload);
+};
+
+const applyPendingStructure = (mode) => {
+if (!pendingStructure) return;
+const ps = pendingStructure;
+let payload;
+if (mode && ps.text) {
+payload = { text: filterPdbText(ps.text, mode === 'chain' ? 'chain' : 'residues', 500), ext: 'pdb', ts: Date.now() };
+} else if (ps.file) {
+payload = { file: ps.file, url: null, ts: Date.now() };
+} else if (ps.text) {
+payload = { text: ps.text, ext: ps.ext || 'pdb', ts: Date.now() };
+} else if (ps.url) {
+payload = { url: ps.url, ts: Date.now() };
+} else {
+setPendingStructure(null);
+return;
+}
+setLoadRequest(payload);
+setPendingStructure(null);
+};
+
 // Jump back to the start when the stride / max-frames controls change.
 useEffect(() => {
 if (trajRef.current && numFrames > 0) {
@@ -983,13 +1103,19 @@ useEffect(() => {
   const component = componentRef.current;
   if (!component || status !== 'ready' || !component.structure) return;
   const list = [];
+  const resMap = new Map();
   try {
     component.structure.eachAtom((a) => {
-      list.push({ idx: a.index, element: a.element || '', name: a.atomname || '', resno: a.resno || 0, resname: a.resname || '' });
+      const rawResno = a.resno != null ? Number(a.resno) : 0;
+      list.push({ idx: a.index, element: a.element || '', name: a.atomname || '', resno: displayResno(rawResno), rawResno, resname: a.resname || '' });
+      if (!resMap.has(rawResno)) resMap.set(rawResno, { resno: rawResno, resname: a.resname || '', count: 0 });
+      resMap.get(rawResno).count++;
     });
   } catch (e) {}
   setAtomList(list);
-}, [status]);
+  setResidueInfo([...resMap.values()]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [status, renumberMap]);
 
 // ---- PyMOL-style selections & effects ----
 const selCompsRef = useRef({});       // key -> [representations]
@@ -1292,7 +1418,8 @@ sidechainCompRef.current = null;
 }
 };
 clearSidechain();
-if (sidechainStyle !== 'none' && !hideAll && !pymolActive) {
+// Skip heavy side-chain rendering on very large systems (keeps the view usable).
+if (sidechainStyle !== 'none' && !hideAll && !pymolActive && !largeStructureRef.current) {
 try {
 sidechainCompRef.current = component.addRepresentation(sidechainStyle, {
 sele: '(protein and sidechain) or (protein and .CA)', color: 'element', multipleBond: true,
@@ -1408,7 +1535,7 @@ setManualOverride(true);
 setFile(f);
 setPdbId('');
 setTrajFile(null);
-setLoadRequest({ file: f, url: null, ts: Date.now() });
+requestStructureLoad({ file: f, url: null, ts: Date.now() });
 onStructureFile?.(f);   // share the chosen topology with the analysis sections
 e.target.value = '';
 }, [onStructureFile]);
@@ -1536,6 +1663,63 @@ className="w-4 h-4 accent-blue-600"
 />
 Show atom names
 </label>
+</div>
+
+{/* Residue renumbering */}
+<div className="flex flex-col gap-1">
+<button
+type="button"
+onClick={() => setShowRenumberPanel((v) => !v)}
+className="text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg px-2 py-1.5 text-left flex items-center justify-between gap-2"
+>
+<span>🔢 Renumber residues</span>
+<span className="text-slate-400">{showRenumberPanel ? '▲' : '▼'}</span>
+</button>
+{showRenumberPanel && residueInfo.length > 0 && (
+<div className="border border-slate-200 rounded-lg bg-white shadow-sm p-2 flex flex-col gap-1.5 max-h-56 overflow-y-auto">
+<div className="flex items-center justify-between gap-1">
+<span className="text-[9px] font-bold text-slate-400 uppercase">Residue → new number</span>
+<div className="flex gap-1">
+<button
+type="button"
+onClick={() => {
+const next = {};
+residueInfo.forEach((r, i) => { next[String(r.resno)] = i + 1; });
+commitRenumber(next);
+}}
+className="text-[9px] font-bold bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-1.5 py-0.5 rounded"
+title="Renumber all residues consecutively starting at 1 (fixes PDBs that do not start at 1)"
+>
+Renumber from 1
+</button>
+<button
+type="button"
+onClick={() => commitRenumber({})}
+className="text-[9px] font-bold bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-1.5 py-0.5 rounded"
+title="Clear renumbering (restore original numbers)"
+>
+Clear
+</button>
+</div>
+</div>
+{residueInfo.map((r, i) => (
+<div key={r.resno} className="flex items-center gap-1.5 text-[10px] font-mono text-slate-600">
+<span className="w-3 text-slate-400">{i + 1}.</span>
+<span className="flex-1 truncate">{r.resname}{r.resno}</span>
+<input
+type="number"
+value={renumberMap[String(r.resno)] !== undefined && renumberMap[String(r.resno)] !== '' ? renumberMap[String(r.resno)] : r.resno}
+onChange={(e) => {
+const nv = parseInt(e.target.value, 10);
+commitRenumber({ ...renumberMap, [String(r.resno)]: Number.isFinite(nv) ? nv : '' });
+}}
+className="border border-slate-300 rounded px-1 py-0.5 w-16 text-right outline-none focus:border-blue-500"
+title="New residue number (blank = keep the original)"
+/>
+</div>
+))}
+</div>
+)}
 </div>
 
 <div className="flex flex-col gap-1">
@@ -1851,6 +2035,59 @@ onClick={acceptTrajReduction}
 className="text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg shadow-sm"
 >
 ✓ Yes, reduce frames
+</button>
+</div>
+</div>
+</div>
+)}
+
+
+{/* Large-structure confirmation modal */}
+{pendingStructure && (
+<div className="fixed inset-0 z-[99999] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+<div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+<h3 className="text-sm font-black text-slate-800 mb-2">Large structure detected</h3>
+<p className="text-xs text-slate-600 mb-3">
+<b className="text-slate-800">{pendingStructure.name}</b> is {fmtBytesMB(pendingStructure.size)}.
+Loading everything may freeze the browser.
+</p>
+{pendingStructure.text ? (
+<>
+<p className="text-xs text-slate-600 mb-3">Load only a subset so the view stays responsive:</p>
+<div className="flex flex-col gap-2 mb-3">
+<button
+type="button"
+onClick={() => applyPendingStructure('chain')}
+className="text-left text-xs font-bold bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-3 py-2 rounded-lg transition-colors"
+>
+🔗 First chain only
+</button>
+<button
+type="button"
+onClick={() => applyPendingStructure('residues')}
+className="text-left text-xs font-bold bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-3 py-2 rounded-lg transition-colors"
+>
+🧩 First 500 residues
+</button>
+</div>
+</>
+) : (
+<p className="text-xs text-amber-700 mb-3">This format cannot be pre-filtered — loading may be slow.</p>
+)}
+<div className="flex flex-wrap gap-2 justify-end">
+<button
+type="button"
+onClick={() => setPendingStructure(null)}
+className="text-xs font-bold text-slate-500 hover:text-slate-700 px-3 py-2 rounded-lg"
+>
+Cancel
+</button>
+<button
+type="button"
+onClick={() => applyPendingStructure(null)}
+className="text-xs font-bold bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 px-3 py-2 rounded-lg shadow-sm"
+>
+📦 Load everything
 </button>
 </div>
 </div>
