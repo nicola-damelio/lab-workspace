@@ -49,13 +49,13 @@ $targets = Get-ChildItem 'src/components/AppModules' -File -Filter *.jsx
 $anyFlags = $false
 foreach($file in $targets){
   $content = [System.IO.File]::ReadAllText($file.FullName)
-  # Code-only copy: strip comments and string/template literals so identifiers
-  # inside prose, className="...", titles etc. don't cause false flags.
-  $code = [regex]::Replace($content, '/\*[\s\S]*?\*/', ' ')
-  $code = [regex]::Replace($code, '(?m)//[^\r\n]*', ' ')
-  $code = [regex]::Replace($code, '`[^`]*`', ' ')
+  # Code-only copy: strip string/template literals FIRST (a `//` or `/*` inside a
+  # URL/string must not be read as a comment), then comments.
+  $code = [regex]::Replace($content, '`[^`]*`', ' ')
   $code = [regex]::Replace($code, '"(?:[^"\\]|\\.)*"', ' ')
   $code = [regex]::Replace($code, "'(?:[^'\\]|\\.)*'", ' ')
+  $code = [regex]::Replace($code, '/\*[\s\S]*?\*/', ' ')
+  $code = [regex]::Replace($code, '(?m)//[^\r\n]*', ' ')
 
   $local = @()
   foreach($m in [regex]::Matches($code, '\b(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)')){ $local += $m.Groups[1].Value }
