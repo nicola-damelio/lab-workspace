@@ -954,7 +954,7 @@ if (cancelled) return;
 try {
 frames = await NGL.autoLoad(cand, { ext });
 if (frames) break;
-} catch { lastTrajErr = e; }
+} catch (e) { lastTrajErr = e; }
 }
 if (!frames) throw lastTrajErr || new Error('Could not parse trajectory frames from any candidate URL');
 
@@ -1343,7 +1343,7 @@ const applyPyMOLScript = (text) => {
       setSelStyles(next);
     }
     log.push(`✓ Parsed ${sels.length} selection(s) and ${acts.length} command(s).`);
-  } catch {
+  } catch (e) {
     log.push(`⚠️ ${e?.message || 'Failed to parse script.'}`);
   }
   setPymolLog(log.join('\n'));

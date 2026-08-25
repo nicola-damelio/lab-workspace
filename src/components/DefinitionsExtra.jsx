@@ -744,7 +744,7 @@ const fetchPulseSequenceFromLink = async (url) => {
       }
 
       lastError = new Error('The file does not look like a pulse program.');
-    } catch {
+    } catch (err) {
       lastError = err;
     }
   }

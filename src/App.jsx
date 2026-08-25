@@ -892,7 +892,7 @@ if (customType === 'nmr-fittings') {
           authSettings: JSON.stringify(authSettings),
           updatedAt: window.firebase ? window.firebase.firestore.FieldValue.serverTimestamp() : Date.now()
         }, { merge: true });
-      } catch { console.warn('Could not sync app config to Firestore:', e.message); }
+      } catch (e) { console.warn('Could not sync app config to Firestore:', e.message); }
     }, 1500);
     return () => { if (appConfigSaveRef.current) clearTimeout(appConfigSaveRef.current); };
   }, [operators, authSettings, user]);
@@ -970,7 +970,7 @@ if (customType === 'nmr-fittings') {
 
     try {
       await auth.signInWithPopup(provider);
-    } catch {
+    } catch (e) {
       console.error('Errore login:', e);
     }
   };
@@ -1164,7 +1164,7 @@ useEffect(() => {
         );
         setSaveStatus('saved');
       }
-    } catch {
+    } catch (e) {
       setSaveStatus('error');
       setSaveErrorMsg(e.message);
       console.error('Save error:', e);
@@ -1226,7 +1226,7 @@ useEffect(() => {
       document.body.removeChild(a);
 
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch {
+    } catch (e) {
       setDialog({
         type: 'alert',
         title: 'Save Failed',
@@ -1597,7 +1597,7 @@ const handleBackToExplorer = async () => {
           [...stored].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
         );
       }
-    } catch {
+    } catch (e) {
       console.error('Back to explorer save error:', e);
     }
   }
@@ -1615,7 +1615,7 @@ const openDataset = (dset) => {
     } else {
       s = parsePayload(dset);
     }
-  } catch {
+  } catch (e) {
     console.error('Dataset parse error:', e);
     s = null;
   }
@@ -1821,7 +1821,7 @@ const openDataset = (dset) => {
             });
 
             await batch.commit();
-          } catch {
+          } catch (e) {
             console.error('Batch delete failed', e);
 
             setDialog({

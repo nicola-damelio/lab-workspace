@@ -128,8 +128,8 @@ const fetchPubchemPdb = async (smiles) => {
 
 const resolveOrganicStructureText = async (smiles) => {
   const errors = [];
-  try { return { text: await fetchCactusPdb(smiles), ext: 'pdb' }; } catch { errors.push(`Cactus: ${e.message}`); }
-  try { const { sdf } = await fetchPubchemPdb(smiles); return { text: sdf, ext: 'sdf' }; } catch { errors.push(`PubChem: ${e.message}`); }
+  try { return { text: await fetchCactusPdb(smiles), ext: 'pdb' }; } catch (e) { errors.push(`Cactus: ${e.message}`); }
+  try { const { sdf } = await fetchPubchemPdb(smiles); return { text: sdf, ext: 'sdf' }; } catch (e) { errors.push(`PubChem: ${e.message}`); }
   throw new Error(`No 3D structure could be resolved for this SMILES.\n${errors.join('\n')}`);
 };
 
@@ -2349,7 +2349,7 @@ export const MDMembraneContactSection = ({ ctx }) => {
       }
       setOutputs(out);
       setStatus({ state: 'done', msg: '', done: 0 });
-    } catch {
+    } catch (e) {
       setStatus({ state: 'error', msg: e.message, done: 0 });
     }
   };
@@ -2669,7 +2669,7 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
       });
       storeAnalysisToAtomTable(activeTest, updateActiveTest, { analysis_scd: scdCells });
       setStatus({ state: 'done', msg: '', done: 0 });
-    } catch {
+    } catch (e) {
       setStatus({ state: 'error', msg: e.message, done: 0 });
     }
   };
@@ -3180,7 +3180,7 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
       }
       setOutputs(outs);
       setStatus({ state: 'done', msg: '', done: 0 });
-    } catch {
+    } catch (e) {
       setStatus({ state: 'error', msg: e.message, done: 0 });
     }
   };

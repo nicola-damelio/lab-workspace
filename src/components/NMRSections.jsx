@@ -341,6 +341,7 @@ const RANDOM_COIL_DB = { A: { HA: 4.35, CA: 52.5, CB: 19.1, CO: 177.8 }, C: { HA
 
 const SS_META = { C: { label: 'Random coil', color: '#64748b' }, H: { label: 'α-Helix', color: '#8b5cf6' }, E: { label: 'β-Sheet', color: '#f59e0b' } };
 const SUGAR_ANOMER_OFFSETS = { alpha: { H1: 0.25 }, beta: { H1: -0.15 } };
+const DNA_FORM_OFFSETS = { B: { "H1'": 0, "H2'": 0, "H3'": 0, "H2''": 0 }, A: { "H1'": 0.2, "H2'": -0.3, "H3'": 0.15, "H2''": -0.25 }, Z: { "H1'": -0.15, "H2'": 0.25, "H3'": -0.1, "H2''": 0.2 } };
 const RESIDUE_COLORS = ['#3b82f6', '#8b5cf6', '#d946ef', '#ec4899', '#f43f5e', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#6366f1'];
 
 // ================= GENERIC HELPERS =================
@@ -2608,14 +2609,14 @@ const proteinSequenceToPdbText = (seq, ssString, title = 'GENERATED') => {
       } else if (char !== 'P') {
         bbH.push({ name: 'H', pos: nerfPlace(residues[i - 1].C, r.N, r.CA, 1.01, _deg2rad(120), _deg2rad(180)) });
       }
-    } catch {
+    } catch (e) {
       console.warn(`Backbone-H placement failed for residue ${i + 1} (${char}), continuing without them:`, e);
     }
     // Side chain -- never let one residue's spec kill the whole structure
     let sidechain = [];
     try {
       sidechain = placeSidechainAtoms(char, r);
-    } catch {
+    } catch (e) {
       console.warn(`Side-chain generation failed for residue ${i + 1} (${char}), keeping backbone only:`, e);
     }
     const ordered = [];
@@ -2830,11 +2831,11 @@ const resolveOrganicStructureText = async (smiles) => {
   try {
     const text = await fetchCactusPdb(smiles);
     return { text, ext: 'pdb' };
-  } catch { errors.push(`Cactus: ${e.message}`); }
+  } catch (e) { errors.push(`Cactus: ${e.message}`); }
   try {
     const { sdf } = await fetchPubchemPdb(smiles);
     return { text: sdf, ext: 'sdf' };
-  } catch { errors.push(`PubChem: ${e.message}`); }
+  } catch (e) { errors.push(`PubChem: ${e.message}`); }
   throw new Error(`No 3D structure could be resolved for this SMILES.\n${errors.join('\n')}`);
 };
 
@@ -2896,7 +2897,7 @@ const useNmrDerived = (activeTest, ctx = {}) => {
        }
        
        if (typeof mol.delete === 'function') mol.delete();
-     } catch {
+     } catch (e) {
        console.warn("RDKit organic parsing failed, using fallback atoms:", e);
        atoms = Array.from({ length: 40 }, (_, i) => `Atom-${i}`);
      }
@@ -3213,6 +3214,22 @@ if (moleculeType === 'protein' && res.simN !== null && res.simN !== undefined &&
 };
 
 // ================= IMPORT HELPERS =================
+const gaussSolve = (A, b) => {
+  const n = b.length;
+  const M = A.map((r, i) => [...r, b[i]]);
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+    if (Math.abs(M[p][c]) < 1e-12) return null;
+    [M[c], M[p]] = [M[p], M[c]];
+    for (let r = 0; r < n; r++) {
+      if (r === c) continue;
+      const f = M[r][c] / M[c][c];
+      for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k];
+    }
+  }
+  return M.map((r, i) => r[n] / r[i][i]);
+};
 const tokenizeExpr = (s) => {
   const t = []; let i = 0;
   const D = (c) => /[0-9.]/.test(c), A = (c) => /[a-zA-Z_]/.test(c);
@@ -3486,7 +3503,7 @@ const getMolWithExplicitHs = (smiles) => {
     }
     
     return molWithHs;
-  } catch {
+  } catch (e) {
     console.error('RDKit parse error:', e);
     return null;
   }
@@ -3805,7 +3822,7 @@ const generatedStructure = useMemo(() => {
     }
     
     console.log('ℹ️ 3D Generation skipped: No valid sequence provided for this molecule type.');
-  } catch {
+  } catch (e) {
     console.error('❌ 3D structure generation failed with error:', e);
   }
   
@@ -3855,6 +3872,7 @@ const generatedStructure = useMemo(() => {
   const focusIdx = activeTest.focusIdx !== undefined ? activeTest.focusIdx : 'ALL';
   const setFocusIdx = (val) => updateActiveTest({ focusIdx: val });
   const [ssBrush, setSSBrush] = useState('H');
+  const [expandedPanel, setExpandedPanel] = useState(null);
   const selectedKeys = getSelectedKeys(activeTest);
   const manualKeys = useMemo(() => getManualKeys(d.shifts), [d.shifts]);
   
@@ -3892,7 +3910,7 @@ const generatedStructure = useMemo(() => {
       try {
         const { text, ext } = await resolveOrganicStructureText(targetSmiles);
         triggerDownload(text, `${activeTest.name || 'molecule'}_3D.${ext}`);
-      } catch {
+      } catch (e) {
         alert('Failed to generate a 3D structure for this SMILES: ' + e.message);
       }
     } else if ((d.moleculeType === 'protein' || d.moleculeType === 'dna' || d.moleculeType === 'rna') && d.seq) {
@@ -3902,7 +3920,7 @@ const generatedStructure = useMemo(() => {
           ? proteinSequenceToPdbText(d.seq, activeTest.secondaryStructure || '', activeTest.name || 'PROTEIN')
           : nucleicSequenceToPdbText(d.seq, d.moleculeType, activeTest.name || 'NUCLEIC_ACID');
         triggerDownload(text, `${activeTest.name || d.moleculeType}_3D.pdb`);
-      } catch {
+      } catch (e) {
         alert('Failed to generate structure: ' + e.message);
       }
     } else {
@@ -4748,7 +4766,7 @@ export const DataSection = ({ ctx }) => {
          });
       }
       setNmrBrukerMsg(`✅ Successfully imported ${results.length} spectrum/spectra.`);
-    } catch {
+    } catch (err) {
       setNmrBrukerMsg(`⚠️ ${err.message}`);
     }
     setNmrBrukerBusy(false);
@@ -4766,7 +4784,7 @@ export const DataSection = ({ ctx }) => {
         try { acqusText = await (await fetch(_nmrResolveDrive(nmrBrukerAcqusUrl))).text(); } catch { acqusText = ''; }
       }
       applyNmrBruker(importBruker1rPpm({ dataBuffer: await res.arrayBuffer(), acqusText, manualSWppm: parseManual(nmrBrukerSwPpm), manualO1ppm: parseManual(nmrBrukerO1Ppm)||0 }), null);
-    } catch { setNmrBrukerMsg('\u26a0\ufe0f Fetch failed: ' + e.message); }
+    } catch (e) { setNmrBrukerMsg('\u26a0\ufe0f Fetch failed: ' + e.message); }
     setNmrBrukerBusy(false);
   };
 

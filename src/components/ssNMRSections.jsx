@@ -1106,7 +1106,7 @@ export const Data = ({ ctx }) => {
           });
       }
       setBrukerMsg(`✅ Successfully imported ${results.length} spectrum/spectra.`);
-    } catch {
+    } catch (err) {
       setBrukerMsg(`⚠️ ${err.message}`);
     }
     setBrukerBusy(false);
@@ -1129,7 +1129,7 @@ export const Data = ({ ctx }) => {
         manualSWkHz: parseManual(brukerSw),
         manualOffsetKHz: parseManual(brukerOffset) || 0
       }), null);
-    } catch {
+    } catch (e) {
       setBrukerMsg(`⚠️ Fetch failed: ${e.message} — the file must be shared as "Anyone with the link".`);
     }
     setBrukerBusy(false);
@@ -1802,6 +1802,7 @@ export const QuadrupolarFitting = ({ ctx }) => {
 
   const overlayRef = useRef(null);
   const allXs = [...expData.map((p) => p.x), ...simData.map((p) => p.x)];
+  const padX = allXs.length ? ((Math.max(...allXs) - Math.min(...allXs)) * 0.03 || 1) : 1;
   const resolvedXDomain = [
     dom(cfg.xMin) !== undefined ? dom(cfg.xMin) : (allXs.length ? Math.min(...allXs) - padX : -80),
     dom(cfg.xMax) !== undefined ? dom(cfg.xMax) : (allXs.length ? Math.max(...allXs) + padX : 80)

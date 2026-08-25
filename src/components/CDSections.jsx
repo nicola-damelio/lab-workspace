@@ -1164,7 +1164,7 @@ export const Data = ({ ctx }) => {
         const parsed = parseJascoCDText(text);
         parsed.filename = f.name;
         results.push(parsed);
-      } catch { console.error('Parse error:', err); }
+      } catch (err) { console.error('Parse error:', err); }
     }
 
     if (results.length === 0) {
@@ -1210,7 +1210,7 @@ export const Data = ({ ctx }) => {
       const parsed = parseJascoCDText(jascoText);
       applyJasco(parsed, null);
       setJascoText('');
-    } catch {
+    } catch (err) {
       setJascoMsg(`⚠️ Error parsing text: ${err.message}`);
       console.error('Jasco paste parse error:', err);
     }
@@ -1876,6 +1876,10 @@ export const SpectrumFitting = ({ ctx }) => {
   }, [savedFit, fitParsed, spec]);
 
   const overlayRef = useRef(null);
+  const allXs = [...expData.map((p) => p.x), ...simData.map((p) => p.x)];
+  const padX = allXs.length ? ((Math.max(...allXs) - Math.min(...allXs)) * 0.03 || 1) : 1;
+  const resolvedXDomain = [dom(cfg.xMin) !== undefined ? dom(cfg.xMin) : (allXs.length ? Math.min(...allXs) - padX : 190), dom(cfg.xMax) !== undefined ? dom(cfg.xMax) : (allXs.length ? Math.max(...allXs) + padX : 260)];
+  const zoomFit = useXZoom(overlayRef, resolvedXDomain);
 
   const allSaved = useMemo(() => {
     const out = [];
