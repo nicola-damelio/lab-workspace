@@ -426,6 +426,10 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
                 selectedKeys={selectedKeys}
                 manualKeys={manualKeys}
                 onAtomClick={handleAtomClick}
+                atomRenames={activeTest.atomRenames || {}}
+                onAtomRenames={(map) => updateActiveTest({ atomRenames: map })}
+                resRenumber={activeTest.resRenumber || {}}
+                onResRenumber={(map) => updateActiveTest({ resRenumber: map })}
                 height="480px"
               />
             )}

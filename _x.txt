@@ -1,0 +1,2 @@
+FINDSTR : Impossible d’ouvrir const
+FINDSTR : Impossible d’ouvrir buildMDTrajectoryJobs\ src\components\MDSections.jsx 

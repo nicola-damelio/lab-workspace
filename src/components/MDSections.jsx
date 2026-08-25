@@ -33,7 +33,7 @@ import {
   getFFBackboneAtoms, findFFAtom,
   normalizeTrajectoryUrl, detectTrajectoryFormat, getTrajectoryFormatInfo,
   getMDInstances, getMDActiveInstance, getMDLayers, getMDActiveLayerKey, getMDLayerValues,
-  writeMDCellValue,
+  writeMDCellValue, MD_ANALYSIS_LAYERS,
   generateRMSDData, generateRMSFData, generateRgData, generateSASAData,
   generateEnergyData, generateTemperatureData,
   DEFAULT_MD_CHART_STYLE, mdLineDash, mdSeriesColor, mdDom, mdMakeTicks, mdChartBoxStyle,
@@ -295,13 +295,27 @@ const useMDDerived = (activeTest, ctx = {}) => {
   const activeLayerKey = getMDActiveLayerKey(activeTest);
   const activeValues = getMDLayerValues(activeInstance, activeLayerKey);
 
+  // Pseudo-atoms created by the analyses (system-level Rg/SASA/RMSD, SCD
+  // carbons, …), so they become selectable in the Per-Atom and Condition plots.
+  const analysisAtoms = useMemo(() => {
+    const seen = new Map();
+    MD_ANALYSIS_LAYERS.forEach((l) => {
+      const vals = getMDLayerValues(activeInstance, l.key);
+      Object.keys(vals || {}).forEach((k) => {
+        if (!/^\d+-/.test(k)) return;
+        seen.set(k, k.replace(/^\d+-/, ''));
+      });
+    });
+    return [...seen.entries()].map(([key, label]) => ({ key, label: `0 ${label}` }));
+  }, [activeInstance]);
+
   return {
     moleculeType, seq, validChars, isPolymer, DB, typeLabel,
     ffKey, ffVersion, ffInfo, ffBackbone, waterModel, ensemble, integrator,
     thermostat, barostat, timestep, nSteps, temperature, pressure,
     trajectoryUrl, trajectoryFormat,
     getSSAt, getFormAt, sugarConf, sugarAnomer, lipidDB, dnaFormDefault,
-    parsedSeq, estSeq, structure, atomOptions,
+    parsedSeq, estSeq, structure, atomOptions: [...atomOptions, ...analysisAtoms],
     instances, activeInstance, layers, activeLayerKey, activeValues,
     metaSeq
   };
@@ -1617,7 +1631,32 @@ export const MDAnalysisSection = ({ ctx }) => {
         (p) => setCalc((s) => ({ ...s, done: p.done, total: p.total, msg: p.msg }))
       );
       setCalcData(res);
-      setCalc({ state: 'done', msg: `Calculated from ${res.nFrames} frames (${src.source}).`, done: 0, total: 0, error: '' });
+      // Populate the per-atom table so Per-Atom and Condition plots can use the
+      // calculated parameters (RMSF per residue + system-level Rg/SASA/RMSD).
+      const layerCells = {};
+      if (Array.isArray(res.rmsf)) {
+        const cells = {};
+        res.rmsf.forEach((row, r) => {
+          ['N', 'CA', 'C', 'O'].forEach((atom) => {
+            cells[`${r}-${atom}`] = row.value != null ? +row.value.toFixed(4) : '';
+          });
+        });
+        layerCells.analysis_rmsf = cells;
+      }
+      const avgOf = (arr) => {
+        if (!Array.isArray(arr) || !arr.length) return null;
+        let s = 0, n = 0;
+        arr.forEach((p) => { const v = parseFloat(p.value); if (Number.isFinite(v)) { s += v; n++; } });
+        return n ? s / n : null;
+      };
+      const rgAvg = avgOf(res.rg);
+      const sasaAvg = avgOf(res.sasa);
+      const rmsdLast = res.rmsd && res.rmsd.length ? parseFloat(res.rmsd[res.rmsd.length - 1].value) : null;
+      if (Number.isFinite(rgAvg)) layerCells.analysis_rg = { '0-Rg': +rgAvg.toFixed(4) };
+      if (Number.isFinite(sasaAvg)) layerCells.analysis_sasa = { '0-SASA': +sasaAvg.toFixed(4) };
+      if (Number.isFinite(rmsdLast)) layerCells.analysis_rmsd = { '0-RMSD': +rmsdLast.toFixed(4) };
+      storeAnalysisToAtomTable(activeTest, updateActiveTest, layerCells);
+      setCalc({ state: 'done', msg: `Calculated from ${res.nFrames} frames (${src.source}) — values added to the per-atom table.`, done: 0, total: 0, error: '' });
     } catch (err) {
       setCalc((s) => ({ ...s, state: 'error', error: err?.message || String(err) }));
     }
@@ -2066,6 +2105,36 @@ const buildMDTrajectoryJobs = async (activeTest, extraRuns) => {
     }
   }
   return jobs;
+};
+
+// Store analysis-derived parameters into the per-atom table of the active MD
+// instance (as "analysis_*" layers), so the Per-Atom and Condition plots can
+// graph them. layerCells = { layerKey: { cellKey: value } }.
+const storeAnalysisToAtomTable = (activeTest, updateActiveTest, layerCells) => {
+  if (!updateActiveTest || !layerCells) return;
+  const activeInst = getMDActiveInstance(activeTest);
+  if (!activeInst) return;
+  const layers = {};
+  Object.entries(layerCells).forEach(([lk, cells]) => {
+    if (cells && Object.keys(cells).length) layers[lk] = cells;
+  });
+  if (Object.keys(layers).length === 0) return;
+
+  const mdValues = { ...(activeTest.mdValues || {}) };
+  Object.keys(layers).forEach((lk) => { mdValues[lk] = { ...(mdValues[lk] || {}), ...layers[lk] }; });
+
+  const insts = Array.isArray(activeTest.instances) && activeTest.instances.length ? activeTest.instances : null;
+  if (insts) {
+    const instances = insts.map((inst) => {
+      if (inst.id !== activeInst.id) return inst;
+      const vals = { ...(inst.values || {}) };
+      Object.keys(layers).forEach((lk) => { vals[lk] = { ...(vals[lk] || {}), ...layers[lk] }; });
+      return { ...inst, values: vals };
+    });
+    updateActiveTest({ instances, mdValues });
+  } else {
+    updateActiveTest({ mdValues });
+  }
 };
 
 // custom recharts dot: draws a coloured symbol per series (awk pt_group style)
@@ -2605,6 +2674,17 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
         }
       }
       setOutputs(outs);
+      // Populate the per-atom table with the computed order parameters |SCD|
+      // (one pseudo-atom per lipid group + carbon, e.g. "0-POPC sn-1 C14").
+      const scdCells = {};
+      outs.forEach((o) => {
+        (o.result.scdGroups || []).forEach((g) => {
+          (g.carbons || []).forEach((c) => {
+            scdCells[`0-${g.label} ${c.x}`] = c.scd;
+          });
+        });
+      });
+      storeAnalysisToAtomTable(activeTest, updateActiveTest, { analysis_scd: scdCells });
       setStatus({ state: 'done', msg: '', done: 0 });
     } catch (e) {
       setStatus({ state: 'error', msg: e.message, done: 0 });
