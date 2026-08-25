@@ -33,6 +33,9 @@ export const VIS_PALETTES = {
 const _rdkitListeners = new Set();
 let _rdkitStatus = 'loading'; 
 
+const RDKIT_JS_URL = 'https://unpkg.com/@rdkit/rdkit/dist/RDKit_minimal.js';
+const RDKIT_WASM_URL = 'https://unpkg.com/@rdkit/rdkit/dist/RDKit_minimal.wasm';
+
 const loadRDKitScript = () => {
   if (window.__RDKit) {
     _rdkitStatus = 'ready';
@@ -44,12 +47,14 @@ const loadRDKitScript = () => {
   
   const script = document.createElement('script');
   script.id = 'rdkit-wasm-script';
-script.src = 'https://unpkg.com/@rdkit/rdkit/dist/RDKit.js'; // Full build includes addHs
+  // NOTE: "RDKit.js" does NOT exist in the @rdkit/rdkit dist (only RDKit_minimal.js),
+  // so the old URL was a 404 and the 2D formula silently fell back to a static image.
+  script.src = RDKIT_JS_URL;
   script.async = true;
   
   script.onload = () => {
     if (typeof window.initRDKitModule === 'function') {
-      window.initRDKitModule().then((Module) => {
+      window.initRDKitModule({ locateFile: () => RDKIT_WASM_URL }).then((Module) => {
         window.__RDKit = Module;
         _rdkitStatus = 'ready';
         _rdkitListeners.forEach(fn => fn('ready'));
@@ -99,7 +104,11 @@ const useRdkitReady = () => {
     _rdkitListeners.add(fn);
     return () => _rdkitListeners.delete(fn);
   }, []);
-  return { rdkitReady: status === 'ready', rdkitFailed: status === 'failed' };
+  // If window.__RDKit was already loaded by another module, treat it as ready even
+  // when this module's own status flag is stale (e.g. an earlier failed script tag).
+  const effectiveReady = status === 'ready' || !!window.__RDKit;
+  const effectiveFailed = status === 'failed' && !window.__RDKit;
+  return { rdkitReady: effectiveReady, rdkitFailed: effectiveFailed };
 };
 // =====================================================================
 

@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, ReferenceArea
 } from 'recharts';
-import { ChartControlBar, SharedChartStylePanel, useXZoom, useYZoom, ChartPanel, CHART_FS_CLASSES, useChartFsHeight } from './SharedAnalysisTools';
+import { ChartControlBar, SharedChartStylePanel, useXZoom, ChartPanel, CHART_FS_CLASSES, useChartFsHeight } from './SharedAnalysisTools';
 import { parseSimulationParameters } from './MDData';
 import {
   CONTACT_DEFAULTS, parseTopology, computeContactRDF, demoFrames,
@@ -1926,53 +1926,64 @@ const contactDot = (symbol, color) => (props) => {
   return <g>{shapes[symbol] || shapes.circle}</g>;
 };
 
-const MDContactChart = ({ rows, series, yLabel, height = 480, fontSize = 9 }) => {
-  const effHeight = useChartFsHeight(height);
+const MDContactChart = ({ rows, series, yLabel, cfg }) => {
+  const effHeight = useChartFsHeight(cfg.height || 480);
   const ref = useRef(null);
+  const fontSize = cfg.fontSize || 9;
   let yMax = 0;
   rows.forEach((r) => series.forEach((s) => { const v = r[s.key]; if (typeof v === 'number' && v > yMax) yMax = v; }));
-  const yZoom = useYZoom(ref, [0, yMax || 1], { top: 8, right: 8, bottom: 96, left: 8 });
+  const chartData = useMemo(() => rows.map((r, i) => ({ ...r, __xi: i })), [rows]);
+  // X-axis drag-to-zoom on the atom axis (horizontal drag selects a range), like the other charts
+  const zoom = useXZoom(ref, [0, Math.max(1, rows.length - 1)], { top: 8, right: 8, bottom: 96, left: 8 });
+  const ticks = [];
+  for (let i = Math.max(0, Math.ceil(zoom.domain[0])); i <= Math.min(rows.length - 1, Math.floor(zoom.domain[1])); i++) ticks.push(i);
+  const colorOf = (s, i) => (cfg.colors && cfg.colors[s.key]) || s.color || AWK_PALETTE[i % AWK_PALETTE.length];
   return (
     <div className="flex flex-col gap-1">
-      {yZoom.isZoomed && (
+      {zoom.isZoomed && (
         <div className="flex justify-end">
-          <button type="button" onClick={yZoom.reset} className="text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">↩ Reset Zoom</button>
+          <button type="button" onClick={zoom.reset} className="text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">↩ Reset Zoom</button>
         </div>
       )}
       <div className="flex gap-3">
-        <div ref={ref} onMouseDown={yZoom.onMouseDown} style={{ flex: 1, minWidth: 0 }} className="select-none">
+        <div ref={ref} onMouseDown={zoom.onMouseDown} style={{ flex: 1, minWidth: 0 }} className="select-none">
           <ResponsiveContainer width="100%" height={effHeight}>
-            <LineChart data={rows} margin={{ top: 8, right: 8, bottom: 96, left: 8 }}>
+            <LineChart data={chartData} margin={{ top: 8, right: 8, bottom: 96, left: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="atom" interval={0} height={100}
-                     tick={{ fontSize, angle: -90, textAnchor: 'end' }} />
+              <XAxis dataKey="__xi" type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow
+                     ticks={ticks} tickFormatter={(v) => { const r = chartData[Math.round(v)]; return r ? r.atom : ''; }}
+                     interval={0} height={100} tick={{ fontSize, angle: -90, textAnchor: 'end' }}
+                     label={{ value: cfg.xAxisLabel || 'Atom group', position: 'insideBottom', offset: -76, style: { fontSize: fontSize + 1 } }} />
               <YAxis tick={{ fontSize: fontSize + 1 }} width={70}
-                     domain={[yZoom.domain[0], yZoom.domain[1]]} allowDataOverflow
-                     label={{ value: yLabel, angle: -90, position: 'insideLeft', style: { fontSize: fontSize + 2 } }} />
+                     domain={[mdDom(cfg.yMin) ?? 0, mdDom(cfg.yMax) ?? (yMax || 1)]} allowDataOverflow
+                     label={{ value: cfg.yAxisLabel || yLabel, angle: -90, position: 'insideLeft', style: { fontSize: fontSize + 2 } }} />
               <Tooltip />
               {series.map((s, i) => {
-                const color = s.color || AWK_PALETTE[i % AWK_PALETTE.length];
+                const color = colorOf(s, i);
                 return (
                   <Line key={s.key} dataKey={s.key} stroke={color}
-                        strokeWidth={2} dot={contactDot(s.symbol || 'circle', color)} isAnimationActive={false} />
+                        strokeWidth={cfg.lineThickness || 2} strokeDasharray={mdLineDash(cfg.lineStyle)}
+                        dot={cfg.pointStyle === 'none' ? false : contactDot(s.symbol || cfg.pointStyle || 'circle', color)}
+                        isAnimationActive={false} />
                 );
               })}
-              {yZoom.refLo !== null && yZoom.refHi !== null && (
-                <ReferenceArea y1={yZoom.refLo} y2={yZoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />
+              {zoom.refLo !== null && zoom.refHi !== null && (
+                <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />
               )}
             </LineChart>
           </ResponsiveContainer>
         </div>
-        <div className="w-52 shrink-0 overflow-y-auto custom-scrollbar border border-slate-200 rounded-lg p-2 text-[11px] font-mono bg-white"
-             style={{ maxHeight: effHeight }}>
-          {series.map((s, i) => (
-            <div key={s.key} className="flex items-center gap-1.5 py-0.5">
-              <span className="inline-block w-3 h-3 shrink-0"
-                    style={{ background: s.color || AWK_PALETTE[i % AWK_PALETTE.length] }} />
-              <span className="truncate" title={s.key}>{s.key}</span>
-            </div>
-          ))}
-        </div>
+        {cfg.legend !== 'none' && (
+          <div className="w-52 shrink-0 overflow-y-auto custom-scrollbar border border-slate-200 rounded-lg p-2 text-[11px] font-mono bg-white"
+               style={{ maxHeight: effHeight }}>
+            {series.map((s, i) => (
+              <div key={s.key} className="flex items-center gap-1.5 py-0.5">
+                <span className="inline-block w-3 h-3 shrink-0" style={{ background: colorOf(s, i) }} />
+                <span className="truncate" title={s.key}>{s.key}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1984,7 +1995,10 @@ export const MDMembraneContactSection = ({ ctx }) => {
   const [extraRuns, setExtraRuns] = useState([]);
   const [status, setStatus] = useState({ state: 'idle', msg: '', done: 0 });
   const [output, setOutput] = useState(null);
-  const [chartStyle, setChartStyle] = useState({ height: 480, fontSize: 9 });
+  const [chartCfg, setChartCfg] = useState({ ...DEFAULT_MD_CHART_STYLE, height: 480, fontSize: 9 });
+  // SharedChartStylePanel calls setCfg(patch) — merge into the current object
+  // instead of replacing it (a plain useState setter would wipe every other field).
+  const setChartCfgMerged = (patch) => setChartCfg((c) => ({ ...(c || {}), ...patch }));
 
   const setOpt = (k, v) => setCfg((c) => ({ ...c, [k]: v }));
 
@@ -2213,15 +2227,13 @@ export const MDMembraneContactSection = ({ ctx }) => {
         <ChartPanel title="Membrane contact recurrence" icon="🫧"
                     cfgPanel={(
                       <div className="flex flex-col gap-3">
+                        <SharedChartStylePanel cfg={chartCfg} setCfg={setChartCfgMerged}
+                                               series={(output.series || []).map((s, i) => ({ key: s.key, label: s.key, color: s.color || AWK_PALETTE[i % AWK_PALETTE.length] }))}
+                                               showHeightSlider={false} />
                         <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
-                          Chart height — {chartStyle.height}px
-                          <input type="range" min="260" max="900" step="10" value={chartStyle.height}
-                                 onChange={(e) => setChartStyle((c) => ({ ...c, height: parseInt(e.target.value) }))} className="accent-blue-600" />
-                        </label>
-                        <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
-                          Font size — {chartStyle.fontSize}
-                          <input type="range" min="7" max="16" step="1" value={chartStyle.fontSize}
-                                 onChange={(e) => setChartStyle((c) => ({ ...c, fontSize: parseInt(e.target.value) }))} className="accent-blue-600" />
+                          Chart height — {chartCfg.height}px
+                          <input type="range" min="260" max="900" step="10" value={chartCfg.height}
+                                 onChange={(e) => setChartCfg((c) => ({ ...c, height: parseInt(e.target.value) }))} className="accent-blue-600" />
                         </label>
                       </div>
                     )}>
@@ -2230,8 +2242,7 @@ export const MDMembraneContactSection = ({ ctx }) => {
             {output.series.length} series · {output.rows.length} {output.xIsPeptide ? 'peptide' : 'membrane'} atom groups
             {output.molResidues?.length ? ` · molecule residue(s): ${output.molResidues.join(', ')}` : ''}
           </div>
-          <MDContactChart rows={output.rows} series={output.series} yLabel={yLabel}
-                          height={chartStyle.height} fontSize={chartStyle.fontSize} />
+          <MDContactChart rows={output.rows} series={output.series} yLabel={yLabel} cfg={chartCfg} />
         </ChartPanel>
       )}
     </div>
@@ -2240,24 +2251,24 @@ export const MDMembraneContactSection = ({ ctx }) => {
 
 // ================= 6) ORDER PARAMETERS & MEMBRANE PROFILES =================
 
-const MDProfileChart = ({ rows, series, xKey, yLabel, xLabel, height = 380, rotateX = false, numericX = false, fontSize = 10 }) => {
-  const effHeight = useChartFsHeight(height);
+const MDProfileChart = ({ rows, series, xKey, yLabel, xLabel, height = 380, rotateX = false, numericX = false, fontSize = 10, cfg = {} }) => {
+  const effHeight = useChartFsHeight(height || cfg.height || 380);
   const ref = useRef(null);
-  let yMin = 0, yMax = 0;
-  rows.forEach((r) => series.forEach((s) => {
-    const v = r[s.key];
-    if (typeof v === 'number') { if (v > yMax) yMax = v; if (v < yMin) yMin = v; }
-  }));
+  const fSize = cfg.fontSize || fontSize || 10;
+  const colorOf = (s, i) => (cfg.colors && cfg.colors[s.key]) || s.color || AWK_PALETTE[i % AWK_PALETTE.length];
   const xVals = rows.map((r) => (typeof r[xKey] === 'number' ? r[xKey] : NaN)).filter(Number.isFinite);
   const xDomain = xVals.length > 1 ? [Math.min(...xVals), Math.max(...xVals)] : [0, 1];
-  // both hooks are called unconditionally (rules of hooks); only one is used
-  const zoomX = useXZoom(ref, xDomain, { top: 8, right: 8, bottom: 36, left: 8 });
-  const zoomY = useYZoom(ref, [yMin, yMax || 1], { top: 8, right: 8, bottom: rotateX ? 90 : 36, left: 8 });
-  const activeZoomX = numericX ? zoomX : null;
-  const activeZoomY = numericX ? null : zoomY;
-  const onMouseDown = (activeZoomX && activeZoomX.onMouseDown) || (activeZoomY && activeZoomY.onMouseDown);
-  const isZoomed = !!(activeZoomX && activeZoomX.isZoomed) || !!(activeZoomY && activeZoomY.isZoomed);
-  const reset = (activeZoomX && activeZoomX.reset) || (activeZoomY && activeZoomY.reset);
+  // X-axis drag-to-zoom in every case (horizontal drag selects an X range).
+  // For a categorical X axis we zoom over the row index, so the axis is rendered numeric.
+  const chartData = useMemo(() => (numericX ? rows : rows.map((r, i) => ({ ...r, __xi: i }))), [rows, numericX]);
+  const zoom = useXZoom(ref, numericX ? xDomain : [0, Math.max(1, rows.length - 1)], { top: 8, right: 8, bottom: rotateX ? 90 : 36, left: 8 });
+  const onMouseDown = zoom.onMouseDown;
+  const isZoomed = zoom.isZoomed;
+  const reset = zoom.reset;
+  const catTicks = [];
+  if (!numericX) {
+    for (let i = Math.max(0, Math.ceil(zoom.domain[0])); i <= Math.min(rows.length - 1, Math.floor(zoom.domain[1])); i++) catTicks.push(i);
+  }
   return (
     <div className="flex flex-col gap-1">
       {isZoomed && reset && (
@@ -2268,41 +2279,43 @@ const MDProfileChart = ({ rows, series, xKey, yLabel, xLabel, height = 380, rota
       <div className="flex gap-3">
         <div ref={ref} onMouseDown={onMouseDown} style={{ flex: 1, minWidth: 0 }} className="select-none">
           <ResponsiveContainer width="100%" height={effHeight}>
-            <LineChart data={rows} margin={{ top: 8, right: 8, bottom: rotateX ? 90 : 36, left: 8 }}>
+            <LineChart data={chartData} margin={{ top: 8, right: 8, bottom: rotateX ? 90 : 36, left: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               {numericX ? (
-                <XAxis dataKey={xKey} type="number" domain={activeZoomX ? [activeZoomX.domain[0], activeZoomX.domain[1]] : ['dataMin', 'dataMax']} allowDataOverflow={!!activeZoomX} tick={{ fontSize }}
-                       label={{ value: xLabel, position: 'insideBottom', offset: -18, style: { fontSize: fontSize + 1 } }} />
+                <XAxis dataKey={xKey} type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow tick={{ fontSize: fSize }}
+                       label={{ value: cfg.xAxisLabel || xLabel, position: 'insideBottom', offset: -18, style: { fontSize: fSize + 1 } }} />
               ) : (
-                <XAxis dataKey={xKey} interval={0} height={rotateX ? 100 : 40}
-                       tick={{ fontSize: rotateX ? fontSize - 1 : fontSize, angle: rotateX ? -90 : 0, textAnchor: rotateX ? 'end' : 'middle' }} />
+                <XAxis dataKey="__xi" type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow
+                       ticks={catTicks} tickFormatter={(v) => { const r = chartData[Math.round(v)]; return r ? r[xKey] : ''; }}
+                       interval={0} height={rotateX ? 100 : 40}
+                       tick={{ fontSize: rotateX ? fSize - 1 : fSize, angle: rotateX ? -90 : 0, textAnchor: rotateX ? 'end' : 'middle' }} />
               )}
-              <YAxis tick={{ fontSize: fontSize + 1 }} width={70}
-                     domain={activeZoomY ? [activeZoomY.domain[0], activeZoomY.domain[1]] : undefined} allowDataOverflow={!!activeZoomY}
-                     label={{ value: yLabel, angle: -90, position: 'insideLeft', style: { fontSize: fontSize + 2 } }} />
+              <YAxis tick={{ fontSize: fSize + 1 }} width={70}
+                     domain={[mdDom(cfg.yMin) ?? 'auto', mdDom(cfg.yMax) ?? 'auto']}
+                     label={{ value: cfg.yAxisLabel || yLabel, angle: -90, position: 'insideLeft', style: { fontSize: fSize + 2 } }} />
               <Tooltip />
               {series.map((s, i) => (
-                <Line key={s.key} dataKey={s.key} stroke={AWK_PALETTE[i % AWK_PALETTE.length]} strokeWidth={2}
-                      dot={{ r: rotateX ? 2.5 : 0, strokeWidth: 0 }} connectNulls isAnimationActive={false} />
+                <Line key={s.key} dataKey={s.key} stroke={colorOf(s, i)}
+                      strokeWidth={cfg.lineThickness || 2} strokeDasharray={mdLineDash(cfg.lineStyle)}
+                      dot={rotateX ? { r: cfg.ptSize || 2.5, strokeWidth: 0 } : false} connectNulls isAnimationActive={false} />
               ))}
-              {activeZoomX && activeZoomX.refLo !== null && activeZoomX.refHi !== null && (
-                <ReferenceArea x1={activeZoomX.refLo} x2={activeZoomX.refHi} strokeOpacity={0.3} fill="#cbd5e1" />
-              )}
-              {activeZoomY && activeZoomY.refLo !== null && activeZoomY.refHi !== null && (
-                <ReferenceArea y1={activeZoomY.refLo} y2={activeZoomY.refHi} strokeOpacity={0.3} fill="#cbd5e1" />
+              {zoom.refLo !== null && zoom.refHi !== null && (
+                <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />
               )}
             </LineChart>
           </ResponsiveContainer>
         </div>
-        <div className="w-48 shrink-0 overflow-y-auto custom-scrollbar border border-slate-200 rounded-lg p-2 text-[11px] font-mono bg-white"
-             style={{ maxHeight: effHeight }}>
-          {series.map((s, i) => (
-            <div key={s.key} className="flex items-center gap-1.5 py-0.5">
-              <span className="inline-block w-3 h-3 rounded-full shrink-0" style={{ background: AWK_PALETTE[i % AWK_PALETTE.length] }} />
-              <span className="truncate" title={s.key}>{s.key}</span>
-            </div>
-          ))}
-        </div>
+        {cfg.legend !== 'none' && (
+          <div className="w-48 shrink-0 overflow-y-auto custom-scrollbar border border-slate-200 rounded-lg p-2 text-[11px] font-mono bg-white"
+               style={{ maxHeight: effHeight }}>
+            {series.map((s, i) => (
+              <div key={s.key} className="flex items-center gap-1.5 py-0.5">
+                <span className="inline-block w-3 h-3 rounded-full shrink-0" style={{ background: colorOf(s, i) }} />
+                <span className="truncate" title={s.key}>{s.key}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -2316,6 +2329,9 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
   const [status, setStatus] = useState({ state: 'idle', msg: '', done: 0 });
   const [outputs, setOutputs] = useState([]); // [{ name, result }]
   const [chartStyle, setChartStyle] = useState({ scdH: 420, densH: 360, potH: 360, fontSize: 10 });
+  const [profCfg, setProfCfg] = useState({ ...DEFAULT_MD_CHART_STYLE, fontSize: 10 });
+  // Merge semantics for SharedChartStylePanel (see setChartCfgMerged above).
+  const setProfCfgMerged = (patch) => setProfCfg((c) => ({ ...(c || {}), ...patch }));
 
   const setOpt = (k, v) => setCfg((c) => ({ ...c, [k]: v }));
 
@@ -2528,51 +2544,59 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
           <ChartPanel title="Order parameter |SCD|" icon="📐"
                       cfgPanel={(
                         <div className="flex flex-col gap-3">
+                          <SharedChartStylePanel cfg={profCfg} setCfg={setProfCfgMerged}
+                                                 series={scdData.series.map((s, i) => ({ key: s.key, label: s.key, color: AWK_PALETTE[i % AWK_PALETTE.length] }))}
+                                                 showHeightSlider={false} />
                           <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
                             Chart height — {chartStyle.scdH}px
                             <input type="range" min="260" max="900" step="10" value={chartStyle.scdH}
                                    onChange={(e) => setChartStyle((c) => ({ ...c, scdH: parseInt(e.target.value) }))} className="accent-indigo-600" />
                           </label>
-                          <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
-                            Font size — {chartStyle.fontSize}
-                            <input type="range" min="8" max="18" step="1" value={chartStyle.fontSize}
-                                   onChange={(e) => setChartStyle((c) => ({ ...c, fontSize: parseInt(e.target.value) }))} className="accent-indigo-600" />
-                          </label>
                         </div>
                       )}>
             <MDProfileChart rows={scdData.rows} series={scdData.series} xKey="x" rotateX
                             yLabel={cfg.signedSCD ? 'SCD' : '|SCD|'}
-                            height={chartStyle.scdH} fontSize={chartStyle.fontSize} />
+                            height={chartStyle.scdH} cfg={profCfg} />
           </ChartPanel>
           {densityRows && (
             <ChartPanel title="Electron density profile" icon="📈"
                         cfgPanel={(
-                          <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
-                            Chart height — {chartStyle.densH}px
-                            <input type="range" min="260" max="900" step="10" value={chartStyle.densH}
-                                   onChange={(e) => setChartStyle((c) => ({ ...c, densH: parseInt(e.target.value) }))} className="accent-indigo-600" />
-                          </label>
+                          <div className="flex flex-col gap-3">
+                            <SharedChartStylePanel cfg={profCfg} setCfg={setProfCfgMerged}
+                                                   series={outputs.map((o, i) => ({ key: o.name, label: o.name, color: AWK_PALETTE[i % AWK_PALETTE.length] }))}
+                                                   showHeightSlider={false} />
+                            <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
+                              Chart height — {chartStyle.densH}px
+                              <input type="range" min="260" max="900" step="10" value={chartStyle.densH}
+                                     onChange={(e) => setChartStyle((c) => ({ ...c, densH: parseInt(e.target.value) }))} className="accent-indigo-600" />
+                            </label>
+                          </div>
                         )}>
               <MDProfileChart rows={densityRows} series={outputs.map((o) => ({ key: o.name }))}
                               xKey="z" numericX xLabel="Distance to bilayer center (nm)"
                               yLabel="Electron density (e/nm³)"
-                              height={chartStyle.densH} fontSize={chartStyle.fontSize} />
+                              height={chartStyle.densH} cfg={profCfg} />
             </ChartPanel>
           )}
           {potentialRows ? (
             <ChartPanel title="Electrostatic potential" icon="⚡"
                         cfgPanel={(
-                          <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
-                            Chart height — {chartStyle.potH}px
-                            <input type="range" min="260" max="900" step="10" value={chartStyle.potH}
-                                   onChange={(e) => setChartStyle((c) => ({ ...c, potH: parseInt(e.target.value) }))} className="accent-indigo-600" />
-                          </label>
+                          <div className="flex flex-col gap-3">
+                            <SharedChartStylePanel cfg={profCfg} setCfg={setProfCfgMerged}
+                                                   series={outputs.filter((o) => o.result.density.potential).map((o, i) => ({ key: o.name, label: o.name, color: AWK_PALETTE[i % AWK_PALETTE.length] }))}
+                                                   showHeightSlider={false} />
+                            <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
+                              Chart height — {chartStyle.potH}px
+                              <input type="range" min="260" max="900" step="10" value={chartStyle.potH}
+                                     onChange={(e) => setChartStyle((c) => ({ ...c, potH: parseInt(e.target.value) }))} className="accent-indigo-600" />
+                            </label>
+                          </div>
                         )}>
               <MDProfileChart rows={potentialRows}
                               series={outputs.filter((o) => o.result.density.potential).map((o) => ({ key: o.name }))}
                               xKey="z" numericX xLabel="Distance to bilayer center (nm)"
                               yLabel="Potential (V)"
-                              height={chartStyle.potH} fontSize={chartStyle.fontSize} />
+                              height={chartStyle.potH} cfg={profCfg} />
             </ChartPanel>
           ) : (
             <div className="text-xs text-slate-400 font-semibold">Electrostatic potential: requires a charges file (.itp / .top).</div>
@@ -2592,137 +2616,119 @@ const SS_LETTER_META = [
   { k: 'S', label: 'bend (S)' }, { k: 'C', label: 'coil (C)' },
 ];
 
-// Interactive DSSP timeline map: a real "plot" instead of a static image.
-// Supports mouse drag-to-zoom (select a region), hover tooltip with the
-// residue / frame / DSSP letter, double-click or button to reset the zoom.
-const DSSPHeatmap = ({ heat, height = 520, width = 0, cellPx = 2 }) => {
-  const canvasRef = useRef(null);
-  const [zoom, setZoom] = useState(null);   // { x0, x1, y0, y1 } sample/residue indices
-  const [hover, setHover] = useState(null); // { x, y, sx, sy, letter } display px + cells
-  const [sel, setSel] = useState(null);     // { x, y, w, h } display px selection rectangle
-  const dragRef = useRef(null);             // { startX, startY, startSx, startSy, lastSx, lastSy }
-  const geomRef = useRef({ padL: 52, padR: 8, padT: 10, padB: 42 });
-  const heatRef = useRef(heat);
-  heatRef.current = heat;
-  const zoomRef = useRef(zoom);
-  zoomRef.current = zoom;
+// Interactive DSSP timeline map as a real SVG chart (same zoom behaviour as the
+// other plots): X axis = time/frame, Y axis = residue. Drag horizontally to zoom
+// the X range, hover for details, double-click or button to reset.
+const DSSPHeatmap = ({ heat, height = 520, width = 0, fontSize = 9 }) => {
+  const wrapRef = useRef(null);
+  const svgRef = useRef(null);
+  const [zoom, setZoom] = useState(null);   // { x0, x1 } sample (frame) indices
+  const [hover, setHover] = useState(null); // { px, py, sx, sy, letter }
+  const [sel, setSel] = useState(null);     // { x, w } display px selection
+  const [w, setW] = useState(0);            // measured container width
+  const dragRef = useRef(null);             // { fx0, lastFx }
 
+  // Fill the panel width (like the other charts), re-measuring on resize
   useEffect(() => {
-    const cv = canvasRef.current;
-    if (!cv || !heat) return;
-    const { padL, padR, padT, padB } = geomRef.current;
-    const px = Math.max(1, Math.min(6, cellPx || 2));
-    const samples = heat.samples || [];
-    const nRes = Math.max(1, heat.nRes || 0);
-    const frameStride = Math.max(1, heat.frameStride || 1);
-    const dtPs = Number(heat.dtPs) || 0;
-    const resIds = Array.isArray(heat.resIds) ? heat.resIds : [];
-    const vis = zoomRef.current || { x0: 0, x1: samples.length - 1, y0: 0, y1: nRes - 1 };
-    const visW = Math.max(1, vis.x1 - vis.x0 + 1);
-    const visH = Math.max(1, vis.y1 - vis.y0 + 1);
-    cv.width = visW * px + padL + padR;
-    cv.height = visH * px + padT + padB;
+    const el = wrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setW(el.clientWidth));
+    ro.observe(el);
+    setW(el.clientWidth);
+    return () => ro.disconnect();
+  }, []);
 
-    const c2 = cv.getContext('2d');
-    c2.fillStyle = '#ffffff';
-    c2.fillRect(0, 0, cv.width, cv.height);
+  const samples = heat?.samples || [];
+  const nSamples = samples.length;
+  const nRes = Math.max(1, heat?.nRes || 0);
+  const resIds = Array.isArray(heat?.resIds) ? heat.resIds : [];
+  const frameStride = Math.max(1, heat?.frameStride || 1);
+  const dtPs = Number(heat?.dtPs) || 0;
 
-    for (let x = 0; x < visW; x++) {
-      const codes = samples[vis.x0 + x];
-      if (!codes) continue;
-      for (let y = 0; y < visH; y++) {
-        c2.fillStyle = SS_COLORS[SS_CODE_ORDER[codes[vis.y0 + y]]];
-        c2.fillRect(padL + x * px, padT + y * px, px, px);
+  const margin = { top: 12, right: 14, bottom: 42, left: 52 };
+  const svgW = Math.max(240, width > 0 ? width : w || 800);
+  const svgH = Math.max(160, height || 520);
+  const plotW = svgW - margin.left - margin.right;
+  const plotH = svgH - margin.top - margin.bottom;
+
+  const vis0 = zoom ? zoom.x0 : 0;
+  const vis1 = zoom ? zoom.x1 : Math.max(0, nSamples - 1);
+  const visW = Math.max(1, vis1 - vis0 + 1);
+
+  // Downsample to a bounded grid so the SVG stays fast like a real chart
+  const cells = useMemo(() => {
+    const MAX_COLS = 260;
+    const MAX_ROWS = 140;
+    const binX = Math.max(1, Math.ceil(visW / MAX_COLS));
+    const binY = Math.max(1, Math.ceil(nRes / MAX_ROWS));
+    const nCols = Math.ceil(visW / binX);
+    const nRows = Math.ceil(nRes / binY);
+    const cw = plotW / nCols;
+    const ch = plotH / nRows;
+    const out = [];
+    for (let cx = 0; cx < nCols; cx++) {
+      const s0 = vis0 + cx * binX;
+      const s1 = Math.min(nSamples - 1, s0 + binX - 1);
+      for (let cy = 0; cy < nRows; cy++) {
+        const r0 = cy * binY;
+        const r1 = Math.min(nRes - 1, r0 + binY - 1);
+        const counts = {};
+        let best = 'C';
+        let bestN = -1;
+        for (let s = s0; s <= s1; s++) {
+          const codes = samples[s];
+          if (!codes) continue;
+          for (let r = r0; r <= r1; r++) {
+            const letter = codes[r] !== undefined ? SS_CODE_ORDER[codes[r]] : 'C';
+            counts[letter] = (counts[letter] || 0) + 1;
+            if (counts[letter] > bestN) { bestN = counts[letter]; best = letter; }
+          }
+        }
+        out.push({ x: margin.left + cx * cw, y: margin.top + cy * ch, w: cw + 0.5, h: ch + 0.5, letter: best });
       }
     }
+    return out;
+  }, [samples, nSamples, nRes, vis0, visW, plotW, plotH, margin]);
 
-    c2.strokeStyle = '#94a3b8';
-    c2.strokeRect(padL - 0.5, padT - 0.5, visW * px + 1, visH * px + 1);
+  const niceTicks = (count, maxTicks) => {
+    const step = Math.max(1, Math.ceil(count / Math.max(1, maxTicks)));
+    const arr = [];
+    for (let i = 0; i < count; i += step) arr.push(i);
+    if (arr.length === 0) arr.push(0);
+    if (arr[arr.length - 1] !== count - 1) arr.push(count - 1);
+    return arr;
+  };
+  const yTicks = niceTicks(nRes, Math.max(3, Math.floor(plotH / 15)));
+  const xTicks = niceTicks(visW, Math.max(3, Math.floor(plotW / 36)));
 
-    // display size: explicit width/height (shape adjustable), otherwise fill panel
-    const containerW = (cv.parentElement && cv.parentElement.clientWidth) || 800;
-    const autoW = Math.max(320, Math.min(containerW - 8, 1400));
-    const propH = (w) => Math.round((w * cv.height) / cv.width);
-    let dispW, dispH;
-    if (width > 0 && height > 0) { dispW = width; dispH = height; }
-    else if (width > 0) { dispW = width; dispH = propH(width); }
-    else { dispW = autoW; dispH = propH(autoW); if (dispH > (height || 520)) { dispH = height || 520; dispW = Math.round((dispH * cv.width) / cv.height); } }
-    cv.style.width = `${dispW}px`;
-    cv.style.height = `${dispH}px`;
-    cv.style.imageRendering = 'pixelated';
-    cv.style.cursor = 'crosshair';
-
-    const niceCeil = (raw) => {
-      if (raw <= 1) return 1;
-      const mag = Math.pow(10, Math.floor(Math.log10(raw)));
-      const norm = raw / mag;
-      return (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag;
-    };
-    c2.font = '9px monospace';
-    c2.fillStyle = '#475569';
-
-    const maxYTicks = Math.max(3, Math.floor((dispH * 0.88) / 15));
-    const yStep = niceCeil(visH / maxYTicks);
-    const drawYLabel = (y) => {
-      const ypx = padT + y * px;
-      c2.fillRect(padL - 4, ypx, 4, 1);
-      const r = vis.y0 + y;
-      const res = resIds[r] != null ? resIds[r] : r + 1;
-      c2.textAlign = 'right';
-      c2.fillText(String(res), padL - 6, ypx + 3);
-    };
-    for (let y = 0; y < visH; y += yStep) drawYLabel(y);
-    if ((visH - 1) % yStep !== 0) drawYLabel(visH - 1);
-
-    c2.save();
-    c2.font = 'bold 10px sans-serif';
-    c2.textAlign = 'center';
-    c2.translate(15, padT + (visH * px) / 2);
-    c2.rotate(-Math.PI / 2);
-    c2.fillText('Residue', 0, 0);
-    c2.restore();
-
-    const maxXTicks = Math.max(3, Math.floor((dispW * 0.92) / 36));
-    const xStep = niceCeil(visW / maxXTicks);
-    const toXLabel = (x) => {
-      const u = (vis.x0 + x) * frameStride;
-      if (dtPs > 0) { const ns = (u * dtPs) / 1000; return ns >= 100 ? ns.toFixed(0) : ns.toFixed(1); }
-      return String(u);
-    };
-    const drawXLabel = (x) => {
-      const xpx = padL + x * px;
-      c2.fillRect(xpx, padT + visH * px, 1, 4);
-      c2.textAlign = 'center';
-      c2.fillText(toXLabel(x), xpx, padT + visH * px + 13);
-    };
-    for (let x = 0; x < visW; x += xStep) drawXLabel(x);
-    if ((visW - 1) % xStep !== 0) drawXLabel(visW - 1);
-
-    c2.font = 'bold 10px sans-serif';
-    c2.textAlign = 'center';
-    c2.fillText(dtPs > 0 ? 'Time (ns)' : 'Frame', padL + (visW * px) / 2, cv.height - 8);
-  }, [heat, zoom, height, width, cellPx]);
+  const toX = (colIdx) => {
+    const s = Math.min(nSamples - 1, vis0 + colIdx);
+    const u = s * frameStride;
+    return dtPs > 0 ? (u * dtPs) / 1000 : u;
+  };
+  const fmtX = (v) => (dtPs > 0 ? (v >= 100 ? v.toFixed(0) : v.toFixed(1)) : String(v));
+  const resAt = (rowIdx) => {
+    const r = Math.min(nRes - 1, rowIdx);
+    return resIds[r] != null ? resIds[r] : r + 1;
+  };
 
   const evtToCell = (e) => {
-    const cv = canvasRef.current;
-    if (!cv || !heatRef.current) return null;
-    const rect = cv.getBoundingClientRect();
-    if (!rect.width || !rect.height) return null;
-    const { padL, padT } = geomRef.current;
-    const px = Math.max(1, Math.min(6, cellPx || 2));
-    const vis = zoomRef.current || { x0: 0, x1: (heatRef.current.samples || []).length - 1, y0: 0, y1: (heatRef.current.nRes || 1) - 1 };
-    const dx = e.clientX - rect.left;
-    const dy = e.clientY - rect.top;
-    const cx = Math.floor(dx / (rect.width / cv.width) / px - padL / px);
-    const cy = Math.floor(dy / (rect.height / cv.height) / px - padT / px);
-    return { sx: vis.x0 + cx, sy: vis.y0 + cy, dx, dy };
+    const svg = svgRef.current;
+    if (!svg || plotW <= 0 || plotH <= 0) return null;
+    const rect = svg.getBoundingClientRect();
+    const fx = (e.clientX - rect.left - margin.left) / plotW;
+    const fy = (e.clientY - rect.top - margin.top) / plotH;
+    if (fx < -0.02 || fx > 1.02 || fy < -0.02 || fy > 1.02) return null;
+    const sx = Math.max(0, Math.min(nSamples - 1, Math.round(vis0 + fx * (visW - 1))));
+    const sy = Math.max(0, Math.min(nRes - 1, Math.round(fy * (nRes - 1))));
+    return { fx, sx, sy, px: e.clientX - rect.left, py: e.clientY - rect.top };
   };
 
   const onMouseDown = (e) => {
     const c = evtToCell(e);
     if (!c) return;
-    dragRef.current = { startX: c.dx, startY: c.dy, startSx: c.sx, startSy: c.sy, lastSx: c.sx, lastSy: c.sy };
-    setSel({ x: c.dx, y: c.dy, w: 0, h: 0 });
+    dragRef.current = { fx0: c.fx, lastFx: c.fx };
+    setSel({ x: margin.left + c.fx * plotW, w: 0 });
     setHover(null);
   };
 
@@ -2730,16 +2736,16 @@ const DSSPHeatmap = ({ heat, height = 520, width = 0, cellPx = 2 }) => {
     const c = evtToCell(e);
     if (!c) return;
     if (!dragRef.current) {
-      const samples = heatRef.current?.samples || [];
       const codes = samples[c.sx];
       const letter = codes ? SS_CODE_ORDER[codes[c.sy]] : null;
-      if (letter) setHover({ x: c.dx, y: c.dy, sx: c.sx, sy: c.sy, letter });
+      if (letter) setHover({ px: c.px, py: c.py, sx: c.sx, sy: c.sy, letter });
       else setHover(null);
       return;
     }
     const d = dragRef.current;
-    d.lastSx = c.sx; d.lastSy = c.sy;
-    setSel({ x: Math.min(d.startX, c.dx), y: Math.min(d.startY, c.dy), w: Math.abs(c.dx - d.startX), h: Math.abs(c.dy - d.startY) });
+    d.lastFx = c.fx;
+    const x = margin.left + Math.min(d.fx0, c.fx) * plotW;
+    setSel({ x, w: Math.abs(c.fx - d.fx0) * plotW });
   };
 
   const onMouseUp = () => {
@@ -2747,24 +2753,13 @@ const DSSPHeatmap = ({ heat, height = 520, width = 0, cellPx = 2 }) => {
     dragRef.current = null;
     setSel(null);
     if (!d) return;
-    const w = Math.abs(d.lastSx - d.startSx);
-    const h = Math.abs(d.lastSy - d.startSy);
-    if (w >= 2 && h >= 2) {
-      setZoom({
-        x0: Math.min(d.startSx, d.lastSx),
-        x1: Math.max(d.startSx, d.lastSx),
-        y0: Math.min(d.startSy, d.lastSy),
-        y1: Math.max(d.startSy, d.lastSy),
-      });
-    }
+    const a = Math.max(0, Math.round(vis0 + Math.min(d.fx0, d.lastFx) * (visW - 1)));
+    const b = Math.min(nSamples - 1, Math.round(vis0 + Math.max(d.fx0, d.lastFx) * (visW - 1)));
+    if (b - a >= 2) setZoom({ x0: a, x1: b });
   };
 
-  const onDoubleClick = () => setZoom(null);
   const onMouseLeave = () => { setHover(null); setSel(null); dragRef.current = null; };
 
-  const frameStride = Math.max(1, heat?.frameStride || 1);
-  const dtPs = Number(heat?.dtPs) || 0;
-  const resIds = Array.isArray(heat?.resIds) ? heat.resIds : [];
   const hoverRes = hover && resIds[hover.sy] != null ? resIds[hover.sy] : (hover ? hover.sy + 1 : null);
   const hoverU = hover ? hover.sx * frameStride : 0;
   const hoverTime = dtPs > 0 ? `${(hoverU * dtPs / 1000).toFixed(2)} ns` : `frame ${hoverU}`;
@@ -2777,26 +2772,51 @@ const DSSPHeatmap = ({ heat, height = 520, width = 0, cellPx = 2 }) => {
           <button type="button" onClick={() => setZoom(null)} className="text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">↩ Reset Zoom (double-click also resets)</button>
         </div>
       )}
-      <div style={{ position: 'relative', width: 'fit-content', maxWidth: '100%' }}>
-        <canvas ref={canvasRef}
-                onMouseDown={onMouseDown}
-                onMouseMove={onMouseMove}
-                onMouseUp={onMouseUp}
-                onMouseLeave={onMouseLeave}
-                onDoubleClick={onDoubleClick}
-                style={{ display: 'block', maxWidth: '100%' }} />
-        {sel && sel.w > 2 && sel.h > 2 && (
-          <div style={{ position: 'absolute', left: sel.x, top: sel.y, width: sel.w, height: sel.h, border: '1px dashed #334155', background: 'rgba(100,116,139,0.25)', pointerEvents: 'none', zIndex: 5 }} />
-        )}
+      <div ref={wrapRef} style={{ position: 'relative', maxWidth: '100%' }}>
+        <svg ref={svgRef} width={svgW} height={svgH} style={{ display: 'block', maxWidth: '100%', cursor: 'crosshair', background: '#fff', borderRadius: 8 }}
+             onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseLeave}
+             onDoubleClick={() => setZoom(null)}>
+          <rect x={margin.left} y={margin.top} width={plotW} height={plotH} fill="#f8fafc" stroke="#94a3b8" strokeWidth={1} />
+          {cells.map((c, i) => (
+            <rect key={i} x={c.x} y={c.y} width={c.w} height={c.h} fill={SS_COLORS[c.letter]} />
+          ))}
+          {xTicks.map((tx) => {
+            const x = margin.left + ((tx + 0.5) / visW) * plotW;
+            return (
+              <g key={`xt${tx}`}>
+                <line x1={x} y1={margin.top + plotH} x2={x} y2={margin.top + plotH + 4} stroke="#64748b" />
+                <text x={x} y={margin.top + plotH + 14} textAnchor="middle" fontSize={Math.max(9, fontSize)} fill="#475569">{fmtX(toX(tx))}</text>
+              </g>
+            );
+          })}
+          {yTicks.map((ty) => {
+            const y = margin.top + ((ty + 0.5) / nRes) * plotH;
+            return (
+              <g key={`yt${ty}`}>
+                <line x1={margin.left - 4} y1={y} x2={margin.left} y2={y} stroke="#64748b" />
+                <text x={margin.left - 6} y={y + 3} textAnchor="end" fontSize={Math.max(9, fontSize)} fill="#475569">{resAt(ty)}</text>
+              </g>
+            );
+          })}
+          <text x={margin.left + plotW / 2} y={svgH - 8} textAnchor="middle" fontSize={Math.max(10, fontSize + 1)} fontWeight="bold" fill="#334155">
+            {dtPs > 0 ? 'Time (ns)' : 'Frame'}
+          </text>
+          <text transform={`translate(14, ${margin.top + plotH / 2}) rotate(-90)`} textAnchor="middle" fontSize={Math.max(10, fontSize + 1)} fontWeight="bold" fill="#334155">
+            Residue
+          </text>
+          {sel && sel.w > 2 && (
+            <rect x={sel.x} y={margin.top} width={sel.w} height={plotH} fill="rgba(100,116,139,0.25)" stroke="#334155" strokeDasharray="4 3" />
+          )}
+        </svg>
         {hover && hoverMeta && (
-          <div style={{ position: 'absolute', left: Math.min(hover.x + 12, (canvasRef.current?.parentElement?.clientWidth || 300) - 160), top: hover.y + 14, pointerEvents: 'none', zIndex: 6 }}
+          <div style={{ position: 'absolute', left: Math.min(hover.px + 12, (wrapRef.current?.clientWidth || 300) - 170), top: hover.py + 14, pointerEvents: 'none', zIndex: 6 }}
                className="bg-slate-900/90 text-white text-[10px] font-mono px-2 py-1 rounded shadow-lg whitespace-nowrap">
             <span className="inline-block w-2.5 h-2.5 rounded-sm mr-1 align-middle" style={{ background: SS_COLORS[hover.letter] }} />
             Res {hoverRes} · {hoverTime} · {hoverMeta.label}
           </div>
         )}
       </div>
-      <div className="text-[10px] text-slate-400">💡 Drag to select a region and zoom · hover for details · double-click to reset</div>
+      <div className="text-[10px] text-slate-400">💡 Drag horizontally to zoom the time/frame axis · hover for details · double-click to reset</div>
     </div>
   );
 };
@@ -2809,8 +2829,10 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
   const [outputs, setOutputs] = useState([]); // [{ name, result }]
   const [heatHeight, setHeatHeight] = useState(520);
   const [heatWidth, setHeatWidth] = useState(0); // 0 = auto (fill panel width)
-  const [heatCellPx, setHeatCellPx] = useState(2);
   const [dsspChartCfg, setDsspChartCfg] = useState({ contentH: 380, occH: 320, fontSize: 10 });
+  const [dsspCfg, setDsspCfg] = useState({ ...DEFAULT_MD_CHART_STYLE, fontSize: 10 });
+  // Merge semantics for SharedChartStylePanel (see setChartCfgMerged above).
+  const setDsspCfgMerged = (patch) => setDsspCfg((c) => ({ ...(c || {}), ...patch }));
 
   const setOpt = (k, v) => setCfg((c) => ({ ...c, [k]: v }));
 
@@ -2890,7 +2912,10 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
   const contentXs = (contentData?.rows || []).map((r) => r.x).filter((x) => typeof x === 'number');
   const contentDomain = contentXs.length > 1 ? [Math.min(...contentXs), Math.max(...contentXs)] : [0, 1];
   const contentZoom = useXZoom(contentRef, contentDomain, { top: 8, right: 8, bottom: 30, left: 8 });
-  const occZoom = useYZoom(occRef, [0, 100], { top: 8, right: 8, bottom: 70, left: 8 });
+  const occRows = useMemo(() => outputs[0]?.result.occupancy || [], [outputs]);
+  // X-axis drag-to-zoom on the residue axis (horizontal drag selects a range), like the other charts
+  const occRowsWithXi = useMemo(() => occRows.map((r, i) => ({ ...r, __xi: i })), [occRows]);
+  const occZoom = useXZoom(occRef, [0, Math.max(1, occRows.length - 1)], { top: 8, right: 8, bottom: 70, left: 8 });
   const contentH = useChartFsHeight(dsspChartCfg.contentH || 380);
   const occH = useChartFsHeight(dsspChartCfg.occH || 320);
 
@@ -2910,8 +2935,11 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
   };
 
   const inp = 'border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500';
-  const occRows = outputs[0]?.result.occupancy || [];
-  const occInterval = Math.max(0, Math.floor(occRows.length / 40));
+  const occTickStep = Math.max(1, Math.floor(occRows.length / 40));
+  const occTicks = [];
+  for (let i = Math.max(0, Math.ceil(occZoom.domain[0])); i <= Math.min(occRows.length - 1, Math.floor(occZoom.domain[1])); i += occTickStep) occTicks.push(i);
+  const occTicksLast = Math.min(occRows.length - 1, Math.floor(occZoom.domain[1]));
+  if (occTicks[occTicks.length - 1] !== occTicksLast) occTicks.push(occTicksLast);
 
   return (
     <div className="space-y-4">
@@ -2985,15 +3013,13 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
                       ) : null}
                       cfgPanel={(
                         <div className="flex flex-col gap-3">
+                          <SharedChartStylePanel cfg={dsspCfg} setCfg={setDsspCfgMerged}
+                                                 series={contentData.series.map((s, i) => ({ key: s.key, label: s.label, color: contentColor(s.key, i) }))}
+                                                 showHeightSlider={false} />
                           <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
                             Chart height — {dsspChartCfg.contentH || 380}px
                             <input type="range" min="180" max="900" step="10" value={dsspChartCfg.contentH || 380}
                                    onChange={(e) => setDsspChartCfg((c) => ({ ...c, contentH: parseInt(e.target.value) }))} className="accent-blue-600" />
-                          </label>
-                          <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
-                            Font size — {dsspChartCfg.fontSize || 10}
-                            <input type="range" min="8" max="18" step="1" value={dsspChartCfg.fontSize || 10}
-                                   onChange={(e) => setDsspChartCfg((c) => ({ ...c, fontSize: parseInt(e.target.value) }))} className="accent-blue-600" />
                           </label>
                         </div>
                       )}>
@@ -3001,13 +3027,17 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
               <ResponsiveContainer width="100%" height={contentH}>
                 <LineChart data={contentData.rows} margin={{ top: 8, right: 8, bottom: 30, left: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="x" type="number" domain={[contentZoom.domain[0], contentZoom.domain[1]]} allowDataOverflow tick={{ fontSize: dsspChartCfg.fontSize || 10 }}
-                         label={{ value: outputs[0].result.xUnit === 'ns' ? 'Time (ns)' : 'Frame', position: 'insideBottom', offset: -18, style: { fontSize: (dsspChartCfg.fontSize || 10) + 1 } }} />
-                  <YAxis tick={{ fontSize: (dsspChartCfg.fontSize || 10) + 1 }} width={70} unit="%"
-                         label={{ value: 'Residues (%)', angle: -90, position: 'insideLeft', style: { fontSize: (dsspChartCfg.fontSize || 10) + 2 } }} />
+                  <XAxis dataKey="x" type="number" domain={[contentZoom.domain[0], contentZoom.domain[1]]} allowDataOverflow tick={{ fontSize: dsspCfg.fontSize || 10 }}
+                         label={{ value: dsspCfg.xAxisLabel || (outputs[0].result.xUnit === 'ns' ? 'Time (ns)' : 'Frame'), position: 'insideBottom', offset: -18, style: { fontSize: (dsspCfg.fontSize || 10) + 1 } }} />
+                  <YAxis tick={{ fontSize: (dsspCfg.fontSize || 10) + 1 }} width={70} unit="%"
+                         domain={[mdDom(dsspCfg.yMin) ?? 'auto', mdDom(dsspCfg.yMax) ?? 'auto']}
+                         label={{ value: dsspCfg.yAxisLabel || 'Residues (%)', angle: -90, position: 'insideLeft', style: { fontSize: (dsspCfg.fontSize || 10) + 2 } }} />
                   <Tooltip />
+                  {dsspCfg.legend !== 'none' && <Legend verticalAlign={dsspCfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: (dsspCfg.fontSize || 10) }} />}
                   {contentData.series.map((s, i) => (
-                    <Line key={s.key} dataKey={s.key} stroke={contentColor(s.key, i)} strokeWidth={2}
+                    <Line key={s.key} dataKey={s.key}
+                          stroke={(dsspCfg.colors && dsspCfg.colors[s.key]) || contentColor(s.key, i)}
+                          strokeWidth={dsspCfg.lineThickness || 2} strokeDasharray={mdLineDash(dsspCfg.lineStyle)}
                           dot={false} connectNulls isAnimationActive={false} />
                   ))}
                   {contentZoom.refLo !== null && contentZoom.refHi !== null && (
@@ -3022,20 +3052,22 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
             <ChartPanel title="DSSP timeline map (residue × frame)" icon="🧬"
                         cfgPanel={(
                           <div className="flex flex-col gap-3">
+                            <SharedChartStylePanel cfg={dsspCfg} setCfg={setDsspCfgMerged}
+                                                   series={[
+                                                     { key: 'alpha', label: 'α-helix', color: SS_GROUP_COLORS.alpha },
+                                                     { key: 'beta', label: 'β-sheet', color: SS_GROUP_COLORS.beta },
+                                                     { key: 'other', label: 'coil/other', color: '#e5e7eb' }
+                                                   ]}
+                                                   showHeightSlider={false} />
                             <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
-                              Width — {heatWidth > 0 ? `${heatWidth}px` : 'Auto (fill panel)'}
+                              Map width — {heatWidth > 0 ? `${heatWidth}px` : 'Auto (fill panel)'}
                               <input type="range" min="0" max="1400" step="20" value={heatWidth}
                                      onChange={(e) => setHeatWidth(parseInt(e.target.value))} className="accent-blue-600" />
                             </label>
                             <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
-                              Height — {heatHeight}px
+                              Map height — {heatHeight}px
                               <input type="range" min="220" max="900" step="10" value={heatHeight}
                                      onChange={(e) => setHeatHeight(parseInt(e.target.value))} className="accent-blue-600" />
-                            </label>
-                            <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
-                              Cell size (resolution) — {heatCellPx}px
-                              <input type="range" min="1" max="6" step="1" value={heatCellPx}
-                                     onChange={(e) => setHeatCellPx(parseInt(e.target.value))} className="accent-blue-600" />
                             </label>
                           </div>
                         )}
@@ -3052,7 +3084,7 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
                             </span>
                           </div>
                         )}>
-              <DSSPHeatmap heat={heat} height={heatHeight} width={heatWidth} cellPx={heatCellPx} />
+              <DSSPHeatmap heat={heat} height={heatHeight} width={heatWidth} fontSize={dsspCfg.fontSize || 9} />
             </ChartPanel>
           )}
 
@@ -3062,26 +3094,36 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
                           <button type="button" onClick={occZoom.reset} className="text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">↩ Reset Zoom</button>
                         ) : null}
                         cfgPanel={(
-                          <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
-                            Chart height — {dsspChartCfg.occH || 320}px
-                            <input type="range" min="180" max="900" step="10" value={dsspChartCfg.occH || 320}
-                                   onChange={(e) => setDsspChartCfg((c) => ({ ...c, occH: parseInt(e.target.value) }))} className="accent-blue-600" />
-                          </label>
+                          <div className="flex flex-col gap-3">
+                            <SharedChartStylePanel cfg={dsspCfg} setCfg={setDsspCfgMerged}
+                                                   series={[
+                                                     { key: 'alpha', label: 'α-helix', color: SS_GROUP_COLORS.alpha },
+                                                     { key: 'beta', label: 'β-sheet', color: SS_GROUP_COLORS.beta },
+                                                     { key: 'other', label: 'coil/other', color: '#e5e7eb' }
+                                                   ]}
+                                                   showHeightSlider={false} />
+                            <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
+                              Chart height — {dsspChartCfg.occH || 320}px
+                              <input type="range" min="180" max="900" step="10" value={dsspChartCfg.occH || 320}
+                                     onChange={(e) => setDsspChartCfg((c) => ({ ...c, occH: parseInt(e.target.value) }))} className="accent-blue-600" />
+                            </label>
+                          </div>
                         )}>
               <div ref={occRef} onMouseDown={occZoom.onMouseDown} className="select-none">
                 <ResponsiveContainer width="100%" height={occH}>
-                  <BarChart data={occRows} margin={{ top: 8, right: 8, bottom: 70, left: 8 }}>
+                  <BarChart data={occRowsWithXi} margin={{ top: 8, right: 8, bottom: 70, left: 8 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                    <XAxis dataKey="label" interval={occInterval} height={80}
-                           tick={{ fontSize: dsspChartCfg.fontSize || 8, angle: -90, textAnchor: 'end' }} />
-                    <YAxis tick={{ fontSize: (dsspChartCfg.fontSize || 10) + 1 }} width={70} unit="%"
-                           domain={[occZoom.domain[0], occZoom.domain[1]]} allowDataOverflow />
+                    <XAxis dataKey="__xi" type="number" domain={[occZoom.domain[0], occZoom.domain[1]]} allowDataOverflow
+                           ticks={occTicks} tickFormatter={(v) => { const r = occRowsWithXi[Math.round(v)]; return r ? r.label : ''; }}
+                           interval={0} height={80} tick={{ fontSize: dsspCfg.fontSize || 8, angle: -90, textAnchor: 'end' }} />
+                    <YAxis tick={{ fontSize: (dsspCfg.fontSize || 10) + 1 }} width={70} unit="%" domain={[0, 100]} />
                     <Tooltip />
-                    <Bar dataKey="alpha" stackId="ss" fill={SS_GROUP_COLORS.alpha} name="α-helix" isAnimationActive={false} />
-                    <Bar dataKey="beta" stackId="ss" fill={SS_GROUP_COLORS.beta} name="β-sheet" isAnimationActive={false} />
-                    <Bar dataKey="other" stackId="ss" fill="#e5e7eb" name="coil/other" isAnimationActive={false} />
+                    {dsspCfg.legend !== 'none' && <Legend verticalAlign={dsspCfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: (dsspCfg.fontSize || 10) }} />}
+                    <Bar dataKey="alpha" stackId="ss" fill={(dsspCfg.colors && dsspCfg.colors.alpha) || SS_GROUP_COLORS.alpha} name="α-helix" isAnimationActive={false} />
+                    <Bar dataKey="beta" stackId="ss" fill={(dsspCfg.colors && dsspCfg.colors.beta) || SS_GROUP_COLORS.beta} name="β-sheet" isAnimationActive={false} />
+                    <Bar dataKey="other" stackId="ss" fill={(dsspCfg.colors && dsspCfg.colors.other) || '#e5e7eb'} name="coil/other" isAnimationActive={false} />
                     {occZoom.refLo !== null && occZoom.refHi !== null && (
-                      <ReferenceArea y1={occZoom.refLo} y2={occZoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />
+                      <ReferenceArea x1={occZoom.refLo} x2={occZoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />
                     )}
                   </BarChart>
                 </ResponsiveContainer>
