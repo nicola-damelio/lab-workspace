@@ -6,7 +6,7 @@ import {
   ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar, Cell
 } from 'recharts';
 import { CollapsibleSection } from './ui';
-import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, LINE_COLORS, VIS_PALETTES } from '../utils/chartStyle';
+import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, LINE_COLORS, VIS_PALETTES, PER_ATOM_COLORS } from '../utils/chartStyle';
 export { VIS_PALETTES };
 
 const HAS_EB = typeof ErrorBar !== 'undefined';
@@ -4582,7 +4582,7 @@ const chartRef = useRef(null);
 
   const seriesList = useMemo(() => {
     const out = [];
-    const defaultColors = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
+    const defaultColors = VIS_PALETTES.default;
     instances.forEach((inst, idx) => {
       const spec = inst.test.nmr1dSpectrum;
       if (!spec || !Array.isArray(spec.xs) || spec.xs.length === 0) return;
@@ -5763,7 +5763,7 @@ const dom = brukerZoomDom || xFull;
 
 
 // ================= SECONDARY SHIFTS SECTION =================
-const SCS_INST_COLORS = ['#3b82f6','#8b5cf6','#f59e0b','#22c55e','#ef4444','#0ea5e9','#ec4899','#14b8a6'];
+const SCS_INST_COLORS = PER_ATOM_COLORS.slice(0, 8);
 
 const computeSCSRows = (estSeq, cs, focusIdx) =>
   estSeq.map((res, idx) => {
@@ -6517,7 +6517,7 @@ const defaultPlotCfg = (n) => ({
 
 // ================= PER ATOM CHART PANEL =================
 // Configurable grouped bar chart: user picks a parameter layer + atoms → bars per residue
-const PAP_COLORS = ['#3b82f6','#8b5cf6','#f59e0b','#22c55e','#ef4444','#0ea5e9','#ec4899','#14b8a6','#f97316','#6366f1'];
+const PAP_COLORS = PER_ATOM_COLORS;
 const makePapPresetId = () => `papPreset_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
 const PerAtomChartPanel = ({ ctx, d, chart, updateChart, removeChart }) => {

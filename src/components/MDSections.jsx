@@ -11,6 +11,7 @@ import {
 import { computeOrderAndDensity, parseChargeMap } from './MDMembraneProfiles';
 import { computeMDTrajectoryAnalysis, parseEnergyFile } from '../utils/mdAnalysis';
 import html2canvas from 'html2canvas';
+import { PER_ATOM_COLORS } from '../utils/chartStyle';
 export { parseSimulationParameters };   
 import NMRMoleculeViewer from './NMRMoleculeViewer';
 import {
@@ -1324,7 +1325,7 @@ const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color,
 
 
 // ================= MD PER ATOM PLOT SECTION =================
-const MD_PAP_COLORS = ['#3b82f6','#8b5cf6','#f59e0b','#22c55e','#ef4444','#0ea5e9','#ec4899','#14b8a6','#f97316','#6366f1'];
+const MD_PAP_COLORS = PER_ATOM_COLORS;
 
 const MDPerAtomChartPanel = ({ d, chart, updateChart, removeChart, activeTest }) => {
   const [atomSearch, setAtomSearch] = useState('');

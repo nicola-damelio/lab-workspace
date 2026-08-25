@@ -9,7 +9,7 @@ import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES } from '../utils/chartStyle';
 export { VIS_PALETTES };
 
-const COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
+const COLORS = VIS_PALETTES.default;
 const DEFAULT_CHART_STYLE = { height: 380, aspect: 1.8, fontSize: 12, tickStep: '', tickAngle: 0, ptStyle: 'circle', ptSize: 5, lineStyle: 'solid', lineThickness: 2, legend: 'top', colors: {}, barRadius: 3, xMin: '', xMax: '', yMin: '', yMax: '', xAxisLabel: '', yAxisLabel: '' };
 // FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES now live in ../utils/chartStyle.
 // CollapsibleSection now lives in ./ui (single shared definition).

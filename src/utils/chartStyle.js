@@ -16,6 +16,10 @@ export const MANUAL_COLOR = '#16a34a';
 
 export const LINE_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16'];
 
+// Per-atom / per-residue palette used by the MD & NMR "per atom" plot panels.
+// Previously copy-pasted as MD_PAP_COLORS (MDSections) and PAP_COLORS (NMRSections).
+export const PER_ATOM_COLORS = ['#3b82f6', '#8b5cf6', '#f59e0b', '#22c55e', '#ef4444', '#0ea5e9', '#ec4899', '#14b8a6', '#f97316', '#6366f1'];
+
 export const CHART_MARGIN = { top: 20, right: 20, bottom: 45, left: 50 };
 
 export const CHART_MARGIN_1D = { top: 10, right: 15, bottom: 45, left: 15 };
