@@ -10,15 +10,7 @@ import {
   BOX_ROW_LABELS
 } from './data/constants';
 const TestShellRenderer = lazy(() => import('./components/TestShellRenderer'));
-const NMRTestRenderer = lazy(() => import('./components/NMRTestRenderer').then(m => ({ default: m.NMRTestRenderer })));
-const PlateTestRenderer = lazy(() => import('./components/PlateTestRenderer').then(m => ({ default: m.PlateTestRenderer })));
-const CDTestRenderer = lazy(() => import('./components/CDTestRenderer').then(m => ({ default: m.CDTestRenderer })));
-const SSNMRTestRenderer = lazy(() => import('./components/ssNMRTestRenderer').then(m => ({ default: m.ssNMRTestRenderer })));
 import { StorageModals } from './components/Storage';
-const NMRFittingsTestRenderer = lazy(() => import('./components/NMRFittingsTestRenderer').then(m => ({ default: m.NMRFittingsTestRenderer })));
-const CloningTestRenderer = lazy(() => import('./components/CloningTestRenderer').then(m => ({ default: m.CloningTestRenderer })));
-const ProteinExpressionTestRenderer = lazy(() => import('./components/ProteinExpressionTestRenderer').then(m => ({ default: m.ProteinExpressionTestRenderer })));
-const DockingTestRenderer = lazy(() => import('./components/DockingTestRenderer'));
 import { Setup, Data, Simulations, Analysis, MD_ANALYSIS_SECTIONS } from '/src/components/MDSections.jsx';
 import { SolventsManager, BuffersManager, AdditivesManager, NMRProbesManager, NMRInstrumentsManager, NMRExperimentsManager } from './components/DefinitionsExtra';
 import { SearchableSelect } from './components/SearchableSelect';
@@ -33,7 +25,6 @@ import { TestsModule } from './components/AppModules/testsModule';
 import { ProtocolsModule } from './components/AppModules/protocolsModule';
 import { ActiveTestModule } from './components/AppModules/activeTestModule';
 import { NotebookModule, CalculationsModule, PublicationsModule } from './components/AppModules/miscModules';
-const FlowCytometryTestRenderer = lazy(() => import('./components/FlowCytometryTestRenderer').then(m => ({ default: m.FlowCytometryTestRenderer })));
 import { hashPassword, normalizeOperators, getOpLabel } from './utils/auth';
 import { CALC_INPUT_CLS, CALC_LABEL_CLS } from './utils/styles';
 import { ScientistLoginGate, ScientistLoginModal } from './components/AppModules/definitionsManagers';
