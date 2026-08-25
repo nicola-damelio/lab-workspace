@@ -508,6 +508,7 @@ labelMode,
 namingConvention = 'nmr',
 resRenumber,
 onResRenumber,
+onStructureSequence,
 height = '520px',
 }) => {
 const containerRef = useRef(null);
@@ -872,6 +873,16 @@ componentRef.current = component;
 
 largeStructureRef.current = !!(component.structure && component.structure.atomCount > LARGE_ATOM_COUNT);
 addDefaultReps(component);
+
+// Expose the 1-letter sequence parsed from the structure so the pages can
+// auto-fill the sequence field when it is empty (enables the per-atom table).
+try {
+  const seqArr = (typeof component.structure.getSequence === 'function') ? component.structure.getSequence() : null;
+  if (Array.isArray(seqArr) && seqArr.length && typeof onStructureSequence === 'function') {
+    const seq = seqArr.map((s) => (s && s.seq) || '').join('').replace(/[^A-Za-z]/g, '');
+    if (seq) onStructureSequence(seq);
+  }
+} catch (e) {}
 
 component.autoView();
 requestAnimationFrame(() => {

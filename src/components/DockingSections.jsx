@@ -430,6 +430,11 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
                 onAtomRenames={(map) => updateActiveTest({ atomRenames: map })}
                 resRenumber={activeTest.resRenumber || {}}
                 onResRenumber={(map) => updateActiveTest({ resRenumber: map })}
+                onStructureSequence={(seq) => {
+                  if (seq && !activeTest.proteinSequence && ['protein', 'dna', 'rna'].includes(d.moleculeType)) {
+                    updateActiveTest({ proteinSequence: seq });
+                  }
+                }}
                 height="480px"
               />
             )}

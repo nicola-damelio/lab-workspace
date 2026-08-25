@@ -865,6 +865,11 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   onAtomRenames={(map) => updateActiveTest({ atomRenames: map })}
   resRenumber={activeTest.resRenumber || {}}
   onResRenumber={(map) => updateActiveTest({ resRenumber: map })}
+  onStructureSequence={(seq) => {
+    if (seq && !activeTest.proteinSequence && ['protein', 'dna', 'rna'].includes(d.moleculeType)) {
+      updateActiveTest({ proteinSequence: seq });
+    }
+  }}
   labelMode={atomLabelMode}
   height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '620px' : '520px'}
 />
