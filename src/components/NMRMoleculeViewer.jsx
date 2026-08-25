@@ -21,46 +21,64 @@ const estimateTrajectoryFrames = (file, atomCount) => {
   return Math.max(1, Math.round(file.size / bytesPerFrame));
 };
 
-// ---- Large-structure detection & PDB subsetting ----------------------------
-// Large systems freeze NGL during parse AND render. When a structure source is
-// big, ask the user whether to load only the first chain / first N residues
-// (PDB text is filtered BEFORE parsing), or everything.
-const LARGE_STRUCT_BYTES = 1.5 * 1024 * 1024;   // ~1.5 MB of PDB text
+// ---- Large-structure handling ----------------------------------------------
+// Large systems are still loaded in full (so the topology / analysis keep
+// everything), but only the FIRST CHAIN is rendered by default to avoid
+// freezing the browser. A non-blocking banner warns the user and lets them
+// show everything if they want.
+const LARGE_STRUCT_BYTES = 1.5 * 1024 * 1024;   // ~1.5 MB of structure text
 const LARGE_ATOM_COUNT = 25000;                 // lighter rendering above this
 
-// Keep only the first chain (or first N distinct residues) of a PDB text so
-// NGL does not have to parse / render a huge system.
-const filterPdbText = (text, mode, limit = 500) => {
-  const lines = String(text || '').split(/\r?\n/);
-  const kept = [];
-  let chain = null;
-  const seenRes = new Set();
-  let inCoords = false;
-  for (const line of lines) {
-    const rec = line.slice(0, 6).trim();
-    if (rec === 'ATOM' || rec === 'HETATM') {
-      inCoords = true;
-      const resSeq = parseInt(line.slice(22, 26), 10) || 0;
-      const ch = line.slice(21, 22).trim();
-      if (mode === 'chain') {
-        if (chain === null) chain = ch || 'A';
-        if ((ch || 'A') !== chain) continue;
-      } else {
-        if (seenRes.size >= limit) continue;
-        seenRes.add(resSeq);
+const AA3_TO_1 = {
+  ALA: 'A', ARG: 'R', ASN: 'N', ASP: 'D', CYS: 'C', GLN: 'Q', GLU: 'E', GLY: 'G',
+  HIS: 'H', HSD: 'H', HSE: 'H', HSP: 'H', ILE: 'I', LEU: 'L', LYS: 'K', MET: 'M',
+  PHE: 'F', PRO: 'P', SER: 'S', THR: 'T', TRP: 'W', TYR: 'Y', VAL: 'V', CYX: 'C',
+  SEC: 'U', PYL: 'O', ASX: 'B', GLX: 'Z',
+  DA: 'A', DC: 'C', DG: 'G', DT: 'T', DU: 'U'
+};
+
+// 1-letter sequence from an NGL structure. Tries NGL's getSequence() first,
+// then falls back to walking the residues (handles .gro topologies and any
+// PDB where NGL does not auto-detect the chains as polymers).
+const extractStructureSequence = (component) => {
+  if (!component || !component.structure) return '';
+  if (typeof component.structure.getSequence === 'function') {
+    try {
+      const arr = component.structure.getSequence();
+      if (Array.isArray(arr) && arr.length) {
+        const seq = arr
+          .map((s) => (s && (s.seq || s.sequence)) || '')
+          .join('')
+          .replace(/[^A-Za-z]/g, '');
+        if (seq) return seq;
       }
-      kept.push(line);
-    } else if (rec === 'TER' || rec === 'END' || rec === 'ENDMDL') {
-      if (inCoords) kept.push(line);
-      if (rec === 'END') break;
-    } else if (inCoords) {
-      if (rec === 'CONECT' || rec === 'CRYST1') kept.push(line);
-    } else {
-      kept.push(line); // header records before the first ATOM/HETATM
-    }
+    } catch (e) { /* fall through */ }
   }
-  if (!kept.some((l) => l.trim().startsWith('END'))) kept.push('END');
-  return kept.join('\n');
+  let seq = '';
+  try {
+    component.structure.eachResidue((r) => {
+      const name = String((r && (r.resname || r.restype)) || '').toUpperCase();
+      const code = AA3_TO_1[name] || (name.length === 1 && /[ACGTU]/.test(name) ? name : '');
+      if (code) seq += code;
+    });
+  } catch (e) { /* fall through */ }
+  return seq;
+};
+
+// NGL selection string for the first chain of a structure (":A", ":B", …),
+// used to render only that chain on very large systems.
+const detectFirstChainSelection = (component) => {
+  try {
+    let chain = null;
+    if (typeof component.structure.eachResidue === 'function') {
+      component.structure.eachResidue((r) => {
+        if (chain === null && r && r.chainid) chain = String(r.chainid);
+      });
+    }
+    return chain ? `:${chain}` : null;
+  } catch (e) {
+    return null;
+  }
 };
 
 const SELECT_COLOR_HEX = 0xf59e0b;
@@ -559,6 +577,23 @@ useEffect(() => {
     });
   }
 }, [resRenumber]);
+
+// Rebuild the base representations when the large-structure mode toggles
+// ("Show everything" / reload of a big system).
+useEffect(() => {
+  const component = componentRef.current;
+  if (!component || status !== 'ready') return;
+  baseCompsRef.current.forEach((r) => { try { component.removeRepresentation(r); } catch (e) {} });
+  baseCompsRef.current = [];
+  addDefaultReps(component);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [largeMode, status]);
+
+const showAllLargeAtoms = () => {
+  largeModeRef.current = false;
+  setLargeMode(false);
+  setLargeInfo(null);
+};
 const [renameMode, setRenameMode] = useState(false);
 const [renameTarget, setRenameTarget] = useState(null); // atom index being renamed
 const [renameDraft, setRenameDraft] = useState('');
@@ -606,8 +641,11 @@ const [speed, setSpeed] = useState(10);
 const [stride, setStride] = useState(1);        // play every Nth frame (keeps total time)
 const [maxFrames, setMaxFrames] = useState(0);  // 0 = keep all frames
 const [pendingTraj, setPendingTraj] = useState(null); // { file, estFrames, suggested } awaiting user confirmation
-const [pendingStructure, setPendingStructure] = useState(null); // large-structure confirmation { file|text|url, name, ext, text?, size }
-const largeStructureRef = useRef(false); // true when the loaded structure has very many atoms
+const [largeMode, setLargeMode] = useState(false);     // true → only the first chain is rendered (big system)
+const [largeInfo, setLargeInfo] = useState(null);      // { nAtoms, size } → shows the non-blocking warning banner
+const largeModeRef = useRef(false);                    // synchronous mirror for addDefaultReps / sidechain effect
+largeModeRef.current = largeMode;
+const firstChainSelRef = useRef(null);                 // NGL selection of the first chain (":A")
 const trajRef = useRef(null);
 const blobUrlsRef = useRef([]);
 
@@ -781,10 +819,12 @@ const addDefaultReps = (component) => {
     try { trackBase(component.addRepresentation('ball+stick', { sele: 'all', colorScheme: 'element', multipleBond: true, aspectRatio: 1.1 })); } catch (e) {}
     return;
   }
-  // Very large systems: use a light representation so the view stays usable.
-  if (largeStructureRef.current) {
-    try { trackBase(component.addRepresentation('line', { sele: 'protein', colorScheme: 'element' })); } catch (e) {}
-    try { trackBase(component.addRepresentation('line', { sele: 'hetero and not water', colorScheme: 'element' })); } catch (e) {}
+  // Very large systems: render only the first chain (light representation) so
+  // the view stays usable — the rest of the structure stays loaded, just hidden.
+  if (largeModeRef.current) {
+    const sele = firstChainSelRef.current || 'protein';
+    try { trackBase(component.addRepresentation('line', { sele, colorScheme: 'element' })); } catch (e) {}
+    try { trackBase(component.addRepresentation('ball+stick', { sele: `${sele} and hetero`, aspectRatio: 1.1 })); } catch (e) {}
     return;
   }
   const bb = backboneStyleRef.current || 'cartoon';
@@ -871,18 +911,28 @@ componentRef.current = component;
 // Note: NGL viewer structures from PDB/SDF already contain hydrogens when generated correctly.
 // We skip addHydrogens() to prevent "is not a function" errors in this NGL version.
 
-largeStructureRef.current = !!(component.structure && component.structure.atomCount > LARGE_ATOM_COUNT);
+// Very large systems: load everything but render only the first chain so the
+// browser does not freeze; a non-blocking banner warns the user.
+const nAtoms = component.structure ? component.structure.atomCount : 0;
+const bigSource = (loadRequest && loadRequest.size) >= LARGE_STRUCT_BYTES;
+const isLarge = nAtoms > LARGE_ATOM_COUNT || bigSource;
+largeModeRef.current = isLarge;
+setLargeMode(isLarge);
+if (isLarge) {
+firstChainSelRef.current = detectFirstChainSelection(component);
+setLargeInfo({ nAtoms, size: loadRequest && loadRequest.size ? loadRequest.size : 0 });
+} else {
+firstChainSelRef.current = null;
+setLargeInfo(null);
+}
 addDefaultReps(component);
 
 // Expose the 1-letter sequence parsed from the structure so the pages can
 // auto-fill the sequence field when it is empty (enables the per-atom table).
-try {
-  const seqArr = (typeof component.structure.getSequence === 'function') ? component.structure.getSequence() : null;
-  if (Array.isArray(seqArr) && seqArr.length && typeof onStructureSequence === 'function') {
-    const seq = seqArr.map((s) => (s && s.seq) || '').join('').replace(/[^A-Za-z]/g, '');
-    if (seq) onStructureSequence(seq);
-  }
-} catch (e) {}
+if (typeof onStructureSequence === 'function') {
+const seq = extractStructureSequence(component);
+if (seq) onStructureSequence(seq);
+}
 
 component.autoView();
 requestAnimationFrame(() => {
@@ -1048,46 +1098,15 @@ onTrajectoryFile?.(pendingTraj.file);
 setPendingTraj(null);
 };
 
-// ---- Large-structure confirmation ------------------------------------------
-// All structure sources funnel through here so a big PDB can be subset BEFORE
-// NGL parses it (which is what freezes the browser).
+// ---- Structure load funnel -------------------------------------------------
+// Every structure source goes through here. The size is tagged onto the load
+// request so the load effect can auto-hide all but the first chain on very
+// large systems (the structure is still loaded in full for the analysis).
 const requestStructureLoad = (payload) => {
 const file = payload.file;
 const name = file ? file.name : (payload.name || 'structure.pdb');
-const ext = (name.split('.').pop() || 'pdb').toLowerCase();
 const size = file ? file.size : (payload.text ? payload.text.length : 0);
-const isPdb = ext === 'pdb' || ext === 'ent';
-if (size >= LARGE_STRUCT_BYTES) {
-if (file && isPdb) {
-file.text()
-.then((text) => setPendingStructure({ ...payload, name, ext, text, size }))
-.catch(() => setLoadRequest(payload));
-} else {
-setPendingStructure({ ...payload, name, ext, size });
-}
-return;
-}
-setLoadRequest(payload);
-};
-
-const applyPendingStructure = (mode) => {
-if (!pendingStructure) return;
-const ps = pendingStructure;
-let payload;
-if (mode && ps.text) {
-payload = { text: filterPdbText(ps.text, mode === 'chain' ? 'chain' : 'residues', 500), ext: 'pdb', ts: Date.now() };
-} else if (ps.file) {
-payload = { file: ps.file, url: null, ts: Date.now() };
-} else if (ps.text) {
-payload = { text: ps.text, ext: ps.ext || 'pdb', ts: Date.now() };
-} else if (ps.url) {
-payload = { url: ps.url, ts: Date.now() };
-} else {
-setPendingStructure(null);
-return;
-}
-setLoadRequest(payload);
-setPendingStructure(null);
+setLoadRequest({ ...payload, size });
 };
 
 // Jump back to the start when the stride / max-frames controls change.
@@ -1430,7 +1449,7 @@ sidechainCompRef.current = null;
 };
 clearSidechain();
 // Skip heavy side-chain rendering on very large systems (keeps the view usable).
-if (sidechainStyle !== 'none' && !hideAll && !pymolActive && !largeStructureRef.current) {
+if (sidechainStyle !== 'none' && !hideAll && !pymolActive && !largeModeRef.current) {
 try {
 sidechainCompRef.current = component.addRepresentation(sidechainStyle, {
 sele: '(protein and sidechain) or (protein and .CA)', color: 'element', multipleBond: true,
@@ -1439,7 +1458,7 @@ radiusSize: sidechainStyle === 'licorice' ? 0.25 : undefined,
 } catch (e) {}
 }
 return clearSidechain;
-}, [sidechainStyle, status, hideAll, pymolActive]);
+}, [sidechainStyle, status, hideAll, pymolActive, largeMode]);
 
 // Highlight selected and manually selected atoms
 useEffect(() => {
@@ -2053,55 +2072,22 @@ className="text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-3 p
 )}
 
 
-{/* Large-structure confirmation modal */}
-{pendingStructure && (
-<div className="fixed inset-0 z-[99999] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
-<div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
-<h3 className="text-sm font-black text-slate-800 mb-2">Large structure detected</h3>
-<p className="text-xs text-slate-600 mb-3">
-<b className="text-slate-800">{pendingStructure.name}</b> is {fmtBytesMB(pendingStructure.size)}.
-Loading everything may freeze the browser.
-</p>
-{pendingStructure.text ? (
-<>
-<p className="text-xs text-slate-600 mb-3">Load only a subset so the view stays responsive:</p>
-<div className="flex flex-col gap-2 mb-3">
+{/* Large-structure warning banner (non-blocking) */}
+{largeInfo && (
+<div className="flex flex-wrap items-center gap-2 bg-amber-50 border border-amber-300 text-amber-900 rounded-lg px-3 py-2 text-[11px] font-bold shadow-sm">
+<span>
+⚠️ Large structure
+{largeInfo.nAtoms ? ` (${largeInfo.nAtoms.toLocaleString()} atoms)` : ''}:
+only the first chain is rendered to avoid overloading the browser.
+The rest of the molecule is loaded but hidden.
+</span>
 <button
 type="button"
-onClick={() => applyPendingStructure('chain')}
-className="text-left text-xs font-bold bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-3 py-2 rounded-lg transition-colors"
+onClick={showAllLargeAtoms}
+className="text-[10px] font-bold bg-white border border-amber-400 text-amber-800 hover:bg-amber-100 px-2.5 py-1 rounded-lg transition-colors"
 >
-🔗 First chain only
+👁 Show everything
 </button>
-<button
-type="button"
-onClick={() => applyPendingStructure('residues')}
-className="text-left text-xs font-bold bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-3 py-2 rounded-lg transition-colors"
->
-🧩 First 500 residues
-</button>
-</div>
-</>
-) : (
-<p className="text-xs text-amber-700 mb-3">This format cannot be pre-filtered — loading may be slow.</p>
-)}
-<div className="flex flex-wrap gap-2 justify-end">
-<button
-type="button"
-onClick={() => setPendingStructure(null)}
-className="text-xs font-bold text-slate-500 hover:text-slate-700 px-3 py-2 rounded-lg"
->
-Cancel
-</button>
-<button
-type="button"
-onClick={() => applyPendingStructure(null)}
-className="text-xs font-bold bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 px-3 py-2 rounded-lg shadow-sm"
->
-📦 Load everything
-</button>
-</div>
-</div>
 </div>
 )}
 
