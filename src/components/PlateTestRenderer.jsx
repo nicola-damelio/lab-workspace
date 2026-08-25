@@ -91,7 +91,7 @@ export const PlateTestRenderer = (props) => {
       and store the selection in `compoundsSelected`.
       */
       if (Object.prototype.hasOwnProperty.call(updates, 'selectedCompounds')) {
-        const { compounds, ...rest } = updates;
+        const { ...rest } = updates;
 
         props.updateActiveTest({
           ...rest,

@@ -609,10 +609,10 @@ export const StorageFinder = ({
    DATABASE CLEANUP & MERGING
 ========================================================= */
 export const DatabaseCleanupManager = ({
-  tests, setTests,
+  setTests,
   allCmpds, allCellLines,
-  setCustomCmpds, setCompoundMeta, compoundMeta,
-  setCustomCellLines, setCellLineMeta, cellLineMeta
+  setCustomCmpds, setCompoundMeta,
+  setCustomCellLines, setCellLineMeta
 }) => {
   // Merge state
   const [oldName, setOldName] = useState('');

@@ -5,7 +5,6 @@ import {ChartControlBar, SharedChartStylePanel} from './SharedAnalysisTools';
 import NMRMoleculeViewer from './NMRMoleculeViewer';
 import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_PROGRAMS, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, getScoringFunctions, getSearchAlgorithms, parseDockingFile, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, DOCK_CHART_MARGIN} from './DockingData';
 
-const localFileCache = new Map();
 
 /* ============================================================================
    DockingSections — Docking page content sections (mirrors MDSections.jsx)
@@ -439,7 +438,7 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
 };
 
 // ================= 2) DATA (Docking results table + import) =================
-const DockingImportPanel = ({ ctx, d, onPoses }) => {
+const DockingImportPanel = ({ ctx, onPoses }) => {
   const { updateActiveTest } = ctx;
   const [pasteText, setPasteText] = useState('');
   const [report, setReport] = useState(null);

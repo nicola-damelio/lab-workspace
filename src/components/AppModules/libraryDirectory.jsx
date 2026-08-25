@@ -64,7 +64,6 @@ export const LibraryDirectory = ({
     csv.push("Name,Backbone,Promoter,Marker,MW,Notes");
     plasmids.forEach(name => {
       const m = plasmidMeta[name] || {};
-      const seq = stripHtml(m.insertSequence || '');
       csv.push(`${escapeCsv(name)},${escapeCsv(m.backbone)},${escapeCsv(m.promoter)},${escapeCsv(m.marker)},${escapeCsv(m.molecularWeight)},${escapeCsv(m.notes)}`);
     });
 

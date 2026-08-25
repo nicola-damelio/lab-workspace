@@ -52,7 +52,6 @@ const NotebookTestItem = ({
   const isPlate = localTest.type && localTest.type.startsWith('plate-') && localTest.type !== 'plate-9x9box';
   const isNMR = localTest.type === 'nmr';
   const isCD = localTest.type === 'cd';
-  const isDocking = localTest.type === 'docking';
   const isNMRFitting = localTest.type === 'nmr-fittings';
   const isCloning = localTest.type === 'cloning';
   const isProteinExp = localTest.type === 'protein_expression';
@@ -623,7 +622,7 @@ const NotebookTestItem = ({
    LAB NOTEBOOK — MAIN COMPONENT
 ========================================================================== */
 export const LabNotebook = ({ 
-  tests, allCellLines, testCategories, jumpToTest, customConc, cmpColors, allCmpds, customFields, operators,
+  tests, allCellLines, jumpToTest, allCmpds, operators,
   plasmidMeta, solvents, buffers, additives, nmrInstruments, nmrProbes, nmrExperiments, currentUser
 }) => {
   const isSuperuser = currentUser?.role === 'superuser';
@@ -643,8 +642,6 @@ export const LabNotebook = ({
   const [filterProbe, setFilterProbe] = useState('ALL');
   const [filterPulseSeq, setFilterPulseSeq] = useState('ALL');
 
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
   const [bestOnly, setBestOnly] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('date_desc');
@@ -672,7 +669,6 @@ const secondaryOptions = useMemo(() => {
   return CLASSIFICATION_MAP[filterPrimary] || [];
 }, [filterPrimary]);
 const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t => t.operator)].filter(Boolean))].sort(), [tests, operators]);
-  const allTypes = useMemo(() => [...new Set(tests.map(t => t.type).filter(Boolean))].sort(), [tests]);
   const allPlasmids = useMemo(() => Object.keys(plasmidMeta || {}).sort(), [plasmidMeta]);
   const allSolvents = useMemo(() => (solvents || []).map(s => s.name || s).filter(Boolean).sort(), [solvents]);
   const allBuffers = useMemo(() => (buffers || []).map(b => b.name || b).filter(Boolean).sort(), [buffers]);

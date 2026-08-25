@@ -1306,7 +1306,7 @@ const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color,
 // ================= MD PER ATOM PLOT SECTION =================
 const MD_PAP_COLORS = PER_ATOM_COLORS;
 
-const MDPerAtomChartPanel = ({ d, chart, updateChart, removeChart, activeTest }) => {
+const MDPerAtomChartPanel = ({ d, chart, updateChart, removeChart }) => {
   const [atomSearch, setAtomSearch] = useState('');
   const [showCfg, setShowCfg] = useState(false);
   const [isFs, setIsFs] = useState(false);
@@ -1442,8 +1442,6 @@ const MD_COND_FIELDS = [
   { key: 'timestep', label: 'Timestep (fs)' },
   { key: 'nSteps', label: 'Steps' },
 ];
-
-const getMDCondValue = (inst, key) => inst && inst.values ? (inst.values[key] ?? '') : '';
 
 const MDConditionPlotPanel = ({ d, chart, updateChart, removeChart, activeTest }) => {
   const [atomSearch, setAtomSearch] = useState('');

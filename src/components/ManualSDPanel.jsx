@@ -4,7 +4,6 @@ import { formatConc } from '../data/constants';
 const SDInput = ({
     label,
     value,
-    sdRaw,
     isOverridden,
     onSave,
     onReset

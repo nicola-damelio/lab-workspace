@@ -300,7 +300,7 @@ export const StorageDetail = ({ storages, activeStorageId, tests, setTests, setC
 };
 
 // --- BOX DETAIL VIEW ---
-export const BoxDetail = ({ activeTest, updateActiveTest, storages, expandedGroups, setExpandedGroups, customCmpds, jumpToTest, setMoveModal, TestHeader, operators = [] }) => {
+export const BoxDetail = ({ activeTest, updateActiveTest, storages, expandedGroups, setExpandedGroups, customCmpds, TestHeader, operators = [] }) => {
     const getVal = (key, def) => expandedGroups[key] !== undefined ? expandedGroups[key] : def;
     const setVal = (key, val) => setExpandedGroups(p => {
         let current = p[key];

@@ -383,23 +383,20 @@ const FIREBASE_CONFIG = {
   appId: '1:855790481107:web:a566455d3f13a48a20ae26'
 };
 
-let app,
-  auth,
+let auth,
   db,
   appId = 'lab-workspace-app';
 
 try {
   if (window.firebase) {
     if (!window.firebase.apps.length) {
-      app = window.firebase.initializeApp(FIREBASE_CONFIG);
-    } else {
-      app = window.firebase.app();
+      window.firebase.initializeApp(FIREBASE_CONFIG);
     }
 
     auth = window.firebase.auth();
     db = window.firebase.firestore();
   }
-} catch {
+} catch (e) {
   console.error('Firebase init error. Falling back to local storage.', e);
 }
 // StorageFinder + DatabaseCleanupManager now live in ./components/AppModules/storageModules (see import above).
@@ -1049,9 +1046,6 @@ if (customType === 'nmr-fittings') {
   // All child components (test renderers, LabNotebook, Storage, etc.) still
   // expect operators as plain strings. This is the safe list to pass them.
   const operatorNames = normalizeOperators(operators).map((op) => op.name);
-
-  // Bootstrap mode: if no superuser exists yet, allow anyone to define roles
-  const hasSuperuserDefined = normalizeOperators(operators).some((op) => op.role === 'superuser');
 
   const latestDataRef = useRef(null);
 
@@ -1849,7 +1843,6 @@ const openDataset = (dset) => {
     });
   };
 
-  const [searchQuery, setSearchQuery] = useState('');
   const [expandedGroups, setExpandedGroups] = useState({});
 
   const toggleGroup = (key) =>
@@ -1975,13 +1968,6 @@ const openDataset = (dset) => {
   const jumpToTest = (testId) => {
     setActiveTestId(testId);
     setCurrentModule('active-test');
-
-    if (window.innerWidth < 768) setIsSidebarOpen(false);
-  };
-
-  const jumpToProtocol = (protocolId) => {
-    setExpandedGroups((p) => ({ ...p, activeProtoId: protocolId }));
-    setCurrentModule('protocols');
 
     if (window.innerWidth < 768) setIsSidebarOpen(false);
   };

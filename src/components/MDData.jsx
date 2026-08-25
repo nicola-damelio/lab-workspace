@@ -417,7 +417,6 @@ export const getMDAtomTypes = (ffKey, molType) => {
 };
 
 export const generateMDAtomEntry = (resIdx, atomName, forceField, molType) => {
-  const ff = getForceFieldInfo(forceField);
   const types = getMDAtomTypes(forceField, molType);
   const match = types.find((t) => (t.name || t.atom) === atomName);
 

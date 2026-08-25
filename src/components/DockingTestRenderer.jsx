@@ -95,31 +95,6 @@ const DockingTestRenderer = ({
   testCategories,
   ...rest
 }) => {
-  const ctx = useMemo(
-    () => ({
-      activeTest,
-      updateActiveTest,
-      allCmpds,
-      allCellLines,
-      customFields,
-      testCategories,
-      datasetProtocols,
-      jumpToProtocol,
-      ...rest
-    }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [
-      activeTest,
-      updateActiveTest,
-      allCmpds,
-      allCellLines,
-      customFields,
-      testCategories,
-      datasetProtocols,
-      jumpToProtocol
-    ]
-  );
-
   const custom = useMemo(
     () => ({
       MolecularStructure: DockingExperimentSetupSection,

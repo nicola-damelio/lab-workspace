@@ -386,7 +386,6 @@ export function generateDnaFromProtein(sequence, host = 'bacterial', { addStop =
 
 // Optional RDKit-based SMILES MW calculation.
 // If RDKit is not available, the UI should allow manual MW override.
-let rdkitPromise = null;
 
 async function loadRDKit() {
   if (typeof window === 'undefined') return null;

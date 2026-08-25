@@ -94,7 +94,7 @@ export const kabsch = (ref, mov, idx) => {
     H[3] += py * qx; H[4] += py * qy; H[5] += py * qz;
     H[6] += pz * qx; H[7] += pz * qy; H[8] += pz * qz;
   }
-  const { u, s, v } = svd3(H);
+  const { u, v } = svd3(H);
   let d = det3(v) * det3(u);
   if (d < 0) d = -1; else d = 1;
 

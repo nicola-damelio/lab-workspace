@@ -23,7 +23,7 @@ import { FS_CLASSES, OVERLAY_CLASSES } from '../utils/chartStyle';
 // Chart/style constants now live in ../utils/chartStyle.
 
 // ================= ERROR INPUT =================
-export const ErrInput = ({ label, value, sdRaw, isOverridden, onSave, onReset }) => {
+export const ErrInput = ({ label, value, isOverridden, onSave, onReset }) => {
     const [tempVal, setTempVal] = useState(value !== undefined ? value : '');
 
     useEffect(() => {
@@ -867,7 +867,7 @@ export const buildNotebookHtml = (checked, ctx) => {
     if (checked.ic50 && Object.keys(model.processedByRegion).length > 0) {
         html += `<table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; text-align: left; background: white;"> <tr style="background-color: #f1f5f9;"> <th style="padding: 6px; border: 1px solid #cbd5e1;">Region</th> <th style="padding: 6px; border: 1px solid #cbd5e1;">Compound</th> <th style="padding: 6px; border: 1px solid #cbd5e1;">IC50 (${t.unit || 'µM'})</th> </tr>`;
 
-        Object.entries(model.processedByRegion).forEach(([reg, comps]) => {
+        Object.entries(processedByRegion).forEach(([reg, comps]) => {
             comps.forEach((c) => {
                 if (c.fit) {
                     html += `<tr> <td style="padding: 6px; border: 1px solid #e2e8f0;">${reg}</td> <td style="padding: 6px; border: 1px solid #e2e8f0;"><b>${c.name}</b></td> <td style="padding: 6px; border: 1px solid #e2e8f0;"> ${c.fit.ic50.toFixed(3)} ± ${(c.fit.se * (model.eScale || 1)).toFixed(3)} </td> </tr>`;
@@ -1556,7 +1556,7 @@ export const All = ({ ctx }) => {
     const autoTouchAll = () => {
         let updates = {};
 
-        Object.entries(processedByRegion).forEach(([reg, comps]) => {
+        Object.entries(processedByRegion).forEach(([, comps]) => {
             comps.forEach((c) => {
                 if (!c.fit) return;
 
@@ -1774,17 +1774,6 @@ export const All = ({ ctx }) => {
         }
 
         if (changed) updatePlate({ cellConfig: nc });
-    };
-
-    const restoreAll = () => {
-        const nc = cellConfig.map((row) =>
-            row.map((c) => ({
-                ...c,
-                excluded: false,
-                manualOverride: false
-            }))
-        );
-        updatePlate({ cellConfig: nc });
     };
 
     const exportXLS = () => {
