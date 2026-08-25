@@ -3854,6 +3854,7 @@ const generatedStructure = useMemo(() => {
   
   const focusIdx = activeTest.focusIdx !== undefined ? activeTest.focusIdx : 'ALL';
   const setFocusIdx = (val) => updateActiveTest({ focusIdx: val });
+  const [ssBrush, setSSBrush] = useState('H');
   const selectedKeys = getSelectedKeys(activeTest);
   const manualKeys = useMemo(() => getManualKeys(d.shifts), [d.shifts]);
   

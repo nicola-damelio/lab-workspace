@@ -810,11 +810,16 @@ if (customType === 'nmr-fittings') {
   const tests = reactTests;
 
   const allCmpds = useMemo(() => {
-    return [...new Set([...DEF_COMPOUNDS, ...customCmpds])].filter(Boolean);
+    // Built-in default compounds only appear as a fallback when the user has
+    // not defined their own library yet — otherwise dropdowns keep showing
+    // compounds that were removed from Definitions & Labels.
+    const lib = [...new Set(customCmpds || [])].filter(Boolean);
+    return lib.length > 0 ? lib : [...new Set([...DEF_COMPOUNDS, ...lib])];
   }, [customCmpds]);
 
   const allCellLines = useMemo(() => {
-    return [...new Set([...DEF_CELL_LINES, ...customCellLines])].filter(Boolean);
+    const lib = [...new Set(customCellLines || [])].filter(Boolean);
+    return lib.length > 0 ? lib : [...new Set([...DEF_CELL_LINES, ...lib])];
   }, [customCellLines]);
 
   const [activeTestId, setActiveTestId] = useState('t1');

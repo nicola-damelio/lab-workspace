@@ -615,7 +615,7 @@ const printBoxLabel = () => {
                             })}
                         </div>
                     )}
-                    <datalist id="box-cmpd-list">{[...new Set([...customCmpds, ...DEF_COMPOUNDS])].map(c => <option key={c} value={c}/>)}</datalist>
+                    <datalist id="box-cmpd-list">{[...new Set((customCmpds && customCmpds.length ? customCmpds : DEF_COMPOUNDS))].map(c => <option key={c} value={c}/>)}</datalist>
                 </div>
             </div>
         </div>
