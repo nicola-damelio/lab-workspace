@@ -3,7 +3,7 @@ import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { getDirectImageUrl } from '../data/constants';
 import { FCSDataVisualizations } from './FlowCytometrySections';
-import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES } from '../App.jsx';
+import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES } from '../data/testTypes';
 import { SearchableSelect } from './SearchableSelect';
 import { getTestTypeMeta, getNotebookTypeKey } from './testTypeMeta';
 import { NOTEBOOK_ANALYSIS_PREVIEWS, RemovablePanel, ChunkedTable, NMRSpectraPreview, PlateGridPreview, Formula2DPreview, CDSpectraChart, CloningUvSpectraChart, CloningSimChartPreview, ProteinChromatogramChart, NMR_SPECTRUM_TYPES, NMRFittingSimPreview, MDParamsPreview, MDAtomTablePreview, normalizeImagePreview } from './notebookPreviews';

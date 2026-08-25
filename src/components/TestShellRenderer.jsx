@@ -3,7 +3,7 @@ import { RichTextEditor } from './RichTextEditor';
 import { BufferAdditiveFields } from './DefinitionsExtra';
 import { SearchableSelect } from './SearchableSelect';
 import { parseSimulationParameters } from './MDData';
-import { CLASSIFICATION_MAP } from '../App.jsx';
+import { CLASSIFICATION_MAP } from '../data/testTypes';
 import { CollapsibleSection } from './ui';
 export { CollapsibleSection };
 
