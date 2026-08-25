@@ -9,6 +9,7 @@ import {
   resolveFrameSource, AWK_PALETTE, contactSeriesStyle
 } from './MDMembraneContacts';
 import { computeOrderAndDensity, parseChargeMap } from './MDMembraneProfiles';
+import { computeMDTrajectoryAnalysis, parseEnergyFile } from '../utils/mdAnalysis';
 import html2canvas from 'html2canvas';
 export { parseSimulationParameters };   
 import NMRMoleculeViewer from './NMRMoleculeViewer';
@@ -1588,6 +1589,54 @@ export const MDAnalysisSection = ({ ctx }) => {
   const [importedData, setImportedData] = useState(null);
   const [importError, setImportError] = useState('');
 
+  // NEW: State for data CALCULATED from the loaded trajectory
+  const [calcData, setCalcData] = useState(null);
+  const [calc, setCalc] = useState({ state: 'idle', msg: '', done: 0, total: 0, error: '' });
+  const [calcOpts, setCalcOpts] = useState({ stride: 5, maxFrames: 300, sasa: true });
+  const [energyData, setEnergyData] = useState(null);
+  const [energyFileName, setEnergyFileName] = useState('');
+
+  const handleCalculateFromTrajectory = async () => {
+    setCalc({ state: 'running', msg: 'Resolving topology…', done: 0, total: 0, error: '' });
+    try {
+      const tl = await resolveMDTopology(activeTest);
+      if (!tl) throw new Error('Upload the simulation topology (.gro/.pdb — same atom order as the trajectory). Use "Choose PDB/CIF" in the 3D viewer, or a PDB ID / URL.');
+      const { topo } = tl;
+      const jobs = await buildMDTrajectoryJobs(activeTest, []);
+      if (jobs.length === 0) throw new Error('Load a trajectory (.xtc/.trr/.dcd) in the 3D viewer first.');
+      const src = await resolveFrameSource(jobs[0].file, {
+        topoAtoms: topo.atoms, topologyBox: topo.box,
+        onStatus: (m) => setCalc((s) => ({ ...s, msg: m })),
+      });
+      if (!src) throw new Error(`"${jobs[0].file.name}": unsupported format, or the topology could not anchor it (XTC/DCD need the exact matching topology; TRR works standalone).`);
+      const res = await computeMDTrajectoryAnalysis(
+        topo, src.frames,
+        { stride: calcOpts.stride, maxFrames: calcOpts.maxFrames, doSasa: calcOpts.sasa, doRg: true },
+        (p) => setCalc((s) => ({ ...s, done: p.done, total: p.total, msg: p.msg }))
+      );
+      setCalcData(res);
+      setCalc({ state: 'done', msg: `Calculated from ${res.nFrames} frames (${src.source}).`, done: 0, total: 0, error: '' });
+    } catch (err) {
+      setCalc((s) => ({ ...s, state: 'error', error: err?.message || String(err) }));
+    }
+  };
+
+  const handleEnergyFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        setEnergyData(parseEnergyFile(ev.target.result));
+        setEnergyFileName(file.name);
+      } catch (err) {
+        setCalc((s) => ({ ...s, state: 'error', error: 'Energy file: ' + err.message }));
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
   const handleAnalysisFileUpload = (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
@@ -1613,20 +1662,24 @@ export const MDAnalysisSection = ({ ctx }) => {
   const nFrames = parseMDValue(activeTest.mdNumFrames) || 500;
   const nResidues = Math.max(1, d.parsedSeq.length || 20);
 
-  // Use imported data if available, otherwise fallback to simulated data
-  const rmsd = useMemo(() => importedData?.rmsd || generateRMSDData(nFrames), [nFrames, importedData]);
+  // Use calculated-from-trajectory data if available, then imported JSON,
+  // then fallback to simulated data
+  const rmsd = useMemo(() => calcData?.rmsd || importedData?.rmsd || generateRMSDData(nFrames), [nFrames, importedData, calcData]);
   const rmsf = useMemo(() => {
+      if (calcData?.rmsf) return calcData.rmsf.map(r => ({ ...r, fill: r.value > 0.25 ? '#ef4444' : '#3b82f6' }));
       if (importedData?.rmsf) return importedData.rmsf.map(r => ({ ...r, fill: r.value > 0.25 ? '#ef4444' : '#3b82f6' }));
       return generateRMSFData(nResidues).map((r) => ({ ...r, fill: r.value > 0.25 ? '#ef4444' : '#3b82f6' }));
-  }, [nResidues, importedData]);
-  const rg = useMemo(() => importedData?.rg || generateRgData(nFrames), [nFrames, importedData]);
-  const sasa = useMemo(() => importedData?.sasa || generateSASAData(nFrames), [nFrames, importedData]);
-  const energy = useMemo(() => importedData?.energy || generateEnergyData(nFrames), [nFrames, importedData]);
+  }, [nResidues, importedData, calcData]);
+  const rg = useMemo(() => calcData?.rg || importedData?.rg || generateRgData(nFrames), [nFrames, importedData, calcData]);
+  const sasa = useMemo(() => calcData?.sasa || importedData?.sasa || generateSASAData(nFrames), [nFrames, importedData, calcData]);
+  const energy = useMemo(() => calcData?.energy || importedData?.energy || energyData || generateEnergyData(nFrames), [nFrames, importedData, calcData, energyData]);
 
   // Snapshot the main analysis charts for the Lab Notebook "Results Summary" tick.
   useEffect(() => {
     if (d.parsedSeq.length === 0) return;
-    const t = setTimeout(() => {
+    let attempt = 0;
+    let t = null;
+    const tryCapture = () => {
       storeChartSnapshots(updateActiveTest, activeTest, [
         { id: 'md-rmsd', key: 'rmsd' },
         { id: 'md-rmsf', key: 'rmsf' },
@@ -1634,7 +1687,12 @@ export const MDAnalysisSection = ({ ctx }) => {
         { id: 'md-sasa', key: 'sasa' },
         { id: 'md-energy', key: 'energy' }
       ]);
-    }, 500);
+      // recharts can take a moment to draw; retry a few times so the export
+      // always has the graphs even if the section was just opened.
+      attempt++;
+      if (attempt < 4) t = setTimeout(tryCapture, 700);
+    };
+    t = setTimeout(tryCapture, 400);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rmsd, rmsf, rg, sasa, energy, d.parsedSeq.length]);
@@ -1677,13 +1735,77 @@ export const MDAnalysisSection = ({ ctx }) => {
          </div>
       )}
 
-      {importedData ? (
+      {/* ── Calculate the general parameters from the loaded trajectory ── */}
+      <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={handleCalculateFromTrajectory}
+            disabled={calc.state === 'running'}
+            className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold py-1.5 px-3 rounded-lg text-xs shadow-sm transition-colors flex items-center gap-2"
+          >
+            ⚙️ {calc.state === 'running' ? 'Calculating…' : 'Calculate from trajectory'}
+          </button>
+          <label className="flex items-center gap-1.5 text-[10px] font-bold text-indigo-700 uppercase">
+            Stride
+            <select
+              value={calcOpts.stride}
+              onChange={(e) => setCalcOpts((o) => ({ ...o, stride: Math.max(1, Number(e.target.value) || 1) }))}
+              className="border border-indigo-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-indigo-500"
+              title="Use every Nth frame for the calculation"
+            >
+              {[1, 2, 5, 10, 20, 50, 100].map((s) => <option key={s} value={s}>{s}×</option>)}
+            </select>
+          </label>
+          <label className="flex items-center gap-1.5 text-[10px] font-bold text-indigo-700 uppercase">
+            Max frames
+            <input type="number" min="10" value={calcOpts.maxFrames}
+              onChange={(e) => setCalcOpts((o) => ({ ...o, maxFrames: Math.max(10, Number(e.target.value) || 300) }))}
+              className="border border-indigo-300 rounded-lg px-2 py-1 text-xs w-20 bg-white outline-none focus:border-indigo-500"
+              title="Cap on the number of frames processed" />
+          </label>
+          <label className="flex items-center gap-1.5 text-[10px] font-bold text-indigo-700 uppercase cursor-pointer">
+            <input type="checkbox" checked={calcOpts.sasa}
+              onChange={(e) => setCalcOpts((o) => ({ ...o, sasa: e.target.checked }))}
+              className="w-4 h-4 accent-indigo-600" />
+            SASA (slower)
+          </label>
+          <label className="bg-white hover:bg-slate-50 border border-indigo-300 text-indigo-700 font-bold py-1.5 px-3 rounded-lg text-xs cursor-pointer shadow-sm transition-colors flex items-center gap-1.5"
+            title="XTC/TRR contain no energies — load gmx energy -o output (.xvg) or a time/value file">
+            ⚡ Energy file (.xvg/.dat)
+            <input type="file" accept=".xvg,.dat,.txt,.log" className="hidden" onChange={handleEnergyFile} />
+          </label>
+          {energyFileName && (
+            <span className="text-[10px] text-indigo-600 font-bold max-w-[160px] truncate">⚡ {energyFileName}</span>
+          )}
+        </div>
+        {calc.state === 'running' && (
+          <div className="flex items-center gap-2">
+            <div className="flex-1 h-2 bg-white rounded-full overflow-hidden border border-indigo-200">
+              <div className="h-full bg-indigo-500 transition-all" style={{ width: calc.total > 0 ? `${Math.min(100, (calc.done / calc.total) * 100)}%` : '10%' }} />
+            </div>
+            <span className="text-[10px] font-bold text-indigo-700 whitespace-nowrap">{calc.msg}</span>
+          </div>
+        )}
+        {calc.state === 'error' && (
+          <div className="bg-red-50 border border-red-200 text-red-700 text-xs font-bold p-2 rounded-lg">⚠️ {calc.error}</div>
+        )}
+        {calc.state === 'done' && (
+          <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold p-2 rounded-lg">✅ {calc.msg}</div>
+        )}
+      </div>
+
+      {calcData ? (
+         <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold p-2 rounded-lg flex items-center gap-2">
+           ✅ Plotting data calculated from the trajectory (RMSD/RMSF/Rg/SASA).
+         </div>
+      ) : importedData ? (
          <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold p-2 rounded-lg flex items-center gap-2">
            ✅ Plotting real imported data. (XTC trajectory is still playing in the 3D viewer above).
          </div>
       ) : (
          <span className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 w-fit">
-           Curves are simulated. To see real graphs, upload an analysis JSON file.
+           Curves are simulated. Calculate from the trajectory (⚙️ button above) or upload an analysis JSON file to see real graphs.
          </span>
       )}
 

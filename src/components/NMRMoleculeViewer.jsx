@@ -1444,6 +1444,32 @@ className="hidden"
 {(trajFile || trajectoryFile).name}
 </span>
 )}
+{/* Load options — settable BEFORE loading, so a large trajectory is only
+    stepped through at the chosen stride / frame cap from the start. */}
+<div className="flex flex-wrap items-center gap-3 mt-1 pt-2 border-t border-slate-200">
+<label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 uppercase">
+Load every
+<select
+value={stride}
+onChange={(e) => setStride(Math.max(1, parseInt(e.target.value, 10) || 1))}
+className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-indigo-500"
+title="Play every Nth frame — keeps the same total trajectory time with fewer frames"
+>
+{[1, 2, 5, 10, 20, 50, 100, 200, 500, 1000].map((s) => <option key={s} value={s}>{s}×</option>)}
+</select>
+</label>
+<label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 uppercase">
+Max frames
+<input
+type="number"
+min="0"
+value={maxFrames}
+onChange={(e) => setMaxFrames(Math.max(0, parseInt(e.target.value, 10) || 0))}
+className="border border-slate-300 rounded-lg px-2 py-1 text-xs w-20 bg-white outline-none focus:border-indigo-500"
+title="Limit the number of frames actually played (0 = keep all)"
+/>
+</label>
+</div>
 </div>
 
 <div className="flex flex-col gap-1">
@@ -1634,28 +1660,6 @@ className="border border-indigo-300 rounded-lg px-2 py-1 text-xs bg-white outlin
 >
 {[1, 5, 10, 20, 30, 60].map((s) => <option key={s} value={s}>{s} fps</option>)}
 </select>
-</div>
-<div className="flex items-center gap-2">
-<label className="text-[10px] font-bold text-indigo-700 uppercase">Load every</label>
-<select
-value={stride}
-onChange={(e) => setStride(Math.max(1, parseInt(e.target.value, 10) || 1))}
-className="border border-indigo-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-indigo-500"
-title="Play every Nth frame — keeps the same total trajectory time with fewer frames"
->
-{[1, 2, 5, 10, 20, 50, 100, 200, 500, 1000].map((s) => <option key={s} value={s}>{s}×</option>)}
-</select>
-</div>
-<div className="flex items-center gap-2">
-<label className="text-[10px] font-bold text-indigo-700 uppercase">Max frames</label>
-<input
-type="number"
-min="0"
-value={maxFrames}
-onChange={(e) => setMaxFrames(Math.max(0, parseInt(e.target.value, 10) || 0))}
-className="border border-indigo-300 rounded-lg px-2 py-1 text-xs w-20 bg-white outline-none focus:border-indigo-500"
-title="Limit the number of frames actually played (0 = keep all)"
-/>
 </div>
 <div className="w-full">
 {trajStatus === 'loading' && <span className="text-[11px] font-bold text-indigo-600">⏳ Loading trajectory ({trajectoryFormat.toUpperCase()})…</span>}
