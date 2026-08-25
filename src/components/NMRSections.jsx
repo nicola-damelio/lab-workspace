@@ -3213,51 +3213,6 @@ if (moleculeType === 'protein' && res.simN !== null && res.simN !== undefined &&
 };
 
 // ================= IMPORT HELPERS =================
-const GREEK_MAP = { 'α': 'a', 'β': 'b', 'γ': 'g', 'δ': 'd', 'ε': 'e', 'ζ': 'z', 'η': 'h' };
-const normAtomName = (s) => String(s || '').trim().replace(/\s+/g, '').split('').map((ch) => GREEK_MAP[ch] || ch).join('').toUpperCase();
-const ATOM_ALIASES = { HA: 'Hα', HB: 'Hβ', HG: 'Hγ', HD: 'Hδ', HE: 'Hε', HZ: 'Hζ', CA: 'Cα', CB: 'Cβ', CG: 'Cγ', CD: 'Cδ', CE: 'Cε', CZ: 'Cζ', C: "C'", CO: "C'", N: 'N', H: 'HN', HN: 'HN' };
-const resolveAtom = (res, atomRaw, nameMap = {}) => {
-  if (!res) return null;
-  const pool = [...(res.atoms || [])];
-  if (res.backboneRand) pool.push('N', "C'");
-  Object.keys(res.uniqueCShifts || {}).forEach((c) => pool.push(c));
-  const raw = String(atomRaw || '').trim();
-  const cands = [raw, nameMap[raw], ATOM_ALIASES[normAtomName(raw)], raw.replace(/\s+/g, '')].filter(Boolean);
-  for (const cand of cands) {
-    const hit = pool.find((a) => normAtomName(a) === normAtomName(cand));
-    if (hit) return hit;
-  }
-  return null;
-};
-const buildResLookup = (parsedSeq) => {
-  const map = {};
-  parsedSeq.forEach((r, i) => {
-    map[String(i)] = i;
-    map[String(i + 1)] = i;
-    map[r.id.toLowerCase()] = i;
-    map[(r.char + (i + 1)).toLowerCase()] = i;
-    if (r.code3) map[(r.code3 + (i + 1)).toLowerCase()] = i;
-  });
-  return map;
-};
-
-// ================= FITTING ENGINE =================
-const gaussSolve = (A, b) => {
-  const n = b.length;
-  const M = A.map((r, i) => [...r, b[i]]);
-  for (let c = 0; c < n; c++) {
-    let p = c;
-    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
-    if (Math.abs(M[p][c]) < 1e-12) return null;
-    [M[c], M[p]] = [M[p], M[c]];
-    for (let r = 0; r < n; r++) {
-      if (r === c) continue;
-      const f = M[r][c] / M[c][c];
-      for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k];
-    }
-  }
-  return M.map((r, i) => r[n] / r[i][i]);
-};
 const tokenizeExpr = (s) => {
   const t = []; let i = 0;
   const D = (c) => /[0-9.]/.test(c), A = (c) => /[a-zA-Z_]/.test(c);
@@ -3491,15 +3446,6 @@ const TxtField = ({ label, value, onChange, placeholder = '', w = 'w-full' }) =>
     <label className="text-[10px] font-bold text-slate-600">{label}</label>
     <input type="text" value={value ?? ''} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
       className={`border border-slate-300 rounded-md p-1.5 text-xs outline-none focus:border-blue-500 ${w}`} />
-  </div>
-);
-
-const SelField = ({ label, value, onChange, options }) => (
-  <div className="flex flex-col gap-1">
-    <label className="text-[10px] font-bold text-slate-600">{label}</label>
-    <select value={value} onChange={(e) => onChange(e.target.value)} className="border border-slate-300 rounded-md p-1.5 text-xs bg-white outline-none focus:border-blue-500">
-      {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-    </select>
   </div>
 );
 
@@ -3908,8 +3854,6 @@ const generatedStructure = useMemo(() => {
   
   const focusIdx = activeTest.focusIdx !== undefined ? activeTest.focusIdx : 'ALL';
   const setFocusIdx = (val) => updateActiveTest({ focusIdx: val });
-  const [expandedPanel, setExpandedPanel] = useState(null);
-  const [ssBrush, setSSBrush] = useState('H');
   const selectedKeys = getSelectedKeys(activeTest);
   const manualKeys = useMemo(() => getManualKeys(d.shifts), [d.shifts]);
   
@@ -4498,8 +4442,7 @@ export const DataSection = ({ ctx }) => {
   const focusIdx = activeTest.focusIdx !== undefined ? activeTest.focusIdx : 'ALL';
   const [newLayerName, setNewLayerName] = useState('');
   const [newLayerUnit, setNewLayerUnit] = useState('');
-  const [showImport, setShowImport] = useState(false);
-  const [importConfig, setImportConfig] = useState({ testId: '', tableId: '', metric: 'R_s' });
+  const [, setShowImport] = useState(false);
 
   // ---- Bruker 1r import (ppm axis) ----
   const [nmrBrukerDataUrl, setNmrBrukerDataUrl] = useState('');
@@ -4530,7 +4473,7 @@ export const DataSection = ({ ctx }) => {
   const isDragging = useRef(false);
   const [copiedMsg, setCopiedMsg] = useState('');
 
-  const cellInDragSel = (rowIdx, atomName, lk) => {
+  const cellInDragSel = (rowIdx) => {
     if (!dragSel) return false;
     const rows = [dragSel.startRow, dragSel.endRow].sort((a, b) => a - b);
     if (rowIdx < rows[0] || rowIdx > rows[1]) return false;
@@ -4647,98 +4590,6 @@ export const DataSection = ({ ctx }) => {
     updateActiveTest({ chemicalShifts: cs, nmrValues: nv });
   };
   
-  const executeImport = () => {
-      const selectedTest = (ctx.allTests || []).find(t => t.id === importConfig.testId);
-      const table = (selectedTest?.nmrTables || []).find(t => t.id === importConfig.tableId);
-      if (!table) return;
-
-      const layerName = `${table.relaxType}_${importConfig.metric}`;
-      const newLayers = [...(activeTest.parameterLayers || [])];
-      let layer = newLayers.find(l => l.label === layerName);
-      if (!layer) {
-          layer = {
-            key: makeLayerId(),
-            label: layerName,
-            unit: importConfig.metric === 'T_s' ? 's' : (importConfig.metric === 'R_s' ? (table.relaxType === 'DOSY' ? 'm²/s' : 's⁻¹') : ''),
-            source: { testId: selectedTest.id, testName: selectedTest.name, tableId: table.id, metric: importConfig.metric }
-          };
-          newLayers.push(layer);
-      } else {
-          layer = { ...layer, source: { testId: selectedTest.id, testName: selectedTest.name, tableId: table.id, metric: importConfig.metric } };
-          const idx = newLayers.findIndex(l => l.key === layer.key);
-          if (idx >= 0) newLayers[idx] = layer;
-      }
-      
-      const newValues = { ...(activeTest.nmrValues || {}) };
-      newValues[layer.key] = { ...(newValues[layer.key] || {}) };
-      
-      const tableFits = selectedTest.savedFits?.[table.id] || [];
-      let count = 0;
-
-      tableFits.forEach(colFit => {
-          if (!colFit.fit || !colFit.residue) return;
-          const colResRaw = String(colFit.residue).toLowerCase().trim();
-          let matchedKey = null;
-
-          const targetAtomRaw = (table.atom || 'HN');
-          const targetAtomLower = targetAtomRaw.toLowerCase();
-          const targetAtomAlias = (ATOM_ALIASES[normAtomName(targetAtomRaw)] || targetAtomRaw).toLowerCase();
-
-          let colResLower = colResRaw;
-          const dashIdx = colResRaw.lastIndexOf('-');
-          if (dashIdx > 0) {
-              const afterDash = colResRaw.slice(dashIdx + 1);
-              if (afterDash === targetAtomLower || afterDash === targetAtomAlias) {
-                  colResLower = colResRaw.slice(0, dashIdx);
-              }
-          }
-
-          for (const opt of d.atomOptions) {
-              const parts = opt.key.split('-');
-              const rIdx = parseInt(parts[0], 10);
-              const aName = parts.slice(1).join('-');
-              const aNameLower = aName.toLowerCase();
-              const res = d.parsedSeq[rIdx];
-              if (!res) continue;
-              const rId = res.id?.toLowerCase() || '';
-              const rShort = `${res.char?.toLowerCase() || ''}${rIdx + 1}`;
-              const rNum = String(rIdx + 1);
-
-              const atomMatches = aNameLower === targetAtomLower || aNameLower === targetAtomAlias;
-
-              if (!atomMatches) continue;
-
-              if (colResLower === rId || colResLower === rShort || colResLower === rNum) {
-                  matchedKey = opt.key; break;
-              } else if (colResLower === `${rId} ${aNameLower}` || colResLower === `${rShort} ${aNameLower}`) {
-                  matchedKey = opt.key; break;
-              } else if (aNameLower === colResLower && d.parsedSeq.length === 1) {
-                  matchedKey = opt.key; break;
-              }
-          }
-
-          if (matchedKey) {
-              let val = null;
-              if (importConfig.metric === 'R_s') val = colFit.fit.R_s ?? colFit.fit.R ?? colFit.fit.rate;
-              else if (importConfig.metric === 'T_s') val = colFit.fit.T_s ?? colFit.fit.T ?? colFit.fit.time;
-              else if (importConfig.metric === 'error') val = selectedTest.manualErrors?.[table.id]?.[colFit.residue] ?? colFit.fit.seR_s ?? colFit.fit.seR ?? colFit.fit.error;
-              if (val !== '' && val !== undefined && val !== null && !Number.isNaN(val)) {
-                  let formattedVal = val;
-                  if (typeof val === 'number') {
-                      formattedVal = (Math.abs(val) < 0.001 && val !== 0) || Math.abs(val) > 10000 ? val.toExponential(4) : val.toFixed(4);
-                  }
-                  newValues[layer.key][matchedKey] = formattedVal;
-                  count++;
-              }
-          }
-      });
-      
-      updateActiveTest({ parameterLayers: newLayers, nmrValues: newValues });
-      if (!visibleLayers.includes(layer.key)) setVisibleLayers([...visibleLayers, layer.key]);
-      setShowImport(false);
-      alert(`Imported ${count} values from "${selectedTest.name}" successfully.`);
-  };
-
   const openExportModal = () => {
     setExportColumns([...visibleLayers]);
     setShowExportModal(true);
@@ -5431,7 +5282,7 @@ const dom = brukerZoomDom || xFull;
                        ? resAtoms.filter(o => o.label.includes(' HN ') || o.label.includes(' N ') || o.label.includes(' Cα ') || o.label.includes(' Cβ ') || o.label.includes(" C' "))
                        : resAtoms;
                        
-                    return displayAtoms.map((opt, aIdx) => {
+                    return displayAtoms.map((opt) => {
                       const rowHasData = exportColumns.some(lk => {
                         const valMap = lk === 'cs' ? activeTest.chemicalShifts : (d.allLayerValues[lk] || {});
                         const val = valMap?.[opt.key];
@@ -6517,7 +6368,6 @@ export const SimulationsSection = ({ ctx }) => {
   const [expandedPanel, setExpandedPanel] = useState(null);
   const [showCfg, setShowCfg] = useState(false);
   const focusIdx = activeTest.focusIdx !== undefined ? activeTest.focusIdx : 'ALL';
-  const setFocusIdx = (val) => updateActiveTest({ focusIdx: val });
   const selectedKeys = getSelectedKeys(activeTest);
   const manualKeys = useMemo(() => getManualKeys(d.shifts), [d.shifts]);
   const simCfg = { fontSize: 11, h1D: 300, aspect2D: 1, simShowLabels: false, simLabelFormat: 'resNum_code_atom', simLabelDim: 'both', simLabelFontSize: 10, ...(activeTest.simChartCfg || {}) };

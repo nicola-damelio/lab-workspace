@@ -6,7 +6,7 @@
 
 import React, {useState, useEffect, useRef, useMemo} from 'react';
 import {XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar, Cell} from 'recharts';
-import { SharedGraphConfig, SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, AngledTick } from './SharedAnalysisTools';
+import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, AngledTick } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, LINE_COLORS } from '../utils/chartStyle';
 export { CollapsibleSection };
@@ -320,23 +320,6 @@ const importBruker1r = ({ dataBuffer, acqusText = '', manualSWkHz = null, manual
 /* ========================================================================
 MOLAR ELLIPTICITY
 ======================================================================== */
-const concentrationToMgPerMl = (concStr, unit, mw) => {
-  const c = parseManual(concStr);
-  if (c === null) return null;
-  const u = String(unit || 'mg/mL');
-  if (u === 'mg/mL') return c;
-  if (!mw) return null;
-  if (u === 'µM' || u === 'uM') return c * 1e-6 * mw;
-  if (u === 'mM') return c * 1e-3 * mw;
-  if (u === 'M') return c * mw;
-  return c;
-};
-
-const pathLengthToCm = (vStr, unit) => {
-  const v = parseManual(vStr);
-  if (v === null) return null;
-  return String(unit || 'cm') === 'mm' ? v / 10 : v;
-};
 
 const getCompoundMW = (inst, ctx) => {
   const t = inst?.test || inst || {};
@@ -756,54 +739,6 @@ const chartBoxStyle = (cfg) => ({
   maxHeight: cfg.height || 380,
   minHeight: 220
 });
-
-const NumField = ({ label, value, onChange, step = 1, w = 'w-full' }) => {
-  const [local, setLocal] = useState(value ?? '');
-  useEffect(() => { setLocal(value ?? ''); }, [value]);
-  return (
-    <div className="flex flex-col gap-1">
-      <label className="text-[10px] font-bold text-slate-600">{label}</label>
-      <input
-        type="number" step={step} value={local}
-        onWheel={(e) => e.target.blur()}
-        onChange={(e) => setLocal(e.target.value)}
-        onBlur={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))}
-        onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
-        className={`border border-slate-300 rounded-md p-1.5 text-xs outline-none focus:border-blue-500 ${w}`}
-      />
-    </div>
-  );
-};
-
-const TxtField = ({ label, value, onChange, placeholder = '', w = 'w-full' }) => {
-  const [local, setLocal] = useState(value ?? '');
-  useEffect(() => { setLocal(value ?? ''); }, [value]);
-  return (
-    <div className="flex flex-col gap-1">
-      <label className="text-[10px] font-bold text-slate-600">{label}</label>
-      <input
-        type="text" value={local}
-        onChange={(e) => setLocal(e.target.value)}
-        onBlur={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
-        placeholder={placeholder}
-        className={`border border-slate-300 rounded-md p-1.5 text-xs outline-none focus:border-blue-500 ${w}`}
-      />
-    </div>
-  );
-};
-
-const SelField = ({ label, value, onChange, options }) => (
-  <div className="flex flex-col gap-1">
-    <label className="text-[10px] font-bold text-slate-600">{label}</label>
-    <select
-      value={value} onChange={(e) => onChange(e.target.value)}
-      className="border border-slate-300 rounded-md p-1.5 text-xs bg-white outline-none focus:border-blue-500"
-    >
-      {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-    </select>
-  </div>
-);
 
 const ErrorTreatmentPanel = ({ plot, set, showFitToggle = true, customActions }) => {
   const shimTest = {

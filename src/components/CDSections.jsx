@@ -10,7 +10,7 @@ import {
   ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line,
   Legend, ErrorBar, Cell, PieChart, Pie
 } from 'recharts';
-import { SharedGraphConfig, SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, AngledTick } from './SharedAnalysisTools';
+import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, AngledTick } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, LINE_COLORS } from '../utils/chartStyle';
 export { CollapsibleSection };
@@ -899,54 +899,6 @@ const chartBoxStyle = (cfg) => ({
   maxHeight: cfg.height || 380,
   minHeight: 220
 });
-
-const NumField = ({ label, value, onChange, step = 1, w = 'w-full' }) => {
-  const [local, setLocal] = useState(value ?? '');
-  useEffect(() => { setLocal(value ?? ''); }, [value]);
-  return (
-    <div className="flex flex-col gap-1">
-      <label className="text-[10px] font-bold text-slate-600">{label}</label>
-      <input
-        type="number" step={step} value={local}
-        onWheel={(e) => e.target.blur()}
-        onChange={(e) => setLocal(e.target.value)}
-        onBlur={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))}
-        onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
-        className={`border border-slate-300 rounded-md p-1.5 text-xs outline-none focus:border-blue-500 ${w}`}
-      />
-    </div>
-  );
-};
-
-const TxtField = ({ label, value, onChange, placeholder = '', w = 'w-full' }) => {
-  const [local, setLocal] = useState(value ?? '');
-  useEffect(() => { setLocal(value ?? ''); }, [value]);
-  return (
-    <div className="flex flex-col gap-1">
-      <label className="text-[10px] font-bold text-slate-600">{label}</label>
-      <input
-        type="text" value={local}
-        onChange={(e) => setLocal(e.target.value)}
-        onBlur={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
-        placeholder={placeholder}
-        className={`border border-slate-300 rounded-md p-1.5 text-xs outline-none focus:border-blue-500 ${w}`}
-      />
-    </div>
-  );
-};
-
-const SelField = ({ label, value, onChange, options }) => (
-  <div className="flex flex-col gap-1">
-    <label className="text-[10px] font-bold text-slate-600">{label}</label>
-    <select
-      value={value} onChange={(e) => onChange(e.target.value)}
-      className="border border-slate-300 rounded-md p-1.5 text-xs bg-white outline-none focus:border-blue-500"
-    >
-      {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-    </select>
-  </div>
-);
 
 const ErrorTreatmentPanel = ({ plot, set, showFitToggle = true, customActions }) => {
   const shimTest = {
@@ -1924,10 +1876,6 @@ export const SpectrumFitting = ({ ctx }) => {
   }, [savedFit, fitParsed, spec]);
 
   const overlayRef = useRef(null);
-  const allXs = [...expData.map((p) => p.x), ...simData.map((p) => p.x)];
-  const allYs = [...expData.map((p) => p.y), ...simData.map((p) => p.y)].filter((y) => Number.isFinite(y));
-  const padX = allXs.length ? ((Math.max(...allXs) - Math.min(...allXs)) * 0.03 || 1) : 1;
-  const zoomFit = useXZoom(overlayRef, resolvedXDomain);
 
   const allSaved = useMemo(() => {
     const out = [];
