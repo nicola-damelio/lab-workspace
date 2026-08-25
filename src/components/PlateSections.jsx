@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { CollapsibleSection } from './TestShellRenderer';
-import { SharedGraphConfig, SharedErrorTreatment } from './SharedAnalysisTools';
+import { SharedGraphConfig, SharedErrorTreatment, ChartControlBar } from './SharedAnalysisTools';
 import {
     PLATES_DEF,
     formatConc,
@@ -3214,28 +3214,13 @@ return (
             <CollapsibleSection title="Data Analysis" icon="📐" defaultOpen={true}>
                 <div className="flex flex-col gap-6">
 {/* ===== TOGGLE BUTTONS FOR ERROR MGMT & GRAPHICAL PARAMS ===== */}
-                    <div className="flex flex-wrap gap-3">
-                        <button
-                            onClick={() => setShowErrMgmt(!showErrMgmt)}
-                            className={`font-bold py-2 px-4 rounded-lg text-sm transition-colors shadow-sm flex items-center gap-2 ${
-                                showErrMgmt
-                                    ? 'bg-blue-100 border border-blue-300 text-blue-800'
-                                    : 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-300'
-                            }`}
-                        >
-                            <span>⚠️</span> Error Management {showErrMgmt ? '▲' : '▼'}
-                        </button>
-                        <button
-                            onClick={() => setShowGraphParams(!showGraphParams)}
-                            className={`font-bold py-2 px-4 rounded-lg text-sm transition-colors shadow-sm flex items-center gap-2 ${
-                                showGraphParams
-                                    ? 'bg-blue-100 border border-blue-300 text-blue-800'
-                                    : 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-300'
-                            }`}
-                        >
-                            <span>🎨</span> Graphical Parameters {showGraphParams ? '▲' : '▼'}
-                        </button>
-                    </div>
+                    <ChartControlBar
+                        showErr={showErrMgmt}
+                        onToggleErr={() => setShowErrMgmt(!showErrMgmt)}
+                        showCfg={showGraphParams}
+                        onToggleCfg={() => setShowGraphParams(!showGraphParams)}
+                        className="flex flex-wrap gap-3"
+                    />
 
                     {/* ===== ERROR MANAGEMENT ===== */}
                     {showErrMgmt && (
