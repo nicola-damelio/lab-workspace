@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import TestShellRenderer from './TestShellRenderer';
 
 import {
   buildNotebookHtml as buildDockingNotebookHtmlFromSections,
