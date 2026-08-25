@@ -5,7 +5,7 @@
 
 import React from 'react';
 
-export const DashboardModule = ({ datasetTitle, datasetSubtitle, handlePrint, tests, storages, setCurrentModule }) => (
+export const DashboardModule = ({ datasetTitle, datasetSubtitle, handlePrint, tests, storages, setCurrentModule, mergedPlan }) => (
 
               <div className="p-4 md:p-8 h-full overflow-y-auto custom-scrollbar bg-slate-50">
                 <div className="max-w-6xl mx-auto">
