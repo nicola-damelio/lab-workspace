@@ -2681,6 +2681,7 @@ const openDataset = (dset) => {
 
             {currentModule === 'definitions' && (<DefinitionsModule
               allCmpds={allCmpds} setActiveLibrarySelection={setActiveLibrarySelection} activeLibrarySelection={activeLibrarySelection}
+              allCellLines={allCellLines}
               compoundMeta={compoundMeta} setCompoundMeta={setCompoundMeta}
               cellLineMeta={cellLineMeta} setCellLineMeta={setCellLineMeta}
               plasmidMeta={plasmidMeta} setPlasmidMeta={setPlasmidMeta}
@@ -2696,6 +2697,7 @@ const openDataset = (dset) => {
               mandatoryBehavior={mandatoryBehavior} setMandatoryBehavior={setMandatoryBehavior}
               operators={operators} setOperators={setOperators}
               authSettings={authSettings} setAuthSettings={setAuthSettings}
+              currentUser={currentUser} tests={tests} setTests={setTests} handleSetCustomFields={handleSetCustomFields}
             />)}
 
             {currentModule === 'agenda' && (<AgendaModule
@@ -2703,6 +2705,8 @@ const openDataset = (dset) => {
               operatorNames={operatorNames} mergedPlan={mergedPlan}
               calFilterDate={calFilterDate} setCalFilterDate={setCalFilterDate}
               agendaGrouped={agendaGrouped} jumpToTest={jumpToTest}
+              currentMonth={currentMonth} monthName={monthName} startDayOffset={startDayOffset} totalDays={totalDays}
+              handlePrevMonth={handlePrevMonth} handleNextMonth={handleNextMonth} handlePrint={handlePrint}
             />)}
 
             <StorageModule

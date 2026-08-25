@@ -6,6 +6,7 @@
    ========================================================================= */
 
 import React, { useState, useMemo, useCallback } from 'react';
+import { BOX_ROW_LABELS } from '../../data/constants';
 
 /* =========================================================
 STORAGE FINDER

@@ -7,7 +7,9 @@ import React from 'react';
 
 export const AgendaModule = ({
   currentUser, agendaOpFilter, setAgendaOpFilter, operatorNames,
-  mergedPlan, calFilterDate, setCalFilterDate, agendaGrouped, jumpToTest
+  mergedPlan, calFilterDate, setCalFilterDate, agendaGrouped, jumpToTest,
+  currentMonth, monthName, startDayOffset, totalDays,
+  handlePrevMonth, handleNextMonth, handlePrint
 }) => (
 
               <div className="p-4 md:p-6 h-full overflow-y-auto custom-scrollbar flex flex-col">

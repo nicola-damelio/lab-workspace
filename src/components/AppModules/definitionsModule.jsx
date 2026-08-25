@@ -6,12 +6,16 @@
 import React from 'react';
 import { CollapsibleSectionPanel as CollapsibleSection } from '../ui';
 import { LibraryDirectory } from './libraryDirectory';
+import { CellLineDefinitionSection, PlasmidDefinitionSection } from './librarySections';
 import { CompoundDefinitionSection } from './compoundDefinitionSection';
+import { SolventsManager, BuffersManager, AdditivesManager, NMRProbesManager, NMRInstrumentsManager, NMRExperimentsManager } from '../DefinitionsExtra';
 import { CustomMetadataFieldsManager, MandatoryParametersManager, ScientistsOperatorsManager } from './definitionsManagers';
 import { DatabaseCleanupManager } from './storageModules';
+import { normalizeOperators } from '../../utils/auth';
 
 export const DefinitionsModule = ({
   allCmpds, setActiveLibrarySelection, activeLibrarySelection,
+  allCellLines,
   compoundMeta, setCompoundMeta, cellLineMeta, setCellLineMeta,
   plasmidMeta, setPlasmidMeta, customCmpds, setCustomCmpds,
   customCellLines, setCustomCellLines,
@@ -19,7 +23,8 @@ export const DefinitionsModule = ({
   nmrProbes, setNmrProbes, nmrInstruments, setNmrInstruments, nmrExperiments, setNmrExperiments,
   customFields, setCustomFields, mandatoryRules, setMandatoryRules,
   mandatoryBehavior, setMandatoryBehavior,
-  operators, setOperators, authSettings, setAuthSettings
+  operators, setOperators, authSettings, setAuthSettings,
+  currentUser, tests, setTests, handleSetCustomFields
 }) => (
 
               <div className="h-full min-h-0 overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">

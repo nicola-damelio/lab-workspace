@@ -40,16 +40,40 @@ foreach($m in [regex]::Matches($appText, 'import\s+([^;]+?)\s+from')){
     }
   }
 }
-$appNames = $appNames | Sort-Object -Unique
+# Single-char names (a, t, s, ...) are App-internal closure vars — pure noise.
+$appNames = $appNames | Where-Object { $_.Length -gt 1 } | Sort-Object -Unique
 
 $globals = @('window','document','console','alert','confirm','prompt','setTimeout','clearTimeout','setInterval','clearInterval','fetch','URL','FileReader','TextEncoder','TextDecoder','crypto','Promise','JSON','Math','Date','String','Number','Boolean','Array','Object','Symbol','RegExp','Map','Set','WeakMap','WeakSet','parseInt','parseFloat','isNaN','encodeURIComponent','decodeURIComponent','localStorage','sessionStorage','Blob','FormData','btoa','atob','structuredClone','performance','location','navigator','history','requestAnimationFrame','cancelAnimationFrame','CustomEvent','Event','KeyboardEvent','MouseEvent','Image','DOMParser','AbortController','IntersectionObserver','ResizeObserver','MutationObserver','File','FileList','React','useState','useEffect','useRef','useMemo','useCallback','useReducer','useContext','useLayoutEffect','useImperativeHandle','useTransition','useDeferredValue','useId','useSyncExternalStore','Fragment','Suspense','lazy','memo','Children','isValidElement','createElement','createContext','createRef','forwardRef','startTransition','useDebugValue','alert','confirm')
 
-$targets = Get-ChildItem 'src/components/AppModules' -File -Include *.jsx
+$targets = Get-ChildItem 'src/components/AppModules' -File -Filter *.jsx
 $anyFlags = $false
 foreach($file in $targets){
   $content = [System.IO.File]::ReadAllText($file.FullName)
+  # Code-only copy: strip comments and string/template literals so identifiers
+  # inside prose, className="...", titles etc. don't cause false flags.
+  $code = [regex]::Replace($content, '/\*[\s\S]*?\*/', ' ')
+  $code = [regex]::Replace($code, '(?m)//[^\r\n]*', ' ')
+  $code = [regex]::Replace($code, '`[^`]*`', ' ')
+  $code = [regex]::Replace($code, '"(?:[^"\\]|\\.)*"', ' ')
+  $code = [regex]::Replace($code, "'(?:[^'\\]|\\.)*'", ' ')
+
   $local = @()
-  foreach($m in [regex]::Matches($content, '\b(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)')){ $local += $m.Groups[1].Value }
+  foreach($m in [regex]::Matches($code, '\b(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)')){ $local += $m.Groups[1].Value }
+  # destructured: const { a, b: c } = ...  /  const [a, b] = ...
+  foreach($m in [regex]::Matches($code, '\b(?:const|let|var)\s*\{([^}]*)\}\s*=')){
+    ($m.Groups[1].Value -split ',') | ForEach-Object { $p = $_.Trim(); if($p -match '^([A-Za-z_$][\w$]*)(\s*:\s*([A-Za-z_$][\w$]*))?'){ $local += if($Matches[3]){$Matches[3]}else{$Matches[1]} } }
+  }
+  foreach($m in [regex]::Matches($code, '\bconst\s*\[([^\]]+)\]\s*=')){
+    ($m.Groups[1].Value -split ',') | ForEach-Object { $p = $_.Trim(); if($p -match '^([A-Za-z_$][\w$]*)'){ $local += $Matches[1] } }
+  }
+  # function / arrow parameters: (a, b = x) =>  and  function foo(a, b)
+  foreach($m in [regex]::Matches($code, '\(([^()]*)\)\s*=>')){
+    ($m.Groups[1].Value -split ',') | ForEach-Object { $p = ($_.Trim() -replace '=.*$','' -replace '^\.\.\.',''); if($p -match '^([A-Za-z_$][\w$]*)'){ $local += $Matches[1] } }
+  }
+  foreach($m in [regex]::Matches($code, 'function\s+[A-Za-z_$][\w$]*\s*\(([^()]*)\)')){
+    ($m.Groups[1].Value -split ',') | ForEach-Object { $p = ($_.Trim() -replace '=.*$','' -replace '^\.\.\.',''); if($p -match '^([A-Za-z_$][\w$]*)'){ $local += $Matches[1] } }
+  }
+
   $imported = @()
   foreach($m in [regex]::Matches($content, 'import\s+([^;]+?)\s+from')){
     $spec = $m.Groups[1].Value
@@ -78,10 +102,20 @@ foreach($file in $targets){
   $lines = [System.IO.File]::ReadAllLines($file.FullName)
   $flags = @()
   foreach($name in $appNames){
-    if($defined -notcontains $name -and [regex]::IsMatch($content, '\b' + [regex]::Escape($name) + '\b')){
-      $hits = @()
-      for($i=0;$i -lt $lines.Count;$i++){ if($lines[$i] -match ('\b'+[regex]::Escape($name)+'\b')){ $hits += ($i+1) } }
-      $flags += ($name + ' @ ' + ($hits -join ','))
+    if($defined -notcontains $name){
+      $esc = [regex]::Escape($name)
+      # flag only real identifier uses: skip `.name` (property access), `-name` (class-name
+      # fragments like `grid-cols-3`), `name={` / `name="` / `name='` (JSX attribute),
+      # and `name:` (object key).
+      $rx = '(?<![\w.$-])\b' + $esc + '\b(?!\s*=\s*[\{"'' ]|\s*:)'
+      $realHits = ([regex]::Matches($code, $rx)).Count
+      if($realHits -gt 0){
+        # report line numbers from the code-only copy (accurate; no comment/string noise)
+        $codeLines = $code -split "`n"
+        $hits = @()
+        for($i=0;$i -lt $codeLines.Count;$i++){ if($codeLines[$i] -match ('\b'+$esc+'\b')){ $hits += ($i+1) } }
+        $flags += ($name + ' @ ' + ($hits -join ','))
+      }
     }
   }
   if($flags.Count){
