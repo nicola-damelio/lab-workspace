@@ -18,6 +18,16 @@ import {
 } from '../components/tabConfigs.jsx';
 import { DOCKING_TAB_CONFIG } from '../components/DockingTestRenderer';
 
+/* NOTE: This MD_SIMULATION_TAB_CONFIG is the App-local copy (previously defined
+   in App.jsx) and intentionally DIFFERS from the one exported by
+   src/components/tabConfigs.jsx, which is used by the MD page sections:
+     - fallbackCategories: App has 5 (adds 'Characterization'), tabConfigs has 4.
+     - notebookChecks:     App has 3 (cond/setup/results), tabConfigs has 4
+                           (adds 'analysis' = Data Analysis).
+   conditionFields are identical. Consolidating requires deciding which values
+   are canonical (it changes the MD test form's category list and the
+   SPECIAL_PAGES subsections shown in Custom Metadata / Mandatory Parameters).
+   TODO(refactor): pick one canonical definition and import it in both places. */
 export const MD_SIMULATION_TAB_CONFIG = {
   typeKey: 'md_simulation',
   typeLabel: 'MD Simulations',
