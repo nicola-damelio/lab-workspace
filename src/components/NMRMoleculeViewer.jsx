@@ -4,11 +4,14 @@ import { ensureNGL } from '../utils/ngl';
 // ---- Large-trajectory detection -------------------------------------------
 // When a chosen trajectory is big enough to freeze the browser, propose a
 // stride reduction BEFORE the file is parsed (frame counts are only known
-// after parsing, so we estimate from the file size).
-const LARGE_TRAJ_BYTES = 200 * 1024 * 1024;   // warn above 200 MB
-const TARGET_TRAJ_FRAMES = 2500;              // aim for ~2500 kept frames
+// after parsing, so we estimate from the file size). Above 2 GB the suggested
+// stride is recalculated so the effective loaded data stays under ~2 GB.
+const LARGE_TRAJ_BYTES = 200 * 1024 * 1024;        // warn above 200 MB
+const TARGET_TRAJ_FRAMES = 2500;                   // aim for ~2500 kept frames
+const TARGET_TRAJ_BYTES = 2 * 1024 * 1024 * 1024;  // 2 GB effective-load cap
 
 const fmtBytesMB = (b) => `${(b / (1024 * 1024)).toFixed(1)} MB`;
+const fmtBytesGB = (b) => `${(b / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 
 // Rough bytes/frame estimate per format (coordinates + box + header).
 const estimateTrajectoryFrames = (file, atomCount) => {
@@ -18,7 +21,10 @@ const estimateTrajectoryFrames = (file, atomCount) => {
   if (name.endsWith('.trr')) bytesPerFrame = n * 3 * 8 + 44;     // doubles
   else if (name.endsWith('.dcd')) bytesPerFrame = n * 3 * 4 + 40; // floats
   else bytesPerFrame = n * 3 * 2 + 48;                            // XTC (compressed ints)
-  return Math.max(1, Math.round(file.size / bytesPerFrame));
+  return {
+    estFrames: Math.max(1, Math.round(file.size / Math.max(1, bytesPerFrame))),
+    bytesPerFrame
+  };
 };
 
 // ---- Large-structure handling ----------------------------------------------
@@ -559,6 +565,7 @@ renamesRef.current = renames;
 const [renumberMap, setRenumberMap] = useState(() => (resRenumber && typeof resRenumber === 'object' ? { ...resRenumber } : {}));
 const [showRenumberPanel, setShowRenumberPanel] = useState(false);
 const [residueInfo, setResidueInfo] = useState([]); // [{ resno, resname, count }]
+const [renumberFrom, setRenumberFrom] = useState(1); // starting number for "Renumber from"
 const displayResno = (resno) => {
   const v = renumberMap[String(resno)];
   return v != null ? v : resno;
@@ -566,6 +573,16 @@ const displayResno = (resno) => {
 const commitRenumber = (next) => {
   setRenumberMap(next);
   if (typeof onResRenumber === 'function') onResRenumber(next);
+};
+
+// Renumber every residue consecutively starting from the user-chosen number
+// (residue 1 → start, residue 2 → start+1, …).
+const applyRenumberFrom = () => {
+  const start = parseInt(renumberFrom, 10);
+  if (!Number.isFinite(start)) return;
+  const next = {};
+  residueInfo.forEach((r, i) => { next[String(r.resno)] = start + i; });
+  commitRenumber(next);
 };
 
 // Sync externally-provided residue renumbering (e.g. restored from the active test)
@@ -1071,10 +1088,18 @@ if (!f) return;
 const structure = componentRef.current && componentRef.current.structure;
 const atomCount = structure ? structure.atomCount : 0;
 if (f.size >= LARGE_TRAJ_BYTES) {
-const estFrames = estimateTrajectoryFrames(f, atomCount);
-const suggested = Math.min(1000, Math.max(1, Math.ceil(estFrames / TARGET_TRAJ_FRAMES)));
+const { estFrames, bytesPerFrame } = estimateTrajectoryFrames(f, atomCount);
+const over2G = f.size > TARGET_TRAJ_BYTES;
+let suggested;
+if (over2G) {
+// Recalculate the stride so the effective loaded data stays under ~2 GB.
+const keepFrames = Math.max(1, Math.floor(TARGET_TRAJ_BYTES / Math.max(1, bytesPerFrame)));
+suggested = Math.min(1000, Math.max(1, Math.ceil(estFrames / keepFrames)));
+} else {
+suggested = Math.min(1000, Math.max(1, Math.ceil(estFrames / TARGET_TRAJ_FRAMES)));
+}
 if (suggested > 1) {
-setPendingTraj({ file: f, estFrames, suggested });
+setPendingTraj({ file: f, estFrames, suggested, over2G });
 return;
 }
 }
@@ -1709,18 +1734,21 @@ className="text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 
 <div className="border border-slate-200 rounded-lg bg-white shadow-sm p-2 flex flex-col gap-1.5 max-h-56 overflow-y-auto">
 <div className="flex items-center justify-between gap-1">
 <span className="text-[9px] font-bold text-slate-400 uppercase">Residue → new number</span>
-<div className="flex gap-1">
+<div className="flex items-center gap-1">
+<input
+type="number"
+value={renumberFrom}
+onChange={(e) => setRenumberFrom(e.target.value)}
+className="border border-slate-300 rounded px-1 py-0.5 w-12 text-right outline-none focus:border-blue-500 text-[10px] font-mono"
+title="Starting number"
+/>
 <button
 type="button"
-onClick={() => {
-const next = {};
-residueInfo.forEach((r, i) => { next[String(r.resno)] = i + 1; });
-commitRenumber(next);
-}}
-className="text-[9px] font-bold bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-1.5 py-0.5 rounded"
-title="Renumber all residues consecutively starting at 1 (fixes PDBs that do not start at 1)"
+onClick={applyRenumberFrom}
+className="text-[9px] font-bold bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-1.5 py-0.5 rounded whitespace-nowrap"
+title="Renumber all residues consecutively starting from this number (no manual per-residue edits needed)"
 >
-Renumber from 1
+Renumber from
 </button>
 <button
 type="button"
@@ -2035,13 +2063,17 @@ Tip: you cannot paste a local file path — use the file picker button above
 <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
 <h3 className="text-sm font-black text-slate-800 mb-2">Large trajectory detected</h3>
 <p className="text-xs text-slate-600 mb-3">
-<b className="text-slate-800">{pendingTraj.file.name}</b> is {fmtBytesMB(pendingTraj.file.size)}
+<b className="text-slate-800">{pendingTraj.file.name}</b> is {pendingTraj.over2G ? fmtBytesGB(pendingTraj.file.size) : fmtBytesMB(pendingTraj.file.size)}
 {' '}and is estimated to contain ~{pendingTraj.estFrames.toLocaleString()} frames.
-Playing it without reduction may freeze the browser.
+{pendingTraj.over2G
+  ? ' Loading it all may exceed ~2 GB of memory and freeze the browser.'
+  : ' Playing it without reduction may freeze the browser.'}
 </p>
 <p className="text-xs text-slate-600 mb-4">
-Load only <b>every {pendingTraj.suggested}×</b> frame
-{' '}(≈{Math.ceil(pendingTraj.estFrames / pendingTraj.suggested).toLocaleString()} frames, capped at ~{TARGET_TRAJ_FRAMES.toLocaleString()}).
+{pendingTraj.over2G ? 'To stay under ~2 GB, skip ' : 'Load only '}
+<b>every {pendingTraj.suggested}×</b> frame
+{' '}(≈{Math.ceil(pendingTraj.estFrames / pendingTraj.suggested).toLocaleString()} frames
+{pendingTraj.over2G ? ', ≈2 GB' : `, capped at ~${TARGET_TRAJ_FRAMES.toLocaleString()}`}).
 The total trajectory time is preserved.
 </p>
 <div className="flex flex-wrap gap-2 justify-end">
