@@ -25,6 +25,7 @@ import {
 generateRMSDData, generateRMSFData, generateRgData, generateSASAData, generateEnergyData,
 parseMDValue, getForceFieldInfo, getWaterModelInfo, getTrajectoryFormatInfo
 } from './MDData';
+import { getTestTypeMeta, getNotebookTypeKey } from './testTypeMeta';
 
 /* ============================================================================
    CHUNKED TABLE HELPER
@@ -1848,6 +1849,31 @@ const normalizeImagePreview = (url) => {
 };
 
 /* ============================================================================
+   NOTEBOOK ANALYSIS PREVIEW REGISTRY
+   Maps each test type to the graph(s) shown in the notebook's
+   "Data Analysis Graphs" panel. Adding a new test page = add one entry here
+   (plus its preview component) instead of editing an if/else chain.
+   ========================================================================== */
+const NOTEBOOK_ANALYSIS_PREVIEWS = {
+  plate: [(test, ctx) => <PlateAnalysisPreview test={test} />],
+  flow_cytometry: [(test, ctx) => <FCSOverlayVisualization ctx={ctx} />],
+  cd: [(test, ctx) => <CDAnalysisGraphsPreview test={test} instances={ctx.instances} />],
+  nmr: [(test, ctx) => (
+    <div className="flex flex-col gap-4 mt-2">
+      <PerAtomPlot ctx={ctx} />
+      <Fitting ctx={ctx} />
+    </div>
+  )],
+  'nmr-fittings': [(test, ctx) => (
+    <div className="mt-2">
+      <NMRFittingGraphsPreview test={test} />
+    </div>
+  )],
+  md_simulation: [(test, ctx) => <MDAnalysisPreview test={test} />],
+};
+
+
+/* ============================================================================
    NOTEBOOK TEST ITEM
 ========================================================================== */
 const NotebookTestItem = ({
@@ -1898,8 +1924,11 @@ const NotebookTestItem = ({
   const isMD = localTest.type === 'md_simulation';
   const isFlow = localTest.type === 'flow_cytometry';
   
-  const typeLabel = isPlate ? 'Plate Assay' : isNMR ? 'NMR' : isCD ? 'Circular Dichroism' : isNMRFitting ? 'NMR Fitting' : isCloning ? 'Cloning' : isProteinExp ? 'Protein Expression' : isMD ? 'MD Simulation' : isFlow ? 'Flow Cytometry' : 'Experiment';
-  const typeIcon = isPlate ? '🧫' : isNMR ? '📉' : isCD ? '🌀' : isNMRFitting ? '🧭' : isCloning ? '🧬' : isProteinExp ? '🧫' : isMD ? '🖥️' : isFlow ? '🩸' : '🧪';
+  const typeMeta = getTestTypeMeta(localTest.type);
+  const typeLabel = typeMeta.label;
+  const typeIcon = typeMeta.icon;
+  const nbTypeKey = getNotebookTypeKey(localTest.type);
+  const nbAnalysisPreviews = NOTEBOOK_ANALYSIS_PREVIEWS[nbTypeKey];
   
   const compounds = [...new Set([...(localTest.selectedCompounds || []), ...(localTest.compoundsSelected || []), ...(localTest.compound ? localTest.compound.split(',') : [])])].map(s => s.trim()).filter(Boolean);
   const plasmids = [...new Set([...(localTest.plasmids || []), ...(localTest.plasmid ? [localTest.plasmid] : [])])].filter(Boolean);
@@ -2413,23 +2442,11 @@ const NotebookTestItem = ({
           )}
         </RemovablePanel>
 
-        {(isCD || isNMR || isNMRFitting || isPlate || isMD || isFlow) && (
+        {nbAnalysisPreviews && (
           <RemovablePanel title="Data Analysis Graphs" visible={showAnaLocal} setVisible={setShowAnaLocal}>
-            {isPlate && <PlateAnalysisPreview test={localTest} />}
-            {isFlow && <FCSOverlayVisualization ctx={mockCtx} />}
-            {isCD && <CDAnalysisGraphsPreview test={localTest} instances={mockCtx.instances} />}
-            {isNMR && (
-              <div className="flex flex-col gap-4 mt-2">
-                <PerAtomPlot ctx={mockCtx} />
-                <Fitting ctx={mockCtx} />
-              </div>
-            )}
-            {isNMRFitting && (
-              <div className="mt-2">
-                <NMRFittingGraphsPreview test={localTest} />
-              </div>
-            )}
-            {isMD && <MDAnalysisPreview test={localTest} />}
+            {nbAnalysisPreviews.map((node, i) => (
+              <div key={i}>{node(localTest, mockCtx)}</div>
+            ))}
           </RemovablePanel>
         )}
 
