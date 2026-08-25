@@ -1,6 +1,26 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ensureNGL } from '../utils/ngl';
 
+// ---- Large-trajectory detection -------------------------------------------
+// When a chosen trajectory is big enough to freeze the browser, propose a
+// stride reduction BEFORE the file is parsed (frame counts are only known
+// after parsing, so we estimate from the file size).
+const LARGE_TRAJ_BYTES = 200 * 1024 * 1024;   // warn above 200 MB
+const TARGET_TRAJ_FRAMES = 2500;              // aim for ~2500 kept frames
+
+const fmtBytesMB = (b) => `${(b / (1024 * 1024)).toFixed(1)} MB`;
+
+// Rough bytes/frame estimate per format (coordinates + box + header).
+const estimateTrajectoryFrames = (file, atomCount) => {
+  const name = (file.name || '').toLowerCase();
+  const n = atomCount > 0 ? atomCount : 300; // fallback atom count
+  let bytesPerFrame;
+  if (name.endsWith('.trr')) bytesPerFrame = n * 3 * 8 + 44;     // doubles
+  else if (name.endsWith('.dcd')) bytesPerFrame = n * 3 * 4 + 40; // floats
+  else bytesPerFrame = n * 3 * 2 + 48;                            // XTC (compressed ints)
+  return Math.max(1, Math.round(file.size / bytesPerFrame));
+};
+
 const SELECT_COLOR_HEX = 0xf59e0b;
 const MANUAL_COLOR_HEX = 0x16a34a;
 
@@ -515,6 +535,7 @@ const [playing, setPlaying] = useState(false);
 const [speed, setSpeed] = useState(10);
 const [stride, setStride] = useState(1);        // play every Nth frame (keeps total time)
 const [maxFrames, setMaxFrames] = useState(0);  // 0 = keep all frames
+const [pendingTraj, setPendingTraj] = useState(null); // { file, estFrames, suggested } awaiting user confirmation
 const trajRef = useRef(null);
 const blobUrlsRef = useRef([]);
 
@@ -903,6 +924,39 @@ const idx = parseInt(e.target.value, 10);
 if (Number.isNaN(idx)) return;
 setCurrentFrame(idx);
 setFrameSafe(trajRef.current, toActualFrame(idx));
+};
+
+// ---- Large-trajectory confirmation ----------------------------------------
+const handleTrajFileChosen = (f) => {
+if (!f) return;
+const structure = componentRef.current && componentRef.current.structure;
+const atomCount = structure ? structure.atomCount : 0;
+if (f.size >= LARGE_TRAJ_BYTES) {
+const estFrames = estimateTrajectoryFrames(f, atomCount);
+const suggested = Math.min(1000, Math.max(1, Math.ceil(estFrames / TARGET_TRAJ_FRAMES)));
+if (suggested > 1) {
+setPendingTraj({ file: f, estFrames, suggested });
+return;
+}
+}
+setTrajFile(f);
+onTrajectoryFile?.(f);
+};
+
+const acceptTrajReduction = () => {
+if (!pendingTraj) return;
+setStride(pendingTraj.suggested);
+setMaxFrames(TARGET_TRAJ_FRAMES);
+setTrajFile(pendingTraj.file);
+onTrajectoryFile?.(pendingTraj.file);
+setPendingTraj(null);
+};
+
+const loadTrajWithoutReduction = () => {
+if (!pendingTraj) return;
+setTrajFile(pendingTraj.file);
+onTrajectoryFile?.(pendingTraj.file);
+setPendingTraj(null);
 };
 
 // Jump back to the start when the stride / max-frames controls change.
@@ -1430,10 +1484,7 @@ type="file"
 accept=".xtc,.trr,.dcd"
 onChange={(e) => {
 const f = e.target.files && e.target.files[0];
-if (f) {
-setTrajFile(f);
-onTrajectoryFile?.(f);   // share the chosen trajectory with the analysis sections
-}
+if (f) handleTrajFileChosen(f);
 e.target.value = '';
 }}
 className="hidden"
@@ -1763,6 +1814,49 @@ Tip: you cannot paste a local file path — use the file picker button above
 </div>
 )}
 </div>
+
+{/* Large-trajectory confirmation modal */}
+{pendingTraj && (
+<div className="fixed inset-0 z-[99999] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+<div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+<h3 className="text-sm font-black text-slate-800 mb-2">Large trajectory detected</h3>
+<p className="text-xs text-slate-600 mb-3">
+<b className="text-slate-800">{pendingTraj.file.name}</b> is {fmtBytesMB(pendingTraj.file.size)}
+{' '}and is estimated to contain ~{pendingTraj.estFrames.toLocaleString()} frames.
+Playing it without reduction may freeze the browser.
+</p>
+<p className="text-xs text-slate-600 mb-4">
+Load only <b>every {pendingTraj.suggested}×</b> frame
+{' '}(≈{Math.ceil(pendingTraj.estFrames / pendingTraj.suggested).toLocaleString()} frames, capped at ~{TARGET_TRAJ_FRAMES.toLocaleString()}).
+The total trajectory time is preserved.
+</p>
+<div className="flex flex-wrap gap-2 justify-end">
+<button
+type="button"
+onClick={() => setPendingTraj(null)}
+className="text-xs font-bold text-slate-500 hover:text-slate-700 px-3 py-2 rounded-lg"
+>
+Cancel
+</button>
+<button
+type="button"
+onClick={loadTrajWithoutReduction}
+className="text-xs font-bold bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 px-3 py-2 rounded-lg shadow-sm"
+>
+Load everything
+</button>
+<button
+type="button"
+onClick={acceptTrajReduction}
+className="text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg shadow-sm"
+>
+✓ Yes, reduce frames
+</button>
+</div>
+</div>
+</div>
+)}
+
 </div>
 );
 };
