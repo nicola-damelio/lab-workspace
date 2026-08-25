@@ -38,6 +38,7 @@ import {
   FLOW_CYTOMETRY_TAB_CONFIG
 } from './components/tabConfigs.jsx';
 import { FlowCytometryTestRenderer } from './components/FlowCytometryTestRenderer';
+import { CollapsibleSectionPanel as CollapsibleSection } from './components/ui';
 
 
 /* =========================================================
@@ -77,31 +78,8 @@ const getOpLabel = (op) => (typeof op === 'string' ? op : op?.name || '');
    COLLAPSIBLE SECTION
 ========================================================= */
 
-const CollapsibleSection = ({ id, title, subtitle, defaultOpen = false, children }) => {
-  const [open, setOpen] = useState(defaultOpen);
-
-  useEffect(() => {
-    setOpen(defaultOpen);
-  }, [defaultOpen]);
-
-  return (
-    <div id={id} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-visible scroll-mt-6">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center justify-between gap-3 p-4 text-left"
-      >
-        <div>
-          <h3 className="text-sm font-bold text-slate-700 uppercase">{title}</h3>
-          {subtitle && <p className="text-xs text-slate-500 mt-1">{subtitle}</p>}
-        </div>
-        <span className="text-slate-400 text-lg">{open ? '▲' : '▼'}</span>
-      </button>
-
-      {open && <div className="px-4 pb-4 overflow-visible">{children}</div>}
-    </div>
-  );
-};
+/* CollapsibleSectionPanel (library panel style) now lives in ./ui; imported
+   above as CollapsibleSection so existing call sites are unchanged. */
 
 /* =========================================================
    MD SIMULATIONS CONFIG & RENDERER

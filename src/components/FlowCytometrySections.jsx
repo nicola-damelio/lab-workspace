@@ -5,6 +5,7 @@ import {
   LineChart, Line, Legend, ReferenceArea
 } from 'recharts';
 import { ChartControlBar, SharedChartStylePanel } from './SharedAnalysisTools';
+import { CollapsibleSection } from './ui';
 
 const COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
 const FS_CLASSES = 'fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col';
@@ -21,21 +22,7 @@ export const VIS_PALETTES = {
   earth: ['#78350f', '#92400e', '#b45309', '#d97706', '#f59e0b', '#fbbf24', '#fcd34d'],
   monochrome: ['#0f172a', '#1e293b', '#334155', '#475569', '#64748b', '#94a3b8', '#cbd5e1']
 };
-const CollapsibleSection = ({ title, icon, defaultOpen = true, children, className = '' }) => {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
-  return (
-    <div className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-6 break-inside-avoid ${className}`}>
-      <button type="button" onClick={() => setIsOpen(!isOpen)} className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left ${isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'}`}>
-        <div className="flex items-center gap-2 overflow-hidden">
-          {icon && <span className="text-xl shrink-0">{icon}</span>}
-          <h3 className="text-lg font-bold text-slate-800 truncate">{title}</h3>
-        </div>
-        <svg className={`w-5 h-5 text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
-      </button>
-      {isOpen && <div className="p-6">{children}</div>}
-    </div>
-  );
-};
+// CollapsibleSection now lives in ./ui (single shared definition).
 
 // =========================================================================
 // FCS BINARY PARSER 

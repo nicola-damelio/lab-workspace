@@ -11,6 +11,8 @@ import {
   Legend, ErrorBar, Cell, PieChart, Pie
 } from 'recharts';
 import { SharedGraphConfig, SharedErrorTreatment, ChartControlBar, SharedChartStylePanel } from './SharedAnalysisTools';
+import { CollapsibleSection } from './ui';
+export { CollapsibleSection };
 
 const HAS_EB = typeof ErrorBar !== 'undefined';
 
@@ -49,38 +51,7 @@ const DEFAULT_CD_CHART_CFG = {
 
 const CHART_MARGIN = { top: 20, right: 20, bottom: 45, left: 50 };
 
-/* ========================================================================
-COLLAPSIBLE SECTION
-======================================================================== */
-export const CollapsibleSection = ({
-  title, icon, defaultOpen = true, children, headerExtra, className = ''
-}) => {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
-  return (
-    <div className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-6 break-inside-avoid ${className}`}>
-      <button
-        type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left ${isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'}`}
-      >
-        <div className="flex items-center gap-2 overflow-hidden">
-          {icon && <span className="text-xl shrink-0">{icon}</span>}
-          <h3 className="text-lg font-bold text-slate-800 truncate">{title}</h3>
-        </div>
-        <div className="flex items-center gap-3 shrink-0">
-          {headerExtra && <div onClick={(e) => e.stopPropagation()}>{headerExtra}</div>}
-          <svg
-            className={`w-5 h-5 text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
-            fill="none" viewBox="0 0 24 24" stroke="currentColor"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-        </div>
-      </button>
-      {isOpen && <div className="p-6">{children}</div>}
-    </div>
-  );
-};
+/* CollapsibleSection now lives in ./ui (single shared definition). */
 
 /* ========================================================================
 GENERIC PARSING HELPERS

@@ -1,30 +1,14 @@
 import React, { useState } from 'react';
 import { CompoundDefinitionSection } from './CompoundDefinitionSection';
 import { SolventsManager, BuffersManager, AdditivesManager, NMRProbesManager, NMRInstrumentsManager, NMRExperimentsManager } from './DefinitionsExtra';
+import { CollapsibleSectionPanel as CollapsibleSection } from './ui';
 
 /* ============================================================
 DefinitionsPanel
 ============================================================ */
 
-const CollapsibleSection = ({ title, subtitle, defaultOpen = false, children, className = '' }) => {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div className={`bg-white border border-slate-200 rounded-xl shadow-sm overflow-visible ${className}`}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center justify-between gap-3 p-4 text-left"
-      >
-        <div>
-          <h3 className="text-sm font-bold text-slate-700 uppercase">{title}</h3>
-          {subtitle && <p className="text-xs text-slate-500 mt-1">{subtitle}</p>}
-        </div>
-        <span className="text-slate-400 text-lg">{open ? '▲' : '▼'}</span>
-      </button>
-      {open && <div className="px-4 pb-4 overflow-visible">{children}</div>}
-    </div>
-  );
-};
+/* CollapsibleSectionPanel (library panel style) now lives in ./ui; imported
+   above as CollapsibleSection so existing call sites are unchanged. */
 
 const TagManager = ({ items, onAdd, onRemove, onRename, color, placeholder, icon }) => {
   const [input, setInput] = useState('');

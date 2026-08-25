@@ -5,6 +5,7 @@ import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar, Cell
 } from 'recharts';
+import { CollapsibleSection } from './ui';
 
 const HAS_EB = typeof ErrorBar !== 'undefined';
 const LINE_COLORS = ['#3b82f6','#ef4444','#22c55e','#f59e0b','#8b5cf6','#ec4899','#14b8a6','#f97316','#6366f1','#84cc16'];
@@ -112,29 +113,7 @@ const useRdkitReady = () => {
 };
 // =====================================================================
 
-const CollapsibleSection = ({ title, icon, defaultOpen = false, children, headerExtra, className = '' }) => {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
-  return (
-    <div className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-6 break-inside-avoid ${className}`}>
-      <div
-        onClick={() => setIsOpen(!isOpen)}
-        className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left cursor-pointer ${isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'}`}
-      >
-        <div className="flex items-center gap-2 overflow-hidden">
-          {icon && <span className="text-xl shrink-0">{icon}</span>}
-          <h3 className="text-lg font-bold text-slate-800 truncate select-none">{title}</h3>
-        </div>
-        <div className="flex items-center gap-3 shrink-0">
-          {headerExtra && <div onClick={(e) => e.stopPropagation()}>{headerExtra}</div>}
-          <svg className={`w-5 h-5 text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-        </div>
-      </div>
-      {isOpen && <div className="p-6">{children}</div>}
-    </div>
-  );
-};
+// CollapsibleSection now lives in ./ui (single shared definition).
 
 export const ExperimentSetupSection = ({ ctx }) => {
   const { activeTest, updateActiveTest, nmrExperiments } = ctx;
