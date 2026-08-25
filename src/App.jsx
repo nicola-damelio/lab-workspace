@@ -29,6 +29,7 @@ import { SearchableSelect } from './components/SearchableSelect';
 import { MD_SIMULATION_TAB_CONFIG } from './data/specialPages';
 import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES, EXPERIMENT_TYPES } from './data/testTypes';
 import { CompoundDefinitionSection } from './components/AppModules/compoundDefinitionSection';
+import { AppSidebar } from './components/AppModules/appSidebar';
 const FlowCytometryTestRenderer = lazy(() => import('./components/FlowCytometryTestRenderer').then(m => ({ default: m.FlowCytometryTestRenderer })));
 import { hashPassword, normalizeOperators, getOpLabel } from './utils/auth';
 import { CALC_INPUT_CLS, CALC_LABEL_CLS } from './utils/styles';
@@ -2656,230 +2657,20 @@ const openDataset = (dset) => {
             ></div>
           )}
 
-          {/* COLLAPSIBLE SIDEBAR */}
-          <div
-            className={`bg-white border-r border-slate-200 flex flex-col shadow-sm z-50 shrink-0 no-print transition-all duration-300 absolute md:relative h-full ${
-              isSidebarOpen
-                ? 'translate-x-0 w-64'
-                : '-translate-x-full md:translate-x-0 md:w-16 items-center'
-            }`}
-          >
-            <div
-              className={`p-4 border-b border-slate-200 flex items-center gap-2 ${
-                isSidebarOpen ? 'justify-between' : 'flex-col justify-center'
-              }`}
-            >
-              <button
-                onClick={handleBackToExplorer}
-                className="text-slate-400 hover:text-blue-600 transition-colors"
-                title="Back to Workspace"
-              >
-                ◀
-              </button>
-
-              {isSidebarOpen && (
-                <div className="min-w-0 flex-1">
-                  <input
-                    value={datasetTitle}
-                    onChange={(e) => setDatasetTitle(e.target.value)}
-                    className="w-full text-sm font-black text-slate-800 bg-transparent border-none outline-none truncate focus:ring-1 focus:ring-blue-500 rounded px-1"
-                    placeholder="Dataset Title"
-                  />
-
-                  <input
-                    value={datasetSubtitle}
-                    onChange={(e) => setDatasetSubtitle(e.target.value)}
-                    className="w-full text-[10px] font-medium text-slate-500 bg-transparent border-none outline-none truncate focus:ring-1 focus:ring-blue-500 rounded px-1 mt-0.5"
-                    placeholder="Subtitle / Project info"
-                  />
-                </div>
-              )}
-
-              <button
-                onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-                className="text-slate-400 hover:text-slate-600 transition-colors text-lg"
-                title="Toggle Sidebar"
-              >
-                {isSidebarOpen ? '⮜' : '☰'}
-              </button>
-            </div>
-
-            {isSidebarOpen && (
-              <div className="px-4 py-2 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center text-[10px] font-bold text-slate-500">
-                <span>Status:</span>
-
-                {saveStatus === 'saving' ? (
-                  <span className="text-blue-500 animate-pulse">💾 Saving...</span>
-                ) : saveStatus === 'saved' ? (
-                  <span className="text-emerald-600">☁️ Cloud Sync</span>
-                ) : saveStatus === 'error' ? (
-                  <span className="text-red-600" title={saveErrorMsg}>❌ Error</span>
-                ) : (
-                  <span className="text-slate-600">...</span>
-                )}
-              </div>
-            )}
-
-            <nav
-              className={`flex-1 overflow-y-auto py-4 flex flex-col gap-1 ${
-                isSidebarOpen ? 'px-2' : 'px-1 items-center'
-              }`}
-            >
-              {/* ── User identity bar ── */}
-              {isSidebarOpen ? (
-                <div className={`mb-3 rounded-xl border px-3 py-2.5 flex items-center gap-2 text-sm ${
-                  currentUser?.role === 'superuser'
-                    ? 'bg-amber-50 border-amber-200'
-                    : currentUser
-                    ? 'bg-blue-50 border-blue-200'
-                    : 'bg-slate-50 border-slate-200'
-                }`}>
-                  <span className="text-base shrink-0">
-                    {currentUser?.role === 'superuser' ? '👑' : currentUser ? '🧪' : '👤'}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[11px] font-black uppercase text-slate-400">Logged in as</div>
-                    <div className="font-bold text-slate-700 truncate text-xs">
-                      {currentUser ? currentUser.name : <span className="text-slate-400 italic">Guest</span>}
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => {
-                      if (currentUser) {
-                        setCurrentUser(null);
-                        setUnlockedTestIds(new Set());
-                      } else {
-                        setLoginModal({ isEntryGate: false });
-                      }
-                    }}
-                    className={`shrink-0 text-[10px] font-bold px-2 py-1 rounded transition-colors ${
-                      currentUser
-                        ? 'bg-slate-200 hover:bg-red-100 text-slate-600 hover:text-red-700'
-                        : 'bg-blue-600 hover:bg-blue-700 text-white'
-                    }`}
-                  >
-                    {currentUser ? 'Logout' : 'Login'}
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => {
-                    if (currentUser) { setCurrentUser(null); setUnlockedTestIds(new Set()); }
-                    else setLoginModal({ isEntryGate: false });
-                  }}
-                  title={currentUser ? `Logged in as ${currentUser.name} — click to logout` : 'Login'}
-                  className={`w-10 h-10 rounded-xl border flex items-center justify-center text-base mb-2 transition-colors ${
-                    currentUser?.role === 'superuser' ? 'bg-amber-50 border-amber-200' :
-                    currentUser ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-slate-200 hover:bg-blue-50'
-                  }`}
-                >
-                  {currentUser?.role === 'superuser' ? '👑' : currentUser ? '🧪' : '🔐'}
-                </button>
-              )}
-
-              {[
-                { id: 'dashboard', icon: '📊', label: 'Dataset Overview' },
-                { id: 'notebook', icon: '📓', label: 'Lab Notebook' },
-                { id: 'definitions', icon: '🏷️', label: 'Definitions & Labels' },
-                { id: 'tests', icon: '🧪', label: 'Tests & Fittings' },
-                { id: 'agenda', icon: '🗓️', label: 'Agenda (Timeline)' },
-                { id: 'protocols', icon: '📝', label: 'Protocols' },
-                { id: 'storage', icon: '📦', label: 'Storage & Boxes' },
-                { id: 'calculations', icon: '🧮', label: 'Calculations' },
-                { id: 'publications', icon: '📰', label: 'Publications' }
-              ].map((nav) => (
-                <button
-                  key={nav.id}
-                  onClick={() => {
-                    setCurrentModule(nav.id);
-                    if (window.innerWidth < 768) setIsSidebarOpen(false);
-                  }}
-                  title={!isSidebarOpen ? nav.label : ''}
-                  className={`flex items-center gap-3 py-2 rounded-lg text-sm transition-all text-left ${
-                    isSidebarOpen ? 'px-3 w-full' : 'px-0 w-10 justify-center'
-                  } ${
-                    currentModule === nav.id
-                      ? 'bg-blue-50 text-blue-700 font-bold shadow-sm'
-                      : 'text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  <span className="text-lg text-center w-6">{nav.icon}</span>
-                  {isSidebarOpen && <span>{nav.label}</span>}
-                </button>
-              ))}
-            </nav>
-
-            <div
-              className={`p-4 border-t border-slate-200 flex flex-col gap-2 ${
-                !isSidebarOpen ? 'items-center px-1' : ''
-              }`}
-            >
-              <div className={`flex flex-col gap-2 w-full`}>
-                <button
-                  onClick={handlePrint}
-                  className={`w-full text-center bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors flex items-center justify-center gap-1 ${
-                    !isSidebarOpen ? 'py-2 px-0 text-[10px]' : ''
-                  }`}
-                  title="Print / Export PDF"
-                >
-                  <span>🖨️</span> {isSidebarOpen ? 'Print / Export PDF' : ''}
-                </button>
-
-                {/* Load HTML + Save HTML — superuser only */}
-                {currentUser?.role === 'superuser' && (
-                  <div className={`flex ${isSidebarOpen ? 'gap-2' : 'flex-col gap-2 w-full'}`}>
-                    <label
-                      className={`flex-1 text-center bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-200 font-bold py-1.5 rounded text-xs cursor-pointer shadow-sm transition-colors ${
-                        !isSidebarOpen ? 'py-2 px-0 text-[10px]' : ''
-                      }`}
-                      title="Load HTML"
-                    >
-                      {isSidebarOpen ? '📂 Load HTML' : '📂'}
-                      <input type="file" accept=".html" onChange={loadHTML} className="hidden" />
-                    </label>
-
-                    <button
-                      onClick={exportHTML}
-                      className={`flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors ${
-                        !isSidebarOpen ? 'py-2 px-0 text-[10px]' : ''
-                      }`}
-                      title="Save HTML"
-                    >
-                      {isSidebarOpen ? '💾 Save HTML' : '💾'}
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex gap-2 justify-center mt-2">
-                <button
-                  onClick={handleUndo}
-                  disabled={historyIndex === 0}
-                  className={`p-2 rounded border shadow-sm transition-colors ${
-                    historyIndex > 0
-                      ? 'bg-white hover:bg-slate-50 text-slate-700'
-                      : 'bg-slate-50 text-slate-300'
-                  }`}
-                  title="Undo"
-                >
-                  ↩
-                </button>
-
-                <button
-                  onClick={handleRedo}
-                  disabled={historyIndex >= historyRef.current.length - 1}
-                  className={`p-2 rounded border shadow-sm transition-colors ${
-                    historyIndex < historyRef.current.length - 1
-                      ? 'bg-white hover:bg-slate-50 text-slate-700'
-                      : 'bg-slate-50 text-slate-300'
-                  }`}
-                  title="Redo"
-                >
-                  ↪
-                </button>
-              </div>
-            </div>
-          </div>
+          {/* COLLAPSIBLE SIDEBAR — now in ./components/AppModules/appSidebar */}
+          <AppSidebar
+            isSidebarOpen={isSidebarOpen} setIsSidebarOpen={setIsSidebarOpen}
+            handleBackToExplorer={handleBackToExplorer}
+            datasetTitle={datasetTitle} setDatasetTitle={setDatasetTitle}
+            datasetSubtitle={datasetSubtitle} setDatasetSubtitle={setDatasetSubtitle}
+            saveStatus={saveStatus} saveErrorMsg={saveErrorMsg}
+            currentUser={currentUser} setCurrentUser={setCurrentUser}
+            setUnlockedTestIds={setUnlockedTestIds} setLoginModal={setLoginModal}
+            currentModule={currentModule} setCurrentModule={setCurrentModule}
+            handlePrint={handlePrint} loadHTML={loadHTML} exportHTML={exportHTML}
+            handleUndo={handleUndo} handleRedo={handleRedo}
+            historyIndex={historyIndex} historyRef={historyRef}
+          />
 
           {/* MAIN CONTENT */}
           <div className="flex-1 flex flex-col bg-slate-50 h-full overflow-hidden relative">
