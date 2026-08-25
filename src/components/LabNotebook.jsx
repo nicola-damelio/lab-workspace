@@ -642,6 +642,9 @@ export const LabNotebook = ({
   const [filterProbe, setFilterProbe] = useState('ALL');
   const [filterPulseSeq, setFilterPulseSeq] = useState('ALL');
 
+  const [dateFrom] = useState('');
+  const [dateTo] = useState('');
+
   const [bestOnly, setBestOnly] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('date_desc');
@@ -769,7 +772,7 @@ const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t =>
     else if (sortBy === 'type') result.sort((a, b) => (a.type || '').localeCompare(b.type || ''));
 
     return result;
-  }, [tests, isSuperuser, currentUser, filterPrimary, filterSecondary, filterScientist, filterType, filterCompound, filterPlasmid, filterCellLine, showAdvanced, filterSolvent, filterBuffer, filterAdditive, filterInstrument, filterProbe, filterPulseSeq, bestOnly, searchQuery, sortBy]);
+  }, [tests, isSuperuser, currentUser, filterPrimary, filterSecondary, filterScientist, filterType, filterCompound, filterPlasmid, filterCellLine, showAdvanced, filterSolvent, filterBuffer, filterAdditive, filterInstrument, filterProbe, filterPulseSeq, dateFrom, dateTo, bestOnly, searchQuery, sortBy]);
   const exportPDF = async () => {
     // Find the scrollable notebook content area
     const el = document.getElementById('lab-notebook-print-area');
