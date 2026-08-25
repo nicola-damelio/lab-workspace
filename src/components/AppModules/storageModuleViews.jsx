@@ -14,7 +14,7 @@ export const StorageModule = ({
   handlePrint, activeStorageId, jumpToTest, setMoveModal, createEmptyTest
 }) => (
   <>
-
+    {currentModule === 'storage' && (
   <div className="h-full min-h-0 flex flex-col overflow-hidden bg-slate-50">
     <StorageFinder
       tests={tests}
@@ -43,6 +43,8 @@ export const StorageModule = ({
       />
     </div>
   </div>
+    )}
+    {currentModule === 'storage-detail' && (
               <StorageDetail
                 storages={storages}
                 activeStorageId={activeStorageId}
@@ -56,5 +58,6 @@ export const StorageModule = ({
                 setActiveTestId={setActiveTestId}
                 operators={operatorNames}
               />
+    )}
   </>
 );

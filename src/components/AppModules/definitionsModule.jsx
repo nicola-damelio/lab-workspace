@@ -4,13 +4,14 @@
    ========================================================================= */
 
 import React from 'react';
+import { CollapsibleSectionPanel as CollapsibleSection } from '../ui';
 import { LibraryDirectory } from './libraryDirectory';
 import { CompoundDefinitionSection } from './compoundDefinitionSection';
 import { CustomMetadataFieldsManager, MandatoryParametersManager, ScientistsOperatorsManager } from './definitionsManagers';
 import { DatabaseCleanupManager } from './storageModules';
 
 export const DefinitionsModule = ({
-  allCmpds, setActiveLibrarySelection,
+  allCmpds, setActiveLibrarySelection, activeLibrarySelection,
   compoundMeta, setCompoundMeta, cellLineMeta, setCellLineMeta,
   plasmidMeta, setPlasmidMeta, customCmpds, setCustomCmpds,
   customCellLines, setCustomCellLines,

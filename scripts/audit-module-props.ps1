@@ -24,6 +24,24 @@ foreach($m in [regex]::Matches($body, '\bconst\s*\[([^\]]+)\]\s*=')){
 }
 $appNames = $appNames | Sort-Object -Unique
 
+# Also collect App.jsx's imported names (e.g. CollapsibleSection) — modules that
+# reference them must import them too (or declare them as props).
+$appText = [System.IO.File]::ReadAllText('src/App.jsx')
+foreach($m in [regex]::Matches($appText, 'import\s+([^;]+?)\s+from')){
+  $spec = $m.Groups[1].Value
+  if($spec -match '^\s*([A-Za-z_$][\w$]*)\s*,'){ $appNames += $Matches[1] }
+  elseif($spec -match '^\s*([A-Za-z_$][\w$]*)\s*$'){ $appNames += $Matches[1] }
+  if($spec -match '\*\s+as\s+([A-Za-z_$][\w$]*)'){ $appNames += $Matches[1] }
+  if($spec -match '\{\s*([^}]*)\}'){
+    ($Matches[1] -split ',') | ForEach-Object {
+      $n = $_.Trim()
+      if($n -match '^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)'){ $appNames += $Matches[2] }
+      elseif($n -match '^([A-Za-z_$][\w$]*)$'){ $appNames += $Matches[1] }
+    }
+  }
+}
+$appNames = $appNames | Sort-Object -Unique
+
 $globals = @('window','document','console','alert','confirm','prompt','setTimeout','clearTimeout','setInterval','clearInterval','fetch','URL','FileReader','TextEncoder','TextDecoder','crypto','Promise','JSON','Math','Date','String','Number','Boolean','Array','Object','Symbol','RegExp','Map','Set','WeakMap','WeakSet','parseInt','parseFloat','isNaN','encodeURIComponent','decodeURIComponent','localStorage','sessionStorage','Blob','FormData','btoa','atob','structuredClone','performance','location','navigator','history','requestAnimationFrame','cancelAnimationFrame','CustomEvent','Event','KeyboardEvent','MouseEvent','Image','DOMParser','AbortController','IntersectionObserver','ResizeObserver','MutationObserver','File','FileList','React','useState','useEffect','useRef','useMemo','useCallback','useReducer','useContext','useLayoutEffect','useImperativeHandle','useTransition','useDeferredValue','useId','useSyncExternalStore','Fragment','Suspense','lazy','memo','Children','isValidElement','createElement','createContext','createRef','forwardRef','startTransition','useDebugValue','alert','confirm')
 
 $targets = Get-ChildItem 'src/components/AppModules' -File -Include *.jsx

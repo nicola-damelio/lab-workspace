@@ -2680,7 +2680,7 @@ const openDataset = (dset) => {
             />)}
 
             {currentModule === 'definitions' && (<DefinitionsModule
-              allCmpds={allCmpds} setActiveLibrarySelection={setActiveLibrarySelection}
+              allCmpds={allCmpds} setActiveLibrarySelection={setActiveLibrarySelection} activeLibrarySelection={activeLibrarySelection}
               compoundMeta={compoundMeta} setCompoundMeta={setCompoundMeta}
               cellLineMeta={cellLineMeta} setCellLineMeta={setCellLineMeta}
               plasmidMeta={plasmidMeta} setPlasmidMeta={setPlasmidMeta}
