@@ -15,8 +15,6 @@ const NMRTestRenderer = lazy(() => import('./components/NMRTestRenderer').then(m
 const PlateTestRenderer = lazy(() => import('./components/PlateTestRenderer').then(m => ({ default: m.PlateTestRenderer })));
 const CDTestRenderer = lazy(() => import('./components/CDTestRenderer').then(m => ({ default: m.CDTestRenderer })));
 const SSNMRTestRenderer = lazy(() => import('./components/ssNMRTestRenderer').then(m => ({ default: m.ssNMRTestRenderer })));
-const LabNotebook = lazy(() => import('./components/LabNotebook').then(m => ({ default: m.LabNotebook })));
-const PublicationsSection = lazy(() => import('./components/Publications').then(m => ({ default: m.PublicationsSection })));
 import { RichTextEditor } from './components/RichTextEditor';
 import { StorageModals, BoxDetail } from './components/Storage';
 const NMRFittingsTestRenderer = lazy(() => import('./components/NMRFittingsTestRenderer').then(m => ({ default: m.NMRFittingsTestRenderer })));
@@ -33,6 +31,7 @@ import { AgendaModule } from './components/AppModules/agendaModule';
 import { DashboardModule } from './components/AppModules/dashboardModule';
 import { DefinitionsModule } from './components/AppModules/definitionsModule';
 import { StorageModule } from './components/AppModules/storageModuleViews';
+import { NotebookModule, CalculationsModule, PublicationsModule } from './components/AppModules/miscModules';
 const FlowCytometryTestRenderer = lazy(() => import('./components/FlowCytometryTestRenderer').then(m => ({ default: m.FlowCytometryTestRenderer })));
 import { hashPassword, normalizeOperators, getOpLabel } from './utils/auth';
 import { CALC_INPUT_CLS, CALC_LABEL_CLS } from './utils/styles';
@@ -4692,75 +4691,26 @@ if (activeTest.type === 'flow_cytometry') {
 
                 return <div className="p-6">Unknown test type.</div>;
               })()}
-{currentModule === 'notebook' && (
-              <div className="flex-1 overflow-hidden relative flex flex-col h-full w-full">
-                <LabNotebook
-                  tests={tests}
-                  allCellLines={allCellLines}
-                  testCategories={testCategories}
-                  jumpToTest={(id) => {
-                    setActiveTestId(id);
-                    setCurrentModule('active-test');
-                  }}
-                  customConc={customConc}
-                  cmpColors={cmpColors}
-                  allCmpds={allCmpds}
-                  customFields={customFields}
-                  operators={operatorNames}
-                  plasmidMeta={plasmidMeta}
-                  solvents={solvents}
-                  buffers={buffers}
-                  additives={additives}
-                  nmrInstruments={nmrInstruments}
-                  nmrProbes={nmrProbes}
-                  nmrExperiments={nmrExperiments}
-                  currentUser={currentUser}
-                />
-              </div>
-            )}
+            {currentModule === 'notebook' && (<NotebookModule
+              tests={tests} allCellLines={allCellLines} testCategories={testCategories}
+              setActiveTestId={setActiveTestId} setCurrentModule={setCurrentModule}
+              customConc={customConc} cmpColors={cmpColors} allCmpds={allCmpds}
+              customFields={customFields} operatorNames={operatorNames} plasmidMeta={plasmidMeta}
+              solvents={solvents} buffers={buffers} additives={additives}
+              nmrInstruments={nmrInstruments} nmrProbes={nmrProbes} nmrExperiments={nmrExperiments}
+              currentUser={currentUser}
+            />)}
 
-{currentModule === 'calculations' && (() => {
-                // Merge everything into a unified dataset for the Calculations page
-                const combinedMeta = { ...compoundMeta };
-                Object.keys(plasmidMeta || {}).forEach(k => { if(!combinedMeta[k]) combinedMeta[k] = plasmidMeta[k]; });
-                (solvents || []).forEach(s => { if(s.name && !combinedMeta[s.name]) combinedMeta[s.name] = s; });
-                (buffers || []).forEach(b => { if(b.name && !combinedMeta[b.name]) combinedMeta[b.name] = b; });
-                (additives || []).forEach(a => { if(a.name && !combinedMeta[a.name]) combinedMeta[a.name] = a; });
-                
-                const combinedOptions = [...new Set([
-                    ...allCmpds,
-                    ...Object.keys(plasmidMeta || {}),
-                    ...(solvents || []).map(s => s.name),
-                    ...(buffers || []).map(b => b.name),
-                    ...(additives || []).map(a => a.name)
-                ].filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+            {currentModule === 'calculations' && (<CalculationsModule
+              compoundMeta={compoundMeta} plasmidMeta={plasmidMeta}
+              solvents={solvents} buffers={buffers} additives={additives}
+              allCmpds={allCmpds} calculationEntries={calculationEntries}
+              setCalculationEntries={setCalculationEntries} currentUser={currentUser}
+            />)}
 
-                return (
-                  <div className="h-full overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
-                    <Calculations
-                      compoundOptions={combinedOptions}
-                      compoundMeta={combinedMeta}
-                      calculationEntries={calculationEntries}
-                      setCalculationEntries={setCalculationEntries}
-                      currentUser={currentUser}
-                    />
-                  </div>
-                );
-            })()}
-
-            {currentModule === 'publications' && (
-              <div className="h-full overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
-                <div className="max-w-6xl mx-auto flex flex-col gap-4 pb-10">
-                  <PublicationsSection
-                    scientists={[...new Set([
-                      ...operatorNames,
-                      ...(tests || []).map((t) => t.operator).filter(Boolean)
-                    ])]}
-                    defaultScientist={currentUser?.name || ''}
-                  />
-                </div>
-              </div>
-            )}
+            {currentModule === 'publications' && (<PublicationsModule
+              operatorNames={operatorNames} tests={tests} currentUser={currentUser}
+            />)}
           </div>
         </div>
       )}
