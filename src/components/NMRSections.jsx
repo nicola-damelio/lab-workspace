@@ -3002,7 +3002,7 @@ const useNmrDerived = (activeTest, ctx = {}) => {
       estCP = +(res.backboneRand.CP + (ssKey !== 'coil' ? corr.c["C'"] || 0 : 0)).toFixed(2);
     }
     return { ...res, estShifts, estUniqueC, estShifts13C, estN, estCP, ssLetter, formLetter: getFormAt(idx) };
-  }), [parsedSeq, moleculeType, ssRaw, formsRaw, dnaFormDefault, sugarAnomer]);
+  }), [parsedSeq, moleculeType, sugarAnomer]);
   
   const simSeq = useMemo(() => {
     const getMan = (idx, name) => {
@@ -5607,7 +5607,7 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
     });
     pts.sort((a, b) => (a.x ?? 0) - (b.x ?? 0));
     return { key: ak, label: opt ? opt.label : ak, pts };
-  }), [plot.atoms, plot.layerKey, d.instances, d.atomOptions, plot.excluded, effXField, plot.yField, used, activeTest.nmrValues, plot.excludeNonComparable, comparableInfo]);
+  }), [plot.atoms, plot.layerKey, d.instances, d.atomOptions, plot.excluded, effXField, plot.yField, used]);
 
   const colorOf = (s) => seriesColor(cfg, s.key, series.findIndex((q) => q.key === s.key));
   const includedPts = (s) => s.pts.filter((p) => !p.excluded);
@@ -5630,7 +5630,7 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
     const out = {};
     series.forEach((s) => { out[s.key] = fitOf(s); });
     return out;
-  }, [series, plot.fitEnabled, plot.fitModel, plot.customExpr, plot.chartType, plot.manualSD, plot.useFixedSD, plot.fixedSDStr]);
+  }, [series]);
   const setManualSD = (sKey, instId, val) => {
     const inner = { ...(plot.manualSD[sKey] || {}) };
     const n = parseManual(val);

@@ -769,7 +769,7 @@ const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t =>
     else if (sortBy === 'type') result.sort((a, b) => (a.type || '').localeCompare(b.type || ''));
 
     return result;
-  }, [tests, isSuperuser, currentUser, filterPrimary, filterSecondary, filterScientist, filterType, filterCompound, filterPlasmid, filterCellLine, showAdvanced, filterSolvent, filterBuffer, filterAdditive, filterInstrument, filterProbe, filterPulseSeq, dateFrom, dateTo, bestOnly, searchQuery, sortBy]);
+  }, [tests, isSuperuser, currentUser, filterPrimary, filterSecondary, filterScientist, filterType, filterCompound, filterPlasmid, filterCellLine, showAdvanced, filterSolvent, filterBuffer, filterAdditive, filterInstrument, filterProbe, filterPulseSeq, bestOnly, searchQuery, sortBy]);
   const exportPDF = async () => {
     // Find the scrollable notebook content area
     const el = document.getElementById('lab-notebook-print-area');

@@ -760,7 +760,7 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
     const norm = list.filter(Boolean).map(t => ({ id: t.id, name: t.instanceName || t.name, test: t }));
     if (!norm.some(i => i.id === activeTest.id)) norm.unshift({ id: activeTest.id, name: activeTest.name, test: activeTest });
     return norm;
-  }, [ctx, activeTest, updater]);
+  }, [ctx, activeTest]);
 
   const loadedInstances = instances.filter(inst => globalFcsCache[inst.id]);
   const visibleInstances = loadedInstances.filter(inst => !hiddenSeries[inst.id]).map((inst, idx) => {

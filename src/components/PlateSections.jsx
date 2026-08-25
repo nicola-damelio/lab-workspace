@@ -1166,7 +1166,7 @@ export const All = ({ ctx }) => {
         );
 
         return Array.from(s);
-    }, [cellConfig, activePlateDim, grid, compounds, rowCompounds]);
+    }, [activePlateDim, grid, compounds, rowCompounds]);
 
     const cmpStats = useMemo(() => {
         const stats = {};
@@ -1187,7 +1187,7 @@ export const All = ({ ctx }) => {
         );
 
         return stats;
-    }, [cellConfig, activePlateDim, grid, compounds, rowCompounds, tConc, dFact, customConc]);
+    }, [activePlateDim, grid]);
 
     const [bgOD, setBgOD] = useState(0);
 
@@ -1499,20 +1499,12 @@ export const All = ({ ctx }) => {
         grid,
         cellConfig,
         activePlateDim,
-        cOD,
-        bgOD,
         fitIC50,
         useFixedSD,
         fSD,
-        gOff,
-        manualErrors,
         plotCmps,
         allCmpds,
-        cmpColors,
-        plateType,
-        tConc,
-        dFact,
-        customConc
+        plateType
     ]);
 
     const model = useMemo(

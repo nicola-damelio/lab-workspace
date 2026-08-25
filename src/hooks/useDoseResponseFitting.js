@@ -35,9 +35,7 @@ export function useDoseResponseFitting({
     const outliers = useMemo(() => {
         return detectOutliersForSeries(processedSeries, settings);
     }, [
-        processedSeries,
-        settings.outlierThreshold,
-        settings.fixedSD
+        processedSeries
     ]);
 
     const actions = {

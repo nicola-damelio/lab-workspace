@@ -890,7 +890,7 @@ if (customType === 'nmr-fittings') {
       } catch { console.warn('Could not sync app config to Firestore:', e.message); }
     }, 1500);
     return () => { if (appConfigSaveRef.current) clearTimeout(appConfigSaveRef.current); };
-  }, [operators, authSettings, user, db]);
+  }, [operators, authSettings, user]);
   // ─────────────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -956,7 +956,7 @@ if (customType === 'nmr-fittings') {
         (err) => console.warn('AppConfig Firestore listener error:', err.message)
       );
     return () => unsubscribe();
-  }, [user, db]);
+  }, [user]);
   // ──────────────────────────────────────────────────────────────────────
 
 
@@ -988,7 +988,7 @@ if (customType === 'nmr-fittings') {
         })
         .catch((err) => console.error('Errore dataset condiviso:', err));
     }
-  }, [isCloudReady, db, currentDatasetId, needsLogin]);
+  }, [isCloudReady, currentDatasetId, needsLogin]);
 
   useEffect(() => {
     if (db && user) {
@@ -1040,7 +1040,7 @@ if (customType === 'nmr-fittings') {
 
       setIsCloudReady(true);
     }
-  }, [user, db]);
+  }, [user]);
 
   // ── Derived string array for backward-compatible child components ──
   // All child components (test renderers, LabNotebook, Storage, etc.) still

@@ -2370,7 +2370,7 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
   };
   const fits = useMemo(() => {
     const out = {}; series.forEach((s) => { out[s.key] = fitOf(s); }); return out;
-  }, [series, plot.fitEnabled, plot.fitModel, plot.customExpr, plot.chartType, plot.manualSD, plot.useFixedSD, plot.fixedSDStr]);
+  }, [series]);
 
   const autoTouch = (s) => {
     const fit = fits[s.key] || fitOf(s);
@@ -2499,7 +2499,7 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
       });
       return row;
     });
-  }, [d.instances, series, used, plot.manualSD, plot.useFixedSD, plot.fixedSDStr]);
+  }, [d.instances, series, used]);
 
   const makeDot = (color, s) => (props) => {
     const { cx, cy, index } = props;
@@ -2536,7 +2536,7 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
       if (val === undefined || val === null) return null;
       return { name: s.label, val, err: err || 0, fill: colorOf(s) };
     }).filter(Boolean);
-  }, [series, fits, paramGraphVar, plot.fitModel, cfg.colors]);
+  }, [series, fits, paramGraphVar, plot.fitModel]);
   const paramYDataDomain = useMemo(() => {
     const vals = paramData.flatMap((p) => [p.val - Math.abs(p.err || 0), p.val + Math.abs(p.err || 0)]);
     if (!vals.length) return [0, 1];

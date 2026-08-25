@@ -227,14 +227,14 @@ const useMDDerived = (activeTest, ctx = {}) => {
         ffAtoms
       };
     }).filter(Boolean);
-  }, [seq, moleculeType, activeTest.sugarChoice, activeTest.lipidChoice, ffKey, DB, isPolymer, ffBackbone]);
+  }, [seq, moleculeType, activeTest.sugarChoice, activeTest.lipidChoice, DB, isPolymer, ffBackbone]);
 
   // ---- secondary-structure / form annotated sequence ----
   const estSeq = useMemo(() => parsedSeq.map((res, idx) => ({
     ...res,
     ssLetter: moleculeType === 'protein' ? getSSAt(idx) : 'C',
     formLetter: getFormAt(idx)
-  })), [parsedSeq, moleculeType, ssRaw, formsRaw, dnaFormDefault]);
+  })), [parsedSeq, moleculeType]);
 
   // ---- 2D structure ----
   const structure = useMemo(() => {
