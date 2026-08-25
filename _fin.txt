@@ -1,0 +1,7 @@
+7421b06 refactor: share chart/style constants via src/utils/chartStyle.js (FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, LINE_COLORS etc were duplicated in 6 files)
+3e563a4 refactor: single shared CollapsibleSection/CollapsibleSectionPanel in src/components/ui.jsx (was duplicated in 8+ files)
+4cffacc chore: remove temp scratch files
+731f36c refactor: share NGL loader via src/utils/ngl.js (was duplicated in viewer + trajectory frames)
+8b369ce cleanup: remove dead/unused files (16 tracked + 2 untracked backups)
+?? _fin.txt
+fatal: the remote end hung up unexpectedly

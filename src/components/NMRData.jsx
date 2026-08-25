@@ -1466,7 +1466,8 @@ export const StructureSVGView = ({
 
 // ================= COLLAPSIBLE SECTION =================
 // CollapsibleSection now lives in ./ui (single shared definition).
-export { CollapsibleSection } from './ui';
+import { CollapsibleSection } from './ui';
+export { CollapsibleSection };
 
 // ================= MULTI-SELECT DROPDOWN =================
 export const MultiSelectDropdown = ({ options, selected, onToggle, placeholder }) => {
