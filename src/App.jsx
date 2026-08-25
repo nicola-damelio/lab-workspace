@@ -2692,7 +2692,7 @@ const openDataset = (dset) => {
               nmrProbes={nmrProbes} setNmrProbes={setNmrProbes}
               nmrInstruments={nmrInstruments} setNmrInstruments={setNmrInstruments}
               nmrExperiments={nmrExperiments} setNmrExperiments={setNmrExperiments}
-              customFields={customFields} setCustomFields={setCustomFields}
+              customFields={customFields}
               mandatoryRules={mandatoryRules} setMandatoryRules={setMandatoryRules}
               mandatoryBehavior={mandatoryBehavior} setMandatoryBehavior={setMandatoryBehavior}
               operators={operators} setOperators={setOperators}

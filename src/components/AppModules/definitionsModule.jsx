@@ -21,7 +21,7 @@ export const DefinitionsModule = ({
   customCellLines, setCustomCellLines,
   solvents, setSolvents, buffers, setBuffers, additives, setAdditives,
   nmrProbes, setNmrProbes, nmrInstruments, setNmrInstruments, nmrExperiments, setNmrExperiments,
-  customFields, setCustomFields, mandatoryRules, setMandatoryRules,
+  customFields, mandatoryRules, setMandatoryRules,
   mandatoryBehavior, setMandatoryBehavior,
   operators, setOperators, authSettings, setAuthSettings,
   currentUser, tests, setTests, handleSetCustomFields
