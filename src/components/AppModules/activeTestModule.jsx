@@ -12,6 +12,7 @@ const PlateTestRenderer = lazy(() => import('../PlateTestRenderer').then(m => ({
 const CDTestRenderer = lazy(() => import('../CDTestRenderer').then(m => ({ default: m.CDTestRenderer })));
 const SSNMRTestRenderer = lazy(() => import('../ssNMRTestRenderer').then(m => ({ default: m.SSNMRTestRenderer })));
 const NMRFittingsTestRenderer = lazy(() => import('../NMRFittingsTestRenderer').then(m => ({ default: m.NMRFittingsTestRenderer })));
+const DOSYTestRenderer = lazy(() => import('../DOSYTestRenderer').then(m => ({ default: m.DOSYTestRenderer })));
 const CloningTestRenderer = lazy(() => import('../CloningTestRenderer').then(m => ({ default: m.CloningTestRenderer })));
 const ProteinExpressionTestRenderer = lazy(() => import('../ProteinExpressionTestRenderer').then(m => ({ default: m.ProteinExpressionTestRenderer })));
 const DockingTestRenderer = lazy(() => import('../DockingTestRenderer'));
@@ -262,6 +263,7 @@ const TestHeader = (
                             value={
                            activeTest.type === 'plate-96' || activeTest.type === 'plate-384' || activeTest.type === 'plate-24' ? 'Multiwell plate essay' : 
                            activeTest.type === 'nmr-fittings' ? 'NMR Fitting' :
+                           activeTest.type === 'dosy' ? 'DOSY' :
                            activeTest.type === 'md_simulation' ? 'MD Simulation' :
                            activeTest.type === 'protein_expression' ? 'Protein expression & Purification' :
                            activeTest.type === 'ssnmr' ? 'Solid State NMR' :
@@ -607,6 +609,34 @@ if (activeTest.type === 'flow_cytometry') {
                       setCustomCmpds={setCustomCmpds}
                       appClipboard={appClipboard}
                       setAppClipboard={setAppClipboard}
+                      datasetProtocols={datasetProtocols}
+                      jumpToProtocol={jumpToProtocolFn}
+                      solvents={solvents}
+                      buffers={buffers}
+                      additives={additives}
+                      nmrInstruments={nmrInstruments}
+                      nmrProbes={nmrProbes}
+                      nmrExperiments={nmrExperiments}
+                      mandatoryRules={mandatoryRules}
+                      mandatoryBehavior={mandatoryBehavior}
+                    />
+                  );
+                }
+
+                if (activeTest.type === 'dosy') {
+                  return (
+                    <DOSYTestRenderer
+                      activeTest={activeTest}
+                      updateActiveTest={updateActiveTest}
+                      allTests={tests}
+                      TestHeader={TestHeader}
+                      operators={operatorNames}
+                      molecules={molecules}
+                      compoundMeta={compoundMeta}
+                      allCmpds={allCmpds}
+                      allCellLines={allCellLines}
+                      customFields={customFields}
+                      testCategories={testCategories}
                       datasetProtocols={datasetProtocols}
                       jumpToProtocol={jumpToProtocolFn}
                       solvents={solvents}

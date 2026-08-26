@@ -15,6 +15,7 @@ const FALLBACK = { label: 'Experiment', icon: '🧪' };
 export const TEST_TYPE_META = {
   nmr: { label: 'NMR', icon: '📉' },
   'nmr-fittings': { label: 'NMR Fitting', icon: '🧭' },
+  dosy: { label: 'DOSY', icon: '📈' },
   cd: { label: 'Circular Dichroism', icon: '🌀' },
   ssnmr: { label: 'Solid State NMR', icon: '🧲' },
   plate: { label: 'Plate Assay', icon: '🧫' },

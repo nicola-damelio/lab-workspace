@@ -1,4 +1,5 @@
 import React from 'react';
+import { seriesColorFor } from '../utils/chartStyle';
 
 /* ============================================================================
    DockingData — shared molecular-docking building blocks imported by
@@ -673,9 +674,7 @@ export const dockLineDash = (style) => {
   return undefined;
 };
 
-export const dockSeriesColor = (cfg, key, idx) =>
-  (cfg.colors && cfg.colors[key]) ||
-  DOCK_LINE_COLORS[Math.max(0, idx) % DOCK_LINE_COLORS.length];
+export const dockSeriesColor = (cfg, key, idx, total) => seriesColorFor(cfg, key, idx, total);
 
 export const dockMakeTicks = (domain, stepStr) => {
   const step = parseDockingValue(stepStr);

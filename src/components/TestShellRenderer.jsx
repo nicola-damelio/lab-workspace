@@ -432,6 +432,9 @@ const [showGeneral, setShowGeneral] = useState(false);
   // Shared stride / max-frames for the MD "Calculate all analyses" toolbar.
   const [mdRunCfg, setMdRunCfg] = useState(mdAnalysisRunAll.getCfg());
   useEffect(() => mdAnalysisRunAll.subscribeCfg(setMdRunCfg), []);
+  // Live progress of every analysis triggered by "Calculate all".
+  const [mdRunStatus, setMdRunStatus] = useState({});
+  useEffect(() => mdAnalysisRunAll.subscribeStatus(setMdRunStatus), []);
 
   const [tableRows, setTableRows] = useState(2);
   const [tableCols, setTableCols] = useState(3);
@@ -1832,6 +1835,15 @@ const details = [
                     <span className="text-[10px] text-slate-500">
                       Stride &amp; max frames apply to every analysis below. Each subsection can also be run individually.
                     </span>
+                    {Object.keys(mdRunStatus).length > 0 && (
+                      <div className="w-full flex flex-col gap-1 border-t border-indigo-200 pt-2 mt-1">
+                        {Object.entries(mdRunStatus).map(([k, s]) => (
+                          <div key={k} className="text-[11px] font-bold text-indigo-700 animate-pulse">
+                            ⏳ {s.msg}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
                 {CustomAll ? (

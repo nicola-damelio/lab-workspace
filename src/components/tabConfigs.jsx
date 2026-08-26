@@ -389,6 +389,33 @@ export const NMR_FITTING_TAB_CONFIG = {
   ]
 };
 
+export const DOSY_TAB_CONFIG = {
+  typeKey: 'dosy',
+  typeLabel: 'DOSY',
+  icon: '📈',
+  fallbackCategories: ['Diffusion', 'NMR', 'Relaxation'],
+  samples: {
+    compounds: true,
+    cellLines: true,
+    compoundLabel: 'Molecule / System Label(s)',
+    cellLineLabel: 'Cell Lines / Biological Models'
+  },
+  imagesKey: 'images',
+  conditionFields: [
+    { key: 'experimentDate', label: 'Experiment Date', type: 'date' },
+    { key: 'spectrometer', label: 'Spectrometer Frequency', type: 'text', placeholder: 'e.g. 600', units: ['MHz'] },
+    { key: 'temperature', label: 'Temperature', type: 'text', placeholder: 'e.g. 298', units: ['K', '°C'] },
+    { key: 'solvent', label: 'Solvent', type: 'text', placeholder: 'e.g. D2O' },
+    { key: 'gradient', label: 'Max gradient (G/cm)', type: 'text', placeholder: 'e.g. 60' },
+    { key: 'diffusionTime', label: 'Diffusion time Δ (ms)', type: 'text', placeholder: 'e.g. 50' },
+    { key: 'ph', label: 'pH', type: 'text', placeholder: 'e.g. 6.8' }
+  ],
+  notebookChecks: [
+    { id: 'cond', label: 'Experimental Conditions' },
+    { id: 'fittings', label: 'Diffusion Fits Summary' }
+  ]
+};
+
 export const MD_SIMULATION_TAB_CONFIG = {
   typeKey: 'md_simulation',
   typeLabel: 'MD Simulations',

@@ -229,6 +229,7 @@ if (/^(https?:|blob:|data:)/i.test(value)) {
 const path = value.split(/[?#]/)[0];
 const ext = path.includes('.') ? path.split('.').pop().toLowerCase() : '';
 if (ext === 'pdb' || ext === 'ent') return { url: value, params: { ext: 'pdb' } };
+if (ext === 'gro') return { url: value, params: { ext: 'gro' } };
 if (ext === 'cif' || ext === 'mmcif') return { url: value, params: { ext: 'cif' } };
 if (ext === 'bcif') return { url: value, params: { ext: 'bcif' } };
 if (ext === 'mol2') return { url: value, params: { ext: 'mol2' } };
@@ -493,6 +494,7 @@ const [pdbId, setPdbId] = useState('');
 const [loadRequest, setLoadRequest] = useState(null);
 const [status, setStatus] = useState('idle');
 const [errorMsg, setErrorMsg] = useState('');
+const [showManualHighlight, setShowManualHighlight] = useState(true); // green "assigned" atoms toggle
 const [hoverInfo, setHoverInfo] = useState(null);
 const [showLabels, setShowLabels] = useState(false);
 const [sidechainStyle, setSidechainStyle] = useState('licorice');
@@ -1671,13 +1673,13 @@ if (selSele) {
 highlightCompRef.current = component.addRepresentation('ball+stick', { sele: selSele, color: SELECT_COLOR_HEX, aspectRatio: 1.5, radius: 0.4 });
 }
 const manSele = buildSele(man);
-if (manSele) {
+if (manSele && showManualHighlight) {
 manualHighlightCompRef.current = component.addRepresentation('ball+stick', { sele: manSele, color: MANUAL_COLOR_HEX, aspectRatio: 1.5, radius: 0.4 });
 }
 } catch {}
 
 return clearHighlights;
-}, [selectedKeys, manualKeys, status]);
+}, [selectedKeys, manualKeys, status, showManualHighlight]);
 
 const handleFileChange = useCallback((e) => {
 const f = e.target.files && e.target.files[0];
@@ -1724,14 +1726,22 @@ return (
 Load local file
 </label>
 <label className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm transition-colors inline-flex items-center gap-2">
-📂 Choose PDB / CIF file
+📂 Choose PDB / GRO / CIF file
 <input
 type="file"
-accept=".pdb,.cif,.bcif,.ent,.mol2,.sdf"
+accept=".pdb,.gro,.cif,.bcif,.ent,.mol2,.sdf"
 onChange={handleFileChange}
 className="hidden"
 />
 </label>
+<button
+type="button"
+onClick={() => setShowManualHighlight((v) => !v)}
+className={`text-[10px] font-bold px-3 py-2 rounded-lg border transition-colors ${showManualHighlight ? 'bg-green-50 border-green-300 text-green-700' : 'bg-slate-100 border-slate-300 text-slate-500'}`}
+title="Show / hide the green highlight on manually assigned atoms"
+>
+{showManualHighlight ? '🟢 Assigned atoms ON' : '⚪ Assigned atoms OFF'}
+</button>
 {file && (
 <span className="text-[10px] text-slate-500 max-w-[200px] truncate">
 {file.name}

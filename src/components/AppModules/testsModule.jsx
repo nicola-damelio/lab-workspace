@@ -220,6 +220,21 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 ro
       const id = 't' + Date.now();
       setTests((prev) => [
         ...prev,
+        createEmptyTest(id, prev.length + 1, 'dosy')
+      ]);
+      setActiveTestId(id);
+      setCurrentModule('active-test');
+    }}
+    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+  >
+    + DOSY
+  </button>
+
+  <button
+    onClick={() => {
+      const id = 't' + Date.now();
+      setTests((prev) => [
+        ...prev,
         createEmptyTest(id, prev.length + 1, 'md_simulation')
       ]);
       setActiveTestId(id);
@@ -400,6 +415,7 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 ro
 : test.type === 'cloning' ? '🧬'
 : test.type === 'plate-9x9box' ? '📦'
 : test.type === 'nmr-fittings' ? '🧭'
+: test.type === 'dosy' ? '📈'
 : test.type === 'md_simulation' ? '🖥️'
 : test.type === 'docking' ? '🎯'
 : test.type === 'flow_cytometry' ? '🩸'
@@ -428,6 +444,7 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 ro
                                 <span>📅 {test.date}</span>
 <span className="bg-slate-100 px-2 py-0.5 rounded font-bold text-slate-600">
 {test.type === 'nmr-fittings' ? 'NMR FITTINGS'
+: test.type === 'dosy' ? 'DOSY'
 : test.type === 'md_simulation' ? 'MD'
 : test.type === 'protein_expression' ? 'PROTEIN'
 : test.type === 'ssnmr' ? 'SSNMR'

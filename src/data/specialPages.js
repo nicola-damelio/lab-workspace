@@ -12,6 +12,7 @@ import {
   NMR_TAB_CONFIG,
   CLONING_TAB_CONFIG,
   NMR_FITTING_TAB_CONFIG,
+  DOSY_TAB_CONFIG,
   PROTEIN_EXPRESSION_TAB_CONFIG,
   SSNMR_TAB_CONFIG,
   FLOW_CYTOMETRY_TAB_CONFIG
@@ -154,6 +155,7 @@ export const MD_SIMULATION_TAB_CONFIG = {
 export const SPECIAL_PAGES = [
   { value: 'nmr', label: 'NMR', subsections: NMR_TAB_CONFIG.notebookChecks || [] },
   { value: 'nmr-fittings', label: 'NMR Fittings', subsections: NMR_FITTING_TAB_CONFIG.notebookChecks || [] },
+  { value: 'dosy', label: 'DOSY', subsections: DOSY_TAB_CONFIG.notebookChecks || [] },
   { value: 'plate', label: 'Plate', subsections: PLATE_TAB_CONFIG.notebookChecks || [] },
   { value: 'cd', label: 'CD', subsections: CD_TAB_CONFIG.notebookChecks || [] },
   { value: 'cloning', label: 'Cloning', subsections: CLONING_TAB_CONFIG.notebookChecks || [] },

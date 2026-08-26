@@ -6,11 +6,12 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import Chart from 'chart.js/auto';
-import { formatConc, concKey, toHex, PALETTE, fit4PL, errBarPlugin } from '../data/constants';
+import { formatConc, concKey, toHex, fit4PL, errBarPlugin } from '../data/constants';
+import { rainbowColors } from '../utils/chartStyle';
 import { useNmrDerived, OneDSpectrumPlot, SpectrumPlot, HSQCPlot, CustomXTick1H, CustomXTick13C, TICKS_1H, TICKS_13C, TICKS_15N, PerAtomPlot, Fitting } from './NMRSections';
 import { FCSOverlayVisualization } from './FlowCytometrySections';
 import { CD_FIT_COMPONENTS } from './CDSections';
-import { generateRMSDData, generateRMSFData, generateRgData, generateSASAData, generateEnergyData, parseMDValue, getForceFieldInfo, getWaterModelInfo, getTrajectoryFormatInfo } from './MDData';
+import { parseMDValue, getForceFieldInfo, getWaterModelInfo, getTrajectoryFormatInfo } from './MDData';
 
 /* ============================================================================
    CHUNKED TABLE HELPER
@@ -202,7 +203,7 @@ const chartInstance = useRef(null);
     if (chartInstance.current) chartInstance.current.destroy();
 
 const datasets = (uvSpectra || []).map((spec, idx) => {
-const color = PALETTE ? toHex(PALETTE[idx % PALETTE.length]) : '#3b82f6';
+const color = toHex(rainbowColors(uvSpectra.length)[idx % Math.max(1, uvSpectra.length)]);
       return {
         label: spec.name || `Spectrum ${idx + 1}`,
         data: (spec.points || []).map(p => ({ x: p.wavelength, y: p.absorbance })),
@@ -814,7 +815,7 @@ const chartInstance = useRef(null);
 
 const ds = [];
     for (let c = 0; c < table.nCols; c++) {
-const color = PALETTE ? toHex(PALETTE[c % PALETTE.length]) : '#3b82f6';
+const color = toHex(rainbowColors(table.nCols)[c % Math.max(1, table.nCols)]);
 const pts = [];
       for (let r = 0; r < table.nRows; r++) {
 const x = table.delays[r], y = parseFloat(table.grid[r]?.[c]);
@@ -872,7 +873,7 @@ const colors = [];
       if (cf.fit) {
         labels.push(cf.residue || `Col ${i+1}`);
         data.push(cf.fit.R_s);
-        colors.push(PALETTE ? toHex(PALETTE[i % PALETTE.length]) : '#3b82f6');
+        colors.push(toHex(rainbowColors(colFits.length)[i % Math.max(1, colFits.length)]));
       }
     });
 
@@ -907,7 +908,7 @@ const chartInstance = useRef(null);
     if (!canvasRef.current) return;
     if (chartInstance.current) chartInstance.current.destroy();
 
-const color = PALETTE ? toHex(PALETTE[colIndex % PALETTE.length]) : '#3b82f6';
+const color = toHex(rainbowColors(Math.max(1, table.nCols))[colIndex % Math.max(1, table.nCols)]);
 const pts = [];
     for (let r = 0; r < table.nRows; r++) {
 const x = table.delays[r], y = parseFloat(table.grid[r]?.[colIndex]);
@@ -1118,7 +1119,7 @@ const sumW = fitData.reduce((s, p) => s + p.w, 0);
        if (sumW > 0) fitData.forEach(p => p.w = (p.w / sumW) * fitData.length);
        fit = fit4PL(fitData);
      }
-     result[reg].push({ name, vPts, fit, color: toHex(PALETTE[result[reg].length % PALETTE.length]) });
+     result[reg].push({ name, vPts, fit, color: toHex(rainbowColors(Math.max(1, result[reg].length + 1))[result[reg].length]) });
    });
  });
  return result;
@@ -1687,108 +1688,109 @@ return (
 );
 };
 const MDAnalysisPreview = ({ test }) => {
+const res = (test && test.mdAnalysisResult) || null;
 const canvasRefs = { rmsd: useRef(null), rmsf: useRef(null), rg: useRef(null), sasa: useRef(null), energy: useRef(null) };
 const chartInstances = useRef({});
-const nFrames = parseMDValue(test.mdNumFrames) || 500;
-const seqLen = (test.proteinSequence || '').replace(/[^ACDEFGHIKLMNPQRSTVWY]/gi, '').length;
-const nResidues = Math.max(1, seqLen || 20);
 useEffect(() => {
-const datasets = {
-rmsd: generateRMSDData(Math.min(nFrames, 500)),
-rmsf: generateRMSFData(nResidues),
-rg: generateRgData(Math.min(nFrames, 500)),
-sasa: generateSASAData(Math.min(nFrames, 500)),
-energy: generateEnergyData(Math.min(nFrames, 500))
-};
-Object.entries(canvasRefs).forEach(([key, ref]) => {
-if (!ref.current) return;
-if (chartInstances.current[key]) chartInstances.current[key].destroy();
-let chartData, xLabel, yLabel;
-if (key === 'rmsf') {
-  chartData = {
-    labels: datasets.rmsf.map(d => d.residue),
-    datasets: [{
-      label: 'RMSF',
-      data: datasets.rmsf.map(d => d.value),
-      backgroundColor: datasets.rmsf.map(d => d.value > 0.25 ? '#ef444499' : '#3b82f699'),
-      borderColor: datasets.rmsf.map(d => d.value > 0.25 ? '#ef4444' : '#3b82f6'),
-      borderWidth: 1,
-      type: 'bar'
-    }]
+  if (!res) return;
+  const datasets = {
+    rmsd: res.rmsd || [],
+    rmsf: (res.rmsf || []).map((d) => ({ ...d, fill: d.value > 0.25 ? '#ef4444' : '#3b82f6' })),
+    rg: res.rg || [],
+    sasa: res.sasa || [],
+    energy: res.energy || [],
   };
-  xLabel = 'Residue';
-  yLabel = 'RMSF (nm)';
-} else if (key === 'energy') {
-  chartData = {
-    datasets: [
-      { label: 'Potential', data: datasets.energy.map(d => ({ x: d.time, y: d.potential })), borderColor: '#3b82f6', borderWidth: 1.5, pointRadius: 0, fill: false },
-      { label: 'Total', data: datasets.energy.map(d => ({ x: d.time, y: d.total })), borderColor: '#ef4444', borderWidth: 1.5, pointRadius: 0, fill: false }
-    ]
+  Object.entries(canvasRefs).forEach(([key, ref]) => {
+    if (!ref.current || !datasets[key] || !datasets[key].length) return;
+    if (chartInstances.current[key]) chartInstances.current[key].destroy();
+    let chartData, xLabel, yLabel;
+    if (key === 'rmsf') {
+      chartData = {
+        labels: datasets.rmsf.map(d => d.residue),
+        datasets: [{
+          label: 'RMSF',
+          data: datasets.rmsf.map(d => d.value),
+          backgroundColor: datasets.rmsf.map(d => d.fill + '99'),
+          borderColor: datasets.rmsf.map(d => d.fill),
+          borderWidth: 1,
+          type: 'bar'
+        }]
+      };
+      xLabel = 'Residue';
+      yLabel = 'RMSF (nm)';
+    } else if (key === 'energy') {
+      chartData = {
+        datasets: [
+          { label: 'Potential', data: datasets.energy.map(d => ({ x: d.time, y: d.potential })), borderColor: '#ef4444', borderWidth: 1.5, pointRadius: 0, fill: false },
+          { label: 'Kinetic', data: datasets.energy.map(d => ({ x: d.time, y: d.kinetic })), borderColor: '#3b82f6', borderWidth: 1.5, pointRadius: 0, fill: false },
+          { label: 'Total', data: datasets.energy.map(d => ({ x: d.time, y: d.total })), borderColor: '#22c55e', borderWidth: 1.5, pointRadius: 0, fill: false }
+        ]
+      };
+      xLabel = 'Time (ps)';
+      yLabel = 'Energy (kJ/mol)';
+    } else {
+      const unit = key === 'sasa' ? 'nm²' : 'nm';
+      chartData = {
+        datasets: [{
+          label: key.toUpperCase(),
+          data: datasets[key].map(d => ({ x: d.time, y: d.value })),
+          borderColor: key === 'rmsd' ? '#3b82f6' : key === 'rg' ? '#22c55e' : '#f59e0b',
+          borderWidth: 1.5,
+          pointRadius: 0,
+          fill: false
+        }]
+      };
+      xLabel = 'Time (ps)';
+      yLabel = `${key.toUpperCase()} (${unit})`;
+    }
+    chartInstances.current[key] = new Chart(ref.current, {
+      type: key === 'rmsf' ? 'bar' : 'line',
+      data: chartData,
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        scales: {
+          x: { type: key === 'rmsf' ? 'category' : 'linear', title: { display: true, text: xLabel, font: { size: 10 } }, ticks: { font: { size: 9 } } },
+          y: { title: { display: true, text: yLabel, font: { size: 10 } }, ticks: { font: { size: 9 } } }
+        },
+        plugins: { legend: { display: key === 'energy', labels: { font: { size: 9 } } } }
+      }
+    });
+  });
+  return () => {
+    Object.values(chartInstances.current).forEach(c => { if (c) c.destroy(); });
+    chartInstances.current = {};
   };
-  xLabel = 'Time (ps)';
-  yLabel = 'Energy (kJ/mol)';
-} else {
-const unit = key === 'sasa' ? 'nm²' : 'nm';
-  chartData = {
-    datasets: [{
-      label: key.toUpperCase(),
-      data: datasets[key].map(d => ({ x: d.time, y: d.value })),
-      borderColor: key === 'rmsd' ? '#3b82f6' : key === 'rg' ? '#22c55e' : '#f59e0b',
-      borderWidth: 1.5,
-      pointRadius: 0,
-      fill: false
-    }]
-  };
-  xLabel = 'Time (ps)';
-  yLabel = `${key.toUpperCase()} (${unit})`;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [res]);
+if (!res) {
+  return <p className="text-[10px] text-slate-400 italic">No trajectory analysis saved yet — open the MD test and run “Calculate from trajectory”.</p>;
 }
-chartInstances.current[key] = new Chart(ref.current, {
-  type: key === 'rmsf' ? 'bar' : key === 'energy' ? 'line' : 'line',
-  data: chartData,
-  options: {
-    responsive: true, maintainAspectRatio: false, animation: false,
-    scales: {
-      x: { type: key === 'rmsf' ? 'category' : 'linear', title: { display: true, text: xLabel, font: { size: 10 } }, ticks: { font: { size: 9 } } },
-      y: { title: { display: true, text: yLabel, font: { size: 10 } }, ticks: { font: { size: 9 } } }
-    },
-    plugins: { legend: { display: key === 'energy', labels: { font: { size: 9 } } } }
-  }
-});
-});
-return () => {
-Object.values(chartInstances.current).forEach(c => { if (c) c.destroy(); });
-chartInstances.current = {};
-};
-}, [nFrames, nResidues]);
-if (!(test.proteinSequence || test.smiles || test.moleculeType)) {
-return <p className="text-[10px] text-slate-400 italic">No sequence defined — MD analysis unavailable.</p>;
-}
+const has = (k) => Array.isArray(res[k]) && res[k].length;
 return (
 <div className="flex flex-col gap-4 mt-2">
-<h5 className="text-[10px] font-bold text-slate-500 uppercase text-center w-full">MD Analysis ({nFrames} frames)</h5>
+<h5 className="text-[10px] font-bold text-slate-500 uppercase text-center w-full">MD Analysis ({res.nFrames || 0} frames)</h5>
 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-<div className="bg-white p-2 border border-slate-200 rounded shadow-sm">
+{has('rmsd') && (<div className="bg-white p-2 border border-slate-200 rounded shadow-sm">
   <h6 className="text-[10px] font-bold text-slate-500 mb-1 text-center uppercase">RMSD</h6>
   <div style={{ height: '200px' }}><canvas ref={canvasRefs.rmsd}></canvas></div>
-</div>
-<div className="bg-white p-2 border border-slate-200 rounded shadow-sm">
+</div>)}
+{has('rmsf') && (<div className="bg-white p-2 border border-slate-200 rounded shadow-sm">
   <h6 className="text-[10px] font-bold text-slate-500 mb-1 text-center uppercase">RMSF per Residue</h6>
   <div style={{ height: '200px' }}><canvas ref={canvasRefs.rmsf}></canvas></div>
-</div>
-<div className="bg-white p-2 border border-slate-200 rounded shadow-sm">
+</div>)}
+{has('rg') && (<div className="bg-white p-2 border border-slate-200 rounded shadow-sm">
   <h6 className="text-[10px] font-bold text-slate-500 mb-1 text-center uppercase">Radius of Gyration</h6>
   <div style={{ height: '200px' }}><canvas ref={canvasRefs.rg}></canvas></div>
-</div>
-<div className="bg-white p-2 border border-slate-200 rounded shadow-sm">
+</div>)}
+{has('sasa') && (<div className="bg-white p-2 border border-slate-200 rounded shadow-sm">
   <h6 className="text-[10px] font-bold text-slate-500 mb-1 text-center uppercase">SASA</h6>
   <div style={{ height: '200px' }}><canvas ref={canvasRefs.sasa}></canvas></div>
-</div>
-</div>
-<div className="bg-white p-2 border border-slate-200 rounded shadow-sm">
+</div>)}
+{has('energy') && (<div className="bg-white p-2 border border-slate-200 rounded shadow-sm">
 <h6 className="text-[10px] font-bold text-slate-500 mb-1 text-center uppercase">Energy</h6>
 <div style={{ height: '220px' }}><canvas ref={canvasRefs.energy}></canvas></div>
+</div>)}
 </div>
-<p className="text-[9px] text-slate-400 italic text-center">Curves are simulated until a real trajectory analysis is attached.</p>
 </div>
 );
 };
@@ -1839,6 +1841,37 @@ export const normalizeImagePreview = (url) => {
    "Data Analysis Graphs" panel. Adding a new test page = add one entry here
    (plus its preview component) instead of editing an if/else chain.
    ========================================================================== */
+const DOSYFitPreview = ({ test }) => {
+  const tables = Array.isArray(test?.dosyTables) ? test.dosyTables : [];
+  const fits = test?.dosyFits || {};
+  if (!tables.length) return <p className="text-xs text-slate-400 italic">No DOSY data yet.</p>;
+  return (
+    <div className="flex flex-col gap-4 mt-2">
+      {tables.map((t, i) => {
+        const colFits = fits[t.id] || [];
+        return (
+          <div key={t.id} className="bg-white p-2 rounded border border-slate-200 shadow-sm">
+            <h6 className="text-[10px] font-bold text-slate-500 mb-2 uppercase">Gradient set {i + 1} — Stejskal-Tanner fit</h6>
+            <table className="border-collapse text-xs w-full">
+              <thead><tr className="bg-slate-50"><th className="px-3 py-1.5 border border-slate-200 text-left">Column</th><th className="px-3 py-1.5 border border-slate-200">D (m²/s)</th><th className="px-3 py-1.5 border border-slate-200">I₀</th><th className="px-3 py-1.5 border border-slate-200">R²</th><th className="px-3 py-1.5 border border-slate-200">n</th></tr></thead>
+              <tbody>
+                {colFits.map((cf, j) => (
+                  <tr key={j}>
+                    <td className="p-1.5 border border-slate-200 font-bold text-blue-800">{cf.residue}</td>
+                    <td className="p-1.5 border border-slate-200 font-mono">{cf.fit ? cf.fit.D.toExponential(3) : '—'}</td>
+                    <td className="p-1.5 border border-slate-200 font-mono">{cf.fit ? cf.fit.I0.toExponential(2) : '—'}</td>
+                    <td className="p-1.5 border border-slate-200 font-mono">{cf.fit ? cf.fit.r2.toFixed(3) : '—'}</td>
+                    <td className="p-1.5 border border-slate-200">{cf.fit ? cf.fit.n : 0}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
 export const NOTEBOOK_ANALYSIS_PREVIEWS = {
   plate: [(test) => <PlateAnalysisPreview test={test} />],
   flow_cytometry: [(test, ctx) => <FCSOverlayVisualization ctx={ctx} />],
@@ -1852,6 +1885,11 @@ export const NOTEBOOK_ANALYSIS_PREVIEWS = {
   'nmr-fittings': [(test) => (
     <div className="mt-2">
       <NMRFittingGraphsPreview test={test} />
+    </div>
+  )],
+  dosy: [(test) => (
+    <div className="mt-2">
+      <DOSYFitPreview test={test} />
     </div>
   )],
   md_simulation: [(test) => <MDAnalysisPreview test={test} />],

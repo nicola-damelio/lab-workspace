@@ -3,7 +3,7 @@ import LZString from 'lz-string';
 import {LOCAL_STORAGE_KEY, PLATES_DEF, DEF_COMPOUNDS, DEF_CELL_LINES, parsePayload} from './data/constants';
 const TestShellRenderer = lazy(() => import('./components/TestShellRenderer'));
 import { StorageModals } from './components/Storage';
-import { Setup, Data, Simulations, Analysis, MD_ANALYSIS_SECTIONS } from '/src/components/MDSections.jsx';
+import { Setup, Data, Simulations, Analysis, MD_ANALYSIS_SECTIONS, mdChartToSvg, mdContactToSvg, mdProfileToSvg, mdDsspToSvg, readChartSnapshots } from '/src/components/MDSections.jsx';
 
 
 import { MD_SIMULATION_TAB_CONFIG } from './data/specialPages';
@@ -51,7 +51,11 @@ const sanitizeTestCategories = (cats, testsList) => {
 
 const buildMDNotebookHtml = (checked, ctx) => {
   const t = ctx?.activeTest || {};
-  const charts = (t && t.mdNotebookCharts) || {};
+  // Snapshot figures (contacts / profiles / DSSP) are kept out of the Firestore
+  // document and read back from the per-test sessionStorage cache (legacy
+  // mdNotebookCharts is still honoured for previously saved datasets).
+  const charts = { ...readChartSnapshots(t.id), ...((t && t.mdNotebookCharts) || {}) };
+  const res = (t && t.mdAnalysisResult) || null;
 
   let html = '';
 
@@ -77,25 +81,57 @@ const buildMDNotebookHtml = (checked, ctx) => {
     ? `<figure style="margin: 12px 0; text-align:center; break-inside:avoid;"><img src="${src}" alt="${label}" style="max-width:100%; border:1px solid #e2e8f0; border-radius:8px; background:#fff; box-shadow:0 1px 3px rgba(15,23,42,0.08);"/><figcaption style="font-size:11px;color:#64748b;margin-top:4px;"><b>${label}</b></figcaption></figure>`
     : '');
 
+  // Vector chart rendered straight from the persisted analysis data — no
+  // base64 images involved, so the notebook stays crisp and tiny.
+  const svgFigure = (svg, label) => (svg
+    ? `<figure style="margin: 12px 0; text-align:center; break-inside:avoid;">${svg}<figcaption style="font-size:11px;color:#64748b;margin-top:4px;"><b>${label}</b></figcaption></figure>`
+    : '');
+
+  const svgOrImage = (svg, src, label) => svgFigure(svg, label) || chartFigure(src, label);
+
   if (checked.results) {
     html += `<p style="font-size:12px;color:#475569;margin-bottom:8px;"><b>Results Summary:</b> RMSD, RMSF, Rg, SASA and energy curves.</p>`;
-    html += chartFigure(charts.rmsd, 'RMSD (backbone)');
-    html += chartFigure(charts.rmsf, 'RMSF per residue');
-    html += chartFigure(charts.rg, 'Radius of Gyration (Rg)');
-    html += chartFigure(charts.sasa, 'SASA');
-    html += chartFigure(charts.energy, 'Energy');
+    html += svgOrImage(mdChartToSvg({ data: res && res.rmsd, series: [{ key: 'value', color: '#3b82f6' }], yLabel: 'nm', xLabel: 'Time (ns)' }), charts.rmsd, 'RMSD (backbone)');
+    const rmsfSvgData = res && res.rmsf ? res.rmsf.map((d) => ({ ...d, fill: d.value > 0.25 ? '#ef4444' : '#3b82f6' })) : null;
+    html += svgOrImage(mdChartToSvg({ data: rmsfSvgData, series: [{ key: 'value', color: '#3b82f6' }], chartType: 'bar', xKey: 'residue', yLabel: 'nm', xLabel: 'Residue' }), charts.rmsf, 'RMSF per residue');
+    html += svgOrImage(mdChartToSvg({ data: res && res.rg, series: [{ key: 'value', color: '#22c55e' }], yLabel: 'nm', xLabel: 'Time (ns)' }), charts.rg, 'Radius of Gyration (Rg)');
+    html += svgOrImage(mdChartToSvg({ data: res && res.sasa, series: [{ key: 'value', color: '#f59e0b' }], yLabel: 'nm²', xLabel: 'Time (ns)' }), charts.sasa, 'SASA');
+    html += svgOrImage(mdChartToSvg({ data: res && res.energy, series: [{ key: 'potential', color: '#ef4444' }, { key: 'kinetic', color: '#3b82f6' }, { key: 'total', color: '#22c55e' }], yLabel: 'kJ/mol', xLabel: 'Time (ns)' }), charts.energy, 'Energy');
   }
 
   if (checked.analysis) {
     html += `<p style="font-size:12px;color:#475569;margin-bottom:8px;"><b>Data Analysis:</b> membrane contacts (polar + apolar), membrane profiles and secondary structure (DSSP).</p>`;
-    html += chartFigure(charts.contactPolar, 'Membrane contacts — Polar');
-    html += chartFigure(charts.contactApolar, 'Membrane contacts — Apolar (van der Waals)');
-    html += chartFigure(charts.scd, 'Order parameter |SCD|');
-    html += chartFigure(charts.density, 'Electron density profile');
-    html += chartFigure(charts.potential, 'Electrostatic potential');
-    html += chartFigure(charts.dsspContent, 'Secondary structure content vs time');
-    html += chartFigure(charts.dsspHeat, 'DSSP timeline map (residue × frame)');
-    html += chartFigure(charts.dsspOcc, 'Per-residue occupancy');
+    const contact = (t && t.mdContactResult) || {};
+    const profile = (t && t.mdProfileResult) || null;
+    const dssp = (t && t.mdDsspResult) || null;
+    // Prefer vector SVG rendered from the persisted analysis data; fall back to
+    // the in-session raster snapshots for cases where only those exist.
+    const fig = (svg, img, label) => svgFigure(svg, label) || chartFigure(img, label);
+    const contactFigs = [
+      ['polar', 'peptide', 'Membrane contacts — Polar (X: peptide atoms)'],
+      ['polar', 'membrane', 'Membrane contacts — Polar (X: lipid atoms)'],
+      ['vdW', 'peptide', 'Membrane contacts — Apolar (X: peptide atoms)'],
+      ['vdW', 'membrane', 'Membrane contacts — Apolar (X: lipid atoms)'],
+    ];
+    contactFigs.forEach(([m, xa, label]) => {
+      const imgKey = m === 'polar' ? 'contactPolar' : 'contactApolar';
+      html += fig(mdContactToSvg(contact[`${m}_${xa}`], label), charts[imgKey], label);
+    });
+    if (Array.isArray(profile) && profile.length) {
+      html += profile.map((p) => mdProfileToSvg(p)).join('');
+    } else {
+      html += chartFigure(charts.scd, 'Order parameter |SCD|');
+      html += chartFigure(charts.density, 'Electron density profile');
+      html += chartFigure(charts.potential, 'Electrostatic potential');
+    }
+    if (Array.isArray(dssp) && dssp.length) {
+      html += dssp.map((d) => mdDsspToSvg(d)).join('');
+      html += chartFigure(charts.dsspHeat, 'DSSP timeline map (residue × frame)');
+    } else {
+      html += chartFigure(charts.dsspContent, 'Secondary structure content vs time');
+      html += chartFigure(charts.dsspHeat, 'DSSP timeline map (residue × frame)');
+      html += chartFigure(charts.dsspOcc, 'Per-residue occupancy');
+    }
   }
 
   return html;
@@ -738,6 +774,22 @@ if (customType === 'nmr-fittings') {
       };
     }
 
+if (customType === 'dosy') {
+  const id = 'dt' + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36);
+  return {
+    ...baseTest,
+    name: `DOSY ${num}`,
+    type: 'dosy',
+    testCategory: 'DOSY',
+    dosyTables: [{
+      id, nRows: 8, nCols: 4, delayUnit: 's/mm2',
+      delays: [0, 100, 200, 400, 800, 1200, 1600, 2000],
+      colResidues: ['', '', '', ''],
+      grid: Array.from({ length: 8 }, () => Array(4).fill(''))
+    }]
+  };
+}
+
     return baseTest;
   };
 
@@ -1148,6 +1200,71 @@ if (customType === 'nmr-fittings') {
   }, [operators, currentUser]);
 
 const saveTimeoutRef = useRef(null);
+// Firestore rejects a single document/field above ~1 MiB ("the value of
+// property payload is longer than 1048487 bytes"). LZString's UTF-16 output is
+// up to 3 bytes per char in UTF-8, so we stay well under the limit: if the
+// compressed payload would be too large, drop the heavy legacy chart images
+// (mdNotebookCharts) that no longer belong in the dataset document — the MD
+// notebook now renders its figures from persisted data / sessionStorage.
+const compressDatasetForSave = (raw) => {
+  const compress = (data) => LZString.compressToUTF16(JSON.stringify(data));
+  const sizeOf = (data) => compress(data).length * 3; // UTF-16 char -> max 3 UTF-8 bytes
+  const budget = 900000; // Firestore field limit is 1048487 bytes; stay well under.
+  if (sizeOf(raw) <= budget) return compress(raw);
+
+  // Stage 1: drop the heavy legacy chart images (mdNotebookCharts) that no
+  // longer belong in the dataset document — the MD notebook now renders its
+  // figures from persisted data / sessionStorage.
+  let cleaned = {
+    ...raw,
+    tests: (raw.tests || []).map((test) => {
+      if (!test) return test;
+      const clean = { ...test };
+      delete clean.mdNotebookCharts;
+      delete clean.chartSnapshots;
+      return clean;
+    })
+  };
+  if (sizeOf(cleaned) <= budget) return compress(cleaned);
+
+  // Stage 2: iteratively drop the LARGEST base64 images embedded in notebook
+  // `comments` until the payload fits (a single image below 40 KB may still
+  // overflow when there are many of them). Each dropped image is replaced with
+  // a placeholder note, so no content is ever silently lost from the document.
+  let guard = 0;
+  while (sizeOf(cleaned) > budget && guard < 40) {
+    guard++;
+    let target = null; // { testId, len, img }
+    cleaned.tests.forEach((test) => {
+      if (!test || typeof test.comments !== 'string' || !test.comments.includes('data:image')) return;
+      const imgs = test.comments.match(/<img[^>]*src="data:image\/[a-z0-9+/]+;base64,[^"]+"[^>]*>/gi) || [];
+      imgs.forEach((img) => {
+        if (!target || img.length > target.len) target = { testId: test.id, len: img.length, img };
+      });
+    });
+    if (!target) break;
+    cleaned.tests = (cleaned.tests || []).map((test) => {
+      if (test.id !== target.testId || typeof test.comments !== 'string') return test;
+      return { ...test, comments: test.comments.replace(target.img, '<p style="color:#94a3b8;">[large image omitted from saved notebook — re-run the analysis to re-append]</p>') };
+    });
+  }
+  if (sizeOf(cleaned) <= budget) return compress(cleaned);
+
+  // Stage 3 (absolute last resort — the save must never fail): cap the largest
+  // analysis arrays (MD time series). The notebook re-renders figures from data
+  // and the per-atom table already holds the imported per-atom values.
+  cleaned.tests = (cleaned.tests || []).map((test) => {
+    if (!test) return test;
+    const clean = { ...test };
+    if (clean.mdAnalysisResult && typeof clean.mdAnalysisResult === 'object') {
+      Object.entries(clean.mdAnalysisResult).forEach(([k, v]) => {
+        if (Array.isArray(v) && v.length > 400) clean.mdAnalysisResult[k] = v.slice(0, 400);
+      });
+    }
+    return clean;
+  });
+  return compress(cleaned);
+};
 useEffect(() => {
   if (!isCloudReady || appView !== 'dataset' || !currentDatasetId) return;
   setSaveStatus('saving');
@@ -1156,7 +1273,7 @@ useEffect(() => {
     try {
       const rawData = latestDataRef.current;
       // Compress payload to prevent Firestore 1MB limit and write stream exhaustion
-      const compressedPayload = LZString.compressToUTF16(JSON.stringify(rawData));
+      const compressedPayload = compressDatasetForSave(rawData);
 
       const updatedPayload = {
         title: datasetTitle || 'Untitled Dataset',
@@ -1600,7 +1717,7 @@ const handleBackToExplorer = async () => {
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     try {
       const rawData = latestDataRef.current;
-      const compressedPayload = LZString.compressToUTF16(JSON.stringify(rawData));
+      const compressedPayload = compressDatasetForSave(rawData);
       
       const updatedPayload = {
         title: datasetTitle || 'Untitled Dataset',

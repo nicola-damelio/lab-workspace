@@ -12,8 +12,9 @@ import { computeOrderAndDensity, parseChargeMap } from './MDMembraneProfiles';
 import { computeMDTrajectoryAnalysis, parseEnergyFile } from '../utils/mdAnalysis';
 import { abortControl, isAbortError } from '../utils/abortControl';
 import { mdAnalysisRunAll } from '../utils/mdAnalysisRunAll';
+import { blobStore } from '../utils/blobStore';
 import html2canvas from 'html2canvas';
-import { PER_ATOM_COLORS } from '../utils/chartStyle';
+import { PER_ATOM_COLORS, seriesColorFor, rainbowColors } from '../utils/chartStyle';
 export { parseSimulationParameters };   
 import NMRMoleculeViewer from './NMRMoleculeViewer';
 import {
@@ -24,6 +25,10 @@ import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, FORM_META, RE
 
 // Cache to retain local File objects when switching tabs within the same session
 const localFileCache = new Map();
+
+// IndexedDB key under which the uploaded trajectory File is persisted so it
+// survives a page reload (no re-upload needed).
+const trajBlobKey = (testId) => `traj_${testId}`;
 
 /* ---- Lab Notebook chart snapshots ----------------------------------------
    The MD analysis charts live inside collapsed CollapsibleSections, so they
@@ -37,7 +42,7 @@ const captureChartToDataUrl = async (id) => {
   if (!el) return null;
   try {
     const canvas = await html2canvas(el, {
-      scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false,
+      scale: 1, useCORS: true, backgroundColor: '#ffffff', logging: false,
       imageTimeout: 15000
     });
     return canvas.toDataURL('image/png');
@@ -46,7 +51,26 @@ const captureChartToDataUrl = async (id) => {
   }
 };
 
-const storeChartSnapshots = (updateActiveTest, activeTest, entries) => {
+// Chart snapshots for the Lab Notebook live in a per-test sessionStorage cache,
+// NOT inside activeTest. Storing base64 PNGs in the test object is what pushed
+// the Firestore document past its 1 MiB limit ("value of property payload is
+// longer than 1048487 bytes") and silently broke every save. sessionStorage
+// survives page reloads in the same tab (so notebook figures still appear) but
+// never touches the persisted dataset.
+const chartCacheKey = (testId) => `lab_md_chart_snapshots_${testId}`;
+
+export const readChartSnapshots = (testId) => {
+  if (!testId) return {};
+  try {
+    return JSON.parse(sessionStorage.getItem(chartCacheKey(testId)) || '{}');
+  } catch {
+    return {};
+  }
+};
+
+const storeChartSnapshots = (activeTest, entries) => {
+  const testId = activeTest && activeTest.id;
+  if (!testId) return;
   (async () => {
     const urls = {};
     await Promise.all(
@@ -55,11 +79,169 @@ const storeChartSnapshots = (updateActiveTest, activeTest, entries) => {
         if (u) urls[key] = u;
       })
     );
-    if (Object.keys(urls).length && typeof updateActiveTest === 'function') {
-      const prev = (activeTest && activeTest.mdNotebookCharts) || {};
-      updateActiveTest({ mdNotebookCharts: { ...prev, ...urls } });
-    }
+    if (!Object.keys(urls).length) return;
+    try {
+      sessionStorage.setItem(
+        chartCacheKey(testId),
+        JSON.stringify({ ...readChartSnapshots(testId), ...urls })
+      );
+    } catch { /* quota exceeded / private mode — notebook figures degrade gracefully */ }
   })();
+};
+
+// Recharts + html2canvas become extremely slow above ~2k points. Time-series
+// analysis results (RMSD / Rg / SASA, one point per used frame) can be far
+// larger, so we thin them for DISPLAY only — the full result stays in
+// calcData (and in the per-atom table).
+const MAX_DISPLAY_POINTS = 1500;
+const downsampleSeries = (arr, max = MAX_DISPLAY_POINTS) => {
+  if (!Array.isArray(arr) || arr.length <= max) return arr;
+  const step = Math.max(1, Math.ceil(arr.length / max));
+  return arr.filter((_, i) => i % step === 0);
+};
+
+// Tiny self-contained SVG renderer used to embed the MD analysis charts into
+// the Lab Notebook HTML. It renders straight from the persisted
+// mdAnalysisResult data, so the notebook needs no stored base64 images.
+export const mdChartToSvg = ({
+  data, series, chartType = 'line', xKey = 'time', yLabel = '', xLabel = '', width = 680, height = 340
+}) => {
+  if (!Array.isArray(data) || !data.length || !Array.isArray(series) || !series.length) return '';
+  const W = width, H = height, mL = 64, mR = 16, mT = 18, mB = 44;
+  const plotW = W - mL - mR, plotH = H - mT - mB;
+  const xs = data.map((d) => Number(d[xKey]) || 0);
+  const allY = [];
+  series.forEach((s) => data.forEach((d) => { const v = Number(d[s.key]); if (Number.isFinite(v)) allY.push(v); }));
+  if (!allY.length) return '';
+  const xMin = Math.min(...xs), xMax = Math.max(...xs);
+  let lo = Math.min(...allY, 0), hi = Math.max(...allY);
+  if (lo === hi) { lo -= 1; hi += 1; }
+  const xSpan = xMax === xMin ? 1 : xMax - xMin;
+  const X = (v) => mL + ((Number(v) - xMin) / xSpan) * plotW;
+  const Y = (v) => mT + (1 - (Number(v) - lo) / (hi - lo)) * plotH;
+  let out = '';
+  const yTicks = 5;
+  for (let i = 0; i <= yTicks; i++) {
+    const yv = lo + ((hi - lo) * i) / yTicks;
+    const yy = Y(yv);
+    out += `<line x1="${mL}" y1="${yy.toFixed(1)}" x2="${W - mR}" y2="${yy.toFixed(1)}" stroke="#e2e8f0" stroke-width="1"/>`;
+    out += `<text x="${mL - 6}" y="${(yy + 3).toFixed(1)}" text-anchor="end" font-size="10" fill="#64748b">${yv.toFixed(2)}</text>`;
+  }
+  const xTicks = 4;
+  for (let i = 0; i < xTicks; i++) {
+    const xv = xMin + (xMax - xMin) * (i / (xTicks - 1));
+    out += `<text x="${X(xv).toFixed(1)}" y="${H - mB + 16}" text-anchor="middle" font-size="10" fill="#64748b">${Number(xv).toFixed(2)}</text>`;
+  }
+  if (chartType === 'bar') {
+    const bw = Math.max(2, (plotW / data.length) * 0.7);
+    out += data.map((d) => {
+      const x = X(d[xKey]) - bw / 2;
+      const y = Y(Number(d[series[0].key]));
+      const h = Math.max(0, H - mB - y);
+      return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="${d.fill || series[0].color}"/>`;
+    }).join('');
+  } else {
+    out += series.map((s) => {
+      const pts = data.map((d) => `${X(d[xKey]).toFixed(1)},${Y(Number(d[s.key])).toFixed(1)}`).join(' ');
+      return `<polyline fill="none" stroke="${s.color}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" points="${pts}"/>`;
+    }).join('');
+  }
+  out += `<line x1="${mL}" y1="${mT}" x2="${mL}" y2="${H - mB}" stroke="#94a3b8" stroke-width="1"/>`;
+  out += `<line x1="${mL}" y1="${H - mB}" x2="${W - mR}" y2="${H - mB}" stroke="#94a3b8" stroke-width="1"/>`;
+  out += `<text x="${W / 2}" y="${H - 10}" text-anchor="middle" font-size="11" fill="#475569">${xLabel}</text>`;
+  out += `<text x="14" y="${H / 2}" text-anchor="middle" font-size="11" fill="#475569" transform="rotate(-90 14 ${H / 2})">${yLabel}</text>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" font-family="Arial, Helvetica, sans-serif">${out}</svg>`;
+};
+
+// Compact heatmap SVG for the membrane-contact matrices (used by the Lab
+// Notebook). Aggressively downsampled (≤ 25×25 cells) so the printed notebook
+// stays small while the key pattern remains visible.
+export const mdContactToSvg = (result, label) => {
+  if (!result || !Array.isArray(result.rows) || !result.rows.length) return '';
+  const keys = (Array.isArray(result.series) ? result.series.map((s) => s.key) : []).filter((k) => k && k !== 'atom');
+  if (!keys.length) return '';
+  const maxR = 25, maxC = 25;
+  const rStride = Math.max(1, Math.ceil(result.rows.length / maxR));
+  const cStride = Math.max(1, Math.ceil(keys.length / maxC));
+  const rIdx = result.rows.map((_, i) => i).filter((_, i) => i % rStride === 0);
+  const cIdx = keys.map((_, i) => i).filter((_, i) => i % cStride === 0);
+  let maxV = 0;
+  rIdx.forEach((ri) => cIdx.forEach((ci) => { const v = Math.abs(Number(result.rows[ri][keys[ci]]) || 0); if (v > maxV) maxV = v; }));
+  if (maxV <= 0) maxV = 1;
+  const cell = 14, left = 70, top = 22;
+  const W = cIdx.length * cell + left + 8;
+  const H = rIdx.length * cell + top + 30;
+  const color = (v) => {
+    const t = Math.min(1, Math.abs(Number(v) || 0) / maxV);
+    const r = Math.round(30 + 180 * t);
+    const g = Math.round(90 + 90 * (1 - t));
+    const b = Math.round(225 - 170 * t);
+    return `rgb(${r},${g},${b})`;
+  };
+  let out = `<rect x="0" y="0" width="${W}" height="${H}" fill="#ffffff"/>`;
+  out += `<text x="8" y="12" font-size="11" fill="#475569">${label}</text>`;
+  rIdx.forEach((ri, y) => cIdx.forEach((ci, x) => {
+    const v = Number(result.rows[ri][keys[ci]]) || 0;
+    out += `<rect x="${left + x * cell}" y="${top + y * cell}" width="${cell - 1}" height="${cell - 1}" fill="${color(v)}"/>`;
+  }));
+  rIdx.forEach((ri, y) => {
+    const lbl = String(result.rows[ri].atom || ri).slice(0, 14);
+    out += `<text x="${left - 4}" y="${top + y * cell + cell - 3}" text-anchor="end" font-size="8" fill="#475569">${lbl}</text>`;
+  });
+  cIdx.forEach((ci, x) => {
+    const tx = left + x * cell + cell / 2;
+    const ty = rIdx.length * cell + top + 12;
+    out += `<text x="${tx}" y="${ty}" text-anchor="middle" font-size="7" fill="#475569" transform="rotate(-60 ${tx} ${ty})">${String(keys[ci]).slice(0, 12)}</text>`;
+  });
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" font-family="Arial, Helvetica, sans-serif">${out}</svg>`;
+};
+
+// Vector notebook figures for the membrane profiles (SCD / density / potential).
+export const mdProfileToSvg = (result) => {
+  if (!result) return '';
+  const figs = [];
+  const scdGroups = result.scdGroups || [];
+  if (scdGroups.length) {
+    const maxCarbons = Math.max(...scdGroups.map((g) => (g.carbons || []).length));
+    const rows = [];
+    for (let i = 0; i < maxCarbons; i++) {
+      const row = { x: i + 1 };
+      scdGroups.forEach((g, gi) => { const c = (g.carbons || [])[i]; row[`s${gi}`] = c ? c.scd : 0; });
+      rows.push(row);
+    }
+    const series = scdGroups.map((g, gi) => ({ key: `s${gi}`, color: rainbowColors(scdGroups.length)[gi % Math.max(1, scdGroups.length)] }));
+    figs.push(['Order parameter |SCD|', mdChartToSvg({ data: rows, series, xKey: 'x', yLabel: '|SCD|', xLabel: 'Carbon index', height: 240 })]);
+  }
+  const dens = result.density;
+  if (dens && Array.isArray(dens.z) && dens.z.length) {
+    const dRows = dens.z.map((z, i) => ({ x: z, value: dens.rhoE[i] }));
+    const pRows = dens.z.map((z, i) => ({ x: z, value: dens.potential[i] }));
+    figs.push(['Electron density profile', mdChartToSvg({ data: dRows, series: [{ key: 'value', color: '#0ea5e9' }], yLabel: 'e/nm³', xLabel: 'z (nm)', height: 240 })]);
+    figs.push(['Electrostatic potential', mdChartToSvg({ data: pRows, series: [{ key: 'value', color: '#f43f5e' }], yLabel: 'V (mV)', xLabel: 'z (nm)', height: 240 })]);
+  }
+  return figs.map(([lbl, svg]) => (svg ? `<figure style="margin:8px 0;text-align:center;break-inside:avoid;">${svg}<figcaption style="font-size:11px;color:#64748b;"><b>${lbl}</b></figcaption></figure>` : '')).join('');
+};
+
+// Vector notebook figures for DSSP (content over time + per-residue occupancy).
+export const mdDsspToSvg = (result) => {
+  if (!result) return '';
+  let html = '';
+  if (Array.isArray(result.series) && result.series.length) {
+    html += `<figure style="margin:8px 0;text-align:center;break-inside:avoid;">${mdChartToSvg({
+      data: result.series, xKey: 'x',
+      series: [{ key: 'alpha', color: '#3b82f6' }, { key: 'beta', color: '#ef4444' }, { key: 'coil', color: '#94a3b8' }],
+      yLabel: '%', xLabel: result.xUnit === 'ns' ? 'Time (ns)' : 'Frame', height: 240
+    })}<figcaption style="font-size:11px;color:#64748b;"><b>Secondary structure content</b></figcaption></figure>`;
+  }
+  if (Array.isArray(result.occupancy) && result.occupancy.length) {
+    const oRows = result.occupancy.map((o, i) => ({ x: i + 1, value: o.alpha, residue: o.label }));
+    html += `<figure style="margin:8px 0;text-align:center;break-inside:avoid;">${mdChartToSvg({
+      data: oRows, xKey: 'x', chartType: 'bar',
+      series: [{ key: 'value', color: '#3b82f6' }],
+      yLabel: '% α-helix', xLabel: 'Residue', height: 220
+    })}<figcaption style="font-size:11px;color:#64748b;"><b>Per-residue α-helix occupancy</b></figcaption></figure>`;
+  }
+  return html;
 };
 
 // ---- Global RDKit readiness singleton (shared across all OrganicViewer instances) ----
@@ -509,13 +691,34 @@ export const MDExperimentSetupSection = ({ ctx }) => {
     if (!file) {
       updateActiveTest({ trajectoryFileName: null });
       setTrajectoryFile(null);
+      blobStore.remove(trajBlobKey(activeTest.id));
       return;
     }
     setTrajectoryFile(file);
     updateActiveTest({ trajectoryFileName: file.name });
     const cache = localFileCache.get(activeTest.id) || {};
     localFileCache.set(activeTest.id, { ...cache, trajectory: file });
+    // Persist the file in the browser so it survives a page reload.
+    blobStore.save(trajBlobKey(activeTest.id), file);
   };
+
+  // Restore a previously-uploaded trajectory from IndexedDB on (re)load, so the
+  // user does not have to re-upload the .xtc/.trr/.dcd after refreshing the page.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (trajectoryFile || !activeTest.trajectoryFileName) return;
+      const blob = await blobStore.load(trajBlobKey(activeTest.id));
+      if (cancelled || !blob) return;
+      if (activeTest.trajectoryFileName && blob.name && blob.name !== activeTest.trajectoryFileName) return;
+      const restored = new File([blob], blob.name || activeTest.trajectoryFileName || 'trajectory.xtc', { type: blob.type || 'application/octet-stream' });
+      setTrajectoryFile(restored);
+      const cache = localFileCache.get(activeTest.id) || {};
+      localFileCache.set(activeTest.id, { ...cache, trajectory: restored });
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTest.id]);
   
   useEffect(() => { if (structureMode === '3d') setHasOpened3D(true); }, [structureMode]);
 
@@ -802,8 +1005,8 @@ export const MDExperimentSetupSection = ({ ctx }) => {
                     </span>
                   ) : activeTest.trajectoryFileName ? (
                     <span className="text-[10px] font-bold text-amber-600 mt-0.5 flex flex-col">
-                      <span>⚠️ {activeTest.trajectoryFileName}</span>
-                      <span className="font-normal text-slate-500">Please re-select this file with the "Choose XTC / TRR" button in the 3D viewer.</span>
+                      <span>♻️ Restoring {activeTest.trajectoryFileName}…</span>
+                      <span className="font-normal text-slate-500">The file is being brought back from this browser's local storage. If it does not reappear (e.g. you're on a different browser/PC), re-select it with the "Choose XTC / TRR" button in the 3D viewer.</span>
                       <button type="button" onClick={() => updateActiveTest({ trajectoryFileName: null })} className="self-start mt-1 text-red-500 hover:text-red-700 font-bold underline">Clear saved name</button>
                     </span>
                   ) : (
@@ -1587,19 +1790,35 @@ export const MDAnalysisSection = ({ ctx }) => {
   const [isFs, setIsFs] = useState(false);
   
   // State for data CALCULATED from the loaded trajectory (real data only —
-  // simulated fallbacks have been removed).
-  const [calcData, setCalcData] = useState(null);
+  // simulated fallbacks have been removed). Restored from the persisted
+  // mdAnalysisResult so the graphs survive leaving the page / closing the section.
+  const [calcData, setCalcData] = useState(() => (activeTest && activeTest.mdAnalysisResult) || null);
   const [calc, setCalc] = useState({ state: 'idle', msg: '', done: 0, total: 0, error: '' });
   const [calcOpts, setCalcOpts] = useState({ sasa: true });
   const calcAbortRef = useRef(false); // set by the global ⏹ Stop button
-  const [energyData, setEnergyData] = useState(null);
-  const [energyFileName, setEnergyFileName] = useState('');
+  const [energyData, setEnergyData] = useState(() => (activeTest && activeTest.mdAnalysisResult && activeTest.mdAnalysisResult.energy) || null);
+  const [energyFileName, setEnergyFileName] = useState(() => (activeTest && activeTest.mdAnalysisResult && activeTest.mdAnalysisResult.energyFileName) || '');
+
+  // If the section stays mounted while the user switches to a different MD test,
+  // reload the persisted result for the new test (state is otherwise stable for
+  // the lifetime of this mount).
+  const mdTestIdRef = useRef(activeTest && activeTest.id);
+  useEffect(() => {
+    if ((activeTest && activeTest.id) === mdTestIdRef.current) return;
+    mdTestIdRef.current = activeTest && activeTest.id;
+    const res = (activeTest && activeTest.mdAnalysisResult) || null;
+    setCalcData(res);
+    setEnergyData((res && res.energy) || null);
+    setEnergyFileName((res && res.energyFileName) || '');
+    setCalc({ state: 'idle', msg: '', done: 0, total: 0, error: '' });
+  }, [activeTest]);
 
   const handleCalculateFromTrajectory = async () => {
     calcAbortRef.current = false;
     const unregister = abortControl.register('MD analysis', () => { calcAbortRef.current = true; });
     try {
       setCalc({ state: 'running', msg: 'Resolving topology…', done: 0, total: 0, error: '' });
+      mdAnalysisRunAll.setStatus('general', 'MD general parameters — resolving topology…');
       const tl = await resolveMDTopology(activeTest);
       if (!tl) throw new Error('Upload the simulation topology (.gro/.pdb — same atom order as the trajectory). Use "Choose PDB/CIF" in the 3D viewer, or a PDB ID / URL.');
       const { topo } = tl;
@@ -1609,40 +1828,35 @@ export const MDAnalysisSection = ({ ctx }) => {
       const src = await resolveFrameSource(jobs[0].file, {
         topoAtoms: topo.atoms, topologyBox: topo.box,
         maxFrames: runCfg.maxFrames || 0,
-        onStatus: (m) => setCalc((s) => ({ ...s, msg: m })),
+        onStatus: (m) => { setCalc((s) => ({ ...s, msg: m })); mdAnalysisRunAll.setStatus('general', `MD general parameters — ${m}`); },
       });
       if (!src) throw new Error(`"${jobs[0].file.name}": unsupported format, or the topology could not anchor it (XTC/DCD need the exact matching topology; TRR works standalone).`);
       const res = await computeMDTrajectoryAnalysis(
         topo, src.frames,
         { stride: runCfg.stride, maxFrames: runCfg.maxFrames, doSasa: calcOpts.sasa, doRg: true, renumber: activeTest.resRenumber || {}, isAborted: () => calcAbortRef.current },
-        (p) => setCalc((s) => ({ ...s, done: p.done, total: p.total, msg: p.msg }))
+        (p) => { setCalc((s) => ({ ...s, done: p.done, total: p.total, msg: p.msg })); mdAnalysisRunAll.setStatus('general', `MD general parameters — ${p.msg}`); }
       );
       if (calcAbortRef.current) { unregister(); setCalc({ state: 'idle', msg: 'Calculation cancelled.', done: 0, total: 0, error: '' }); return; }
       setCalcData(res);
+      // Persist a bounded copy of the result so the charts survive leaving the
+      // page (and so the Lab Notebook can render them as vector SVG). Stored in
+      // activeTest — small, and compresses well in the Firestore payload.
+      const prevRes = (activeTest && activeTest.mdAnalysisResult) || {};
+      updateActiveTest({
+        mdAnalysisResult: {
+          rmsd: downsampleSeries(res.rmsd || []),
+          rmsf: res.rmsf || [],
+          rg: downsampleSeries(res.rg || []),
+          sasa: downsampleSeries(res.sasa || []),
+          energy: prevRes.energy || [],
+          energyFileName: prevRes.energyFileName || '',
+          nFrames: res.nFrames,
+          source: src.source,
+        }
+      });
       // Populate the per-atom table so Per-Atom and Condition plots can use the
       // calculated parameters (RMSF per residue + system-level Rg/SASA/RMSD).
-      const layerCells = {};
-      if (Array.isArray(res.rmsf)) {
-        const cells = {};
-        res.rmsf.forEach((row, r) => {
-          ['N', 'CA', 'C', 'O'].forEach((atom) => {
-            cells[`${r}-${atom}`] = row.value != null ? +row.value.toFixed(4) : '';
-          });
-        });
-        layerCells.analysis_rmsf = cells;
-      }
-      const avgOf = (arr) => {
-        if (!Array.isArray(arr) || !arr.length) return null;
-        let s = 0, n = 0;
-        arr.forEach((p) => { const v = parseFloat(p.value); if (Number.isFinite(v)) { s += v; n++; } });
-        return n ? s / n : null;
-      };
-      const rgAvg = avgOf(res.rg);
-      const sasaAvg = avgOf(res.sasa);
-      const rmsdLast = res.rmsd && res.rmsd.length ? parseFloat(res.rmsd[res.rmsd.length - 1].value) : null;
-      if (Number.isFinite(rgAvg)) layerCells.analysis_rg = { '0-Rg': +rgAvg.toFixed(4) };
-      if (Number.isFinite(sasaAvg)) layerCells.analysis_sasa = { '0-SASA': +sasaAvg.toFixed(4) };
-      if (Number.isFinite(rmsdLast)) layerCells.analysis_rmsd = { '0-RMSD': +rmsdLast.toFixed(4) };
+      const layerCells = buildGeneralParamsLayerCells(res);
       storeAnalysisToAtomTable(activeTest, updateActiveTest, layerCells);
       setCalc({ state: 'done', msg: `Calculated from ${res.nFrames} frames (${src.source}) — values added to the per-atom table.`, done: 0, total: 0, error: '' });
     } catch (err) {
@@ -1654,6 +1868,7 @@ export const MDAnalysisSection = ({ ctx }) => {
     } finally {
       unregister();
       calcAbortRef.current = false;
+      mdAnalysisRunAll.clearStatus('general');
     }
   };
 
@@ -1663,8 +1878,18 @@ export const MDAnalysisSection = ({ ctx }) => {
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
-        setEnergyData(parseEnergyFile(ev.target.result));
+        const parsed = parseEnergyFile(ev.target.result);
+        setEnergyData(parsed);
         setEnergyFileName(file.name);
+        // Persist the (bounded) energy series so it survives page navigation too.
+        const prevRes = (activeTest && activeTest.mdAnalysisResult) || {};
+        updateActiveTest({
+          mdAnalysisResult: {
+            ...prevRes,
+            energy: downsampleSeries(parsed || []),
+            energyFileName: file.name,
+          }
+        });
       } catch (err) {
         setCalc((s) => ({ ...s, state: 'error', error: 'Energy file: ' + err.message }));
       }
@@ -1680,34 +1905,11 @@ export const MDAnalysisSection = ({ ctx }) => {
   useEffect(() => mdAnalysisRunAll.subscribeRun(() => { runAllFnRef.current(); }), []);
 
   // Real data calculated from the loaded trajectory only — no simulated fallbacks.
-  const rmsd = useMemo(() => calcData?.rmsd || [], [calcData]);
+  const rmsd = useMemo(() => downsampleSeries(calcData?.rmsd || []), [calcData]);
   const rmsf = useMemo(() => (calcData?.rmsf || []).map((r) => ({ ...r, fill: r.value > 0.25 ? '#ef4444' : '#3b82f6' })), [calcData]);
-  const rg = useMemo(() => calcData?.rg || [], [calcData]);
-  const sasa = useMemo(() => calcData?.sasa || [], [calcData]);
-  const energy = useMemo(() => energyData || [], [energyData]);
-
-  // Snapshot the main analysis charts for the Lab Notebook "Results Summary" tick.
-  useEffect(() => {
-    if (d.parsedSeq.length === 0) return;
-    let attempt = 0;
-    let t = null;
-    const tryCapture = () => {
-      storeChartSnapshots(updateActiveTest, activeTest, [
-        { id: 'md-rmsd', key: 'rmsd' },
-        { id: 'md-rmsf', key: 'rmsf' },
-        { id: 'md-rg', key: 'rg' },
-        { id: 'md-sasa', key: 'sasa' },
-        { id: 'md-energy', key: 'energy' }
-      ]);
-      // recharts can take a moment to draw; retry a few times so the export
-      // always has the graphs even if the section was just opened.
-      attempt++;
-      if (attempt < 4) t = setTimeout(tryCapture, 700);
-    };
-    t = setTimeout(tryCapture, 400);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rmsd, rmsf, rg, sasa, energy, d.parsedSeq.length]);
+  const rg = useMemo(() => downsampleSeries(calcData?.rg || []), [calcData]);
+  const sasa = useMemo(() => downsampleSeries(calcData?.sasa || []), [calcData]);
+  const energy = useMemo(() => downsampleSeries(energyData || []), [energyData]);
 
   return (
     <div className={`flex flex-col gap-4 ${isFs ? CHART_FS_CLASSES : ''}`}>
@@ -1732,6 +1934,16 @@ export const MDAnalysisSection = ({ ctx }) => {
           <span className="text-[10px] text-indigo-600 font-bold">
             Uses the shared stride / max frames from the “⚡ Calculate all analyses” toolbar above.
           </span>
+          {calcData && (
+            <button
+              type="button"
+              onClick={() => storeAnalysisToAtomTable(activeTest, updateActiveTest, buildGeneralParamsLayerCells(calcData))}
+              className="bg-teal-600 hover:bg-teal-700 text-white font-bold py-1.5 px-3 rounded-lg text-xs shadow-sm transition-colors flex items-center gap-2"
+              title="Writes the calculated RMSF / Rg / SASA / RMSD into the per-atom table as new columns (analysis_* layers), so Per-Atom and Condition plots can graph them."
+            >
+              📥 Import per-atom values into data table
+            </button>
+          )}
           <label className="flex items-center gap-1.5 text-[10px] font-bold text-indigo-700 uppercase cursor-pointer">
             <input type="checkbox" checked={calcOpts.sasa}
               onChange={(e) => setCalcOpts((o) => ({ ...o, sasa: e.target.checked }))}
@@ -2065,6 +2277,37 @@ const storeAnalysisToAtomTable = (activeTest, updateActiveTest, layerCells) => {
   }
 };
 
+// Build the per-atom table layers for the MD general parameters: RMSF per
+// backbone atom + system-level pseudo-atoms for Rg / SASA / RMSD. Used by
+// "Calculate from trajectory" and by the explicit "Import per-atom values into
+// data table" button (so the values become selectable columns in Per-Atom and
+// Condition plots).
+const buildGeneralParamsLayerCells = (res) => {
+  const layerCells = {};
+  if (res && Array.isArray(res.rmsf)) {
+    const cells = {};
+    res.rmsf.forEach((row, r) => {
+      ['N', 'CA', 'C', 'O'].forEach((atom) => {
+        cells[`${r}-${atom}`] = row.value != null ? +row.value.toFixed(4) : '';
+      });
+    });
+    layerCells.analysis_rmsf = cells;
+  }
+  const avgOf = (arr) => {
+    if (!Array.isArray(arr) || !arr.length) return null;
+    let s = 0, n = 0;
+    arr.forEach((p) => { const v = parseFloat(p.value); if (Number.isFinite(v)) { s += v; n++; } });
+    return n ? s / n : null;
+  };
+  const rgAvg = avgOf(res && res.rg);
+  const sasaAvg = avgOf(res && res.sasa);
+  const rmsdLast = res && res.rmsd && res.rmsd.length ? parseFloat(res.rmsd[res.rmsd.length - 1].value) : null;
+  if (Number.isFinite(rgAvg)) layerCells.analysis_rg = { '0-Rg': +rgAvg.toFixed(4) };
+  if (Number.isFinite(sasaAvg)) layerCells.analysis_sasa = { '0-SASA': +sasaAvg.toFixed(4) };
+  if (Number.isFinite(rmsdLast)) layerCells.analysis_rmsd = { '0-RMSD': +rmsdLast.toFixed(4) };
+  return layerCells;
+};
+
 // custom recharts dot: draws a coloured symbol per series (awk pt_group style)
 const contactDot = (symbol, color) => (props) => {
   const { cx, cy } = props;
@@ -2114,7 +2357,7 @@ const MDContactChart = ({ rows, series, yLabel, cfg }) => {
   const zoom = useXZoom(ref, [0, Math.max(1, rows.length - 1)], { top: 8, right: 8, bottom: 96, left: 8 });
   const ticks = [];
   for (let i = Math.max(0, Math.ceil(zoom.domain[0])); i <= Math.min(rows.length - 1, Math.floor(zoom.domain[1])); i++) ticks.push(i);
-  const colorOf = (s, i) => (cfg.colors && cfg.colors[s.key]) || s.color || AWK_PALETTE[i % AWK_PALETTE.length];
+  const colorOf = (s, i) => s.color || seriesColorFor(cfg, s.key, i, series.length);
   return (
     <div className="flex flex-col gap-1">
       {zoom.isZoomed && (
@@ -2202,9 +2445,9 @@ export const MDMembraneContactSection = ({ ctx }) => {
     return out;
   };
 
-  const buildOutputFor = (mode, res) => {
+  const buildOutputFor = (mode, res, xAxis = cfg.xAxis) => {
     const byKey = new Map(res.pairs.map((p) => [`${p.mem}|${p.mol}`, p]));
-    const xIsPeptide = cfg.xAxis === 'peptide';
+    const xIsPeptide = xAxis === 'peptide';
     // awk option="inter": X axis = peptide atoms, one curve per membrane atom
     const rowsLabels = xIsPeptide ? res.molLabels : res.memLabels;
     const seriesLabels = xIsPeptide ? res.memLabels : res.molLabels;
@@ -2226,7 +2469,7 @@ export const MDMembraneContactSection = ({ ctx }) => {
     };
   };
 
-  const buildRunsOutputFor = (mode, labels, seriesVals) => {
+  const buildRunsOutputFor = (mode, labels, seriesVals, xAxis = cfg.xAxis) => {
     const names = Object.keys(seriesVals);
     const rows = labels.map((m) => {
       const row = { atom: m };
@@ -2236,24 +2479,24 @@ export const MDMembraneContactSection = ({ ctx }) => {
     return {
       mode: 'runs', rows, memLabels: labels,
       series: names.map((k) => ({ key: k })),
-      nFrames: null, molResidues: [], xIsPeptide: cfg.xAxis === 'peptide',
+      nFrames: null, molResidues: [], xIsPeptide: xAxis === 'peptide',
       contactMode: mode,
     };
   };
 
-  // Run the whole pipeline once for a given interaction mode.
-  const runMode = async (mode, useDemo) => {
+  // Run the whole pipeline once for a given interaction mode and X-axis choice.
+  const runMode = async (mode, useDemo, xAxis = cfg.xAxis) => {
     const tl = await resolveMDTopology(activeTest);
     if (!tl) throw new Error('Upload the simulation topology (.gro/.pdb — same atom order as the trajectory). Use the "Choose PDB/CIF" button in the 3D viewer, or paste a PDB ID / URL / Drive link.');
     const { topo } = tl;
     if (!topo.box) throw new Error('The topology has no box vectors — a .gro file with its final box line (or a PDB CRYST1 line) is required.');
 
     const shared = mdAnalysisRunAll.getCfg(); // stride / max frames from the Data Analysis toolbar
-    const runCfg = { ...cfg, mode, stride: shared.stride, maxFrames: shared.maxFrames };
+    const runCfg = { ...cfg, mode, xAxis, stride: shared.stride, maxFrames: shared.maxFrames };
     const openTrajectory = async (file) => {
       const src = await resolveFrameSource(file, {
         topoAtoms: topo.atoms, topologyBox: topo.box,
-        onStatus: (m) => setStatus((s) => ({ ...s, msg: m })),
+        onStatus: (m) => { setStatus((s) => ({ ...s, msg: m })); mdAnalysisRunAll.setStatus('contacts', `Membrane contacts — ${m}`); },
       });
       if (!src) throw new Error(`"${file.name}": unsupported format, or no topology available to decode it (.xtc / .dcd need the system topology uploaded; .trr works standalone).`);
       return src; // { frames, numframes, source }
@@ -2264,7 +2507,7 @@ export const MDMembraneContactSection = ({ ctx }) => {
     if (jobs.length === 0) {
       const res = await computeContactRDF(topo, demoFrames(topo, 40), runCfg,
         (p) => setStatus((s) => ({ ...s, msg: `Demo: frame ${p.done}`, done: p.done })));
-      return buildOutputFor(mode, res);
+      return buildOutputFor(mode, res, xAxis);
     }
 
     if (jobs.length === 1) {
@@ -2272,21 +2515,21 @@ export const MDMembraneContactSection = ({ ctx }) => {
       const total = numframes ? ` / ${numframes}` : '';
       const res = await computeContactRDF(topo, frames, runCfg,
         (p) => setStatus({ state: 'busy', msg: `${jobs[0].name} (${source}): frame ${p.done}${total}`, done: p.done }));
-      return buildOutputFor(mode, res);
+      return buildOutputFor(mode, res, xAxis);
     }
 
     const seriesVals = {};
     let xLabels = null;
-    const keySel = cfg.xAxis === 'peptide' ? (p) => p.mol : (p) => p.mem;
+    const keySel = xAxis === 'peptide' ? (p) => p.mol : (p) => p.mem;
     for (const job of jobs) {
       const { frames, numframes, source } = await openTrajectory(job.file);
       const total = numframes ? ` / ${numframes}` : '';
       const res = await computeContactRDF(topo, frames, runCfg,
         (p) => setStatus({ state: 'busy', msg: `${job.name} (${source}): frame ${p.done}${total}`, done: p.done }));
-      if (!xLabels) xLabels = cfg.xAxis === 'peptide' ? res.molLabels : res.memLabels;
+      if (!xLabels) xLabels = xAxis === 'peptide' ? res.molLabels : res.memLabels;
       seriesVals[job.name] = aggregatePairs(res.pairs, keySel);
     }
-    return buildRunsOutputFor(mode, xLabels, seriesVals);
+    return buildRunsOutputFor(mode, xLabels, seriesVals, xAxis);
   };
 
   const runAll = async (useDemo = false) => {
@@ -2294,24 +2537,52 @@ export const MDMembraneContactSection = ({ ctx }) => {
     setOutputs(null);
     try {
       const modes = cfg.mode === 'polar' ? ['polar'] : cfg.mode === 'vdW' ? ['vdW'] : ['polar', 'vdW'];
-      const out = {};
+      // Always compute BOTH X-axis orientations (peptide on X and lipid on X),
+      // so the subsection shows the 4 requested graphs (polar/apolar × peptide/lipid).
+      const xAxes = ['peptide', 'membrane'];
+      const out = { polar: {}, vdW: {} };
       for (const mode of modes) {
-        out[mode] = await runMode(mode, useDemo);
+        for (const xa of xAxes) {
+          setStatus((s) => ({ ...s, msg: `Computing ${mode === 'polar' ? 'polar' : 'apolar'} contacts — X axis: ${xa === 'peptide' ? 'peptide' : 'lipid'} atoms…`, done: 0 }));
+          mdAnalysisRunAll.setStatus('contacts', `Membrane contacts — computing ${mode === 'polar' ? 'polar' : 'apolar'} contacts, X axis: ${xa === 'peptide' ? 'peptide' : 'lipid'} atoms…`);
+          out[mode][xa] = await runMode(mode, useDemo, xa);
+        }
       }
       setOutputs(out);
       setStatus({ state: 'done', msg: '', done: 0 });
+      mdAnalysisRunAll.clearStatus('contacts');
+      // Persist compact copies so the Lab Notebook can render the contact maps
+      // as SVG after a reload too (sessionStorage raster images do not survive
+      // closing the tab). The heavy `pairs` arrays are dropped — the matrix
+      // (rows/series) is all the notebook figure needs.
+      const persist = {};
+      Object.entries(out).forEach(([mode, byX]) => {
+        Object.entries(byX || {}).forEach(([xa, o]) => {
+          if (!o) return;
+          persist[`${mode}_${xa}`] = {
+            rows: o.rows,
+            memLabels: o.memLabels,
+            series: (o.series || []).map((s) => (typeof s === 'string' ? { key: s } : { key: s.key })),
+            nFrames: o.nFrames,
+            xIsPeptide: !!o.xIsPeptide,
+            contactMode: o.contactMode,
+          };
+        });
+      });
+      updateActiveTest({ mdContactResult: persist });
     } catch (e) {
       setStatus({ state: 'error', msg: e.message, done: 0 });
+      mdAnalysisRunAll.clearStatus('contacts');
     }
   };
 
   // Snapshot the contact charts for the Lab Notebook ("Data Analysis" tick).
   useEffect(() => {
-    if (!outputs || !outputs.polar || !outputs.apolar) return;
+    if (!outputs) return;
     const t = setTimeout(() => {
-      storeChartSnapshots(updateActiveTest, activeTest, [
-        { id: 'md-contact-polar', key: 'contactPolar' },
-        { id: 'md-contact-apolar', key: 'contactApolar' }
+      storeChartSnapshots(activeTest, [
+        { id: 'md-contact-polar-peptide', key: 'contactPolar' },
+        { id: 'md-contact-apolar-peptide', key: 'contactApolar' }
       ]);
     }, 600);
     return () => clearTimeout(t);
@@ -2319,17 +2590,18 @@ export const MDMembraneContactSection = ({ ctx }) => {
 
   const exportCSV = () => {
     if (!outputs) return;
-    Object.keys(outputs).forEach((mode) => {
-      const out = outputs[mode];
-      if (!out) return;
-      const head = [out.xIsPeptide ? 'Peptide atom' : 'Membrane atom', ...out.series.map((s) => s.key)];
-      const body = out.rows.map((r) => [r.atom, ...out.series.map((s) => r[s.key] ?? '')]);
-      const csv = [head, ...body].map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
-      const url = URL.createObjectURL(new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' }));
-      const a = document.createElement('a');
-      a.href = url; a.download = `membrane_contacts_${mode}.csv`;
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+    Object.entries(outputs).forEach(([mode, byX]) => {
+      Object.entries(byX || {}).forEach(([xa, out]) => {
+        if (!out) return;
+        const head = [out.xIsPeptide ? 'Peptide atom' : 'Membrane atom', ...out.series.map((s) => s.key)];
+        const body = out.rows.map((r) => [r.atom, ...out.series.map((s) => r[s.key] ?? '')]);
+        const csv = [head, ...body].map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+        const url = URL.createObjectURL(new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' }));
+        const a = document.createElement('a');
+        a.href = url; a.download = `membrane_contacts_${mode}_${xa}.csv`;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      });
     });
   };
 
@@ -2403,10 +2675,6 @@ export const MDMembraneContactSection = ({ ctx }) => {
                 className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold px-5 py-2 rounded-lg text-sm">
           ▶ Compute contacts
         </button>
-        <button onClick={() => runAll(true)} disabled={status.state === 'busy'}
-                className="bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 font-bold px-4 py-2 rounded-lg text-xs">
-          🧪 Test pipeline (demo frames)
-        </button>
         <label className="text-xs font-bold text-slate-600">Additional runs to overlay (like POPC+CHD(1)…(3))
           <input type="file" multiple accept=".xtc,.trr,.dcd" className={`${inp} block mt-1`}
                  onChange={(e) => setExtraRuns(Array.from(e.target.files || []))} />
@@ -2429,35 +2697,42 @@ export const MDMembraneContactSection = ({ ctx }) => {
       )}
 
       {outputs && (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-          {['polar', 'vdW']
-            .filter((m) => outputs[m])
+        <div className="flex flex-col gap-6">
+          {(['polar', 'vdW'])
+            .filter((m) => outputs[m] && Object.keys(outputs[m]).length)
             .map((m) => (
-              <ChartPanel
-                key={m}
-                title={m === 'polar' ? 'Polar contacts' : 'Apolar (van der Waals) contacts'}
-                icon="🫧"
-                cfgPanel={(
-                  <div className="flex flex-col gap-3">
-                    <SharedChartStylePanel cfg={chartCfg} setCfg={setChartCfgMerged}
-                                           series={(outputs[m].series || []).map((s, i) => ({ key: s.key, label: s.key, color: s.color || AWK_PALETTE[i % AWK_PALETTE.length] }))}
-                                           showHeightSlider={false} />
-                    <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
-                      Chart height — {chartCfg.height}px
-                      <input type="range" min="260" max="900" step="10" value={chartCfg.height}
-                             onChange={(e) => setChartCfg((c) => ({ ...c, height: parseInt(e.target.value) }))} className="accent-blue-600" />
-                    </label>
-                  </div>
-                )}>
-                <div className="text-xs text-slate-500 font-semibold mb-2">
-                  {outputs[m].nFrames ? `${outputs[m].nFrames} frames analysed · ` : ''}
-                  {outputs[m].series.length} series · {outputs[m].rows.length} {outputs[m].xIsPeptide ? 'peptide' : 'membrane'} atom groups
-                  {outputs[m].molResidues?.length ? ` · molecule residue(s): ${outputs[m].molResidues.join(', ')}` : ''}
-                </div>
-                <div id={m === 'polar' ? 'md-contact-polar' : 'md-contact-apolar'}>
-                  <MDContactChart rows={outputs[m].rows} series={outputs[m].series} yLabel={yLabelFor(m)} cfg={chartCfg} />
-                </div>
-              </ChartPanel>
+              ['peptide', 'membrane']
+                .filter((xa) => outputs[m][xa])
+                .map((xa) => {
+                  const o = outputs[m][xa];
+                  return (
+                    <ChartPanel
+                      key={`${m}-${xa}`}
+                      title={`${m === 'polar' ? 'Polar contacts' : 'Apolar (van der Waals) contacts'} — X axis: ${xa === 'peptide' ? 'peptide' : 'lipid'} atoms`}
+                      icon="🫧"
+                      cfgPanel={(
+                        <div className="flex flex-col gap-3">
+                          <SharedChartStylePanel cfg={chartCfg} setCfg={setChartCfgMerged}
+                                                 series={(o.series || []).map((s, i) => ({ key: s.key, label: s.key, color: s.color || AWK_PALETTE[i % AWK_PALETTE.length] }))}
+                                                 showHeightSlider={false} />
+                          <label className="flex items-center justify-between gap-4 text-xs font-bold text-slate-600">
+                            Chart height — {chartCfg.height}px
+                            <input type="range" min="260" max="900" step="10" value={chartCfg.height}
+                                   onChange={(e) => setChartCfg((c) => ({ ...c, height: parseInt(e.target.value) }))} className="accent-blue-600" />
+                          </label>
+                        </div>
+                      )}>
+                      <div className="text-xs text-slate-500 font-semibold mb-2">
+                        {o.nFrames ? `${o.nFrames} frames analysed · ` : ''}
+                        {o.series.length} series · {o.rows.length} {o.xIsPeptide ? 'peptide' : 'membrane'} atom groups
+                        {o.molResidues?.length ? ` · molecule residue(s): ${o.molResidues.join(', ')}` : ''}
+                      </div>
+                      <div id={`md-contact-${m === 'polar' ? 'polar' : 'apolar'}-${xa}`}>
+                        <MDContactChart rows={o.rows} series={o.series} yLabel={yLabelFor(m)} cfg={chartCfg} />
+                      </div>
+                    </ChartPanel>
+                  );
+                })
             ))}
         </div>
       )}
@@ -2471,7 +2746,7 @@ const MDProfileChart = ({ rows, series, xKey, yLabel, xLabel, height = 380, rota
   const effHeight = useChartFsHeight(height || cfg.height || 380);
   const ref = useRef(null);
   const fSize = cfg.fontSize || fontSize || 10;
-  const colorOf = (s, i) => (cfg.colors && cfg.colors[s.key]) || s.color || AWK_PALETTE[i % AWK_PALETTE.length];
+  const colorOf = (s, i) => s.color || seriesColorFor(cfg, s.key, i, series.length);
   const xVals = rows.map((r) => (typeof r[xKey] === 'number' ? r[xKey] : NaN)).filter(Number.isFinite);
   const xDomain = xVals.length > 1 ? [Math.min(...xVals), Math.max(...xVals)] : [0, 1];
   // X-axis drag-to-zoom in every case (horizontal drag selects an X range).
@@ -2553,7 +2828,7 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
   useEffect(() => {
     if (!outputs.length) return;
     const t = setTimeout(() => {
-      storeChartSnapshots(updateActiveTest, activeTest, [
+      storeChartSnapshots(activeTest, [
         { id: 'md-scd', key: 'scd' },
         { id: 'md-density', key: 'density' },
         { id: 'md-potential', key: 'potential' }
@@ -2580,6 +2855,7 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
 
   const runAll = async (useDemo = false) => {
     setStatus({ state: 'busy', msg: 'Reading topology…', done: 0 });
+    mdAnalysisRunAll.setStatus('profiles', 'Membrane profiles — reading topology…');
     setOutputs([]);
     try {
       const tl = await resolveMDTopology(activeTest);
@@ -2595,22 +2871,32 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
       const outs = [];
       if (jobs.length === 0) {
         const result = await computeOrderAndDensity(topo, demoFrames(topo, 40), runCfg, chargeInfo.map,
-          (p) => setStatus({ state: 'busy', msg: `Demo: frame ${p.done}`, done: p.done }));
+          (p) => { setStatus({ state: 'busy', msg: `Demo: frame ${p.done}`, done: p.done }); mdAnalysisRunAll.setStatus('profiles', `Membrane profiles — demo frame ${p.done}`); });
         outs.push({ name: 'demo', result });
       } else {
         for (const job of jobs) {
           const src = await resolveFrameSource(job.file, {
             topoAtoms: topo.atoms, topologyBox: topo.box,
-            onStatus: (m) => setStatus((s) => ({ ...s, msg: m })),
+            onStatus: (m) => { setStatus((s) => ({ ...s, msg: m })); mdAnalysisRunAll.setStatus('profiles', `Membrane profiles — ${m}`); },
           });
           if (!src) throw new Error(`"${job.file.name}": could not be opened (.xtc / .dcd need the topology uploaded; .trr works standalone).`);
           const frames = src.frames || src;
           const result = await computeOrderAndDensity(topo, frames, runCfg, chargeInfo.map,
-            (p) => setStatus({ state: 'busy', msg: `${job.name}: frame ${p.done}`, done: p.done }));
+            (p) => { setStatus({ state: 'busy', msg: `${job.name}: frame ${p.done}`, done: p.done }); mdAnalysisRunAll.setStatus('profiles', `Membrane profiles — ${job.name}: frame ${p.done}`); });
           outs.push({ name: job.name, result });
         }
       }
       setOutputs(outs);
+      // Persist compact profile data so the notebook renders vector SVG figures
+      // even after a reload.
+      updateActiveTest({
+        mdProfileResult: (outs || []).map((o) => ({
+          name: o.name,
+          nFramesUsed: o.result && o.result.nFramesUsed,
+          scdGroups: o.result && o.result.scdGroups,
+          density: o.result && o.result.density,
+        }))
+      });
       // Populate the per-atom table with the computed order parameters |SCD|
       // (one pseudo-atom per lipid group + carbon, e.g. "0-POPC sn-1 C14").
       const scdCells = {};
@@ -2623,8 +2909,10 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
       });
       storeAnalysisToAtomTable(activeTest, updateActiveTest, { analysis_scd: scdCells });
       setStatus({ state: 'done', msg: '', done: 0 });
+      mdAnalysisRunAll.clearStatus('profiles');
     } catch (e) {
       setStatus({ state: 'error', msg: e.message, done: 0 });
+      mdAnalysisRunAll.clearStatus('profiles');
     }
   };
 
@@ -2738,10 +3026,20 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
                 className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold px-5 py-2 rounded-lg text-sm">
           ▶ Compute profiles
         </button>
-        <button onClick={() => runAll(true)} disabled={status.state === 'busy'}
-                className="bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 font-bold px-4 py-2 rounded-lg text-xs">
-          🧪 Test pipeline (demo frames)
-        </button>
+        {outputs.length > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              const scdCells = {};
+              outputs.forEach((o) => (o.result.scdGroups || []).forEach((g) => (g.carbons || []).forEach((c) => { scdCells[`0-${g.label} ${c.x}`] = c.scd; })));
+              storeAnalysisToAtomTable(activeTest, updateActiveTest, { analysis_scd: scdCells });
+              alert('Order parameters |SCD| imported into the per-atom table as column "analysis_scd" — usable in Per-Atom / Condition plots.');
+            }}
+            className="bg-teal-600 hover:bg-teal-700 text-white font-bold px-4 py-2 rounded-lg text-xs"
+          >
+            📥 Import per-atom values into data table
+          </button>
+        )}
         <label className="text-xs font-bold text-slate-600">Additional runs to overlay
           <input type="file" multiple accept=".xtc,.trr,.dcd" className={`${inp} block mt-1`}
                  onChange={(e) => setExtraRuns(Array.from(e.target.files || []))} />
@@ -3087,7 +3385,7 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
   useEffect(() => {
     if (!outputs.length) return;
     const t = setTimeout(() => {
-      storeChartSnapshots(updateActiveTest, activeTest, [
+      storeChartSnapshots(activeTest, [
         { id: 'md-dssp-content', key: 'dsspContent' },
         { id: 'md-dssp-heat', key: 'dsspHeat' },
         { id: 'md-dssp-occ', key: 'dsspOcc' }
@@ -3109,6 +3407,7 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
     const unregister = abortControl.register('secondary structure', () => { dsspAbortRef.current = true; });
     const shared = mdAnalysisRunAll.getCfg(); // stride / max frames from the Data Analysis toolbar
     setStatus({ state: 'busy', msg: 'Reading topology…', done: 0 });
+    mdAnalysisRunAll.setStatus('dssp', 'Secondary structure (DSSP) — reading topology…');
     setOutputs([]);
     try {
       const tl = await resolveMDTopology(activeTest);
@@ -3121,30 +3420,56 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
       const outs = [];
       if (jobs.length === 0) {
         const result = await computeSecondaryStructure(topo, demoFrames(topo, 40), { ...cfg, stride: shared.stride, maxFrames: shared.maxFrames, isAborted: () => dsspAbortRef.current },
-          (p) => setStatus({ state: 'busy', msg: `Demo: frame ${p.done}`, done: p.done }));
+          (p) => { setStatus({ state: 'busy', msg: `Demo: frame ${p.done}`, done: p.done }); mdAnalysisRunAll.setStatus('dssp', `Secondary structure (DSSP) — demo frame ${p.done}`); });
         outs.push({ name: 'demo', result });
       } else {
         for (const job of jobs) {
           const src = await resolveFrameSource(job.file, {
             topoAtoms: topo.atoms, topologyBox: topo.box,
-            onStatus: (m) => setStatus((s) => ({ ...s, msg: m })),
+            onStatus: (m) => { setStatus((s) => ({ ...s, msg: m })); mdAnalysisRunAll.setStatus('dssp', `Secondary structure (DSSP) — ${m}`); },
           });
           if (!src) throw new Error(`"${job.file.name}": could not be opened (.xtc / .dcd need the topology uploaded; .trr works standalone).`);
           const frames = src.frames || src;
           const result = await computeSecondaryStructure(topo, frames, { ...cfg, stride: shared.stride, maxFrames: shared.maxFrames, isAborted: () => dsspAbortRef.current },
-            (p) => setStatus({ state: 'busy', msg: `${job.name}: frame ${p.done}`, done: p.done }));
+            (p) => { setStatus({ state: 'busy', msg: `${job.name}: frame ${p.done}`, done: p.done }); mdAnalysisRunAll.setStatus('dssp', `Secondary structure (DSSP) — ${job.name}: frame ${p.done}`); });
           outs.push({ name: job.name, result });
         }
       }
-      if (dsspAbortRef.current) { setStatus({ state: 'idle', msg: 'Calculation cancelled.', done: 0 }); return; }
+      if (dsspAbortRef.current) { setStatus({ state: 'idle', msg: 'Calculation cancelled.', done: 0 }); mdAnalysisRunAll.clearStatus('dssp'); return; }
       setOutputs(outs);
+      // Persist compact DSSP data (content + occupancy + a capped heatmap) so the
+      // notebook renders vector SVG figures even after a reload.
+      updateActiveTest({
+        mdDsspResult: (outs || []).map((o) => {
+          const r = o.result || {};
+          const heat = r.heat && r.heat.samples ? r.heat : null;
+          let heatSamples = null;
+          if (heat) {
+            const cap = 200;
+            const stride = Math.max(1, Math.ceil(heat.samples.length / cap));
+            heatSamples = heat.samples.filter((_, i) => i % stride === 0).map((codes) => Array.from(codes));
+          }
+          return {
+            name: o.name,
+            nRes: r.nRes,
+            labels: r.labels,
+            series: downsampleSeries(r.series || [], 400),
+            occupancy: r.occupancy,
+            nFramesUsed: r.nFramesUsed,
+            xUnit: r.xUnit,
+            heat: heat ? { nRes: heat.nRes, samples: heatSamples, frameStride: heat.frameStride, totalFrames: heat.totalFrames, dtPs: heat.dtPs, resIds: heat.resIds } : null,
+          };
+        })
+      });
       setStatus({ state: 'done', msg: '', done: 0 });
+      mdAnalysisRunAll.clearStatus('dssp');
     } catch (e) {
       if (isAbortError(e)) {
         setStatus({ state: 'idle', msg: 'Calculation cancelled.', done: 0 });
       } else {
         setStatus({ state: 'error', msg: e.message, done: 0 });
       }
+      mdAnalysisRunAll.clearStatus('dssp');
     } finally {
       unregister();
       dsspAbortRef.current = false;
@@ -3250,10 +3575,20 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
                 className="bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white font-bold px-5 py-2 rounded-lg text-sm">
           ▶ Compute DSSP
         </button>
-        <button onClick={() => runAll(true)} disabled={status.state === 'busy'}
-                className="bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 font-bold px-4 py-2 rounded-lg text-xs">
-          🧪 Test pipeline (demo frames)
-        </button>
+        {outputs.length > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              const cells = {};
+              outputs.forEach((o) => (o.result.occupancy || []).forEach((oc, r) => { cells[`${r}-CA`] = +Number(oc.alpha).toFixed(2); }));
+              storeAnalysisToAtomTable(activeTest, updateActiveTest, { analysis_dssp: cells });
+              alert('Per-residue α-helix occupancy (%) imported into the per-atom table as column "analysis_dssp" — usable in Per-Atom / Condition plots.');
+            }}
+            className="bg-teal-600 hover:bg-teal-700 text-white font-bold px-4 py-2 rounded-lg text-xs"
+          >
+            📥 Import per-atom values into data table
+          </button>
+        )}
         <label className="text-xs font-bold text-slate-600">Additional runs to overlay
           <input type="file" multiple accept=".xtc,.trr,.dcd" className={`${inp} block mt-1`}
                  onChange={(e) => setExtraRuns(Array.from(e.target.files || []))} />

@@ -2,11 +2,13 @@ import React, {useState, useEffect, useRef} from 'react';
 import Chart from 'chart.js/auto';
 import * as XLSX from 'xlsx';
 import TestShellRenderer, { CollapsibleSection } from './TestShellRenderer';
+import { enableCellClipboard, cellAttrs } from '../utils/cellClipboard';
+enableCellClipboard(); // global multi-cell select / copy / paste for data tables
 import { NMR_FITTING_TAB_CONFIG } from './tabConfigs';
-import { PALETTE, toHex, errBarPlugin } from '../data/constants';
+import { toHex, errBarPlugin } from '../data/constants';
+import { rainbowColors } from '../utils/chartStyle';
 import { NMRInstrumentalSetup } from './NMRInstrumentalSetup';
 import {ChartControlBar, SharedChartStylePanel} from './SharedAnalysisTools';
-import ST_DOSY_HTML from './stejskalTanner.html?raw';
 const DIPOLAR_SIM_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -534,12 +536,12 @@ PHYSICS CONSTANTS & MODEL-FREE
 --------------------------------------------------------------------------- */
 const HBAR = 1.054571817e-34;
 const MU0_4PI = 1e-7;
-const RGAS = 8.314462618;
-const GAMMA_H = 2.6752218744e8;
+export const RGAS = 8.314462618;
+export const GAMMA_H = 2.6752218744e8;
 const GAMMA = { '15N': -2.7126e7, '13C': 6.7283e7, '1H': 2.6752218744e8, '31P': 1.083e8 };
-const DEFAULT_DIST = { '15N': 1.02, '13C': 1.09, '1H': 1.09 };
-const DEFAULT_CSA = { '15N': -160, '13C': -20, '1H': 0 };
-const BOLTZMANN = 1.380649e-23;
+export const DEFAULT_DIST = { '15N': 1.02, '13C': 1.09, '1H': 1.09 };
+export const DEFAULT_CSA = { '15N': -160, '13C': -20, '1H': 0 };
+export const BOLTZMANN = 1.380649e-23;
 
 
 
@@ -584,12 +586,12 @@ function tauFromMW(MW_Da, eta_PaS, T_K, vbar_cm3g = 0.73, hydration = 0.3) {
 
 
 // Stokes-Einstein diffusion coefficient
-function stokesEinsteinD(T_K, eta_PaS, r_m) {
+export function stokesEinsteinD(T_K, eta_PaS, r_m) {
     return (BOLTZMANN * T_K) / (6 * Math.PI * eta_PaS * r_m);
 }
 
 // Approximate radius from MW (assuming sphere with vbar and hydration)
-function radiusFromMW(MW_Da, vbar_cm3g = 0.73, hydration = 0.3) {
+export function radiusFromMW(MW_Da, vbar_cm3g = 0.73, hydration = 0.3) {
     const V_m3 = (MW_Da * 1e-3 / 6.022e23) * (vbar_cm3g * 1e-6 + hydration * 1e-6);
     return Math.pow((3 * V_m3) / (4 * Math.PI), 1 / 3);
 }
@@ -750,7 +752,7 @@ function DecayChart({ table, colFits, chartCfg, isFs, onToggleFs, chartType = 'l
         const isHist = chartType === 'hist';
 
         for (let c = 0; c < table.nCols; c++) {
-            const color = toHex(PALETTE[c % PALETTE.length]);
+            const color = toHex(rainbowColors(table.nCols)[c % Math.max(1, table.nCols)]);
             const pts = [];
             for (let r = 0; r < table.nRows; r++) {
                 const x = table.delays[r], y = parseFloat(table.grid[r]?.[c]);
@@ -818,7 +820,7 @@ function ParameterChart({ table, colFits, chartCfg, isFs, onToggleFs, chartType 
             if (!cf.fit) return;
             labels.push(cf.residue || `Col ${i+1}`);
             data.push(cf.fit.R_s);
-            colors.push(toHex(PALETTE[i % PALETTE.length]));
+            colors.push(toHex(rainbowColors(Math.max(1, colFits.length))[i % Math.max(1, colFits.length)]));
             const err = cf.effectiveError || cf.fit.seR_s || 0;
             ebars.push({ plus: err, minus: err });
         });
@@ -854,7 +856,7 @@ function IndividualDecayChart({ table, colIndex, colFit, chartCfg, isFs, onToggl
     const ref = useRef(null); const chartRef = useRef(null);
     useEffect(() => {
         if (!ref.current) return;
-        const color = toHex(PALETTE[colIndex % PALETTE.length]);
+        const color = toHex(rainbowColors(Math.max(1, table.nCols))[colIndex % Math.max(1, table.nCols)]);
         const pts = [];
         for (let r = 0; r < table.nRows; r++) {
             const x = table.delays[r], y = parseFloat(table.grid[r]?.[colIndex]);
@@ -904,7 +906,7 @@ function IndividualDecayChart({ table, colIndex, colFit, chartCfg, isFs, onToggl
     );
 }
 
-const makeTable = (overrides = {}) => ({
+export const makeTable = (overrides = {}) => ({
     id: 't' + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36),
     atom: 'HN', relaxType: 'T2', delayUnit: 'ms', nRows: 6, nCols: 4,
     delays: [0, 50, 100, 200, 400, 800], colResidues: ['', '', '', ''],
@@ -914,35 +916,15 @@ const makeTable = (overrides = {}) => ({
 /* ---------------------------------------------------------------------------
 SIMULATION SECTION
 --------------------------------------------------------------------------- */
-function SimulationSection({ sim, setSim, activeTest }) {
-    const [simType, setSimType] = useState('diffusion');
-    const solventName = activeTest?.solvent || '';
-    const temperature = parseFloat(activeTest?.temperature) || 298;
-
-    // Default viscosity for common solvents (Pa·s at ~25°C)
-    const SOLVENT_VISCOSITY = {
-        'H2O': 0.89e-3, 'D2O': 1.107e-3, 'DMSO': 1.996e-3, 'DMSO-d6': 1.996e-3,
-        'methanol': 0.544e-3, 'ethanol': 1.074e-3, 'chloroform': 0.538e-3,
-        'acetone': 0.306e-3, 'benzene': 0.604e-3, 'toluene': 0.560e-3,
-    };
-
-    const viscosity = sim.viscosity || SOLVENT_VISCOSITY[solventName] || 0.89e-3;
-    const T_K = temperature > 100 ? temperature : temperature + 273.15; // assume °C if < 100
-
-    // Diffusion coefficient simulation
-    const MW = sim.MW || 12000;
-    const shape = sim.shape || 'sphere'; // sphere, rod, disc
-    const shapeFactor = shape === 'sphere' ? 1 : shape === 'rod' ? 1.3 : 1.15; // approximate correction
-    const r_m = radiusFromMW(MW, sim.vbar || 0.73, sim.hydration || 0.3) * shapeFactor;
-    const D_calc = stokesEinsteinD(T_K, viscosity, r_m);
-    const tau_c_calc = tauFromMW(MW, viscosity, T_K, sim.vbar || 0.73, sim.hydration || 0.3);
+function SimulationSection({ sim, setSim }) {
+    const [simType, setSimType] = useState('relaxation');
 
     // Nuclear relaxation simulation
     const nucleus = sim.nucleus || '15N';
     const fieldMHz = sim.fieldMHz || 600;
     const rates = modelFreeRates({
         nucleus, fieldMHz,
-        tau_c_ns: (tau_c_calc * 1e9) || (sim.tau_c_ns || 5),
+        tau_c_ns: sim.tau_c_ns || 5,
         S2: sim.S2 || 0.85,
         useInternal: sim.useInternal || false,
         tau_e_ps: sim.tau_e_ps || 50,
@@ -953,58 +935,9 @@ function SimulationSection({ sim, setSim, activeTest }) {
     return (
         <div className="flex flex-col gap-4">
             <div className="flex gap-2 flex-wrap mb-2">
-                <button type="button" onClick={() => setSimType('diffusion')} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${simType === 'diffusion' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}>💧 Diffusion Coefficient</button>
                 <button type="button" onClick={() => setSimType('relaxation')} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${simType === 'relaxation' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}>🔄 Nuclear Relaxation</button>
                 <button type="button" onClick={() => setSimType('dipolar')} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${simType === 'dipolar' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}>🧲 Dipolar + CSA (Advanced)</button>
-                <button type="button" onClick={() => setSimType('dosy')} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${simType === 'dosy' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}>📈 Stejskal-Tanner (DOSY)</button>
             </div>
-
-            {simType === 'diffusion' && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="flex flex-col gap-3">
-                        <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Molecular Weight (Da)</label>
-                            <input type="number" value={sim.MW || 12000} onChange={(e) => setSim({ MW: parseFloat(e.target.value) || 12000 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-                        </div>
-                        <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Temperature (K)</label>
-                            <input type="number" value={T_K.toFixed(1)} onChange={(e) => setSim({ temperature: parseFloat(e.target.value) || 298 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-                        </div>
-                        <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Viscosity (Pa·s)</label>
-                            <input type="number" step="0.001e-3" value={viscosity} onChange={(e) => setSim({ viscosity: parseFloat(e.target.value) || 0.89e-3 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-                        </div>
-                        <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Shape</label>
-                            <select value={sim.shape || 'sphere'} onChange={(e) => setSim({ shape: e.target.value })} className="w-full border border-slate-300 rounded-md p-2 text-sm bg-white outline-none focus:border-blue-500">
-                                <option value="sphere">Sphere</option>
-                                <option value="rod">Rod (elongated)</option>
-                                <option value="disc">Disc (flat)</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Partial specific volume (cm³/g)</label>
-                            <input type="number" step="0.01" value={sim.vbar || 0.73} onChange={(e) => setSim({ vbar: parseFloat(e.target.value) || 0.73 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-                        </div>
-                        <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Hydration (g/g)</label>
-                            <input type="number" step="0.05" value={sim.hydration || 0.3} onChange={(e) => setSim({ hydration: parseFloat(e.target.value) || 0.3 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-                        </div>
-                    </div>
-                    <div className="md:col-span-2 flex flex-col gap-3">
-                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                            <h4 className="text-xs font-black text-blue-800 uppercase mb-3">Stokes-Einstein Diffusion Coefficient</h4>
-                            <div className="grid grid-cols-2 gap-3 text-sm">
-                                <div><span className="font-bold text-slate-600">Hydrodynamic radius:</span> <span className="font-mono text-blue-700">{(r_m * 1e9).toFixed(2)} nm</span></div>
-                                <div><span className="font-bold text-slate-600">Diffusion coefficient D:</span> <span className="font-mono text-blue-700">{D_calc.toExponential(3)} m²/s</span></div>
-                                <div><span className="font-bold text-slate-600">D (×10⁻¹¹ m²/s):</span> <span className="font-mono text-blue-700">{(D_calc * 1e11).toFixed(2)}</span></div>
-                                <div><span className="font-bold text-slate-600">Rotational τc:</span> <span className="font-mono text-blue-700">{(tau_c_calc * 1e9).toFixed(2)} ns</span></div>
-                            </div>
-                            <p className="text-[10px] text-slate-500 mt-3 italic">D = k_B·T / (6π·η·r_h) — Stokes-Einstein equation. Shape correction factor: {shapeFactor.toFixed(2)}</p>
-                        </div>
-                    </div>
-                </div>
-            )}
 
             {simType === 'relaxation' && (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1024,7 +957,7 @@ function SimulationSection({ sim, setSim, activeTest }) {
                         </div>
                         <div>
                             <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">τc (ns)</label>
-                            <input type="number" step="0.1" value={sim.tau_c_ns || (tau_c_calc * 1e9).toFixed(1)} onChange={(e) => setSim({ tau_c_ns: parseFloat(e.target.value) || 5 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
+                            <input type="number" step="0.1" value={sim.tau_c_ns || 5} onChange={(e) => setSim({ tau_c_ns: parseFloat(e.target.value) || 5 })} className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
                         </div>
                         <div>
                             <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">S² (order parameter)</label>
@@ -1071,19 +1004,6 @@ function SimulationSection({ sim, setSim, activeTest }) {
                 </div>
             )}
 
-            {simType === 'dosy' && (
-                <>
-                    <div className="w-full bg-blue-50 border-2 border-dashed border-blue-300 rounded-xl px-4 py-3 text-center">
-                        <span className="text-[10px] font-black text-blue-700 uppercase tracking-widest">Stejskal-Tanner Equation</span>
-                        <div className="text-lg font-semibold text-slate-800 mt-1 whitespace-nowrap overflow-x-auto">
-                            I<sub>G</sub> = I<sub>G=0</sub>·exp[ −(γ·δ·G)<sup>2</sup>·D·(Δ − δ/3) ] + C
-                        </div>
-                    </div>
-                    <div className="w-full border border-slate-300 rounded-lg overflow-hidden mt-2 bg-slate-50" style={{ height: '960px' }}>
-                        <iframe srcDoc={ST_DOSY_HTML} className="w-full h-full border-0" title="Stejskal-Tanner DOSY Fitter" />
-                    </div>
-                </>
-            )}
         </div>
     );
 }
@@ -1256,7 +1176,7 @@ const exportFittedTable = (t, colFits) => {
                         <table className="border-collapse text-xs w-full">
                             <thead>
                                 <tr>
-                                    <th className="bg-slate-200 border border-slate-300 p-1 sticky top-0 left-0 z-20 text-slate-600">{t.relaxType === 'DOSY' ? 'b-value / G²' : 'Delay'} ({t.delayUnit})</th>
+                                    <th className="bg-slate-200 border border-slate-300 p-1 sticky top-0 left-0 z-20 text-slate-600">Delay ({t.delayUnit})</th>
                                     {Array.from({ length: t.nCols }, (_, c) => (
                                         <th key={c} className="bg-slate-100 border border-slate-300 p-1 min-w-[110px] sticky top-0 z-10 group relative">
                                             <div className="flex flex-col gap-1 w-full relative">
@@ -1273,12 +1193,12 @@ const exportFittedTable = (t, colFits) => {
                                     <tr key={r}>
                                         <td className="bg-slate-100 border border-slate-300 p-0.5 sticky left-0 z-10">
                                             <div className="flex items-center justify-between px-1">
-                                                <input type="number" step="any" value={t.delays[r]} onChange={(e) => setDelay(t, r, e.target.value === '' ? '' : Number(e.target.value))} className="w-16 text-center border border-slate-300 rounded p-1 text-[11px] font-mono" />
+                                                <input type="number" step="any" value={t.delays[r]} {...cellAttrs(r, -1)} onChange={(e) => setDelay(t, r, e.target.value === '' ? '' : Number(e.target.value))} className="w-16 text-center border border-slate-300 rounded p-1 text-[11px] font-mono" />
                                                 <button onClick={() => removeRow(t, r)} className="text-red-400 hover:text-red-600 text-[11px] font-bold ml-1 px-1" title="Delete Row">✕</button>
                                             </div>
                                         </td>
                                         {Array.from({ length: t.nCols }, (_, c) => (
-                                            <td key={c} className="border border-slate-200 p-0"><input value={t.grid[r]?.[c] ?? ''} onChange={(e) => setCell(t, r, c, e.target.value)} className="w-full h-8 text-center outline-none focus:bg-blue-50 focus:ring-1 focus:ring-blue-400 font-mono text-[11px]" /></td>
+                                            <td key={c} className="border border-slate-200 p-0"><input value={t.grid[r]?.[c] ?? ''} {...cellAttrs(r, c)} onChange={(e) => setCell(t, r, c, e.target.value)} className="w-full h-8 text-center outline-none focus:bg-blue-50 focus:ring-1 focus:ring-blue-400 font-mono text-[11px]" /></td>
                                         ))}
                                         <td className="border border-slate-100 p-0.5 text-center text-slate-300 bg-slate-50">·</td>
                                     </tr>
@@ -1291,6 +1211,7 @@ const exportFittedTable = (t, colFits) => {
                     <div className="flex justify-end pt-2 border-t border-slate-100">
                        <button onClick={() => removeTable(t.id)} className="text-xs bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold px-4 py-2 rounded-md shadow-sm flex items-center gap-2 transition-colors">🗑️ Delete Entire Table</button>
                     </div>
+                    <p className="text-[10px] text-slate-400 italic -mt-2">🖱️ Drag or Shift+click to select multiple cells · Ctrl/Cmd+C copy · Ctrl/Cmd+V paste (Excel-compatible, tab-separated)</p>
                 </div>
             </CollapsibleSection>
         );
@@ -1311,13 +1232,12 @@ const renderTableAnalysis = (t, tIndex) => {
                             <select value={t.relaxType} onChange={(e) => updateTable(t.id, { relaxType: e.target.value })} className="w-full border border-slate-300 rounded-md p-2 text-sm bg-white outline-none focus:border-blue-500">
                                 <option value="T1">T1 (Inversion Recovery)</option>
                                 <option value="T2">T2 / T1rho (Exponential)</option>
-                                <option value="DOSY">DOSY (Diffusion)</option>
                             </select>
                         </div>
                         <div>
                             <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">{t.relaxType === 'DOSY' ? 'X Unit' : 'Delay unit'}</label>
                             <select value={t.delayUnit} onChange={(e) => updateTable(t.id, { delayUnit: e.target.value })} className="w-full border border-slate-300 rounded-md p-2 text-sm bg-white outline-none focus:border-blue-500">
-                                <option value="ms">ms</option> <option value="s">s</option>{t.relaxType === 'DOSY' && <option value="s/mm2">s/mm²</option>}
+                                <option value="ms">ms</option> <option value="s">s</option>
                             </select>
                         </div>
                         <div className="flex items-end gap-2">

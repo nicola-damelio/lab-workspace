@@ -2,6 +2,7 @@
 
 
 import { MD_TAB_CONFIG } from './tabConfigs';
+import { seriesColorFor } from '../utils/chartStyle';
 
 /* ============================================================================
    MDData — shared MD building blocks imported by MDSections.jsx
@@ -930,11 +931,8 @@ export const mdLineDash = (style) => {
   return undefined;
 };
 
-export const mdSeriesColor = (cfg, key, idx) => {
-  return (
-    (cfg.colors && cfg.colors[key]) ||
-    MD_LINE_COLORS[Math.max(0, idx) % MD_LINE_COLORS.length]
-  );
+export const mdSeriesColor = (cfg, key, idx, total) => {
+  return seriesColorFor(cfg, key, idx, total);
 };
 
 export const mdMakeTicks = (domain, stepStr) => {

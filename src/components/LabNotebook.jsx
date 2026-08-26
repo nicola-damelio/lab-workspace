@@ -689,7 +689,7 @@ const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t =>
   const typeLabels = {
     'plate-96': 'Multiwell plate essay', 'plate-48': 'Multiwell plate essay', 'plate-24': 'Multiwell plate essay', 'plate-12': 'Multiwell plate essay', 'plate-6': 'Multiwell plate essay', 'plate-1': 'Multiwell plate essay',
     'plate-9x9box': 'Storage Box',
-    'nmr': 'NMR', 'cd': 'Circular Dichroism', 'nmr-fittings': 'NMR Fitting',
+    'nmr': 'NMR', 'cd': 'Circular Dichroism', 'nmr-fittings': 'NMR Fitting', 'dosy': 'DOSY',
     'cloning': 'Cloning', 'protein_expression': 'Protein expression & Purification', 'md_simulation': 'MD Simulation',
     'ssnmr': 'Solid State NMR', 'docking': 'Molecular Docking', 'flow_cytometry': 'Flow Cytometry'
   };

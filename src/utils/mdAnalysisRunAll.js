@@ -17,6 +17,11 @@ let cfg = { stride: 1, maxFrames: 0 };
 const cfgListeners = new Set();
 const runListeners = new Set();
 
+// Live per-analysis status, so the "⚡ Calculate all analyses" toolbar can show
+// what each analysis is doing in real time (otherwise the user thinks it froze).
+const statuses = {};
+const statusListeners = new Set();
+
 export const mdAnalysisRunAll = {
   getCfg: () => ({ ...cfg }),
 
@@ -46,4 +51,31 @@ export const mdAnalysisRunAll = {
       try { fn(); } catch { /* one failing subsection must not block the others */ }
     });
   },
+
+  /** Report live progress for one analysis (key, e.g. 'general'|'dssp'|'contacts'|'profiles'). */
+  setStatus(key, msg, active = true) {
+    statuses[key] = { msg: msg || '', active };
+    statusListeners.forEach((fn) => {
+      try { fn({ ...statuses }); } catch {}
+    });
+  },
+
+  /** Mark an analysis finished (idle) and clear its status. */
+  clearStatus(key) {
+    delete statuses[key];
+    statusListeners.forEach((fn) => {
+      try { fn({ ...statuses }); } catch {}
+    });
+  },
+
+  /** Get a snapshot of all live statuses. */
+  getStatus() { return { ...statuses }; },
+
+  /** Subscribe to status changes; fires immediately with the current snapshot. */
+  subscribeStatus(fn) {
+    statusListeners.add(fn);
+    try { fn({ ...statuses }); } catch {}
+    return () => { statusListeners.delete(fn); };
+  },
 };
+

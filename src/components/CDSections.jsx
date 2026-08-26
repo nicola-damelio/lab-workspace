@@ -12,7 +12,7 @@ import {
 } from 'recharts';
 import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, AngledTick } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
-import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, LINE_COLORS } from '../utils/chartStyle';
+import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, seriesColorFor } from '../utils/chartStyle';
 import { parseJascoJwsBinary, isJascoJwsBinary } from '../utils/jascoJws';
 export { CollapsibleSection };
 export { VIS_PALETTES };
@@ -927,8 +927,7 @@ const DEFAULT_CHART_STYLE = {
 const lineDash = (style) =>
   style === 'dashed' ? '7 5' : style === 'dotted' ? '2 3' : undefined;
 
-const seriesColor = (cfg, key, idx) =>
-  (cfg.colors && cfg.colors[key]) || LINE_COLORS[Math.max(0, idx) % LINE_COLORS.length];
+const seriesColor = (cfg, key, idx, total) => seriesColorFor(cfg, key, idx, total);
 
 const makeTicks = (domain, stepStr) => {
   const step = parseManual(stepStr);
@@ -2423,10 +2422,13 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
     return out;
   }, [plot.yMode, plot.specIdx, plot.lambda, effXField, is3D, effXFields.join('|'), d.instances, plot.excluded, used, usedSSKeys, d.activeInstance]);
 
-  const colorOf = (s) =>
-    plot.yMode === 'ss'
-      ? (CD_FIT_COMPONENTS[s.key.replace('ss_', '')]?.color || seriesColor(cfg, s.key, series.findIndex((q) => q.key === s.key)))
-      : seriesColor(cfg, s.key, series.findIndex((q) => q.key === s.key));
+  const colorOf = (s) => {
+    const idx = series.findIndex((q) => q.key === s.key);
+    const total = series.length;
+    return plot.yMode === 'ss'
+      ? (CD_FIT_COMPONENTS[s.key.replace('ss_', '')]?.color || seriesColor(cfg, s.key, idx, total))
+      : seriesColor(cfg, s.key, idx, total);
+  };
 
   const includedPts = (s) => s.pts.filter((p) => !p.excluded);
 

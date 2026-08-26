@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { BASE_COLOR_SWATCHES, shadesFromColor, rainbowColors } from '../utils/chartStyle';
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -484,18 +485,58 @@ export const SharedChartStylePanel = ({ cfg = {}, setCfg, series = [], unit = 'a
             {/* Series colours */}
             {series.length > 0 && (
                 <div className="pt-2 border-t border-slate-100">
-                    <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Series colours</p>
+                    <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Series palette</p>
+
+                    {/* Base colour picker: Rainbow auto vs a single colour degraded dark→light */}
+                    <div className="flex flex-wrap items-center gap-2 mb-2">
+                        <span className="text-[10px] font-bold text-slate-600">Base colour:</span>
+                        {BASE_COLOR_SWATCHES.map((sw) => (
+                            <button
+                                key={sw.label}
+                                type="button"
+                                title={sw.label}
+                                onClick={() => set({ baseColor: sw.hex })}
+                                className={`w-6 h-6 rounded-full border transition-transform hover:scale-110 ${cfg.baseColor === sw.hex ? 'ring-2 ring-offset-1 ring-slate-700' : 'border-slate-300'}`}
+                                style={sw.hex ? { background: sw.hex } : { background: 'linear-gradient(90deg,#ef4444,#f59e0b,#22c55e,#3b82f6,#8b5cf6)' }}
+                            >{sw.hex ? '' : ''}</button>
+                        ))}
+                        <input
+                            type="color"
+                            value={cfg.baseColor || '#3b82f6'}
+                            onChange={(e) => set({ baseColor: e.target.value })}
+                            className="w-8 h-6 rounded cursor-pointer border border-slate-300 bg-white"
+                            title="Pick any base colour"
+                        />
+                        {cfg.baseColor && (
+                            <button type="button" onClick={() => set({ baseColor: null })}
+                                className="text-[10px] font-bold text-slate-500 hover:text-slate-800 underline">reset</button>
+                        )}
+                    </div>
+
+                    {/* Live preview of the generated colours (dark → light across the curves) */}
+                    <div className="flex items-center gap-1 mb-2">
+                        {(cfg.baseColor ? shadesFromColor(cfg.baseColor, series.length) : rainbowColors(series.length)).map((c, i) => (
+                            <span key={i} title={`curve ${i + 1}: ${c}`}
+                                className="h-4 flex-1 rounded-sm border border-slate-200"
+                                style={{ background: c }} />
+                        ))}
+                        <span className="text-[9px] text-slate-400 ml-1 whitespace-nowrap">
+                            {series.length} curve{series.length > 1 ? 's' : ''} · {cfg.baseColor ? 'dark → light' : 'rainbow'}
+                        </span>
+                    </div>
+
                     <div className="flex flex-wrap gap-3">
-                        {series.map((s) => (
+                        {series.map((s, i) => (
                             <label key={s.key} className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
                                 <input type="color"
-                                    value={(cfg.colors && cfg.colors[s.key]) || s.color || '#3b82f6'}
+                                    value={(cfg.colors && cfg.colors[s.key]) || (cfg.baseColor ? shadesFromColor(cfg.baseColor, series.length)[i] : rainbowColors(series.length)[i]) || '#3b82f6'}
                                     onChange={(e) => set({ colors: { ...(cfg.colors || {}), [s.key]: e.target.value } })}
                                     className="w-6 h-6 rounded cursor-pointer border border-slate-300" />
                                 {s.label}
                             </label>
                         ))}
                     </div>
+                    <p className="text-[9px] text-slate-400 mt-1">Pick a base colour and the curves are degraded from dark to light; the rainbow range is used when no colour is selected.</p>
                 </div>
             )}
 

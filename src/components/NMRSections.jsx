@@ -6,7 +6,7 @@ import {
   ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar, Cell
 } from 'recharts';
 import { CollapsibleSection } from './ui';
-import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, LINE_COLORS, VIS_PALETTES, PER_ATOM_COLORS } from '../utils/chartStyle';
+import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, VIS_PALETTES, PER_ATOM_COLORS, seriesColorFor } from '../utils/chartStyle';
 import {
   AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, CARBON_RANGE_DB,
   SS_CORRECTIONS, SS_META, DNA_FORM_OFFSETS, SUGAR_ANOMER_OFFSETS,
@@ -3363,7 +3363,7 @@ const DEFAULT_CHART_STYLE = {
 };
 
 const lineDash = (style) => (style === 'dashed' ? '7 5' : style === 'dotted' ? '2 3' : undefined);
-const seriesColor = (cfg, key, idx) => (cfg.colors && cfg.colors[key]) || LINE_COLORS[Math.max(0, idx) % LINE_COLORS.length];
+const seriesColor = (cfg, key, idx, total) => seriesColorFor(cfg, key, idx, total);
 const makeTicks = (domain, stepStr) => {
   const step = parseManual(stepStr);
   if (!step || step <= 0 || !Array.isArray(domain)) return undefined;
@@ -4661,13 +4661,16 @@ export const DataSection = ({ ctx }) => {
           const targetAcqusPath = expDir + '/acqus';
           acqusFile = files.find(f => f.webkitRelativePath === targetAcqusPath);
           
-          // Experiment type = first (or second) line of the "pulseprogram" file
+          // Experiment type = first (or second) line of the "pulseprogram" file,
+          // reduced to the file name after the last slash (e.g. "zgesgp" instead
+          // of # 1 "/opt/topspin3.6.2/exp/stan/nmr/lists/pp/zgesgp").
           const pulseFile = files.find(f => f.webkitRelativePath === expDir + '/pulseprogram');
           if (pulseFile) {
             try {
               const pt = await pulseFile.text();
               const lines = pt.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-              expType = lines[0] || lines[1] || '';
+              const raw = lines[0] || lines[1] || '';
+              expType = raw.split(/[/\\]/).pop().replace(/["'#;\s]+/g, '').trim();
             } catch { /* ignore unreadable pulseprogram */ }
           }
           // Title = content of "<dataset>/pdata/1/title"
@@ -5663,7 +5666,7 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
     return { key: ak, label: opt ? opt.label : ak, pts };
   }), [plot.atoms, plot.layerKey, d.instances, d.atomOptions, plot.excluded, effXField, plot.yField, used]);
 
-  const colorOf = (s) => seriesColor(cfg, s.key, series.findIndex((q) => q.key === s.key));
+  const colorOf = (s) => seriesColor(cfg, s.key, series.findIndex((q) => q.key === s.key), series.length);
   const includedPts = (s) => s.pts.filter((p) => !p.excluded);
   const maxOf = (s) => { const v = includedPts(s).map((p) => p.y); return v.length ? Math.max(...v) : null; };
   const effSD = (sKey, p) => {
