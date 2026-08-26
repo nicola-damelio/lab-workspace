@@ -1922,7 +1922,7 @@ export const MDSimulationParamsSection = ({ ctx }) => {
             onChange={(e) => updateActiveTest({ ensemble: e.target.value })}
             className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
           >
-            {MD_ENSEMBLES.map(e => <option key={e} value={e}>{e}</option>)}
+            {MD_ENSEMBLES.map(e => <option key={e.key} value={e.key} title={e.description}>{e.label}</option>)}
           </select>
         </div>
 
@@ -1934,7 +1934,7 @@ export const MDSimulationParamsSection = ({ ctx }) => {
             onChange={(e) => updateActiveTest({ integrator: e.target.value })}
             className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
           >
-            {MD_INTEGRATORS.map(i => <option key={i} value={i}>{i}</option>)}
+            {MD_INTEGRATORS.map(i => <option key={i.key} value={i.key} title={i.label}>{i.label}</option>)}
           </select>
         </div>
 
@@ -1946,7 +1946,7 @@ export const MDSimulationParamsSection = ({ ctx }) => {
             onChange={(e) => updateActiveTest({ thermostat: e.target.value })}
             className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
           >
-            {MD_THERMOSTATS.map(t => <option key={t} value={t}>{t}</option>)}
+            {MD_THERMOSTATS.map(t => <option key={t.key} value={t.key} title={t.label}>{t.label}</option>)}
           </select>
         </div>
 
@@ -1958,7 +1958,7 @@ export const MDSimulationParamsSection = ({ ctx }) => {
             onChange={(e) => updateActiveTest({ barostat: e.target.value })}
             className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
           >
-            {MD_BAROSTATS.map(b => <option key={b} value={b}>{b}</option>)}
+            {MD_BAROSTATS.map(b => <option key={b.key} value={b.key} title={b.label}>{b.label}</option>)}
           </select>
         </div>
       </div>

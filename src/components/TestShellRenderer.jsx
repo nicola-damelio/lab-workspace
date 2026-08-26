@@ -3,7 +3,7 @@ import { RichTextEditor } from './RichTextEditor';
 import { BufferAdditiveFields } from './DefinitionsExtra';
 import { SearchableSelect } from './SearchableSelect';
 import { parseSimulationParameters } from './MDData';
-import { CLASSIFICATION_MAP } from '../data/testTypes';
+import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES } from '../data/testTypes';
 import { CollapsibleSection } from './ui';
 export { CollapsibleSection };
 
@@ -365,7 +365,7 @@ export const TestShellRenderer = ({
   allCmpds,
   allCellLines,
   customFields,
-  testCategories,
+  testCategories: _testCategories,
   ...rest
 }) => {
   const update = (u) => {
@@ -408,29 +408,14 @@ const [showGeneral, setShowGeneral] = useState(true);
 
   const planDateId = `plan-date-${t.id ?? 'unsaved'}`;
 
-  const definitionCategories = Array.isArray(testCategories)
-    ? testCategories.filter(Boolean)
-    : [];
+  const testCategory = t.testCategory || 'Activity';
 
-  const fallbackCategories = (
-    Array.isArray(config.fallbackCategories)
-      ? config.fallbackCategories
-      : Array.isArray(config.categories)
-        ? config.categories
-        : ['Activity']
-  ).filter(Boolean);
-
-  const baseCategories =
-    definitionCategories.length > 0
-      ? definitionCategories
-      : fallbackCategories.length > 0
-        ? fallbackCategories
-        : ['Activity'];
-
-  const testCategory = t.testCategory || baseCategories[0] || 'Activity';
-
+  // Primary classification: only the canonical official categories are offered,
+  // plus the current test's stored value (so an old/custom value stays visible
+  // until it is re-selected). Stale categories inherited from older datasets
+  // are intentionally not shown here.
   const categories = [
-    ...new Set([...baseCategories, testCategory].filter(Boolean))
+    ...new Set([...PRIMARY_CATEGORIES, testCategory].filter(Boolean))
   ];
 
   const operatorsRaw = Array.isArray(rest.operators) ? rest.operators : [];

@@ -13,6 +13,7 @@ import {
 import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, AngledTick } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, LINE_COLORS } from '../utils/chartStyle';
+import { parseJascoJwsBinary, isJascoJwsBinary } from '../utils/jascoJws';
 export { CollapsibleSection };
 export { VIS_PALETTES };
 
@@ -233,53 +234,92 @@ const parseJascoCDText = (text) => {
   let ys = [];
   let inData = false;
 
+  const storeMeta = (key, value) => {
+    const k = String(key).trim().replace(/^"|"$/g, '');
+    const v = String(value ?? '').trim().replace(/^"|"$/g, '');
+    if (k && !/^[-+]?\d/.test(k)) meta[k] = v;
+  };
+
+  // Parses a single XY data row, supporting:
+  //   - dot decimals, comma/tab/semicolon/space separated ("260, -1.234")
+  //   - European comma decimals with semicolon/space separators ("185,0; -10,5")
+  const parseJascoDataLine = (line) => {
+    const body = line.replace(/^"|"$/g, '').trim();
+    if (!body) return null;
+    // European style: comma sits between digits (decimal point) and another
+    // non-comma separator (space / tab / semicolon) is present in the same line.
+    if (/(?:\d,\d)/.test(body) && /[;\t ]/.test(body)) {
+      const toks = body.replace(/,/g, '.').split(/[;\t ]+/).filter(Boolean);
+      if (toks.length >= 2) {
+        const x = parseFloat(toks[0]);
+        const y = parseFloat(toks[1]);
+        if (!isNaN(x) && !isNaN(y)) return [x, y];
+      }
+    }
+    const toks = body.split(/[,\t;\s]+/).filter(Boolean);
+    if (toks.length >= 2) {
+      const x = parseFloat(toks[0]);
+      const y = parseFloat(toks[1]);
+      if (!isNaN(x) && !isNaN(y)) return [x, y];
+    }
+    return null;
+  };
+
   const addMeta = (line) => {
     if (!line) return;
-    const unquoted = line.replace(/^"|"$/g, '');
-    
+    const raw = line.trim();
+
+    // 0. Fully-quoted CSV line: "Key","Value"  (standard JASCO Spectra Manager export)
+    const csv = raw.match(/^"([^"]*)"\s*,\s*"([^"]*)"\s*$/);
+    if (csv) { storeMeta(csv[1], csv[2]); return; }
+
+    const unquoted = raw.replace(/^"|"$/g, '');
+
     // 1. Try Tab
     if (unquoted.includes('\t')) {
       const parts = unquoted.split('\t');
-      const key = parts[0].trim();
-      const value = parts.slice(1).join('\t').trim();
-      if (key && !/^[-+]?\d/.test(key)) { meta[key] = value; return; }
+      storeMeta(parts[0], parts.slice(1).join('\t'));
+      return;
     }
-    // 2. Try Comma
+    // 2. Try Comma (split at first comma, then strip any surrounding quotes)
     if (unquoted.includes(',')) {
       const idx = unquoted.indexOf(',');
-      const key = unquoted.slice(0, idx).trim();
-      const value = unquoted.slice(idx + 1).trim();
-      if (key && !/^[-+]?\d/.test(key)) { meta[key] = value; return; }
+      storeMeta(unquoted.slice(0, idx), unquoted.slice(idx + 1));
+      return;
     }
-    // 3. Try Colon (some European Jasco exports)
+    // 2b. Try Semicolon (some European JASCO exports use "Key;Value")
+    if (unquoted.includes(';')) {
+      const idx = unquoted.indexOf(';');
+      storeMeta(unquoted.slice(0, idx), unquoted.slice(idx + 1));
+      return;
+    }
+    // 3. Try Equals ("Key = Value", used by some JASCO report exports)
+    const eq = unquoted.match(/^([^=]{1,60}?)\s*=\s*(.+)$/);
+    if (eq) { storeMeta(eq[1], eq[2]); return; }
+    // 4. Try Colon (some European Jasco exports)
     if (unquoted.includes(':')) {
       const idx = unquoted.indexOf(':');
-      const key = unquoted.slice(0, idx).trim();
-      const value = unquoted.slice(idx + 1).trim();
-      if (key && !/^[-+]?\d/.test(key)) { meta[key] = value; return; }
+      storeMeta(unquoted.slice(0, idx), unquoted.slice(idx + 1));
+      return;
     }
-    // 4. Try multiple spaces
+    // 5. Try multiple spaces
     const m = unquoted.match(/^([A-Za-z0-9/.()\- ]{2,60}?)\s{2,}(.*)$/);
-    if (m && !/^\d/.test(m[1])) { meta[m[1].trim()] = m[2].trim(); return; }
+    if (m && !/^\d/.test(m[1])) { meta[m[1].trim()] = m[2].trim(); }
   };
 
   for (const rawLine of lines) {
-    let line = rawLine.trim();
+    const line = rawLine.trim();
     if (!line) continue;
     
     if (line.startsWith('#####')) { inData = false; continue; }
     if (/^\[?\s*(?:XYDATA|DATA)\s*\]?$/i.test(line.replace(/["']/g, ''))) { inData = true; continue; }
     if (line.startsWith('[') && line.endsWith(']')) continue;
     
-    const cleanTokens = line.replace(/^"|"$/g, '').split(/[,\t;\s]+/).filter(Boolean);
-    if (cleanTokens.length >= 2) {
-      const x = parseFloat(cleanTokens[0].replace(',', '.'));
-      const y = parseFloat(cleanTokens[1].replace(',', '.'));
-      if (!isNaN(x) && !isNaN(y)) {
-        xs.push(x);
-        ys.push(y);
-        continue;
-      }
+    const pair = parseJascoDataLine(line);
+    if (pair) {
+      xs.push(pair[0]);
+      ys.push(pair[1]);
+      continue;
     }
     
     if (!inData) addMeta(line);
@@ -289,14 +329,30 @@ const parseJascoCDText = (text) => {
     xs.reverse(); 
     ys.reverse(); 
   }
-  
+
+  const tempRaw = (meta['Temperature'] || meta['Temperature (°C)'] || meta['Temperature (C)'] || '').trim();
+  const tempNum = tempRaw.match(/(-?\d+(?:[.,]\d+)?)/);
+  const pathRaw = (meta['Cell length'] || meta['Pathlength'] || meta['Path length'] || '').trim();
+  const pathNum = pathRaw.match(/(-?\d+(?:[.,]\d+)?)/);
+  const concRaw = (meta['Concentration'] || meta['Conc.'] || meta['Concn'] || '').trim();
+
+  let concentrationUnit = '';
+  if (/mg\/ml/i.test(concRaw)) concentrationUnit = 'mg/mL';
+  else if (/nM\b/i.test(concRaw)) concentrationUnit = 'nM';
+  else if (/mM\b/i.test(concRaw)) concentrationUnit = 'mM';
+  else if (/[µu]M\b/i.test(concRaw)) concentrationUnit = 'µM';
+  else if (/^M$/.test(concRaw.trim())) concentrationUnit = 'M';
+
   return {
     xs, ys, meta,
-    title: meta['Sample name'] || meta['TITLE'] || meta['Sample Name'] || meta['Title'] || '',
+    title: meta['Sample name'] || meta['TITLE'] || meta['Sample Name'] || meta['Title'] || meta['sample'] || '',
     experimentDate: parseJascoDate(meta['Measurement date'] || meta['DATE'] || meta['Date'] || ''),
-    temperature: meta['Temperature'] ? meta['Temperature'].replace(/\s*C\s*$/i, ' °C') : '',
-    pathLength: (meta['Cell length'] || meta['Pathlength'] || '').match(/(-?\d+(?:\.\d+)?)/)?.[1] || (meta['Cell length'] || meta['Pathlength'] || ''),
-    concentration: meta['Concentration'] || ''
+    temperature: tempNum ? tempNum[1].replace(',', '.') : '',
+    temperatureUnit: /(°?C|℃)\s*$/i.test(tempRaw) ? '°C' : /K\s*$/i.test(tempRaw) ? 'K' : '',
+    pathLength: pathNum ? pathNum[1].replace(',', '.') : '',
+    pathLengthUnit: /cm\b/i.test(pathRaw) ? 'cm' : /mm\b/i.test(pathRaw) ? 'mm' : '',
+    concentration: concRaw,
+    concentrationUnit
   };
 };
 
@@ -1106,10 +1162,19 @@ export const Data = ({ ctx }) => {
     if (filename) updates.instanceName = filename.replace(/\.[^/.]+$/, "");
 
     const cNum = parseManual(parsed.concentration);
-    if (cNum !== null) updates.concentration = String(cNum);
+    if (cNum !== null) {
+      updates.concentration = String(cNum);
+      if (parsed.concentrationUnit) updates.concentrationUnit = parsed.concentrationUnit;
+    }
     const pNum = parseManual(parsed.pathLength);
-    if (pNum !== null) updates.pathLength = String(pNum);
-    if (parsed.temperature) updates.temperature = String(parsed.temperature);
+    if (pNum !== null) {
+      updates.pathLength = String(pNum);
+      if (parsed.pathLengthUnit) updates.pathLengthUnit = parsed.pathLengthUnit;
+    }
+    if (parsed.temperature) {
+      updates.temperature = String(parsed.temperature);
+      if (parsed.temperatureUnit) updates.temperatureUnit = parsed.temperatureUnit;
+    }
     if (parsed.experimentDate) updates.experimentDate = parsed.experimentDate;
 
     const normMeta = {};
@@ -1148,7 +1213,9 @@ export const Data = ({ ctx }) => {
     if (!Number.isNaN(sens)) setIfEmpty('sensitivity', sens);
 
     updateActiveTest(updates);
-    setJascoMsg(`✅ Imported ${parsed.xs.length} points${parsed.title ? ` — "${parsed.title}"` : ''}. All instrumental parameters populated.`);
+    const expFilled = ['concentration', 'pathLength', 'temperature', 'experimentDate'].filter((k) => updates[k]).length;
+    const instFilled = ['instrumentModel', 'scanMode', 'scanSpeed', 'dataPitch', 'bandwidth', 'responseTime', 'accumulations', 'photometricMode', 'sensitivity'].filter((k) => updates[k]).length;
+    setJascoMsg(`✅ Imported ${parsed.xs.length} points${parsed.title ? ` — "${parsed.title}"` : ''}. Filled ${expFilled} experimental + ${instFilled} instrumental field(s).`);
   };
 
   const handleJascoFile = async (e) => {
@@ -1157,23 +1224,40 @@ export const Data = ({ ctx }) => {
     setJascoMsg(`Parsing ${files.length} Jasco file(s)...`);
 
     const results = [];
+    const failed = [];
     for (const f of files) {
-      if (f.name.toLowerCase().endsWith('.jws')) continue;
       try {
-        const text = await f.text();
-        const parsed = parseJascoCDText(text);
-        parsed.filename = f.name;
-        results.push(parsed);
-      } catch (err) { console.error('Parse error:', err); }
+        const buf = await f.arrayBuffer();
+        // Native JASCO .jws files are binary (v1.5 flat or OLE2 compound
+        // document) — detect by magic bytes and use the binary parser.
+        let parsed = null;
+        if (isJascoJwsBinary(buf)) {
+          parsed = parseJascoJwsBinary(buf);
+          parsed.title = parsed.title || f.name.replace(/\.[^/.]+$/, '');
+        } else {
+          const text = new TextDecoder('utf-8').decode(buf);
+          parsed = parseJascoCDText(text);
+        }
+        if (parsed.xs.length) {
+          parsed.filename = f.name;
+          results.push(parsed);
+        } else {
+          failed.push(f.name);
+        }
+      } catch (err) { console.error('Parse error:', err); failed.push(f.name); }
     }
 
     if (results.length === 0) {
-      setJascoMsg('⚠️ No valid text/csv files found (skipped .jws).');
+      setJascoMsg(failed.length
+        ? `⚠️ Could not read XY data from: ${failed.join(', ')}. Unsupported or corrupted .jws variant.`
+        : '⚠️ No valid Jasco file(s) found.');
       if (jascoFileRef.current) jascoFileRef.current.value = '';
       return;
     }
 
     applyJasco(results[0], results[0].filename);
+
+    if (failed.length) setJascoMsg(`⚠️ Skipped ${failed.length} file(s) with no readable XY data (${failed.join(', ')}). ${results.length} imported.`);
 
     if (results.length > 1 && ctx.setTests) {
       ctx.setTests(prevTests => {
@@ -1188,9 +1272,9 @@ export const Data = ({ ctx }) => {
           cloned.spectraColumns = [{ id: makeId('spec'), title: parsed.title || 'Imported Spectrum', data: parsed.ys.join('\n'), color: SPECTRA_PALETTE[i % SPECTRA_PALETTE.length], visible: true }];
           cloned.yUnit = 'mdeg';
           
-          const cNum = parseManual(parsed.concentration); if (cNum !== null) cloned.concentration = String(cNum);
-          const pNum = parseManual(parsed.pathLength); if (pNum !== null) cloned.pathLength = String(pNum);
-          if (parsed.temperature) cloned.temperature = String(parsed.temperature);
+          const cNum = parseManual(parsed.concentration); if (cNum !== null) { cloned.concentration = String(cNum); if (parsed.concentrationUnit) cloned.concentrationUnit = parsed.concentrationUnit; }
+          const pNum = parseManual(parsed.pathLength); if (pNum !== null) { cloned.pathLength = String(pNum); if (parsed.pathLengthUnit) cloned.pathLengthUnit = parsed.pathLengthUnit; }
+          if (parsed.temperature) { cloned.temperature = String(parsed.temperature); if (parsed.temperatureUnit) cloned.temperatureUnit = parsed.temperatureUnit; }
           if (parsed.experimentDate) cloned.experimentDate = parsed.experimentDate;
           newTests.push(cloned);
         }
@@ -1473,7 +1557,7 @@ export const Data = ({ ctx }) => {
 
         <div className="bg-sky-50 border border-sky-200 rounded-xl p-4 flex flex-col gap-3">
           <div className="flex items-center justify-between flex-wrap gap-2">
-            <h4 className="text-sm font-bold text-sky-900">📥 Jasco Import (.txt / .csv export)</h4>
+            <h4 className="text-sm font-bold text-sky-900">📥 Jasco Import (.txt / .csv / .jws)</h4>
             <span className="text-[9px] bg-sky-200 text-sky-900 px-2 py-0.5 rounded font-bold">imports into the ACTIVE condition</span>
           </div>
           <div className="flex flex-wrap items-end gap-3">
@@ -1481,7 +1565,7 @@ export const Data = ({ ctx }) => {
               📄 Choose Jasco file(s)…
               <input ref={jascoFileRef} type="file" accept=".txt,.csv,.jws" multiple onChange={handleJascoFile} className="hidden" />
             </label>
-            <span className="text-[10px] text-sky-700">…or paste the file content below and press Import.</span>
+            <span className="text-[10px] text-sky-700">…or paste the file content below and press Import. Metadata (temperature, cell length, scan settings…) is auto-filled into the Experimental Conditions and Instrumental Setup sections.</span>
           </div>
           <textarea
             value={jascoText} onChange={(e) => setJascoText(e.target.value)} placeholder={'Paste Jasco export here (metadata block + XYDATA)…'}

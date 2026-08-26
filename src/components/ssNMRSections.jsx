@@ -950,6 +950,10 @@ export const Data = ({ ctx }) => {
   const [brukerMsg, setBrukerMsg] = useState('');
   const [brukerBusy, setBrukerBusy] = useState(false);
   const brukerFileRef = useRef(null);
+  // Discovered-but-not-yet-imported Bruker spectra (folder import shows a
+  // selection dialog so the user can pick which experiments to import).
+  const [pendingSpectra, setPendingSpectra] = useState([]);
+  const [selectedSpectraIds, setSelectedSpectraIds] = useState([]);
 
   const interpolateY = (xs, ys, targetX) => {
     const n = xs.length;
@@ -1067,50 +1071,64 @@ export const Data = ({ ctx }) => {
       
       if (results.length === 0) throw new Error("Could not parse any valid 1r spectra.");
 
-      applyBruker(results[0], results[0].filename);
-
-      if (results.length > 1 && ctx.setTests) {
-          ctx.setTests(prevTests => {
-              const newTests = [];
-              for (let i = 1; i < results.length; i++) {
-                  const parsed = results[i];
-                  const newId = 't' + Date.now() + i + Math.random().toString(36).substring(2,5);
-                  const cloned = JSON.parse(JSON.stringify(activeTest));
-                  cloned.id = newId;
-                  cloned.instanceName = parsed.filename;
-                  
-                  let finalXs = parsed.xs; let finalYs = parsed.ys;
-                  const hasCustomRange = (brukerStartKHz !== '' && brukerEndKHz !== '') || (brukerNumPoints !== '' && Number(brukerNumPoints) > 0);
-                  if (hasCustomRange) {
-                      const xMin = Math.min(...parsed.xs); const xMax = Math.max(...parsed.xs); const isDesc = parsed.xs[0] > parsed.xs[parsed.xs.length - 1];
-                      const sK = brukerStartKHz !== '' ? Number(brukerStartKHz) : (isDesc ? xMax : xMin);
-                      const eK = brukerEndKHz !== '' ? Number(brukerEndKHz) : (isDesc ? xMin : xMax);
-                      const nPts = brukerNumPoints !== '' && Number(brukerNumPoints) > 1 ? Number(brukerNumPoints) : parsed.xs.length;
-                      const newXs = []; const newYs = [];
-                      for (let j = 0; j < nPts; j++) {
-                          const x = sK + (eK - sK) * (j / (nPts - 1 || 1));
-                          newXs.push(x);
-                          const y = interpolateY(parsed.xs, parsed.ys, x);
-                          newYs.push(y !== null && Number.isFinite(y) ? y : 0);
-                      }
-                      finalXs = newXs; finalYs = newYs;
-                  }
-
-                  cloned.wavelengthData = finalXs.map((x) => (+x.toFixed(4))).join('\n');
-                  cloned.spectraColumns = [{ id: makeId('spec'), title: parsed.meta.title || 'Bruker 1r spectrum', data: Array.from(finalYs).map(String).join('\n'), color: SPECTRA_PALETTE[i % SPECTRA_PALETTE.length], visible: true }];
-                  cloned.yUnit = 'raw';
-                  cloned.brukerMeta = parsed.meta;
-                  newTests.push(cloned);
-              }
-              return [...prevTests, ...newTests];
-          });
-      }
-      setBrukerMsg(`✅ Successfully imported ${results.length} spectrum/spectra.`);
+      // Show a selection dialog so the user can pick which experiments to import.
+      const pending = results.map((parsed, i) => ({ id: 'p_' + Date.now() + '_' + i, parsed, filename: parsed.filename }));
+      setPendingSpectra(pending);
+      setSelectedSpectraIds(pending.map(p => p.id));
+      setBrukerMsg(`Found ${results.length} 1D spectrum/spectra — select which experiments to import.`);
     } catch (err) {
       setBrukerMsg(`⚠️ ${err.message}`);
     }
     setBrukerBusy(false);
     if (brukerFileRef.current) brukerFileRef.current.value = '';
+  };
+
+  // Import only the experiments the user ticked in the selection dialog.
+  const importSelectedSpectra = () => {
+    const selected = pendingSpectra.filter(p => selectedSpectraIds.includes(p.id));
+    if (!selected.length) { setBrukerMsg('⚠️ Select at least one spectrum to import.'); return; }
+
+    applyBruker(selected[0].parsed, selected[0].filename);
+
+    if (selected.length > 1 && ctx.setTests) {
+        ctx.setTests(prevTests => {
+            const newTests = [];
+            for (let i = 1; i < selected.length; i++) {
+                const parsed = selected[i].parsed;
+                const newId = 't' + Date.now() + i + Math.random().toString(36).substring(2,5);
+                const cloned = JSON.parse(JSON.stringify(activeTest));
+                cloned.id = newId;
+                cloned.instanceName = selected[i].filename;
+                
+                let finalXs = parsed.xs; let finalYs = parsed.ys;
+                const hasCustomRange = (brukerStartKHz !== '' && brukerEndKHz !== '') || (brukerNumPoints !== '' && Number(brukerNumPoints) > 0);
+                if (hasCustomRange) {
+                    const xMin = Math.min(...parsed.xs); const xMax = Math.max(...parsed.xs); const isDesc = parsed.xs[0] > parsed.xs[parsed.xs.length - 1];
+                    const sK = brukerStartKHz !== '' ? Number(brukerStartKHz) : (isDesc ? xMax : xMin);
+                    const eK = brukerEndKHz !== '' ? Number(brukerEndKHz) : (isDesc ? xMin : xMax);
+                    const nPts = brukerNumPoints !== '' && Number(brukerNumPoints) > 1 ? Number(brukerNumPoints) : parsed.xs.length;
+                    const newXs = []; const newYs = [];
+                    for (let j = 0; j < nPts; j++) {
+                        const x = sK + (eK - sK) * (j / (nPts - 1 || 1));
+                        newXs.push(x);
+                        const y = interpolateY(parsed.xs, parsed.ys, x);
+                        newYs.push(y !== null && Number.isFinite(y) ? y : 0);
+                    }
+                    finalXs = newXs; finalYs = newYs;
+                }
+
+                cloned.wavelengthData = finalXs.map((x) => (+x.toFixed(4))).join('\n');
+                cloned.spectraColumns = [{ id: makeId('spec'), title: parsed.meta.title || 'Bruker 1r spectrum', data: Array.from(finalYs).map(String).join('\n'), color: SPECTRA_PALETTE[i % SPECTRA_PALETTE.length], visible: true }];
+                cloned.yUnit = 'raw';
+                cloned.brukerMeta = parsed.meta;
+                newTests.push(cloned);
+            }
+            return [...prevTests, ...newTests];
+        });
+    }
+    setPendingSpectra([]);
+    setSelectedSpectraIds([]);
+    setBrukerMsg(`✅ Successfully imported ${selected.length} spectrum/spectra.`);
   };
 
   const importBrukerFromUrl = async () => {
@@ -1400,7 +1418,7 @@ export const Data = ({ ctx }) => {
                 />
               </label>
               <span className="text-[9px] text-sky-700 mt-1 max-w-sm">
-                This will automatically locate the 1r file(s) and their corresponding acqus parameter files, instantly importing the correct ppm axis. If multiple experiments are selected, they will automatically be loaded into separate condition tabs.
+                This will automatically locate the 1r file(s) and their corresponding acqus parameter files, instantly importing the correct ppm axis. After scanning you can choose exactly which experiments to load — they will be imported into separate condition tabs.
               </span>
             </div>
 
@@ -1445,6 +1463,71 @@ export const Data = ({ ctx }) => {
           </div>
           {brukerMsg && <span className="text-xs font-bold text-sky-900">{brukerMsg}</span>}
         </div>
+
+        {/* Experiment selection dialog for folder import */}
+        {pendingSpectra.length > 0 && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[85vh]">
+              <div className="bg-gradient-to-r from-sky-600 to-blue-700 px-5 py-4 text-white rounded-t-2xl shrink-0">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="font-black text-lg">Select experiments to import</h3>
+                    <p className="text-sky-100 text-xs mt-0.5">{pendingSpectra.length} 1D spectrum/spectra found in the selected dataset folder</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { setPendingSpectra([]); setSelectedSpectraIds([]); setBrukerMsg('Import cancelled.'); }}
+                    className="text-white/70 hover:text-white text-2xl leading-none font-bold shrink-0"
+                    title="Cancel import"
+                  >
+                    &times;
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-4 flex flex-col gap-2 overflow-y-auto custom-scrollbar flex-1">
+                <div className="flex gap-2 items-center justify-between px-1 mb-1 shrink-0">
+                  <span className="text-xs font-bold text-slate-500 uppercase">Tick the experiments to load</span>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setSelectedSpectraIds(pendingSpectra.map(p => p.id))} className="text-[11px] font-bold text-sky-700 bg-sky-50 border border-sky-200 px-2 py-1 rounded hover:bg-sky-100">Select all</button>
+                    <button type="button" onClick={() => setSelectedSpectraIds([])} className="text-[11px] font-bold text-slate-500 bg-slate-50 border border-slate-200 px-2 py-1 rounded hover:bg-slate-100">Select none</button>
+                  </div>
+                </div>
+                {pendingSpectra.map(p => {
+                  const checked = selectedSpectraIds.includes(p.id);
+                  return (
+                    <label key={p.id} className={`flex items-center gap-3 border rounded-xl px-3 py-2.5 cursor-pointer transition-colors ${checked ? 'bg-sky-50 border-sky-300' : 'bg-white border-slate-200 hover:bg-slate-50'}`}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => {
+                          const id = p.id;
+                          setSelectedSpectraIds(prev => (e.target.checked ? [...prev, id] : prev.filter(x => x !== id)));
+                        }}
+                        className="w-4 h-4 accent-sky-600 shrink-0"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-bold text-slate-800 truncate">{p.filename}</div>
+                        <div className="text-[11px] text-slate-500 truncate">
+                          {(p.parsed.nPoints != null ? `${p.parsed.nPoints} pts` : `${p.parsed.xs ? p.parsed.xs.length : 0} pts`)}
+                          {p.parsed.meta?.title ? ` · ${p.parsed.meta.title}` : ''}
+                          {p.parsed.meta?.nucleus ? ` · ${p.parsed.meta.nucleus}` : ''}
+                        </div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+
+              <div className="px-4 py-3 border-t border-slate-200 flex justify-between items-center gap-3 bg-slate-50 rounded-b-2xl shrink-0">
+                <span className="text-[11px] text-slate-500">{selectedSpectraIds.length} of {pendingSpectra.length} selected</span>
+                <button type="button" onClick={importSelectedSpectra} disabled={!selectedSpectraIds.length} className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-bold px-5 py-2 rounded-lg text-sm shadow-sm">
+                  📥 Import selected ({selectedSpectraIds.length})
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3">
           <h4 className="text-sm font-bold text-slate-700">📐 Scaling & Acquisition Metadata</h4>

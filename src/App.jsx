@@ -38,6 +38,17 @@ import { ScientistLoginGate, ScientistLoginModal } from './components/AppModules
 ========================================================= */
 // MD_SIMULATION_TAB_CONFIG + SPECIAL_PAGES registry now live in ./data/specialPages (see import above).
 
+/**
+ * Keep the persisted "test categories" list in sync with reality: always the
+ * canonical PRIMARY_CATEGORIES plus any extra category that is actually used
+ * by an existing test. Unused stale categories (e.g. from older datasets) are
+ * dropped so they no longer pollute the classification dropdowns.
+ */
+const sanitizeTestCategories = (cats, testsList) => {
+  const used = new Set((testsList || []).map((t) => t.testCategory).filter(Boolean));
+  return [...new Set([...PRIMARY_CATEGORIES, ...(cats || []).filter((c) => used.has(c))])];
+};
+
 const buildMDNotebookHtml = (checked, ctx) => {
   const t = ctx?.activeTest || {};
   const charts = (t && t.mdNotebookCharts) || {};
@@ -906,14 +917,16 @@ if (customType === 'nmr-fittings') {
 
     const initAuth = async () => {
       auth.onAuthStateChanged((currentUser) => {
+        // Google / Firebase sign-in is OPTIONAL and only used for cloud sync.
+        // People without a Google account must still be able to use the app:
+        // the scientist password login (ScientistLoginGate) is the only
+        // required gate, and saving falls back to localStorage when no Google
+        // user is signed in.
         if (currentUser) {
           setUser(currentUser);
-          setNeedsLogin(false);
-          setIsCloudReady(true);
-        } else {
-          setNeedsLogin(true);
-          setIsCloudReady(true);
         }
+        setNeedsLogin(false);
+        setIsCloudReady(true);
       });
     };
 
@@ -966,12 +979,19 @@ if (customType === 'nmr-fittings') {
 
 
     const handleManualLogin = async () => {
+    // Optional Google sign-in, used only to enable cloud sync (Firestore).
+    // The app itself never requires a Google account.
+    if (!window.firebase || !auth) {
+      console.warn('Firebase auth is not available — cloud sync is disabled.');
+      return;
+    }
+
     const provider = new window.firebase.auth.GoogleAuthProvider();
 
     try {
       await auth.signInWithPopup(provider);
     } catch (e) {
-      console.error('Errore login:', e);
+      console.error('Google sign-in error:', e);
     }
   };
 
@@ -1340,7 +1360,7 @@ useEffect(() => {
       if (s.customCellLines !== undefined) setCustomCellLines(s.customCellLines);
       if (s.customConc !== undefined) setCustomConc(s.customConc);
       if (s.cmpColors !== undefined) setCmpColors(s.cmpColors);
-      if (s.testCategories !== undefined) setTestCategories(s.testCategories);
+      if (s.testCategories !== undefined) setTestCategories(sanitizeTestCategories(s.testCategories, loadedTests));
       if (s.protocolCategories !== undefined) setProtocolCategories(s.protocolCategories);
       if (s.datasetProtocols !== undefined) setDatasetProtocols(s.datasetProtocols);
       if (s.storages !== undefined) setStorages(s.storages);
@@ -1679,7 +1699,7 @@ const openDataset = (dset) => {
       setNmrProbes(s.nmrProbes || []);
       setNmrExperiments(s.nmrExperiments || []);
       
-   setTestCategories(s.testCategories || PRIMARY_CATEGORIES);
+   setTestCategories(sanitizeTestCategories(s.testCategories, loadedTests));
 
       setProtocolCategories(
         s.protocolCategories || ['Preparation', 'Measurement', 'Analysis']
@@ -1992,30 +2012,6 @@ const openDataset = (dset) => {
     await new Promise((r) => setTimeout(r, 150));
     window.print();
   };
-
-  if (needsLogin) {
-    return (
-      <div className="flex h-screen w-full items-center justify-center bg-slate-100 p-4">
-        <div className="bg-white p-8 rounded-2xl shadow-xl flex flex-col items-center max-w-sm border border-slate-200 text-center">
-          <div className="text-5xl mb-4">🔐</div>
-
-          <h1 className="text-2xl font-black text-slate-800 mb-2">Accesso Richiesto</h1>
-
-          <p className="text-slate-500 mb-8 text-sm leading-relaxed">
-            Per ragioni di sicurezza e per sincronizzare i tuoi dati di laboratorio sul Cloud,
-            il browser richiede un'azione manuale per il login.
-          </p>
-
-          <button
-            onClick={handleManualLogin}
-            className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-full shadow-lg transition-transform hover:scale-105 w-full flex items-center justify-center gap-2"
-          >
-            <span>Accedi con Google</span>
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <Suspense fallback={<div className="flex items-center justify-center h-screen text-slate-400 text-sm">Loading…</div>}>
@@ -2564,6 +2560,7 @@ const openDataset = (dset) => {
             handlePrint={handlePrint} loadHTML={loadHTML} exportHTML={exportHTML}
             handleUndo={handleUndo} handleRedo={handleRedo}
             historyIndex={historyIndex} historyRef={historyRef}
+            user={user} onGoogleLogin={handleManualLogin}
           />
 
           {/* MAIN CONTENT */}

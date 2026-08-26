@@ -4,6 +4,7 @@
    ========================================================================= */
 
 import React from 'react';
+import { PRIMARY_CATEGORIES } from '../../data/testTypes';
 
 export const TestsModule = ({
   authSettings, createEmptyTest, currentUser, expandedGroups, handlePrint,
@@ -14,6 +15,16 @@ export const TestsModule = ({
                 const testCatFilter = expandedGroups['testCatFilter'] || 'ALL';
                 const showCatMgr = expandedGroups['showTestCatMgr'] || false;
                 const newCatInput = expandedGroups['newTestCatInput'] || '';
+
+                // Filter dropdown shows only the official categories plus any
+                // extra category still used by an existing test — stale
+                // categories from older datasets are not offered here.
+                const filterCategories = [
+                  ...new Set([
+                    ...PRIMARY_CATEGORIES,
+                    ...(tests || []).map((t) => t.testCategory).filter(Boolean)
+                  ])
+                ];
 
 
                 // ── Auth helpers ──────────────────────────────
@@ -261,7 +272,7 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 ro
                           >
                             <option value="ALL">All Categories</option>
 
-                            {testCategories.map((c) => (
+                            {filterCategories.map((c) => (
                               <option key={c} value={c}>
                                 {c}
                               </option>

@@ -1278,6 +1278,9 @@ export const buildLipidStructure = (res, db) => {
 
 // ================= SVG EXPORT =================
 export const elementsToSVG = (structure, height = 320) => {
+  if (!structure || !Array.isArray(structure.elements)) {
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 40" style="height:80px;max-width:100%;font-family:sans-serif;background:white;"><text x="50" y="24" text-anchor="middle" font-size="11" fill="#94a3b8">No structure available</text></svg>';
+  }
   let inner = '';
   structure.elements.forEach((el) => {
     const w = el.width || 1.8;
@@ -1384,6 +1387,17 @@ export const getManualKeys = (values) => {
 export const StructureSVGView = ({
   structure, minWidth, isExpanded, onToggleExpand, selectedKeys, manualKeys = [], onAtomClick, height = '300px'
 }) => {
+  if (!structure || !Array.isArray(structure.elements)) {
+    return (
+      <div className="flex items-center justify-center bg-slate-50 border border-dashed border-slate-300 rounded-xl p-6 text-center w-full h-full min-h-[150px]">
+        <div>
+          <div className="text-2xl mb-1">🧬</div>
+          <p className="text-xs font-bold text-slate-500">No structure to display yet</p>
+          <p className="text-[11px] text-slate-400 mt-1">Add a sequence to generate the molecular formula.</p>
+        </div>
+      </div>
+    );
+  }
   const clickables = structure.elements.filter(
     (e) => (e.type === 'circle' || e.type === 'text') && e.ri != null && e.keys && e.keys.length && onAtomClick
   );

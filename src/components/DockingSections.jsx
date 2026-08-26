@@ -421,16 +421,29 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
           </div>
 
           <div style={{ display: structureMode === '2d' ? 'block' : 'none' }}>
-            <StructureSVGView
-              structure={d.structure}
-              minWidth={d.moleculeType === 'protein' && d.parsedSeq.length > 3 ? `${d.parsedSeq.length * 120}px` : '100%'}
-              isExpanded={expandedPanel === 'formula'}
-              onToggleExpand={() => setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')}
-              selectedKeys={selectedKeys}
-              manualKeys={manualKeys}
-              onAtomClick={handleAtomClick}
-              height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? `${Math.max(360, d.parsedSeq.length * 250 + 120)}px` : '300px'}
-            />
+            {d.structure ? (
+              <StructureSVGView
+                structure={d.structure}
+                minWidth={d.moleculeType === 'protein' && d.parsedSeq.length > 3 ? `${d.parsedSeq.length * 120}px` : '100%'}
+                isExpanded={expandedPanel === 'formula'}
+                onToggleExpand={() => setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')}
+                selectedKeys={selectedKeys}
+                manualKeys={manualKeys}
+                onAtomClick={handleAtomClick}
+                height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? `${Math.max(360, d.parsedSeq.length * 250 + 120)}px` : '300px'}
+              />
+            ) : (
+              <div className="flex items-center justify-center bg-slate-50 border border-dashed border-slate-300 rounded-xl p-6 text-center w-full">
+                <div>
+                  <div className="text-2xl mb-1">🧬</div>
+                  <p className="text-xs font-bold text-slate-500">No structure to display yet</p>
+                  <p className="text-[11px] text-slate-400 mt-1 max-w-md">
+                    Enter a receptor sequence below (or select a compound that has sequence / SMILES metadata)
+                    to generate the 2D formula.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
     </div>

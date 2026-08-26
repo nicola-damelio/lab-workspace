@@ -691,13 +691,14 @@ const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t =>
     'plate-9x9box': 'Storage Box',
     'nmr': 'NMR', 'cd': 'Circular Dichroism', 'nmr-fittings': 'NMR Fitting',
     'cloning': 'Cloning', 'protein_expression': 'Protein expression & Purification', 'md_simulation': 'MD Simulation',
-    'ssnmr': 'Solid State NMR', 'docking': 'Molecular Docking'
+    'ssnmr': 'Solid State NMR', 'docking': 'Molecular Docking', 'flow_cytometry': 'Flow Cytometry'
   };
 
   const EXPERIMENT_TYPES = [
     "Cloning",
     "Protein expression & Purification",
     "Multiwell plate essay",
+    "Flow Cytometry",
     "Circular Dichroism",
     "NMR",
     "NMR Fitting",

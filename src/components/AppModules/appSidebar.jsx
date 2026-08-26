@@ -13,7 +13,8 @@ export const AppSidebar = ({
   currentUser, setCurrentUser, setUnlockedTestIds, setLoginModal,
   currentModule, setCurrentModule,
   handlePrint, loadHTML, exportHTML,
-  handleUndo, handleRedo, historyIndex, historyRef
+  handleUndo, handleRedo, historyIndex, historyRef,
+  user, onGoogleLogin
 }) => (
 
           <div
@@ -174,6 +175,17 @@ export const AppSidebar = ({
               }`}
             >
               <div className={`flex flex-col gap-2 w-full`}>
+                {!user && onGoogleLogin && (
+                  <button
+                    onClick={onGoogleLogin}
+                    className={`w-full text-center bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors flex items-center justify-center gap-1 ${
+                      !isSidebarOpen ? 'py-2 px-0 text-[10px]' : ''
+                    }`}
+                    title="Optional: sign in with Google to enable cloud sync (the app works fully without it)"
+                  >
+                    <span>☁️</span> {isSidebarOpen ? 'Cloud sign-in (optional)' : ''}
+                  </button>
+                )}
                 <button
                   onClick={handlePrint}
                   className={`w-full text-center bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors flex items-center justify-center gap-1 ${
