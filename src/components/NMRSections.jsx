@@ -1,33 +1,21 @@
 import NMRMoleculeViewer from './NMRMoleculeViewer';
-import { ChartControlBar, SharedChartStylePanel } from './SharedAnalysisTools';
+import { ChartControlBar, SharedChartStylePanel, AngledTick } from './SharedAnalysisTools';
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar, Cell
 } from 'recharts';
+import { CollapsibleSection } from './ui';
+import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, LINE_COLORS, VIS_PALETTES, PER_ATOM_COLORS } from '../utils/chartStyle';
+export { VIS_PALETTES };
 
 const HAS_EB = typeof ErrorBar !== 'undefined';
-const LINE_COLORS = ['#3b82f6','#ef4444','#22c55e','#f59e0b','#8b5cf6','#ec4899','#14b8a6','#f97316','#6366f1','#84cc16'];
+// Chart/style constants now live in ../utils/chartStyle (single shared source).
 const TICKS_13C = Array.from({ length: 421 }, (_, i) => parseFloat((10 + i * 0.5).toFixed(1)));
 const TICKS_15N = Array.from({ length: 81 }, (_, i) => parseFloat((95 + i * 0.5).toFixed(1)));
 const TICKS_1H = Array.from({ length: 111 }, (_, i) => parseFloat((i / 10).toFixed(1)));
-const FS_CLASSES = 'fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col';
-const OVERLAY_CLASSES = 'fixed top-0 left-0 w-screen h-screen bg-slate-900/50 backdrop-blur-sm z-[999990]';
-const SELECT_COLOR = '#f59e0b';
-const MANUAL_COLOR = '#16a34a';
-const CHART_MARGIN = { top: 20, right: 20, bottom: 45, left: 50 };
-const CHART_MARGIN_1D = { top: 10, right: 15, bottom: 45, left: 15 };
-export const VIS_PALETTES = {
-  default: ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'],
-  viridis: ['#440154', '#482878', '#3e4a89', '#31688e', '#26828e', '#1f9e89', '#35b779', '#6ece58', '#b5de2b', '#fde725'],
-  magma: ['#000004', '#3b0f70', '#8c2981', '#de4968', '#fe9f6d', '#fcfdbf'],
-  ocean: ['#082f49', '#1e3a8a', '#1d4ed8', '#2563eb', '#3b82f6', '#60a5fa', '#93c5fd'],
-  warm: ['#7f1d1d', '#991b1b', '#b91c1c', '#dc2626', '#ef4444', '#f87171', '#fca5a5'],
-  neon: ['#ff00ff', '#00ffff', '#00ff00', '#ffff00', '#ff0000', '#0000ff'],
-  pastel: ['#fbcfe8', '#fecaca', '#fde68a', '#bbf7d0', '#a7f3d0', '#bfdbfe', '#c7d2fe', '#e9d5ff'],
-  earth: ['#78350f', '#92400e', '#b45309', '#d97706', '#f59e0b', '#fbbf24', '#fcd34d'],
-  monochrome: ['#0f172a', '#1e293b', '#334155', '#475569', '#64748b', '#94a3b8', '#cbd5e1']
-};
+// Chart/style constants (FS_CLASSES, OVERLAY_CLASSES, SELECT_COLOR, MANUAL_COLOR,
+// CHART_MARGIN, CHART_MARGIN_1D, VIS_PALETTES) now live in ../utils/chartStyle.
 
 // ================= RDKit Auto-Loader & Singleton =================
 const _rdkitListeners = new Set();
@@ -112,29 +100,7 @@ const useRdkitReady = () => {
 };
 // =====================================================================
 
-const CollapsibleSection = ({ title, icon, defaultOpen = false, children, headerExtra, className = '' }) => {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
-  return (
-    <div className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-6 break-inside-avoid ${className}`}>
-      <div
-        onClick={() => setIsOpen(!isOpen)}
-        className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left cursor-pointer ${isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'}`}
-      >
-        <div className="flex items-center gap-2 overflow-hidden">
-          {icon && <span className="text-xl shrink-0">{icon}</span>}
-          <h3 className="text-lg font-bold text-slate-800 truncate select-none">{title}</h3>
-        </div>
-        <div className="flex items-center gap-3 shrink-0">
-          {headerExtra && <div onClick={(e) => e.stopPropagation()}>{headerExtra}</div>}
-          <svg className={`w-5 h-5 text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-        </div>
-      </div>
-      {isOpen && <div className="p-6">{children}</div>}
-    </div>
-  );
-};
+// CollapsibleSection now lives in ./ui (single shared definition).
 
 export const ExperimentSetupSection = ({ ctx }) => {
   const { activeTest, updateActiveTest, nmrExperiments } = ctx;
@@ -374,9 +340,8 @@ const SS_CORRECTIONS = {
 const RANDOM_COIL_DB = { A: { HA: 4.35, CA: 52.5, CB: 19.1, CO: 177.8 }, C: { HA: 4.55, CA: 58.2, CB: 28.0, CO: 175.9 }, D: { HA: 4.76, CA: 54.5, CB: 40.8, CO: 177.5 }, E: { HA: 4.37, CA: 56.9, CB: 29.8, CO: 177.6 }, F: { HA: 4.66, CA: 57.9, CB: 39.8, CO: 177.4 }, G: { HA: 3.96, CA: 45.2, CB: null, CO: 174.6 }, H: { HA: 4.76, CA: 55.3, CB: 31.3, CO: 175.3 }, I: { HA: 4.20, CA: 61.3, CB: 38.3, CO: 177.8 }, K: { HA: 4.38, CA: 56.6, CB: 32.4, CO: 177.9 }, L: { HA: 4.47, CA: 55.4, CB: 41.9, CO: 178.9 }, M: { HA: 4.52, CA: 55.5, CB: 32.6, CO: 177.5 }, N: { HA: 4.75, CA: 53.3, CB: 38.6, CO: 176.6 }, P: { HA: 4.44, CA: 63.1, CB: 31.9, CO: 178.1 }, Q: { HA: 4.39, CA: 56.2, CB: 29.5, CO: 177.2 }, R: { HA: 4.51, CA: 56.5, CB: 30.4, CO: 177.2 }, S: { HA: 4.51, CA: 58.4, CB: 63.6, CO: 175.6 }, T: { HA: 4.39, CA: 62.0, CB: 69.6, CO: 175.7 }, V: { HA: 4.16, CA: 62.1, CB: 32.1, CO: 177.4 }, W: { HA: 4.70, CA: 57.4, CB: 29.5, CO: 177.2 }, Y: { HA: 4.66, CA: 57.9, CB: 38.9, CO: 177.2 } };
 
 const SS_META = { C: { label: 'Random coil', color: '#64748b' }, H: { label: 'α-Helix', color: '#8b5cf6' }, E: { label: 'β-Sheet', color: '#f59e0b' } };
-const FORM_META = { A: { label: 'A-form', color: '#0ea5e9' }, B: { label: 'B-form', color: '#22c55e' }, Z: { label: 'Z-form', color: '#f43f5e' } };
-const DNA_FORM_OFFSETS = { B: { "H1'": 0, "H2'": 0, "H3'": 0, "H2''": 0 }, A: { "H1'": 0.2, "H2'": -0.3, "H3'": 0.15, "H2''": -0.25 }, Z: { "H1'": -0.15, "H2'": 0.25, "H3'": -0.1, "H2''": 0.2 } };
 const SUGAR_ANOMER_OFFSETS = { alpha: { H1: 0.25 }, beta: { H1: -0.15 } };
+const DNA_FORM_OFFSETS = { B: { "H1'": 0, "H2'": 0, "H3'": 0, "H2''": 0 }, A: { "H1'": 0.2, "H2'": -0.3, "H3'": 0.15, "H2''": -0.25 }, Z: { "H1'": -0.15, "H2'": 0.25, "H3'": -0.1, "H2''": 0.2 } };
 const RESIDUE_COLORS = ['#3b82f6', '#8b5cf6', '#d946ef', '#ec4899', '#f43f5e', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#6366f1'];
 
 // ================= GENERIC HELPERS =================
@@ -1073,6 +1038,9 @@ const buildLipidStructure = (res, db) => {
 };
 
 const elementsToSVG = (structure, height = 320) => {
+  if (!structure || !Array.isArray(structure.elements)) {
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 40" style="height:80px;max-width:100%;font-family:sans-serif;background:white;"><text x="50" y="24" text-anchor="middle" font-size="11" fill="#94a3b8">No structure available</text></svg>';
+  }
   let inner = '';
   structure.elements.forEach((el) => {
     const w = el.width || 1.8;
@@ -1113,6 +1081,17 @@ export const getPeakLabelText = (payload, format, dim) => {
 };
 // ================= STRUCTURE VIEW / PAINT / TICKS / TOOLTIP / RANGE / ZOOMABLE PLOTS =================
 const StructureSVGView = ({ structure, minWidth, isExpanded, onToggleExpand, selectedKeys, manualKeys = [], onAtomClick, height = '300px' }) => {
+  if (!structure || !Array.isArray(structure.elements)) {
+    return (
+      <div className="flex items-center justify-center bg-slate-50 border border-dashed border-slate-300 rounded-xl p-6 text-center w-full h-full min-h-[150px]">
+        <div>
+          <div className="text-2xl mb-1">🧬</div>
+          <p className="text-xs font-bold text-slate-500">No structure to display yet</p>
+          <p className="text-[11px] text-slate-400 mt-1">Add a sequence to generate the molecular formula.</p>
+        </div>
+      </div>
+    );
+  }
   const clickables = structure.elements.filter((e) => (e.type === 'circle' || e.type === 'text') && e.ri != null && e.keys && e.keys.length && onAtomClick);
   return (
     <>
@@ -1366,7 +1345,7 @@ const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, row
    PEAK LABEL OVERLAYS (1D & 2D)
    Renders peak labels searching for free space to avoid collisions.
    ============================================================================ */
-const PeakLabelOverlay = ({ markers, dom, marginLeft, marginRight, marginTop, marginBottom, labelAreaH }) => {
+const PeakLabelOverlay = ({ markers, dom, marginLeft, marginRight, marginTop, marginBottom }) => {
   const containerRef = useRef(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
 
@@ -1456,105 +1435,6 @@ const PeakLabelOverlay = ({ markers, dom, marginLeft, marginRight, marginTop, ma
   );
 };
 
-const PeakLabelOverlay2D = ({ markers, xDom, yDom, marginLeft, marginRight, marginTop, marginBottom, fontSize = 9 }) => {
-  const containerRef = useRef(null);
-  const [size, setSize] = useState({ w: 0, h: 0 });
-
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const obs = new ResizeObserver(([e]) => {
-      setSize({ w: e.contentRect.width, h: e.contentRect.height });
-    });
-    obs.observe(containerRef.current);
-    return () => obs.disconnect();
-  }, []);
-
-  const { w, h } = size;
-  const plotW = w - marginLeft - marginRight;
-  const plotH = h - marginTop - marginBottom;
-  
-  if (plotW <= 0 || plotH <= 0 || markers.length === 0) {
-    return <div ref={containerRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />;
-  }
-
-  const xLo = Math.min(xDom[0], xDom[1]);
-  const xHi = Math.max(xDom[0], xDom[1]);
-  const yLo = Math.min(yDom[0], yDom[1]);
-  const yHi = Math.max(yDom[0], yDom[1]);
-
-  const ppmToX = (ppm) => marginLeft + plotW * (1 - (ppm - xLo) / (xHi - xLo));
-  const ppmToY = (ppm) => marginTop + plotH * (1 - (ppm - yLo) / (yHi - yLo));
-
-  const visible = markers.filter(m => m.x >= xLo && m.x <= xHi && m.y >= yLo && m.y <= yHi);
-  
-  const FONT_SIZE = fontSize;
-  const LABEL_PAD_X = 4;
-  const LABEL_H = fontSize + 5;
-  const placed = [];
-
-  visible.forEach(m => {
-    const cx = ppmToX(m.x);
-    const cy = ppmToY(m.y);
-    const tw = m.label.length * FONT_SIZE * 0.55 + LABEL_PAD_X * 2;
-    const th = LABEL_H;
-
-    let best = null;
-    let rad = 1;
-    const angles = [Math.PI/4, 7*Math.PI/4, 3*Math.PI/4, 5*Math.PI/4, 0, Math.PI/2, Math.PI, 3*Math.PI/2];
-
-    while(rad < 15 && !best) {
-      for(let a of angles) {
-         const dist = 8 + rad * 12;
-         const px = cx + dist * Math.cos(a);
-         const py = cy + dist * Math.sin(a);
-         
-         const left = px - tw/2;
-         const right = px + tw/2;
-         const top = py - th/2;
-         const bottom = py + th/2;
-
-         if(left < marginLeft || right > w - marginRight || top < marginTop || bottom > h - marginBottom) continue;
-
-         const overlap = placed.some(p => !(right < p.left - 2 || left > p.right + 2 || bottom < p.top - 2 || top > p.bottom + 2));
-
-         if(!overlap) {
-           best = { cx: px, cy: py, left, right, top, bottom };
-           break;
-         }
-      }
-      rad++;
-    }
-
-    if(!best) {
-       best = { cx: cx + 15, cy: cy - 15, left: cx+15-tw/2, right: cx+15+tw/2, top: cy-15-th/2, bottom: cy-15+th/2 };
-    }
-
-    placed.push({ ...best, originX: cx, originY: cy, label: m.label });
-  });
-
-  return (
-    <div ref={containerRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
-      {w > 0 && (
-        <svg width={w} height={h} style={{ position: 'absolute', top: 0, left: 0, overflow: 'visible' }}>
-          <defs>
-            <marker id="pk-arrow-2d" markerWidth="4" markerHeight="4" refX="2" refY="2" orient="auto">
-              <path d="M0,0 L0,4 L4,2 z" fill="#94a3b8" />
-            </marker>
-          </defs>
-          {placed.map((p, i) => (
-            <g key={i}>
-              <line x1={p.cx} y1={p.cy} x2={p.originX} y2={p.originY} stroke="#94a3b8" strokeWidth={1} strokeDasharray="2 2" markerEnd="url(#pk-arrow-2d)" />
-              <rect x={p.left} y={p.top} width={p.right - p.left} height={p.bottom - p.top} rx={2} fill="white" stroke="#cbd5e1" strokeWidth={0.8} opacity={0.85} />
-              <text x={p.cx} y={p.cy + FONT_SIZE/2 - 1} textAnchor="middle" fontSize={FONT_SIZE} fontFamily="sans-serif" fontWeight="bold" fill="#475569">
-                {p.label}
-              </text>
-            </g>
-          ))}
-        </svg>
-      )}
-    </div>
-  );
-};
 // ================= ZOOMABLE PLOTS & SCROLLBARS =================
 const AxisScrollbar = ({ domain, fullDomain, onChange, vertical = false, reversed = true }) => {
   const [min, max] = domain;
@@ -1590,7 +1470,7 @@ const AxisScrollbar = ({ domain, fullDomain, onChange, vertical = false, reverse
 };
 
 const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel, selectedKeys, manualKeys = [], heightPx = 300, fs = 11, aspect = null, simCfg }) => {
-  const { simShowLabels = true, simLabelFormat = 'resNum_code_atom', simLabelDim = 'both', simLabelFontSize = 10 } = simCfg || {};
+  const { simShowLabels = true, simLabelFormat = 'resNum_code_atom', simLabelDim = 'both' } = simCfg || {};
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState(fullDomain);
   const [refAreaLeft, setRefAreaLeft] = useState(null);
@@ -3137,7 +3017,7 @@ const useNmrDerived = (activeTest, ctx = {}) => {
       estCP = +(res.backboneRand.CP + (ssKey !== 'coil' ? corr.c["C'"] || 0 : 0)).toFixed(2);
     }
     return { ...res, estShifts, estUniqueC, estShifts13C, estN, estCP, ssLetter, formLetter: getFormAt(idx) };
-  }), [parsedSeq, moleculeType, ssRaw, formsRaw, dnaFormDefault, sugarAnomer]);
+  }), [parsedSeq, moleculeType, sugarAnomer]);
   
   const simSeq = useMemo(() => {
     const getMan = (idx, name) => {
@@ -3348,152 +3228,6 @@ if (moleculeType === 'protein' && res.simN !== null && res.simN !== undefined &&
 };
 
 // ================= IMPORT HELPERS =================
-const GREEK_MAP = { 'α': 'a', 'β': 'b', 'γ': 'g', 'δ': 'd', 'ε': 'e', 'ζ': 'z', 'η': 'h' };
-const normAtomName = (s) => String(s || '').trim().replace(/\s+/g, '').split('').map((ch) => GREEK_MAP[ch] || ch).join('').toUpperCase();
-const ATOM_ALIASES = { HA: 'Hα', HB: 'Hβ', HG: 'Hγ', HD: 'Hδ', HE: 'Hε', HZ: 'Hζ', CA: 'Cα', CB: 'Cβ', CG: 'Cγ', CD: 'Cδ', CE: 'Cε', CZ: 'Cζ', C: "C'", CO: "C'", N: 'N', H: 'HN', HN: 'HN' };
-const resolveAtom = (res, atomRaw, nameMap = {}) => {
-  if (!res) return null;
-  const pool = [...(res.atoms || [])];
-  if (res.backboneRand) pool.push('N', "C'");
-  Object.keys(res.uniqueCShifts || {}).forEach((c) => pool.push(c));
-  const raw = String(atomRaw || '').trim();
-  const cands = [raw, nameMap[raw], ATOM_ALIASES[normAtomName(raw)], raw.replace(/\s+/g, '')].filter(Boolean);
-  for (const cand of cands) {
-    const hit = pool.find((a) => normAtomName(a) === normAtomName(cand));
-    if (hit) return hit;
-  }
-  return null;
-};
-const buildResLookup = (parsedSeq) => {
-  const map = {};
-  parsedSeq.forEach((r, i) => {
-    map[String(i)] = i;
-    map[String(i + 1)] = i;
-    map[r.id.toLowerCase()] = i;
-    map[(r.char + (i + 1)).toLowerCase()] = i;
-    if (r.code3) map[(r.code3 + (i + 1)).toLowerCase()] = i;
-  });
-  return map;
-};
-const parseTableText = (text) => {
-  const delim = text.includes('\t') ? '\t' : (text.split(';').length > text.split(',').length ? ';' : ',');
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  if (!lines.length) return [];
-  const split = (l) => l.split(delim).map((c) => c.replace(/^"|"$/g, '').trim());
-  const head = split(lines[0]).map((h) => h.toLowerCase());
-  const iRes = head.findIndex((h) => /(res|position|seq|#)/.test(h));
-  const iAtom = head.findIndex((h) => /(atom|nucleus|group|assignment)/.test(h));
-  const iVal = head.findIndex((h) => /(value|shift|ppm|assign|intens|delta)/.test(h));
-  const hasHeader = iAtom >= 0 || iVal >= 0;
-  const rows = (hasHeader ? lines.slice(1) : lines).map(split);
-  return rows.map((r) => ({
-    res: r[hasHeader && iRes >= 0 ? iRes : 0],
-    atom: r[hasHeader ? (iAtom >= 0 ? iAtom : 1) : 1],
-    value: r[hasHeader ? (iVal >= 0 ? iVal : 2) : 2]
-  })).filter((r) => r.atom);
-};
-const importRowsToValues = (rows, parsedSeq, nameMap = {}) => {
-  const lookup = buildResLookup(parsedSeq);
-  const out = {}; const missed = [];
-  rows.forEach((r) => {
-    const ri = lookup[String(r.res).toLowerCase().trim()];
-    if (ri === undefined) { missed.push(r); return; }
-    const atom = resolveAtom(parsedSeq[ri], r.atom, nameMap);
-    if (!atom) { missed.push(r); return; }
-    out[`${ri}-${atom}`] = String(r.value);
-  });
-  return { out, missed };
-};
-const remapAtomKeys = (values, parsedSeq, nameMap = {}) => {
-  const out = {};
-  Object.entries(values || {}).forEach(([k, v]) => {
-    const parts = k.split('-');
-    if (parts.length < 2) return;
-    const ri = Number(parts[0]);
-    const res = parsedSeq[ri];
-    if (!res) return;
-    const atom = resolveAtom(res, parts.slice(1).join('-'), nameMap);
-    if (atom) out[`${ri}-${atom}`] = String(v);
-  });
-  return out;
-};
-const detectSparkyFormat = (text) => {
-  if (/^\s*VARS/im.test(text) || /^\s*FORMAT/im.test(text) || /^\s*S\s+[\d-]/im.test(text)) return 'peaklist';
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
-  let hits = 0;
-  lines.forEach((l) => { if (/^[A-Za-z]+\s?\d+[\s,]+[A-Za-z0-9'″"αβγδεζ]+[\s,]+[-+0-9.]+$/.test(l)) hits++; });
-  return hits > 0 ? 'assignments' : 'peaklist';
-};
-const parseSparkyPeakList = (text) => {
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
-  let vars = null;
-  const raw = [];
-  for (const line of lines) {
-    const up = line.toUpperCase();
-    if (up.startsWith('VARS')) { vars = line.replace(/^VARS/i, '').trim().split(/[\s,]+/).map((v) => v.toUpperCase()); continue; }
-    if (/^(FORMAT|TITL|TITLE|AXES|TYPE|NE|NP|NC|SW|SF|XMIN|XMAX|YMIN|YMAX|XP|YP|FP|HZPPM|DATASET)/.test(up)) continue;
-    const cleaned = line.replace(/^S\s+/i, '');
-    const parts = cleaned.split(/[\s,]+/).filter(Boolean);
-    if (parts.length >= 2) raw.push(parts);
-  }
-  const idx = (names) => (vars ? vars.findIndex((v) => names.includes(v)) : -1);
-  const iXf = idx(['X_PPM', 'X_AXIS', 'W2', 'X', 'PPM2', 'F2_PPM', 'F2']);
-  const iX = iXf >= 0 ? iXf : 0;
-  const iY = idx(['Y_PPM', 'Y_AXIS', 'W1', 'Y', 'PPM1', 'F1_PPM', 'F1']);
-  const iInt = idx(['DATA', 'DATA1', 'INT', 'INTENSITY', 'HEIGHT', 'H']);
-  const iVol = idx(['VOL', 'VOLUME', 'INTEGRAL', 'INTG']);
-  const iAss = idx(['ASS', 'ASSIGNS', 'ASSIGNMENT', 'ASSIGNMENTS', 'ASSIGN', 'LABEL']);
-  const isNum = (s) => s !== undefined && /^[-+0-9.eE]+$/.test(s) && !isNaN(parseFloat(s));
-  return raw.map((parts) => {
-    if (vars) {
-      return {
-        x: parseManual(parts[iX]),
-        y: iY >= 0 ? parseManual(parts[iY]) : null,
-        int: iInt >= 0 ? parseManual(parts[iInt]) : null,
-        vol: iVol >= 0 ? parseManual(parts[iVol]) : null,
-        ass: iAss >= 0 ? parts[iAss] : ''
-      };
-    }
-    const nums = parts.filter(isNum).map(parseFloat);
-    const strs = parts.filter((p) => !isNum(p));
-    return { x: nums[0] ?? null, y: nums[1] ?? null, int: nums[2] ?? null, vol: nums[3] ?? null, ass: strs.join(' ') };
-  }).filter((p) => p.x !== null || p.y !== null);
-};
-const parseAssignmentString = (str) => {
-  const pieces = String(str || '').split(/[,;|]+/).map((s) => s.trim()).filter(Boolean);
-  const out = []; let lastRes = null;
-  pieces.forEach((pc) => {
-    const toks = pc.replace(/[-–]/g, ' ').split(/\s+/).filter(Boolean);
-    if (!toks.length) return;
-    let res = null, atom = null;
-    if (toks.length === 1) {
-      const mm = toks[0].match(/^([A-Za-z]+)(\d+)$/);
-      if (mm) { lastRes = toks[0]; return; }
-      if (lastRes) { res = lastRes; atom = toks[0]; }
-    } else {
-      if (/^[A-Za-z]+\d+$/.test(toks[0])) { res = toks[0]; atom = toks.slice(1).join(' '); lastRes = res; }
-      else if (/^\d+$/.test(toks[0]) && toks.length > 1 && /^[A-Za-z]/.test(toks[1])) { res = toks[0]; atom = toks.slice(1).join(' '); }
-      else if (toks.length > 1 && /^\d+$/.test(toks[1])) { res = toks[0] + toks[1]; atom = toks.slice(2).join(' '); lastRes = res; }
-      else if (lastRes) { res = lastRes; atom = toks.join(' '); }
-    }
-    if (res && atom) out.push({ res, atom });
-  });
-  return out;
-};
-const parseSparkyAssignments = (text) => {
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  const out = [];
-  lines.forEach((line) => {
-    if (line.startsWith('#') || /^(VARS|FORMAT)/i.test(line)) return;
-    let m = line.match(/^([A-Za-z]+[\s-]?\d+)[\s,]+([A-Za-z0-9'″"αβγδεζ]+)[\s,]+([-+0-9.]+)/);
-    if (m) { out.push({ res: m[1], atom: m[2], value: m[3] }); return; }
-    m = line.match(/^([A-Za-z]+\d+[-_][A-Za-z0-9'″"αβγδεζ]+)[\s,]+([-+0-9.]+)/);
-    if (m) { const pieces = m[1].split(/[-_]/); out.push({ res: pieces[0], atom: pieces[1], value: m[2] }); }
-  });
-  return out;
-};
-
-// ================= FITTING ENGINE =================
 const gaussSolve = (A, b) => {
   const n = b.length;
   const M = A.map((r, i) => [...r, b[i]]);
@@ -3615,7 +3349,7 @@ export const fitGeneric = (pts, f0, P0) => {
       const col = gaussSolve(A, e);
       if (col) P_err[i] = Math.sqrt(Math.max(0, col[i] * (cur / df)));
     }
-  } catch (err) { /* ignore */ }
+  } catch { /* ignore */ }
   return { params: P, paramsErr: P_err, r2, se, f: (x) => f(x, P) };
 };
 export const fitLinear = (pts) => {
@@ -3632,7 +3366,7 @@ export const fit4PL = (pts) => {
 };
 export const fitCustomEquation = (expr, pts) => {
   let ast, par;
-  try { ast = parseExpression(expr); par = collectParams(ast); } catch (e) { return null; }
+  try { ast = parseExpression(expr); par = collectParams(ast); } catch { return null; }
   if (!par.length || pts.length < par.length + 1) return null;
   const init = par.map((_, i) => (i === 0 ? pts.reduce((s, p) => s + p.y, 0) / Math.max(1, pts.length) : 1));
   const res = fitGeneric(pts, (x, P) => { const s = { x }; par.forEach((n, i) => s[n] = P[i]); return evalAST(ast, s); }, init);
@@ -3706,24 +3440,6 @@ const useXZoom = (chartRef, dataDomain, margin = CHART_MARGIN) => {
   return { domain: eff, refLo: lo, refHi: hi, onMouseDown, isZoomed: !!domain, reset: () => setDomain(null) };
 };
 
-const useCatZoom = (names) => {
-  const [range, setRange] = useState(null);
-  const [d0, setD0] = useState(null);
-  const [d1, setD1] = useState(null);
-  const idxOf = (label) => names.indexOf(label);
-  const onMouseDown = (st) => { if (st && st.activeLabel != null) { setD0(String(st.activeLabel)); setD1(String(st.activeLabel)); } };
-  const onMouseMove = (st) => { if (d0 != null && st && st.activeLabel != null) setD1(String(st.activeLabel)); };
-  const onMouseUp = (st) => {
-    if (d0 == null) return;
-    const end = st && st.activeLabel != null ? String(st.activeLabel) : d1;
-    const i0 = idxOf(d0), i1 = idxOf(end);
-    setD0(null); setD1(null);
-    if (i0 >= 0 && i1 >= 0 && i0 !== i1) setRange([Math.min(i0, i1), Math.max(i0, i1)]);
-  };
-  const visible = range ? names.slice(range[0], range[1] + 1) : names;
-  return { visible, drag: [d0, d1], onMouseDown, onMouseMove, onMouseUp, reset: () => setRange(null), isZoomed: !!range };
-};
-
 const DEFAULT_CHART_STYLE = {
   height: 380, aspect: 1.8, fontSize: 12, tickStep: '', tickAngle: 0,
   pointStyle: 'circle', ptSize: 5, lineStyle: 'solid', lineThickness: 2,
@@ -3748,18 +3464,6 @@ const catInterval = (stepStr) => {
 const dom = (v) => (v === '' || v == null || parseManual(v) === null ? undefined : parseManual(v));
 const chartBoxStyle = (cfg) => ({ width: '100%', aspectRatio: String(cfg.aspect || 1.8), maxHeight: cfg.height || 380, minHeight: 220 });
 
-const AngledTick = ({ x, y, payload, angle = 0, fontSize = 11, anchor = 'middle' }) => {
-  const a = Number(angle) || 0;
-  return (
-    <g transform={`translate(${x || 0},${y || 0})`}>
-      <text transform={a ? `rotate(${a})` : undefined} textAnchor={a < 0 ? 'end' : a > 0 ? 'start' : anchor}
-        dy={a ? 4 : 12} dx={a ? (a > 0 ? 4 : -4) : 0} fill="#64748b" fontSize={fontSize}>
-        {String(payload.value)}
-      </text>
-    </g>
-  );
-};
-
 const NumField = ({ label, value, onChange, step = 1, w = 'w-full' }) => (
   <div className="flex flex-col gap-1">
     <label className="text-[10px] font-bold text-slate-600">{label}</label>
@@ -3776,60 +3480,6 @@ const TxtField = ({ label, value, onChange, placeholder = '', w = 'w-full' }) =>
   </div>
 );
 
-const SelField = ({ label, value, onChange, options }) => (
-  <div className="flex flex-col gap-1">
-    <label className="text-[10px] font-bold text-slate-600">{label}</label>
-    <select value={value} onChange={(e) => onChange(e.target.value)} className="border border-slate-300 rounded-md p-1.5 text-xs bg-white outline-none focus:border-blue-500">
-      {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-    </select>
-  </div>
-);
-
-const ChartStylePanel = ({ cfg, setCfg, series = [] }) => (
-  <div className="p-4 bg-white border border-slate-300 rounded-xl grid grid-cols-2 lg:grid-cols-4 gap-3 shadow-sm">
-    <NumField label="Font size (px)" value={cfg.fontSize} onChange={(v) => setCfg({ fontSize: v || 12 })} />
-    <NumField label="Chart height (px)" value={cfg.height} onChange={(v) => setCfg({ height: v || 380 })} />
-    <NumField label="Aspect ratio X/Y (W÷H) — rectangularity" step={0.1} value={cfg.aspect} onChange={(v) => setCfg({ aspect: v || 1.8 })} />
-    <TxtField label="Tick step (num: spacing · cat: every N)" value={cfg.tickStep} onChange={(v) => setCfg({ tickStep: v })} placeholder="auto" />
-    <SelField label="Tick label orientation" value={String(cfg.tickAngle || 0)} onChange={(v) => setCfg({ tickAngle: Number(v) })}
-      options={[['0', '0° (horizontal)'], ['-30', '-30°'], ['-45', '-45°'], ['-60', '-60°'], ['-90', '-90° (vertical)'], ['30', '30°'], ['45', '45°'], ['90', '90°']]} />
-    <SelField label="Point style" value={cfg.pointStyle} onChange={(v) => setCfg({ pointStyle: v })}
-      options={[['circle', 'Circle'], ['square', 'Square'], ['triangle', 'Triangle'], ['cross', 'Cross']]} />
-    <NumField label="Point size" value={cfg.ptSize} onChange={(v) => setCfg({ ptSize: v || 5 })} />
-    <SelField label="Line style" value={cfg.lineStyle} onChange={(v) => setCfg({ lineStyle: v })}
-      options={[['solid', 'Solid'], ['dashed', 'Dashed'], ['dotted', 'Dotted']]} />
-    <NumField label="Line thickness" step={0.5} value={cfg.lineThickness} onChange={(v) => setCfg({ lineThickness: v || 2 })} />
-    <SelField label="Legend" value={cfg.legend} onChange={(v) => setCfg({ legend: v })} options={[['top', 'Top'], ['bottom', 'Bottom'], ['none', 'None']]} />
-    <div className="flex flex-col gap-1"> <label className="text-[10px] font-bold text-slate-600">X Min / Max</label>
-      <div className="flex gap-1">
-        <input type="number" placeholder="auto" value={cfg.xMin} onChange={(e) => setCfg({ xMin: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none" />
-        <input type="number" placeholder="auto" value={cfg.xMax} onChange={(e) => setCfg({ xMax: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none" />
-      </div> </div>
-    <div className="flex flex-col gap-1"> <label className="text-[10px] font-bold text-slate-600">Y Min / Max</label>
-      <div className="flex gap-1">
-        <input type="number" placeholder="auto" value={cfg.yMin} onChange={(e) => setCfg({ yMin: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none" />
-        <input type="number" placeholder="auto" value={cfg.yMax} onChange={(e) => setCfg({ yMax: e.target.value })} className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none" />
-      </div> </div>
-    <TxtField label="X axis label" value={cfg.xAxisLabel} onChange={(v) => setCfg({ xAxisLabel: v })} />
-    <TxtField label="Y axis label" value={cfg.yAxisLabel} onChange={(v) => setCfg({ yAxisLabel: v })} />
-    {series.length > 0 && (
-      <div className="col-span-2 lg:col-span-4 pt-2 border-t border-slate-100 flex flex-col gap-2">
-        <label className="text-[10px] font-bold text-slate-600 uppercase">Series colors (points / lines / bars)</label>
-        <div className="flex flex-wrap gap-3">
-          {series.map((s) => (
-            <label key={s.key} className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
-              <input type="color" value={(cfg.colors && cfg.colors[s.key]) || s.color || '#3b82f6'}
-                onChange={(e) => setCfg({ colors: { ...(cfg.colors || {}), [s.key]: e.target.value } })}
-                className="w-6 h-6 rounded cursor-pointer border border-slate-300" />
-              {s.label}
-            </label>
-          ))}
-        </div>
-      </div>
-    )}
-    <p className="col-span-2 lg:col-span-4 text-[9px] text-slate-400">💡 Drag with the mouse over any graph to zoom into a region. Use "Reset Zoom" to restore.</p>
-  </div>
-);
 const getMolWithExplicitHs = (smiles) => {
   if (!window.__RDKit) return null;
   try {
@@ -3996,7 +3646,7 @@ bonds.forEach(([a1, a2]) => {
 setModel({ atoms, bonds, parentName, viewBox: `${-pad} ${-pad} ${finalWidth + 2 * pad} ${finalHeight + 2 * pad}`, scale });
 
 setModel({ atoms, bonds, parentName, viewBox: `${-pad} ${-pad} ${finalWidth + 2 * pad} ${finalHeight + 2 * pad}` });
-    } catch (e) { setModel(null); }
+    } catch { setModel(null); }
   }, [smiles, rdkitReady]);
 
   const keysFor = (idx) => {
@@ -4235,8 +3885,8 @@ const generatedStructure = useMemo(() => {
   
   const focusIdx = activeTest.focusIdx !== undefined ? activeTest.focusIdx : 'ALL';
   const setFocusIdx = (val) => updateActiveTest({ focusIdx: val });
-  const [expandedPanel, setExpandedPanel] = useState(null);
   const [ssBrush, setSSBrush] = useState('H');
+  const [expandedPanel, setExpandedPanel] = useState(null);
   const selectedKeys = getSelectedKeys(activeTest);
   const manualKeys = useMemo(() => getManualKeys(d.shifts), [d.shifts]);
   
@@ -4419,7 +4069,7 @@ const generatedStructure = useMemo(() => {
         <div style={{ display: structureMode === '3d' ? 'block' : 'none' }} aria-hidden={structureMode !== '3d'}>
           {hasOpened3D && (
             <div className="flex flex-col gap-2">
-              <NMRMoleculeViewer key={structureSrc || (generatedStructure ? 'generated' : 'no-structure-src')} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} externalLoading={organicFetch.loading} externalError={organicFetch.error} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '620px' : '520px'} />
+              <NMRMoleculeViewer key={structureSrc || (generatedStructure ? 'generated' : 'no-structure-src')} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} externalLoading={organicFetch.loading} externalError={organicFetch.error} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq) => { if (seq && !activeTest.proteinSequence && ['protein', 'dna', 'rna'].includes(d.moleculeType)) updateActiveTest({ proteinSequence: seq }); }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '620px' : '520px'} />
               <button onClick={downloadPdbFile} className="self-center mt-2 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-xs rounded-lg hover:bg-indigo-100 transition-colors shadow-sm">📥 Download 3D PDB File</button>
             </div>
           )}
@@ -4437,13 +4087,11 @@ const generatedStructure = useMemo(() => {
   );
 };
 
-
 /* ============================================================================
    PEAK LABEL OVERLAY
    Renders peak labels above the spectrum using arrows and free-space placement.
    Uses absolute positioning over the Recharts canvas.
    ============================================================================ */
-
 
 /* ============================================================================
    BRUKER 1R → PPM AXIS  (shared helpers for the NMR page import)
@@ -4627,7 +4275,7 @@ const chartRef = useRef(null);
 
   const seriesList = useMemo(() => {
     const out = [];
-    const defaultColors = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
+    const defaultColors = VIS_PALETTES.default;
     instances.forEach((inst, idx) => {
       const spec = inst.test.nmr1dSpectrum;
       if (!spec || !Array.isArray(spec.xs) || spec.xs.length === 0) return;
@@ -4827,8 +4475,7 @@ export const DataSection = ({ ctx }) => {
   const focusIdx = activeTest.focusIdx !== undefined ? activeTest.focusIdx : 'ALL';
   const [newLayerName, setNewLayerName] = useState('');
   const [newLayerUnit, setNewLayerUnit] = useState('');
-  const [showImport, setShowImport] = useState(false);
-  const [importConfig, setImportConfig] = useState({ testId: '', tableId: '', metric: 'R_s' });
+  const [, setShowImport] = useState(false);
 
   // ---- Bruker 1r import (ppm axis) ----
   const [nmrBrukerDataUrl, setNmrBrukerDataUrl] = useState('');
@@ -4846,6 +4493,11 @@ export const DataSection = ({ ctx }) => {
   const brukerChartRef = useRef(null);
   const nmrBrukerFileRef = useRef(null);
   
+  // Discovered-but-not-yet-imported Bruker spectra (folder import shows a
+  // selection dialog so the user can pick which experiments to import).
+  const [pendingSpectra, setPendingSpectra] = useState([]);
+  const [selectedSpectraIds, setSelectedSpectraIds] = useState([]);
+  
   // Publication Table Export States
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportColumns, setExportColumns] = useState([]);
@@ -4859,7 +4511,7 @@ export const DataSection = ({ ctx }) => {
   const isDragging = useRef(false);
   const [copiedMsg, setCopiedMsg] = useState('');
 
-  const cellInDragSel = (rowIdx, atomName, lk) => {
+  const cellInDragSel = (rowIdx) => {
     if (!dragSel) return false;
     const rows = [dragSel.startRow, dragSel.endRow].sort((a, b) => a - b);
     if (rowIdx < rows[0] || rowIdx > rows[1]) return false;
@@ -4976,98 +4628,6 @@ export const DataSection = ({ ctx }) => {
     updateActiveTest({ chemicalShifts: cs, nmrValues: nv });
   };
   
-  const executeImport = () => {
-      const selectedTest = (ctx.allTests || []).find(t => t.id === importConfig.testId);
-      const table = (selectedTest?.nmrTables || []).find(t => t.id === importConfig.tableId);
-      if (!table) return;
-
-      const layerName = `${table.relaxType}_${importConfig.metric}`;
-      const newLayers = [...(activeTest.parameterLayers || [])];
-      let layer = newLayers.find(l => l.label === layerName);
-      if (!layer) {
-          layer = {
-            key: makeLayerId(),
-            label: layerName,
-            unit: importConfig.metric === 'T_s' ? 's' : (importConfig.metric === 'R_s' ? (table.relaxType === 'DOSY' ? 'm²/s' : 's⁻¹') : ''),
-            source: { testId: selectedTest.id, testName: selectedTest.name, tableId: table.id, metric: importConfig.metric }
-          };
-          newLayers.push(layer);
-      } else {
-          layer = { ...layer, source: { testId: selectedTest.id, testName: selectedTest.name, tableId: table.id, metric: importConfig.metric } };
-          const idx = newLayers.findIndex(l => l.key === layer.key);
-          if (idx >= 0) newLayers[idx] = layer;
-      }
-      
-      const newValues = { ...(activeTest.nmrValues || {}) };
-      newValues[layer.key] = { ...(newValues[layer.key] || {}) };
-      
-      const tableFits = selectedTest.savedFits?.[table.id] || [];
-      let count = 0;
-
-      tableFits.forEach(colFit => {
-          if (!colFit.fit || !colFit.residue) return;
-          const colResRaw = String(colFit.residue).toLowerCase().trim();
-          let matchedKey = null;
-
-          const targetAtomRaw = (table.atom || 'HN');
-          const targetAtomLower = targetAtomRaw.toLowerCase();
-          const targetAtomAlias = (ATOM_ALIASES[normAtomName(targetAtomRaw)] || targetAtomRaw).toLowerCase();
-
-          let colResLower = colResRaw;
-          const dashIdx = colResRaw.lastIndexOf('-');
-          if (dashIdx > 0) {
-              const afterDash = colResRaw.slice(dashIdx + 1);
-              if (afterDash === targetAtomLower || afterDash === targetAtomAlias) {
-                  colResLower = colResRaw.slice(0, dashIdx);
-              }
-          }
-
-          for (const opt of d.atomOptions) {
-              const parts = opt.key.split('-');
-              const rIdx = parseInt(parts[0], 10);
-              const aName = parts.slice(1).join('-');
-              const aNameLower = aName.toLowerCase();
-              const res = d.parsedSeq[rIdx];
-              if (!res) continue;
-              const rId = res.id?.toLowerCase() || '';
-              const rShort = `${res.char?.toLowerCase() || ''}${rIdx + 1}`;
-              const rNum = String(rIdx + 1);
-
-              const atomMatches = aNameLower === targetAtomLower || aNameLower === targetAtomAlias;
-
-              if (!atomMatches) continue;
-
-              if (colResLower === rId || colResLower === rShort || colResLower === rNum) {
-                  matchedKey = opt.key; break;
-              } else if (colResLower === `${rId} ${aNameLower}` || colResLower === `${rShort} ${aNameLower}`) {
-                  matchedKey = opt.key; break;
-              } else if (aNameLower === colResLower && d.parsedSeq.length === 1) {
-                  matchedKey = opt.key; break;
-              }
-          }
-
-          if (matchedKey) {
-              let val = null;
-              if (importConfig.metric === 'R_s') val = colFit.fit.R_s ?? colFit.fit.R ?? colFit.fit.rate;
-              else if (importConfig.metric === 'T_s') val = colFit.fit.T_s ?? colFit.fit.T ?? colFit.fit.time;
-              else if (importConfig.metric === 'error') val = selectedTest.manualErrors?.[table.id]?.[colFit.residue] ?? colFit.fit.seR_s ?? colFit.fit.seR ?? colFit.fit.error;
-              if (val !== '' && val !== undefined && val !== null && !Number.isNaN(val)) {
-                  let formattedVal = val;
-                  if (typeof val === 'number') {
-                      formattedVal = (Math.abs(val) < 0.001 && val !== 0) || Math.abs(val) > 10000 ? val.toExponential(4) : val.toFixed(4);
-                  }
-                  newValues[layer.key][matchedKey] = formattedVal;
-                  count++;
-              }
-          }
-      });
-      
-      updateActiveTest({ parameterLayers: newLayers, nmrValues: newValues });
-      if (!visibleLayers.includes(layer.key)) setVisibleLayers([...visibleLayers, layer.key]);
-      setShowImport(false);
-      alert(`Imported ${count} values from "${selectedTest.name}" successfully.`);
-  };
-
   const openExportModal = () => {
     setExportColumns([...visibleLayers]);
     setShowExportModal(true);
@@ -5094,7 +4654,7 @@ export const DataSection = ({ ctx }) => {
       document.execCommand('copy');
       window.getSelection().removeAllRanges();
       alert('Table copied to clipboard!');
-    } catch (err) {
+    } catch {
       alert('Failed to copy automatically. Please select the table manually and press Ctrl+C.');
     }
   };
@@ -5208,28 +4768,43 @@ export const DataSection = ({ ctx }) => {
       
       if (results.length === 0) throw new Error("Could not parse any valid 1r spectra.");
 
-      applyNmrBruker(results[0], results[0].filename);
-
-      if (results.length > 1 && ctx.setTests) {
-         ctx.setTests(prev => {
-           const newTests = [];
-           for (let i = 1; i < results.length; i++) {
-             const p = results[i];
-             const cloned = JSON.parse(JSON.stringify(activeTest));
-             cloned.id = 't' + Date.now() + i + Math.random().toString(36).substring(2,5);
-             cloned.instanceName = p.filename;
-             cloned.nmr1dSpectrum = { xs: p.xs, ys: p.ys, meta: p.meta, title: p.meta.title || 'Imported 1r' };
-             newTests.push(cloned);
-           }
-           return [...prev, ...newTests];
-         });
-      }
-      setNmrBrukerMsg(`✅ Successfully imported ${results.length} spectrum/spectra.`);
+      // Show a selection dialog so the user can pick which experiments to import.
+      const pending = results.map((parsed, i) => ({ id: 'p_' + Date.now() + '_' + i, parsed, filename: parsed.filename }));
+      setPendingSpectra(pending);
+      setSelectedSpectraIds(pending.map(p => p.id));
+      setNmrBrukerMsg(`Found ${results.length} 1D spectrum/spectra — select which experiments to import.`);
     } catch (err) {
       setNmrBrukerMsg(`⚠️ ${err.message}`);
     }
     setNmrBrukerBusy(false);
     if (nmrBrukerFileRef.current) nmrBrukerFileRef.current.value = '';
+  };
+
+  // Import only the experiments the user ticked in the selection dialog.
+  const importSelectedSpectra = () => {
+    const selected = pendingSpectra.filter(p => selectedSpectraIds.includes(p.id));
+    if (!selected.length) { setNmrBrukerMsg('⚠️ Select at least one spectrum to import.'); return; }
+
+    applyNmrBruker(selected[0].parsed, selected[0].filename);
+
+    if (selected.length > 1 && ctx.setTests) {
+       ctx.setTests(prev => {
+         const newTests = [];
+         for (let i = 1; i < selected.length; i++) {
+           const p = selected[i].parsed;
+           const cloned = JSON.parse(JSON.stringify(activeTest));
+           cloned.id = 't' + Date.now() + i + Math.random().toString(36).substring(2,5);
+           cloned.instanceName = selected[i].filename;
+           cloned.nmr1dSpectrum = { xs: p.xs, ys: p.ys, meta: p.meta, title: p.meta.title || 'Imported 1r' };
+           newTests.push(cloned);
+         }
+         return [...prev, ...newTests];
+       });
+    }
+
+    setPendingSpectra([]);
+    setSelectedSpectraIds([]);
+    setNmrBrukerMsg(`✅ Imported ${selected.length} spectrum/spectra.`);
   };
 
   const importFromUrl = async () => {
@@ -5243,7 +4818,7 @@ export const DataSection = ({ ctx }) => {
         try { acqusText = await (await fetch(_nmrResolveDrive(nmrBrukerAcqusUrl))).text(); } catch { acqusText = ''; }
       }
       applyNmrBruker(importBruker1rPpm({ dataBuffer: await res.arrayBuffer(), acqusText, manualSWppm: parseManual(nmrBrukerSwPpm), manualO1ppm: parseManual(nmrBrukerO1Ppm)||0 }), null);
-    } catch(e) { setNmrBrukerMsg('\u26a0\ufe0f Fetch failed: ' + e.message); }
+    } catch (e) { setNmrBrukerMsg('\u26a0\ufe0f Fetch failed: ' + e.message); }
     setNmrBrukerBusy(false);
   };
 
@@ -5591,7 +5166,7 @@ const dom = brukerZoomDom || xFull;
             </label>
             
             <span className="text-[9px] text-sky-700 mt-1 max-w-sm">
-              This will automatically locate the 1r file(s) and their corresponding acqus parameter files, instantly importing the correct ppm axis. If multiple experiments are selected, they will automatically be loaded into separate condition tabs.
+              This will automatically locate the 1r file(s) and their corresponding acqus parameter files, instantly importing the correct ppm axis. After scanning you can choose exactly which experiments to load — they will be imported into separate condition tabs.
             </span>
           </div>
 
@@ -5625,6 +5200,71 @@ const dom = brukerZoomDom || xFull;
 
         {nmrBrukerMsg && <span className="text-xs font-bold text-sky-900">{nmrBrukerMsg}</span>}
       </div>
+
+      {/* Experiment selection dialog for folder import */}
+      {pendingSpectra.length > 0 && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[85vh]">
+            <div className="bg-gradient-to-r from-sky-600 to-blue-700 px-5 py-4 text-white rounded-t-2xl shrink-0">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="font-black text-lg">Select experiments to import</h3>
+                  <p className="text-sky-100 text-xs mt-0.5">{pendingSpectra.length} 1D spectrum/spectra found in the selected dataset folder</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setPendingSpectra([]); setSelectedSpectraIds([]); setNmrBrukerMsg('Import cancelled.'); }}
+                  className="text-white/70 hover:text-white text-2xl leading-none font-bold shrink-0"
+                  title="Cancel import"
+                >
+                  &times;
+                </button>
+              </div>
+            </div>
+
+            <div className="p-4 flex flex-col gap-2 overflow-y-auto custom-scrollbar flex-1">
+              <div className="flex gap-2 items-center justify-between px-1 mb-1 shrink-0">
+                <span className="text-xs font-bold text-slate-500 uppercase">Tick the experiments to load</span>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setSelectedSpectraIds(pendingSpectra.map(p => p.id))} className="text-[11px] font-bold text-sky-700 bg-sky-50 border border-sky-200 px-2 py-1 rounded hover:bg-sky-100">Select all</button>
+                  <button type="button" onClick={() => setSelectedSpectraIds([])} className="text-[11px] font-bold text-slate-500 bg-slate-50 border border-slate-200 px-2 py-1 rounded hover:bg-slate-100">Select none</button>
+                </div>
+              </div>
+              {pendingSpectra.map(p => {
+                const checked = selectedSpectraIds.includes(p.id);
+                return (
+                  <label key={p.id} className={`flex items-center gap-3 border rounded-xl px-3 py-2.5 cursor-pointer transition-colors ${checked ? 'bg-sky-50 border-sky-300' : 'bg-white border-slate-200 hover:bg-slate-50'}`}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) => {
+                        const id = p.id;
+                        setSelectedSpectraIds(prev => (e.target.checked ? [...prev, id] : prev.filter(x => x !== id)));
+                      }}
+                      className="w-4 h-4 accent-sky-600 shrink-0"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-bold text-slate-800 truncate">{p.filename}</div>
+                      <div className="text-[11px] text-slate-500 truncate">
+                        {(p.parsed.nPoints != null ? `${p.parsed.nPoints} pts` : `${p.parsed.xs ? p.parsed.xs.length : 0} pts`)}
+                        {p.parsed.meta?.title ? ` · ${p.parsed.meta.title}` : ''}
+                        {p.parsed.meta?.nucleus ? ` · ${p.parsed.meta.nucleus}` : ''}
+                      </div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+
+            <div className="px-4 py-3 border-t border-slate-200 flex justify-between items-center gap-3 bg-slate-50 rounded-b-2xl shrink-0">
+              <span className="text-[11px] text-slate-500">{selectedSpectraIds.length} of {pendingSpectra.length} selected</span>
+              <button type="button" onClick={importSelectedSpectra} disabled={!selectedSpectraIds.length} className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-bold px-5 py-2 rounded-lg text-sm shadow-sm">
+                📥 Import selected ({selectedSpectraIds.length})
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Export Publication Table Modal */}
       {showExportModal && (
@@ -5760,7 +5400,7 @@ const dom = brukerZoomDom || xFull;
                        ? resAtoms.filter(o => o.label.includes(' HN ') || o.label.includes(' N ') || o.label.includes(' Cα ') || o.label.includes(' Cβ ') || o.label.includes(" C' "))
                        : resAtoms;
                        
-                    return displayAtoms.map((opt, aIdx) => {
+                    return displayAtoms.map((opt) => {
                       const rowHasData = exportColumns.some(lk => {
                         const valMap = lk === 'cs' ? activeTest.chemicalShifts : (d.allLayerValues[lk] || {});
                         const val = valMap?.[opt.key];
@@ -5806,9 +5446,8 @@ const dom = brukerZoomDom || xFull;
   );
 };
 
-
 // ================= SECONDARY SHIFTS SECTION =================
-const SCS_INST_COLORS = ['#3b82f6','#8b5cf6','#f59e0b','#22c55e','#ef4444','#0ea5e9','#ec4899','#14b8a6'];
+const SCS_INST_COLORS = PER_ATOM_COLORS.slice(0, 8);
 
 const computeSCSRows = (estSeq, cs, focusIdx) =>
   estSeq.map((res, idx) => {
@@ -6086,7 +5725,7 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
     });
     pts.sort((a, b) => (a.x ?? 0) - (b.x ?? 0));
     return { key: ak, label: opt ? opt.label : ak, pts };
-  }), [plot.atoms, plot.layerKey, d.instances, d.atomOptions, plot.excluded, effXField, plot.yField, used, activeTest.nmrValues, plot.excludeNonComparable, comparableInfo]);
+  }), [plot.atoms, plot.layerKey, d.instances, d.atomOptions, plot.excluded, effXField, plot.yField, used]);
 
   const colorOf = (s) => seriesColor(cfg, s.key, series.findIndex((q) => q.key === s.key));
   const includedPts = (s) => s.pts.filter((p) => !p.excluded);
@@ -6109,7 +5748,7 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
     const out = {};
     series.forEach((s) => { out[s.key] = fitOf(s); });
     return out;
-  }, [series, plot.fitEnabled, plot.fitModel, plot.customExpr, plot.chartType, plot.manualSD, plot.useFixedSD, plot.fixedSDStr]);
+  }, [series]);
   const setManualSD = (sKey, instId, val) => {
     const inner = { ...(plot.manualSD[sKey] || {}) };
     const n = parseManual(val);
@@ -6562,7 +6201,7 @@ const defaultPlotCfg = (n) => ({
 
 // ================= PER ATOM CHART PANEL =================
 // Configurable grouped bar chart: user picks a parameter layer + atoms → bars per residue
-const PAP_COLORS = ['#3b82f6','#8b5cf6','#f59e0b','#22c55e','#ef4444','#0ea5e9','#ec4899','#14b8a6','#f97316','#6366f1'];
+const PAP_COLORS = PER_ATOM_COLORS;
 const makePapPresetId = () => `papPreset_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
 const PerAtomChartPanel = ({ ctx, d, chart, updateChart, removeChart }) => {
@@ -6647,7 +6286,6 @@ const PerAtomChartPanel = ({ ctx, d, chart, updateChart, removeChart }) => {
       </div>
 
       {showCfg && <SharedChartStylePanel cfg={cfg} setCfg={setCfg} series={[]} showHeightSlider={false} />}
-
 
       {/* Atom picker */}
       <div className="flex flex-col gap-2">
@@ -6848,7 +6486,6 @@ export const SimulationsSection = ({ ctx }) => {
   const [expandedPanel, setExpandedPanel] = useState(null);
   const [showCfg, setShowCfg] = useState(false);
   const focusIdx = activeTest.focusIdx !== undefined ? activeTest.focusIdx : 'ALL';
-  const setFocusIdx = (val) => updateActiveTest({ focusIdx: val });
   const selectedKeys = getSelectedKeys(activeTest);
   const manualKeys = useMemo(() => getManualKeys(d.shifts), [d.shifts]);
   const simCfg = { fontSize: 11, h1D: 300, aspect2D: 1, simShowLabels: false, simLabelFormat: 'resNum_code_atom', simLabelDim: 'both', simLabelFontSize: 10, ...(activeTest.simChartCfg || {}) };
@@ -6996,7 +6633,6 @@ export const PerAtomPlot = PerAtomPlotSection;
 export { OneDSpectrumPlot, SpectrumPlot, HSQCPlot, useNmrDerived };
 export { CustomXTick1H, CustomYTick1H, CustomXTick13C, CustomYTick13C };
 export { TICKS_1H, TICKS_13C, TICKS_15N };
-
 
 // ================= NOTEBOOK EXTRA =================
 export const NotebookExtra = ({ ctx, checkId }) => {

@@ -1,30 +1,10 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import {
-  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Legend, Cell, ScatterChart, Scatter, ReferenceArea
-} from 'recharts';
-import { ChartControlBar, SharedChartStylePanel, useXZoom } from './SharedAnalysisTools';
+import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, ScatterChart, Scatter} from 'recharts';
+import {ChartControlBar, SharedChartStylePanel} from './SharedAnalysisTools';
 
 import NMRMoleculeViewer from './NMRMoleculeViewer';
-import {
-  AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB,
-  SS_META, FORM_META, RESIDUE_COLORS,
-  SELECT_COLOR, MANUAL_COLOR,
-  buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure,
-  elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip,
-  getSelectedKeys, selectionLabel, getManualKeys,
+import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_PROGRAMS, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, getScoringFunctions, getSearchAlgorithms, parseDockingFile, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, DOCK_CHART_MARGIN} from './DockingData';
 
-  DOCKING_PROGRAMS, DOCKING_METRICS, DOCKING_FILE_FORMATS, DOCKING_PIPELINE_STAGES,
-  parseDockingValue, getProgramInfo, getProgramVersions, getScoringFunctions, getSearchAlgorithms,
-  parseDockingFile, normalizeDockingUrl, detectDockingFormat,
-  getDockingInstances, getDockingActiveInstance, getDockingLayers,
-  getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue,
-  generateDockingPoses, generateHADDOCKPoses,
-  DEFAULT_DOCKING_CHART_STYLE, dockSeriesColor, dockChartBoxStyle,
-  DOCK_CHART_MARGIN
-} from './DockingData';
-
-const localFileCache = new Map();
 
 /* ============================================================================
    DockingSections — Docking page content sections (mirrors MDSections.jsx)
@@ -426,22 +406,44 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
                 selectedKeys={selectedKeys}
                 manualKeys={manualKeys}
                 onAtomClick={handleAtomClick}
+                atomRenames={activeTest.atomRenames || {}}
+                onAtomRenames={(map) => updateActiveTest({ atomRenames: map })}
+                resRenumber={activeTest.resRenumber || {}}
+                onResRenumber={(map) => updateActiveTest({ resRenumber: map })}
+                onStructureSequence={(seq) => {
+                  if (seq && !activeTest.proteinSequence && ['protein', 'dna', 'rna'].includes(d.moleculeType)) {
+                    updateActiveTest({ proteinSequence: seq });
+                  }
+                }}
                 height="480px"
               />
             )}
           </div>
 
           <div style={{ display: structureMode === '2d' ? 'block' : 'none' }}>
-            <StructureSVGView
-              structure={d.structure}
-              minWidth={d.moleculeType === 'protein' && d.parsedSeq.length > 3 ? `${d.parsedSeq.length * 120}px` : '100%'}
-              isExpanded={expandedPanel === 'formula'}
-              onToggleExpand={() => setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')}
-              selectedKeys={selectedKeys}
-              manualKeys={manualKeys}
-              onAtomClick={handleAtomClick}
-              height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? `${Math.max(360, d.parsedSeq.length * 250 + 120)}px` : '300px'}
-            />
+            {d.structure ? (
+              <StructureSVGView
+                structure={d.structure}
+                minWidth={d.moleculeType === 'protein' && d.parsedSeq.length > 3 ? `${d.parsedSeq.length * 120}px` : '100%'}
+                isExpanded={expandedPanel === 'formula'}
+                onToggleExpand={() => setExpandedPanel(expandedPanel === 'formula' ? null : 'formula')}
+                selectedKeys={selectedKeys}
+                manualKeys={manualKeys}
+                onAtomClick={handleAtomClick}
+                height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? `${Math.max(360, d.parsedSeq.length * 250 + 120)}px` : '300px'}
+              />
+            ) : (
+              <div className="flex items-center justify-center bg-slate-50 border border-dashed border-slate-300 rounded-xl p-6 text-center w-full">
+                <div>
+                  <div className="text-2xl mb-1">🧬</div>
+                  <p className="text-xs font-bold text-slate-500">No structure to display yet</p>
+                  <p className="text-[11px] text-slate-400 mt-1 max-w-md">
+                    Enter a receptor sequence below (or select a compound that has sequence / SMILES metadata)
+                    to generate the 2D formula.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
     </div>
@@ -449,7 +451,7 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
 };
 
 // ================= 2) DATA (Docking results table + import) =================
-const DockingImportPanel = ({ ctx, d, onPoses }) => {
+const DockingImportPanel = ({ ctx, onPoses }) => {
   const { updateActiveTest } = ctx;
   const [pasteText, setPasteText] = useState('');
   const [report, setReport] = useState(null);

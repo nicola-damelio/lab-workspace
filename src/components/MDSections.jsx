@@ -2,42 +2,23 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, ReferenceArea
 } from 'recharts';
-import { ChartControlBar, SharedChartStylePanel, useXZoom, ChartPanel, CHART_FS_CLASSES, useChartFsHeight } from './SharedAnalysisTools';
+import { ChartControlBar, SharedChartStylePanel, useXZoom, ChartPanel, CHART_FS_CLASSES, useChartFsHeight, AngledTick } from './SharedAnalysisTools';
 import { parseSimulationParameters } from './MDData';
 import {
   CONTACT_DEFAULTS, parseTopology, computeContactRDF, demoFrames,
   resolveFrameSource, AWK_PALETTE, contactSeriesStyle
 } from './MDMembraneContacts';
 import { computeOrderAndDensity, parseChargeMap } from './MDMembraneProfiles';
+import { computeMDTrajectoryAnalysis, parseEnergyFile } from '../utils/mdAnalysis';
 import html2canvas from 'html2canvas';
+import { PER_ATOM_COLORS } from '../utils/chartStyle';
 export { parseSimulationParameters };   
 import NMRMoleculeViewer from './NMRMoleculeViewer';
 import {
   computeSecondaryStructure, SS_CODE_ORDER, SS_COLORS, SS_GROUP_COLORS
 } from './MDSecondaryStructure';
 
-import {
-  AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB,
-  SS_META, FORM_META, RESIDUE_COLORS,
-  SELECT_COLOR, MANUAL_COLOR, FS_CLASSES, OVERLAY_CLASSES,
-  parseManual, buildKeys, getCarbonName,
-  buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure,
-  elementsToSVG,
-  StructureSVGView, CollapsibleSection, SequencePaintStrip,
-  getSelectedKeys, selectionLabel, getManualKeys,
-
-  FORCE_FIELDS, FF_ATOM_TYPES, WATER_MODELS, MD_ENSEMBLES, MD_INTEGRATORS,
-  MD_THERMOSTATS, MD_BAROSTATS, MD_ANALYSIS_METRICS, TRAJECTORY_FORMATS, MD_SIMULATION_PHASES,
-  parseMDValue, getForceFieldInfo, getFFVersions, getWaterModelInfo,
-  getFFBackboneAtoms, findFFAtom,
-  normalizeTrajectoryUrl, detectTrajectoryFormat, getTrajectoryFormatInfo,
-  getMDInstances, getMDActiveInstance, getMDLayers, getMDActiveLayerKey, getMDLayerValues,
-  writeMDCellValue,
-  generateRMSDData, generateRMSFData, generateRgData, generateSASAData,
-  generateEnergyData, generateTemperatureData,
-  DEFAULT_MD_CHART_STYLE, mdLineDash, mdSeriesColor, mdDom, mdMakeTicks, mdChartBoxStyle,
-  MD_CHART_MARGIN
-} from './MDData';
+import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, FORM_META, RESIDUE_COLORS, buildKeys, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, SequencePaintStrip, getSelectedKeys, selectionLabel, getManualKeys, FORCE_FIELDS, WATER_MODELS, MD_ENSEMBLES, MD_INTEGRATORS, MD_THERMOSTATS, MD_BAROSTATS, TRAJECTORY_FORMATS, parseMDValue, getForceFieldInfo, getFFVersions, getWaterModelInfo, getFFBackboneAtoms, normalizeTrajectoryUrl, detectTrajectoryFormat, getTrajectoryFormatInfo, getMDInstances, getMDActiveInstance, getMDLayers, getMDActiveLayerKey, getMDLayerValues, writeMDCellValue, MD_ANALYSIS_LAYERS, generateRMSDData, generateRMSFData, generateRgData, generateSASAData, generateEnergyData, DEFAULT_MD_CHART_STYLE, mdLineDash, mdDom} from './MDData';
 
 // Cache to retain local File objects when switching tabs within the same session
 const localFileCache = new Map();
@@ -58,7 +39,7 @@ const captureChartToDataUrl = async (id) => {
       imageTimeout: 15000
     });
     return canvas.toDataURL('image/png');
-  } catch (e) {
+  } catch {
     return null;
   }
 };
@@ -100,7 +81,7 @@ if (_rdkitMDStatus === 'loading') {
       };
       document.head.appendChild(s);
     }
-  } catch (e) { /* RDKit stays unavailable — fallback image will be shown */ }
+  } catch { /* RDKit stays unavailable — fallback image will be shown */ }
   let _att = 0;
   const _iv = setInterval(() => {
     _att++;
@@ -246,14 +227,14 @@ const useMDDerived = (activeTest, ctx = {}) => {
         ffAtoms
       };
     }).filter(Boolean);
-  }, [seq, moleculeType, activeTest.sugarChoice, activeTest.lipidChoice, ffKey, DB, isPolymer, ffBackbone]);
+  }, [seq, moleculeType, activeTest.sugarChoice, activeTest.lipidChoice, DB, isPolymer, ffBackbone]);
 
   // ---- secondary-structure / form annotated sequence ----
   const estSeq = useMemo(() => parsedSeq.map((res, idx) => ({
     ...res,
     ssLetter: moleculeType === 'protein' ? getSSAt(idx) : 'C',
     formLetter: getFormAt(idx)
-  })), [parsedSeq, moleculeType, ssRaw, formsRaw, dnaFormDefault]);
+  })), [parsedSeq, moleculeType]);
 
   // ---- 2D structure ----
   const structure = useMemo(() => {
@@ -278,7 +259,7 @@ const useMDDerived = (activeTest, ctx = {}) => {
           mol.delete();
           atomNameList.forEach(name => opts.push({ key: `0-${name}`, label: `ORG1 ${name}` }));
         }
-      } catch (e) { /* RDKit not ready or parse error — opts stays empty */ }
+      } catch { /* RDKit not ready or parse error — opts stays empty */ }
     } else {
       estSeq.forEach((res, idx) => {
         (res.ffAtoms || []).forEach((a) => opts.push({ key: `${idx}-${a.atom}`, label: `${res.id} ${a.atom}` }));
@@ -294,13 +275,27 @@ const useMDDerived = (activeTest, ctx = {}) => {
   const activeLayerKey = getMDActiveLayerKey(activeTest);
   const activeValues = getMDLayerValues(activeInstance, activeLayerKey);
 
+  // Pseudo-atoms created by the analyses (system-level Rg/SASA/RMSD, SCD
+  // carbons, …), so they become selectable in the Per-Atom and Condition plots.
+  const analysisAtoms = useMemo(() => {
+    const seen = new Map();
+    MD_ANALYSIS_LAYERS.forEach((l) => {
+      const vals = getMDLayerValues(activeInstance, l.key);
+      Object.keys(vals || {}).forEach((k) => {
+        if (!/^\d+-/.test(k)) return;
+        seen.set(k, k.replace(/^\d+-/, ''));
+      });
+    });
+    return [...seen.entries()].map(([key, label]) => ({ key, label: `0 ${label}` }));
+  }, [activeInstance]);
+
   return {
     moleculeType, seq, validChars, isPolymer, DB, typeLabel,
     ffKey, ffVersion, ffInfo, ffBackbone, waterModel, ensemble, integrator,
     thermostat, barostat, timestep, nSteps, temperature, pressure,
     trajectoryUrl, trajectoryFormat,
     getSSAt, getFormAt, sugarConf, sugarAnomer, lipidDB, dnaFormDefault,
-    parsedSeq, estSeq, structure, atomOptions,
+    parsedSeq, estSeq, structure, atomOptions: [...atomOptions, ...analysisAtoms],
     instances, activeInstance, layers, activeLayerKey, activeValues,
     metaSeq
   };
@@ -408,7 +403,7 @@ const OrganicViewer = ({ smiles, selectedKeys, onAtomClick }) => {
                 
                 setSvg(mol.get_svg_with_highlights(details));
                 mol.delete();
-            } catch(e) { setSvg(''); }
+            } catch { setSvg(''); }
         } else { setSvg(''); }
     }, [smiles, selectedKeys, rdkitReady]);
 
@@ -435,7 +430,7 @@ const OrganicViewer = ({ smiles, selectedKeys, onAtomClick }) => {
                     }
                 };
             });
-        } catch (e) {}
+        } catch {}
     };
 
     useEffect(() => { attachListeners(svgRef.current); }, [svg, onAtomClick]);
@@ -848,6 +843,13 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   atomNameMap={atomNameMap}
   atomRenames={activeTest.atomRenames || {}}
   onAtomRenames={(map) => updateActiveTest({ atomRenames: map })}
+  resRenumber={activeTest.resRenumber || {}}
+  onResRenumber={(map) => updateActiveTest({ resRenumber: map })}
+  onStructureSequence={(seq) => {
+    if (seq && !activeTest.proteinSequence && ['protein', 'dna', 'rna'].includes(d.moleculeType)) {
+      updateActiveTest({ proteinSequence: seq });
+    }
+  }}
   labelMode={atomLabelMode}
   height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '620px' : '520px'}
 />
@@ -1274,7 +1276,7 @@ const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color,
           {chartType === 'bar' ? (
             <BarChart data={data} margin={MD_CHART_M_ZOOM}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey={xKey} tick={{ fontSize: fSize }} label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fSize + 1 }} />
+              <XAxis dataKey={xKey} interval={0} tick={<AngledTick angle={cfg.tickAngle} fontSize={fSize} />} tickMargin={10} label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fSize + 1 }} />
               <YAxis width={70} tick={{ fontSize: fSize }} label={{ value: yLabel, angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fSize + 1 }} />
               <Tooltip />
               <Bar dataKey={dataKey} isAnimationActive={false}>
@@ -1284,7 +1286,7 @@ const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color,
           ) : (
             <LineChart data={data} margin={MD_CHART_M_ZOOM}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey={xKey} type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow tick={{ fontSize: fSize }}
+              <XAxis dataKey={xKey} type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow tick={<AngledTick angle={cfg.tickAngle} fontSize={fSize} />} tickMargin={10}
                 label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fSize + 1 }} />
               <YAxis type="number" width={70} domain={[mdDom(cfg.yMin) ?? 'auto', mdDom(cfg.yMax) ?? 'auto']} tick={{ fontSize: fSize }}
                 label={{ value: yLabel, angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fSize + 1 }} />
@@ -1302,9 +1304,9 @@ const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color,
 
 
 // ================= MD PER ATOM PLOT SECTION =================
-const MD_PAP_COLORS = ['#3b82f6','#8b5cf6','#f59e0b','#22c55e','#ef4444','#0ea5e9','#ec4899','#14b8a6','#f97316','#6366f1'];
+const MD_PAP_COLORS = PER_ATOM_COLORS;
 
-const MDPerAtomChartPanel = ({ d, chart, updateChart, removeChart, activeTest }) => {
+const MDPerAtomChartPanel = ({ d, chart, updateChart, removeChart }) => {
   const [atomSearch, setAtomSearch] = useState('');
   const [showCfg, setShowCfg] = useState(false);
   const [isFs, setIsFs] = useState(false);
@@ -1440,8 +1442,6 @@ const MD_COND_FIELDS = [
   { key: 'timestep', label: 'Timestep (fs)' },
   { key: 'nSteps', label: 'Steps' },
 ];
-
-const getMDCondValue = (inst, key) => inst && inst.values ? (inst.values[key] ?? '') : '';
 
 const MDConditionPlotPanel = ({ d, chart, updateChart, removeChart, activeTest }) => {
   const [atomSearch, setAtomSearch] = useState('');
@@ -1588,6 +1588,79 @@ export const MDAnalysisSection = ({ ctx }) => {
   const [importedData, setImportedData] = useState(null);
   const [importError, setImportError] = useState('');
 
+  // NEW: State for data CALCULATED from the loaded trajectory
+  const [calcData, setCalcData] = useState(null);
+  const [calc, setCalc] = useState({ state: 'idle', msg: '', done: 0, total: 0, error: '' });
+  const [calcOpts, setCalcOpts] = useState({ stride: 5, maxFrames: 300, sasa: true });
+  const [energyData, setEnergyData] = useState(null);
+  const [energyFileName, setEnergyFileName] = useState('');
+
+  const handleCalculateFromTrajectory = async () => {
+    setCalc({ state: 'running', msg: 'Resolving topology…', done: 0, total: 0, error: '' });
+    try {
+      const tl = await resolveMDTopology(activeTest);
+      if (!tl) throw new Error('Upload the simulation topology (.gro/.pdb — same atom order as the trajectory). Use "Choose PDB/CIF" in the 3D viewer, or a PDB ID / URL.');
+      const { topo } = tl;
+      const jobs = await buildMDTrajectoryJobs(activeTest, []);
+      if (jobs.length === 0) throw new Error('Load a trajectory (.xtc/.trr/.dcd) in the 3D viewer first.');
+      const src = await resolveFrameSource(jobs[0].file, {
+        topoAtoms: topo.atoms, topologyBox: topo.box,
+        onStatus: (m) => setCalc((s) => ({ ...s, msg: m })),
+      });
+      if (!src) throw new Error(`"${jobs[0].file.name}": unsupported format, or the topology could not anchor it (XTC/DCD need the exact matching topology; TRR works standalone).`);
+      const res = await computeMDTrajectoryAnalysis(
+        topo, src.frames,
+        { stride: calcOpts.stride, maxFrames: calcOpts.maxFrames, doSasa: calcOpts.sasa, doRg: true, renumber: activeTest.resRenumber || {} },
+        (p) => setCalc((s) => ({ ...s, done: p.done, total: p.total, msg: p.msg }))
+      );
+      setCalcData(res);
+      // Populate the per-atom table so Per-Atom and Condition plots can use the
+      // calculated parameters (RMSF per residue + system-level Rg/SASA/RMSD).
+      const layerCells = {};
+      if (Array.isArray(res.rmsf)) {
+        const cells = {};
+        res.rmsf.forEach((row, r) => {
+          ['N', 'CA', 'C', 'O'].forEach((atom) => {
+            cells[`${r}-${atom}`] = row.value != null ? +row.value.toFixed(4) : '';
+          });
+        });
+        layerCells.analysis_rmsf = cells;
+      }
+      const avgOf = (arr) => {
+        if (!Array.isArray(arr) || !arr.length) return null;
+        let s = 0, n = 0;
+        arr.forEach((p) => { const v = parseFloat(p.value); if (Number.isFinite(v)) { s += v; n++; } });
+        return n ? s / n : null;
+      };
+      const rgAvg = avgOf(res.rg);
+      const sasaAvg = avgOf(res.sasa);
+      const rmsdLast = res.rmsd && res.rmsd.length ? parseFloat(res.rmsd[res.rmsd.length - 1].value) : null;
+      if (Number.isFinite(rgAvg)) layerCells.analysis_rg = { '0-Rg': +rgAvg.toFixed(4) };
+      if (Number.isFinite(sasaAvg)) layerCells.analysis_sasa = { '0-SASA': +sasaAvg.toFixed(4) };
+      if (Number.isFinite(rmsdLast)) layerCells.analysis_rmsd = { '0-RMSD': +rmsdLast.toFixed(4) };
+      storeAnalysisToAtomTable(activeTest, updateActiveTest, layerCells);
+      setCalc({ state: 'done', msg: `Calculated from ${res.nFrames} frames (${src.source}) — values added to the per-atom table.`, done: 0, total: 0, error: '' });
+    } catch (err) {
+      setCalc((s) => ({ ...s, state: 'error', error: err?.message || String(err) }));
+    }
+  };
+
+  const handleEnergyFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        setEnergyData(parseEnergyFile(ev.target.result));
+        setEnergyFileName(file.name);
+      } catch (err) {
+        setCalc((s) => ({ ...s, state: 'error', error: 'Energy file: ' + err.message }));
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
   const handleAnalysisFileUpload = (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
@@ -1613,20 +1686,24 @@ export const MDAnalysisSection = ({ ctx }) => {
   const nFrames = parseMDValue(activeTest.mdNumFrames) || 500;
   const nResidues = Math.max(1, d.parsedSeq.length || 20);
 
-  // Use imported data if available, otherwise fallback to simulated data
-  const rmsd = useMemo(() => importedData?.rmsd || generateRMSDData(nFrames), [nFrames, importedData]);
+  // Use calculated-from-trajectory data if available, then imported JSON,
+  // then fallback to simulated data
+  const rmsd = useMemo(() => calcData?.rmsd || importedData?.rmsd || generateRMSDData(nFrames), [nFrames, importedData, calcData]);
   const rmsf = useMemo(() => {
+      if (calcData?.rmsf) return calcData.rmsf.map(r => ({ ...r, fill: r.value > 0.25 ? '#ef4444' : '#3b82f6' }));
       if (importedData?.rmsf) return importedData.rmsf.map(r => ({ ...r, fill: r.value > 0.25 ? '#ef4444' : '#3b82f6' }));
       return generateRMSFData(nResidues).map((r) => ({ ...r, fill: r.value > 0.25 ? '#ef4444' : '#3b82f6' }));
-  }, [nResidues, importedData]);
-  const rg = useMemo(() => importedData?.rg || generateRgData(nFrames), [nFrames, importedData]);
-  const sasa = useMemo(() => importedData?.sasa || generateSASAData(nFrames), [nFrames, importedData]);
-  const energy = useMemo(() => importedData?.energy || generateEnergyData(nFrames), [nFrames, importedData]);
+  }, [nResidues, importedData, calcData]);
+  const rg = useMemo(() => calcData?.rg || importedData?.rg || generateRgData(nFrames), [nFrames, importedData, calcData]);
+  const sasa = useMemo(() => calcData?.sasa || importedData?.sasa || generateSASAData(nFrames), [nFrames, importedData, calcData]);
+  const energy = useMemo(() => calcData?.energy || importedData?.energy || energyData || generateEnergyData(nFrames), [nFrames, importedData, calcData, energyData]);
 
   // Snapshot the main analysis charts for the Lab Notebook "Results Summary" tick.
   useEffect(() => {
     if (d.parsedSeq.length === 0) return;
-    const t = setTimeout(() => {
+    let attempt = 0;
+    let t = null;
+    const tryCapture = () => {
       storeChartSnapshots(updateActiveTest, activeTest, [
         { id: 'md-rmsd', key: 'rmsd' },
         { id: 'md-rmsf', key: 'rmsf' },
@@ -1634,7 +1711,12 @@ export const MDAnalysisSection = ({ ctx }) => {
         { id: 'md-sasa', key: 'sasa' },
         { id: 'md-energy', key: 'energy' }
       ]);
-    }, 500);
+      // recharts can take a moment to draw; retry a few times so the export
+      // always has the graphs even if the section was just opened.
+      attempt++;
+      if (attempt < 4) t = setTimeout(tryCapture, 700);
+    };
+    t = setTimeout(tryCapture, 400);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rmsd, rmsf, rg, sasa, energy, d.parsedSeq.length]);
@@ -1677,13 +1759,77 @@ export const MDAnalysisSection = ({ ctx }) => {
          </div>
       )}
 
-      {importedData ? (
+      {/* ── Calculate the general parameters from the loaded trajectory ── */}
+      <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={handleCalculateFromTrajectory}
+            disabled={calc.state === 'running'}
+            className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold py-1.5 px-3 rounded-lg text-xs shadow-sm transition-colors flex items-center gap-2"
+          >
+            ⚙️ {calc.state === 'running' ? 'Calculating…' : 'Calculate from trajectory'}
+          </button>
+          <label className="flex items-center gap-1.5 text-[10px] font-bold text-indigo-700 uppercase">
+            Stride
+            <select
+              value={calcOpts.stride}
+              onChange={(e) => setCalcOpts((o) => ({ ...o, stride: Math.max(1, Number(e.target.value) || 1) }))}
+              className="border border-indigo-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-indigo-500"
+              title="Use every Nth frame for the calculation"
+            >
+              {[1, 2, 5, 10, 20, 50, 100].map((s) => <option key={s} value={s}>{s}×</option>)}
+            </select>
+          </label>
+          <label className="flex items-center gap-1.5 text-[10px] font-bold text-indigo-700 uppercase">
+            Max frames
+            <input type="number" min="10" value={calcOpts.maxFrames}
+              onChange={(e) => setCalcOpts((o) => ({ ...o, maxFrames: Math.max(10, Number(e.target.value) || 300) }))}
+              className="border border-indigo-300 rounded-lg px-2 py-1 text-xs w-20 bg-white outline-none focus:border-indigo-500"
+              title="Cap on the number of frames processed" />
+          </label>
+          <label className="flex items-center gap-1.5 text-[10px] font-bold text-indigo-700 uppercase cursor-pointer">
+            <input type="checkbox" checked={calcOpts.sasa}
+              onChange={(e) => setCalcOpts((o) => ({ ...o, sasa: e.target.checked }))}
+              className="w-4 h-4 accent-indigo-600" />
+            SASA (slower)
+          </label>
+          <label className="bg-white hover:bg-slate-50 border border-indigo-300 text-indigo-700 font-bold py-1.5 px-3 rounded-lg text-xs cursor-pointer shadow-sm transition-colors flex items-center gap-1.5"
+            title="XTC/TRR contain no energies — load gmx energy -o output (.xvg) or a time/value file">
+            ⚡ Energy file (.xvg/.dat)
+            <input type="file" accept=".xvg,.dat,.txt,.log" className="hidden" onChange={handleEnergyFile} />
+          </label>
+          {energyFileName && (
+            <span className="text-[10px] text-indigo-600 font-bold max-w-[160px] truncate">⚡ {energyFileName}</span>
+          )}
+        </div>
+        {calc.state === 'running' && (
+          <div className="flex items-center gap-2">
+            <div className="flex-1 h-2 bg-white rounded-full overflow-hidden border border-indigo-200">
+              <div className="h-full bg-indigo-500 transition-all" style={{ width: calc.total > 0 ? `${Math.min(100, (calc.done / calc.total) * 100)}%` : '10%' }} />
+            </div>
+            <span className="text-[10px] font-bold text-indigo-700 whitespace-nowrap">{calc.msg}</span>
+          </div>
+        )}
+        {calc.state === 'error' && (
+          <div className="bg-red-50 border border-red-200 text-red-700 text-xs font-bold p-2 rounded-lg">⚠️ {calc.error}</div>
+        )}
+        {calc.state === 'done' && (
+          <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold p-2 rounded-lg">✅ {calc.msg}</div>
+        )}
+      </div>
+
+      {calcData ? (
+         <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold p-2 rounded-lg flex items-center gap-2">
+           ✅ Plotting data calculated from the trajectory (RMSD/RMSF/Rg/SASA).
+         </div>
+      ) : importedData ? (
          <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold p-2 rounded-lg flex items-center gap-2">
            ✅ Plotting real imported data. (XTC trajectory is still playing in the 3D viewer above).
          </div>
       ) : (
          <span className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 w-fit">
-           Curves are simulated. To see real graphs, upload an analysis JSON file.
+           Curves are simulated. Calculate from the trajectory (⚙️ button above) or upload an analysis JSON file to see real graphs.
          </span>
       )}
 
@@ -1707,7 +1853,7 @@ export const MDAnalysisSection = ({ ctx }) => {
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={energy} margin={{ top: 5, right: 10, bottom: 25, left: 10 }}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="time" tick={{ fontSize: 10 }} />
+                <XAxis dataKey="time" tick={<AngledTick angle={cfg.tickAngle} fontSize={10} />} tickMargin={10} />
                 <YAxis tick={{ fontSize: 10 }} />
                 <Tooltip />
                 <Legend verticalAlign="top" wrapperStyle={{ fontSize: 10 }} />
@@ -1776,7 +1922,7 @@ export const MDSimulationParamsSection = ({ ctx }) => {
             onChange={(e) => updateActiveTest({ ensemble: e.target.value })}
             className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
           >
-            {MD_ENSEMBLES.map(e => <option key={e} value={e}>{e}</option>)}
+            {MD_ENSEMBLES.map(e => <option key={e.key} value={e.key} title={e.description}>{e.label}</option>)}
           </select>
         </div>
 
@@ -1788,7 +1934,7 @@ export const MDSimulationParamsSection = ({ ctx }) => {
             onChange={(e) => updateActiveTest({ integrator: e.target.value })}
             className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
           >
-            {MD_INTEGRATORS.map(i => <option key={i} value={i}>{i}</option>)}
+            {MD_INTEGRATORS.map(i => <option key={i.key} value={i.key} title={i.label}>{i.label}</option>)}
           </select>
         </div>
 
@@ -1800,7 +1946,7 @@ export const MDSimulationParamsSection = ({ ctx }) => {
             onChange={(e) => updateActiveTest({ thermostat: e.target.value })}
             className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
           >
-            {MD_THERMOSTATS.map(t => <option key={t} value={t}>{t}</option>)}
+            {MD_THERMOSTATS.map(t => <option key={t.key} value={t.key} title={t.label}>{t.label}</option>)}
           </select>
         </div>
 
@@ -1812,7 +1958,7 @@ export const MDSimulationParamsSection = ({ ctx }) => {
             onChange={(e) => updateActiveTest({ barostat: e.target.value })}
             className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
           >
-            {MD_BAROSTATS.map(b => <option key={b} value={b}>{b}</option>)}
+            {MD_BAROSTATS.map(b => <option key={b.key} value={b.key} title={b.label}>{b.label}</option>)}
           </select>
         </div>
       </div>
@@ -1906,7 +2052,7 @@ const resolveMDTopology = async (activeTest) => {
         text = await res.text();
         source = 'web';
         break;
-      } catch (e) { /* try next candidate */ }
+      } catch { /* try next candidate */ }
     }
   }
 
@@ -1938,10 +2084,40 @@ const buildMDTrajectoryJobs = async (activeTest, extraRuns) => {
           file: new File([buf], name, { type: 'application/octet-stream' }),
         });
         break;
-      } catch (e) { /* try next candidate */ }
+      } catch { /* try next candidate */ }
     }
   }
   return jobs;
+};
+
+// Store analysis-derived parameters into the per-atom table of the active MD
+// instance (as "analysis_*" layers), so the Per-Atom and Condition plots can
+// graph them. layerCells = { layerKey: { cellKey: value } }.
+const storeAnalysisToAtomTable = (activeTest, updateActiveTest, layerCells) => {
+  if (!updateActiveTest || !layerCells) return;
+  const activeInst = getMDActiveInstance(activeTest);
+  if (!activeInst) return;
+  const layers = {};
+  Object.entries(layerCells).forEach(([lk, cells]) => {
+    if (cells && Object.keys(cells).length) layers[lk] = cells;
+  });
+  if (Object.keys(layers).length === 0) return;
+
+  const mdValues = { ...(activeTest.mdValues || {}) };
+  Object.keys(layers).forEach((lk) => { mdValues[lk] = { ...(mdValues[lk] || {}), ...layers[lk] }; });
+
+  const insts = Array.isArray(activeTest.instances) && activeTest.instances.length ? activeTest.instances : null;
+  if (insts) {
+    const instances = insts.map((inst) => {
+      if (inst.id !== activeInst.id) return inst;
+      const vals = { ...(inst.values || {}) };
+      Object.keys(layers).forEach((lk) => { vals[lk] = { ...(vals[lk] || {}), ...layers[lk] }; });
+      return { ...inst, values: vals };
+    });
+    updateActiveTest({ instances, mdValues });
+  } else {
+    updateActiveTest({ mdValues });
+  }
 };
 
 // custom recharts dot: draws a coloured symbol per series (awk pt_group style)
@@ -2481,6 +2657,17 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
         }
       }
       setOutputs(outs);
+      // Populate the per-atom table with the computed order parameters |SCD|
+      // (one pseudo-atom per lipid group + carbon, e.g. "0-POPC sn-1 C14").
+      const scdCells = {};
+      outs.forEach((o) => {
+        (o.result.scdGroups || []).forEach((g) => {
+          (g.carbons || []).forEach((c) => {
+            scdCells[`0-${g.label} ${c.x}`] = c.scd;
+          });
+        });
+      });
+      storeAnalysisToAtomTable(activeTest, updateActiveTest, { analysis_scd: scdCells });
       setStatus({ state: 'done', msg: '', done: 0 });
     } catch (e) {
       setStatus({ state: 'error', msg: e.message, done: 0 });

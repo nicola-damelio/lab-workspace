@@ -49,6 +49,8 @@ export const MD_TAB_CONFIG = {
     { id: 'table', label: 'Atom Table' },
     { id: 'formula', label: 'Chemical Formula' },
     { id: 'trajectory', label: 'Trajectory Info' },
+    { id: 'results', label: 'Results Summary (RMSD / RMSF / Rg / SASA / Energy)' },
+    { id: 'analysis', label: 'Data Analysis graphs' },
     { id: 'images', label: 'Figures / Images' }
   ]
 };

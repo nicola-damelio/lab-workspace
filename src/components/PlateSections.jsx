@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { CollapsibleSection } from './TestShellRenderer';
-import { SharedGraphConfig, SharedErrorTreatment } from './SharedAnalysisTools';
+import { SharedGraphConfig, SharedErrorTreatment, ChartControlBar } from './SharedAnalysisTools';
 import {
     PLATES_DEF,
     formatConc,
@@ -18,15 +18,12 @@ import {
     fit4PL,
     errBarPlugin
 } from '../data/constants';
+import { FS_CLASSES, OVERLAY_CLASSES } from '../utils/chartStyle';
 
-const FS_CLASSES =
-    'fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col';
-
-const OVERLAY_CLASSES =
-    'fixed top-0 left-0 w-screen h-screen bg-slate-900/50 backdrop-blur-sm z-[999990]';
+// Chart/style constants now live in ../utils/chartStyle.
 
 // ================= ERROR INPUT =================
-export const ErrInput = ({ label, value, sdRaw, isOverridden, onSave, onReset }) => {
+export const ErrInput = ({ label, value, isOverridden, onSave, onReset }) => {
     const [tempVal, setTempVal] = useState(value !== undefined ? value : '');
 
     useEffect(() => {
@@ -1169,7 +1166,7 @@ export const All = ({ ctx }) => {
         );
 
         return Array.from(s);
-    }, [cellConfig, activePlateDim, grid, compounds, rowCompounds]);
+    }, [activePlateDim, grid, compounds, rowCompounds]);
 
     const cmpStats = useMemo(() => {
         const stats = {};
@@ -1190,7 +1187,7 @@ export const All = ({ ctx }) => {
         );
 
         return stats;
-    }, [cellConfig, activePlateDim, grid, compounds, rowCompounds, tConc, dFact, customConc]);
+    }, [activePlateDim, grid]);
 
     const [bgOD, setBgOD] = useState(0);
 
@@ -1502,20 +1499,12 @@ export const All = ({ ctx }) => {
         grid,
         cellConfig,
         activePlateDim,
-        cOD,
-        bgOD,
         fitIC50,
         useFixedSD,
         fSD,
-        gOff,
-        manualErrors,
         plotCmps,
         allCmpds,
-        cmpColors,
-        plateType,
-        tConc,
-        dFact,
-        customConc
+        plateType
     ]);
 
     const model = useMemo(
@@ -1559,7 +1548,7 @@ export const All = ({ ctx }) => {
     const autoTouchAll = () => {
         let updates = {};
 
-        Object.entries(processedByRegion).forEach(([reg, comps]) => {
+        Object.entries(processedByRegion).forEach(([, comps]) => {
             comps.forEach((c) => {
                 if (!c.fit) return;
 
@@ -1777,17 +1766,6 @@ export const All = ({ ctx }) => {
         }
 
         if (changed) updatePlate({ cellConfig: nc });
-    };
-
-    const restoreAll = () => {
-        const nc = cellConfig.map((row) =>
-            row.map((c) => ({
-                ...c,
-                excluded: false,
-                manualOverride: false
-            }))
-        );
-        updatePlate({ cellConfig: nc });
     };
 
     const exportXLS = () => {
@@ -3217,28 +3195,13 @@ return (
             <CollapsibleSection title="Data Analysis" icon="📐" defaultOpen={true}>
                 <div className="flex flex-col gap-6">
 {/* ===== TOGGLE BUTTONS FOR ERROR MGMT & GRAPHICAL PARAMS ===== */}
-                    <div className="flex flex-wrap gap-3">
-                        <button
-                            onClick={() => setShowErrMgmt(!showErrMgmt)}
-                            className={`font-bold py-2 px-4 rounded-lg text-sm transition-colors shadow-sm flex items-center gap-2 ${
-                                showErrMgmt
-                                    ? 'bg-blue-100 border border-blue-300 text-blue-800'
-                                    : 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-300'
-                            }`}
-                        >
-                            <span>⚠️</span> Error Management {showErrMgmt ? '▲' : '▼'}
-                        </button>
-                        <button
-                            onClick={() => setShowGraphParams(!showGraphParams)}
-                            className={`font-bold py-2 px-4 rounded-lg text-sm transition-colors shadow-sm flex items-center gap-2 ${
-                                showGraphParams
-                                    ? 'bg-blue-100 border border-blue-300 text-blue-800'
-                                    : 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-300'
-                            }`}
-                        >
-                            <span>🎨</span> Graphical Parameters {showGraphParams ? '▲' : '▼'}
-                        </button>
-                    </div>
+                    <ChartControlBar
+                        showErr={showErrMgmt}
+                        onToggleErr={() => setShowErrMgmt(!showErrMgmt)}
+                        showCfg={showGraphParams}
+                        onToggleCfg={() => setShowGraphParams(!showGraphParams)}
+                        className="flex flex-wrap gap-3"
+                    />
 
                     {/* ===== ERROR MANAGEMENT ===== */}
                     {showErrMgmt && (

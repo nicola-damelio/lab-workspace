@@ -1,15 +1,11 @@
-import React, { useRef, useState } from 'react';
+import React, {useRef} from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, ReferenceArea
 } from 'recharts';
-import { useXZoom, ChartControlBar, SharedChartStylePanel } from './SharedAnalysisTools';
+import {useXZoom} from './SharedAnalysisTools';
 import { CollapsibleSection, SmartImage } from './TestShellRenderer';
-import {
-  uid, toNumber, round,
-  parseSpectrumText, analyzeSpectrum, effectiveSpectrumProps,
-  INPUT_CLS
-} from './cloningUtils';
+import {uid, round, parseSpectrumText, analyzeSpectrum, effectiveSpectrumProps, INPUT_CLS} from './cloningUtils';
 
 const UV_CHART_MARGIN = { top: 8, right: 10, bottom: 30, left: 40 };
 

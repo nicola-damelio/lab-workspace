@@ -4,83 +4,31 @@
 // plots) · Simulations.
 // ============================================================================
 
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import {
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line,
-  Legend, ErrorBar, Cell, PieChart, Pie
-} from 'recharts';
-import { SharedGraphConfig, SharedErrorTreatment, ChartControlBar, SharedChartStylePanel } from './SharedAnalysisTools';
+import React, {useState, useEffect, useRef, useMemo} from 'react';
+import {XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar, Cell} from 'recharts';
+import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, AngledTick } from './SharedAnalysisTools';
+import { CollapsibleSection } from './ui';
+import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, LINE_COLORS } from '../utils/chartStyle';
+export { CollapsibleSection };
+export { VIS_PALETTES };
 
 const HAS_EB = typeof ErrorBar !== 'undefined';
 
 /* ========================================================================
 LAYOUT / STYLE CONSTANTS
 ======================================================================== */
-const FS_CLASSES =
-  'fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col';
-const OVERLAY_CLASSES =
-  'fixed top-0 left-0 w-screen h-screen bg-slate-900/50 backdrop-blur-sm z-[999990]';
+/* Chart/style constants (FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES)
+   now live in ../utils/chartStyle. */
 
 const SPECTRA_PALETTE = [
   '#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6',
   '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#06b6d4',
   '#84cc16', '#e11d48', '#0ea5e9', '#a855f7', '#10b981'
 ];
-const LINE_COLORS = [
-  '#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6',
-  '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16'
-];
-export const VIS_PALETTES = {
-  default: ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'],
-  viridis: ['#440154', '#482878', '#3e4a89', '#31688e', '#26828e', '#1f9e89', '#35b779', '#6ece58', '#b5de2b', '#fde725'],
-  magma: ['#000004', '#3b0f70', '#8c2981', '#de4968', '#fe9f6d', '#fcfdbf'],
-  ocean: ['#082f49', '#1e3a8a', '#1d4ed8', '#2563eb', '#3b82f6', '#60a5fa', '#93c5fd'],
-  warm: ['#7f1d1d', '#991b1b', '#b91c1c', '#dc2626', '#ef4444', '#f87171', '#fca5a5'],
-  neon: ['#ff00ff', '#00ffff', '#00ff00', '#ffff00', '#ff0000', '#0000ff'],
-  pastel: ['#fbcfe8', '#fecaca', '#fde68a', '#bbf7d0', '#a7f3d0', '#bfdbfe', '#c7d2fe', '#e9d5ff'],
-  earth: ['#78350f', '#92400e', '#b45309', '#d97706', '#f59e0b', '#fbbf24', '#fcd34d'],
-  monochrome: ['#0f172a', '#1e293b', '#334155', '#475569', '#64748b', '#94a3b8', '#cbd5e1']
-};
-const DEFAULT_ssNMR_CHART_CFG = {
-  yMin: '', yMax: '', xMin: '-250', xMax: '250',
-  fontSize: 12, lineWidth: 2
-};
 
-const CHART_MARGIN = { top: 20, right: 20, bottom: 45, left: 50 };
-
-/* ========================================================================
-COLLAPSIBLE SECTION
-======================================================================== */
-export const CollapsibleSection = ({
-  title, icon, defaultOpen = true, children, headerExtra, className = ''
-}) => {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
-  return (
-    <div className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-6 break-inside-avoid ${className}`}>
-      <button
-        type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left ${isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'}`}
-      >
-        <div className="flex items-center gap-2 overflow-hidden">
-          {icon && <span className="text-xl shrink-0">{icon}</span>}
-          <h3 className="text-lg font-bold text-slate-800 truncate">{title}</h3>
-        </div>
-        <div className="flex items-center gap-3 shrink-0">
-          {headerExtra && <div onClick={(e) => e.stopPropagation()}>{headerExtra}</div>}
-          <svg
-            className={`w-5 h-5 text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
-            fill="none" viewBox="0 0 24 24" stroke="currentColor"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-        </div>
-      </button>
-      {isOpen && <div className="p-6">{children}</div>}
-    </div>
-  );
-};
+/* CollapsibleSection now lives in ./ui (single shared definition). */
+// Chart/style constants (FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES)
+// now live in ../utils/chartStyle.
 
 /* ========================================================================
 GENERIC PARSING HELPERS
@@ -143,8 +91,6 @@ export const SSNMR_INSTRUMENTAL_FIELDS = [
   { key: 'spectralWidthKHz', label: 'Spectral Width', type: 'text', placeholder: 'e.g. 250', units: ['kHz'] },
   { key: 'lineBroadening', label: 'Line Broadening', type: 'text', placeholder: 'e.g. 100', units: ['Hz'] }
 ];
-
-
 
 const getExpValue = (inst, key) => {
   const t = inst?.test || inst || {};
@@ -374,31 +320,6 @@ const importBruker1r = ({ dataBuffer, acqusText = '', manualSWkHz = null, manual
 /* ========================================================================
 MOLAR ELLIPTICITY
 ======================================================================== */
-const concentrationToMgPerMl = (concStr, unit, mw) => {
-  const c = parseManual(concStr);
-  if (c === null) return null;
-  const u = String(unit || 'mg/mL');
-  if (u === 'mg/mL') return c;
-  if (!mw) return null;
-  if (u === 'µM' || u === 'uM') return c * 1e-6 * mw;
-  if (u === 'mM') return c * 1e-3 * mw;
-  if (u === 'M') return c * mw;
-  return c;
-};
-
-const pathLengthToCm = (vStr, unit) => {
-  const v = parseManual(vStr);
-  if (v === null) return null;
-  return String(unit || 'cm') === 'mm' ? v / 10 : v;
-};
-
-const molarEllipticityFactor = (inst, mw) => {
-  const t = inst?.test || inst || {};
-  const cMg = concentrationToMgPerMl(t.concentration, t.concentrationUnit, mw);
-  const lCm = pathLengthToCm(t.pathLength, t.pathLengthUnit);
-  if (!cMg || !lCm || !mw) return null;
-  return mw / (10 * cMg * lCm);
-};
 
 const getCompoundMW = (inst, ctx) => {
   const t = inst?.test || inst || {};
@@ -430,55 +351,6 @@ const getMWForInstance = (inst, ctx) => {
 /* ========================================================================
 NATURAL CUBIC SPLINE
 ======================================================================== */
-class NaturalCubicSpline {
-  constructor(xs, ys) {
-    this.xs = xs; this.ys = ys; this.n = xs.length;
-    this.a = ys.slice();
-    this.b = new Array(this.n).fill(0);
-    this.c = new Array(this.n).fill(0);
-    this.d = new Array(this.n).fill(0);
-    this.calculateCoefficients();
-  }
-  calculateCoefficients() {
-    const h = [];
-    for (let i = 0; i < this.n - 1; i++) h.push(this.xs[i + 1] - this.xs[i]);
-    const alpha = new Array(this.n - 1).fill(0);
-    for (let i = 1; i < this.n - 1; i++) {
-      alpha[i] = (3 / h[i]) * (this.a[i + 1] - this.a[i]) - (3 / h[i - 1]) * (this.a[i] - this.a[i - 1]);
-    }
-    const l = new Array(this.n).fill(0);
-    const mu = new Array(this.n).fill(0);
-    const z = new Array(this.n).fill(0);
-    l[0] = 1;
-    for (let i = 1; i < this.n - 1; i++) {
-      l[i] = 2 * (this.xs[i + 1] - this.xs[i - 1]) - h[i - 1] * mu[i - 1];
-      mu[i] = h[i] / l[i];
-      z[i] = (alpha[i] - h[i - 1] * z[i - 1]) / l[i];
-    }
-    l[this.n - 1] = 1;
-    for (let j = this.n - 2; j >= 0; j--) {
-      this.c[j] = z[j] - mu[j] * this.c[j + 1];
-      this.b[j] = (this.a[j + 1] - this.a[j]) / h[j] - (h[j] * (this.c[j + 1] + 2 * this.c[j])) / 3;
-      this.d[j] = (this.c[j + 1] - this.c[j]) / (3 * h[j]);
-    }
-  }
-  at(x) {
-    let i = 0;
-    if (x >= this.xs[this.n - 1]) i = this.n - 2;
-    else if (x <= this.xs[0]) i = 0;
-    else {
-      let low = 0, high = this.n - 1;
-      while (low <= high) {
-        const mid = Math.floor((low + high) / 2);
-        if (this.xs[mid] < x) low = mid + 1; else high = mid - 1;
-      }
-      i = Math.max(0, high);
-    }
-    if (i >= this.n - 1) i = this.n - 2;
-    const dx = x - this.xs[i];
-    return this.a[i] + this.b[i] * dx + this.c[i] * dx * dx + this.d[i] * dx * dx * dx;
-  }
-}
 
 /* ========================================================================
    DEUTERIUM QUADRUPOULAR MODEL
@@ -687,7 +559,7 @@ const fitGeneric = (pts, f0, P0) => {
       const col = gaussSolve(A, e);
       if (col) P_err[i] = Math.sqrt(Math.max(0, col[i] * (cur / df)));
     }
-  } catch (err) { /* ignore */ }
+  } catch { /* ignore */ }
   return { params: P, paramsErr: P_err, r2, se, f: (x) => f(x, P) };
 };
 
@@ -715,7 +587,7 @@ const fit4PL = (pts) => {
 
 const fitCustomEquation = (expr, pts) => {
   let ast, par;
-  try { ast = parseExpression(expr); par = collectParams(ast); } catch (e) { return null; }
+  try { ast = parseExpression(expr); par = collectParams(ast); } catch { return null; }
   if (!par.length || pts.length < par.length + 1) return null;
   const init = par.map((_, i) => (i === 0 ? pts.reduce((s, p) => s + p.y, 0) / Math.max(1, pts.length) : 1));
   const res = fitGeneric(pts, (x, P) => {
@@ -826,7 +698,6 @@ const buildSimulatedCurve = (fitRes, xs) => {
     });
 };
 
-
 /* ========================================================================
 SHARED CHART STYLE SYSTEM + DRAG-TO-ZOOM
 ======================================================================== */
@@ -869,129 +740,6 @@ const chartBoxStyle = (cfg) => ({
   minHeight: 220
 });
 
-const AngledTick = ({ x, y, payload, angle = 0, fontSize = 11, anchor = 'middle' }) => {
-  const a = Number(angle) || 0;
-  return (
-    <g transform={`translate(${x || 0},${y || 0})`}>
-      <text
-        transform={a ? `rotate(${a})` : undefined}
-        textAnchor={a < 0 ? 'end' : a > 0 ? 'start' : anchor}
-        dy={a ? 4 : 12}
-        dx={a ? (a > 0 ? 4 : -4) : 0}
-        fill="#64748b"
-        fontSize={fontSize}
-      >
-        {String(payload.value)}
-      </text>
-    </g>
-  );
-};
-
-const NumField = ({ label, value, onChange, step = 1, w = 'w-full' }) => {
-  const [local, setLocal] = useState(value ?? '');
-  useEffect(() => { setLocal(value ?? ''); }, [value]);
-  return (
-    <div className="flex flex-col gap-1">
-      <label className="text-[10px] font-bold text-slate-600">{label}</label>
-      <input
-        type="number" step={step} value={local}
-        onWheel={(e) => e.target.blur()}
-        onChange={(e) => setLocal(e.target.value)}
-        onBlur={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))}
-        onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
-        className={`border border-slate-300 rounded-md p-1.5 text-xs outline-none focus:border-blue-500 ${w}`}
-      />
-    </div>
-  );
-};
-
-const TxtField = ({ label, value, onChange, placeholder = '', w = 'w-full' }) => {
-  const [local, setLocal] = useState(value ?? '');
-  useEffect(() => { setLocal(value ?? ''); }, [value]);
-  return (
-    <div className="flex flex-col gap-1">
-      <label className="text-[10px] font-bold text-slate-600">{label}</label>
-      <input
-        type="text" value={local}
-        onChange={(e) => setLocal(e.target.value)}
-        onBlur={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
-        placeholder={placeholder}
-        className={`border border-slate-300 rounded-md p-1.5 text-xs outline-none focus:border-blue-500 ${w}`}
-      />
-    </div>
-  );
-};
-
-const CfgNumInput = ({ value, onCommit, placeholder = 'auto' }) => {
-  const [local, setLocal] = useState(value ?? '');
-  useEffect(() => { setLocal(value ?? ''); }, [value]);
-  return (
-    <input
-      type="number" placeholder={placeholder} value={local}
-      onWheel={(e) => e.target.blur()}
-      onChange={(e) => setLocal(e.target.value)}
-      onBlur={(e) => onCommit(e.target.value)}
-      onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
-      className="border border-slate-300 rounded-md p-1.5 text-xs w-full outline-none"
-    />
-  );
-};
-
-const SelField = ({ label, value, onChange, options }) => (
-  <div className="flex flex-col gap-1">
-    <label className="text-[10px] font-bold text-slate-600">{label}</label>
-    <select
-      value={value} onChange={(e) => onChange(e.target.value)}
-      className="border border-slate-300 rounded-md p-1.5 text-xs bg-white outline-none focus:border-blue-500"
-    >
-      {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-    </select>
-  </div>
-);
-
-const GraphConfigPanel = ({ cfg, setCfg, series = [], unit = 'a.u.' }) => (
-  <div className="flex flex-col gap-3">
-    <SharedGraphConfig
-      activeTest={{ chartCfg: cfg }}
-      updateActiveTest={(u) => setCfg(u.chartCfg || {})}
-      unit={unit}
-      showHeightSlider
-      chartH={cfg.height}
-      setChartH={(h) => setCfg({ height: h })}
-    />
-    <div className="p-4 bg-white border border-slate-300 rounded-xl grid grid-cols-2 lg:grid-cols-4 gap-3 shadow-sm">
-      <NumField label="Aspect ratio X/Y (W÷H)" step={0.1} value={cfg.aspect} onChange={(v) => setCfg({ aspect: v || 1.8 })} />
-      <TxtField label="Tick step (num: spacing · cat: every N)" value={cfg.tickStep} onChange={(v) => setCfg({ tickStep: v })} placeholder="auto" />
-      <SelField
-        label="Tick label orientation" value={String(cfg.tickAngle || 0)}
-        onChange={(v) => setCfg({ tickAngle: Number(v) })}
-        options={[['0', '0° (horizontal)'], ['-30', '-30°'], ['-45', '-45°'], ['-60', '-60°'], ['-90', '-90° (vertical)'], ['30', '30°'], ['45', '45°'], ['90', '90°']]}
-      />
-      <SelField label="Legend" value={cfg.legend} onChange={(v) => setCfg({ legend: v })} options={[['top', 'Top'], ['bottom', 'Bottom'], ['none', 'None']]} />
-      {series.length > 0 && (
-        <div className="col-span-2 lg:col-span-4 pt-2 border-t border-slate-100 flex flex-col gap-2">
-          <label className="text-[10px] font-bold text-slate-600 uppercase">Series colors (points / lines / bars)</label>
-          <div className="flex flex-wrap gap-3">
-            {series.map((s) => (
-              <label key={s.key} className="flex items-center gap-2 text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
-                <input
-                  type="color"
-                  value={(cfg.colors && cfg.colors[s.key]) || s.color || '#3b82f6'}
-                  onChange={(e) => setCfg({ colors: { ...(cfg.colors || {}), [s.key]: e.target.value } })}
-                  className="w-6 h-6 rounded cursor-pointer border border-slate-300"
-                />
-                {s.label}
-              </label>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-    <p className="text-[9px] text-slate-400">💡 Drag with the mouse over any graph to zoom into a region. Use "Reset Zoom" to restore.</p>
-  </div>
-);
-
 const ErrorTreatmentPanel = ({ plot, set, showFitToggle = true, customActions }) => {
   const shimTest = {
     useFixedSD: plot.useFixedSD,
@@ -1007,7 +755,6 @@ const ErrorTreatmentPanel = ({ plot, set, showFitToggle = true, customActions })
   };
   return <SharedErrorTreatment activeTest={shimTest} updateActiveTest={shimUpdate} showFitToggle={showFitToggle} customActions={customActions} />;
 };
-
 
 const useXZoom = (chartRef, dataDomain, margin = CHART_MARGIN) => {
   const [domain, setDomain] = useState(null);
@@ -1140,7 +887,7 @@ const useElementSize = (ref) => {
   return size;
 };
 
-const usessNMRDerived = (activeTest, ctx = {}) => {
+const useSSNMRDerived = (activeTest, ctx = {}) => {
   const instances = getInstances(ctx, activeTest);
   const activeInstance =
     instances.find((i) => i.id === activeTest.id) || instances[0] || null;
@@ -1155,8 +902,8 @@ const usessNMRDerived = (activeTest, ctx = {}) => {
 // =========================================================================
 export const Data = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
-  const d = usessNMRDerived(activeTest, ctx);
-  const { activeInstance, activeParsed, instances, mw, compoundMW } = d;
+  const d = useSSNMRDerived(activeTest, ctx);
+  const { activeInstance, activeParsed, instances } = d;
 
   const instTest = (activeInstance && activeInstance.test) ? activeInstance.test : activeTest;
   const spectraColumns = instTest.spectraColumns || [];
@@ -1203,6 +950,10 @@ export const Data = ({ ctx }) => {
   const [brukerMsg, setBrukerMsg] = useState('');
   const [brukerBusy, setBrukerBusy] = useState(false);
   const brukerFileRef = useRef(null);
+  // Discovered-but-not-yet-imported Bruker spectra (folder import shows a
+  // selection dialog so the user can pick which experiments to import).
+  const [pendingSpectra, setPendingSpectra] = useState([]);
+  const [selectedSpectraIds, setSelectedSpectraIds] = useState([]);
 
   const interpolateY = (xs, ys, targetX) => {
     const n = xs.length;
@@ -1320,50 +1071,64 @@ export const Data = ({ ctx }) => {
       
       if (results.length === 0) throw new Error("Could not parse any valid 1r spectra.");
 
-      applyBruker(results[0], results[0].filename);
-
-      if (results.length > 1 && ctx.setTests) {
-          ctx.setTests(prevTests => {
-              const newTests = [];
-              for (let i = 1; i < results.length; i++) {
-                  const parsed = results[i];
-                  const newId = 't' + Date.now() + i + Math.random().toString(36).substring(2,5);
-                  const cloned = JSON.parse(JSON.stringify(activeTest));
-                  cloned.id = newId;
-                  cloned.instanceName = parsed.filename;
-                  
-                  let finalXs = parsed.xs; let finalYs = parsed.ys;
-                  const hasCustomRange = (brukerStartKHz !== '' && brukerEndKHz !== '') || (brukerNumPoints !== '' && Number(brukerNumPoints) > 0);
-                  if (hasCustomRange) {
-                      const xMin = Math.min(...parsed.xs); const xMax = Math.max(...parsed.xs); const isDesc = parsed.xs[0] > parsed.xs[parsed.xs.length - 1];
-                      const sK = brukerStartKHz !== '' ? Number(brukerStartKHz) : (isDesc ? xMax : xMin);
-                      const eK = brukerEndKHz !== '' ? Number(brukerEndKHz) : (isDesc ? xMin : xMax);
-                      const nPts = brukerNumPoints !== '' && Number(brukerNumPoints) > 1 ? Number(brukerNumPoints) : parsed.xs.length;
-                      const newXs = []; const newYs = [];
-                      for (let j = 0; j < nPts; j++) {
-                          const x = sK + (eK - sK) * (j / (nPts - 1 || 1));
-                          newXs.push(x);
-                          const y = interpolateY(parsed.xs, parsed.ys, x);
-                          newYs.push(y !== null && Number.isFinite(y) ? y : 0);
-                      }
-                      finalXs = newXs; finalYs = newYs;
-                  }
-
-                  cloned.wavelengthData = finalXs.map((x) => (+x.toFixed(4))).join('\n');
-                  cloned.spectraColumns = [{ id: makeId('spec'), title: parsed.meta.title || 'Bruker 1r spectrum', data: Array.from(finalYs).map(String).join('\n'), color: SPECTRA_PALETTE[i % SPECTRA_PALETTE.length], visible: true }];
-                  cloned.yUnit = 'raw';
-                  cloned.brukerMeta = parsed.meta;
-                  newTests.push(cloned);
-              }
-              return [...prevTests, ...newTests];
-          });
-      }
-      setBrukerMsg(`✅ Successfully imported ${results.length} spectrum/spectra.`);
+      // Show a selection dialog so the user can pick which experiments to import.
+      const pending = results.map((parsed, i) => ({ id: 'p_' + Date.now() + '_' + i, parsed, filename: parsed.filename }));
+      setPendingSpectra(pending);
+      setSelectedSpectraIds(pending.map(p => p.id));
+      setBrukerMsg(`Found ${results.length} 1D spectrum/spectra — select which experiments to import.`);
     } catch (err) {
       setBrukerMsg(`⚠️ ${err.message}`);
     }
     setBrukerBusy(false);
     if (brukerFileRef.current) brukerFileRef.current.value = '';
+  };
+
+  // Import only the experiments the user ticked in the selection dialog.
+  const importSelectedSpectra = () => {
+    const selected = pendingSpectra.filter(p => selectedSpectraIds.includes(p.id));
+    if (!selected.length) { setBrukerMsg('⚠️ Select at least one spectrum to import.'); return; }
+
+    applyBruker(selected[0].parsed, selected[0].filename);
+
+    if (selected.length > 1 && ctx.setTests) {
+        ctx.setTests(prevTests => {
+            const newTests = [];
+            for (let i = 1; i < selected.length; i++) {
+                const parsed = selected[i].parsed;
+                const newId = 't' + Date.now() + i + Math.random().toString(36).substring(2,5);
+                const cloned = JSON.parse(JSON.stringify(activeTest));
+                cloned.id = newId;
+                cloned.instanceName = selected[i].filename;
+                
+                let finalXs = parsed.xs; let finalYs = parsed.ys;
+                const hasCustomRange = (brukerStartKHz !== '' && brukerEndKHz !== '') || (brukerNumPoints !== '' && Number(brukerNumPoints) > 0);
+                if (hasCustomRange) {
+                    const xMin = Math.min(...parsed.xs); const xMax = Math.max(...parsed.xs); const isDesc = parsed.xs[0] > parsed.xs[parsed.xs.length - 1];
+                    const sK = brukerStartKHz !== '' ? Number(brukerStartKHz) : (isDesc ? xMax : xMin);
+                    const eK = brukerEndKHz !== '' ? Number(brukerEndKHz) : (isDesc ? xMin : xMax);
+                    const nPts = brukerNumPoints !== '' && Number(brukerNumPoints) > 1 ? Number(brukerNumPoints) : parsed.xs.length;
+                    const newXs = []; const newYs = [];
+                    for (let j = 0; j < nPts; j++) {
+                        const x = sK + (eK - sK) * (j / (nPts - 1 || 1));
+                        newXs.push(x);
+                        const y = interpolateY(parsed.xs, parsed.ys, x);
+                        newYs.push(y !== null && Number.isFinite(y) ? y : 0);
+                    }
+                    finalXs = newXs; finalYs = newYs;
+                }
+
+                cloned.wavelengthData = finalXs.map((x) => (+x.toFixed(4))).join('\n');
+                cloned.spectraColumns = [{ id: makeId('spec'), title: parsed.meta.title || 'Bruker 1r spectrum', data: Array.from(finalYs).map(String).join('\n'), color: SPECTRA_PALETTE[i % SPECTRA_PALETTE.length], visible: true }];
+                cloned.yUnit = 'raw';
+                cloned.brukerMeta = parsed.meta;
+                newTests.push(cloned);
+            }
+            return [...prevTests, ...newTests];
+        });
+    }
+    setPendingSpectra([]);
+    setSelectedSpectraIds([]);
+    setBrukerMsg(`✅ Successfully imported ${selected.length} spectrum/spectra.`);
   };
 
   const importBrukerFromUrl = async () => {
@@ -1653,7 +1418,7 @@ export const Data = ({ ctx }) => {
                 />
               </label>
               <span className="text-[9px] text-sky-700 mt-1 max-w-sm">
-                This will automatically locate the 1r file(s) and their corresponding acqus parameter files, instantly importing the correct ppm axis. If multiple experiments are selected, they will automatically be loaded into separate condition tabs.
+                This will automatically locate the 1r file(s) and their corresponding acqus parameter files, instantly importing the correct ppm axis. After scanning you can choose exactly which experiments to load — they will be imported into separate condition tabs.
               </span>
             </div>
 
@@ -1698,6 +1463,71 @@ export const Data = ({ ctx }) => {
           </div>
           {brukerMsg && <span className="text-xs font-bold text-sky-900">{brukerMsg}</span>}
         </div>
+
+        {/* Experiment selection dialog for folder import */}
+        {pendingSpectra.length > 0 && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[85vh]">
+              <div className="bg-gradient-to-r from-sky-600 to-blue-700 px-5 py-4 text-white rounded-t-2xl shrink-0">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="font-black text-lg">Select experiments to import</h3>
+                    <p className="text-sky-100 text-xs mt-0.5">{pendingSpectra.length} 1D spectrum/spectra found in the selected dataset folder</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { setPendingSpectra([]); setSelectedSpectraIds([]); setBrukerMsg('Import cancelled.'); }}
+                    className="text-white/70 hover:text-white text-2xl leading-none font-bold shrink-0"
+                    title="Cancel import"
+                  >
+                    &times;
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-4 flex flex-col gap-2 overflow-y-auto custom-scrollbar flex-1">
+                <div className="flex gap-2 items-center justify-between px-1 mb-1 shrink-0">
+                  <span className="text-xs font-bold text-slate-500 uppercase">Tick the experiments to load</span>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setSelectedSpectraIds(pendingSpectra.map(p => p.id))} className="text-[11px] font-bold text-sky-700 bg-sky-50 border border-sky-200 px-2 py-1 rounded hover:bg-sky-100">Select all</button>
+                    <button type="button" onClick={() => setSelectedSpectraIds([])} className="text-[11px] font-bold text-slate-500 bg-slate-50 border border-slate-200 px-2 py-1 rounded hover:bg-slate-100">Select none</button>
+                  </div>
+                </div>
+                {pendingSpectra.map(p => {
+                  const checked = selectedSpectraIds.includes(p.id);
+                  return (
+                    <label key={p.id} className={`flex items-center gap-3 border rounded-xl px-3 py-2.5 cursor-pointer transition-colors ${checked ? 'bg-sky-50 border-sky-300' : 'bg-white border-slate-200 hover:bg-slate-50'}`}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => {
+                          const id = p.id;
+                          setSelectedSpectraIds(prev => (e.target.checked ? [...prev, id] : prev.filter(x => x !== id)));
+                        }}
+                        className="w-4 h-4 accent-sky-600 shrink-0"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-bold text-slate-800 truncate">{p.filename}</div>
+                        <div className="text-[11px] text-slate-500 truncate">
+                          {(p.parsed.nPoints != null ? `${p.parsed.nPoints} pts` : `${p.parsed.xs ? p.parsed.xs.length : 0} pts`)}
+                          {p.parsed.meta?.title ? ` · ${p.parsed.meta.title}` : ''}
+                          {p.parsed.meta?.nucleus ? ` · ${p.parsed.meta.nucleus}` : ''}
+                        </div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+
+              <div className="px-4 py-3 border-t border-slate-200 flex justify-between items-center gap-3 bg-slate-50 rounded-b-2xl shrink-0">
+                <span className="text-[11px] text-slate-500">{selectedSpectraIds.length} of {pendingSpectra.length} selected</span>
+                <button type="button" onClick={importSelectedSpectra} disabled={!selectedSpectraIds.length} className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-bold px-5 py-2 rounded-lg text-sm shadow-sm">
+                  📥 Import selected ({selectedSpectraIds.length})
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3">
           <h4 className="text-sm font-bold text-slate-700">📐 Scaling & Acquisition Metadata</h4>
@@ -1809,15 +1639,12 @@ export const Data = ({ ctx }) => {
   );
 };
 
-
-
-
 // =========================================================================
 // ssNMRSections.jsx - REPLACE SpectraVisualization COMPONENT
 // =========================================================================
 export const SpectraVisualization = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
-  const d = usessNMRDerived(activeTest, ctx);
+  const d = useSSNMRDerived(activeTest, ctx);
   const { instances } = d;
 
   const cfg = { ...DEFAULT_CHART_STYLE, ...(activeTest.vizCfg || {}) };
@@ -1976,7 +1803,6 @@ export const SpectraVisualization = ({ ctx }) => {
 DATA ANALYSIS — FITTING (DYNAMIC PURE COMPONENTS)
 ======================================================================== */
 
-
 const OrderProfileChart = ({ res }) => {
   const data = (res.activeBases || []).map((k) => ({
     name: SSNMR_FIT_COMPONENTS[k]?.label || k,
@@ -2004,7 +1830,7 @@ const OrderProfileChart = ({ res }) => {
 
 export const QuadrupolarFitting = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
-  const d = usessNMRDerived(activeTest, ctx);
+  const d = useSSNMRDerived(activeTest, ctx);
   const { instances } = d;
   const [fitInstId, setFitInstId] = useState(activeTest.id);
   const [fitSpecIdx, setFitSpecIdx] = useState(0);
@@ -2059,7 +1885,6 @@ export const QuadrupolarFitting = ({ ctx }) => {
 
   const overlayRef = useRef(null);
   const allXs = [...expData.map((p) => p.x), ...simData.map((p) => p.x)];
-  const allYs = [...expData.map((p) => p.y), ...simData.map((p) => p.y)].filter((y) => Number.isFinite(y));
   const padX = allXs.length ? ((Math.max(...allXs) - Math.min(...allXs)) * 0.03 || 1) : 1;
   const resolvedXDomain = [
     dom(cfg.xMin) !== undefined ? dom(cfg.xMin) : (allXs.length ? Math.min(...allXs) - padX : -80),
@@ -2434,7 +2259,7 @@ const Condition3DScatter = ({ series, colorOf, includedPts, xLabel, yLabel, zLab
   );
 };
 
-const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlot }) => {
+const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) => {
   const cfg = { ...DEFAULT_CHART_STYLE, ...(plot.style || {}) };
   const set = (patch) => updatePlot(plot.id, patch);
   const setCfg = (patch) => updatePlot(plot.id, { style: { ...cfg, ...patch } });
@@ -2557,7 +2382,7 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
   };
   const fits = useMemo(() => {
     const out = {}; series.forEach((s) => { out[s.key] = fitOf(s); }); return out;
-  }, [series, plot.fitEnabled, plot.fitModel, plot.customExpr, plot.chartType, plot.manualSD, plot.useFixedSD, plot.fixedSDStr]);
+  }, [series]);
 
   const autoTouch = (s) => {
     const fit = fits[s.key] || fitOf(s);
@@ -2686,7 +2511,7 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
       });
       return row;
     });
-  }, [d.instances, series, used, plot.manualSD, plot.useFixedSD, plot.fixedSDStr]);
+  }, [d.instances, series, used]);
 
   const makeDot = (color, s) => (props) => {
     const { cx, cy, index } = props;
@@ -2723,7 +2548,7 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
       if (val === undefined || val === null) return null;
       return { name: s.label, val, err: err || 0, fill: colorOf(s) };
     }).filter(Boolean);
-  }, [series, fits, paramGraphVar, plot.fitModel, cfg.colors]);
+  }, [series, fits, paramGraphVar, plot.fitModel]);
   const paramYDataDomain = useMemo(() => {
     const vals = paramData.flatMap((p) => [p.val - Math.abs(p.err || 0), p.val + Math.abs(p.err || 0)]);
     if (!vals.length) return [0, 1];
@@ -3129,7 +2954,7 @@ const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, duplicatePlo
 
 const ConditionFittingSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
-  const d = usessNMRDerived(activeTest, ctx);
+  const d = useSSNMRDerived(activeTest, ctx);
   const plots = Array.isArray(activeTest.conditionPlots) && activeTest.conditionPlots.length
     ? activeTest.conditionPlots
     : [defaultssNMRConditionPlot(1)];
@@ -3162,7 +2987,6 @@ export const DataAnalysis = ({ ctx }) => (
     </div>
   </CollapsibleSection>
 );
-
 
 /* ========================================================================
    SIMULATIONS — DEUTERIUM SPECTRUM SIMULATOR
@@ -3197,7 +3021,7 @@ const DeuteriumMixer = ({ isExpanded, onToggleExpand }) => {
     for (let x = xMin; x <= xMax; x += 0.25) {
       xs.push(x);
       let v = 0;
-      Object.entries(scProfile).forEach(([k, scPct]) => {
+      Object.entries(scProfile).forEach(([, scPct]) => {
         const dNu = 1.5 * chi * (scPct / 100);
         if (dNu > 0.01) v += doubletAt(x, dNu, 1, sigma);
       });
@@ -3525,7 +3349,7 @@ export const InstrumentalSetup = ({ ctx }) => {
 
 export const NotebookExtra = ({ ctx, checkId }) => {
   const { activeTest } = ctx;
-  const d = usessNMRDerived(activeTest, ctx);
+  const d = useSSNMRDerived(activeTest, ctx);
   if (checkId === 'cond') {
     const expStr = SSNMR_EXPERIMENTAL_FIELDS
       .map((f) => {

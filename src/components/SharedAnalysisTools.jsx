@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ReferenceArea } from 'recharts';
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SHARED GRAPH CONFIGURATION  (legacy — used by Plate page)
@@ -236,6 +236,29 @@ export const ChartControlBar = ({
         )}
     </div>
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ANGLED TICK  -- rotated axis tick label, honours the "Tick label angle"
+// setting of SharedChartStylePanel (cfg.tickAngle). Previously copy-pasted in
+// CDSections / ssNMRSections / NMRSections.
+// ─────────────────────────────────────────────────────────────────────────────
+export const AngledTick = ({ x, y, payload, angle = 0, fontSize = 11, anchor = 'middle' }) => {
+    const a = Number(angle) || 0;
+    return (
+        <g transform={`translate(${x || 0},${y || 0})`}>
+            <text
+                transform={a ? `rotate(${a})` : undefined}
+                textAnchor={a < 0 ? 'end' : a > 0 ? 'start' : anchor}
+                dy={a ? 4 : 12}
+                dx={a ? (a > 0 ? 4 : -4) : 0}
+                fill="#64748b"
+                fontSize={fontSize}
+            >
+                {String(payload.value)}
+            </text>
+        </g>
+    );
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FULLSCREEN / FULLZOOM  -- shared classes used by ChartPanel and any chart

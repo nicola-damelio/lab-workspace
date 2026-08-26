@@ -1,4 +1,91 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { ensureNGL } from '../utils/ngl';
+
+// ---- Large-trajectory detection -------------------------------------------
+// When a chosen trajectory is big enough to freeze the browser, propose a
+// stride reduction BEFORE the file is parsed (frame counts are only known
+// after parsing, so we estimate from the file size). Above 2 GB the suggested
+// stride is recalculated so the effective loaded data stays under ~2 GB.
+const LARGE_TRAJ_BYTES = 200 * 1024 * 1024;        // warn above 200 MB
+const TARGET_TRAJ_FRAMES = 2500;                   // aim for ~2500 kept frames
+const TARGET_TRAJ_BYTES = 2 * 1024 * 1024 * 1024;  // 2 GB effective-load cap
+
+const fmtBytesMB = (b) => `${(b / (1024 * 1024)).toFixed(1)} MB`;
+const fmtBytesGB = (b) => `${(b / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+
+// Rough bytes/frame estimate per format (coordinates + box + header).
+const estimateTrajectoryFrames = (file, atomCount) => {
+  const name = (file.name || '').toLowerCase();
+  const n = atomCount > 0 ? atomCount : 300; // fallback atom count
+  let bytesPerFrame;
+  if (name.endsWith('.trr')) bytesPerFrame = n * 3 * 8 + 44;     // doubles
+  else if (name.endsWith('.dcd')) bytesPerFrame = n * 3 * 4 + 40; // floats
+  else bytesPerFrame = n * 3 * 2 + 48;                            // XTC (compressed ints)
+  return {
+    estFrames: Math.max(1, Math.round(file.size / Math.max(1, bytesPerFrame))),
+    bytesPerFrame
+  };
+};
+
+// ---- Large-structure handling ----------------------------------------------
+// Large systems are still loaded in full (so the topology / analysis keep
+// everything), but only the FIRST CHAIN is rendered by default to avoid
+// freezing the browser. A non-blocking banner warns the user and lets them
+// show everything if they want.
+const LARGE_STRUCT_BYTES = 1.5 * 1024 * 1024;   // ~1.5 MB of structure text
+const LARGE_ATOM_COUNT = 25000;                 // lighter rendering above this
+
+const AA3_TO_1 = {
+  ALA: 'A', ARG: 'R', ASN: 'N', ASP: 'D', CYS: 'C', GLN: 'Q', GLU: 'E', GLY: 'G',
+  HIS: 'H', HSD: 'H', HSE: 'H', HSP: 'H', ILE: 'I', LEU: 'L', LYS: 'K', MET: 'M',
+  PHE: 'F', PRO: 'P', SER: 'S', THR: 'T', TRP: 'W', TYR: 'Y', VAL: 'V', CYX: 'C',
+  SEC: 'U', PYL: 'O', ASX: 'B', GLX: 'Z',
+  DA: 'A', DC: 'C', DG: 'G', DT: 'T', DU: 'U'
+};
+
+// 1-letter sequence from an NGL structure. Tries NGL's getSequence() first,
+// then falls back to walking the residues (handles .gro topologies and any
+// PDB where NGL does not auto-detect the chains as polymers).
+const extractStructureSequence = (component) => {
+  if (!component || !component.structure) return '';
+  if (typeof component.structure.getSequence === 'function') {
+    try {
+      const arr = component.structure.getSequence();
+      if (Array.isArray(arr) && arr.length) {
+        const seq = arr
+          .map((s) => (s && (s.seq || s.sequence)) || '')
+          .join('')
+          .replace(/[^A-Za-z]/g, '');
+        if (seq) return seq;
+      }
+    } catch { /* fall through */ }
+  }
+  let seq = '';
+  try {
+    component.structure.eachResidue((r) => {
+      const name = String((r && (r.resname || r.restype)) || '').toUpperCase();
+      const code = AA3_TO_1[name] || (name.length === 1 && /[ACGTU]/.test(name) ? name : '');
+      if (code) seq += code;
+    });
+  } catch { /* fall through */ }
+  return seq;
+};
+
+// NGL selection string for the first chain of a structure (":A", ":B", …),
+// used to render only that chain on very large systems.
+const detectFirstChainSelection = (component) => {
+  try {
+    let chain = null;
+    if (typeof component.structure.eachResidue === 'function') {
+      component.structure.eachResidue((r) => {
+        if (chain === null && r && r.chainid) chain = String(r.chainid);
+      });
+    }
+    return chain ? `:${chain}` : null;
+  } catch {
+    return null;
+  }
+};
 
 const SELECT_COLOR_HEX = 0xf59e0b;
 const MANUAL_COLOR_HEX = 0x16a34a;
@@ -287,61 +374,6 @@ const computeMorganRanks = (elements, bonds) => {
   return ranks;
 };
 
-const deriveOrganicAtomNaming = (molblock) => {
-  const lines = molblock.split('\n');
-  const countsLine = lines[3] || '';
-  const nA = parseInt(countsLine.substring(0, 3).trim(), 10) || 0;
-  const nB = parseInt(countsLine.substring(3, 6).trim(), 10) || 0;
-  
-  const elements = [];
-  const bonds = [];
-  
-  for (let i = 0; i < nA; i++) {
-    const line = lines[4 + i] || '';
-    const elem = line.substring(31, 34).trim();
-    elements.push(elem || 'C');
-  }
-  for (let i = 0; i < nB; i++) {
-    const line = lines[4 + nA + i] || '';
-    const a1 = parseInt(line.substring(0, 3).trim(), 10) - 1;
-    const a2 = parseInt(line.substring(3, 6).trim(), 10) - 1;
-    if (!isNaN(a1) && !isNaN(a2)) bonds.push([a1, a2]);
-  }
-  
-  const ranks = computeMorganRanks(elements, bonds);
-  const atomNameList = new Array(nA).fill('');
-  const parentOfH = new Array(nA).fill(-1);
-  
-  bonds.forEach(([a1, a2]) => {
-    if (elements[a1] === 'H' && elements[a2] !== 'H') parentOfH[a1] = a2;
-    if (elements[a2] === 'H' && elements[a1] !== 'H') parentOfH[a2] = a1;
-  });
-  
-  const keepAtom = new Array(nA).fill(true);
-  const seenHForParent = new Set();
-  
-  for (let i = 0; i < nA; i++) {
-    if (elements[i] !== 'H') {
-      atomNameList[i] = `${elements[i]}${ranks[i] >= 0 ? ranks[i] : i}`;
-    } else {
-      const pr = parentOfH[i] >= 0 ? ranks[parentOfH[i]] : null;
-      // Name it H{parentRank} without a,b,c suffix
-      atomNameList[i] = pr !== null ? `H${pr}` : `H${i}`;
-      
-      // Only keep the FIRST hydrogen for each parent to avoid visual clutter
-      if (parentOfH[i] !== -1) {
-        if (seenHForParent.has(parentOfH[i])) {
-          keepAtom[i] = false;
-        } else {
-          seenHForParent.add(parentOfH[i]);
-        }
-      }
-    }
-  }
-  
-  return { atomNameList, elements, keepAtom };
-};
-// ==========================================================
 
 const _organicNamingCache = new WeakMap();
 const getOrganicNaming = (structure) => {
@@ -380,37 +412,7 @@ const names = getOrganicNaming(atom.structure);
 return names[atom.index] || `X${atom.index}`;
 };
 
-let _nglLoadPromise = null;
-const NGL_CDN_URLS = [
-'https://unpkg.com/ngl@2.4.0/dist/ngl.js',
-'https://cdn.jsdelivr.net/npm/ngl@2.4.0/dist/ngl.js',
-];
-
-const loadNGLFromUrl = (url) => new Promise((resolve, reject) => {
-const script = document.createElement('script');
-script.src = url;
-script.async = true;
-script.onload = () => {
-if (window.NGL) resolve(window.NGL);
-else reject(new Error(`Script loaded from ${url} but did not set window.NGL`));
-};
-script.onerror = () => reject(new Error(`Failed to fetch NGL script from ${url}`));
-document.head.appendChild(script);
-});
-
-const ensureNGL = () => {
-if (window.NGL) return Promise.resolve(window.NGL);
-if (_nglLoadPromise) return _nglLoadPromise;
-_nglLoadPromise = (async () => {
-let lastErr = null;
-for (const url of NGL_CDN_URLS) {
-try { return await loadNGLFromUrl(url); } catch (e) { lastErr = e; }
-}
-_nglLoadPromise = null;
-throw new Error(`Could not load the NGL viewer library from any CDN. ${lastErr ? lastErr.message : ''}`);
-})();
-return _nglLoadPromise;
-};
+// NGL is loaded via the shared loader in ../utils/ngl.js (see import above).
 
 // ================= TRAJECTORY HELPERS =================
 const getTrajectoryObject = (component) => {
@@ -440,7 +442,7 @@ if (!traj) return;
 try {
 if (typeof traj.setFrame === 'function') traj.setFrame(frame);
 else if (traj.trajectory && typeof traj.trajectory.setFrame === 'function') traj.trajectory.setFrame(frame);
-} catch (e) {}
+} catch {}
 };
 
 // ============================================================================
@@ -468,11 +470,12 @@ manualKeys = [],
 moleculeType = 'protein',
 parsedSeq = [],
 residueOffset = 0,
-atomNameMap,
 atomRenames,
 onAtomRenames,
-labelMode,
 namingConvention = 'nmr',
+resRenumber,
+onResRenumber,
+onStructureSequence,
 height = '520px',
 }) => {
 const containerRef = useRef(null);
@@ -498,6 +501,65 @@ const [backboneStyle, setBackboneStyle] = useState('cartoon');
 const [renames, setRenames] = useState(() => (atomRenames && typeof atomRenames === 'object' ? { ...atomRenames } : {}));
 const renamesRef = useRef(renames);
 renamesRef.current = renames;
+
+// ---- Residue renumbering (3D labels / analysis numbering) ----
+// Map of { originalResno: newResno } — lets the user renumber residues when a
+// PDB does not start at 1 (or any custom renumbering).
+const [renumberMap, setRenumberMap] = useState(() => (resRenumber && typeof resRenumber === 'object' ? { ...resRenumber } : {}));
+const [showRenumberPanel, setShowRenumberPanel] = useState(false);
+const [residueInfo, setResidueInfo] = useState([]); // [{ resno, resname, count }]
+const [renumberFrom, setRenumberFrom] = useState(1); // starting number for "Renumber from"
+const displayResno = (resno) => {
+  const v = renumberMap[String(resno)];
+  return v != null ? v : resno;
+};
+const commitRenumber = (next) => {
+  setRenumberMap(next);
+  if (typeof onResRenumber === 'function') onResRenumber(next);
+};
+
+// Renumber every residue consecutively starting from the user-chosen number
+// (residue 1 → start, residue 2 → start+1, …).
+const applyRenumberFrom = () => {
+  const start = parseInt(renumberFrom, 10);
+  if (!Number.isFinite(start)) return;
+  const next = {};
+  residueInfo.forEach((r, i) => { next[String(r.resno)] = start + i; });
+  commitRenumber(next);
+};
+
+// Sync externally-provided residue renumbering (e.g. restored from the active test)
+useEffect(() => {
+  if (resRenumber && typeof resRenumber === 'object') {
+    setRenumberMap((prev) => {
+      const next = { ...resRenumber };
+      return JSON.stringify(next) === JSON.stringify(prev) ? prev : next;
+    });
+  }
+}, [resRenumber]);
+
+// ---- Large-structure mode (declared before the effects below use it) ----
+const [largeMode, setLargeMode] = useState(false);     // true → only the first chain is rendered (big system)
+const [largeInfo, setLargeInfo] = useState(null);      // { nAtoms, size } → shows the non-blocking warning banner
+const largeModeRef = useRef(false);                    // synchronous mirror for addDefaultReps / sidechain effect
+largeModeRef.current = largeMode;
+
+// Rebuild the base representations when the large-structure mode toggles
+// ("Show everything" / reload of a big system).
+useEffect(() => {
+  const component = componentRef.current;
+  if (!component || status !== 'ready') return;
+  baseCompsRef.current.forEach((r) => { try { component.removeRepresentation(r); } catch {} });
+  baseCompsRef.current = [];
+  addDefaultReps(component);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [largeMode, status]);
+
+const showAllLargeAtoms = () => {
+  largeModeRef.current = false;
+  setLargeMode(false);
+  setLargeInfo(null);
+};
 const [renameMode, setRenameMode] = useState(false);
 const [renameTarget, setRenameTarget] = useState(null); // atom index being renamed
 const [renameDraft, setRenameDraft] = useState('');
@@ -529,7 +591,7 @@ const displayAtomName = (atom) => {
   // For organic/lipid/sugar molecules, use the same connectivity-based name as
   // the 2D structure (so the 3D labels automatically match the 2D formula).
   if (['organic', 'lipid', 'sugar'].includes(moleculeTypeRef.current)) {
-    try { return getOrganicAtomName(atom); } catch (e) { /* fall through */ }
+    try { return getOrganicAtomName(atom); } catch { /* fall through */ }
   }
   return atom.atomname || atom.name || '';
 };
@@ -544,6 +606,8 @@ const [playing, setPlaying] = useState(false);
 const [speed, setSpeed] = useState(10);
 const [stride, setStride] = useState(1);        // play every Nth frame (keeps total time)
 const [maxFrames, setMaxFrames] = useState(0);  // 0 = keep all frames
+const [pendingTraj, setPendingTraj] = useState(null); // { file, estFrames, suggested } awaiting user confirmation
+const firstChainSelRef = useRef(null);                 // NGL selection of the first chain (":A")
 const trajRef = useRef(null);
 const blobUrlsRef = useRef([]);
 
@@ -661,10 +725,9 @@ const bin = atob(b64);
 const bytes = new Uint8Array(bin.length);
 for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
 const blob = new Blob([bytes], { type: mime });
-const ext = structureFormat !== 'auto' ? structureFormat : (structureFileName || 'structure.pdb').split('.').pop();
 const fakeFile = new File([blob], structureFileName || 'structure.pdb', { type: mime });
-setLoadRequest({ file: fakeFile, url: null, ts: Date.now() });
-} catch (e) {
+requestStructureLoad({ file: fakeFile, url: null, ts: Date.now() });
+} catch {
 setErrorMsg('Failed to decode structure file data.');
 setStatus('error');
 }
@@ -683,7 +746,7 @@ if (!structureText) { lastLoadedTextRef.current = null; return; }
 if (structureText !== lastLoadedTextRef.current) {
 lastLoadedTextRef.current = structureText;
 setFile(null);
-setLoadRequest({ file: null, url: null, text: structureText, ext: structureTextExt || 'pdb', ts: Date.now() });
+requestStructureLoad({ file: null, url: null, text: structureText, ext: structureTextExt || 'pdb', ts: Date.now() });
 }
 }, [structureText, structureTextExt, manualOverride]);
 
@@ -709,12 +772,20 @@ const addDefaultReps = (component) => {
   const trackBase = (r) => { if (r) baseCompsRef.current.push(r); };
   const organicLike = ['organic', 'lipid', 'sugar'].includes(moleculeTypeRef.current);
   if (organicLike) {
-    try { trackBase(component.addRepresentation('ball+stick', { colorScheme: 'element', multipleBond: true, aspectRatio: 1.3 })); } catch (e) {}
+    try { trackBase(component.addRepresentation('ball+stick', { colorScheme: 'element', multipleBond: true, aspectRatio: 1.3 })); } catch {}
     return;
   }
   const isNucleic = moleculeTypeRef.current === 'dna' || moleculeTypeRef.current === 'rna';
   if (isNucleic) {
-    try { trackBase(component.addRepresentation('ball+stick', { sele: 'all', colorScheme: 'element', multipleBond: true, aspectRatio: 1.1 })); } catch (e) {}
+    try { trackBase(component.addRepresentation('ball+stick', { sele: 'all', colorScheme: 'element', multipleBond: true, aspectRatio: 1.1 })); } catch {}
+    return;
+  }
+  // Very large systems: render only the first chain (light representation) so
+  // the view stays usable — the rest of the structure stays loaded, just hidden.
+  if (largeModeRef.current) {
+    const sele = firstChainSelRef.current || 'protein';
+    try { trackBase(component.addRepresentation('line', { sele, colorScheme: 'element' })); } catch {}
+    try { trackBase(component.addRepresentation('ball+stick', { sele: `${sele} and hetero`, aspectRatio: 1.1 })); } catch {}
     return;
   }
   const bb = backboneStyleRef.current || 'cartoon';
@@ -724,8 +795,8 @@ const addDefaultReps = (component) => {
     else if (bb === 'sticks') trackBase(component.addRepresentation('ball+stick', { sele: 'protein and not sidechain', colorScheme: 'element', multipleBond: true, aspectRatio: 1.1 }));
     else if (bb === 'lines') trackBase(component.addRepresentation('line', { sele: 'protein', colorScheme: 'element' }));
     else if (bb === 'spheres') trackBase(component.addRepresentation('spacefill', { sele: 'protein', colorScheme: 'element', scale: 0.6 }));
-  } catch (e) {}
-  try { trackBase(component.addRepresentation('ball+stick', { sele: 'hetero and not water', aspectRatio: 1.1 })); } catch (e) {}
+  } catch {}
+  try { trackBase(component.addRepresentation('ball+stick', { sele: 'hetero and not water', aspectRatio: 1.1 })); } catch {}
 };
 
 // Main structure load
@@ -774,7 +845,7 @@ try {
 component = fb.params ? await stage.loadFile(fb.url, fb.params) : await stage.loadFile(fb.url);
 loaded = true;
 break;
-} catch (fbErr) { /* try next fallback */ }
+} catch { /* try next fallback */ }
 }
 }
 if (!loaded) {
@@ -801,13 +872,34 @@ componentRef.current = component;
 // Note: NGL viewer structures from PDB/SDF already contain hydrogens when generated correctly.
 // We skip addHydrogens() to prevent "is not a function" errors in this NGL version.
 
+// Very large systems: load everything but render only the first chain so the
+// browser does not freeze; a non-blocking banner warns the user.
+const nAtoms = component.structure ? component.structure.atomCount : 0;
+const bigSource = (loadRequest && loadRequest.size) >= LARGE_STRUCT_BYTES;
+const isLarge = nAtoms > LARGE_ATOM_COUNT || bigSource;
+largeModeRef.current = isLarge;
+setLargeMode(isLarge);
+if (isLarge) {
+firstChainSelRef.current = detectFirstChainSelection(component);
+setLargeInfo({ nAtoms, size: loadRequest && loadRequest.size ? loadRequest.size : 0 });
+} else {
+firstChainSelRef.current = null;
+setLargeInfo(null);
+}
 addDefaultReps(component);
+
+// Expose the 1-letter sequence parsed from the structure so the pages can
+// auto-fill the sequence field when it is empty (enables the per-atom table).
+if (typeof onStructureSequence === 'function') {
+const seq = extractStructureSequence(component);
+if (seq) onStructureSequence(seq);
+}
 
 component.autoView();
 requestAnimationFrame(() => {
 if (cancelled || !stageRef.current) return;
-try { stageRef.current.handleResize(); } catch (e) {}
-try { component.autoView(); } catch (e) {}
+try { stageRef.current.handleResize(); } catch {}
+try { component.autoView(); } catch {}
 });
 
 if (!(component.structure ? component.structure.atomCount : 0)) {
@@ -934,6 +1026,57 @@ setCurrentFrame(idx);
 setFrameSafe(trajRef.current, toActualFrame(idx));
 };
 
+// ---- Large-trajectory confirmation ----------------------------------------
+const handleTrajFileChosen = (f) => {
+if (!f) return;
+const structure = componentRef.current && componentRef.current.structure;
+const atomCount = structure ? structure.atomCount : 0;
+if (f.size >= LARGE_TRAJ_BYTES) {
+const { estFrames, bytesPerFrame } = estimateTrajectoryFrames(f, atomCount);
+const over2G = f.size > TARGET_TRAJ_BYTES;
+let suggested;
+if (over2G) {
+// Recalculate the stride so the effective loaded data stays under ~2 GB.
+const keepFrames = Math.max(1, Math.floor(TARGET_TRAJ_BYTES / Math.max(1, bytesPerFrame)));
+suggested = Math.min(1000, Math.max(1, Math.ceil(estFrames / keepFrames)));
+} else {
+suggested = Math.min(1000, Math.max(1, Math.ceil(estFrames / TARGET_TRAJ_FRAMES)));
+}
+if (suggested > 1) {
+setPendingTraj({ file: f, estFrames, suggested, over2G });
+return;
+}
+}
+setTrajFile(f);
+onTrajectoryFile?.(f);
+};
+
+const acceptTrajReduction = () => {
+if (!pendingTraj) return;
+setStride(pendingTraj.suggested);
+setMaxFrames(TARGET_TRAJ_FRAMES);
+setTrajFile(pendingTraj.file);
+onTrajectoryFile?.(pendingTraj.file);
+setPendingTraj(null);
+};
+
+const loadTrajWithoutReduction = () => {
+if (!pendingTraj) return;
+setTrajFile(pendingTraj.file);
+onTrajectoryFile?.(pendingTraj.file);
+setPendingTraj(null);
+};
+
+// ---- Structure load funnel -------------------------------------------------
+// Every structure source goes through here. The size is tagged onto the load
+// request so the load effect can auto-hide all but the first chain on very
+// large systems (the structure is still loaded in full for the analysis).
+const requestStructureLoad = (payload) => {
+const file = payload.file;
+const size = file ? file.size : (payload.text ? payload.text.length : 0);
+setLoadRequest({ ...payload, size });
+};
+
 // Jump back to the start when the stride / max-frames controls change.
 useEffect(() => {
 if (trajRef.current && numFrames > 0) {
@@ -958,13 +1101,19 @@ useEffect(() => {
   const component = componentRef.current;
   if (!component || status !== 'ready' || !component.structure) return;
   const list = [];
+  const resMap = new Map();
   try {
     component.structure.eachAtom((a) => {
-      list.push({ idx: a.index, element: a.element || '', name: a.atomname || '', resno: a.resno || 0, resname: a.resname || '' });
+      const rawResno = a.resno != null ? Number(a.resno) : 0;
+      list.push({ idx: a.index, element: a.element || '', name: a.atomname || '', resno: displayResno(rawResno), rawResno, resname: a.resname || '' });
+      if (!resMap.has(rawResno)) resMap.set(rawResno, { resno: rawResno, resname: a.resname || '', count: 0 });
+      resMap.get(rawResno).count++;
     });
-  } catch (e) {}
+  } catch {}
   setAtomList(list);
-}, [status]);
+  setResidueInfo([...resMap.values()]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [status, renumberMap]);
 
 // ---- PyMOL-style selections & effects ----
 const selCompsRef = useRef({});       // key -> [representations]
@@ -998,7 +1147,7 @@ const selectionAtomCount = (key) => {
   try {
     const sel = component.structure.getSelection(selKeyExpr(key));
     return sel.count != null ? sel.count : (sel.length != null ? sel.length : null);
-  } catch (e) {
+  } catch {
     return null;
   }
 };
@@ -1008,17 +1157,17 @@ useEffect(() => {
   const component = componentRef.current;
   if (!component || status !== 'ready') return;
   Object.keys(selCompsRef.current).forEach((k) => {
-    (selCompsRef.current[k] || []).forEach((r) => { try { component.removeRepresentation(r); } catch (e) {} });
+    (selCompsRef.current[k] || []).forEach((r) => { try { component.removeRepresentation(r); } catch {} });
   });
   selCompsRef.current = {};
   // Base representations: removed in "hide all" or PyMOL-script mode, and rebuilt
   // when the backbone style changes or when restoring from "hide all".
   const backboneChanged = prevBackboneRef.current !== backboneStyle;
   if (hideAll || pymolActive) {
-    baseCompsRef.current.forEach((r) => { try { component.removeRepresentation(r); } catch (e) {} });
+    baseCompsRef.current.forEach((r) => { try { component.removeRepresentation(r); } catch {} });
     baseCompsRef.current = [];
   } else if (backboneChanged || baseCompsRef.current.length === 0) {
-    baseCompsRef.current.forEach((r) => { try { component.removeRepresentation(r); } catch (e) {} });
+    baseCompsRef.current.forEach((r) => { try { component.removeRepresentation(r); } catch {} });
     baseCompsRef.current = [];
     addDefaultReps(component);
   }
@@ -1033,7 +1182,7 @@ useEffect(() => {
     const opacity = st.transparency != null ? Math.max(0, Math.min(1, 1 - st.transparency)) : undefined;
     const reps = [];
     const add = (type, params) => {
-      try { reps.push(component.addRepresentation(type, { sele: expr, ...params })); } catch (e) {}
+      try { reps.push(component.addRepresentation(type, { sele: expr, ...params })); } catch {}
     };
     if (st.cartoon) add('cartoon', { color, opacity });
     if (st.sphere) add('spacefill', { scale: st.sphereScale || 1, color, opacity, multipleBond: true });
@@ -1043,7 +1192,7 @@ useEffect(() => {
   });
   return () => {
     Object.keys(selCompsRef.current).forEach((k) => {
-      (selCompsRef.current[k] || []).forEach((r) => { try { component.removeRepresentation(r); } catch (e) {} });
+      (selCompsRef.current[k] || []).forEach((r) => { try { component.removeRepresentation(r); } catch {} });
     });
     selCompsRef.current = {};
   };
@@ -1054,8 +1203,8 @@ useEffect(() => {
 useEffect(() => {
   const stage = stageRef.current;
   if (!stage) return;
-  try { stage.setParameters({ backgroundColor: bgColor }); } catch (e) {}
-  try { stage.setQuality(qualityHigh ? 'high' : 'medium'); } catch (e) {}
+  try { stage.setParameters({ backgroundColor: bgColor }); } catch {}
+  try { stage.setQuality(qualityHigh ? 'high' : 'medium'); } catch {}
 }, [bgColor, qualityHigh, status]);
 
 const parsePyMOL = (text) => {
@@ -1226,7 +1375,7 @@ const autoNameFrom2D = () => {
     component.structure.eachAtom((a) => {
       next[a.index] = getOrganicAtomName(a);
     });
-  } catch (e) {}
+  } catch {}
   persistRenames(next);
 };
 const clearRenames = () => persistRenames({});
@@ -1237,7 +1386,7 @@ const component = componentRef.current;
 if (!component || status !== 'ready') return;
 const clearLabels = () => {
 if (labelCompRef.current) {
-try { component.removeRepresentation(labelCompRef.current); } catch (e) {}
+try { component.removeRepresentation(labelCompRef.current); } catch {}
 labelCompRef.current = null;
 }
 };
@@ -1250,7 +1399,7 @@ sele: isOrganicLike ? 'not hydrogen' : 'protein and sidechain and not hydrogen',
 labelType: 'custom', labelGrouping: 'atom', color: 0x111827, radius: 1.0, opacity: 1, depthTest: false,
 customLabel: (a) => displayNameRef.current(a),
 });
-} catch (e) {}
+} catch {}
 }
 return clearLabels;
 }, [showLabels, status, renames]);
@@ -1262,21 +1411,22 @@ if (!component || status !== 'ready') return;
 if (['organic', 'lipid', 'sugar'].includes(moleculeTypeRef.current)) return;
 const clearSidechain = () => {
 if (sidechainCompRef.current) {
-try { component.removeRepresentation(sidechainCompRef.current); } catch (e) {}
+try { component.removeRepresentation(sidechainCompRef.current); } catch {}
 sidechainCompRef.current = null;
 }
 };
 clearSidechain();
-if (sidechainStyle !== 'none' && !hideAll && !pymolActive) {
+// Skip heavy side-chain rendering on very large systems (keeps the view usable).
+if (sidechainStyle !== 'none' && !hideAll && !pymolActive && !largeModeRef.current) {
 try {
 sidechainCompRef.current = component.addRepresentation(sidechainStyle, {
 sele: '(protein and sidechain) or (protein and .CA)', color: 'element', multipleBond: true,
 radiusSize: sidechainStyle === 'licorice' ? 0.25 : undefined,
 });
-} catch (e) {}
+} catch {}
 }
 return clearSidechain;
-}, [sidechainStyle, status, hideAll, pymolActive]);
+}, [sidechainStyle, status, hideAll, pymolActive, largeMode]);
 
 // Highlight selected and manually selected atoms
 useEffect(() => {
@@ -1285,11 +1435,11 @@ if (!component || status !== 'ready') return;
 
 const clearHighlights = () => {
 if (highlightCompRef.current) {
-try { component.removeRepresentation(highlightCompRef.current); } catch (e) {}
+try { component.removeRepresentation(highlightCompRef.current); } catch {}
 highlightCompRef.current = null;
 }
 if (manualHighlightCompRef.current) {
-try { component.removeRepresentation(manualHighlightCompRef.current); } catch (e) {}
+try { component.removeRepresentation(manualHighlightCompRef.current); } catch {}
 manualHighlightCompRef.current = null;
 }
 };
@@ -1371,7 +1521,7 @@ const manSele = buildSele(man);
 if (manSele) {
 manualHighlightCompRef.current = component.addRepresentation('ball+stick', { sele: manSele, color: MANUAL_COLOR_HEX, aspectRatio: 1.5, radius: 0.4 });
 }
-} catch (e) {}
+} catch {}
 
 return clearHighlights;
 }, [selectedKeys, manualKeys, status]);
@@ -1383,7 +1533,7 @@ setManualOverride(true);
 setFile(f);
 setPdbId('');
 setTrajFile(null);
-setLoadRequest({ file: f, url: null, ts: Date.now() });
+requestStructureLoad({ file: f, url: null, ts: Date.now() });
 onStructureFile?.(f);   // share the chosen topology with the analysis sections
 e.target.value = '';
 }, [onStructureFile]);
@@ -1459,10 +1609,7 @@ type="file"
 accept=".xtc,.trr,.dcd"
 onChange={(e) => {
 const f = e.target.files && e.target.files[0];
-if (f) {
-setTrajFile(f);
-onTrajectoryFile?.(f);   // share the chosen trajectory with the analysis sections
-}
+if (f) handleTrajFileChosen(f);
 e.target.value = '';
 }}
 className="hidden"
@@ -1473,6 +1620,32 @@ className="hidden"
 {(trajFile || trajectoryFile).name}
 </span>
 )}
+{/* Load options — settable BEFORE loading, so a large trajectory is only
+    stepped through at the chosen stride / frame cap from the start. */}
+<div className="flex flex-wrap items-center gap-3 mt-1 pt-2 border-t border-slate-200">
+<label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 uppercase">
+Load every
+<select
+value={stride}
+onChange={(e) => setStride(Math.max(1, parseInt(e.target.value, 10) || 1))}
+className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-indigo-500"
+title="Play every Nth frame — keeps the same total trajectory time with fewer frames"
+>
+{[1, 2, 5, 10, 20, 50, 100, 200, 500, 1000].map((s) => <option key={s} value={s}>{s}×</option>)}
+</select>
+</label>
+<label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 uppercase">
+Max frames
+<input
+type="number"
+min="0"
+value={maxFrames}
+onChange={(e) => setMaxFrames(Math.max(0, parseInt(e.target.value, 10) || 0))}
+className="border border-slate-300 rounded-lg px-2 py-1 text-xs w-20 bg-white outline-none focus:border-indigo-500"
+title="Limit the number of frames actually played (0 = keep all)"
+/>
+</label>
+</div>
 </div>
 
 <div className="flex flex-col gap-1">
@@ -1488,6 +1661,66 @@ className="w-4 h-4 accent-blue-600"
 />
 Show atom names
 </label>
+</div>
+
+{/* Residue renumbering */}
+<div className="flex flex-col gap-1">
+<button
+type="button"
+onClick={() => setShowRenumberPanel((v) => !v)}
+className="text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg px-2 py-1.5 text-left flex items-center justify-between gap-2"
+>
+<span>🔢 Renumber residues</span>
+<span className="text-slate-400">{showRenumberPanel ? '▲' : '▼'}</span>
+</button>
+{showRenumberPanel && residueInfo.length > 0 && (
+<div className="border border-slate-200 rounded-lg bg-white shadow-sm p-2 flex flex-col gap-1.5 max-h-56 overflow-y-auto">
+<div className="flex items-center justify-between gap-1">
+<span className="text-[9px] font-bold text-slate-400 uppercase">Residue → new number</span>
+<div className="flex items-center gap-1">
+<input
+type="number"
+value={renumberFrom}
+onChange={(e) => setRenumberFrom(e.target.value)}
+className="border border-slate-300 rounded px-1 py-0.5 w-12 text-right outline-none focus:border-blue-500 text-[10px] font-mono"
+title="Starting number"
+/>
+<button
+type="button"
+onClick={applyRenumberFrom}
+className="text-[9px] font-bold bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-1.5 py-0.5 rounded whitespace-nowrap"
+title="Renumber all residues consecutively starting from this number (no manual per-residue edits needed)"
+>
+Renumber from
+</button>
+<button
+type="button"
+onClick={() => commitRenumber({})}
+className="text-[9px] font-bold bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-1.5 py-0.5 rounded"
+title="Clear renumbering (restore original numbers)"
+>
+Clear
+</button>
+</div>
+</div>
+{residueInfo.map((r, i) => (
+<div key={r.resno} className="flex items-center gap-1.5 text-[10px] font-mono text-slate-600">
+<span className="w-3 text-slate-400">{i + 1}.</span>
+<span className="flex-1 truncate">{r.resname}{r.resno}</span>
+<input
+type="number"
+value={renumberMap[String(r.resno)] !== undefined && renumberMap[String(r.resno)] !== '' ? renumberMap[String(r.resno)] : r.resno}
+onChange={(e) => {
+const nv = parseInt(e.target.value, 10);
+commitRenumber({ ...renumberMap, [String(r.resno)]: Number.isFinite(nv) ? nv : '' });
+}}
+className="border border-slate-300 rounded px-1 py-0.5 w-16 text-right outline-none focus:border-blue-500"
+title="New residue number (blank = keep the original)"
+/>
+</div>
+))}
+</div>
+)}
 </div>
 
 <div className="flex flex-col gap-1">
@@ -1664,28 +1897,6 @@ className="border border-indigo-300 rounded-lg px-2 py-1 text-xs bg-white outlin
 {[1, 5, 10, 20, 30, 60].map((s) => <option key={s} value={s}>{s} fps</option>)}
 </select>
 </div>
-<div className="flex items-center gap-2">
-<label className="text-[10px] font-bold text-indigo-700 uppercase">Load every</label>
-<select
-value={stride}
-onChange={(e) => setStride(Math.max(1, parseInt(e.target.value, 10) || 1))}
-className="border border-indigo-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-indigo-500"
-title="Play every Nth frame — keeps the same total trajectory time with fewer frames"
->
-{[1, 2, 5, 10, 20, 50, 100, 200, 500, 1000].map((s) => <option key={s} value={s}>{s}×</option>)}
-</select>
-</div>
-<div className="flex items-center gap-2">
-<label className="text-[10px] font-bold text-indigo-700 uppercase">Max frames</label>
-<input
-type="number"
-min="0"
-value={maxFrames}
-onChange={(e) => setMaxFrames(Math.max(0, parseInt(e.target.value, 10) || 0))}
-className="border border-indigo-300 rounded-lg px-2 py-1 text-xs w-20 bg-white outline-none focus:border-indigo-500"
-title="Limit the number of frames actually played (0 = keep all)"
-/>
-</div>
 <div className="w-full">
 {trajStatus === 'loading' && <span className="text-[11px] font-bold text-indigo-600">⏳ Loading trajectory ({trajectoryFormat.toUpperCase()})…</span>}
 {trajStatus === 'ready' && (
@@ -1788,6 +1999,73 @@ Tip: you cannot paste a local file path — use the file picker button above
 </div>
 )}
 </div>
+
+{/* Large-trajectory confirmation modal */}
+{pendingTraj && (
+<div className="fixed inset-0 z-[99999] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+<div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+<h3 className="text-sm font-black text-slate-800 mb-2">Large trajectory detected</h3>
+<p className="text-xs text-slate-600 mb-3">
+<b className="text-slate-800">{pendingTraj.file.name}</b> is {pendingTraj.over2G ? fmtBytesGB(pendingTraj.file.size) : fmtBytesMB(pendingTraj.file.size)}
+{' '}and is estimated to contain ~{pendingTraj.estFrames.toLocaleString()} frames.
+{pendingTraj.over2G
+  ? ' Loading it all may exceed ~2 GB of memory and freeze the browser.'
+  : ' Playing it without reduction may freeze the browser.'}
+</p>
+<p className="text-xs text-slate-600 mb-4">
+{pendingTraj.over2G ? 'To stay under ~2 GB, skip ' : 'Load only '}
+<b>every {pendingTraj.suggested}×</b> frame
+{' '}(≈{Math.ceil(pendingTraj.estFrames / pendingTraj.suggested).toLocaleString()} frames
+{pendingTraj.over2G ? ', ≈2 GB' : `, capped at ~${TARGET_TRAJ_FRAMES.toLocaleString()}`}).
+The total trajectory time is preserved.
+</p>
+<div className="flex flex-wrap gap-2 justify-end">
+<button
+type="button"
+onClick={() => setPendingTraj(null)}
+className="text-xs font-bold text-slate-500 hover:text-slate-700 px-3 py-2 rounded-lg"
+>
+Cancel
+</button>
+<button
+type="button"
+onClick={loadTrajWithoutReduction}
+className="text-xs font-bold bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 px-3 py-2 rounded-lg shadow-sm"
+>
+Load everything
+</button>
+<button
+type="button"
+onClick={acceptTrajReduction}
+className="text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg shadow-sm"
+>
+✓ Yes, reduce frames
+</button>
+</div>
+</div>
+</div>
+)}
+
+
+{/* Large-structure warning banner (non-blocking) */}
+{largeInfo && (
+<div className="flex flex-wrap items-center gap-2 bg-amber-50 border border-amber-300 text-amber-900 rounded-lg px-3 py-2 text-[11px] font-bold shadow-sm">
+<span>
+⚠️ Large structure
+{largeInfo.nAtoms ? ` (${largeInfo.nAtoms.toLocaleString()} atoms)` : ''}:
+only the first chain is rendered to avoid overloading the browser.
+The rest of the molecule is loaded but hidden.
+</span>
+<button
+type="button"
+onClick={showAllLargeAtoms}
+className="text-[10px] font-bold bg-white border border-amber-400 text-amber-800 hover:bg-amber-100 px-2.5 py-1 rounded-lg transition-colors"
+>
+👁 Show everything
+</button>
+</div>
+)}
+
 </div>
 );
 };

@@ -3,6 +3,7 @@ import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   ReferenceArea, BarChart, Bar, LineChart, Line, Legend
 } from 'recharts';
+import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, LINE_COLORS } from '../utils/chartStyle';
 
 /* ============================================================================
    NMRData — shared NMR building blocks imported by NMRSections.jsx
@@ -13,12 +14,7 @@ import {
 ========================================================================== */
 
 // ================= LAYOUT CONSTANTS =================
-export const FS_CLASSES =
-  'fixed top-4 left-4 z-[999999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col';
-export const OVERLAY_CLASSES = 'fixed top-0 left-0 w-screen h-screen bg-slate-900/50 backdrop-blur-sm z-[999990]';
-export const SELECT_COLOR = '#f59e0b';
-export const MANUAL_COLOR = '#16a34a';
-export const LINE_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16'];
+export { FS_CLASSES, OVERLAY_CLASSES, SELECT_COLOR, MANUAL_COLOR, LINE_COLORS };
 
 // ================= DATABASES =================
 export const AMINO_ACID_DB = {
@@ -510,8 +506,7 @@ export const RESIDUE_COLORS = ['#3b82f6', '#8b5cf6', '#d946ef', '#ec4899', '#f43
 export const TICKS_1H = Array.from({ length: 111 }, (_, i) => parseFloat((i / 10).toFixed(1)));
 export const TICKS_13C = Array.from({ length: 281 }, (_, i) => parseFloat((10 + i * 0.5).toFixed(1)));
 export const TICKS_15N = Array.from({ length: 81 }, (_, i) => parseFloat((95 + i * 0.5).toFixed(1)));
-export const CHART_MARGIN = { top: 20, right: 20, bottom: 45, left: 50 };
-export const CHART_MARGIN_1D = { top: 10, right: 15, bottom: 45, left: 15 };
+export { CHART_MARGIN, CHART_MARGIN_1D };
 
 // ================= HELPERS =================
 export const parseManual = (v) => {
@@ -1283,6 +1278,9 @@ export const buildLipidStructure = (res, db) => {
 
 // ================= SVG EXPORT =================
 export const elementsToSVG = (structure, height = 320) => {
+  if (!structure || !Array.isArray(structure.elements)) {
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 40" style="height:80px;max-width:100%;font-family:sans-serif;background:white;"><text x="50" y="24" text-anchor="middle" font-size="11" fill="#94a3b8">No structure available</text></svg>';
+  }
   let inner = '';
   structure.elements.forEach((el) => {
     const w = el.width || 1.8;
@@ -1389,6 +1387,17 @@ export const getManualKeys = (values) => {
 export const StructureSVGView = ({
   structure, minWidth, isExpanded, onToggleExpand, selectedKeys, manualKeys = [], onAtomClick, height = '300px'
 }) => {
+  if (!structure || !Array.isArray(structure.elements)) {
+    return (
+      <div className="flex items-center justify-center bg-slate-50 border border-dashed border-slate-300 rounded-xl p-6 text-center w-full h-full min-h-[150px]">
+        <div>
+          <div className="text-2xl mb-1">🧬</div>
+          <p className="text-xs font-bold text-slate-500">No structure to display yet</p>
+          <p className="text-[11px] text-slate-400 mt-1">Add a sequence to generate the molecular formula.</p>
+        </div>
+      </div>
+    );
+  }
   const clickables = structure.elements.filter(
     (e) => (e.type === 'circle' || e.type === 'text') && e.ri != null && e.keys && e.keys.length && onAtomClick
   );
@@ -1470,29 +1479,9 @@ export const StructureSVGView = ({
 };
 
 // ================= COLLAPSIBLE SECTION =================
-export const CollapsibleSection = ({ title, icon, defaultOpen = true, children, headerExtra, className = '' }) => {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
-  return (
-    <div className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-6 break-inside-avoid ${className}`}>
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className={`w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition-colors text-left ${isOpen ? 'rounded-t-xl border-b border-slate-200' : 'rounded-xl'}`}
-      >
-        <div className="flex items-center gap-2 overflow-hidden">
-          {icon && <span className="text-xl shrink-0">{icon}</span>}
-          <h3 className="text-lg font-bold text-slate-800 truncate">{title}</h3>
-        </div>
-        <div className="flex items-center gap-3 shrink-0">
-          {headerExtra && <div onClick={(e) => e.stopPropagation()}>{headerExtra}</div>}
-          <svg className={`w-5 h-5 text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-        </div>
-      </button>
-      {isOpen && <div className="p-6">{children}</div>}
-    </div>
-  );
-};
+// CollapsibleSection now lives in ./ui (single shared definition).
+import { CollapsibleSection } from './ui';
+export { CollapsibleSection };
 
 // ================= MULTI-SELECT DROPDOWN =================
 export const MultiSelectDropdown = ({ options, selected, onToggle, placeholder }) => {

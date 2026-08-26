@@ -55,7 +55,7 @@ const LABEL_CLS = 'block text-[10px] font-bold text-slate-500 uppercase mb-1';
 
 const PrimerCard = ({ primer }) => {
 const copy = () => {
-try { navigator.clipboard.writeText(primer.seq); } catch (e) {}
+try { navigator.clipboard.writeText(primer.seq); } catch {}
 };
 return (
  <div className= "bg-slate-50 border border-slate-200 rounded-lg p-3 flex flex-col gap-2 " >

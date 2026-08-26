@@ -300,7 +300,7 @@ export const StorageDetail = ({ storages, activeStorageId, tests, setTests, setC
 };
 
 // --- BOX DETAIL VIEW ---
-export const BoxDetail = ({ activeTest, updateActiveTest, storages, expandedGroups, setExpandedGroups, customCmpds, jumpToTest, setMoveModal, TestHeader, operators = [] }) => {
+export const BoxDetail = ({ activeTest, updateActiveTest, storages, expandedGroups, setExpandedGroups, customCmpds, TestHeader, operators = [] }) => {
     const getVal = (key, def) => expandedGroups[key] !== undefined ? expandedGroups[key] : def;
     const setVal = (key, val) => setExpandedGroups(p => {
         let current = p[key];
@@ -343,7 +343,7 @@ const getWellData = (r, c) => {
         sampleOwner: parsed.sampleOwner || parsed.operator || ''
       };
     }
-  } catch (e) {}
+  } catch {}
 
   return defaults;
 };
@@ -465,7 +465,7 @@ const printBoxLabel = () => {
     setTimeout(() => {
       try {
         printWin.print();
-      } catch (e) {}
+      } catch {}
     }, 300);
   } catch (err) {
     alert('Print failed: ' + err.message);
@@ -615,7 +615,7 @@ const printBoxLabel = () => {
                             })}
                         </div>
                     )}
-                    <datalist id="box-cmpd-list">{[...new Set([...customCmpds, ...DEF_COMPOUNDS])].map(c => <option key={c} value={c}/>)}</datalist>
+                    <datalist id="box-cmpd-list">{[...new Set((customCmpds && customCmpds.length ? customCmpds : DEF_COMPOUNDS))].map(c => <option key={c} value={c}/>)}</datalist>
                 </div>
             </div>
         </div>

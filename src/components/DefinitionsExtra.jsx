@@ -24,7 +24,7 @@ export const getMolecularWeightFromFormula = (formulaStr) => {
   
   try {
     const cleanStr = formulaStr.replace(/\s+/g, '');
-    const parts = cleanStr.split(/[\.·*]/);
+    const parts = cleanStr.split(/[.·*]/);
     let totalMW = 0;
     
     for (let part of parts) {
@@ -80,7 +80,7 @@ export const getMolecularWeightFromFormula = (formulaStr) => {
       totalMW += stack[0].weight * multiplier;
     }
     return totalMW > 0 ? totalMW.toFixed(2) : '';
-  } catch (e) {
+  } catch {
     return '';
   }
 };
@@ -700,7 +700,7 @@ const extractPulseDriveId = (url) => {
 
     const openMatch = u.match(/\/d\/([a-zA-Z0-9_-]+)/);
     if (openMatch) return openMatch[1];
-  } catch (e) {}
+  } catch {}
 
   return '';
 };
@@ -1533,7 +1533,7 @@ export const NMRExperimentsManager = ({
       const text = await fetchPulseSequenceFromLink(url);
       setPulseSequence(text);
       setPulseStatus('Pulse sequence loaded from link.');
-    } catch (err) {
+    } catch {
       setPulseStatus(
         'Could not automatically load the file. This can happen because of Google Drive permissions/CORS. Paste the pulse-sequence text manually if needed.'
       );

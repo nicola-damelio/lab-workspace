@@ -13,7 +13,6 @@ const labelCls = 'block text-xs font-bold text-slate-500 uppercase mb-1';
 /* =========================================================
 RDKit  & 3Dmol.js LOADING
 ========================================================= */
-let rdkitPromise = null;
 async function loadRDKit() {
 if (typeof window === 'undefined') return null;
 if (window.__RDKit) return window.__RDKit;
@@ -31,7 +30,6 @@ window.__RDKit = await window.initRDKitModule();
 return window.__RDKit;
 }
 
-let mol3dPromise = null;
 async function load3Dmol() {
 if (typeof window === 'undefined') return null;
 if (window.$3Dmol) return window.$3Dmol;
@@ -166,8 +164,7 @@ customCmpds = [],
 setCustomCmpds,
 compoundMeta = {},
 setCompoundMeta,
-selectedId,
-onSelect
+selectedId
 }) {
 const [selectedName, setSelectedName] = useState('');
 const [newName, setNewName] = useState('');

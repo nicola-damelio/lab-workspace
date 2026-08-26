@@ -1,19 +1,5 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import {
-  ScatterChart,
-  Scatter,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  ReferenceArea,
-  BarChart,
-  Bar,
-  LineChart,
-  Line,
-  Legend
-} from 'recharts';
+
+
 
 import { MD_TAB_CONFIG } from './tabConfigs';
 
@@ -431,7 +417,6 @@ export const getMDAtomTypes = (ffKey, molType) => {
 };
 
 export const generateMDAtomEntry = (resIdx, atomName, forceField, molType) => {
-  const ff = getForceFieldInfo(forceField);
   const types = getMDAtomTypes(forceField, molType);
   const match = types.find((t) => (t.name || t.atom) === atomName);
 
@@ -529,6 +514,17 @@ export const MD_DEFAULT_LAYER = {
   builtin: true
 };
 
+// Computed layers populated by the in-browser analyses (MD general parameters,
+// membrane profiles / SCD). They only appear in the per-atom table and in the
+// Per-Atom / Condition plot selectors once a calculation has stored values.
+export const MD_ANALYSIS_LAYERS = [
+  { key: 'analysis_rmsf', label: 'RMSF', unit: 'nm', computed: true },
+  { key: 'analysis_rmsd', label: 'RMSD', unit: 'nm', computed: true },
+  { key: 'analysis_rg', label: 'Rg', unit: 'nm', computed: true },
+  { key: 'analysis_sasa', label: 'SASA', unit: 'nm²', computed: true },
+  { key: 'analysis_scd', label: 'Order param |SCD|', unit: '', computed: true }
+];
+
 export const makeMDInstanceId = () => {
   return `mdinst_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 };
@@ -553,10 +549,19 @@ export const getMDActiveInstance = (activeTest) => {
 };
 
 export const getMDLayers = (activeTest) => {
-  return [
+  const base = [
     MD_DEFAULT_LAYER,
     ...(Array.isArray(activeTest.parameterLayers) ? activeTest.parameterLayers : [])
   ];
+  // Only surface the computed analysis layers that already have values for the
+  // active instance (so empty columns don't clutter the table before a run).
+  const inst = getMDActiveInstance(activeTest);
+  const has = (lk) => {
+    if (!inst || !inst.values || !inst.values[lk]) return false;
+    return Object.keys(inst.values[lk]).length > 0;
+  };
+  const analysis = MD_ANALYSIS_LAYERS.filter((l) => has(l.key));
+  return [...base, ...analysis];
 };
 
 export const getMDActiveLayerKey = (activeTest) => {

@@ -169,7 +169,7 @@ export const applyAutoTouchAll = (processedByRegion, manualErrors) => {
         ...(manualErrors || {})
     };
 
-    Object.entries(processedByRegion || {}).forEach(([region, comps]) => {
+    Object.entries(processedByRegion || {}).forEach(([, comps]) => {
         comps.forEach((comp) => {
             if (!comp.fit || !comp.vPts?.length) return;
 

@@ -3,46 +3,16 @@
    Frame providers for the membrane-contact analysis (MDMembraneContacts.js).
 
    - .trr       : parsed natively here (uncompressed XDR)
-   - .xtc/.dcd  : decoded through the NGL library, which MDMoleculeViewer.jsx
-                  already loads from CDN. NGL's dist build bundles the
-                  official GROMACS xdrfile / 3dfcoord decoder, so XTC
+   - .xtc/.dcd  : decoded through the NGL library (loaded via src/utils/ngl.js,
+                  which also powers the 3D viewers). NGL's dist build bundles
+                  the official GROMACS xdrfile / 3dfcoord decoder, so XTC
                   compression is handled by proven code, not a re-implementation.
 
    Every provider yields { xyz: Float32Array(3N) in nm, box: 9 floats (nm) }
    in topology atom order.
    ========================================================================= */
 
-/* ------------------------------ NGL loader ----------------------------- */
-/* Same CDN builds MDMoleculeViewer.jsx uses. */
-
-let _nglPromise = null;
-const NGL_CDN_URLS = [
-  'https://unpkg.com/ngl@2.4.0/dist/ngl.js',
-  'https://cdn.jsdelivr.net/npm/ngl@2.4.0/dist/ngl.js',
-];
-
-export const ensureNGL = () => {
-  if (typeof window !== 'undefined' && window.NGL) return Promise.resolve(window.NGL);
-  if (_nglPromise) return _nglPromise;
-  _nglPromise = new Promise((resolve, reject) => {
-    let idx = 0;
-    const tryNext = () => {
-      if (idx >= NGL_CDN_URLS.length) {
-        _nglPromise = null;
-        reject(new Error('Could not load NGL from any CDN (unpkg / jsdelivr).'));
-        return;
-      }
-      const script = document.createElement('script');
-      script.src = NGL_CDN_URLS[idx++];
-      script.async = true;
-      script.onload = () => (window.NGL ? resolve(window.NGL) : tryNext());
-      script.onerror = () => tryNext();
-      document.head.appendChild(script);
-    };
-    tryNext();
-  });
-  return _nglPromise;
-};
+import { ensureNGL } from '../utils/ngl';
 
 /* ------------------------------ TRR reader ------------------------------ */
 

@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
-import TestShellRenderer, { CollapsibleSection } from './TestShellRenderer';
+import TestShellRenderer from './TestShellRenderer';
+
 import {
   buildNotebookHtml as buildDockingNotebookHtmlFromSections,
   DockingExperimentSetupSection,
@@ -94,31 +95,6 @@ const DockingTestRenderer = ({
   testCategories,
   ...rest
 }) => {
-  const ctx = useMemo(
-    () => ({
-      activeTest,
-      updateActiveTest,
-      allCmpds,
-      allCellLines,
-      customFields,
-      testCategories,
-      datasetProtocols,
-      jumpToProtocol,
-      ...rest
-    }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [
-      activeTest,
-      updateActiveTest,
-      allCmpds,
-      allCellLines,
-      customFields,
-      testCategories,
-      datasetProtocols,
-      jumpToProtocol
-    ]
-  );
-
   const custom = useMemo(
     () => ({
       MolecularStructure: DockingExperimentSetupSection,
