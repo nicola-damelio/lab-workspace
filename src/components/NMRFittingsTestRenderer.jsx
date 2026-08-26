@@ -6,6 +6,7 @@ import { NMR_FITTING_TAB_CONFIG } from './tabConfigs';
 import { PALETTE, toHex, errBarPlugin } from '../data/constants';
 import { NMRInstrumentalSetup } from './NMRInstrumentalSetup';
 import {ChartControlBar, SharedChartStylePanel} from './SharedAnalysisTools';
+import ST_DOSY_HTML from './stejskalTanner.html?raw';
 const DIPOLAR_SIM_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -955,6 +956,7 @@ function SimulationSection({ sim, setSim, activeTest }) {
                 <button type="button" onClick={() => setSimType('diffusion')} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${simType === 'diffusion' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}>💧 Diffusion Coefficient</button>
                 <button type="button" onClick={() => setSimType('relaxation')} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${simType === 'relaxation' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}>🔄 Nuclear Relaxation</button>
                 <button type="button" onClick={() => setSimType('dipolar')} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${simType === 'dipolar' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}>🧲 Dipolar + CSA (Advanced)</button>
+                <button type="button" onClick={() => setSimType('dosy')} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${simType === 'dosy' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}>📈 Stejskal-Tanner (DOSY)</button>
             </div>
 
             {simType === 'diffusion' && (
@@ -1068,9 +1070,92 @@ function SimulationSection({ sim, setSim, activeTest }) {
                     <iframe srcDoc={DIPOLAR_SIM_HTML} className="w-full h-full border-0" title="Dipolar CSA Simulator" />
                 </div>
             )}
+
+            {simType === 'dosy' && (
+                <>
+                    <div className="w-full bg-blue-50 border-2 border-dashed border-blue-300 rounded-xl px-4 py-3 text-center">
+                        <span className="text-[10px] font-black text-blue-700 uppercase tracking-widest">Stejskal-Tanner Equation</span>
+                        <div className="text-lg font-semibold text-slate-800 mt-1 whitespace-nowrap overflow-x-auto">
+                            I<sub>G</sub> = I<sub>G=0</sub>·exp[ −(γ·δ·G)<sup>2</sup>·D·(Δ − δ/3) ] + C
+                        </div>
+                    </div>
+                    <div className="w-full border border-slate-300 rounded-lg overflow-hidden mt-2 bg-slate-50" style={{ height: '960px' }}>
+                        <iframe srcDoc={ST_DOSY_HTML} className="w-full h-full border-0" title="Stejskal-Tanner DOSY Fitter" />
+                    </div>
+                </>
+            )}
         </div>
     );
 }
+
+/* ========================================================================== */
+/* STABLE SECTION WRAPPERS (module-level)
+   ---------------------------------------------------------------------------
+   These must stay at module scope. When they were defined inline inside
+   NMRFittingsTestRenderer, every render created brand-new component functions,
+   so React unmounted/remounted the whole subtree on each keystroke — which
+   collapsed every CollapsibleSection and dropped input focus.
+
+   The render helpers (renderTableData / renderTableAnalysis) are closures over
+   the parent's state, so they are bridged through the mutable `nmrSections`
+   registry below (updated every render; the component *types* stay stable).
+========================================================================== */
+const nmrSections = {
+    renderData: null,     // (t, tIndex) => ReactNode
+    renderAnalysis: null, // (t, tIndex) => ReactNode
+    addTable: null,       // () => void
+    sim: {},
+    setSim: null,         // (patch) => void
+    solvents: [],
+};
+
+const NMRSetupSection = ({ ctx }) => {
+    const activeTest = ctx.activeTest || {};
+    const update = (u) => { if (ctx.updateActiveTest) ctx.updateActiveTest(u); };
+    return (
+        <CollapsibleSection title="Experiment Setup" icon="🧭" defaultOpen={false}>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">NMR Dataset Name</label>
+                    <input type="text" value={activeTest.nmrDatasetName || ''} onChange={(e) => update({ nmrDatasetName: e.target.value })} placeholder="e.g. 15N_T2_relax_series" className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
+                </div>
+                <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Experiment Number</label>
+                    <input type="text" value={activeTest.nmrExpNumber || ''} onChange={(e) => update({ nmrExpNumber: e.target.value })} placeholder="e.g. 42" className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
+                </div>
+                <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Link (URL)</label>
+                    <input type="text" value={activeTest.nmrLink || ''} onChange={(e) => update({ nmrLink: e.target.value })} placeholder="https://..." className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
+                </div>
+            </div>
+        </CollapsibleSection>
+    );
+};
+
+const NMRFittingSection = ({ ctx }) => {
+    const tables = Array.isArray(ctx.activeTest?.nmrTables) ? ctx.activeTest.nmrTables : [];
+    return (
+        <div className="flex flex-col gap-6">
+            {tables.map((t, i) => (nmrSections.renderAnalysis ? nmrSections.renderAnalysis(t, i) : null))}
+        </div>
+    );
+};
+
+const NMRDataSection = ({ ctx }) => {
+    const tables = Array.isArray(ctx.activeTest?.nmrTables) ? ctx.activeTest.nmrTables : [];
+    return (
+        <div className="flex flex-col gap-6">
+            {tables.map((t, i) => (nmrSections.renderData ? nmrSections.renderData(t, i) : null))}
+            {nmrSections.addTable && (
+                <button onClick={nmrSections.addTable} className="self-start text-sm bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-md shadow-sm">+ Add relaxation table</button>
+            )}
+        </div>
+    );
+};
+
+const NMRSimulationsSection = ({ ctx }) => (
+    <SimulationSection sim={nmrSections.sim} setSim={nmrSections.setSim} solvents={nmrSections.solvents} activeTest={ctx.activeTest} />
+);
 
 /* ========================================================================== */
 export const NMRFittingsTestRenderer = ({ activeTest = {}, updateActiveTest, TestHeader, compoundMeta = {}, allCmpds = [], ...rest }) => {
@@ -1148,7 +1233,7 @@ const exportFittedTable = (t, colFits) => {
 
     const renderTableData = (t, tIndex) => {
         return (
-            <CollapsibleSection key={t.id} title={`Table ${tIndex + 1} Data — ${t.atom || '…'} (${t.relaxType})`} icon="📈" defaultOpen={tIndex === 0}>
+            <CollapsibleSection key={t.id} title={`Table ${tIndex + 1} Data — ${t.atom || '…'} (${t.relaxType})`} icon="📈" defaultOpen={false}>
                 <div className="flex flex-col gap-4">
                     {/* Dataset info row */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -1214,7 +1299,7 @@ const exportFittedTable = (t, colFits) => {
 const renderTableAnalysis = (t, tIndex) => {
         const colFits = (fits[t.id] || []).map(cf => ({ ...cf, effectiveError: manualErrors[t.id]?.[cf.residue] ?? (cf.fit?.seR_s || 0) }));
         return (
-            <CollapsibleSection key={t.id} title={`Table ${tIndex + 1} Analysis — ${t.atom || '…'} (${t.relaxType})`} icon="📐" defaultOpen={tIndex === 0}>
+            <CollapsibleSection key={t.id} title={`Table ${tIndex + 1} Analysis — ${t.atom || '…'} (${t.relaxType})`} icon="📐" defaultOpen={false}>
                 <div className="flex flex-col gap-4">
                     <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
                         <div>
@@ -1365,53 +1450,26 @@ const renderTableAnalysis = (t, tIndex) => {
         );
     };
 
-    /* ---------------------------------------------------------------------------
-    EXPERIMENT SETUP — Dataset name, experiment number, link (no target molecule)
-    --------------------------------------------------------------------------- */
-    const SetupSection = () => (
-        <CollapsibleSection title="Experiment Setup" icon="🧭" defaultOpen={true}>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">NMR Dataset Name</label>
-                    <input type="text" value={activeTest.nmrDatasetName || ''} onChange={(e) => update({ nmrDatasetName: e.target.value })} placeholder="e.g. 15N_T2_relax_series" className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-                </div>
-                <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Experiment Number</label>
-                    <input type="text" value={activeTest.nmrExpNumber || ''} onChange={(e) => update({ nmrExpNumber: e.target.value })} placeholder="e.g. 42" className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-                </div>
-                <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Link (URL)</label>
-                    <input type="text" value={activeTest.nmrLink || ''} onChange={(e) => update({ nmrLink: e.target.value })} placeholder="https://..." className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-                </div>
-            </div>
-        </CollapsibleSection>
-    );
+    // Bridge the render-time closures into the stable module-level section
+    // components (see nmrSections registry above). Because the components
+    // themselves keep a constant identity, typing in any table cell or the
+    // Experiment Setup fields no longer remounts the sections.
+    nmrSections.renderData = (t, i) => renderTableData(t, i);
+    nmrSections.renderAnalysis = (t, i) => renderTableAnalysis(t, i);
+    nmrSections.addTable = addTable;
+    nmrSections.sim = sim;
+    nmrSections.setSim = setSim;
+    nmrSections.solvents = rest.solvents || [];
 
-    /* ---------------------------------------------------------------------------
-    FITTING SECTION & DATA SECTION
-    --------------------------------------------------------------------------- */
-    const FittingSection = () => (
-        <div className="flex flex-col gap-6">
-            {tables.map((t, i) => renderTableAnalysis(t, i))}
-        </div>
-    );
-
-    const DataSection = () => (
-        <div className="flex flex-col gap-6">
-            {tables.map((t, i) => renderTableData(t, i))}
-            <button onClick={addTable} className="self-start text-sm bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-md shadow-sm">+ Add relaxation table</button>
-        </div>
-    );
- 
     return (
         <TestShellRenderer
             config={NMR_FITTING_TAB_CONFIG}
             custom={{
-                Setup: SetupSection,
-                Data: DataSection,
-                Fitting: FittingSection,
+                Setup: NMRSetupSection,
+                Data: NMRDataSection,
+                Fitting: NMRFittingSection,
                 InstrumentalSetup: NMRInstrumentalSetup,
-                Simulations: () => <SimulationSection sim={sim} setSim={setSim} solvents={rest.solvents || []} activeTest={activeTest} />,
+                Simulations: NMRSimulationsSection,
             }}
             activeTest={activeTest}
             updateActiveTest={updateActiveTest}

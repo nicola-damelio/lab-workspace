@@ -10,6 +10,8 @@ import {
 } from './MDMembraneContacts';
 import { computeOrderAndDensity, parseChargeMap } from './MDMembraneProfiles';
 import { computeMDTrajectoryAnalysis, parseEnergyFile } from '../utils/mdAnalysis';
+import { abortControl, isAbortError } from '../utils/abortControl';
+import { mdAnalysisRunAll } from '../utils/mdAnalysisRunAll';
 import html2canvas from 'html2canvas';
 import { PER_ATOM_COLORS } from '../utils/chartStyle';
 export { parseSimulationParameters };   
@@ -18,7 +20,7 @@ import {
   computeSecondaryStructure, SS_CODE_ORDER, SS_COLORS, SS_GROUP_COLORS
 } from './MDSecondaryStructure';
 
-import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, FORM_META, RESIDUE_COLORS, buildKeys, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, SequencePaintStrip, getSelectedKeys, selectionLabel, getManualKeys, FORCE_FIELDS, WATER_MODELS, MD_ENSEMBLES, MD_INTEGRATORS, MD_THERMOSTATS, MD_BAROSTATS, TRAJECTORY_FORMATS, parseMDValue, getForceFieldInfo, getFFVersions, getWaterModelInfo, getFFBackboneAtoms, normalizeTrajectoryUrl, detectTrajectoryFormat, getTrajectoryFormatInfo, getMDInstances, getMDActiveInstance, getMDLayers, getMDActiveLayerKey, getMDLayerValues, writeMDCellValue, MD_ANALYSIS_LAYERS, generateRMSDData, generateRMSFData, generateRgData, generateSASAData, generateEnergyData, DEFAULT_MD_CHART_STYLE, mdLineDash, mdDom} from './MDData';
+import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, FORM_META, RESIDUE_COLORS, buildKeys, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, SequencePaintStrip, getSelectedKeys, selectionLabel, getManualKeys, FORCE_FIELDS, WATER_MODELS, MD_ENSEMBLES, MD_INTEGRATORS, MD_THERMOSTATS, MD_BAROSTATS, TRAJECTORY_FORMATS, parseMDValue, getForceFieldInfo, getFFVersions, getWaterModelInfo, getFFBackboneAtoms, normalizeTrajectoryUrl, detectTrajectoryFormat, getTrajectoryFormatInfo, getMDInstances, getMDActiveInstance, getMDLayers, getMDActiveLayerKey, getMDLayerValues, writeMDCellValue, MD_ANALYSIS_LAYERS, DEFAULT_MD_CHART_STYLE, mdLineDash, mdDom} from './MDData';
 
 // Cache to retain local File objects when switching tabs within the same session
 const localFileCache = new Map();
@@ -1584,35 +1586,38 @@ export const MDAnalysisSection = ({ ctx }) => {
   const [showCfg, setShowCfg] = useState(false);
   const [isFs, setIsFs] = useState(false);
   
-  // NEW: State for real imported data
-  const [importedData, setImportedData] = useState(null);
-  const [importError, setImportError] = useState('');
-
-  // NEW: State for data CALCULATED from the loaded trajectory
+  // State for data CALCULATED from the loaded trajectory (real data only —
+  // simulated fallbacks have been removed).
   const [calcData, setCalcData] = useState(null);
   const [calc, setCalc] = useState({ state: 'idle', msg: '', done: 0, total: 0, error: '' });
-  const [calcOpts, setCalcOpts] = useState({ stride: 5, maxFrames: 300, sasa: true });
+  const [calcOpts, setCalcOpts] = useState({ sasa: true });
+  const calcAbortRef = useRef(false); // set by the global ⏹ Stop button
   const [energyData, setEnergyData] = useState(null);
   const [energyFileName, setEnergyFileName] = useState('');
 
   const handleCalculateFromTrajectory = async () => {
-    setCalc({ state: 'running', msg: 'Resolving topology…', done: 0, total: 0, error: '' });
+    calcAbortRef.current = false;
+    const unregister = abortControl.register('MD analysis', () => { calcAbortRef.current = true; });
     try {
+      setCalc({ state: 'running', msg: 'Resolving topology…', done: 0, total: 0, error: '' });
       const tl = await resolveMDTopology(activeTest);
       if (!tl) throw new Error('Upload the simulation topology (.gro/.pdb — same atom order as the trajectory). Use "Choose PDB/CIF" in the 3D viewer, or a PDB ID / URL.');
       const { topo } = tl;
       const jobs = await buildMDTrajectoryJobs(activeTest, []);
       if (jobs.length === 0) throw new Error('Load a trajectory (.xtc/.trr/.dcd) in the 3D viewer first.');
+      const runCfg = mdAnalysisRunAll.getCfg(); // shared stride / max frames from the Data Analysis toolbar
       const src = await resolveFrameSource(jobs[0].file, {
         topoAtoms: topo.atoms, topologyBox: topo.box,
+        maxFrames: runCfg.maxFrames || 0,
         onStatus: (m) => setCalc((s) => ({ ...s, msg: m })),
       });
       if (!src) throw new Error(`"${jobs[0].file.name}": unsupported format, or the topology could not anchor it (XTC/DCD need the exact matching topology; TRR works standalone).`);
       const res = await computeMDTrajectoryAnalysis(
         topo, src.frames,
-        { stride: calcOpts.stride, maxFrames: calcOpts.maxFrames, doSasa: calcOpts.sasa, doRg: true, renumber: activeTest.resRenumber || {} },
+        { stride: runCfg.stride, maxFrames: runCfg.maxFrames, doSasa: calcOpts.sasa, doRg: true, renumber: activeTest.resRenumber || {}, isAborted: () => calcAbortRef.current },
         (p) => setCalc((s) => ({ ...s, done: p.done, total: p.total, msg: p.msg }))
       );
+      if (calcAbortRef.current) { unregister(); setCalc({ state: 'idle', msg: 'Calculation cancelled.', done: 0, total: 0, error: '' }); return; }
       setCalcData(res);
       // Populate the per-atom table so Per-Atom and Condition plots can use the
       // calculated parameters (RMSF per residue + system-level Rg/SASA/RMSD).
@@ -1641,7 +1646,14 @@ export const MDAnalysisSection = ({ ctx }) => {
       storeAnalysisToAtomTable(activeTest, updateActiveTest, layerCells);
       setCalc({ state: 'done', msg: `Calculated from ${res.nFrames} frames (${src.source}) — values added to the per-atom table.`, done: 0, total: 0, error: '' });
     } catch (err) {
-      setCalc((s) => ({ ...s, state: 'error', error: err?.message || String(err) }));
+      if (isAbortError(err)) {
+        setCalc((s) => ({ ...s, state: 'idle', msg: 'Calculation cancelled.', done: 0, total: 0, error: '' }));
+      } else {
+        setCalc((s) => ({ ...s, state: 'error', error: err?.message || String(err) }));
+      }
+    } finally {
+      unregister();
+      calcAbortRef.current = false;
     }
   };
 
@@ -1661,42 +1673,18 @@ export const MDAnalysisSection = ({ ctx }) => {
     e.target.value = '';
   };
 
-  const handleAnalysisFileUpload = (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      try {
-        const text = ev.target.result;
-        let data = JSON.parse(text);
-        if (!data.rmsd && !data.rmsf && !data.rg && !data.sasa && !data.energy) {
-           throw new Error('JSON must contain at least one of: rmsd, rmsf, rg, sasa, energy arrays.');
-        }
-        setImportedData(data);
-        setImportError('');
-      } catch (err) {
-        setImportError('Invalid JSON: ' + err.message);
-        setImportedData(null);
-      }
-    };
-    reader.readAsText(file);
-    e.target.value = '';
-  };
+  // The ⚡ "Calculate all analyses" button (Data Analysis toolbar) runs every
+  // analysis subsection. A ref keeps the subscription current without re-binding.
+  const runAllFnRef = useRef(() => { handleCalculateFromTrajectory(); });
+  runAllFnRef.current = () => { handleCalculateFromTrajectory(); };
+  useEffect(() => mdAnalysisRunAll.subscribeRun(() => { runAllFnRef.current(); }), []);
 
-  const nFrames = parseMDValue(activeTest.mdNumFrames) || 500;
-  const nResidues = Math.max(1, d.parsedSeq.length || 20);
-
-  // Use calculated-from-trajectory data if available, then imported JSON,
-  // then fallback to simulated data
-  const rmsd = useMemo(() => calcData?.rmsd || importedData?.rmsd || generateRMSDData(nFrames), [nFrames, importedData, calcData]);
-  const rmsf = useMemo(() => {
-      if (calcData?.rmsf) return calcData.rmsf.map(r => ({ ...r, fill: r.value > 0.25 ? '#ef4444' : '#3b82f6' }));
-      if (importedData?.rmsf) return importedData.rmsf.map(r => ({ ...r, fill: r.value > 0.25 ? '#ef4444' : '#3b82f6' }));
-      return generateRMSFData(nResidues).map((r) => ({ ...r, fill: r.value > 0.25 ? '#ef4444' : '#3b82f6' }));
-  }, [nResidues, importedData, calcData]);
-  const rg = useMemo(() => calcData?.rg || importedData?.rg || generateRgData(nFrames), [nFrames, importedData, calcData]);
-  const sasa = useMemo(() => calcData?.sasa || importedData?.sasa || generateSASAData(nFrames), [nFrames, importedData, calcData]);
-  const energy = useMemo(() => calcData?.energy || importedData?.energy || energyData || generateEnergyData(nFrames), [nFrames, importedData, calcData, energyData]);
+  // Real data calculated from the loaded trajectory only — no simulated fallbacks.
+  const rmsd = useMemo(() => calcData?.rmsd || [], [calcData]);
+  const rmsf = useMemo(() => (calcData?.rmsf || []).map((r) => ({ ...r, fill: r.value > 0.25 ? '#ef4444' : '#3b82f6' })), [calcData]);
+  const rg = useMemo(() => calcData?.rg || [], [calcData]);
+  const sasa = useMemo(() => calcData?.sasa || [], [calcData]);
+  const energy = useMemo(() => energyData || [], [energyData]);
 
   // Snapshot the main analysis charts for the Lab Notebook "Results Summary" tick.
   useEffect(() => {
@@ -1727,37 +1715,8 @@ export const MDAnalysisSection = ({ ctx }) => {
         <div className="flex flex-wrap items-center gap-2">
           <ChartControlBar showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)}
                            showFs={isFs} onToggleFs={() => setIsFs((v) => !v)} className="flex gap-2" />
-          
-          <label className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 rounded-lg text-xs cursor-pointer shadow-sm transition-colors flex items-center gap-2">
-            📂 Upload Real Analysis (JSON)
-            <input type="file" accept=".json" className="hidden" onChange={handleAnalysisFileUpload} />
-          </label>
-
-          {importedData && (
-             <button onClick={() => setImportedData(null)} className="text-xs font-bold text-red-500 hover:text-red-700 underline ml-2">
-               ✕ Clear Real Data
-             </button>
-          )}
         </div>
-
-        {!importedData && (
-          <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2">
-            Frames (Simulated)
-            <input
-              type="number"
-              value={activeTest.mdNumFrames || 500}
-              onChange={(e) => updateActiveTest({ mdNumFrames: e.target.value })}
-              className="border border-slate-300 rounded-md px-2 py-1 text-xs w-20 outline-none focus:border-blue-500"
-            />
-          </label>
-        )}
       </div>
-
-      {importError && (
-         <div className="bg-red-50 border border-red-200 text-red-700 text-xs font-bold p-2 rounded-lg">
-           ⚠️ Import Error: {importError}
-         </div>
-      )}
 
       {/* ── Calculate the general parameters from the loaded trajectory ── */}
       <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 flex flex-col gap-2">
@@ -1770,24 +1729,9 @@ export const MDAnalysisSection = ({ ctx }) => {
           >
             ⚙️ {calc.state === 'running' ? 'Calculating…' : 'Calculate from trajectory'}
           </button>
-          <label className="flex items-center gap-1.5 text-[10px] font-bold text-indigo-700 uppercase">
-            Stride
-            <select
-              value={calcOpts.stride}
-              onChange={(e) => setCalcOpts((o) => ({ ...o, stride: Math.max(1, Number(e.target.value) || 1) }))}
-              className="border border-indigo-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-indigo-500"
-              title="Use every Nth frame for the calculation"
-            >
-              {[1, 2, 5, 10, 20, 50, 100].map((s) => <option key={s} value={s}>{s}×</option>)}
-            </select>
-          </label>
-          <label className="flex items-center gap-1.5 text-[10px] font-bold text-indigo-700 uppercase">
-            Max frames
-            <input type="number" min="10" value={calcOpts.maxFrames}
-              onChange={(e) => setCalcOpts((o) => ({ ...o, maxFrames: Math.max(10, Number(e.target.value) || 300) }))}
-              className="border border-indigo-300 rounded-lg px-2 py-1 text-xs w-20 bg-white outline-none focus:border-indigo-500"
-              title="Cap on the number of frames processed" />
-          </label>
+          <span className="text-[10px] text-indigo-600 font-bold">
+            Uses the shared stride / max frames from the “⚡ Calculate all analyses” toolbar above.
+          </span>
           <label className="flex items-center gap-1.5 text-[10px] font-bold text-indigo-700 uppercase cursor-pointer">
             <input type="checkbox" checked={calcOpts.sasa}
               onChange={(e) => setCalcOpts((o) => ({ ...o, sasa: e.target.checked }))}
@@ -1823,13 +1767,9 @@ export const MDAnalysisSection = ({ ctx }) => {
          <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold p-2 rounded-lg flex items-center gap-2">
            ✅ Plotting data calculated from the trajectory (RMSD/RMSF/Rg/SASA).
          </div>
-      ) : importedData ? (
-         <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold p-2 rounded-lg flex items-center gap-2">
-           ✅ Plotting real imported data. (XTC trajectory is still playing in the 3D viewer above).
-         </div>
       ) : (
          <span className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 w-fit">
-           Curves are simulated. Calculate from the trajectory (⚙️ button above) or upload an analysis JSON file to see real graphs.
+           No analysis yet — click “Calculate from trajectory” below (or ⚡ Calculate all analyses above) to compute the real curves from the loaded XTC.
          </span>
       )}
 
@@ -1849,6 +1789,11 @@ export const MDAnalysisSection = ({ ctx }) => {
       {d.parsedSeq.length > 0 && (
         <div id="md-energy" className="bg-white rounded-lg border border-slate-200 p-3">
           <h5 className="text-xs font-bold text-slate-700 mb-1">Energy</h5>
+          {energy.length === 0 && (
+            <div className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 mb-2">
+              XTC/TRR trajectories carry no energies — load a <code>gmx energy -o</code> output (.xvg/.dat) above to plot them.
+            </div>
+          )}
           <div style={{ height: 250 }}>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={energy} margin={{ top: 5, right: 10, bottom: 25, left: 10 }}>
@@ -2234,6 +2179,11 @@ export const MDMembraneContactSection = ({ ctx }) => {
 
   const setOpt = (k, v) => setCfg((c) => ({ ...c, [k]: v }));
 
+  // The ⚡ "Calculate all analyses" toolbar button runs this section too.
+  const contactRunAllRef = useRef(() => { runAll(false); });
+  contactRunAllRef.current = () => { runAll(false); };
+  useEffect(() => mdAnalysisRunAll.subscribeRun(() => { contactRunAllRef.current(); }), []);
+
   const metricOf = (p) => (cfg.metric === 'contactFreq' ? p.contactFreq : p.peakRDF);
 
   const aggregatePairs = (pairs, keySel = (p) => p.mem) => {
@@ -2298,7 +2248,8 @@ export const MDMembraneContactSection = ({ ctx }) => {
     const { topo } = tl;
     if (!topo.box) throw new Error('The topology has no box vectors — a .gro file with its final box line (or a PDB CRYST1 line) is required.');
 
-    const runCfg = { ...cfg, mode };
+    const shared = mdAnalysisRunAll.getCfg(); // stride / max frames from the Data Analysis toolbar
+    const runCfg = { ...cfg, mode, stride: shared.stride, maxFrames: shared.maxFrames };
     const openTrajectory = async (file) => {
       const src = await resolveFrameSource(file, {
         topoAtoms: topo.atoms, topologyBox: topo.box,
@@ -2427,15 +2378,10 @@ export const MDMembraneContactSection = ({ ctx }) => {
         <label className="text-xs font-bold text-slate-600">Bin (nm)
           <input type="number" step="0.001" value={cfg.bin} onChange={(e) => setOpt('bin', Number(e.target.value))} className={`${inp} block mt-1 w-20`} />
         </label>
-        <label className="text-xs font-bold text-slate-600">Stride
-          <input type="number" min="1" value={cfg.stride} onChange={(e) => setOpt('stride', Math.max(1, Number(e.target.value) || 1))} className={`${inp} block mt-1 w-16`} />
-        </label>
         <label className="text-xs font-bold text-slate-600">Start frame
           <input type="number" min="0" value={cfg.startFrame} onChange={(e) => setOpt('startFrame', Math.max(0, Number(e.target.value) || 0))} className={`${inp} block mt-1 w-20`} />
         </label>
-        <label className="text-xs font-bold text-slate-600">Max frames (0=all)
-          <input type="number" min="0" value={cfg.maxFrames} onChange={(e) => setOpt('maxFrames', Math.max(0, Number(e.target.value) || 0))} className={`${inp} block mt-1 w-24`} />
-        </label>
+        <span className="text-[10px] text-slate-400 font-bold w-full">Stride &amp; max frames are set in the “⚡ Calculate all analyses” toolbar at the top of Data Analysis.</span>
         <label className="text-xs font-bold text-slate-600">Molecule residue(s)
           <input value={cfg.molResidues} onChange={(e) => setOpt('molResidues', e.target.value)} placeholder="auto" className={`${inp} block mt-1 w-32 font-mono`} />
         </label>
@@ -2618,6 +2564,11 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
 
   const setOpt = (k, v) => setCfg((c) => ({ ...c, [k]: v }));
 
+  // The ⚡ "Calculate all analyses" toolbar button runs this section too.
+  const profileRunAllRef = useRef(() => { runAll(false); });
+  profileRunAllRef.current = () => { runAll(false); };
+  useEffect(() => mdAnalysisRunAll.subscribeRun(() => { profileRunAllRef.current(); }), []);
+
   const handleChargeFiles = async (fileList) => {
     const files = Array.from(fileList || []);
     if (files.length === 0) { setChargeInfo({ map: null, count: 0, files: [] }); return; }
@@ -2638,9 +2589,12 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
 
       const jobs = useDemo ? [] : await buildMDTrajectoryJobs(activeTest, extraRuns);
 
+      const shared = mdAnalysisRunAll.getCfg(); // stride / max frames from the Data Analysis toolbar
+      const runCfg = { ...cfg, stride: shared.stride, maxFrames: shared.maxFrames };
+
       const outs = [];
       if (jobs.length === 0) {
-        const result = await computeOrderAndDensity(topo, demoFrames(topo, 40), cfg, chargeInfo.map,
+        const result = await computeOrderAndDensity(topo, demoFrames(topo, 40), runCfg, chargeInfo.map,
           (p) => setStatus({ state: 'busy', msg: `Demo: frame ${p.done}`, done: p.done }));
         outs.push({ name: 'demo', result });
       } else {
@@ -2651,7 +2605,7 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
           });
           if (!src) throw new Error(`"${job.file.name}": could not be opened (.xtc / .dcd need the topology uploaded; .trr works standalone).`);
           const frames = src.frames || src;
-          const result = await computeOrderAndDensity(topo, frames, cfg, chargeInfo.map,
+          const result = await computeOrderAndDensity(topo, frames, runCfg, chargeInfo.map,
             (p) => setStatus({ state: 'busy', msg: `${job.name}: frame ${p.done}`, done: p.done }));
           outs.push({ name: job.name, result });
         }
@@ -2773,15 +2727,10 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
           <input type="checkbox" checked={cfg.signedSCD} onChange={(e) => setOpt('signedSCD', e.target.checked)} className="accent-indigo-600" />
           signed SCD (default |SCD|)
         </label>
-        <label className="text-xs font-bold text-slate-600">Stride
-          <input type="number" min="1" value={cfg.stride} onChange={(e) => setOpt('stride', Math.max(1, Number(e.target.value) || 1))} className={`${inp} block mt-1 w-16`} />
-        </label>
         <label className="text-xs font-bold text-slate-600">Start frame
           <input type="number" min="0" value={cfg.startFrame} onChange={(e) => setOpt('startFrame', Math.max(0, Number(e.target.value) || 0))} className={`${inp} block mt-1 w-20`} />
         </label>
-        <label className="text-xs font-bold text-slate-600">Max frames (0=all)
-          <input type="number" min="0" value={cfg.maxFrames} onChange={(e) => setOpt('maxFrames', Math.max(0, Number(e.target.value) || 0))} className={`${inp} block mt-1 w-24`} />
-        </label>
+        <span className="text-[10px] text-slate-400 font-bold w-full">Stride &amp; max frames are set in the “⚡ Calculate all analyses” toolbar at the top of Data Analysis.</span>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
@@ -3127,6 +3076,12 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
   const [extraRuns, setExtraRuns] = useState([]);
   const [status, setStatus] = useState({ state: 'idle', msg: '', done: 0 });
   const [outputs, setOutputs] = useState([]); // [{ name, result }]
+  const dsspAbortRef = useRef(false); // set by the global ⏹ Stop button
+
+  // The ⚡ "Calculate all analyses" toolbar button runs this section too.
+  const dsspRunAllRef = useRef(() => { runAll(false); });
+  dsspRunAllRef.current = () => { runAll(false); };
+  useEffect(() => mdAnalysisRunAll.subscribeRun(() => { dsspRunAllRef.current(); }), []);
 
   // Snapshot the DSSP charts for the Lab Notebook ("Data Analysis" tick).
   useEffect(() => {
@@ -3150,6 +3105,9 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
   const setOpt = (k, v) => setCfg((c) => ({ ...c, [k]: v }));
 
   const runAll = async (useDemo = false) => {
+    dsspAbortRef.current = false;
+    const unregister = abortControl.register('secondary structure', () => { dsspAbortRef.current = true; });
+    const shared = mdAnalysisRunAll.getCfg(); // stride / max frames from the Data Analysis toolbar
     setStatus({ state: 'busy', msg: 'Reading topology…', done: 0 });
     setOutputs([]);
     try {
@@ -3162,7 +3120,7 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
 
       const outs = [];
       if (jobs.length === 0) {
-        const result = await computeSecondaryStructure(topo, demoFrames(topo, 40), cfg,
+        const result = await computeSecondaryStructure(topo, demoFrames(topo, 40), { ...cfg, stride: shared.stride, maxFrames: shared.maxFrames, isAborted: () => dsspAbortRef.current },
           (p) => setStatus({ state: 'busy', msg: `Demo: frame ${p.done}`, done: p.done }));
         outs.push({ name: 'demo', result });
       } else {
@@ -3173,15 +3131,23 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
           });
           if (!src) throw new Error(`"${job.file.name}": could not be opened (.xtc / .dcd need the topology uploaded; .trr works standalone).`);
           const frames = src.frames || src;
-          const result = await computeSecondaryStructure(topo, frames, cfg,
+          const result = await computeSecondaryStructure(topo, frames, { ...cfg, stride: shared.stride, maxFrames: shared.maxFrames, isAborted: () => dsspAbortRef.current },
             (p) => setStatus({ state: 'busy', msg: `${job.name}: frame ${p.done}`, done: p.done }));
           outs.push({ name: job.name, result });
         }
       }
+      if (dsspAbortRef.current) { setStatus({ state: 'idle', msg: 'Calculation cancelled.', done: 0 }); return; }
       setOutputs(outs);
       setStatus({ state: 'done', msg: '', done: 0 });
     } catch (e) {
-      setStatus({ state: 'error', msg: e.message, done: 0 });
+      if (isAbortError(e)) {
+        setStatus({ state: 'idle', msg: 'Calculation cancelled.', done: 0 });
+      } else {
+        setStatus({ state: 'error', msg: e.message, done: 0 });
+      }
+    } finally {
+      unregister();
+      dsspAbortRef.current = false;
     }
   };
 
@@ -3273,15 +3239,10 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
         <label className="text-xs font-bold text-slate-600">Δt between frames (ps, 0 = frame axis)
           <input type="number" min="0" step="10" value={cfg.dtPs} onChange={(e) => setOpt('dtPs', Number(e.target.value) || 0)} className={`${inp} block mt-1 w-28`} />
         </label>
-        <label className="text-xs font-bold text-slate-600">Stride
-          <input type="number" min="1" value={cfg.stride} onChange={(e) => setOpt('stride', Math.max(1, Number(e.target.value) || 1))} className={`${inp} block mt-1 w-16`} />
-        </label>
         <label className="text-xs font-bold text-slate-600">Start frame
           <input type="number" min="0" value={cfg.startFrame} onChange={(e) => setOpt('startFrame', Math.max(0, Number(e.target.value) || 0))} className={`${inp} block mt-1 w-20`} />
         </label>
-        <label className="text-xs font-bold text-slate-600">Max frames (0=all)
-          <input type="number" min="0" value={cfg.maxFrames} onChange={(e) => setOpt('maxFrames', Math.max(0, Number(e.target.value) || 0))} className={`${inp} block mt-1 w-24`} />
-        </label>
+        <span className="text-[10px] text-slate-400 font-bold w-full">Stride &amp; max frames are set in the “⚡ Calculate all analyses” toolbar at the top of Data Analysis.</span>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">

@@ -3,7 +3,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, ReferenceArea
 } from 'recharts';
-import { useXZoom } from './SharedAnalysisTools';
+import { ChartPanel, SharedChartStylePanel, useXZoom, useChartFsHeight } from './SharedAnalysisTools';
 import { CollapsibleSection } from './TestShellRenderer';
 import {
   uid, toNumber, round, GAUSS, DS_DNA_HYPOCHROMICITY, DNA_BASE_EPS,
@@ -12,25 +12,30 @@ import {
 } from './cloningUtils';
 
 const SIM_UV_MARGIN = { top: 8, right: 10, bottom: 30, left: 50 };
-const SimUvZoomChart = ({ data }) => {
+const SimUvZoomChart = ({ data, cfg = {} }) => {
   const chartRef = useRef(null);
   const xs = data.map(p => p.wavelength);
   const dataDomain = xs.length > 1 ? [xs[0], xs[xs.length - 1]] : [220, 320];
   const zoom = useXZoom(chartRef, dataDomain, SIM_UV_MARGIN);
+  const fs = Number(cfg.fontSize) || 11;
+  const dash = cfg.lineStyle === 'dashed' ? '4 4' : cfg.lineStyle === 'dotted' ? '1 3' : undefined;
+  const dot = cfg.pointStyle && cfg.pointStyle !== 'none' ? { r: Number(cfg.ptSize) || 4, fill: '#7c3aed', strokeWidth: 0 } : false;
+  const height = useChartFsHeight(Number(cfg.height) || 300);
   return (
     <div className="flex flex-col gap-1">
-      <div ref={chartRef} onMouseDown={zoom.onMouseDown} className="select-none" style={{ height: 300 }}>
+      <div ref={chartRef} onMouseDown={zoom.onMouseDown} className="select-none" style={{ height }}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data} margin={SIM_UV_MARGIN}>
             <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
             <XAxis dataKey="wavelength" type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow
-              tick={{ fontSize: 11, fill: '#64748b' }}
-              label={{ value: 'Wavelength (nm)', position: 'insideBottom', offset: -15, fontSize: 11, fill: '#64748b' }} />
-            <YAxis tick={{ fontSize: 11, fill: '#64748b' }} label={{ value: 'Absorbance', angle: -90, position: 'insideLeft', fontSize: 11, fill: '#64748b' }} />
+              tick={{ fontSize: fs, fill: '#64748b' }}
+              label={{ value: cfg.xAxisLabel || 'Wavelength (nm)', position: 'insideBottom', offset: -15, fontSize: fs, fill: '#64748b' }} />
+            <YAxis tick={{ fontSize: fs, fill: '#64748b' }}
+              label={cfg.yAxisLabel ? { value: cfg.yAxisLabel, angle: -90, position: 'insideLeft', fontSize: fs, fill: '#64748b' } : { value: 'Absorbance', angle: -90, position: 'insideLeft', fontSize: fs, fill: '#64748b' }} />
             <Tooltip formatter={(v) => Number(v).toFixed(4)} labelFormatter={(l) => `${l} nm`} />
             <ReferenceLine x={260} stroke="#3b82f6" strokeDasharray="4 4" />
             <ReferenceLine x={280} stroke="#ef4444" strokeDasharray="4 4" />
-            <Line type="monotone" dataKey="absorbance" stroke="#7c3aed" strokeWidth={2} dot={false} isAnimationActive={false} />
+            <Line type="monotone" dataKey="absorbance" stroke="#7c3aed" strokeWidth={Number(cfg.lineThickness) || 2} strokeDasharray={dash} dot={dot} isAnimationActive={false} />
             {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
           </LineChart>
         </ResponsiveContainer>
@@ -147,7 +152,7 @@ export const CloningSimulationsSection = ({ ctx }) => {
   };
 
   return (
-    <CollapsibleSection title="Simulations — UV Spectra Simulator" icon="🧪">
+    <CollapsibleSection title="Simulations — UV Spectra Simulator" icon="🧪" defaultOpen={false}>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* controls */}
         <div className="flex flex-col gap-3 bg-slate-50 border border-slate-200 rounded-xl p-4">
@@ -221,7 +226,13 @@ export const CloningSimulationsSection = ({ ctx }) => {
         {/* chart + readouts */}
         <div className="lg:col-span-2">
           {data.length ? (
-            <SimUvZoomChart data={data} />
+            <ChartPanel
+              title={(sim.chartCfg && sim.chartCfg.title) || 'Simulated UV Spectrum'}
+              icon="🧪"
+              cfgPanel={<SharedChartStylePanel cfg={sim.chartCfg || {}} setCfg={(patch) => setSim({ chartCfg: { ...(sim.chartCfg || {}), ...patch } })} unit="Wavelength (nm)" />}
+            >
+              <SimUvZoomChart data={data} cfg={sim.chartCfg || {}} />
+            </ChartPanel>
           ) : (
             <div className="h-[300px] flex items-center justify-center text-slate-400 italic text-sm bg-slate-50 rounded-lg border border-dashed border-slate-300">
               Enter a sequence and concentration to simulate the UV spectrum.

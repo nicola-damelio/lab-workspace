@@ -651,15 +651,15 @@ export const LabNotebook = ({
   
   const [imageScale, setImageScale] = useState(100);
 
-  // Display Toggles
+  // Display Toggles — all active by default
   const [showConditions, setShowConditions] = useState(true);
-  const [showMolecularFormula, setShowMolecularFormula] = useState(false);
-  const [showInstrumental, setShowInstrumental] = useState(false);
-  const [showReport, setShowReport] = useState(false);
+  const [showMolecularFormula, setShowMolecularFormula] = useState(true);
+  const [showInstrumental, setShowInstrumental] = useState(true);
+  const [showReport, setShowReport] = useState(true);
   const [showImages, setShowImages] = useState(true);
-  const [showData, setShowData] = useState(false);
-  const [showDataAnalysisGraphs, setShowDataAnalysisGraphs] = useState(false);
-  const [showSimImages, setShowSimImages] = useState(false);
+  const [showData, setShowData] = useState(true);
+  const [showDataAnalysisGraphs, setShowDataAnalysisGraphs] = useState(true);
+  const [showSimImages, setShowSimImages] = useState(true);
   
   // Option Lists
 const primaryOptions = PRIMARY_CATEGORIES || Object.keys(CLASSIFICATION_MAP || {});
@@ -679,7 +679,7 @@ const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t =>
   const allInstruments = useMemo(() => (nmrInstruments || []).map(i => i.name || i).filter(Boolean).sort(), [nmrInstruments]);
   const allProbes = useMemo(() => (nmrProbes || []).map(p => p.name || p).filter(Boolean).sort(), [nmrProbes]);
   const allPulseSeqs = useMemo(() => (nmrExperiments || []).map(e => e.name || e).filter(Boolean).sort(), [nmrExperiments]);
-  const [selectedSpectrumTypes, setSelectedSpectrumTypes] = useState(['hsqc', 'hsqc15n']);
+  const [selectedSpectrumTypes, setSelectedSpectrumTypes] = useState(['hsqc']);
 
   const toggleSpectrumType = (id) =>
     setSelectedSpectrumTypes((prev) =>

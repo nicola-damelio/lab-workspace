@@ -16,6 +16,8 @@
    All coordinates are in nm (as produced by MDTrajectoryFrames.js).
    ========================================================================= */
 
+import { abortError } from './abortControl';
+
 // ---------------------------------------------------------------------------
 // 3×3 SVD via one-sided Jacobi rotations (A = U·S·Vᵀ, row-major flat arrays)
 // ---------------------------------------------------------------------------
@@ -302,7 +304,7 @@ const yieldUI = () => new Promise((r) => setTimeout(r, 0));
  *            sasa:[{time,value}], nFrames }
  */
 export async function computeMDTrajectoryAnalysis(topo, frames, opts = {}, onStatus) {
-  const { stride = 1, maxFrames = 500, doSasa = true, doRg = true, renumber } = opts;
+  const { stride = 1, maxFrames = 500, doSasa = true, doRg = true, renumber, isAborted } = opts;
   const atoms = Array.isArray(topo.atoms) ? topo.atoms : [];
   if (atoms.length === 0) throw new Error('No topology atoms.');
 
@@ -321,6 +323,7 @@ export async function computeMDTrajectoryAnalysis(topo, frames, opts = {}, onSta
 
   for await (const fr of frames) {
     if (!fr || !fr.xyz) continue;
+    if (isAborted && isAborted()) throw abortError('MD analysis cancelled.');
     read++;
     if (read > 1 && (read - 1) % stride !== 0) continue;   // stride over processed frames
     if (alignedFrames.length >= maxFrames) break;

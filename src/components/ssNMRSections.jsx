@@ -1041,11 +1041,29 @@ export const Data = ({ ctx }) => {
         
         let acqusFile = null;
         let title = 'Bruker 1r';
+        let expType = '';   // from the experiment dir "pulseprogram" file
+        let fileTitle = ''; // from the "<dataset>/pdata/1/title" file
         
         if (pdataIndex > 0) {
           const expDir = pathParts.slice(0, pdataIndex).join('/');
           const targetAcqusPath = expDir + '/acqus';
           acqusFile = files.find(f => f.webkitRelativePath === targetAcqusPath);
+          
+          // Experiment type = first (or second) line of the "pulseprogram" file
+          const pulseFile = files.find(f => f.webkitRelativePath === expDir + '/pulseprogram');
+          if (pulseFile) {
+            try {
+              const pt = await pulseFile.text();
+              const lines = pt.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+              expType = lines[0] || lines[1] || '';
+            } catch { /* ignore unreadable pulseprogram */ }
+          }
+          // Title = content of "<dataset>/pdata/1/title"
+          const titlePath = pathParts.slice(0, -1).join('/') + '/title';
+          const titleFile = files.find(f => f.webkitRelativePath === titlePath);
+          if (titleFile) {
+            try { fileTitle = (await titleFile.text()).trim(); } catch { /* ignore */ }
+          }
           
           const expNum = pathParts[pdataIndex - 1];
           const procNum = pathParts[pdataIndex + 1];
@@ -1060,11 +1078,13 @@ export const Data = ({ ctx }) => {
           acqusText, 
           manualSWkHz: parseManual(brukerSw), 
           manualOffsetKHz: parseManual(brukerOffset) || 0, 
-          title 
+          title: fileTitle || title 
         });
         
         if (!parsed.error) {
           parsed.filename = title;
+          parsed.expType = expType;
+          parsed.fileTitle = fileTitle;
           results.push(parsed);
         }
       }
@@ -1335,7 +1355,7 @@ export const Data = ({ ctx }) => {
   const LABEL_CLS = 'text-[10px] font-bold text-slate-500 uppercase';
 
   return (
-    <CollapsibleSection title="Data" icon="📂" defaultOpen={true}>
+    <CollapsibleSection title="Data" icon="📂" defaultOpen={false}>
       <div className="flex flex-col gap-6">
         <div className="bg-purple-50 border border-purple-200 rounded-xl px-4 py-3 flex flex-wrap items-center gap-2">
           <span className="text-xs font-bold text-purple-800 uppercase">Editing condition:</span>
@@ -1510,7 +1530,8 @@ export const Data = ({ ctx }) => {
                         <div className="text-sm font-bold text-slate-800 truncate">{p.filename}</div>
                         <div className="text-[11px] text-slate-500 truncate">
                           {(p.parsed.nPoints != null ? `${p.parsed.nPoints} pts` : `${p.parsed.xs ? p.parsed.xs.length : 0} pts`)}
-                          {p.parsed.meta?.title ? ` · ${p.parsed.meta.title}` : ''}
+                          {p.parsed.expType ? ` · ${p.parsed.expType}` : ''}
+                          {p.parsed.fileTitle ? ` · ${p.parsed.fileTitle}` : ''}
                           {p.parsed.meta?.nucleus ? ` · ${p.parsed.meta.nucleus}` : ''}
                         </div>
                       </div>
@@ -2572,7 +2593,7 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
 
   return (
     <CollapsibleSection
-      title={plot.title} icon="📈" defaultOpen={true}
+      title={plot.title} icon="📈" defaultOpen={false}
       headerExtra={
         <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
           <span role="button" onClick={(e) => { e.stopPropagation(); const nn = window.prompt('Rename plot:', plot.title); if (nn && nn.trim()) set({ title: nn.trim() }); }} className="text-slate-400 hover:text-blue-600 cursor-pointer text-lg leading-none" title="Rename">✏️</span>
@@ -2980,7 +3001,7 @@ const ConditionFittingSection = ({ ctx }) => {
 };
 
 export const DataAnalysis = ({ ctx }) => (
-  <CollapsibleSection title="Data Analysis" icon="📐" defaultOpen={true}>
+  <CollapsibleSection title="Data Analysis" icon="📐" defaultOpen={false}>
     <div className="flex flex-col gap-6">
       <QuadrupolarFitting ctx={ctx} />
       <ConditionFittingSection ctx={ctx} />

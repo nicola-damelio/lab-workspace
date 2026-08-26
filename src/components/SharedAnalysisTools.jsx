@@ -404,6 +404,7 @@ export const SharedChartStylePanel = ({ cfg = {}, setCfg, series = [], unit = 'a
             <div>
                 <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Chart Appearance</p>
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                    <TF label="Chart title" value={cfg.title} onChange={(v) => set({ title: v })} placeholder="Optional title" />
                     <SF label="Chart type" value={cfg.chartType || 'line'} onChange={(v) => set({ chartType: v })}
                         options={[['line','Line'],['bar','Bar / Histogram'],['scatter','Scatter (no line)'],['area','Area']]} />
                     <SF label="Error bar style" value={cfg.errorBarStyle || 'caps'} onChange={(v) => set({ errorBarStyle: v })}

@@ -180,7 +180,7 @@ alert(`${newTasks.length} cloning tasks added to the Agenda section.`);
 const compoundOptions = [...new Set([...(Array.isArray(selectedCompounds) ? selectedCompounds : []), ...(Array.isArray(allCmpds) ? allCmpds : [])])].filter(Boolean);
 
 return (
- <CollapsibleSection title= "Cloning Strategy Planner " icon= "🧭 " headerExtra={ <span className= "text-[10px] font-black px-2 py-1 rounded-full border bg-teal-50 border-teal-300 text-teal-700 " >{insertCompound || 'no insert'} → {vectorName || 'no vector'} </span >} >
+ <CollapsibleSection title= "Cloning Strategy Planner " icon= "🧭 " defaultOpen={false} headerExtra={ <span className= "text-[10px] font-black px-2 py-1 rounded-full border bg-teal-50 border-teal-300 text-teal-700 " >{insertCompound || 'no insert'} → {vectorName || 'no vector'} </span >} >
  <div className= "flex flex-col gap-6 " >
       {/* INSERT & VECTOR */}
        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

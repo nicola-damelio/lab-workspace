@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ensureNGL } from '../utils/ngl';
+import { readXtcFrames, countXtcFrames, countXtcFramesInFile } from '../utils/xtcDecoder';
+import { abortControl } from '../utils/abortControl';
 
-// ---- Large-trajectory detection -------------------------------------------
-// When a chosen trajectory is big enough to freeze the browser, propose a
-// stride reduction BEFORE the file is parsed (frame counts are only known
-// after parsing, so we estimate from the file size). Above 2 GB the suggested
-// stride is recalculated so the effective loaded data stays under ~2 GB.
-const LARGE_TRAJ_BYTES = 200 * 1024 * 1024;        // warn above 200 MB
-const TARGET_TRAJ_FRAMES = 2500;                   // aim for ~2500 kept frames
+// ---- Trajectory frame selection -------------------------------------------
+// Frame COUNT is what matters (not file size). Before parsing a trajectory the
+// user is always asked how to load it: the full trajectory, the default of
+// ~30 representative frames spread across the whole run, or a custom number.
+const TARGET_TRAJ_FRAMES = 30;                   // default representative frame count
 const TARGET_TRAJ_BYTES = 2 * 1024 * 1024 * 1024;  // 2 GB effective-load cap
 
 const fmtBytesMB = (b) => `${(b / (1024 * 1024)).toFixed(1)} MB`;
@@ -486,6 +486,7 @@ const highlightCompRef = useRef(null);
 const manualHighlightCompRef = useRef(null);
 const labelCompRef = useRef(null);
 const sidechainCompRef = useRef(null);
+const abortRef = useRef(null); // { token, label, cancel } of the active long-running operation (structure / trajectory load)
 
 const [file, setFile] = useState(null);
 const [pdbId, setPdbId] = useState('');
@@ -578,6 +579,7 @@ const [autoShowSel, setAutoShowSel] = useState(true); // auto-visibility of pars
 const [hideAll, setHideAll] = useState(false);        // remove every representation
 const [bgColor, setBgColor] = useState('#f8fafc');
 const [qualityHigh, setQualityHigh] = useState(false);
+const [fogEnabled, setFogEnabled] = useState(false);
 
 const persistRenames = (next) => {
   setRenames(next);
@@ -598,17 +600,21 @@ const displayAtomName = (atom) => {
 
 // ---- Trajectory State ----
 const [trajFile, setTrajFile] = useState(null);
+const [trajAborted, setTrajAborted] = useState(false); // true while the user aborted the trajectory (blocks auto-reload from props)
 const [trajStatus, setTrajStatus] = useState('none');
 const [trajError, setTrajError] = useState('');
 const [numFrames, setNumFrames] = useState(0);
+const [trajTotal, setTrajTotal] = useState(0); // total frames of the trajectory being loaded (for the live counter)
 const [currentFrame, setCurrentFrame] = useState(0);
 const [playing, setPlaying] = useState(false);
 const [speed, setSpeed] = useState(10);
 const [stride, setStride] = useState(1);        // play every Nth frame (keeps total time)
 const [maxFrames, setMaxFrames] = useState(0);  // 0 = keep all frames
-const [pendingTraj, setPendingTraj] = useState(null); // { file, estFrames, suggested } awaiting user confirmation
+const [pendingTraj, setPendingTraj] = useState(null); // { file, estFrames, suggested, over2G } awaiting user confirmation
+const [trajFrameCount, setTrajFrameCount] = useState(TARGET_TRAJ_FRAMES);
 const firstChainSelRef = useRef(null);                 // NGL selection of the first chain (":A")
 const trajRef = useRef(null);
+const lastChosenTrajRef = useRef(null);                // guards the async XTC exact-count scan
 const blobUrlsRef = useRef([]);
 
 // Number of frames we actually step through (the trajectory's total time span is
@@ -803,6 +809,29 @@ const addDefaultReps = (component) => {
 useEffect(() => {
 if (!loadRequest || (!loadRequest.file && !loadRequest.url && !loadRequest.text)) return;
 let cancelled = false;
+const abortToken = {};
+abortRef.current = {
+  token: abortToken,
+  label: 'structure loading',
+  cancel: () => {
+    cancelled = true;
+    setStatus('idle');
+    setErrorMsg('');
+    setLoadRequest(null);
+    componentRef.current = null;
+    setSelections([]);
+    setLargeMode(false);
+    setLargeInfo(null);
+    try { if (stageRef.current) stageRef.current.removeAllComponents(); } catch {}
+  }
+};
+const unregisterAbort = abortControl.register('structure loading', () => {
+  if (abortRef.current && abortRef.current.token === abortToken) {
+    const a = abortRef.current;
+    abortRef.current = null;
+    a.cancel();
+  }
+});
 setStatus('loading');
 setErrorMsg('');
 setTrajFile(null);
@@ -915,19 +944,50 @@ setStatus('error');
 }
 };
 run();
-return () => { cancelled = true; };
+return () => {
+  cancelled = true;
+  unregisterAbort();
+  if (abortRef.current && abortRef.current.token === abortToken) abortRef.current = null;
+};
 }, [loadRequest]);
 
 // ---- Trajectory Loading Effect ----
 useEffect(() => {
+if (trajAborted) return; // user aborted the trajectory — do not auto-reload (e.g. from props)
 const component = componentRef.current;
 if (!component || status !== 'ready') return;
 const targetSrc = trajFile || trajectoryFile || trajectorySrc;
 if (!targetSrc) return;
 let cancelled = false;
+const abortToken = {};
+abortRef.current = {
+  token: abortToken,
+  label: 'trajectory loading',
+  cancel: () => {
+    cancelled = true;
+    setTrajAborted(true); // block auto-reload (e.g. from the trajectorySrc prop) until the user picks a new trajectory
+    setTrajStatus('idle');
+    setTrajError('');
+    setPlaying(false);
+    setNumFrames(0);
+    setTrajTotal(0);
+    setCurrentFrame(0);
+    trajRef.current = null;
+    setTrajFile(null);
+    try { if (componentRef.current && typeof componentRef.current.removeAllTrajectories === 'function') componentRef.current.removeAllTrajectories(); } catch {}
+  }
+};
+const unregisterAbort = abortControl.register('trajectory loading', () => {
+  if (abortRef.current && abortRef.current.token === abortToken) {
+    const a = abortRef.current;
+    abortRef.current = null;
+    a.cancel();
+  }
+});
 setTrajStatus('loading');
 setTrajError('');
 setNumFrames(0);
+setTrajTotal(0);
 setCurrentFrame(0);
 setPlaying(false);
 
@@ -937,12 +997,71 @@ const NGL = await ensureNGL();
 if (cancelled) return;
 let targetCand = targetSrc;
 let ext = trajectoryFormat || 'xtc';
+let srcFile = null;
 if (typeof targetSrc === 'object' && targetSrc instanceof File) {
-targetCand = URL.createObjectURL(targetSrc);
-blobUrlsRef.current.push(targetCand);
-const fileParts = targetSrc.name.split('.');
-ext = fileParts.length > 1 ? fileParts.pop().toLowerCase() : ext;
+  srcFile = targetSrc;
+  const fileParts = targetSrc.name.split('.');
+  ext = fileParts.length > 1 ? fileParts.pop().toLowerCase() : ext;
+  if (ext !== 'xtc') {
+    // Non-XTC files still go through NGL (blob URL), exactly as before.
+    targetCand = URL.createObjectURL(targetSrc);
+    blobUrlsRef.current.push(targetCand);
+  }
 }
+
+// ---- Native incremental XTC decode (local .xtc files) ---------------------
+// NGL's own parse of a large XTC is all-or-nothing and reports no per-frame
+// progress. Decoding the file natively here lets the UI show a live
+// "N / total frames loaded" counter and stay responsive (the generator
+// yields between frames, so the Abort button keeps working).
+if (ext === 'xtc' && srcFile) {
+  const ab = await srcFile.arrayBuffer();
+  if (cancelled) return;
+  const { totalFrames } = countXtcFrames(ab);
+  if (totalFrames > 0) setTrajTotal(totalFrames);
+  const coords = [];
+  const boxes = [];
+  const times = [];
+  let done = 0;
+  for await (const fr of readXtcFrames(ab)) {
+    if (cancelled) return;
+    coords.push(fr.coords);
+    boxes.push(fr.box);
+    times.push(fr.time);
+    done++;
+    if (done === totalFrames || done % 20 === 0) {
+      // Keep the counter honest: the header-scan total is only an estimate —
+      // the decoded count is authoritative, so the total shown must never lag
+      // behind (otherwise the live counter would claim "more than total").
+      setNumFrames(done);
+      if (totalFrames <= 0 || done > totalFrames) setTrajTotal(done);
+      await new Promise((r) => setTimeout(r, 0)); // let React repaint + honour aborts
+    }
+  }
+  if (cancelled) return;
+  if (done === 0) {
+    throw new Error('Trajectory contains 0 readable frames. Verify that the PDB and XTC have the exact same atom count.');
+  }
+  // The actually decoded frame count is the authoritative total.
+  setNumFrames(done);
+  setTrajTotal(done);
+  const frames = new NGL.Frames(srcFile.name, srcFile.name);
+  frames.coordinates = coords;
+  frames.boxes = boxes;
+  frames.times = times;
+  frames.timeOffset = times[0] || 0;
+  frames.deltaTime = times.length > 1 ? times[1] - times[0] : 1;
+  setNumFrames(done);
+  const trajComp = component.addTrajectory(frames);
+  const traj = (trajComp && trajComp.trajectory) || getTrajectoryObject(component);
+  if (!traj) throw new Error('Could not attach trajectory');
+  trajRef.current = traj;
+  try { if (typeof traj._setFrameCount === 'function') traj._setFrameCount(done); } catch {}
+  setCurrentFrame(0);
+  setTrajStatus('ready');
+  return;
+}
+
 const candidates = [
 targetCand,
 ...(Array.isArray(trajectoryFallbacks) ? trajectoryFallbacks : []),
@@ -997,8 +1116,12 @@ setTrajError(err?.message || 'Failed to load trajectory. Check matching atom cou
 }
 };
 initTraj();
-return () => { cancelled = true; };
-}, [trajFile, trajectoryFile, trajectorySrc, trajectoryFormat, status]);
+return () => {
+  cancelled = true;
+  unregisterAbort();
+  if (abortRef.current && abortRef.current.token === abortToken) abortRef.current = null;
+};
+}, [trajFile, trajectoryFile, trajectorySrc, trajectoryFormat, status, trajAborted]);
 
 // ---- Trajectory Playback Loop ----
 useEffect(() => {
@@ -1013,6 +1136,15 @@ return next;
 }, interval);
 return () => clearInterval(id);
 }, [playing, speed, keptFrames, stride, numFrames, maxFrames]);
+
+// Expose trajectory playback to the global Stop button (so the always-visible
+// ⏹ Stop can also halt playback, not just loading operations).
+useEffect(() => {
+  if (!playing) return;
+  const unregister = abortControl.register('trajectory playback', () => setPlaying(false));
+  return unregister;
+}, [playing]);
+
 
 const togglePlay = () => {
 if (trajStatus !== 'ready' || keptFrames === 0) return;
@@ -1029,32 +1161,57 @@ setFrameSafe(trajRef.current, toActualFrame(idx));
 // ---- Large-trajectory confirmation ----------------------------------------
 const handleTrajFileChosen = (f) => {
 if (!f) return;
+setTrajAborted(false); // a fresh user-selected trajectory is always allowed
 const structure = componentRef.current && componentRef.current.structure;
 const atomCount = structure ? structure.atomCount : 0;
-if (f.size >= LARGE_TRAJ_BYTES) {
-const { estFrames, bytesPerFrame } = estimateTrajectoryFrames(f, atomCount);
-const over2G = f.size > TARGET_TRAJ_BYTES;
-let suggested;
-if (over2G) {
-// Recalculate the stride so the effective loaded data stays under ~2 GB.
-const keepFrames = Math.max(1, Math.floor(TARGET_TRAJ_BYTES / Math.max(1, bytesPerFrame)));
-suggested = Math.min(1000, Math.max(1, Math.ceil(estFrames / keepFrames)));
-} else {
-suggested = Math.min(1000, Math.max(1, Math.ceil(estFrames / TARGET_TRAJ_FRAMES)));
-}
-if (suggested > 1) {
-setPendingTraj({ file: f, estFrames, suggested, over2G });
-return;
-}
-}
+const name = (f.name || '').toLowerCase();
+const isTraj = name.endsWith('.xtc') || name.endsWith('.trr') || name.endsWith('.dcd') || name.endsWith('.nc');
+if (!isTraj) {
 setTrajFile(f);
 onTrajectoryFile?.(f);
+return;
+}
+// Always ask the user how to load the trajectory — frame COUNT matters, not
+// file size. Representative frames are spread evenly over the whole run.
+const { estFrames, bytesPerFrame } = estimateTrajectoryFrames(f, atomCount);
+const finalizePendingTraj = (est, bpf) => {
+  const over2G = f.size > TARGET_TRAJ_BYTES;
+  let suggested = 1;
+  if (est > TARGET_TRAJ_FRAMES) {
+    suggested = Math.min(1000, Math.max(1, Math.ceil(est / TARGET_TRAJ_FRAMES)));
+  }
+  if (over2G) {
+    // Recalculate the stride so the effective loaded data stays under ~2 GB.
+    const keepFrames = Math.max(1, Math.floor(TARGET_TRAJ_BYTES / Math.max(1, bpf)));
+    suggested = Math.max(suggested, Math.min(1000, Math.max(1, Math.ceil(est / keepFrames))));
+  }
+  setTrajFrameCount(Math.min(TARGET_TRAJ_FRAMES, est));
+  setPendingTraj({ file: f, estFrames: est, suggested, over2G });
+};
+if (name.endsWith('.xtc')) {
+  // XTC frame count can be read exactly from the file headers (fast chunked
+  // scan, no decompression) — show the real number in the confirmation dialog.
+  lastChosenTrajRef.current = f;
+  countXtcFramesInFile(f)
+    .then(({ totalFrames }) => {
+      if (lastChosenTrajRef.current !== f) return; // stale: user already moved on
+      const est = totalFrames > 0 ? totalFrames : estFrames;
+      const bpf = totalFrames > 0 ? Math.max(1, f.size / totalFrames) : bytesPerFrame;
+      finalizePendingTraj(est, bpf);
+    })
+    .catch(() => { if (lastChosenTrajRef.current === f) finalizePendingTraj(estFrames, bytesPerFrame); });
+} else {
+  finalizePendingTraj(estFrames, bytesPerFrame);
+}
 };
 
 const acceptTrajReduction = () => {
 if (!pendingTraj) return;
-setStride(pendingTraj.suggested);
-setMaxFrames(TARGET_TRAJ_FRAMES);
+setTrajAborted(false); // a fresh user-selected trajectory is always allowed
+const target = Math.min(Math.max(1, parseInt(trajFrameCount, 10) || TARGET_TRAJ_FRAMES), Math.max(1, pendingTraj.estFrames));
+const strideNeeded = Math.max(1, Math.ceil(pendingTraj.estFrames / Math.max(1, target)));
+setStride(strideNeeded);
+setMaxFrames(target);
 setTrajFile(pendingTraj.file);
 onTrajectoryFile?.(pendingTraj.file);
 setPendingTraj(null);
@@ -1062,6 +1219,7 @@ setPendingTraj(null);
 
 const loadTrajWithoutReduction = () => {
 if (!pendingTraj) return;
+setTrajAborted(false); // a fresh user-selected trajectory is always allowed
 setTrajFile(pendingTraj.file);
 onTrajectoryFile?.(pendingTraj.file);
 setPendingTraj(null);
@@ -1076,15 +1234,6 @@ const file = payload.file;
 const size = file ? file.size : (payload.text ? payload.text.length : 0);
 setLoadRequest({ ...payload, size });
 };
-
-// Jump back to the start when the stride / max-frames controls change.
-useEffect(() => {
-if (trajRef.current && numFrames > 0) {
-setCurrentFrame(0);
-setFrameSafe(trajRef.current, toActualFrame(0));
-}
-// eslint-disable-next-line react-hooks/exhaustive-deps
-}, [stride, maxFrames]);
 
 // Sync externally-provided atom renames (e.g. restored from the active test)
 useEffect(() => {
@@ -1205,7 +1354,11 @@ useEffect(() => {
   if (!stage) return;
   try { stage.setParameters({ backgroundColor: bgColor }); } catch {}
   try { stage.setQuality(qualityHigh ? 'high' : 'medium'); } catch {}
-}, [bgColor, qualityHigh, status]);
+  // NGL fog is recomputed on every render from the (relative 0-100) fogNear/fogFar
+  // stage parameters. fogNear=1 / fogFar=100 spans the whole model depth (visible
+  // depth fog); fogNear=50 restores NGL's default crisp appearance (fog off).
+  try { stage.setParameters({ fogNear: fogEnabled ? 1 : 50, fogFar: 100 }); } catch {}
+}, [bgColor, qualityHigh, fogEnabled, status]);
 
 const parsePyMOL = (text) => {
   const sels = [];
@@ -1548,6 +1701,20 @@ setLoadRequest({ file: null, url: value, ts: Date.now() });
 onStructureSrc?.(value);   // share the web/PDB topology with the analysis sections
 }, [pdbId, onStructureSrc]);
 
+// ---- Abort the current long-running operation (vertical-bar / global Stop) ----
+// Stops trajectory playback, closes the frame-selection modal and cancels the
+// active structure / trajectory load so the UI returns to a usable state.
+const handleAbort = () => {
+  setPlaying(false);
+  setPendingTraj(null);
+  abortControl.abortAll();
+  if (abortRef.current) {
+    const a = abortRef.current;
+    abortRef.current = null;
+    a.cancel();
+  }
+};
+
 return (
 <div className="flex flex-col gap-3">
 {/* Topology and Structure Controls */}
@@ -1620,32 +1787,6 @@ className="hidden"
 {(trajFile || trajectoryFile).name}
 </span>
 )}
-{/* Load options — settable BEFORE loading, so a large trajectory is only
-    stepped through at the chosen stride / frame cap from the start. */}
-<div className="flex flex-wrap items-center gap-3 mt-1 pt-2 border-t border-slate-200">
-<label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 uppercase">
-Load every
-<select
-value={stride}
-onChange={(e) => setStride(Math.max(1, parseInt(e.target.value, 10) || 1))}
-className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-indigo-500"
-title="Play every Nth frame — keeps the same total trajectory time with fewer frames"
->
-{[1, 2, 5, 10, 20, 50, 100, 200, 500, 1000].map((s) => <option key={s} value={s}>{s}×</option>)}
-</select>
-</label>
-<label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 uppercase">
-Max frames
-<input
-type="number"
-min="0"
-value={maxFrames}
-onChange={(e) => setMaxFrames(Math.max(0, parseInt(e.target.value, 10) || 0))}
-className="border border-slate-300 rounded-lg px-2 py-1 text-xs w-20 bg-white outline-none focus:border-indigo-500"
-title="Limit the number of frames actually played (0 = keep all)"
-/>
-</label>
-</div>
 </div>
 
 <div className="flex flex-col gap-1">
@@ -1756,6 +1897,24 @@ className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline
 <option value="spheres">Spheres</option>
 <option value="hidden">Hidden</option>
 </select>
+</div>
+
+{/* 3D View — always-visible effects (the Fog toggle is no longer buried in
+    the Selections & PyMOL panel). */}
+<div className="flex flex-col gap-1">
+<label className="text-[10px] font-bold text-slate-500 uppercase">
+3D View
+</label>
+<label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer h-8">
+<input
+type="checkbox"
+checked={fogEnabled}
+onChange={(e) => setFogEnabled(e.target.checked)}
+className="w-4 h-4 accent-violet-600"
+title="Depth fog: fade the far side of the molecule into the background"
+/>
+🌫️ Fog
+</label>
 </div>
 </div>
 
@@ -1898,7 +2057,18 @@ className="border border-indigo-300 rounded-lg px-2 py-1 text-xs bg-white outlin
 </select>
 </div>
 <div className="w-full">
-{trajStatus === 'loading' && <span className="text-[11px] font-bold text-indigo-600">⏳ Loading trajectory ({trajectoryFormat.toUpperCase()})…</span>}
+{trajStatus === 'loading' && (
+  <span className="text-[11px] font-bold text-indigo-600">
+    ⏳ Loading trajectory ({trajectoryFormat.toUpperCase()})…
+    {numFrames > 0 && (
+      <span className="text-indigo-500 font-mono font-semibold">
+        {' '}{trajTotal > 0
+          ? `${Math.min(numFrames, trajTotal).toLocaleString()} / ${trajTotal.toLocaleString()}`
+          : `${numFrames.toLocaleString()}`} frames loaded
+      </span>
+    )}
+  </span>
+)}
 {trajStatus === 'ready' && (
   <span className="text-[11px] font-bold text-emerald-600">
     ✓ {trajectoryFormat.toUpperCase()}: {numFrames} frames total → playing {keptFrames} (stride {effStride})
@@ -1916,9 +2086,11 @@ style={{ height }}
 >
 <div ref={containerRef} className="w-full h-full" />
 
-{/* Vertical selections bar (right side of the viewer) */}
-{selections.length > 0 && status === 'ready' && (
-  <div className="absolute top-2 right-2 bottom-2 w-60 z-10 flex flex-col gap-2 bg-white/95 border border-violet-200 rounded-xl shadow-lg p-2 overflow-hidden">
+{/* Vertical selections bar (right side of the viewer) — also hosts the Abort button */}
+{(selections.length > 0 || status === 'loading' || trajStatus === 'loading' || playing) && (
+  <div className="absolute top-2 right-2 bottom-2 w-60 z-30 flex flex-col gap-2 bg-white/95 border border-violet-200 rounded-xl shadow-lg p-2 overflow-hidden">
+    {selections.length > 0 && (
+    <>
     <div className="flex items-center justify-between gap-2 shrink-0">
       <span className="text-[10px] font-black text-violet-700 uppercase tracking-wide">Selections</span>
       <button type="button" onClick={() => setHideAll((v) => !v)}
@@ -1958,6 +2130,16 @@ style={{ height }}
           </div>
         );
       })}
+    </div>
+    </>
+    )}
+    <div className="shrink-0 border-t border-slate-100 pt-1.5 mt-1">
+      <button type="button" onClick={handleAbort}
+        className={`w-full px-2 py-1 text-[10px] font-bold rounded-lg border transition-colors ${abortRef.current || playing ? 'bg-red-600 text-white border-red-600 hover:bg-red-700' : 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'}`}
+        disabled={!(abortRef.current || playing)}
+        title={abortRef.current ? `Abort: ${abortRef.current.label}` : playing ? 'Stop trajectory playback' : 'No operation in progress'}>
+        ⏹ Abort{abortRef.current ? ` (${abortRef.current.label})` : ''}
+      </button>
     </div>
   </div>
 )}
@@ -2000,24 +2182,31 @@ Tip: you cannot paste a local file path — use the file picker button above
 )}
 </div>
 
-{/* Large-trajectory confirmation modal */}
+{/* Trajectory frame-selection modal */}
 {pendingTraj && (
 <div className="fixed inset-0 z-[99999] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
 <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
-<h3 className="text-sm font-black text-slate-800 mb-2">Large trajectory detected</h3>
+<h3 className="text-sm font-black text-slate-800 mb-2">Trajectory frame selection</h3>
 <p className="text-xs text-slate-600 mb-3">
-<b className="text-slate-800">{pendingTraj.file.name}</b> is {pendingTraj.over2G ? fmtBytesGB(pendingTraj.file.size) : fmtBytesMB(pendingTraj.file.size)}
-{' '}and is estimated to contain ~{pendingTraj.estFrames.toLocaleString()} frames.
+<b className="text-slate-800">{pendingTraj.file.name}</b> is estimated to contain ~{pendingTraj.estFrames.toLocaleString()} frames.
 {pendingTraj.over2G
-  ? ' Loading it all may exceed ~2 GB of memory and freeze the browser.'
-  : ' Playing it without reduction may freeze the browser.'}
+  ? ' Loading all of it may exceed ~2 GB of memory and freeze the browser.'
+  : ' Choose how many frames to load — a reduced set is sampled evenly across the whole trajectory so the total time range is preserved.'}
 </p>
-<p className="text-xs text-slate-600 mb-4">
-{pendingTraj.over2G ? 'To stay under ~2 GB, skip ' : 'Load only '}
-<b>every {pendingTraj.suggested}×</b> frame
-{' '}(≈{Math.ceil(pendingTraj.estFrames / pendingTraj.suggested).toLocaleString()} frames
-{pendingTraj.over2G ? ', ≈2 GB' : `, capped at ~${TARGET_TRAJ_FRAMES.toLocaleString()}`}).
-The total trajectory time is preserved.
+<div className="flex items-center gap-2 mb-1">
+<label className="text-xs font-bold text-slate-700 shrink-0">Load at most</label>
+<input
+  type="number"
+  min="1"
+  max={pendingTraj.estFrames}
+  value={trajFrameCount}
+  onChange={(e) => setTrajFrameCount(Math.max(1, parseInt(e.target.value, 10) || 1))}
+  className="w-24 border border-indigo-300 rounded-lg px-2 py-1.5 text-sm bg-white outline-none focus:border-indigo-500 font-semibold"
+/>
+<span className="text-xs text-slate-500 shrink-0">representative frames (max {pendingTraj.estFrames.toLocaleString()})</span>
+</div>
+<p className="text-[10px] text-slate-400 mb-4">
+Default: {Math.min(TARGET_TRAJ_FRAMES, pendingTraj.estFrames).toLocaleString()} frames sampled evenly across the run (~every {pendingTraj.suggested}× frame). The total trajectory time is preserved.
 </p>
 <div className="flex flex-wrap gap-2 justify-end">
 <button
@@ -2039,7 +2228,7 @@ type="button"
 onClick={acceptTrajReduction}
 className="text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg shadow-sm"
 >
-✓ Yes, reduce frames
+✓ Load {Math.min(Math.max(1, parseInt(trajFrameCount, 10) || TARGET_TRAJ_FRAMES), Math.max(1, pendingTraj.estFrames)).toLocaleString()} frames
 </button>
 </div>
 </div>

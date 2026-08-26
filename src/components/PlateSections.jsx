@@ -629,7 +629,7 @@ export function RegionCharts({ regionName, regionData, config }) {
     }, [regionData, hiddenCmpds, fitIC50, eScale, chartCfg, fsPanel, unit]);
 
     return (
-        <CollapsibleSection title={`Region: ${regionName}`} icon="📍" defaultOpen={true}>
+        <CollapsibleSection title={`Region: ${regionName}`} icon="📍" defaultOpen={false}>
             <div className="flex flex-col lg:flex-row gap-6 relative">
                 {isDrFs && (
                     <div
@@ -2442,7 +2442,7 @@ const fname = `${(activeTest.name || 'test').replace(/[^a-z0-9]+/gi, '_')}.xlsx`
 return (
         <div id={`plate-report-${activeTest.id}`} className="flex flex-col gap-6">
             {/* ================= EXPERIMENT SETUP ================= */}
-            <CollapsibleSection title="Experiment Setup" icon="⚙️" defaultOpen={true}>
+            <CollapsibleSection title="Experiment Setup" icon="⚙️" defaultOpen={false}>
                 <div className="flex flex-col gap-6">
                     {/* Format / Dose / Units / Custom concentrations */}
                     <div className="flex flex-wrap gap-4 items-stretch">
@@ -2789,7 +2789,7 @@ return (
             </CollapsibleSection>
 
             {/* ================= DATA GRID ================= */}
-            <CollapsibleSection title="Data" icon="🔢" defaultOpen={true}>
+            <CollapsibleSection title="Data" icon="🔢" defaultOpen={false}>
                 <div className="relative">
                     {fsPanel === 'data' && (
                         <div className={OVERLAY_CLASSES} onClick={() => toggleFs('data')}></div>
@@ -3192,7 +3192,7 @@ return (
             </CollapsibleSection>
 
             {/* ================= DATA ANALYSIS ================= */}
-            <CollapsibleSection title="Data Analysis" icon="📐" defaultOpen={true}>
+            <CollapsibleSection title="Data Analysis" icon="📐" defaultOpen={false}>
                 <div className="flex flex-col gap-6">
 {/* ===== TOGGLE BUTTONS FOR ERROR MGMT & GRAPHICAL PARAMS ===== */}
                     <ChartControlBar

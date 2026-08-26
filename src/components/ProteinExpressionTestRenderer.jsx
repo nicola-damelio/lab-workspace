@@ -3,7 +3,7 @@ import {
 LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
 ResponsiveContainer, ReferenceArea
 } from 'recharts';
-import { useXZoom } from './SharedAnalysisTools';
+import { ChartPanel, SharedChartStylePanel, useXZoom, useChartFsHeight } from './SharedAnalysisTools';
 import TestShellRenderer, {
 CollapsibleSection,
 SmartImage
@@ -76,24 +76,28 @@ className="w-full border border-slate-200 rounded-lg p-2.5 text-xs outline-none 
 );
 
 const CHROMA_MARGIN = { top: 10, right: 10, bottom: 35, left: 50 };
-const ChromaZoomChart = ({ data, stroke }) => {
+const ChromaZoomChart = ({ data, stroke, cfg = {} }) => {
   const chartRef = useRef(null);
   const xs = data.map(p => p.volume);
   const dataDomain = xs.length > 1 ? [Math.min(...xs), Math.max(...xs)] : [0, 1];
   const zoom = useXZoom(chartRef, dataDomain, CHROMA_MARGIN);
+  const fs = Number(cfg.fontSize) || 11;
+  const dash = cfg.lineStyle === 'dashed' ? '4 4' : cfg.lineStyle === 'dotted' ? '1 3' : undefined;
+  const dot = cfg.pointStyle && cfg.pointStyle !== 'none' ? { r: Number(cfg.ptSize) || 4, fill: stroke, strokeWidth: 0 } : false;
+  const height = useChartFsHeight(Number(cfg.height) || 230);
   return (
     <div className="flex flex-col gap-1">
-      <div ref={chartRef} onMouseDown={zoom.onMouseDown} className="select-none" style={{ height: 230 }}>
+      <div ref={chartRef} onMouseDown={zoom.onMouseDown} className="select-none" style={{ height }}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data} margin={CHROMA_MARGIN}>
             <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
             <XAxis dataKey="volume" type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow
-              tick={{ fontSize: 11, fill: '#64748b' }}
-              label={{ value: 'Elution Volume (mL)', position: 'insideBottom', offset: -15, fontSize: 11, fill: '#64748b' }} />
-            <YAxis tick={{ fontSize: 11, fill: '#64748b' }}
-              label={{ value: 'Absorbance', angle: -90, position: 'insideLeft', fontSize: 11, fill: '#64748b' }} />
+              tick={{ fontSize: fs, fill: '#64748b' }}
+              label={{ value: cfg.xAxisLabel || 'Elution Volume (mL)', position: 'insideBottom', offset: -15, fontSize: fs, fill: '#64748b' }} />
+            <YAxis tick={{ fontSize: fs, fill: '#64748b' }}
+              label={cfg.yAxisLabel ? { value: cfg.yAxisLabel, angle: -90, position: 'insideLeft', fontSize: fs, fill: '#64748b' } : { value: 'Absorbance', angle: -90, position: 'insideLeft', fontSize: fs, fill: '#64748b' }} />
             <Tooltip formatter={(v) => Number(v).toFixed(2)} labelFormatter={(l) => `${l} mL`} />
-            <Line type="monotone" dataKey="absorbance" stroke={stroke} strokeWidth={2} dot={false} isAnimationActive={false} />
+            <Line type="monotone" dataKey="absorbance" stroke={stroke} strokeWidth={Number(cfg.lineThickness) || 2} strokeDasharray={dash} dot={dot} isAnimationActive={false} />
             {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
           </LineChart>
         </ResponsiveContainer>
@@ -193,12 +197,17 @@ return (
       />
       <p className="text-[10px] text-slate-400">Data points: {chartData.length}</p>
     </div>
-    <div className="lg:col-span-2 bg-slate-50 p-4 rounded-xl border border-slate-200 min-h-[280px]">
-      <h4 className="text-xs font-bold text-slate-700 uppercase mb-3">Elution Profile</h4>
+    <div className="lg:col-span-2">
       {chartData.length > 0 ? (
-        <ChromaZoomChart data={chartData} stroke={stroke} />
+        <ChartPanel
+          title={(chr.chartCfg && chr.chartCfg.title) || `Elution Profile${chr.method ? ` — ${chr.method}` : ''}`}
+          icon="📈"
+          cfgPanel={<SharedChartStylePanel cfg={chr.chartCfg || {}} setCfg={(patch) => onChange({ chartCfg: { ...(chr.chartCfg || {}), ...patch } })} unit="Elution Volume (mL)" />}
+        >
+          <ChromaZoomChart data={chartData} stroke={stroke} cfg={chr.chartCfg || {}} />
+        </ChartPanel>
       ) : (
-        <div className="flex h-full items-center justify-center text-slate-400 italic text-sm">
+        <div className="flex h-full items-center justify-center text-slate-400 italic text-sm bg-slate-50 rounded-xl border border-slate-200 min-h-[280px]">
           Paste data to view the chromatogram.
         </div>
       )}
@@ -320,7 +329,7 @@ const ProteinDataSection = ({ ctx }) => {
   return (
     <div className="flex flex-col gap-6">
       {/* ============ 1. PROTEIN YIELD ============ */}
-      <CollapsibleSection title="Protein Yield (BCA / Bradford / UV)" icon="💧">
+      <CollapsibleSection title="Protein Yield (BCA / Bradford / UV)" icon="💧" defaultOpen={false}>
         <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm">
           <div className="flex justify-between items-center mb-3">
             <h3 className="text-xs font-bold text-slate-600 uppercase">Purified Fractions</h3>
@@ -429,7 +438,7 @@ const ProteinDataSection = ({ ctx }) => {
       </CollapsibleSection>
 
       {/* ============ 2. CHROMATOGRAMS ============ */}
-      <CollapsibleSection title="Chromatograms (FPLC / AKTA)" icon="📈">
+      <CollapsibleSection title="Chromatograms (FPLC / AKTA)" icon="📈" defaultOpen={false}>
         <div className="flex flex-col gap-4">
           <div className="flex justify-between items-center flex-wrap gap-2">
             <p className="text-xs text-slate-500">
@@ -471,7 +480,7 @@ const ProteinDataSection = ({ ctx }) => {
       </CollapsibleSection>
 
       {/* ============ 3. SDS-PAGE GELS ============ */}
-      <CollapsibleSection title="SDS-PAGE Gels & Blots" icon="🖼️">
+      <CollapsibleSection title="SDS-PAGE Gels & Blots" icon="🖼️" defaultOpen={false}>
         <div className="border border-slate-200 bg-slate-50 rounded-lg p-4">
           <input
             ref={gelImageInputRef}

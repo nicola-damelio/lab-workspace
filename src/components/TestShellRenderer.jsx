@@ -5,6 +5,8 @@ import { SearchableSelect } from './SearchableSelect';
 import { parseSimulationParameters } from './MDData';
 import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES } from '../data/testTypes';
 import { CollapsibleSection } from './ui';
+import { abortControl, useAbortControl } from '../utils/abortControl';
+import { mdAnalysisRunAll } from '../utils/mdAnalysisRunAll';
 export { CollapsibleSection };
 
 /* ============================================================================
@@ -354,6 +356,30 @@ export const SmartImage = ({ src, alt, style }) => {
 MAIN SHELL
 ========================================================================== */
 
+// Always-visible emergency stop. Lives at the top-right of every test page:
+// it enables the moment any operation registers itself in the global
+// abortControl registry and cancels it (structure / trajectory loads,
+// playback, MD analyses, …). Idle pages show it dimmed so it is always
+// findable — no more hunting for a hidden stop button mid-freeze.
+const GlobalStopButton = () => {
+  const { active, label } = useAbortControl();
+  return (
+    <button
+      type="button"
+      onClick={() => abortControl.abortAll()}
+      disabled={!active}
+      className={`fixed top-2 right-2 z-[70] no-print inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wide shadow-md border transition-colors ${
+        active
+          ? 'bg-red-600 text-white border-red-600 hover:bg-red-700 animate-pulse'
+          : 'bg-white/70 text-slate-400 border-slate-200 cursor-default'
+      }`}
+      title={active ? `Abort: ${label}` : 'No operation in progress'}
+    >
+      ⏹ {active ? `Stop (${label})` : 'Stop'}
+    </button>
+  );
+};
+
 export const TestShellRenderer = ({
   config = {},
   custom = {},
@@ -397,11 +423,15 @@ const experimentPlan = Array.isArray(t.plan) ? t.plan : [];
   const [zoomImage, setZoomImage] = useState(null);
   const [mdParamFileReport, setMdParamFileReport] = useState(null);
 
-const [showGeneral, setShowGeneral] = useState(true);
-  const [showSetup, setShowSetup] = useState(true);
-  const [showMolSys, setShowMolSys] = useState(true);
-  const [showData, setShowData] = useState(true);
-  const [showReport, setShowReport] = useState(true);
+const [showGeneral, setShowGeneral] = useState(false);
+  const [showSetup, setShowSetup] = useState(false);
+  const [showMolSys, setShowMolSys] = useState(false);
+  const [showData, setShowData] = useState(false);
+  const [showReport, setShowReport] = useState(false);
+
+  // Shared stride / max-frames for the MD "Calculate all analyses" toolbar.
+  const [mdRunCfg, setMdRunCfg] = useState(mdAnalysisRunAll.getCfg());
+  useEffect(() => mdAnalysisRunAll.subscribeCfg(setMdRunCfg), []);
 
   const [tableRows, setTableRows] = useState(2);
   const [tableCols, setTableCols] = useState(3);
@@ -1243,6 +1273,8 @@ const details = [
     <div className="flex flex-col h-full overflow-hidden relative">
       {TestHeader}
 
+      <GlobalStopButton />
+
       {CustomToolbar && <CustomToolbar ctx={ctx} />}
 <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
         {!mandatoryBlocked && missingMandatoryRules.length > 0 && (
@@ -1774,6 +1806,34 @@ const details = [
             
             {showData && (
               <div className="flex flex-col gap-0">
+                {isMdType && (
+                  <div className="mb-4 flex flex-wrap items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2">
+                    <button
+                      type="button"
+                      onClick={() => mdAnalysisRunAll.triggerRun()}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm transition-colors flex items-center gap-2"
+                    >
+                      ⚡ Calculate all analyses
+                    </button>
+                    <label className="flex items-center gap-1.5 text-[10px] font-bold text-indigo-700 uppercase">
+                      Stride
+                      <input type="number" min="1" value={mdRunCfg.stride}
+                        onChange={(e) => mdAnalysisRunAll.setCfg({ stride: Math.max(1, parseInt(e.target.value, 10) || 1) })}
+                        className="w-16 border border-indigo-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-indigo-500"
+                        title="Use every Nth frame for every analysis below" />
+                    </label>
+                    <label className="flex items-center gap-1.5 text-[10px] font-bold text-indigo-700 uppercase">
+                      Max frames
+                      <input type="number" min="0" value={mdRunCfg.maxFrames}
+                        onChange={(e) => mdAnalysisRunAll.setCfg({ maxFrames: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+                        className="w-20 border border-indigo-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-indigo-500"
+                        title="Cap the number of frames processed (0 = all frames)" />
+                    </label>
+                    <span className="text-[10px] text-slate-500">
+                      Stride &amp; max frames apply to every analysis below. Each subsection can also be run individually.
+                    </span>
+                  </div>
+                )}
                 {CustomAll ? (
               <CustomAll ctx={ctx} />
             ) : (

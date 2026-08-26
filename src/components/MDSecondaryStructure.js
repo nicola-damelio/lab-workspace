@@ -15,6 +15,8 @@
    - DSSP priority: H > B > E > G > I > T > S > C
    ========================================================================= */
 
+import { abortError } from '../utils/abortControl';
+
 export const SS_CODE_ORDER = ['H', 'E', 'G', 'I', 'B', 'T', 'S', 'C'];
 export const SS_COLORS = {
   H: '#d62828', G: '#f3722c', I: '#9d0208', E: '#2667ff',
@@ -222,6 +224,7 @@ export const computeSecondaryStructure = async (topo, frames, opts, onProgress) 
 
   const iter = frames[Symbol.asyncIterator] ? frames : (async function* () { yield* frames; })();
   for await (const frame of iter) {
+    if (opts.isAborted && opts.isAborted()) throw abortError('Secondary-structure analysis cancelled.');
     const cur = fi++;
     if (cur < startFrame) continue;
     if ((cur - startFrame) % stride !== 0) continue;

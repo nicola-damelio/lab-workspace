@@ -672,7 +672,7 @@ export const DockingAnalysisSection = ({ ctx }) => {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Affinity bar chart */}
-        <CollapsibleSection title={`Binding Affinity per Pose (${unit})`} icon="📊" defaultOpen>
+        <CollapsibleSection title={`Binding Affinity per Pose (${unit})`} icon="📊" defaultOpen={false}>
           <div style={dockChartBoxStyle(cfg)}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={affinityData} margin={DOCK_CHART_MARGIN}>
@@ -691,7 +691,7 @@ export const DockingAnalysisSection = ({ ctx }) => {
         </CollapsibleSection>
 
         {/* Affinity vs RMSD scatter */}
-        <CollapsibleSection title="Affinity vs. RMSD" icon="🎯" defaultOpen>
+        <CollapsibleSection title="Affinity vs. RMSD" icon="🎯" defaultOpen={false}>
           <div ref={scatterRef} style={dockChartBoxStyle(cfg)} className="select-none relative">
             <ResponsiveContainer width="100%" height="100%">
               <ScatterChart margin={DOCK_CHART_MARGIN}>

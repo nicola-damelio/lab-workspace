@@ -55,7 +55,7 @@ export async function* readTrrFrames(file) {
 // ({ coordinates:[Float32Array…], boxes:[…], times:[…] }) WITHOUT needing a
 // Stage / WebGL context. The topology is already parsed by the app
 // (parseTopology → atoms in nm), so we only need autoLoad + unit detection.
-const nglTrajectoryFrames = async (file, ext, topoAtoms, topoBoxNm, onStatus) => {
+const nglTrajectoryFrames = async (file, ext, topoAtoms, topoBoxNm, onStatus, maxFrames = 0) => {
   const NGL = await ensureNGL();
   const natoms = Array.isArray(topoAtoms) ? topoAtoms.length : 0;
   if (!natoms) throw new Error('No topology atoms available to anchor the trajectory.');
@@ -82,6 +82,20 @@ const nglTrajectoryFrames = async (file, ext, topoAtoms, topoBoxNm, onStatus) =>
       `Trajectory / topology atom mismatch: trajectory frames have ${coords[0].length / 3} atoms, ` +
       `but the topology has ${natoms}. Use a topology (.gro/.pdb) with the exact same atom order and count.`
     );
+  }
+
+  // ---- representative frame selection --------------------------------------
+  // Frame COUNT is what matters: when a cap is set, keep a subset of frames
+  // sampled evenly across the WHOLE trajectory (not just the first N frames),
+  // so the analysis still covers the full time range.
+  const total = coords.length;
+  let indices;
+  if (maxFrames > 0 && total > maxFrames) {
+    indices = Array.from({ length: maxFrames }, (_, i) =>
+      Math.round((total - 1) * (i / (maxFrames - 1)))
+    );
+  } else {
+    indices = Array.from({ length: total }, (_, i) => i);
   }
 
   // ---- coordinate scale: NGL's trajectory parsers are inconsistent (some XTC
@@ -113,12 +127,12 @@ const nglTrajectoryFrames = async (file, ext, topoAtoms, topoBoxNm, onStatus) =>
 
   const frames = (async function* () {
     let read = 0;
-    for (let i = 0; i < coords.length; i++) {
-      const c = coords[i];
+    for (const idx of indices) {
+      const c = coords[idx];
       const xyz = new Float32Array(c.length);
       for (let k = 0; k < c.length; k++) xyz[k] = nmScale ? c[k] : c[k] / 10; // → nm
       let box = topoBoxNm || null;
-      const b = boxes[i];
+      const b = boxes[idx];
       if (b && b.length >= 9) {
         box = new Float32Array(9);
         for (let k = 0; k < 9; k++) box[k] = b[k] / 10; // NGL boxes are Å → nm
@@ -129,14 +143,14 @@ const nglTrajectoryFrames = async (file, ext, topoAtoms, topoBoxNm, onStatus) =>
     if (read === 0) throw new Error('Trajectory contained no readable frames.');
   })();
 
-  return { frames, numframes: coords.length, source: `NGL ${ext.toUpperCase()}` };
+  return { frames, numframes: indices.length, source: `NGL ${ext.toUpperCase()}` };
 };
 
 /* ----------------------------- public entry ----------------------------- */
 
 export const resolveFrameSource = async (file, opts = {}) => {
   const name = (file?.name || '').toLowerCase();
-  const { topoAtoms, topologyBox, onStatus } = opts;
+  const { topoAtoms, topologyBox, onStatus, maxFrames } = opts;
 
   if (name.endsWith('.trr')) {
     return { frames: readTrrFrames(file), numframes: null, source: 'native TRR' };
@@ -144,7 +158,7 @@ export const resolveFrameSource = async (file, opts = {}) => {
   const ext = name.endsWith('.xtc') ? 'xtc' : name.endsWith('.dcd') ? 'dcd' : null;
   if (ext && Array.isArray(topoAtoms) && topoAtoms.length > 0) {
     const { frames, numframes } = await nglTrajectoryFrames(
-      file, ext, topoAtoms, topologyBox, onStatus
+      file, ext, topoAtoms, topologyBox, onStatus, maxFrames
     );
     return { frames, numframes, source: `NGL ${ext.toUpperCase()}` };
   }

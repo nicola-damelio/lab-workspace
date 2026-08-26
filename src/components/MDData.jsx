@@ -70,6 +70,9 @@ export {
   SmartImage
 } from './NMRData';
 
+import { RANDOM_COIL_DB } from './NMRData';
+export { RANDOM_COIL_DB };
+
 // ================= MD-SPECIFIC CONSTANTS =================
 export const MD_SELECT_COLOR = '#f59e0b';
 export const MD_MANUAL_COLOR = '#16a34a';
@@ -332,30 +335,6 @@ export const MD_SIMULATION_PHASES = [
   { key: 'metadynamics', label: 'Metadynamics', icon: '⛰️' },
   { key: 'umbrella', label: 'Umbrella Sampling', icon: '☂️' }
 ];
-
-// ================= RANDOM COIL / SECONDARY STRUCTURE =================
-export const RANDOM_COIL_DB = {
-  A: { HA: 4.35, CA: 52.5, CB: 19.1, CO: 177.8 },
-  C: { HA: 4.55, CA: 58.2, CB: 28.0, CO: 175.9 },
-  D: { HA: 4.76, CA: 54.5, CB: 40.8, CO: 177.5 },
-  E: { HA: 4.37, CA: 56.9, CB: 29.8, CO: 177.6 },
-  F: { HA: 4.66, CA: 57.9, CB: 39.8, CO: 177.4 },
-  G: { HA: 3.96, CA: 45.2, CB: null, CO: 174.6 },
-  H: { HA: 4.76, CA: 55.3, CB: 31.3, CO: 175.3 },
-  I: { HA: 4.20, CA: 61.3, CB: 38.3, CO: 177.8 },
-  K: { HA: 4.38, CA: 56.6, CB: 32.4, CO: 177.9 },
-  L: { HA: 4.47, CA: 55.4, CB: 41.9, CO: 178.9 },
-  M: { HA: 4.52, CA: 55.5, CB: 32.6, CO: 177.5 },
-  N: { HA: 4.75, CA: 53.3, CB: 38.6, CO: 176.6 },
-  P: { HA: 4.44, CA: 63.1, CB: 31.9, CO: 178.1 },
-  Q: { HA: 4.39, CA: 56.2, CB: 29.5, CO: 177.2 },
-  R: { HA: 4.51, CA: 56.5, CB: 30.4, CO: 177.2 },
-  S: { HA: 4.51, CA: 58.4, CB: 63.6, CO: 175.6 },
-  T: { HA: 4.39, CA: 62.0, CB: 69.6, CO: 175.7 },
-  V: { HA: 4.16, CA: 62.1, CB: 32.1, CO: 177.4 },
-  W: { HA: 4.70, CA: 57.4, CB: 29.5, CO: 177.2 },
-  Y: { HA: 4.66, CA: 57.9, CB: 38.9, CO: 177.2 }
-};
 
 // ================= MD-SPECIFIC HELPERS =================
 export const parseMDValue = (v) => {

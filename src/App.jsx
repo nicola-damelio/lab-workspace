@@ -428,7 +428,7 @@ const baseTest = {
   testCategory: 'Activity',
   secondaryCategory: '',
   bestMeasurement: false,
-  operator: '',
+  operator: currentUser?.name || '',
   boxOwner: '',
   sampleOwner: '',
   type: customType,
@@ -857,6 +857,23 @@ if (customType === 'nmr-fittings') {
     },
     [historyIndex]
   );
+
+  // ── AUTO-ATTRIBUTE OPENED TESTS TO THE CURRENT SCIENTIST ────────────────
+  // A test with no owner is invisible to non-superuser scientists in the test
+  // list (only superusers see unassigned tests), so a scientist who opens an
+  // unassigned test would lose it after closing it. Claim it for them on open
+  // so it stays visible in their list.
+  useEffect(() => {
+    if (!currentUser || !currentUser.name) return;
+    const openTest = tests.find((x) => x.id === activeTestId);
+    if (!openTest) return;
+    const scientists = [openTest.operator, ...(openTest.coScientists || [])].filter(Boolean);
+    if (scientists.length > 0) return; // already owned / assigned to others
+    setTests((prev) =>
+      prev.map((x) => (x.id === openTest.id ? { ...x, operator: currentUser.name } : x))
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTestId]);
 
   const handleSetCustomFields = useCallback((updater) => {
     setCustomFields((prev) => {

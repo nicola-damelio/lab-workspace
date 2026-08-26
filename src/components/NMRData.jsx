@@ -451,7 +451,7 @@ export const CARBON_RANGE_DB = {
   E: { Cα: [53, 58], Cβ: [26, 31], Cγ: [32, 37], Cδ: [176, 181] },
   F: { Cα: [53, 58.5], Cβ: [35, 41], Cγ: [133, 139], Cδ: [126.5, 132], Cε: [126, 131.5], Cζ: [124, 129.5] },
   G: { Cα: [41, 46] },
-  H: { Cα: [51.5, 57], Cβ: [27, 33], Cδ2: [114, 120], Cε1: [131, 138] },
+  H: { Cα: [51.5, 57], Cβ: [27, 33], Cγ: [133, 137], Cδ2: [114, 120], Cε1: [131, 138] },
   I: { Cα: [57, 62.5], Cβ: [34, 39.5], Cγ1: [23, 29], Cγ2: [13.5, 19], Cδ1: [9, 14.5] },
   K: { Cα: [53, 58.5], Cβ: [29, 34.5], Cγ: [21, 26.5], Cδ: [26, 31.5], Cε: [38.5, 43.5] },
   L: { Cα: [51, 56.5], Cβ: [38, 44], Cγ: [22.5, 28], Cδ1: [20, 25.5], Cδ2: [20, 25.5] },
@@ -463,7 +463,7 @@ export const CARBON_RANGE_DB = {
   S: { Cα: [53.5, 60], Cβ: [59.5, 66.5] },
   T: { Cα: [56.5, 64], Cβ: [64.5, 72.5], Cγ2: [17.5, 23.5] },
   V: { Cα: [57.5, 64], Cβ: [28.5, 34.5], Cγ1: [16.5, 22.5], Cγ2: [16.5, 22.5] },
-  W: { Cα: [53.5, 59], Cβ: [25.5, 32], Cδ1: [119, 126], Cε3: [115, 121], Cζ2: [115, 122], Cη2: [117, 124], Cζ3: [115, 122] },
+  W: { Cα: [53.5, 59], Cβ: [25.5, 32], Cγ: [107, 112], Cδ1: [119, 126], Cε3: [115, 121], Cζ2: [115, 122], Cη2: [117, 124], Cζ3: [115, 122] },
   Y: { Cα: [53, 58.5], Cβ: [34.5, 41], Cγ: [125.5, 131.5], Cδ: [128, 134], Cε: [112.5, 118.5], Cζ: [151, 158] }
 };
 
@@ -471,11 +471,11 @@ export const SS_CORRECTIONS = {
   coil: { h: {}, c: {} },
   helix: {
     h: { HN: -0.45, Hα: -0.35, Hα1: -0.35, Hα2: -0.35, other: -0.05 },
-    c: { Cα: 2.8, Cβ: -1.5, "C'": -1.3, N: -2.5 }
+    c: { Cα: 2.8, Cβ: -1.5, "C'": 1.5, N: -2.5 }
   },
   sheet: {
     h: { HN: 0.4, Hα: 0.3, Hα1: 0.3, Hα2: 0.3, other: 0.05 },
-    c: { Cα: -1.6, Cβ: 1.4, "C'": 1.5, N: 2.0 }
+    c: { Cα: -1.6, Cβ: 1.4, "C'": -1.5, N: 2.0 }
   }
 };
 
@@ -502,9 +502,34 @@ export const SUGAR_ANOMER_OFFSETS = {
   beta: { H1: -0.15 }
 };
 
+// Random-coil ¹H/¹³C reference shifts (Wishart/CSI style) used to seed
+// predicted-shift estimates and secondary-structure analysis.
+export const RANDOM_COIL_DB = {
+  A: { HA: 4.35, CA: 52.5, CB: 19.1, CO: 177.8 },
+  C: { HA: 4.55, CA: 58.2, CB: 28.0, CO: 175.9 },
+  D: { HA: 4.76, CA: 54.5, CB: 40.8, CO: 177.5 },
+  E: { HA: 4.37, CA: 56.9, CB: 29.8, CO: 177.6 },
+  F: { HA: 4.66, CA: 57.9, CB: 39.8, CO: 177.4 },
+  G: { HA: 3.96, CA: 45.2, CB: null, CO: 174.6 },
+  H: { HA: 4.76, CA: 55.3, CB: 31.3, CO: 175.3 },
+  I: { HA: 4.20, CA: 61.3, CB: 38.3, CO: 177.8 },
+  K: { HA: 4.38, CA: 56.6, CB: 32.4, CO: 177.9 },
+  L: { HA: 4.47, CA: 55.4, CB: 41.9, CO: 178.9 },
+  M: { HA: 4.52, CA: 55.5, CB: 32.6, CO: 177.5 },
+  N: { HA: 4.75, CA: 53.3, CB: 38.6, CO: 176.6 },
+  P: { HA: 4.44, CA: 63.1, CB: 31.9, CO: 178.1 },
+  Q: { HA: 4.39, CA: 56.2, CB: 29.5, CO: 177.2 },
+  R: { HA: 4.51, CA: 56.5, CB: 30.4, CO: 177.2 },
+  S: { HA: 4.51, CA: 58.4, CB: 63.6, CO: 175.6 },
+  T: { HA: 4.39, CA: 62.0, CB: 69.6, CO: 175.7 },
+  V: { HA: 4.16, CA: 62.1, CB: 32.1, CO: 177.4 },
+  W: { HA: 4.70, CA: 57.4, CB: 29.5, CO: 177.2 },
+  Y: { HA: 4.66, CA: 57.9, CB: 38.9, CO: 177.2 }
+};
+
 export const RESIDUE_COLORS = ['#3b82f6', '#8b5cf6', '#d946ef', '#ec4899', '#f43f5e', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#6366f1'];
 export const TICKS_1H = Array.from({ length: 111 }, (_, i) => parseFloat((i / 10).toFixed(1)));
-export const TICKS_13C = Array.from({ length: 281 }, (_, i) => parseFloat((10 + i * 0.5).toFixed(1)));
+export const TICKS_13C = Array.from({ length: 421 }, (_, i) => parseFloat((10 + i * 0.5).toFixed(1)));
 export const TICKS_15N = Array.from({ length: 81 }, (_, i) => parseFloat((95 + i * 0.5).toFixed(1)));
 export { CHART_MARGIN, CHART_MARGIN_1D };
 
@@ -2294,7 +2319,7 @@ export const SmartImage = ({ src, alt }) => {
 export default {
   AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, CARBON_RANGE_DB,
   SS_CORRECTIONS, SS_META, FORM_META, DNA_FORM_OFFSETS, SUGAR_ANOMER_OFFSETS,
-  RESIDUE_COLORS, TICKS_1H, TICKS_13C, TICKS_15N, CHART_MARGIN, CHART_MARGIN_1D, LINE_COLORS,
+  RESIDUE_COLORS, TICKS_1H, TICKS_13C, TICKS_15N, RANDOM_COIL_DB, CHART_MARGIN, CHART_MARGIN_1D, LINE_COLORS,
   FS_CLASSES, OVERLAY_CLASSES, SELECT_COLOR, MANUAL_COLOR,
   parseManual, getNMRFillColor, getCarbonName, buildKeys, getProtonCountEx, getPascalRow, getCarbonRangeFor,
   getHexagon, getPentagon, hexAt, fusePentagon, makeBuilder,

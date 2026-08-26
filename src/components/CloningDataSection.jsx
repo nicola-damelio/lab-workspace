@@ -3,31 +3,36 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, ReferenceArea
 } from 'recharts';
-import {useXZoom} from './SharedAnalysisTools';
+import {ChartPanel, SharedChartStylePanel, useXZoom, useChartFsHeight} from './SharedAnalysisTools';
 import { CollapsibleSection, SmartImage } from './TestShellRenderer';
 import {uid, round, parseSpectrumText, analyzeSpectrum, effectiveSpectrumProps, INPUT_CLS} from './cloningUtils';
 
 const UV_CHART_MARGIN = { top: 8, right: 10, bottom: 30, left: 40 };
 
-const UvZoomChart = ({ pts }) => {
+const UvZoomChart = ({ pts, cfg = {} }) => {
   const chartRef = useRef(null);
   const wavelengths = pts.map(p => p.wavelength);
   const dataDomain = wavelengths.length > 1 ? [Math.min(...wavelengths), Math.max(...wavelengths)] : [220, 320];
   const zoom = useXZoom(chartRef, dataDomain, UV_CHART_MARGIN);
+  const fs = Number(cfg.fontSize) || 11;
+  const dash = cfg.lineStyle === 'dashed' ? '4 4' : cfg.lineStyle === 'dotted' ? '1 3' : undefined;
+  const dot = cfg.pointStyle && cfg.pointStyle !== 'none' ? { r: Number(cfg.ptSize) || 4, fill: '#1e40af', strokeWidth: 0 } : false;
+  const height = useChartFsHeight(Number(cfg.height) || 220);
   return (
     <div className="flex flex-col gap-1">
-      <div ref={chartRef} onMouseDown={zoom.onMouseDown} className="select-none" style={{ height: 220 }}>
+      <div ref={chartRef} onMouseDown={zoom.onMouseDown} className="select-none" style={{ height }}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={pts} margin={UV_CHART_MARGIN}>
             <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
             <XAxis dataKey="wavelength" type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow
-              tick={{ fontSize: 11, fill: '#64748b' }}
-              label={{ value: 'Wavelength (nm)', position: 'insideBottom', offset: -15, fontSize: 11, fill: '#64748b' }} />
-            <YAxis tick={{ fontSize: 11, fill: '#64748b' }} />
+              tick={{ fontSize: fs, fill: '#64748b' }}
+              label={{ value: cfg.xAxisLabel || 'Wavelength (nm)', position: 'insideBottom', offset: -15, fontSize: fs, fill: '#64748b' }} />
+            <YAxis tick={{ fontSize: fs, fill: '#64748b' }}
+              label={cfg.yAxisLabel ? { value: cfg.yAxisLabel, angle: -90, position: 'insideLeft', fontSize: fs, fill: '#64748b' } : undefined} />
             <Tooltip formatter={(v) => Number(v).toFixed(4)} labelFormatter={(l) => `${l} nm`} />
             <ReferenceLine x={260} stroke="#3b82f6" strokeDasharray="4 4" />
             <ReferenceLine x={280} stroke="#ef4444" strokeDasharray="4 4" />
-            <Line type="monotone" dataKey="absorbance" stroke="#1e40af" strokeWidth={2} dot={false} isAnimationActive={false} />
+            <Line type="monotone" dataKey="absorbance" stroke="#1e40af" strokeWidth={Number(cfg.lineThickness) || 2} strokeDasharray={dash} dot={dot} isAnimationActive={false} />
             {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
           </LineChart>
         </ResponsiveContainer>
@@ -172,7 +177,13 @@ const UvSpectrumCard = ({ spec, onChange, onRemove, onSendToQuant }) => {
         {/* chart */}
         <div className="lg:col-span-2 flex flex-col gap-1">
           {an ? (
-            <UvZoomChart pts={an.pts} />
+            <ChartPanel
+              title={(spec.chartCfg && spec.chartCfg.title) || 'UV Spectrum'}
+              icon="📈"
+              cfgPanel={<SharedChartStylePanel cfg={spec.chartCfg || {}} setCfg={(patch) => onChange({ chartCfg: { ...(spec.chartCfg || {}), ...patch } })} unit="Wavelength (nm)" />}
+            >
+              <UvZoomChart pts={an.pts} cfg={spec.chartCfg || {}} />
+            </ChartPanel>
           ) : (
             <div className="h-[220px] flex items-center justify-center text-slate-400 italic text-sm">
               Not enough data points.
@@ -472,7 +483,7 @@ export const CloningDataSection = ({ ctx }) => {
   return (
     <div className="flex flex-col gap-6">
       {/* ---------- UV SPECTRA ---------- */}
-      <CollapsibleSection title="UV Spectra — Concentration from Absorbance" icon="💧">
+      <CollapsibleSection title="UV Spectra — Concentration from Absorbance" icon="💧" defaultOpen={false}>
         <input
           ref={uvFileRef}
           type="file"
@@ -517,12 +528,12 @@ export const CloningDataSection = ({ ctx }) => {
       </CollapsibleSection>
 
       {/* ---------- DNA QUANTIFICATION ---------- */}
-      <CollapsibleSection title="DNA Quantification" icon="🧮">
+      <CollapsibleSection title="DNA Quantification" icon="🧮" defaultOpen={false}>
         <DnaQuantTable ctx={ctx} />
       </CollapsibleSection>
 
       {/* ---------- GELS ---------- */}
-      <CollapsibleSection title="Gel Electrophoresis" icon="🧬">
+      <CollapsibleSection title="Gel Electrophoresis" icon="🧬" defaultOpen={false}>
         <GelPanel ctx={ctx} />
       </CollapsibleSection>
     </div>

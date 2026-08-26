@@ -270,6 +270,72 @@ const searchCrossrefAuthor = async (name) => {
     .filter((r) => r.title);
 };
 
+// ---- ORCID Public API ------------------------------------------------
+// Fetch the list of works of an ORCID iD (from an orcid.org/XXXX-XXXX-… profile
+// page) and return them in the same shape as the PubMed / Crossref results.
+const searchOrcidByOrcidId = async (orcidId, authorName = '') => {
+  const id = String(orcidId || '').trim().toLowerCase().replace(/^https?:\/\/orcid\.org\//i, '');
+  if (!id) return [];
+  const res = await fetch(`https://pub.orcid.org/v3.0/${encodeURIComponent(id)}/works`, {
+    headers: { Accept: 'application/json' }
+  });
+  if (!res.ok) throw new Error(`ORCID API error (HTTP ${res.status})`);
+  const j = await res.json();
+  const groups = Array.isArray(j?.group) ? j.group : [];
+  const out = [];
+  groups.forEach((g) => {
+    const ws = Array.isArray(g?.['work-summary']) ? g['work-summary'] : [];
+    const ws0 = ws[0];
+    if (!ws0) return;
+    const title = ws0?.title?.title?.value || '';
+    if (!title) return;
+    const doi = (ws0?.['external-ids']?.['external-id'] || [])
+      .find((e) => (e['external-id-type'] || '').toLowerCase() === 'doi')?.['external-id-value'] || '';
+    const pmid = (ws0?.['external-ids']?.['external-id'] || [])
+      .find((e) => (e['external-id-type'] || '').toLowerCase() === 'pmid')?.['external-id-value'] || '';
+    const pd = ws0?.['publication-date'] || {};
+    const year = pd?.year?.value || '';
+    const putCode = ws0?.['put-code'] || '';
+    out.push({
+      title,
+      authors: authorName || '',
+      journal: ws0?.['journal-title']?.value || '',
+      year,
+      doi,
+      pmid,
+      type: (ws0?.type || '').replace(/-/g, ' '),
+      links: [
+        ...(putCode ? [{ description: 'ORCID', url: `https://orcid.org/${id}/work/${putCode}` }] : [{ description: 'ORCID', url: `https://orcid.org/${id}` }]),
+        ...(doi ? [{ description: 'DOI', url: `https://doi.org/${doi}` }] : [])
+      ]
+    });
+  });
+  return out;
+};
+
+// Search ORCID by author name (expanded-search).
+const searchOrcidByName = async (query) => {
+  const q = encodeURIComponent(String(query || '').trim());
+  if (!q) return [];
+  const res = await fetch(`https://pub.orcid.org/v3.0/expanded-search/?q=${q}`, {
+    headers: { Accept: 'application/json' }
+  });
+  if (!res.ok) throw new Error(`ORCID API error (HTTP ${res.status})`);
+  const j = await res.json();
+  const items = Array.isArray(j?.['expanded-result']) ? j['expanded-result'] : [];
+  const out = [];
+  for (const it of items.slice(0, 5)) {
+    const oid = it?.['orcid-id'] || '';
+    const name = `${it?.['given-names'] || ''} ${it?.['family-names'] || ''}`.trim();
+    if (!oid) continue;
+    try {
+      const works = await searchOrcidByOrcidId(oid, name);
+      works.forEach((w) => out.push(w));
+    } catch { /* skip profiles that fail */ }
+  }
+  return out;
+};
+
 export const PublicationsSection = ({ scientists = [], defaultScientist = '' }) => {
   const [journals, setJournals] = useState(() => {
     try {
@@ -312,6 +378,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '' }) 
   const [pubShowSearch, setPubShowSearch] = useState(false);
   const [pubScientist, setPubScientist] = useState(defaultScientist || '');
   const [pubQuery, setPubQuery] = useState('');
+  const [orcidId, setOrcidId] = useState('');
   const [pubSearching, setPubSearching] = useState(false);
   const [pubError, setPubError] = useState('');
   const [pubResults, setPubResults] = useState([]);
@@ -433,11 +500,31 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '' }) 
     setPubError('');
     setPubResults([]);
     try {
-      const res = source === 'crossref' ? await searchCrossref(q) : await searchPubMed(q);
+      const res = source === 'crossref' ? await searchCrossref(q)
+        : source === 'orcid' ? await searchOrcidByName(q)
+        : await searchPubMed(q);
       setPubResults(res);
-      if (res.length === 0) setPubError('No results found. Try a different query, or use Web of Science / ORCID.');
+      if (res.length === 0) setPubError('No results found. Try a different query, or paste an ORCID iD below.');
     } catch (e) {
       setPubError(`Search failed: ${e && e.message ? e.message : e}`);
+    } finally {
+      setPubSearching(false);
+    }
+  };
+
+  // Import all works from an ORCID profile page (paste the iD, e.g. 0000-0002-1825-0097)
+  const importOrcidId = async () => {
+    const id = (orcidId || '').trim();
+    if (!id) { setPubError('Paste an ORCID iD (e.g. 0000-0002-1825-0097) or the full profile URL.'); return; }
+    setPubSearching(true);
+    setPubError('');
+    setPubResults([]);
+    try {
+      const res = await searchOrcidByOrcidId(id, pubScientist || defaultScientist || '');
+      setPubResults(res);
+      if (res.length === 0) setPubError('No works found for this ORCID profile (or the iD is not public).');
+    } catch (e) {
+      setPubError(`ORCID import failed: ${e && e.message ? e.message : e}`);
     } finally {
       setPubSearching(false);
     }
@@ -940,10 +1027,19 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '' }) 
                     className="px-3 py-1.5 text-xs font-bold rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40">🔍 PubMed</button>
             <button type="button" onClick={() => doSearch('crossref')} disabled={!pubQuery.trim() || pubSearching}
                     className="px-3 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40">📚 Crossref</button>
+            <button type="button" onClick={() => doSearch('orcid')} disabled={!pubQuery.trim() || pubSearching}
+                    className="px-3 py-1.5 text-xs font-bold rounded-lg bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-40">🆔 ORCID (by name)</button>
             <a href={`https://www.webofscience.com/wos/woscc/basic-search?q=${encodeURIComponent(pubQuery.trim())}`} target="_blank" rel="noreferrer"
                className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300">🌐 Web of Science ↗</a>
-            <a href={`https://orcid.org/orcid-search/search?searchQuery=${encodeURIComponent(pubQuery.trim() || pubScientist)}`} target="_blank" rel="noreferrer"
-               className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300">🆔 ORCID ↗</a>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 mt-2 bg-white border border-sky-200 rounded-lg p-2">
+            <label className="text-[10px] font-bold text-sky-800 uppercase">Import from an ORCID profile (paste iD or URL):</label>
+            <input className="flex-1 min-w-[220px] border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-sky-500"
+                   value={orcidId} onChange={(e) => setOrcidId(e.target.value)}
+                   onKeyDown={(e) => { if (e.key === 'Enter') importOrcidId(); }}
+                   placeholder="e.g. 0000-0002-1825-0097 or https://orcid.org/0000-0002-1825-0097" />
+            <button type="button" onClick={importOrcidId} disabled={!orcidId.trim() || pubSearching}
+                    className="px-3 py-1.5 text-xs font-bold rounded-lg bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-40">⬇ Fetch works</button>
           </div>
           {pubSearching && <div className="mt-2 text-xs font-bold text-blue-700 animate-pulse">⏳ Searching…</div>}
           {pubError && <div className="mt-2 bg-red-50 border border-red-300 text-red-700 rounded-lg p-2 text-xs font-semibold">⚠️ {pubError}</div>}

@@ -1253,7 +1253,7 @@ export const Data = ({ ctx }) => {
   };
 
   return (
-    <CollapsibleSection title="Flow Cytometry Data" icon="🩸" defaultOpen={true}>
+    <CollapsibleSection title="Flow Cytometry Data" icon="🩸" defaultOpen={false}>
       <div className="flex flex-col gap-6">
         <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 flex flex-col gap-3">
           <div className="flex items-center justify-between flex-wrap gap-2">
@@ -1356,7 +1356,7 @@ export const DataAnalysis = ({ ctx }) => {
   const [showCfgFreq, setShowCfgFreq] = useState(false);
 
   return (
-    <CollapsibleSection title="Data Analysis & Visualization" icon="📊" defaultOpen={true}>
+    <CollapsibleSection title="Data Analysis & Visualization" icon="📊" defaultOpen={false}>
       <div className="flex flex-col gap-6">
         <FCSOverlayVisualization ctx={ctx} />
         {chartData.length > 0 ? (
