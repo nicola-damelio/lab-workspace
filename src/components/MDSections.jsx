@@ -22,7 +22,9 @@ import {
   computeSecondaryStructure, SS_CODE_ORDER, SS_COLORS, SS_GROUP_COLORS
 } from './MDSecondaryStructure';
 
-import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, FORM_META, RESIDUE_COLORS, buildKeys, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, SequencePaintStrip, getSelectedKeys, selectionLabel, getManualKeys, FORCE_FIELDS, WATER_MODELS, MD_ENSEMBLES, MD_INTEGRATORS, MD_THERMOSTATS, MD_BAROSTATS, TRAJECTORY_FORMATS, parseMDValue, getForceFieldInfo, getFFVersions, getWaterModelInfo, getFFBackboneAtoms, normalizeTrajectoryUrl, detectTrajectoryFormat, getTrajectoryFormatInfo, getMDInstances, getMDActiveInstance, getMDLayers, getMDActiveLayerKey, getMDLayerValues, writeMDCellValue, MD_ANALYSIS_LAYERS, DEFAULT_MD_CHART_STYLE, mdLineDash, mdDom} from './MDData';
+import { AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, FORM_META, RESIDUE_COLORS, buildKeys, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, SequencePaintStrip, getSelectedKeys, selectionLabel, getManualKeys, FORCE_FIELDS, WATER_MODELS, MD_ENSEMBLES, MD_INTEGRATORS, MD_THERMOSTATS, MD_BAROSTATS, TRAJECTORY_FORMATS, parseMDValue, getForceFieldInfo, getFFVersions, getWaterModelInfo, getFFBackboneAtoms, normalizeTrajectoryUrl, detectTrajectoryFormat, getTrajectoryFormatInfo, getMDInstances, getMDActiveInstance, getMDLayers, getMDActiveLayerKey, getMDLayerValues, writeMDCellValue, MD_ANALYSIS_LAYERS, DEFAULT_MD_CHART_STYLE, mdLineDash, mdDom} from './MDData';
+import { DriveUploadButton } from './DriveUpload';
+import { suggestDriveFileName } from '../utils/driveNaming';
 
 // Cache to retain local File objects when switching tabs within the same session
 const localFileCache = new Map();
@@ -1021,6 +1023,21 @@ export const MDExperimentSetupSection = ({ ctx }) => {
                   ) : (
                     <span className="text-[10px] text-slate-400 mt-0.5">Use the "Choose XTC / TRR" button in the 3D viewer below.</span>
                   )}
+
+                  <div className="mt-1">
+                    <DriveUploadButton
+                      suggestedName={suggestDriveFileName({
+                        project: (activeTest.projectNames || [])[0] || '',
+                        test: activeTest.name || activeTest.instanceName || '',
+                        section: 'Setup',
+                        subsection: 'Trajectory',
+                        suffix: 'trajectory'
+                      })}
+                      preloadedFile={trajectoryFile || null}
+                      label="⬆ Archive trajectory to Drive"
+                      className="bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100"
+                    />
+                  </div>
                 </div>
               </div>
             </div>
@@ -2007,6 +2024,21 @@ export const MDAnalysisSection = ({ ctx }) => {
             ⚡ Energy file (.xvg/.dat)
             <input type="file" accept=".xvg,.dat,.txt,.log" className="hidden" onChange={handleEnergyFile} />
           </label>
+          <div className="mt-1">
+            <DriveUploadButton
+              suggestedName={suggestDriveFileName({
+                project: (activeTest.projectNames || [])[0] || '',
+                test: activeTest.name || activeTest.instanceName || '',
+                section: 'Analysis',
+                subsection: 'Energy',
+                suffix: 'energy'
+              })}
+              accept=".xvg,.dat,.txt,.log"
+              preloadedFile={null}
+              label="⬆ Archive energy file to Drive"
+              className="bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100"
+            />
+          </div>
           {energyFileName && (
             <span className="text-[10px] text-indigo-600 font-bold max-w-[160px] truncate">⚡ {energyFileName}</span>
           )}
@@ -2743,6 +2775,20 @@ export const MDMembraneContactSection = ({ ctx }) => {
           <input type="file" multiple accept=".xtc,.trr,.dcd" className={`${inp} block mt-1`}
                  onChange={(e) => setExtraRuns(Array.from(e.target.files || []))} />
         </label>
+        <div className="mt-1">
+          <DriveUploadButton
+            suggestedName={suggestDriveFileName({
+              project: (activeTest.projectNames || [])[0] || '',
+              test: activeTest.name || activeTest.instanceName || '',
+              section: 'Analysis',
+              subsection: 'Trajectory',
+              suffix: 'trajectory'
+            })}
+            accept=".xtc,.trr,.dcd"
+            label="⬆ Archive to Drive"
+            className="bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100"
+          />
+        </div>
         {extraRuns.length > 0 && (
           <span className="text-xs text-slate-500 font-mono">{extraRuns.map((f) => f.name).join(', ')}</span>
         )}
@@ -3112,10 +3158,38 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
           <input type="file" multiple accept=".xtc,.trr,.dcd" className={`${inp} block mt-1`}
                  onChange={(e) => setExtraRuns(Array.from(e.target.files || []))} />
         </label>
+        <div className="mt-1">
+          <DriveUploadButton
+            suggestedName={suggestDriveFileName({
+              project: (activeTest.projectNames || [])[0] || '',
+              test: activeTest.name || activeTest.instanceName || '',
+              section: 'Analysis',
+              subsection: 'Trajectory',
+              suffix: 'trajectory'
+            })}
+            accept=".xtc,.trr,.dcd"
+            label="⬆ Archive to Drive"
+            className="bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100"
+          />
+        </div>
         <label className="text-xs font-bold text-slate-600">Charges (.itp / .top, for the potential)
           <input type="file" multiple accept=".itp,.top,.txt" className={`${inp} block mt-1`}
                  onChange={(e) => handleChargeFiles(e.target.files)} />
         </label>
+        <div className="mt-1">
+          <DriveUploadButton
+            suggestedName={suggestDriveFileName({
+              project: (activeTest.projectNames || [])[0] || '',
+              test: activeTest.name || activeTest.instanceName || '',
+              section: 'Analysis',
+              subsection: 'Charges',
+              suffix: 'charges'
+            })}
+            accept=".itp,.top,.txt"
+            label="⬆ Archive to Drive"
+            className="bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100"
+          />
+        </div>
         {chargeInfo.count > 0 && (
           <span className="text-xs text-emerald-700 font-semibold">✓ {chargeInfo.count} atom charges from {chargeInfo.files.join(', ')}</span>
         )}
@@ -3671,6 +3745,20 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
           <input type="file" multiple accept=".xtc,.trr,.dcd" className={`${inp} block mt-1`}
                  onChange={(e) => setExtraRuns(Array.from(e.target.files || []))} />
         </label>
+        <div className="mt-1">
+          <DriveUploadButton
+            suggestedName={suggestDriveFileName({
+              project: (activeTest.projectNames || [])[0] || '',
+              test: activeTest.name || activeTest.instanceName || '',
+              section: 'Analysis',
+              subsection: 'Trajectory',
+              suffix: 'trajectory'
+            })}
+            accept=".xtc,.trr,.dcd"
+            label="⬆ Archive to Drive"
+            className="bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100"
+          />
+        </div>
         {extraRuns.length > 0 && (
           <span className="text-xs text-slate-500 font-mono">{extraRuns.map((f) => f.name).join(', ')}</span>
         )}

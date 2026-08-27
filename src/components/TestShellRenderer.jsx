@@ -8,6 +8,8 @@ import { CollapsibleSection } from './ui';
 import { abortControl, useAbortControl } from '../utils/abortControl';
 import { mdAnalysisRunAll } from '../utils/mdAnalysisRunAll';
 import { Icon } from './Icons';
+import { suggestDriveFileName, openDrive } from '../utils/driveNaming';
+import { DriveUploadButton } from './DriveUpload';
 import { StarToggle } from './StarToggle';
 import { ChartStarLayer } from './ChartStarLayer';
 import { isStarred, toggleStarredItem } from '../utils/starredItems';
@@ -1660,6 +1662,18 @@ const details = [
                     className="hidden"
                   />
                 </label>
+                <DriveUploadButton
+                  suggestedName={suggestDriveFileName({
+                    project: (t.projectNames || [])[0] || '',
+                    test: t.name || t.instanceName || '',
+                    section: 'Setup',
+                    subsection: 'Parameters',
+                    suffix: 'parameters'
+                  })}
+                  accept=".mdp,.top,.itp,.inp,.str,.conf,.namd,.prm,.par,.psf"
+                  label="⬆ Archive to Drive"
+                  className="bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100"
+                />
 
                 <p className="text-[11px] text-emerald-700/80 flex-1 min-w-[220px]">
                   Reads force field, water model, temperature, pressure, timestep
@@ -2084,7 +2098,12 @@ const details = [
                         onClick={() => {
                           const newDoc = {
                             id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-                            name: 'New Document Link',
+                            name: suggestDriveFileName({
+                              project: (t.projectNames || [])[0] || '',
+                              test: t.name || t.instanceName || '',
+                              section: 'Report',
+                              suffix: 'doc'
+                            }),
                             type: 'link',
                             data: ''
                           };
@@ -2094,6 +2113,29 @@ const details = [
                       >
                         + Add Document
                       </button>
+
+                      <DriveUploadButton
+                        suggestedName={suggestDriveFileName({
+                          project: (t.projectNames || [])[0] || '',
+                          test: t.name || t.instanceName || '',
+                          section: 'Report',
+                          suffix: 'doc'
+                        })}
+                        onDone={({ name, dataUrl, drive }) =>
+                          update({
+                            documents: [
+                              ...documents,
+                              {
+                                id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                                name,
+                                type: 'link',
+                                data: drive ? drive.driveUrl : dataUrl
+                              }
+                            ]
+                          })
+                        }
+                        label="⬆ Upload document"
+                      />
                     </div>
                   </div>
 
@@ -2103,9 +2145,15 @@ const details = [
                     placeholder="Enter your experiment notes, observations, etc..."
                     linkButton
                     figureButton
+                    docImportButton
                     minHeight={420}
                     maxHeight={6000}
                     onEditFocusChange={setReportWide}
+                    fileNaming={{
+                      project: (t.projectNames || [])[0] || '',
+                      test: t.name || t.instanceName || '',
+                      section: 'Report'
+                    }}
                   />
                 </div>
 
@@ -2113,6 +2161,15 @@ const details = [
                 <div className="flex-shrink-0 flex flex-col justify-start gap-4" style={{ maxWidth: '300px', minWidth: '180px' }}>
                   <div className="w-full flex flex-col items-end border-t lg:border-t-0 border-slate-200 pt-3 lg:pt-0">
                     <div className="flex flex-col gap-2 w-full max-h-[250px] overflow-y-auto custom-scrollbar">
+                      <div className="flex items-center justify-between w-full mb-1">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase">🔗 Documents</span>
+                        <button type="button" onClick={openDrive}
+                                className="text-[10px] font-bold text-blue-600 hover:text-blue-800 underline"
+                                title="Open your Google Drive folder in a new tab">
+                          Open Drive ↗
+                        </button>
+                      </div>
+
                       {documents.length === 0 && (
                         <span className="text-[10px] text-slate-400 italic text-right w-full">
                           No documents attached.

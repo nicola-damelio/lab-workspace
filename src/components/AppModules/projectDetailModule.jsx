@@ -4,6 +4,9 @@ import { SmartImage } from '../TestShellRenderer';
 import { loadPubFormat, pubCitationHtml } from '../Publications';
 import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigForType } from '../../utils/starredItems';
 import { loadProjects, saveProjects, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId } from './projectsModule';
+import { suggestDriveFileName, openDrive } from '../../utils/driveNaming';
+import { DriveUploadButton } from '../DriveUpload';
+import { markAttachmentsDeleted } from '../../utils/driveUpload';
 
 /* =========================================================================
    PROJECT DETAIL — a project page with subsections:
@@ -503,8 +506,15 @@ export const ProjectDetailModule = ({
     patchFigures(sec, sectionFigures(sec).map((f) => (f.id === figId ? { ...f, ...patch } : f)));
   const removeSectionFigure = (sec, figId) =>
     patchFigures(sec, sectionFigures(sec).filter((f) => f.id !== figId));
+  // Readable section name used inside file names (full-path naming).
+  const sectionLabelOf = (sec) => ({
+    background: 'Background',
+    discussion: 'Discussion',
+    conclusions: 'Conclusions'
+  }[sec] || sec);
+
   const addSectionDoc = (sec) =>
-    patchDocs(sec, [...sectionDocs(sec), { id: genProjectId(), name: 'New Document Link', data: '' }]);
+    patchDocs(sec, [...sectionDocs(sec), { id: genProjectId(), name: suggestDriveFileName({ project: project.name || '', section: sectionLabelOf(sec), suffix: 'doc' }), data: '' }]);
   const patchSectionDoc = (sec, docId, patch) =>
     patchDocs(sec, sectionDocs(sec).map((d) => (d.id === docId ? { ...d, ...patch } : d)));
   const removeSectionDoc = (sec, docId) =>
@@ -695,14 +705,24 @@ export const ProjectDetailModule = ({
           placeholder={hint}
           linkButton
           figureButton
+          docImportButton
           minHeight={420}
           maxHeight={6000}
           onEditFocusChange={setTextEditing}
+          fileNaming={{ project: project.name || '', section: label }}
           toolbarExtra={[
             { label: '▦ + Std Table', title: 'Insert a standard table at the cursor position', onClick: (insertText) => setTableDraft({ section: id, insertText }) },
             { label: '📎 + Document', title: 'Attach a document link', onClick: () => addSectionDoc(id) },
             { label: '📚 + Reference', title: 'Insert a numbered reference at the cursor position', onClick: (insertText) => setRefPicker({ insertText }) }
           ]}
+        />
+
+        <DriveUploadButton
+          suggestedName={suggestDriveFileName({ project: project.name || '', section: label, suffix: 'doc' })}
+          onDone={({ name, dataUrl, drive }) =>
+            patchDocs(id, [...sectionDocs(id), { id: genProjectId(), name, data: drive ? drive.driveUrl : dataUrl }])
+          }
+          label="⬆ Upload document"
         />
 
         {figures.length > 0 && (
@@ -735,7 +755,12 @@ export const ProjectDetailModule = ({
 
         {docs.length > 0 && (
           <div className="mt-4 pt-4 border-t border-slate-200">
-            <h4 className="text-sm font-bold text-slate-700 mb-2">Documents</h4>
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-sm font-bold text-slate-700">Documents</h4>
+              <button type="button" onClick={openDrive}
+                      className="text-[10px] font-bold text-blue-600 hover:text-blue-800 underline"
+                      title="Open your Google Drive folder in a new tab">Open Drive ↗</button>
+            </div>
             <div className="flex flex-col gap-1.5">
               {docs.map((doc) => (
                 <div key={doc.id} className="flex items-center gap-2 bg-slate-50 border border-slate-200 p-2 rounded-lg">
@@ -1572,6 +1597,7 @@ export const ProjectDetailModule = ({
                   const remaining = projects.filter((p) => p.id !== project.id);
                   setProjects(remaining);
                   saveProjects(remaining);
+                  markAttachmentsDeleted(project).catch(() => {});
                   backToList();
                 }}
                         className="px-3 py-1.5 text-xs font-bold rounded-lg bg-red-600 text-white hover:bg-red-700">Delete</button>

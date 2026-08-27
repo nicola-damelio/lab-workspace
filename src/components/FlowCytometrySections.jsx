@@ -1,5 +1,7 @@
 // components/FlowCytometrySections.jsx
 import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { DriveUploadButton } from './DriveUpload';
+import { suggestDriveFileName } from '../utils/driveNaming';
 import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LineChart, Line, ReferenceArea} from 'recharts';
 import { ChartControlBar, SharedChartStylePanel } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
@@ -1320,6 +1322,18 @@ export const Data = ({ ctx }) => {
               <input type="file" accept=".fcs" multiple onChange={handleFCSUpload} className="hidden" />
             </label>
             {fcsMsg && <span className="text-xs font-bold text-indigo-900">{fcsMsg}</span>}
+            <DriveUploadButton
+              suggestedName={suggestDriveFileName({
+                project: (activeTest.projectNames || [])[0] || '',
+                test: activeTest.name || activeTest.instanceName || '',
+                section: 'Data',
+                subsection: 'Flow Cytometry',
+                suffix: 'fcs'
+              })}
+              accept=".fcs"
+              label="⬆ Archive FCS to Drive"
+              className="bg-indigo-50 text-indigo-800 border border-indigo-200 hover:bg-indigo-100"
+            />
           </div>
         </div>
 

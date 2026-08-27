@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { markAttachmentsDeleted } from '../../utils/driveUpload';
 
 /* =========================================================================
    PROJECTS — "Scientific background / Experiments / Discussion /
@@ -120,10 +121,13 @@ export const ProjectsModule = ({
   };
 
   const deleteProject = (id) => {
+    const target = projects.find((p) => p.id === id);
     const remaining = projects.filter((p) => p.id !== id);
     setProjects(remaining);
     saveProjects(remaining);
     setConfirmDelete(null);
+    // Mark any Google Drive attachments of this project as deleted.
+    if (target) markAttachmentsDeleted(target).catch(() => {});
   };
 
   const canManage = (p) => isSuper || p.scientist === myName;

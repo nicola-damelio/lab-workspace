@@ -2,6 +2,7 @@ import React from 'react';
 import { getDirectImageUrl, BOX_ROW_LABELS, DEF_COMPOUNDS } from '../data/constants';
 import { RichTextEditor } from './RichTextEditor';
 import { Icon } from './Icons';
+import { markAttachmentsDeleted } from '../utils/driveUpload';
 
 // Helper to bypass Google Drive CORS blocks
 const getProxiedImage = (url) => {
@@ -276,6 +277,7 @@ export const StorageDetail = ({ storages, activeStorageId, tests, setTests, setC
                                                             e.stopPropagation(); 
                                                             if(confirm(`Delete box "${box.name}"?`)) {
                                                                 setTests(prev => prev.filter(t => t.id !== box.id));
+                                                                markAttachmentsDeleted(box).catch(() => {});
                                                             }
                                                         }} 
                                                         className="bg-red-500 hover:bg-red-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs shadow-sm" 

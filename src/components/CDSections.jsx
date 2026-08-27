@@ -14,6 +14,8 @@ import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, AngledTic
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, seriesColorFor } from '../utils/chartStyle';
 import { parseJascoJwsBinary, isJascoJwsBinary } from '../utils/jascoJws';
+import { DriveUploadButton } from './DriveUpload';
+import { suggestDriveFileName } from '../utils/driveNaming';
 export { CollapsibleSection };
 export { VIS_PALETTES };
 
@@ -1564,6 +1566,18 @@ export const Data = ({ ctx }) => {
               📄 Choose Jasco file(s)…
               <input ref={jascoFileRef} type="file" accept=".txt,.csv,.jws" multiple onChange={handleJascoFile} className="hidden" />
             </label>
+            <DriveUploadButton
+              suggestedName={suggestDriveFileName({
+                project: (activeTest.projectNames || [])[0] || '',
+                test: activeTest.name || activeTest.instanceName || '',
+                section: 'Data',
+                subsection: 'Spectra',
+                suffix: 'spectrum'
+              })}
+              accept=".txt,.csv,.jws"
+              label="⬆ Archive spectra to Drive"
+              className="bg-sky-50 text-sky-800 border border-sky-200 hover:bg-sky-100"
+            />
             <span className="text-[10px] text-sky-700">…or paste the file content below and press Import. Metadata (temperature, cell length, scan settings…) is auto-filled into the Experimental Conditions and Instrumental Setup sections.</span>
           </div>
           <textarea

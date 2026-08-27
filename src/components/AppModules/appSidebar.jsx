@@ -3,8 +3,10 @@
    Left navigation sidebar (extracted from App.jsx). Props-only component.
    ========================================================================= */
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Icon } from '../Icons';
+import { getDriveToken } from '../../utils/driveUpload';
+import { openDrive } from '../../utils/driveNaming';
 
 export const AppSidebar = ({
   isSidebarOpen, setIsSidebarOpen,
@@ -15,8 +17,17 @@ export const AppSidebar = ({
   currentModule, setCurrentModule,
   handlePrint, loadHTML, exportHTML,
   handleUndo, handleRedo, historyIndex, historyRef,
-  user, onGoogleLogin
-}) => (
+  user, onGoogleLogin, onConnectDrive
+}) => {
+  const [driveConnected, setDriveConnected] = useState(!!getDriveToken());
+
+  useEffect(() => {
+    const onConnected = () => setDriveConnected(!!getDriveToken());
+    window.addEventListener('lab:drive-connected', onConnected);
+    return () => window.removeEventListener('lab:drive-connected', onConnected);
+  }, []);
+
+  return (
 
           <div
             className={`bg-white border-r border-slate-200 flex flex-col shadow-sm z-50 shrink-0 no-print transition-all duration-300 absolute md:relative h-full ${
@@ -191,6 +202,38 @@ export const AppSidebar = ({
                     <Icon name="cloud" size={14} /> {isSidebarOpen ? 'Cloud sign-in (optional)' : ''}
                   </button>
                 )}
+
+                {/* Google Drive: uploads are auto-renamed and saved here */}
+                {driveConnected ? (
+                  <div
+                    className={`flex items-center justify-between gap-1 bg-emerald-50 border border-emerald-200 rounded py-1.5 px-2 ${
+                      !isSidebarOpen ? 'flex-col px-1' : ''
+                    }`}
+                    title="Google Drive connected — uploaded files are renamed and saved to your Drive folder automatically"
+                  >
+                    <span className="text-[10px] font-bold text-emerald-700 flex items-center gap-1">
+                      <Icon name="cloud" size={12} /> {isSidebarOpen ? 'Drive connected' : ''}
+                    </span>
+                    <button
+                      onClick={openDrive}
+                      className="text-[10px] font-bold text-blue-600 hover:text-blue-800 underline"
+                    >
+                      Open ↗
+                    </button>
+                  </div>
+                ) : (
+                  onConnectDrive && (
+                    <button
+                      onClick={onConnectDrive}
+                      className={`w-full text-center bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors flex items-center justify-center gap-1 ${
+                        !isSidebarOpen ? 'py-2 px-0 text-[10px]' : ''
+                      }`}
+                      title="Connect Google Drive so uploaded images/documents are automatically renamed and saved to your Drive folder"
+                    >
+                      <Icon name="cloud" size={14} /> {isSidebarOpen ? 'Connect Drive' : ''}
+                    </button>
+                  )
+                )}
                 <button
                   onClick={handlePrint}
                   className={`w-full text-center bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors flex items-center justify-center gap-1 ${
@@ -257,3 +300,4 @@ export const AppSidebar = ({
             </div>
           </div>
 );
+};

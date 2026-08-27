@@ -6,6 +6,7 @@
 import React from 'react';
 import { PRIMARY_CATEGORIES } from '../../data/testTypes';
 import { Icon } from '../Icons';
+import { markAttachmentsDeleted } from '../../utils/driveUpload';
 
 const TEST_CARD_ICON = {
   nmr: 'chart-line',
@@ -74,6 +75,8 @@ export const TestsModule = ({
                 };
                 const approveDeletion = (test) => {
                   setTests((prev) => prev.filter((t) => t.id !== test.id));
+                  // Mark any Google Drive attachments of this test as deleted.
+                  markAttachmentsDeleted(test).catch(() => {});
                 };
                 const rejectDeletion = (test) => {
                   setTests((prev) => prev.map((t) =>

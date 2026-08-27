@@ -1,4 +1,6 @@
 import React, {useRef} from 'react';
+import { DriveUploadButton } from './DriveUpload';
+import { suggestDriveFileName } from '../utils/driveNaming';
 import {ChartPanel, SharedChartStylePanel, SharedChart} from './SharedAnalysisTools';
 import { CollapsibleSection, SmartImage } from './TestShellRenderer';
 import GelScheme from './GelScheme';
@@ -380,6 +382,19 @@ const GelPanel = ({ ctx }) => {
           e.target.value = '';
         }}
       />
+      <div className="mt-1">
+        <DriveUploadButton
+          suggestedName={suggestDriveFileName({
+            project: (activeTest.projectNames || [])[0] || '',
+            test: activeTest.name || activeTest.instanceName || '',
+            section: 'Data',
+            subsection: 'Gel',
+            suffix: 'gel'
+          })}
+          accept="image/*"
+          label="⬆ Archive gel image to Drive"
+        />
+      </div>
       <div className="flex justify-between items-center mb-3 flex-wrap gap-2">
         <label className="text-xs font-bold text-slate-600 uppercase">Gel Images</label>
         <div className="flex gap-2">
@@ -513,6 +528,19 @@ export const CloningDataSection = ({ ctx }) => {
             e.target.value = '';
           }}
         />
+        <div className="mt-1">
+          <DriveUploadButton
+            suggestedName={suggestDriveFileName({
+              project: (activeTest.projectNames || [])[0] || '',
+              test: activeTest.name || activeTest.instanceName || '',
+              section: 'Data',
+              subsection: 'UV Spectra',
+              suffix: 'uvspectrum'
+            })}
+            accept=".csv,.txt,.tsv"
+            label="⬆ Archive UV spectrum to Drive"
+          />
+        </div>
         <div className="flex justify-between items-center flex-wrap gap-2 mb-4">
           <p className="text-xs text-slate-500">
             Upload exported spectra (2 columns: wavelength, absorbance). Concentration is computed with

@@ -1,14 +1,25 @@
 import React, { useRef, useEffect, useState } from 'react';
+import { suggestDriveFileName, getDriveFolderUrl, setDriveFolderUrl, openDrive, copyText } from '../utils/driveNaming';
+import { DriveUploadButton } from './DriveUpload';
+import { docxToHtml } from '../utils/docxImport';
 
 export const RichTextEditor = ({
   value, onChange, placeholder, toolbarExtra = [],
   minHeight = 120, maxHeight = 500, resizable = true, fillHeight = true,
-  linkButton = false, figureButton = false, onEditFocusChange = null
+  linkButton = false, figureButton = false, docImportButton = false, onEditFocusChange = null,
+  fileNaming = null
 }) => {
     const editorRef = useRef(null);
     const selRef = useRef(null);
+    const docImportRef = useRef(null);
+    const [importingDoc, setImportingDoc] = useState(false);
     const [linkDraft, setLinkDraft] = useState(null); // null | { text, url }
     const [figureDraft, setFigureDraft] = useState(null); // null | { url, caption }
+    const [driveFolderDraft, setDriveFolderDraft] = useState(getDriveFolderUrl());
+
+    // Full-path suggested file name for the figure being inserted (figure1, figure2, ...)
+    const figureSuffix = `figure${(editorRef.current ? editorRef.current.querySelectorAll('figure').length : 0) + 1}`;
+    const figureSuggestedName = suggestDriveFileName({ ...(fileNaming || {}), suffix: figureSuffix });
     useEffect(() => { if (editorRef.current && editorRef.current.innerHTML !== value) editorRef.current.innerHTML = value || ''; }, [value]);
     const execCmd = (cmd, val=null) => { document.execCommand(cmd, false, val); onChange(editorRef.current.innerHTML); editorRef.current.focus(); };
     const storeSel = () => {
@@ -154,6 +165,31 @@ export const RichTextEditor = ({
             try { window.dispatchEvent(new CustomEvent('lab:edit-blur')); } catch { /* ignore */ }
         }
     };
+    // Import a Word (.docx) document: converts text + figures, saves figures to Drive
+    const handleDocImport = async (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (e.target.value) e.target.value = '';
+        if (!file) return;
+        setImportingDoc(true);
+        try {
+            const arrayBuffer = await file.arrayBuffer();
+            const result = await docxToHtml({ arrayBuffer, naming: fileNaming || {} });
+            if (!result.html.trim()) {
+                alert('The Word document produced no readable content.');
+                return;
+            }
+            insertHtml(result.html);
+            const { images, uploadedToDrive, locallyStored } = result.stats;
+            const msg = images > 0
+                ? `Word document imported: ${images} figure${images === 1 ? '' : 's'} (${uploadedToDrive} saved to Google Drive${locallyStored ? `, ${locallyStored} stored locally — connect Drive to save them` : ''}).`
+                : 'Word document imported.';
+            alert(msg);
+        } catch (err) {
+            alert('Word import failed: ' + (err && err.message ? err.message : 'unknown error'));
+        } finally {
+            setImportingDoc(false);
+        }
+    };
     const toPx = (v) => (typeof v === 'number' ? `${v}px` : v);
     const clampHeight = () => {
         let min = 100; let max = 10000;
@@ -255,6 +291,17 @@ export const RichTextEditor = ({
                         🖼️ Figure
                     </button>
                 )}
+                {docImportButton && (
+                    <>
+                        <input ref={docImportRef} type="file" accept=".docx" onChange={handleDocImport} className="hidden" />
+                        <button onClick={() => docImportRef.current && docImportRef.current.click()}
+                                disabled={importingDoc}
+                                title="Import a Word (.docx) document — text, tables and figures are converted; figures are saved to Google Drive"
+                                className="px-2 py-0.5 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 rounded shadow-sm text-xs font-bold transition disabled:opacity-50">
+                            {importingDoc ? '⏳ Importing…' : '📄 Word'}
+                        </button>
+                    </>
+                )}
                 {toolbarExtra.map((btn, i) => (
                     <button key={i} type="button" onClick={() => btn.onClick(insertText)} title={btn.title || btn.label}
                             className="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white border border-indigo-700 rounded shadow-sm text-xs font-bold transition">
@@ -316,11 +363,70 @@ export const RichTextEditor = ({
                          onClick={(e) => e.stopPropagation()}>
                         <h4 className="text-sm font-black text-slate-800">🖼️ Insert Figure</h4>
 
+                        <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-2.5 flex flex-col gap-1.5">
+                          <span className="text-[10px] font-bold text-emerald-700 uppercase">
+                            Suggested file name (for Google Drive)
+                          </span>
+
+                          <div className="flex gap-1.5 items-center">
+                            <input
+                              readOnly
+                              value={figureSuggestedName}
+                              onFocus={(e) => e.target.select()}
+                              className="flex-1 border border-emerald-300 rounded-lg px-2 py-1.5 text-xs font-mono bg-white outline-none"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => copyText(figureSuggestedName)}
+                              className="px-2 py-1.5 text-[10px] font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+                            >
+                              Copy
+                            </button>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] text-emerald-700/80">
+                              Save the file with this name in Drive, then paste its link below.
+                            </span>
+                            <button
+                              type="button"
+                              onClick={openDrive}
+                              className="text-[10px] font-bold text-blue-600 hover:text-blue-800 underline whitespace-nowrap"
+                            >
+                              Open Drive ↗
+                            </button>
+                          </div>
+
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-bold text-slate-500 uppercase shrink-0">
+                              Folder
+                            </span>
+                            <input
+                              type="text"
+                              value={driveFolderDraft}
+                              onChange={(e) => {
+                                setDriveFolderDraft(e.target.value);
+                                setDriveFolderUrl(e.target.value);
+                              }}
+                              placeholder="Paste a Drive folder URL to open it directly (optional)"
+                              className="flex-1 border border-slate-300 rounded-lg px-2 py-1 text-[11px] outline-none focus:border-blue-500 bg-white"
+                            />
+                          </div>
+                        </div>
+
                         <label className="text-[10px] font-bold text-slate-500 uppercase">Image URL</label>
                         <input autoFocus type="text" value={figureDraft.url}
                                onChange={(e) => setFigureDraft({ ...figureDraft, url: e.target.value })}
                                placeholder="Paste image URL here (Google Drive, Dropbox, etc.)"
                                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500" />
+
+                        <DriveUploadButton
+                          suggestedName={figureSuggestedName}
+                          onDone={({ dataUrl, drive }) =>
+                            setFigureDraft((d) => ({ ...d, url: drive ? drive.driveUrl : dataUrl }))
+                          }
+                          label="⬆ Upload from computer"
+                        />
 
                         {figureDraft.url && String(figureDraft.url).trim() !== '' && (
                             <div className="relative h-40 rounded-md overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center">

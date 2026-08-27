@@ -1,4 +1,6 @@
 import React, {useRef, useMemo} from 'react';
+import { DriveUploadButton } from './DriveUpload';
+import { suggestDriveFileName } from '../utils/driveNaming';
 import { ChartPanel, SharedChartStylePanel, SharedChart } from './SharedAnalysisTools';
 import TestShellRenderer, {
 CollapsibleSection,
@@ -483,6 +485,19 @@ const ProteinDataSection = ({ ctx }) => {
               e.target.value = '';
             }}
           />
+          <div className="mt-1">
+            <DriveUploadButton
+              suggestedName={suggestDriveFileName({
+                project: (ctx.activeTest?.projectNames || [])[0] || '',
+                test: ctx.activeTest?.name || ctx.activeTest?.instanceName || '',
+                section: 'Data',
+                subsection: 'Gel',
+                suffix: 'gel'
+              })}
+              accept="image/*"
+              label="⬆ Archive gel image to Drive"
+            />
+          </div>
           <div className="flex justify-between items-center mb-3 flex-wrap gap-2">
             <label className="text-xs font-bold text-slate-600 uppercase">Gel Images</label>
             <div className="flex gap-2">

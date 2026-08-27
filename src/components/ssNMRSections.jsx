@@ -11,6 +11,8 @@ import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, seriesColorFor } from '../utils/chartStyle';
 export { CollapsibleSection };
 export { VIS_PALETTES };
+import { DriveUploadButton } from './DriveUpload';
+import { suggestDriveFileName } from '../utils/driveNaming';
 
 const HAS_EB = typeof ErrorBar !== 'undefined';
 
@@ -1439,6 +1441,20 @@ export const Data = ({ ctx }) => {
                   className="hidden" 
                 />
               </label>
+              <div className="mt-1">
+                <DriveUploadButton
+                  suggestedName={suggestDriveFileName({
+                    project: (activeTest.projectNames || [])[0] || '',
+                    test: activeTest.name || activeTest.instanceName || '',
+                    section: 'Data',
+                    subsection: 'Bruker 1r',
+                    suffix: 'bruker1r'
+                  })}
+                  accept=".1r,.fid,.ser,.acqus"
+                  label="⬆ Archive spectra to Drive"
+                  className="bg-sky-50 text-sky-800 border border-sky-200 hover:bg-sky-100"
+                />
+              </div>
               <span className="text-[9px] text-sky-700 mt-1 max-w-sm">
                 This will automatically locate the 1r file(s) and their corresponding acqus parameter files, instantly importing the correct ppm axis. After scanning you can choose exactly which experiments to load — they will be imported into separate condition tabs.
               </span>

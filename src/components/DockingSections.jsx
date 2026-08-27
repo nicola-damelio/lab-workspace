@@ -2,6 +2,8 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, ScatterChart, Scatter} from 'recharts';
 import {ChartControlBar, SharedChartStylePanel} from './SharedAnalysisTools';
 import { Icon } from './Icons';
+import { DriveUploadButton } from './DriveUpload';
+import { suggestDriveFileName } from '../utils/driveNaming';
 
 import NMRMoleculeViewer from './NMRMoleculeViewer';
 import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_PROGRAMS, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, getScoringFunctions, getSearchAlgorithms, parseDockingFile, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, DOCK_CHART_MARGIN} from './DockingData';
@@ -504,6 +506,18 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
             }}
           />
         </label>
+        <DriveUploadButton
+          suggestedName={suggestDriveFileName({
+            project: (ctx.activeTest?.projectNames || [])[0] || '',
+            test: ctx.activeTest?.name || ctx.activeTest?.instanceName || '',
+            section: 'Data',
+            subsection: 'Docking',
+            suffix: 'docking'
+          })}
+          accept=".dlg,.dpf,.gpf,.csv,.txt,.param,.log,.cfg"
+          label="⬆ Archive to Drive"
+          className="bg-sky-50 text-sky-800 border border-sky-200 hover:bg-sky-100"
+        />
         <span className="text-[10px] text-slate-500">…or paste output text below:</span>
       </div>
       <textarea

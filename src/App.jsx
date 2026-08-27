@@ -20,6 +20,7 @@ import { NotebookModule, CalculationsModule, PublicationsModule } from './compon
 import { ProjectsModule } from './components/AppModules/projectsModule';
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
 import {normalizeOperators} from './utils/auth';
+import { setDriveToken } from './utils/driveUpload';
 
 import { ScientistLoginGate, ScientistLoginModal } from './components/AppModules/definitionsManagers';
 
@@ -1057,21 +1058,34 @@ if (customType === 'dosy') {
 
 
     const handleManualLogin = async () => {
-    // Optional Google sign-in, used only to enable cloud sync (Firestore).
-    // The app itself never requires a Google account.
+    // Optional Google sign-in. Requests the "drive.file" scope so uploaded
+    // images/documents can be auto-renamed and stored in the user's Drive.
     if (!window.firebase || !auth) {
-      console.warn('Firebase auth is not available — cloud sync is disabled.');
+      console.warn('Firebase auth is not available — cloud sync and Drive uploads are disabled.');
       return;
     }
 
     const provider = new window.firebase.auth.GoogleAuthProvider();
+    provider.addScope('https://www.googleapis.com/auth/drive.file');
 
     try {
-      await auth.signInWithPopup(provider);
+      const result = await auth.signInWithPopup(provider);
+      const token = result && result.credential && result.credential.accessToken;
+      if (token) {
+        setDriveToken(token);
+        try { window.dispatchEvent(new CustomEvent('lab:drive-connected')); } catch { /* ignore */ }
+      }
     } catch (e) {
       console.error('Google sign-in error:', e);
     }
   };
+
+  // Let the DriveUpload component trigger the Drive-enabled sign-in from anywhere.
+  useEffect(() => {
+    const onConnectDrive = () => { handleManualLogin(); };
+    window.addEventListener('lab:connect-drive', onConnectDrive);
+    return () => window.removeEventListener('lab:connect-drive', onConnectDrive);
+  }, []);
 
   useEffect(() => {
     if (needsLogin) return;
@@ -2749,6 +2763,7 @@ const openDataset = (dset) => {
             handleUndo={handleUndo} handleRedo={handleRedo}
             historyIndex={historyIndex} historyRef={historyRef}
             user={user} onGoogleLogin={handleManualLogin}
+            onConnectDrive={handleManualLogin}
           />
 
           {/* MAIN CONTENT */}

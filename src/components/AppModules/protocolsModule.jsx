@@ -8,6 +8,8 @@ import { RichTextEditor } from '../RichTextEditor';
 import { BrukerPulseSequenceViewer } from '../DefinitionsExtra';
 import { getDirectImageUrl } from '../../data/constants';
 import { Icon } from '../Icons';
+import { suggestDriveFileName, openDrive } from '../../utils/driveNaming';
+import { DriveUploadButton } from '../DriveUpload';
 
 export const ProtocolsModule = ({
   datasetProtocols, expandedGroups, handlePrint, nmrExperiments,
@@ -86,7 +88,10 @@ const addProtocolDocument = () =>
       ...protocolDocuments,
       {
         id: Date.now() + '-' + Math.random().toString(36).slice(2),
-        name: 'New Document Link',
+        name: suggestDriveFileName({
+          protocol: activeProtocol.title || '',
+          suffix: 'doc'
+        }),
         type: 'link',
         data: ''
       }
@@ -304,6 +309,27 @@ const getProtocolImageFallback = (url) => {
     >
       <Icon name="link" size={12} /> + Add Document
     </button>
+
+    <DriveUploadButton
+      suggestedName={suggestDriveFileName({
+        protocol: activeProtocol.title || '',
+        suffix: 'doc'
+      })}
+      onDone={({ name, dataUrl, drive }) =>
+        updateProtocol({
+          documents: [
+            ...protocolDocuments,
+            {
+              id: Date.now() + '-' + Math.random().toString(36).slice(2),
+              name,
+              type: 'link',
+              data: drive ? drive.driveUrl : dataUrl
+            }
+          ]
+        })
+      }
+      label="⬆ Upload document"
+    />
   </div>
 
   <RichTextEditor
@@ -322,6 +348,8 @@ const getProtocolImageFallback = (url) => {
     resizable
     linkButton
     figureButton
+    docImportButton
+    fileNaming={{ protocol: activeProtocol.title || '' }}
     onEditFocusChange={(editing) =>
       setExpandedGroups((p) => ({ ...p, protoSidebarOpen: !editing }))
     }
@@ -423,9 +451,19 @@ const getProtocolImageFallback = (url) => {
     <div className="mt-6 border border-slate-200 rounded-xl bg-slate-50 p-4 shadow-sm">
       <div className="flex flex-col gap-3 mb-3">
         <div>
-          <h4 className="text-xs font-bold text-slate-500 uppercase">
-            📎 Documents
-          </h4>
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <h4 className="text-xs font-bold text-slate-500 uppercase">
+              📎 Documents
+            </h4>
+            <button
+              type="button"
+              onClick={openDrive}
+              className="text-[10px] font-bold text-blue-600 hover:text-blue-800 underline whitespace-nowrap"
+              title="Open your Google Drive folder in a new tab"
+            >
+              Open Drive ↗
+            </button>
+          </div>
           <p className="text-xs text-slate-400">
             Attached document links (publications, SOPs, files...).
           </p>
