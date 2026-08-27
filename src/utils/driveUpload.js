@@ -20,17 +20,29 @@
 const TOKEN_KEY = 'labDriveAccessToken';
 const FOLDER_ID_KEY = 'labDriveFolderId';
 
-/** The Google OAuth access token (with drive.file scope) from the last sign-in. */
+/** The Google OAuth access token (with drive.file scope) from the last sign-in.
+ *  Stored in localStorage so it survives tab switches / page reloads (the
+ *  token itself still expires after ~1h and needs a re-connect then). */
 export const getDriveToken = () => {
-  try { return sessionStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; }
+  try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; }
 };
 
 export const setDriveToken = (token) => {
-  try { sessionStorage.setItem(TOKEN_KEY, String(token || '')); } catch { /* ignore */ }
+  try { localStorage.setItem(TOKEN_KEY, String(token || '')); } catch { /* ignore */ }
 };
 
 export const clearDriveToken = () => {
-  try { sessionStorage.removeItem(TOKEN_KEY); } catch { /* ignore */ }
+  try { localStorage.removeItem(TOKEN_KEY); } catch { /* ignore */ }
+};
+
+/** Verify the stored token really works against the Drive API (the scope can be silently missing). */
+export const testDriveAccess = async () => {
+  if (!getDriveToken()) return false;
+  try {
+    const res = await driveFetch('/drive/v3/files?pageSize=1&fields=files(id)');
+    await res.json();
+    return true;
+  } catch { return false; }
 };
 
 /** Folder id the app uploads into (persisted so we don't re-create it). */

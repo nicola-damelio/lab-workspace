@@ -20,7 +20,7 @@ import { NotebookModule, CalculationsModule, PublicationsModule } from './compon
 import { ProjectsModule } from './components/AppModules/projectsModule';
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
 import {normalizeOperators} from './utils/auth';
-import { setDriveToken } from './utils/driveUpload';
+import { setDriveToken, clearDriveToken, testDriveAccess } from './utils/driveUpload';
 
 import { ScientistLoginGate, ScientistLoginModal } from './components/AppModules/definitionsManagers';
 
@@ -1062,21 +1062,38 @@ if (customType === 'dosy') {
     // images/documents can be auto-renamed and stored in the user's Drive.
     if (!window.firebase || !auth) {
       console.warn('Firebase auth is not available — cloud sync and Drive uploads are disabled.');
+      alert('Google sign-in is not available here — Drive uploads are disabled.');
       return;
     }
 
     const provider = new window.firebase.auth.GoogleAuthProvider();
     provider.addScope('https://www.googleapis.com/auth/drive.file');
+    // Force the consent screen so the Drive scope is actually granted every time.
+    provider.setCustomParameters({ prompt: 'consent' });
 
     try {
       const result = await auth.signInWithPopup(provider);
       const token = result && result.credential && result.credential.accessToken;
-      if (token) {
-        setDriveToken(token);
-        try { window.dispatchEvent(new CustomEvent('lab:drive-connected')); } catch { /* ignore */ }
+      if (!token) {
+        alert('Google sign-in did not return Drive access. Please try again and allow “View and manage Google Drive files”.');
+        return;
+      }
+
+      setDriveToken(token);
+      try { window.dispatchEvent(new CustomEvent('lab:drive-connected')); } catch { /* ignore */ }
+
+      // Verify Drive access really works — the scope can be silently missing.
+      const ok = await testDriveAccess();
+      if (!ok) {
+        clearDriveToken();
+        try { window.dispatchEvent(new CustomEvent('lab:drive-disconnected')); } catch { /* ignore */ }
+        alert('Connected to Google, but Drive access was NOT granted by Google for this app. Files will be stored locally (temporary) until this is fixed.');
+      } else {
+        alert('Google Drive connected ✓ — uploaded images/documents will be saved automatically to your Drive folder.');
       }
     } catch (e) {
       console.error('Google sign-in error:', e);
+      alert('Google sign-in was cancelled or failed: ' + (e && e.message ? e.message : 'unknown error'));
     }
   };
 

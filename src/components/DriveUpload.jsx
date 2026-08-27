@@ -32,25 +32,36 @@ export const DriveUploadButton = ({
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState(''); // '' | 'drive' | 'local' | 'error'
   const [lastFile, setLastFile] = useState(null);
+  const [lastDrive, setLastDrive] = useState(null);
+  const [lastDriveError, setLastDriveError] = useState('');
 
   const upload = async (file) => {
     if (!file) return;
     setBusy(true);
     setStatus('');
     setLastFile(file);
+    setLastDrive(null);
+    setLastDriveError('');
     try {
       const name = withExtension(suggestedName, file.name || suggestedName);
       const mimeType = file.type || 'application/octet-stream';
 
       let drive = null;
+      let driveError = '';
       if (getDriveToken()) {
         try {
           drive = await uploadLocalFile({ name, mimeType, file });
         } catch (err) {
           drive = null;
-          console.warn('Drive upload failed:', err && err.message);
+          driveError = err && err.message ? String(err.message) : 'unknown Drive error';
+          console.warn('Drive upload failed:', driveError);
         }
+      } else {
+        driveError = 'Google Drive is not connected.';
       }
+
+      setLastDrive(drive);
+      setLastDriveError(driveError);
 
       if (drive) {
         setStatus('drive');
@@ -100,16 +111,26 @@ export const DriveUploadButton = ({
         {busy ? '⏳ Uploading…' : label}
       </button>
 
-      {status === 'drive' && (
-        <span className="text-[10px] font-bold text-emerald-600">
+      {status === 'drive' && lastDrive && (
+        <span className="text-[10px] font-bold text-emerald-600 flex items-center gap-1">
           ✓ Saved to Google Drive
+          {lastDrive.driveUrl && (
+            <a href={lastDrive.driveUrl} target="_blank" rel="noopener noreferrer"
+               className="text-blue-600 hover:text-blue-800 underline">
+              Open ↗
+            </a>
+          )}
         </span>
       )}
       {status === 'local' && (
         <span className="text-[10px] font-bold text-amber-600">
-          {bigFile ? '⚠ Large file kept locally (temporary) — connect Google Drive to store it properly. ' : '⚠ Stored locally (temporary) — '}
+          {lastDriveError ? (
+            <>Drive upload failed ({lastDriveError}) — file kept locally. </> 
+          ) : (
+            <>{bigFile ? '⚠ Large file kept locally (temporary) — ' : '⚠ Stored locally (temporary) — '}</>
+          )}
           <button type="button" onClick={connectDrive} className="underline hover:text-amber-800">
-            connect Google Drive
+            {lastDriveError ? 'reconnect Google Drive' : 'connect Google Drive'}
           </button>{' '}
           to auto-save it, then upload again.
         </span>
