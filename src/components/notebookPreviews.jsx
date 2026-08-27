@@ -2157,13 +2157,14 @@ const DOSYFitPreview = ({ test }) => {
           <div key={t.id} className="bg-white p-2 rounded border border-slate-200 shadow-sm">
             <h6 className="text-[10px] font-bold text-slate-500 mb-2 uppercase">Gradient set {i + 1} — Stejskal-Tanner fit</h6>
             <table className="border-collapse text-xs w-full">
-              <thead><tr className="bg-slate-50"><th className="px-3 py-1.5 border border-slate-200 text-left">Column</th><th className="px-3 py-1.5 border border-slate-200">D (m²/s)</th><th className="px-3 py-1.5 border border-slate-200">I₀</th><th className="px-3 py-1.5 border border-slate-200">R²</th><th className="px-3 py-1.5 border border-slate-200">n</th></tr></thead>
+              <thead><tr className="bg-slate-50"><th className="px-3 py-1.5 border border-slate-200 text-left">Column</th><th className="px-3 py-1.5 border border-slate-200">D (m²/s)</th><th className="px-3 py-1.5 border border-slate-200">I₀</th><th className="px-3 py-1.5 border border-slate-200">C</th><th className="px-3 py-1.5 border border-slate-200">R²</th><th className="px-3 py-1.5 border border-slate-200">n</th></tr></thead>
               <tbody>
                 {colFits.map((cf, j) => (
                   <tr key={j}>
                     <td className="p-1.5 border border-slate-200 font-bold text-blue-800">{cf.residue}</td>
                     <td className="p-1.5 border border-slate-200 font-mono">{cf.fit ? cf.fit.D.toExponential(3) : '—'}</td>
                     <td className="p-1.5 border border-slate-200 font-mono">{cf.fit ? cf.fit.I0.toExponential(2) : '—'}</td>
+                    <td className="p-1.5 border border-slate-200 font-mono">{cf.fit ? cf.fit.C.toExponential(2) : '—'}</td>
                     <td className="p-1.5 border border-slate-200 font-mono">{cf.fit ? cf.fit.r2.toFixed(3) : '—'}</td>
                     <td className="p-1.5 border border-slate-200">{cf.fit ? cf.fit.n : 0}</td>
                   </tr>

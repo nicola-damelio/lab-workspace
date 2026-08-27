@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { RichTextEditor } from '../RichTextEditor';
 import { SmartImage } from '../TestShellRenderer';
 import { loadPubFormat, pubCitationHtml } from '../Publications';
-import { getStarredItems, buildMaterialsAndMethods, tabConfigForType } from '../../utils/starredItems';
+import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigForType } from '../../utils/starredItems';
 import { loadProjects, saveProjects, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId } from './projectsModule';
 
 /* =========================================================================
@@ -32,9 +32,11 @@ const SectionCard = ({ title, badge, open, onToggle, children }) => (
 );
 
 // Renders one ⭐-starred item (figure / plot snapshot / data table) inside the
-// project export document.
-const renderStarredItem = (item) => {
+// project export document. The caption is generated from the item's base label
+// plus data found on the test page (sample, name, date, DOSY parameters, D…).
+const renderStarredItem = (item, test) => {
   if (!item) return null;
+  const cap = buildStarCaption(test || {}, item);
 
   if (item.kind === 'table') {
     const cols = Array.isArray(item.columns) ? item.columns : [];
@@ -62,7 +64,7 @@ const renderStarredItem = (item) => {
             </tbody>
           </table>
         </div>
-        {item.caption && <figcaption className="text-xs text-slate-500 mt-1">{item.caption}</figcaption>}
+        {cap && <figcaption className="text-xs text-slate-500 mt-1">{cap}</figcaption>}
       </figure>
     );
   }
@@ -71,7 +73,7 @@ const renderStarredItem = (item) => {
   return (
     <figure key={item.id} className="mb-4">
       <SmartImage src={item.url} alt={item.label || 'Figure'} style={{ maxWidth: '100%', minHeight: '120px', maxHeight: '500px' }} />
-      {item.caption && <figcaption className="text-xs text-slate-500 mt-1">{item.caption}</figcaption>}
+      {cap && <figcaption className="text-xs text-slate-500 mt-1">{cap}</figcaption>}
     </figure>
   );
 };
@@ -91,12 +93,12 @@ const mmPartsFor = (project, tests, onlyIncluded) =>
 
 export const ProjectDetailModule = ({
   currentUser, setCurrentModule, setCurrentProjectId, currentProjectId,
-  createEmptyTest, tests, setTests, setActiveTestId, jumpToTest
+  createEmptyTest, tests, setTests, setActiveTestId, jumpToTest, operatorNames
 }) => {
   const isSuper = currentUser?.role === 'superuser';
   const myName = currentUser?.name || '';
   const [projects, setProjects] = useState(loadProjects);
-  const [openSections, setOpenSections] = useState({ background: true, materials: true });
+  const [openSections, setOpenSections] = useState({ background: true, materials: true, comments: false });
   const [refPicker, setRefPicker] = useState(null); // null | { insertText?: fn }
   const [showBibForm, setShowBibForm] = useState(false);
   const [bibDraft, setBibDraft] = useState({ title: '', link: '' });
@@ -108,6 +110,10 @@ export const ProjectDetailModule = ({
   const [tableRows, setTableRows] = useState(3);
   const [tableCols, setTableCols] = useState(4);
   const [mmFeedback, setMmFeedback] = useState(''); // "✓ Updated HH:MM" flash after manual M&M refresh
+  const [editDoc, setEditDoc] = useState(false);    // inline text editing of the export document
+  const [commentDraft, setCommentDraft] = useState('');
+  const [replyDrafts, setReplyDrafts] = useState({});
+  const [openReplyId, setOpenReplyId] = useState(null);
 
   const visibleTests = useMemo(() => {
     if (isSuper) return tests;
@@ -163,6 +169,57 @@ export const ProjectDetailModule = ({
     setProjects((prev) => prev.map((p) =>
       p.id === project.id ? { ...p, ...patch, updatedAt: new Date().toISOString() } : p));
 
+  // ---- Comments & review ----
+  // Authorized people are selected (by the owner) from the list of users.
+  // The owner and superusers are always authorized.
+  const authorizedPeople = project.authorizedPeople || [];
+  const isAuthorized = !!currentUser && (isSuper || project.scientist === myName || authorizedPeople.includes(myName));
+  const comments = project.comments || [];
+  const openComments = comments.filter((c) => !c.resolved).length;
+
+  const toggleAuthorized = (name) =>
+    updateProject({
+      authorizedPeople: authorizedPeople.includes(name)
+        ? authorizedPeople.filter((x) => x !== name)
+        : [...authorizedPeople, name].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+    });
+
+  const addComment = () => {
+    const text = commentDraft.trim();
+    if (!text || !isAuthorized) return;
+    updateProject({
+      comments: [...comments, {
+        id: genProjectId(), author: myName, text,
+        createdAt: new Date().toISOString(), resolved: false, replies: []
+      }]
+    });
+    setCommentDraft('');
+  };
+
+  const addReply = (commentId) => {
+    const text = (replyDrafts[commentId] || '').trim();
+    if (!text || !isAuthorized) return;
+    updateProject({
+      comments: comments.map((c) => c.id === commentId
+        ? { ...c, resolved: false, replies: [...(c.replies || []), { id: genProjectId(), author: myName, text, createdAt: new Date().toISOString() }] }
+        : c)
+    });
+    setReplyDrafts((d) => ({ ...d, [commentId]: '' }));
+    setOpenReplyId(null);
+  };
+
+  const toggleResolve = (commentId) =>
+    updateProject({
+      comments: comments.map((c) => c.id === commentId ? { ...c, resolved: !c.resolved } : c)
+    });
+
+  const deleteComment = (commentId) => {
+    const c = comments.find((x) => x.id === commentId);
+    if (!c || !isAuthorized) return;
+    if (!(isSuper || c.author === myName || project.scientist === myName)) return;
+    updateProject({ comments: comments.filter((x) => x.id !== commentId) });
+  };
+
   // Manually refresh the Materials and Methods section from the current
   // linked-test data (Experimental Conditions / Instrumental Setup / Experiment
   // Setup) and confirm with a short "✓ Updated" flash. `onlyIncluded` defaults
@@ -182,6 +239,25 @@ export const ProjectDetailModule = ({
       setMmFeedback(`✓ Updated ${new Date().toLocaleTimeString()}`);
       setTimeout(() => setMmFeedback(''), 3500);
     }
+  };
+
+  // Save the (possibly edited) document text as a frozen snapshot on the project,
+  // so the user can modify the exported text and it survives reopening.
+  const saveDocText = () => {
+    const el = document.getElementById('project-doc-container');
+    if (!el) return;
+    updateProject({ exportDocHtml: el.innerHTML });
+    setEditDoc(false);
+    setMmFeedback('✓ Document text saved');
+    setTimeout(() => setMmFeedback(''), 2500);
+  };
+
+  // Discard the frozen snapshot and rebuild the document from the current
+  // project data (any text edits are lost).
+  const rebuildDoc = () => {
+    if (!window.confirm('Regenerate the document from the current project data? Your text edits to this document will be lost.')) return;
+    updateProject({ exportDocHtml: null });
+    setEditDoc(false);
   };
 
   // ---- Figures & documents per text section (report-style tools) ----
@@ -281,8 +357,8 @@ export const ProjectDetailModule = ({
     });
     setProjects(nextProjects);
     saveProjects(nextProjects);
-    setActiveTestId(created.id);
-    setCurrentModule('active-test');
+    // Navigate through openTest so "◀ Back" returns to this project page.
+    openTest(created.id);
   };
 
   const linkExistingTest = () => {
@@ -557,17 +633,56 @@ export const ProjectDetailModule = ({
     return (
       <div className="fixed inset-0 z-[60] bg-slate-100 overflow-y-auto custom-scrollbar">
         <div className="max-w-4xl mx-auto p-4 md:p-8">
-          <div className="flex items-center justify-between mb-4 no-print">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-4 no-print">
             <h2 className="text-lg font-black text-slate-800">📄 {project.name} — document</h2>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {mmFeedback && <span className="text-[10px] font-bold text-emerald-600">{mmFeedback}</span>}
+              {!editDoc && (
+                <button onClick={() => setEditDoc(true)}
+                        className="px-3 py-1.5 text-xs font-bold rounded-lg bg-amber-50 text-amber-700 border border-amber-300 hover:bg-amber-100"
+                        title="Edit the text of this document before printing">
+                  ✏️ Edit text
+                </button>
+              )}
+              {editDoc && (
+                <>
+                  <button onClick={saveDocText}
+                          className="px-3 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">
+                    💾 Save changes
+                  </button>
+                  <button onClick={() => setEditDoc(false)}
+                          className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300">
+                    ✖ Cancel
+                  </button>
+                </>
+              )}
+              {project.exportDocHtml && !editDoc && (
+                <button onClick={rebuildDoc}
+                        className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-100 text-slate-600 border border-slate-300 hover:bg-slate-200"
+                        title="Discard the saved text edits and rebuild the document from the project data">
+                  ↩️ Rebuild from data
+                </button>
+              )}
               <button onClick={printProjectDoc}
                       className="px-3 py-1.5 text-xs font-bold rounded-lg bg-blue-600 text-white hover:bg-blue-700">🖨️ Print / Save as PDF</button>
               <button onClick={() => setShowExport(false)}
                       className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300">Close</button>
             </div>
           </div>
+          {editDoc && (
+            <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 mb-3 no-print">
+              ✏️ Edit mode: click any text to modify it. “💾 Save changes” keeps your edits in the document, “🖨️ Print” prints it as-is.
+            </p>
+          )}
 
-          <div id="project-doc-container" className="bg-white border border-slate-200 rounded-xl shadow-sm p-6 md:p-10 text-slate-900">
+          <div id="project-doc-container"
+               contentEditable={editDoc}
+               suppressContentEditableWarning
+               className={`bg-white rounded-xl shadow-sm p-6 md:p-10 text-slate-900 ${editDoc ? 'border-2 border-dashed border-amber-400 outline-none' : 'border border-slate-200'}`}>
+            {project.exportDocHtml ? (
+              <div dangerouslySetInnerHTML={{ __html: project.exportDocHtml }} />
+            ) : (
+              <>
             <h1 className="text-2xl font-black text-slate-900 mb-1">📁 {project.name}</h1>
             <p className="text-xs text-slate-500 mb-6">
               Scientist: {project.scientist || '—'} · Created: {new Date(project.createdAt).toLocaleDateString()}
@@ -648,7 +763,7 @@ export const ProjectDetailModule = ({
                           you want to import into the document.
                         </p>
                       ) : (
-                        stars.map((s) => renderStarredItem(s))
+                        stars.map((s) => renderStarredItem(s, test))
                       )}
                     </div>
                   );
@@ -662,15 +777,159 @@ export const ProjectDetailModule = ({
                 <ol className="list-decimal pl-5 text-sm text-slate-800 space-y-1">
                   {refs.map((r) => (
                     <li key={r.id} dangerouslySetInnerHTML={{
-                      __html: pubCitationHtml({ authors: r.authors, year: r.year, title: r.title, journal: r.journal, doi: r.doi, volume: r.volume, pages: r.pages }, pubFormat) || r.title
+                      __html: pubCitationHtml({ authors: r.authors, year: r.year, title: r.title, journal: r.journal, doi: r.doi, volume: r.volume, pages: r.pages }, pubFormat, operatorNames) || r.title
                     }} />
                   ))}
                 </ol>
               )}
             </div>
+              </>
+            )}
           </div>
         </div>
       </div>
+    );
+  };
+
+  // ---- Comments & review section ----
+  const renderCommentsSection = () => {
+    const userList = (operatorNames || []).filter((n) => String(n).trim());
+    const ownerInList = project.scientist && !userList.includes(project.scientist);
+    const shownUsers = [...new Set([...userList, ...(ownerInList ? [project.scientist] : [])])]
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    return (
+      <SectionCard title="💬 Comments & review"
+                   open={openSections.comments} onToggle={() => toggleSection('comments')}
+                   badge={<span className={`text-[10px] font-bold rounded-full px-2 py-0.5 ${openComments ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
+                     {openComments} open
+                   </span>}>
+        {/* Authorized people */}
+        <div className="mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+            <h4 className="text-xs font-black uppercase tracking-wide text-slate-500">Authorized people (from the list of users)</h4>
+            {isOwner && <span className="text-[10px] text-slate-400">owner &amp; superusers always included</span>}
+          </div>
+          <p className="text-[10px] text-slate-500 mb-2">
+            Only the people below can add comments, answer them and resolve them.
+          </p>
+          {shownUsers.length === 0 ? (
+            <p className="text-xs italic text-slate-400 bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-2">
+              No users in the list yet — add scientists in Definitions → Scientists &amp; Operators.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {shownUsers.map((u) => {
+                const isOwnerName = u === project.scientist;
+                const on = isOwnerName || authorizedPeople.includes(u);
+                const disabled = !isOwner || isOwnerName;
+                return (
+                  <button key={u} type="button" disabled={disabled}
+                          onClick={() => toggleAuthorized(u)}
+                          title={isOwnerName
+                            ? 'The project owner is always authorized'
+                            : (disabled ? 'Only the project owner can change this list' : (on ? 'Click to remove access' : 'Click to give access'))}
+                          className={`text-[10px] font-bold px-2 py-1 rounded-full border transition-colors ${
+                            on
+                              ? 'bg-blue-600 text-white border-blue-600'
+                              : 'bg-white text-slate-600 border-slate-300 hover:border-blue-400'
+                          } ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}>
+                    {isOwnerName ? '👑 ' : ''}{u}{on ? ' ✓' : ''}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Composer */}
+        {isAuthorized ? (
+          <div className="mb-4">
+            <textarea value={commentDraft} onChange={(e) => setCommentDraft(e.target.value)}
+                      rows="2" placeholder="Write a comment or question…"
+                      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white" />
+            <div className="flex justify-end mt-1.5">
+              <button onClick={addComment} disabled={!commentDraft.trim()}
+                      className="px-3 py-1.5 text-xs font-bold rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40">
+                💬 Add comment
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs italic text-slate-400 bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-3 mb-4 text-center">
+            {currentUser
+              ? '🔒 You are not authorized to comment on this project. Ask the project owner to add you to “Authorized people”.'
+              : '🔒 Log in to comment on this project.'}
+          </p>
+        )}
+
+        {/* Thread */}
+        {comments.length === 0 ? (
+          <p className="text-xs italic text-slate-400 text-center bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-3">
+            No comments yet.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-2.5">
+            {comments.map((c) => (
+              <div key={c.id} className={`bg-white border rounded-lg p-3 ${c.resolved ? 'border-slate-200 opacity-70' : 'border-slate-300'}`}>
+                <div className="flex flex-wrap items-center gap-2 mb-1">
+                  <span className="text-xs font-bold text-blue-800">👤 {c.author}</span>
+                  <span className="text-[10px] text-slate-400">{new Date(c.createdAt).toLocaleString()}</span>
+                  {c.resolved
+                    ? <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">✔ Resolved</span>
+                    : <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">● Open</span>}
+                  {isAuthorized && (
+                    <span className="ml-auto flex gap-1.5">
+                      <button onClick={() => toggleResolve(c.id)}
+                              className={`text-[10px] font-bold rounded px-2 py-0.5 border transition-colors ${c.resolved ? 'text-amber-600 border-amber-200 hover:bg-amber-50' : 'text-emerald-600 border-emerald-200 hover:bg-emerald-50'}`}>
+                        {c.resolved ? '↩ Re-open' : '✔ Resolve'}
+                      </button>
+                      <button onClick={() => setOpenReplyId(openReplyId === c.id ? null : c.id)}
+                              className="text-[10px] font-bold text-blue-600 border border-blue-200 hover:bg-blue-50 rounded px-2 py-0.5">
+                        💬 Reply
+                      </button>
+                      {(isSuper || c.author === myName || project.scientist === myName) && (
+                        <button onClick={() => deleteComment(c.id)}
+                                className="text-[10px] font-bold text-red-500 border border-red-200 hover:bg-red-50 rounded px-2 py-0.5"
+                                title="Delete comment">✕</button>
+                      )}
+                    </span>
+                  )}
+                </div>
+                <p className="text-sm text-slate-800 whitespace-pre-wrap">{c.text}</p>
+
+                {openReplyId === c.id && isAuthorized && (
+                  <div className="mt-2">
+                    <textarea autoFocus rows="2" value={replyDrafts[c.id] || ''}
+                              onChange={(e) => setReplyDrafts((d) => ({ ...d, [c.id]: e.target.value }))}
+                              placeholder={`Reply to ${c.author}…`}
+                              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white" />
+                    <div className="flex justify-end gap-1.5 mt-1">
+                      <button onClick={() => setOpenReplyId(null)}
+                              className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-slate-200 text-slate-600 hover:bg-slate-300">Cancel</button>
+                      <button onClick={() => addReply(c.id)} disabled={!(replyDrafts[c.id] || '').trim()}
+                              className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40">Send reply</button>
+                    </div>
+                  </div>
+                )}
+
+                {(c.replies || []).length > 0 && (
+                  <div className="mt-2.5 ml-3 pl-3 border-l-2 border-slate-200 flex flex-col gap-2">
+                    {c.replies.map((r) => (
+                      <div key={r.id} className="bg-slate-50 border border-slate-200 rounded-lg p-2">
+                        <div className="flex flex-wrap items-center gap-2 mb-0.5">
+                          <span className="text-[11px] font-bold text-slate-700">↪ {r.author}</span>
+                          <span className="text-[10px] text-slate-400">{new Date(r.createdAt).toLocaleString()}</span>
+                        </div>
+                        <p className="text-xs text-slate-700 whitespace-pre-wrap">{r.text}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </SectionCard>
     );
   };
 
@@ -957,6 +1216,8 @@ export const ProjectDetailModule = ({
           </div>
         </SectionCard>
 
+
+        {renderCommentsSection()}
 
         {confirmDelete && (
           <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">

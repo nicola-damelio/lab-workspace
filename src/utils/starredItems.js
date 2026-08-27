@@ -55,6 +55,66 @@ export const toggleStarredItem = (test, item) => {
 };
 
 /* =========================================================================
+   STAR CAPTION — descriptive caption for a starred item, built from data
+   found on the test page: sample/compounds, test name, date, DOSY gradient
+   parameters (Gmax, Δ, δ) and the fitted diffusion coefficients (D, R²).
+
+   The starred item stores a short *base* label (e.g. "Figure 3" or
+   "Stejskal-Tanner fit results — gradient set 1"); the full caption is
+   assembled at export time from the test's current data, so it always
+   reflects the latest values.
+   ========================================================================= */
+const compoundList = (t) => [...new Set([
+  ...(t.selectedCompounds || []),
+  ...(t.compoundsSelected || []),
+  ...(t.compound ? String(t.compound).split(',') : [])
+])].map((s) => String(s || '').trim()).filter(Boolean);
+
+// Compact summary of the test's stored DOSY fits, e.g.
+// "set 1 Int1: D = 2.30e-10 m²/s, R² = 0.999".
+const dosyFitSummary = (t) => {
+  const fits = (t && t.dosyFits) || {};
+  const tables = Array.isArray(t.dosyTables) ? t.dosyTables : [];
+  const out = [];
+  tables.forEach((tb, ti) => {
+    const cols = fits[tb.id] || [];
+    cols.forEach((cf) => {
+      if (cf && cf.fit && cf.fit.D !== undefined) {
+        out.push(
+          `set ${ti + 1}${cf.residue ? ' ' + cf.residue : ''}: D = ${cf.fit.D.toExponential(2)} m²/s` +
+          (cf.fit.r2 ? `, R² = ${cf.fit.r2.toFixed(3)}` : '')
+        );
+      }
+    });
+  });
+  return out.slice(0, 4).join('; ') + (out.length > 4 ? '; …' : '');
+};
+
+export const buildStarCaption = (test = {}, item = {}, opts = {}) => {
+  const t = test;
+  const base = String(opts.base || (item && (item.caption || item.label)) || '')
+    .trim()
+    .replace(/\.+$/, '');
+
+  const parts = [];
+  const compounds = compoundList(t);
+  if (compounds.length) parts.push(`sample: ${compounds.join(', ')}`);
+  else if (t.moleculeName) parts.push(`sample: ${t.moleculeName}`);
+
+  if (t.name && t.name.trim()) parts.push(t.name.trim());
+  if (t.date) parts.push(t.date);
+
+  if (t.type === 'dosy' || t.dosyMaxG) {
+    parts.push(`Gmax ${t.dosyMaxG || 60} G/cm, Δ ${t.dosyDelta || 50} ms, δ ${t.dosySmallDelta || 2} ms`);
+  }
+
+  const extra = opts.extra || dosyFitSummary(t);
+  if (extra) parts.push(extra);
+
+  return parts.length ? `${base} — ${parts.join(' · ')}.` : `${base}.`;
+};
+
+/* =========================================================================
    MATERIALS & METHODS — automatic narrative
    Merges "Experimental Conditions", "Instrumental Setup" and "Experiment
    Setup" information of a test into one descriptive text paragraph.

@@ -24,7 +24,8 @@ export const ActiveTestModule = ({
   cmpColors, compoundMeta, currentUser, customCmpds, customConc, customFields,
   datasetProtocols, expandedGroups, jumpToTest, mandatoryBehavior, mandatoryRules,
   molecules, nmrExperiments, nmrInstruments, nmrProbes, operatorNames, plasmidMeta,
-  setActiveStorageId, setActiveTestId, setAppClipboard, setCmpColors, setCurrentModule,
+  returnTarget, setActiveStorageId, setReturnTarget, setActiveTestId, setAppClipboard,
+  setCmpColors, setCurrentModule, setCurrentProjectId,
   setCustomCmpds, setCustomConc, setExpandedGroups, setMoveModal, setTests,
   solvents, storages, testCategories, tests, unlockedTestIds,
   MDTestRenderer
@@ -135,7 +136,17 @@ const TestHeader = (
                       <div className="flex flex-col md:flex-row md:items-center gap-3 md:gap-4 w-full lg:w-auto">
                         <button
                           onClick={() => {
-                            if (isBox && activeTest.storageId) {
+                            // "◀ Back" returns to where the user came from
+                            // (e.g. the project page) instead of always the list.
+                            if (returnTarget && returnTarget.module === 'project-detail' && returnTarget.projectId) {
+                              setCurrentProjectId(returnTarget.projectId);
+                              setCurrentModule('project-detail');
+                              setReturnTarget(null);
+                            } else if (returnTarget && returnTarget.module === 'storage-detail' && returnTarget.storageId) {
+                              setActiveStorageId(returnTarget.storageId);
+                              setCurrentModule('storage-detail');
+                              setReturnTarget(null);
+                            } else if (isBox && activeTest.storageId) {
                               setActiveStorageId(activeTest.storageId);
                               setCurrentModule('storage-detail');
                             } else {

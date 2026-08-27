@@ -24,6 +24,8 @@ import { ChartPanel, SharedErrorTreatment, SharedChartStylePanel } from './Share
 import { shadesFromColor } from '../utils/chartStyle';
 import { StarToggle } from './StarToggle';
 import { isStarred, toggleStarredItem } from '../utils/starredItems';
+import { isPointExcluded, togglePointExcluded, clearExcludedForTable, computePointSD } from '../utils/pointTreatment';
+import { errBarPlugin } from '../data/constants';
 
 enableCellClipboard(); // global multi-cell select / copy / paste for data tables
 
@@ -31,8 +33,11 @@ enableCellClipboard(); // global multi-cell select / copy / paste for data table
 // The data table stores the gradient as a percentage (0–100) of the maximum
 // gradient G_max (G/cm) entered in Instrumental Setup (1 G/cm = 0.01 T/m).
 const computeB = (gPct, maxG_Gcm, deltaS, bigDeltaS, gamma = GAMMA_H) => {
+  // Empty / non-numeric gradient → NaN (row is skipped by the fit filters).
+  if (gPct === '' || gPct === undefined || gPct === null || String(gPct).trim() === '') return NaN;
   const g = Number(gPct);
-  if (!Number.isFinite(g) || g <= 0) return 0;
+  if (!Number.isFinite(g) || g < 0) return NaN;
+  if (g === 0) return 0; // 0% gradient → b = 0, a valid I₀ point for the fit
   const G_Tm = (Number(maxG_Gcm) || 60) * 0.01 * (g / 100);
   const d = Number(deltaS) || 0.002;      // small delta (gradient duration), s
   const D = Number(bigDeltaS) || 0.05;    // diffusion time Δ, s
@@ -42,46 +47,100 @@ const computeB = (gPct, maxG_Gcm, deltaS, bigDeltaS, gamma = GAMMA_H) => {
 };
 
 // Linear regression of ln(I) vs b → D = −slope (m²/s).
-const fitStejskalTanner = (bvals, ys) => {
-  const pts = bvals
-    .map((x, i) => ({ x: Number(x), y: Math.log(Math.max(Number(ys[i]), 1e-12)) }))
-    .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y) && isFinite(p.x) && isFinite(p.y));
-  if (pts.length < 2) return null;
-  const n = pts.length;
-  const sx = pts.reduce((s, p) => s + p.x, 0);
-  const sy = pts.reduce((s, p) => s + p.y, 0);
-  const sxx = pts.reduce((s, p) => s + p.x * p.x, 0);
-  const sxy = pts.reduce((s, p) => s + p.x * p.y, 0);
+const linearFitOn = (xs, lns) => {
+  const n = xs.length;
+  const sx = xs.reduce((s, v) => s + v, 0);
+  const sl = lns.reduce((s, v) => s + v, 0);
+  const sxx = xs.reduce((s, v) => s + v * v, 0);
+  const sxl = xs.reduce((s, v, i) => s + v * lns[i], 0);
   const denom = n * sxx - sx * sx;
   if (denom === 0) return null;
-  const slope = (n * sxy - sx * sy) / denom;
-  const intercept = (sy - slope * sx) / n;
-  const D = -slope;
-  const mean = sy / n;
-  const ssTot = pts.reduce((s, p) => s + (p.y - mean) ** 2, 0);
-  const ssRes = pts.reduce((s, p) => s + (p.y - (slope * p.x + intercept)) ** 2, 0);
-  return { D, I0: Math.exp(intercept), r2: ssTot > 0 ? 1 - ssRes / ssTot : 1, n };
+  const slope = (n * sxl - sx * sl) / denom;
+  const intercept = (sl - slope * sx) / n;
+  return { D: -slope, I0: Math.exp(intercept), slope, intercept };
+};
+
+// Stejskal-Tanner fit WITH an optimized vertical baseline offset C (as in the
+// standalone fitter): I = I0·exp(−b·D) + C. C is found by coarse + fine grid
+// search so that ln(I − C) vs b is as linear as possible; R² is reported in
+// linear (intensity) space.
+const fitStejskalTannerWithC = (bvals, ys) => {
+  const pts = bvals
+    .map((x, i) => ({ x: Number(x), y: Number(ys[i]) }))
+    .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y) && p.x >= 0 && p.y > 0);
+  if (pts.length < 2) return null;
+
+  const sseFor = (C) => {
+    const lns = pts.map((p) => Math.log(Math.max(p.y - C, 1e-12)));
+    const f = linearFitOn(pts.map((p) => p.x), lns);
+    if (!f) return Infinity;
+    let sse = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const Icalc = f.I0 * Math.exp(-f.D * pts[i].x) + C;
+      sse += (pts[i].y - Icalc) ** 2;
+    }
+    return sse;
+  };
+
+  const minI = Math.min(...pts.map((p) => p.y));
+  const maxI = Math.max(...pts.map((p) => p.y));
+  const startC = -maxI;
+  const endC = minI - 1e-4;
+  if (endC <= startC) {
+    // Degenerate: fall back to a C = 0 fit.
+    const f0 = linearFitOn(pts.map((p) => p.x), pts.map((p) => Math.log(Math.max(p.y, 1e-12))));
+    return f0 ? { ...f0, C: 0, r2: 1, n: pts.length, total: pts.length } : null;
+  }
+
+  let bestC = 0, bestSSE = Infinity;
+  const coarseSteps = 1000;
+  const coarseStep = (endC - startC) / coarseSteps;
+  for (let i = 0; i <= coarseSteps; i++) {
+    const C = startC + i * coarseStep;
+    const sse = sseFor(C);
+    if (sse < bestSSE) { bestSSE = sse; bestC = C; }
+  }
+  const fineStart = Math.max(startC, bestC - coarseStep * 2);
+  const fineEnd = Math.min(endC, bestC + coarseStep * 2);
+  const fineStep = (fineEnd - fineStart) / 1000;
+  if (fineStep > 0) {
+    for (let i = 0; i <= 1000; i++) {
+      const C = fineStart + i * fineStep;
+      const sse = sseFor(C);
+      if (sse < bestSSE) { bestSSE = sse; bestC = C; }
+    }
+  }
+
+  const lns = pts.map((p) => Math.log(Math.max(p.y - bestC, 1e-12)));
+  const f = linearFitOn(pts.map((p) => p.x), lns);
+  if (!f) return null;
+  const meanI = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+  const sst = pts.reduce((s, p) => s + (p.y - meanI) ** 2, 0);
+  const r2 = sst > 0 ? 1 - bestSSE / sst : 1;
+  return { D: f.D, I0: f.I0, C: bestC, r2, n: pts.length, total: pts.length };
 };
 
 // Outlier-aware fit — honours the "Outlier Threshold" of the Error Management
 // panel: points whose residual is > threshold × SD are dropped and the fit is
-// recomputed (up to 6 passes). The dropped indices are returned in `excluded`.
+// recomputed (up to 6 passes). Residuals are evaluated in INTENSITY space
+// against the C-optimized model I = I0·exp(−b·D) + C. The dropped indices are
+// returned in `excluded`.
 const fitStejskalTannerRobust = (bvals, ys, outlierThresh) => {
   const thresh = Number(outlierThresh) > 0 ? Number(outlierThresh) : 2;
   const pts = bvals
     .map((x, i) => ({ x: Number(x), y: Number(ys[i]), idx: i }))
-    .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y) && p.x > 0 && p.y > 0);
+    .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y) && p.x >= 0 && p.y > 0);
   if (pts.length < 2) return null;
   let excluded = [];
   let fit = null;
   for (let iter = 0; iter < 6; iter++) {
     const kept = pts.filter((p) => !excluded.includes(p.idx));
     if (kept.length < 2) break;
-    fit = fitStejskalTanner(kept.map((p) => p.x), kept.map((p) => p.y));
+    fit = fitStejskalTannerWithC(kept.map((p) => p.x), kept.map((p) => p.y));
     if (!fit) break;
     const residuals = kept.map((p) => {
-      const pred = Math.log(fit.I0) - fit.D * p.x;
-      return Math.abs(p.y - Math.exp(pred));
+      const Icalc = fit.I0 * Math.exp(-fit.D * p.x) + fit.C;
+      return Math.abs(p.y - Icalc);
     });
     const sd = residuals.length > 1
       ? Math.sqrt(residuals.reduce((s, v) => s + v * v, 0) / (residuals.length - 1))
@@ -91,7 +150,7 @@ const fitStejskalTannerRobust = (bvals, ys, outlierThresh) => {
       excluded.push(kept[worst].idx);
     } else break;
   }
-  return fit ? { ...fit, excluded } : null;
+  return fit ? { ...fit, excluded, total: pts.length } : null;
 };
 
 /* ---- STABLE SECTION WRAPPERS (module-level, like NMR Fittings) ---- */
@@ -260,7 +319,7 @@ const DOSYDataSection = ({ ctx }) => {
 // intensity) and the read-only gradient parameters of Instrumental Setup.
 // Applied style comes from the Graphical Parameters panel (dosyChartCfg) and
 // excluded/outlier points (Error Management) are drawn hollow.
-const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh = '2.0', showFit = true, mode = 'b', gamma = GAMMA_H }) => {
+const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh = '2.0', showFit = true, mode = 'b', gamma = GAMMA_H, useAll = true, errMode = 'none', fixedSD = '', manualSD = {}, excluded = {}, update = null }) => {
   const ref = useRef(null);
   const chartRef = useRef(null);
   const { maxG, deltaMs, bigDeltaMs } = params || {};
@@ -272,7 +331,7 @@ const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh
       for (let r = 0; r < t.nRows; r++) {
         const b = computeB(t.delays[r], maxG, deltaMs / 1000, bigDeltaMs / 1000, gamma);
         const y = parseFloat(t.grid?.[r]?.[c]);
-        if (b > 0 && Number.isFinite(y) && y > 0) return true;
+        if (b >= 0 && Number.isFinite(y) && y > 0) return true;
       }
     }
     return false;
@@ -293,93 +352,112 @@ const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh
     };
     (Array.isArray(tables) ? tables : []).forEach((t, ti) => {
       const nCols = t.nCols || 0;
+      const tableId = t.id;
+      // Replicate intensity values per row (across columns) for the "SD" error-bar mode.
+      const rowVals = [];
+      for (let r = 0; r < t.nRows; r++) {
+        const vals = [];
+        for (let cc = 0; cc < nCols; cc++) {
+          const v = parseFloat(t.grid?.[r]?.[cc]);
+          if (Number.isFinite(v) && v > 0) vals.push(v);
+        }
+        rowVals.push(vals);
+      }
       for (let c = 0; c < nCols; c++) {
         const label = (t.colResidues && t.colResidues[c]) || `Col ${c + 1}`;
-        const bvals = [], ys = [], gvals = [];
+        const rows = [];
         for (let r = 0; r < t.nRows; r++) {
           const b = computeB(t.delays[r], maxG, deltaMs / 1000, bigDeltaMs / 1000, gamma);
           const y = parseFloat(t.grid?.[r]?.[c]);
-          if (b > 0 && Number.isFinite(y) && y > 0) { bvals.push(b); ys.push(y); gvals.push(Number(t.delays[r]) || 0); }
+          if (b >= 0 && Number.isFinite(y) && y > 0) rows.push({ b, y, g: Number(t.delays[r]) || 0, r, key: `${c}:${r}` });
         }
-        if (bvals.length < 2) continue;
+        if (rows.length < 2) continue;
         const key = `col${ti}_${c}`;
         const color = (cfg.colors && cfg.colors[key]) || (cfg.baseColor ? shadesFromColor(cfg.baseColor, 8)[c % 8] : `hsl(${((ti * nCols + c) * 57) % 360}, 80%, 50%)`);
-        const fit = fitStejskalTannerRobust(bvals, ys, thresh);
-        const excludedSet = new Set(fit ? fit.excluded : []);
 
-        if (xMode === 'percent') {
-          // Gradient % vs Intensity — Stejskal-Tanner curve I = I0·exp(−b·D)
-          const pts = [];
-          for (let r = 0; r < t.nRows; r++) {
-            const b = computeB(t.delays[r], maxG, deltaMs / 1000, bigDeltaMs / 1000, gamma);
-            const y = parseFloat(t.grid?.[r]?.[c]);
-            if (b > 0 && Number.isFinite(y) && y > 0) pts.push({ x: Number(t.delays[r]) || 0, y });
+        // Manually excluded points (clicked on the chart or ticked in the table)
+        const manualKeys = new Set(rows.filter((p) => isPointExcluded(excluded, tableId, p.key)).map((p) => p.key));
+        const fitRows = rows.filter((p) => !manualKeys.has(p.key));
+        const bvals = fitRows.map((p) => p.b);
+        const ys = fitRows.map((p) => p.y);
+        const fit = bvals.length >= 2
+          ? (useAll ? fitStejskalTannerWithC(bvals, ys) : fitStejskalTannerRobust(bvals, ys, thresh))
+          : null;
+        const robustIdx = new Set(fit ? fit.excluded : []);
+        const posInFit = new Map(fitRows.map((p, i) => [p.key, i]));
+
+        const xOf = (p) => (xMode === 'percent' ? p.g : xMode === 'g' ? (Number(maxG) || 60) * (p.g / 100) : p.b);
+        const yOf = (p) => (xMode === 'percent' ? p.y : Math.log(Math.max(p.y, 1e-12)));
+
+        const errBars = [];
+        rows.forEach((p) => {
+          p.ex = manualKeys.has(p.key) || robustIdx.has(posInFit.get(p.key));
+          let predicted = 0;
+          if (fit) {
+            if (xMode === 'percent') predicted = fit.I0 * Math.exp(-fit.D * p.b) + (fit.C || 0);
+            else predicted = Math.log(Math.max(fit.I0 * Math.exp(-fit.D * p.b) + (fit.C || 0), 1e-12));
+          }
+          const sd = computePointSD({
+            mode: errMode,
+            fixedSD,
+            rowValues: rowVals[p.r] || [],
+            manualSD: manualSD && manualSD[tableId] && manualSD[tableId][p.key],
+            y: yOf(p),
+            predicted
+          });
+          errBars.push({ plus: sd, minus: sd });
+        });
+
+        datasets.push({
+          label,
+          data: rows.map((p) => ({ x: xOf(p), y: yOf(p) })),
+          errorBars: errBars,
+          showLine: false,
+          pointStyle: cfg.ptStyle || 'circle',
+          pointRadius: Number(cfg.ptSize) || 4,
+          backgroundColor: color,
+          borderColor: color,
+          pointBackgroundColor: rows.map((p) => (showExcl && p.ex ? '#ffffff' : color)),
+          pointBorderColor: rows.map((p) => (showExcl && p.ex ? '#ef4444' : color)),
+          pointBorderWidth: rows.map((p) => (showExcl && p.ex ? 2 : 1)),
+          _pointKeys: rows.map((p) => p.key),
+          _tableId: tableId,
+          onClick: (event, elements) => {
+            if (!elements || !elements.length || !update) return;
+            const el = elements[0];
+            const ds = el.dataset;
+            const k = ds && ds._pointKeys && ds._pointKeys[el.index];
+            if (k && ds._tableId) update({ dosyExcluded: togglePointExcluded(excluded, ds._tableId, k) });
+          }
+        });
+
+        if (fit && showFit) {
+          const xs = fitRows.map((p) => xOf(p));
+          const xmin = Math.min(...xs), xmax = Math.max(...xs);
+          const steps = xMode === 'percent' || xMode === 'g' ? 80 : 60;
+          const curve = [];
+          for (let i = 0; i <= steps; i++) {
+            const x = xmin + ((xmax - xmin) * i) / steps;
+            const b = xMode === 'g'
+              ? bFromG(x)
+              : xMode === 'percent'
+                ? computeB(x, maxG, deltaMs / 1000, bigDeltaMs / 1000, gamma)
+                : x;
+            if (xMode === 'percent') {
+              curve.push({ x, y: fit.I0 * Math.exp(-fit.D * b) + (fit.C || 0) });
+            } else {
+              const model = fit.I0 * Math.exp(-fit.D * b) + (fit.C || 0);
+              curve.push({ x, y: Math.log(Math.max(model, 1e-12)) });
+            }
           }
           datasets.push({
-            label,
-            data: pts.map((p) => ({ x: p.x, y: p.y })),
-            showLine: false,
-            pointStyle: cfg.ptStyle || 'circle',
-            pointRadius: Number(cfg.ptSize) || 4,
-            backgroundColor: color,
+            label: `${label} fit (D=${fit.D.toExponential(2)} m²/s)`,
+            data: curve, showLine: true, pointRadius: 0,
             borderColor: color,
-            pointBackgroundColor: pts.map((p, i) => (showExcl && excludedSet.has(i) ? '#ffffff' : color)),
-            pointBorderColor: pts.map((p, i) => (showExcl && excludedSet.has(i) ? '#ef4444' : color)),
-            pointBorderWidth: pts.map((p, i) => (showExcl && excludedSet.has(i) ? 2 : 1))
+            borderWidth: Number(cfg.lineThickness) || 2,
+            borderDash: cfg.lineStyle === 'dashed' ? [6, 4] : cfg.lineStyle === 'dotted' ? [2, 4] : [],
+            type: 'line', fill: false
           });
-          if (fit && showFit) {
-            const xs = pts.map((p) => p.x);
-            const xmin = Math.min(0, ...xs), xmax = Math.max(...xs);
-            const curve = [];
-            for (let i = 0; i <= 80; i++) {
-              const x = xmin + ((xmax - xmin) * i) / 80;
-              const b = computeB(x, maxG, deltaMs / 1000, bigDeltaMs / 1000, gamma);
-              curve.push({ x, y: fit.I0 * Math.exp(-fit.D * b) });
-            }
-            datasets.push({
-              label: `${label} fit (D=${fit.D.toExponential(2)} m²/s)`,
-              data: curve, showLine: true, pointRadius: 0,
-              borderColor: color,
-              borderWidth: Number(cfg.lineThickness) || 2,
-              borderDash: cfg.lineStyle === 'dashed' ? [6, 4] : cfg.lineStyle === 'dotted' ? [2, 4] : [],
-              type: 'line', fill: false
-            });
-          }
-        } else {
-          // x = b-value or gradient strength G (G/cm), y = ln(I) — linearized Stejskal-Tanner
-          const xVals = xMode === 'g' ? gvals.map((g) => (Number(maxG) || 60) * (g / 100)) : bvals;
-          const pts = xVals.map((x, i) => ({ x, y: Math.log(Math.max(ys[i], 1e-12)), ex: excludedSet.has(i) }));
-          datasets.push({
-            label,
-            data: pts.map((p) => ({ x: p.x, y: p.y })),
-            showLine: false,
-            pointStyle: cfg.ptStyle || 'circle',
-            pointRadius: Number(cfg.ptSize) || 4,
-            backgroundColor: color,
-            borderColor: color,
-            pointBackgroundColor: pts.map((p) => (showExcl && p.ex ? '#ffffff' : color)),
-            pointBorderColor: pts.map((p) => (showExcl && p.ex ? '#ef4444' : color)),
-            pointBorderWidth: pts.map((p) => (showExcl && p.ex ? 2 : 1))
-          });
-          if (fit && showFit) {
-            const xmin = Math.min(...xVals), xmax = Math.max(...xVals);
-            const steps = xMode === 'g' ? 80 : 60;
-            const curve = [];
-            for (let i = 0; i <= steps; i++) {
-              const x = xmin + ((xmax - xmin) * i) / steps;
-              // ln(I) = ln(I0) − D·b(x): straight line when x = b, curved (∝ G²) when x = G
-              const b = xMode === 'g' ? bFromG(x) : x;
-              curve.push({ x, y: Math.log(fit.I0) - fit.D * b });
-            }
-            datasets.push({
-              label: `${label} fit (D=${fit.D.toExponential(2)} m²/s)`,
-              data: curve, showLine: true, pointRadius: 0,
-              borderColor: color,
-              borderWidth: Number(cfg.lineThickness) || 2,
-              borderDash: cfg.lineStyle === 'dashed' ? [6, 4] : cfg.lineStyle === 'dotted' ? [2, 4] : [],
-              type: 'line', fill: false
-            });
-          }
         }
       }
     });
@@ -396,6 +474,7 @@ const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh
     chartRef.current = new Chart(ref.current, {
       type: 'scatter',
       data: { datasets },
+      plugins: [errBarPlugin],
       options: {
         responsive: true, maintainAspectRatio: false,
         scales: {
@@ -420,7 +499,7 @@ const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh
       }
     });
     return () => { if (chartRef.current) chartRef.current.destroy(); };
-  }, [tables, maxG, deltaMs, bigDeltaMs, cfg, showExcl, thresh, showFit, xMode, gamma]);
+  }, [tables, maxG, deltaMs, bigDeltaMs, cfg, showExcl, thresh, showFit, xMode, gamma, useAll, errMode, fixedSD, manualSD, excluded, update]);
 
   return (
     <div className="w-full">
@@ -490,7 +569,8 @@ const DOSYFittingSection = ({ ctx }) => {
         <div className="text-[11px] text-slate-500 mt-1">
           with&nbsp; b = (γ·δ·G)²·(Δ − δ/3), &nbsp;G = G<sub>max</sub> · (gradient % / 100)
           &nbsp;and&nbsp; γ = {gamma.toExponential(3)} rad/(s·T)
-          {ctx.activeTest?.dosyNucleus ? ` (${ctx.activeTest.dosyNucleus})` : ' (¹H)'}
+          {ctx.activeTest?.dosyNucleus ? ` (${ctx.activeTest.dosyNucleus})` : ' (¹H)'} ·
+          &nbsp;C (baseline offset) is optimized automatically
         </div>
       </div>
 
@@ -532,6 +612,33 @@ const DOSYFittingSection = ({ ctx }) => {
       {/* Stejskal-Tanner results tables — directly inside Data Analysis */}
       {tables.map((t, i) => (dosySections.renderAnalysis ? dosySections.renderAnalysis(t, i) : null))}
 
+      {/* Per-gradient-set points editor (exclude points + manual ±SD) */}
+      {tables.map((t, i) => (dosySections.renderPoints ? dosySections.renderPoints(t, i) : null))}
+
+      {/* Transparency note: how many rows were actually used in the fit */}
+      {(() => {
+        let nUsed = 0, nTotal = 0, nExcluded = 0;
+        tables.forEach((t) => {
+          const cols = (dosySections.fits && dosySections.fits[t.id]) || [];
+          cols.forEach((cf) => {
+            if (cf && cf.fit) {
+              nUsed += cf.fit.n || 0;
+              nTotal += cf.fit.total || cf.fit.n || 0;
+              nExcluded += Array.isArray(cf.fit.excluded) ? cf.fit.excluded.length : 0;
+            }
+          });
+        });
+        if (nTotal === 0) return null;
+        return (
+          <p className={`text-[10px] ${nExcluded > 0 ? 'text-amber-600 font-bold' : 'text-slate-400'}`}>
+            Fit uses {nUsed} of {nTotal} data point{nTotal === 1 ? '' : 's'}
+            {nExcluded > 0
+              ? ` — ${nExcluded} excluded as outlier${nExcluded === 1 ? '' : 's'}. Tick “Use all points” (Error Management) to keep every row.`
+              : ' (all valid rows).'}
+          </p>
+        );
+      })()}
+
       {/* Stejskal-Tanner plot — directly inside Data Analysis, with Error
           Management (outliers, fit toggle) and Graphical Parameters buttons */}
       <ChartPanel
@@ -547,10 +654,47 @@ const DOSYFittingSection = ({ ctx }) => {
             updateActiveTest={update}
             showFitToggle
             customActions={
-              <button type="button" onClick={() => dosySections.recomputeAll && dosySections.recomputeAll()}
-                      className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-2 rounded-lg text-xs shadow-sm whitespace-nowrap">
-                ▶️ Recompute fits
-              </button>
+              <>
+                <label className="flex items-center gap-2 bg-teal-50 border border-teal-200 hover:bg-teal-100 rounded-md px-3 py-1.5 cursor-pointer transition-colors shadow-sm" title="Use every valid row of the Data table (no automatic outlier exclusion)">
+                  <span className="text-xs font-bold text-teal-800">Use all points</span>
+                  <input type="checkbox" checked={ctx.activeTest?.dosyUseAllPoints !== false}
+                    onChange={(e) => update({ dosyUseAllPoints: e.target.checked })}
+                    className="w-4 h-4 cursor-pointer accent-teal-600" />
+                </label>
+                <label className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-md px-2 py-1.5 shadow-sm" title="Error-bar mode (as in the plate tests)">
+                  <span className="text-xs font-bold text-slate-600">Error bars:</span>
+                  <select value={ctx.activeTest?.dosyErrMode || 'none'}
+                    onChange={(e) => update({ dosyErrMode: e.target.value })}
+                    className="border border-slate-300 rounded text-[11px] px-1 py-0.5 outline-none bg-white font-semibold text-slate-700">
+                    <option value="none">None</option>
+                    <option value="fixed">Fixed</option>
+                    <option value="sd">Std. deviation</option>
+                    <option value="touch">Touch curve</option>
+                  </select>
+                  {ctx.activeTest?.dosyErrMode === 'fixed' && (
+                    <input type="number" step="any" min="0" value={ctx.activeTest?.dosyFixedSDStr ?? ''}
+                      onChange={(e) => update({ dosyFixedSDStr: e.target.value })}
+                      placeholder="±SD"
+                      className="w-16 border border-slate-300 rounded text-[11px] px-1 py-0.5 outline-none font-mono" />
+                  )}
+                </label>
+                <button type="button" onClick={() => {
+                  const excluded = ctx.activeTest?.dosyExcluded || {};
+                  let next = excluded;
+                  (Array.isArray(ctx.activeTest?.dosyTables) ? ctx.activeTest.dosyTables : []).forEach((tb) => {
+                    next = clearExcludedForTable(next, tb.id);
+                  });
+                  update({ dosyExcluded: next });
+                }}
+                        className="bg-white border border-orange-300 text-orange-700 hover:bg-orange-100 font-bold px-3 py-2 rounded-lg text-xs shadow-sm whitespace-nowrap"
+                        title="Re-include every manually excluded point">
+                  ↩️ Restore all points
+                </button>
+                <button type="button" onClick={() => dosySections.recomputeAll && dosySections.recomputeAll()}
+                        className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-2 rounded-lg text-xs shadow-sm whitespace-nowrap">
+                  ▶️ Recompute fits
+                </button>
+              </>
             }
           />
         }
@@ -581,11 +725,11 @@ const DOSYFittingSection = ({ ctx }) => {
                     : xMode === 'g'
                       ? 'Stejskal-Tanner plot (G/cm vs ln I)'
                       : 'Stejskal-Tanner plot (b vs ln I)',
-                  caption: `${xMode === 'percent'
+                  caption: xMode === 'percent'
                     ? 'Stejskal-Tanner curve — intensity I vs gradient %'
                     : xMode === 'g'
                       ? 'Stejskal-Tanner plot — ln(I) vs gradient strength G (G/cm)'
-                      : 'Stejskal-Tanner plot — ln(I) vs b-value'} — ${(series || []).map((s) => s.label).join(', ') || 'DOSY'}`,
+                      : 'Stejskal-Tanner plot — ln(I) vs b-value',
                   url
                 })
               });
@@ -603,6 +747,12 @@ const DOSYFittingSection = ({ ctx }) => {
             showFit={ctx.activeTest?.fitIC50 !== false}
             mode={xMode}
             gamma={gamma}
+            useAll={ctx.activeTest?.dosyUseAllPoints !== false}
+            errMode={ctx.activeTest?.dosyErrMode || 'none'}
+            fixedSD={ctx.activeTest?.dosyFixedSDStr || ''}
+            manualSD={ctx.activeTest?.dosyManualSD || {}}
+            excluded={ctx.activeTest?.dosyExcluded || {}}
+            update={update}
           />
         </div>
       </ChartPanel>
@@ -869,6 +1019,8 @@ export const DOSYTestRenderer = ({ activeTest = {}, updateActiveTest, TestHeader
 
   const computeFits = (tablesList) => {
     const thresh = Number(activeTest.outlierThreshStr) > 0 ? Number(activeTest.outlierThreshStr) : 2;
+    const useAll = activeTest.dosyUseAllPoints !== false; // default: use every valid row
+    const excludedMap = activeTest.dosyExcluded || {};
     const next = {};
     const sigs = [];
     tablesList.forEach((t) => {
@@ -876,13 +1028,17 @@ export const DOSYTestRenderer = ({ activeTest = {}, updateActiveTest, TestHeader
       for (let c = 0; c < (t.nCols || 0); c++) {
         const bvals = [], ys = [];
         for (let r = 0; r < t.nRows; r++) {
+          const key = `${c}:${r}`;
+          if (isPointExcluded(excludedMap, t.id, key)) continue; // manually removed point
           const b = computeB(t.delays[r], gradientParams.maxG, gradientParams.deltaMs / 1000, gradientParams.bigDeltaMs / 1000, gradientParams.gamma);
           const y = parseFloat(t.grid?.[r]?.[c]);
-          if (b > 0 && isFinite(y) && y > 0) { bvals.push(b); ys.push(y); }
+          if (b >= 0 && isFinite(y) && y > 0) { bvals.push(b); ys.push(y); }
         }
-        const fit = fitStejskalTannerRobust(bvals, ys, thresh);
+        const fit = useAll
+          ? fitStejskalTannerWithC(bvals, ys)
+          : fitStejskalTannerRobust(bvals, ys, thresh);
         cols.push({ residue: t.colResidues?.[c] || `Col ${c + 1}`, fit });
-        sigs.push(fit ? [fit.D, fit.I0, fit.r2, fit.n, fit.excluded].join('|') : 'null');
+        sigs.push(fit ? [fit.D, fit.I0, fit.C, fit.r2, fit.n, fit.total, fit.excluded].join('|') : 'null');
       }
       next[t.id] = cols;
     });
@@ -899,7 +1055,7 @@ export const DOSYTestRenderer = ({ activeTest = {}, updateActiveTest, TestHeader
     setFits(next);
     update({ dosyFits: next });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tables, activeTest.outlierThreshStr, activeTest.dosyMaxG, activeTest.dosySmallDelta, activeTest.dosyDelta, activeTest.dosyGamma]);
+  }, [tables, activeTest.outlierThreshStr, activeTest.dosyMaxG, activeTest.dosySmallDelta, activeTest.dosyDelta, activeTest.dosyGamma, activeTest.dosyUseAllPoints, activeTest.dosyExcluded]);
 
   const runFitForTable = () => {
     const { next } = computeFits(tablesRef.current);
@@ -1002,13 +1158,14 @@ export const DOSYTestRenderer = ({ activeTest = {}, updateActiveTest, TestHeader
                 kind: 'table',
                 label: `Gradient set ${tIndex + 1} — Stejskal-Tanner results`,
                 caption: `Stejskal-Tanner fit results for gradient set ${tIndex + 1}.`,
-                columns: ['Column', 'Diffusion D (m²/s)', 'I₀', 'R²', 'n points'],
+                columns: ['Column', 'Diffusion D (m²/s)', 'I₀', 'C (baseline)', 'R²', 'n points'],
                 rows: colFits.map((cf) => [
                   cf.residue,
                   cf.fit ? cf.fit.D.toExponential(3) : '—',
                   cf.fit ? cf.fit.I0.toExponential(2) : '—',
+                  cf.fit ? cf.fit.C.toExponential(2) : '—',
                   cf.fit ? cf.fit.r2.toFixed(3) : '—',
-                  cf.fit ? String(cf.fit.n) : '0'
+                  cf.fit ? (cf.fit.total && cf.fit.total !== cf.fit.n ? `${cf.fit.n}/${cf.fit.total}` : String(cf.fit.n)) : '0'
                 ])
               })
             })}
@@ -1021,6 +1178,7 @@ export const DOSYTestRenderer = ({ activeTest = {}, updateActiveTest, TestHeader
                 <th className="px-3 py-1.5 border border-slate-200 text-left">Column</th>
                 <th className="px-3 py-1.5 border border-slate-200">Diffusion D (m²/s)</th>
                 <th className="px-3 py-1.5 border border-slate-200">I₀</th>
+                <th className="px-3 py-1.5 border border-slate-200">C (baseline)</th>
                 <th className="px-3 py-1.5 border border-slate-200">R²</th>
                 <th className="px-3 py-1.5 border border-slate-200">n points</th>
               </tr>
@@ -1031,8 +1189,9 @@ export const DOSYTestRenderer = ({ activeTest = {}, updateActiveTest, TestHeader
                   <td className="p-1.5 border border-slate-200 font-bold text-blue-800">{cf.residue}</td>
                   <td className="p-1.5 border border-slate-200 font-mono">{cf.fit ? cf.fit.D.toExponential(3) : '—'}</td>
                   <td className="p-1.5 border border-slate-200 font-mono">{cf.fit ? cf.fit.I0.toExponential(2) : '—'}</td>
+                  <td className="p-1.5 border border-slate-200 font-mono">{cf.fit ? cf.fit.C.toExponential(2) : '—'}</td>
                   <td className="p-1.5 border border-slate-200 font-mono">{cf.fit ? cf.fit.r2.toFixed(3) : '—'}</td>
-                  <td className="p-1.5 border border-slate-200">{cf.fit ? cf.fit.n : 0}</td>
+                  <td className="p-1.5 border border-slate-200">{cf.fit ? (cf.fit.total && cf.fit.total !== cf.fit.n ? `${cf.fit.n}/${cf.fit.total}` : cf.fit.n) : 0}</td>
                 </tr>
               ))}
             </tbody>
@@ -1043,13 +1202,88 @@ export const DOSYTestRenderer = ({ activeTest = {}, updateActiveTest, TestHeader
     );
   };
 
+  // Per-gradient-set "points" editor — exclude / re-include points and set a
+  // manual per-point SD, exactly like the plate / CD / ssNMR point tables.
+  const renderPointsTable = (t, tIndex) => {
+    const tableId = t.id;
+    const excludedMap = activeTest.dosyExcluded || {};
+    const manualSDMap = activeTest.dosyManualSD || {};
+    const nCols = t.nCols || 0;
+    return (
+      <div key={`pts-${t.id}`} className="flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <h4 className="text-xs font-black uppercase tracking-wide text-slate-500">Points — gradient set {tIndex + 1}</h4>
+          <button type="button"
+            onClick={() => update({ dosyExcluded: clearExcludedForTable(excludedMap, tableId) })}
+            className="text-[10px] font-bold text-orange-600 hover:text-orange-800 border border-orange-200 rounded px-2 py-0.5 hover:bg-orange-50 transition-colors">
+            ↩️ Restore
+          </button>
+        </div>
+        <div className="overflow-auto border border-slate-200 rounded-lg" data-star-key={`dosy-points-${t.id}`}>
+          <table className="border-collapse text-xs w-full">
+            <thead>
+              <tr className="bg-slate-50">
+                <th className="px-2 py-1 border border-slate-200 text-left">Gradient %</th>
+                {Array.from({ length: nCols }, (_, c) => (
+                  <th key={c} className="px-2 py-1 border border-slate-200">{t.colResidues?.[c] || `Col ${c + 1}`}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {Array.from({ length: t.nRows || 0 }, (_, r) => (
+                <tr key={r}>
+                  <td className="px-2 py-1 border border-slate-200 font-mono font-bold text-slate-700">{t.delays?.[r] ?? '-'}</td>
+                  {Array.from({ length: nCols }, (_, c) => {
+                    const key = `${c}:${r}`;
+                    const isExcl = isPointExcluded(excludedMap, tableId, key);
+                    return (
+                      <td key={c} className={`px-2 py-1 border border-slate-200 ${isExcl ? 'bg-red-50 opacity-50' : ''}`}>
+                        <div className="flex flex-col gap-1 min-w-[120px]">
+                          <span className="font-mono">{t.grid?.[r]?.[c] ?? '-'}</span>
+                          <div className="flex items-center gap-1">
+                            <input type="number" step="any" min="0" placeholder="±SD"
+                              value={manualSDMap[tableId]?.[key] ?? ''}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                const series = { ...(manualSDMap[tableId] || {}) };
+                                if (val === '') delete series[key];
+                                else series[key] = Number(val);
+                                update({ dosyManualSD: { ...manualSDMap, [tableId]: series } });
+                              }}
+                              className="w-14 border border-slate-300 rounded px-1 py-0.5 text-center text-[10px] outline-none font-mono" />
+                            <button type="button"
+                              onClick={() => update({ dosyExcluded: togglePointExcluded(excludedMap, tableId, key) })}
+                              className={`text-[10px] font-black px-1.5 py-0.5 rounded border transition-colors ${isExcl ? 'bg-red-100 text-red-600 border-red-300' : 'text-slate-400 border-slate-200 hover:text-red-500 hover:border-red-200'}`}
+                              title="Exclude / re-include this point">
+                              {isExcl ? 'EXCL' : '×'}
+                            </button>
+                          </div>
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-[10px] text-slate-400 italic">
+          Excluded rows are drawn hollow and left out of the fit. Manual ±SD overrides the error-bar mode for that row.
+          Tip: click any point directly on the plot to exclude / re-include it.
+        </p>
+      </div>
+    );
+  };
+
   // Bridge render closures into the stable module-level section components.
   dosySections.renderData = (t, i) => renderTableData(t, i);
   dosySections.renderAnalysis = (t, i) => renderTableAnalysis(t, i);
+  dosySections.renderPoints = (t, i) => renderPointsTable(t, i);
   dosySections.addTable = addTable;
   dosySections.openImport = () => setDosyImportOpen(true);
   dosySections.sim = sim;
   dosySections.setSim = setSim;
+  dosySections.fits = fits;
   dosySections.solvents = rest.solvents || [];
 
   return (

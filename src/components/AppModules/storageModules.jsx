@@ -612,7 +612,8 @@ export const DatabaseCleanupManager = ({
   setTests,
   allCmpds, allCellLines,
   setCustomCmpds, setCompoundMeta,
-  setCustomCellLines, setCellLineMeta
+  setCustomCellLines, setCellLineMeta,
+  datasetsList, deleteDataset, deleteEmptyDatasets
 }) => {
   // Merge state
   const [oldName, setOldName] = useState('');
@@ -752,6 +753,58 @@ export const DatabaseCleanupManager = ({
 
   return (
     <div className="flex flex-col gap-6">
+      {/* --- SAFETY BANNER --- */}
+      <div className="bg-red-50 border-2 border-red-200 rounded-xl p-4">
+        <p className="text-xs font-bold text-red-700 leading-relaxed">
+          ⚠️ This is the only area of the program where data can be deleted. The start page no longer
+          deletes anything — every delete request from the start page warns and redirects here.
+          Every deletion is permanent and always asks for confirmation first.
+        </p>
+      </div>
+
+      {/* --- DELETE DATASETS TOOL --- */}
+      <div className="bg-slate-50 border-2 border-red-200 rounded-xl p-5 shadow-sm">
+        <h4 className="font-bold text-red-800 mb-1 text-sm">🗑️ Delete Datasets</h4>
+        <p className="text-xs text-slate-500 mb-3">
+          Datasets shown on the start page can only be deleted from here. Pick a dataset and press
+          Delete — a confirmation dialog always appears before anything is removed.
+        </p>
+
+        {(!datasetsList || datasetsList.length === 0) ? (
+          <p className="text-xs italic text-slate-400">No datasets to delete.</p>
+        ) : (
+          <div className="flex flex-col gap-1.5 max-h-60 overflow-y-auto custom-scrollbar pr-1">
+            {datasetsList.map((dset) => (
+              <div key={dset.id}
+                   className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-lg px-3 py-1.5">
+                <span className="text-xs font-semibold text-slate-700 truncate min-w-0" title={dset.title || 'Untitled'}>
+                  {dset.title || 'Untitled'}
+                  <span className="text-slate-400 font-normal ml-2">
+                    📅 {dset.date || 'No date'} · {dset.testCount || 0} test{(dset.testCount || 0) === 1 ? '' : 's'}
+                  </span>
+                </span>
+                <button
+                  onClick={(e) => deleteDataset(e, dset.id)}
+                  className="shrink-0 text-red-500 hover:text-red-700 hover:bg-red-50 px-2 py-0.5 rounded text-[11px] font-bold border border-red-200 transition-colors"
+                >
+                  Delete
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <button
+          onClick={deleteEmptyDatasets}
+          className="mt-3 w-full md:w-auto bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg shadow-sm transition-colors text-sm"
+        >
+          🗑️ Delete Empty Datasets
+        </button>
+        <p className="text-xs text-red-500 mt-2 font-medium">
+          ⚠️ Deleting is permanent — a confirmation dialog always asks before anything is removed.
+        </p>
+      </div>
+
       {/* --- RENAME TOOL --- */}
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-5 shadow-sm">
         <h4 className="font-bold text-blue-800 mb-3 text-sm">Global Rename</h4>

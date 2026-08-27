@@ -859,6 +859,9 @@ if (customType === 'dosy') {
   const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth > 768);
   const [storages, setStorages] = useState([]);
   const [activeStorageId, setActiveStorageId] = useState(null);
+  // Where the user came from before opening a test page (used by the active
+  // test's "◀ Back" button), e.g. { module: 'project-detail', projectId }.
+  const [returnTarget, setReturnTarget] = useState(null);
   const [storageModal, setStorageModal] = useState(null);
   const [moveModal, setMoveModal] = useState(null);
  const [testCategories, setTestCategories] = useState(PRIMARY_CATEGORIES);
@@ -2006,6 +2009,20 @@ const openDataset = (dset) => {
     });
   };
 
+  // Deletion is intentionally NOT available from the start page: for safety,
+  // data can only be deleted from Definitions → Database Cleanup & Data
+  // management. Any delete request from the start page warns and redirects there.
+  const redirectDeleteToDefinitions = (e, label) => {
+    if (e && e.stopPropagation) e.stopPropagation();
+
+    setDialog({
+      type: 'confirm',
+      title: '⚠️ Deletion only in Definitions',
+      message: `“${label}” cannot be deleted from the start page.\n\nFor safety, data deletion is only possible in the “Definitions → Database Cleanup & Data management” section.\n\nOpen that section now?`,
+      onConfirm: () => setCurrentModule('definitions')
+    });
+  };
+
   const [expandedGroups, setExpandedGroups] = useState({});
 
   const toggleGroup = (key) =>
@@ -2129,6 +2146,15 @@ const openDataset = (dset) => {
     setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1));
 
   const jumpToTest = (testId) => {
+    // Remember where we came from so the test page's "◀ Back" button can
+    // return there (e.g. a project detail page instead of the test list).
+    if (currentModule !== 'active-test') {
+      setReturnTarget({
+        module: currentModule,
+        projectId: currentProjectId,
+        storageId: activeStorageId
+      });
+    }
     setActiveTestId(testId);
     setCurrentModule('active-test');
 
@@ -2340,7 +2366,7 @@ const openDataset = (dset) => {
                 <h3 className="text-lg font-bold text-slate-800 mb-2">{dialog.title}</h3>
               )}
 
-              <p className="text-sm text-slate-600 mb-4">{dialog.message}</p>
+              <p className="text-sm text-slate-600 mb-4 whitespace-pre-line">{dialog.message}</p>
 
               {dialog.type === 'prompt' && (
                 <input
@@ -2536,10 +2562,10 @@ const openDataset = (dset) => {
                 </h2>
 
                 <div className="flex flex-wrap gap-2 w-full md:w-auto">
-                  {/* Delete Empty — superuser only */}
+                  {/* Delete Empty — superuser only (warns + redirects to Definitions) */}
                   {currentUser?.role === 'superuser' && (
                     <button
-                      onClick={deleteEmptyDatasets}
+                      onClick={(e) => redirectDeleteToDefinitions(e, 'Delete Empty Datasets')}
                       className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex-1 md:flex-none items-center justify-center gap-2 cursor-pointer text-sm"
                     >
                       🗑️ Delete Empty
@@ -2624,10 +2650,7 @@ const openDataset = (dset) => {
                                     </button>
 
                                     <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        deleteDataset(e, dset.id);
-                                      }}
+                                      onClick={(e) => redirectDeleteToDefinitions(e, dset.title || groupTitle)}
                                       className="text-slate-500 hover:text-red-600 hover:bg-red-50 px-2 py-1 rounded text-xs font-bold transition-colors text-right"
                                     >
                                       Delete
@@ -2718,6 +2741,7 @@ const openDataset = (dset) => {
               currentProjectId={currentProjectId} setCurrentProjectId={setCurrentProjectId}
               createEmptyTest={createEmptyTest} tests={tests} setTests={setTests}
               setActiveTestId={setActiveTestId} jumpToTest={jumpToTest}
+              operatorNames={operatorNames}
             />)}
 
             {currentModule === 'definitions' && (<DefinitionsModule
@@ -2739,6 +2763,7 @@ const openDataset = (dset) => {
               operators={operators} setOperators={setOperators}
               authSettings={authSettings} setAuthSettings={setAuthSettings}
               currentUser={currentUser} tests={tests} setTests={setTests} handleSetCustomFields={handleSetCustomFields}
+              datasetsList={datasetsList} deleteDataset={deleteDataset} deleteEmptyDatasets={deleteEmptyDatasets}
             />)}
 
             {currentModule === 'agenda' && (<AgendaModule
@@ -2782,9 +2807,11 @@ const openDataset = (dset) => {
               datasetProtocols={datasetProtocols} expandedGroups={expandedGroups} jumpToTest={jumpToTest}
               mandatoryBehavior={mandatoryBehavior} mandatoryRules={mandatoryRules} molecules={molecules}
               nmrExperiments={nmrExperiments} nmrInstruments={nmrInstruments} nmrProbes={nmrProbes}
-              operatorNames={operatorNames} plasmidMeta={plasmidMeta} setActiveStorageId={setActiveStorageId}
+              operatorNames={operatorNames} plasmidMeta={plasmidMeta} returnTarget={returnTarget}
+              setActiveStorageId={setActiveStorageId} setReturnTarget={setReturnTarget}
               setActiveTestId={setActiveTestId} setAppClipboard={setAppClipboard} setCmpColors={setCmpColors}
-              setCurrentModule={setCurrentModule} setCustomCmpds={setCustomCmpds} setCustomConc={setCustomConc}
+              setCurrentModule={setCurrentModule} setCurrentProjectId={setCurrentProjectId}
+              setCustomCmpds={setCustomCmpds} setCustomConc={setCustomConc}
               setExpandedGroups={setExpandedGroups} setMoveModal={setMoveModal} setTests={setTests}
               solvents={solvents} storages={storages} testCategories={testCategories} tests={tests}
               unlockedTestIds={unlockedTestIds} MDTestRenderer={MDTestRenderer}

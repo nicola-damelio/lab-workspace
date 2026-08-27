@@ -35,6 +35,9 @@ export const buildPubFormat = (presetId) => {
   const preset = PUB_FORMAT_PRESETS[presetId] || PUB_FORMAT_PRESETS.nature;
   return {
     preset: presetId,
+    etAlLimit: 0,                   // after how many authors to truncate with "et al." (0 = never)
+    alwaysShowScientists: false,    // keep the lab scientists (user list) even past the cutoff
+    underlineScientists: false,     // underline the lab scientists' names in the citation
     fields: preset.defs.map((def, i) => ({
       id: def[0], enabled: true, order: i, style: def[1], prefix: def[2], suffix: def[3]
     }))
@@ -46,7 +49,16 @@ export const loadPubFormat = () => {
     const raw = localStorage.getItem(PUB_FORMAT_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed && Array.isArray(parsed.fields)) return parsed;
+      if (parsed && Array.isArray(parsed.fields)) {
+        const n = parseInt(parsed.etAlLimit, 10);
+        return {
+          preset: parsed.preset || 'custom',
+          etAlLimit: Number.isFinite(n) && n >= 0 ? n : 0,
+          alwaysShowScientists: !!parsed.alwaysShowScientists,
+          underlineScientists: !!parsed.underlineScientists,
+          fields: parsed.fields
+        };
+      }
     }
   } catch { /* ignore malformed */ }
   return buildPubFormat('nature');
@@ -73,10 +85,56 @@ const pubWrap = (val, style) => {
   return val;
 };
 
-export const pubCitationHtml = (pub, fmt) => {
+const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+}[ch]));
+
+// Split a raw authors string ("Rossi M, Bianchi A and Smith J, et al.") into a
+// clean list of author names, dropping any existing "et al." marker.
+const parseAuthorList = (raw) => String(raw || '')
+  .split(/\s*[,;]+\s*|\s+and\s+/i)
+  .map((s) => s.trim())
+  .filter(Boolean)
+  .filter((s) => !/^et\s*al\.?$/i.test(s));
+
+// Is an author a member of the lab (i.e. one of the user-list scientists)?
+const isLabAuthor = (author, scientists) =>
+  Array.isArray(scientists) && scientists.some((s) => s && authorMatchesCandidate(author, s));
+
+// Build the author-name section of a citation, honouring the format's
+// "et al." cutoff, the "always show the lab scientists" option and the
+// "underline their names" option. Returns { html, text }.
+const renderAuthorNames = (pub, fmt, scientists) => {
+  const authors = parseAuthorList(pub.authors);
+  if (authors.length === 0) return null;
+  const limit = fmt.etAlLimit > 0 ? fmt.etAlLimit : null;
+  let shown = authors;
+  let etAl = false;
+  if (limit && authors.length > limit) {
+    const rest = authors.slice(limit);
+    // Lab scientists past the cutoff are kept (in their original order),
+    // everything else is replaced by "et al."
+    const forced = fmt.alwaysShowScientists ? rest.filter((a) => isLabAuthor(a, scientists)) : [];
+    shown = [...authors.slice(0, limit), ...forced];
+    etAl = true;
+  }
+  const html = shown
+    .map((a) => (fmt.underlineScientists && isLabAuthor(a, scientists) ? `<u>${escapeHtml(a)}</u>` : escapeHtml(a)))
+    .join(', ') + (etAl ? ', et al.' : '');
+  const text = shown.join(', ') + (etAl ? ', et al.' : '');
+  return { html, text };
+};
+
+export const pubCitationHtml = (pub, fmt, scientists) => {
   const ordered = [...fmt.fields].sort((a, b) => a.order - b.order).filter((f) => f.enabled);
   const parts = [];
   ordered.forEach((f) => {
+    if (f.id === 'authors') {
+      const names = renderAuthorNames(pub, fmt, scientists);
+      if (!names) return;
+      parts.push(`${f.prefix || ''}${pubWrap(names.html, f.style)}${f.suffix || ''}`);
+      return;
+    }
     const val = pubFieldValue(pub, f.id);
     if (!val) return;
     parts.push(`${f.prefix || ''}${pubWrap(val, f.style)}${f.suffix || ''}`);
@@ -84,10 +142,16 @@ export const pubCitationHtml = (pub, fmt) => {
   return parts.join(' ');
 };
 
-export const pubCitationText = (pub, fmt) => {
+export const pubCitationText = (pub, fmt, scientists) => {
   const ordered = [...fmt.fields].sort((a, b) => a.order - b.order).filter((f) => f.enabled);
   const parts = [];
   ordered.forEach((f) => {
+    if (f.id === 'authors') {
+      const names = renderAuthorNames(pub, fmt, scientists);
+      if (!names) return;
+      parts.push(`${f.prefix || ''}${names.text}${f.suffix || ''}`);
+      return;
+    }
     const val = pubFieldValue(pub, f.id);
     if (!val) return;
     parts.push(`${f.prefix || ''}${val}${f.suffix || ''}`);
@@ -1493,7 +1557,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                               <div className="text-[10px] font-black uppercase tracking-wide text-slate-400 mb-1">
                                 Formatted citation {pubFormat.preset !== 'custom' ? `(${PUB_FORMAT_PRESETS[pubFormat.preset]?.label || pubFormat.preset})` : '(custom)'}
                               </div>
-                              <div className="text-xs text-slate-800" dangerouslySetInnerHTML={{ __html: pubCitationHtml(p, pubFormat) || '—' }} />
+                              <div className="text-xs text-slate-800" dangerouslySetInnerHTML={{ __html: pubCitationHtml(p, pubFormat, scientists) || '—' }} />
                             </div>
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                               <div>
@@ -1872,8 +1936,17 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
       setPbProjects((prev) => prev.map((p) => (p.name === pubFormatScope ? { ...p, pubFormat: fmt } : p)));
     }
   };
+  const pubCustomFormat = (fields) => ({
+    preset: 'custom',
+    etAlLimit: activeFormat.etAlLimit || 0,
+    alwaysShowScientists: !!activeFormat.alwaysShowScientists,
+    underlineScientists: !!activeFormat.underlineScientists,
+    fields
+  });
   const pubPatchField = (fieldId, patch) =>
-    setActiveFormat({ preset: 'custom', fields: activeFormat.fields.map((f) => (f.id === fieldId ? { ...f, ...patch } : f)) });
+    setActiveFormat(pubCustomFormat(activeFormat.fields.map((f) => (f.id === fieldId ? { ...f, ...patch } : f))));
+  const pubPatchFormat = (patch) =>
+    setActiveFormat({ ...pubCustomFormat(activeFormat.fields), ...patch });
   const pubMoveField = (fieldId, dir) => {
     const fields = [...activeFormat.fields].sort((a, b) => a.order - b.order);
     const idx = fields.findIndex((f) => f.id === fieldId);
@@ -1882,13 +1955,22 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     const tmp = fields[idx].order;
     fields[idx] = { ...fields[idx], order: fields[j].order };
     fields[j] = { ...fields[j], order: tmp };
-    setActiveFormat({ preset: 'custom', fields });
+    setActiveFormat(pubCustomFormat(fields));
   };
-  const samplePub = {
-    authors: 'Rossi M, Bianchi A, Smith J',
-    year: '2024', title: 'Structure and dynamics of antimicrobial peptides in lipid bilayers',
-    journal: 'Journal of Biological Chemistry', volume: '300', pages: '105678', doi: '10.1016/j.jbc.2024.105678'
-  };
+  // Sample citation: a realistic long author list, extended with the current
+  // lab scientists (user list) so the "et al." / always-show / underline
+  // options are visible in the preview.
+  const samplePub = useMemo(() => {
+    const baseAuthors = ['Rossi M', 'Bianchi A', 'Smith J', 'Verdi G', 'Müller K', 'Suzuki H', 'Almeida P', 'Costa L'];
+    const mine = (scientists || [])
+      .filter((s) => s && !baseAuthors.some((b) => authorMatchesCandidate(b, s)))
+      .slice(0, 2);
+    return {
+      authors: [...baseAuthors, ...mine].join(', '),
+      year: '2024', title: 'Structure and dynamics of antimicrobial peptides in lipid bilayers',
+      journal: 'Journal of Biological Chemistry', volume: '300', pages: '105678', doi: '10.1016/j.jbc.2024.105678'
+    };
+  }, [scientists]);
 
   const renderPubFormat = () => (
     <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
@@ -1920,16 +2002,45 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
         <p className="text-sm text-slate-500 mb-3">
           Choose how every citation is built: the order of the fields, the style of each field
           (bold / italic / underline / prefix / suffix) and which fields are shown at all.
-          Formats can be set per project (each project keeps its own) or left to the default.
-          The formatted citations are used in the publications table and in the project documents
-          that reference these publications.
+          You can also cut long author lists with “et al.” after a given number of authors,
+          always keep the lab scientists (user list) in the citation even past that cutoff,
+          and underline their names. Formats can be set per project (each project keeps its
+          own) or left to the default. The formatted citations are used in the publications
+          table and in the project documents that reference these publications.
         </p>
 
         <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-4">
           <div className="text-[10px] font-black uppercase tracking-wide text-slate-400 mb-1">
             Live preview {pubFormatScope !== 'default' ? `— project “${pubFormatScope}”` : '— default'}
           </div>
-          <div className="text-sm text-slate-800" dangerouslySetInnerHTML={{ __html: pubCitationHtml(samplePub, activeFormat) || '—' }} />
+          <div className="text-sm text-slate-800" dangerouslySetInnerHTML={{ __html: pubCitationHtml(samplePub, activeFormat, scientists) || '—' }} />
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-lg p-3 mb-4 flex flex-wrap items-center gap-x-6 gap-y-2">
+          <div className="flex items-center gap-2">
+            <label className="text-[11px] font-bold text-slate-600 whitespace-nowrap"
+                   title="Author position after which the citation is cut short with “et al.” (0 = never truncate)">
+              et al. after
+            </label>
+            <input type="number" min="0" max="99" value={activeFormat.etAlLimit || 0}
+                   onChange={(e) => pubPatchFormat({ etAlLimit: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+                   className="w-16 border border-slate-300 rounded px-1.5 py-0.5 text-[11px] bg-white outline-none" />
+            <span className="text-[10px] text-slate-400 whitespace-nowrap">authors (0 = never)</span>
+          </div>
+          <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 cursor-pointer"
+                 title="The scientists of the user list always keep their name in the citation, even when they come after the “et al.” cutoff">
+            <input type="checkbox" checked={!!activeFormat.alwaysShowScientists}
+                   onChange={(e) => pubPatchFormat({ alwaysShowScientists: e.target.checked })}
+                   className="w-3.5 h-3.5 accent-indigo-600" />
+            Always show lab scientists even after “et al.”
+          </label>
+          <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 cursor-pointer"
+                 title="Underline the names of the scientists from the user list">
+            <input type="checkbox" checked={!!activeFormat.underlineScientists}
+                   onChange={(e) => pubPatchFormat({ underlineScientists: e.target.checked })}
+                   className="w-3.5 h-3.5 accent-indigo-600" />
+            Underline their names
+          </label>
         </div>
 
         <div className="flex flex-col gap-1.5">

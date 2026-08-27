@@ -8,7 +8,8 @@ import { NMR_FITTING_TAB_CONFIG } from './tabConfigs';
 import { toHex, errBarPlugin } from '../data/constants';
 import { rainbowColors } from '../utils/chartStyle';
 import { NMRInstrumentalSetup } from './NMRInstrumentalSetup';
-import {ChartControlBar, SharedChartStylePanel} from './SharedAnalysisTools';
+import { ChartControlBar, SharedChartStylePanel} from './SharedAnalysisTools';
+import { isPointExcluded, togglePointExcluded, clearExcludedForTable, computePointSD } from '../utils/pointTreatment';
 const DIPOLAR_SIM_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -744,19 +745,30 @@ export const ErrInput = ({ label, value, isOverridden, onSave, onReset }) => {
 /* ---------------------------------------------------------------------------
 CHARTS — FULL WIDTH (not side by side)
 --------------------------------------------------------------------------- */
-function DecayChart({ table, colFits, chartCfg, isFs, onToggleFs, chartType = 'line' }) {
+function DecayChart({ table, colFits, chartCfg, isFs, onToggleFs, chartType = 'line', errMode = 'none', fixedSD = '', manualSD = {}, excluded = {}, update = null }) {
     const ref = useRef(null); const chartRef = useRef(null);
     useEffect(() => {
         if (!ref.current) return;
         const ds = [];
         const isHist = chartType === 'hist';
+        const tableId = table.id;
+        // Replicate values per row (across columns) for the "SD" error-bar mode.
+        const rowVals = [];
+        for (let r = 0; r < table.nRows; r++) {
+            const vals = [];
+            for (let cc = 0; cc < table.nCols; cc++) {
+                const v = parseFloat(table.grid[r]?.[cc]);
+                if (isFinite(v)) vals.push(v);
+            }
+            rowVals.push(vals);
+        }
 
         for (let c = 0; c < table.nCols; c++) {
             const color = toHex(rainbowColors(table.nCols)[c % Math.max(1, table.nCols)]);
             const pts = [];
             for (let r = 0; r < table.nRows; r++) {
                 const x = table.delays[r], y = parseFloat(table.grid[r]?.[c]);
-                if (isFinite(x) && isFinite(y)) pts.push({ x, y });
+                if (isFinite(x) && isFinite(y)) pts.push({ x, y, r, key: `${c}:${r}` });
             }
             if (pts.length === 0) continue;
 
@@ -767,8 +779,45 @@ function DecayChart({ table, colFits, chartCfg, isFs, onToggleFs, chartType = 'l
                     ds.push({ label: table.colResidues[c] || `Col ${c + 1}`, data: [{ x: c, y: fit.R_s }], type: 'bar', backgroundColor: color + '99', borderColor: color, borderWidth: 1 });
                 }
             } else {
-                ds.push({ label: table.colResidues[c] || `Col ${c + 1}`, data: pts, showLine: false, pointRadius: chartCfg.ptSize, pointStyle: chartCfg.ptStyle, backgroundColor: color, borderColor: color, type: 'scatter' });
                 const fit = colFits[c]?.fit;
+                const manualKeys = new Set(pts.filter((p) => isPointExcluded(excluded, tableId, p.key)).map((p) => p.key));
+                const errBars = [];
+                pts.forEach((p) => {
+                    p.ex = manualKeys.has(p.key);
+                    let predicted = 0;
+                    if (fit) predicted = fit.modelType === 'inversion-recovery' ? fit.A - fit.B * Math.exp(-fit.R * p.x) : fit.A * Math.exp(-fit.R * p.x);
+                    const sd = computePointSD({
+                        mode: errMode,
+                        fixedSD,
+                        rowValues: (rowVals[p.r] || []),
+                        manualSD: manualSD && manualSD[tableId] && manualSD[tableId][p.key],
+                        y: p.y,
+                        predicted
+                    });
+                    errBars.push({ plus: sd, minus: sd });
+                });
+                ds.push({
+                    label: table.colResidues[c] || `Col ${c + 1}`,
+                    data: pts.map((p) => ({ x: p.x, y: p.y })),
+                    errorBars: errBars,
+                    showLine: false,
+                    pointRadius: chartCfg.ptSize,
+                    pointStyle: chartCfg.ptStyle,
+                    backgroundColor: color,
+                    borderColor: color,
+                    pointBackgroundColor: pts.map((p) => (p.ex ? '#ffffff' : color)),
+                    pointBorderColor: pts.map((p) => (p.ex ? '#ef4444' : color)),
+                    pointBorderWidth: pts.map((p) => (p.ex ? 2 : 1)),
+                    _pointKeys: pts.map((p) => p.key),
+                    _tableId: tableId,
+                    onClick: (event, elements) => {
+                        if (!elements || !elements.length || !update) return;
+                        const el = elements[0];
+                        const d = el.dataset;
+                        const k = d && d._pointKeys && d._pointKeys[el.index];
+                        if (k && d._tableId) update({ nmrExcluded: togglePointExcluded(excluded, d._tableId, k) });
+                    }
+                });
                 if (fit && pts.length >= 2) {
                     const xmin = Math.min(...pts.map((p) => p.x)), xmax = Math.max(...pts.map((p) => p.x)), curve = [];
                     for (let i = 0; i <= 60; i++) {
@@ -799,7 +848,7 @@ function DecayChart({ table, colFits, chartCfg, isFs, onToggleFs, chartType = 'l
             }
         });
         return () => { if (chartRef.current) chartRef.current.destroy(); };
-    }, [table, colFits, chartCfg, chartType]);
+    }, [table, colFits, chartCfg, chartType, errMode, fixedSD, manualSD, excluded, update]);
     return (
         <div className={`flex flex-col ${isFs ? FS_CLASSES + ' p-6' : 'relative h-[350px]'}`}>
             <div className="flex justify-between items-start mb-2 z-10">
@@ -1114,9 +1163,12 @@ export const NMRFittingsTestRenderer = ({ activeTest = {}, updateActiveTest, Tes
 
     const runFitForTable = (t) => {
         const unit = t.delayUnit === 'ms' ? 1e-3 : 1; const cols = [];
+        const excludedMap = activeTest.nmrExcluded || {};
         for (let c = 0; c < t.nCols; c++) {
             const xs = [], ys = [];
             for (let r = 0; r < t.nRows; r++) {
+                const key = `${c}:${r}`;
+                if (isPointExcluded(excludedMap, t.id, key)) continue; // manually removed point
                 const x = Number(t.delays[r]), y = parseFloat(t.grid[r]?.[c]);
                 if (isFinite(x) && isFinite(y)) { xs.push(x); ys.push(y); }
             }
@@ -1331,11 +1383,102 @@ const renderTableAnalysis = (t, tIndex) => {
                         </div>
                     )}
 
+                    {/* Error bars + point treatment (as in the plate tests) */}
+                    <div className="mt-4 p-4 bg-teal-50 border border-teal-200 rounded-lg shadow-sm flex flex-col gap-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs font-black text-teal-800 uppercase">Error bars:</span>
+                            <select value={activeTest.nmrErrMode || 'none'} onChange={(e) => update({ nmrErrMode: e.target.value })}
+                                className="border border-slate-300 rounded text-[11px] px-1 py-1 outline-none bg-white font-semibold text-slate-700">
+                                <option value="none">None</option>
+                                <option value="fixed">Fixed</option>
+                                <option value="sd">Std. deviation (replicates)</option>
+                                <option value="touch">Touch curve</option>
+                            </select>
+                            {activeTest.nmrErrMode === 'fixed' && (
+                                <input type="number" step="any" min="0" value={activeTest.nmrFixedSDStr ?? ''}
+                                    onChange={(e) => update({ nmrFixedSDStr: e.target.value })}
+                                    placeholder="±SD" className="w-20 border border-slate-300 rounded px-1.5 py-1 text-[11px] outline-none font-mono" />
+                            )}
+                            <button type="button" onClick={() => {
+                                let next = activeTest.nmrExcluded || {};
+                                next = clearExcludedForTable(next, t.id);
+                                update({ nmrExcluded: next });
+                            }}
+                                className="ml-auto text-[10px] font-bold text-orange-700 border border-orange-300 rounded px-2 py-1 hover:bg-orange-100 bg-white shadow-sm transition-colors"
+                                title="Re-include every manually excluded point of this table">
+                                ↩️ Restore all points
+                            </button>
+                            <button type="button" onClick={() => runFitForTable(t)}
+                                className="text-[10px] font-bold bg-blue-600 hover:bg-blue-700 text-white rounded px-2 py-1 shadow-sm transition-colors">
+                                ▶️ Recompute fit
+                            </button>
+                        </div>
+
+                        {/* Points editor — exclude points + manual per-point ±SD */}
+                        <div className="overflow-auto border border-slate-200 rounded-lg bg-white" data-star-key={`nmr-points-${t.id}`}>
+                            <table className="border-collapse text-xs w-full">
+                                <thead>
+                                    <tr className="bg-slate-100 text-slate-600">
+                                        <th className="p-1.5 border border-slate-200 text-left">{t.relaxType === 'DOSY' ? 'b / G²' : 'Delay'}</th>
+                                        {Array.from({ length: t.nCols }, (_, c) => (
+                                            <th key={c} className="p-1.5 border border-slate-200">{t.colResidues[c] || `Col ${c + 1}`}</th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {Array.from({ length: t.nRows }, (_, r) => (
+                                        <tr key={r}>
+                                            <td className="p-1.5 border border-slate-200 font-mono font-bold text-slate-700">{t.delays[r]}</td>
+                                            {Array.from({ length: t.nCols }, (_, c) => {
+                                                const key = `${c}:${r}`;
+                                                const isExcl = isPointExcluded(activeTest.nmrExcluded || {}, t.id, key);
+                                                return (
+                                                    <td key={c} className={`p-1.5 border border-slate-200 ${isExcl ? 'bg-red-50 opacity-50' : ''}`}>
+                                                        <div className="flex flex-col gap-1 min-w-[120px]">
+                                                            <span className="font-mono">{t.grid[r]?.[c] ?? '-'}</span>
+                                                            <div className="flex items-center gap-1">
+                                                                <input type="number" step="any" min="0" placeholder="±SD"
+                                                                    value={activeTest.nmrManualSD?.[t.id]?.[key] ?? ''}
+                                                                    onChange={(e) => {
+                                                                        const val = e.target.value;
+                                                                        const series = { ...((activeTest.nmrManualSD || {})[t.id] || {}) };
+                                                                        if (val === '') delete series[key];
+                                                                        else series[key] = Number(val);
+                                                                        update({ nmrManualSD: { ...(activeTest.nmrManualSD || {}), [t.id]: series } });
+                                                                    }}
+                                                                    className="w-14 border border-slate-300 rounded px-1 py-0.5 text-center text-[10px] outline-none font-mono" />
+                                                                <button type="button"
+                                                                    onClick={() => update({ nmrExcluded: togglePointExcluded(activeTest.nmrExcluded || {}, t.id, key) })}
+                                                                    className={`text-[10px] font-black px-1.5 py-0.5 rounded border transition-colors ${isExcl ? 'bg-red-100 text-red-600 border-red-300' : 'text-slate-400 border-slate-200 hover:text-red-500 hover:border-red-200'}`}
+                                                                    title="Exclude / re-include this point">
+                                                                    {isExcl ? 'EXCL' : '×'}
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                );
+                                            })}
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                        <p className="text-[10px] text-teal-700/70 italic">
+                            Excluded points are drawn hollow and left out of the fit. Click any point on the decay plot to exclude / re-include it.
+                            “Std. deviation” uses the spread across columns (replicates); “Touch curve” sizes each bar to just reach the fit.
+                        </p>
+                    </div>
+
                     {/* Charts — FULL WIDTH, one per line */}
                     <div className="flex flex-col gap-4 relative">
                         {fsPanel === `decay_${t.id}` && <div className={OVERLAY_CLASSES} onClick={() => setFsPanel(null)}></div>}
                         <div className={`border border-slate-200 rounded-lg bg-white ${fsPanel === `decay_${t.id}` ? 'z-[999999]' : 'p-3'}`}>
-                            <DecayChart table={t} colFits={colFits} chartCfg={chartCfg} isFs={fsPanel === `decay_${t.id}`} onToggleFs={() => setFsPanel(fsPanel === `decay_${t.id}` ? null : `decay_${t.id}`)} chartType={chartType} />
+                            <DecayChart table={t} colFits={colFits} chartCfg={chartCfg} isFs={fsPanel === `decay_${t.id}`} onToggleFs={() => setFsPanel(fsPanel === `decay_${t.id}` ? null : `decay_${t.id}`)} chartType={chartType}
+                                errMode={activeTest.nmrErrMode || 'none'}
+                                fixedSD={activeTest.nmrFixedSDStr || ''}
+                                manualSD={activeTest.nmrManualSD || {}}
+                                excluded={activeTest.nmrExcluded || {}}
+                                update={update} />
                         </div>
 
                         {fsPanel === `param_${t.id}` && <div className={OVERLAY_CLASSES} onClick={() => setFsPanel(null)}></div>}

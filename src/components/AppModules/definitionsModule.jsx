@@ -24,7 +24,8 @@ export const DefinitionsModule = ({
   customFields, mandatoryRules, setMandatoryRules,
   mandatoryBehavior, setMandatoryBehavior,
   operators, setOperators, authSettings, setAuthSettings,
-  currentUser, tests, setTests, handleSetCustomFields
+  currentUser, tests, setTests, handleSetCustomFields,
+  datasetsList, deleteDataset, deleteEmptyDatasets
 }) => (
 
               <div className="h-full min-h-0 overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
@@ -142,7 +143,7 @@ export const DefinitionsModule = ({
                     </div>
                   </CollapsibleSection>
 
-<CollapsibleSection title="Database Cleanup & Merging" subtitle="Fix misclassifications, rename items globally, and merge duplicates across all tests and multiwell plates." defaultOpen={false}>
+<CollapsibleSection title="Database Cleanup & Data management" subtitle="Rename items globally, merge duplicates, and delete datasets — this is the only area of the program where data deletion is available." defaultOpen={false}>
                      <DatabaseCleanupManager 
                         tests={tests}
                         setTests={setTests}
@@ -154,6 +155,9 @@ export const DefinitionsModule = ({
                         setCustomCellLines={setCustomCellLines}
                         setCellLineMeta={setCellLineMeta}
                         cellLineMeta={cellLineMeta}
+                        datasetsList={datasetsList}
+                        deleteDataset={deleteDataset}
+                        deleteEmptyDatasets={deleteEmptyDatasets}
                      />
                   </CollapsibleSection>
 

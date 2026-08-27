@@ -105,7 +105,9 @@ export const ProjectsModule = ({
       bibliography: [],
       references: [],
       figures: { background: [], discussion: [], conclusions: [] },
-      docs: { background: [], discussion: [], conclusions: [] }
+      docs: { background: [], discussion: [], conclusions: [] },
+      authorizedPeople: [],
+      comments: []
     };
     const nextProjects = [...projects, prj];
     setProjects(nextProjects);
@@ -222,6 +224,12 @@ export const ProjectsModule = ({
                 <div className="flex items-center gap-2 text-[10px] font-bold text-slate-500">
                   <span className="bg-slate-100 rounded-full px-2 py-0.5">🧪 {(p.experiments || []).length} experiments</span>
                   <span className="bg-slate-100 rounded-full px-2 py-0.5">📚 {(p.references || []).length} references</span>
+                  {(() => {
+                    const open = (p.comments || []).filter((c) => !c.resolved).length;
+                    return open > 0 ? (
+                      <span className="bg-amber-100 text-amber-700 rounded-full px-2 py-0.5">💬 {open} open</span>
+                    ) : null;
+                  })()}
                 </div>
                 <div className="flex items-center gap-1.5 mt-auto pt-1 no-print">
                   <button onClick={() => { setCurrentProjectId(p.id); setCurrentModule('project-detail'); }}
