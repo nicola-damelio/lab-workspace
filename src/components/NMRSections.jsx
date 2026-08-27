@@ -1474,7 +1474,7 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
   return (
     <>
       {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setExpandedPanel(null)} />}
-      <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'break-inside-avoid'}`} style={!isExpanded ? { height: aspect ? Math.max(260, Math.round((boxW || 400) * aspect)) : `${heightPx}px` } : undefined}>
+      <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'break-inside-avoid'}`} style={!isExpanded ? { height: aspect ? Math.max(260, Math.round((boxW || 400) * aspect)) : `${heightPx + labelAreaH}px` } : undefined}>
         <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
           <div className="flex items-center gap-4">
             <h4 className="font-bold text-slate-700">{title}</h4>
@@ -4834,9 +4834,9 @@ const dom = brukerZoomDom || xFull;
       setBrukerRefL(null); setBrukerRefR(null);
     };
 
-    const PANEL_H = expandedBruker ? '100%' : 260;
-    const topMargin = 10;
     const labelAreaH = (showPeakLabels && peakMarkers.length > 0) ? Math.min(185, 44 + peakMarkers.length * 22) : 0;
+    const topMargin = 10;
+    const PANEL_H = expandedBruker ? '100%' : 260 + labelAreaH;
 
     return (
       <div className={'bg-white border border-sky-200 rounded-xl p-3 flex flex-col gap-2' + (expandedBruker ? ' fixed inset-2 z-50 shadow-2xl' : '')}>
