@@ -146,6 +146,26 @@ export const getDirectImageUrl = (url) => {
     } catch { return url; }
 };
 
+/** Best single URL to show a Drive-hosted image inside an <img> tag
+ *  (drive.google.com/file/d/ID/view pages cannot be shown as images). */
+export const getRenderableDriveUrl = (url) => {
+    try {
+        const u = String(url || '');
+        if (u.includes('drive.google.com') || u.includes('docs.google.com') || u.includes('lh3.googleusercontent.com')) {
+            const m = u.match(/\/file\/d\/([^/?]+)/) || u.match(/[?&]id=([^&#]+)/) || u.match(/\/d\/([^/?]+)/);
+            if (m && m[1]) return `https://lh3.googleusercontent.com/d/${m[1]}`;
+        }
+        return u;
+    } catch { return url; }
+};
+
+/** Rewrite every <img src="https://drive.google.com/..."> inside stored rich-text
+ *  HTML into a URL the browser can actually display (idempotent). */
+export const repairContentImages = (html) => {
+    if (!html || !String(html).includes('drive.google.com')) return html;
+    return String(html).replace(/src="([^"]*drive\.google\.com[^"]*)"/g, (full, u) => `src="${getRenderableDriveUrl(u)}"`);
+};
+
 export const parsePayload = (exp) => {
     if (!exp || !exp.payload) return null;
     try {

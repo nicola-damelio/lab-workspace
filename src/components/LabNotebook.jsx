@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { getDirectImageUrl } from '../data/constants';
+import { getDirectImageUrl, repairContentImages } from '../data/constants';
 import { FCSDataVisualizations } from './FlowCytometrySections';
 import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES } from '../data/testTypes';
 import { SearchableSelect } from './SearchableSelect';
@@ -312,10 +312,10 @@ export const NotebookTestItem = ({
         {(localTest.comments || localTest.report) && (
           <RemovablePanel title="Report" visible={showRepLocal} setVisible={setShowRepLocal}>
             {localTest.comments && (
-              <div className="text-xs text-slate-700 prose prose-sm max-w-none mb-2" dangerouslySetInnerHTML={{ __html: localTest.comments }} />
+              <div className="text-xs text-slate-700 prose prose-sm max-w-none mb-2" dangerouslySetInnerHTML={{ __html: repairContentImages(localTest.comments) }} />
             )}
             {localTest.report && (
-              <div className="text-xs text-slate-700 bg-slate-50 p-2 rounded mb-2" dangerouslySetInnerHTML={{ __html: localTest.report }} />
+              <div className="text-xs text-slate-700 bg-slate-50 p-2 rounded mb-2" dangerouslySetInnerHTML={{ __html: repairContentImages(localTest.report) }} />
             )}
           </RemovablePanel>
         )}

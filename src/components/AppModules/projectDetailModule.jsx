@@ -7,6 +7,7 @@ import { loadProjects, saveProjects, loadPublications, TEST_TYPE_OPTIONS, testTy
 import { suggestDriveFileName, openDrive } from '../../utils/driveNaming';
 import { DriveUploadButton } from '../DriveUpload';
 import { markAttachmentsDeleted, renameDriveFilesFor } from '../../utils/driveUpload';
+import { repairContentImages } from '../../data/constants';
 
 /* =========================================================================
    PROJECT DETAIL — a project page with subsections:
@@ -993,9 +994,9 @@ export const ProjectDetailModule = ({
                    : docMode === 'suggest' ? 'border-2 border-dashed border-violet-400 outline-none'
                      : 'border border-slate-200'}`}>
             {project.docSuggestion && docMode === 'view' ? (
-              <div dangerouslySetInnerHTML={{ __html: project.docSuggestion.markedHtml }} />
+              <div dangerouslySetInnerHTML={{ __html: repairContentImages(project.docSuggestion.markedHtml) }} />
             ) : project.exportDocHtml ? (
-              <div dangerouslySetInnerHTML={{ __html: project.exportDocHtml }} />
+              <div dangerouslySetInnerHTML={{ __html: repairContentImages(project.exportDocHtml) }} />
             ) : (
               <>
             <h1 className="text-2xl font-black text-slate-900 mb-1">📁 {project.name}</h1>
@@ -1006,7 +1007,7 @@ export const ProjectDetailModule = ({
             {sectionBlocks.map((s) => (
               <div key={s.id} className="mb-6">
                 <h2 className="text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">{s.title}</h2>
-                {s.html ? <div className="text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: s.html }} />
+                {s.html ? <div className="text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: repairContentImages(s.html) }} />
                         : <p className="text-xs italic text-slate-400">—</p>}
                 {renderFigures(sectionFigures(s.id))}
                 {renderDocs(sectionDocs(s.id))}

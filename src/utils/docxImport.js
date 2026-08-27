@@ -16,6 +16,7 @@
 import { unzipSync, strFromU8 } from 'fflate';
 import { uploadLocalFile, getDriveToken, withExtension } from './driveUpload';
 import { suggestDriveFileName } from './driveNaming';
+import { getRenderableDriveUrl } from '../data/constants';
 
 const REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 
@@ -220,16 +221,24 @@ export const docxToHtml = async ({ arrayBuffer, naming = {} }) => {
     }
   });
 
-  // Merge an image with the caption paragraph that follows it ("Figure 1: …").
+  // Merge an image with its caption ("Figure 1: …" / "Figura 1: …"). The caption
+  // normally follows the image, but some documents put it above — both are handled.
+  const capRe = /^(fig(ura)?\.?\s*\d*[\s:.\-–—]*)/i;
   const merged = [];
   for (let i = 0; i < blocks.length; i++) {
     const b = blocks[i];
     if (b.type === 'img') {
       let caption = '';
       const next = blocks[i + 1];
-      if (next && next.type === 'text' && /^(fig(ure)?\.?\s*\d*\s*[:.-]?)/i.test(stripTags(next.html))) {
+      if (next && next.type === 'text' && capRe.test(stripTags(next.html))) {
         caption = stripTags(next.html).trim();
         i++;
+      } else {
+        const prev = merged[merged.length - 1];
+        if (prev && prev.type === 'text' && capRe.test(stripTags(prev.html))) {
+          caption = stripTags(prev.html).trim();
+          merged.pop();
+        }
       }
       merged.push({ type: 'fig', idx: b.idx, caption });
     } else {
@@ -247,14 +256,12 @@ export const docxToHtml = async ({ arrayBuffer, naming = {} }) => {
   merged.forEach((b) => {
     if (b.type === 'fig') {
       const r = results[b.idx] || {};
-      const imgSrc = r.url ? escapeHtml(r.url) : '';
+      const imgSrc = r.url ? escapeHtml(getRenderableDriveUrl(r.url)) : '';
       html += `<figure style="margin:14px 0;text-align:center;break-inside:avoid;">`;
       if (imgSrc) {
-        html += `<img src="${imgSrc}" alt="${escapeHtml(r.name || 'figure')}" style="max-width:100%;height:auto;border:1px solid #e2e8f0;border-radius:8px;background:#fff;box-shadow:0 1px 3px rgba(15,23,42,0.08);"/>`;
+        html += `<img src="${imgSrc}" alt="${escapeHtml(r.name || 'figure')}" style="display:block;margin:0 auto;max-width:100%;height:auto;border:1px solid #e2e8f0;border-radius:8px;background:#fff;box-shadow:0 1px 3px rgba(15,23,42,0.08);"/>`;
       }
-      if (b.caption) {
-        html += `<figcaption style="font-size:12px;color:#475569;margin-top:4px;">${escapeHtml(b.caption)}</figcaption>`;
-      }
+      html += `<figcaption style="font-size:12px;color:#475569;margin-top:4px;min-height:18px;">${b.caption ? escapeHtml(b.caption) : '&nbsp;'}</figcaption>`;
       html += '</figure>';
     } else {
       html += b.html;

@@ -1098,7 +1098,18 @@ if (customType === 'dosy') {
           alert('Google sign-in succeeded, but Google blocked Drive access. Check that the OAuth client has the drive.file scope enabled.');
         }
       } else {
-        alert('Google Drive sign-in was cancelled or failed.');
+        const origin = (() => { try { return window.location.origin || ''; } catch { return ''; } })();
+        alert(
+          'Google Drive sign-in was cancelled or failed. ' +
+          (origin
+            ? '\n\nIf Google shows “no registered origin / invalid_client”:\n' +
+              '  1) In Google Cloud Console → APIs & Services → Credentials,\n' +
+              '  2) open your Web OAuth client,\n' +
+              '  3) add this to “Authorized JavaScript origins” (no trailing slash):\n' +
+              `     ${origin}\n` +
+              '  4) Save, then try Connect Drive again.'
+            : 'Check that the OAuth client is a Web application client with the right authorized origins.')
+        );
       }
       return;
     }

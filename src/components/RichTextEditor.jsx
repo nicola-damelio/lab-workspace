@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState } from 'react';
 import { suggestDriveFileName, getDriveFolderUrl, setDriveFolderUrl, openDrive, copyText } from '../utils/driveNaming';
 import { DriveUploadButton } from './DriveUpload';
 import { docxToHtml } from '../utils/docxImport';
+import { getRenderableDriveUrl, repairContentImages } from '../data/constants';
 
 export const RichTextEditor = ({
   value, onChange, placeholder, toolbarExtra = [],
@@ -20,7 +21,7 @@ export const RichTextEditor = ({
     // Full-path suggested file name for the figure being inserted (figure1, figure2, ...)
     const figureSuffix = `figure${(editorRef.current ? editorRef.current.querySelectorAll('figure').length : 0) + 1}`;
     const figureSuggestedName = suggestDriveFileName({ ...(fileNaming || {}), suffix: figureSuffix });
-    useEffect(() => { if (editorRef.current && editorRef.current.innerHTML !== value) editorRef.current.innerHTML = value || ''; }, [value]);
+    useEffect(() => { if (editorRef.current && editorRef.current.innerHTML !== value) editorRef.current.innerHTML = repairContentImages(value || ''); }, [value]);
     const execCmd = (cmd, val=null) => { document.execCommand(cmd, false, val); onChange(editorRef.current.innerHTML); editorRef.current.focus(); };
     const storeSel = () => {
         const sel = window.getSelection();
@@ -142,11 +143,9 @@ export const RichTextEditor = ({
         if (!url) return;
         const caption = String(figureDraft.caption || '').trim();
         const alt = escapeHtml(caption || 'Figure');
-        const imgSrc = escapeHtml(url);
-        const figCaption = caption
-            ? `<figcaption style="font-size:12px;color:#475569;margin-top:4px;">${escapeHtml(caption)}</figcaption>`
-            : '';
-        insertHtml(`<figure style="margin:14px 0;text-align:center;break-inside:avoid;"><img src="${imgSrc}" alt="${alt}" style="max-width:100%;height:auto;border:1px solid #e2e8f0;border-radius:8px;background:#fff;box-shadow:0 1px 3px rgba(15,23,42,0.08);"/>${figCaption}</figure>`);
+        const imgSrc = escapeHtml(getRenderableDriveUrl(url));
+        const figCaption = `<figcaption style="font-size:12px;color:#475569;margin-top:4px;min-height:18px;">${caption ? escapeHtml(caption) : '&nbsp;'}</figcaption>`;
+        insertHtml(`<figure style="margin:14px 0;text-align:center;break-inside:avoid;"><img src="${imgSrc}" alt="${alt}" style="display:block;margin:0 auto;max-width:100%;height:auto;border:1px solid #e2e8f0;border-radius:8px;background:#fff;box-shadow:0 1px 3px rgba(15,23,42,0.08);"/>${figCaption}</figure>`);
         setFigureDraft(null);
     };
     // Notify parents (and the app) that the user started/stopped editing this text,
@@ -431,7 +430,7 @@ export const RichTextEditor = ({
 
                         {figureDraft.url && String(figureDraft.url).trim() !== '' && (
                             <div className="relative h-40 rounded-md overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center">
-                                <img src={String(figureDraft.url).trim()} alt="Preview" referrerPolicy="no-referrer"
+                                <img src={getRenderableDriveUrl(String(figureDraft.url).trim())} alt="Preview" referrerPolicy="no-referrer"
                                      className="w-full h-full object-contain absolute inset-0"
                                      onError={(e) => { e.currentTarget.style.display = 'none'; }} />
                                 <span className="text-[10px] text-slate-400 italic px-2">Preview unavailable</span>
