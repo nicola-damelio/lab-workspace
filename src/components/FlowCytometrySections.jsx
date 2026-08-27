@@ -2,6 +2,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
+import { uploadLocalFile, withExtension, getDriveToken } from '../utils/driveUpload';
 import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LineChart, Line, ReferenceArea} from 'recharts';
 import { ChartControlBar, SharedChartStylePanel } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
@@ -1262,7 +1263,36 @@ export const Data = ({ ctx }) => {
           });
       }
 
-      setFcsMsg(`✅ Successfully loaded ${results.length} file(s).`);
+      // Archive the RAW .fcs file(s) to Google Drive automatically (best-effort).
+      const driveConnected = getDriveToken();
+      let driveSaved = 0;
+      if (driveConnected) {
+        const driveCtx = {
+          project: (activeTest.projectNames || [])[0] || '',
+          test: activeTest.name || activeTest.instanceName || '',
+          section: 'Data',
+          subsection: 'Flow Cytometry'
+        };
+        for (let i = 0; i < results.length; i++) {
+          const file = results[i].file;
+          try {
+            const base = String(file.name || '').replace(/\.[^/.]+$/, '');
+            const suffix = results.length > 1 ? `fcs${i + 1}` : 'fcs';
+            const name = withExtension(
+              suggestDriveFileName({ ...driveCtx, title: base, suffix }),
+              file.name || 'fcs'
+            );
+            await uploadLocalFile({ name, mimeType: file.type || 'application/octet-stream', file, ctx: { ...driveCtx, title: base, suffix } });
+            driveSaved++;
+          } catch (err) {
+            console.warn('FCS Drive archive failed:', err && err.message);
+          }
+        }
+      }
+
+      setFcsMsg(driveConnected
+        ? `✅ Successfully loaded ${results.length} file(s) — ${driveSaved} saved to Google Drive.`
+        : `✅ Successfully loaded ${results.length} file(s). (Drive not connected — raw files not archived.)`);
       setUpdater(u => u + 1);
     } catch (err) {
       setFcsMsg(`⚠️ Error: ${err.message}`);
