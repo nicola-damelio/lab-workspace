@@ -1285,9 +1285,9 @@ const PeakLabelOverlay = ({ markers, dom, marginLeft, marginRight, marginTop, ma
 
   const visible = markers.filter(m => m.ppm >= domLo && m.ppm <= domHi);
 
-  const LABEL_H = 14;
-  const LABEL_PAD = 4;
-  const FONT_SIZE = 7;
+  const LABEL_H = 20;
+  const LABEL_PAD = 6;
+  const FONT_SIZE = 11;
   const ARROW_LEN = 10;
   const TICK_LEN = 6;
 
@@ -1296,12 +1296,12 @@ const PeakLabelOverlay = ({ markers, dom, marginLeft, marginRight, marginTop, ma
 
   sorted.forEach(m => {
     const cx = ppmToX(m.ppm);
-    const textW = m.label.length * FONT_SIZE * 0.55 + LABEL_PAD * 2;
+    const textW = m.label.length * FONT_SIZE * 0.6 + LABEL_PAD * 2;
     let bestY = null;
-    for (let row = 0; row < 5; row++) {
+    for (let row = 0; row < 8; row++) {
       const candidateY = marginTop - TICK_LEN - ARROW_LEN - LABEL_H - row * (LABEL_H + 2);
       if (candidateY < 2) continue;
-      const overlap = placed.some(p => p.row === row && Math.abs(p.cx - cx) < (textW / 2 + p.tw / 2 + 2));
+      const overlap = placed.some(p => p.row === row && Math.abs(p.cx - cx) < (textW / 2 + p.tw / 2 + 3));
       if (!overlap) {
         bestY = candidateY;
         placed.push({ cx, cy: candidateY, tw: textW, row, label: m.label });
@@ -1468,7 +1468,7 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
     return markers;
   }, [processedData, simShowLabels, simLabelFormat, simLabelDim]);
 
-  const labelAreaH = (simShowLabels && peakMarkers.length > 0) ? 55 : 0;
+  const labelAreaH = (simShowLabels && peakMarkers.length > 0) ? Math.min(185, 44 + peakMarkers.length * 22) : 0;
   const activeMargin = { ...CHART_MARGIN_1D, top: CHART_MARGIN_1D.top + labelAreaH };
   
   return (
@@ -1564,7 +1564,7 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
 };
 
 const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setExpandedPanel, panelId, diagonalColor, selectedKeys, manualKeys = [], aspect = 1, fs = 11, simCfg = {} }) => {
-  const { simShowLabels, simLabelFormat, simLabelDim, simLabelFontSize = 10 } = simCfg;
+  const { simShowLabels, simLabelFormat, simLabelDim, simLabelFontSize = 12 } = simCfg;
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState([0, 11]);
   const [yDomain, setYDomain] = useState([0, 11]);
@@ -1620,14 +1620,16 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
     const used = [];
     return crossPeakData.map(p => {
       let dx = 0, dy = 0, rad = 1;
-      while(used.some(u => Math.abs(u.x - (p.x + dx)) < 0.4 && Math.abs(u.y - (p.y + dy)) < 0.4)) {
+      while(used.some(u => Math.abs(u.x - (p.x + dx)) < 0.65 && Math.abs(u.y - (p.y + dy)) < 0.55)) {
          const angle = rad * Math.PI / 4;
-         dx = (Math.ceil(rad/8) * 0.4) * Math.cos(angle);
-         dy = (Math.ceil(rad/8) * 0.4) * Math.sin(angle);
+         const step = Math.ceil(rad/8);
+         dx = step * 0.65 * Math.cos(angle);
+         dy = step * 0.55 * Math.sin(angle);
          rad++;
+         if (rad > 80) break;
       }
       used.push({ x: p.x + dx, y: p.y + dy });
-      return { ...p, labelDx: dx * 35, labelDy: dy * 35 };
+      return { ...p, labelDx: dx * 42, labelDy: dy * 42 };
     });
   }, [crossPeakData]);
   
@@ -1708,7 +1710,7 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
 };
 
 const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panelId, selectedKeys, manualKeys = [], yAxisLabel = '¹³C F1 (ppm)', yDomainInit = [0, 220], yTicks = TICKS_13C, aspect = 1, fs = 11, simCfg = {} }) => {
-  const { simShowLabels, simLabelFormat, simLabelDim, simLabelFontSize = 10 } = simCfg;
+  const { simShowLabels, simLabelFormat, simLabelDim, simLabelFontSize = 12 } = simCfg;
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState([0, 11]);
   const [yDomain, setYDomain] = useState(yDomainInit);
@@ -1765,14 +1767,19 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
     const yRange = yDomainInit[1] - yDomainInit[0];
     return crossPeakData.map(p => {
       let dx = 0, dy = 0, rad = 1;
-      while(used.some(u => Math.abs(u.x - (p.x + dx)) < 0.4 && Math.abs(u.y - (p.y + dy)) < (yRange/25))) {
+      // Search a spiral of positions until the label does not collide with any
+      // previously placed label or another peak. Collision cells are enlarged
+      // (labels are wider than the marker itself).
+      while(used.some(u => Math.abs(u.x - (p.x + dx)) < 0.75 && Math.abs(u.y - (p.y + dy)) < (yRange/15))) {
          const angle = rad * Math.PI / 4;
-         dx = (Math.ceil(rad/8) * 0.4) * Math.cos(angle);
-         dy = (Math.ceil(rad/8) * (yRange/25)) * Math.sin(angle);
+         const step = Math.ceil(rad/8);
+         dx = step * 0.75 * Math.cos(angle);
+         dy = step * (yRange/15) * Math.sin(angle);
          rad++;
+         if (rad > 80) break;
       }
       used.push({ x: p.x + dx, y: p.y + dy });
-      return { ...p, labelDx: dx * 35, labelDy: dy * 12 };
+      return { ...p, labelDx: dx * 42, labelDy: dy * 16 };
     });
   }, [crossPeakData, yDomainInit]);
   
@@ -4829,7 +4836,7 @@ const dom = brukerZoomDom || xFull;
 
     const PANEL_H = expandedBruker ? '100%' : 260;
     const topMargin = 10;
-    const labelAreaH = (showPeakLabels && peakMarkers.length > 0) ? 55 : 0;
+    const labelAreaH = (showPeakLabels && peakMarkers.length > 0) ? Math.min(185, 44 + peakMarkers.length * 22) : 0;
 
     return (
       <div className={'bg-white border border-sky-200 rounded-xl p-3 flex flex-col gap-2' + (expandedBruker ? ' fixed inset-2 z-50 shadow-2xl' : '')}>
@@ -6442,7 +6449,7 @@ export const SimulationsSection = ({ ctx }) => {
   // Always an ARRAY (the spectrum plots call `.includes` on it) — an empty
   // array when the "Assigned atoms" highlight is off, never a Set.
   const manualKeys = useMemo(() => (showAssignedFlag ? getManualKeys(d.shifts) : []), [d.shifts, showAssignedFlag]);
-  const simCfg = { fontSize: 11, h1D: 300, aspect2D: 1, simShowLabels: false, simLabelFormat: 'resNum_code_atom', simLabelDim: 'both', simLabelFontSize: 10, ...(activeTest.simChartCfg || {}) };
+  const simCfg = { fontSize: 11, h1D: 300, aspect2D: 1, simShowLabels: false, simLabelFormat: 'resNum_code_atom', simLabelDim: 'both', simLabelFontSize: 12, ...(activeTest.simChartCfg || {}) };
   const setCfg = (patch) => updateActiveTest({ simChartCfg: { ...simCfg, ...patch } });
   if (d.parsedSeq.length === 0 && d.moleculeType !== 'organic') {
     return <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">Enter a sequence / select a molecule (in Experiment Setup) to generate simulated spectra.</div>;

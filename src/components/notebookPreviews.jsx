@@ -463,7 +463,7 @@ const simCfg = {
     simShowLabels: false,
     simLabelFormat: 'resNum_code_atom',
     simLabelDim: 'both',
-    simLabelFontSize: 10,
+    simLabelFontSize: 12,
     ...(test.simChartCfg || {})
   };
 const has = (id) => selectedTypes.includes(id);

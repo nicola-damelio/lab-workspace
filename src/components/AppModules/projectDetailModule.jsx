@@ -31,12 +31,123 @@ const SectionCard = ({ title, badge, open, onToggle, children }) => (
   </section>
 );
 
+// Suggestion-mode diff helpers: produce a marked-up copy of the document HTML
+// where inserted text is wrapped in <ins class="doc-ins"> and removed text in
+// <del class="doc-del">, so a reviewer can see exactly what changed.
+const escDiff = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const diffAttrs = (el) => {
+  const out = [];
+  for (let i = 0; i < el.attributes.length; i++) {
+    const a = el.attributes[i];
+    out.push(` ${a.name}="${escDiff(a.value)}"`);
+  }
+  return out.join('');
+};
+// Word-level LCS diff of two plain-text strings → inline <ins>/<del> HTML.
+const diffWordsHtml = (a, b) => {
+  const ta = String(a || '').split(/(\s+)/);
+  const tb = String(b || '').split(/(\s+)/);
+  const n = ta.length, m = tb.length;
+  const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+    dp[i][j] = ta[i] === tb[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const segs = []; // { t: 'same'|'ins'|'del', s }
+  const push = (t, s) => {
+    if (!s) return;
+    const last = segs[segs.length - 1];
+    if (last && last.t === t) last.s += s; else segs.push({ t, s });
+  };
+  let i = 0, j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && ta[i] === tb[j]) { push('same', ta[i]); i++; j++; }
+    else if (j < m && (i === n || dp[i][j + 1] >= dp[i + 1][j])) { push('ins', tb[j]); j++; }
+    else { push('del', ta[i]); i++; }
+  }
+  return segs.map((x) => x.t === 'same' ? escDiff(x.s)
+    : x.t === 'ins' ? `<ins class="doc-ins">${escDiff(x.s)}</ins>`
+      : `<del class="doc-del">${escDiff(x.s)}</del>`).join('');
+};
+// Diff two element lists (children of a block) with an LCS; returns HTML strings.
+const diffElLists = (aEls, bEls) => {
+  const textOf = (el) => (el.textContent || '').trim().replace(/\s+/g, ' ');
+  const sigOf = (el) => `${el.tagName.toLowerCase()}|${el.className || ''}|${textOf(el)}`;
+  const n = aEls.length, m = bEls.length;
+  const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+    dp[i][j] = sigOf(aEls[i]) === sigOf(bEls[j]) ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const out = [];
+  let i = 0, j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && sigOf(aEls[i]) === sigOf(bEls[j])) { out.push(aEls[i].outerHTML); i++; j++; continue; }
+    if (j < m && (i === n || dp[i][j + 1] >= dp[i + 1][j])) {
+      // block added in b — but maybe it is an edited version of the current a
+      if (i < n && aEls[i].tagName === bEls[j].tagName && aEls[i].className === bEls[j].className) {
+        out.push(diffOneBlock(aEls[i], bEls[j]));
+        i++; j++;
+      } else {
+        out.push(`<div class="doc-ins">${bEls[j].outerHTML}</div>`);
+        j++;
+      }
+    } else {
+      if (j < m && i < n && aEls[i].tagName === bEls[j].tagName && aEls[i].className === bEls[j].className) {
+        out.push(diffOneBlock(aEls[i], bEls[j]));
+        i++; j++;
+      } else {
+        out.push(`<div class="doc-del">${aEls[i].outerHTML}</div>`);
+        i++;
+      }
+    }
+  }
+  return out;
+};
+// Diff a single pair of blocks with the same tag/class but different content.
+const diffOneBlock = (a, b) => {
+  const tag = a.tagName.toLowerCase();
+  const attrs = diffAttrs(a);
+  const aKids = Array.from(a.children), bKids = Array.from(b.children);
+  if (aKids.length && bKids.length) {
+    return `<${tag}${attrs}>${diffElLists(aKids, bKids).join('')}</${tag}>`;
+  }
+  if (a.innerHTML === b.innerHTML) return a.outerHTML;
+  // Plain-text blocks (no nested markup) get word-level marks.
+  if (a.textContent === a.innerHTML && b.textContent === b.innerHTML) {
+    return `<${tag}${attrs}>${diffWordsHtml(a.textContent, b.textContent)}</${tag}>`;
+  }
+  return `<div class="doc-del">${a.outerHTML}</div><div class="doc-ins">${b.outerHTML}</div>`;
+};
+const diffHtml = (baseHtml, newHtml) => {
+  try {
+    const doc = (h) => new DOMParser().parseFromString(h, 'text/html').body;
+    return diffElLists(Array.from(doc(baseHtml).children), Array.from(doc(newHtml).children)).join('\n');
+  } catch {
+    return `<del class="doc-del">${escDiff(baseHtml)}</del>\n<ins class="doc-ins">${escDiff(newHtml)}</ins>`;
+  }
+};
+
 // Renders one ⭐-starred item (figure / plot snapshot / data table) inside the
 // project export document. The caption is generated from the item's base label
 // plus data found on the test page (sample, name, date, DOSY parameters, D…).
-const renderStarredItem = (item, test) => {
+const renderStarredItem = (item, test, opts = {}) => {
   if (!item) return null;
-  const cap = buildStarCaption(test || {}, item);
+  const cap = buildStarCaption(test || {}, item, {
+    figLabel: opts.figLabel,
+    testType: opts.testType,
+    base: opts.captionOverride
+  });
+  const isEditing = opts.editKey === `${test?.id}:${item.id}`;
+
+  const capElement = (
+    <figcaption className="text-xs text-slate-500 mt-1 flex flex-wrap items-start gap-1.5">
+      <span className="min-w-0">{cap}</span>
+      {opts.onEditCaption && (
+        <button type="button"
+                onClick={() => opts.onEditCaption(`${test?.id}:${item.id}`, cap)}
+                className="shrink-0 no-print text-[10px] font-bold text-blue-500 hover:text-blue-700 border border-blue-200 rounded px-1.5 py-0.5 hover:bg-blue-50"
+                title="Edit this caption before export">✏️</button>
+      )}
+      {isEditing && opts.renderCaptionEditor && opts.renderCaptionEditor(item, test)}
+    </figcaption>
+  );
 
   if (item.kind === 'table') {
     const cols = Array.isArray(item.columns) ? item.columns : [];
@@ -64,7 +175,7 @@ const renderStarredItem = (item, test) => {
             </tbody>
           </table>
         </div>
-        {cap && <figcaption className="text-xs text-slate-500 mt-1">{cap}</figcaption>}
+        {capElement}
       </figure>
     );
   }
@@ -73,7 +184,7 @@ const renderStarredItem = (item, test) => {
   return (
     <figure key={item.id} className="mb-4">
       <SmartImage src={item.url} alt={item.label || 'Figure'} style={{ maxWidth: '100%', minHeight: '120px', maxHeight: '500px' }} />
-      {cap && <figcaption className="text-xs text-slate-500 mt-1">{cap}</figcaption>}
+      {capElement}
     </figure>
   );
 };
@@ -110,7 +221,12 @@ export const ProjectDetailModule = ({
   const [tableRows, setTableRows] = useState(3);
   const [tableCols, setTableCols] = useState(4);
   const [mmFeedback, setMmFeedback] = useState(''); // "✓ Updated HH:MM" flash after manual M&M refresh
-  const [editDoc, setEditDoc] = useState(false);    // inline text editing of the export document
+  const [docMode, setDocMode] = useState('view');   // export doc: 'view' | 'edit' | 'suggest'
+  const [suggestBaseHtml, setSuggestBaseHtml] = useState(''); // HTML snapshot when suggestion mode starts
+  const [mmEditOpen, setMmEditOpen] = useState(false); // edit the M&M text on the project page
+  const [mmDraft, setMmDraft] = useState('');           // M&M textarea draft
+  const [capEditKey, setCapEditKey] = useState(null);   // 'testId:itemId' being caption-edited
+  const [capDraft, setCapDraft] = useState('');         // caption textarea draft
   const [commentDraft, setCommentDraft] = useState('');
   const [replyDrafts, setReplyDrafts] = useState({});
   const [openReplyId, setOpenReplyId] = useState(null);
@@ -130,6 +246,8 @@ export const ProjectDetailModule = ({
   // Instrumental Setup and Experiment Setup of the included tests).
   useEffect(() => {
     if (!showExport || !project) return;
+    // Never overwrite a manually edited Materials & Methods text.
+    if (project.materialsAndMethods?.edited) return;
     const parts = mmPartsFor(project, tests, true);
     setProjects((prev) => prev.map((p) =>
       p.id === project.id
@@ -232,7 +350,9 @@ export const ProjectDetailModule = ({
         text: parts.map((q) => `${q.name}: ${q.text}`).join('\n'),
         generatedAt: new Date().toISOString(),
         count: parts.length,
-        scope: onlyIncluded ? 'included' : 'all'
+        scope: onlyIncluded ? 'included' : 'all',
+        edited: false,
+        editedAt: null
       }
     });
     if (!silent) {
@@ -241,23 +361,136 @@ export const ProjectDetailModule = ({
     }
   };
 
+  // Save a hand-edited Materials & Methods text (project page, before export).
+  const saveMaterialsAndMethodsText = () => {
+    const text = mmDraft.trim();
+    if (!text) return;
+    updateProject({
+      materialsAndMethods: {
+        ...(project.materialsAndMethods || {}),
+        text,
+        edited: true,
+        editedAt: new Date().toISOString()
+      }
+    });
+    setMmEditOpen(false);
+    setMmFeedback('✏️ Materials & Methods text saved');
+    setTimeout(() => setMmFeedback(''), 3000);
+  };
+
+  // Start / save the suggestion-mode edit of the document.
+  const startEditDoc = () => {
+    if (project.docSuggestion) {
+      if (!window.confirm('There is a pending suggestion for this document. Starting a new edit will discard it.')) return;
+      updateProject({ docSuggestion: null });
+    }
+    setDocMode('edit');
+    setMmFeedback('');
+  };
+  const startSuggestDoc = () => {
+    const el = document.getElementById('project-doc-container');
+    if (!el) return;
+    if (project.docSuggestion) {
+      if (!window.confirm('There is already a pending suggestion. Starting a new one will replace it.')) return;
+    }
+    setSuggestBaseHtml(el.innerHTML);
+    setDocMode('suggest');
+    setMmFeedback('');
+  };
+
   // Save the (possibly edited) document text as a frozen snapshot on the project,
   // so the user can modify the exported text and it survives reopening.
   const saveDocText = () => {
     const el = document.getElementById('project-doc-container');
     if (!el) return;
-    updateProject({ exportDocHtml: el.innerHTML });
-    setEditDoc(false);
+    updateProject({ exportDocHtml: el.innerHTML, docSuggestion: null });
+    setDocMode('view');
     setMmFeedback('✓ Document text saved');
     setTimeout(() => setMmFeedback(''), 2500);
+  };
+
+  // Save the edited text as a *suggestion*: keep the base document untouched and
+  // store a marked-up diff (insertions/deletions highlighted) for review.
+  const saveDocSuggestion = () => {
+    const el = document.getElementById('project-doc-container');
+    if (!el) return;
+    const editedHtml = el.innerHTML;
+    const baseHtml = suggestBaseHtml || editedHtml;
+    updateProject({
+      docSuggestion: {
+        baseHtml,
+        editedHtml,
+        markedHtml: diffHtml(baseHtml, editedHtml),
+        author: myName || 'Anonymous',
+        createdAt: new Date().toISOString()
+      }
+    });
+    setDocMode('view');
+    setMmFeedback('📝 Suggestion saved — review it below');
+    setTimeout(() => setMmFeedback(''), 3500);
+  };
+
+  const acceptSuggestion = () => {
+    if (!project.docSuggestion) return;
+    updateProject({ exportDocHtml: project.docSuggestion.editedHtml, docSuggestion: null });
+    setMmFeedback('✓ Suggestion accepted');
+    setTimeout(() => setMmFeedback(''), 2500);
+  };
+  const rejectSuggestion = () => {
+    updateProject({ docSuggestion: null });
+    setMmFeedback('Suggestion rejected');
+    setTimeout(() => setMmFeedback(''), 2500);
+  };
+
+  // ---- Editable figure captions (per ⭐-starred item, before export) ----
+  const captionOverrides = project.figureCaptionOverrides || {};
+  const openCaptionEditor = (key, currentCaption) => {
+    setCapEditKey(key);
+    setCapDraft(currentCaption);
+  };
+  const saveCaption = (key) => {
+    const val = capDraft.trim();
+    const next = { ...captionOverrides };
+    if (val) next[key] = val; else delete next[key];
+    updateProject({ figureCaptionOverrides: next });
+    setCapEditKey(null);
+    setMmFeedback('✏️ Caption updated');
+    setTimeout(() => setMmFeedback(''), 2500);
+  };
+  const clearCaption = (key) => {
+    const next = { ...captionOverrides };
+    delete next[key];
+    updateProject({ figureCaptionOverrides: next });
+    setCapEditKey(null);
+    setMmFeedback('↩️ Caption restored to automatic');
+    setTimeout(() => setMmFeedback(''), 2500);
+  };
+  const renderCaptionEditor = (item, test) => {
+    const key = `${test?.id}:${item.id}`;
+    return (
+      <span className="no-print inline-flex items-center gap-1 flex-wrap">
+        <input value={capDraft} onChange={(e) => setCapDraft(e.target.value)}
+               autoFocus
+               placeholder="Write a custom caption…"
+               className="border border-blue-300 rounded px-2 py-1 text-[11px] w-72 bg-white outline-none focus:border-blue-500" />
+        <button type="button" onClick={() => saveCaption(key)}
+                className="text-[10px] font-bold rounded bg-blue-600 text-white px-2 py-1 hover:bg-blue-700">Save</button>
+        {captionOverrides[key] && (
+          <button type="button" onClick={() => clearCaption(key)}
+                  className="text-[10px] font-bold rounded bg-amber-50 text-amber-700 border border-amber-200 px-2 py-1 hover:bg-amber-100">↩️ Auto</button>
+        )}
+        <button type="button" onClick={() => setCapEditKey(null)}
+                className="text-[10px] font-bold rounded bg-slate-200 text-slate-600 px-2 py-1 hover:bg-slate-300">Cancel</button>
+      </span>
+    );
   };
 
   // Discard the frozen snapshot and rebuild the document from the current
   // project data (any text edits are lost).
   const rebuildDoc = () => {
     if (!window.confirm('Regenerate the document from the current project data? Your text edits to this document will be lost.')) return;
-    updateProject({ exportDocHtml: null });
-    setEditDoc(false);
+    updateProject({ exportDocHtml: null, docSuggestion: null });
+    setDocMode('view');
   };
 
   // ---- Figures & documents per text section (report-style tools) ----
@@ -552,6 +785,8 @@ export const ProjectDetailModule = ({
     .meta { font-size: 12px; color: #666; }
     .exp-card { border: 1px solid #ddd; border-radius: 8px; padding: 10px 14px; margin: 14px 0; page-break-inside: avoid; }
     .no-print { display: none !important; }
+    .doc-ins { background: #dcfce7; color: #166534; text-decoration: none; }
+    .doc-del { background: #fee2e2; color: #991b1b; text-decoration: line-through; }
     button { font-family: Georgia, 'Times New Roman', serif; }
   </style>
 </head>
@@ -632,31 +867,54 @@ export const ProjectDetailModule = ({
     );
     return (
       <div className="fixed inset-0 z-[60] bg-slate-100 overflow-y-auto custom-scrollbar">
+        <style>{`
+          .doc-ins { background: #dcfce7; color: #166534; text-decoration: none; }
+          .doc-del { background: #fee2e2; color: #991b1b; text-decoration: line-through; }
+        `}</style>
         <div className="max-w-4xl mx-auto p-4 md:p-8">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-4 no-print">
             <h2 className="text-lg font-black text-slate-800">📄 {project.name} — document</h2>
             <div className="flex flex-wrap items-center gap-2">
               {mmFeedback && <span className="text-[10px] font-bold text-emerald-600">{mmFeedback}</span>}
-              {!editDoc && (
-                <button onClick={() => setEditDoc(true)}
-                        className="px-3 py-1.5 text-xs font-bold rounded-lg bg-amber-50 text-amber-700 border border-amber-300 hover:bg-amber-100"
-                        title="Edit the text of this document before printing">
-                  ✏️ Edit text
-                </button>
+              {docMode === 'view' && (
+                <>
+                  <button onClick={startEditDoc}
+                          className="px-3 py-1.5 text-xs font-bold rounded-lg bg-amber-50 text-amber-700 border border-amber-300 hover:bg-amber-100"
+                          title="Edit the text of this document before printing">
+                    ✏️ Edit text
+                  </button>
+                  <button onClick={startSuggestDoc}
+                          className="px-3 py-1.5 text-xs font-bold rounded-lg bg-violet-50 text-violet-700 border border-violet-300 hover:bg-violet-100"
+                          title="Edit the text as a suggestion — changes are highlighted and can be accepted or rejected">
+                    📝 Suggest edits
+                  </button>
+                </>
               )}
-              {editDoc && (
+              {docMode === 'edit' && (
                 <>
                   <button onClick={saveDocText}
                           className="px-3 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">
                     💾 Save changes
                   </button>
-                  <button onClick={() => setEditDoc(false)}
+                  <button onClick={() => setDocMode('view')}
                           className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300">
                     ✖ Cancel
                   </button>
                 </>
               )}
-              {project.exportDocHtml && !editDoc && (
+              {docMode === 'suggest' && (
+                <>
+                  <button onClick={saveDocSuggestion}
+                          className="px-3 py-1.5 text-xs font-bold rounded-lg bg-violet-600 text-white hover:bg-violet-700">
+                    💾 Save suggestion
+                  </button>
+                  <button onClick={() => setDocMode('view')}
+                          className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300">
+                    ✖ Cancel
+                  </button>
+                </>
+              )}
+              {project.exportDocHtml && docMode === 'view' && (
                 <button onClick={rebuildDoc}
                         className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-100 text-slate-600 border border-slate-300 hover:bg-slate-200"
                         title="Discard the saved text edits and rebuild the document from the project data">
@@ -669,17 +927,44 @@ export const ProjectDetailModule = ({
                       className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300">Close</button>
             </div>
           </div>
-          {editDoc && (
+          {docMode === 'edit' && (
             <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 mb-3 no-print">
               ✏️ Edit mode: click any text to modify it. “💾 Save changes” keeps your edits in the document, “🖨️ Print” prints it as-is.
             </p>
           )}
+          {docMode === 'suggest' && (
+            <p className="text-[10px] text-violet-700 bg-violet-50 border border-violet-200 rounded-lg px-3 py-1.5 mb-3 no-print">
+              📝 Suggestion mode: edit the text freely. “💾 Save suggestion” does NOT change the document — it produces a
+              reviewable version where additions are highlighted green and removals red. Accept or reject it below.
+            </p>
+          )}
+          {project.docSuggestion && docMode === 'view' && (
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-violet-50 border border-violet-300 rounded-lg px-3 py-2 mb-3 no-print">
+              <p className="text-[10px] font-bold text-violet-800">
+                📝 Suggestion by {project.docSuggestion.author} · {new Date(project.docSuggestion.createdAt).toLocaleString()}
+                {' — '}
+                <span className="text-emerald-700 bg-emerald-100 rounded px-1">green = added</span>
+                <span className="text-red-700 bg-red-100 rounded px-1 ml-1">red = removed</span>
+              </p>
+              <div className="flex gap-1.5">
+                <button onClick={acceptSuggestion}
+                        className="px-3 py-1 text-[11px] font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">✔ Accept suggestion</button>
+                <button onClick={rejectSuggestion}
+                        className="px-3 py-1 text-[11px] font-bold rounded-lg bg-slate-200 text-slate-600 hover:bg-slate-300">✖ Reject</button>
+              </div>
+            </div>
+          )}
 
           <div id="project-doc-container"
-               contentEditable={editDoc}
+               contentEditable={docMode !== 'view'}
                suppressContentEditableWarning
-               className={`bg-white rounded-xl shadow-sm p-6 md:p-10 text-slate-900 ${editDoc ? 'border-2 border-dashed border-amber-400 outline-none' : 'border border-slate-200'}`}>
-            {project.exportDocHtml ? (
+               className={`bg-white rounded-xl shadow-sm p-6 md:p-10 text-slate-900 ${
+                 docMode === 'edit' ? 'border-2 border-dashed border-amber-400 outline-none'
+                   : docMode === 'suggest' ? 'border-2 border-dashed border-violet-400 outline-none'
+                     : 'border border-slate-200'}`}>
+            {project.docSuggestion && docMode === 'view' ? (
+              <div dangerouslySetInnerHTML={{ __html: project.docSuggestion.markedHtml }} />
+            ) : project.exportDocHtml ? (
               <div dangerouslySetInnerHTML={{ __html: project.exportDocHtml }} />
             ) : (
               <>
@@ -704,6 +989,11 @@ export const ProjectDetailModule = ({
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-1 mb-2">
                   <h2 className="text-base font-black text-slate-800">Materials and Methods</h2>
                   <div className="flex items-center gap-2 no-print">
+                    {project.materialsAndMethods?.edited && (
+                      <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
+                        ✏️ edited
+                      </span>
+                    )}
                     {mmFeedback && <span className="text-[10px] font-bold text-emerald-600">{mmFeedback}</span>}
                     <button type="button" onClick={() => regenerateMaterialsAndMethods()}
                             className="text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 rounded-lg px-2 py-1 shadow-sm transition-colors whitespace-nowrap"
@@ -715,21 +1005,29 @@ export const ProjectDetailModule = ({
                 <p className="text-[10px] text-slate-400 mb-3">
                   Automatically generated from the Experimental Conditions, Instrumental Setup and Experiment Setup
                   of each included test
-                  {project.materialsAndMethods?.generatedAt
-                    ? ` · last updated ${new Date(project.materialsAndMethods.generatedAt).toLocaleString()}`
-                    : ''}.
+                  {project.materialsAndMethods?.edited
+                    ? ` · hand-edited ${project.materialsAndMethods.editedAt ? new Date(project.materialsAndMethods.editedAt).toLocaleString() : ''}`
+                    : project.materialsAndMethods?.generatedAt
+                      ? ` · last updated ${new Date(project.materialsAndMethods.generatedAt).toLocaleString()}`
+                      : ''}.
                 </p>
                 <div className="flex flex-col gap-2">
-                  {includedExps.map((exp) => {
-                    const test = tests.find((t) => t.id === exp.testId);
-                    if (!test) return null;
-                    const text = buildMaterialsAndMethods(test, tabConfigForType(test.type));
-                    return (
-                      <p key={exp.id} className="text-sm text-slate-800 text-justify leading-relaxed">
-                        <span className="font-black">{test.name || exp.label}:</span> {text}
-                      </p>
-                    );
-                  })}
+                  {project.materialsAndMethods?.text ? (
+                    String(project.materialsAndMethods.text).split('\n').filter(Boolean).map((para, i) => (
+                      <p key={i} className="text-sm text-slate-800 text-justify leading-relaxed">{para}</p>
+                    ))
+                  ) : (
+                    includedExps.map((exp) => {
+                      const test = tests.find((t) => t.id === exp.testId);
+                      if (!test) return null;
+                      const text = buildMaterialsAndMethods(test, tabConfigForType(test.type));
+                      return (
+                        <p key={exp.id} className="text-sm text-slate-800 text-justify leading-relaxed">
+                          <span className="font-black">{test.name || exp.label}:</span> {text}
+                        </p>
+                      );
+                    })
+                  )}
                 </div>
               </div>
             )}
@@ -739,11 +1037,13 @@ export const ProjectDetailModule = ({
                 <h2 className="text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">Experiments ({includedExps.length})</h2>
                 <p className="text-[10px] text-slate-400 mb-3">
                   Only the figures, plots and tables you ⭐-starred on the test pages are imported here.
+                  Click the ✏️ next to a caption to edit it before export.
                 </p>
                 {includedExps.map((exp) => {
                   const test = tests.find((t) => t.id === exp.testId);
                   if (!test) return null;
                   const stars = getStarredItems(test);
+                  let figCount = 0;
                   return (
                     <div key={exp.id} className="mb-6 border-b border-slate-100 pb-4">
                       <h3 className="text-sm font-black text-slate-800 flex flex-wrap items-center gap-2">
@@ -763,7 +1063,18 @@ export const ProjectDetailModule = ({
                           you want to import into the document.
                         </p>
                       ) : (
-                        stars.map((s) => renderStarredItem(s, test))
+                        stars.map((s) => {
+                          figCount += 1;
+                          const key = `${test.id}:${s.id}`;
+                          return renderStarredItem(s, test, {
+                            figLabel: `Figure ${figCount}`,
+                            testType: testTypeLabel(test.type),
+                            captionOverride: captionOverrides[key],
+                            editKey: capEditKey,
+                            onEditCaption: openCaptionEditor,
+                            renderCaptionEditor
+                          });
+                        })
                       )}
                     </div>
                   );
@@ -1067,18 +1378,26 @@ export const ProjectDetailModule = ({
 
         {/* ---------- Materials and Methods ---------- */}
         <SectionCard title="📋 Materials and Methods" open={openSections.materials} onToggle={() => toggleSection('materials')}
-                     badge={<span className="text-[10px] font-bold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">{mmPartsFor(project, tests, false).length}</span>}>
+                     badge={<span className={`text-[10px] font-bold rounded-full px-2 py-0.5 ${project.materialsAndMethods?.edited ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>{mmPartsFor(project, tests, false).length}</span>}>
           <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
             <p className="text-[10px] text-slate-400 flex-1 min-w-[220px]">
-              Auto-generated from the Experimental Conditions, Instrumental Setup and Experiment Setup of the linked
-              tests.
-              {project.materialsAndMethods?.generatedAt
+              {project.materialsAndMethods?.edited
+                ? `✏️ Hand-edited text used in the export document${project.materialsAndMethods.editedAt ? ' — ' + new Date(project.materialsAndMethods.editedAt).toLocaleString() : ''}.`
+                : 'Auto-generated from the Experimental Conditions, Instrumental Setup and Experiment Setup of the linked tests.'}
+              {!project.materialsAndMethods?.edited && project.materialsAndMethods?.generatedAt
                 ? ` Last updated ${new Date(project.materialsAndMethods.generatedAt).toLocaleString()}.`
                 : ''}
             </p>
             <div className="flex items-center gap-2">
               {mmFeedback && <span className="text-[10px] font-bold text-emerald-600">{mmFeedback}</span>}
-              <button type="button" onClick={() => regenerateMaterialsAndMethods(false, false)}
+              <button type="button"
+                      onClick={() => { setMmEditOpen(true); setMmDraft(project.materialsAndMethods?.text || mmPartsFor(project, tests, false).map((p) => `${p.name}: ${p.text}`).join('\n')); }}
+                      className="text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 rounded-lg px-2 py-1 shadow-sm transition-colors whitespace-nowrap"
+                      title="Edit the Materials & Methods text that will appear in the exported document">
+                ✏️ Edit text
+              </button>
+              <button type="button"
+                      onClick={() => { regenerateMaterialsAndMethods(false, false); setMmEditOpen(false); }}
                       className="text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 rounded-lg px-2 py-1 shadow-sm transition-colors whitespace-nowrap"
                       title="Regenerate this section from the current Experimental Conditions, Instrumental Setup and Experiment Setup of the linked tests">
                 🔄 Update from tests
@@ -1086,21 +1405,38 @@ export const ProjectDetailModule = ({
             </div>
           </div>
 
-          {mmPartsFor(project, tests, false).length === 0 ? (
+          {mmEditOpen ? (
+            <div className="flex flex-col gap-2">
+              <textarea value={mmDraft} onChange={(e) => setMmDraft(e.target.value)}
+                        rows="8" placeholder="Materials & Methods text…"
+                        className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white" />
+              <div className="flex justify-end gap-2">
+                <button type="button" onClick={() => setMmEditOpen(false)}
+                        className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300">Cancel</button>
+                <button type="button" onClick={saveMaterialsAndMethodsText} disabled={!mmDraft.trim()}
+                        className="px-3 py-1.5 text-xs font-bold rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40">💾 Save text</button>
+              </div>
+            </div>
+          ) : mmPartsFor(project, tests, false).length === 0 && !project.materialsAndMethods?.text ? (
             <p className="text-xs italic text-slate-400 bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-6 text-center">
               No linked experiments yet — add tests with the Experiment planner above.
             </p>
           ) : (
             <div className="flex flex-col gap-2 max-h-80 overflow-y-auto custom-scrollbar pr-1">
-              {mmPartsFor(project, tests, false).map((p, i) => (
-                <p key={i} className="text-sm text-slate-800 text-justify leading-relaxed">
-                  <span className="font-black">{p.name}:</span> {p.text}
-                </p>
-              ))}
+              {project.materialsAndMethods?.text
+                ? String(project.materialsAndMethods.text).split('\n').filter(Boolean).map((para, i) => (
+                    <p key={i} className="text-sm text-slate-800 text-justify leading-relaxed">{para}</p>
+                  ))
+                : mmPartsFor(project, tests, false).map((p, i) => (
+                    <p key={i} className="text-sm text-slate-800 text-justify leading-relaxed">
+                      <span className="font-black">{p.name}:</span> {p.text}
+                    </p>
+                  ))}
             </div>
           )}
           <p className="text-[10px] text-slate-400 mt-2 italic">
             The 📄 Export document includes the Materials &amp; Methods of only the tests ticked “Include”.
+            {project.materialsAndMethods?.edited ? ' “🔄 Update from tests” regenerates it and discards your edits.' : ''}
           </p>
         </SectionCard>
 

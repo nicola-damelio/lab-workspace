@@ -90,16 +90,51 @@ const dosyFitSummary = (t) => {
   return out.slice(0, 4).join('; ') + (out.length > 4 ? '; …' : '');
 };
 
+const cleanVal = (v) => (
+  v === undefined || v === null || (typeof v === 'string' && v.trim() === '') ? ''
+    : typeof v === 'string' ? v.trim() : String(v)
+);
+const valWithUnit = (val, unit) => {
+  const v = cleanVal(val);
+  if (!v) return '';
+  const u = cleanVal(unit);
+  return u ? `${v} ${u}` : v;
+};
+
 export const buildStarCaption = (test = {}, item = {}, opts = {}) => {
   const t = test;
-  const base = String(opts.base || (item && (item.caption || item.label)) || '')
+  const base = String(opts.base || opts.figLabel || (item && (item.caption || item.label)) || '')
     .trim()
     .replace(/\.+$/, '');
 
   const parts = [];
+  const push = (label, value, unit) => {
+    const v = valWithUnit(value, unit);
+    if (v) parts.push(`${label} ${v}`);
+  };
+
+  // Test type (e.g. "NMR", "DOSY", "CD", "Multiwell Plate").
+  if (opts.testType) parts.push(`test ${opts.testType}`);
+
+  // Compound(s) studied.
   const compounds = compoundList(t);
-  if (compounds.length) parts.push(`sample: ${compounds.join(', ')}`);
-  else if (t.moleculeName) parts.push(`sample: ${t.moleculeName}`);
+  if (compounds.length) parts.push(`compound ${compounds.join(', ')}`);
+  else if (t.moleculeName) parts.push(`compound ${t.moleculeName}`);
+
+  // Concentration, pH, buffer, additive, ions, solvent, temperature.
+  push('concentration', t.concentration, t.concentrationUnit);
+  push('pH', t.ph);
+  const bConc = valWithUnit(t.bufferConc, t.bufferUnit);
+  const bufName = cleanVal(t.bufferName) || cleanVal(t.buffer);
+  if (bufName) parts.push(`buffer ${bufName}${bConc ? ' ' + bConc : ''}`);
+  const aConc = valWithUnit(t.additiveConc, t.additiveUnit);
+  const addName = cleanVal(t.additiveName) || cleanVal(t.additive) ||
+    (Array.isArray(t.additives) ? t.additives.map((a) => cleanVal(a)).filter(Boolean).join(', ') : '');
+  if (addName) parts.push(`additive ${addName}${aConc ? ' ' + aConc : ''}`);
+  push('ions', t.saltConcentration, t.saltConcentrationUnit);
+  if (!cleanVal(t.saltConcentration) && cleanVal(t.ions)) parts.push(`ions ${t.ions}`);
+  push('solvent', t.solvent);
+  push('temperature', t.temperature, t.temperatureUnit);
 
   if (t.name && t.name.trim()) parts.push(t.name.trim());
   if (t.date) parts.push(t.date);

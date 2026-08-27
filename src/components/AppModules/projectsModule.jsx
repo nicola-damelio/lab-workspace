@@ -107,7 +107,8 @@ export const ProjectsModule = ({
       figures: { background: [], discussion: [], conclusions: [] },
       docs: { background: [], discussion: [], conclusions: [] },
       authorizedPeople: [],
-      comments: []
+      comments: [],
+      figureCaptionOverrides: {}
     };
     const nextProjects = [...projects, prj];
     setProjects(nextProjects);

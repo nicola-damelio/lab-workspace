@@ -742,7 +742,7 @@ const DOSYFittingSection = ({ ctx }) => {
             tables={tables}
             params={{ maxG, deltaMs, bigDeltaMs }}
             cfg={chartCfg}
-            showExcl={!!ctx.activeTest?.showExcl}
+            showExcl={ctx.activeTest?.showExcl !== false}
             outlierThresh={ctx.activeTest?.outlierThreshStr || '2.0'}
             showFit={ctx.activeTest?.fitIC50 !== false}
             mode={xMode}
