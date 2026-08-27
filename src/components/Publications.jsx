@@ -513,6 +513,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
   });
   const [pubFilter, setPubFilter] = useState('all');
   const [pubFormat, setPubFormat] = useState(loadPubFormat);
+  const [pubFormatScope, setPubFormatScope] = useState('default'); // 'default' | project name
   useEffect(() => {
     try { localStorage.setItem(PUB_FORMAT_KEY, JSON.stringify(pubFormat)); } catch { /* ignore */ }
   }, [pubFormat]);
@@ -782,8 +783,6 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
   const [paperFilterLabels, setPaperFilterLabels] = useState([]); // all selected labels must be on the paper (AND)
   const [paperFilterScientist, setPaperFilterScientist] = useState('all');
   const [paperExpanded, setPaperExpanded] = useState(null);
-  const [paperTransfer, setPaperTransfer] = useState(null); // paper being sent to a project bibliography
-  const [paperTransferTarget, setPaperTransferTarget] = useState('');
   const [pbTransferStatus, setPbTransferStatus] = useState('');
   const [showAddPaper, setShowAddPaper] = useState(false);
   const [paperDraft, setPaperDraft] = useState({ title: '', link: '', labels: [], scientist: '', comments: '' });
@@ -817,6 +816,10 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
   const [pbShowAdd, setPbShowAdd] = useState(false);
   const [pbDraft, setPbDraft] = useState({ project: '', title: '', link: '', comments: '' });
   const [pbExpanded, setPbExpanded] = useState(null);
+  // Import papers (from Relevant papers / Publications of the scientist) into a project
+  const [pbImportOpen, setPbImportOpen] = useState(false);
+  const [pbImportProject, setPbImportProject] = useState('');
+  const [pbImportSel, setPbImportSel] = useState(new Set());
 
   useEffect(() => {
     try { localStorage.setItem('labWorkspace_projects', JSON.stringify(pbProjects)); } catch { /* ignore */ }
@@ -884,36 +887,53 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
       return { ...prj, bibliography: (prj.bibliography || []).filter((p) => p.id !== paperId) };
     }));
 
-  // Copy a "Relevant papers" entry into the bibliography of a selected project
-  const transferPaperToProject = () => {
-    const paper = paperTransfer;
-    const prjName = paperTransferTarget;
-    if (!paper || !prjName) return;
-    const title = (paper.title || '').trim();
-    if (!title) return;
-    let added = false;
+  // Candidates for import: every "Relevant papers" entry + the publications of
+  // the scientist(s) of the target project.
+  const pbImportCandidates = useMemo(() => {
+    const targetPrj = pbImportProject ? myProjects.find((p) => p.name === pbImportProject) : null;
+    const relevant = (papers || []).map((p) => ({ ...p, source: 'Relevant papers' }));
+    const pubsForProject = targetPrj
+      ? (pubs || []).filter((p) => {
+          const authors = [p.scientist, ...(p.coauthors || [])].filter(Boolean);
+          return !authors.length || authors.includes(targetPrj.scientist);
+        })
+      : (pubs || []);
+    return [...relevant, ...pubsForProject.map((p) => ({ ...p, source: 'Publications of the scientist' }))];
+  }, [papers, pubs, pbImportProject, myProjects]);
+
+  const toggleImportSel = (key) =>
+    setPbImportSel((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  const importPapersToProject = () => {
+    const prjName = pbImportProject;
+    if (!prjName) return;
+    const selected = pbImportCandidates.filter((p) => pbImportSel.has(`${p.source}:${p.id}`));
+    if (selected.length === 0) return;
+    let added = 0;
     setPbProjects((prev) => prev.map((prj) => {
       if (prj.name !== prjName) return prj;
-      const dup = (prj.bibliography || []).some((b) => (b.title || '').trim() === title);
-      if (dup) return prj;
-      added = true;
-      return {
-        ...prj,
-        bibliography: [...(prj.bibliography || []), {
-          id: 'pb_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
-          title,
-          link: paper.link || paper.doi || '',
-          scientist: prj.scientist,
-          comments: paper.comments || '',
-          labels: Array.isArray(paper.labels) ? paper.labels : (paper.subject ? [paper.subject] : [])
-        }]
-      };
+      const existingTitles = new Set((prj.bibliography || []).map((b) => (b.title || '').trim()));
+      const fresh = selected.filter((p) => !existingTitles.has((p.title || '').trim()));
+      const newPapers = fresh.map((p) => ({
+        id: 'pb_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8) + '_' + added,
+        title: p.title || 'Untitled',
+        link: p.link || p.doi || '',
+        scientist: prj.scientist,
+        comments: p.comments || '',
+        labels: Array.isArray(p.labels) ? p.labels : (p.subject ? [p.subject] : [])
+      }));
+      added += fresh.length;
+      return { ...prj, bibliography: [...(prj.bibliography || []), ...newPapers] };
     }));
-    setPbTransferStatus(added
-      ? `✅ Added “${title}” to the bibliography of “${prjName}”`
-      : `ℹ️ “${title}” is already in the bibliography of “${prjName}”`);
-    setPaperTransfer(null);
-    setPaperTransferTarget('');
+    setPbTransferStatus(`✅ ${added} paper(s) imported into “${prjName}”${selected.length > added ? ` (${selected.length - added} already present)` : ''}`);
+    setPbImportOpen(false);
+    setPbImportSel(new Set());
+    setPbImportProject('');
   };
 
   useEffect(() => {
@@ -1789,8 +1809,6 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                         <td className="px-3 py-2 border-b border-slate-100 align-top text-xs text-slate-600">{p.scientist || '—'}</td>
                         <td className="px-3 py-2 border-b border-slate-100 align-top text-xs text-slate-600"><span className="line-clamp-2">{p.comments || '—'}</span></td>
                         <td className="px-3 py-2 border-b border-slate-100 text-right align-top whitespace-nowrap">
-                          <button type="button" onClick={(e) => { e.stopPropagation(); setPaperTransfer(p); setPaperTransferTarget(''); }}
-                                  className="text-violet-600 hover:text-violet-800 text-xs px-1" title="Add to Project bibliography">📁</button>
                           <button type="button" onClick={(e) => { e.stopPropagation(); removePaper(p.id, p.title); }}
                                   className="text-red-400 hover:text-red-600 text-xs px-1" title="Delete paper">✕</button>
                         </td>
@@ -1838,66 +1856,34 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
         </div>
       </div>
       </div>
-
-        {/* Transfer a relevant paper to a project bibliography */}
-        {paperTransfer && (
-          <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-               onClick={() => setPaperTransfer(null)}>
-            <div className="bg-white rounded-xl shadow-xl p-5 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
-              <h3 className="text-sm font-black text-slate-800 mb-1">Add to Project bibliography</h3>
-              <p className="text-xs text-slate-500 mb-3 line-clamp-2">{paperTransfer.title || 'Untitled'}</p>
-              {myProjects.length === 0 ? (
-                <p className="text-xs italic text-slate-400 bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-2">
-                  No projects available — create one first in 📁 Projects → “+ New Project”.
-                </p>
-              ) : (
-                <>
-                  <label className={labelCls}>Project *</label>
-                  <select className={inputCls} value={paperTransferTarget} onChange={(e) => setPaperTransferTarget(e.target.value)}>
-                    <option value="">Choose a project…</option>
-                    {myProjects.map((prj) => <option key={prj.id} value={prj.name}>{prj.name}</option>)}
-                  </select>
-                </>
-              )}
-              <div className="flex justify-end gap-2 mt-4">
-                <button type="button" onClick={() => setPaperTransfer(null)}
-                        className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300">Cancel</button>
-                <button type="button" onClick={transferPaperToProject} disabled={!paperTransferTarget}
-                        className="px-3 py-1.5 text-xs font-bold rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40">
-                  📁 Add to Project bibliography
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {pbTransferStatus && (
-          <div className="fixed bottom-4 right-4 z-[70] bg-slate-900 text-white text-xs font-bold rounded-lg px-4 py-2 shadow-lg no-print">
-            {pbTransferStatus}
-          </div>
-        )}
     </section>
   );
   const PUB_FIELD_LABELS = {
     authors: 'Authors', year: 'Year', title: 'Title', journal: 'Journal',
     volume: 'Volume', pages: 'Pages', doi: 'DOI'
   };
+  // The format being edited: the default (global) or a specific project's own format
+  const scopedProject = pubFormatScope !== 'default' ? myProjects.find((p) => p.name === pubFormatScope) : null;
+  const activeFormat = (scopedProject && scopedProject.pubFormat) || pubFormat;
+  const setActiveFormat = (fmt) => {
+    if (pubFormatScope === 'default') {
+      setPubFormat(fmt);
+    } else {
+      setPbProjects((prev) => prev.map((p) => (p.name === pubFormatScope ? { ...p, pubFormat: fmt } : p)));
+    }
+  };
   const pubPatchField = (fieldId, patch) =>
-    setPubFormat((prev) => ({
-      preset: 'custom',
-      fields: prev.fields.map((f) => (f.id === fieldId ? { ...f, ...patch } : f))
-    }));
-  const pubMoveField = (fieldId, dir) =>
-    setPubFormat((prev) => {
-      const fields = [...prev.fields].sort((a, b) => a.order - b.order);
-      const idx = fields.findIndex((f) => f.id === fieldId);
-      const j = idx + dir;
-      if (idx < 0 || j < 0 || j >= fields.length) return prev;
-      const tmp = fields[idx].order;
-      fields[idx] = { ...fields[idx], order: fields[j].order };
-      fields[j] = { ...fields[j], order: tmp };
-      return { preset: 'custom', fields };
-    });
+    setActiveFormat({ preset: 'custom', fields: activeFormat.fields.map((f) => (f.id === fieldId ? { ...f, ...patch } : f)) });
+  const pubMoveField = (fieldId, dir) => {
+    const fields = [...activeFormat.fields].sort((a, b) => a.order - b.order);
+    const idx = fields.findIndex((f) => f.id === fieldId);
+    const j = idx + dir;
+    if (idx < 0 || j < 0 || j >= fields.length) return;
+    const tmp = fields[idx].order;
+    fields[idx] = { ...fields[idx], order: fields[j].order };
+    fields[j] = { ...fields[j], order: tmp };
+    setActiveFormat({ preset: 'custom', fields });
+  };
   const samplePub = {
     authors: 'Rossi M, Bianchi A, Smith J',
     year: '2024', title: 'Structure and dynamics of antimicrobial peptides in lipid bilayers',
@@ -1912,8 +1898,16 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
           Publication format
         </h2>
         <div className="flex flex-wrap items-center gap-2">
+          <label className="text-[10px] font-black uppercase tracking-wide text-slate-400">Format for:</label>
+          <select value={pubFormatScope} onChange={(e) => setPubFormatScope(e.target.value)}
+                  className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-semibold text-slate-700">
+            <option value="default">🌍 Default (all publications)</option>
+            {myProjects.map((prj) => (
+              <option key={prj.id} value={prj.name}>📁 {prj.name}{prj.pubFormat ? ' ✎' : ''}</option>
+            ))}
+          </select>
           <label className="text-[10px] font-black uppercase tracking-wide text-slate-400">Journal preset:</label>
-          <select value={pubFormat.preset} onChange={(e) => setPubFormat(buildPubFormat(e.target.value))}
+          <select value={activeFormat.preset} onChange={(e) => setActiveFormat(buildPubFormat(e.target.value))}
                   className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-semibold text-slate-700">
             {Object.entries(PUB_FORMAT_PRESETS).map(([id, p]) => (
               <option key={id} value={id}>{p.label}</option>
@@ -1926,17 +1920,20 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
         <p className="text-sm text-slate-500 mb-3">
           Choose how every citation is built: the order of the fields, the style of each field
           (bold / italic / underline / prefix / suffix) and which fields are shown at all.
+          Formats can be set per project (each project keeps its own) or left to the default.
           The formatted citations are used in the publications table and in the project documents
           that reference these publications.
         </p>
 
         <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-4">
-          <div className="text-[10px] font-black uppercase tracking-wide text-slate-400 mb-1">Live preview</div>
-          <div className="text-sm text-slate-800" dangerouslySetInnerHTML={{ __html: pubCitationHtml(samplePub, pubFormat) || '—' }} />
+          <div className="text-[10px] font-black uppercase tracking-wide text-slate-400 mb-1">
+            Live preview {pubFormatScope !== 'default' ? `— project “${pubFormatScope}”` : '— default'}
+          </div>
+          <div className="text-sm text-slate-800" dangerouslySetInnerHTML={{ __html: pubCitationHtml(samplePub, activeFormat) || '—' }} />
         </div>
 
         <div className="flex flex-col gap-1.5">
-          {[...pubFormat.fields].sort((a, b) => a.order - b.order).map((f) => (
+          {[...activeFormat.fields].sort((a, b) => a.order - b.order).map((f) => (
             <div key={f.id} className={`flex flex-wrap items-center gap-2 bg-white border rounded-lg px-2.5 py-1.5 ${f.enabled ? 'border-slate-200' : 'border-slate-100 opacity-50'}`}>
               <input type="checkbox" checked={f.enabled}
                      onChange={(e) => pubPatchField(f.id, { enabled: e.target.checked })}
@@ -1985,6 +1982,11 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
               <option key={prj.id} value={prj.name}>{prj.name} ({(prj.bibliography || []).length})</option>
             ))}
           </select>
+          <button type="button" onClick={() => setPbImportOpen(true)}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition"
+                  title="Import papers from the Relevant papers table or from the scientist's publications">
+            ⬇ Import papers
+          </button>
           <button type="button" onClick={() => setPbShowAdd((v) => !v)}
                   className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition">
             {pbShowAdd ? 'Cancel' : '+ Add paper'}
@@ -2113,6 +2115,87 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
           </div>
         </div>
       </div>
+
+        {/* Import papers into a project bibliography */}
+        {pbImportOpen && (
+          <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+               onClick={() => setPbImportOpen(false)}>
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col"
+                 onClick={(e) => e.stopPropagation()}>
+              <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+                <h3 className="text-sm font-black text-slate-800">⬇ Import papers</h3>
+                <button onClick={() => setPbImportOpen(false)} className="text-slate-400 hover:text-slate-600 text-sm px-1">✕</button>
+              </div>
+              <div className="p-3 overflow-y-auto custom-scrollbar flex flex-col gap-4">
+                <div>
+                  <label className={labelCls}>Import into project *</label>
+                  <select className={inputCls} value={pbImportProject}
+                          onChange={(e) => { setPbImportProject(e.target.value); setPbImportSel(new Set()); }}>
+                    <option value="">Choose a project…</option>
+                    {myProjects.map((prj) => <option key={prj.id} value={prj.name}>{prj.name}</option>)}
+                  </select>
+                </div>
+                {['Relevant papers', 'Publications of the scientist'].map((group) => {
+                  const items = pbImportCandidates.filter((c) => c.source === group);
+                  return (
+                    <div key={group}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] font-black uppercase tracking-wide text-slate-400">{group} ({items.length})</span>
+                        <button type="button"
+                                onClick={() => {
+                                  const allKeys = items.map((c) => `${c.source}:${c.id}`);
+                                  const allSelected = allKeys.length > 0 && allKeys.every((k) => pbImportSel.has(k));
+                                  setPbImportSel((prev) => {
+                                    const next = new Set(prev);
+                                    allKeys.forEach((k) => { if (allSelected) next.delete(k); else next.add(k); });
+                                    return next;
+                                  });
+                                }}
+                                className="text-[10px] font-bold text-blue-600 hover:underline">Select all</button>
+                      </div>
+                      {items.length === 0 ? (
+                        <div className="text-xs italic text-slate-400 bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-2">No papers available in this list.</div>
+                      ) : (
+                        <div className="flex flex-col gap-1 max-h-56 overflow-y-auto custom-scrollbar">
+                          {items.map((it) => {
+                            const key = `${it.source}:${it.id}`;
+                            const checked = pbImportSel.has(key);
+                            return (
+                              <label key={key}
+                                     className={`flex items-start gap-2 rounded-lg border p-2 cursor-pointer text-xs ${checked ? 'bg-emerald-50 border-emerald-300' : 'bg-white border-slate-200 hover:bg-slate-50'}`}>
+                                <input type="checkbox" checked={checked} onChange={() => toggleImportSel(key)}
+                                       className="mt-0.5 w-3.5 h-3.5 accent-emerald-600" />
+                                <span className="min-w-0">
+                                  <span className="block font-bold text-slate-800 leading-snug">{it.title || 'Untitled'}</span>
+                                  <span className="block text-[10px] text-slate-500">{[it.authors, it.journal, it.year].filter(Boolean).join(' · ')}</span>
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="px-4 py-3 border-t border-slate-200 flex justify-end gap-2">
+                <button type="button" onClick={() => setPbImportOpen(false)}
+                        className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300">Cancel</button>
+                <button type="button" onClick={importPapersToProject}
+                        disabled={!pbImportProject || pbImportSel.size === 0}
+                        className="px-3 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40">
+                  ⬇ Import selected ({pbImportSel.size})
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {pbTransferStatus && (
+          <div className="fixed bottom-4 right-4 z-[70] bg-slate-900 text-white text-xs font-bold rounded-lg px-4 py-2 shadow-lg no-print">
+            {pbTransferStatus}
+          </div>
+        )}
     </section>
   );
 
@@ -2203,11 +2286,11 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
 
       {renderPublications()}
 
-      {renderPubFormat()}
-
       {renderPapers()}
 
       {renderProjectBibliography()}
+
+      {renderPubFormat()}
     </div>
   );
 };

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { RichTextEditor } from '../RichTextEditor';
 import { SmartImage } from '../TestShellRenderer';
 import { loadPubFormat, pubCitationHtml } from '../Publications';
+import { getStarredItems, buildMaterialsAndMethods, tabConfigForType } from '../../utils/starredItems';
 import { loadProjects, saveProjects, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId } from './projectsModule';
 
 /* =========================================================================
@@ -30,6 +31,64 @@ const SectionCard = ({ title, badge, open, onToggle, children }) => (
   </section>
 );
 
+// Renders one ⭐-starred item (figure / plot snapshot / data table) inside the
+// project export document.
+const renderStarredItem = (item) => {
+  if (!item) return null;
+
+  if (item.kind === 'table') {
+    const cols = Array.isArray(item.columns) ? item.columns : [];
+    const rows = Array.isArray(item.rows) ? item.rows : [];
+    if (cols.length === 0 || rows.length === 0) return null;
+    return (
+      <figure key={item.id} className="mb-4">
+        <div className="overflow-x-auto border border-slate-200 rounded-lg">
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr className="bg-slate-50">
+                {cols.map((c, i) => (
+                  <th key={i} className="px-3 py-1.5 border border-slate-200 text-left">{c}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, ri) => (
+                <tr key={ri}>
+                  {row.map((cell, ci) => (
+                    <td key={ci} className="px-3 py-1.5 border border-slate-200 font-mono">{cell === undefined || cell === null ? '—' : cell}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {item.caption && <figcaption className="text-xs text-slate-500 mt-1">{item.caption}</figcaption>}
+      </figure>
+    );
+  }
+
+  if (!item.url) return null;
+  return (
+    <figure key={item.id} className="mb-4">
+      <SmartImage src={item.url} alt={item.label || 'Figure'} style={{ maxWidth: '100%', minHeight: '120px', maxHeight: '500px' }} />
+      {item.caption && <figcaption className="text-xs text-slate-500 mt-1">{item.caption}</figcaption>}
+    </figure>
+  );
+};
+
+// Builds the auto-generated Materials & Methods parts for a project's linked
+// tests. `onlyIncluded` restricts to the tests ticked "Include" (the ones that
+// appear in the export document); otherwise all linked tests are used.
+const mmPartsFor = (project, tests, onlyIncluded) =>
+  (project && Array.isArray(project.experiments) ? project.experiments : [])
+    .filter((e) => (onlyIncluded ? e.includeInDocument : true))
+    .map((exp) => {
+      const test = tests.find((t) => t.id === exp.testId);
+      if (!test) return null;
+      return { name: test.name || exp.label, text: buildMaterialsAndMethods(test, tabConfigForType(test.type)) };
+    })
+    .filter(Boolean);
+
 export const ProjectDetailModule = ({
   currentUser, setCurrentModule, setCurrentProjectId, currentProjectId,
   createEmptyTest, tests, setTests, setActiveTestId, jumpToTest
@@ -37,18 +96,18 @@ export const ProjectDetailModule = ({
   const isSuper = currentUser?.role === 'superuser';
   const myName = currentUser?.name || '';
   const [projects, setProjects] = useState(loadProjects);
-  const [openSections, setOpenSections] = useState({ background: true });
+  const [openSections, setOpenSections] = useState({ background: true, materials: true });
   const [refPicker, setRefPicker] = useState(null); // null | { insertText?: fn }
   const [showBibForm, setShowBibForm] = useState(false);
   const [bibDraft, setBibDraft] = useState({ title: '', link: '' });
   const [linkTestId, setLinkTestId] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const pubs = useMemo(loadPublications, []);
-  const pubFormat = useMemo(loadPubFormat, []);
   const [tableDraft, setTableDraft] = useState(null); // null | { section, insertText }
   const [showExport, setShowExport] = useState(false);
   const [tableRows, setTableRows] = useState(3);
   const [tableCols, setTableCols] = useState(4);
+  const [mmFeedback, setMmFeedback] = useState(''); // "✓ Updated HH:MM" flash after manual M&M refresh
 
   const visibleTests = useMemo(() => {
     if (isSuper) return tests;
@@ -56,8 +115,31 @@ export const ProjectDetailModule = ({
   }, [tests, isSuper, myName]);
 
   const project = projects.find((p) => p.id === currentProjectId);
+  const pubFormat = useMemo(() => project?.pubFormat || loadPubFormat(), [project]);
 
   useEffect(() => { saveProjects(projects); }, [projects]);
+
+  // Keep the persisted "Materials and Methods" snapshot fresh every time the
+  // export document is opened (it pulls the latest Experimental Conditions,
+  // Instrumental Setup and Experiment Setup of the included tests).
+  useEffect(() => {
+    if (!showExport || !project) return;
+    const parts = mmPartsFor(project, tests, true);
+    setProjects((prev) => prev.map((p) =>
+      p.id === project.id
+        ? {
+            ...p,
+            materialsAndMethods: {
+              text: parts.map((q) => `${q.name}: ${q.text}`).join('\n'),
+              generatedAt: new Date().toISOString(),
+              count: parts.length,
+              scope: 'included'
+            },
+            updatedAt: new Date().toISOString()
+          }
+        : p));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showExport]);
 
   if (!project) {
     return (
@@ -80,6 +162,27 @@ export const ProjectDetailModule = ({
   const updateProject = (patch) =>
     setProjects((prev) => prev.map((p) =>
       p.id === project.id ? { ...p, ...patch, updatedAt: new Date().toISOString() } : p));
+
+  // Manually refresh the Materials and Methods section from the current
+  // linked-test data (Experimental Conditions / Instrumental Setup / Experiment
+  // Setup) and confirm with a short "✓ Updated" flash. `onlyIncluded` defaults
+  // to the tests ticked "Include" (matching the export document); pass false to
+  // cover every linked test (used by the project page section).
+  const regenerateMaterialsAndMethods = (silent = false, onlyIncluded = true) => {
+    const parts = mmPartsFor(project, tests, onlyIncluded);
+    updateProject({
+      materialsAndMethods: {
+        text: parts.map((q) => `${q.name}: ${q.text}`).join('\n'),
+        generatedAt: new Date().toISOString(),
+        count: parts.length,
+        scope: onlyIncluded ? 'included' : 'all'
+      }
+    });
+    if (!silent) {
+      setMmFeedback(`✓ Updated ${new Date().toLocaleTimeString()}`);
+      setTimeout(() => setMmFeedback(''), 3500);
+    }
+  };
 
   // ---- Figures & documents per text section (report-style tools) ----
   const sectionFigures = (sec) => (project.figures || {})[sec] || [];
@@ -372,6 +475,8 @@ export const ProjectDetailModule = ({
     li { margin: 3px 0; }
     .meta { font-size: 12px; color: #666; }
     .exp-card { border: 1px solid #ddd; border-radius: 8px; padding: 10px 14px; margin: 14px 0; page-break-inside: avoid; }
+    .no-print { display: none !important; }
+    button { font-family: Georgia, 'Times New Roman', serif; }
   </style>
 </head>
 <body>${docEl.innerHTML}</body>
@@ -481,35 +586,70 @@ export const ProjectDetailModule = ({
 
             {includedExps.length > 0 && (
               <div className="mb-6">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-1 mb-2">
+                  <h2 className="text-base font-black text-slate-800">Materials and Methods</h2>
+                  <div className="flex items-center gap-2 no-print">
+                    {mmFeedback && <span className="text-[10px] font-bold text-emerald-600">{mmFeedback}</span>}
+                    <button type="button" onClick={() => regenerateMaterialsAndMethods()}
+                            className="text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 rounded-lg px-2 py-1 shadow-sm transition-colors whitespace-nowrap"
+                            title="Regenerate this section from the current Experimental Conditions, Instrumental Setup and Experiment Setup of the linked tests">
+                      🔄 Update from tests
+                    </button>
+                  </div>
+                </div>
+                <p className="text-[10px] text-slate-400 mb-3">
+                  Automatically generated from the Experimental Conditions, Instrumental Setup and Experiment Setup
+                  of each included test
+                  {project.materialsAndMethods?.generatedAt
+                    ? ` · last updated ${new Date(project.materialsAndMethods.generatedAt).toLocaleString()}`
+                    : ''}.
+                </p>
+                <div className="flex flex-col gap-2">
+                  {includedExps.map((exp) => {
+                    const test = tests.find((t) => t.id === exp.testId);
+                    if (!test) return null;
+                    const text = buildMaterialsAndMethods(test, tabConfigForType(test.type));
+                    return (
+                      <p key={exp.id} className="text-sm text-slate-800 text-justify leading-relaxed">
+                        <span className="font-black">{test.name || exp.label}:</span> {text}
+                      </p>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {includedExps.length > 0 && (
+              <div className="mb-6">
                 <h2 className="text-base font-black text-slate-800 border-b border-slate-200 pb-1 mb-2">Experiments ({includedExps.length})</h2>
+                <p className="text-[10px] text-slate-400 mb-3">
+                  Only the figures, plots and tables you ⭐-starred on the test pages are imported here.
+                </p>
                 {includedExps.map((exp) => {
                   const test = tests.find((t) => t.id === exp.testId);
                   if (!test) return null;
-                  const imgs = Array.isArray(test.images) ? test.images : [];
-                  const caps = Array.isArray(test.figureCaptions) ? test.figureCaptions : [];
-                  const testDocs = Array.isArray(test.documents) ? test.documents : [];
+                  const stars = getStarredItems(test);
                   return (
-                    <div key={exp.id} className="mb-5 border border-slate-200 rounded-lg p-3">
-                      <h3 className="text-sm font-black text-slate-800">
-                        {exp.label}: {test.name}
-                        <span className="ml-2 text-[10px] font-bold text-violet-700 bg-violet-50 rounded-full px-2 py-0.5">📁 {project.name}</span>
+                    <div key={exp.id} className="mb-6 border-b border-slate-100 pb-4">
+                      <h3 className="text-sm font-black text-slate-800 flex flex-wrap items-center gap-2">
+                        <button onClick={() => { setShowExport(false); openTest(test.id); }}
+                                className="hover:text-blue-600 hover:underline text-left">
+                          {exp.label}: {test.name}
+                        </button>
+                        <span className="text-[10px] font-bold text-violet-700 bg-violet-50 rounded-full px-2 py-0.5">📁 {project.name}</span>
                       </h3>
                       <p className="text-[11px] text-slate-500 mb-2">
                         📅 {test.date || '—'} · 🧪 {[test.operator, ...(test.coScientists || [])].filter(Boolean).join(', ') || '—'}
+                        {' · '}⭐ {stars.length} item{stars.length === 1 ? '' : 's'}
                       </p>
-                      {test.comments ? <div className="text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: test.comments }} />
-                                     : <p className="text-xs italic text-slate-400">No report text.</p>}
-                      {imgs.filter(Boolean).length > 0 && (
-                        <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-3">
-                          {imgs.map((src, i) => src && (
-                            <figure key={i}>
-                              <img src={src} alt={caps[i] || `Figure ${i + 1}`} style={{ maxWidth: '100%', border: '1px solid #e2e8f0', borderRadius: '8px' }} />
-                              {(caps[i] || '').trim() && <figcaption className="text-xs text-slate-500 mt-1">{caps[i]}</figcaption>}
-                            </figure>
-                          ))}
-                        </div>
+                      {stars.length === 0 ? (
+                        <p className="text-xs italic text-slate-400 bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-3">
+                          No items starred yet — open this test and press the ⭐ button on the figures, plots or tables
+                          you want to import into the document.
+                        </p>
+                      ) : (
+                        stars.map((s) => renderStarredItem(s))
                       )}
-                      {renderDocs(testDocs)}
                     </div>
                   );
                 })}
@@ -587,11 +727,11 @@ export const ProjectDetailModule = ({
           project.background || '', (val) => updateProject({ background: val }))}
 
 
-        {/* ---------- Experiments ---------- */}
-        <SectionCard title="🧪 Experiments" open={openSections.experiments} onToggle={() => toggleSection('experiments')}
+        {/* ---------- Experiment planner ---------- */}
+        <SectionCard title="🧪 Experiment planner" open={openSections.experiments} onToggle={() => toggleSection('experiments')}
                      badge={<span className="text-[10px] font-bold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">{(project.experiments || []).length}</span>}>
           <p className="text-xs text-slate-500 mb-3">
-            Add as many tests as needed (NMR, ssNMR, DOSY, CD, plate assays, cloning, expression…). Clicking a test
+            Plan as many tests as needed (NMR, ssNMR, DOSY, CD, plate assays, cloning, expression…). Clicking a test
             type creates the classic test page and makes its button appear inside the collapsible window below —
             each button is the link to that test page.
           </p>
@@ -646,11 +786,15 @@ export const ProjectDetailModule = ({
                       <span className="text-[10px] text-slate-400 hidden md:inline">📅 {test?.date || '—'}</span>
                     </button>
                     <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 cursor-pointer"
-                           title="Include this test's images and text in the exported project document">
+                           title="Include this test in the exported project document (its ⭐-starred figures, plots and tables)">
                       <input type="checkbox" checked={!!exp.includeInDocument} onChange={() => toggleInclude(exp.id)}
                              className="w-3.5 h-3.5 accent-blue-600" />
                       Include
                     </label>
+                    <span className="text-[10px] font-bold text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 whitespace-nowrap"
+                          title="Items ⭐-starred on the test page that will be imported into the document">
+                      ⭐ {getStarredItems(test).length}
+                    </span>
                     <button onClick={() => removeExperiment(exp.id)}
                             className="shrink-0 text-red-400 hover:text-red-600 text-xs px-1.5" title="Remove from project">
                       ✕
@@ -660,6 +804,45 @@ export const ProjectDetailModule = ({
               })}
             </div>
           )}
+        </SectionCard>
+
+        {/* ---------- Materials and Methods ---------- */}
+        <SectionCard title="📋 Materials and Methods" open={openSections.materials} onToggle={() => toggleSection('materials')}
+                     badge={<span className="text-[10px] font-bold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">{mmPartsFor(project, tests, false).length}</span>}>
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <p className="text-[10px] text-slate-400 flex-1 min-w-[220px]">
+              Auto-generated from the Experimental Conditions, Instrumental Setup and Experiment Setup of the linked
+              tests.
+              {project.materialsAndMethods?.generatedAt
+                ? ` Last updated ${new Date(project.materialsAndMethods.generatedAt).toLocaleString()}.`
+                : ''}
+            </p>
+            <div className="flex items-center gap-2">
+              {mmFeedback && <span className="text-[10px] font-bold text-emerald-600">{mmFeedback}</span>}
+              <button type="button" onClick={() => regenerateMaterialsAndMethods(false, false)}
+                      className="text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 rounded-lg px-2 py-1 shadow-sm transition-colors whitespace-nowrap"
+                      title="Regenerate this section from the current Experimental Conditions, Instrumental Setup and Experiment Setup of the linked tests">
+                🔄 Update from tests
+              </button>
+            </div>
+          </div>
+
+          {mmPartsFor(project, tests, false).length === 0 ? (
+            <p className="text-xs italic text-slate-400 bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-6 text-center">
+              No linked experiments yet — add tests with the Experiment planner above.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2 max-h-80 overflow-y-auto custom-scrollbar pr-1">
+              {mmPartsFor(project, tests, false).map((p, i) => (
+                <p key={i} className="text-sm text-slate-800 text-justify leading-relaxed">
+                  <span className="font-black">{p.name}:</span> {p.text}
+                </p>
+              ))}
+            </div>
+          )}
+          <p className="text-[10px] text-slate-400 mt-2 italic">
+            The 📄 Export document includes the Materials &amp; Methods of only the tests ticked “Include”.
+          </p>
         </SectionCard>
 
         {/* ---------- Discussion ---------- */}

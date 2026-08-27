@@ -10,7 +10,7 @@ import { NOTEBOOK_ANALYSIS_PREVIEWS, RemovablePanel, ChunkedTable, NMRSpectraPre
 /* ============================================================================
    NOTEBOOK TEST ITEM
 ========================================================================== */
-const NotebookTestItem = ({
+export const NotebookTestItem = ({
   test, tests, jumpToTest,
   showConditions, showMolecularFormula, showInstrumental, showReport, showImages,
   showData, showDataAnalysisGraphs,
@@ -582,6 +582,39 @@ const NotebookTestItem = ({
               </div>
             </div>
           )}
+          {localTest.type === 'dosy' && Array.isArray(localTest.dosyTables) && localTest.dosyTables.length > 0 && (
+            <div className="flex flex-col gap-4 mt-2 w-full">
+              {localTest.dosyTables.map((t, ti) => (
+                <div key={t.id} className="flex flex-col items-center w-full">
+                  <h5 className="text-[10px] font-bold text-slate-500 mb-1 uppercase text-center w-full">
+                    Gradient set {ti + 1} — Gradient % vs Intensity
+                  </h5>
+                  <div className="overflow-x-auto text-xs border border-slate-200 rounded bg-slate-50 shadow-sm w-full">
+                    <table className="w-full text-left select-text bg-white">
+                      <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
+                        <tr>
+                          <th className="px-3 py-1.5 border-r border-slate-200">Gradient % (0–100)</th>
+                          {Array.from({ length: t.nCols || 0 }, (_, c) => (
+                            <th key={c} className="px-3 py-1.5 border-r border-slate-200">{t.colResidues?.[c] || `Col ${c + 1}`}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {Array.from({ length: t.nRows || 0 }, (_, r) => (
+                          <tr key={r}>
+                            <td className="px-3 py-1.5 font-mono text-slate-700 border-r border-slate-200">{t.delays?.[r] ?? '-'}</td>
+                            {Array.from({ length: t.nCols || 0 }, (_, c) => (
+                              <td key={c} className="px-3 py-1.5 font-mono text-slate-600">{t.grid?.[r]?.[c] ?? '-'}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           {isMD && (
             <div className="flex flex-col gap-4 mt-2">
               <MDParamsPreview test={localTest} />
@@ -647,6 +680,7 @@ export const LabNotebook = ({
   const [filterCompound, setFilterCompound] = useState('ALL');
   const [filterPlasmid, setFilterPlasmid] = useState('ALL');
   const [filterCellLine, setFilterCellLine] = useState('ALL');
+  const [filterProject, setFilterProject] = useState('ALL');
 
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [filterSolvent, setFilterSolvent] = useState('ALL');
@@ -687,6 +721,7 @@ const secondaryOptions = useMemo(() => {
   return CLASSIFICATION_MAP[filterPrimary] || [];
 }, [filterPrimary]);
 const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t => t.operator)].filter(Boolean))].sort(), [tests, operators]);
+  const allProjects = useMemo(() => [...new Set(tests.flatMap(t => t.projectNames || []))].filter(Boolean).sort(), [tests]);
   const allPlasmids = useMemo(() => Object.keys(plasmidMeta || {}).sort(), [plasmidMeta]);
   const allSolvents = useMemo(() => (solvents || []).map(s => s.name || s).filter(Boolean).sort(), [solvents]);
   const allBuffers = useMemo(() => (buffers || []).map(b => b.name || b).filter(Boolean).sort(), [buffers]);
@@ -758,6 +793,7 @@ const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t =>
       if (filterCompound !== 'ALL' && !flatCompounds.includes(filterCompound)) return false;
       if (filterPlasmid !== 'ALL' && !flatPlasmids.includes(filterPlasmid)) return false;
       if (filterCellLine !== 'ALL' && (!t.cellLines || !t.cellLines.includes(filterCellLine))) return false;
+      if (filterProject !== 'ALL' && !(t.projectNames || []).includes(filterProject)) return false;
 
       if (showAdvanced) {
         const testStr = JSON.stringify(t).toLowerCase();
@@ -789,7 +825,7 @@ const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t =>
     else if (sortBy === 'type') result.sort((a, b) => (a.type || '').localeCompare(b.type || ''));
 
     return result;
-  }, [tests, isSuperuser, currentUser, filterPrimary, filterSecondary, filterScientist, filterType, filterCompound, filterPlasmid, filterCellLine, showAdvanced, filterSolvent, filterBuffer, filterAdditive, filterInstrument, filterProbe, filterPulseSeq, dateFrom, dateTo, bestOnly, searchQuery, sortBy]);
+  }, [tests, isSuperuser, currentUser, filterPrimary, filterSecondary, filterScientist, filterType, filterCompound, filterPlasmid, filterCellLine, filterProject, showAdvanced, filterSolvent, filterBuffer, filterAdditive, filterInstrument, filterProbe, filterPulseSeq, dateFrom, dateTo, bestOnly, searchQuery, sortBy]);
 
   return (
     <div className="flex flex-col h-full w-full">
@@ -817,7 +853,7 @@ const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t =>
         </div>
 
         {/* MAIN FILTERS — all users see all filters except Scientist which is superuser-only */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2">
        <div>
          <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Main classification</label>
          <select value={filterPrimary} onChange={(e) => { setFilterPrimary(e.target.value); setFilterSecondary('ALL'); }} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
@@ -839,6 +875,15 @@ const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t =>
               <select value={filterScientist} onChange={(e) => setFilterScientist(e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
                 <option value="ALL">All</option>
                 {allScientists.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </div>
+          )}
+          {allProjects.length > 0 && (
+            <div>
+              <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Project</label>
+              <select value={filterProject} onChange={(e) => setFilterProject(e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
+                <option value="ALL">All</option>
+                {allProjects.map(o => <option key={o} value={o}>📁 {o}</option>)}
               </select>
             </div>
           )}

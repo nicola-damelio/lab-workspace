@@ -26,9 +26,15 @@ export const TestsModule = ({
 }) => {
                 const testSearch = expandedGroups['testSearch'] || '';
                 const testCatFilter = expandedGroups['testCatFilter'] || 'ALL';
+                const testProjectFilter = expandedGroups['testProjectFilter'] || 'ALL';
                 const showTestFilters = expandedGroups['showTestFilters'] || false;
                 const showCatMgr = expandedGroups['showTestCatMgr'] || false;
                 const newCatInput = expandedGroups['newTestCatInput'] || '';
+
+                // Projects known by the tests (for the project filter dropdown)
+                const projectOptions = [
+                  ...new Set((tests || []).flatMap((t) => t.projectNames || []))
+                ].filter(Boolean).sort();
 
                 // Filter dropdown shows only the official categories plus any
                 // extra category still used by an existing test — stale
@@ -96,7 +102,10 @@ export const TestsModule = ({
                   const matchesCat =
                     testCatFilter === 'ALL' || t.testCategory === testCatFilter;
 
-                  return matchesSearch && matchesCat;
+                  const matchesProject =
+                    testProjectFilter === 'ALL' || (t.projectNames || []).includes(testProjectFilter);
+
+                  return matchesSearch && matchesCat && matchesProject;
                 });
 
                 const filteredTests = [];
@@ -315,10 +324,10 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 
                           <Icon name="gear" size={16} />
                         </button>
 
-                        {(testSearch || testCatFilter !== 'ALL') && (
+                        {(testSearch || testCatFilter !== 'ALL' || testProjectFilter !== 'ALL') && (
                           <button
                             type="button"
-                            onClick={() => setExpandedGroups((p) => ({ ...p, testSearch: '', testCatFilter: 'ALL' }))}
+                            onClick={() => setExpandedGroups((p) => ({ ...p, testSearch: '', testCatFilter: 'ALL', testProjectFilter: 'ALL' }))}
                             className="px-2.5 py-1.5 border rounded-lg text-xs font-bold text-red-600 border-red-200 bg-red-50 hover:bg-red-100 shadow-sm"
                           >
                             Clear filters
@@ -349,6 +358,18 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 
                                 {filterCategories.map((c) => (<option key={c} value={c}>{c}</option>))}
                               </select>
                             </div>
+                            {projectOptions.length > 0 && (
+                              <div className="w-full md:w-64">
+                                <select
+                                  value={testProjectFilter}
+                                  onChange={(e) => setExpandedGroups((p) => ({ ...p, testProjectFilter: e.target.value }))}
+                                  className="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs bg-white focus:outline-none focus:border-blue-500 font-semibold text-slate-700 cursor-pointer"
+                                >
+                                  <option value="ALL">All Projects</option>
+                                  {projectOptions.map((pn) => (<option key={pn} value={pn}>📁 {pn}</option>))}
+                                </select>
+                              </div>
+                            )}
                           </div>
 
                           {showCatMgr && (

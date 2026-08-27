@@ -1,36 +1,43 @@
 /* =========================================================================
    DOSYTestRenderer.jsx — test page "DOSY".
 
-   Structure (same skeleton as NMR Fittings):
+   Structure:
      • General (TestShellRenderer) — primary classification "Molecular
        Structure and Dynamics", secondary "Diffusion by DOSY".
-     • Experiment Setup  — dataset name / experiment number / link.
      • Instrumental Setup — NMR instrument + DOSY gradient parameters
-       (max gradient G, diffusion time Δ, small delta δ). No operator here.
-     • Data              — gradient % (0–100) vs intensity grids, paste from Excel.
-     • Data Analysis     — Stejskal-Tanner fit (read-only Δ/δ/maxG + per-column D).
+       (max gradient G, diffusion time Δ, small delta δ) + DOSY dataset fields.
+     • Data              — gradient % (0–100) vs intensity grids, paste from
+       Excel. The table is rendered DIRECTLY inside the Data subsection.
+     • Data Analysis     — Stejskal-Tanner plot (with Error Management and
+       Graphical Parameters buttons) + the per-gradient-set results tables,
+       rendered DIRECTLY inside the Data Analysis subsection.
      • Simulations       — diffusion coefficient (Stokes–Einstein).
    ========================================================================= */
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import Chart from 'chart.js/auto';
-import TestShellRenderer, { CollapsibleSection } from './TestShellRenderer';
+import TestShellRenderer from './TestShellRenderer';
 import { DOSY_TAB_CONFIG } from './tabConfigs';
 import { NMRInstrumentalSetup } from './NMRInstrumentalSetup';
 import { makeTable, stokesEinsteinD, radiusFromMW, GAMMA_H } from './NMRFittingsTestRenderer';
 import { enableCellClipboard, cellAttrs } from '../utils/cellClipboard';
+import { ChartPanel, SharedErrorTreatment, SharedChartStylePanel } from './SharedAnalysisTools';
+import { shadesFromColor } from '../utils/chartStyle';
+import { StarToggle } from './StarToggle';
+import { isStarred, toggleStarredItem } from '../utils/starredItems';
 
 enableCellClipboard(); // global multi-cell select / copy / paste for data tables
 
 // Stejskal-Tanner: I = I0·exp(−b·D) with b = (γ·δ·G)²·(Δ−δ/3).
 // The data table stores the gradient as a percentage (0–100) of the maximum
 // gradient G_max (G/cm) entered in Instrumental Setup (1 G/cm = 0.01 T/m).
-const computeB = (gPct, maxG_Gcm, deltaS, bigDeltaS) => {
+const computeB = (gPct, maxG_Gcm, deltaS, bigDeltaS, gamma = GAMMA_H) => {
   const g = Number(gPct);
   if (!Number.isFinite(g) || g <= 0) return 0;
   const G_Tm = (Number(maxG_Gcm) || 60) * 0.01 * (g / 100);
   const d = Number(deltaS) || 0.002;      // small delta (gradient duration), s
   const D = Number(bigDeltaS) || 0.05;    // diffusion time Δ, s
-  const b = Math.pow(GAMMA_H * d * G_Tm, 2) * (D - d / 3);
+  const gyro = Number(gamma) > 0 ? Number(gamma) : GAMMA_H;
+  const b = Math.pow(gyro * d * G_Tm, 2) * (D - d / 3);
   return b > 0 ? b : 0;
 };
 
@@ -56,11 +63,43 @@ const fitStejskalTanner = (bvals, ys) => {
   return { D, I0: Math.exp(intercept), r2: ssTot > 0 ? 1 - ssRes / ssTot : 1, n };
 };
 
+// Outlier-aware fit — honours the "Outlier Threshold" of the Error Management
+// panel: points whose residual is > threshold × SD are dropped and the fit is
+// recomputed (up to 6 passes). The dropped indices are returned in `excluded`.
+const fitStejskalTannerRobust = (bvals, ys, outlierThresh) => {
+  const thresh = Number(outlierThresh) > 0 ? Number(outlierThresh) : 2;
+  const pts = bvals
+    .map((x, i) => ({ x: Number(x), y: Number(ys[i]), idx: i }))
+    .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y) && p.x > 0 && p.y > 0);
+  if (pts.length < 2) return null;
+  let excluded = [];
+  let fit = null;
+  for (let iter = 0; iter < 6; iter++) {
+    const kept = pts.filter((p) => !excluded.includes(p.idx));
+    if (kept.length < 2) break;
+    fit = fitStejskalTanner(kept.map((p) => p.x), kept.map((p) => p.y));
+    if (!fit) break;
+    const residuals = kept.map((p) => {
+      const pred = Math.log(fit.I0) - fit.D * p.x;
+      return Math.abs(p.y - Math.exp(pred));
+    });
+    const sd = residuals.length > 1
+      ? Math.sqrt(residuals.reduce((s, v) => s + v * v, 0) / (residuals.length - 1))
+      : 0;
+    const worst = residuals.reduce((best, v, i) => (v > residuals[best] ? i : best), 0);
+    if (sd > 0 && residuals[worst] / sd > thresh && kept.length > 2) {
+      excluded.push(kept[worst].idx);
+    } else break;
+  }
+  return fit ? { ...fit, excluded } : null;
+};
+
 /* ---- STABLE SECTION WRAPPERS (module-level, like NMR Fittings) ---- */
 const dosySections = {
   renderData: null,       // (t, tIndex) => ReactNode
   renderAnalysis: null,   // (t, tIndex) => ReactNode
   addTable: null,         // () => void
+  recomputeAll: null,     // () => void
   tables: [],             // live tables (bridged from the component so Data Analysis reads the same data as Data)
   sim: {},
   setSim: null,
@@ -68,35 +107,170 @@ const dosySections = {
   params: { maxG: 60, deltaMs: 2, bigDeltaMs: 50 }, // read-only values shown in Data Analysis
 };
 
+const DEFAULT_CFG = {
+  title: '',
+  xAxisLabel: 'b (s/mm²)',
+  yAxisLabel: 'ln(I)',
+  fontSize: 12,
+  ptStyle: 'circle',
+  ptSize: 4,
+  lineStyle: 'solid',
+  lineThickness: 2,
+  yMin: '', yMax: '', xMin: '', xMax: '',
+  baseColor: null,
+  colors: {}
+};
 
+// Parse pasted text into DOSY rows: first column = gradient % (0–100),
+// following columns = intensities. Accepts tab, space, semicolon or comma
+// separators, skips empty lines and a non-numeric header line.
+const parseDosyText = (text) => {
+  const lines = String(text || '').split(/\r?\n/);
+  // Detect the separator from the first data-like line.
+  let sep = null;
+  for (const line of lines) {
+    const l = line.trim();
+    if (!l || l.startsWith('#') || l.startsWith('//')) continue;
+    if (l.includes('\t')) sep = '\t';
+    else if (l.includes(';')) sep = ';';
+    else if (l.includes(',')) sep = ',';
+    break;
+  }
+  const rows = [];
+  for (const line of lines) {
+    const l = line.trim();
+    if (!l || l.startsWith('#') || l.startsWith('//')) continue;
+    const parts = sep ? l.split(sep) : l.split(/\s+/);
+    const tokens = parts.map((p) => p.trim()).filter((p) => p !== '');
+    if (!tokens.length) continue;
+    const parsed = tokens.map((tok) => {
+      const norm = sep !== ',' ? tok.replace(/,/g, '.') : tok; // European decimals
+      const v = parseFloat(norm);
+      return Number.isFinite(v) ? v : NaN;
+    });
+    if (parsed.every((v) => Number.isNaN(v))) continue; // header line
+    if (parsed.length < 2) continue; // need at least gradient % + 1 intensity
+    rows.push(parsed.map((v) => (Number.isNaN(v) ? '' : v)));
+  }
+  if (!rows.length) {
+    return { rows: [], error: 'No numeric data found — paste rows with a gradient % and at least one intensity value.' };
+  }
+  return { rows, error: null };
+};
+
+// Modal for the DOSY Data section: paste text, preview it, then import it into
+// a new gradient set or overwrite an existing one.
+const DOSYImportModal = ({ open, onClose, onImport, tables }) => {
+  const [text, setText] = useState('');
+  const [target, setTarget] = useState('new');
+  if (!open) return null;
+  const preview = parseDosyText(text);
+  const nIntensity = preview.rows.length
+    ? Math.max(1, Math.max(...preview.rows.map((r) => r.length - 1)))
+    : 0;
+  return (
+    <div className="fixed inset-0 z-[80] bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-xl p-5 w-full max-w-lg max-h-[85vh] overflow-y-auto custom-scrollbar"
+           onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-sm font-black text-slate-800 mb-1">📋 Import DOSY data from text</h3>
+        <p className="text-[10px] text-slate-500 mb-3">
+          First column = <b>gradient %</b> (0–100), second (and following) columns = <b>intensities</b>.
+          Tab / space / semicolon / comma separated — paste straight from Excel.
+        </p>
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={9}
+          spellCheck={false}
+          placeholder={'0\t100\n5\t98.5\n10\t95\n20\t88\n40\t72\n60\t55\n80\t40\n100\t30'}
+          className="w-full border border-slate-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-blue-500 resize-y"
+        />
+        <div className="flex flex-wrap items-center gap-2 mt-3">
+          <label className="text-[10px] font-bold text-slate-500 uppercase">Import into:</label>
+          <select value={target} onChange={(e) => setTarget(e.target.value)}
+                  className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-semibold text-slate-700">
+            <option value="new">New gradient set</option>
+            {(Array.isArray(tables) ? tables : []).map((t, i) => (
+              <option key={t.id} value={t.id}>Overwrite gradient set {i + 1}</option>
+            ))}
+          </select>
+        </div>
+        <div className="text-[10px] mt-2">
+          {preview.error ? (
+            <span className="text-red-500 font-bold">{preview.error}</span>
+          ) : preview.rows.length ? (
+            <span className="text-emerald-600 font-bold">
+              ✓ {preview.rows.length} row{preview.rows.length === 1 ? '' : 's'} · {nIntensity} intensity column{nIntensity === 1 ? '' : 's'} ready to import
+            </span>
+          ) : (
+            <span className="text-slate-400">Paste the data above to see a preview.</span>
+          )}
+        </div>
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300">Cancel</button>
+          <button
+            disabled={!!preview.error || !preview.rows.length}
+            onClick={() => onImport(preview.rows, target)}
+            className="px-3 py-1.5 text-xs font-bold rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40">
+            Import
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Data — the gradient %/intensity tables rendered DIRECTLY in the subsection
+// (no extra collapsible around each gradient set).
 const DOSYDataSection = ({ ctx }) => {
   const tables = Array.isArray(ctx.activeTest?.dosyTables) ? ctx.activeTest.dosyTables : [];
   return (
-    <div className="flex flex-col gap-6">
-      {tables.map((t, i) => (dosySections.renderData ? dosySections.renderData(t, i) : null))}
+    <div className="flex flex-col gap-5">
+      {tables.length === 0 && (
+        <p className="text-xs italic text-slate-400 bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-6 text-center">
+          No gradient sets yet — click “+ Add gradient set”.
+        </p>
+      )}
+      {tables.map((t, i) => (
+        <div key={t.id} className="flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-black uppercase tracking-wide text-slate-500">Gradient set {i + 1}</h4>
+          </div>
+          {dosySections.renderData ? dosySections.renderData(t, i) : null}
+        </div>
+      ))}
       {dosySections.addTable && (
-        <button onClick={dosySections.addTable} className="self-start text-sm bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-md shadow-sm">+ Add gradient set</button>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={dosySections.addTable} className="self-start text-sm bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-md shadow-sm">+ Add gradient set</button>
+          {dosySections.openImport && (
+            <button onClick={dosySections.openImport}
+                    className="self-start text-sm bg-teal-600 hover:bg-teal-700 text-white font-bold px-4 py-2 rounded-md shadow-sm"
+                    title="Paste text with gradient % in the first column and intensities in the following columns">
+              📋 Import from text
+            </button>
+          )}
+        </div>
       )}
     </div>
   );
 };
 
 
-// Data Analysis — Stejskal-Tanner decay plot built directly from the DATA TABLE
-// (gradient % vs intensity) and the read-only gradient parameters taken from
-// Instrumental Setup (max G, Δ, δ). Nothing here is editable: the source of
-// truth is the Data tab + Instrumental Setup, so the graph always stays in sync
-// with the values the scientist entered there.
-const DOSYFitChart = ({ tables, params }) => {
+// Stejskal-Tanner decay plot built DIRECTLY from the data table (gradient % vs
+// intensity) and the read-only gradient parameters of Instrumental Setup.
+// Applied style comes from the Graphical Parameters panel (dosyChartCfg) and
+// excluded/outlier points (Error Management) are drawn hollow.
+const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh = '2.0', showFit = true, mode = 'b', gamma = GAMMA_H }) => {
   const ref = useRef(null);
   const chartRef = useRef(null);
   const { maxG, deltaMs, bigDeltaMs } = params || {};
+  const thresh = Number(outlierThresh) > 0 ? Number(outlierThresh) : 2;
+  const xMode = mode === 'percent' ? 'percent' : mode === 'g' ? 'g' : 'b';
 
-  // Does any table column have at least one valid (b, intensity) pair?
   const anyPoint = (Array.isArray(tables) ? tables : []).some((t) => {
     for (let c = 0; c < (t.nCols || 0); c++) {
       for (let r = 0; r < t.nRows; r++) {
-        const b = computeB(t.delays[r], maxG, deltaMs / 1000, bigDeltaMs / 1000);
+        const b = computeB(t.delays[r], maxG, deltaMs / 1000, bigDeltaMs / 1000, gamma);
         const y = parseFloat(t.grid?.[r]?.[c]);
         if (b > 0 && Number.isFinite(y) && y > 0) return true;
       }
@@ -109,32 +283,115 @@ const DOSYFitChart = ({ tables, params }) => {
     if (chartRef.current) chartRef.current.destroy();
 
     const datasets = [];
-    (Array.isArray(tables) ? tables : []).forEach((t) => {
+    const fs = Number(cfg.fontSize) || 11;
+    // b-value for a given gradient strength G (G/cm): b = (γ·δ·G_Tm)²·(Δ−δ/3)
+    const dS = (Number(deltaMs) || 2) / 1000;      // small delta δ, s
+    const DS = (Number(bigDeltaMs) || 50) / 1000;  // diffusion time Δ, s
+    const bFromG = (gGcm) => {
+      const gTm = gGcm * 0.01;                      // 1 G/cm = 0.01 T/m
+      return Math.pow((Number(gamma) > 0 ? Number(gamma) : GAMMA_H) * dS * gTm, 2) * (DS - dS / 3);
+    };
+    (Array.isArray(tables) ? tables : []).forEach((t, ti) => {
       const nCols = t.nCols || 0;
       for (let c = 0; c < nCols; c++) {
         const label = (t.colResidues && t.colResidues[c]) || `Col ${c + 1}`;
-        const bvals = [], ys = [];
+        const bvals = [], ys = [], gvals = [];
         for (let r = 0; r < t.nRows; r++) {
-          const b = computeB(t.delays[r], maxG, deltaMs / 1000, bigDeltaMs / 1000);
+          const b = computeB(t.delays[r], maxG, deltaMs / 1000, bigDeltaMs / 1000, gamma);
           const y = parseFloat(t.grid?.[r]?.[c]);
-          if (b > 0 && Number.isFinite(y) && y > 0) { bvals.push(b); ys.push(y); }
+          if (b > 0 && Number.isFinite(y) && y > 0) { bvals.push(b); ys.push(y); gvals.push(Number(t.delays[r]) || 0); }
         }
         if (bvals.length < 2) continue;
-        const color = `hsl(${(c * 57) % 360}, 80%, 50%)`;
-        const pts = bvals.map((x, i) => ({ x, y: Math.log(Math.max(ys[i], 1e-12)) }));
-        datasets.push({ label, data: pts, showLine: false, pointRadius: 3, backgroundColor: color, borderColor: color });
-        const fit = fitStejskalTanner(bvals, ys);
-        if (fit) {
-          const xmin = Math.min(...bvals), xmax = Math.max(...bvals);
-          const curve = [];
-          for (let i = 0; i <= 60; i++) {
-            const x = xmin + ((xmax - xmin) * i) / 60;
-            curve.push({ x, y: Math.log(fit.I0) - fit.D * x });
+        const key = `col${ti}_${c}`;
+        const color = (cfg.colors && cfg.colors[key]) || (cfg.baseColor ? shadesFromColor(cfg.baseColor, 8)[c % 8] : `hsl(${((ti * nCols + c) * 57) % 360}, 80%, 50%)`);
+        const fit = fitStejskalTannerRobust(bvals, ys, thresh);
+        const excludedSet = new Set(fit ? fit.excluded : []);
+
+        if (xMode === 'percent') {
+          // Gradient % vs Intensity — Stejskal-Tanner curve I = I0·exp(−b·D)
+          const pts = [];
+          for (let r = 0; r < t.nRows; r++) {
+            const b = computeB(t.delays[r], maxG, deltaMs / 1000, bigDeltaMs / 1000, gamma);
+            const y = parseFloat(t.grid?.[r]?.[c]);
+            if (b > 0 && Number.isFinite(y) && y > 0) pts.push({ x: Number(t.delays[r]) || 0, y });
           }
-          datasets.push({ label: `${label} fit (D=${fit.D.toExponential(2)} m²/s)`, data: curve, showLine: true, pointRadius: 0, borderColor: color, borderWidth: 2, type: 'line' });
+          datasets.push({
+            label,
+            data: pts.map((p) => ({ x: p.x, y: p.y })),
+            showLine: false,
+            pointStyle: cfg.ptStyle || 'circle',
+            pointRadius: Number(cfg.ptSize) || 4,
+            backgroundColor: color,
+            borderColor: color,
+            pointBackgroundColor: pts.map((p, i) => (showExcl && excludedSet.has(i) ? '#ffffff' : color)),
+            pointBorderColor: pts.map((p, i) => (showExcl && excludedSet.has(i) ? '#ef4444' : color)),
+            pointBorderWidth: pts.map((p, i) => (showExcl && excludedSet.has(i) ? 2 : 1))
+          });
+          if (fit && showFit) {
+            const xs = pts.map((p) => p.x);
+            const xmin = Math.min(0, ...xs), xmax = Math.max(...xs);
+            const curve = [];
+            for (let i = 0; i <= 80; i++) {
+              const x = xmin + ((xmax - xmin) * i) / 80;
+              const b = computeB(x, maxG, deltaMs / 1000, bigDeltaMs / 1000, gamma);
+              curve.push({ x, y: fit.I0 * Math.exp(-fit.D * b) });
+            }
+            datasets.push({
+              label: `${label} fit (D=${fit.D.toExponential(2)} m²/s)`,
+              data: curve, showLine: true, pointRadius: 0,
+              borderColor: color,
+              borderWidth: Number(cfg.lineThickness) || 2,
+              borderDash: cfg.lineStyle === 'dashed' ? [6, 4] : cfg.lineStyle === 'dotted' ? [2, 4] : [],
+              type: 'line', fill: false
+            });
+          }
+        } else {
+          // x = b-value or gradient strength G (G/cm), y = ln(I) — linearized Stejskal-Tanner
+          const xVals = xMode === 'g' ? gvals.map((g) => (Number(maxG) || 60) * (g / 100)) : bvals;
+          const pts = xVals.map((x, i) => ({ x, y: Math.log(Math.max(ys[i], 1e-12)), ex: excludedSet.has(i) }));
+          datasets.push({
+            label,
+            data: pts.map((p) => ({ x: p.x, y: p.y })),
+            showLine: false,
+            pointStyle: cfg.ptStyle || 'circle',
+            pointRadius: Number(cfg.ptSize) || 4,
+            backgroundColor: color,
+            borderColor: color,
+            pointBackgroundColor: pts.map((p) => (showExcl && p.ex ? '#ffffff' : color)),
+            pointBorderColor: pts.map((p) => (showExcl && p.ex ? '#ef4444' : color)),
+            pointBorderWidth: pts.map((p) => (showExcl && p.ex ? 2 : 1))
+          });
+          if (fit && showFit) {
+            const xmin = Math.min(...xVals), xmax = Math.max(...xVals);
+            const steps = xMode === 'g' ? 80 : 60;
+            const curve = [];
+            for (let i = 0; i <= steps; i++) {
+              const x = xmin + ((xmax - xmin) * i) / steps;
+              // ln(I) = ln(I0) − D·b(x): straight line when x = b, curved (∝ G²) when x = G
+              const b = xMode === 'g' ? bFromG(x) : x;
+              curve.push({ x, y: Math.log(fit.I0) - fit.D * b });
+            }
+            datasets.push({
+              label: `${label} fit (D=${fit.D.toExponential(2)} m²/s)`,
+              data: curve, showLine: true, pointRadius: 0,
+              borderColor: color,
+              borderWidth: Number(cfg.lineThickness) || 2,
+              borderDash: cfg.lineStyle === 'dashed' ? [6, 4] : cfg.lineStyle === 'dotted' ? [2, 4] : [],
+              type: 'line', fill: false
+            });
+          }
         }
       }
     });
+
+    const xTitle = xMode === 'percent'
+      ? (cfg.xAxisLabel || 'Gradient % (0–100)')
+      : xMode === 'g'
+        ? (cfg.xAxisLabel || `Gradient strength G (G/cm) — Gmax = ${maxG} G/cm`)
+        : (cfg.xAxisLabel || `b (s/mm²) — Gmax = ${maxG} G/cm · Δ = ${bigDeltaMs} ms · δ = ${deltaMs} ms`);
+    const yTitle = xMode === 'percent'
+      ? (cfg.yAxisLabel || 'Intensity (I)')
+      : (cfg.yAxisLabel || 'ln(I)');
 
     chartRef.current = new Chart(ref.current, {
       type: 'scatter',
@@ -142,14 +399,28 @@ const DOSYFitChart = ({ tables, params }) => {
       options: {
         responsive: true, maintainAspectRatio: false,
         scales: {
-          x: { type: 'linear', title: { display: true, text: `b (s/mm²) — from gradient % · Gmax = ${maxG} G/cm · Δ = ${bigDeltaMs} ms · δ = ${deltaMs} ms`, font: { size: 11 } }, ticks: { font: { size: 10 } } },
-          y: { title: { display: true, text: 'ln(I)', font: { size: 11 } }, ticks: { font: { size: 10 } } }
+          x: {
+            type: 'linear',
+            title: { display: true, text: xTitle, font: { size: fs } },
+            ticks: { font: { size: fs - 1 } },
+            min: cfg.xMin !== '' && cfg.xMin !== undefined && cfg.xMin !== null ? Number(cfg.xMin) : undefined,
+            max: cfg.xMax !== '' && cfg.xMax !== undefined && cfg.xMax !== null ? Number(cfg.xMax) : undefined
+          },
+          y: {
+            title: { display: true, text: yTitle, font: { size: fs } },
+            ticks: { font: { size: fs - 1 } },
+            min: cfg.yMin !== '' && cfg.yMin !== undefined && cfg.yMin !== null ? Number(cfg.yMin) : undefined,
+            max: cfg.yMax !== '' && cfg.yMax !== undefined && cfg.yMax !== null ? Number(cfg.yMax) : undefined
+          }
         },
-        plugins: { legend: { display: datasets.length > 0, labels: { font: { size: 10 } } } }
+        plugins: {
+          title: cfg.title ? { display: true, text: cfg.title, font: { size: fs + 2 } } : undefined,
+          legend: { display: datasets.length > 0, labels: { font: { size: fs - 1 } } }
+        }
       }
     });
     return () => { if (chartRef.current) chartRef.current.destroy(); };
-  }, [tables, maxG, deltaMs, bigDeltaMs]);
+  }, [tables, maxG, deltaMs, bigDeltaMs, cfg, showExcl, thresh, showFit, xMode, gamma]);
 
   return (
     <div className="w-full">
@@ -164,20 +435,33 @@ const DOSYFitChart = ({ tables, params }) => {
 };
 
 
-// Data Analysis — direct content (analysisPlain), no nested "Per Atom Plot".
+// Data Analysis — direct content (analysisPlain), no nested subsections.
+// The Stejskal-Tanner plot and the per-gradient-set results tables are
+// rendered DIRECTLY here, with Error Management + Graphical Parameters buttons.
 const DOSYFittingSection = ({ ctx }) => {
-  // Read the LIVE data tables (the same ones the Data section edits), falling
-  // back to the persisted activeTest tables — the plot must always mirror the
-  // Data section exactly.
-  const liveTables = Array.isArray(dosySections.tables) && dosySections.tables.length
+  const tables = (Array.isArray(dosySections.tables) && dosySections.tables.length)
     ? dosySections.tables
     : (Array.isArray(ctx.activeTest?.dosyTables) ? ctx.activeTest.dosyTables : []);
-  const tables = liveTables;
-  const { maxG, deltaMs, bigDeltaMs } = dosySections.params;
+  const { maxG, deltaMs, bigDeltaMs, gamma = GAMMA_H } = dosySections.params;
+  const chartCfg = useMemo(
+    () => ({ ...DEFAULT_CFG, ...(ctx.activeTest?.dosyChartCfg || {}) }),
+    [ctx.activeTest?.dosyChartCfg]
+  );
+  const update = (u) => { if (ctx.updateActiveTest) ctx.updateActiveTest(u); };
+  const plotRef = useRef(null); // container of the Chart.js canvas (for the ⭐ snapshot)
+  const xMode = ctx.activeTest?.dosyXAxis === 'percent' ? 'percent' : ctx.activeTest?.dosyXAxis === 'g' ? 'g' : 'b';
+
+  const series = [];
+  tables.forEach((t, ti) => {
+    for (let c = 0; c < (t.nCols || 0); c++) {
+      series.push({ key: `col${ti}_${c}`, label: (t.colResidues && t.colResidues[c]) || `Set ${ti + 1} Col ${c + 1}` });
+    }
+  });
+
   return (
     <div className="flex flex-col gap-6">
       {/* Read-only gradient parameters, taken from Instrumental Setup */}
-      <div className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 grid grid-cols-1 md:grid-cols-3 gap-3 text-center">
+      <div className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
         <div>
           <div className="text-[10px] font-black text-slate-400 uppercase">Max gradient G</div>
           <div className="text-base font-bold text-slate-800 font-mono">{maxG} G/cm</div>
@@ -190,19 +474,158 @@ const DOSYFittingSection = ({ ctx }) => {
           <div className="text-[10px] font-black text-slate-400 uppercase">Small delta δ (gradient duration)</div>
           <div className="text-base font-bold text-slate-800 font-mono">{deltaMs} ms</div>
         </div>
+        <div>
+          <div className="text-[10px] font-black text-slate-400 uppercase">Gyromagnetic ratio γ</div>
+          <div className="text-base font-bold text-slate-800 font-mono">{gamma.toExponential(3)} rad/(s·T)</div>
+        </div>
       </div>
+
+      {/* Stejskal-Tanner equation (the fitting function) */}
+      <div className="w-full bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 text-center">
+        <div className="text-[10px] font-black text-indigo-500 uppercase mb-1">Stejskal-Tanner equation</div>
+        <div className="text-sm md:text-lg font-semibold text-slate-800 overflow-x-auto whitespace-nowrap py-1"
+             style={{ fontFamily: 'Georgia, "Times New Roman", serif' }}>
+          I<sub>G</sub> = I<sub>0</sub> · exp[ −(γ·δ·G)² · D · (Δ − δ/3) ] + C
+        </div>
+        <div className="text-[11px] text-slate-500 mt-1">
+          with&nbsp; b = (γ·δ·G)²·(Δ − δ/3), &nbsp;G = G<sub>max</sub> · (gradient % / 100)
+          &nbsp;and&nbsp; γ = {gamma.toExponential(3)} rad/(s·T)
+          {ctx.activeTest?.dosyNucleus ? ` (${ctx.activeTest.dosyNucleus})` : ' (¹H)'}
+        </div>
+      </div>
+
+      {/* X-axis switch: Gradient % (intensity curve) ↔ b-value ↔ G (G/cm) */}
+      <div className="w-full flex flex-wrap items-center justify-center gap-2">
+        <span className="text-[10px] font-black text-slate-500 uppercase">X axis:</span>
+        <div className="inline-flex rounded-lg border border-slate-300 bg-white shadow-sm overflow-hidden">
+          <button
+            type="button"
+            onClick={() => update({ dosyXAxis: 'b' })}
+            className={`px-3 py-1.5 text-[11px] font-bold transition-colors ${xMode === 'b' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+            title="Stejskal-Tanner plot: ln(I) vs b-value (s/mm²) with a linear regression fit">
+            b-value (s/mm²)
+          </button>
+          <button
+            type="button"
+            onClick={() => update({ dosyXAxis: 'g' })}
+            className={`px-3 py-1.5 text-[11px] font-bold transition-colors border-l border-slate-200 ${xMode === 'g' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+            title="Stejskal-Tanner plot: ln(I) vs gradient strength G (G/cm) with the model curve">
+            G (G/cm)
+          </button>
+          <button
+            type="button"
+            onClick={() => update({ dosyXAxis: 'percent' })}
+            className={`px-3 py-1.5 text-[11px] font-bold transition-colors border-l border-slate-200 ${xMode === 'percent' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+            title="Intensity I vs gradient % (0–100) with the Stejskal-Tanner decay curve">
+            Gradient %
+          </button>
+        </div>
+        <span className="text-[10px] text-slate-400">
+          {xMode === 'percent'
+            ? 'I vs gradient % — exponential Stejskal-Tanner decay'
+            : xMode === 'g'
+              ? 'ln(I) vs G (G/cm) — model curve (quadratic in G)'
+              : 'ln(I) vs b — linearized Stejskal-Tanner fit'}
+        </span>
+      </div>
+
+      {/* Stejskal-Tanner results tables — directly inside Data Analysis */}
       {tables.map((t, i) => (dosySections.renderAnalysis ? dosySections.renderAnalysis(t, i) : null))}
-      <div className="w-full border border-slate-300 rounded-xl bg-slate-50 p-4 flex flex-col gap-2">
-        <h4 className="text-sm font-bold text-slate-700">📈 Stejskal-Tanner plot — read directly from the data table</h4>
-        <p className="text-[10px] text-slate-400">ln(I) vs b computed from the gradient % columns of the Data tab and the gradient parameters of Instrumental Setup (shown read-only above). No data is entered here.</p>
-        <DOSYFitChart tables={tables} params={{ maxG, deltaMs, bigDeltaMs }} />
-      </div>
+
+      {/* Stejskal-Tanner plot — directly inside Data Analysis, with Error
+          Management (outliers, fit toggle) and Graphical Parameters buttons */}
+      <ChartPanel
+        title={xMode === 'percent'
+          ? 'Stejskal-Tanner plot — Gradient % vs Intensity'
+          : xMode === 'g'
+            ? 'Stejskal-Tanner plot — G (G/cm) vs ln(I)'
+            : 'Stejskal-Tanner plot — b vs ln(I)'}
+        icon="📈"
+        errPanel={
+          <SharedErrorTreatment
+            activeTest={ctx.activeTest || {}}
+            updateActiveTest={update}
+            showFitToggle
+            customActions={
+              <button type="button" onClick={() => dosySections.recomputeAll && dosySections.recomputeAll()}
+                      className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-2 rounded-lg text-xs shadow-sm whitespace-nowrap">
+                ▶️ Recompute fits
+              </button>
+            }
+          />
+        }
+        cfgPanel={
+          <SharedChartStylePanel
+            cfg={chartCfg}
+            setCfg={(patch) => update({ dosyChartCfg: { ...chartCfg, ...patch } })}
+            series={series}
+            unit={xMode === 'percent' ? 'Gradient % (0–100)' : xMode === 'g' ? 'G (G/cm)' : 'b (s/mm²)'}
+          />
+        }
+        headerExtra={
+          <StarToggle
+            active={isStarred(ctx.activeTest, 'dosy-plot')}
+            title={isStarred(ctx.activeTest, 'dosy-plot')
+              ? 'Remove this plot from the project document'
+              : '⭐ Import this plot into the project document'}
+            onToggle={() => {
+              const cv = plotRef.current ? plotRef.current.querySelector('canvas') : null;
+              const url = cv ? cv.toDataURL('image/png') : '';
+              if (!url) return;
+              update({
+                starredItems: toggleStarredItem(ctx.activeTest, {
+                  id: 'dosy-plot',
+                  kind: 'graph',
+                  label: xMode === 'percent'
+                    ? 'Stejskal-Tanner plot (Gradient % vs Intensity)'
+                    : xMode === 'g'
+                      ? 'Stejskal-Tanner plot (G/cm vs ln I)'
+                      : 'Stejskal-Tanner plot (b vs ln I)',
+                  caption: `${xMode === 'percent'
+                    ? 'Stejskal-Tanner curve — intensity I vs gradient %'
+                    : xMode === 'g'
+                      ? 'Stejskal-Tanner plot — ln(I) vs gradient strength G (G/cm)'
+                      : 'Stejskal-Tanner plot — ln(I) vs b-value'} — ${(series || []).map((s) => s.label).join(', ') || 'DOSY'}`,
+                  url
+                })
+              });
+            }}
+          />
+        }
+      >
+        <div ref={plotRef} data-star-key="dosy-plot">
+          <DOSYFitChart
+            tables={tables}
+            params={{ maxG, deltaMs, bigDeltaMs }}
+            cfg={chartCfg}
+            showExcl={!!ctx.activeTest?.showExcl}
+            outlierThresh={ctx.activeTest?.outlierThreshStr || '2.0'}
+            showFit={ctx.activeTest?.fitIC50 !== false}
+            mode={xMode}
+            gamma={gamma}
+          />
+        </div>
+      </ChartPanel>
+      <p className="text-[10px] text-slate-400 -mt-2">
+        The plot reads the gradient % / intensity values directly from the Data tab and the gradient parameters of
+        Instrumental Setup. Switch the x axis between “Gradient %” (intensity curve), “b-value” (linearized ln(I) fit)
+        and “G (G/cm)” (gradient strength). Use “Error Management” to drop outliers from the fit and “Graphical Parameters”
+        to style the chart.
+      </p>
     </div>
   );
 };
 
-// Instrumental Setup — shared NMR setup without Operator, plus the DOSY
-// gradient parameters (max gradient G, diffusion time Δ, small delta δ).
+
+// Common nuclei gyromagnetic ratios (rad/(s·T)) for the Stejskal-Tanner fit.
+const DOSY_NUCLEI = [
+  { label: '¹H', value: 2.6752218744e8 },
+  { label: '¹⁹F', value: 2.51815e8 },
+  { label: '³¹P', value: 1.08409e8 },
+  { label: '¹³C', value: 6.728284e7 },
+  { label: '¹⁵N', value: -2.71261804e7 }, // magnitude used (γ² in the b-value)
+];
+
 const DOSYInstrumentalSetup = ({ ctx }) => {
   const update = (u) => { if (ctx.updateActiveTest) ctx.updateActiveTest(u); };
   const activeTest = ctx.activeTest || {};
@@ -215,7 +638,7 @@ const DOSYInstrumentalSetup = ({ ctx }) => {
         <div className="border border-slate-200 rounded-xl bg-slate-50 p-4 flex flex-col gap-3">
           <div>
             <h4 className="text-sm font-bold text-slate-700">DOSY Dataset</h4>
-            <p className="text-[10px] text-slate-400">Dataset identification for this DOSY experiment (was the Experiment Setup section).</p>
+            <p className="text-[10px] text-slate-400">Dataset identification for this DOSY experiment.</p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="flex flex-col gap-1">
                 <label className="text-[10px] font-bold text-slate-500 uppercase">Dataset Name</label>
@@ -254,6 +677,31 @@ const DOSYInstrumentalSetup = ({ ctx }) => {
                 onChange={(e) => update({ dosySmallDelta: e.target.value === '' ? '' : Number(e.target.value) })}
                 className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-500 bg-white" />
             </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-bold text-slate-500 uppercase">Gyromagnetic ratio γ (rad/(s·T))</label>
+              <input type="number" step="any"
+                value={activeTest.dosyGamma || GAMMA_H}
+                onChange={(e) => update({ dosyGamma: e.target.value === '' ? '' : Number(e.target.value), dosyNucleus: 'Custom' })}
+                className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-500 bg-white font-mono" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-bold text-slate-500 uppercase">Nucleus preset</label>
+              <select
+                value={DOSY_NUCLEI.find((n) => n.label === activeTest.dosyNucleus && Number(activeTest.dosyGamma) === n.value) ? activeTest.dosyNucleus : 'custom'}
+                onChange={(e) => {
+                  const n = DOSY_NUCLEI.find((x) => x.label === e.target.value);
+                  if (n) update({ dosyGamma: n.value, dosyNucleus: n.label });
+                }}
+                className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-500 bg-white font-semibold text-slate-700">
+                {DOSY_NUCLEI.map((n) => <option key={n.label} value={n.label}>{n.label}</option>)}
+                <option value="custom">Custom…</option>
+              </select>
+            </div>
+            <p className="text-[10px] text-slate-400 leading-tight">
+              Used in b = (γ·δ·G)²·(Δ − δ/3). Default ¹H = 2.6752×10⁸ rad/(s·T).
+            </p>
           </div>
         </div>
       )}
@@ -335,201 +783,303 @@ const DOSYSimulationsSection = ({ ctx }) => {
 
 /* ========================================================================== */
 export const DOSYTestRenderer = ({ activeTest = {}, updateActiveTest, TestHeader, compoundMeta = {}, allCmpds = [], ...rest }) => {
-    const update = (u) => { if (updateActiveTest) updateActiveTest(u); };
+  const update = (u) => { if (updateActiveTest) updateActiveTest(u); };
+  const [dosyImportOpen, setDosyImportOpen] = useState(false);
 
-    // LOCAL STATE for the data tables — every edit runs against the latest
-    // array, so editing one cell can never drop the other values.
-    const makeDefaultTable = () => makeTable({
-        relaxType: 'DOSY', delayUnit: '%',
-        nRows: 8, nCols: 4,
-        delays: [0, 5, 10, 20, 40, 60, 80, 100],
-        grid: Array.from({ length: 8 }, () => Array(4).fill('')),
+  // The DATA TABLES live directly on the test (activeTest.dosyTables). No local
+  // shadow state: every mutator composes against the LATEST array via tablesRef,
+  // so an Excel paste (many cell updates in one batch) and later single-cell
+  // edits can never drop the other values.
+  const makeDefaultTable = () => makeTable({
+    relaxType: 'DOSY', delayUnit: '%',
+    nRows: 8, nCols: 4,
+    delays: [0, 5, 10, 20, 40, 60, 80, 100],
+    grid: Array.from({ length: 8 }, () => Array(4).fill('')),
+  });
+  const fallbackTable = useMemo(() => makeDefaultTable(), []);
+  const tables = (Array.isArray(activeTest.dosyTables) && activeTest.dosyTables.length)
+    ? activeTest.dosyTables
+    : [fallbackTable];
+  const tablesRef = useRef(tables);
+  tablesRef.current = tables;
+
+  const commit = (next) => { tablesRef.current = next; update({ dosyTables: next }); };
+  const liveTable = (t) => tablesRef.current.find((tb) => tb.id === t.id) || t;
+  const updateTable = (id, patch) => {
+    const live = tablesRef.current;
+    commit(live.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+  };
+  const setCell = (t, r, c, v) => {
+    const lt = liveTable(t);
+    const g = (lt.grid || []).map((row) => (row || []).slice());
+    while (g.length < lt.nRows) g.push(new Array(lt.nCols).fill(''));
+    if (!g[r]) g[r] = [];
+    while (g[r].length < lt.nCols) g[r].push('');
+    g[r][c] = v;
+    updateTable(t.id, { grid: g });
+  };
+  const setDelay = (t, r, v) => { const lt = liveTable(t); const d = (lt.delays || []).slice(); d[r] = v; updateTable(t.id, { delays: d }); };
+  const setColResidue = (t, c, v) => { const lt = liveTable(t); const cr = (lt.colResidues || []).slice(); cr[c] = v; updateTable(t.id, { colResidues: cr }); };
+  const addRow = (t) => { const lt = liveTable(t); const last = lt.delays.length ? Number(lt.delays[lt.delays.length - 1]) || 0 : 0; updateTable(t.id, { nRows: lt.nRows + 1, delays: [...(lt.delays || []), last], grid: [...(lt.grid || []).map((r) => r.slice()), new Array(lt.nCols).fill('')] }); };
+  const removeRow = (t, r) => { const lt = liveTable(t); if (lt.nRows <= 1) return; updateTable(t.id, { nRows: lt.nRows - 1, delays: (lt.delays || []).filter((_, i) => i !== r), grid: (lt.grid || []).filter((_, i) => i !== r) }); };
+  const addCol = (t) => { const lt = liveTable(t); updateTable(t.id, { nCols: lt.nCols + 1, colResidues: [...(lt.colResidues || []), ''], grid: (lt.grid || []).map((r) => [...(r || []), '']) }); };
+  const removeCol = (t, c) => { const lt = liveTable(t); if (lt.nCols <= 1) return; updateTable(t.id, { nCols: lt.nCols - 1, colResidues: (lt.colResidues || []).filter((_, i) => i !== c), grid: (lt.grid || []).map((r) => (r || []).filter((_, i) => i !== c)) }); };
+  const addTable = () => commit([...tablesRef.current, makeDefaultTable()]);
+  const removeTable = (id) => { if (tablesRef.current.length <= 1) { alert('Keep at least one gradient set.'); return; } commit(tablesRef.current.filter((t) => t.id !== id)); };
+
+  // Import pasted text into a gradient set: first column = gradient % (0–100),
+  // following columns = intensities. Creates a new set or overwrites one.
+  const handleDosyImport = (rows, targetTableId) => {
+    if (!Array.isArray(rows) || !rows.length) return;
+    const nInt = Math.max(1, Math.max(...rows.map((r) => r.length - 1)));
+    const clampG = (v) => (typeof v === 'number' ? Math.min(100, Math.max(0, v)) : v);
+    const delays = rows.map((r) => clampG(r[0]));
+    const colResidues = Array.from({ length: nInt }, (_, c) => (c === 0 ? 'Intensity 1' : `Intensity ${c + 1}`));
+    const grid = rows.map((r) =>
+      Array.from({ length: nInt }, (_, c) => (r[c + 1] === undefined || r[c + 1] === null ? '' : r[c + 1]))
+    );
+    if (targetTableId === 'new') {
+      commit([...tablesRef.current, {
+        id: 'd' + Date.now() + Math.floor(Math.random() * 1e4),
+        nRows: rows.length, nCols: nInt, delayUnit: '%',
+        delays, colResidues, grid
+      }]);
+    } else {
+      commit(tablesRef.current.map((t) => (t.id === targetTableId
+        ? { ...t, nRows: rows.length, nCols: nInt, delayUnit: t.delayUnit || '%', delays, colResidues, grid }
+        : t)));
+    }
+    setDosyImportOpen(false);
+  };
+
+  const gamma = Number(activeTest.dosyGamma) > 0 ? Number(activeTest.dosyGamma) : GAMMA_H; // gyromagnetic ratio γ (rad/(s·T))
+
+  const gradientParams = {
+    maxG: Number(activeTest.dosyMaxG) || 60,
+    deltaMs: Number(activeTest.dosySmallDelta) || 2,
+    bigDeltaMs: Number(activeTest.dosyDelta) || 50,
+    gamma,
+  };
+  dosySections.params = gradientParams;
+  dosySections.gamma = gamma;
+  dosySections.tables = tables;
+
+  const [fits, setFits] = useState(activeTest.dosyFits || {});
+  const fitsSigRef = useRef('');
+
+  const computeFits = (tablesList) => {
+    const thresh = Number(activeTest.outlierThreshStr) > 0 ? Number(activeTest.outlierThreshStr) : 2;
+    const next = {};
+    const sigs = [];
+    tablesList.forEach((t) => {
+      const cols = [];
+      for (let c = 0; c < (t.nCols || 0); c++) {
+        const bvals = [], ys = [];
+        for (let r = 0; r < t.nRows; r++) {
+          const b = computeB(t.delays[r], gradientParams.maxG, gradientParams.deltaMs / 1000, gradientParams.bigDeltaMs / 1000, gradientParams.gamma);
+          const y = parseFloat(t.grid?.[r]?.[c]);
+          if (b > 0 && isFinite(y) && y > 0) { bvals.push(b); ys.push(y); }
+        }
+        const fit = fitStejskalTannerRobust(bvals, ys, thresh);
+        cols.push({ residue: t.colResidues?.[c] || `Col ${c + 1}`, fit });
+        sigs.push(fit ? [fit.D, fit.I0, fit.r2, fit.n, fit.excluded].join('|') : 'null');
+      }
+      next[t.id] = cols;
     });
-    const [tablesState, setTablesState] = useState(() => (
-        Array.isArray(activeTest.dosyTables) && activeTest.dosyTables.length
-            ? activeTest.dosyTables
-            : [makeDefaultTable()]
-    ));
-    const lastSyncRef = useRef(tablesState);
-    // Sync local state when activeTest changes from elsewhere (reload / undo).
-    useEffect(() => {
-        const t = activeTest.dosyTables;
-        if (Array.isArray(t) && t.length && t !== lastSyncRef.current) {
-            lastSyncRef.current = t;
-            setTablesState(t);
-        }
-    }, [activeTest.dosyTables]);
-    const commit = (next) => { lastSyncRef.current = next; tablesRef.current = next; setTablesState(next); update({ dosyTables: next }); };
-    // Always points at the LATEST tables, so batched edits (Excel-style paste,
-    // several onChange events in the same tick) never overwrite each other.
-    const tablesRef = useRef(tablesState);
-    tablesRef.current = tablesState;
+    const sig = sigs.join(';');
+    return { next, sig };
+  };
 
-    const [fits, setFits] = useState(activeTest.dosyFits || {});
+  // Auto-fit whenever the data changes so the results tables always mirror
+  // the values entered in the Data tab.
+  useEffect(() => {
+    const { next, sig } = computeFits(tables);
+    if (sig === fitsSigRef.current) return;
+    fitsSigRef.current = sig;
+    setFits(next);
+    update({ dosyFits: next });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tables, activeTest.outlierThreshStr, activeTest.dosyMaxG, activeTest.dosySmallDelta, activeTest.dosyDelta, activeTest.dosyGamma]);
 
-    const gradientParams = {
-        maxG: Number(activeTest.dosyMaxG) || 60,
-        deltaMs: Number(activeTest.dosySmallDelta) || 2,
-        bigDeltaMs: Number(activeTest.dosyDelta) || 50,
-    };
-    dosySections.params = gradientParams;
-    dosySections.tables = tablesState;
-
-    const sim = { MW: 12000, shape: 'sphere', vbar: 0.73, hydration: 0.3, viscosity: 0.89e-3, ...(activeTest.dosySim || {}) };
-    const setSim = (patch) => update({ dosySim: { ...sim, ...patch } });
-
-    const liveTable = (t) => tablesRef.current.find((tb) => tb.id === t.id) || t;
-
-    const updateTable = (id, patch) => {
-        const live = tablesRef.current;
-        commit(live.map((t) => (t.id === id ? { ...t, ...patch } : t)));
-    };
-    const setCell = (t, r, c, v) => {
-        const lt = liveTable(t);
-        const g = (lt.grid || []).map((row) => (row || []).slice());
-        while (g.length < lt.nRows) g.push(new Array(lt.nCols).fill(''));
-        if (!g[r]) g[r] = [];
-        while (g[r].length < lt.nCols) g[r].push('');
-        g[r][c] = v;
-        updateTable(t.id, { grid: g });
-    };
-    const setDelay = (t, r, v) => { const lt = liveTable(t); const d = (lt.delays || []).slice(); d[r] = v; updateTable(t.id, { delays: d }); };
-    const setColResidue = (t, c, v) => { const lt = liveTable(t); const cr = (lt.colResidues || []).slice(); cr[c] = v; updateTable(t.id, { colResidues: cr }); };
-    const addRow = (t) => { const lt = liveTable(t); const last = lt.delays.length ? Number(lt.delays[lt.delays.length - 1]) || 0 : 0; updateTable(t.id, { nRows: lt.nRows + 1, delays: [...(lt.delays || []), last], grid: [...(lt.grid || []).map((r) => r.slice()), new Array(lt.nCols).fill('')] }); };
-    const removeRow = (t, r) => { const lt = liveTable(t); if (lt.nRows <= 1) return; updateTable(t.id, { nRows: lt.nRows - 1, delays: (lt.delays || []).filter((_, i) => i !== r), grid: (lt.grid || []).filter((_, i) => i !== r) }); };
-    const addCol = (t) => { const lt = liveTable(t); updateTable(t.id, { nCols: lt.nCols + 1, colResidues: [...(lt.colResidues || []), ''], grid: (lt.grid || []).map((r) => [...(r || []), '']) }); };
-    const removeCol = (t, c) => { const lt = liveTable(t); if (lt.nCols <= 1) return; updateTable(t.id, { nCols: lt.nCols - 1, colResidues: (lt.colResidues || []).filter((_, i) => i !== c), grid: (lt.grid || []).map((r) => (r || []).filter((_, i) => i !== c)) }); };
-    const addTable = () => commit([...tablesRef.current, makeDefaultTable()]);
-    const removeTable = (id) => { if (tablesRef.current.length <= 1) { alert('Keep at least one gradient set.'); return; } commit(tablesRef.current.filter((t) => t.id !== id)); };
-
-    const runFitForTable = (t) => {
-        const lt = liveTable(t);
-        const cols = [];
-        for (let c = 0; c < lt.nCols; c++) {
-            const bvals = [], ys = [];
-            for (let r = 0; r < lt.nRows; r++) {
-                const b = computeB(lt.delays[r], gradientParams.maxG, gradientParams.deltaMs / 1000, gradientParams.bigDeltaMs / 1000);
-                const y = parseFloat(lt.grid[r]?.[c]);
-                if (b > 0 && isFinite(y) && y > 0) { bvals.push(b); ys.push(y); }
-            }
-            cols.push({ residue: lt.colResidues[c] || `Col ${c + 1}`, fit: fitStejskalTanner(bvals, ys) });
-        }
-        const next = { ...(fits || {}), [t.id]: cols };
-        setFits(next);
-        update({ dosyFits: next });
-    };
+  const runFitForTable = () => {
+    const { next } = computeFits(tablesRef.current);
+    setFits(next);
+    update({ dosyFits: next });
+  };
+  dosySections.recomputeAll = () => runFitForTable();
 
 
-    const renderTableData = (t, tIndex) => (
-        <CollapsibleSection key={t.id} title={`Gradient set ${tIndex + 1} — ${t.colResidues.filter(Boolean).join(', ') || 'DOSY data'}`} icon="📈" defaultOpen={false}>
-            <div className="flex flex-col gap-4">
-                <div className="overflow-auto border border-slate-300 rounded-lg bg-white shadow-inner">
-                    <table className="border-collapse text-xs w-full">
-                        <thead>
-                            <tr>
-                                <th className="bg-slate-200 border border-slate-300 p-1 sticky top-0 left-0 z-20 text-slate-600">Gradient % (0–100)</th>
-                                {Array.from({ length: t.nCols }, (_, c) => (
-                                    <th key={c} className="bg-slate-100 border border-slate-300 p-1 min-w-[110px] sticky top-0 z-10 group relative">
-                                        <div className="flex flex-col gap-1 w-full relative">
-                                            <input value={t.colResidues[c] || ''} onChange={(e) => setColResidue(t, c, e.target.value)} placeholder="intensity" className="w-full text-center border border-slate-300 rounded p-1 text-[11px] font-bold text-blue-800" />
-                                            <button onClick={() => removeCol(t, c)} className="absolute -top-1 -right-1 bg-red-100 text-red-500 hover:bg-red-500 hover:text-white rounded-full w-5 h-5 flex items-center justify-center font-bold opacity-0 group-hover:opacity-100 transition-opacity shadow-sm" title="Delete Column">✕</button>
-                                        </div>
-                                    </th>
-                                ))}
-                                <th className="bg-slate-50 border border-slate-200 p-1 sticky top-0 z-10"><button onClick={() => addCol(t)} className="text-blue-600 hover:text-blue-800 font-bold text-[11px] bg-blue-50 px-2 py-1 rounded w-full h-full transition-colors">+ Add Col</button></th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {Array.from({ length: t.nRows }, (_, r) => (
-                                <tr key={r}>
-                                    <td className="bg-slate-100 border border-slate-300 p-0.5 sticky left-0 z-10">
-                                        <div className="flex items-center justify-between px-1">
-                                            <input type="number" step="1" min="0" max="100" value={t.delays[r]} {...cellAttrs(r, -1)} onChange={(e) => setDelay(t, r, e.target.value === '' ? '' : Number(e.target.value))} className="w-16 text-center border border-slate-300 rounded p-1 text-[11px] font-mono" />
-                                            <button onClick={() => removeRow(t, r)} className="text-red-400 hover:text-red-600 text-[11px] font-bold ml-1 px-1" title="Delete Row">✕</button>
-                                        </div>
-                                    </td>
-                                    {Array.from({ length: t.nCols }, (_, c) => (
-                                        <td key={c} className="border border-slate-200 p-0"><input value={t.grid[r]?.[c] ?? ''} {...cellAttrs(r, c)} onChange={(e) => setCell(t, r, c, e.target.value)} className="w-full h-8 text-center outline-none focus:bg-blue-50 focus:ring-1 focus:ring-blue-400 font-mono text-[11px]" /></td>
-                                    ))}
-                                    <td className="border border-slate-100 p-0.5 text-center text-slate-300 bg-slate-50">·</td>
-                                </tr>
-                            ))}
-                            <tr><td colSpan={t.nCols + 2} className="bg-slate-50 border border-slate-200 p-2"><button onClick={() => addRow(t)} className="text-blue-600 hover:text-blue-800 font-bold text-[11px] w-full text-left pl-2">+ Add Gradient Row</button></td></tr>
-                        </tbody>
-                    </table>
-                </div>
-                <p className="text-[10px] text-slate-400 italic -mt-2">🖱️ Drag or Shift+click to select multiple cells · Ctrl/Cmd+C copy · Ctrl/Cmd+V paste (Excel-compatible, tab-separated) · gradient values are % of the maximum G from Instrumental Setup</p>
-                <div className="flex justify-between items-center border-t border-slate-100 pt-2">
-                    <button onClick={() => runFitForTable(t)} className="text-xs bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-md shadow-sm transition-colors">▶️ Fit Stejskal-Tanner (D)</button>
-                    <button onClick={() => removeTable(t.id)} className="text-xs bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold px-4 py-2 rounded-md shadow-sm flex items-center gap-2 transition-colors">🗑️ Delete</button>
-                </div>
-            </div>
-        </CollapsibleSection>
-    );
+  const sim = { MW: 12000, shape: 'sphere', vbar: 0.73, hydration: 0.3, viscosity: 0.89e-3, ...(activeTest.dosySim || {}) };
+  const setSim = (patch) => update({ dosySim: { ...sim, ...patch } });
 
-
-    const renderTableAnalysis = (t, tIndex) => {
-        const colFits = (fits[t.id] || []).map((cf) => ({ ...cf }));
-        return (
-            <CollapsibleSection key={t.id} title={`Gradient set ${tIndex + 1} — Stejskal-Tanner results`} icon="📐" defaultOpen={false}>
-                <div className="flex flex-col gap-4">
-                    <div className="overflow-auto border border-slate-200 rounded-lg">
-                        <table className="border-collapse text-xs w-full">
-                            <thead>
-                                <tr className="bg-slate-50">
-                                    <th className="px-3 py-1.5 border border-slate-200 text-left">Column</th>
-                                    <th className="px-3 py-1.5 border border-slate-200">Diffusion D (m²/s)</th>
-                                    <th className="px-3 py-1.5 border border-slate-200">I₀</th>
-                                    <th className="px-3 py-1.5 border border-slate-200">R²</th>
-                                    <th className="px-3 py-1.5 border border-slate-200">n points</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {colFits.map((cf, i) => (
-                                    <tr key={i}>
-                                        <td className="p-1.5 border border-slate-200 font-bold text-blue-800">{cf.residue}</td>
-                                        <td className="p-1.5 border border-slate-200 font-mono">{cf.fit ? cf.fit.D.toExponential(3) : '—'}</td>
-                                        <td className="p-1.5 border border-slate-200 font-mono">{cf.fit ? cf.fit.I0.toExponential(2) : '—'}</td>
-                                        <td className="p-1.5 border border-slate-200 font-mono">{cf.fit ? cf.fit.r2.toFixed(3) : '—'}</td>
-                                        <td className="p-1.5 border border-slate-200">{cf.fit ? cf.fit.n : 0}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                    <button onClick={() => runFitForTable(t)} className="self-start text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-md shadow-sm">▶️ Recompute fit</button>
-                </div>
-            </CollapsibleSection>
-        );
-    };
-
-    // Bridge render closures into the stable module-level section components.
-    dosySections.renderData = (t, i) => renderTableData(t, i);
-    dosySections.renderAnalysis = (t, i) => renderTableAnalysis(t, i);
-    dosySections.addTable = addTable;
-    dosySections.sim = sim;
-    dosySections.setSim = setSim;
-    dosySections.solvents = rest.solvents || [];
-
-    return (
-        <TestShellRenderer
-            config={DOSY_TAB_CONFIG}
-            custom={{
-                Setup: null, // "Experiment Setup" was merged into Instrumental Setup (DOSY Dataset fields)
-                Data: DOSYDataSection,
-                Analysis: DOSYFittingSection,
-                InstrumentalSetup: DOSYInstrumentalSetup,
-                Simulations: DOSYSimulationsSection,
-                analysisPlain: true, // fitting is rendered directly inside Data Analysis (no "Per Atom Plot")
-            }}
-            activeTest={activeTest}
-            updateActiveTest={updateActiveTest}
-            TestHeader={TestHeader}
-            compoundMeta={compoundMeta}
-            allCmpds={allCmpds}
-            {...rest}
+  // A gradient set table rendered DIRECTLY (no collapsible around it).
+  const renderTableData = (t, tIndex) => (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center justify-between gap-2">
+        <h4 className="text-xs font-black uppercase tracking-wide text-slate-500">Gradient % vs Intensity</h4>
+        <StarToggle
+          active={isStarred(activeTest, `dosy-data-${t.id}`)}
+          title={isStarred(activeTest, `dosy-data-${t.id}`)
+            ? 'Remove this data table from the project document'
+            : '⭐ Import this data table into the project document'}
+          onToggle={() => update({
+            starredItems: toggleStarredItem(activeTest, {
+              id: `dosy-data-${t.id}`,
+              kind: 'table',
+              label: `Gradient set ${tIndex + 1} — Gradient % vs Intensity`,
+              caption: `Raw gradient % / intensity data of gradient set ${tIndex + 1}.`,
+              columns: [
+                'Gradient % (0–100)',
+                ...Array.from({ length: t.nCols || 0 }, (_, c) => t.colResidues?.[c] || `Col ${c + 1}`)
+              ],
+              rows: Array.from({ length: t.nRows || 0 }, (_, r) => [
+                t.delays?.[r] ?? '-',
+                ...Array.from({ length: t.nCols || 0 }, (_, c) => t.grid?.[r]?.[c] ?? '-')
+              ])
+            })
+          })}
         />
+      </div>
+      <div className="overflow-auto border border-slate-300 rounded-lg bg-white shadow-inner" data-star-key={`dosy-data-${t.id}`}>
+        <table className="border-collapse text-xs w-full">
+          <thead>
+            <tr>
+              <th className="bg-slate-200 border border-slate-300 p-1 sticky top-0 left-0 z-20 text-slate-600">Gradient % (0–100)</th>
+              {Array.from({ length: t.nCols }, (_, c) => (
+                <th key={c} className="bg-slate-100 border border-slate-300 p-1 min-w-[110px] sticky top-0 z-10 group relative">
+                  <div className="flex flex-col gap-1 w-full relative">
+                    <input value={t.colResidues[c] || ''} onChange={(e) => setColResidue(t, c, e.target.value)} placeholder="intensity" className="w-full text-center border border-slate-300 rounded p-1 text-[11px] font-bold text-blue-800" />
+                    <button onClick={() => removeCol(t, c)} className="absolute -top-1 -right-1 bg-red-100 text-red-500 hover:bg-red-500 hover:text-white rounded-full w-5 h-5 flex items-center justify-center font-bold opacity-0 group-hover:opacity-100 transition-opacity shadow-sm" title="Delete Column">✕</button>
+                  </div>
+                </th>
+              ))}
+              <th className="bg-slate-50 border border-slate-200 p-1 sticky top-0 z-10"><button onClick={() => addCol(t)} className="text-blue-600 hover:text-blue-800 font-bold text-[11px] bg-blue-50 px-2 py-1 rounded w-full h-full transition-colors">+ Add Col</button></th>
+            </tr>
+          </thead>
+          <tbody>
+            {Array.from({ length: t.nRows }, (_, r) => (
+              <tr key={r}>
+                <td className="bg-slate-100 border border-slate-300 p-0.5 sticky left-0 z-10">
+                  <div className="flex items-center justify-between px-1">
+                    <input type="number" step="1" min="0" max="100" value={t.delays[r]} {...cellAttrs(r, -1)} onChange={(e) => setDelay(t, r, e.target.value === '' ? '' : Number(e.target.value))} className="w-16 text-center border border-slate-300 rounded p-1 text-[11px] font-mono" />
+                    <button onClick={() => removeRow(t, r)} className="text-red-400 hover:text-red-600 text-[11px] font-bold ml-1 px-1" title="Delete Row">✕</button>
+                  </div>
+                </td>
+                {Array.from({ length: t.nCols }, (_, c) => (
+                  <td key={c} className="border border-slate-200 p-0"><input value={t.grid[r]?.[c] ?? ''} {...cellAttrs(r, c)} onChange={(e) => setCell(t, r, c, e.target.value)} className="w-full h-8 text-center outline-none focus:bg-blue-50 focus:ring-1 focus:ring-blue-400 font-mono text-[11px]" /></td>
+                ))}
+                <td className="border border-slate-100 p-0.5 text-center text-slate-300 bg-slate-50">·</td>
+              </tr>
+            ))}
+            <tr><td colSpan={t.nCols + 2} className="bg-slate-50 border border-slate-200 p-2"><button onClick={() => addRow(t)} className="text-blue-600 hover:text-blue-800 font-bold text-[11px] w-full text-left pl-2">+ Add Gradient Row</button></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[10px] text-slate-400 italic -mt-2">🖱️ Drag or Shift+click to select multiple cells · Ctrl/Cmd+C copy · Ctrl/Cmd+V paste (Excel-compatible, tab-separated) · gradient values are % of the maximum G from Instrumental Setup</p>
+      <div className="flex justify-between items-center border-t border-slate-100 pt-2">
+        <button onClick={() => runFitForTable()} className="text-xs bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-md shadow-sm transition-colors">▶️ Fit Stejskal-Tanner (D)</button>
+        <button onClick={() => removeTable(t.id)} className="text-xs bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold px-4 py-2 rounded-md shadow-sm flex items-center gap-2 transition-colors">🗑️ Delete</button>
+      </div>
+    </div>
+  );
+
+
+  // Stejskal-Tanner results table rendered DIRECTLY (no collapsible around it).
+  const renderTableAnalysis = (t, tIndex) => {
+    const colFits = (fits[t.id] || []).map((cf) => ({ ...cf }));
+    return (
+      <div key={t.id} className="flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-2">
+          <h4 className="text-xs font-black uppercase tracking-wide text-slate-500">Gradient set {tIndex + 1} — Stejskal-Tanner results</h4>
+          <StarToggle
+            active={isStarred(activeTest, `dosy-results-${t.id}`)}
+            title={isStarred(activeTest, `dosy-results-${t.id}`)
+              ? 'Remove this results table from the project document'
+              : '⭐ Import this results table into the project document'}
+            onToggle={() => update({
+              starredItems: toggleStarredItem(activeTest, {
+                id: `dosy-results-${t.id}`,
+                kind: 'table',
+                label: `Gradient set ${tIndex + 1} — Stejskal-Tanner results`,
+                caption: `Stejskal-Tanner fit results for gradient set ${tIndex + 1}.`,
+                columns: ['Column', 'Diffusion D (m²/s)', 'I₀', 'R²', 'n points'],
+                rows: colFits.map((cf) => [
+                  cf.residue,
+                  cf.fit ? cf.fit.D.toExponential(3) : '—',
+                  cf.fit ? cf.fit.I0.toExponential(2) : '—',
+                  cf.fit ? cf.fit.r2.toFixed(3) : '—',
+                  cf.fit ? String(cf.fit.n) : '0'
+                ])
+              })
+            })}
+          />
+        </div>
+        <div className="overflow-auto border border-slate-200 rounded-lg" data-star-key={`dosy-results-${t.id}`}>
+          <table className="border-collapse text-xs w-full">
+            <thead>
+              <tr className="bg-slate-50">
+                <th className="px-3 py-1.5 border border-slate-200 text-left">Column</th>
+                <th className="px-3 py-1.5 border border-slate-200">Diffusion D (m²/s)</th>
+                <th className="px-3 py-1.5 border border-slate-200">I₀</th>
+                <th className="px-3 py-1.5 border border-slate-200">R²</th>
+                <th className="px-3 py-1.5 border border-slate-200">n points</th>
+              </tr>
+            </thead>
+            <tbody>
+              {colFits.map((cf, i) => (
+                <tr key={i}>
+                  <td className="p-1.5 border border-slate-200 font-bold text-blue-800">{cf.residue}</td>
+                  <td className="p-1.5 border border-slate-200 font-mono">{cf.fit ? cf.fit.D.toExponential(3) : '—'}</td>
+                  <td className="p-1.5 border border-slate-200 font-mono">{cf.fit ? cf.fit.I0.toExponential(2) : '—'}</td>
+                  <td className="p-1.5 border border-slate-200 font-mono">{cf.fit ? cf.fit.r2.toFixed(3) : '—'}</td>
+                  <td className="p-1.5 border border-slate-200">{cf.fit ? cf.fit.n : 0}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <button onClick={() => runFitForTable()} className="self-start text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-md shadow-sm">▶️ Recompute fit</button>
+      </div>
     );
+  };
+
+  // Bridge render closures into the stable module-level section components.
+  dosySections.renderData = (t, i) => renderTableData(t, i);
+  dosySections.renderAnalysis = (t, i) => renderTableAnalysis(t, i);
+  dosySections.addTable = addTable;
+  dosySections.openImport = () => setDosyImportOpen(true);
+  dosySections.sim = sim;
+  dosySections.setSim = setSim;
+  dosySections.solvents = rest.solvents || [];
+
+  return (
+    <>
+      <TestShellRenderer
+        config={DOSY_TAB_CONFIG}
+        custom={{
+          Setup: null, // "Experiment Setup" was merged into Instrumental Setup (DOSY Dataset fields)
+          Data: DOSYDataSection,
+          Analysis: DOSYFittingSection,
+          InstrumentalSetup: DOSYInstrumentalSetup,
+          Simulations: DOSYSimulationsSection,
+          analysisPlain: true, // fitting is rendered directly inside Data Analysis (no "Per Atom Plot")
+        }}
+        activeTest={activeTest}
+        updateActiveTest={updateActiveTest}
+        TestHeader={TestHeader}
+        compoundMeta={compoundMeta}
+        allCmpds={allCmpds}
+        {...rest}
+      />
+      <DOSYImportModal
+        open={dosyImportOpen}
+        onClose={() => setDosyImportOpen(false)}
+        onImport={handleDosyImport}
+        tables={tables}
+      />
+    </>
+  );
 };
 
 export default DOSYTestRenderer;
+

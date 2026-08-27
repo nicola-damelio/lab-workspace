@@ -8,6 +8,9 @@ import { CollapsibleSection } from './ui';
 import { abortControl, useAbortControl } from '../utils/abortControl';
 import { mdAnalysisRunAll } from '../utils/mdAnalysisRunAll';
 import { Icon } from './Icons';
+import { StarToggle } from './StarToggle';
+import { ChartStarLayer } from './ChartStarLayer';
+import { isStarred, toggleStarredItem } from '../utils/starredItems';
 export { CollapsibleSection };
 
 /* ============================================================================
@@ -259,7 +262,8 @@ const normalizeImageCandidates = (url) => {
   let u = (url || '').trim();
   
   // Automatically prepend https:// if the user pastes a raw domain
-  if (u && !/^https?:\/\//i.test(u)) {
+  // (skip data:/blob: URLs — they are already complete images).
+  if (u && !/^(https?:|data:|blob:)/i.test(u)) {
     u = `https://${u}`;
   }
 
@@ -400,6 +404,7 @@ export const TestShellRenderer = ({
   };
 
   const t = activeTest || {};
+  const pageRef = useRef(null); // root container scanned by the universal ⭐ layer
 
   const samplesCfg = config.samples || {};
   const imagesKey = config.imagesKey || 'images';
@@ -1273,12 +1278,17 @@ const details = [
     config.SimulationsSection || custom.Simulations || null;
 
   return (
-    <div className="flex flex-col h-full overflow-hidden relative">
+    <div ref={pageRef} className="flex flex-col h-full overflow-hidden relative">
       {TestHeader}
 
       <GlobalStopButton />
 
       {CustomToolbar && <CustomToolbar ctx={ctx} />}
+
+      {/* Universal ⭐ layer: stars every chart / spectrum / chromatogram /
+          image / table rendered on this test page, for import into the
+          project's Export document. */}
+      <ChartStarLayer rootRef={pageRef} test={t} update={update} />
 <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
         {!mandatoryBlocked && missingMandatoryRules.length > 0 && (
           <div className="mb-6 bg-red-50 border-l-4 border-red-500 p-4 rounded-r-lg shadow-sm">
@@ -2173,19 +2183,41 @@ const details = [
                       <div
                         key={idx}
                         className="relative group bg-slate-50 p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col gap-2"
+                        data-star-key={`fig-${idx}`}
                       >
                         <div className="flex items-center justify-between">
                           <span className="text-xs font-bold text-slate-500">
                             Figure {idx + 1}
                           </span>
 
-                          <button
-                            type="button"
-                            onClick={() => removeImageAt(idx)}
-                            className="bg-red-50 hover:bg-red-100 text-red-500 hover:text-red-700 rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold transition-colors border border-red-200"
-                          >
-                            ×
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <StarToggle
+                              active={isStarred(t, `fig-${idx}`)}
+                              disabled={!imgSrc || imgSrc.trim() === ''}
+                              title={isStarred(t, `fig-${idx}`)
+                                ? 'Remove this figure from the project document'
+                                : '⭐ Import this figure into the project document'}
+                              onToggle={() => update({
+                                starredItems: toggleStarredItem(t, {
+                                  id: `fig-${idx}`,
+                                  kind: 'figure',
+                                  label: `Figure ${idx + 1}`,
+                                  caption: (captionsAligned[idx] || '').trim()
+                                    ? captionsAligned[idx].trim()
+                                    : `Figure ${idx + 1}`,
+                                  url: imgSrc
+                                })
+                              })}
+                            />
+
+                            <button
+                              type="button"
+                              onClick={() => removeImageAt(idx)}
+                              className="bg-red-50 hover:bg-red-100 text-red-500 hover:text-red-700 rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold transition-colors border border-red-200"
+                            >
+                              ×
+                            </button>
+                          </div>
                         </div>
 
                         <input
