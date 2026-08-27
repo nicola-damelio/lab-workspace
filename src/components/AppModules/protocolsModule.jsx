@@ -10,7 +10,7 @@ import { getDirectImageUrl } from '../../data/constants';
 import { Icon } from '../Icons';
 import { suggestDriveFileName, openDrive } from '../../utils/driveNaming';
 import { DriveUploadButton } from '../DriveUpload';
-import { renameDriveFilesFor } from '../../utils/driveUpload';
+import { renameDriveFilesFor, markAttachmentsDeleted } from '../../utils/driveUpload';
 
 export const ProtocolsModule = ({
   datasetProtocols, expandedGroups, handlePrint, nmrExperiments,
@@ -1144,6 +1144,8 @@ const newProto = {
           setDatasetProtocols(
             datasetProtocols.filter((p) => p.id !== proto.id)
           );
+          // Mark any Google Drive attachments of this protocol as deleted.
+          markAttachmentsDeleted(proto).catch(() => {});
         }
       }}
       className="absolute top-3 right-3 text-slate-300 hover:text-red-500 text-lg md:opacity-0 group-hover:opacity-100 transition-opacity no-print"

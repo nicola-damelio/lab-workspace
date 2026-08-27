@@ -224,10 +224,11 @@ const deletedNameOf = (name) => {
 /** Recursively find every Google Drive file id referenced by a value (string/array/object/HTML). */
 export const extractDriveFileIds = (value, out = []) => {
   if (typeof value === 'string') {
-    const re = /drive\.google\.com\/(?:file\/d\/|open\?.*?id=|uc\?.*?id=|thumbnail\?.*?id=|drive\/folders\/)([a-zA-Z0-9_-]{8,})/g;
+    const re = /drive\.google\.com\/(?:file\/d\/|open\?.*?id=|uc\?.*?id=|thumbnail\?.*?id=|drive\/folders\/)([a-zA-Z0-9_-]{8,})|lh3\.googleusercontent\.com\/d\/([a-zA-Z0-9_-]{8,})/g;
     let m;
     while ((m = re.exec(value)) !== null) {
-      if (out.indexOf(m[1]) === -1) out.push(m[1]);
+      const id = m[1] || m[2];
+      if (id && out.indexOf(id) === -1) out.push(id);
     }
     return out;
   }
@@ -253,14 +254,22 @@ export const renameDriveFile = async (fileId, newName) => {
   return true;
 };
 
-/** Append "_deleted" to a Drive file's name (best-effort). */
+/** Append "_deleted" to a Drive file's name (best-effort) and remember it in the registry. */
 export const markDriveFileDeleted = async (fileId) => {
   if (!fileId) return false;
   try {
     const res = await driveFetch(`/drive/v3/files/${fileId}?fields=id,name`);
     const meta = await res.json();
     if (!meta || !meta.name) return false;
-    return await renameDriveFile(fileId, deletedNameOf(meta.name));
+    const ok = await renameDriveFile(fileId, deletedNameOf(meta.name));
+    if (ok) {
+      const reg = getDriveFileRegistry();
+      if (reg[fileId]) {
+        reg[fileId] = { ...reg[fileId], name: deletedNameOf(meta.name), deleted: true, at: Date.now() };
+        saveDriveFileRegistry(reg);
+      }
+    }
+    return ok;
   } catch (err) {
     console.warn('Could not mark Drive file as deleted:', err && err.message);
     return false;
@@ -354,6 +363,7 @@ export const renameDriveFilesFor = async ({ field, oldValue, newValue }) => {
   const reg = getDriveFileRegistry();
   let count = 0;
   for (const [fileId, entry] of Object.entries(reg)) {
+    if (!entry || entry.deleted) continue; // never revive files marked as deleted
     const ctx = entry.ctx || {};
     if (String(ctx[field] || '') !== String(oldValue)) continue;
 
