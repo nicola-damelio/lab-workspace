@@ -22,6 +22,7 @@ export const ProtocolsModule = ({
                 const newProtoCatInput = expandedGroups['newProtoCatInput'] || '';
                 const activeProtoId = expandedGroups['activeProtoId'] || null;
                 const protoUserFilter = expandedGroups['protoUserFilter'] || 'ALL';
+                const protoSidebarOpen = expandedGroups['protoSidebarOpen'] !== false;
 
                 const allUsers = (Array.isArray(operatorNames) ? operatorNames : [])
                   .map((n) => (typeof n === 'string' ? n : n?.name || ''))
@@ -66,19 +67,6 @@ const updateProtocol = (patch) =>
       p.id === activeProtocol.id ? { ...p, ...patch } : p
     )
   );
-
-const addProtocolFigure = () =>
-  updateProtocol({
-    images: [
-      ...protocolFigures,
-      {
-        id: 'proto_img_' + Date.now(),
-        name: 'Figure ' + (protocolFigures.length + 1),
-        url: '',
-        caption: ''
-      }
-    ]
-  });
 
 const updateProtocolFigure = (id, field, val) =>
   updateProtocol({
@@ -236,6 +224,24 @@ const getProtocolImageFallback = (url) => {
                             </option>
                           ))}
                         </select>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedGroups((p) => ({
+                              ...p,
+                              protoSidebarOpen: p.protoSidebarOpen === false
+                            }))
+                          }
+                          title={
+                            protoSidebarOpen
+                              ? 'Hide sidebar (give more space to the text)'
+                              : 'Show sidebar'
+                          }
+                          className="no-print px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors shadow-sm flex items-center gap-1 bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100"
+                        >
+                          {protoSidebarOpen ? '◧ Hide sidebar' : '◧ Show sidebar'}
+                        </button>
                       </div>
 
                       {assignedUsers(activeProtocol).length > 0 && (
@@ -262,15 +268,6 @@ const getProtocolImageFallback = (url) => {
   </label>
 
   <div className="flex flex-wrap items-center gap-2 mb-2 no-print shrink-0">
-    <button
-      type="button"
-      onClick={addProtocolFigure}
-      title="Add a figure (image link + caption)"
-      className="bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 font-bold px-2 py-1 rounded transition-colors shadow-sm text-[10px] flex items-center gap-1"
-    >
-      <Icon name="image" size={12} /> + Add Figure
-    </button>
-
     <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded px-2 py-1 shadow-sm">
       <label className="text-[10px] font-bold text-slate-500">Rows:</label>
       <input
@@ -319,11 +316,15 @@ const getProtocolImageFallback = (url) => {
       )
     }
     placeholder="Write the detailed protocol steps here. You can paste images directly..."
-    minHeight={280}
-    maxHeight={2000}
+    minHeight={560}
+    maxHeight={8000}
     fillHeight={false}
     resizable
     linkButton
+    figureButton
+    onEditFocusChange={(editing) =>
+      setExpandedGroups((p) => ({ ...p, protoSidebarOpen: !editing }))
+    }
   />
 
   {protocolFigures.length > 0 && (
@@ -331,11 +332,12 @@ const getProtocolImageFallback = (url) => {
       <div className="flex flex-col gap-3 mb-3">
         <div>
           <h4 className="text-xs font-bold text-slate-500 uppercase">
-            🖼️ Figures
+            🖼️ Attached images (legacy)
           </h4>
           <p className="text-xs text-slate-400">
-            Attached image links — paste a Google Drive / Dropbox URL, add a
-            caption and preview.
+            Older attached images kept for compatibility — use the “🖼️ Figure”
+            button in the editor toolbar to insert a new figure with its caption
+            inside the text.
           </p>
         </div>
       </div>
@@ -554,7 +556,9 @@ const getProtocolImageFallback = (url) => {
   };
 
   return (
-    <div className="w-full lg:w-80 flex flex-col gap-4 lg:overflow-y-auto custom-scrollbar shrink-0 lg:border-l border-t lg:border-t-0 border-slate-100 pt-4 lg:pt-0 lg:pl-4 no-print">
+    <div className={`shrink-0 no-print ${protoSidebarOpen ? 'w-full lg:w-80 flex flex-col gap-4 lg:overflow-y-auto custom-scrollbar lg:border-l border-t lg:border-t-0 border-slate-100 pt-4 lg:pt-0 lg:pl-4' : 'lg:w-12 flex items-start justify-center lg:pt-4'}`}>
+      {protoSidebarOpen ? (
+        <>
       <div className="flex flex-col gap-3">
         <label className="text-xs font-bold text-slate-500 uppercase">
           👥 Assigned Users
@@ -857,6 +861,19 @@ const getProtocolImageFallback = (url) => {
             pulseSequenceLink={linkedPulse.pulseSequenceLink || ''}
           />
         )}
+        </>
+      ) : (
+        <button
+          type="button"
+          onClick={() =>
+            setExpandedGroups((p) => ({ ...p, protoSidebarOpen: true }))
+          }
+          title="Show protocol sidebar"
+          className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-sm flex items-center justify-center shadow-sm"
+        >
+          ◀
+        </button>
+      )}
     </div>
   );
 })()}

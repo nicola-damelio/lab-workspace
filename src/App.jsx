@@ -872,6 +872,9 @@ if (customType === 'dosy') {
   ]);
   const [datasetProtocols, setDatasetProtocols] = useState([]);
 
+  // Remember the sidebar state before a text editor retracts it ("wide editing")
+  const sidebarBeforeEditRef = useRef(null);
+
   const historyRef = useRef([[createEmptyTest('t1', 1, 'plate-96')]]);
   const [historyIndex, setHistoryIndex] = useState(0);
   const [reactTests, setReactTests] = useState(historyRef.current[0]);
@@ -1146,6 +1149,31 @@ if (customType === 'dosy') {
   // All child components (test renderers, LabNotebook, Storage, etc.) still
   // expect operators as plain strings. This is the safe list to pass them.
   const operatorNames = normalizeOperators(operators).map((op) => op.name);
+
+  // ── Wide-editing mode: rich text editors (protocols, project text sections,
+  // test reports) retract the left sidebar while the user is typing, and
+  // restore it when they leave the editor. ──────────────────────────────
+  useEffect(() => {
+    const onEditFocus = () => {
+      if (window.innerWidth < 768) return;
+      if (sidebarBeforeEditRef.current === null) {
+        sidebarBeforeEditRef.current = isSidebarOpen;
+      }
+      if (isSidebarOpen) setIsSidebarOpen(false);
+    };
+    const onEditBlur = () => {
+      if (sidebarBeforeEditRef.current !== null) {
+        setIsSidebarOpen(sidebarBeforeEditRef.current);
+        sidebarBeforeEditRef.current = null;
+      }
+    };
+    window.addEventListener('lab:edit-focus', onEditFocus);
+    window.addEventListener('lab:edit-blur', onEditBlur);
+    return () => {
+      window.removeEventListener('lab:edit-focus', onEditFocus);
+      window.removeEventListener('lab:edit-blur', onEditBlur);
+    };
+  }, [isSidebarOpen]);
 
   const latestDataRef = useRef(null);
 

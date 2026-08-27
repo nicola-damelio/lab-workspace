@@ -218,6 +218,7 @@ export const ProjectDetailModule = ({
   const pubs = useMemo(loadPublications, []);
   const [tableDraft, setTableDraft] = useState(null); // null | { section, insertText }
   const [showExport, setShowExport] = useState(false);
+  const [textEditing, setTextEditing] = useState(false); // wide editing (retract side panels)
   const [tableRows, setTableRows] = useState(3);
   const [tableCols, setTableCols] = useState(4);
   const [mmFeedback, setMmFeedback] = useState(''); // "✓ Updated HH:MM" flash after manual M&M refresh
@@ -498,8 +499,6 @@ export const ProjectDetailModule = ({
   const sectionDocs = (sec) => (project.docs || {})[sec] || [];
   const patchFigures = (sec, list) => updateProject({ figures: { ...(project.figures || {}), [sec]: list } });
   const patchDocs = (sec, list) => updateProject({ docs: { ...(project.docs || {}), [sec]: list } });
-  const addSectionFigure = (sec) =>
-    patchFigures(sec, [...sectionFigures(sec), { id: genProjectId(), url: '', caption: '' }]);
   const patchSectionFigure = (sec, figId, patch) =>
     patchFigures(sec, sectionFigures(sec).map((f) => (f.id === figId ? { ...f, ...patch } : f)));
   const removeSectionFigure = (sec, figId) =>
@@ -695,8 +694,11 @@ export const ProjectDetailModule = ({
           onChange={onChange}
           placeholder={hint}
           linkButton
+          figureButton
+          minHeight={420}
+          maxHeight={6000}
+          onEditFocusChange={setTextEditing}
           toolbarExtra={[
-            { label: '🖼️ + Figure', title: 'Add a figure (image link + caption)', onClick: () => addSectionFigure(id) },
             { label: '▦ + Std Table', title: 'Insert a standard table at the cursor position', onClick: (insertText) => setTableDraft({ section: id, insertText }) },
             { label: '📎 + Document', title: 'Attach a document link', onClick: () => addSectionDoc(id) },
             { label: '📚 + Reference', title: 'Insert a numbered reference at the cursor position', onClick: (insertText) => setRefPicker({ insertText }) }
@@ -1248,7 +1250,7 @@ export const ProjectDetailModule = ({
 
   return (
     <div className="p-4 md:p-6 h-full overflow-y-auto custom-scrollbar bg-slate-50">
-      <div className="max-w-5xl mx-auto flex flex-col gap-4 pb-10">
+      <div className={`${textEditing ? 'max-w-none' : 'max-w-5xl'} mx-auto flex flex-col gap-4 pb-10`}>
 
         {/* ---------- Header ---------- */}
         <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col gap-3">

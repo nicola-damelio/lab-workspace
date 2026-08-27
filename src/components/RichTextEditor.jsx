@@ -3,11 +3,12 @@ import React, { useRef, useEffect, useState } from 'react';
 export const RichTextEditor = ({
   value, onChange, placeholder, toolbarExtra = [],
   minHeight = 120, maxHeight = 500, resizable = true, fillHeight = true,
-  linkButton = false
+  linkButton = false, figureButton = false, onEditFocusChange = null
 }) => {
     const editorRef = useRef(null);
     const selRef = useRef(null);
     const [linkDraft, setLinkDraft] = useState(null); // null | { text, url }
+    const [figureDraft, setFigureDraft] = useState(null); // null | { url, caption }
     useEffect(() => { if (editorRef.current && editorRef.current.innerHTML !== value) editorRef.current.innerHTML = value || ''; }, [value]);
     const execCmd = (cmd, val=null) => { document.execCommand(cmd, false, val); onChange(editorRef.current.innerHTML); editorRef.current.focus(); };
     const storeSel = () => {
@@ -16,17 +17,51 @@ export const RichTextEditor = ({
             selRef.current = sel.getRangeAt(0).cloneRange();
         }
     };
+    // Resolve the caret/selection range inside the editor (falls back to the end of the content)
+    const getEditorRange = (el, sel) => {
+        if (selRef.current && el.contains(selRef.current.startContainer)) {
+            return selRef.current.cloneRange();
+        }
+        if (sel && sel.rangeCount > 0 && el.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+            return sel.getRangeAt(0).cloneRange();
+        }
+        return null;
+    };
+    const caretAtEnd = (el) => {
+        const r = document.createRange();
+        r.selectNodeContents(el);
+        r.collapse(false);
+        return r;
+    };
     // Insert text at the last caret position (used by toolbarExtra buttons, e.g. reference markers)
     const insertText = (text) => {
         const el = editorRef.current;
         if (!el) return;
         el.focus();
         const sel = window.getSelection();
-        if (selRef.current && el.contains(selRef.current.startContainer)) {
-            sel.removeAllRanges();
-            sel.addRange(selRef.current);
-        }
-        document.execCommand('insertText', false, text);
+        const range = getEditorRange(el, sel) || caretAtEnd(el);
+
+        // Prefer the native command where it is still supported (Firefox / Safari)
+        try {
+            if (document.queryCommandSupported && document.queryCommandSupported('insertText')) {
+                sel.removeAllRanges();
+                sel.addRange(range.cloneRange());
+                if (document.execCommand('insertText', false, text)) {
+                    onChange(el.innerHTML);
+                    return;
+                }
+            }
+        } catch { /* fall through to manual insertion */ }
+
+        // Manual insertion via the Range API
+        range.deleteContents();
+        const node = document.createTextNode(text);
+        range.insertNode(node);
+        const caret = document.createRange();
+        caret.setStartAfter(node);
+        caret.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(caret);
         onChange(el.innerHTML);
     };
     // Insert rich HTML (e.g. an <a> link) at the last caret position
@@ -35,11 +70,36 @@ export const RichTextEditor = ({
         if (!el) return;
         el.focus();
         const sel = window.getSelection();
-        if (selRef.current && el.contains(selRef.current.startContainer)) {
+        const range = getEditorRange(el, sel) || caretAtEnd(el);
+
+        // Prefer the native command where it is still supported (Firefox / Safari)
+        try {
+            if (document.queryCommandSupported && document.queryCommandSupported('insertHTML')) {
+                sel.removeAllRanges();
+                sel.addRange(range.cloneRange());
+                if (document.execCommand('insertHTML', false, html)) {
+                    onChange(el.innerHTML);
+                    return;
+                }
+            }
+        } catch { /* fall through to manual insertion */ }
+
+        // Manual insertion — Chrome 134+ removed execCommand('insertHTML')
+        range.deleteContents();
+        const template = document.createElement('template');
+        template.innerHTML = html;
+        const fragment = template.content;
+        const lastNode = fragment.lastChild;
+        range.insertNode(fragment);
+
+        if (lastNode && lastNode.parentNode) {
+            const caret = document.createRange();
+            caret.setStartAfter(lastNode);
+            caret.collapse(true);
             sel.removeAllRanges();
-            sel.addRange(selRef.current);
+            sel.addRange(caret);
         }
-        document.execCommand('insertHTML', false, html);
+
         onChange(el.innerHTML);
     };
     const escapeHtml = (s) =>
@@ -61,8 +121,38 @@ export const RichTextEditor = ({
         if (!url) return;
         const text = String(linkDraft.text || '').trim() || url;
         const safeUrl = /^(https?:|mailto:|tel:|#|\/)/i.test(url) ? url : `https://${url}`;
-        insertHtml(`<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(text)}</a>`);
+        insertHtml(`<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer" style="color:#2563eb;text-decoration:underline;">${escapeHtml(text)}</a>`);
         setLinkDraft(null);
+    };
+    // Insert an image with its caption inline at the caret position (not at the end)
+    const insertFigure = () => {
+        if (!figureDraft) return;
+        const url = String(figureDraft.url || '').trim();
+        if (!url) return;
+        const caption = String(figureDraft.caption || '').trim();
+        const alt = escapeHtml(caption || 'Figure');
+        const imgSrc = escapeHtml(url);
+        const figCaption = caption
+            ? `<figcaption style="font-size:12px;color:#475569;margin-top:4px;">${escapeHtml(caption)}</figcaption>`
+            : '';
+        insertHtml(`<figure style="margin:14px 0;text-align:center;break-inside:avoid;"><img src="${imgSrc}" alt="${alt}" style="max-width:100%;height:auto;border:1px solid #e2e8f0;border-radius:8px;background:#fff;box-shadow:0 1px 3px rgba(15,23,42,0.08);"/>${figCaption}</figure>`);
+        setFigureDraft(null);
+    };
+    // Notify parents (and the app) that the user started/stopped editing this text,
+    // so surrounding side panels can retract to give the editor more space.
+    const handleEditFocus = () => {
+        storeSel();
+        if (onEditFocusChange) {
+            onEditFocusChange(true);
+            try { window.dispatchEvent(new CustomEvent('lab:edit-focus')); } catch { /* ignore */ }
+        }
+    };
+    const handleBlur = (e) => {
+        onChange(e.target.innerHTML);
+        if (onEditFocusChange) {
+            onEditFocusChange(false);
+            try { window.dispatchEvent(new CustomEvent('lab:edit-blur')); } catch { /* ignore */ }
+        }
     };
     const toPx = (v) => (typeof v === 'number' ? `${v}px` : v);
     const clampHeight = () => {
@@ -129,6 +219,7 @@ export const RichTextEditor = ({
     };
     return (
         <div className={`w-full ${fillHeight ? 'flex-1' : ''} flex flex-col border border-slate-300 rounded-md bg-white overflow-hidden shadow-sm transition-shadow focus-within:ring-1 focus-within:ring-blue-500 focus-within:border-blue-500`}>
+            <style>{`.rte-content a { color:#2563eb; text-decoration:underline; } .rte-content a:hover { color:#1d4ed8; }`}</style>
             <div className="flex gap-1 p-1 bg-slate-50 border-b border-slate-200 shrink-0 flex-wrap">
                 <button onClick={()=>execCmd('bold')} className="font-bold px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition">B</button>
                 <button onClick={()=>execCmd('italic')} className="italic px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition">I</button>
@@ -158,6 +249,12 @@ export const RichTextEditor = ({
                         🔗 Link
                     </button>
                 )}
+                {figureButton && (
+                    <button onClick={() => setFigureDraft({ url: '', caption: '' })} title="Insert an image with its caption within the text"
+                            className="px-2 py-0.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded shadow-sm text-xs font-bold transition">
+                        🖼️ Figure
+                    </button>
+                )}
                 {toolbarExtra.map((btn, i) => (
                     <button key={i} type="button" onClick={() => btn.onClick(insertText)} title={btn.title || btn.label}
                             className="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white border border-indigo-700 rounded shadow-sm text-xs font-bold transition">
@@ -165,9 +262,9 @@ export const RichTextEditor = ({
                     </button>
                 ))}
             </div>
-            <div ref={editorRef} contentEditable onPaste={handlePaste} onBlur={e => onChange(e.target.innerHTML)}
-                onSelect={storeSel} onKeyUp={storeSel} onMouseUp={storeSel} onFocus={storeSel}
-                className="p-3 text-sm text-slate-700 focus:outline-none custom-scrollbar shadow-inner bg-slate-50/50" style={{ resize: 'vertical', minHeight: toPx(minHeight), maxHeight: toPx(maxHeight), overflowY: 'auto' }} data-placeholder={placeholder} />
+            <div ref={editorRef} contentEditable onPaste={handlePaste} onBlur={handleBlur}
+                onSelect={storeSel} onKeyUp={storeSel} onMouseUp={storeSel} onFocus={handleEditFocus}
+                className="p-3 text-sm text-slate-700 focus:outline-none custom-scrollbar shadow-inner bg-slate-50/50 rte-content" style={{ resize: 'vertical', minHeight: toPx(minHeight), maxHeight: toPx(maxHeight), overflowY: 'auto' }} data-placeholder={placeholder} />
             {resizable && (
                 <div onMouseDown={startResize} title="Drag to resize the editor vertically"
                      className="shrink-0 h-3.5 flex items-center justify-center cursor-ns-resize select-none border-t border-slate-200 bg-slate-50 hover:bg-slate-200/70 transition-colors">
@@ -205,6 +302,50 @@ export const RichTextEditor = ({
                             <button onClick={insertLink}
                                     className="px-3 py-1.5 text-xs font-bold rounded-lg bg-sky-600 text-white hover:bg-sky-700 transition-colors">
                                 Insert Link
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {figureDraft && (
+                <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4"
+                     style={{ background: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(2px)' }}
+                     onMouseDown={(e) => { if (e.target === e.currentTarget) setFigureDraft(null); }}>
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-5 flex flex-col gap-3"
+                         onClick={(e) => e.stopPropagation()}>
+                        <h4 className="text-sm font-black text-slate-800">🖼️ Insert Figure</h4>
+
+                        <label className="text-[10px] font-bold text-slate-500 uppercase">Image URL</label>
+                        <input autoFocus type="text" value={figureDraft.url}
+                               onChange={(e) => setFigureDraft({ ...figureDraft, url: e.target.value })}
+                               placeholder="Paste image URL here (Google Drive, Dropbox, etc.)"
+                               className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500" />
+
+                        {figureDraft.url && String(figureDraft.url).trim() !== '' && (
+                            <div className="relative h-40 rounded-md overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center">
+                                <img src={String(figureDraft.url).trim()} alt="Preview" referrerPolicy="no-referrer"
+                                     className="w-full h-full object-contain absolute inset-0"
+                                     onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                                <span className="text-[10px] text-slate-400 italic px-2">Preview unavailable</span>
+                            </div>
+                        )}
+
+                        <label className="text-[10px] font-bold text-slate-500 uppercase">Caption</label>
+                        <input type="text" value={figureDraft.caption}
+                               onChange={(e) => setFigureDraft({ ...figureDraft, caption: e.target.value })}
+                               placeholder="Figure caption (optional)"
+                               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); insertFigure(); } }}
+                               className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500" />
+
+                        <div className="flex justify-end gap-2 pt-1">
+                            <button onClick={() => setFigureDraft(null)}
+                                    className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300 transition-colors">
+                                Cancel
+                            </button>
+                            <button onClick={insertFigure}
+                                    className="px-3 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors">
+                                Insert Figure
                             </button>
                         </div>
                     </div>

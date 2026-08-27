@@ -444,6 +444,7 @@ const [showGeneral, setShowGeneral] = useState(false);
 
   const [tableRows, setTableRows] = useState(2);
   const [tableCols, setTableCols] = useState(3);
+  const [reportWide, setReportWide] = useState(false); // wide editing (retract side panels)
 
   const planDateId = `plan-date-${t.id ?? 'unsaved'}`;
 
@@ -602,13 +603,6 @@ const [showGeneral, setShowGeneral] = useState(false);
     next[idx] = value;
 
     update({ figureCaptions: next });
-  };
-
-  const addImageLink = (url) => {
-    update({
-      [imagesKey]: [...images, url],
-      figureCaptions: [...captionsAligned, `Figure ${images.length + 1}:`]
-    });
   };
 
   const removeImageAt = (idx) => {
@@ -1941,14 +1935,6 @@ const details = [
                       Comments & Notes
                     </label>
                     <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => addImageLink('')}
-                        className="bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 font-bold px-2 py-1 rounded transition-colors shadow-sm text-[10px]"
-                      >
-                        + Add Figure
-                      </button>
-
                       <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded px-2 py-1 shadow-sm">
                         <label className="text-[10px] font-bold text-slate-500">Rows:</label>
                         <input type="number" min="1" value={tableRows} onChange={(e) => setTableRows(parseInt(e.target.value) || 1)} className="w-10 text-[10px] border border-slate-300 rounded px-1 outline-none" />
@@ -2116,10 +2102,15 @@ const details = [
                     onChange={(val) => update({ comments: val })}
                     placeholder="Enter your experiment notes, observations, etc..."
                     linkButton
+                    figureButton
+                    minHeight={420}
+                    maxHeight={6000}
+                    onEditFocusChange={setReportWide}
                   />
                 </div>
 
-<div className="flex-shrink-0 flex flex-col justify-start gap-4" style={{ maxWidth: '300px', minWidth: '180px' }}>
+                {!reportWide && (
+                <div className="flex-shrink-0 flex flex-col justify-start gap-4" style={{ maxWidth: '300px', minWidth: '180px' }}>
                   <div className="w-full flex flex-col items-end border-t lg:border-t-0 border-slate-200 pt-3 lg:pt-0">
                     <div className="flex flex-col gap-2 w-full max-h-[250px] overflow-y-auto custom-scrollbar">
                       {documents.length === 0 && (
@@ -2171,6 +2162,7 @@ const details = [
                     </div>
                   </div>
                 </div>
+              )}
               </div>
 
               {images.length > 0 && (
