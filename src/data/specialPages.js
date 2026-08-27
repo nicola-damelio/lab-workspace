@@ -49,6 +49,8 @@ export const MD_SIMULATION_TAB_CONFIG = {
   imagesKey: 'images',
   conditionFields: [
     { key: 'experimentDate', label: 'Simulation Date', type: 'date' },
+    { key: 'concentration', label: 'Concentration', type: 'text', placeholder: 'e.g. 1', units: ['mM', 'µM', 'mg/mL'] },
+
     {
       key: 'forceField',
       label: 'Force Field',

@@ -35,6 +35,8 @@ export const DOCKING_TAB_CONFIG = {
   imagesKey: 'dockingImages',
   conditionFields: [
     { key: 'experimentDate', label: 'Docking Date', type: 'date' },
+    { key: 'concentration', label: 'Concentration', type: 'text', placeholder: 'e.g. 10', units: ['µM', 'mM', 'nM'] },
+
     { key: 'dockingProgram', label: 'Docking Program', type: 'text', placeholder: 'e.g. AutoDock Vina' },
     { key: 'scoringFunction', label: 'Scoring Function', type: 'text', placeholder: 'e.g. Vina' },
     { key: 'searchAlgorithm', label: 'Search Algorithm', type: 'text', placeholder: 'e.g. Lamarckian GA' },

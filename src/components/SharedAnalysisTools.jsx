@@ -1,4 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
+import {
+  LineChart, Line, AreaChart, Area, BarChart, Bar, ScatterChart, Scatter,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceArea, ReferenceLine,
+  ResponsiveContainer, ErrorBar
+} from 'recharts';
 import { BASE_COLOR_SWATCHES, shadesFromColor, rainbowColors } from '../utils/chartStyle';
 import { Icon } from './Icons';
 
@@ -656,3 +661,246 @@ export const useYZoom = (chartRef, dataDomain, margin = { top: 10, right: 20, bo
 
   return { domain: eff, refLo: lo, refHi: hi, onMouseDown, isZoomed: !!domain, reset: () => setDomain(null) };
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SHARED CHART — fully-wired recharts body that honours every field of
+// SharedChartStylePanel, so the "Graphical Parameters" commands really modify
+// the spectrum / chromatogram / plot they are attached to (chart type, series
+// colours, error bars, axis ranges, tick steps/angle, log axes, legend,
+// line/point/font styles, height, axis labels).
+//
+//   data           -- array of row objects
+//   xKey           -- key of the x-axis column
+//   series         -- [{ key, label, color? }]
+//   cfg            -- style object produced by SharedChartStylePanel
+//   unit           -- x-axis unit (tooltip / label placeholder)
+//   margin         -- recharts chart margin (left is auto-set from yAxisWidth)
+//   errorKey       -- optional key holding a per-point ± value (y error bars)
+//   yFormatter / xFormatter -- (value) => string
+//   referenceLines -- [{ x, color, label? }] vertical reference lines
+//   yAxisWidth, height
+// ─────────────────────────────────────────────────────────────────────────────
+const numOrNull = (v) => {
+  if (v === undefined || v === null || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+// Evenly spaced ticks for a numeric axis when a step is requested.
+const numericTicks = (min, max, step) => {
+  if (!(Number.isFinite(min) && Number.isFinite(max) && min < max)) return null;
+  const s = Number(step);
+  if (!(Number.isFinite(s) && s > 0)) return null;
+  const out = [];
+  for (let v = Math.ceil(min / s) * s; v <= max + s * 0.001; v += s) {
+    out.push(Math.round(v * 10000) / 10000);
+  }
+  return out.length > 1 ? out : null;
+};
+
+export const SharedChart = ({
+  data = [],
+  xKey = 'x',
+  series = [],
+  cfg = {},
+  unit = 'a.u.',
+  margin = {},
+  errorKey,
+  yFormatter,
+  xFormatter,
+  referenceLines = [],
+  yAxisWidth = 54,
+  height = 260
+}) => {
+  const safeSeries = Array.isArray(series) && series.length
+    ? series
+    : [{ key: 'y', label: 'Series' }];
+
+  const chartRef = useRef(null);
+  const fs = Number(cfg.fontSize) || 11;
+  const dash = cfg.lineStyle === 'dashed' ? '4 4' : cfg.lineStyle === 'dotted' ? '1 3' : undefined;
+  const strokeWidth = Number(cfg.lineThickness) || 2;
+  const ptSize = Number(cfg.ptSize) || 4;
+  const showPoints = cfg.pointStyle && cfg.pointStyle !== 'none';
+  const chartType = cfg.chartType || 'line';
+  const xLog = !!cfg.xLog;
+  const yLog = !!cfg.yLog;
+  const tickAngle = Number(cfg.tickAngle) || 0;
+
+  /* Log axes need strictly positive data. */
+  const plotData = (xLog || yLog)
+    ? data.filter((d) => {
+        const x = Number(d?.[xKey]);
+        if (!Number.isFinite(x) || x <= 0) return false;
+        return safeSeries.every((s) => {
+          const v = Number(d?.[s.key]);
+          return !Number.isFinite(v) || v > 0;
+        });
+      })
+    : data;
+
+  /* X domain: cfg.xMin/xMax override the data range; drag-zoom applies on top. */
+  const xs = plotData.map((d) => Number(d?.[xKey])).filter((v) => Number.isFinite(v));
+  const dataDomain = xs.length > 1 ? [Math.min(...xs), Math.max(...xs)] : [0, 1];
+  const cMin = numOrNull(cfg.xMin);
+  const cMax = numOrNull(cfg.xMax);
+  const cfgDomain = cMin !== null && cMax !== null && cMax > cMin ? [cMin, cMax] : dataDomain;
+  const zoom = useXZoom(chartRef, cfgDomain, { ...margin, left: yAxisWidth });
+  const xDomain = xLog
+    ? [
+        Math.max(1e-9, cMin !== null && cMin > 0 ? cMin : (dataDomain[0] > 0 ? dataDomain[0] : zoom.domain[0])),
+        cMax !== null ? cMax : zoom.domain[1]
+      ]
+    : [zoom.domain[0], zoom.domain[1]];
+
+  /* Y domain (0-based unless the user overrides; positive when log). */
+  const yMin = numOrNull(cfg.yMin);
+  const yMax = numOrNull(cfg.yMax);
+  const yDomain = yLog
+    ? [yMin !== null && yMin > 0 ? yMin : 'auto', yMax !== null ? yMax : 'auto']
+    : [yMin ?? 0, yMax ?? 'auto'];
+
+  /* Tick steps → explicit ticks on numeric axes. */
+  const xStep = cfg.xTickStep ?? cfg.tickStep;
+  const yStep = cfg.yTickStep;
+  const xTicks = xStep ? numericTicks(xDomain[0], xDomain[1], xStep) : null;
+  const yTicks = yStep && yMin !== null && yMax !== null ? numericTicks(yMin, yMax, yStep) : null;
+
+  /* Series colours: per-series override → base-colour shades → rainbow → default. */
+  const colorFor = (s, i) =>
+    (cfg.colors && cfg.colors[s.key]) ||
+    (cfg.baseColor ? shadesFromColor(cfg.baseColor, safeSeries.length)[i] : rainbowColors(safeSeries.length)[i]) ||
+    s.color ||
+    '#3b82f6';
+
+  const errColor = cfg.errorBarColor || '#94a3b8';
+  const noCaps = cfg.errorBarStyle === 'no-caps';
+  const showErr = errorKey && cfg.errorBarStyle !== 'none';
+  const errorBarsFor = () => (
+    showErr
+      ? <ErrorBar dataKey={errorKey} direction="y" stroke={errColor} strokeWidth={1.2} width={noCaps ? 0 : 4} />
+      : null
+  );
+
+  const tickProps = tickAngle
+    ? <AngledTick angle={tickAngle} fontSize={fs} />
+    : { fontSize: fs, fill: '#64748b' };
+
+
+  const makeSeries = safeSeries.map((s, i) => {
+    const col = colorFor(s, i);
+    const base = { dataKey: s.key, name: s.label, isAnimationActive: false };
+    if (chartType === 'bar') {
+      return <Bar key={s.key} {...base} fill={col} stroke={col} strokeWidth={1}>{errorBarsFor()}</Bar>;
+    }
+    if (chartType === 'scatter') {
+      return <Scatter key={s.key} {...base} fill={col} stroke={col} fillOpacity={0.85} shape="circle">{errorBarsFor()}</Scatter>;
+    }
+    if (chartType === 'area') {
+      return (
+        <Area
+          key={s.key}
+          {...base}
+          type="monotone"
+          stroke={col}
+          strokeWidth={strokeWidth}
+          strokeDasharray={dash}
+          fill={col}
+          fillOpacity={0.15}
+          dot={showPoints ? { r: ptSize, fill: col, strokeWidth: 0 } : false}
+        >
+          {errorBarsFor()}
+        </Area>
+      );
+    }
+    return (
+      <Line
+        key={s.key}
+        {...base}
+        type="monotone"
+        stroke={col}
+        strokeWidth={strokeWidth}
+        strokeDasharray={dash}
+        dot={showPoints ? { r: ptSize, fill: col, strokeWidth: 0 } : false}
+      >
+        {errorBarsFor()}
+      </Line>
+    );
+  });
+
+  const children = [
+    <CartesianGrid key="grid" strokeDasharray="3 3" stroke="#e2e8f0" />,
+    <XAxis
+      key="x"
+      type="number"
+      dataKey={xKey}
+      domain={xDomain}
+      allowDataOverflow
+      scale={xLog ? 'log' : 'auto'}
+      tick={tickProps}
+      {...(xTicks ? { ticks: xTicks } : {})}
+      label={{ value: cfg.xAxisLabel || (unit ? `Value (${unit})` : 'Value'), position: 'insideBottom', offset: -18, fontSize: fs, fill: '#64748b' }}
+    />,
+    <YAxis
+      key="y"
+      domain={yDomain}
+      allowDataOverflow
+      scale={yLog ? 'log' : 'auto'}
+      tick={tickProps}
+      {...(yTicks ? { ticks: yTicks } : {})}
+      width={yAxisWidth}
+      label={cfg.yAxisLabel ? { value: cfg.yAxisLabel, angle: -90, position: 'insideLeft', offset: 0, fontSize: fs, fill: '#64748b' } : undefined}
+    />,
+    <Tooltip
+      key="tip"
+      formatter={(v, name) => [
+        yFormatter ? yFormatter(v) : (Number.isFinite(Number(v)) ? Number(v).toPrecision(4) : v),
+        name
+      ]}
+      labelFormatter={(l) => (xFormatter ? xFormatter(l) : `${l}${unit ? ' ' + unit : ''}`)}
+    />,
+    ...(cfg.legend && cfg.legend !== 'none'
+      ? [<Legend key="legend" verticalAlign={cfg.legend} align="center" wrapperStyle={{ fontSize: fs }} />]
+      : []),
+    ...(zoom.refLo !== null && zoom.refHi !== null
+      ? [<ReferenceArea key="za" x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />]
+      : []),
+    ...referenceLines.map((rl, i) => (
+      <ReferenceLine
+        key={`rl-${i}`}
+        x={rl.x}
+        stroke={rl.color || '#94a3b8'}
+        strokeDasharray="4 4"
+        label={rl.label
+          ? { value: rl.label, position: 'insideTopRight', fontSize: 9, fill: rl.color || '#94a3b8' }
+          : undefined}
+      />
+    )),
+    ...makeSeries
+  ];
+
+  const h = useChartFsHeight(Number(cfg.height) || height);
+  const resolvedMargin = { top: 8, right: 12, bottom: 34, ...margin, left: margin.left ?? yAxisWidth };
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div ref={chartRef} onMouseDown={zoom.onMouseDown} className="select-none" style={{ height: h }}>
+        <ResponsiveContainer width="100%" height="100%">
+          {chartType === 'bar' ? (
+            <BarChart data={plotData} margin={resolvedMargin}>{children}</BarChart>
+          ) : chartType === 'scatter' ? (
+            <ScatterChart data={plotData} margin={resolvedMargin}>{children}</ScatterChart>
+          ) : chartType === 'area' ? (
+            <AreaChart data={plotData} margin={resolvedMargin}>{children}</AreaChart>
+          ) : (
+            <LineChart data={plotData} margin={resolvedMargin}>{children}</LineChart>
+          )}
+        </ResponsiveContainer>
+      </div>
+      {zoom.isZoomed && (
+        <button type="button" onClick={zoom.reset} className="self-end text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>
+      )}
+    </div>
+  );
+};
+

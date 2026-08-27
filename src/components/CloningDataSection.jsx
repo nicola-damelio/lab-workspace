@@ -1,9 +1,5 @@
 import React, {useRef} from 'react';
-import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ReferenceLine, ReferenceArea
-} from 'recharts';
-import {ChartPanel, SharedChartStylePanel, useXZoom, useChartFsHeight} from './SharedAnalysisTools';
+import {ChartPanel, SharedChartStylePanel, SharedChart} from './SharedAnalysisTools';
 import { CollapsibleSection, SmartImage } from './TestShellRenderer';
 import GelScheme from './GelScheme';
 import {uid, round, parseSpectrumText, analyzeSpectrum, effectiveSpectrumProps, INPUT_CLS} from './cloningUtils';
@@ -23,42 +19,29 @@ const SectionComment = ({ value, onChange, placeholder = 'Add notes about this s
   </div>
 );
 
-const UV_CHART_MARGIN = { top: 8, right: 10, bottom: 30, left: 40 };
+const UV_CHART_MARGIN = { top: 8, right: 10, bottom: 30 };
 
-const UvZoomChart = ({ pts, cfg = {} }) => {
-  const chartRef = useRef(null);
-  const wavelengths = pts.map(p => p.wavelength);
-  const dataDomain = wavelengths.length > 1 ? [Math.min(...wavelengths), Math.max(...wavelengths)] : [220, 320];
-  const zoom = useXZoom(chartRef, dataDomain, UV_CHART_MARGIN);
-  const fs = Number(cfg.fontSize) || 11;
-  const dash = cfg.lineStyle === 'dashed' ? '4 4' : cfg.lineStyle === 'dotted' ? '1 3' : undefined;
-  const dot = cfg.pointStyle && cfg.pointStyle !== 'none' ? { r: Number(cfg.ptSize) || 4, fill: '#1e40af', strokeWidth: 0 } : false;
-  const height = useChartFsHeight(Number(cfg.height) || 220);
-  return (
-    <div className="flex flex-col gap-1">
-      <div ref={chartRef} onMouseDown={zoom.onMouseDown} className="select-none" style={{ height }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={pts} margin={UV_CHART_MARGIN}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-            <XAxis dataKey="wavelength" type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow
-              tick={{ fontSize: fs, fill: '#64748b' }}
-              label={{ value: cfg.xAxisLabel || 'Wavelength (nm)', position: 'insideBottom', offset: -15, fontSize: fs, fill: '#64748b' }} />
-            <YAxis tick={{ fontSize: fs, fill: '#64748b' }}
-              label={cfg.yAxisLabel ? { value: cfg.yAxisLabel, angle: -90, position: 'insideLeft', fontSize: fs, fill: '#64748b' } : undefined} />
-            <Tooltip formatter={(v) => Number(v).toFixed(4)} labelFormatter={(l) => `${l} nm`} />
-            <ReferenceLine x={260} stroke="#3b82f6" strokeDasharray="4 4" />
-            <ReferenceLine x={280} stroke="#ef4444" strokeDasharray="4 4" />
-            <Line type="monotone" dataKey="absorbance" stroke="#1e40af" strokeWidth={Number(cfg.lineThickness) || 2} strokeDasharray={dash} dot={dot} isAnimationActive={false} />
-            {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-      {zoom.isZoomed && (
-        <button type="button" onClick={zoom.reset} className="self-end text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>
-      )}
-    </div>
-  );
-};
+/* Fully wired through SharedChart → SharedChartStylePanel: every
+   "Graphical Parameters" command (type, colours, ranges, ticks, log axes,
+   legend, line/point/font styles, height) really modifies the spectrum. */
+const UvZoomChart = ({ pts, cfg = {} }) => (
+  <SharedChart
+    data={pts}
+    xKey="wavelength"
+    series={[{ key: 'absorbance', label: 'Absorbance', color: '#1e40af' }]}
+    cfg={cfg}
+    unit="nm"
+    margin={UV_CHART_MARGIN}
+    yAxisWidth={48}
+    height={220}
+    yFormatter={(v) => Number(v).toFixed(4)}
+    xFormatter={(l) => `${l} nm`}
+    referenceLines={[
+      { x: 260, color: '#3b82f6', label: '260' },
+      { x: 280, color: '#ef4444', label: '280' }
+    ]}
+  />
+);
 
 /* ==========================================================================
    UV SPECTRUM CARD

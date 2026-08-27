@@ -29,6 +29,8 @@ export const MD_TAB_CONFIG = {
   imagesKey: 'mdImages',
   conditionFields: [
     { key: 'experimentDate', label: 'Simulation Date', type: 'date' },
+    { key: 'concentration', label: 'Concentration', type: 'text', placeholder: 'e.g. 1', units: ['mM', 'µM', 'mg/mL'] },
+
     { key: 'forceField', label: 'Force Field', type: 'text', placeholder: 'e.g. CHARMM36m' },
     { key: 'forceFieldVersion', label: 'FF Version', type: 'text', placeholder: 'e.g. charmm36m' },
     { key: 'waterModel', label: 'Water Model', type: 'text', placeholder: 'e.g. TIP3P' },
@@ -73,6 +75,8 @@ export const CLONING_TAB_CONFIG = {
   imagesKey: 'gelImages',
   conditionFields: [
     { key: 'experimentDate', label: 'Experiment Date', type: 'date' },
+    { key: 'concentration', label: 'Concentration', type: 'text', placeholder: 'e.g. 100', units: ['ng/µL', 'µM', 'mg/mL', 'mM'] },
+
     { key: 'vectorBackbone', label: 'Vector Backbone', type: 'text', placeholder: 'e.g. pET-28a(+)' },
     {
       key: 'cloningMethod',
@@ -127,6 +131,8 @@ export const PROTEIN_EXPRESSION_TAB_CONFIG = {
   imagesKey: 'gelImages',
   conditionFields: [
     { key: 'experimentDate', label: 'Experiment Date', type: 'date' },
+    { key: 'concentration', label: 'Concentration', type: 'text', placeholder: 'e.g. 5', units: ['mg/mL', 'µM', 'mM', 'µg/mL'] },
+
     { key: 'cultureVolume', label: 'Culture Volume', type: 'text', placeholder: 'e.g. 1', units: ['L', 'mL', 'µL'] },
     {
       key: 'medium',
@@ -270,6 +276,8 @@ export const SSNMR_TAB_CONFIG = {
   imagesKey: 'images',
   conditionFields: [
     { key: 'experimentDate', label: 'Experiment Date', type: 'date' },
+    { key: 'concentration', label: 'Concentration', type: 'text', placeholder: 'e.g. 1', units: ['mM', 'µM', 'mg/mL'] },
+
     { key: 'temperature', label: 'Temperature', type: 'text', placeholder: 'e.g. 300', units: ['K', '°C'] },
     { key: 'lipid', label: 'Lipid', type: 'text', placeholder: 'e.g. POPC / DPPC' },
     { key: 'deuteration', label: 'Deuteration Pattern', type: 'text', placeholder: 'e.g. sn-1 perdeuterated' },
@@ -306,6 +314,8 @@ export const PLATE_TAB_CONFIG = {
   imagesKey: 'images',
   conditionFields: [
     { key: 'experimentDate', label: 'Experiment Date', type: 'date' },
+    { key: 'concentration', label: 'Concentration', type: 'text', placeholder: 'e.g. 100', units: ['µM', 'mM', 'nM', 'µg/mL'] },
+
     { key: 'cellsSeeded', label: 'Cells per Well', type: 'number', placeholder: 'e.g. 5000' },
     { key: 'timeBeforeRevelation', label: 'Time Before Revelation', type: 'number', step: '0.5', placeholder: 'e.g. 72', units: ['h', 'min', 'days'] },
     { key: 'temperature', label: 'Temperature', type: 'text', placeholder: 'e.g. 37', units: ['°C', 'K'] },
@@ -376,6 +386,8 @@ export const NMR_FITTING_TAB_CONFIG = {
   imagesKey: 'images',
   conditionFields: [
     { key: 'experimentDate', label: 'Experiment Date', type: 'date' },
+    { key: 'concentration', label: 'Concentration', type: 'text', placeholder: 'e.g. 1', units: ['mM', 'µM', 'mg/mL'] },
+
     { key: 'spectrometer', label: 'Spectrometer Frequency', type: 'text', placeholder: 'e.g. 600', units: ['MHz'] },
     { key: 'temperature', label: 'Temperature', type: 'text', placeholder: 'e.g. 298', units: ['K', '°C'] },
     { key: 'solvent', label: 'Solvent', type: 'text', placeholder: 'e.g. D2O' },
@@ -403,6 +415,8 @@ export const DOSY_TAB_CONFIG = {
   imagesKey: 'images',
   conditionFields: [
     { key: 'experimentDate', label: 'Experiment Date', type: 'date' },
+    { key: 'concentration', label: 'Concentration', type: 'text', placeholder: 'e.g. 1', units: ['mM', 'µM', 'mg/mL'] },
+
     { key: 'spectrometer', label: 'Spectrometer Frequency', type: 'text', placeholder: 'e.g. 600', units: ['MHz'] },
     { key: 'temperature', label: 'Temperature', type: 'text', placeholder: 'e.g. 298', units: ['K', '°C'] },
     { key: 'solvent', label: 'Solvent', type: 'text', placeholder: 'e.g. D2O' },
@@ -433,6 +447,8 @@ export const MD_SIMULATION_TAB_CONFIG = {
   imagesKey: 'images',
   conditionFields: [
     { key: 'experimentDate', label: 'Simulation Date', type: 'date' },
+    { key: 'concentration', label: 'Concentration', type: 'text', placeholder: 'e.g. 1', units: ['mM', 'µM', 'mg/mL'] },
+
     { key: 'forceField', label: 'Force Field', type: 'select', options: ['AMBER ff19SB', 'CHARMM36m', 'OPLS-AA/M', 'GROMOS 54a7', 'Other'] },
     { key: 'waterModel', label: 'Water Model', type: 'select', options: ['TIP3P', 'TIP4P', 'SPC/E', 'OPC', 'Other'] },
     { key: 'temperature', label: 'Temperature', type: 'text', placeholder: 'e.g. 300', units: ['K'] },
@@ -473,6 +489,8 @@ export const FLOW_CYTOMETRY_TAB_CONFIG = {
   imagesKey: 'images',
   conditionFields: [
     { key: 'experimentDate', label: 'Experiment Date', type: 'date' },
+    { key: 'concentration', label: 'Concentration', type: 'text', placeholder: 'e.g. 5', units: ['µg/mL', 'ng/mL', 'µM', 'mM'] },
+
     { key: 'cellNumber', label: 'Cells per Sample', type: 'text', placeholder: 'e.g. 1x10^6' },
     { key: 'liveDeadStain', label: 'Live/Dead Stain', type: 'text', placeholder: 'e.g. Zombie NIR' },
     { key: 'fixation', label: 'Fixation', type: 'select', options: ['None', '1% PFA', '4% PFA', 'BD Cytofix', 'eBioscience Foxp3'] },

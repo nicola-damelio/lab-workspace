@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import StarToggle from './StarToggle';
+import { isStarred, toggleStarredItem } from '../utils/starredItems';
 
 /* ============================================================================
 GEL SCHEME — a visual, translucent light-blue gel editor
@@ -170,6 +172,26 @@ export const GelScheme = ({
     if (c && c !== LADDER && i + 1 < wellCount) setSelected(i + 1);
   };
 
+  /* ---- ⭐ import into the project document ---- */
+  const starId = `gel-scheme-${storageKey}`;
+  const starActive = isStarred(activeTest, starId);
+  const toggleStar = () => {
+    if (!updateActiveTest) return;
+    // Always render from the live wells so an unsaved scheme can be starred.
+    const svg = gelSchemeSvg({ wellCount, wells }, ctx, bandKind);
+    const url = svg ? 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg) : '';
+    if (!url) return;
+    const summary = gelSchemeText({ wellCount, wells }) || 'empty gel';
+    updateActiveTest({
+      starredItems: toggleStarredItem(activeTest, {
+        id: starId,
+        kind: 'graph',
+        label: `${title} — ${summary}`,
+        caption: `${title} — well contents (${summary})`,
+        url
+      })
+    });
+  };
 
   return (
     <div>
@@ -205,11 +227,19 @@ export const GelScheme = ({
           >
             🧹 Clear all
           </button>
+          <StarToggle
+            active={starActive}
+            onToggle={toggleStar}
+            title={starActive
+              ? 'Remove this gel scheme from the project document'
+              : '⭐ Import this gel scheme into the project document'}
+          />
         </div>
       </div>
 
       {/* ---- the gel ---- */}
       <div
+        data-star-key={starId}
         className="relative rounded-2xl border border-blue-200/90 overflow-hidden"
         style={{
           background:
@@ -457,7 +487,7 @@ export const gelSchemeText = (scheme) => {
 };
 
 /* Renders the same scheme as a standalone translucent-light-blue SVG. */
-export const gelSchemeToHtml = (scheme, ctx = {}, bandKind = 'dna') => {
+export const gelSchemeSvg = (scheme, ctx = {}, bandKind = 'dna') => {
   if (!scheme || !Array.isArray(scheme.wells)) return '';
   const compoundMeta = ctx.compoundMeta || {};
   const cmpColors = ctx.cmpColors || {};
@@ -522,7 +552,16 @@ export const gelSchemeToHtml = (scheme, ctx = {}, bandKind = 'dna') => {
   }
   svg += `</svg>`;
 
+  return svg;
+};
+
+/* Wraps the scheme SVG + well-contents summary in a small bordered block
+   for the lab-notebook / print exports. */
+export const gelSchemeToHtml = (scheme, ctx = {}, bandKind = 'dna') => {
+  const svg = gelSchemeSvg(scheme, ctx, bandKind);
+  if (!svg) return '';
   const summary = gelSchemeText(scheme);
+  const esc = escHtml;
   return (
     `<div style="background:rgba(224,242,254,0.3);border:1px solid #bfdbfe;border-radius:10px;padding:10px;margin-bottom:12px;">` +
     `<div style="font-size:11px;font-weight:700;color:#1d4ed8;margin-bottom:6px;">🧪 Gel Scheme — well contents</div>` +

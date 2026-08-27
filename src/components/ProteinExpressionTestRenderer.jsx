@@ -1,9 +1,5 @@
 import React, {useRef, useMemo} from 'react';
-import {
-LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-ResponsiveContainer, ReferenceArea
-} from 'recharts';
-import { ChartPanel, SharedChartStylePanel, useXZoom, useChartFsHeight } from './SharedAnalysisTools';
+import { ChartPanel, SharedChartStylePanel, SharedChart } from './SharedAnalysisTools';
 import TestShellRenderer, {
 CollapsibleSection,
 SmartImage
@@ -76,39 +72,24 @@ className="w-full border border-slate-200 rounded-lg p-2.5 text-xs outline-none 
 </div>
 );
 
-const CHROMA_MARGIN = { top: 10, right: 10, bottom: 35, left: 50 };
-const ChromaZoomChart = ({ data, stroke, cfg = {} }) => {
-  const chartRef = useRef(null);
-  const xs = data.map(p => p.volume);
-  const dataDomain = xs.length > 1 ? [Math.min(...xs), Math.max(...xs)] : [0, 1];
-  const zoom = useXZoom(chartRef, dataDomain, CHROMA_MARGIN);
-  const fs = Number(cfg.fontSize) || 11;
-  const dash = cfg.lineStyle === 'dashed' ? '4 4' : cfg.lineStyle === 'dotted' ? '1 3' : undefined;
-  const dot = cfg.pointStyle && cfg.pointStyle !== 'none' ? { r: Number(cfg.ptSize) || 4, fill: stroke, strokeWidth: 0 } : false;
-  const height = useChartFsHeight(Number(cfg.height) || 230);
-  return (
-    <div className="flex flex-col gap-1">
-      <div ref={chartRef} onMouseDown={zoom.onMouseDown} className="select-none" style={{ height }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={CHROMA_MARGIN}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-            <XAxis dataKey="volume" type="number" domain={[zoom.domain[0], zoom.domain[1]]} allowDataOverflow
-              tick={{ fontSize: fs, fill: '#64748b' }}
-              label={{ value: cfg.xAxisLabel || 'Elution Volume (mL)', position: 'insideBottom', offset: -15, fontSize: fs, fill: '#64748b' }} />
-            <YAxis tick={{ fontSize: fs, fill: '#64748b' }}
-              label={cfg.yAxisLabel ? { value: cfg.yAxisLabel, angle: -90, position: 'insideLeft', fontSize: fs, fill: '#64748b' } : { value: 'Absorbance', angle: -90, position: 'insideLeft', fontSize: fs, fill: '#64748b' }} />
-            <Tooltip formatter={(v) => Number(v).toFixed(2)} labelFormatter={(l) => `${l} mL`} />
-            <Line type="monotone" dataKey="absorbance" stroke={stroke} strokeWidth={Number(cfg.lineThickness) || 2} strokeDasharray={dash} dot={dot} isAnimationActive={false} />
-            {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-      {zoom.isZoomed && (
-        <button type="button" onClick={zoom.reset} className="self-end text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>
-      )}
-    </div>
-  );
-};
+const CHROMA_MARGIN = { top: 10, right: 10, bottom: 35 };
+
+/* Fully wired through SharedChart → SharedChartStylePanel: every
+   "Graphical Parameters" command really modifies the elution profile. */
+const ChromaZoomChart = ({ data, stroke, cfg = {} }) => (
+  <SharedChart
+    data={data}
+    xKey="volume"
+    series={[{ key: 'absorbance', label: 'Absorbance', color: stroke }]}
+    cfg={cfg}
+    unit="Elution Volume (mL)"
+    margin={CHROMA_MARGIN}
+    yAxisWidth={50}
+    height={230}
+    yFormatter={(v) => Number(v).toFixed(2)}
+    xFormatter={(l) => `${l} mL`}
+  />
+);
 
 /* ============================================================================
 CHROMATOGRAM CARD (one card = one run, method is mandatory)
