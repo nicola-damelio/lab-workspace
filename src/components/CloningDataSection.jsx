@@ -5,6 +5,7 @@ import {
 } from 'recharts';
 import {ChartPanel, SharedChartStylePanel, useXZoom, useChartFsHeight} from './SharedAnalysisTools';
 import { CollapsibleSection, SmartImage } from './TestShellRenderer';
+import GelScheme from './GelScheme';
 import {uid, round, parseSpectrumText, analyzeSpectrum, effectiveSpectrumProps, INPUT_CLS} from './cloningUtils';
 
 const SectionComment = ({ value, onChange, placeholder = 'Add notes about this section...' }) => (
@@ -377,6 +378,14 @@ const GelPanel = ({ ctx }) => {
 
   return (
     <div className="border border-slate-200 bg-slate-50 rounded-lg p-4">
+      <div className="mb-5">
+        <GelScheme
+          ctx={ctx}
+          bandKind="dna"
+          title="DNA gel scheme"
+          subtitle="Scheme of the agarose gel — click a well and add compounds from Definitions & Labels to show what is loaded in each lane."
+        />
+      </div>
       <input
         ref={fileRef}
         type="file"

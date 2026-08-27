@@ -8,6 +8,7 @@ import TestShellRenderer, {
 CollapsibleSection,
 SmartImage
 } from './TestShellRenderer';
+import GelScheme, { gelSchemeToHtml } from './GelScheme';
 import { PROTEIN_EXPRESSION_TAB_CONFIG } from './tabConfigs';
 
 /* ============================================================================
@@ -482,6 +483,14 @@ const ProteinDataSection = ({ ctx }) => {
       {/* ============ 3. SDS-PAGE GELS ============ */}
       <CollapsibleSection title="SDS-PAGE Gels & Blots" icon="🖼️" defaultOpen={false}>
         <div className="border border-slate-200 bg-slate-50 rounded-lg p-4">
+          <div className="mb-5">
+            <GelScheme
+              ctx={ctx}
+              bandKind="protein"
+              title="SDS-PAGE gel scheme"
+              subtitle="Scheme of the SDS-PAGE gel — click a well and add compounds from Definitions & Labels to show which sample is loaded in each lane."
+            />
+          </div>
           <input
             ref={gelImageInputRef}
             type="file"
@@ -642,11 +651,18 @@ html += `<p style="font-size: 11px; color: #64748b; font-style: italic; margin-b
 }
 }
 
-if (checked.gels && Array.isArray(t.gelImages) && t.gelImages.length > 0) {
+if (checked.gels) {
+const schemeHtml = gelSchemeToHtml(t.gelScheme, ctx, 'protein');
+if (schemeHtml) {
+html += `<h4 style="font-size: 12px; color: #334155; margin-bottom: 4px;">🧪 SDS-PAGE Gel Scheme</h4>${schemeHtml}`;
+}
+
+if (Array.isArray(t.gelImages) && t.gelImages.length > 0) {
 html += `<p style="font-size: 11px; color: #64748b;">${t.gelImages.length} SDS-PAGE gel image(s) attached.</p>`;
 
 if (t.gelComment) {
 html += `<p style="font-size: 11px; color: #64748b; font-style: italic;">📝 ${t.gelComment}</p>`;
+}
 }
 }
 

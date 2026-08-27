@@ -4,6 +4,7 @@ import { CLONING_TAB_CONFIG } from './tabConfigs';
 import { CloningSetupSection } from './CloningSetupSection';
 import { CloningDataSection } from './CloningDataSection';
 import { CloningSimulationsSection } from './CloningSimulationsSection';
+import { gelSchemeToHtml } from './GelScheme';
 import { analyzeSpectrum, getOperatorLabel } from './cloningUtils';
 
 /* Cloning Strategy Planner now lives inside CloningSetupSection itself,
@@ -177,13 +178,22 @@ const buildCloningNotebookHtml = (checked, ctx) => {
     html += `</table>`;
   }
 
-  if (checked.gels && Array.isArray(t.gelImages) && t.gelImages.length) {
-    html += `
-      <h4 style="font-size: 12px; color: #334155; margin-bottom: 4px;">🧬 Gel Images</h4>
-      <p style="font-size: 11px; color: #64748b;">${t.gelImages.length} gel image(s) attached.</p>`;
-      
-    if (t.gelComment) {
-      html += `<p style="font-size: 11px; color: #64748b; font-style: italic; margin-bottom: 12px;">📝 ${t.gelComment}</p>`;
+  if (checked.gels) {
+    const schemeHtml = gelSchemeToHtml(t.gelScheme, ctx, 'dna');
+    if (schemeHtml) {
+      html += `
+        <h4 style="font-size: 12px; color: #334155; margin-bottom: 4px;">🧪 Gel Scheme</h4>
+        ${schemeHtml}`;
+    }
+
+    if (Array.isArray(t.gelImages) && t.gelImages.length) {
+      html += `
+        <h4 style="font-size: 12px; color: #334155; margin-bottom: 4px;">🧬 Gel Images</h4>
+        <p style="font-size: 11px; color: #64748b;">${t.gelImages.length} gel image(s) attached.</p>`;
+
+      if (t.gelComment) {
+        html += `<p style="font-size: 11px; color: #64748b; font-style: italic; margin-bottom: 12px;">📝 ${t.gelComment}</p>`;
+      }
     }
   }
 

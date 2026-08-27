@@ -645,6 +645,7 @@ if (activeTest.type === 'flow_cytometry') {
                       compoundMeta={compoundMeta}
                       plasmidMeta={plasmidMeta}
                       molecules={molecules}
+                      cmpColors={cmpColors}
                       solvents={solvents}
                       buffers={buffers}
                       additives={additives}
@@ -736,6 +737,8 @@ if (activeTest.type === 'flow_cytometry') {
                       solvents={solvents}
                       buffers={buffers}
                       additives={additives}
+                      compoundMeta={compoundMeta}
+                      cmpColors={cmpColors}
                       mandatoryRules={mandatoryRules}
                       mandatoryBehavior={mandatoryBehavior}
                     />

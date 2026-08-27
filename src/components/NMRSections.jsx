@@ -1255,7 +1255,7 @@ const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, row
    PEAK LABEL OVERLAYS (1D & 2D)
    Renders peak labels searching for free space to avoid collisions.
    ============================================================================ */
-const PeakLabelOverlay = ({ markers, dom, marginLeft, marginRight, marginTop, marginBottom }) => {
+const PeakLabelOverlay = ({ markers, dom, marginLeft, marginRight, marginTop, marginBottom, fontSize = 11, color = '#b91c1c' }) => {
   const containerRef = useRef(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
 
@@ -1285,9 +1285,9 @@ const PeakLabelOverlay = ({ markers, dom, marginLeft, marginRight, marginTop, ma
 
   const visible = markers.filter(m => m.ppm >= domLo && m.ppm <= domHi);
 
-  const LABEL_H = 20;
+  const LABEL_H = fontSize + 9;
   const LABEL_PAD = 6;
-  const FONT_SIZE = 11;
+  const FONT_SIZE = fontSize;
   const ARROW_LEN = 10;
   const TICK_LEN = 6;
 
@@ -1320,7 +1320,7 @@ const PeakLabelOverlay = ({ markers, dom, marginLeft, marginRight, marginTop, ma
         <svg width={w} height={h} style={{ position: 'absolute', top: 0, left: 0, overflow: 'visible' }}>
           <defs>
             <marker id="pk-arrow" markerWidth="5" markerHeight="5" refX="2" refY="2.5" orient="auto">
-              <path d="M0,0 L0,5 L4,2.5 z" fill="#dc2626" />
+              <path d="M0,0 L0,5 L4,2.5 z" fill={color} />
             </marker>
           </defs>
           {placed.map((p, i) => {
@@ -1328,12 +1328,12 @@ const PeakLabelOverlay = ({ markers, dom, marginLeft, marginRight, marginTop, ma
             const arrowEndY = marginTop - TICK_LEN - 1;
             return (
               <g key={i}>
-                <line x1={p.cx} y1={marginTop} x2={p.cx} y2={marginTop - TICK_LEN} stroke="#ef4444" strokeWidth={1.5} />
+                <line x1={p.cx} y1={marginTop} x2={p.cx} y2={marginTop - TICK_LEN} stroke={color} strokeWidth={1.5} />
                 {arrowStartY < arrowEndY && (
-                  <line x1={p.cx} y1={arrowStartY} x2={p.cx} y2={arrowEndY} stroke="#dc2626" strokeWidth={1} markerEnd="url(#pk-arrow)" />
+                  <line x1={p.cx} y1={arrowStartY} x2={p.cx} y2={arrowEndY} stroke={color} strokeWidth={1} markerEnd="url(#pk-arrow)" />
                 )}
-                <rect x={p.cx - p.tw / 2} y={p.cy} width={p.tw} height={LABEL_H} rx={2} fill="white" stroke="#fca5a5" strokeWidth={0.8} opacity={0.95} />
-                <text x={p.cx} y={p.cy + LABEL_H / 2 + FONT_SIZE / 2 - 1} textAnchor="middle" fontSize={FONT_SIZE} fontFamily="monospace" fontWeight="bold" fill="#b91c1c">
+                <rect x={p.cx - p.tw / 2} y={p.cy} width={p.tw} height={LABEL_H} rx={2} fill="white" stroke={color} strokeWidth={0.8} opacity={0.95} />
+                <text x={p.cx} y={p.cy + LABEL_H / 2 + FONT_SIZE / 2 - 1} textAnchor="middle" fontSize={FONT_SIZE} fontFamily="monospace" fontWeight="bold" fill={color}>
                   {p.label}
                 </text>
               </g>
@@ -1380,7 +1380,7 @@ const AxisScrollbar = ({ domain, fullDomain, onChange, vertical = false, reverse
 };
 
 const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel, selectedKeys, manualKeys = [], heightPx = 300, fs = 11, aspect = null, simCfg }) => {
-  const { simShowLabels = true, simLabelFormat = 'resNum_code_atom', simLabelDim = 'both' } = simCfg || {};
+  const { simShowLabels = true, simLabelFormat = 'resNum_code_atom', simLabelDim = 'both', simLabelFontSize = 12, simLabelColor = '#b91c1c' } = simCfg || {};
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState(fullDomain);
   const [refAreaLeft, setRefAreaLeft] = useState(null);
@@ -1468,7 +1468,7 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
     return markers;
   }, [processedData, simShowLabels, simLabelFormat, simLabelDim]);
 
-  const labelAreaH = (simShowLabels && peakMarkers.length > 0) ? Math.min(185, 44 + peakMarkers.length * 22) : 0;
+  const labelAreaH = (simShowLabels && peakMarkers.length > 0) ? Math.min(220, 40 + peakMarkers.length * (simLabelFontSize + 10)) : 0;
   const activeMargin = { ...CHART_MARGIN_1D, top: CHART_MARGIN_1D.top + labelAreaH };
   
   return (
@@ -1550,6 +1550,8 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
               marginTop={activeMargin.top}
               marginBottom={activeMargin.bottom}
               labelAreaH={labelAreaH}
+              fontSize={simLabelFontSize}
+              color={simLabelColor}
             />
           )}
           {isZoomed && (
@@ -1563,8 +1565,58 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
   );
 };
 
+// Place 2D peak labels in the free space closest to their peak.
+// A fine spiral search (small radius steps, arc-proportional angle steps) keeps
+// each label as near as possible to its peak while avoiding overlaps with
+// other labels and other peaks' markers. Collisions are evaluated with the
+// actual label box (width ∝ text length, height ∝ line height) converted to
+// ppm units. Offsets are returned in PIXELS (labelDx / labelDy) and added to
+// the default (r+5) offset in the Scatter shape renderer, whose dashed line
+// points back to the peak.
+const place2DLabels = (crossPeakData, { showLabels, format, dim, yRange, boxW, aspect, fontSize = 12 }) => {
+  if (!crossPeakData) return [];
+  const plotW = Math.max(200, (Number(boxW) || 600) - 70);
+  const plotH = Math.max(200, (aspect ? Math.round((Number(boxW) || 600) * aspect) : 300) - 65);
+  const xPpmPerPx = 11 / plotW; // ¹H F2 ppm axis is always [0, 11]
+  const yPpmPerPx = yRange / plotH;
+  const CHAR_PX = fontSize * 0.53, LINE_PX = fontSize * 1.25;
+  const placed = []; // already-placed label boxes { cx, cy, hw, hh } in ppm
+  const peaks = [];  // peak markers { x, y } in ppm
+  const overlaps = (a, b) => Math.abs(a.cx - b.cx) < a.hw + b.hw && Math.abs(a.cy - b.cy) < a.hh + b.hh;
+  return crossPeakData.map((p) => {
+    const label = showLabels ? getPeakLabelText(p, format, dim) : '';
+    const r = p.size || 5;
+    const hw = (label.length * CHAR_PX * 0.5) * xPpmPerPx; // half label width in ppm
+    const hh = (LINE_PX * 0.5) * yPpmPerPx;                // half label height in ppm
+    const boxAt = (dpx, dpy) => ({
+      cx: p.x + (r + 5) * xPpmPerPx + dpx * xPpmPerPx,
+      cy: p.y - (r + 5) * yPpmPerPx + dpy * yPpmPerPx,
+      hw, hh
+    });
+    let best = null;
+    for (let ring = 1; ring <= 12 && !best; ring++) {
+      const radiusPx = ring * 9;
+      const steps = Math.max(8, Math.round((radiusPx * 2 * Math.PI) / 15));
+      for (let a = 0; a < steps; a++) {
+        const ang = (a / steps) * 2 * Math.PI;
+        const dpx = radiusPx * Math.cos(ang);
+        const dpy = radiusPx * Math.sin(ang);
+        const box = boxAt(dpx, dpy);
+        if (placed.some((u) => overlaps(box, u))) continue;
+        if (peaks.some((pt) => Math.abs(pt.x - box.cx) < hw + 0.03 && Math.abs(pt.y - box.cy) < hh + 0.03)) continue;
+        best = { dpx, dpy };
+        break;
+      }
+    }
+    const off = best || { dpx: 0, dpy: 0 };
+    placed.push(boxAt(off.dpx, off.dpy));
+    peaks.push({ x: p.x, y: p.y });
+    return { ...p, labelDx: off.dpx, labelDy: off.dpy };
+  });
+};
+
 const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setExpandedPanel, panelId, diagonalColor, selectedKeys, manualKeys = [], aspect = 1, fs = 11, simCfg = {} }) => {
-  const { simShowLabels, simLabelFormat, simLabelDim, simLabelFontSize = 12 } = simCfg;
+  const { simShowLabels, simLabelFormat, simLabelDim, simLabelFontSize = 12, simLabelColor = '#b91c1c' } = simCfg;
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState([0, 11]);
   const [yDomain, setYDomain] = useState([0, 11]);
@@ -1615,23 +1667,9 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
     if (coords) { isDragging.current = true; setRefAreaLeft(coords.x); setRefAreaTop(coords.y); setRefAreaRight(coords.x); setRefAreaBottom(coords.y); }
   };
 
-  const processedCrossPeaks = useMemo(() => {
-    if (!crossPeakData) return [];
-    const used = [];
-    return crossPeakData.map(p => {
-      let dx = 0, dy = 0, rad = 1;
-      while(used.some(u => Math.abs(u.x - (p.x + dx)) < 0.65 && Math.abs(u.y - (p.y + dy)) < 0.55)) {
-         const angle = rad * Math.PI / 4;
-         const step = Math.ceil(rad/8);
-         dx = step * 0.65 * Math.cos(angle);
-         dy = step * 0.55 * Math.sin(angle);
-         rad++;
-         if (rad > 80) break;
-      }
-      used.push({ x: p.x + dx, y: p.y + dy });
-      return { ...p, labelDx: dx * 42, labelDy: dy * 42 };
-    });
-  }, [crossPeakData]);
+  const processedCrossPeaks = useMemo(() =>
+    place2DLabels(crossPeakData, { showLabels: simShowLabels, format: simLabelFormat, dim: simLabelDim, yRange: 11, boxW, aspect, fontSize: simLabelFontSize }),
+    [crossPeakData, simShowLabels, simLabelFormat, simLabelDim, boxW, aspect, simLabelFontSize]);
   
   const shape = (props) => {
     const { cx, cy, fill, payload } = props;
@@ -1649,7 +1687,7 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
     return (
       <g opacity={dimmed ? 0.18 : 1}>
         {textStr && isMoved && (
-          <line x1={cx} y1={cy} x2={textX} y2={textY} stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="2 2" />
+          <line x1={cx} y1={cy} x2={textX} y2={textY} stroke={simLabelColor} strokeWidth={1.5} strokeDasharray="2 2" />
         )}
         {isSel && <circle cx={cx} cy={cy} r={r + 5} fill={SELECT_COLOR} opacity={0.3} />}
         {isMan && !isSel && <circle cx={cx} cy={cy} r={r + 5} fill={MANUAL_COLOR} opacity={0.22} />}
@@ -1657,7 +1695,7 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
         {textStr && (
           <g>
             <text x={textX} y={textY} fontSize={simLabelFontSize} fill="white" stroke="white" strokeWidth={3} strokeLinejoin="round" fontWeight="bold">{textStr}</text>
-            <text x={textX} y={textY} fontSize={simLabelFontSize} fill="#475569" fontWeight="bold">{textStr}</text>
+            <text x={textX} y={textY} fontSize={simLabelFontSize} fill={simLabelColor} fontWeight="bold">{textStr}</text>
           </g>
         )}
       </g>
@@ -1710,7 +1748,7 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
 };
 
 const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panelId, selectedKeys, manualKeys = [], yAxisLabel = '¹³C F1 (ppm)', yDomainInit = [0, 220], yTicks = TICKS_13C, aspect = 1, fs = 11, simCfg = {} }) => {
-  const { simShowLabels, simLabelFormat, simLabelDim, simLabelFontSize = 12 } = simCfg;
+  const { simShowLabels, simLabelFormat, simLabelDim, simLabelFontSize = 12, simLabelColor = '#b91c1c' } = simCfg;
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState([0, 11]);
   const [yDomain, setYDomain] = useState(yDomainInit);
@@ -1761,27 +1799,9 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
     if (coords) { isDragging.current = true; setRefAreaLeft(coords.x); setRefAreaTop(coords.y); setRefAreaRight(coords.x); setRefAreaBottom(coords.y); }
   };
 
-  const processedCrossPeaks = useMemo(() => {
-    if (!crossPeakData) return [];
-    const used = [];
-    const yRange = yDomainInit[1] - yDomainInit[0];
-    return crossPeakData.map(p => {
-      let dx = 0, dy = 0, rad = 1;
-      // Search a spiral of positions until the label does not collide with any
-      // previously placed label or another peak. Collision cells are enlarged
-      // (labels are wider than the marker itself).
-      while(used.some(u => Math.abs(u.x - (p.x + dx)) < 0.75 && Math.abs(u.y - (p.y + dy)) < (yRange/15))) {
-         const angle = rad * Math.PI / 4;
-         const step = Math.ceil(rad/8);
-         dx = step * 0.75 * Math.cos(angle);
-         dy = step * (yRange/15) * Math.sin(angle);
-         rad++;
-         if (rad > 80) break;
-      }
-      used.push({ x: p.x + dx, y: p.y + dy });
-      return { ...p, labelDx: dx * 42, labelDy: dy * 16 };
-    });
-  }, [crossPeakData, yDomainInit]);
+  const processedCrossPeaks = useMemo(() =>
+    place2DLabels(crossPeakData, { showLabels: simShowLabels, format: simLabelFormat, dim: simLabelDim, yRange: yDomainInit[1] - yDomainInit[0], boxW, aspect, fontSize: simLabelFontSize }),
+    [crossPeakData, simShowLabels, simLabelFormat, simLabelDim, yDomainInit, boxW, aspect, simLabelFontSize]);
   
   return (
     <>
@@ -1818,7 +1838,7 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
                   return (
                     <g opacity={dimmed ? 0.18 : 1}>
                       {textStr && isMoved && (
-                        <line x1={cx} y1={cy} x2={textX} y2={textY} stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="2 2" />
+                        <line x1={cx} y1={cy} x2={textX} y2={textY} stroke={simLabelColor} strokeWidth={1.5} strokeDasharray="2 2" />
                       )}
                       {isSel && <circle cx={cx} cy={cy} r={r + 5} fill={SELECT_COLOR} opacity={0.3} />}
                       {isMan && !isSel && <circle cx={cx} cy={cy} r={r + 5} fill={MANUAL_COLOR} opacity={0.22} />}
@@ -1826,7 +1846,7 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
                       {textStr && (
                         <g>
                           <text x={textX} y={textY} fontSize={simLabelFontSize} fill="white" stroke="white" strokeWidth={3} strokeLinejoin="round" fontWeight="bold">{textStr}</text>
-                          <text x={textX} y={textY} fontSize={simLabelFontSize} fill="#475569" fontWeight="bold">{textStr}</text>
+                          <text x={textX} y={textY} fontSize={simLabelFontSize} fill={simLabelColor} fontWeight="bold">{textStr}</text>
                         </g>
                       )}
                     </g>
@@ -4834,7 +4854,9 @@ const dom = brukerZoomDom || xFull;
       setBrukerRefL(null); setBrukerRefR(null);
     };
 
-    const labelAreaH = (showPeakLabels && peakMarkers.length > 0) ? Math.min(185, 44 + peakMarkers.length * 22) : 0;
+    const nmr1dLabelFontSize = Number(activeTest.nmr1dLabelFontSize) > 0 ? Number(activeTest.nmr1dLabelFontSize) : 12;
+    const nmr1dLabelColor = activeTest.nmr1dLabelColor || '#b91c1c';
+    const labelAreaH = (showPeakLabels && peakMarkers.length > 0) ? Math.min(220, 40 + peakMarkers.length * (nmr1dLabelFontSize + 10)) : 0;
     const topMargin = 10;
     const PANEL_H = expandedBruker ? '100%' : 260 + labelAreaH;
 
@@ -4853,6 +4875,21 @@ const dom = brukerZoomDom || xFull;
               <input type="checkbox" checked={showPeakLabels} onChange={e => setShowPeakLabels(e.target.checked)} className="accent-blue-600" />
               Peak labels
             </label>
+            {showPeakLabels && (
+              <>
+                <label className="flex items-center gap-1 text-[11px] font-bold text-slate-500" title="Peak label font size">
+                  Size
+                  <input type="number" min="6" max="24" value={nmr1dLabelFontSize}
+                         onChange={(e) => updateActiveTest({ nmr1dLabelFontSize: parseInt(e.target.value, 10) || 12 })}
+                         className="w-12 border border-slate-300 rounded px-1 py-0.5 text-[11px] bg-white outline-none" />
+                </label>
+                <label className="flex items-center gap-1 text-[11px] font-bold text-slate-500 cursor-pointer" title="Peak label color">
+                  <input type="color" value={nmr1dLabelColor}
+                         onChange={(e) => updateActiveTest({ nmr1dLabelColor: e.target.value })}
+                         className="w-6 h-6 rounded border border-slate-300 bg-white p-0 cursor-pointer" />
+                </label>
+              </>
+            )}
             <button type="button" onClick={() => setExpandedBruker(b => !b)} className="text-slate-400 hover:text-blue-600 text-lg px-1" title={expandedBruker ? 'Collapse' : 'Expand'}>{expandedBruker ? '\u2199\ufe0f' : '\u2197\ufe0f'}</button>
             <button type="button" onClick={() => { updateActiveTest({nmr1dSpectrum: null}); setBrukerZoomDom(null); setNmrBrukerMsg(''); }} className="text-[10px] text-red-400 hover:text-red-600 font-bold">× Remove</button>
           </div>
@@ -4892,6 +4929,8 @@ const dom = brukerZoomDom || xFull;
               marginTop={topMargin + labelAreaH}
               marginBottom={CHART_MARGIN.bottom}
               labelAreaH={labelAreaH}
+              fontSize={nmr1dLabelFontSize}
+              color={nmr1dLabelColor}
             />
           )}
         </div>
@@ -6449,7 +6488,7 @@ export const SimulationsSection = ({ ctx }) => {
   // Always an ARRAY (the spectrum plots call `.includes` on it) — an empty
   // array when the "Assigned atoms" highlight is off, never a Set.
   const manualKeys = useMemo(() => (showAssignedFlag ? getManualKeys(d.shifts) : []), [d.shifts, showAssignedFlag]);
-  const simCfg = { fontSize: 11, h1D: 300, aspect2D: 1, simShowLabels: false, simLabelFormat: 'resNum_code_atom', simLabelDim: 'both', simLabelFontSize: 12, ...(activeTest.simChartCfg || {}) };
+  const simCfg = { fontSize: 11, h1D: 300, aspect2D: 1, simShowLabels: false, simLabelFormat: 'resNum_code_atom', simLabelDim: 'both', simLabelFontSize: 12, simLabelColor: '#b91c1c', ...(activeTest.simChartCfg || {}) };
   const setCfg = (patch) => updateActiveTest({ simChartCfg: { ...simCfg, ...patch } });
   if (d.parsedSeq.length === 0 && d.moleculeType !== 'organic') {
     return <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">Enter a sequence / select a molecule (in Experiment Setup) to generate simulated spectra.</div>;
@@ -6522,6 +6561,14 @@ export const SimulationsSection = ({ ctx }) => {
                 <div className="flex flex-col gap-1">
                   <label className="text-[10px] font-bold text-slate-500">Peak Label Font Size: {simCfg.simLabelFontSize}</label>
                   <input type="range" min="6" max="24" step="1" value={simCfg.simLabelFontSize} onChange={(e) => setCfg({ simLabelFontSize: parseInt(e.target.value, 10) })} className="accent-blue-600 mt-1" />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-slate-500">Peak Label Color</label>
+                  <div className="flex items-center gap-2">
+                    <input type="color" value={simCfg.simLabelColor || '#b91c1c'} onChange={(e) => setCfg({ simLabelColor: e.target.value })} className="w-9 h-8 rounded border border-slate-300 bg-white p-0.5 cursor-pointer" />
+                    <span className="text-[10px] text-slate-400 font-mono">{simCfg.simLabelColor || '#b91c1c'}</span>
+                    <button type="button" onClick={() => setCfg({ simLabelColor: '#b91c1c' })} className="text-[10px] font-bold bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 px-2 py-1 rounded">Reset</button>
+                  </div>
                 </div>
               </div>
             </div>

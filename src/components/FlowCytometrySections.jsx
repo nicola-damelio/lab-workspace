@@ -918,12 +918,15 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
 
   // When the histogram parameter is the SAME as the 2D chart's X parameter (and
   // the log settings match), the histogram mirrors the 2D chart's X axis exactly.
-  const histXMirrors2D = overlayParam1D === xParam2D && log1D === logX2D;
-  const histDomain = histXMirrors2D ? (xDomain2D || chartData1D.domain) : zoom1D.domain;
-
+  // NOTE: computed AFTER zoom1D is declared — referencing zoom1D before its
+  // `const` initialization would throw a "Cannot access ... before initialization"
+  // (temporal dead zone) error on FCS load.
   const chartRef1D = useRef(null);
   const zoom1D = useXZoom(chartRef1D, chartData1D.domain);
-  useEffect(() => { zoom1D.reset(); }, [overlayParam1D, log1D]); 
+  useEffect(() => { zoom1D.reset(); }, [overlayParam1D, log1D]);
+
+  const histXMirrors2D = overlayParam1D === xParam2D && log1D === logX2D;
+  const histDomain = histXMirrors2D ? (xDomain2D || chartData1D.domain) : zoom1D.domain;
 
   if (!loadedInstances.length) return null;
 
