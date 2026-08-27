@@ -1450,6 +1450,13 @@ export const Data = ({ ctx }) => {
                     subsection: 'Bruker 1r',
                     suffix: 'bruker1r'
                   })}
+                  naming={{
+                    project: (activeTest.projectNames || [])[0] || '',
+                    test: activeTest.name || activeTest.instanceName || '',
+                    section: 'Data',
+                    subsection: 'Bruker 1r',
+                    suffix: 'bruker1r'
+                  }}
                   accept=".1r,.fid,.ser,.acqus"
                   label="⬆ Archive spectra to Drive"
                   className="bg-sky-50 text-sky-800 border border-sky-200 hover:bg-sky-100"

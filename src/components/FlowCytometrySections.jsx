@@ -1330,6 +1330,13 @@ export const Data = ({ ctx }) => {
                 subsection: 'Flow Cytometry',
                 suffix: 'fcs'
               })}
+              naming={{
+                project: (activeTest.projectNames || [])[0] || '',
+                test: activeTest.name || activeTest.instanceName || '',
+                section: 'Data',
+                subsection: 'Flow Cytometry',
+                suffix: 'fcs'
+              }}
               accept=".fcs"
               label="⬆ Archive FCS to Drive"
               className="bg-indigo-50 text-indigo-800 border border-indigo-200 hover:bg-indigo-100"

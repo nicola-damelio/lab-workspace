@@ -1033,6 +1033,13 @@ export const MDExperimentSetupSection = ({ ctx }) => {
                         subsection: 'Trajectory',
                         suffix: 'trajectory'
                       })}
+                      naming={{
+                        project: (activeTest.projectNames || [])[0] || '',
+                        test: activeTest.name || activeTest.instanceName || '',
+                        section: 'Setup',
+                        subsection: 'Trajectory',
+                        suffix: 'trajectory'
+                      }}
                       preloadedFile={trajectoryFile || null}
                       label="⬆ Archive trajectory to Drive"
                       className="bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100"
@@ -2033,6 +2040,13 @@ export const MDAnalysisSection = ({ ctx }) => {
                 subsection: 'Energy',
                 suffix: 'energy'
               })}
+              naming={{
+                project: (activeTest.projectNames || [])[0] || '',
+                test: activeTest.name || activeTest.instanceName || '',
+                section: 'Analysis',
+                subsection: 'Energy',
+                suffix: 'energy'
+              }}
               accept=".xvg,.dat,.txt,.log"
               preloadedFile={null}
               label="⬆ Archive energy file to Drive"
@@ -2784,6 +2798,13 @@ export const MDMembraneContactSection = ({ ctx }) => {
               subsection: 'Trajectory',
               suffix: 'trajectory'
             })}
+            naming={{
+              project: (activeTest.projectNames || [])[0] || '',
+              test: activeTest.name || activeTest.instanceName || '',
+              section: 'Analysis',
+              subsection: 'Trajectory',
+              suffix: 'trajectory'
+            }}
             accept=".xtc,.trr,.dcd"
             label="⬆ Archive to Drive"
             className="bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100"
@@ -3167,6 +3188,13 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
               subsection: 'Trajectory',
               suffix: 'trajectory'
             })}
+            naming={{
+              project: (activeTest.projectNames || [])[0] || '',
+              test: activeTest.name || activeTest.instanceName || '',
+              section: 'Analysis',
+              subsection: 'Trajectory',
+              suffix: 'trajectory'
+            }}
             accept=".xtc,.trr,.dcd"
             label="⬆ Archive to Drive"
             className="bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100"
@@ -3185,6 +3213,13 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
               subsection: 'Charges',
               suffix: 'charges'
             })}
+            naming={{
+              project: (activeTest.projectNames || [])[0] || '',
+              test: activeTest.name || activeTest.instanceName || '',
+              section: 'Analysis',
+              subsection: 'Charges',
+              suffix: 'charges'
+            }}
             accept=".itp,.top,.txt"
             label="⬆ Archive to Drive"
             className="bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100"
@@ -3754,6 +3789,13 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
               subsection: 'Trajectory',
               suffix: 'trajectory'
             })}
+            naming={{
+              project: (activeTest.projectNames || [])[0] || '',
+              test: activeTest.name || activeTest.instanceName || '',
+              section: 'Analysis',
+              subsection: 'Trajectory',
+              suffix: 'trajectory'
+            }}
             accept=".xtc,.trr,.dcd"
             label="⬆ Archive to Drive"
             className="bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100"

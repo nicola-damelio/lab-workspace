@@ -1670,6 +1670,13 @@ const details = [
                     subsection: 'Parameters',
                     suffix: 'parameters'
                   })}
+                  naming={{
+                    project: (t.projectNames || [])[0] || '',
+                    test: t.name || t.instanceName || '',
+                    section: 'Setup',
+                    subsection: 'Parameters',
+                    suffix: 'parameters'
+                  }}
                   accept=".mdp,.top,.itp,.inp,.str,.conf,.namd,.prm,.par,.psf"
                   label="⬆ Archive to Drive"
                   className="bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100"
@@ -2121,6 +2128,12 @@ const details = [
                           section: 'Report',
                           suffix: 'doc'
                         })}
+                        naming={{
+                          project: (t.projectNames || [])[0] || '',
+                          test: t.name || t.instanceName || '',
+                          section: 'Report',
+                          suffix: 'doc'
+                        }}
                         onDone={({ name, dataUrl, drive }) =>
                           update({
                             documents: [

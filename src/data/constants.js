@@ -22,7 +22,7 @@ export const LOCAL_STORAGE_KEY = 'lab_datasets_local_v2';
 //   4. Paste the Client ID below.
 // Empty = the standard Google sign-in cannot get Drive permission from
 // Google, so uploaded files are stored locally (with a download option).
-export const GOOGLE_DRIVE_CLIENT_ID = '';
+export const GOOGLE_DRIVE_CLIENT_ID = '763848765523-kvjohq6qv8oifb2n86ibh6m4vm4057ej.apps.googleusercontent.com';
 
 // --- CONSTANTS & CONFIGURATIONS ---
 export const PLATES_DEF = {

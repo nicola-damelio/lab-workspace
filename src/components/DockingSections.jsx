@@ -514,6 +514,13 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
             subsection: 'Docking',
             suffix: 'docking'
           })}
+          naming={{
+            project: (ctx.activeTest?.projectNames || [])[0] || '',
+            test: ctx.activeTest?.name || ctx.activeTest?.instanceName || '',
+            section: 'Data',
+            subsection: 'Docking',
+            suffix: 'docking'
+          }}
           accept=".dlg,.dpf,.gpf,.csv,.txt,.param,.log,.cfg"
           label="⬆ Archive to Drive"
           className="bg-sky-50 text-sky-800 border border-sky-200 hover:bg-sky-100"

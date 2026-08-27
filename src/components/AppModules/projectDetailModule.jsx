@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { RichTextEditor } from '../RichTextEditor';
 import { SmartImage } from '../TestShellRenderer';
 import { loadPubFormat, pubCitationHtml } from '../Publications';
@@ -6,7 +6,7 @@ import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigF
 import { loadProjects, saveProjects, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId } from './projectsModule';
 import { suggestDriveFileName, openDrive } from '../../utils/driveNaming';
 import { DriveUploadButton } from '../DriveUpload';
-import { markAttachmentsDeleted } from '../../utils/driveUpload';
+import { markAttachmentsDeleted, renameDriveFilesFor } from '../../utils/driveUpload';
 
 /* =========================================================================
    PROJECT DETAIL — a project page with subsections:
@@ -234,6 +234,7 @@ export const ProjectDetailModule = ({
   const [commentDraft, setCommentDraft] = useState('');
   const [replyDrafts, setReplyDrafts] = useState({});
   const [openReplyId, setOpenReplyId] = useState(null);
+  const projectNameBeforeEditRef = useRef(null); // Drive-file rename tracking
 
   const visibleTests = useMemo(() => {
     if (isSuper) return tests;
@@ -719,6 +720,7 @@ export const ProjectDetailModule = ({
 
         <DriveUploadButton
           suggestedName={suggestDriveFileName({ project: project.name || '', section: label, suffix: 'doc' })}
+          naming={{ project: project.name || '', section: label, suffix: 'doc' }}
           onDone={({ name, dataUrl, drive }) =>
             patchDocs(id, [...sectionDocs(id), { id: genProjectId(), name, data: drive ? drive.driveUrl : dataUrl }])
           }
@@ -1311,6 +1313,14 @@ export const ProjectDetailModule = ({
           </div>
           <input className={inputCls} value={project.name}
                  onChange={(e) => updateProject({ name: e.target.value })}
+                 onFocus={() => { projectNameBeforeEditRef.current = project.name; }}
+                 onBlur={() => {
+                   const before = projectNameBeforeEditRef.current;
+                   if (before && before !== project.name) {
+                     renameDriveFilesFor({ field: 'project', oldValue: before, newValue: project.name }).catch(() => {});
+                   }
+                   projectNameBeforeEditRef.current = null;
+                 }}
                  placeholder="Project name" />
           {!isSuper && currentUser && (
             <div className="text-[10px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5">

@@ -19,6 +19,7 @@
 
 const TOKEN_KEY = 'labDriveAccessToken';
 const FOLDER_ID_KEY = 'labDriveFolderId';
+import { suggestDriveFileName } from './driveNaming';
 
 /** The Google OAuth access token (with drive.file scope) from the last sign-in.
  *  Stored in localStorage so it survives tab switches / page reloads (the
@@ -158,7 +159,7 @@ export const ensureDriveFolder = async () => {
  * a duplicate — so updating a figure/document tomorrow reuses the same file.
  * @returns {{ id:string, name:string, driveUrl:string }}
  */
-export const uploadLocalFile = async ({ name, mimeType, file }) => {
+export const uploadLocalFile = async ({ name, mimeType, file, ctx = null }) => {
   const folderId = await ensureDriveFolder();
   // Accept a raw Blob/File (streamed directly, no base64 overhead) or a data URL.
   const blob = typeof file === 'string' ? dataUrlToBlob(file) : file;
@@ -205,6 +206,9 @@ export const uploadLocalFile = async ({ name, mimeType, file }) => {
       body: JSON.stringify({ role: 'reader', type: 'anyone' })
     });
   } catch { /* link may stay private to the owner — upload still succeeded */ }
+
+  // Remember the naming context so later project/test renames can rename the file too.
+  if (ctx) registerDriveFile(fileMeta.id, fileMeta.name, ctx);
 
   return { id: fileMeta.id, name: fileMeta.name, driveUrl: `https://drive.google.com/file/d/${fileMeta.id}/view` };
 };
@@ -313,6 +317,71 @@ export const connectDriveWithGis = async () => {
       resolve(false);
     }
   });
+};
+
+// ── File-name registry: remember what context each uploaded file was named
+//    from, so that renaming a project / test / protocol / section can rename
+//    the corresponding Drive files to match. ───────────────────────────────
+const FILE_REGISTRY_KEY = 'labDriveFileRegistry';
+
+export const getDriveFileRegistry = () => {
+  try { return JSON.parse(localStorage.getItem(FILE_REGISTRY_KEY) || '{}') || {}; } catch { return {}; }
+};
+
+const saveDriveFileRegistry = (reg) => {
+  try { localStorage.setItem(FILE_REGISTRY_KEY, JSON.stringify(reg)); } catch { /* ignore */ }
+};
+
+/** Record an uploaded Drive file with the naming context that produced it. */
+export const registerDriveFile = (fileId, name, ctx) => {
+  if (!fileId) return;
+  const reg = getDriveFileRegistry();
+  reg[fileId] = { name: String(name || ''), ctx: ctx || {}, at: Date.now() };
+  saveDriveFileRegistry(reg);
+};
+
+/**
+ * Rename every recorded Drive file whose naming context contains `oldValue`
+ * for the given field (project | test | protocol | section | subsection),
+ * rebuilding its name with the new value.
+ * @returns {Promise<number>} number of files renamed
+ */
+export const renameDriveFilesFor = async ({ field, oldValue, newValue }) => {
+  if (!field || oldValue === undefined || newValue === undefined) return 0;
+  if (String(oldValue) === String(newValue)) return 0;
+  if (!getDriveToken()) return 0;
+
+  const reg = getDriveFileRegistry();
+  let count = 0;
+  for (const [fileId, entry] of Object.entries(reg)) {
+    const ctx = entry.ctx || {};
+    if (String(ctx[field] || '') !== String(oldValue)) continue;
+
+    const newCtx = { ...ctx, [field]: newValue };
+    const ext = /(\.[a-zA-Z0-9]{1,10})$/.exec(String(entry.name || ''))?.[1] || '';
+    const newName = suggestDriveFileName(newCtx) + ext;
+
+    try {
+      await renameDriveFile(fileId, newName);
+      reg[fileId] = { ...entry, name: newName, ctx: newCtx, at: Date.now() };
+      count++;
+    } catch { /* skip files that cannot be renamed (e.g. not app-created) */ }
+  }
+
+  if (count > 0) saveDriveFileRegistry(reg);
+  return count;
+};
+
+
+/** The email/name of the Google account currently connected for Drive ('' if unknown). */
+export const getDriveAccountEmail = async () => {
+  if (!getDriveToken()) return '';
+  try {
+    const res = await driveFetch('/drive/v3/about?fields=user');
+    const j = await res.json();
+    const u = (j && j.user) || {};
+    return String(u.emailAddress || u.displayName || '');
+  } catch { return ''; }
 };
 
 /**

@@ -422,6 +422,7 @@ export const RichTextEditor = ({
 
                         <DriveUploadButton
                           suggestedName={figureSuggestedName}
+                          naming={{ ...(fileNaming || {}), suffix: figureSuffix }}
                           onDone={({ dataUrl, drive }) =>
                             setFigureDraft((d) => ({ ...d, url: drive ? drive.driveUrl : dataUrl }))
                           }

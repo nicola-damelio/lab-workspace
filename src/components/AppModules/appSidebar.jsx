@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Icon } from '../Icons';
-import { getDriveToken } from '../../utils/driveUpload';
+import { getDriveToken, getDriveAccountEmail } from '../../utils/driveUpload';
 import { openDrive } from '../../utils/driveNaming';
 
 export const AppSidebar = ({
@@ -20,10 +20,19 @@ export const AppSidebar = ({
   user, onGoogleLogin, onConnectDrive
 }) => {
   const [driveConnected, setDriveConnected] = useState(!!getDriveToken());
+  const [driveAccount, setDriveAccount] = useState('');
 
   useEffect(() => {
-    const onConnected = () => setDriveConnected(!!getDriveToken());
+    const refreshAccount = () => {
+      if (getDriveToken()) {
+        getDriveAccountEmail().then((email) => setDriveAccount(email || '')).catch(() => setDriveAccount(''));
+      } else {
+        setDriveAccount('');
+      }
+    };
+    const onConnected = () => { setDriveConnected(!!getDriveToken()); refreshAccount(); };
     window.addEventListener('lab:drive-connected', onConnected);
+    refreshAccount(); // on first load, show which account is connected
     return () => window.removeEventListener('lab:drive-connected', onConnected);
   }, []);
 
@@ -212,7 +221,8 @@ export const AppSidebar = ({
                     title="Google Drive connected — uploaded files are renamed and saved to your Drive folder automatically"
                   >
                     <span className="text-[10px] font-bold text-emerald-700 flex items-center gap-1">
-                      <Icon name="cloud" size={12} /> {isSidebarOpen ? 'Drive connected' : ''}
+                      <Icon name="cloud" size={12} />
+                      {isSidebarOpen ? `Drive · ${driveAccount || 'connected'}` : ''}
                     </span>
                     <button
                       onClick={openDrive}

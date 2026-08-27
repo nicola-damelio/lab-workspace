@@ -391,6 +391,13 @@ const GelPanel = ({ ctx }) => {
             subsection: 'Gel',
             suffix: 'gel'
           })}
+          naming={{
+            project: (activeTest.projectNames || [])[0] || '',
+            test: activeTest.name || activeTest.instanceName || '',
+            section: 'Data',
+            subsection: 'Gel',
+            suffix: 'gel'
+          }}
           accept="image/*"
           label="⬆ Archive gel image to Drive"
         />
@@ -537,6 +544,13 @@ export const CloningDataSection = ({ ctx }) => {
               subsection: 'UV Spectra',
               suffix: 'uvspectrum'
             })}
+            naming={{
+              project: (activeTest.projectNames || [])[0] || '',
+              test: activeTest.name || activeTest.instanceName || '',
+              section: 'Data',
+              subsection: 'UV Spectra',
+              suffix: 'uvspectrum'
+            }}
             accept=".csv,.txt,.tsv"
             label="⬆ Archive UV spectrum to Drive"
           />

@@ -3,13 +3,14 @@
    Protocols & Protocol Categories view, extracted from App.jsx. Props-only.
    ========================================================================= */
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { RichTextEditor } from '../RichTextEditor';
 import { BrukerPulseSequenceViewer } from '../DefinitionsExtra';
 import { getDirectImageUrl } from '../../data/constants';
 import { Icon } from '../Icons';
 import { suggestDriveFileName, openDrive } from '../../utils/driveNaming';
 import { DriveUploadButton } from '../DriveUpload';
+import { renameDriveFilesFor } from '../../utils/driveUpload';
 
 export const ProtocolsModule = ({
   datasetProtocols, expandedGroups, handlePrint, nmrExperiments,
@@ -54,6 +55,7 @@ const activeProtocol = activeProtoId
 
 const [tableRows, setTableRows] = useState(2);
 const [tableCols, setTableCols] = useState(3);
+const protoTitleBeforeEditRef = useRef(null); // Drive-file rename tracking
 
 const protocolFigures = Array.isArray(activeProtocol?.images)
   ? activeProtocol.images
@@ -205,6 +207,14 @@ const getProtocolImageFallback = (url) => {
                                 )
                               )
                             }
+                            onFocus={() => { protoTitleBeforeEditRef.current = activeProtocol.title; }}
+                            onBlur={() => {
+                              const before = protoTitleBeforeEditRef.current;
+                              if (before && before !== activeProtocol.title) {
+                                renameDriveFilesFor({ field: 'protocol', oldValue: before, newValue: activeProtocol.title }).catch(() => {});
+                              }
+                              protoTitleBeforeEditRef.current = null;
+                            }}
                             className="text-xl md:text-2xl font-black text-slate-800 bg-transparent border-none outline-none w-full focus:ring-1 focus:ring-blue-500 rounded px-1"
                             placeholder="Protocol Title"
                           />
@@ -315,6 +325,7 @@ const getProtocolImageFallback = (url) => {
         protocol: activeProtocol.title || '',
         suffix: 'doc'
       })}
+      naming={{ protocol: activeProtocol.title || '', suffix: 'doc' }}
       onDone={({ name, dataUrl, drive }) =>
         updateProtocol({
           documents: [

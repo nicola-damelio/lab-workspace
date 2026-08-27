@@ -3,10 +3,10 @@
    Active Test detail view, extracted from App.jsx. Props-only.
    ========================================================================= */
 
-import React, { lazy } from 'react';
+import React, { lazy, useRef } from 'react';
 import { BoxDetail } from '../Storage';
 import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES, EXPERIMENT_TYPES } from '../../data/testTypes';
-import { markAttachmentsDeleted } from '../../utils/driveUpload';
+import { markAttachmentsDeleted, renameDriveFilesFor } from '../../utils/driveUpload';
 import { Icon } from '../Icons';
 // Lazy renderers (kept as dynamic imports so each stays its own chunk).
 const NMRTestRenderer = lazy(() => import('../NMRTestRenderer').then(m => ({ default: m.NMRTestRenderer })));
@@ -32,6 +32,7 @@ export const ActiveTestModule = ({
   MDTestRenderer
 }) => {
                 const dragInstanceId = React.useRef(null); // dragged instance tab (for reordering)
+                const testNameBeforeEditRef = useRef(null); // Drive-file rename tracking
                 const activeTest = tests.find((t) => t.id === activeTestId);
 
                 if (!activeTest) return <div className="p-6">Test not found.</div>;
@@ -163,6 +164,14 @@ const TestHeader = (
                           <input
                             value={activeTest.name}
                             onChange={(e) => updateActiveTest({ name: e.target.value })}
+                            onFocus={() => { testNameBeforeEditRef.current = activeTest.name; }}
+                            onBlur={() => {
+                              const before = testNameBeforeEditRef.current;
+                              if (before && before !== activeTest.name) {
+                                renameDriveFilesFor({ field: 'test', oldValue: before, newValue: activeTest.name }).catch(() => {});
+                              }
+                              testNameBeforeEditRef.current = null;
+                            }}
                             className="text-base font-black text-slate-800 bg-transparent border-none outline-none focus:ring-1 focus:ring-blue-500 rounded px-1 w-full md:w-64"
                             placeholder="Test Name"
                           />

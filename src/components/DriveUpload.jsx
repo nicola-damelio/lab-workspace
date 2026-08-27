@@ -25,6 +25,7 @@ export const DriveUploadButton = ({
   label = '⬆ Upload',
   className = '',
   preloadedFile = null,
+  naming = null,
   onDone,
   onError
 }) => {
@@ -52,7 +53,7 @@ export const DriveUploadButton = ({
       let driveError = '';
       if (getDriveToken()) {
         try {
-          drive = await uploadLocalFile({ name, mimeType, file });
+          drive = await uploadLocalFile({ name, mimeType, file, ctx: naming });
         } catch (err) {
           drive = null;
           driveError = err && err.message ? String(err.message) : 'unknown Drive error';

@@ -1574,6 +1574,13 @@ export const Data = ({ ctx }) => {
                 subsection: 'Spectra',
                 suffix: 'spectrum'
               })}
+              naming={{
+                project: (activeTest.projectNames || [])[0] || '',
+                test: activeTest.name || activeTest.instanceName || '',
+                section: 'Data',
+                subsection: 'Spectra',
+                suffix: 'spectrum'
+              }}
               accept=".txt,.csv,.jws"
               label="⬆ Archive spectra to Drive"
               className="bg-sky-50 text-sky-800 border border-sky-200 hover:bg-sky-100"
