@@ -5,7 +5,20 @@
 
 import React from 'react';
 import { PRIMARY_CATEGORIES } from '../../data/testTypes';
+import { Icon } from '../Icons';
 
+const TEST_CARD_ICON = {
+  nmr: 'chart-line',
+  cd: 'atom',
+  ssnmr: 'magnet',
+  cloning: 'dna',
+  'plate-9x9box': 'box',
+  'nmr-fittings': 'compass',
+  dosy: 'chart-bar',
+  md_simulation: 'monitor',
+  docking: 'target',
+  flow_cytometry: 'droplet'
+};
 export const TestsModule = ({
   authSettings, createEmptyTest, currentUser, expandedGroups, handlePrint,
   setActiveTestId, setCurrentModule, setCurrentUser, setExpandedGroups, setLoginModal,
@@ -79,21 +92,21 @@ export const TestsModule = ({
 
                 return (
                   <div className="p-4 md:p-6 h-full flex flex-col">
-                    <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-6 gap-4 border-b border-slate-200 pb-4">
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-3 gap-2 border-b border-slate-200 pb-2">
                       <div>
-                        <h2 className="text-xl md:text-2xl font-black text-slate-800">
+                        <h2 className="text-lg md:text-xl font-black text-slate-800">
                           Tests & Assays
                         </h2>
 
-                        <p className="text-sm text-slate-500">
+                        <p className="text-xs text-slate-500">
                           Manage experimental plates, spectroscopic data, cloning, protein purification, and MD simulations.
                         </p>
                       </div>
 
-<div className="flex flex-wrap gap-2 no-print w-full md:w-auto">
+<div className="flex flex-wrap gap-1.5 no-print w-full md:w-auto">
   <button
     onClick={handlePrint}
-    className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 shadow-sm flex-1 md:flex-none"
+    className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-1.5 px-3 rounded-lg text-xs transition-colors flex items-center justify-center gap-1.5 shadow-sm flex-1 md:flex-none"
   >
     🖨️ PDF
   </button>
@@ -108,7 +121,7 @@ export const TestsModule = ({
       setActiveTestId(id);
       setCurrentModule('active-test');
     }}
-    className="bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+    className="bg-teal-600 hover:bg-teal-700 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex-1 md:flex-none"
   >
     + Cloning
   </button>
@@ -123,7 +136,7 @@ export const TestsModule = ({
       setActiveTestId(id);
       setCurrentModule('active-test');
     }}
-    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex-1 md:flex-none"
   >
     + Expression & Purification
   </button>
@@ -138,7 +151,7 @@ export const TestsModule = ({
       setActiveTestId(id);
       setCurrentModule('active-test');
     }}
-    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex-1 md:flex-none"
   >
     + Multiwell Plate tests
   </button>
@@ -152,7 +165,7 @@ createEmptyTest(id, prev.length + 1, 'flow_cytometry')
 setActiveTestId(id);
 setCurrentModule('active-test');
 }}
-className="bg-pink-600 hover:bg-pink-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+className="bg-pink-600 hover:bg-pink-700 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex-1 md:flex-none"
 >
 + Flow Cytometry
 </button>
@@ -167,7 +180,7 @@ createEmptyTest(id, prev.length + 1, 'cd')
 setActiveTestId(id);
 setCurrentModule('active-test');
 }}
-className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex-1 md:flex-none"
 >
 + CD
 </button>
@@ -181,7 +194,7 @@ createEmptyTest(id, prev.length + 1, 'ssnmr')
 setActiveTestId(id);
 setCurrentModule('active-test');
 }}
-className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex-1 md:flex-none"
 >
 + ssNMR
 </button>
@@ -195,7 +208,7 @@ createEmptyTest(id, prev.length + 1, 'nmr')
 setActiveTestId(id);
 setCurrentModule('active-test');
 }}
-className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex-1 md:flex-none"
 >
 + NMR
 </button>
@@ -210,7 +223,7 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 ro
       setActiveTestId(id);
       setCurrentModule('active-test');
     }}
-    className="bg-amber-600 hover:bg-amber-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+    className="bg-amber-600 hover:bg-amber-700 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex-1 md:flex-none"
   >
     + NMR Fittings
   </button>
@@ -225,7 +238,7 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 ro
       setActiveTestId(id);
       setCurrentModule('active-test');
     }}
-    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex-1 md:flex-none"
   >
     + DOSY
   </button>
@@ -240,7 +253,7 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 ro
       setActiveTestId(id);
       setCurrentModule('active-test');
     }}
-    className="bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+    className="bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex-1 md:flex-none"
   >
     + MD Simulations
   </button>
@@ -254,17 +267,17 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 ro
       setActiveTestId(id);
       setCurrentModule('active-test');
     }}
-    className="bg-rose-600 hover:bg-rose-700 text-white font-bold py-2 px-4 rounded shadow-sm text-sm transition-colors flex-1 md:flex-none"
+    className="bg-rose-600 hover:bg-rose-700 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex-1 md:flex-none"
   >
     + Docking
   </button>
 </div>
                     </div>
 
-                    <div className="bg-white p-3 md:p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex flex-col gap-4 shrink-0 no-print">
+                    <div className="bg-white p-2.5 rounded-xl shadow-sm border border-slate-200 mb-3 flex flex-col gap-2 shrink-0 no-print">
                       <div className="flex flex-col md:flex-row gap-3 md:gap-4 items-center">
                         <div className="flex-1 w-full relative">
-                          <span className="absolute left-3 top-2.5 text-slate-400">🔍</span>
+                          <span className="absolute left-2.5 top-2 text-slate-400 text-sm">🔍</span>
 
                           <input
                             type="text"
@@ -273,7 +286,7 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 ro
                             onChange={(e) =>
                               setExpandedGroups((p) => ({ ...p, testSearch: e.target.value }))
                             }
-                            className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                            className="w-full pl-8 pr-3 py-1.5 border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                           />
                         </div>
 
@@ -283,7 +296,7 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 ro
                             onChange={(e) =>
                               setExpandedGroups((p) => ({ ...p, testCatFilter: e.target.value }))
                             }
-                            className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:border-blue-500 font-semibold text-slate-700 cursor-pointer"
+                            className="flex-1 border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs bg-white focus:outline-none focus:border-blue-500 font-semibold text-slate-700 cursor-pointer"
                           >
                             <option value="ALL">All Categories</option>
 
@@ -301,14 +314,14 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 ro
                                 showTestCatMgr: !showCatMgr
                               }))
                             }
-                            className={`px-3 py-2 border rounded-lg text-sm font-bold transition-colors shadow-sm ${
+                            className={`px-2.5 py-1.5 border rounded-lg text-xs font-bold transition-colors shadow-sm ${
                               showCatMgr
                                 ? 'bg-blue-50 border-blue-300 text-blue-700'
                                 : 'bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100'
                             }`}
                             title="Manage Categories"
                           >
-                            ⚙️
+                            <Icon name="gear" size={16} />
                           </button>
                         </div>
                       </div>
@@ -330,7 +343,7 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 ro
                                   newTestCatInput: e.target.value
                                 }))
                               }
-                              className="flex-1 border border-slate-300 rounded px-3 py-2 text-sm outline-none focus:border-blue-500"
+                              className="flex-1 border border-slate-300 rounded px-2.5 py-1.5 text-xs outline-none focus:border-blue-500"
                             />
 
                             <button
@@ -346,7 +359,7 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 ro
                                   }));
                                 }
                               }}
-                              className="bg-blue-600 text-white font-bold px-4 py-2 rounded text-sm shadow-sm hover:bg-blue-700 transition-colors"
+                              className="bg-blue-600 text-white font-bold px-3 py-1.5 rounded text-xs shadow-sm hover:bg-blue-700 transition-colors"
                             >
                               Add Category
                             </button>
@@ -361,13 +374,13 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 ro
                           No tests match your filters.
                         </div>
                       ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5">
                           {filteredTests.map((test) => {
                             const locked = isTestLocked(test);
                             return (
                             <div
                               key={test.id}
-                              className={`bg-white border rounded-xl p-4 shadow-sm transition-all flex flex-col group relative overflow-hidden ${
+                              className={`bg-white border rounded-xl p-2.5 shadow-sm transition-all flex flex-col group relative overflow-hidden ${
                                 locked
                                   ? 'border-slate-300 cursor-pointer hover:border-amber-400 hover:shadow-md'
                                   : 'border-slate-200 cursor-pointer hover:shadow-md hover:border-blue-400'
@@ -401,46 +414,36 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 ro
                                       setTests((prev) => prev.filter((t) => t.id !== test.id));
                                     }
                                   }}
-                                  className="absolute top-3 right-10 text-slate-300 hover:text-red-500 text-xl opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity no-print z-10"
+                                  className="absolute top-2 right-9 text-slate-300 hover:text-red-500 text-base opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity no-print z-10"
                                   title="Elimina Test"
                                 >
                                   &times;
                                 </button>
                               )}
 
-<div className="absolute top-3 right-3 text-2xl opacity-80 group-hover:scale-110 transition-transform">
-{test.type === 'nmr' ? '📉'
-: test.type === 'cd' ? '🌀'
-: test.type === 'ssnmr' ? '🧲'
-: test.type === 'cloning' ? '🧬'
-: test.type === 'plate-9x9box' ? '📦'
-: test.type === 'nmr-fittings' ? '🧭'
-: test.type === 'dosy' ? '📈'
-: test.type === 'md_simulation' ? '🖥️'
-: test.type === 'docking' ? '🎯'
-: test.type === 'flow_cytometry' ? '🩸'
-: '🧫'}
+<div className="absolute top-2 right-2 opacity-80 group-hover:scale-110 transition-transform text-blue-500">
+<Icon name={TEST_CARD_ICON[test.type] || 'flask'} size={22} />
 </div>
 
-                              <span className="text-[10px] font-black uppercase tracking-wider text-blue-600 bg-blue-50 px-2 py-0.5 rounded self-start mb-2 border border-blue-100">
+                              <span className="text-[10px] font-black uppercase tracking-wider text-blue-600 bg-blue-50 px-2 py-0.5 rounded self-start mb-1.5 border border-blue-100">
                                 {test.testCategory || 'Uncategorized'}
                               </span>
 
-                              <h3 className="font-bold text-slate-800 text-lg truncate pr-8">
+                              <h3 className="font-bold text-slate-800 text-sm truncate pr-8">
                                 {test.name} {test.bestMeasurement && '⭐'}
                               </h3>
 
-                              <p className="text-xs text-slate-500 mt-1">
+                              <p className="text-[11px] text-slate-500 mt-0.5">
                                 Instance: {test.instanceName || 'Primary'}
                               </p>
 
                               {test.operator && (
-                                <p className="text-xs text-slate-400 mt-0.5">
+                                <p className="text-[11px] text-slate-400 mt-0.5">
                                   🧪 {[test.operator, ...(test.coScientists || [])].join(', ')}
                                 </p>
                               )}
 
-                              <div className="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center text-xs text-slate-500 font-medium">
+                              <div className="mt-2 pt-1.5 border-t border-slate-100 flex justify-between items-center text-[10px] text-slate-500 font-medium">
                                 <span>📅 {test.date}</span>
 <span className="bg-slate-100 px-2 py-0.5 rounded font-bold text-slate-600">
 {test.type === 'nmr-fittings' ? 'NMR FITTINGS'
@@ -457,7 +460,7 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 ro
                               {/* 🔒 Lock overlay */}
                               {locked && (
                                 <div className="absolute inset-0 bg-white/80 backdrop-blur-[2px] flex flex-col items-center justify-center gap-2 rounded-xl">
-                                  <div className="text-3xl">🔒</div>
+                                  <div className="text-slate-400"><Icon name="lock" size={36} /></div>
                                   <div className="text-xs font-bold text-slate-600 text-center px-4">
                                     {[test.operator, ...(test.coScientists || [])].filter(Boolean).join(' / ')}'s test
                                   </div>

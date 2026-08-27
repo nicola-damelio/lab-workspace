@@ -2,6 +2,7 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, ReferenceArea
 } from 'recharts';
+import { Icon } from './Icons';
 import { ChartControlBar, SharedChartStylePanel, useXZoom, ChartPanel, CHART_FS_CLASSES, useChartFsHeight, AngledTick } from './SharedAnalysisTools';
 import { parseSimulationParameters } from './MDData';
 import {
@@ -796,10 +797,18 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap gap-2 mb-2">
-        {[['protein', '🧬 Protein'], ['dna', '🧬 DNA'], ['rna', '🧬 RNA'], ['sugar', '🍬 Sugars'], ['lipid', '🫧 Phospholipids'], ['organic', '⬡ Organic Molecule']].map(([val, lab]) => (
+        {[
+          { val: 'protein', icon: 'dna', label: 'Protein' },
+          { val: 'dna', icon: 'dna', label: 'DNA' },
+          { val: 'rna', icon: 'dna', label: 'RNA' },
+          { val: 'sugar', icon: 'sugar', label: 'Sugars' },
+          { val: 'lipid', icon: 'layers', label: 'Phospholipids' },
+          { val: 'organic', icon: 'atom', label: 'Organic Molecule' }
+        ].map(({ val, icon, label }) => (
           <button key={val} onClick={() => updateActiveTest({ moleculeType: val })}
-            className={`px-3 py-1.5 rounded-lg text-sm font-bold border transition-colors ${d.moleculeType === val ? 'bg-blue-600 border-blue-700 text-white shadow' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
-            {lab}
+            className={`px-3 py-1.5 rounded-lg text-sm font-bold border transition-colors inline-flex items-center gap-1.5 ${d.moleculeType === val ? 'bg-blue-600 border-blue-700 text-white shadow' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+            <Icon name={icon} size={16} />
+            {label}
           </button>
         ))}
       </div>
@@ -1092,7 +1101,17 @@ const MDImportPanel = ({ ctx, d }) => {
   const applyValues = (vals) => {
     const nv = { ...(activeTest.mdValues || {}) };
     nv[layerKey] = { ...(nv[layerKey] || {}), ...vals };
-    updateActiveTest({ mdValues: nv });
+    const insts = Array.isArray(activeTest.instances) && activeTest.instances.length ? activeTest.instances : null;
+    if (insts && d.activeInstance) {
+      const instances = insts.map((inst) =>
+        inst.id === d.activeInstance.id
+          ? { ...inst, values: { ...(inst.values || {}), [layerKey]: { ...((inst.values || {})[layerKey] || {}), ...vals } } }
+          : inst
+      );
+      updateActiveTest({ instances, mdValues: nv });
+    } else {
+      updateActiveTest({ mdValues: nv });
+    }
   };
 
   const handleText = (text) => {
@@ -1143,7 +1162,7 @@ export const MDDataSection = ({ ctx }) => {
   const focusIdx = activeTest.focusIdx !== undefined ? activeTest.focusIdx : 'ALL';
   const selectedKeys = getSelectedKeys(activeTest);
 
-  const effTableMode = d.moleculeType === 'sugar' || d.moleculeType === 'lipid' ? 'all' : tableMode;
+  const effTableMode = d.moleculeType === 'sugar' || d.moleculeType === 'lipid' || d.moleculeType === 'organic' ? 'all' : tableMode;
   const activeLayer = d.layers.find((l) => l.key === d.activeLayerKey) || { label: 'MD Parameters', unit: '' };
 
   // Every layer's values, keyed by layer — needed so the "Unified" view can show
@@ -1267,9 +1286,42 @@ export const MDDataSection = ({ ctx }) => {
       )}
 
       {d.parsedSeq.length === 0 ? (
-        <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">
-          Enter a sequence / select a molecule (in Experiment Setup) to generate the atom table.
-        </div>
+        d.moleculeType === 'organic' && d.atomOptions.length > 0 ? (
+          /* Organic (SMILES) molecules have no sequence, but RDKit gives us the
+             atom names — render a compact atom-value table instead of the
+             "enter a sequence" placeholder. */
+          <div className="overflow-x-auto custom-scrollbar border border-slate-200 rounded-lg max-h-[500px]">
+            <table className="w-full text-sm text-left">
+              <thead className="text-xs text-slate-500 uppercase bg-slate-100 sticky top-0 z-10 shadow-sm">
+                <tr>
+                  <th className="px-4 py-3 font-black border-b border-slate-200 text-center">Atom</th>
+                  <th className="px-3 py-2 font-bold border-b border-slate-200">Value {activeLayer.unit ? `(${activeLayer.unit})` : ''}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 bg-white">
+                {d.atomOptions.map((o) => {
+                  const key = o.key;
+                  const atomName = key.split('-').slice(1).join('-');
+                  const isSel = cellIsSelected(0, atomName);
+                  const hasVal = parseMDValue(d.activeValues[key]) !== null;
+                  return (
+                    <tr key={key} className="hover:bg-slate-50 transition-colors">
+                      <td className="px-4 py-2 font-black text-slate-700 text-center bg-slate-50 border-r border-slate-100">{o.label}</td>
+                      <td className={selTdCls(isSel)} onClick={(e) => handleCellClick(e, 0, atomName)}>
+                        <input type="text" value={d.activeValues[key] || ''} onChange={(e) => handleCellChange(0, atomName, e.target.value)}
+                          className={`w-full border rounded px-2 py-1 outline-none text-xs font-mono max-w-[140px] ${hasVal ? 'border-green-400 bg-green-50 text-green-700 font-bold' : 'border-slate-200 focus:border-blue-500'}`} placeholder="—" />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">
+            Enter a sequence / select a molecule (in Experiment Setup) to generate the atom table.
+          </div>
+        )
       ) : effTableMode === 'backbone' ? (
         <div className="overflow-x-auto custom-scrollbar border border-slate-200 rounded-lg max-h-[500px]">
           <table className="w-full text-sm text-left">
@@ -1900,9 +1952,9 @@ export const MDAnalysisSection = ({ ctx }) => {
 
   // The ⚡ "Calculate all analyses" button (Data Analysis toolbar) runs every
   // analysis subsection. A ref keeps the subscription current without re-binding.
-  const runAllFnRef = useRef(() => { handleCalculateFromTrajectory(); });
-  runAllFnRef.current = () => { handleCalculateFromTrajectory(); };
-  useEffect(() => mdAnalysisRunAll.subscribeRun(() => { runAllFnRef.current(); }), []);
+  const runAllFnRef = useRef(() => handleCalculateFromTrajectory());
+  runAllFnRef.current = () => handleCalculateFromTrajectory();
+  useEffect(() => mdAnalysisRunAll.subscribeRun(() => runAllFnRef.current()), []);
 
   // Real data calculated from the loaded trajectory only — no simulated fallbacks.
   const rmsd = useMemo(() => downsampleSeries(calcData?.rmsd || []), [calcData]);
@@ -2414,7 +2466,19 @@ export const MDMembraneContactSection = ({ ctx }) => {
   const [cfg, setCfg] = useState({ ...CONTACT_DEFAULTS, mode: 'all' });
   const [extraRuns, setExtraRuns] = useState([]);
   const [status, setStatus] = useState({ state: 'idle', msg: '', done: 0 });
-  const [outputs, setOutputs] = useState(null); // { polar, apolar }
+  const [outputs, setOutputs] = useState(() => {
+    // Restore previously-computed contact maps (persisted as mdContactResult) so
+    // the 4 graphs are still visible after leaving and re-opening the MD page.
+    const p = activeTest.mdContactResult;
+    if (!p || typeof p !== 'object' || Object.keys(p).length === 0) return null;
+    const out = { polar: {}, vdW: {} };
+    Object.entries(p).forEach(([k, v]) => {
+      const mode = k.split('_')[0];
+      const xa = k.split('_').slice(1).join('_'); // 'peptide' | 'membrane'
+      if (out[mode] && v) out[mode][xa] = v;
+    });
+    return out;
+  }); // { polar, apolar }
   const [chartCfg, setChartCfg] = useState({ ...DEFAULT_MD_CHART_STYLE, height: 480, fontSize: 9 });
   // SharedChartStylePanel calls setCfg(patch) — merge into the current object
   // instead of replacing it (a plain useState setter would wipe every other field).
@@ -2423,9 +2487,9 @@ export const MDMembraneContactSection = ({ ctx }) => {
   const setOpt = (k, v) => setCfg((c) => ({ ...c, [k]: v }));
 
   // The ⚡ "Calculate all analyses" toolbar button runs this section too.
-  const contactRunAllRef = useRef(() => { runAll(false); });
-  contactRunAllRef.current = () => { runAll(false); };
-  useEffect(() => mdAnalysisRunAll.subscribeRun(() => { contactRunAllRef.current(); }), []);
+  const contactRunAllRef = useRef(() => runAll(false));
+  contactRunAllRef.current = () => runAll(false);
+  useEffect(() => mdAnalysisRunAll.subscribeRun(() => contactRunAllRef.current()), []);
 
   const metricOf = (p) => (cfg.metric === 'contactFreq' ? p.contactFreq : p.peakRDF);
 
@@ -2818,7 +2882,11 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
   const [extraRuns, setExtraRuns] = useState([]);
   const [chargeInfo, setChargeInfo] = useState({ map: null, count: 0, files: [] });
   const [status, setStatus] = useState({ state: 'idle', msg: '', done: 0 });
-  const [outputs, setOutputs] = useState([]); // [{ name, result }]
+  const [outputs, setOutputs] = useState(() => {
+    // Restore previously-computed membrane profiles (persisted as mdProfileResult).
+    const p = activeTest.mdProfileResult;
+    return Array.isArray(p) && p.length ? p.map((o) => ({ name: o.name, result: o })) : [];
+  }); // [{ name, result }]
   const [chartStyle, setChartStyle] = useState({ scdH: 420, densH: 360, potH: 360, fontSize: 10 });
   const [profCfg, setProfCfg] = useState({ ...DEFAULT_MD_CHART_STYLE, fontSize: 10 });
   // Merge semantics for SharedChartStylePanel (see setChartCfgMerged above).
@@ -2840,9 +2908,9 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
   const setOpt = (k, v) => setCfg((c) => ({ ...c, [k]: v }));
 
   // The ⚡ "Calculate all analyses" toolbar button runs this section too.
-  const profileRunAllRef = useRef(() => { runAll(false); });
-  profileRunAllRef.current = () => { runAll(false); };
-  useEffect(() => mdAnalysisRunAll.subscribeRun(() => { profileRunAllRef.current(); }), []);
+  const profileRunAllRef = useRef(() => runAll(false));
+  profileRunAllRef.current = () => runAll(false);
+  useEffect(() => mdAnalysisRunAll.subscribeRun(() => profileRunAllRef.current()), []);
 
   const handleChargeFiles = async (fileList) => {
     const files = Array.from(fileList || []);
@@ -3373,13 +3441,18 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
   const [cfg, setCfg] = useState({ stride: 1, startFrame: 0, maxFrames: 0, dtPs: 0, chartMode: 'grouped' });
   const [extraRuns, setExtraRuns] = useState([]);
   const [status, setStatus] = useState({ state: 'idle', msg: '', done: 0 });
-  const [outputs, setOutputs] = useState([]); // [{ name, result }]
+  const [outputs, setOutputs] = useState(() => {
+    // Restore previously-computed DSSP data (persisted as mdDsspResult) so the
+    // content / occupancy / heatmap charts survive leaving and re-opening the MD page.
+    const p = activeTest.mdDsspResult;
+    return Array.isArray(p) && p.length ? p.map((o) => ({ name: o.name, result: o })) : [];
+  }); // [{ name, result }]
   const dsspAbortRef = useRef(false); // set by the global ⏹ Stop button
 
   // The ⚡ "Calculate all analyses" toolbar button runs this section too.
-  const dsspRunAllRef = useRef(() => { runAll(false); });
-  dsspRunAllRef.current = () => { runAll(false); };
-  useEffect(() => mdAnalysisRunAll.subscribeRun(() => { dsspRunAllRef.current(); }), []);
+  const dsspRunAllRef = useRef(() => runAll(false));
+  dsspRunAllRef.current = () => runAll(false);
+  useEffect(() => mdAnalysisRunAll.subscribeRun(() => dsspRunAllRef.current()), []);
 
   // Snapshot the DSSP charts for the Lab Notebook ("Data Analysis" tick).
   useEffect(() => {
@@ -3581,8 +3654,13 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
             onClick={() => {
               const cells = {};
               outputs.forEach((o) => (o.result.occupancy || []).forEach((oc, r) => { cells[`${r}-CA`] = +Number(oc.alpha).toFixed(2); }));
+              const n = Object.keys(cells).length;
+              if (n === 0) {
+                alert('No α-helix occupancy values to import — run "▶ Compute DSSP" first (needs a protein topology).');
+                return;
+              }
               storeAnalysisToAtomTable(activeTest, updateActiveTest, { analysis_dssp: cells });
-              alert('Per-residue α-helix occupancy (%) imported into the per-atom table as column "analysis_dssp" — usable in Per-Atom / Condition plots.');
+              alert(`Per-residue α-helix occupancy (%) imported (${n} residues) into the per-atom table as column "analysis_dssp" — usable in Per-Atom / Condition plots.`);
             }}
             className="bg-teal-600 hover:bg-teal-700 text-white font-bold px-4 py-2 rounded-lg text-xs"
           >

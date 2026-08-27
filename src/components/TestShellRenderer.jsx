@@ -7,6 +7,7 @@ import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES } from '../data/testTypes';
 import { CollapsibleSection } from './ui';
 import { abortControl, useAbortControl } from '../utils/abortControl';
 import { mdAnalysisRunAll } from '../utils/mdAnalysisRunAll';
+import { Icon } from './Icons';
 export { CollapsibleSection };
 
 /* ============================================================================
@@ -375,7 +376,7 @@ const GlobalStopButton = () => {
       }`}
       title={active ? `Abort: ${label}` : 'No operation in progress'}
     >
-      ⏹ {active ? `Stop (${label})` : 'Stop'}
+      <Icon name="stop" size={12} /> {active ? `Stop (${label})` : 'Stop'}
     </button>
   );
 };
@@ -441,14 +442,13 @@ const [showGeneral, setShowGeneral] = useState(false);
 
   const planDateId = `plan-date-${t.id ?? 'unsaved'}`;
 
-  const testCategory = t.testCategory || 'Activity';
+  const testCategory = PRIMARY_CATEGORIES.includes(t.testCategory || 'Activity') ? (t.testCategory || 'Activity') : 'Activity';
 
-  // Primary classification: only the canonical official categories are offered,
-  // plus the current test's stored value (so an old/custom value stays visible
-  // until it is re-selected). Stale categories inherited from older datasets
-  // are intentionally not shown here.
+  // Primary classification: only the canonical official categories are offered.
+  // Stale non-primary values stored by older datasets (e.g. 'Immunophenotyping',
+  // 'Solid-state NMR') are intentionally not shown in this dropdown.
   const categories = [
-    ...new Set([...PRIMARY_CATEGORIES, testCategory].filter(Boolean))
+    ...PRIMARY_CATEGORIES
   ];
 
   const operatorsRaw = Array.isArray(rest.operators) ? rest.operators : [];
@@ -1279,7 +1279,7 @@ const details = [
       <GlobalStopButton />
 
       {CustomToolbar && <CustomToolbar ctx={ctx} />}
-<div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+<div className="flex-1 overflow-y-auto custom-scrollbar p-4">
         {!mandatoryBlocked && missingMandatoryRules.length > 0 && (
           <div className="mb-6 bg-red-50 border-l-4 border-red-500 p-4 rounded-r-lg shadow-sm">
             <div className="flex items-center gap-2">
@@ -1303,7 +1303,7 @@ const details = [
 
         {mandatoryBlocked && (
           <div className="max-w-2xl mx-auto mb-6 bg-red-50 border-2 border-red-300 rounded-2xl p-8 text-center shadow-sm">
-            <div className="text-4xl mb-3">🔒</div>
+            <div className="text-4xl mb-3 text-red-400"><Icon name="lock" size={48} /></div>
             <h2 className="text-base font-bold text-red-800 uppercase tracking-wide mb-2">
               {config.typeLabel || 'This page'} is locked
             </h2>
@@ -1325,13 +1325,13 @@ const details = [
         )}
 
 {/* ================= GENERAL ================= */}
-        <div className="mb-8">
+        <div className="mb-5">
           <button
             type="button"
             onClick={() => setShowGeneral(!showGeneral)}
-            className="w-full flex items-center justify-center gap-2 mb-4 border-b-2 border-slate-200 pb-2 cursor-pointer group outline-none bg-transparent"
+            className="w-full flex items-center justify-center gap-2 mb-3 border-b border-slate-200 pb-1 cursor-pointer group outline-none bg-transparent"
           >
-            <h2 className="text-lg font-black text-slate-800 uppercase tracking-widest group-hover:text-blue-600 transition-colors m-0">GENERAL</h2>
+            <h2 className="text-sm font-black text-slate-800 uppercase tracking-widest group-hover:text-blue-600 transition-colors m-0">GENERAL</h2>
             <span className="text-slate-400 group-hover:text-blue-600 transition-colors text-sm">{showGeneral ? '▼' : '▶'}</span>
           </button>
 
@@ -1454,13 +1454,13 @@ const details = [
         </div>
 
         {/* ================= SETUP ================= */}
-        <div className="mb-8">
+        <div className="mb-5">
           <button
             type="button"
             onClick={() => setShowSetup(!showSetup)}
-            className="w-full flex items-center justify-center gap-2 mb-4 border-b-2 border-slate-200 pb-2 cursor-pointer group outline-none bg-transparent"
+            className="w-full flex items-center justify-center gap-2 mb-3 border-b border-slate-200 pb-1 cursor-pointer group outline-none bg-transparent"
           >
-            <h2 className="text-lg font-black text-slate-800 uppercase tracking-widest group-hover:text-blue-600 transition-colors m-0">SETUP</h2>
+            <h2 className="text-sm font-black text-slate-800 uppercase tracking-widest group-hover:text-blue-600 transition-colors m-0">SETUP</h2>
             <span className="text-slate-400 group-hover:text-blue-600 transition-colors text-sm">{showSetup ? '▼' : '▶'}</span>
           </button>
 
@@ -1759,13 +1759,13 @@ const details = [
 
 {/* ================= MOLECULAR SYSTEM & SIMULATIONS ================= */}
 {(MolecularStructureSection || (!isMdType && !mandatoryBlocked && SimulationsSection)) && (
-  <div className="mb-8">
+  <div className="mb-5">
     <button
       type="button"
       onClick={() => setShowMolSys(!showMolSys)}
-      className="w-full flex items-center justify-center gap-2 mb-4 border-b-2 border-slate-200 pb-2 cursor-pointer group outline-none bg-transparent"
+      className="w-full flex items-center justify-center gap-2 mb-3 border-b border-slate-200 pb-1 cursor-pointer group outline-none bg-transparent"
     >
-      <h2 className="text-lg font-black text-slate-800 uppercase tracking-widest group-hover:text-blue-600 transition-colors m-0">
+      <h2 className="text-sm font-black text-slate-800 uppercase tracking-widest group-hover:text-blue-600 transition-colors m-0">
         MOLECULAR SYSTEM AND SIMULATIONS
       </h2>
       <span className="text-slate-400 group-hover:text-blue-600 transition-colors text-sm">
@@ -1797,13 +1797,13 @@ const details = [
 
         {/* ================= DATA AND ANALYSIS ================= */}
         {!mandatoryBlocked && (CustomAll || DataSection || DataAnalysisSection || FittingSection || FittingErrors || FittingGraphics) && (
-          <div className="mb-8">
+          <div className="mb-5">
             <button
               type="button"
               onClick={() => setShowData(!showData)}
-              className="w-full flex items-center justify-center gap-2 mb-4 border-b-2 border-slate-200 pb-2 cursor-pointer group outline-none bg-transparent"
+              className="w-full flex items-center justify-center gap-2 mb-3 border-b border-slate-200 pb-1 cursor-pointer group outline-none bg-transparent"
             >
-              <h2 className="text-lg font-black text-slate-800 uppercase tracking-widest group-hover:text-blue-600 transition-colors m-0">DATA AND ANALYSIS</h2>
+              <h2 className="text-sm font-black text-slate-800 uppercase tracking-widest group-hover:text-blue-600 transition-colors m-0">DATA AND ANALYSIS</h2>
               <span className="text-slate-400 group-hover:text-blue-600 transition-colors text-sm">{showData ? '▼' : '▶'}</span>
             </button>
             
@@ -1860,13 +1860,17 @@ const details = [
                   <CollapsibleSection title="Data Analysis" icon="📉" defaultOpen={false}>
                     <div className="flex flex-col gap-6">
       {DataAnalysisSection && (
-        <CollapsibleSection
-          title={isMdType ? 'MD general parameters' : 'Per Atom Plot'}
-          icon={isMdType ? '⚙️' : '📊'}
-          defaultOpen={false}
-        >
+        custom.analysisPlain ? (
           <DataAnalysisSection ctx={ctx} />
-        </CollapsibleSection>
+        ) : (
+          <CollapsibleSection
+            title={isMdType ? 'MD general parameters' : 'Per Atom Plot'}
+            icon={isMdType ? '⚙️' : '📊'}
+            defaultOpen={false}
+          >
+            <DataAnalysisSection ctx={ctx} />
+          </CollapsibleSection>
+        )
       )}
 
                       {Array.isArray(AnalysisSections) && AnalysisSections.map((s) => (
@@ -1906,13 +1910,13 @@ const details = [
         )}
 
         {/* ================= REPORT ================= */}
-        <div className="mb-8">
+        <div className="mb-5">
           <button
             type="button"
             onClick={() => setShowReport(!showReport)}
-            className="w-full flex items-center justify-center gap-2 mb-4 border-b-2 border-slate-200 pb-2 cursor-pointer group outline-none bg-transparent"
+            className="w-full flex items-center justify-center gap-2 mb-3 border-b border-slate-200 pb-1 cursor-pointer group outline-none bg-transparent"
           >
-            <h2 className="text-lg font-black text-slate-800 uppercase tracking-widest group-hover:text-blue-600 transition-colors m-0">REPORT</h2>
+            <h2 className="text-sm font-black text-slate-800 uppercase tracking-widest group-hover:text-blue-600 transition-colors m-0">REPORT</h2>
             <span className="text-slate-400 group-hover:text-blue-600 transition-colors text-sm">{showReport ? '▼' : '▶'}</span>
           </button>
           
@@ -1963,6 +1967,48 @@ const details = [
                         >
                           + Std Table
                         </button>
+
+                        {t.type === 'dosy' && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const dosyTables = Array.isArray(t.dosyTables) ? t.dosyTables : [];
+                            let tableHtml = '<br/>';
+                            // One publication-ready table PER gradient set in the Data tab,
+                            // so the report always mirrors the full data table.
+                            dosyTables.forEach((t0, ti) => {
+                              const nCols = t0 ? (t0.nCols || 0) : 0;
+                              if (ti > 0) tableHtml += '<p style="margin:10px 0 2px;"><b>Gradient set ' + (ti + 1) + '</b></p>';
+                              tableHtml += '<table style="width:100%; border-collapse: collapse;" border="1"><tbody>';
+                              tableHtml += '<tr>';
+                              tableHtml += '<th style="padding:4px; background-color:#f1f5f9; border:1px solid #cbd5e1;">Gradient %</th>';
+                              for (let c = 0; c < nCols; c++) {
+                                const label = t0 && t0.colResidues && t0.colResidues[c] ? t0.colResidues[c] : 'Col ' + (c + 1);
+                                tableHtml += '<th style="padding:4px; background-color:#f1f5f9; border:1px solid #cbd5e1;">' + label + '</th>';
+                              }
+                              tableHtml += '</tr>';
+                              for (let r = 0; r < (t0.nRows || 0); r++) {
+                                const g = t0.delays && t0.delays[r];
+                                if (g === undefined || g === null || g === '') continue;
+                                tableHtml += '<tr>';
+                                tableHtml += '<td style="padding:4px; border:1px solid #cbd5e1; text-align:center;">' + g + '</td>';
+                                for (let c = 0; c < nCols; c++) {
+                                  const v = t0.grid && t0.grid[r] ? t0.grid[r][c] : '';
+                                  tableHtml += '<td style="padding:4px; border:1px solid #cbd5e1; text-align:center;">' + (v === '' ? '-' : v) + '</td>';
+                                }
+                                tableHtml += '</tr>';
+                              }
+                              tableHtml += '</tbody></table>';
+                            });
+                            tableHtml += '<br/>';
+                            update({ comments: (comments || '') + tableHtml });
+                          }}
+                          className="ml-1 bg-teal-50 text-teal-600 hover:bg-teal-100 border border-teal-200 font-bold px-2 py-0.5 rounded transition-colors text-[10px]"
+                          title="Insert a publication-ready table with the gradient % and intensity values from the Data section"
+                        >
+                          + DOSY Pub Table
+                        </button>
+                        )}
 
 <button
                           type="button"

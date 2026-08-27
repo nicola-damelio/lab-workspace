@@ -326,7 +326,7 @@ export async function computeMDTrajectoryAnalysis(topo, frames, opts = {}, onSta
     if (isAborted && isAborted()) throw abortError('MD analysis cancelled.');
     read++;
     if (read > 1 && (read - 1) % stride !== 0) continue;   // stride over processed frames
-    if (alignedFrames.length >= maxFrames) break;
+    if (maxFrames > 0 && alignedFrames.length >= maxFrames) break;   // 0 = no cap (all frames)
     const t = fr.time != null ? fr.time : read;
 
     const movFit = new Float32Array(nFit * 3);
@@ -341,7 +341,7 @@ export async function computeMDTrajectoryAnalysis(topo, frames, opts = {}, onSta
       rmsdSeries.push({ time: t, value: 0 });
       if (doRg) rgSeries.push({ time: t, value: gyrationRadius(fr.xyz, heavyIdx, masses) });
       if (doSasa) sasaSeries.push({ time: t, value: sasaFrame(fr.xyz, heavyIdx, radii) });
-      if (onStatus) onStatus({ done: 1, total: maxFrames, msg: 'Reference frame set' });
+      if (onStatus) onStatus({ done: 1, total: maxFrames > 0 ? maxFrames : 0, msg: maxFrames > 0 ? `Frame 1 / ${maxFrames}` : 'Reference frame set' });
       continue;
     }
 
@@ -363,7 +363,7 @@ export async function computeMDTrajectoryAnalysis(topo, frames, opts = {}, onSta
     if (doSasa) sasaSeries.push({ time: t, value: sasaFrame(fr.xyz, heavyIdx, radii) });
 
     if (onStatus && alignedFrames.length % 5 === 0) {
-      onStatus({ done: alignedFrames.length, total: maxFrames, msg: `Frame ${alignedFrames.length}` });
+      onStatus({ done: alignedFrames.length, total: maxFrames > 0 ? maxFrames : 0, msg: maxFrames > 0 ? `Frame ${alignedFrames.length} / ${maxFrames}` : `Frame ${alignedFrames.length}` });
       await yieldUI();
     }
   }

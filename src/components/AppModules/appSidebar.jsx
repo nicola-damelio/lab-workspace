@@ -4,6 +4,7 @@
    ========================================================================= */
 
 import React from 'react';
+import { Icon } from '../Icons';
 
 export const AppSidebar = ({
   isSidebarOpen, setIsSidebarOpen,
@@ -69,11 +70,11 @@ export const AppSidebar = ({
                 <span>Status:</span>
 
                 {saveStatus === 'saving' ? (
-                  <span className="text-blue-500 animate-pulse">💾 Saving...</span>
+                  <span className="text-blue-500 animate-pulse flex items-center gap-1"><Icon name="save" size={12} /> Saving...</span>
                 ) : saveStatus === 'saved' ? (
-                  <span className="text-emerald-600">☁️ Cloud Sync</span>
+                  <span className="text-emerald-600 flex items-center gap-1"><Icon name="cloud" size={12} /> Cloud Sync</span>
                 ) : saveStatus === 'error' ? (
-                  <span className="text-red-600" title={saveErrorMsg}>❌ Error</span>
+                  <span className="text-red-600 flex items-center gap-1" title={saveErrorMsg}><Icon name="x" size={12} /> Error</span>
                 ) : (
                   <span className="text-slate-600">...</span>
                 )}
@@ -133,7 +134,10 @@ export const AppSidebar = ({
                     currentUser ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-slate-200 hover:bg-blue-50'
                   }`}
                 >
-                  {currentUser?.role === 'superuser' ? '👑' : currentUser ? '🧪' : '🔐'}
+                  {currentUser?.role === 'superuser'
+                    ? <Icon name="crown" size={20} className="text-amber-500" />
+                    : currentUser ? <Icon name="user" size={20} className="text-blue-600" />
+                      : <Icon name="lock" size={20} className="text-slate-400" />}
                 </button>
               )}
 
@@ -163,7 +167,7 @@ export const AppSidebar = ({
                       : 'text-slate-600 hover:bg-slate-50'
                   }`}
                 >
-                  <span className="text-lg text-center w-6">{nav.icon}</span>
+                  <Icon name={nav.icon} size={18} className="shrink-0" />
                   {isSidebarOpen && <span>{nav.label}</span>}
                 </button>
               ))}
@@ -183,7 +187,7 @@ export const AppSidebar = ({
                     }`}
                     title="Optional: sign in with Google to enable cloud sync (the app works fully without it)"
                   >
-                    <span>☁️</span> {isSidebarOpen ? 'Cloud sign-in (optional)' : ''}
+                    <Icon name="cloud" size={14} /> {isSidebarOpen ? 'Cloud sign-in (optional)' : ''}
                   </button>
                 )}
                 <button
@@ -193,7 +197,7 @@ export const AppSidebar = ({
                   }`}
                   title="Print / Export PDF"
                 >
-                  <span>🖨️</span> {isSidebarOpen ? 'Print / Export PDF' : ''}
+                  <Icon name="printer" size={14} /> {isSidebarOpen ? 'Print / Export PDF' : ''}
                 </button>
 
                 {/* Load HTML + Save HTML — superuser only */}

@@ -5,6 +5,7 @@
 // Persisted in localStorage under "labWorkspace_journals".
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { Icon } from './Icons';
 
 const JOURNALS_STORAGE_KEY = 'labWorkspace_journals';
 
@@ -336,6 +337,58 @@ const searchOrcidByName = async (query) => {
   return out;
 };
 
+// ---- Impact-factor lookup (web) ------------------------------------------
+// Uses the OpenAlex "sources" endpoint. OpenAlex's 2-year mean citedness
+// (summary_stats.2yr_mean_citedness) is computed from the same 2-year citation
+// window that defines the Clarivate Journal Impact Factor, so it is the best
+// free, CORS-friendly approximation available in the browser.
+const ifNormalizeName = (s) =>
+  String(s || '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9 ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const fetchJournalImpactFactor = async (journalName) => {
+  const q = encodeURIComponent(ifNormalizeName(journalName));
+  if (!q) return null;
+  const res = await fetch(
+    `https://api.openalex.org/sources?search=${q}&per-page=5&select=id,display_name,issn_l,summary_stats`
+  );
+  if (!res.ok) throw new Error(`OpenAlex API error (HTTP ${res.status})`);
+  const j = await res.json();
+  const results = Array.isArray(j?.results) ? j.results : [];
+  const want = ifNormalizeName(journalName);
+
+  let best = null;
+  let bestScore = -1;
+  for (const r of results) {
+    const dn = ifNormalizeName(r?.display_name || '');
+    if (!dn) continue;
+    let score = 0;
+    if (dn === want) score = 100;
+    else if (dn.includes(want) || want.includes(dn)) {
+      score = 60 + (Math.min(dn.length, want.length) / Math.max(1, Math.max(dn.length, want.length))) * 30;
+    } else {
+      const wa = new Set(want.split(' ').filter(Boolean));
+      const inter = dn.split(' ').filter((w) => wa.has(w)).length;
+      score = (inter / Math.max(1, wa.size)) * 50;
+    }
+    if (score > bestScore) { bestScore = score; best = r; }
+  }
+  if (!best || bestScore < 35) return null;
+
+  const cited = best?.summary_stats?.['2yr_mean_citedness'];
+  if (cited == null || !Number.isFinite(cited)) return null;
+  return {
+    impactFactor: Number(cited).toFixed(1),
+    matchedName: best.display_name || journalName,
+    source: 'OpenAlex',
+    year: new Date().getFullYear()
+  };
+};
+
 export const PublicationsSection = ({ scientists = [], defaultScientist = '' }) => {
   const [journals, setJournals] = useState(() => {
     try {
@@ -350,6 +403,10 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '' }) 
   const [expandedId, setExpandedId] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [draft, setDraft] = useState(emptyJournal());
+  // "Update Impact Factor" — live web lookup state
+  const [ifUpdating, setIfUpdating] = useState(false);
+  const [ifStatus, setIfStatus] = useState('');
+  const [ifResults, setIfResults] = useState({}); // journal id → { status, impactFactor, matchedName }
 
   useEffect(() => {
     try { localStorage.setItem(JOURNALS_STORAGE_KEY, JSON.stringify(journals)); } catch { /* ignore */ }
@@ -798,6 +855,53 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '' }) 
     setShowAdd(false);
   };
 
+  // Look up the current impact factor of every journal from the web (OpenAlex)
+  // and update the table. Runs sequentially with a small delay to respect the
+  // API rate limit; each row gets a ✓/✗ status in the IF column.
+  const updateImpactFactors = async () => {
+    if (ifUpdating) return;
+    setIfUpdating(true);
+    setIfStatus('Starting lookup…');
+    setIfResults({});
+    const targets = [...journals].filter((j) => j.name && j.name.trim());
+    let updated = 0;
+    let notFound = 0;
+    let failed = 0;
+    const results = {};
+    for (let i = 0; i < targets.length; i++) {
+      const j = targets[i];
+      const name = j.name.trim();
+      setIfStatus(`Looking up “${name}”… (${i + 1}/${targets.length})`);
+      try {
+        const found = await fetchJournalImpactFactor(name);
+        if (found) {
+          patch(j.id, {
+            impactFactor: found.impactFactor,
+            ifSource: found.source,
+            ifMatchedName: found.matchedName,
+            ifUpdatedAt: new Date().toISOString().slice(0, 10)
+          });
+          results[j.id] = { status: 'ok', impactFactor: found.impactFactor, matchedName: found.matchedName };
+          updated++;
+        } else {
+          results[j.id] = { status: 'notfound', impactFactor: j.impactFactor || '', matchedName: '' };
+          notFound++;
+        }
+      } catch (e) {
+        results[j.id] = { status: 'error', impactFactor: j.impactFactor || '', message: e?.message || String(e) };
+        failed++;
+      }
+      setIfResults({ ...results });
+      await new Promise((r) => setTimeout(r, 200)); // be nice to the API
+    }
+    setIfStatus(
+      targets.length === 0
+        ? 'No journals to update.'
+        : `Done — ${updated} updated · ${notFound} not found · ${failed} failed.`
+    );
+    setIfUpdating(false);
+  };
+
   // Always sorted by impact factor, highest → lowest (journals without an IF go last, alphabetically)
   const sorted = useMemo(() => {
     return [...journals].sort((a, b) => {
@@ -866,6 +970,25 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '' }) 
                           title="Edit Impact Factor — the table re-sorts automatically"
                           className="w-14 border border-slate-200 rounded px-1.5 py-0.5 text-xs text-right font-semibold text-slate-800 outline-none focus:border-indigo-400"
                         />
+                        {(ifResults[j.id] || (j.ifUpdatedAt && j.ifSource)) && (
+                          <div className="mt-1 text-[9px] leading-tight">
+                            {ifResults[j.id] ? (
+                              ifResults[j.id].status === 'ok' ? (
+                                <span className="text-emerald-600 font-bold whitespace-nowrap" title={`Updated from ${ifResults[j.id].matchedName || j.name} (OpenAlex, 2-year mean citedness)`}>
+                                  ✓ {ifResults[j.id].impactFactor}
+                                </span>
+                              ) : ifResults[j.id].status === 'notfound' ? (
+                                <span className="text-amber-600 font-bold whitespace-nowrap" title="No matching journal found on OpenAlex">✗ not found</span>
+                              ) : (
+                                <span className="text-red-600 font-bold whitespace-nowrap" title={ifResults[j.id].message || 'Lookup failed'}>✗ error</span>
+                              )
+                            ) : (
+                              <span className="text-slate-400 font-bold whitespace-nowrap" title={`Updated ${j.ifUpdatedAt} from ${j.ifSource}${j.ifMatchedName ? ` (matched ${j.ifMatchedName})` : ''}`}>
+                                ✓ {j.ifSource} {j.ifUpdatedAt}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </td>
                       <td className="px-3 py-2 border-b border-slate-100 text-slate-600 align-top text-xs">{j.cost || '—'}</td>
                       <td className="px-3 py-2 border-b border-slate-100 text-slate-600 align-top text-xs"><span className="line-clamp-2">{j.format || '—'}</span></td>
@@ -1514,17 +1637,35 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '' }) 
       <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
         <div className="px-4 py-3 bg-indigo-50/50 border-b border-indigo-100 flex flex-col md:flex-row md:items-center justify-between gap-2">
           <h2 className="text-sm font-black text-slate-800 uppercase tracking-wide flex items-center gap-2">
-            <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-indigo-600 text-white text-sm shrink-0">📰</span>
+            <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-indigo-600 text-white shrink-0"><Icon name="newspaper" size={16} /></span>
             Journals
             <span className="text-slate-400 font-bold">({sorted.length})</span>
           </h2>
-          <button
-            type="button"
-            onClick={() => setShowAdd((v) => !v)}
-            className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition"
-          >
-            {showAdd ? 'Cancel' : '+ Add Journal'}
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={updateImpactFactors}
+              disabled={ifUpdating || sorted.length === 0}
+              className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40 transition flex items-center gap-1.5"
+              title="Look up the current impact factor of every journal on the web (OpenAlex) and update the table"
+            >
+              {ifUpdating ? (
+                <>
+                  <span className="inline-block w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                  Updating…
+                </>
+              ) : (
+                <>🔄 Update Impact Factors</>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowAdd((v) => !v)}
+              className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition"
+            >
+              {showAdd ? 'Cancel' : '+ Add Journal'}
+            </button>
+          </div>
         </div>
         <div className="p-4">
           <p className="text-sm text-slate-500 mb-4">
@@ -1532,6 +1673,12 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '' }) 
             impact factor, highest first — edit the IF in any row and the table re-sorts automatically.
             Click a row to edit its full details, comments and links.
           </p>
+
+          {ifStatus && (
+            <div className={`mb-3 px-3 py-2 rounded-lg text-xs font-semibold border ${ifUpdating ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
+              {ifUpdating ? `⏳ ${ifStatus}` : `ℹ️ ${ifStatus}`}
+            </div>
+          )}
 
           {showAdd && (
             <div className="mb-4 p-3 bg-indigo-50 border border-indigo-200 rounded-lg">

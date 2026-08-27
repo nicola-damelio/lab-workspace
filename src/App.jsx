@@ -638,7 +638,7 @@ if (customType === 'ssnmr') {
 return {
 ...baseTest,
 type: 'ssnmr',
-testCategory: 'Solid-state NMR',
+testCategory: 'Molecular Structure and Dynamics', // real primary category (was 'Solid-state NMR')
 lipid: '',
 deuteration: '',
 hydration: '',
@@ -695,7 +695,7 @@ if (customType === 'docking') {
    return {
      ...baseTest,
      type: 'flow_cytometry',
-     testCategory: 'Immunophenotyping',
+     testCategory: 'Activity', // flow-cytometry default: real primary category (was 'Immunophenotyping')
      cellNumber: '',
      liveDeadStain: '',
      fixation: 'None',
@@ -780,10 +780,11 @@ if (customType === 'dosy') {
     ...baseTest,
     name: `DOSY ${num}`,
     type: 'dosy',
-    testCategory: 'DOSY',
+    testCategory: 'Molecular Structure and Dynamics',
+    secondaryCategory: 'Diffusion by DOSY',
     dosyTables: [{
       id, nRows: 8, nCols: 4, delayUnit: 's/mm2',
-      delays: [0, 100, 200, 400, 800, 1200, 1600, 2000],
+      delays: [0, 5, 10, 20, 40, 60, 80, 100],
       colResidues: ['', '', '', ''],
       grid: Array.from({ length: 8 }, () => Array(4).fill(''))
     }]

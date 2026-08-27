@@ -6,12 +6,13 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import Chart from 'chart.js/auto';
+import { ResponsiveContainer, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { formatConc, concKey, toHex, fit4PL, errBarPlugin } from '../data/constants';
 import { rainbowColors } from '../utils/chartStyle';
-import { useNmrDerived, OneDSpectrumPlot, SpectrumPlot, HSQCPlot, CustomXTick1H, CustomXTick13C, TICKS_1H, TICKS_13C, TICKS_15N, PerAtomPlot, Fitting } from './NMRSections';
+import { useNmrDerived, OneDSpectrumPlot, SpectrumPlot, HSQCPlot, CustomXTick1H, CustomXTick13C, TICKS_1H, TICKS_13C, TICKS_15N } from './NMRSections';
 import { FCSOverlayVisualization } from './FlowCytometrySections';
 import { CD_FIT_COMPONENTS } from './CDSections';
-import { parseMDValue, getForceFieldInfo, getWaterModelInfo, getTrajectoryFormatInfo } from './MDData';
+import { parseMDValue, getForceFieldInfo, getWaterModelInfo, getTrajectoryFormatInfo, MD_ANALYSIS_LAYERS } from './MDData';
 
 /* ============================================================================
    CHUNKED TABLE HELPER
@@ -593,6 +594,51 @@ const isExcluded = cellConfig?.[r]?.[c]?.excluded;
   );
 };
 
+// Inline RDKit molblock atom-naming (same logic as the test page's
+// deriveOrganicAtomNaming) so the notebook formula matches the one shown in
+// the test with atom names.
+const notebookOrganicAtomLabels = (molblock) => {
+  const lines = String(molblock || '').split('\n');
+  const counts = lines[3] || '';
+  const numAtoms = parseInt(counts.substring(0, 3).trim(), 10) || 0;
+  const numBonds = parseInt(counts.substring(3, 6).trim(), 10) || 0;
+  const elements = [];
+  for (let i = 0; i < numAtoms; i++) elements.push(((lines[4 + i] || '').substring(31, 34) || '').trim());
+  const bonds = [];
+  for (let i = 0; i < numBonds; i++) {
+    const bl = lines[4 + numAtoms + i] || '';
+    const a1 = parseInt(bl.substring(0, 3).trim(), 10) - 1;
+    const a2 = parseInt(bl.substring(3, 6).trim(), 10) - 1;
+    if (!isNaN(a1) && !isNaN(a2)) bonds.push([a1, a2]);
+  }
+  const heavyRank = new Array(numAtoms).fill(-1);
+  let hc = 0;
+  for (let i = 0; i < numAtoms; i++) if (elements[i] !== 'H') heavyRank[i] = hc++;
+  const parent = new Array(numAtoms).fill(-1);
+  bonds.forEach(([a, b]) => {
+    if (elements[a] === 'H' && elements[b] !== 'H') parent[a] = b;
+    if (elements[b] === 'H' && elements[a] !== 'H') parent[b] = a;
+  });
+  const hGroups = {};
+  for (let i = 0; i < numAtoms; i++) {
+    if (elements[i] !== 'H') continue;
+    const key = parent[i] >= 0 ? parent[i] : 'orphan';
+    (hGroups[key] = hGroups[key] || []).push(i);
+  }
+  const atomNameList = new Array(numAtoms);
+  for (let i = 0; i < numAtoms; i++) if (elements[i] !== 'H') atomNameList[i] = `${elements[i]}${heavyRank[i]}`;
+  Object.entries(hGroups).forEach(([key, idxs]) => {
+    const parentRank = key === 'orphan' ? null : heavyRank[Number(key)];
+    idxs.forEach((idx, j) => {
+      const suffix = idxs.length > 1 ? ('abcdefgh'[j] || String(j)) : '';
+      atomNameList[idx] = parentRank !== null ? `H${parentRank}${suffix}` : `H${idx}`;
+    });
+  });
+  const atomLabels = {};
+  atomNameList.forEach((name, i) => { atomLabels[i] = name; });
+  return atomLabels;
+};
+
 export const Formula2DPreview = ({ test }) => {
 const FS_CLASSES = 'fixed top-4 left-4 z-[99999] bg-white shadow-2xl rounded-2xl !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !m-0 overflow-hidden flex flex-col';
 const OVERLAY_CLASSES = 'fixed top-0 left-0 w-screen h-screen bg-slate-900/50 backdrop-blur-sm z-[99990]';
@@ -600,13 +646,51 @@ const d = useNmrDerived(test, { activeTest: test, instances: [test] });
   const [isExpanded, setIsExpanded] = useState(false);
   const [zoom, setZoom] = useState(1);
 
+  // RDKit-rendered 2D structure with atom names — identical to the one shown
+  // in the test page. Rendered larger so the atom names are readable.
+  const [rdkitSvg, setRdkitSvg] = useState('');
+  const [rdkitFailed, setRdkitFailed] = useState(false);
+
+  useEffect(() => {
+    if (!test || !test.smiles) return;
+    let cancelled = false;
+    let tries = 0;
+    const timer = setInterval(() => {
+      tries++;
+      if (cancelled) { clearInterval(timer); return; }
+      if (window.__RDKit) {
+        clearInterval(timer);
+        try {
+          const base = window.__RDKit.get_mol(test.smiles);
+          if (!base) throw new Error('RDKit could not parse this SMILES');
+          const withHs = base.add_hs();
+          base.delete();
+          const mol = window.__RDKit.get_mol(withHs);
+          const molblock = mol.get_molblock();
+          const atomLabels = notebookOrganicAtomLabels(molblock);
+          const details = JSON.stringify({ addAtomIndices: false, addStereoAnnotation: true, atomLabels, width: 900, height: 700 });
+          const svg = mol.get_svg_with_highlights(details);
+          mol.delete();
+          if (!cancelled) setRdkitSvg(svg);
+        } catch (e) {
+          console.warn('RDKit formula render failed:', e);
+          if (!cancelled) setRdkitFailed(true);
+        }
+      } else if (tries > 60) {
+        clearInterval(timer);
+        if (!cancelled) setRdkitFailed(true);
+      }
+    }, 250);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [test]);
+
 const handleToggleExpand = () => {
     setIsExpanded(!isExpanded);
     setZoom(1);
   };
 
   if (d.moleculeType === 'organic' && test.smiles) {
-const imageUrl = `https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(test.smiles)}/image?width=800&height=800`;
+const imageUrl = `https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(test.smiles)}/image?width=1500&height=1500`;
     return (
       <>
         {isExpanded && <div className={OVERLAY_CLASSES} onClick={() => setIsExpanded(false)} />}
@@ -625,11 +709,24 @@ const imageUrl = `https://cactus.nci.nih.gov/chemical/structure/${encodeURICompo
             </div>
           </div>
           <div className="flex-1 overflow-auto custom-scrollbar flex items-center justify-center relative min-h-0 p-4">
-            <img 
-              src={imageUrl} 
-              alt="2D Structure" 
-              style={{ width: `${zoom * 100}%`, maxWidth: 'none', height: 'auto', objectFit: 'contain' }} 
-            />
+            {rdkitSvg ? (
+              <div dangerouslySetInnerHTML={{ __html: rdkitSvg }} className="w-full flex items-center justify-center [&>svg]:w-full [&>svg]:h-auto"
+                style={{ width: `${Math.max(zoom, 1.5) * 100}%`, minWidth: '560px' }} />
+            ) : rdkitFailed ? (
+              <>
+                <img
+                  src={imageUrl}
+                  alt="2D Structure"
+                  style={{ width: `${zoom * 100}%`, maxWidth: 'none', height: 'auto', objectFit: 'contain' }}
+                />
+                <span className="absolute bottom-1 right-1 text-[10px] text-slate-400 bg-white/80 px-1.5 py-0.5 rounded">Atom labels unavailable (RDKit not loaded)</span>
+              </>
+            ) : (
+              <div className="flex flex-col items-center gap-2 text-slate-400 py-8">
+                <div className="w-8 h-8 border-4 border-blue-200 border-t-blue-500 rounded-full animate-spin" />
+                <span className="text-xs font-semibold">Rendering 2D formula…</span>
+              </div>
+            )}
           </div>
         </div>
       </>
@@ -1799,30 +1896,237 @@ const instances = (Array.isArray(test.instances) && test.instances.length)
 ? test.instances
 : [{ id: 'mdinst_default', name: 'Simulation 1', values: test.mdValues || {} }];
 const activeInstance = instances.find(i => i.id === test.activeInstanceId) || instances[0];
-const layers = [{ key: 'md', label: 'MD Parameters', unit: '', builtin: true }, ...(Array.isArray(test.parameterLayers) ? test.parameterLayers : [])];
-const activeLayerKey = test.activeLayerKey || 'md';
-const activeLayer = layers.find(l => l.key === activeLayerKey) || layers[0];
-const values = (activeInstance?.values?.[activeLayerKey]) || {};
-const entries = Object.entries(values).filter(([, v]) => v !== null && v !== undefined && v !== '');
-if (entries.length === 0) return null;
+const layers = [
+  { key: 'md', label: 'MD Parameters', unit: '', builtin: true },
+  ...(Array.isArray(test.parameterLayers) ? test.parameterLayers : []),
+  ...MD_ANALYSIS_LAYERS
+];
+const allValues = (() => {
+  const instVals = (activeInstance && activeInstance.values) || {};
+  const rootVals = test.mdValues || {};
+  const merged = {};
+  new Set([...Object.keys(instVals), ...Object.keys(rootVals)]).forEach((k) => {
+    // Root mdValues first, then instance values win — matches writeMDCellValue.
+    merged[k] = { ...(rootVals[k] || {}), ...(instVals[k] || {}) };
+  });
+  return merged;
+})();
+const present = layers.filter((l) => {
+  const vals = allValues[l.key] || {};
+  return Object.keys(vals).some((k) => vals[k] !== null && vals[k] !== undefined && vals[k] !== '');
+});
+if (present.length === 0) return null;
 return (
-<div className="mt-4">
-<h5 className="text-[10px] font-bold text-slate-500 mb-2 uppercase text-center w-full">Atom Table — {activeLayer.label}</h5>
-<ChunkedTable
-data={entries}
-renderHeader={() => (
-  <tr><th className="px-3 py-1.5 border-r">Cell Key</th><th className="px-3 py-1.5">Value {activeLayer.unit ? `(${activeLayer.unit})` : ''}</th></tr>
-)}
-renderRow={([key, val], i) => (
-  <tr key={i}>
-    <td className="px-3 py-1.5 font-mono text-slate-700 border-r">{key}</td>
-    <td className="px-3 py-1.5 font-mono text-blue-700 font-bold">{val}</td>
-  </tr>
-)}
-/>
+<div className="mt-4 flex flex-col gap-4">
+  {present.map((layer) => {
+    const values = allValues[layer.key] || {};
+    const entries = Object.entries(values).filter(([, v]) => v !== null && v !== undefined && v !== '');
+    return (
+      <div key={layer.key}>
+        <h5 className="text-[10px] font-bold text-slate-500 mb-2 uppercase text-center w-full">
+          Atom Table — {layer.label}{layer.unit ? ` (${layer.unit})` : ''}
+        </h5>
+        <ChunkedTable
+          data={entries}
+          renderHeader={() => (
+            <tr><th className="px-3 py-1.5 border-r">Atom</th><th className="px-3 py-1.5">Value {layer.unit ? `(${layer.unit})` : ''}</th></tr>
+          )}
+          renderRow={([key, val], i) => (
+            <tr key={i}>
+              <td className="px-3 py-1.5 font-mono text-slate-700 border-r">{key.replace(/^0-/, '')}</td>
+              <td className="px-3 py-1.5 font-mono text-blue-700 font-bold">{val}</td>
+            </tr>
+          )}
+        />
+      </div>
+    );
+  })}
 </div>
 );
 };
+/* ============================================================================
+   CHART-ONLY NOTEBOOK PREVIEWS
+   The notebook must show ONLY the saved charts — not the interactive
+   atom-selection lists that would fill the page with hundreds of atom names.
+   ========================================================================== */
+
+// ---- NMR: Custom Per-Atom Charts (charts only, no atom lists) ----
+const NMRPerAtomChartsPreview = ({ test }) => {
+  const charts = (Array.isArray(test.perAtomCharts) ? test.perAtomCharts : []).filter((c) => (c.atoms || []).length > 0);
+  if (!charts.length) return <p className="text-[10px] text-slate-400 italic">No custom per-atom charts saved.</p>;
+  const shifts = test.chemicalShifts || {};
+  return (
+    <div className="flex flex-col gap-4 mt-2">
+      {charts.map((chart, ci) => {
+        const atoms = chart.atoms || [];
+        const groups = {};
+        atoms.forEach((ak) => {
+          const val = parseFloat(shifts[ak]);
+          if (!Number.isFinite(val)) return;
+          const resIdx = Number(String(ak).split('-')[0]);
+          const atomName = String(ak).split('-').slice(1).join('-');
+          if (!groups[resIdx]) groups[resIdx] = { label: String(resIdx + 1), atoms: {} };
+          groups[resIdx].atoms[ak] = { key: ak, name: atomName, value: val };
+        });
+        const resIdxs = Object.keys(groups).sort((a, b) => Number(a) - Number(b));
+        if (!resIdxs.length) return null;
+        const data = resIdxs.map((ri) => ({ label: groups[ri].label, ...groups[ri].atoms }));
+        const keys = atoms.filter((ak) => resIdxs.some((ri) => groups[ri].atoms[ak]));
+        return (
+          <div key={chart.id} className="bg-white border border-slate-200 rounded-lg p-2">
+            <h6 className="text-[10px] font-bold text-slate-500 mb-1 text-center uppercase">{chart.title || `Per-Atom Chart ${ci + 1}`}</h6>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={data} margin={{ top: 8, right: 8, bottom: 16, left: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+                <YAxis tick={{ fontSize: 10 }} />
+                <Tooltip />
+                <Legend wrapperStyle={{ fontSize: 10 }} />
+                {keys.map((k, i) => <Bar key={k} dataKey={k} name={String(k).split('-').slice(1).join('-')} fill={rainbowColors(12)[i % 12]} isAnimationActive={false} />)}
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+// ---- NMR: Condition plots (charts only, no atom lists) ----
+const NMRConditionPlotsPreview = ({ test, ctx }) => {
+  const plots = (Array.isArray(test.conditionPlots) ? test.conditionPlots : []).filter((p) => (p.atoms || []).length > 0);
+  if (!plots.length) return <p className="text-[10px] text-slate-400 italic">No condition plots saved.</p>;
+  const instances = (Array.isArray(ctx && ctx.instances) && ctx.instances.length ? ctx.instances : [test]).filter(Boolean);
+  return (
+    <div className="flex flex-col gap-4 mt-2">
+      {plots.map((plot, pi) => {
+        const xField = plot.xField || 'temperature';
+        const series = (plot.atoms || []).map((ak, si) => {
+          const pts = instances.map((inst, xi) => {
+            const shifts = (inst && inst.chemicalShifts) || {};
+            const v = parseFloat(shifts[ak]);
+            let xv = parseFloat(inst && inst[xField]);
+            if (!Number.isFinite(xv)) xv = xi;
+            return { x: xv, y: Number.isFinite(v) ? v : null };
+          }).filter((p) => p.y !== null);
+          return { key: ak, label: String(ak).split('-').slice(1).join('-'), color: rainbowColors(12)[si % 12], pts };
+        }).filter((s) => s.pts.length > 0);
+        if (!series.length) return null;
+        return (
+          <div key={plot.id} className="bg-white border border-slate-200 rounded-lg p-2">
+            <h6 className="text-[10px] font-bold text-slate-500 mb-1 text-center uppercase">{plot.title || `Condition Plot ${pi + 1}`}</h6>
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart margin={{ top: 8, right: 16, bottom: 24, left: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="x" type="number" tick={{ fontSize: 10 }} label={{ value: xField, position: 'insideBottom', offset: -14, style: { fontSize: 10 } }} />
+                <YAxis tick={{ fontSize: 10 }} />
+                <Tooltip />
+                <Legend wrapperStyle={{ fontSize: 10 }} />
+                {series.map((s) => <Line key={s.key} data={s.pts} dataKey="y" name={s.label} stroke={s.color} strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />)}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+// ---- MD: DSSP secondary-structure content preview ----
+const MDDsspPreview = ({ test }) => {
+  const outs = Array.isArray(test.mdDsspResult) ? test.mdDsspResult : [];
+  if (!outs.length) return null;
+  return (
+    <div className="flex flex-col gap-4 mt-2">
+      {outs.map((o, oi) => {
+        const data = (o.series || []).map((r) => ({ x: r.x, alpha: r.alpha, beta: r.beta, coil: r.coil }));
+        if (!data.length) return null;
+        return (
+          <div key={oi} className="bg-white border border-slate-200 rounded-lg p-2">
+            <h6 className="text-[10px] font-bold text-slate-500 mb-1 text-center uppercase">Secondary structure content{outs.length > 1 ? ` — ${o.name}` : ''}</h6>
+            <ResponsiveContainer width="100%" height={200}>
+              <LineChart data={data} margin={{ top: 8, right: 8, bottom: 16, left: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="x" tick={{ fontSize: 10 }} label={{ value: o.xUnit === 'ns' ? 'Time (ns)' : 'Frame', position: 'insideBottom', offset: -12, style: { fontSize: 10 } }} />
+                <YAxis tick={{ fontSize: 10 }} unit="%" />
+                <Tooltip />
+                <Legend wrapperStyle={{ fontSize: 10 }} />
+                <Line dataKey="alpha" name="α-helix" stroke="#f43f5e" dot={false} strokeWidth={2} isAnimationActive={false} />
+                <Line dataKey="beta" name="β-sheet" stroke="#3b82f6" dot={false} strokeWidth={2} isAnimationActive={false} />
+                <Line dataKey="coil" name="coil/other" stroke="#94a3b8" dot={false} strokeWidth={2} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+// ---- MD: Membrane-contact maps preview ----
+const MDContactsPreview = ({ test }) => {
+  const p = test.mdContactResult || {};
+  const entries = Object.entries(p).filter(([, v]) => v && Array.isArray(v.rows) && v.rows.length);
+  if (!entries.length) return null;
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+      {entries.map(([k, o]) => {
+        const mode = String(k).split('_')[0] === 'polar' ? 'Polar' : 'Apolar';
+        const xa = o.xIsPeptide ? 'peptide' : 'lipid';
+        const series = (o.series || []).map((s) => ({ key: s.key, label: s.key }));
+        const data = (o.rows || []).map((r) => ({ atom: r.atom, ...r }));
+        if (!data.length) return null;
+        const palette = rainbowColors(Math.max(series.length, 12));
+        return (
+          <div key={k} className="bg-white border border-slate-200 rounded-lg p-2">
+            <h6 className="text-[10px] font-bold text-slate-500 mb-1 text-center uppercase">Contacts — {mode} ({xa} on X)</h6>
+            <ResponsiveContainer width="100%" height={180}>
+              <LineChart data={data} margin={{ top: 8, right: 8, bottom: 40, left: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="atom" tick={{ fontSize: 9, angle: -60, textAnchor: 'end' }} interval={Math.max(0, Math.floor(data.length / 18))} height={50} />
+                <YAxis tick={{ fontSize: 9 }} />
+                <Tooltip />
+                <Legend wrapperStyle={{ fontSize: 9 }} />
+                {series.map((s, i) => <Line key={s.key} dataKey={s.key} name={s.label} stroke={palette[i % palette.length]} dot={false} strokeWidth={1.5} isAnimationActive={false} />)}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+// ---- MD: Membrane profiles (order parameters |SCD|) preview ----
+const MDProfilesPreview = ({ test }) => {
+  const outs = Array.isArray(test.mdProfileResult) ? test.mdProfileResult : [];
+  const scd = [];
+  outs.forEach((o) => (o.scdGroups || []).forEach((g) => scd.push({ name: o.name, g })));
+  if (!scd.length) return null;
+  return (
+    <div className="flex flex-col gap-4 mt-2">
+      {scd.map(({ name, g }, i) => {
+        const data = (g.carbons || []).map((c) => ({ x: c.x, scd: c.scd }));
+        if (!data.length) return null;
+        return (
+          <div key={i} className="bg-white border border-slate-200 rounded-lg p-2">
+            <h6 className="text-[10px] font-bold text-slate-500 mb-1 text-center uppercase">Order parameter |SCD| — {g.label}{outs.length > 1 ? ` (${name})` : ''}</h6>
+            <ResponsiveContainer width="100%" height={180}>
+              <LineChart data={data} margin={{ top: 8, right: 8, bottom: 16, left: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="x" tick={{ fontSize: 10 }} label={{ value: 'Carbon index', position: 'insideBottom', offset: -12, style: { fontSize: 10 } }} />
+                <YAxis tick={{ fontSize: 10 }} />
+                <Tooltip />
+                <Line dataKey="scd" stroke="#f59e0b" dot={{ r: 3 }} strokeWidth={2} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 /* ============================================================================
    IMAGE NORMALIZATION HELPER (For Google Drive links in Notebook)
 ========================================================================== */
@@ -1878,8 +2182,10 @@ export const NOTEBOOK_ANALYSIS_PREVIEWS = {
   cd: [(test, ctx) => <CDAnalysisGraphsPreview test={test} instances={ctx.instances} />],
   nmr: [(test, ctx) => (
     <div className="flex flex-col gap-4 mt-2">
-      <PerAtomPlot ctx={ctx} />
-      <Fitting ctx={ctx} />
+      {/* Charts only — the interactive atom-selection lists are intentionally
+          not rendered in the notebook (they would fill the page with atoms). */}
+      <NMRPerAtomChartsPreview test={test} />
+      <NMRConditionPlotsPreview test={test} ctx={ctx} />
     </div>
   )],
   'nmr-fittings': [(test) => (
@@ -1892,5 +2198,12 @@ export const NOTEBOOK_ANALYSIS_PREVIEWS = {
       <DOSYFitPreview test={test} />
     </div>
   )],
-  md_simulation: [(test) => <MDAnalysisPreview test={test} />],
+  md_simulation: [(test, ctx) => (
+    <div className="flex flex-col gap-4 mt-2">
+      <MDAnalysisPreview test={test} />
+      <MDDsspPreview test={test} />
+      <MDContactsPreview test={test} />
+      <MDProfilesPreview test={test} />
+    </div>
+  )],
 };

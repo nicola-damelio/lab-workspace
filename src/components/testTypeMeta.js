@@ -13,17 +13,17 @@
 const FALLBACK = { label: 'Experiment', icon: '🧪' };
 
 export const TEST_TYPE_META = {
-  nmr: { label: 'NMR', icon: '📉' },
-  'nmr-fittings': { label: 'NMR Fitting', icon: '🧭' },
-  dosy: { label: 'DOSY', icon: '📈' },
-  cd: { label: 'Circular Dichroism', icon: '🌀' },
-  ssnmr: { label: 'Solid State NMR', icon: '🧲' },
-  plate: { label: 'Plate Assay', icon: '🧫' },
-  cloning: { label: 'Cloning', icon: '🧬' },
-  protein_expression: { label: 'Protein Expression', icon: '🧫' },
-  md_simulation: { label: 'MD Simulation', icon: '🖥️' },
-  flow_cytometry: { label: 'Flow Cytometry', icon: '🩸' },
-  docking: { label: 'Molecular Docking', icon: '🎯' }
+  nmr: { label: 'NMR', icon: 'chart-line' },
+  'nmr-fittings': { label: 'NMR Fitting', icon: 'compass' },
+  dosy: { label: 'DOSY', icon: 'chart-bar' },
+  cd: { label: 'Circular Dichroism', icon: 'atom' },
+  ssnmr: { label: 'Solid State NMR', icon: 'magnet' },
+  plate: { label: 'Plate Assay', icon: 'plate' },
+  cloning: { label: 'Cloning', icon: 'dna' },
+  protein_expression: { label: 'Protein Expression', icon: 'flask' },
+  md_simulation: { label: 'MD Simulation', icon: 'monitor' },
+  flow_cytometry: { label: 'Flow Cytometry', icon: 'droplet' },
+  docking: { label: 'Molecular Docking', icon: 'target' }
 };
 
 /** Normalise a raw test type to the registry key ("plate-96-well" → "plate"). */

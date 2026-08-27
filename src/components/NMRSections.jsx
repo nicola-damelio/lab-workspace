@@ -1,5 +1,6 @@
-import NMRMoleculeViewer from './NMRMoleculeViewer';
+import NMRMoleculeViewer, { useShowAssignedFlag } from './NMRMoleculeViewer';
 import { ChartControlBar, SharedChartStylePanel, AngledTick } from './SharedAnalysisTools';
+import { Icon } from './Icons';
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -3860,10 +3861,18 @@ const generatedStructure = useMemo(() => {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap gap-2 mb-2">
-        {[['protein', '🧬 Protein'], ['dna', '🧬 DNA'], ['rna', '🧬 RNA'], ['sugar', '🍬 Sugars'], ['lipid', '🫧 Phospholipids'], ['organic', '⬡ Organic Molecule']].map(([val, lab]) => (
+        {[
+          { val: 'protein', icon: 'dna', label: 'Protein' },
+          { val: 'dna', icon: 'dna', label: 'DNA' },
+          { val: 'rna', icon: 'dna', label: 'RNA' },
+          { val: 'sugar', icon: 'sugar', label: 'Sugars' },
+          { val: 'lipid', icon: 'layers', label: 'Phospholipids' },
+          { val: 'organic', icon: 'atom', label: 'Organic Molecule' }
+        ].map(({ val, icon, label }) => (
           <button key={val} onClick={() => updateActiveTest({ moleculeType: val })}
-            className={`px-3 py-1.5 rounded-lg text-sm font-bold border transition-colors ${d.moleculeType === val ? 'bg-blue-600 border-blue-700 text-white shadow' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
-            {lab}
+            className={`px-3 py-1.5 rounded-lg text-sm font-bold border transition-colors inline-flex items-center gap-1.5 ${d.moleculeType === val ? 'bg-blue-600 border-blue-700 text-white shadow' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+            <Icon name={icon} size={16} />
+            {label}
           </button>
         ))}
       </div>
@@ -6426,7 +6435,13 @@ export const SimulationsSection = ({ ctx }) => {
   const [showCfg, setShowCfg] = useState(false);
   const focusIdx = activeTest.focusIdx !== undefined ? activeTest.focusIdx : 'ALL';
   const selectedKeys = getSelectedKeys(activeTest);
-  const manualKeys = useMemo(() => getManualKeys(d.shifts), [d.shifts]);
+  // The "🟢 Assigned atoms ON/OFF" button (in the 3D molecule viewer) also
+  // controls the green marks on the simulated spectra: when OFF, no manual
+  // assignment keys are forwarded to the spectrum plots.
+  const showAssignedFlag = useShowAssignedFlag();
+  // Always an ARRAY (the spectrum plots call `.includes` on it) — an empty
+  // array when the "Assigned atoms" highlight is off, never a Set.
+  const manualKeys = useMemo(() => (showAssignedFlag ? getManualKeys(d.shifts) : []), [d.shifts, showAssignedFlag]);
   const simCfg = { fontSize: 11, h1D: 300, aspect2D: 1, simShowLabels: false, simLabelFormat: 'resNum_code_atom', simLabelDim: 'both', simLabelFontSize: 10, ...(activeTest.simChartCfg || {}) };
   const setCfg = (patch) => updateActiveTest({ simChartCfg: { ...simCfg, ...patch } });
   if (d.parsedSeq.length === 0 && d.moleculeType !== 'organic') {

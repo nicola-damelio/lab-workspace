@@ -4,18 +4,19 @@
    ========================================================================= */
 
 import React from 'react';
+import { Icon } from '../Icons';
 
 export const DashboardModule = ({ datasetTitle, datasetSubtitle, handlePrint, tests, storages, setCurrentModule, mergedPlan }) => (
 
               <div className="p-4 md:p-8 h-full overflow-y-auto custom-scrollbar bg-slate-50">
                 <div className="max-w-6xl mx-auto">
-                  <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-6 md:mb-8 border-b border-slate-200 pb-4 gap-4">
+                  <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-3 border-b border-slate-200 pb-2 gap-2">
                     <div>
-                      <h1 className="text-2xl md:text-3xl font-bold text-slate-800">
+                      <h1 className="text-lg md:text-xl font-bold text-slate-800">
                         {datasetTitle || 'Dataset Overview'}
                       </h1>
 
-                      <p className="text-sm md:text-base text-slate-500 mt-1">
+                      <p className="text-xs md:text-sm text-slate-500 mt-0.5">
                         {datasetSubtitle ||
                           'Manage your experiments, inventory, and protocols.'}
                       </p>
@@ -23,49 +24,49 @@ export const DashboardModule = ({ datasetTitle, datasetSubtitle, handlePrint, te
 
                     <button
                       onClick={handlePrint}
-                      className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center gap-2 shadow-sm no-print w-full md:w-auto justify-center"
+                      className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-1.5 px-3 rounded-lg text-xs transition-colors flex items-center gap-1.5 shadow-sm no-print w-full md:w-auto justify-center"
                     >
-                      🖨️ Print / Save PDF
+                      <Icon name="printer" size={14} /> Print / Save PDF
                     </button>
                   </div>
 
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-8">
-                    <div className="bg-white p-4 md:p-5 rounded-lg border border-slate-200 shadow-sm">
-                      <div className="text-slate-500 text-[10px] md:text-xs font-bold uppercase tracking-wide">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3 mb-4">
+                    <div className="bg-white p-2.5 md:p-3 rounded-lg border border-slate-200 shadow-sm">
+                      <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wide">
                         Total Tests
                       </div>
 
-                      <div className="text-2xl md:text-3xl font-bold text-slate-800 mt-1">
+                      <div className="text-lg md:text-xl font-bold text-slate-800">
                         {tests.filter((t) => t.type !== 'plate-9x9box').length}
                       </div>
                     </div>
 
-                    <div className="bg-white p-4 md:p-5 rounded-lg border border-slate-200 shadow-sm">
-                      <div className="text-slate-500 text-[10px] md:text-xs font-bold uppercase tracking-wide">
+                    <div className="bg-white p-2.5 md:p-3 rounded-lg border border-slate-200 shadow-sm">
+                      <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wide">
                         Stored Boxes
                       </div>
 
-                      <div className="text-2xl md:text-3xl font-bold text-slate-800 mt-1">
+                      <div className="text-lg md:text-xl font-bold text-slate-800">
                         {tests.filter((t) => t.type === 'plate-9x9box').length}
                       </div>
                     </div>
 
-                    <div className="bg-white p-4 md:p-5 rounded-lg border border-slate-200 shadow-sm">
-                      <div className="text-slate-500 text-[10px] md:text-xs font-bold uppercase tracking-wide">
+                    <div className="bg-white p-2.5 md:p-3 rounded-lg border border-slate-200 shadow-sm">
+                      <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wide">
                         Storage Units
                       </div>
 
-                      <div className="text-2xl md:text-3xl font-bold text-slate-800 mt-1">
+                      <div className="text-lg md:text-xl font-bold text-slate-800">
                         {storages.length}
                       </div>
                     </div>
 
-                    <div className="bg-white p-4 md:p-5 rounded-lg border border-slate-200 shadow-sm">
-                      <div className="text-slate-500 text-[10px] md:text-xs font-bold uppercase tracking-wide">
+                    <div className="bg-white p-2.5 md:p-3 rounded-lg border border-slate-200 shadow-sm">
+                      <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wide">
                         Upcoming Tasks
                       </div>
 
-                      <div className="text-2xl md:text-3xl font-bold text-slate-800 mt-1">
+                      <div className="text-lg md:text-xl font-bold text-slate-800">
                         {
                           mergedPlan.filter(
                             (t) => t.date >= new Date().toISOString().split('T')[0]
@@ -75,9 +76,9 @@ export const DashboardModule = ({ datasetTitle, datasetSubtitle, handlePrint, te
                     </div>
                   </div>
 
-                  <h2 className="text-lg font-bold text-slate-700 mb-4">Quick Navigation</h2>
+                  <h2 className="text-sm font-bold text-slate-700 mb-2">Quick Navigation</h2>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
                     {[
                       {
                         id: 'notebook',
@@ -131,15 +132,15 @@ export const DashboardModule = ({ datasetTitle, datasetSubtitle, handlePrint, te
                       <button
                         key={mod.id}
                         onClick={() => setCurrentModule(mod.id)}
-                        className="bg-white p-5 md:p-6 rounded-lg border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-400 transition-all text-left group no-print"
+                        className="bg-white p-3 rounded-lg border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-400 transition-all text-left group no-print"
                       >
-                        <div className="text-2xl mb-3 group-hover:scale-110 transition-transform duration-200">
-                          {mod.icon}
+                        <div className="mb-1 group-hover:scale-110 transition-transform duration-200 text-blue-600">
+                          <Icon name={mod.icon} size={26} />
                         </div>
 
-                        <h3 className="font-bold text-slate-800 text-lg mb-1">{mod.title}</h3>
+                        <h3 className="font-bold text-slate-800 text-sm mb-0.5">{mod.title}</h3>
 
-                        <p className="text-sm text-slate-500">{mod.desc}</p>
+                        <p className="text-xs text-slate-500">{mod.desc}</p>
                       </button>
                     ))}
                   </div>

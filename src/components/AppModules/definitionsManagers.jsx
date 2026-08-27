@@ -6,6 +6,7 @@
 
 import React, {useState} from 'react';
 import { normalizeOperators, hashPassword } from '../../utils/auth';
+import { Icon } from '../Icons';
 import { SPECIAL_PAGES, CUSTOM_FIELD_TAB_OPTIONS, getSubsectionsForPage } from '../../data/specialPages';
 
 export const CustomMetadataFieldsManager = ({ customFields = [], setCustomFields }) => {
@@ -830,7 +831,7 @@ export const ScientistLoginGate = ({ operators, onLogin, onRecovery }) => {
 
           {/* Logo / branding */}
           <div className="text-center mb-8">
-            <div className="text-5xl mb-3">🔬</div>
+            <div className="text-blue-300 mb-3 flex justify-center"><Icon name="microscope" size={48} /></div>
             <h1 className="text-2xl font-black text-white tracking-tight">Lab Workspace</h1>
             <p className="text-blue-200 text-sm mt-1 font-medium">Secure access — please identify yourself</p>
           </div>

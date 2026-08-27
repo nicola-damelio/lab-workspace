@@ -14,6 +14,7 @@ export const CLASSIFICATION_MAP = {
     "Dynamics by NMR Relaxation",
     "ssNMR",
     "Diffusion by DLS",
+    "Diffusion by DOSY",
     "NMR"
   ],
   "Interactions": ["Association Constant", "Molecular Docking", "MD interactions", "Chromatography"],
@@ -30,6 +31,7 @@ export const EXPERIMENT_TYPES = [
   "Circular Dichroism",
   "NMR",
   "NMR Fitting",
+  "DOSY",
   "Solid State NMR",
   "MD Simulation",
   "Molecular Docking"

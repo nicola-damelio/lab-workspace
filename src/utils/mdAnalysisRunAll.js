@@ -45,11 +45,17 @@ export const mdAnalysisRunAll = {
     return () => { runListeners.delete(fn); };
   },
 
-  /** Fire every subscribed subsection (used by the Calculate-all button). */
-  triggerRun() {
-    runListeners.forEach((fn) => {
-      try { fn(); } catch { /* one failing subsection must not block the others */ }
-    });
+  /**
+   * Fire every subscribed subsection (used by the Calculate-all button).
+   * Runs each analysis ONE AFTER THE OTHER (awaiting the previous one) instead
+   * of all in parallel: parallel runs saturate the main thread with 4 heavy
+   * per-frame loops at once, which froze the page and hid the progress feed.
+   */
+  async triggerRun() {
+    const fns = [...runListeners];
+    for (const fn of fns) {
+      try { await fn(); } catch { /* one failing subsection must not block the others */ }
+    }
   },
 
   /** Report live progress for one analysis (key, e.g. 'general'|'dssp'|'contacts'|'profiles'). */

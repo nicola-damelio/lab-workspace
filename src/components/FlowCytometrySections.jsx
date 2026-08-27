@@ -3,13 +3,23 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LineChart, Line, ReferenceArea} from 'recharts';
 import { ChartControlBar, SharedChartStylePanel } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
-import { FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES } from '../utils/chartStyle';
+import { FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES, seriesColorFor } from '../utils/chartStyle';
 export { VIS_PALETTES };
 
 const COLORS = VIS_PALETTES.default;
 const DEFAULT_CHART_STYLE = { height: 380, aspect: 1.8, fontSize: 12, tickStep: '', tickAngle: 0, ptStyle: 'circle', ptSize: 5, lineStyle: 'solid', lineThickness: 2, legend: 'top', colors: {}, barRadius: 3, xMin: '', xMax: '', yMin: '', yMax: '', xAxisLabel: '', yAxisLabel: '' };
 // FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES now live in ../utils/chartStyle.
 // CollapsibleSection now lives in ./ui (single shared definition).
+
+// Resolve the colour of an FCS overlay series through the shared palette system:
+//   per-series overrides (style-panel colors + the page's own palette presets)
+//   → base colour (dark→light shades) → rich rainbow by default.
+// This is what makes the rainbow / "Base colour" picker actually visible here.
+const resolveFcsColor = (cfg, localColors, inst, idx, total) => {
+  const overrides = { ...((cfg && cfg.colors) || {}) };
+  Object.entries(localColors || {}).forEach(([id, c]) => { if (c) overrides[id] = c; });
+  return seriesColorFor({ ...(cfg || {}), colors: overrides }, inst.id, idx, total);
+};
 
 // =========================================================================
 // FCS BINARY PARSER 
@@ -555,9 +565,10 @@ export const FCSOverlayVisualization = ({ ctx }) => {
   }, [ctx, activeTest]);
 
   const loadedInstances = instances.filter(inst => globalFcsCache[inst.id]);
-  const visibleInstances = loadedInstances.filter(inst => !hiddenSeries[inst.id]).map((inst, idx) => {
+  const visibleList = loadedInstances.filter(inst => !hiddenSeries[inst.id]);
+  const visibleInstances = visibleList.map((inst, idx) => {
     const fcs = globalFcsCache[inst.id];
-    return { ...inst, fcs, name: fcs.filename || inst.name, color: localColors[inst.id] || COLORS[idx % COLORS.length] };
+    return { ...inst, fcs, name: fcs.filename || inst.name, color: resolveFcsColor(cfgAna, localColors, inst, idx, visibleList.length) };
   });
 
   const rawSharedParams = useMemo(() => {
@@ -687,7 +698,7 @@ export const FCSOverlayVisualization = ({ ctx }) => {
         <div ref={chartRef} onMouseDown={zoom.onMouseDown} className={`bg-slate-50 rounded border border-slate-200 p-2 select-none relative overflow-hidden cursor-crosshair ${fs ? 'flex-1 min-h-0' : 'h-[300px]'}`}>
           {zoom.isZoomed && <button type="button" onClick={zoom.reset} className="absolute top-2 right-2 z-10 text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData.bins} margin={{ top: 10, right: 10, left: 10, bottom: 20 }}>
+            <LineChart data={chartData.bins} margin={{ top: 10, right: 20, left: 75, bottom: 45 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               <XAxis dataKey="x" type="number" domain={zoom.domain} allowDataOverflow tickFormatter={(v) => v.toFixed(logScale ? 1 : 0)} tick={{ fontSize: Math.max(9, cfgAna.fontSize - 2) }} label={{ value: `${label1D}${logScale ? ' (Log)' : ''}`, position: 'insideBottom', offset: -10, fontSize: cfgAna.fontSize }} />
               <YAxis tick={{ fontSize: Math.max(9, cfgAna.fontSize - 2) }} label={{ value: 'Count', angle: -90, position: 'insideLeft', offset: -5, fontSize: cfgAna.fontSize }} />
@@ -763,9 +774,10 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
   }, [ctx, activeTest]);
 
   const loadedInstances = instances.filter(inst => globalFcsCache[inst.id]);
-  const visibleInstances = loadedInstances.filter(inst => !hiddenSeries[inst.id]).map((inst, idx) => {
+  const visibleList = loadedInstances.filter(inst => !hiddenSeries[inst.id]);
+  const visibleInstances = visibleList.map((inst, idx) => {
     const fcs = globalFcsCache[inst.id];
-    return { ...inst, fcs, name: fcs.filename || inst.name, color: localColors[inst.id] || COLORS[idx % COLORS.length] };
+    return { ...inst, fcs, name: fcs.filename || inst.name, color: resolveFcsColor({ ...cfg1D, ...cfg2D }, localColors, inst, idx, visibleList.length) };
   });
 
   const rawSharedParams = useMemo(() => {
@@ -869,6 +881,45 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
 
     return { bins, domain: [globalMin, globalMax] };
   }, [overlayParam1D, visibleInstances, log1D, gates]);
+
+  // Shared auto X/Y domain for the 2D plot — computed at the parent level so the
+  // 1D histogram and the 2D chart ALWAYS use the exact same value range (and
+  // zooming one moves the other). Mirrors the canvas's own min/max scan.
+  const autoDomain2D = useMemo(() => {
+    if (!xParam2D || !yParam2D || !visibleInstances.length) return null;
+    const tX = (val) => logX2D ? Math.log10(Math.max(0, val) + 1) : val;
+    const tY = (val) => logY2D ? Math.log10(Math.max(0, val) + 1) : val;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    visibleInstances.forEach((s) => {
+      const pX = s.fcs.params.findIndex((p) => (p.name || '').toUpperCase() === xParam2D || (p.label || '').toUpperCase() === xParam2D);
+      const pY = s.fcs.params.findIndex((p) => (p.name || '').toUpperCase() === yParam2D || (p.label || '').toUpperCase() === yParam2D);
+      if (pX < 0 || pY < 0) return;
+      for (let i = 0; i < s.fcs.numEvents; i++) {
+        let pass = true;
+        for (const g of gates) {
+          const gX = s.fcs.params.findIndex((p) => (p.name || '').toUpperCase() === g.xParam || (p.label || '').toUpperCase() === g.xParam);
+          const gY = s.fcs.params.findIndex((p) => (p.name || '').toUpperCase() === g.yParam || (p.label || '').toUpperCase() === g.yParam);
+          if (gX >= 0 && gY >= 0) {
+            const gx = g.logX ? Math.log10(Math.max(0, s.fcs.events[i * s.fcs.numParams + gX]) + 1) : s.fcs.events[i * s.fcs.numParams + gX];
+            const gy = g.logY ? Math.log10(Math.max(0, s.fcs.events[i * s.fcs.numParams + gY]) + 1) : s.fcs.events[i * s.fcs.numParams + gY];
+            if (!isPointInPoly(gx, gy, g.vertices)) { pass = false; break; }
+          }
+        }
+        if (!pass) continue;
+        const x = tX(s.fcs.events[i * s.fcs.numParams + pX]);
+        const y = tY(s.fcs.events[i * s.fcs.numParams + pY]);
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+      }
+    });
+    if (minX === Infinity) return { x: [0, 1000], y: [0, 1000] };
+    return { x: [minX, maxX], y: [minY, maxY] };
+  }, [xParam2D, yParam2D, logX2D, logY2D, visibleInstances, gates]);
+
+  // When the histogram parameter is the SAME as the 2D chart's X parameter (and
+  // the log settings match), the histogram mirrors the 2D chart's X axis exactly.
+  const histXMirrors2D = overlayParam1D === xParam2D && log1D === logX2D;
+  const histDomain = histXMirrors2D ? (xDomain2D || chartData1D.domain) : zoom1D.domain;
 
   const chartRef1D = useRef(null);
   const zoom1D = useXZoom(chartRef1D, chartData1D.domain);
@@ -975,9 +1026,9 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
             <div ref={chartRef1D} onMouseDown={zoom1D.onMouseDown} className={`bg-slate-50 rounded border border-slate-200 p-2 select-none relative overflow-hidden cursor-crosshair w-full ${fs1D ? 'flex-1 min-h-0' : 'h-[300px]'}`}>
               {zoom1D.isZoomed && <button type="button" onClick={zoom1D.reset} className="absolute top-2 right-2 z-10 text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData1D.bins} margin={{ top: 10, right: 10, left: 10, bottom: 20 }}>
+                <LineChart data={chartData1D.bins} margin={{ top: 10, right: 20, left: 75, bottom: 45 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="x" type="number" domain={zoom1D.domain} allowDataOverflow tickFormatter={(v) => v.toFixed(log1D ? 1 : 0)} tick={{ fontSize: Math.max(9, cfg1D.fontSize - 2) }} label={{ value: `${label1D}${log1D ? ' (Log)' : ''}`, position: 'insideBottom', offset: -10, fontSize: cfg1D.fontSize }} />
+                  <XAxis dataKey="x" type="number" domain={histDomain} allowDataOverflow tickFormatter={(v) => v.toFixed(log1D ? 1 : 0)} tick={{ fontSize: Math.max(9, cfg1D.fontSize - 2) }} label={{ value: `${label1D}${log1D ? ' (Log)' : ''}`, position: 'insideBottom', offset: -10, fontSize: cfg1D.fontSize }} />
                   <YAxis tick={{ fontSize: Math.max(9, cfg1D.fontSize - 2) }} label={{ value: 'Count', angle: -90, position: 'insideLeft', offset: -5, fontSize: cfg1D.fontSize }} />
                   <Tooltip labelFormatter={(label) => `Value: ${Number(label).toFixed(log1D ? 2 : 0)}`} formatter={(value) => [value, 'Events']} />
                   {visibleInstances.map(s => <Line key={s.id} type="monotone" dataKey={s.id} name={s.name} stroke={s.color} strokeWidth={cfg1D.lineThickness || 2} dot={false} isAnimationActive={false} />)}
@@ -1038,8 +1089,8 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
                gates={gates} 
                onAddGate={(g) => setGates(prev => [...prev, g])} 
                interactionMode={interactionMode}
-               xDomain={xDomain2D}
-               yDomain={yDomain2D}
+               xDomain={xDomain2D || (autoDomain2D && autoDomain2D.x) || undefined}
+               yDomain={yDomain2D || (autoDomain2D && autoDomain2D.y) || undefined}
                onZoom={({ xDomain, yDomain }) => { setXDomain2D(xDomain); setYDomain2D(yDomain); }}
             />
           </div>

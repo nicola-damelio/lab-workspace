@@ -502,7 +502,8 @@ export const MD_ANALYSIS_LAYERS = [
   { key: 'analysis_rmsd', label: 'RMSD', unit: 'nm', computed: true },
   { key: 'analysis_rg', label: 'Rg', unit: 'nm', computed: true },
   { key: 'analysis_sasa', label: 'SASA', unit: 'nm²', computed: true },
-  { key: 'analysis_scd', label: 'Order param |SCD|', unit: '', computed: true }
+  { key: 'analysis_scd', label: 'Order param |SCD|', unit: '', computed: true },
+  { key: 'analysis_dssp', label: 'DSSP α-helix occupancy', unit: '%', computed: true }
 ];
 
 export const makeMDInstanceId = () => {

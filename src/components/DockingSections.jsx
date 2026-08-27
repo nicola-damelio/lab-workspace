@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, ScatterChart, Scatter} from 'recharts';
 import {ChartControlBar, SharedChartStylePanel} from './SharedAnalysisTools';
+import { Icon } from './Icons';
 
 import NMRMoleculeViewer from './NMRMoleculeViewer';
 import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_PROGRAMS, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, getScoringFunctions, getSearchAlgorithms, parseDockingFile, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, DOCK_CHART_MARGIN} from './DockingData';
@@ -190,15 +191,22 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
     <div className="flex flex-col gap-6">
       {/* Molecule type selector */}
       <div className="flex flex-wrap gap-2 mb-2">
-        {[['protein', '🧬 Protein'], ['dna', '🧬 DNA'], ['rna', '🧬 RNA'], ['sugar', '🍬 Sugar'], ['lipid', '🫧 Lipid']].map(([val, lab]) => (
+        {[
+          { val: 'protein', icon: 'dna', label: 'Protein' },
+          { val: 'dna', icon: 'dna', label: 'DNA' },
+          { val: 'rna', icon: 'dna', label: 'RNA' },
+          { val: 'sugar', icon: 'sugar', label: 'Sugar' },
+          { val: 'lipid', icon: 'layers', label: 'Lipid' }
+        ].map(({ val, icon, label }) => (
           <button
             key={val}
             onClick={() => updateActiveTest({ moleculeType: val })}
-            className={`px-3 py-1.5 rounded-lg text-sm font-bold border transition-colors ${
+            className={`px-3 py-1.5 rounded-lg text-sm font-bold border transition-colors inline-flex items-center gap-1.5 ${
               d.moleculeType === val ? 'bg-blue-600 border-blue-700 text-white shadow' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
             }`}
           >
-            {lab}
+            <Icon name={icon} size={16} />
+            {label}
           </button>
         ))}
       </div>
@@ -238,7 +246,7 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
 
           {/* Ligand panel */}
           <div className="mt-4 bg-amber-50 border border-amber-200 rounded-xl p-4">
-            <label className="block text-xs font-bold text-amber-700 uppercase mb-3">⬡ Ligand</label>
+            <label className="block text-xs font-bold text-amber-700 uppercase mb-3 flex items-center gap-1.5"><Icon name="atom" size={14} /> Ligand</label>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div className="flex flex-col gap-1">
                 <label className="text-[10px] font-bold text-slate-500 uppercase">Ligand SMILES</label>
@@ -787,13 +795,13 @@ export const DockingParametersSection = ({ ctx }) => {
           <button
             key={s.key}
             onClick={() => updateActiveTest({ dockingStage: s.key })}
-            className={`px-3 py-1.5 rounded-lg text-sm font-bold border transition-colors ${
+            className={`px-3 py-1.5 rounded-lg text-sm font-bold border transition-colors inline-flex items-center gap-1.5 ${
               (activeTest.dockingStage || 'docking') === s.key
                 ? 'bg-blue-600 border-blue-700 text-white'
                 : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
             }`}
           >
-            {s.icon} {s.label}
+            <Icon name={s.icon} size={16} /> {s.label}
           </button>
         ))}
       </div>

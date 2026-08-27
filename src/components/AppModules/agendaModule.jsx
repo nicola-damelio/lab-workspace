@@ -4,6 +4,7 @@
    ========================================================================= */
 
 import React from 'react';
+import { Icon } from '../Icons';
 
 export const AgendaModule = ({
   currentUser, agendaOpFilter, setAgendaOpFilter, operatorNames,
@@ -34,8 +35,8 @@ export const AgendaModule = ({
       {(operatorNames || []).map((op) => (<option key={`agenda-${op}`} value={op}>{op}</option>))}
     </select>
   ) : (
-    <div className="text-sm font-semibold text-slate-700 bg-slate-100 border border-slate-200 rounded-lg px-3 py-1.5">
-      🧪 {currentUser?.name || 'You'}
+    <div className="text-sm font-semibold text-slate-700 bg-slate-100 border border-slate-200 rounded-lg px-3 py-1.5 flex items-center gap-1.5">
+      <Icon name="user" size={14} className="text-slate-400" /> {currentUser?.name || 'You'}
     </div>
   )}
 </div>
@@ -43,7 +44,7 @@ export const AgendaModule = ({
                       onClick={handlePrint}
                       className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center gap-2 shadow-sm no-print self-end"
                     >
-                      🖨️ Print / Save PDF
+                      <Icon name="printer" size={14} /> Print / Save PDF
                     </button>
                   </div>
                 </div>

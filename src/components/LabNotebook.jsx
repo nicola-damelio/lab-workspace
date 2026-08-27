@@ -6,6 +6,7 @@ import { FCSDataVisualizations } from './FlowCytometrySections';
 import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES } from '../data/testTypes';
 import { SearchableSelect } from './SearchableSelect';
 import { getTestTypeMeta, getNotebookTypeKey } from './testTypeMeta';
+import { Icon } from './Icons';
 import { NOTEBOOK_ANALYSIS_PREVIEWS, RemovablePanel, ChunkedTable, NMRSpectraPreview, PlateGridPreview, Formula2DPreview, CDSpectraChart, CloningUvSpectraChart, CloningSimChartPreview, ProteinChromatogramChart, NMR_SPECTRUM_TYPES, NMRFittingSimPreview, MDParamsPreview, MDAtomTablePreview, normalizeImagePreview } from './notebookPreviews';
 
 /* ============================================================================
@@ -66,8 +67,6 @@ const NotebookTestItem = ({
   
   const compounds = [...new Set([...(localTest.selectedCompounds || []), ...(localTest.compoundsSelected || []), ...(localTest.compound ? localTest.compound.split(',') : [])])].map(s => s.trim()).filter(Boolean);
   const plasmids = [...new Set([...(localTest.plasmids || []), ...(localTest.plasmid ? [localTest.plasmid] : [])])].filter(Boolean);
-  
-  const allImages = [...(localTest.images || []), ...(localTest.nmrSpectraImages || [])];
 
   const getMolecularFormula = () => {
     if (localTest.smiles) return localTest.smiles;
@@ -123,11 +122,21 @@ const NotebookTestItem = ({
     }).map(imgSrc);
   }, [localTest]);
 
+  // All images anywhere in the test object — including DOSY / gel / spectra /
+  // generic figure fields — so every experiment's images show up in the notebook.
+  const allImages = [...new Set([
+    ...(localTest.images || []),
+    ...(localTest.nmrSpectraImages || []),
+    ...(localTest.dosyImages || []),
+    ...(localTest.dockingImages || []),
+    ...simImgList
+  ])];
+
   return (
     <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden break-inside-avoid avoid-break mb-4">
       <div className="px-5 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <span className="text-xl">{typeIcon}</span>
+          <Icon name={typeIcon} size={22} className="text-blue-600 shrink-0" />
           <div>
             <h3 className="font-bold text-slate-800 text-sm">{localTest.name} {localTest.bestMeasurement && '⭐'}</h3>
             <p className="text-[10px] text-slate-500">
@@ -649,17 +658,18 @@ export const LabNotebook = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('date_desc');
   
-  const [imageScale, setImageScale] = useState(100);
+  const [imageScale, setImageScale] = useState(50);
 
-  // Display Toggles — all active by default
+  // Display Toggles
   const [showConditions, setShowConditions] = useState(true);
   const [showMolecularFormula, setShowMolecularFormula] = useState(true);
   const [showInstrumental, setShowInstrumental] = useState(true);
   const [showReport, setShowReport] = useState(true);
   const [showImages, setShowImages] = useState(true);
   const [showData, setShowData] = useState(true);
-  const [showDataAnalysisGraphs, setShowDataAnalysisGraphs] = useState(true);
-  const [showSimImages, setShowSimImages] = useState(true);
+  // Data-analysis graphs and simulated images are OFF by default (lightweight notebook).
+  const [showDataAnalysisGraphs, setShowDataAnalysisGraphs] = useState(false);
+  const [showSimImages, setShowSimImages] = useState(false);
   
   // Option Lists
 const primaryOptions = PRIMARY_CATEGORIES || Object.keys(CLASSIFICATION_MAP || {});
@@ -702,6 +712,7 @@ const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t =>
     "Circular Dichroism",
     "NMR",
     "NMR Fitting",
+    "DOSY",
     "Solid State NMR",
     "MD Simulation",
     "Molecular Docking"
@@ -1037,6 +1048,9 @@ const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t =>
         <style>{`
           #notebook-report-container img { display: ${showImages ? 'block' : 'none'} !important; }
           #notebook-report-container figure { display: ${showImages ? 'block' : 'none'} !important; }
+          /* Uniform 12px character size in the notebook: avoids large headings
+             mixed with tiny 9-11px labels. Applies to the whole report area. */
+          #notebook-report-container, #notebook-report-container * { font-size: 12px !important; }
         `}</style>
         <div id="notebook-report-container" className="flex flex-col gap-4 max-w-5xl mx-auto">
           {filteredTests.length === 0 ? (

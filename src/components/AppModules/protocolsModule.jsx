@@ -7,6 +7,7 @@ import React from 'react';
 import { RichTextEditor } from '../RichTextEditor';
 import { BrukerPulseSequenceViewer } from '../DefinitionsExtra';
 import { getDirectImageUrl } from '../../data/constants';
+import { Icon } from '../Icons';
 
 export const ProtocolsModule = ({
   datasetProtocols, expandedGroups, handlePrint, nmrExperiments,
@@ -629,7 +630,7 @@ const getProtocolImageFallback = (url) => {
                           onClick={handlePrint}
                           className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 shadow-sm flex-1 md:flex-none"
                         >
-                          🖨️ PDF
+                          <Icon name="printer" size={14} /> PDF
                         </button>
 
                         <button
@@ -839,20 +840,20 @@ const newProto = {
         }}
         className="mt-3 self-start bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm transition-colors flex items-center gap-1"
       >
-        🎛️ {proto.linkedPulseProgramName}
+        <Icon name="gear" size={14} className="text-blue-600" /> {proto.linkedPulseProgramName}
       </button>
     )}
 
     <div className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap gap-x-4 gap-y-2 text-xs font-bold text-slate-500">
       <span className="flex items-center gap-1">
-        🔗 {(proto.links || []).length} Links
+        <Icon name="link" size={13} /> {(proto.links || []).length} Links
       </span>
       <span className="flex items-center gap-1">
-        📝 {proto.content ? 'Has Content' : 'Empty'}
+        <Icon name="document" size={13} /> {proto.content ? 'Has Content' : 'Empty'}
       </span>
       {proto.linkedPulseProgramName && (
         <span className="flex items-center gap-1 text-blue-600">
-          📡 Pulse Linked
+          <Icon name="external" size={13} /> Pulse Linked
         </span>
       )}
     </div>

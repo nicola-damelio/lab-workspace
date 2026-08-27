@@ -19,7 +19,7 @@ const LABEL_CLS = 'text-[10px] font-bold text-slate-500 uppercase';
 const INPUT_CLS =
   'border border-slate-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-500 bg-white';
 
-export const NMRInstrumentalSetup = ({ ctx }) => {
+export const NMRInstrumentalSetup = ({ ctx, hideOperator = false, extraFields = null }) => {
   const {
     activeTest = {},
     updateActiveTest
@@ -161,24 +161,26 @@ export const NMRInstrumentalSetup = ({ ctx }) => {
           />
         </div>
 
-        <div className="flex flex-col gap-1">
-          <label className={LABEL_CLS}>Operator</label>
-          <select
-            value={activeTest.operator || ''}
-            onChange={(e) => update({ operator: e.target.value })}
-            className={INPUT_CLS}
-          >
-            <option value="">—</option>
-            {operators.map((op, idx) => {
-              const name = operatorLabel(op);
-              return (
-                <option key={name || idx} value={name}>
-                  {name}
-                </option>
-              );
-            })}
-          </select>
-        </div>
+        {!hideOperator && (
+          <div className="flex flex-col gap-1">
+            <label className={LABEL_CLS}>Operator</label>
+            <select
+              value={activeTest.operator || ''}
+              onChange={(e) => update({ operator: e.target.value })}
+              className={INPUT_CLS}
+            >
+              <option value="">—</option>
+              {operators.map((op, idx) => {
+                const name = operatorLabel(op);
+                return (
+                  <option key={name || idx} value={name}>
+                    {name}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+        )}
 
         <div className="flex flex-col gap-1">
           <label className={LABEL_CLS}>Temperature</label>
@@ -270,7 +272,7 @@ export const NMRInstrumentalSetup = ({ ctx }) => {
                   </button>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                <div className={`grid grid-cols-1 md:grid-cols-${hideOperator ? '3' : '4'} gap-2`}>
                   <div className="flex flex-col gap-1">
                     <label className={LABEL_CLS}>Experiment Number</label>
                     <input
@@ -309,38 +311,40 @@ export const NMRInstrumentalSetup = ({ ctx }) => {
                     />
                   </div>
 
-                  <div className="flex flex-col gap-1">
-                    <label className={LABEL_CLS}>Operator</label>
-                    {operators.length > 0 ? (
-                      <select
-                        value={ds.operator || ''}
-                        onChange={(e) =>
-                          patchDataset(ds.id, { operator: e.target.value })
-                        }
-                        className={INPUT_CLS}
-                      >
-                        <option value="">—</option>
-                        {operators.map((op, idx) => {
-                          const name = operatorLabel(op);
-                          return (
-                            <option key={name || idx} value={name}>
-                              {name}
-                            </option>
-                          );
-                        })}
-                      </select>
-                    ) : (
-                      <input
-                        type="text"
-                        value={ds.operator || ''}
-                        onChange={(e) =>
-                          patchDataset(ds.id, { operator: e.target.value })
-                        }
-                        className={INPUT_CLS}
-                        placeholder="Operator name"
-                      />
-                    )}
-                  </div>
+                  {!hideOperator && (
+                    <div className="flex flex-col gap-1">
+                      <label className={LABEL_CLS}>Operator</label>
+                      {operators.length > 0 ? (
+                        <select
+                          value={ds.operator || ''}
+                          onChange={(e) =>
+                            patchDataset(ds.id, { operator: e.target.value })
+                          }
+                          className={INPUT_CLS}
+                        >
+                          <option value="">—</option>
+                          {operators.map((op, idx) => {
+                            const name = operatorLabel(op);
+                            return (
+                              <option key={name || idx} value={name}>
+                                {name}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      ) : (
+                        <input
+                          type="text"
+                          value={ds.operator || ''}
+                          onChange={(e) =>
+                            patchDataset(ds.id, { operator: e.target.value })
+                          }
+                          className={INPUT_CLS}
+                          placeholder="Operator name"
+                        />
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex flex-col gap-1">
@@ -372,6 +376,8 @@ export const NMRInstrumentalSetup = ({ ctx }) => {
           </div>
         )}
       </div>
+
+      {extraFields}
 
       <p className="text-[10px] text-slate-400">
         NMR instrumental setup and datasets are saved per active condition.

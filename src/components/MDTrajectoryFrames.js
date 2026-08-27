@@ -16,7 +16,7 @@ import { ensureNGL } from '../utils/ngl';
 
 /* ------------------------------ TRR reader ------------------------------ */
 
-export async function* readTrrFrames(file) {
+export async function* readTrrFrames(file, onProgress) {
   const ab = await file.arrayBuffer();
   const dv = new DataView(ab);
   let off = 0, frameIdx = 0;
@@ -45,7 +45,10 @@ export async function* readTrrFrames(file) {
     }
     off += v_size + f_size;
     frameIdx++;
-    if (xyz) yield { xyz, box };
+    if (xyz) {
+      yield { xyz, box };
+      if (onProgress && (frameIdx % 50 === 0)) onProgress(frameIdx);
+    }
   }
 };
 
@@ -139,6 +142,9 @@ const nglTrajectoryFrames = async (file, ext, topoAtoms, topoBoxNm, onStatus, ma
       }
       yield { xyz, box };
       read++;
+      if (onStatus && (read % 50 === 0 || read === indices.length)) {
+        onStatus(`Parsing trajectory frames… ${read} / ${indices.length}`);
+      }
     }
     if (read === 0) throw new Error('Trajectory contained no readable frames.');
   })();
@@ -153,7 +159,7 @@ export const resolveFrameSource = async (file, opts = {}) => {
   const { topoAtoms, topologyBox, onStatus, maxFrames } = opts;
 
   if (name.endsWith('.trr')) {
-    return { frames: readTrrFrames(file), numframes: null, source: 'native TRR' };
+    return { frames: readTrrFrames(file, onStatus ? (n) => onStatus(`Parsing trajectory frames… ${n} parsed`) : undefined), numframes: null, source: 'native TRR' };
   }
   const ext = name.endsWith('.xtc') ? 'xtc' : name.endsWith('.dcd') ? 'dcd' : null;
   if (ext && Array.isArray(topoAtoms) && topoAtoms.length > 0) {

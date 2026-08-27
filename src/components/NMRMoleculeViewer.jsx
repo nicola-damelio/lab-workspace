@@ -3,6 +3,30 @@ import { ensureNGL } from '../utils/ngl';
 import { readXtcFrames, countXtcFrames, countXtcFramesInFile } from '../utils/xtcDecoder';
 import { abortControl } from '../utils/abortControl';
 
+/* ---- Shared "Assigned atoms" highlight flag ---------------------------------
+   The green "assigned atoms" highlight is shown both on the 3D molecule viewer
+   (ball+stick representation) and on the SIMULATED SPECTRA (green marks on the
+   peaks of manually-assigned atoms). Both read this one flag, so the single
+   "🟢 Assigned atoms ON/OFF" button controls them together. */
+let showAssignedFlag = true;
+const assignedListeners = new Set();
+
+export const getShowAssignedFlag = () => showAssignedFlag;
+
+export const setShowAssignedFlag = (v) => {
+  showAssignedFlag = !!v;
+  assignedListeners.forEach((fn) => { try { fn(showAssignedFlag); } catch {} });
+};
+
+export const useShowAssignedFlag = () => {
+  const [v, setV] = useState(getShowAssignedFlag());
+  useEffect(() => {
+    assignedListeners.add(setV);
+    return () => { assignedListeners.delete(setV); };
+  }, []);
+  return v;
+};
+
 // ---- Trajectory frame selection -------------------------------------------
 // Frame COUNT is what matters (not file size). Before parsing a trajectory the
 // user is always asked how to load it: the full trajectory, the default of
@@ -494,7 +518,7 @@ const [pdbId, setPdbId] = useState('');
 const [loadRequest, setLoadRequest] = useState(null);
 const [status, setStatus] = useState('idle');
 const [errorMsg, setErrorMsg] = useState('');
-const [showManualHighlight, setShowManualHighlight] = useState(true); // green "assigned" atoms toggle
+const showManualHighlight = useShowAssignedFlag(); // green "assigned" atoms toggle (shared with the simulated spectra)
 const [hoverInfo, setHoverInfo] = useState(null);
 const [showLabels, setShowLabels] = useState(false);
 const [sidechainStyle, setSidechainStyle] = useState('licorice');
@@ -838,6 +862,13 @@ setStatus('loading');
 setErrorMsg('');
 setTrajFile(null);
 setTrajStatus('none');
+// Release the global ⏹ Stop registration as soon as the structure finishes
+// loading (success or error) — otherwise the red "Stop (structure loading)"
+// pill stays visible forever after a completed load.
+const finishStructLoad = () => {
+  unregisterAbort();
+  if (abortRef.current && abortRef.current.token === abortToken) abortRef.current = null;
+};
 setNumFrames(0);
 setCurrentFrame(0);
 setPlaying(false);
@@ -937,10 +968,12 @@ if (!(component.structure ? component.structure.atomCount : 0)) {
 throw new Error('The structure loaded but contains no atoms (empty/invalid file content).');
 }
 setStatus('ready');
+finishStructLoad();
 } catch (err) {
 if (!cancelled) {
 const raw = (err && err.message ? String(err.message) : '').trim();
 setErrorMsg(raw || 'Failed to load structure.');
+finishStructLoad();
 setStatus('error');
 }
 }
@@ -992,6 +1025,14 @@ setNumFrames(0);
 setTrajTotal(0);
 setCurrentFrame(0);
 setPlaying(false);
+
+// Release the global ⏹ Stop registration as soon as the trajectory finishes
+// (success or failure) — otherwise the red "Stop (trajectory loading)" pill
+// stays visible forever after a completed load.
+const finishTrajLoad = () => {
+  unregisterAbort();
+  if (abortRef.current && abortRef.current.token === abortToken) abortRef.current = null;
+};
 
 const initTraj = async () => {
 try {
@@ -1061,6 +1102,7 @@ if (ext === 'xtc' && srcFile) {
   try { if (typeof traj._setFrameCount === 'function') traj._setFrameCount(done); } catch {}
   setCurrentFrame(0);
   setTrajStatus('ready');
+  finishTrajLoad();
   return;
 }
 
@@ -1089,6 +1131,7 @@ if (initialFrames > 0) {
 setNumFrames(initialFrames);
 setCurrentFrame(0);
 setTrajStatus('ready');
+finishTrajLoad();
 } else {
 const checkInterval = setInterval(() => {
 const nf = getNumFrames(traj);
@@ -1096,6 +1139,7 @@ if (nf > 0) {
 setNumFrames(nf);
 setCurrentFrame(0);
 setTrajStatus('ready');
+finishTrajLoad();
 clearInterval(checkInterval);
 }
 }, 250);
@@ -1104,6 +1148,7 @@ clearInterval(checkInterval);
 if (getNumFrames(traj) === 0 && !cancelled) {
 setTrajStatus('error');
 setTrajError('Trajectory loaded but contains 0 frames. Verify that the PDB and XTC have the exact same atom count.');
+finishTrajLoad();
 }
 }, 10000);
 }
@@ -1114,6 +1159,7 @@ throw new Error('Could not attach trajectory');
 if (!cancelled) {
 setTrajStatus('error');
 setTrajError(err?.message || 'Failed to load trajectory. Check matching atom count.');
+finishTrajLoad();
 }
 }
 };
@@ -1736,7 +1782,7 @@ className="hidden"
 </label>
 <button
 type="button"
-onClick={() => setShowManualHighlight((v) => !v)}
+onClick={() => setShowAssignedFlag(!showManualHighlight)}
 className={`text-[10px] font-bold px-3 py-2 rounded-lg border transition-colors ${showManualHighlight ? 'bg-green-50 border-green-300 text-green-700' : 'bg-slate-100 border-slate-300 text-slate-500'}`}
 title="Show / hide the green highlight on manually assigned atoms"
 >

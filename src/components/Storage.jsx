@@ -1,6 +1,7 @@
 import React from 'react';
 import { getDirectImageUrl, BOX_ROW_LABELS, DEF_COMPOUNDS } from '../data/constants';
 import { RichTextEditor } from './RichTextEditor';
+import { Icon } from './Icons';
 
 // Helper to bypass Google Drive CORS blocks
 const getProxiedImage = (url) => {
@@ -122,7 +123,7 @@ export const StorageModals = ({ storageModal, setStorageModal, storages, setStor
                                                     <span className="absolute top-0.5 left-1 text-[8px] font-bold text-slate-400">{i + 1}</span>
                                                     {boxesInSlot.length > 0 ? (
                                                         <>
-                                                            <span className="text-lg">📦</span>
+                                                            <span className="text-indigo-500"><Icon name="box" size={20} /></span>
                                                             <span className="text-[8px] font-bold text-orange-800 truncate w-full">{boxesInSlot[0].name}</span>
                                                             {boxesInSlot.length > 1 && <span className="text-[8px] bg-orange-200 px-1 rounded">+{boxesInSlot.length - 1}</span>}
                                                         </>
@@ -152,7 +153,7 @@ export const StorageList = ({ storages, tests, setStorageModal, setActiveStorage
                 </div>
                 <div className="flex gap-2 no-print">
                     <button onClick={handlePrint} className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center gap-2 shadow-sm">
-                        🖨️ Print / Save PDF
+                        <Icon name="printer" size={14} /> Print / Save PDF
                     </button>
                     <button onClick={() => setStorageModal({})} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-6 rounded-lg shadow-sm text-sm transition-colors flex items-center gap-2">
                         ➕ Add Storage
@@ -188,7 +189,7 @@ export const StorageList = ({ storages, tests, setStorageModal, setActiveStorage
                                     <h3 className="font-bold text-slate-800 text-lg truncate pr-6">{st.name}</h3>
                                     <p className="text-xs text-slate-500 mt-1 font-medium">Grid: {st.rows} rows × {st.cols} cols ({totalSlots} slots)</p>
                                     <div className="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center text-xs font-bold">
-                                        <span className="text-slate-500">📦 {boxesInStorage.length} Boxes Stored</span>
+                                        <span className="text-slate-500 flex items-center gap-1"><Icon name="box" size={13} /> {boxesInStorage.length} Boxes Stored</span>
                                         <span className={boxesInStorage.length >= totalSlots ? 'text-red-500' : 'text-emerald-600'}>{Math.round((boxesInStorage.length / totalSlots) * 100)}% Full</span>
                                     </div>
                                 </div>
@@ -224,15 +225,15 @@ export const StorageDetail = ({ storages, activeStorageId, tests, setTests, setC
                 <div className="flex items-center gap-4">
                     <button onClick={() => setCurrentModule('storage')} className="text-slate-400 hover:text-indigo-600 transition-colors bg-white p-2 rounded-lg shadow-sm border border-slate-200 no-print">◀ Back</button>
                     <div>
-                        <h2 className="text-2xl font-black text-slate-800 flex items-center gap-2">{st.type === 'Refrigerator' ? '❄️' : st.type === 'Freezer' ? '🧊' : '🚪'} {st.name}</h2>
+                        <h2 className="text-2xl font-black text-slate-800 flex items-center gap-2"><Icon name="box" size={26} className="text-indigo-500" /> {st.name}</h2>
                         <p className="text-sm text-slate-500">Capacity: {st.rows * st.cols} slots. Click an empty slot to add a box.</p>
                     </div>
                 </div>
                 <div className="flex gap-2 no-print">
                     <button onClick={handlePrint} className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center gap-2 shadow-sm">
-                        🖨️ Print / Save PDF
+                        <Icon name="printer" size={14} /> Print / Save PDF
                     </button>
-                    <button onClick={() => handleAddBox()} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-6 rounded-lg shadow-sm text-sm transition-colors flex items-center gap-2">📦 Add Box Here</button>
+                    <button onClick={() => handleAddBox()} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-6 rounded-lg shadow-sm text-sm transition-colors flex items-center gap-2"><Icon name="box" size={14} /> Add Box Here</button>
                 </div>
             </div>
             <div className="flex-1 flex flex-col xl:flex-row gap-6 min-h-0">
@@ -261,7 +262,7 @@ export const StorageDetail = ({ storages, activeStorageId, tests, setTests, setC
                                         <span className="absolute top-1 left-1.5 text-[9px] font-black text-slate-300 select-none">{i+1}</span>
                                         {box ? (
                                             <React.Fragment>
-                                                <span className="text-2xl mb-1 drop-shadow-sm">📦</span>
+                                                <span className="text-indigo-500 mb-1"><Icon name="box" size={26} /></span>
                                                 <span className="text-[10px] font-bold text-indigo-900 leading-tight w-full truncate">{box.name}</span>
                                                 <span className="text-[9px] text-slate-500 truncate w-full">{box.instanceName || box.date}</span>
                                                 <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20 no-print">
@@ -476,7 +477,7 @@ const printBoxLabel = () => {
             {TestHeader}
             <div className="flex-1 overflow-y-auto custom-scrollbar p-6" onMouseUp={() => { if(boxDragState.active) setVal('boxDragState', { active: false, startR: -1, startC: -1 }); }}>
                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col mb-6">
-                    <label className="text-xs font-bold text-slate-600 mb-2">📝 General Box Notes</label>
+                    <label className="text-xs font-bold text-slate-600 mb-2 flex items-center gap-1"><Icon name="document" size={13} /> General Box Notes</label>
                     <RichTextEditor value={activeTest.comments || ''} onChange={val => updateActiveTest({comments: val})} placeholder="Add general box notes here..." />
                 </div>
                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap gap-4 items-center mb-6 no-print">
@@ -556,7 +557,7 @@ const printBoxLabel = () => {
                         </div>
                         <div className="flex gap-3">
                             <button onClick={() => setVal('selectedWells', [])} disabled={selectedWells.length === 0} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 font-bold border border-slate-300 rounded-lg disabled:opacity-50 transition-colors shadow-sm">Clear Selection</button>
-                            <button onClick={printBoxLabel} disabled={selectedWells.length === 0} className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-sm disabled:opacity-50 flex items-center gap-2 transition-colors">🖨️ Print Label</button>
+                            <button onClick={printBoxLabel} disabled={selectedWells.length === 0} className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-sm disabled:opacity-50 flex items-center gap-2 transition-colors"><Icon name="printer" size={14} /> Print Label</button>
                         </div>
                     </div>
                     {selectedWells.length === 0 ? (

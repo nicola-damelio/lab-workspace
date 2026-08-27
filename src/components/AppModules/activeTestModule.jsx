@@ -6,6 +6,7 @@
 import React, { lazy } from 'react';
 import { BoxDetail } from '../Storage';
 import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES, EXPERIMENT_TYPES } from '../../data/testTypes';
+import { Icon } from '../Icons';
 // Lazy renderers (kept as dynamic imports so each stays its own chunk).
 const NMRTestRenderer = lazy(() => import('../NMRTestRenderer').then(m => ({ default: m.NMRTestRenderer })));
 const PlateTestRenderer = lazy(() => import('../PlateTestRenderer').then(m => ({ default: m.PlateTestRenderer })));
@@ -28,6 +29,7 @@ export const ActiveTestModule = ({
   solvents, storages, testCategories, tests, unlockedTestIds,
   MDTestRenderer
 }) => {
+                const dragInstanceId = React.useRef(null); // dragged instance tab (for reordering)
                 const activeTest = tests.find((t) => t.id === activeTestId);
 
                 if (!activeTest) return <div className="p-6">Test not found.</div>;
@@ -54,7 +56,46 @@ export const ActiveTestModule = ({
                   ? []
                   : tests
                       .filter((t) => t.name === activeTest.name && t.name.trim() !== '')
-                      .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+                      .sort((a, b) => {
+                        // User-dragged order (instanceOrder) wins; fall back to date
+                        // order for datasets that never had an explicit order.
+                        const oa = a.instanceOrder;
+                        const ob = b.instanceOrder;
+                        const hasA = Number.isFinite(oa);
+                        const hasB = Number.isFinite(ob);
+                        if (hasA && hasB) return oa - ob;
+                        if (hasA) return -1;
+                        if (hasB) return 1;
+                        return (a.date || '').localeCompare(b.date || '');
+                      });
+
+                // Reorder the sibling conditions by dragging a tab onto another one.
+                const reorderInstances = (dragId, targetId) => {
+                  if (!dragId || dragId === targetId) return;
+                  setTests((prev) => {
+                    const drag = prev.find((x) => x.id === dragId);
+                    const target = prev.find((x) => x.id === targetId);
+                    if (!drag || !target || drag.name !== target.name || !drag.name.trim()) return prev;
+                    const ordered = prev
+                      .filter((x) => x.name === drag.name && x.name.trim() !== '')
+                      .sort((a, b) => {
+                        const oa = a.instanceOrder; const ob = b.instanceOrder;
+                        const hasA = Number.isFinite(oa); const hasB = Number.isFinite(ob);
+                        if (hasA && hasB) return oa - ob;
+                        if (hasA) return -1;
+                        if (hasB) return 1;
+                        return (a.date || '').localeCompare(b.date || '');
+                      });
+                    const from = ordered.findIndex((x) => x.id === dragId);
+                    const to = ordered.findIndex((x) => x.id === targetId);
+                    if (from < 0 || to < 0) return prev;
+                    ordered.splice(from, 1);
+                    ordered.splice(to, 0, drag);
+                    const orderMap = {};
+                    ordered.forEach((x, i) => { orderMap[x.id] = i; });
+                    return prev.map((x) => (orderMap[x.id] !== undefined ? { ...x, instanceOrder: orderMap[x.id] } : x));
+                  });
+                };
 
                 const jumpToProtocolFn = (id) => {
                   setExpandedGroups((p) => ({ ...p, activeProtoId: id }));
@@ -90,7 +131,7 @@ export const ActiveTestModule = ({
 
 const TestHeader = (
                   <div className="flex flex-col shrink-0 z-20 no-print">
-                    <div className="bg-white border-b border-slate-200 px-4 md:px-6 py-4 flex flex-col lg:flex-row justify-between items-start lg:items-center shadow-sm gap-4">
+                    <div className="bg-white border-b border-slate-200 px-4 py-2 flex flex-col lg:flex-row justify-between items-start lg:items-center shadow-sm gap-2">
                       <div className="flex flex-col md:flex-row md:items-center gap-3 md:gap-4 w-full lg:w-auto">
                         <button
                           onClick={() => {
@@ -110,11 +151,11 @@ const TestHeader = (
                           <input
                             value={activeTest.name}
                             onChange={(e) => updateActiveTest({ name: e.target.value })}
-                            className="text-xl font-black text-slate-800 bg-transparent border-none outline-none focus:ring-1 focus:ring-blue-500 rounded px-1 w-full md:w-64"
+                            className="text-base font-black text-slate-800 bg-transparent border-none outline-none focus:ring-1 focus:ring-blue-500 rounded px-1 w-full md:w-64"
                             placeholder="Test Name"
                           />
 
-                          <div className="text-xs text-slate-500 font-medium px-1 mt-1 flex flex-wrap items-center gap-2">
+                          <div className="text-[11px] text-slate-500 font-medium px-1 mt-0.5 flex flex-wrap items-center gap-1.5">
                             {activeTest.testCategory && (
                               <span className="uppercase text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
                                 {activeTest.testCategory}
@@ -148,7 +189,7 @@ const TestHeader = (
                           }}
                           className="bg-red-50 text-red-600 hover:bg-red-100 hover:border-red-300 font-bold py-2 px-3 rounded-lg text-xs transition-colors border border-red-200 shadow-sm"
                         >
-                          🗑️ Elimina
+                          <Icon name="trash" size={14} /> Elimina
                         </button>
                         
 <React.Fragment>
@@ -160,7 +201,7 @@ const TestHeader = (
       <select
         value={activeTest.boxOwner || ''}
         onChange={(e) => updateActiveTest({ boxOwner: e.target.value })}
-        className="bg-slate-50 border border-slate-200 text-xs px-2 py-2 rounded-lg outline-none focus:border-blue-500"
+        className="bg-slate-50 border border-slate-200 text-xs px-2 py-1.5 rounded-lg outline-none focus:border-blue-500"
       >
         <option value="">Select Box Owner...</option>
         {operatorNames.map((op) => (<option key={`owner-${op}`} value={op}>{op}</option>))}
@@ -175,7 +216,7 @@ const TestHeader = (
       <select
         value={activeTest.operator || ''}
         onChange={(e) => updateActiveTest({ operator: e.target.value })}
-        className="bg-slate-50 border border-slate-200 text-xs px-2 py-2 rounded-lg outline-none focus:border-blue-500"
+        className="bg-slate-50 border border-slate-200 text-xs px-2 py-1.5 rounded-lg outline-none focus:border-blue-500"
       >
         <option value="">Select Scientist...</option>
         {operatorNames.map((op) => (<option key={`sci-${op}`} value={op}>{op}</option>))}
@@ -227,7 +268,7 @@ const TestHeader = (
                              secondaryCategory: '' 
                            });
                          }}
-                         className="bg-slate-50 border border-slate-200 text-xs px-2 py-2 rounded-lg outline-none focus:border-blue-500"
+                         className="bg-slate-50 border border-slate-200 text-xs px-2 py-1.5 rounded-lg outline-none focus:border-blue-500"
                        >
                          <option value="">Select...</option>
                          {PRIMARY_CATEGORIES.map((cat) => (
@@ -242,7 +283,7 @@ const TestHeader = (
                        <select
                          value={activeTest.secondaryCategory || ''}
                          onChange={(e) => updateActiveTest({ secondaryCategory: e.target.value })}
-                         className="bg-slate-50 border border-slate-200 text-xs px-2 py-2 rounded-lg outline-none focus:border-blue-500"
+                         className="bg-slate-50 border border-slate-200 text-xs px-2 py-1.5 rounded-lg outline-none focus:border-blue-500"
                          disabled={!activeTest.testCategory || !CLASSIFICATION_MAP[activeTest.testCategory]}
                        >
                          <option value="">Select...</option>
@@ -274,7 +315,7 @@ const TestHeader = (
                            activeTest.type === 'flow_cytometry' ? 'Flow Cytometry' : 'Multiwell plate essay'
                          }
                             disabled
-                            className="bg-slate-100 border border-slate-200 text-xs px-2 py-2 rounded-lg outline-none text-slate-500 cursor-not-allowed"
+                            className="bg-slate-100 border border-slate-200 text-xs px-2 py-1.5 rounded-lg outline-none text-slate-500 cursor-not-allowed"
                           >
                             {EXPERIMENT_TYPES.map(type => (
                               <option key={type} value={type}>{type}</option>
@@ -290,7 +331,7 @@ const TestHeader = (
                             type="text"
                             value={activeTest.instanceName || ''}
                             onChange={(e) => updateActiveTest({ instanceName: e.target.value })}
-                            className="bg-slate-50 border border-slate-200 text-xs px-2 py-2 rounded-lg outline-none focus:border-blue-500"
+                            className="bg-slate-50 border border-slate-200 text-xs px-2 py-1.5 rounded-lg outline-none focus:border-blue-500"
                             placeholder="e.g. 24h / Rep 1"
                           />
                         </div>
@@ -303,7 +344,7 @@ const TestHeader = (
                             type="date"
                             value={activeTest.date}
                             onChange={(e) => updateActiveTest({ date: e.target.value })}
-                            className="bg-slate-50 border border-slate-200 text-xs px-2 py-2 rounded-lg outline-none focus:border-blue-500"
+                            className="bg-slate-50 border border-slate-200 text-xs px-2 py-1.5 rounded-lg outline-none focus:border-blue-500"
                           />
                         </div>
                         
@@ -324,20 +365,35 @@ const TestHeader = (
                     {siblingTests.length > 0 && (
                       <div className="bg-blue-50 border-b border-blue-200 px-4 md:px-6 py-2 flex items-center overflow-x-auto custom-scrollbar gap-2 shadow-inner">
                         <span className="text-[10px] font-bold text-blue-800 uppercase tracking-wide mr-2 shrink-0">
-                          📅 Date / Conditions:
+                          <Icon name="calendar" size={12} className="mr-1 text-blue-700" /> Date / Conditions:
                         </span>
 
                         {siblingTests.map((t, idx) => (
                           <button
                             key={t.id}
+                            draggable={siblingTests.length > 1}
+                            onDragStart={(e) => {
+                              dragInstanceId.current = t.id;
+                              e.dataTransfer.effectAllowed = 'move';
+                              try { e.dataTransfer.setData('text/plain', t.id); } catch {}
+                            }}
+                            onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const dragId = dragInstanceId.current || e.dataTransfer.getData('text/plain');
+                              reorderInstances(dragId, t.id);
+                            }}
                             onClick={() => setActiveTestId(t.id)}
-                            className={`shrink-0 px-3 py-1.5 md:py-1 text-xs font-bold rounded-full transition-colors flex items-center gap-1.5 shadow-sm group ${
+                            className={`shrink-0 px-3 py-1.5 md:py-1 text-xs font-bold rounded-full transition-colors flex items-center gap-1.5 shadow-sm group cursor-grab active:cursor-grabbing ${
                               activeTestId === t.id
                                 ? 'bg-blue-600 text-white'
                                 : 'bg-white text-blue-700 border border-blue-300 hover:bg-blue-100'
                             }`}
+                            title={siblingTests.length > 1 ? 'Drag to reorder conditions' : undefined}
                           >
-                            📅 {t.instanceName || t.date || `Cond ${idx + 1}`}
+                            <span className="opacity-40 text-[9px] mr-0.5" aria-hidden="true">⠿</span>
+                            <Icon name="calendar" size={12} className="mr-1 text-blue-700" /> {t.instanceName || t.date || `Cond ${idx + 1}`}
 
                             {siblingTests.length > 1 && (
                               <span

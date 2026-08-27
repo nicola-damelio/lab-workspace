@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { BASE_COLOR_SWATCHES, shadesFromColor, rainbowColors } from '../utils/chartStyle';
+import { Icon } from './Icons';
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -320,7 +321,7 @@ export const ChartPanel = ({
         <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-3 flex flex-col min-h-0 ${isFs ? CHART_FS_CLASSES : ''} ${className}`}>
             <div className="flex items-center justify-between flex-wrap gap-2 mb-2 shrink-0">
                 <div className="flex items-center gap-2 min-w-0">
-                    {icon && <span className="text-base shrink-0">{icon}</span>}
+                    {icon && <Icon name={icon} size={18} className="shrink-0 text-slate-500" />}
                     <h4 className="text-sm font-bold text-slate-700 truncate">{title}</h4>
                 </div>
                 <div className="ml-auto flex flex-wrap items-center gap-2">
