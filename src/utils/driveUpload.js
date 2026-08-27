@@ -263,6 +263,58 @@ export const markDriveFileDeleted = async (fileId) => {
   }
 };
 
+// ── Google Identity Services (proper Drive access) ─────────────────────────
+// The standard Firebase Google sign-in cannot get the drive.file scope from
+// Google. If GOOGLE_DRIVE_CLIENT_ID is configured, we use Google Identity
+// Services to request a real Drive-access token.
+import { GOOGLE_DRIVE_CLIENT_ID } from '../data/constants';
+
+export const getConfiguredDriveClientId = () =>
+  String(GOOGLE_DRIVE_CLIENT_ID || '').trim();
+
+let gisLoaded = false;
+const loadGis = () =>
+  new Promise((resolve, reject) => {
+    if (window.google && window.google.accounts) return resolve();
+    if (gisLoaded) return resolve();
+    gisLoaded = true;
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client';
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('Could not load the Google sign-in script.'));
+    document.head.appendChild(s);
+  });
+
+/** Request a Drive-access token via Google Identity Services (needs a configured client id). */
+export const connectDriveWithGis = async () => {
+  const clientId = getConfiguredDriveClientId();
+  if (!clientId) return false;
+  try { await loadGis(); } catch { return false; }
+  return new Promise((resolve) => {
+    try {
+      const client = window.google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: 'https://www.googleapis.com/auth/drive.file',
+        callback: (resp) => {
+          if (resp && resp.access_token) {
+            setDriveToken(resp.access_token);
+            resolve(true);
+          } else {
+            clearDriveToken();
+            resolve(false);
+          }
+        },
+        error_callback: () => { clearDriveToken(); resolve(false); }
+      });
+      client.requestAccessToken();
+    } catch {
+      clearDriveToken();
+      resolve(false);
+    }
+  });
+};
+
 /**
  * Mark every Google Drive file referenced by a value (test / project and all
  * of its attachments) as deleted by appending "_deleted" to its name.

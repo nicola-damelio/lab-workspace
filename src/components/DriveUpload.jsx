@@ -34,6 +34,8 @@ export const DriveUploadButton = ({
   const [lastFile, setLastFile] = useState(null);
   const [lastDrive, setLastDrive] = useState(null);
   const [lastDriveError, setLastDriveError] = useState('');
+  const [lastDataUrl, setLastDataUrl] = useState('');
+  const [lastFileName, setLastFileName] = useState('');
 
   const upload = async (file) => {
     if (!file) return;
@@ -65,11 +67,15 @@ export const DriveUploadButton = ({
 
       if (drive) {
         setStatus('drive');
+        setLastDataUrl('');
+        setLastFileName('');
         if (onDone) onDone({ name, file, drive, mimeType, dataUrl: null });
       } else {
         // Temporary in-app copy — the file still works, but warn for big files.
         const dataUrl = await readFileAsDataURL(file);
         setStatus('local');
+        setLastDataUrl(dataUrl);
+        setLastFileName(name);
         if (onDone) onDone({ name, file, drive: null, mimeType, dataUrl });
       }
     } catch (err) {
@@ -89,6 +95,16 @@ export const DriveUploadButton = ({
 
   const connectDrive = () => {
     try { window.dispatchEvent(new CustomEvent('lab:connect-drive')); } catch { /* ignore */ }
+  };
+
+  const downloadLocal = () => {
+    if (!lastDataUrl || !lastFileName) return;
+    const a = document.createElement('a');
+    a.href = lastDataUrl;
+    a.download = lastFileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   };
 
   const bigFile = status === 'local' && lastFile && lastFile.size > 3 * 1024 * 1024;
@@ -125,14 +141,20 @@ export const DriveUploadButton = ({
       {status === 'local' && (
         <span className="text-[10px] font-bold text-amber-600">
           {lastDriveError ? (
-            <>Drive upload failed ({lastDriveError}) — file kept locally. </> 
+            <>Drive saving unavailable — file kept locally. </> 
           ) : (
             <>{bigFile ? '⚠ Large file kept locally (temporary) — ' : '⚠ Stored locally (temporary) — '}</>
           )}
           <button type="button" onClick={connectDrive} className="underline hover:text-amber-800">
             {lastDriveError ? 'reconnect Google Drive' : 'connect Google Drive'}
           </button>{' '}
-          to auto-save it, then upload again.
+          to auto-save it{lastFileName ? (
+            <>, or <button type="button" onClick={downloadLocal} className="underline hover:text-amber-800">⬇ download the renamed file</button> to save it into Drive yourself</>
+          ) : (
+            <>
+              , then upload again.
+            </>
+          )}.
         </span>
       )}
       {status === 'error' && (

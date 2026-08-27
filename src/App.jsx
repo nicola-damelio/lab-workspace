@@ -20,7 +20,7 @@ import { NotebookModule, CalculationsModule, PublicationsModule } from './compon
 import { ProjectsModule } from './components/AppModules/projectsModule';
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
 import {normalizeOperators} from './utils/auth';
-import { setDriveToken, clearDriveToken, testDriveAccess } from './utils/driveUpload';
+import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis } from './utils/driveUpload';
 
 import { ScientistLoginGate, ScientistLoginModal } from './components/AppModules/definitionsManagers';
 
@@ -1058,48 +1058,66 @@ if (customType === 'dosy') {
 
 
     const handleManualLogin = async () => {
-    // Optional Google sign-in. Requests the "drive.file" scope so uploaded
-    // images/documents can be auto-renamed and stored in the user's Drive.
+    // Optional Google sign-in for CLOUD SYNC (Firestore).
+    // Drive uploads are handled separately by connectDrive() below.
     if (!window.firebase || !auth) {
-      console.warn('Firebase auth is not available — cloud sync and Drive uploads are disabled.');
-      alert('Google sign-in is not available here — Drive uploads are disabled.');
+      console.warn('Firebase auth is not available — cloud sync is disabled.');
       return;
     }
 
     const provider = new window.firebase.auth.GoogleAuthProvider();
-    provider.addScope('https://www.googleapis.com/auth/drive.file');
-    // Force the consent screen so the Drive scope is actually granted every time.
-    provider.setCustomParameters({ prompt: 'consent' });
 
     try {
-      const result = await auth.signInWithPopup(provider);
-      const token = result && result.credential && result.credential.accessToken;
-      if (!token) {
-        alert('Google sign-in did not return Drive access. Please try again and allow “View and manage Google Drive files”.');
-        return;
-      }
+      await auth.signInWithPopup(provider);
 
-      setDriveToken(token);
-      try { window.dispatchEvent(new CustomEvent('lab:drive-connected')); } catch { /* ignore */ }
-
-      // Verify Drive access really works — the scope can be silently missing.
-      const ok = await testDriveAccess();
-      if (!ok) {
-        clearDriveToken();
-        try { window.dispatchEvent(new CustomEvent('lab:drive-disconnected')); } catch { /* ignore */ }
-        alert('Connected to Google, but Drive access was NOT granted by Google for this app. Files will be stored locally (temporary) until this is fixed.');
-      } else {
-        alert('Google Drive connected ✓ — uploaded images/documents will be saved automatically to your Drive folder.');
+      // If a proper Google Cloud OAuth client is configured, also connect Drive.
+      if (getConfiguredDriveClientId()) {
+        const ok = await connectDriveWithGis();
+        if (ok) {
+          try { window.dispatchEvent(new CustomEvent('lab:drive-connected')); } catch { /* ignore */ }
+        }
       }
     } catch (e) {
       console.error('Google sign-in error:', e);
-      alert('Google sign-in was cancelled or failed: ' + (e && e.message ? e.message : 'unknown error'));
     }
   };
 
-  // Let the DriveUpload component trigger the Drive-enabled sign-in from anywhere.
+  // Connect Google Drive for uploads. Requires a configured Google Cloud
+  // OAuth client — the standard Google sign-in cannot get Drive permission.
+  const connectDrive = async () => {
+    if (getConfiguredDriveClientId()) {
+      const ok = await connectDriveWithGis();
+      if (ok) {
+        const verified = await testDriveAccess();
+        if (verified) {
+          try { window.dispatchEvent(new CustomEvent('lab:drive-connected')); } catch { /* ignore */ }
+          alert('Google Drive connected ✓ — uploaded images/documents will be saved automatically to your Drive folder.');
+        } else {
+          clearDriveToken();
+          try { window.dispatchEvent(new CustomEvent('lab:drive-disconnected')); } catch { /* ignore */ }
+          alert('Google sign-in succeeded, but Google blocked Drive access. Check that the OAuth client has the drive.file scope enabled.');
+        }
+      } else {
+        alert('Google Drive sign-in was cancelled or failed.');
+      }
+      return;
+    }
+
+    // No OAuth client configured yet — explain exactly what is needed.
+    alert(
+      'Google Drive saving needs a Google Cloud OAuth client — the normal Google sign-in cannot get Drive permission from Google.\n\n' +
+      'Please have the app owner:\n' +
+      ' 1) enable the Google Drive API in Google Cloud Console,\n' +
+      ' 2) create a Web OAuth Client ID for this app,\n' +
+      ' 3) add scope https://www.googleapis.com/auth/drive.file,\n' +
+      ' 4) paste the Client ID into GOOGLE_DRIVE_CLIENT_ID in src/data/constants.js.\n\n' +
+      'Until then, uploaded files are stored locally and can be downloaded with the correct name.'
+    );
+  };
+
+  // Let the DriveUpload component trigger the Drive connection from anywhere.
   useEffect(() => {
-    const onConnectDrive = () => { handleManualLogin(); };
+    const onConnectDrive = () => { connectDrive(); };
     window.addEventListener('lab:connect-drive', onConnectDrive);
     return () => window.removeEventListener('lab:connect-drive', onConnectDrive);
   }, []);
@@ -2780,7 +2798,7 @@ const openDataset = (dset) => {
             handleUndo={handleUndo} handleRedo={handleRedo}
             historyIndex={historyIndex} historyRef={historyRef}
             user={user} onGoogleLogin={handleManualLogin}
-            onConnectDrive={handleManualLogin}
+            onConnectDrive={connectDrive}
           />
 
           {/* MAIN CONTENT */}

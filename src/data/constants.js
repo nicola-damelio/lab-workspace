@@ -12,6 +12,18 @@ export const DEFAULT_FIREBASE_CONFIG = {
 
 export const LOCAL_STORAGE_KEY = 'lab_datasets_local_v2';
 
+// --- GOOGLE DRIVE UPLOADS ---
+// True "save to Google Drive" needs a Google Cloud OAuth client for this
+// app's domain. To enable it, in Google Cloud Console:
+//   1. Enable the "Google Drive API".
+//   2. Create an OAuth 2.0 "Web application" client for this app's domain.
+//   3. Add this scope to the OAuth consent screen:
+//        https://www.googleapis.com/auth/drive.file
+//   4. Paste the Client ID below.
+// Empty = the standard Google sign-in cannot get Drive permission from
+// Google, so uploaded files are stored locally (with a download option).
+export const GOOGLE_DRIVE_CLIENT_ID = '';
+
 // --- CONSTANTS & CONFIGURATIONS ---
 export const PLATES_DEF = {
     '96': { rows: 8, cols: 12 }, '48': { rows: 6, cols: 8 }, '24': { rows: 4, cols: 6 },
