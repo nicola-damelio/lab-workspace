@@ -13,6 +13,88 @@ const inputCls =
   'w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white';
 const labelCls = 'block text-[10px] font-bold text-slate-400 uppercase mb-1';
 
+/* =========================================================================
+   PUBLICATION FORMAT — how a publication citation is rendered: order of the
+   fields, style of each field, presence/absence of each field, and presets
+   reproducing the reference formats of important journals.
+   ========================================================================= */
+const PUB_FORMAT_KEY = 'labWorkspace_pubFormat';
+
+const PUB_FORMAT_PRESETS = {
+  nature: { label: 'Nature', defs: [['authors', 'normal', '', ''], ['title', 'italic', '', '. '], ['journal', 'normal', '', ', '], ['volume', 'bold', '', ', '], ['pages', 'normal', '', ''], ['year', 'normal', '(', ')']] },
+  science: { label: 'Science', defs: [['authors', 'normal', '', ''], ['title', 'normal', '', '. '], ['journal', 'italic', '', ', '], ['volume', 'bold', '', ', '], ['pages', 'normal', '', ''], ['year', 'normal', '(', ')']] },
+  cell: { label: 'Cell', defs: [['authors', 'normal', '', ''], ['year', 'normal', '(', ')'], ['title', 'normal', '', '. '], ['journal', 'italic', '', ', '], ['volume', 'normal', '', ', '], ['pages', 'normal', '', '.']] },
+  apa: { label: 'APA', defs: [['authors', 'normal', '', ''], ['year', 'normal', '(', ')'], ['title', 'italic', '', '. '], ['journal', 'italic', '', ', '], ['volume', 'italic', '', ''], ['pages', 'normal', '', ', '], ['doi', 'normal', 'https://doi.org/', '']] },
+  pnas: { label: 'PNAS', defs: [['authors', 'normal', '', ''], ['year', 'normal', '(', ')'], ['title', 'normal', '', '. '], ['journal', 'italic', '', ''], ['volume', 'bold', '', ', '], ['pages', 'normal', '', '']] },
+  acs: { label: 'ACS', defs: [['authors', 'normal', '', ''], ['title', 'normal', '', '. '], ['journal', 'italic', '', ''], ['year', 'normal', '', ', '], ['volume', 'bold', '', ', '], ['pages', 'normal', '', '.'], ['doi', 'normal', 'DOI: ', '']] },
+  springer: { label: 'Springer', defs: [['authors', 'normal', '', ''], ['year', 'normal', '(', ')'], ['title', 'normal', '', '. '], ['journal', 'italic', '', ''], ['volume', 'normal', '', ':'], ['pages', 'normal', '', '']] },
+  harvard: { label: 'Harvard', defs: [['authors', 'normal', '', ''], ['year', 'normal', '(', ')'], ['title', 'italic', '‘', '’'], ['journal', 'italic', '', ', '], ['volume', 'normal', '', ', '], ['pages', 'normal', 'pp. ', '']] }
+};
+
+export const buildPubFormat = (presetId) => {
+  const preset = PUB_FORMAT_PRESETS[presetId] || PUB_FORMAT_PRESETS.nature;
+  return {
+    preset: presetId,
+    fields: preset.defs.map((def, i) => ({
+      id: def[0], enabled: true, order: i, style: def[1], prefix: def[2], suffix: def[3]
+    }))
+  };
+};
+
+export const loadPubFormat = () => {
+  try {
+    const raw = localStorage.getItem(PUB_FORMAT_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.fields)) return parsed;
+    }
+  } catch { /* ignore malformed */ }
+  return buildPubFormat('nature');
+};
+
+export const pubFieldValue = (pub, id) => {
+  switch (id) {
+    case 'authors': return pub.authors || '';
+    case 'year': return pub.year || '';
+    case 'title': return pub.title || '';
+    case 'journal': return pub.journal || '';
+    case 'volume': return pub.volume || '';
+    case 'pages': return pub.pages || '';
+    case 'doi': return pub.doi || '';
+    default: return '';
+  }
+};
+
+const pubWrap = (val, style) => {
+  if (style === 'bold') return `<b>${val}</b>`;
+  if (style === 'italic') return `<i>${val}</i>`;
+  if (style === 'underline') return `<u>${val}</u>`;
+  if (style === 'bolditalic') return `<b><i>${val}</i></b>`;
+  return val;
+};
+
+export const pubCitationHtml = (pub, fmt) => {
+  const ordered = [...fmt.fields].sort((a, b) => a.order - b.order).filter((f) => f.enabled);
+  const parts = [];
+  ordered.forEach((f) => {
+    const val = pubFieldValue(pub, f.id);
+    if (!val) return;
+    parts.push(`${f.prefix || ''}${pubWrap(val, f.style)}${f.suffix || ''}`);
+  });
+  return parts.join(' ');
+};
+
+export const pubCitationText = (pub, fmt) => {
+  const ordered = [...fmt.fields].sort((a, b) => a.order - b.order).filter((f) => f.enabled);
+  const parts = [];
+  ordered.forEach((f) => {
+    const val = pubFieldValue(pub, f.id);
+    if (!val) return;
+    parts.push(`${f.prefix || ''}${val}${f.suffix || ''}`);
+  });
+  return parts.join(' ');
+};
+
 const ifNum = (v) => {
   const n = parseFloat(String(v ?? '').replace(',', '.'));
   return Number.isFinite(n) ? n : -1;
@@ -389,7 +471,7 @@ const fetchJournalImpactFactor = async (journalName) => {
   };
 };
 
-export const PublicationsSection = ({ scientists = [], defaultScientist = '' }) => {
+export const PublicationsSection = ({ scientists = [], defaultScientist = '', currentUser }) => {
   const [journals, setJournals] = useState(() => {
     try {
       const saved = localStorage.getItem(JOURNALS_STORAGE_KEY);
@@ -430,6 +512,10 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '' }) 
     return [];
   });
   const [pubFilter, setPubFilter] = useState('all');
+  const [pubFormat, setPubFormat] = useState(loadPubFormat);
+  useEffect(() => {
+    try { localStorage.setItem(PUB_FORMAT_KEY, JSON.stringify(pubFormat)); } catch { /* ignore */ }
+  }, [pubFormat]);
   const [pubExpanded, setPubExpanded] = useState(null);
   const [showExcludedPubs, setShowExcludedPubs] = useState(false);
   const [pubShowSearch, setPubShowSearch] = useState(false);
@@ -696,6 +782,9 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '' }) 
   const [paperFilterLabels, setPaperFilterLabels] = useState([]); // all selected labels must be on the paper (AND)
   const [paperFilterScientist, setPaperFilterScientist] = useState('all');
   const [paperExpanded, setPaperExpanded] = useState(null);
+  const [paperTransfer, setPaperTransfer] = useState(null); // paper being sent to a project bibliography
+  const [paperTransferTarget, setPaperTransferTarget] = useState('');
+  const [pbTransferStatus, setPbTransferStatus] = useState('');
   const [showAddPaper, setShowAddPaper] = useState(false);
   const [paperDraft, setPaperDraft] = useState({ title: '', link: '', labels: [], scientist: '', comments: '' });
   // Custom subjects defined by the user (persisted)
@@ -713,6 +802,119 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '' }) 
   const [paperSearchError, setPaperSearchError] = useState('');
   const [paperResults, setPaperResults] = useState([]);
   const [addedPaperKeys, setAddedPaperKeys] = useState([]);
+
+  // ---- Project bibliography (papers labeled with a project name; stored in
+  //      the matching project's `bibliography` array in labWorkspace_projects) ----
+  const pbIsSuper = currentUser?.role === 'superuser';
+  const [pbProjects, setPbProjects] = useState(() => {
+    try {
+      const raw = localStorage.getItem('labWorkspace_projects');
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch { return []; }
+  });
+  const [pbFilter, setPbFilter] = useState('all');
+  const [pbShowAdd, setPbShowAdd] = useState(false);
+  const [pbDraft, setPbDraft] = useState({ project: '', title: '', link: '', comments: '' });
+  const [pbExpanded, setPbExpanded] = useState(null);
+
+  useEffect(() => {
+    try { localStorage.setItem('labWorkspace_projects', JSON.stringify(pbProjects)); } catch { /* ignore */ }
+  }, [pbProjects]);
+
+  useEffect(() => {
+    if (!pbTransferStatus) return;
+    const t = setTimeout(() => setPbTransferStatus(''), 4000);
+    return () => clearTimeout(t);
+  }, [pbTransferStatus]);
+
+  const myProjects = useMemo(() => {
+    return (pbProjects || []).filter((prj) => pbIsSuper || prj.scientist === defaultScientist);
+  }, [pbProjects, pbIsSuper, defaultScientist]);
+
+  const pbRows = useMemo(() => {
+    const rows = [];
+    myProjects.forEach((prj) => {
+      (prj.bibliography || []).forEach((paper) => {
+        rows.push({ ...paper, projectId: prj.id, projectName: prj.name, projectScientist: prj.scientist });
+      });
+    });
+    if (pbFilter !== 'all') return rows.filter((r) => r.projectName === pbFilter);
+    return rows;
+  }, [myProjects, pbFilter]);
+
+  const addPbPaper = () => {
+    const title = (pbDraft.title || '').trim();
+    if (!title || !pbDraft.project) return;
+    setPbProjects((prev) => prev.map((prj) => {
+      if (prj.name !== pbDraft.project) return prj;
+      return {
+        ...prj,
+        bibliography: [...(prj.bibliography || []), {
+          id: 'pb_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+          title, link: pbDraft.link.trim(), scientist: prj.scientist, comments: pbDraft.comments.trim()
+        }]
+      };
+    }));
+    setPbDraft({ project: '', title: '', link: '', comments: '' });
+    setPbShowAdd(false);
+  };
+
+  const patchPbPaper = (projectId, paperId, patch) =>
+    setPbProjects((prev) => prev.map((prj) => {
+      if (prj.id !== projectId) return prj;
+      return { ...prj, bibliography: (prj.bibliography || []).map((p) => (p.id === paperId ? { ...p, ...patch } : p)) };
+    }));
+
+  const movePbPaper = (fromProjectId, paperId, toProjectName) =>
+    setPbProjects((prev) => {
+      const from = prev.find((prj) => prj.id === fromProjectId);
+      const paper = from ? (from.bibliography || []).find((p) => p.id === paperId) : null;
+      if (!paper) return prev;
+      return prev.map((prj) => {
+        if (prj.id === fromProjectId) return { ...prj, bibliography: (prj.bibliography || []).filter((p) => p.id !== paperId) };
+        if (prj.name === toProjectName) return { ...prj, bibliography: [...(prj.bibliography || []), { ...paper, scientist: prj.scientist }] };
+        return prj;
+      });
+    });
+
+  const removePbPaper = (projectId, paperId) =>
+    setPbProjects((prev) => prev.map((prj) => {
+      if (prj.id !== projectId) return prj;
+      return { ...prj, bibliography: (prj.bibliography || []).filter((p) => p.id !== paperId) };
+    }));
+
+  // Copy a "Relevant papers" entry into the bibliography of a selected project
+  const transferPaperToProject = () => {
+    const paper = paperTransfer;
+    const prjName = paperTransferTarget;
+    if (!paper || !prjName) return;
+    const title = (paper.title || '').trim();
+    if (!title) return;
+    let added = false;
+    setPbProjects((prev) => prev.map((prj) => {
+      if (prj.name !== prjName) return prj;
+      const dup = (prj.bibliography || []).some((b) => (b.title || '').trim() === title);
+      if (dup) return prj;
+      added = true;
+      return {
+        ...prj,
+        bibliography: [...(prj.bibliography || []), {
+          id: 'pb_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+          title,
+          link: paper.link || paper.doi || '',
+          scientist: prj.scientist,
+          comments: paper.comments || '',
+          labels: Array.isArray(paper.labels) ? paper.labels : (paper.subject ? [paper.subject] : [])
+        }]
+      };
+    }));
+    setPbTransferStatus(added
+      ? `✅ Added “${title}” to the bibliography of “${prjName}”`
+      : `ℹ️ “${title}” is already in the bibliography of “${prjName}”`);
+    setPaperTransfer(null);
+    setPaperTransferTarget('');
+  };
 
   useEffect(() => {
     try { localStorage.setItem(SUBJECTS_KEY, JSON.stringify(customSubjects)); } catch { /* ignore */ }
@@ -1267,6 +1469,12 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '' }) 
                       {isOpen && (
                         <tr className="bg-indigo-50/40">
                           <td colSpan={pubCols.length} className="px-4 py-3 border-b border-slate-200">
+                            <div className="bg-white border border-slate-200 rounded-lg p-3 mb-3">
+                              <div className="text-[10px] font-black uppercase tracking-wide text-slate-400 mb-1">
+                                Formatted citation {pubFormat.preset !== 'custom' ? `(${PUB_FORMAT_PRESETS[pubFormat.preset]?.label || pubFormat.preset})` : '(custom)'}
+                              </div>
+                              <div className="text-xs text-slate-800" dangerouslySetInnerHTML={{ __html: pubCitationHtml(p, pubFormat) || '—' }} />
+                            </div>
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                               <div>
                                 <label className={labelCls}>Scientist (owner — fixed at insertion)</label>
@@ -1581,6 +1789,8 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '' }) 
                         <td className="px-3 py-2 border-b border-slate-100 align-top text-xs text-slate-600">{p.scientist || '—'}</td>
                         <td className="px-3 py-2 border-b border-slate-100 align-top text-xs text-slate-600"><span className="line-clamp-2">{p.comments || '—'}</span></td>
                         <td className="px-3 py-2 border-b border-slate-100 text-right align-top whitespace-nowrap">
+                          <button type="button" onClick={(e) => { e.stopPropagation(); setPaperTransfer(p); setPaperTransferTarget(''); }}
+                                  className="text-violet-600 hover:text-violet-800 text-xs px-1" title="Add to Project bibliography">📁</button>
                           <button type="button" onClick={(e) => { e.stopPropagation(); removePaper(p.id, p.title); }}
                                   className="text-red-400 hover:text-red-600 text-xs px-1" title="Delete paper">✕</button>
                         </td>
@@ -1628,8 +1838,284 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '' }) 
         </div>
       </div>
       </div>
+
+        {/* Transfer a relevant paper to a project bibliography */}
+        {paperTransfer && (
+          <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+               onClick={() => setPaperTransfer(null)}>
+            <div className="bg-white rounded-xl shadow-xl p-5 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+              <h3 className="text-sm font-black text-slate-800 mb-1">Add to Project bibliography</h3>
+              <p className="text-xs text-slate-500 mb-3 line-clamp-2">{paperTransfer.title || 'Untitled'}</p>
+              {myProjects.length === 0 ? (
+                <p className="text-xs italic text-slate-400 bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-2">
+                  No projects available — create one first in 📁 Projects → “+ New Project”.
+                </p>
+              ) : (
+                <>
+                  <label className={labelCls}>Project *</label>
+                  <select className={inputCls} value={paperTransferTarget} onChange={(e) => setPaperTransferTarget(e.target.value)}>
+                    <option value="">Choose a project…</option>
+                    {myProjects.map((prj) => <option key={prj.id} value={prj.name}>{prj.name}</option>)}
+                  </select>
+                </>
+              )}
+              <div className="flex justify-end gap-2 mt-4">
+                <button type="button" onClick={() => setPaperTransfer(null)}
+                        className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300">Cancel</button>
+                <button type="button" onClick={transferPaperToProject} disabled={!paperTransferTarget}
+                        className="px-3 py-1.5 text-xs font-bold rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40">
+                  📁 Add to Project bibliography
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {pbTransferStatus && (
+          <div className="fixed bottom-4 right-4 z-[70] bg-slate-900 text-white text-xs font-bold rounded-lg px-4 py-2 shadow-lg no-print">
+            {pbTransferStatus}
+          </div>
+        )}
     </section>
   );
+  const PUB_FIELD_LABELS = {
+    authors: 'Authors', year: 'Year', title: 'Title', journal: 'Journal',
+    volume: 'Volume', pages: 'Pages', doi: 'DOI'
+  };
+  const pubPatchField = (fieldId, patch) =>
+    setPubFormat((prev) => ({
+      preset: 'custom',
+      fields: prev.fields.map((f) => (f.id === fieldId ? { ...f, ...patch } : f))
+    }));
+  const pubMoveField = (fieldId, dir) =>
+    setPubFormat((prev) => {
+      const fields = [...prev.fields].sort((a, b) => a.order - b.order);
+      const idx = fields.findIndex((f) => f.id === fieldId);
+      const j = idx + dir;
+      if (idx < 0 || j < 0 || j >= fields.length) return prev;
+      const tmp = fields[idx].order;
+      fields[idx] = { ...fields[idx], order: fields[j].order };
+      fields[j] = { ...fields[j], order: tmp };
+      return { preset: 'custom', fields };
+    });
+  const samplePub = {
+    authors: 'Rossi M, Bianchi A, Smith J',
+    year: '2024', title: 'Structure and dynamics of antimicrobial peptides in lipid bilayers',
+    journal: 'Journal of Biological Chemistry', volume: '300', pages: '105678', doi: '10.1016/j.jbc.2024.105678'
+  };
+
+  const renderPubFormat = () => (
+    <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+      <div className="px-4 py-3 bg-indigo-50/50 border-b border-indigo-100 flex flex-col md:flex-row md:items-center justify-between gap-2">
+        <h2 className="text-sm font-black text-slate-800 uppercase tracking-wide flex items-center gap-2">
+          <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-indigo-600 text-white shrink-0"><Icon name="🎨" size={16} /></span>
+          Publication format
+        </h2>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="text-[10px] font-black uppercase tracking-wide text-slate-400">Journal preset:</label>
+          <select value={pubFormat.preset} onChange={(e) => setPubFormat(buildPubFormat(e.target.value))}
+                  className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-semibold text-slate-700">
+            {Object.entries(PUB_FORMAT_PRESETS).map(([id, p]) => (
+              <option key={id} value={id}>{p.label}</option>
+            ))}
+            <option value="custom">Custom</option>
+          </select>
+        </div>
+      </div>
+      <div className="p-4">
+        <p className="text-sm text-slate-500 mb-3">
+          Choose how every citation is built: the order of the fields, the style of each field
+          (bold / italic / underline / prefix / suffix) and which fields are shown at all.
+          The formatted citations are used in the publications table and in the project documents
+          that reference these publications.
+        </p>
+
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-4">
+          <div className="text-[10px] font-black uppercase tracking-wide text-slate-400 mb-1">Live preview</div>
+          <div className="text-sm text-slate-800" dangerouslySetInnerHTML={{ __html: pubCitationHtml(samplePub, pubFormat) || '—' }} />
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          {[...pubFormat.fields].sort((a, b) => a.order - b.order).map((f) => (
+            <div key={f.id} className={`flex flex-wrap items-center gap-2 bg-white border rounded-lg px-2.5 py-1.5 ${f.enabled ? 'border-slate-200' : 'border-slate-100 opacity-50'}`}>
+              <input type="checkbox" checked={f.enabled}
+                     onChange={(e) => pubPatchField(f.id, { enabled: e.target.checked })}
+                     className="w-3.5 h-3.5 accent-indigo-600" />
+              <span className="w-24 text-xs font-bold text-slate-700">{PUB_FIELD_LABELS[f.id] || f.id}</span>
+              <select value={f.style} onChange={(e) => pubPatchField(f.id, { style: e.target.value })}
+                      className="border border-slate-300 rounded px-1.5 py-0.5 text-[11px] bg-white outline-none">
+                <option value="normal">Normal</option>
+                <option value="bold">Bold</option>
+                <option value="italic">Italic</option>
+                <option value="underline">Underline</option>
+                <option value="bolditalic">Bold + Italic</option>
+              </select>
+              <input type="text" value={f.prefix || ''} onChange={(e) => pubPatchField(f.id, { prefix: e.target.value })}
+                     placeholder="prefix" title="Text before this field"
+                     className="w-24 border border-slate-300 rounded px-1.5 py-0.5 text-[11px] bg-white outline-none" />
+              <input type="text" value={f.suffix || ''} onChange={(e) => pubPatchField(f.id, { suffix: e.target.value })}
+                     placeholder="suffix" title="Text after this field"
+                     className="w-24 border border-slate-300 rounded px-1.5 py-0.5 text-[11px] bg-white outline-none" />
+              <div className="ml-auto flex items-center gap-0.5">
+                <button type="button" onClick={() => pubMoveField(f.id, -1)} title="Move up"
+                        className="w-6 h-6 flex items-center justify-center rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold">▲</button>
+                <button type="button" onClick={() => pubMoveField(f.id, 1)} title="Move down"
+                        className="w-6 h-6 flex items-center justify-center rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold">▼</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+
+  const renderProjectBibliography = () => (
+    <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+      <div className="px-4 py-3 bg-violet-50/50 border-b border-violet-100 flex flex-col md:flex-row md:items-center justify-between gap-2">
+        <h3 className="text-sm font-black text-slate-800 uppercase tracking-wide flex items-center gap-2">
+          <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-violet-600 text-white text-sm shrink-0">📁</span>
+          Project bibliography
+          <span className="text-slate-400 font-bold">({pbRows.length})</span>
+        </h3>
+        <div className="flex flex-wrap items-center gap-2">
+          <select value={pbFilter} onChange={(e) => setPbFilter(e.target.value)}
+                  className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-semibold text-slate-700">
+            <option value="all">All projects</option>
+            {myProjects.map((prj) => (
+              <option key={prj.id} value={prj.name}>{prj.name} ({(prj.bibliography || []).length})</option>
+            ))}
+          </select>
+          <button type="button" onClick={() => setPbShowAdd((v) => !v)}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition">
+            {pbShowAdd ? 'Cancel' : '+ Add paper'}
+          </button>
+        </div>
+      </div>
+      <div className="p-4">
+        <p className="text-sm text-slate-500 mb-3">
+          Papers labeled with a project name — the same table as “Relevant papers”, but each entry is attached to one
+          of the projects. These papers (plus the scientist's publications) feed the references of the project pages.
+          {pbIsSuper ? ' Superusers see the bibliography of every project.' : ` You only see the papers of your own projects (${defaultScientist || 'not logged in'}).`}
+        </p>
+
+
+        {pbShowAdd && (
+          <div className="mb-4 p-3 bg-violet-50 border border-violet-200 rounded-lg">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div>
+                <label className={labelCls}>Project *</label>
+                <select className={inputCls} value={pbDraft.project} onChange={(e) => setPbDraft({ ...pbDraft, project: e.target.value })}>
+                  <option value="">Choose a project…</option>
+                  {myProjects.map((prj) => <option key={prj.id} value={prj.name}>{prj.name}</option>)}
+                </select>
+              </div>
+              <div className="lg:col-span-2">
+                <label className={labelCls}>Title *</label>
+                <input className={inputCls} value={pbDraft.title} onChange={(e) => setPbDraft({ ...pbDraft, title: e.target.value })}
+                       placeholder="Paper title" />
+              </div>
+              <div>
+                <label className={labelCls}>Link / DOI</label>
+                <input className={inputCls} value={pbDraft.link} onChange={(e) => setPbDraft({ ...pbDraft, link: e.target.value })}
+                       placeholder="https://doi.org/…" />
+              </div>
+              <div className="lg:col-span-3">
+                <label className={labelCls}>Comments (optional)</label>
+                <input className={inputCls} value={pbDraft.comments} onChange={(e) => setPbDraft({ ...pbDraft, comments: e.target.value })}
+                       placeholder="Why is it relevant for the project?" />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-3">
+              <button type="button" onClick={() => setPbShowAdd(false)}
+                      className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300">Cancel</button>
+              <button type="button" onClick={addPbPaper} disabled={!pbDraft.project || !pbDraft.title.trim()}
+                      className="px-3 py-1.5 text-xs font-bold rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40">+ Add paper</button>
+            </div>
+          </div>
+        )}
+
+        <div className="border border-slate-200 rounded-lg overflow-hidden">
+          <div className="max-h-96 overflow-y-auto custom-scrollbar">
+            <table className="w-full text-sm border-collapse">
+              <thead className="sticky top-0 bg-slate-100 z-10">
+                <tr>
+                  {['Project', 'Title', 'Link', 'Scientist', 'Comments', ''].map((h, hi) => (
+                    <th key={hi} className="text-left text-[10px] font-bold text-slate-500 uppercase tracking-wide px-3 py-2 border-b border-slate-200">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {pbRows.length === 0 ? (
+                  <tr><td colSpan={6} className="text-xs text-slate-400 italic px-3 py-3">No project bibliography papers yet — use “+ Add paper” to label a paper with a project name.</td></tr>
+                ) : (
+                  pbRows.map((p, idx) => {
+                    const isOpen = pbExpanded === p.id;
+                    return (
+                      <React.Fragment key={p.id}>
+                        <tr className={`cursor-pointer hover:bg-violet-50 transition-colors ${idx % 2 === 1 ? 'bg-slate-50/70' : 'bg-white'}`}
+                            onClick={() => setPbExpanded(isOpen ? null : p.id)}>
+                          <td className="px-3 py-2 border-b border-slate-100 align-top">
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-violet-700 bg-violet-50 border border-violet-200 rounded-full px-2 py-0.5">📁 {p.projectName || '—'}</span>
+                          </td>
+                          <td className="px-3 py-2 border-b border-slate-100 align-top"><span className="text-xs font-semibold text-slate-800">{p.title || '—'}</span></td>
+                          <td className="px-3 py-2 border-b border-slate-100 align-top" onClick={(e) => e.stopPropagation()}>
+                            {p.link ? (
+                              <a href={normalizeLink(p.link)} target="_blank" rel="noreferrer"
+                                 className="text-blue-600 hover:underline text-[11px] truncate block max-w-[200px]" title={p.link}>
+                                {p.link.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '') || p.link}
+                              </a>
+                            ) : <span className="text-slate-300">—</span>}
+                          </td>
+                          <td className="px-3 py-2 border-b border-slate-100 align-top text-xs text-slate-600">{p.projectScientist || '—'}</td>
+                          <td className="px-3 py-2 border-b border-slate-100 align-top text-xs text-slate-600"><span className="line-clamp-2">{p.comments || '—'}</span></td>
+                          <td className="px-3 py-2 border-b border-slate-100 text-right align-top whitespace-nowrap">
+                            <button type="button" onClick={(e) => { e.stopPropagation(); removePbPaper(p.projectId, p.id); }}
+                                    className="text-red-400 hover:text-red-600 text-xs px-1" title="Delete paper">✕</button>
+                          </td>
+                        </tr>
+
+                        {isOpen && (
+                          <tr className="bg-violet-50/40">
+                            <td colSpan={6} className="px-4 py-3 border-b border-slate-200">
+                              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                <div className="lg:col-span-2">
+                                  <label className={labelCls}>Title</label>
+                                  <input className={inputCls} value={p.title || ''} onChange={(e) => patchPbPaper(p.projectId, p.id, { title: e.target.value })} />
+                                </div>
+                                <div>
+                                  <label className={labelCls}>Project</label>
+                                  <select className={inputCls} value={p.projectName} onChange={(e) => movePbPaper(p.projectId, p.id, e.target.value)}>
+                                    {myProjects.map((prj) => <option key={prj.id} value={prj.name}>{prj.name}</option>)}
+                                  </select>
+                                </div>
+                                <div className="lg:col-span-2">
+                                  <label className={labelCls}>Link / DOI</label>
+                                  <input className={inputCls} value={p.link || ''} onChange={(e) => patchPbPaper(p.projectId, p.id, { link: e.target.value })} placeholder="https://doi.org/…" />
+                                </div>
+                                <div>
+                                  <label className={labelCls}>Scientist (owner of the project)</label>
+                                  <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700 bg-slate-50 border border-slate-300 rounded-lg px-2 py-1.5">🔒 {p.projectScientist || '—'}</div>
+                                </div>
+                                <div className="lg:col-span-3">
+                                  <label className={labelCls}>Comments</label>
+                                  <textarea className={`${inputCls} h-16`} value={p.comments || ''} onChange={(e) => patchPbPaper(p.projectId, p.id, { comments: e.target.value })} />
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+
   return (
     <div className="flex flex-col gap-5">
 
@@ -1717,7 +2203,11 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '' }) 
 
       {renderPublications()}
 
+      {renderPubFormat()}
+
       {renderPapers()}
+
+      {renderProjectBibliography()}
     </div>
   );
 };

@@ -143,6 +143,7 @@ export const AppSidebar = ({
 
               {[
                 { id: 'dashboard', icon: '📊', label: 'Dataset Overview' },
+                { id: 'projects', icon: '📁', label: 'Projects' },
                 { id: 'notebook', icon: '📓', label: 'Lab Notebook' },
                 { id: 'definitions', icon: '🏷️', label: 'Definitions & Labels' },
                 { id: 'tests', icon: '🧪', label: 'Tests & Fittings' },

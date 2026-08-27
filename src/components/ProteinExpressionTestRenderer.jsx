@@ -550,6 +550,17 @@ const ProteinDataSection = ({ ctx }) => {
                       🔗 Open original
                     </a>
                   )}
+                  <input
+                    type="text"
+                    value={((activeTest.gelCaptions || [])[idx]) || ''}
+                    onChange={(e) => {
+                      const caps = (activeTest.gelCaptions || []).slice();
+                      caps[idx] = e.target.value;
+                      updateActiveTest({ gelCaptions: caps });
+                    }}
+                    placeholder={`Caption for gel ${idx + 1}...`}
+                    className="mt-2 w-full border border-slate-200 rounded px-2 py-1 text-xs outline-none focus:border-blue-500"
+                  />
                 </div>
               ))}
             </div>
@@ -643,6 +654,43 @@ return html;
 };
 
 /* ============================================================================
+INSTRUMENTAL SETUP — chromatographic parameters for the purification run
+========================================================================== */
+const ProteinInstrumentalSetup = ({ ctx }) => {
+  const { activeTest = {}, updateActiveTest } = ctx || {};
+  const LABEL_CLS = 'text-[10px] font-bold text-slate-500 uppercase';
+  const INPUT_CLS = 'border border-slate-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-500 bg-white';
+  const t = activeTest;
+  const set = (patch) => { if (updateActiveTest) updateActiveTest(patch); };
+  const fields = [
+    { key: 'chromaColumn', label: 'Column / Resin', ph: 'e.g. HisTrap HP 1 mL (Ni-NTA)' },
+    { key: 'chromaFlowRate', label: 'Flow rate (mL/min)', ph: 'e.g. 1.0' },
+    { key: 'chromaFractionVol', label: 'Sample collection volume (mL)', ph: 'e.g. 1.0' },
+    { key: 'chromaEquilibration', label: 'Equilibration volume (CV)', ph: 'e.g. 10' },
+    { key: 'chromaWashBuffer', label: 'Wash buffer', ph: 'e.g. 50 mM NaPi, 300 mM NaCl, 20 mM imidazole' },
+    { key: 'chromaElution', label: 'Elution (buffer / gradient)', ph: 'e.g. linear 20→500 mM imidazole over 20 CV' },
+    { key: 'chromaDetection', label: 'Detection wavelength (nm)', ph: 'e.g. 280' },
+    { key: 'chromaColumnTemp', label: 'Column temperature (°C)', ph: 'e.g. 4' },
+    { key: 'chromaMaxPressure', label: 'Max pressure (MPa)', ph: 'e.g. 0.3' }
+  ];
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {fields.map((f) => (
+          <div key={f.key} className="flex flex-col gap-1">
+            <label className={LABEL_CLS}>{f.label}</label>
+            <input type="text" value={t[f.key] || ''} onChange={(e) => set({ [f.key]: e.target.value })} placeholder={f.ph} className={INPUT_CLS} />
+          </div>
+        ))}
+      </div>
+      <p className="text-[10px] text-slate-400">
+        Typical parameters of a chromatographic purification run (ÄKTA / FPLC / gravity column).
+      </p>
+    </div>
+  );
+};
+
+/* ============================================================================
 MAIN RENDERER
 ========================================================================== */
 export const ProteinExpressionTestRenderer = (props) => {
@@ -662,6 +710,7 @@ return (
 config={config}
 custom={{
 Data: ProteinDataSection,
+InstrumentalSetup: ProteinInstrumentalSetup,
 buildNotebookHtml: buildProteinNotebookHtml
 }}
 testCategories={appCategories}

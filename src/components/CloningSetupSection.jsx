@@ -3,6 +3,21 @@ import React from 'react';
 import { toNumber, round, uid, INPUT_CLS, INPUT_BAD_CLS } from './cloningUtils';
 import { CloningStrategyPlanner } from './CloningStrategyPlanner';
 
+const SectionComment = ({ value, onChange, placeholder = 'Add notes about this section...' }) => (
+  <div className="mt-3 pt-3 border-t border-slate-100">
+    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
+      📝 Notes / Comments
+    </label>
+    <textarea
+      value={value || ''}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      rows={2}
+      className="w-full border border-slate-200 rounded-lg p-2.5 text-xs outline-none focus:border-indigo-400 bg-slate-50 resize-y"
+    />
+  </div>
+);
+
 const STEP_PRESETS = [
   { name: 'Initial Denaturation', temp: '98', timeValue: '30', timeUnit: 's', cycles: '1' },
   { name: 'Denature', temp: '98', timeValue: '10', timeUnit: 's', cycles: '1' },
@@ -168,6 +183,13 @@ export const CloningSetupSection = ({ ctx }) => {
       {/* Cloning Strategy Planner — nested here, before the Thermal Cycler subsection */}
       <div className="mb-6">
         <CloningStrategyPlanner ctx={ctx} />
+        <div className="mb-2">
+          <SectionComment
+            value={activeTest.cloningStrategyComment}
+            onChange={(v) => updateActiveTest({ cloningStrategyComment: v })}
+            placeholder="Notes about the chosen strategy (enzymes, assembly, troubleshooting)..."
+          />
+        </div>
       </div>
 
       <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-6">
@@ -284,6 +306,14 @@ export const CloningSetupSection = ({ ctx }) => {
         </div>
       </div>
 
+      <div className="mb-6">
+        <SectionComment
+          value={activeTest.pcrComment}
+          onChange={(v) => updateActiveTest({ pcrComment: v })}
+          placeholder="Notes about the thermal cycler run (annealing optimisations, touchdown, observed bands)..."
+        />
+      </div>
+
       <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-3 mb-3">
           <h4 className="text-xs font-black text-slate-600 uppercase">
@@ -377,6 +407,14 @@ export const CloningSetupSection = ({ ctx }) => {
         <datalist id="cloning-mix-components">
           {MIX_COMPONENTS.map((c) => <option key={c} value={c} />)}
         </datalist>
+      </div>
+
+      <div className="mb-2">
+        <SectionComment
+          value={activeTest.reactionComment}
+          onChange={(v) => updateActiveTest({ reactionComment: v })}
+          placeholder="Notes about the reaction mix (volumes, final concentrations, storage)..."
+        />
       </div>
     </div>
   );

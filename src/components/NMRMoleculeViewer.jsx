@@ -523,6 +523,9 @@ const [hoverInfo, setHoverInfo] = useState(null);
 const [showLabels, setShowLabels] = useState(false);
 const [sidechainStyle, setSidechainStyle] = useState('licorice');
 const [backboneStyle, setBackboneStyle] = useState('cartoon');
+// Visualization style for NON-protein molecules (organic / lipid / sugar / nucleic):
+// they previously had no style options at all — just a hard-coded ball+stick.
+const [moleculeStyle, setMoleculeStyle] = useState('ball+stick');
 
 // ---- Atom renaming (3D, post-generation) ----
 const [renames, setRenames] = useState(() => (atomRenames && typeof atomRenames === 'object' ? { ...atomRenames } : {}));
@@ -664,6 +667,8 @@ const displayNameRef = useRef(displayAtomName);
 displayNameRef.current = displayAtomName;
 const backboneStyleRef = useRef(backboneStyle);
 backboneStyleRef.current = backboneStyle;
+const moleculeStyleRef = useRef(moleculeStyle);
+moleculeStyleRef.current = moleculeStyle;
 const prevBackboneRef = useRef(backboneStyle);
 
 useEffect(() => {
@@ -804,12 +809,26 @@ const addDefaultReps = (component) => {
   const trackBase = (r) => { if (r) baseCompsRef.current.push(r); };
   const organicLike = ['organic', 'lipid', 'sugar'].includes(moleculeTypeRef.current);
   if (organicLike) {
-    try { trackBase(component.addRepresentation('ball+stick', { colorScheme: 'element', multipleBond: true, aspectRatio: 1.3 })); } catch {}
+    const ms = moleculeStyleRef.current || 'ball+stick';
+    try {
+      if (ms === 'ball+stick') trackBase(component.addRepresentation('ball+stick', { colorScheme: 'element', multipleBond: true, aspectRatio: 1.3 }));
+      else if (ms === 'stick') trackBase(component.addRepresentation('stick', { colorScheme: 'element', multipleBond: true }));
+      else if (ms === 'line') trackBase(component.addRepresentation('line', { colorScheme: 'element' }));
+      else if (ms === 'spheres') trackBase(component.addRepresentation('spacefill', { colorScheme: 'element', scale: 0.7 }));
+      else if (ms === 'surface') trackBase(component.addRepresentation('surface', { colorScheme: 'element' }));
+    } catch {}
     return;
   }
   const isNucleic = moleculeTypeRef.current === 'dna' || moleculeTypeRef.current === 'rna';
   if (isNucleic) {
-    try { trackBase(component.addRepresentation('ball+stick', { sele: 'all', colorScheme: 'element', multipleBond: true, aspectRatio: 1.1 })); } catch {}
+    const ms = moleculeStyleRef.current || 'ball+stick';
+    try {
+      if (ms === 'ball+stick') trackBase(component.addRepresentation('ball+stick', { sele: 'all', colorScheme: 'element', multipleBond: true, aspectRatio: 1.1 }));
+      else if (ms === 'stick') trackBase(component.addRepresentation('stick', { sele: 'all', colorScheme: 'element', multipleBond: true }));
+      else if (ms === 'line') trackBase(component.addRepresentation('line', { sele: 'all', colorScheme: 'element' }));
+      else if (ms === 'spheres') trackBase(component.addRepresentation('spacefill', { sele: 'all', colorScheme: 'element', scale: 0.6 }));
+      else if (ms === 'surface') trackBase(component.addRepresentation('surface', { sele: 'all', colorScheme: 'element' }));
+    } catch {}
     return;
   }
   // Very large systems: render only the first chain (light representation) so
@@ -824,6 +843,7 @@ const addDefaultReps = (component) => {
   try {
     if (bb === 'cartoon') trackBase(component.addRepresentation('cartoon', { sele: 'protein', color: 'residueindex', quality: 'high' }));
     else if (bb === 'tube') trackBase(component.addRepresentation('cartoon', { sele: 'protein', color: 'residueindex', radius: 0.3, quality: 'high' }));
+    else if (bb === 'ball+stick') trackBase(component.addRepresentation('ball+stick', { sele: 'protein', colorScheme: 'element', multipleBond: true, aspectRatio: 1.1 }));
     else if (bb === 'sticks') trackBase(component.addRepresentation('ball+stick', { sele: 'protein and not sidechain', colorScheme: 'element', multipleBond: true, aspectRatio: 1.1 }));
     else if (bb === 'lines') trackBase(component.addRepresentation('line', { sele: 'protein', colorScheme: 'element' }));
     else if (bb === 'spheres') trackBase(component.addRepresentation('spacefill', { sele: 'protein', colorScheme: 'element', scale: 0.6 }));
@@ -1394,7 +1414,7 @@ useEffect(() => {
     selCompsRef.current = {};
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [status, selections, selStyles, pymolActive, hideAll, backboneStyle]);
+}, [status, selections, selStyles, pymolActive, hideAll, backboneStyle, moleculeStyle]);
 
 // Background colour + quality ("ray shadows" approximation)
 useEffect(() => {
@@ -1948,12 +1968,34 @@ className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline
 >
 <option value="cartoon">Cartoon</option>
 <option value="tube">Cartoon (Tube)</option>
+<option value="ball+stick">Ball &amp; Stick</option>
 <option value="sticks">Sticks</option>
 <option value="lines">Lines</option>
 <option value="spheres">Spheres</option>
 <option value="hidden">Hidden</option>
 </select>
 </div>
+
+{/* Molecule Style — for NON-protein molecules (they previously had no
+    visualization options at all). */}
+{['organic', 'lipid', 'sugar', 'dna', 'rna'].includes(moleculeType) && (
+<div className="flex flex-col gap-1">
+<label className="text-[10px] font-bold text-slate-500 uppercase">
+Molecule Style
+</label>
+<select
+value={moleculeStyle}
+onChange={(e) => setMoleculeStyle(e.target.value)}
+className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 h-8"
+>
+<option value="ball+stick">Ball &amp; Stick</option>
+<option value="stick">Sticks</option>
+<option value="line">Lines</option>
+<option value="spheres">Spheres</option>
+<option value="surface">Surface</option>
+</select>
+</div>
+)}
 
 {/* 3D View — always-visible effects (the Fog toggle is no longer buried in
     the Selections & PyMOL panel). */}

@@ -19,7 +19,7 @@ const LABEL_CLS = 'text-[10px] font-bold text-slate-500 uppercase';
 const INPUT_CLS =
   'border border-slate-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-500 bg-white';
 
-export const NMRInstrumentalSetup = ({ ctx, hideOperator = false, extraFields = null }) => {
+export const NMRInstrumentalSetup = ({ ctx, hideOperator = false, extraFields = null, hideDatasets = false }) => {
   const {
     activeTest = {},
     updateActiveTest
@@ -227,6 +227,7 @@ export const NMRInstrumentalSetup = ({ ctx, hideOperator = false, extraFields = 
         </div>
       </div>
 
+      {!hideDatasets && (
       <div className="border border-slate-200 rounded-xl bg-slate-50 p-4 flex flex-col gap-3">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
@@ -376,6 +377,7 @@ export const NMRInstrumentalSetup = ({ ctx, hideOperator = false, extraFields = 
           </div>
         )}
       </div>
+      )}
 
       {extraFields}
 

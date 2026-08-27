@@ -360,6 +360,8 @@ export const Calculations = ({
 }) => {
   const isSuperuserCalc = currentUser?.role === 'superuser';
   const myName = currentUser?.name || null;
+  // Superuser-only filter: show calculations saved by a specific scientist.
+  const [calcScientistFilter, setCalcScientistFilter] = useState('ALL');
   const options = useMemo(() => {
     return [...new Set(compoundOptions.filter(Boolean))];
   }, [compoundOptions]);
@@ -510,9 +512,12 @@ export const Calculations = ({
 
   // All entries for the selected compound
   const allEntries = selectedCompound ? calculationEntries[selectedCompound] || [] : [];
-  // Normal users see only their own entries; superusers see all
+  const calcScientists = [...new Set(allEntries.map((e) => e.operator).filter(Boolean))].sort();
+  // Normal users see only their own entries; superusers see all (or filter by scientist)
   const entries = isSuperuserCalc
-    ? allEntries
+    ? (calcScientistFilter === 'ALL'
+        ? allEntries
+        : allEntries.filter((e) => !e.operator || e.operator === calcScientistFilter))
     : allEntries.filter((e) => !e.operator || e.operator === myName);
 
   const formatEntryData = (data) => {
@@ -638,6 +643,23 @@ export const Calculations = ({
             Clear all for compound
           </button>
         </div>
+
+        {isSuperuserCalc && calcScientists.length > 0 && (
+          <div className="flex items-center gap-2 mb-3 flex-wrap">
+            <label className={CALC_LABEL_CLS}>Filter by scientist:</label>
+            <select
+              value={calcScientistFilter}
+              onChange={(e) => setCalcScientistFilter(e.target.value)}
+              className={CALC_INPUT_CLS}
+            >
+              <option value="ALL">All scientists</option>
+              {calcScientists.map((s) => (<option key={s} value={s}>{s}</option>))}
+            </select>
+            <span className="text-[10px] text-slate-400">
+              {entries.length} of {allEntries.length} saved calculation(s)
+            </span>
+          </div>
+        )}
 
         <div className="flex flex-col gap-3">
           {!selectedCompound ? (

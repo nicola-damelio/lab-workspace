@@ -17,6 +17,8 @@ import { TestsModule } from './components/AppModules/testsModule';
 import { ProtocolsModule } from './components/AppModules/protocolsModule';
 import { ActiveTestModule } from './components/AppModules/activeTestModule';
 import { NotebookModule, CalculationsModule, PublicationsModule } from './components/AppModules/miscModules';
+import { ProjectsModule } from './components/AppModules/projectsModule';
+import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
 import {normalizeOperators} from './utils/auth';
 
 import { ScientistLoginGate, ScientistLoginModal } from './components/AppModules/definitionsManagers';
@@ -804,6 +806,7 @@ if (customType === 'dosy') {
   const [saveErrorMsg, setSaveErrorMsg] = useState('');
   const [appView, setAppView] = useState('explorer');
   const [currentModule, setCurrentModule] = useState('dashboard');
+  const [currentProjectId, setCurrentProjectId] = useState(null);
   const [datasetsList, setDatasetsList] = useState([]);
   const [currentDatasetId, setCurrentDatasetId] = useState(null);
   const [dialog, setDialog] = useState(null);
@@ -2704,6 +2707,17 @@ const openDataset = (dset) => {
               datasetTitle={datasetTitle} datasetSubtitle={datasetSubtitle}
               handlePrint={handlePrint} tests={tests} storages={storages}
               setCurrentModule={setCurrentModule} mergedPlan={mergedPlan}
+            />)}
+
+            {currentModule === 'projects' && (<ProjectsModule
+              currentUser={currentUser} operatorNames={operatorNames} handlePrint={handlePrint}
+              setCurrentModule={setCurrentModule} setCurrentProjectId={setCurrentProjectId}
+            />)}
+            {currentModule === 'project-detail' && (<ProjectDetailModule
+              currentUser={currentUser} setCurrentModule={setCurrentModule}
+              currentProjectId={currentProjectId} setCurrentProjectId={setCurrentProjectId}
+              createEmptyTest={createEmptyTest} tests={tests} setTests={setTests}
+              setActiveTestId={setActiveTestId} jumpToTest={jumpToTest}
             />)}
 
             {currentModule === 'definitions' && (<DefinitionsModule

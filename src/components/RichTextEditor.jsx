@@ -1,9 +1,29 @@
 import React, { useRef, useEffect } from 'react';
 
-export const RichTextEditor = ({ value, onChange, placeholder }) => {
+export const RichTextEditor = ({ value, onChange, placeholder, toolbarExtra = [] }) => {
     const editorRef = useRef(null);
+    const selRef = useRef(null);
     useEffect(() => { if (editorRef.current && editorRef.current.innerHTML !== value) editorRef.current.innerHTML = value || ''; }, [value]);
     const execCmd = (cmd, val=null) => { document.execCommand(cmd, false, val); onChange(editorRef.current.innerHTML); editorRef.current.focus(); };
+    const storeSel = () => {
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount > 0 && editorRef.current && editorRef.current.contains(sel.anchorNode)) {
+            selRef.current = sel.getRangeAt(0).cloneRange();
+        }
+    };
+    // Insert text at the last caret position (used by toolbarExtra buttons, e.g. reference markers)
+    const insertText = (text) => {
+        const el = editorRef.current;
+        if (!el) return;
+        el.focus();
+        const sel = window.getSelection();
+        if (selRef.current && el.contains(selRef.current.startContainer)) {
+            sel.removeAllRanges();
+            sel.addRange(selRef.current);
+        }
+        document.execCommand('insertText', false, text);
+        onChange(el.innerHTML);
+    };
     const handlePaste = (e) => {
         const items = (e.clipboardData || e.originalEvent?.clipboardData)?.items;
         if (!items) return;
@@ -57,8 +77,15 @@ export const RichTextEditor = ({ value, onChange, placeholder }) => {
                     <span>Color:</span>
                     <input type="color" className="w-4 h-4 p-0 border-none cursor-pointer" onChange={e => execCmd('foreColor', e.target.value)} />
                 </label>
+                {toolbarExtra.map((btn, i) => (
+                    <button key={i} type="button" onClick={() => btn.onClick(insertText)} title={btn.title || btn.label}
+                            className="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white border border-indigo-700 rounded shadow-sm text-xs font-bold transition">
+                        {btn.label}
+                    </button>
+                ))}
             </div>
             <div ref={editorRef} contentEditable onPaste={handlePaste} onBlur={e => onChange(e.target.innerHTML)}
+                onSelect={storeSel} onKeyUp={storeSel} onMouseUp={storeSel} onFocus={storeSel}
                 className="p-3 text-sm text-slate-700 focus:outline-none custom-scrollbar shadow-inner bg-slate-50/50" style={{ resize: 'vertical', minHeight: '120px', maxHeight: '500px', overflowY: 'auto' }} data-placeholder={placeholder} />
         </div>
     );

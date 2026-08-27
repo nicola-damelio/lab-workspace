@@ -1,6 +1,4 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import html2canvas from 'html2canvas';
-import { jsPDF } from 'jspdf';
 import { getDirectImageUrl } from '../data/constants';
 import { FCSDataVisualizations } from './FlowCytometrySections';
 import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES } from '../data/testTypes';
@@ -142,6 +140,13 @@ const NotebookTestItem = ({
             <p className="text-[10px] text-slate-500">
               {localTest.date} · {localTest.instanceName || 'Primary'} · {typeLabel}
             </p>
+            {(localTest.projectNames || []).length > 0 && (
+              <p className="text-[9px] font-bold text-violet-700 mt-0.5 flex flex-wrap gap-1">
+                {(localTest.projectNames || []).map((pn) => (
+                  <span key={pn} className="bg-violet-50 border border-violet-200 rounded-full px-1.5 py-0.5">📁 {pn}</span>
+                ))}
+              </p>
+            )}
           </div>
         </div>
         <button
@@ -785,57 +790,6 @@ const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t =>
 
     return result;
   }, [tests, isSuperuser, currentUser, filterPrimary, filterSecondary, filterScientist, filterType, filterCompound, filterPlasmid, filterCellLine, showAdvanced, filterSolvent, filterBuffer, filterAdditive, filterInstrument, filterProbe, filterPulseSeq, dateFrom, dateTo, bestOnly, searchQuery, sortBy]);
-  const exportPDF = async () => {
-    // Find the scrollable notebook content area
-    const el = document.getElementById('lab-notebook-print-area');
-    if (!el) { window.print(); return; }
-    try {
-      // Temporarily make content fully visible for capture
-      const prevOverflow = el.style.overflow;
-      const prevHeight = el.style.maxHeight;
-      el.style.overflow = 'visible';
-      el.style.maxHeight = 'none';
-
-      const canvas = await html2canvas(el, {
-        scale: 2,
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: '#ffffff',
-        ignoreElements: (node) => node.classList?.contains('no-print'),
-        logging: false,
-      });
-
-      el.style.overflow = prevOverflow;
-      el.style.maxHeight = prevHeight;
-
-      const imgW = 595.28; // A4 width in points
-      const imgH = (canvas.height / canvas.width) * imgW;
-      const pdf = new jsPDF('p', 'pt', 'a4');
-      const pageH = pdf.internal.pageSize.getHeight();
-      let offsetY = 0;
-      while (offsetY < imgH) {
-        if (offsetY > 0) pdf.addPage();
-        const sliceH = Math.min(pageH, imgH - offsetY);
-        // Crop the canvas for this page
-        const pageCanvas = document.createElement('canvas');
-        pageCanvas.width = canvas.width;
-        pageCanvas.height = Math.round((sliceH / imgW) * canvas.width);
-        const ctx = pageCanvas.getContext('2d');
-        ctx.drawImage(canvas, 0, Math.round((offsetY / imgW) * canvas.width), canvas.width, pageCanvas.height, 0, 0, canvas.width, pageCanvas.height);
-        pdf.addImage(pageCanvas.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, imgW, sliceH);
-        offsetY += pageH;
-      }
-      pdf.save('lab_notebook.pdf');
-    } catch (err) {
-      console.error('PDF export error:', err);
-      // Fallback to print
-      document.body.classList.add('notebook-print-mode');
-      window.print();
-      const cleanup = () => { document.body.classList.remove('notebook-print-mode'); window.removeEventListener('afterprint', cleanup); };
-      window.addEventListener('afterprint', cleanup);
-      setTimeout(cleanup, 3000);
-    }
-  };
 
   return (
     <div className="flex flex-col h-full w-full">
@@ -860,9 +814,6 @@ const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t =>
             <input type="checkbox" checked={bestOnly} onChange={(e) => setBestOnly(e.target.checked)} className="accent-amber-600 w-4 h-4" />
             ⭐ Best Only
           </label>
-          <button onClick={exportPDF} className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold py-2 px-4 rounded-lg text-xs flex items-center gap-2 shadow-sm transition-colors">
-            📄 Export PDF
-          </button>
         </div>
 
         {/* MAIN FILTERS — all users see all filters except Scientist which is superuser-only */}

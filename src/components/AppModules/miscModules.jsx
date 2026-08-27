@@ -82,6 +82,7 @@ export const PublicationsModule = ({ operatorNames, tests, currentUser }) => (
                       ...(tests || []).map((t) => t.operator).filter(Boolean)
                     ])]}
                     defaultScientist={currentUser?.name || ''}
+                    currentUser={currentUser}
                   />
                 </div>
               </div>

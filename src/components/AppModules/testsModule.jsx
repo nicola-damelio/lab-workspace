@@ -26,6 +26,7 @@ export const TestsModule = ({
 }) => {
                 const testSearch = expandedGroups['testSearch'] || '';
                 const testCatFilter = expandedGroups['testCatFilter'] || 'ALL';
+                const showTestFilters = expandedGroups['showTestFilters'] || false;
                 const showCatMgr = expandedGroups['showTestCatMgr'] || false;
                 const newCatInput = expandedGroups['newTestCatInput'] || '';
 
@@ -56,6 +57,25 @@ export const TestsModule = ({
                   return currentUser && scientists.includes(currentUser.name);
                 };
                 const isTestLocked = (test) => !isTestOwner(test) && !unlockedTestIds.has(test.id);
+                // ── Deletion approval ─────────────────────────────
+                // Normal users can only REQUEST deletion; a supervisor must approve.
+                const requestDeletion = (test) => {
+                  setTests((prev) => prev.map((t) =>
+                    t.id === test.id
+                      ? { ...t, pendingDeletion: true, deletionRequestedBy: currentUser?.name || 'Unknown', deletionRequestedAt: Date.now() }
+                      : t
+                  ));
+                };
+                const approveDeletion = (test) => {
+                  setTests((prev) => prev.filter((t) => t.id !== test.id));
+                };
+                const rejectDeletion = (test) => {
+                  setTests((prev) => prev.map((t) =>
+                    t.id === test.id
+                      ? { ...t, pendingDeletion: false, deletionRequestedBy: '', deletionRequestedAt: 0 }
+                      : t
+                  ));
+                };
                 // ─────────────────────────────────────────────
 
                 const filteredTestsRaw = tests.filter((t) => {
@@ -275,98 +295,92 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 
                     </div>
 
                     <div className="bg-white p-2.5 rounded-xl shadow-sm border border-slate-200 mb-3 flex flex-col gap-2 shrink-0 no-print">
-                      <div className="flex flex-col md:flex-row gap-3 md:gap-4 items-center">
-                        <div className="flex-1 w-full relative">
-                          <span className="absolute left-2.5 top-2 text-slate-400 text-sm">🔍</span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setExpandedGroups((p) => ({ ...p, showTestFilters: !p.showTestFilters }))}
+                          className={`px-3 py-1.5 border rounded-lg text-xs font-bold transition-colors shadow-sm inline-flex items-center gap-1.5 ${showTestFilters ? 'bg-blue-600 border-blue-700 text-white' : 'bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100'}`}
+                        >
+                          <Icon name="search" size={14} /> Search & Filters
+                        </button>
 
-                          <input
-                            type="text"
-                            placeholder="Search tests by name..."
-                            value={testSearch}
-                            onChange={(e) =>
-                              setExpandedGroups((p) => ({ ...p, testSearch: e.target.value }))
-                            }
-                            className="w-full pl-8 pr-3 py-1.5 border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                          />
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedGroups((p) => ({ ...p, showTestCatMgr: !showCatMgr, showTestFilters: true }))
+                          }
+                          className={`px-2.5 py-1.5 border rounded-lg text-xs font-bold transition-colors shadow-sm ${showCatMgr ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100'}`}
+                          title="Manage Categories"
+                        >
+                          <Icon name="gear" size={16} />
+                        </button>
 
-                        <div className="w-full md:w-64 flex gap-2">
-                          <select
-                            value={testCatFilter}
-                            onChange={(e) =>
-                              setExpandedGroups((p) => ({ ...p, testCatFilter: e.target.value }))
-                            }
-                            className="flex-1 border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs bg-white focus:outline-none focus:border-blue-500 font-semibold text-slate-700 cursor-pointer"
-                          >
-                            <option value="ALL">All Categories</option>
-
-                            {filterCategories.map((c) => (
-                              <option key={c} value={c}>
-                                {c}
-                              </option>
-                            ))}
-                          </select>
-
+                        {(testSearch || testCatFilter !== 'ALL') && (
                           <button
-                            onClick={() =>
-                              setExpandedGroups((p) => ({
-                                ...p,
-                                showTestCatMgr: !showCatMgr
-                              }))
-                            }
-                            className={`px-2.5 py-1.5 border rounded-lg text-xs font-bold transition-colors shadow-sm ${
-                              showCatMgr
-                                ? 'bg-blue-50 border-blue-300 text-blue-700'
-                                : 'bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100'
-                            }`}
-                            title="Manage Categories"
+                            type="button"
+                            onClick={() => setExpandedGroups((p) => ({ ...p, testSearch: '', testCatFilter: 'ALL' }))}
+                            className="px-2.5 py-1.5 border rounded-lg text-xs font-bold text-red-600 border-red-200 bg-red-50 hover:bg-red-100 shadow-sm"
                           >
-                            <Icon name="gear" size={16} />
+                            Clear filters
                           </button>
-                        </div>
+                        )}
                       </div>
 
-                      {showCatMgr && (
-                        <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 flex flex-col gap-3">
-                          <h4 className="text-xs font-bold text-slate-500 uppercase">
-                            Manage Test Categories
-                          </h4>
-
-                          <div className="flex flex-col md:flex-row gap-2">
-                            <input
-                              type="text"
-                              placeholder="New category name..."
-                              value={newCatInput}
-                              onChange={(e) =>
-                                setExpandedGroups((p) => ({
-                                  ...p,
-                                  newTestCatInput: e.target.value
-                                }))
-                              }
-                              className="flex-1 border border-slate-300 rounded px-2.5 py-1.5 text-xs outline-none focus:border-blue-500"
-                            />
-
-                            <button
-                              onClick={() => {
-                                const v = newCatInput.trim();
-
-                                if (v && !testCategories.includes(v)) {
-                                  setTestCategories([...testCategories, v]);
-
-                                  setExpandedGroups((p) => ({
-                                    ...p,
-                                    newTestCatInput: ''
-                                  }));
-                                }
-                              }}
-                              className="bg-blue-600 text-white font-bold px-3 py-1.5 rounded text-xs shadow-sm hover:bg-blue-700 transition-colors"
-                            >
-                              Add Category
-                            </button>
+                      {showTestFilters && (
+                        <div className="flex flex-col gap-3 border-t border-slate-100 pt-2 mt-1">
+                          <div className="flex flex-col md:flex-row gap-3 md:gap-4 items-center">
+                            <div className="flex-1 w-full relative">
+                              <span className="absolute left-2.5 top-2 text-slate-400"><Icon name="search" size={14} /></span>
+                              <input
+                                type="text"
+                                placeholder="Search tests by name..."
+                                value={testSearch}
+                                onChange={(e) => setExpandedGroups((p) => ({ ...p, testSearch: e.target.value }))}
+                                className="w-full pl-8 pr-3 py-1.5 border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                              />
+                            </div>
+                            <div className="w-full md:w-64">
+                              <select
+                                value={testCatFilter}
+                                onChange={(e) => setExpandedGroups((p) => ({ ...p, testCatFilter: e.target.value }))}
+                                className="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs bg-white focus:outline-none focus:border-blue-500 font-semibold text-slate-700 cursor-pointer"
+                              >
+                                <option value="ALL">All Categories</option>
+                                {filterCategories.map((c) => (<option key={c} value={c}>{c}</option>))}
+                              </select>
+                            </div>
                           </div>
+
+                          {showCatMgr && (
+                            <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 flex flex-col gap-3">
+                              <h4 className="text-xs font-bold text-slate-500 uppercase">Manage Test Categories</h4>
+                              <div className="flex flex-col md:flex-row gap-2">
+                                <input
+                                  type="text"
+                                  placeholder="New category name..."
+                                  value={newCatInput}
+                                  onChange={(e) => setExpandedGroups((p) => ({ ...p, newTestCatInput: e.target.value }))}
+                                  className="flex-1 border border-slate-300 rounded px-2.5 py-1.5 text-xs outline-none focus:border-blue-500"
+                                />
+                                <button
+                                  onClick={() => {
+                                    const v = newCatInput.trim();
+                                    if (v && !testCategories.includes(v)) {
+                                      setTestCategories([...testCategories, v]);
+                                      setExpandedGroups((p) => ({ ...p, newTestCatInput: '' }));
+                                    }
+                                  }}
+                                  className="bg-blue-600 text-white font-bold px-3 py-1.5 rounded text-xs shadow-sm hover:bg-blue-700 transition-colors"
+                                >
+                                  Add Category
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
+
 
                     <div className="flex-1 overflow-y-auto custom-scrollbar">
                       {filteredTests.length === 0 ? (
@@ -410,14 +424,21 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    if (window.confirm(`Eliminare definitivamente il test "${test.name}"?`)) {
-                                      setTests((prev) => prev.filter((t) => t.id !== test.id));
+                                    if (test.pendingDeletion) {
+                                      // Superuser approves the pending request; a requester just sees the badge.
+                                      if (isSuperuserSession && window.confirm(`Approve deletion of "${test.name}"?`)) approveDeletion(test);
+                                    } else if (isSuperuserSession) {
+                                      if (window.confirm(`Delete "${test.name}" definitively?`)) approveDeletion(test);
+                                    } else {
+                                      if (window.confirm(`Request supervisor approval to delete "${test.name}"?`)) requestDeletion(test);
                                     }
                                   }}
                                   className="absolute top-2 right-9 text-slate-300 hover:text-red-500 text-base opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity no-print z-10"
-                                  title="Elimina Test"
+                                  title={test.pendingDeletion
+                                    ? (isSuperuserSession ? 'Approve deletion request' : 'Deletion requested — awaiting supervisor approval')
+                                    : (isSuperuserSession ? 'Delete test' : 'Request deletion (supervisor approval required)')}
                                 >
-                                  &times;
+                                  {test.pendingDeletion && !isSuperuserSession ? '⏳' : '×'}
                                 </button>
                               )}
 
@@ -443,6 +464,16 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 
                                 </p>
                               )}
 
+                              {(test.projectNames || []).length > 0 && (
+                                <p className="text-[11px] text-violet-600 mt-0.5 flex flex-wrap gap-1">
+                                  {(test.projectNames || []).map((pn) => (
+                                    <span key={pn} className="bg-violet-50 border border-violet-200 rounded-full px-1.5 py-0.5 text-[9px] font-bold">
+                                      📁 {pn}
+                                    </span>
+                                  ))}
+                                </p>
+                              )}
+
                               <div className="mt-2 pt-1.5 border-t border-slate-100 flex justify-between items-center text-[10px] text-slate-500 font-medium">
                                 <span>📅 {test.date}</span>
 <span className="bg-slate-100 px-2 py-0.5 rounded font-bold text-slate-600">
@@ -456,6 +487,29 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 
 : String(test.type || '').replace('plate-', '').toUpperCase()}
 </span>
                               </div>
+
+                              {/* ⏳ Pending deletion request badge */}
+                              {test.pendingDeletion && (
+                                <div className="absolute bottom-2 left-2 right-2 z-10 flex items-center gap-1.5 bg-amber-50 border border-amber-300 text-amber-800 text-[10px] font-bold px-2 py-1 rounded-lg shadow-sm">
+                                  <Icon name="clock" size={12} /> Deletion requested by {test.deletionRequestedBy || 'a user'}
+                                  {isSuperuserSession && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); if (window.confirm(`Approve deletion of "${test.name}"?`)) approveDeletion(test); }}
+                                        className="ml-auto bg-emerald-600 hover:bg-emerald-700 text-white px-2 py-0.5 rounded font-bold"
+                                        title="Approve and delete this test"
+                                      >✓ Approve</button>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); rejectDeletion(test); }}
+                                        className="bg-white hover:bg-slate-100 border border-slate-300 text-slate-600 px-2 py-0.5 rounded font-bold"
+                                        title="Reject the deletion request"
+                                      >✕ Reject</button>
+                                    </>
+                                  )}
+                                </div>
+                              )}
 
                               {/* 🔒 Lock overlay */}
                               {locked && (

@@ -3,10 +3,19 @@
    Dataset Overview (Dashboard) module, extracted from App.jsx. Props-only.
    ========================================================================= */
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Icon } from '../Icons';
 
-export const DashboardModule = ({ datasetTitle, datasetSubtitle, handlePrint, tests, storages, setCurrentModule, mergedPlan }) => (
+export const DashboardModule = ({ datasetTitle, datasetSubtitle, handlePrint, tests, storages, setCurrentModule, mergedPlan }) => {
+  const [projectCount] = useState(() => {
+    try {
+      const raw = localStorage.getItem('labWorkspace_projects');
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.length : 0;
+    } catch { return 0; }
+  });
+
+  return (
 
               <div className="p-4 md:p-8 h-full overflow-y-auto custom-scrollbar bg-slate-50">
                 <div className="max-w-6xl mx-auto">
@@ -74,12 +83,28 @@ export const DashboardModule = ({ datasetTitle, datasetSubtitle, handlePrint, te
                         }
                       </div>
                     </div>
+
+                    <div className="bg-white p-2.5 md:p-3 rounded-lg border border-slate-200 shadow-sm">
+                      <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wide">
+                        Projects
+                      </div>
+
+                      <div className="text-lg md:text-xl font-bold text-slate-800">
+                        {projectCount}
+                      </div>
+                    </div>
                   </div>
 
                   <h2 className="text-sm font-bold text-slate-700 mb-2">Quick Navigation</h2>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
                     {[
+                      {
+                        id: 'projects',
+                        icon: '📁',
+                        title: 'Projects',
+                        desc: 'Scientific background, experiments, discussion, conclusions and bibliography.'
+                      },
                       {
                         id: 'notebook',
                         icon: '📓',
@@ -147,3 +172,4 @@ export const DashboardModule = ({ datasetTitle, datasetSubtitle, handlePrint, te
                 </div>
               </div>
 );
+  };

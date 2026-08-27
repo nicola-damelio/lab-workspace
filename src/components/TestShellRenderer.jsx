@@ -1999,12 +1999,31 @@ const details = [
                                 tableHtml += '</tr>';
                               }
                               tableHtml += '</tbody></table>';
+                              // Stejskal-Tanner fitted results for this gradient set — reproduces
+                              // the "Stejskal-Tanner results" table of the Data Analysis section.
+                              const colFits = (t.dosyFits && t.dosyFits[t0.id]) || [];
+                              if (colFits.length) {
+                                tableHtml += '<p style="margin:8px 0 2px;"><b>Stejskal-Tanner results</b></p>';
+                                tableHtml += '<table style="width:100%; border-collapse: collapse;" border="1"><tbody>';
+                                tableHtml += '<tr><th style="padding:4px; background-color:#f1f5f9; border:1px solid #cbd5e1;">Column</th><th style="padding:4px; background-color:#f1f5f9; border:1px solid #cbd5e1;">Diffusion D (m²/s)</th><th style="padding:4px; background-color:#f1f5f9; border:1px solid #cbd5e1;">I₀</th><th style="padding:4px; background-color:#f1f5f9; border:1px solid #cbd5e1;">R²</th><th style="padding:4px; background-color:#f1f5f9; border:1px solid #cbd5e1;">n points</th></tr>';
+                                colFits.forEach((cf) => {
+                                  const f = cf.fit || {};
+                                  tableHtml += '<tr>';
+                                  tableHtml += '<td style="padding:4px; border:1px solid #cbd5e1; text-align:center; font-weight:bold;">' + (cf.residue || '') + '</td>';
+                                  tableHtml += '<td style="padding:4px; border:1px solid #cbd5e1; text-align:center;">' + (f.D != null ? f.D.toExponential(3) : '—') + '</td>';
+                                  tableHtml += '<td style="padding:4px; border:1px solid #cbd5e1; text-align:center;">' + (f.I0 != null ? f.I0.toExponential(2) : '—') + '</td>';
+                                  tableHtml += '<td style="padding:4px; border:1px solid #cbd5e1; text-align:center;">' + (f.r2 != null ? f.r2.toFixed(3) : '—') + '</td>';
+                                  tableHtml += '<td style="padding:4px; border:1px solid #cbd5e1; text-align:center;">' + (f.n != null ? f.n : 0) + '</td>';
+                                  tableHtml += '</tr>';
+                                });
+                                tableHtml += '</tbody></table>';
+                              }
                             });
                             tableHtml += '<br/>';
                             update({ comments: (comments || '') + tableHtml });
                           }}
                           className="ml-1 bg-teal-50 text-teal-600 hover:bg-teal-100 border border-teal-200 font-bold px-2 py-0.5 rounded transition-colors text-[10px]"
-                          title="Insert a publication-ready table with the gradient % and intensity values from the Data section"
+                          title="Insert a publication-ready table with the gradient %/intensity values AND the Stejskal-Tanner fitted results from the Data Analysis section"
                         >
                           + DOSY Pub Table
                         </button>

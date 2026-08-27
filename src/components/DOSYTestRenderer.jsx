@@ -61,34 +61,13 @@ const dosySections = {
   renderData: null,       // (t, tIndex) => ReactNode
   renderAnalysis: null,   // (t, tIndex) => ReactNode
   addTable: null,         // () => void
+  tables: [],             // live tables (bridged from the component so Data Analysis reads the same data as Data)
   sim: {},
   setSim: null,
   solvents: [],
   params: { maxG: 60, deltaMs: 2, bigDeltaMs: 50 }, // read-only values shown in Data Analysis
 };
 
-
-// Experiment Setup — plain content (TestShellRenderer wraps it once).
-const DOSYSetupSection = ({ ctx }) => {
-  const activeTest = ctx.activeTest || {};
-  const update = (u) => { if (ctx.updateActiveTest) ctx.updateActiveTest(u); };
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-      <div>
-        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">DOSY Dataset Name</label>
-        <input type="text" value={activeTest.dosyDatasetName || ''} onChange={(e) => update({ dosyDatasetName: e.target.value })} placeholder="e.g. PEG400_DOSY" className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-      </div>
-      <div>
-        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Experiment Number</label>
-        <input type="text" value={activeTest.dosyExpNumber || ''} onChange={(e) => update({ dosyExpNumber: e.target.value })} placeholder="e.g. 12" className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-      </div>
-      <div>
-        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Link (URL)</label>
-        <input type="text" value={activeTest.dosyLink || ''} onChange={(e) => update({ dosyLink: e.target.value })} placeholder="https://..." className="w-full border border-slate-300 rounded-md p-2 text-sm outline-none focus:border-blue-500" />
-      </div>
-    </div>
-  );
-};
 
 const DOSYDataSection = ({ ctx }) => {
   const tables = Array.isArray(ctx.activeTest?.dosyTables) ? ctx.activeTest.dosyTables : [];
@@ -187,7 +166,13 @@ const DOSYFitChart = ({ tables, params }) => {
 
 // Data Analysis — direct content (analysisPlain), no nested "Per Atom Plot".
 const DOSYFittingSection = ({ ctx }) => {
-  const tables = Array.isArray(ctx.activeTest?.dosyTables) ? ctx.activeTest.dosyTables : [];
+  // Read the LIVE data tables (the same ones the Data section edits), falling
+  // back to the persisted activeTest tables — the plot must always mirror the
+  // Data section exactly.
+  const liveTables = Array.isArray(dosySections.tables) && dosySections.tables.length
+    ? dosySections.tables
+    : (Array.isArray(ctx.activeTest?.dosyTables) ? ctx.activeTest.dosyTables : []);
+  const tables = liveTables;
   const { maxG, deltaMs, bigDeltaMs } = dosySections.params;
   return (
     <div className="flex flex-col gap-6">
@@ -225,8 +210,27 @@ const DOSYInstrumentalSetup = ({ ctx }) => {
     <NMRInstrumentalSetup
       ctx={ctx}
       hideOperator
+      hideDatasets // the DOSY dataset fields below replace the generic "Datasets" editor
       extraFields={(
         <div className="border border-slate-200 rounded-xl bg-slate-50 p-4 flex flex-col gap-3">
+          <div>
+            <h4 className="text-sm font-bold text-slate-700">DOSY Dataset</h4>
+            <p className="text-[10px] text-slate-400">Dataset identification for this DOSY experiment (was the Experiment Setup section).</p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">Dataset Name</label>
+                <input type="text" value={activeTest.dosyDatasetName || ''} onChange={(e) => update({ dosyDatasetName: e.target.value })} placeholder="e.g. PEG400_DOSY" className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-500 bg-white" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">Experiment Number</label>
+                <input type="text" value={activeTest.dosyExpNumber || ''} onChange={(e) => update({ dosyExpNumber: e.target.value })} placeholder="e.g. 12" className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-500 bg-white" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">Link (URL)</label>
+                <input type="text" value={activeTest.dosyLink || ''} onChange={(e) => update({ dosyLink: e.target.value })} placeholder="https://..." className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-500 bg-white" />
+              </div>
+            </div>
+          </div>
           <div>
             <h4 className="text-sm font-bold text-slate-700">DOSY Gradient Parameters</h4>
             <p className="text-[10px] text-slate-400">Used by the Stejskal-Tanner fit in Data Analysis (gradient % of the maximum).</p>
@@ -355,10 +359,13 @@ export const DOSYTestRenderer = ({ activeTest = {}, updateActiveTest, TestHeader
             setTablesState(t);
         }
     }, [activeTest.dosyTables]);
-    const commit = (next) => { lastSyncRef.current = next; setTablesState(next); update({ dosyTables: next }); };
+    const commit = (next) => { lastSyncRef.current = next; tablesRef.current = next; setTablesState(next); update({ dosyTables: next }); };
+    // Always points at the LATEST tables, so batched edits (Excel-style paste,
+    // several onChange events in the same tick) never overwrite each other.
+    const tablesRef = useRef(tablesState);
+    tablesRef.current = tablesState;
 
     const [fits, setFits] = useState(activeTest.dosyFits || {});
-    const tables = tablesState;
 
     const gradientParams = {
         maxG: Number(activeTest.dosyMaxG) || 60,
@@ -366,38 +373,46 @@ export const DOSYTestRenderer = ({ activeTest = {}, updateActiveTest, TestHeader
         bigDeltaMs: Number(activeTest.dosyDelta) || 50,
     };
     dosySections.params = gradientParams;
+    dosySections.tables = tablesState;
 
     const sim = { MW: 12000, shape: 'sphere', vbar: 0.73, hydration: 0.3, viscosity: 0.89e-3, ...(activeTest.dosySim || {}) };
     const setSim = (patch) => update({ dosySim: { ...sim, ...patch } });
 
-    const updateTable = (id, patch) => commit(tables.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+    const liveTable = (t) => tablesRef.current.find((tb) => tb.id === t.id) || t;
+
+    const updateTable = (id, patch) => {
+        const live = tablesRef.current;
+        commit(live.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+    };
     const setCell = (t, r, c, v) => {
-        const g = (t.grid || []).map((row) => (row || []).slice());
-        while (g.length < t.nRows) g.push(new Array(t.nCols).fill(''));
+        const lt = liveTable(t);
+        const g = (lt.grid || []).map((row) => (row || []).slice());
+        while (g.length < lt.nRows) g.push(new Array(lt.nCols).fill(''));
         if (!g[r]) g[r] = [];
-        while (g[r].length < t.nCols) g[r].push('');
+        while (g[r].length < lt.nCols) g[r].push('');
         g[r][c] = v;
         updateTable(t.id, { grid: g });
     };
-    const setDelay = (t, r, v) => { const d = (t.delays || []).slice(); d[r] = v; updateTable(t.id, { delays: d }); };
-    const setColResidue = (t, c, v) => { const cr = (t.colResidues || []).slice(); cr[c] = v; updateTable(t.id, { colResidues: cr }); };
-    const addRow = (t) => { const last = t.delays.length ? Number(t.delays[t.delays.length - 1]) || 0 : 0; updateTable(t.id, { nRows: t.nRows + 1, delays: [...(t.delays || []), last], grid: [...(t.grid || []).map((r) => r.slice()), new Array(t.nCols).fill('')] }); };
-    const removeRow = (t, r) => { if (t.nRows <= 1) return; updateTable(t.id, { nRows: t.nRows - 1, delays: (t.delays || []).filter((_, i) => i !== r), grid: (t.grid || []).filter((_, i) => i !== r) }); };
-    const addCol = (t) => { updateTable(t.id, { nCols: t.nCols + 1, colResidues: [...(t.colResidues || []), ''], grid: (t.grid || []).map((r) => [...(r || []), '']) }); };
-    const removeCol = (t, c) => { if (t.nCols <= 1) return; updateTable(t.id, { nCols: t.nCols - 1, colResidues: (t.colResidues || []).filter((_, i) => i !== c), grid: (t.grid || []).map((r) => (r || []).filter((_, i) => i !== c)) }); };
-    const addTable = () => commit([...tables, makeDefaultTable()]);
-    const removeTable = (id) => { if (tables.length <= 1) { alert('Keep at least one gradient set.'); return; } commit(tables.filter((t) => t.id !== id)); };
+    const setDelay = (t, r, v) => { const lt = liveTable(t); const d = (lt.delays || []).slice(); d[r] = v; updateTable(t.id, { delays: d }); };
+    const setColResidue = (t, c, v) => { const lt = liveTable(t); const cr = (lt.colResidues || []).slice(); cr[c] = v; updateTable(t.id, { colResidues: cr }); };
+    const addRow = (t) => { const lt = liveTable(t); const last = lt.delays.length ? Number(lt.delays[lt.delays.length - 1]) || 0 : 0; updateTable(t.id, { nRows: lt.nRows + 1, delays: [...(lt.delays || []), last], grid: [...(lt.grid || []).map((r) => r.slice()), new Array(lt.nCols).fill('')] }); };
+    const removeRow = (t, r) => { const lt = liveTable(t); if (lt.nRows <= 1) return; updateTable(t.id, { nRows: lt.nRows - 1, delays: (lt.delays || []).filter((_, i) => i !== r), grid: (lt.grid || []).filter((_, i) => i !== r) }); };
+    const addCol = (t) => { const lt = liveTable(t); updateTable(t.id, { nCols: lt.nCols + 1, colResidues: [...(lt.colResidues || []), ''], grid: (lt.grid || []).map((r) => [...(r || []), '']) }); };
+    const removeCol = (t, c) => { const lt = liveTable(t); if (lt.nCols <= 1) return; updateTable(t.id, { nCols: lt.nCols - 1, colResidues: (lt.colResidues || []).filter((_, i) => i !== c), grid: (lt.grid || []).map((r) => (r || []).filter((_, i) => i !== c)) }); };
+    const addTable = () => commit([...tablesRef.current, makeDefaultTable()]);
+    const removeTable = (id) => { if (tablesRef.current.length <= 1) { alert('Keep at least one gradient set.'); return; } commit(tablesRef.current.filter((t) => t.id !== id)); };
 
     const runFitForTable = (t) => {
+        const lt = liveTable(t);
         const cols = [];
-        for (let c = 0; c < t.nCols; c++) {
+        for (let c = 0; c < lt.nCols; c++) {
             const bvals = [], ys = [];
-            for (let r = 0; r < t.nRows; r++) {
-                const b = computeB(t.delays[r], gradientParams.maxG, gradientParams.deltaMs / 1000, gradientParams.bigDeltaMs / 1000);
-                const y = parseFloat(t.grid[r]?.[c]);
+            for (let r = 0; r < lt.nRows; r++) {
+                const b = computeB(lt.delays[r], gradientParams.maxG, gradientParams.deltaMs / 1000, gradientParams.bigDeltaMs / 1000);
+                const y = parseFloat(lt.grid[r]?.[c]);
                 if (b > 0 && isFinite(y) && y > 0) { bvals.push(b); ys.push(y); }
             }
-            cols.push({ residue: t.colResidues[c] || `Col ${c + 1}`, fit: fitStejskalTanner(bvals, ys) });
+            cols.push({ residue: lt.colResidues[c] || `Col ${c + 1}`, fit: fitStejskalTanner(bvals, ys) });
         }
         const next = { ...(fits || {}), [t.id]: cols };
         setFits(next);
@@ -500,7 +515,7 @@ export const DOSYTestRenderer = ({ activeTest = {}, updateActiveTest, TestHeader
         <TestShellRenderer
             config={DOSY_TAB_CONFIG}
             custom={{
-                Setup: DOSYSetupSection,
+                Setup: null, // "Experiment Setup" was merged into Instrumental Setup (DOSY Dataset fields)
                 Data: DOSYDataSection,
                 Analysis: DOSYFittingSection,
                 InstrumentalSetup: DOSYInstrumentalSetup,

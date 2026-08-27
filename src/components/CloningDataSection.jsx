@@ -7,6 +7,21 @@ import {ChartPanel, SharedChartStylePanel, useXZoom, useChartFsHeight} from './S
 import { CollapsibleSection, SmartImage } from './TestShellRenderer';
 import {uid, round, parseSpectrumText, analyzeSpectrum, effectiveSpectrumProps, INPUT_CLS} from './cloningUtils';
 
+const SectionComment = ({ value, onChange, placeholder = 'Add notes about this section...' }) => (
+  <div className="mt-3 pt-3 border-t border-slate-100">
+    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
+      📝 Notes / Comments
+    </label>
+    <textarea
+      value={value || ''}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      rows={2}
+      className="w-full border border-slate-200 rounded-lg p-2.5 text-xs outline-none focus:border-indigo-400 bg-slate-50 resize-y"
+    />
+  </div>
+);
+
 const UV_CHART_MARGIN = { top: 8, right: 10, bottom: 30, left: 40 };
 
 const UvZoomChart = ({ pts, cfg = {} }) => {
@@ -411,6 +426,17 @@ const GelPanel = ({ ctx }) => {
                   🔗 Open original
                 </a>
               )}
+              <input
+                type="text"
+                value={((activeTest.gelCaptions || [])[idx]) || ''}
+                onChange={(e) => {
+                  const caps = (activeTest.gelCaptions || []).slice();
+                  caps[idx] = e.target.value;
+                  updateActiveTest({ gelCaptions: caps });
+                }}
+                placeholder={`Caption for gel ${idx + 1}...`}
+                className="mt-2 w-full border border-slate-200 rounded px-2 py-1 text-xs outline-none focus:border-blue-500"
+              />
             </div>
           ))}
         </div>
@@ -525,16 +551,31 @@ export const CloningDataSection = ({ ctx }) => {
             ))}
           </div>
         )}
+        <SectionComment
+          value={activeTest.uvComment}
+          onChange={(v) => updateActiveTest({ uvComment: v })}
+          placeholder="Notes about the UV spectra (baseline, A260/280, quality)..."
+        />
       </CollapsibleSection>
 
       {/* ---------- DNA QUANTIFICATION ---------- */}
       <CollapsibleSection title="DNA Quantification" icon="🧮" defaultOpen={false}>
         <DnaQuantTable ctx={ctx} />
+        <SectionComment
+          value={activeTest.dnaQuantComment}
+          onChange={(v) => updateActiveTest({ dnaQuantComment: v })}
+          placeholder="Notes about the DNA quantification results..."
+        />
       </CollapsibleSection>
 
       {/* ---------- GELS ---------- */}
       <CollapsibleSection title="Gel Electrophoresis" icon="🧬" defaultOpen={false}>
         <GelPanel ctx={ctx} />
+        <SectionComment
+          value={activeTest.gelComment}
+          onChange={(v) => updateActiveTest({ gelComment: v })}
+          placeholder="Notes about gel results, band patterns, molecular weight markers..."
+        />
       </CollapsibleSection>
     </div>
   );
