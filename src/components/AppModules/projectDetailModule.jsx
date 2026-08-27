@@ -688,12 +688,13 @@ export const ProjectDetailModule = ({
     return (
       <SectionCard title={label} open={openSections[id]} onToggle={() => toggleSection(id)}
                    badge={value ? <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 rounded-full px-2 py-0.5">saved</span> : null}>
-        <p className="text-xs text-slate-500 mb-2">{hint} Insert figures, standard tables, documents and numbered
+        <p className="text-xs text-slate-500 mb-2">{hint} Insert links, figures, standard tables, documents and numbered
           references (from the “Project bibliography” and the “Publications of the scientist”).</p>
         <RichTextEditor
           value={value}
           onChange={onChange}
           placeholder={hint}
+          linkButton
           toolbarExtra={[
             { label: '🖼️ + Figure', title: 'Add a figure (image link + caption)', onClick: () => addSectionFigure(id) },
             { label: '▦ + Std Table', title: 'Insert a standard table at the cursor position', onClick: (insertText) => setTableDraft({ section: id, insertText }) },

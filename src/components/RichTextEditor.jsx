@@ -1,8 +1,13 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 
-export const RichTextEditor = ({ value, onChange, placeholder, toolbarExtra = [] }) => {
+export const RichTextEditor = ({
+  value, onChange, placeholder, toolbarExtra = [],
+  minHeight = 120, maxHeight = 500, resizable = true, fillHeight = true,
+  linkButton = false
+}) => {
     const editorRef = useRef(null);
     const selRef = useRef(null);
+    const [linkDraft, setLinkDraft] = useState(null); // null | { text, url }
     useEffect(() => { if (editorRef.current && editorRef.current.innerHTML !== value) editorRef.current.innerHTML = value || ''; }, [value]);
     const execCmd = (cmd, val=null) => { document.execCommand(cmd, false, val); onChange(editorRef.current.innerHTML); editorRef.current.focus(); };
     const storeSel = () => {
@@ -23,6 +28,76 @@ export const RichTextEditor = ({ value, onChange, placeholder, toolbarExtra = []
         }
         document.execCommand('insertText', false, text);
         onChange(el.innerHTML);
+    };
+    // Insert rich HTML (e.g. an <a> link) at the last caret position
+    const insertHtml = (html) => {
+        const el = editorRef.current;
+        if (!el) return;
+        el.focus();
+        const sel = window.getSelection();
+        if (selRef.current && el.contains(selRef.current.startContainer)) {
+            sel.removeAllRanges();
+            sel.addRange(selRef.current);
+        }
+        document.execCommand('insertHTML', false, html);
+        onChange(el.innerHTML);
+    };
+    const escapeHtml = (s) =>
+        String(s ?? '').replace(/[&<>"']/g, (ch) => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[ch]));
+    // Open the link modal, pre-filling the text with the currently selected text
+    const openLinkModal = () => {
+        const sel = window.getSelection();
+        let selected = '';
+        if (sel && sel.rangeCount > 0 && editorRef.current && editorRef.current.contains(sel.anchorNode)) {
+            selected = sel.toString();
+        }
+        setLinkDraft({ text: selected || '', url: '' });
+    };
+    const insertLink = () => {
+        if (!linkDraft) return;
+        const url = String(linkDraft.url || '').trim();
+        if (!url) return;
+        const text = String(linkDraft.text || '').trim() || url;
+        const safeUrl = /^(https?:|mailto:|tel:|#|\/)/i.test(url) ? url : `https://${url}`;
+        insertHtml(`<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(text)}</a>`);
+        setLinkDraft(null);
+    };
+    const toPx = (v) => (typeof v === 'number' ? `${v}px` : v);
+    const clampHeight = () => {
+        let min = 100; let max = 10000;
+        const parse = (v) => {
+            if (typeof v === 'number' && isFinite(v)) return v;
+            const m = String(v || '').trim().match(/^(\d+(?:\.\d+)?)/);
+            return m ? parseFloat(m[1]) : NaN;
+        };
+        const mn = parse(minHeight); if (!isNaN(mn)) min = mn;
+        const mx = parse(maxHeight); if (!isNaN(mx)) max = mx;
+        return { min, max };
+    };
+    // Drag-to-resize vertically with the mouse (on the handle bar below the editor)
+    const startResize = (e) => {
+        if (!resizable || e.button !== 0) return;
+        e.preventDefault();
+        const el = editorRef.current;
+        if (!el) return;
+        const { min, max } = clampHeight();
+        const startY = e.clientY;
+        const startH = el.getBoundingClientRect().height;
+        const onMove = (ev) => {
+            const h = Math.max(min, Math.min(max, startH + (ev.clientY - startY)));
+            el.style.height = `${h}px`;
+            el.style.maxHeight = 'none'; // let the inline height win while dragging
+        };
+        const onUp = () => {
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+            document.body.style.cursor = '';
+        };
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+        document.body.style.cursor = 'ns-resize';
     };
     const handlePaste = (e) => {
         const items = (e.clipboardData || e.originalEvent?.clipboardData)?.items;
@@ -53,7 +128,7 @@ export const RichTextEditor = ({ value, onChange, placeholder, toolbarExtra = []
         }
     };
     return (
-        <div className="w-full flex-1 flex flex-col border border-slate-300 rounded-md bg-white overflow-hidden shadow-sm transition-shadow focus-within:ring-1 focus-within:ring-blue-500 focus-within:border-blue-500">
+        <div className={`w-full ${fillHeight ? 'flex-1' : ''} flex flex-col border border-slate-300 rounded-md bg-white overflow-hidden shadow-sm transition-shadow focus-within:ring-1 focus-within:ring-blue-500 focus-within:border-blue-500`}>
             <div className="flex gap-1 p-1 bg-slate-50 border-b border-slate-200 shrink-0 flex-wrap">
                 <button onClick={()=>execCmd('bold')} className="font-bold px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition">B</button>
                 <button onClick={()=>execCmd('italic')} className="italic px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition">I</button>
@@ -77,6 +152,12 @@ export const RichTextEditor = ({ value, onChange, placeholder, toolbarExtra = []
                     <span>Color:</span>
                     <input type="color" className="w-4 h-4 p-0 border-none cursor-pointer" onChange={e => execCmd('foreColor', e.target.value)} />
                 </label>
+                {linkButton && (
+                    <button onClick={openLinkModal} title="Insert a link within the text"
+                            className="px-2 py-0.5 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded shadow-sm text-xs font-bold transition">
+                        🔗 Link
+                    </button>
+                )}
                 {toolbarExtra.map((btn, i) => (
                     <button key={i} type="button" onClick={() => btn.onClick(insertText)} title={btn.title || btn.label}
                             className="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white border border-indigo-700 rounded shadow-sm text-xs font-bold transition">
@@ -86,7 +167,49 @@ export const RichTextEditor = ({ value, onChange, placeholder, toolbarExtra = []
             </div>
             <div ref={editorRef} contentEditable onPaste={handlePaste} onBlur={e => onChange(e.target.innerHTML)}
                 onSelect={storeSel} onKeyUp={storeSel} onMouseUp={storeSel} onFocus={storeSel}
-                className="p-3 text-sm text-slate-700 focus:outline-none custom-scrollbar shadow-inner bg-slate-50/50" style={{ resize: 'vertical', minHeight: '120px', maxHeight: '500px', overflowY: 'auto' }} data-placeholder={placeholder} />
+                className="p-3 text-sm text-slate-700 focus:outline-none custom-scrollbar shadow-inner bg-slate-50/50" style={{ resize: 'vertical', minHeight: toPx(minHeight), maxHeight: toPx(maxHeight), overflowY: 'auto' }} data-placeholder={placeholder} />
+            {resizable && (
+                <div onMouseDown={startResize} title="Drag to resize the editor vertically"
+                     className="shrink-0 h-3.5 flex items-center justify-center cursor-ns-resize select-none border-t border-slate-200 bg-slate-50 hover:bg-slate-200/70 transition-colors">
+                    <span className="block w-12 h-1 rounded-full bg-slate-300" />
+                </div>
+            )}
+
+            {linkDraft && (
+                <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4"
+                     style={{ background: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(2px)' }}
+                     onMouseDown={(e) => { if (e.target === e.currentTarget) setLinkDraft(null); }}>
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-5 flex flex-col gap-3"
+                         onClick={(e) => e.stopPropagation()}>
+                        <h4 className="text-sm font-black text-slate-800">🔗 Insert Link</h4>
+
+                        <label className="text-[10px] font-bold text-slate-500 uppercase">Link text</label>
+                        <input autoFocus type="text" value={linkDraft.text}
+                               onChange={(e) => setLinkDraft({ ...linkDraft, text: e.target.value })}
+                               placeholder="Visible text of the link"
+                               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); insertLink(); } }}
+                               className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500" />
+
+                        <label className="text-[10px] font-bold text-slate-500 uppercase">URL</label>
+                        <input type="text" value={linkDraft.url}
+                               onChange={(e) => setLinkDraft({ ...linkDraft, url: e.target.value })}
+                               placeholder="https://..."
+                               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); insertLink(); } }}
+                               className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500" />
+
+                        <div className="flex justify-end gap-2 pt-1">
+                            <button onClick={() => setLinkDraft(null)}
+                                    className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300 transition-colors">
+                                Cancel
+                            </button>
+                            <button onClick={insertLink}
+                                    className="px-3 py-1.5 text-xs font-bold rounded-lg bg-sky-600 text-white hover:bg-sky-700 transition-colors">
+                                Insert Link
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

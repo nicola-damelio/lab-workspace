@@ -2115,6 +2115,7 @@ const details = [
                     value={comments}
                     onChange={(val) => update({ comments: val })}
                     placeholder="Enter your experiment notes, observations, etc..."
+                    linkButton
                   />
                 </div>
 

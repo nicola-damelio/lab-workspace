@@ -871,7 +871,6 @@ if (customType === 'dosy') {
     'Analysis'
   ]);
   const [datasetProtocols, setDatasetProtocols] = useState([]);
-  const [protoImgInput, setProtoImgInput] = useState(''); // for inline image URL entry
 
   const historyRef = useRef([[createEmptyTest('t1', 1, 'plate-96')]]);
   const [historyIndex, setHistoryIndex] = useState(0);
@@ -2793,11 +2792,12 @@ const openDataset = (dset) => {
             />)}
             {currentModule === 'protocols' && (<ProtocolsModule
               datasetProtocols={datasetProtocols} expandedGroups={expandedGroups} handlePrint={handlePrint}
-              nmrExperiments={nmrExperiments} protocolCategories={protocolCategories}
-              protoImgInput={protoImgInput} setActiveLibrarySelection={setActiveLibrarySelection}
+              nmrExperiments={nmrExperiments} operatorNames={operatorNames} currentUser={currentUser}
+              protocolCategories={protocolCategories}
+              setActiveLibrarySelection={setActiveLibrarySelection}
               setActiveTestId={setActiveTestId} setCurrentModule={setCurrentModule}
               setDatasetProtocols={setDatasetProtocols} setExpandedGroups={setExpandedGroups}
-              setProtocolCategories={setProtocolCategories} setProtoImgInput={setProtoImgInput}
+              setProtocolCategories={setProtocolCategories}
               tests={tests}
             />)}
             {currentModule === 'active-test' && (<ActiveTestModule

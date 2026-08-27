@@ -3,7 +3,7 @@
    Protocols & Protocol Categories view, extracted from App.jsx. Props-only.
    ========================================================================= */
 
-import React from 'react';
+import React, { useState } from 'react';
 import { RichTextEditor } from '../RichTextEditor';
 import { BrukerPulseSequenceViewer } from '../DefinitionsExtra';
 import { getDirectImageUrl } from '../../data/constants';
@@ -11,15 +11,24 @@ import { Icon } from '../Icons';
 
 export const ProtocolsModule = ({
   datasetProtocols, expandedGroups, handlePrint, nmrExperiments,
-  protocolCategories, protoImgInput, setActiveLibrarySelection,
-  setActiveTestId, setCurrentModule, setDatasetProtocols, setExpandedGroups,
-  setProtocolCategories, setProtoImgInput, tests
+  operatorNames, currentUser, protocolCategories,
+  setActiveLibrarySelection, setActiveTestId, setCurrentModule,
+  setDatasetProtocols, setExpandedGroups, setProtocolCategories,
+  tests
 }) => {
                 const protoSearch = expandedGroups['protoSearch'] || '';
                 const protoCatFilter = expandedGroups['protoCatFilter'] || 'ALL';
                 const showProtoCatMgr = expandedGroups['showProtoCatMgr'] || false;
                 const newProtoCatInput = expandedGroups['newProtoCatInput'] || '';
                 const activeProtoId = expandedGroups['activeProtoId'] || null;
+                const protoUserFilter = expandedGroups['protoUserFilter'] || 'ALL';
+
+                const allUsers = (Array.isArray(operatorNames) ? operatorNames : [])
+                  .map((n) => (typeof n === 'string' ? n : n?.name || ''))
+                  .filter((n) => String(n).trim());
+
+                const assignedUsers = (p) =>
+                  Array.isArray(p?.assignedTo) ? p.assignedTo : [];
 
                 const filteredProtocols = datasetProtocols.filter((p) => {
                   const matchesSearch = p.title
@@ -29,12 +38,108 @@ export const ProtocolsModule = ({
                   const matchesCat =
                     protoCatFilter === 'ALL' || p.category === protoCatFilter;
 
-                  return matchesSearch && matchesCat;
+                  const matchesUser =
+                    protoUserFilter === 'ALL' ||
+                    assignedUsers(p).includes(protoUserFilter);
+
+                  return matchesSearch && matchesCat && matchesUser;
                 });
 
 const activeProtocol = activeProtoId
   ? datasetProtocols.find((p) => p.id === activeProtoId)
   : null;
+
+const [tableRows, setTableRows] = useState(2);
+const [tableCols, setTableCols] = useState(3);
+
+const protocolFigures = Array.isArray(activeProtocol?.images)
+  ? activeProtocol.images
+  : [];
+
+const protocolDocuments = Array.isArray(activeProtocol?.documents)
+  ? activeProtocol.documents
+  : [];
+
+const updateProtocol = (patch) =>
+  setDatasetProtocols(
+    datasetProtocols.map((p) =>
+      p.id === activeProtocol.id ? { ...p, ...patch } : p
+    )
+  );
+
+const addProtocolFigure = () =>
+  updateProtocol({
+    images: [
+      ...protocolFigures,
+      {
+        id: 'proto_img_' + Date.now(),
+        name: 'Figure ' + (protocolFigures.length + 1),
+        url: '',
+        caption: ''
+      }
+    ]
+  });
+
+const updateProtocolFigure = (id, field, val) =>
+  updateProtocol({
+    images: protocolFigures.map((im) =>
+      im.id === id ? { ...im, [field]: val } : im
+    )
+  });
+
+const removeProtocolFigure = (id) =>
+  updateProtocol({
+    images: protocolFigures.filter((im) => im.id !== id)
+  });
+
+const addProtocolDocument = () =>
+  updateProtocol({
+    documents: [
+      ...protocolDocuments,
+      {
+        id: Date.now() + '-' + Math.random().toString(36).slice(2),
+        name: 'New Document Link',
+        type: 'link',
+        data: ''
+      }
+    ]
+  });
+
+const updateProtocolDocument = (id, field, val) =>
+  updateProtocol({
+    documents: protocolDocuments.map((d) =>
+      (d.id ?? d) === id ? { ...d, [field]: val } : d
+    )
+  });
+
+const removeProtocolDocument = (id) =>
+  updateProtocol({
+    documents: protocolDocuments.filter((d) => (d.id ?? d) !== id)
+  });
+
+const insertProtocolTable = () => {
+  let tableHtml =
+    '<br/><table style="width:100%; border-collapse: collapse;" border="1"><tbody><tr>';
+
+  for (let c = 0; c < tableCols; c++) {
+    tableHtml += `<th style="padding:4px; background-color:#f1f5f9; border: 1px solid #cbd5e1;">Header ${c + 1}</th>`;
+  }
+
+  tableHtml += '</tr>';
+
+  for (let r = 0; r < tableRows; r++) {
+    tableHtml += '<tr>';
+
+    for (let c = 0; c < tableCols; c++) {
+      tableHtml += `<td style="padding:4px; border: 1px solid #cbd5e1;">Data</td>`;
+    }
+
+    tableHtml += '</tr>';
+  }
+
+  tableHtml += '</tbody></table><br/>';
+  updateProtocol({ content: (activeProtocol.content || '') + tableHtml });
+};
 
 const extractGoogleDriveId = (url) => {
   try {
@@ -133,11 +238,76 @@ const getProtocolImageFallback = (url) => {
                         </select>
                       </div>
 
-                      <div className="flex-1 flex flex-col lg:flex-row gap-6 overflow-y-auto lg:overflow-hidden">
-<div className="flex-1 flex flex-col h-auto lg:h-full min-h-[300px]">
+                      {assignedUsers(activeProtocol).length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5 mb-4 shrink-0">
+                          <Icon name="users" size={13} className="text-slate-400" />
+                          <span className="text-[11px] font-bold text-slate-500 uppercase mr-1">
+                            Assigned to:
+                          </span>
+                          {assignedUsers(activeProtocol).map((n) => (
+                            <span
+                              key={n}
+                              className="text-[10px] font-bold bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full border border-violet-200"
+                            >
+                              {n}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="flex-1 flex flex-col lg:flex-row gap-6 overflow-y-auto custom-scrollbar">
+<div className="flex-1 flex flex-col min-h-[300px]">
   <label className="text-xs font-bold text-slate-500 uppercase mb-2">
     Protocol Description & Steps
   </label>
+
+  <div className="flex flex-wrap items-center gap-2 mb-2 no-print shrink-0">
+    <button
+      type="button"
+      onClick={addProtocolFigure}
+      title="Add a figure (image link + caption)"
+      className="bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 font-bold px-2 py-1 rounded transition-colors shadow-sm text-[10px] flex items-center gap-1"
+    >
+      <Icon name="image" size={12} /> + Add Figure
+    </button>
+
+    <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded px-2 py-1 shadow-sm">
+      <label className="text-[10px] font-bold text-slate-500">Rows:</label>
+      <input
+        type="number"
+        min="1"
+        value={tableRows}
+        onChange={(e) => setTableRows(parseInt(e.target.value) || 1)}
+        className="w-10 text-[10px] border border-slate-300 rounded px-1 outline-none"
+      />
+      <label className="text-[10px] font-bold text-slate-500 ml-1">Cols:</label>
+      <input
+        type="number"
+        min="1"
+        value={tableCols}
+        onChange={(e) => setTableCols(parseInt(e.target.value) || 1)}
+        className="w-10 text-[10px] border border-slate-300 rounded px-1 outline-none"
+      />
+
+      <button
+        type="button"
+        onClick={insertProtocolTable}
+        title="Insert a table with the selected dimensions at the end of the protocol content"
+        className="bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 font-bold px-2 py-1 rounded transition-colors text-[10px]"
+      >
+        ▦ Insert Table
+      </button>
+    </div>
+
+    <button
+      type="button"
+      onClick={addProtocolDocument}
+      title="Attach a document link"
+      className="bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border border-indigo-200 font-bold px-2 py-1 rounded transition-colors shadow-sm text-[10px] flex items-center gap-1"
+    >
+      <Icon name="link" size={12} /> + Add Document
+    </button>
+  </div>
 
   <RichTextEditor
     value={activeProtocol.content || ''}
@@ -149,142 +319,168 @@ const getProtocolImageFallback = (url) => {
       )
     }
     placeholder="Write the detailed protocol steps here. You can paste images directly..."
+    minHeight={280}
+    maxHeight={2000}
+    fillHeight={false}
+    resizable
+    linkButton
   />
 
-  <div className="mt-6 border border-slate-200 rounded-xl bg-slate-50 p-4 shadow-sm">
-    <div className="flex flex-col gap-3 mb-3">
-      <div>
-        <h4 className="text-xs font-bold text-slate-500 uppercase">
-          Protocol Images
-        </h4>
-        <p className="text-xs text-slate-400">
-          Paste Google Drive image links. Previews appear immediately.
-        </p>
+  {protocolFigures.length > 0 && (
+    <div className="mt-6 border border-slate-200 rounded-xl bg-slate-50 p-4 shadow-sm">
+      <div className="flex flex-col gap-3 mb-3">
+        <div>
+          <h4 className="text-xs font-bold text-slate-500 uppercase">
+            🖼️ Figures
+          </h4>
+          <p className="text-xs text-slate-400">
+            Attached image links — paste a Google Drive / Dropbox URL, add a
+            caption and preview.
+          </p>
+        </div>
       </div>
 
-      {/* Inline URL input — no prompt() required */}
-      <div className="flex gap-2 items-center no-print">
-        <input
-          type="text"
-          value={protoImgInput}
-          onChange={(e) => setProtoImgInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              const urls = protoImgInput.split(/[,\n]+/).map(s => s.trim()).filter(Boolean);
-              if (!urls.length) return;
-              const existingCount = (activeProtocol.images || []).length;
-              const newImgs = urls.map((url, idx) => ({ id: `proto_img_${Date.now()}_${idx}`, name: `Image ${existingCount + idx + 1}`, url }));
-              setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? { ...p, images: [...(p.images || []), ...newImgs] } : p));
-              setProtoImgInput('');
-            }
-          }}
-          placeholder="Paste Google Drive URL(s), comma-separated… then press Enter or Add"
-          className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 bg-white"
-        />
-        <button
-          type="button"
-          onClick={() => {
-            const urls = protoImgInput.split(/[,\n]+/).map(s => s.trim()).filter(Boolean);
-            if (!urls.length) return;
-            const existingCount = (activeProtocol.images || []).length;
-            const newImgs = urls.map((url, idx) => ({ id: `proto_img_${Date.now()}_${idx}`, name: `Image ${existingCount + idx + 1}`, url }));
-            setDatasetProtocols(datasetProtocols.map(p => p.id === activeProtocol.id ? { ...p, images: [...(p.images || []), ...newImgs] } : p));
-            setProtoImgInput('');
-          }}
-          className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-xs shadow-sm transition-colors whitespace-nowrap"
-        >
-          + Add
-        </button>
-      </div>
-    </div>
-
-    {(activeProtocol.images || []).length === 0 ? (
-      <div className="text-sm text-slate-400 italic bg-white border border-dashed border-slate-300 rounded-lg p-4">
-        No images added yet. Use “+ Add Image Link(s)” and paste Google Drive
-        image URLs.
-      </div>
-    ) : (
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-        {(activeProtocol.images || []).map((img) => (
+        {protocolFigures.map((img, idx) => (
           <div
             key={img.id}
             className="bg-white border border-slate-200 rounded-lg p-2 shadow-sm flex flex-col gap-2"
           >
-            <div className="h-28 rounded-md overflow-hidden border border-slate-100 bg-slate-100">
-              <img
-                src={getProtocolImagePreview(img.url)}
-                alt={img.name || 'Protocol image'}
-                referrerPolicy="no-referrer"
-                className="w-full h-full object-cover"
-                onError={(e) => {
-                  if (!e.currentTarget.dataset.fallback) {
-                    e.currentTarget.dataset.fallback = '1';
-                    e.currentTarget.src = getProtocolImageFallback(img.url);
-                  }
-                }}
-              />
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-500">
+                Figure {idx + 1}
+              </span>
+              <button
+                type="button"
+                onClick={() => removeProtocolFigure(img.id)}
+                className="bg-red-50 hover:bg-red-100 text-red-500 hover:text-red-700 rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold transition-colors border border-red-200"
+                title="Remove figure"
+              >
+                ×
+              </button>
             </div>
 
             <input
               type="text"
-              value={img.name || ''}
-              onChange={(e) =>
-                setDatasetProtocols(
-                  datasetProtocols.map((p) =>
-                    p.id === activeProtocol.id
-                      ? {
-                          ...p,
-                          images: (p.images || []).map((im) =>
-                            im.id === img.id
-                              ? { ...im, name: e.target.value }
-                              : im
-                          )
-                        }
-                      : p
-                  )
-                )
-              }
-              className="border border-slate-200 rounded-md px-2 py-1 text-xs font-bold text-slate-700 outline-none focus:border-blue-500"
-              placeholder="Image name"
+              value={img.url || ''}
+              onChange={(e) => updateProtocolFigure(img.id, 'url', e.target.value)}
+              placeholder="Paste image URL here (Google Drive, Dropbox, etc.)"
+              className="w-full border border-slate-300 rounded-lg p-2 text-xs outline-none focus:border-blue-500"
             />
 
-            <div className="flex gap-2">
+            {img.url && String(img.url).trim() !== '' && (
+              <div className="h-28 rounded-md overflow-hidden border border-slate-100 bg-slate-100">
+                <img
+                  src={getProtocolImagePreview(img.url)}
+                  alt={img.name || `Figure ${idx + 1}`}
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-cover"
+                  onError={(e) => {
+                    if (!e.currentTarget.dataset.fallback) {
+                      e.currentTarget.dataset.fallback = '1';
+                      e.currentTarget.src = getProtocolImageFallback(img.url);
+                    }
+                  }}
+                />
+              </div>
+            )}
+
+            <input
+              type="text"
+              value={img.name || ''}
+              onChange={(e) => updateProtocolFigure(img.id, 'name', e.target.value)}
+              placeholder="Figure title"
+              className="w-full border border-slate-300 rounded-lg p-2 text-xs outline-none focus:border-blue-500"
+            />
+
+            <textarea
+              value={img.caption || ''}
+              onChange={(e) => updateProtocolFigure(img.id, 'caption', e.target.value)}
+              placeholder={`Figure ${idx + 1} caption...`}
+              rows={2}
+              className="w-full border border-slate-300 rounded-lg p-2 text-xs outline-none focus:border-blue-500 resize-y"
+            />
+
+            {img.url && String(img.url).trim() !== '' && (
               <a
                 href={img.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex-1 text-center bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 font-bold py-1 px-2 rounded text-xs transition-colors"
+                className="text-xs text-blue-500 hover:text-blue-700 font-medium flex items-center gap-1"
               >
-                Open
+                🔗 Open original link
               </a>
-
-              <button
-                type="button"
-                onClick={() =>
-                  setDatasetProtocols(
-                    datasetProtocols.map((p) =>
-                      p.id === activeProtocol.id
-                        ? {
-                            ...p,
-                            images: (p.images || []).filter(
-                              (im) => im.id !== img.id
-                            )
-                          }
-                        : p
-                    )
-                  )
-                }
-                className="flex-1 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold py-1 px-2 rounded text-xs transition-colors"
-              >
-                Remove
-              </button>
-            </div>
+            )}
           </div>
         ))}
       </div>
-    )}
-  </div>
+    </div>
+  )}
+
+  {protocolDocuments.length > 0 && (
+    <div className="mt-6 border border-slate-200 rounded-xl bg-slate-50 p-4 shadow-sm">
+      <div className="flex flex-col gap-3 mb-3">
+        <div>
+          <h4 className="text-xs font-bold text-slate-500 uppercase">
+            📎 Documents
+          </h4>
+          <p className="text-xs text-slate-400">
+            Attached document links (publications, SOPs, files...).
+          </p>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        {protocolDocuments.map((doc, idx) => {
+          const docKey = doc.id ?? idx;
+
+          return (
+            <div key={docKey} className="flex flex-col gap-1.5 bg-white border border-slate-200 p-2 rounded-lg shadow-sm">
+              <div className="flex justify-between items-center">
+                <span className="text-[10px] font-bold text-slate-500">
+                  🔗 Document {idx + 1}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => removeProtocolDocument(docKey)}
+                  className="text-slate-400 hover:text-red-500 font-bold px-1 text-[10px]"
+                >
+                  ×
+                </button>
+              </div>
+
+              <input
+                type="text"
+                value={doc.name || ''}
+                onChange={(e) => updateProtocolDocument(docKey, 'name', e.target.value)}
+                placeholder="Document Name"
+                className="w-full border border-slate-300 rounded p-1 text-[10px] outline-none focus:border-blue-500"
+              />
+
+              <input
+                type="text"
+                value={doc.data || ''}
+                onChange={(e) => updateProtocolDocument(docKey, 'data', e.target.value)}
+                placeholder="https://..."
+                className="w-full border border-slate-300 rounded p-1 text-[10px] outline-none focus:border-blue-500"
+              />
+
+              {doc.data && String(doc.data).trim() !== '' && (
+                <a
+                  href={doc.data}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[9px] text-blue-500 hover:text-blue-700 underline truncate block mt-0.5"
+                >
+                  Open link ↗
+                </a>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  )}
 
   <div className="mt-6 border-t border-slate-100 pt-4 no-print shrink-0">
     <h4 className="text-xs font-bold text-slate-500 uppercase mb-3">
@@ -359,6 +555,63 @@ const getProtocolImageFallback = (url) => {
 
   return (
     <div className="w-full lg:w-80 flex flex-col gap-4 lg:overflow-y-auto custom-scrollbar shrink-0 lg:border-l border-t lg:border-t-0 border-slate-100 pt-4 lg:pt-0 lg:pl-4 no-print">
+      <div className="flex flex-col gap-3">
+        <label className="text-xs font-bold text-slate-500 uppercase">
+          👥 Assigned Users
+        </label>
+
+        {allUsers.length === 0 ? (
+          <span className="text-sm text-slate-400 italic">
+            No users configured yet.
+          </span>
+        ) : (
+          <>
+            <div className="flex flex-wrap gap-1.5">
+              {allUsers.map((name) => {
+                const selected = assignedUsers(activeProtocol).includes(name);
+
+                return (
+                  <button
+                    key={name}
+                    type="button"
+                    onClick={() => {
+                      const current = assignedUsers(activeProtocol);
+                      const next = selected
+                        ? current.filter((n) => n !== name)
+                        : [...current, name];
+
+                      setDatasetProtocols(
+                        datasetProtocols.map((p) =>
+                          p.id === activeProtocol.id
+                            ? { ...p, assignedTo: next }
+                            : p
+                        )
+                      );
+                    }}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border shadow-sm transition-colors flex items-center gap-1 ${
+                      selected
+                        ? 'bg-violet-600 border-violet-700 text-white'
+                        : 'bg-white border-slate-300 text-slate-600 hover:border-violet-400'
+                    }`}
+                  >
+                    {selected ? '✓ ' : '+ '}
+                    {name}
+                  </button>
+                );
+              })}
+            </div>
+
+            {assignedUsers(activeProtocol).length === 0 && (
+              <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
+                ⚠️ This protocol is not assigned to any user yet.
+              </p>
+            )}
+          </>
+        )}
+      </div>
+
+      <div className="w-full h-px bg-slate-200"></div>
+
       <label className="text-xs font-bold text-slate-500 uppercase">
         Attached Resources
       </label>
@@ -641,7 +894,9 @@ const newProto = {
   category: protocolCategories[0] || 'Uncategorized',
   content: '',
   links: [],
-  images: []
+  images: [],
+  documents: [],
+  assignedTo: currentUser && currentUser.name ? [currentUser.name] : []
 };
 
                             setDatasetProtocols([newProto, ...datasetProtocols]);
@@ -674,7 +929,7 @@ const newProto = {
                           />
                         </div>
 
-                        <div className="w-full md:w-64 flex gap-2">
+                        <div className="w-full lg:w-auto flex flex-col sm:flex-row gap-2">
                           <select
                             value={protoCatFilter}
                             onChange={(e) =>
@@ -693,6 +948,27 @@ const newProto = {
                               </option>
                             ))}
                           </select>
+
+                          {allUsers.length > 0 && (
+                            <select
+                              value={protoUserFilter}
+                              onChange={(e) =>
+                                setExpandedGroups((p) => ({
+                                  ...p,
+                                  protoUserFilter: e.target.value
+                                }))
+                              }
+                              className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:border-violet-500 font-semibold text-slate-700 cursor-pointer"
+                            >
+                              <option value="ALL">All Users</option>
+
+                              {allUsers.map((n) => (
+                                <option key={n} value={n}>
+                                  {n}
+                                </option>
+                              ))}
+                            </select>
+                          )}
 
                           <button
                             onClick={() =>
@@ -849,6 +1125,12 @@ const newProto = {
         <Icon name="link" size={13} /> {(proto.links || []).length} Links
       </span>
       <span className="flex items-center gap-1">
+        <Icon name="image" size={13} /> {(proto.images || []).length} Figures
+      </span>
+      <span className="flex items-center gap-1">
+        <Icon name="document" size={13} /> {(proto.documents || []).length} Docs
+      </span>
+      <span className="flex items-center gap-1">
         <Icon name="document" size={13} /> {proto.content ? 'Has Content' : 'Empty'}
       </span>
       {proto.linkedPulseProgramName && (
@@ -857,6 +1139,25 @@ const newProto = {
         </span>
       )}
     </div>
+
+    {assignedUsers(proto).length > 0 ? (
+      <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap gap-1.5">
+        {assignedUsers(proto).map((name) => (
+          <span
+            key={name}
+            className="text-[10px] font-bold bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full border border-violet-200 flex items-center gap-1"
+          >
+            <Icon name="users" size={11} /> {name}
+          </span>
+        ))}
+      </div>
+    ) : (
+      <div className="mt-3 pt-3 border-t border-slate-100">
+        <span className="text-[10px] font-bold bg-slate-100 text-slate-400 px-2 py-0.5 rounded-full">
+          Unassigned
+        </span>
+      </div>
+    )}
   </div>
 ))}
                         </div>
