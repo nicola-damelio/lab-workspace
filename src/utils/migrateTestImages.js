@@ -28,7 +28,8 @@ import {
   resolveDrivePathFromNames,
   moveDriveFile,
   renameDriveFile,
-  registerDriveFile
+  registerDriveFile,
+  uploadLocalFile
 } from './driveUpload';
 import { driveFolderPath, suggestDriveFileName } from './driveNaming';
 
@@ -181,15 +182,44 @@ const applyRewrite = (test, ref, fileId, newUrl) => {
   if (typeof arr[where.index] === 'string') arr[where.index] = newUrl;
 };
 
+/** Extension → MIME type (used when re-uploading an image copied from Drive). */
+const EXT_MIME = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
+  '.bmp': 'image/bmp', '.tif': 'image/tiff', '.tiff': 'image/tiff',
+  '.ico': 'image/x-icon', '.heic': 'image/heic', '.pdf': 'application/pdf'
+};
+
+/** Download the bytes of a publicly-shared Drive file (same endpoint the app
+ *  already uses for Bruker/FCS data). Throws when the file is not shareable. */
+export const downloadDriveFileBytes = async (fileId) => {
+  const res = await fetch(`https://drive.google.com/uc?export=download&id=${fileId}`, {
+    method: 'GET'
+  });
+  if (!res.ok) throw new Error(`Drive download returned HTTP ${res.status}`);
+  const contentType = String(res.headers.get('content-type') || '').split(';')[0].trim();
+  if (contentType === 'text/html') throw new Error('file is not shared ("Anyone with the link")');
+  const bytes = await res.arrayBuffer();
+  if (!bytes || bytes.byteLength === 0) throw new Error('empty download');
+  // Prefer the name Google sends back; fall back to a generic image name.
+  const cd = String(res.headers.get('content-disposition') || '');
+  const m = /filename\*?=(?:UTF-8''|")?([^";]+)/i.exec(cd);
+  const name = m ? decodeURIComponent(m[1].replace(/"/g, '')).trim() : 'image';
+  return { bytes, mimeType: contentType || 'application/octet-stream', name };
+};
+
+
 
 
 /**
  * Move every Drive-linked test image into its correct folder and rename it
- * per the current rules. Returns the updated tests (URLs normalised to the
- * canonical /file/d/<id>/view form) and a run summary.
+ * per the current rules. Files not created by the app (drive.file scope) are
+ * downloaded and re-uploaded as app files into the same folder. Returns the
+ * updated tests (URLs normalised to the canonical /file/d/<id>/view form)
+ * and a run summary.
  *
  * @param {{ tests: Array, onProgress?: Function }} options
- * @returns {Promise<{ nextTests: Array, summary: { moved, skipped, failed, details } }>}
+ * @returns {Promise<{ nextTests: Array, summary: { moved, copied, skipped, failed, details } }>}
  */
 export const migrateTestDriveImages = async ({ tests, onProgress = () => {} } = {}) => {
   const list = Array.isArray(tests) ? tests : [];
@@ -200,7 +230,7 @@ export const migrateTestDriveImages = async ({ tests, onProgress = () => {} } = 
     collectTestImageRefs(test).forEach((r) => allRefs.push({ test, ti, ...r }));
   });
 
-  const summary = { moved: 0, skipped: 0, failed: 0, details: [] };
+  const summary = { moved: 0, copied: 0, skipped: 0, failed: 0, details: [] };
   if (allRefs.length === 0) return { nextTests: list, summary };
 
   if (!getDriveToken()) {
@@ -228,30 +258,16 @@ export const migrateTestDriveImages = async ({ tests, onProgress = () => {} } = 
     const first = refs[0];
     const ctx = first.ctx;
     const testName = (first.test && first.test.name) || '';
+    const folderPath = driveFolderPath(ctx);
+    const folderLabel = folderPath.join('/');
+    let newUrl = '';
+    let status = '';
+    let finalName = '';
 
-    // 4) The file must be app-created to be moved (drive.file scope).
-    let meta;
-    try {
-      meta = await getDriveFileMeta(fileId);
-    } catch {
-      summary.skipped += 1;
-      summary.details.push({
-        fileId, test: testName, status: 'skipped',
-        reason: 'file was not created by the app (or Drive access expired) — link left unchanged'
-      });
-      onProgress({ fileId, status: 'skipped' });
-      continue;
-    }
-
-    const curName = meta.name || '';
-    const extMatch = /(\.[a-zA-Z0-9]{1,10})$/.exec(curName);
-    const ext = extMatch ? extMatch[1] : '';
-    const base = suggestDriveFileName({ ...ctx, title: first.title });
-
-    // 5) Target folder: <project>/<test>/<instance>/Report (created as needed).
+    // 4) Resolve (creating as needed) the target folder once, up-front.
     let resolved;
     try {
-      resolved = await resolveDrivePathFromNames(driveFolderPath(ctx));
+      resolved = await resolveDrivePathFromNames(folderPath);
     } catch (err) {
       summary.failed += 1;
       summary.details.push({ fileId, test: testName, status: 'failed', reason: err && err.message });
@@ -259,32 +275,63 @@ export const migrateTestDriveImages = async ({ tests, onProgress = () => {} } = 
       continue;
     }
 
-    // 6) Move + rename (collision-safe), then remember the naming context.
+    const base = suggestDriveFileName({ ...ctx, title: first.title });
+
+    // 5a) Fast path — the file was created by the app: move + rename in place.
     try {
-      const finalName = await pickUniqueName(resolved.leafId, base + ext, usedNames, fileId);
+      const meta = await getDriveFileMeta(fileId);
+      const curName = meta.name || '';
+      const extMatch = /(\.[a-zA-Z0-9]{1,10})$/.exec(curName);
+      const ext = extMatch ? extMatch[1] : '';
+      finalName = await pickUniqueName(resolved.leafId, base + ext, usedNames, fileId);
       await moveDriveFile(fileId, resolved.leafId);
       if (finalName !== curName) await renameDriveFile(fileId, finalName);
       // Register WITH the title so future project/test renames recompute the
       // same <title>_<scientist> name (instead of falling back to "File").
       registerDriveFile(fileId, finalName, { ...ctx, title: first.title }, resolved.path);
-      summary.moved += 1;
-      summary.details.push({
-        fileId, test: testName, status: 'moved',
-        folder: driveFolderPath(ctx).join('/'), name: finalName
-      });
-    } catch (err) {
-      summary.failed += 1;
-      summary.details.push({ fileId, test: testName, status: 'failed', reason: err && err.message });
-      onProgress({ fileId, status: 'failed', error: err && err.message });
-      continue;
+      newUrl = `https://drive.google.com/file/d/${fileId}/view`;
+      status = 'moved';
+    } catch (moveErr) {
+      // 5b) Fallback — not app-created (drive.file scope cannot move it): copy
+      // the public bytes into a NEW app-created file in the correct folder.
+      try {
+        const dl = await downloadDriveFileBytes(fileId);
+        const dlExt = /(\.[a-zA-Z0-9]{1,10})$/.exec(dl.name);
+        const ext = dlExt ? dlExt[1] : '';
+        const mime = (ext && EXT_MIME[ext.toLowerCase()]) || dl.mimeType || 'application/octet-stream';
+        finalName = await pickUniqueName(resolved.leafId, base + ext, usedNames, '');
+        const drive = await uploadLocalFile({
+          name: finalName,
+          mimeType: mime,
+          file: new Blob([dl.bytes], { type: mime }),
+          ctx: { ...ctx, title: first.title }
+        });
+        // uploadLocalFile already registered the file — re-register WITH title
+        // so future renames keep the <title>_<scientist> name.
+        registerDriveFile(drive.id, finalName, { ...ctx, title: first.title }, resolved.path);
+        newUrl = drive.driveUrl;
+        status = 'copied';
+      } catch (copyErr) {
+        summary.skipped += 1;
+        summary.details.push({
+          fileId, test: testName, status: 'skipped',
+          reason: `${moveErr && moveErr.message || 'file not created by the app'} — copy failed (${copyErr && copyErr.message || 'unknown'})`
+        });
+        onProgress({ fileId, status: 'skipped' });
+        continue;
+      }
     }
 
-    // 7) Normalise every stored reference to the canonical share URL.
-    const newUrl = `https://drive.google.com/file/d/${fileId}/view`;
+    // 6) Normalise every stored reference to the (new) canonical share URL.
     refs.forEach((ref) => applyRewrite(nextTests[ref.ti], ref, fileId, newUrl));
+    summary[status] += 1;
+    summary.details.push({
+      fileId, test: testName, status,
+      folder: folderLabel, name: finalName
+    });
 
     done += 1;
-    onProgress({ fileId, status: 'moved', done, total });
+    onProgress({ fileId, status, done, total });
   }
 
   return { nextTests, summary };

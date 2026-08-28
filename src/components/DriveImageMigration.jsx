@@ -15,7 +15,7 @@ import {
   TEST_IMAGE_SECTION
 } from '../utils/migrateTestImages';
 
-export const DriveImageMigration = ({ tests, setTests }) => {
+export const DriveImageMigration = ({ tests, setTests, datasetTitle = '' }) => {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
 
@@ -32,8 +32,10 @@ export const DriveImageMigration = ({ tests, setTests }) => {
     }
     const ok = window.confirm(
       `Move ${refCount} test image(s) into the correct Drive folders\n` +
-      `(<project>/<test>/<instance>/${TEST_IMAGE_SECTION}) and rename them ` +
-      `as <title>_<scientist>? The images keep their Drive id, so all existing links keep working.`
+      `(Lab Workspace/<dataset>/<project>/<test>/<instance>/${TEST_IMAGE_SECTION})\n` +
+      `and rename them as <title>_<scientist>?\n\n` +
+      `Files created by the app are moved in place. Files uploaded outside the app are ` +
+      `downloaded and re-uploaded as app files into the folder (their link is updated).`
     );
     if (!ok) return;
 
@@ -72,14 +74,14 @@ export const DriveImageMigration = ({ tests, setTests }) => {
       <button
         type="button"
         onClick={run}
-        disabled={busy || (refCount === 0 && !(s && s.moved > 0))}
+        disabled={busy || (refCount === 0 && !(s && (s.moved > 0 || s.copied > 0)))}
         className={`text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm transition-colors ${
-          refCount === 0 && !(s && s.moved > 0)
+          refCount === 0 && !(s && (s.moved > 0 || s.copied > 0))
             ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-default'
             : 'bg-indigo-600 hover:bg-indigo-700 text-white border border-indigo-700 disabled:opacity-60'
         }`}
       >
-        {busy ? 'Moving images…' : refCount === 0 && !(s && s.moved > 0)
+        {busy ? 'Moving images…' : refCount === 0 && !(s && (s.moved > 0 || s.copied > 0))
           ? 'No Drive-linked test images'
           : '⬆ Move images to correct Drive folders'}
       </button>
@@ -102,6 +104,11 @@ export const DriveImageMigration = ({ tests, setTests }) => {
             <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">
               {s.moved} moved
             </span>
+            {s.copied > 0 && (
+              <span className="text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-full px-2 py-0.5">
+                {s.copied} copied &amp; re-uploaded
+              </span>
+            )}
             {s.skipped > 0 && (
               <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
                 {s.skipped} skipped
@@ -120,12 +127,16 @@ export const DriveImageMigration = ({ tests, setTests }) => {
                 <li key={i} className="flex items-start gap-1.5">
                   <span className={
                     d.status === 'moved' ? 'text-emerald-600' :
+                    d.status === 'copied' ? 'text-blue-600' :
                     d.status === 'skipped' ? 'text-amber-600' : 'text-red-600'
                   }>•</span>
                   <span className="text-slate-600">
                     {d.test || '?'}
-                    {d.status === 'moved'
-                      ? <> → <span className="text-slate-400">{d.folder}/</span><span className="font-semibold text-slate-700">{d.name}</span></>
+                    {(d.status === 'moved' || d.status === 'copied')
+                      ? <> → <span className="text-slate-400">
+                          Lab Workspace/{datasetTitle || '<dataset>'}/{d.folder}/
+                        </span><span className="font-semibold text-slate-700">{d.name}</span>
+                          {d.status === 'copied' && <span className="text-blue-500"> (copied)</span>}</>
                       : <> — <span className="text-slate-400">{d.reason || d.status}</span></>}
                   </span>
                 </li>

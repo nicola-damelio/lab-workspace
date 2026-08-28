@@ -176,7 +176,7 @@ export const DashboardModule = ({ datasetTitle, setDatasetTitle, datasetSubtitle
                   </div>
 
                   <div className="mt-4">
-                    <DriveImageMigration tests={tests} setTests={setTests} />
+                    <DriveImageMigration tests={tests} setTests={setTests} datasetTitle={datasetTitle} />
                   </div>
                 </div>
               </div>
