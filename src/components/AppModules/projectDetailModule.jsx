@@ -7,6 +7,7 @@ import { loadProjects, saveProjects, loadPublications, TEST_TYPE_OPTIONS, testTy
 import { suggestDriveFileName, openDrive } from '../../utils/driveNaming';
 import { DriveUploadButton } from '../DriveUpload';
 import { markAttachmentsDeleted, renameDriveFilesFor, moveTestFolderIntoProject, moveTestFolderOutOfProject } from '../../utils/driveUpload';
+import { effectiveInstanceName } from '../../utils/migrateTestImages';
 import { repairContentImages } from '../../data/constants';
 
 /* =========================================================================
@@ -244,6 +245,25 @@ export const ProjectDetailModule = ({
 
   const project = projects.find((p) => p.id === currentProjectId);
   const pubFormat = useMemo(() => project?.pubFormat || loadPubFormat(), [project]);
+
+  // Link-existing-test dropdown: ONE entry per test NAME (the instances of a
+  // test share the same name, so a flat per-instance list shows repetitions).
+  // Names whose instances are ALL already linked to this project are hidden.
+  // Linking a name links every instance of the test in one go.
+  const linkableTestNames = useMemo(() => {
+    const linkedIds = new Set((project?.experiments || []).map((e) => e.testId));
+    const byName = new Map();
+    visibleTests.forEach((t) => {
+      const n = String(t.name || '').trim();
+      if (!n) return;
+      if (!byName.has(n)) byName.set(n, []);
+      byName.get(n).push(t);
+    });
+    return Array.from(byName.entries())
+      .filter(([, items]) => items.some((t) => !linkedIds.has(t.id)))
+      .map(([name]) => name)
+      .sort((a, b) => a.localeCompare(b));
+  }, [visibleTests, project?.experiments]);
 
   // ---- Coworkers & permissions (computed early so every effect can use them) ----
   // Each coworker gets 'view' (read-only) or 'modify' (see and edit).
@@ -614,39 +634,64 @@ export const ProjectDetailModule = ({
   };
 
   const linkExistingTest = () => {
-    const test = tests.find((t) => t.id === linkTestId);
-    if (!test) return;
-    if ((project.experiments || []).some((e) => e.testId === test.id)) return;
-    setTests((prev) => prev.map((t) => t.id === test.id
-      ? { ...t, projectNames: [...new Set([...(t.projectNames || []), project.name])] } : t));
-    // The test may have been standalone before (files at <test>/… on Drive);
-    // now that it belongs to a project its WHOLE Drive folder is moved under
-    // <project>/<test>/… (never copied, so no duplicate folder remains).
-    moveTestFolderIntoProject({ testName: test.name, projectName: project.name }).catch(() => {});
-    updateProject({
-      experiments: [...(project.experiments || []), {
-        id: genProjectId(), testId: test.id, type: test.type || 'plate-96',
-        label: testTypeLabel(test.type) || 'Test',
+    const testName = String(linkTestId || '').trim();
+    if (!testName) return;
+    // Group = every instance (test object) sharing this name.
+    const group = tests.filter((t) => String(t.name || '').trim() === testName);
+    if (group.length === 0) return;
+    const linkedIds = new Set((project.experiments || []).map((e) => e.testId));
+    // Link ALL instances of the test in one go.
+    setTests((prev) => prev.map((t) =>
+      group.some((g) => g.id === t.id)
+        ? { ...t, projectNames: [...new Set([...(t.projectNames || []), project.name])] }
+        : t
+    ));
+    // The test's WHOLE Drive folder (all its instances) is moved into the
+    // project — never copied, so no duplicate folder remains on Drive.
+    moveTestFolderIntoProject({ testName, projectName: project.name }).catch(() => {});
+    const added = group
+      .filter((g) => !linkedIds.has(g.id))
+      .map((g) => ({
+        id: genProjectId(), testId: g.id, type: g.type || 'plate-96',
+        label: testTypeLabel(g.type) || 'Test',
         includeInDocument: false, addedAt: new Date().toISOString()
-      }]
-    });
+      }));
+    if (added.length > 0) {
+      updateProject({ experiments: [...(project.experiments || []), ...added] });
+    }
     setLinkTestId('');
   };
 
   const removeExperiment = (expId) => {
     const exp = (project.experiments || []).find((e) => e.id === expId);
     const test = exp && exp.testId ? tests.find((t) => t.id === exp.testId) : null;
-    updateProject({ experiments: (project.experiments || []).filter((e) => e.id !== expId) });
-    if (test) {
-      // The test is no longer associated with this project: remove the project
-      // from its list and MOVE its Drive folder back out of the project folder
-      // (the Drive tree mirrors the program — never copied, no duplicate).
-      setTests((prev) => prev.map((t) =>
-        t.id === test.id
-          ? { ...t, projectNames: (t.projectNames || []).filter((pn) => pn !== project.name) }
-          : t
-      ));
-      moveTestFolderOutOfProject({ testName: test.name, projectName: project.name }).catch(() => {});
+    if (!test) { // entry with no resolvable test — just drop the entry
+      updateProject({ experiments: (project.experiments || []).filter((e) => e.id !== expId) });
+      return;
+    }
+    const testName = String(test.name || '').trim();
+    // Experiments are grouped by test NAME: removing one removes every instance
+    // of that name in one go, keeping the app and the Drive tree coherent.
+    const remaining = (project.experiments || []).filter((e) => {
+      if (e.id === expId) return false;
+      const t = e.testId ? tests.find((x) => x.id === e.testId) : null;
+      return !(t && testName && String(t.name || '').trim() === testName);
+    });
+    updateProject({ experiments: remaining });
+    setTests((prev) => prev.map((t) =>
+      testName && String(t.name || '').trim() === testName
+        ? { ...t, projectNames: (t.projectNames || []).filter((pn) => pn !== project.name) }
+        : t
+    ));
+    // Move the Drive folder back out ONLY when no instance of this test remains
+    // linked to the project (otherwise the folder would leave the project while
+    // other instances of the same test are still used here).
+    const stillLinked = remaining.some((e) => {
+      const t = e.testId ? tests.find((x) => x.id === e.testId) : null;
+      return t && testName && String(t.name || '').trim() === testName;
+    });
+    if (!stillLinked) {
+      moveTestFolderOutOfProject({ testName, projectName: project.name }).catch(() => {});
     }
   };
 
@@ -1404,14 +1449,14 @@ export const ProjectDetailModule = ({
             ))}
           </div>
           )}
-          {canModify && visibleTests.length > 0 && (
+          {canModify && linkableTestNames.length > 0 && (
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <label className="text-[10px] font-black uppercase tracking-wide text-slate-400">Link existing test:</label>
               <select value={linkTestId} onChange={(e) => setLinkTestId(e.target.value)}
                       className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-semibold text-slate-700 max-w-xs">
                 <option value="">Choose a test…</option>
-                {visibleTests.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name} · {testTypeLabel(t.type)}</option>
+                {linkableTestNames.map((name) => (
+                  <option key={name} value={name}>{name}</option>
                 ))}
               </select>
               <button onClick={linkExistingTest} disabled={!linkTestId}
@@ -1443,7 +1488,9 @@ export const ProjectDetailModule = ({
                       <span className="shrink-0 text-[10px] font-black uppercase tracking-wide text-white bg-blue-600 rounded px-2 py-1">
                         {exp.label}
                       </span>
-                      <span className="text-xs font-bold text-slate-700 truncate">{test?.name || 'Test'}</span>
+                      <span className="text-xs font-bold text-slate-700 truncate">
+                        {test?.name || 'Test'}{test ? ` · ${effectiveInstanceName(test, tests)}` : ''}
+                      </span>
                       <span className="text-[10px] text-slate-400 hidden md:inline">📅 {test?.date || '—'}</span>
                     </button>
                     {canModify && (
