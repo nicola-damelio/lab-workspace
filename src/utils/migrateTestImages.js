@@ -89,15 +89,17 @@ const docTitleFromName = (name, scientist) => {
   return base.trim();
 };
 
-/** Instances are grouped by test name. An instance with NO instanceName is an
- *  UNNAMED instance — give it a real name ("instance1", "instance2", …) based
- *  on its position among the unnamed siblings (same order the app uses:
- *  instanceOrder first, then date), so every instance maps to its own Drive
- *  folder (<test>/<instance>/Report/…). */
+/** Instances are grouped by test name. Each instance must map to its OWN Drive
+ *  folder (<test>/<instance>/Report/…), so names are made UNIQUE within the
+ *  group:
+ *   - an instance with NO instanceName is UNNAMED → gets "instance1", … based
+ *     on its position among the unnamed siblings (same order the app uses:
+ *     instanceOrder first, then date);
+ *   - two siblings with the SAME instanceName → the later ones get a suffix
+ *     ("-2", "-3", …) so their files never end up in the same Drive folder.
+ *  Returns the effective (unique) name for `test`. */
 export const effectiveInstanceName = (test, allTests) => {
   if (!test) return '';
-  const own = String(test.instanceName || '').trim();
-  if (own) return own;
   const siblings = (Array.isArray(allTests) ? allTests : [])
     .filter((t) => t && String(t.name || '') === String(test.name || '') && String(t.name || '').trim() !== '');
   const ordered = siblings.slice().sort((a, b) => {
@@ -110,9 +112,25 @@ export const effectiveInstanceName = (test, allTests) => {
     if (hasB) return 1;
     return (a.date || '').localeCompare(b.date || '');
   });
-  const unnamed = ordered.filter((t) => !t.instanceName || !String(t.instanceName).trim());
-  const idx = unnamed.findIndex((t) => t.id === test.id);
-  return `instance${idx >= 0 ? idx + 1 : unnamed.length + 1}`;
+  const used = new Set();
+  const assigned = {};
+  let unnamed = 0;
+  ordered.forEach((t) => {
+    let desired = String(t.instanceName || '').trim();
+    if (!desired) {
+      unnamed += 1;
+      desired = `instance${unnamed}`;
+    }
+    let name = desired;
+    let n = 2;
+    while (used.has(name)) {
+      name = `${desired}-${n}`;
+      n += 1;
+    }
+    used.add(name);
+    assigned[t.id] = name;
+  });
+  return assigned[test.id] || (String(test.instanceName || '').trim() || 'instance1');
 };
 
 /** Collect every Drive-linked FILE reference of one test — figures/images,
@@ -354,13 +372,15 @@ export const migrateTestDriveImages = async ({ tests, onProgress = () => {} } = 
     starredItems: Array.isArray(t.starredItems) ? t.starredItems.slice() : t.starredItems
   }));
 
-  // 1b) UNNAMED instances get a real name ("instance1", "instance2", … in the
-  // sibling order) so every instance maps to its own Drive folder
-  // (<test>/<instance>/Report/…). Applied to ALL tests, even without files,
-  // so future app uploads land in the same folder too.
+  // 1b) Every instance gets a UNIQUE name within its test group ("instance1",
+  // "instance2", … for unnamed ones; duplicates get a "-2", "-3", … suffix) so
+  // each instance maps to its own Drive folder (<test>/<instance>/Report/…).
+  // Applied to ALL tests, even without files, so future app uploads land in
+  // the same folder too.
   nextTests.forEach((t, i) => {
-    if (!t.instanceName || !String(t.instanceName).trim()) {
-      nextTests[i] = { ...t, instanceName: effectiveInstanceName(t, nextTests) };
+    const eff = effectiveInstanceName(t, nextTests);
+    if (String(t.instanceName || '').trim() !== eff) {
+      nextTests[i] = { ...t, instanceName: eff };
     }
   });
 

@@ -112,7 +112,7 @@ export const ActiveTestModule = ({
 
                   newTest.id = id;
                   newTest.date = new Date().toISOString().split('T')[0];
-                  newTest.instanceName = 'New Instance';
+                  newTest.instanceName = 'New Instance ' + (siblingTests.length + 1);
                   newTest.comments = '';
                   newTest.images = [];
                   newTest.documents = [];
