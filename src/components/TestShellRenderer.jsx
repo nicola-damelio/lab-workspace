@@ -12,6 +12,7 @@ import { suggestDriveFileName, openDrive } from '../utils/driveNaming';
 import { DriveUploadButton } from './DriveUpload';
 import { StarToggle } from './StarToggle';
 import { ChartStarLayer } from './ChartStarLayer';
+import { archiveFileToDrive } from '../utils/driveUpload';
 import { isStarred, toggleStarredItem } from '../utils/starredItems';
 export { CollapsibleSection };
 
@@ -863,6 +864,7 @@ const [showGeneral, setShowGeneral] = useState(false);
   const handleMdParamFile = (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
+    archiveFileToDrive({ file, ctx: { project: (t.projectNames || [])[0] || '', test: t.name || t.instanceName || '', section: 'Setup', subsection: 'Parameters', suffix: 'parameters' } }).catch(() => {});
 
     const reader = new FileReader();
 

@@ -350,6 +350,25 @@ export const registerDriveFile = (fileId, name, ctx) => {
 };
 
 /**
+ * Best-effort: archive a raw file to Google Drive with the app's naming
+ * convention. Used by the data importers (FCS, Jasco, Bruker, MD, ...) so that
+ * EVERY file the user loads is also saved to Drive automatically.
+ * @returns {Promise<boolean>} true if the file was saved to Drive
+ */
+export const archiveFileToDrive = async ({ file, ctx = {}, title = '', suffix = 'file' }) => {
+  if (!file || !getDriveToken()) return false;
+  try {
+    const base = title || String(file.name || '').replace(/\.[^/.]+$/, '');
+    const name = withExtension(suggestDriveFileName({ ...ctx, title: base, suffix }), file.name || 'file');
+    await uploadLocalFile({ name, mimeType: file.type || 'application/octet-stream', file, ctx: { ...ctx, title: base, suffix } });
+    return true;
+  } catch (err) {
+    console.warn('Drive archive failed:', err && err.message);
+    return false;
+  }
+};
+
+/**
  * Rename every recorded Drive file whose naming context contains `oldValue`
  * for the given field (project | test | protocol | section | subsection),
  * rebuilding its name with the new value.

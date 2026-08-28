@@ -3,6 +3,7 @@ import { suggestDriveFileName, getDriveFolderUrl, setDriveFolderUrl, openDrive, 
 import { DriveUploadButton } from './DriveUpload';
 import { docxToHtml } from '../utils/docxImport';
 import { getRenderableDriveUrl, repairContentImages } from '../data/constants';
+import { archiveFileToDrive } from '../utils/driveUpload';
 
 export const RichTextEditor = ({
   value, onChange, placeholder, toolbarExtra = [],
@@ -171,6 +172,8 @@ export const RichTextEditor = ({
         if (!file) return;
         setImportingDoc(true);
         try {
+            // Archive the original .docx to Drive as well (figures are already saved separately).
+            archiveFileToDrive({ file, ctx: { ...(fileNaming || {}), suffix: 'docx' } }).catch(() => {});
             const arrayBuffer = await file.arrayBuffer();
             const result = await docxToHtml({ arrayBuffer, naming: fileNaming || {} });
             if (!result.html.trim()) {
