@@ -189,24 +189,55 @@ const EXT_MIME = {
   '.bmp': 'image/bmp', '.tif': 'image/tiff', '.tiff': 'image/tiff',
   '.ico': 'image/x-icon', '.heic': 'image/heic', '.pdf': 'application/pdf'
 };
+/** Reverse map: MIME type → extension (fallback when Drive sends no filename). */
+const MIME_EXT = Object.entries(EXT_MIME).reduce((acc, [ext, mime]) => {
+  if (!acc[mime]) acc[mime] = ext;
+  return acc;
+}, {});
 
-/** Download the bytes of a publicly-shared Drive file (same endpoint the app
- *  already uses for Bruker/FCS data). Throws when the file is not shareable. */
+/** Candidate download URLs, most likely to work first. `uc` gives the real
+ *  filename but is often CORS-blocked; `drive.usercontent.google.com` and
+ *  `lh3.googleusercontent.com` are the CORS-friendly endpoints (the same pair
+ *  the rest of the app uses for pulse-sequence and image downloads). */
+const driveDownloadCandidates = (fileId) => [
+  `https://drive.google.com/uc?export=download&id=${fileId}`,
+  `https://drive.usercontent.google.com/download?id=${fileId}&export=download`,
+  `https://lh3.googleusercontent.com/d/${fileId}`
+];
+
+/** Download the bytes of a publicly-shared Drive file by trying every known
+ *  download endpoint. Throws with an actionable message when the file is not
+ *  publicly downloadable (private, or sharing "Anyone with the link" is off). */
 export const downloadDriveFileBytes = async (fileId) => {
-  const res = await fetch(`https://drive.google.com/uc?export=download&id=${fileId}`, {
-    method: 'GET'
-  });
-  if (!res.ok) throw new Error(`Drive download returned HTTP ${res.status}`);
-  const contentType = String(res.headers.get('content-type') || '').split(';')[0].trim();
-  if (contentType === 'text/html') throw new Error('file is not shared ("Anyone with the link")');
-  const bytes = await res.arrayBuffer();
-  if (!bytes || bytes.byteLength === 0) throw new Error('empty download');
-  // Prefer the name Google sends back; fall back to a generic image name.
-  const cd = String(res.headers.get('content-disposition') || '');
-  const m = /filename\*?=(?:UTF-8''|")?([^";]+)/i.exec(cd);
-  const name = m ? decodeURIComponent(m[1].replace(/"/g, '')).trim() : 'image';
-  return { bytes, mimeType: contentType || 'application/octet-stream', name };
+  let lastError = null;
+  for (const url of driveDownloadCandidates(fileId)) {
+    try {
+      const res = await fetch(url, { method: 'GET' });
+      if (!res.ok) {
+        lastError = new Error(`HTTP ${res.status}`);
+        continue;
+      }
+      const contentType = String(res.headers.get('content-type') || '').split(';')[0].trim();
+      if (contentType === 'text/html') {
+        lastError = new Error('login page (file is private)');
+        continue;
+      }
+      const bytes = await res.arrayBuffer();
+      if (!bytes || bytes.byteLength === 0) {
+        lastError = new Error('empty response');
+        continue;
+      }
+      const cd = String(res.headers.get('content-disposition') || '');
+      const m = /filename\*?=(?:UTF-8''|")?([^";]+)/i.exec(cd);
+      const name = m ? decodeURIComponent(m[1].replace(/"/g, '')).trim() : '';
+      return { bytes, mimeType: contentType || 'application/octet-stream', name: name || '' };
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError || new Error('download failed');
 };
+
 
 
 
@@ -291,13 +322,15 @@ export const migrateTestDriveImages = async ({ tests, onProgress = () => {} } = 
       registerDriveFile(fileId, finalName, { ...ctx, title: first.title }, resolved.path);
       newUrl = `https://drive.google.com/file/d/${fileId}/view`;
       status = 'moved';
-    } catch (moveErr) {
+    } catch {
       // 5b) Fallback — not app-created (drive.file scope cannot move it): copy
       // the public bytes into a NEW app-created file in the correct folder.
       try {
         const dl = await downloadDriveFileBytes(fileId);
-        const dlExt = /(\.[a-zA-Z0-9]{1,10})$/.exec(dl.name);
-        const ext = dlExt ? dlExt[1] : '';
+        const dlNameExt = dl.name ? /(\.[a-zA-Z0-9]{1,10})$/.exec(dl.name) : null;
+        const ext = dlNameExt
+          ? dlNameExt[1]
+          : (MIME_EXT[dl.mimeType] || '');
         const mime = (ext && EXT_MIME[ext.toLowerCase()]) || dl.mimeType || 'application/octet-stream';
         finalName = await pickUniqueName(resolved.leafId, base + ext, usedNames, '');
         const drive = await uploadLocalFile({
@@ -315,7 +348,8 @@ export const migrateTestDriveImages = async ({ tests, onProgress = () => {} } = 
         summary.skipped += 1;
         summary.details.push({
           fileId, test: testName, status: 'skipped',
-          reason: `${moveErr && moveErr.message || 'file not created by the app'} — copy failed (${copyErr && copyErr.message || 'unknown'})`
+          reason: `cannot be downloaded (${copyErr && copyErr.message || 'unknown'}). ` +
+                  `Open the image on Google Drive and set sharing to "Anyone with the link", then run again.`
         });
         onProgress({ fileId, status: 'skipped' });
         continue;
