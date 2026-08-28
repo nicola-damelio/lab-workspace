@@ -11,6 +11,7 @@ import { CompoundDefinitionSection } from './compoundDefinitionSection';
 import { SolventsManager, BuffersManager, AdditivesManager, NMRProbesManager, NMRInstrumentsManager, NMRExperimentsManager } from '../DefinitionsExtra';
 import { CustomMetadataFieldsManager, MandatoryParametersManager, ScientistsOperatorsManager } from './definitionsManagers';
 import { DatabaseCleanupManager } from './storageModules';
+import { DriveImageMigration } from '../DriveImageMigration';
 import { normalizeOperators } from '../../utils/auth';
 
 export const DefinitionsModule = ({
@@ -25,7 +26,7 @@ export const DefinitionsModule = ({
   mandatoryBehavior, setMandatoryBehavior,
   operators, setOperators, authSettings, setAuthSettings,
   currentUser, tests, setTests, handleSetCustomFields,
-  datasetsList, deleteDataset, deleteEmptyDatasets
+  datasetsList, deleteDataset, deleteEmptyDatasets, datasetTitle
 }) => (
 
               <div className="h-full min-h-0 overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
@@ -160,6 +161,11 @@ export const DefinitionsModule = ({
                         deleteEmptyDatasets={deleteEmptyDatasets}
                      />
                   </CollapsibleSection>
+
+                   <CollapsibleSection title="Test files on Google Drive" subtitle="Move test attachments (figures, ⭐ starred items, PDFs/documents, links) into the correct Drive folders — Lab Workspace/<dataset>/<project>/<test>/<instance>/Report." defaultOpen={false}>
+                      <DriveImageMigration tests={tests} setTests={setTests} datasetTitle={datasetTitle} />
+                   </CollapsibleSection>
+
 
                 </div>
               </div>

@@ -529,6 +529,16 @@ const [backboneStyle, setBackboneStyle] = useState('cartoon');
 // they previously had no style options at all — just a hard-coded ball+stick.
 const [moleculeStyle, setMoleculeStyle] = useState('ball+stick');
 
+// ---- Multiple structures & multi-model PDB (docking clusters: HADDOCK/AutoDock) ----
+// extraMols = extra loaded structure files (each its own NGL component); the
+// "Molecules" selector shows exactly one at a time. modelCount > 1 means the
+// loaded PDB contains several MODEL records → "Model" selector (setFrame).
+const [extraMols, setExtraMols] = useState([]);    // [{ id, name }]
+const [activeMolKey, setActiveMolKey] = useState('main');
+const [modelCount, setModelCount] = useState(0);
+const [modelIdx, setModelIdx] = useState(0);
+const extraCompsRef = useRef([]);                  // [{ id, name, comp }]
+
 // ---- Atom renaming (3D, post-generation) ----
 const [renames, setRenames] = useState(() => (atomRenames && typeof atomRenames === 'object' ? { ...atomRenames } : {}));
 const renamesRef = useRef(renames);
@@ -971,6 +981,27 @@ firstChainSelRef.current = null;
 setLargeInfo(null);
 }
 addDefaultReps(component);
+
+// Multi-model PDB files (docking ensembles / clusters — HADDOCK, AutoDock,
+// NMR ensembles) are exposed through a "Model" selector so the user can look
+// at one pose/cluster at a time.
+try {
+  const fc = component.structure ? component.structure.frameCount : 0;
+  setModelCount(fc > 1 ? fc : 0);
+  setModelIdx(0);
+  if (fc > 1 && typeof component.setFrame === 'function') {
+    try { component.setFrame(0); } catch {}
+  }
+} catch {
+  setModelCount(0);
+}
+// A new main structure replaces any extra uploaded molecules.
+extraCompsRef.current.forEach(({ comp }) => {
+  try { if (stageRef.current) stageRef.current.removeComponent(comp); } catch {}
+});
+extraCompsRef.current = [];
+setExtraMols([]);
+setActiveMolKey('main');
 
 // Expose the 1-letter sequence parsed from the structure so the pages can
 // auto-fill the sequence field when it is empty (enables the per-atom table).
@@ -1749,18 +1780,69 @@ manualHighlightCompRef.current = component.addRepresentation('ball+stick', { sel
 return clearHighlights;
 }, [selectedKeys, manualKeys, status, showManualHighlight]);
 
+// Load an additional structure file as its own NGL component (hidden by default —
+// the "Molecules" selector reveals one at a time).
+const loadExtraMolecule = useCallback(async (file, n) => {
+try {
+  const stage = stageRef.current;
+  if (!stage) return;
+  const comp = await stage.loadFile(file);
+  const isProtein = moleculeTypeRef.current === 'protein';
+  try { comp.addRepresentation('cartoon', { colorScheme: 'element' }); } catch {}
+  try { comp.addRepresentation('ball+stick', { sele: 'hetero', colorScheme: 'element', aspectRatio: 1.2 }); } catch {}
+  if (!isProtein) {
+    try { if (comp.reprList && comp.reprList[0]) comp.removeRepresentation(comp.reprList[0]); } catch {}
+    try { comp.addRepresentation('ball+stick', { colorScheme: 'element', multipleBond: true }); } catch {}
+  }
+  const name = file.name || `Molecule ${n}`;
+  const id = `mol_${Date.now()}_${n}`;
+  extraCompsRef.current.push({ id, name, comp });
+  setExtraMols(extraCompsRef.current.map(({ id: xid, name: xname }) => ({ id: xid, name: xname })));
+  try { comp.setVisibility(false); } catch {}
+  try { comp.autoView(); } catch {}
+} catch (err) {
+  console.warn('Could not load additional molecule:', err && err.message);
+}
+}, []);
+
 const handleFileChange = useCallback((e) => {
-const f = e.target.files && e.target.files[0];
-if (!f) return;
+const files = Array.from(e.target.files || []);
+if (files.length === 0) return;
 setManualOverride(true);
-setFile(f);
-setPdbId('');
 setTrajFile(null);
-requestStructureLoad({ file: f, url: null, ts: Date.now() });
-onStructureFile?.(f);   // share the chosen topology with the analysis sections
-if (driveNaming) archiveFileToDrive({ file: f, ctx: driveNaming }).catch(() => {});
+const [first, ...rest] = files;
+setFile(first);
+setPdbId('');
+requestStructureLoad({ file: first, url: null, ts: Date.now() });
+onStructureFile?.(first);   // share the chosen topology with the analysis sections
+if (driveNaming) archiveFileToDrive({ file: first, ctx: driveNaming }).catch(() => {});
+// Additional structures (docking complexes / clusters / poses) are loaded as
+// separate NGL components and shown ONE AT A TIME via the "Molecules" selector.
+rest.forEach((f, i) => {
+  loadExtraMolecule(f, i + 1);
+  if (driveNaming) archiveFileToDrive({ file: f, ctx: driveNaming }).catch(() => {});
+});
 e.target.value = '';
-}, [onStructureFile, driveNaming]);
+}, [onStructureFile, driveNaming, loadExtraMolecule]);
+
+// Show exactly one molecule at a time (main structure or an extra uploaded file).
+const handleMolSelect = (key) => {
+setActiveMolKey(key);
+try { if (componentRef.current) componentRef.current.setVisibility(key === 'main'); } catch {}
+extraCompsRef.current.forEach(({ id, comp }) => {
+  try { comp.setVisibility(key === id); } catch {}
+});
+const target = key === 'main' ? componentRef.current : (extraCompsRef.current.find((x) => x.id === key) || {}).comp;
+if (target) { try { target.autoView(); } catch {} }
+try { if (stageRef.current) stageRef.current.handleResize(); } catch {}
+};
+
+// Switch the displayed MODEL of a multi-model PDB (docking clusters/ensembles).
+const handleModelChange = (idx) => {
+setModelIdx(idx);
+const c = componentRef.current;
+if (c && typeof c.setFrame === 'function') { try { c.setFrame(idx); } catch {} }
+};
 
 const handlePdbIdLoad = useCallback(() => {
 const value = pdbId.trim();
@@ -1795,10 +1877,11 @@ return (
 Load local file
 </label>
 <label className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm transition-colors inline-flex items-center gap-2">
-📂 Choose PDB / GRO / CIF file
+📂 Choose PDB / GRO / CIF file(s)
 <input
 type="file"
 accept=".pdb,.gro,.cif,.bcif,.ent,.mol2,.sdf"
+multiple
 onChange={handleFileChange}
 className="hidden"
 />
@@ -1815,6 +1898,41 @@ title="Show / hide the green highlight on manually assigned atoms"
 <span className="text-[10px] text-slate-500 max-w-[200px] truncate">
 {file.name}
 </span>
+)}
+{modelCount > 1 && trajStatus === 'none' && (
+<div className="flex flex-col gap-1">
+<label className="text-[10px] font-bold text-slate-500 uppercase">
+Model (multi-model PDB)
+</label>
+<select
+value={modelIdx}
+onChange={(e) => handleModelChange(parseInt(e.target.value, 10) || 0)}
+title="This PDB contains several MODEL records (docking clusters / ensembles) — view one at a time"
+className="border border-slate-300 rounded-lg px-2 py-2 text-xs bg-white outline-none focus:border-blue-500"
+>
+{Array.from({ length: modelCount }, (_, i) => (
+<option key={i} value={i}>Model {i + 1}</option>
+))}
+</select>
+</div>
+)}
+{extraMols.length > 0 && (
+<div className="flex flex-col gap-1">
+<label className="text-[10px] font-bold text-slate-500 uppercase">
+Molecules
+</label>
+<select
+value={activeMolKey}
+onChange={(e) => handleMolSelect(e.target.value)}
+title="Multiple structures are loaded — show one at a time"
+className="border border-slate-300 rounded-lg px-2 py-2 text-xs bg-white outline-none focus:border-blue-500 max-w-[220px]"
+>
+<option value="main">Main structure{file ? ` (${file.name})` : ''}</option>
+{extraMols.map((m) => (
+<option key={m.id} value={m.id}>{m.name}</option>
+))}
+</select>
+</div>
 )}
 </div>
 

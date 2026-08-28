@@ -31,9 +31,11 @@ export const DriveImageMigration = ({ tests, setTests, datasetTitle = '' }) => {
       return;
     }
     const ok = window.confirm(
-      `Move ${refCount} test image(s) into the correct Drive folders\n` +
+      `Move ${refCount} test file(s) into the correct Drive folders\n` +
       `(Lab Workspace/<dataset>/<project>/<test>/<instance>/${TEST_IMAGE_SECTION})\n` +
       `and rename them as <title>_<scientist>?\n\n` +
+      `This covers figures/images, ⭐ starred items, attached documents (PDFs etc.) ` +
+      `and links inside the report text.\n\n` +
       `Files created by the app are moved in place. Files uploaded outside the app are ` +
       `downloaded and re-uploaded as app files into the folder (their link is updated).`
     );
@@ -57,18 +59,19 @@ export const DriveImageMigration = ({ tests, setTests, datasetTitle = '' }) => {
   return (
     <div className="bg-white p-3 md:p-4 rounded-xl border border-slate-200 shadow-sm">
       <div className="flex items-center justify-between gap-2 mb-1.5">
-        <h3 className="text-sm font-bold text-slate-700">🖼️ Test images on Google Drive</h3>
+        <h3 className="text-sm font-bold text-slate-700">🖼️ Test files on Google Drive</h3>
         {refCount > 0 && (
           <span className="text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 rounded-full px-2 py-0.5 whitespace-nowrap">
-            {refCount} link{refCount === 1 ? '' : 's'} found
+            {refCount} file{refCount === 1 ? '' : 's'} found
           </span>
         )}
       </div>
 
       <p className="text-xs text-slate-500 mb-3">
-        Older test images were attached as plain Drive links. This moves them into
+        Older test attachments were stored as plain Drive links. This moves them into
         the correct folder (<code className="text-slate-600">…/&lt;test&gt;/&lt;instance&gt;/{TEST_IMAGE_SECTION}</code>)
-        and renames them <code className="text-slate-600">&lt;title&gt;_&lt;scientist&gt;</code>.
+        and renames them <code className="text-slate-600">&lt;title&gt;_&lt;scientist&gt;</code> —
+        figures, ⭐ starred items, attached documents (PDFs) and links in the report text.
       </p>
 
       <button
@@ -81,9 +84,9 @@ export const DriveImageMigration = ({ tests, setTests, datasetTitle = '' }) => {
             : 'bg-indigo-600 hover:bg-indigo-700 text-white border border-indigo-700 disabled:opacity-60'
         }`}
       >
-        {busy ? 'Moving images…' : refCount === 0 && !(s && (s.moved > 0 || s.copied > 0))
-          ? 'No Drive-linked test images'
-          : '⬆ Move images to correct Drive folders'}
+        {busy ? 'Moving files…' : refCount === 0 && !(s && (s.moved > 0 || s.copied > 0))
+          ? 'No Drive-linked test files'
+          : '⬆ Move files to correct Drive folders'}
       </button>
 
       {busy && (
@@ -94,7 +97,7 @@ export const DriveImageMigration = ({ tests, setTests, datasetTitle = '' }) => {
 
       {result && result.nothing && !busy && (
         <p className="text-[11px] text-slate-500 font-semibold mt-2">
-          ✓ Nothing to do — no Drive-linked test images found.
+          ✓ Nothing to do — no Drive-linked test files found.
         </p>
       )}
 

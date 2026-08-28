@@ -33,7 +33,7 @@ import {
   trashEmptyFolderChain,
   uploadLocalFile
 } from './driveUpload';
-import { driveFolderPath, suggestDriveFileName } from './driveNaming';
+import { driveFolderPath, suggestDriveFileName, sanitizeSlug } from './driveNaming';
 
 /** Matches every Google-Drive URL form the app stores, capturing the file id.
  *  Consumes the scheme + any query/trailing junk (up to a quote/space) so the
@@ -67,7 +67,30 @@ const IMAGE_ARRAY_RE = /images$/i;
 /** The Drive folder section used for test figures / report images. */
 export const TEST_IMAGE_SECTION = 'Report';
 
-/** Collect every Drive-linked IMAGE reference of one test.
+/** Anchor texts that do not make a meaningful file title (fall back to the
+ *  downloaded file's real name / "Attachment N"). */
+const TRIVIAL_LINK_TITLES = new Set([
+  '', 'link', 'here', 'download', 'open', 'file', 'attach', 'attachment',
+  'attached', 'attached file', 'view', 'open file', 'download file', 'click here'
+]);
+
+/** Title for a test document: its name without the extension, minus a trailing
+ *  "<scientist>" suffix (uploaded documents already carry it) so we never end
+ *  up with "<name>_<scientist>_<scientist>.pdf". */
+const docTitleFromName = (name, scientist) => {
+  let base = String(name || '').trim().replace(/\.[a-zA-Z0-9]{1,10}$/, '');
+  const sciSlug = sanitizeSlug(String(scientist || '').trim());
+  if (sciSlug) {
+    try {
+      base = base.replace(new RegExp('_?' + sciSlug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i'), '');
+    } catch { /* keep the name as-is */ }
+  }
+  return base.trim();
+};
+
+/** Collect every Drive-linked FILE reference of one test — figures/images,
+ *  ⭐ starred items, attached documents (PDFs etc.) and every <img>/<a> that
+ *  points at a Drive file inside rich-text HTML.
  *  @returns [{ where, url, fileId, title, ctx }] */
 export const collectTestImageRefs = (test) => {
   const refs = [];
@@ -76,12 +99,18 @@ export const collectTestImageRefs = (test) => {
   const ctx = {
     project: (test.projectNames || [])[0] || '',
     test: test.name || '',
-    // Instances are grouped by test name; an unnamed instance is labelled
-    // "Primary" in the app — mirror that on Drive so the instance folder is
-    // always present: <test>/<instance>/Report/…
-    instance: test.instanceName || 'Primary',
+    // Instances are grouped by test name; each instance keeps its own label
+    // (instanceName). An unnamed instance simply has NO instance folder —
+    // exactly like every DriveUpload in the app (instance: instanceName || '').
+    instance: test.instanceName || '',
     scientist: test.operator || '',
     section: TEST_IMAGE_SECTION
+  };
+
+  const addRef = (where, url, title) => {
+    const fileId = extractDriveFileId(url);
+    if (!fileId) return;
+    refs.push({ where, url: String(url), fileId, title: String(title || '').trim(), ctx: { ...ctx } });
   };
 
   // 1) Image arrays (figures grid on the Report page).
@@ -89,61 +118,58 @@ export const collectTestImageRefs = (test) => {
     if (!IMAGE_ARRAY_RE.test(key)) return;
     const arr = test[key];
     if (!Array.isArray(arr)) return;
-    arr.forEach((url, index) => {
-      const fileId = extractDriveFileId(url);
-      if (!fileId) return;
-      refs.push({
-        where: { field: key, index },
-        url: String(url),
-        fileId,
-        title: `Figure ${index + 1}`,
-        ctx: { ...ctx }
-      });
-    });
+    arr.forEach((url, index) => addRef({ field: key, index }, url, `Figure ${index + 1}`));
   });
 
   // 2) Starred items (⭐ "Import into the project document") with a Drive URL.
   (Array.isArray(test.starredItems) ? test.starredItems : []).forEach((s, index) => {
     if (!s || !s.url) return;
-    const fileId = extractDriveFileId(s.url);
-    if (!fileId) return;
-    refs.push({
-      where: { field: 'starredItems', index },
-      url: String(s.url),
-      fileId,
-      title: (s.label || '').trim() || `Figure ${index + 1}`,
-      ctx: { ...ctx }
-    });
+    addRef({ field: 'starredItems', index }, s.url, (s.label || '').trim() || `Figure ${index + 1}`);
   });
 
-  // 3) <img> tags inside rich-text HTML (comments, notes, …).
+  // 3) Attached documents (PDFs, data sheets, …) — Report → Documents.
+  (Array.isArray(test.documents) ? test.documents : []).forEach((doc, index) => {
+    if (!doc || !doc.data) return;
+    addRef(
+      { field: 'documents', index },
+      doc.data,
+      docTitleFromName(doc.name, ctx.scientist) || `Document ${index + 1}`
+    );
+  });
+
+  // 4) <img> and <a href> pointing at Drive files inside rich-text HTML.
   Object.keys(test).forEach((key) => {
     const val = test[key];
     if (typeof val !== 'string') return;
     if (!/drive\.google\.com|lh3\.googleusercontent\.com/.test(val)) return;
+
     const imgRe = /<img\b[^>]*?\bsrc=["']([^"']+)["'][^>]*>/gi;
     let m;
     while ((m = imgRe.exec(val)) !== null) {
       const url = m[1];
-      const fileId = extractDriveFileId(url);
-      if (!fileId) continue;
+      if (!extractDriveFileId(url)) continue;
       const alt = /alt=["']([^"']*)["']/i.exec(m[0]);
       let title = alt ? alt[1].replace(/&nbsp;|&amp;|&quot;|&lt;|&gt;/g, ' ').trim() : '';
       if (!title) title = `Figure ${refs.length + 1}`;
-      refs.push({
-        where: { field: key, html: true },
-        url,
-        fileId,
-        title,
-        ctx: { ...ctx }
-      });
+      addRef({ field: key, html: true }, url, title);
+    }
+
+    const aRe = /<a\b[^>]*?\bhref=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+    while ((m = aRe.exec(val)) !== null) {
+      const url = m[1];
+      if (!extractDriveFileId(url)) continue;
+      const text = String(m[2] || '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&nbsp;|&amp;|&quot;|&lt;|&gt;/g, ' ')
+        .replace(/\s+/g, ' ').trim();
+      addRef({ field: key, html: true, link: true }, url, TRIVIAL_LINK_TITLES.has(text.toLowerCase()) ? '' : text);
     }
   });
 
   return refs;
 };
 
-/** Count the Drive-linked image references of a test (for the UI). */
+/** Count the Drive-linked file references of a test (for the UI). */
 export const countTestImageRefs = (tests) =>
   (Array.isArray(tests) ? tests : [])
     .reduce((n, t) => n + collectTestImageRefs(t).length, 0);
@@ -170,7 +196,9 @@ const pickUniqueName = async (folderId, desired, usedNames, ownId) => {
   return name;
 };
 
-/** Apply the rewritten URL to one reference inside `test` (mutates test). */
+/** Apply the rewritten URL to one reference inside `test` (mutates test).
+ *  Copy-on-write for arrays, so the original test objects (and the undo
+ *  history) are never touched. */
 const applyRewrite = (test, ref, fileId, newUrl) => {
   const where = ref.where || {};
   if (where.html) {
@@ -179,12 +207,22 @@ const applyRewrite = (test, ref, fileId, newUrl) => {
     return;
   }
   if (where.field === 'starredItems') {
-    const arr = Array.isArray(test.starredItems) ? test.starredItems : [];
+    const arr = (Array.isArray(test.starredItems) ? test.starredItems : []).slice();
     if (arr[where.index]) arr[where.index] = { ...arr[where.index], url: newUrl };
+    test.starredItems = arr;
     return;
   }
-  const arr = Array.isArray(test[where.field]) ? test[where.field] : [];
+  if (where.field === 'documents') {
+    const arr = (Array.isArray(test.documents) ? test.documents : []).slice();
+    if (arr[where.index] && typeof arr[where.index] === 'object') {
+      arr[where.index] = { ...arr[where.index], data: newUrl };
+    }
+    test.documents = arr;
+    return;
+  }
+  const arr = (Array.isArray(test[where.field]) ? test[where.field] : []).slice();
   if (typeof arr[where.index] === 'string') arr[where.index] = newUrl;
+  test[where.field] = arr;
 };
 
 /** Extension → MIME type (used when re-uploading an image copied from Drive). */
@@ -311,21 +349,23 @@ export const migrateTestDriveImages = async ({ tests, onProgress = () => {} } = 
       continue;
     }
 
-    const base = suggestDriveFileName({ ...ctx, title: first.title });
-
     // 5a) Fast path — the file was created by the app: move + rename in place.
     try {
       const meta = await getDriveFileMeta(fileId);
       const curName = meta.name || '';
       const extMatch = /(\.[a-zA-Z0-9]{1,10})$/.exec(curName);
       const ext = extMatch ? extMatch[1] : '';
+      // Fall back to the file's own name when the reference has no title
+      // (e.g. an <a href> link with a generic anchor text).
+      const curBase = curName.replace(/\.[a-zA-Z0-9]{1,10}$/, '');
+      const base = suggestDriveFileName({ ...ctx, title: first.title || curBase });
       finalName = await pickUniqueName(resolved.leafId, base + ext, usedNames, fileId);
       const oldPath = (getDriveFileRegistry()[fileId] || {}).path || null;
       await moveDriveFile(fileId, resolved.leafId);
       if (finalName !== curName) await renameDriveFile(fileId, finalName);
       // Register WITH the title so future project/test renames recompute the
       // same <title>_<scientist> name (instead of falling back to "File").
-      registerDriveFile(fileId, finalName, { ...ctx, title: first.title }, resolved.path);
+      registerDriveFile(fileId, finalName, { ...ctx, title: first.title || curBase }, resolved.path);
       // The folder the file just left may now be empty (e.g. an instance-less
       // <test>/Report from an earlier run) — trash it so Drive stays tidy.
       if (Array.isArray(oldPath) && oldPath.length > 0) {
@@ -343,16 +383,20 @@ export const migrateTestDriveImages = async ({ tests, onProgress = () => {} } = 
           ? dlNameExt[1]
           : (MIME_EXT[dl.mimeType] || '');
         const mime = (ext && EXT_MIME[ext.toLowerCase()]) || dl.mimeType || 'application/octet-stream';
+        // Prefer a meaningful reference title; otherwise use the real file name
+        // Google sent back with the download.
+        const dlBase = (dl.name || '').replace(/\.[a-zA-Z0-9]{1,10}$/, '');
+        const base = suggestDriveFileName({ ...ctx, title: first.title || dlBase });
         finalName = await pickUniqueName(resolved.leafId, base + ext, usedNames, '');
         const drive = await uploadLocalFile({
           name: finalName,
           mimeType: mime,
           file: new Blob([dl.bytes], { type: mime }),
-          ctx: { ...ctx, title: first.title }
+          ctx: { ...ctx, title: first.title || dlBase }
         });
         // uploadLocalFile already registered the file — re-register WITH title
         // so future renames keep the <title>_<scientist> name.
-        registerDriveFile(drive.id, finalName, { ...ctx, title: first.title }, resolved.path);
+        registerDriveFile(drive.id, finalName, { ...ctx, title: first.title || dlBase }, resolved.path);
         newUrl = drive.driveUrl;
         status = 'copied';
       } catch (copyErr) {
@@ -360,7 +404,7 @@ export const migrateTestDriveImages = async ({ tests, onProgress = () => {} } = 
         summary.details.push({
           fileId, test: testName, status: 'skipped',
           reason: `cannot be downloaded (${copyErr && copyErr.message || 'unknown'}). ` +
-                  `Open the image on Google Drive and set sharing to "Anyone with the link", then run again.`
+                  `Open the file on Google Drive and set sharing to "Anyone with the link", then run again.`
         });
         onProgress({ fileId, status: 'skipped' });
         continue;

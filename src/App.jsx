@@ -2760,6 +2760,7 @@ const openDataset = (dset) => {
               authSettings={authSettings} setAuthSettings={setAuthSettings}
               currentUser={currentUser} tests={tests} setTests={setTests} handleSetCustomFields={handleSetCustomFields}
               datasetsList={datasetsList} deleteDataset={deleteDataset} deleteEmptyDatasets={deleteEmptyDatasets}
+              datasetTitle={datasetTitle}
             />)}
 
             {currentModule === 'agenda' && (<AgendaModule
