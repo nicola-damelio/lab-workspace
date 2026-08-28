@@ -10,7 +10,7 @@ import { getDirectImageUrl } from '../../data/constants';
 import { Icon } from '../Icons';
 import { suggestDriveFileName, openDrive } from '../../utils/driveNaming';
 import { DriveUploadButton } from '../DriveUpload';
-import { renameDriveFilesFor, markAttachmentsDeleted, uploadLocalFile } from '../../utils/driveUpload';
+import { renameDriveFilesFor, markAttachmentsDeleted, uploadLocalFile, deleteProtocolDriveFolder } from '../../utils/driveUpload';
 
 export const ProtocolsModule = ({
   datasetProtocols, expandedGroups, handlePrint, nmrExperiments,
@@ -1158,8 +1158,11 @@ const newProto = {
           setDatasetProtocols(
             datasetProtocols.filter((p) => p.id !== proto.id)
           );
-          // Mark any Google Drive attachments of this protocol as deleted.
+          // The Drive mirrors the app: mark the attachments as deleted AND
+          // trash the protocol's folder (protocols/<protocol>) so it does not
+          // stay behind on Drive.
           markAttachmentsDeleted(proto).catch(() => {});
+          deleteProtocolDriveFolder(proto).catch(() => {});
         }
       }}
       className="absolute top-3 right-3 text-slate-300 hover:text-red-500 text-lg md:opacity-0 group-hover:opacity-100 transition-opacity no-print"

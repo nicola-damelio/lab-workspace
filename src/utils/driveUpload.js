@@ -459,6 +459,40 @@ export const deleteTestDriveFolder = async (test) => {
   } catch { return 0; }
 };
 
+/** Trash the Drive folder that mirrors a protocol — protocols/<protocol> — so
+ *  ALL of its files (attachments, imported Word documents, pasted images…)
+ *  are removed together. The Drive mirrors the app: a protocol deleted here
+ *  disappears from Drive too (its folder is moved to the Drive Trash). */
+export const deleteProtocolDriveFolder = async (protocol) => {
+  if (!getDriveToken() || !protocol || !protocol.title) return 0;
+  try {
+    const root = await ensureDriveFolder();
+    if (!root) return 0;
+    const protocolsFolderId = await findFolderByName('protocols', root);
+    if (!protocolsFolderId) return 0;
+    let protoFolderId = await findFolderByName(sanitizeSlug(protocol.title), protocolsFolderId);
+    if (!protoFolderId) {
+      // Fallback: locate it through the registry — a file uploaded for this
+      // protocol knows its exact folder chain.
+      const reg = getDriveFileRegistry();
+      for (const entry of Object.values(reg)) {
+        if (!entry || entry.deleted) continue;
+        const ctx = entry.ctx || {};
+        if (String(ctx.protocol || '') !== String(protocol.title)) continue;
+        const seg = (entry.path || []).find((s) => s && s.name === sanitizeSlug(protocol.title));
+        if (seg && seg.id) { protoFolderId = seg.id; break; }
+      }
+    }
+    if (!protoFolderId) return 0;
+    await driveFetch(`/drive/v3/files/${protoFolderId}?fields=id`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trashed: true })
+    });
+    return 1;
+  } catch { return 0; }
+};
+
 /** Move a test's WHOLE Drive folder into a project folder — used when an
  *  existing standalone test is linked to a project. The folder is MOVED (never
  *  copied), so the old path disappears and no duplicate remains on Drive.
