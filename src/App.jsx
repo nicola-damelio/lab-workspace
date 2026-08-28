@@ -2134,53 +2134,12 @@ const openDataset = (dset) => {
 
   const [expandedGroups, setExpandedGroups] = useState({});
 
-  const toggleGroup = (key) =>
-    setExpandedGroups((prev) => ({ ...prev, [key]: !prev[key] }));
-
-  const groupedDatasets = useMemo(() => {
-    const groups = {};
-
-    datasetsList.forEach((dset) => {
-      let catSet = new Set();
-      let cellSet = new Set();
-
-      try {
-        const s = parsePayload(dset);
-
-        if (s && s.tests) {
-          s.tests.forEach((t) => {
-            if (t.testCategory) catSet.add(t.testCategory);
-
-            if (Array.isArray(t.cellLines)) {
-              t.cellLines.forEach((e) => cellSet.add(e));
-            }
-          });
-        }
-      } catch {}
-
-      const catStr = Array.from(catSet).sort().join(', ');
-      const cellStr = Array.from(cellSet).sort().join(', ');
-      const hasMeta = catStr || cellStr;
-      const key = hasMeta ? `${catStr}|${cellStr}` : `unclassified_${dset.id}`;
-
-      if (!groups[key]) {
-        groups[key] = {
-          key,
-          categories: catStr,
-          cellLines: cellStr,
-          isUnclassified: !hasMeta,
-          items: []
-        };
-      }
-
-      groups[key].items.push(dset);
-    });
-
-    Object.values(groups).forEach((g) => {
-      g.items.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
-    });
-
-    return groups;
+  // Recent datasets, newest first. The landing page shows them as a simple flat
+  // list of cards (each with its own title) — no category-group headers like
+  // "Activity, Blind Docking, CD".
+  const flatDatasets = useMemo(() => {
+    const list = Array.isArray(datasetsList) ? datasetsList : [];
+    return [...list].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
   }, [datasetsList]);
 
   const [currentMonth, setCurrentMonth] = useState(() => {
@@ -2691,98 +2650,52 @@ const openDataset = (dset) => {
                 </div>
               </div>
 
-              {isCloudReady && Object.keys(groupedDatasets).length === 0 ? (
+              {isCloudReady && flatDatasets.length === 0 ? (
                 <div className="text-center py-12 text-slate-400 text-md flex flex-col items-center gap-3">
                   <span className="text-4xl opacity-30">📂</span>
                   <span>No datasets found in cloud or local storage.</span>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-                  {Object.values(groupedDatasets).map((group) => {
-                    const titleParts = [];
+                  {flatDatasets.map((dset) => (
+                    <div
+                      key={dset.id}
+                      onClick={() => openDataset(dset)}
+                      className="bg-white border border-slate-200 hover:border-blue-400 hover:shadow-md p-3 rounded-lg cursor-pointer flex justify-between items-center transition-all group/item"
+                    >
+                      <div className="flex flex-col overflow-hidden">
+                        <span className="font-bold text-sm text-blue-700 truncate">
+                          {dset.title || 'Untitled'}
+                        </span>
 
-                    if (group.categories) titleParts.push(group.categories);
-                    if (group.cellLines) titleParts.push(group.cellLines);
-
-                    const groupTitle = group.isUnclassified
-                      ? group.items[0].title || 'Untitled'
-                      : titleParts.join(' - ');
-
-                    const isExpanded = expandedGroups[group.key];
-
-                    return (
-                      <div
-                        key={group.key}
-                        className="border border-slate-200 rounded-xl p-4 md:p-5 hover:shadow-lg hover:border-blue-300 transition-all bg-white flex flex-col h-full"
-                      >
-                        <h3
-                          className="font-bold text-lg text-slate-800 mb-2 leading-tight truncate"
-                          title={groupTitle}
-                        >
-                          {groupTitle}
-                        </h3>
-
-                        <p className="text-xs text-slate-500 mb-4 font-medium bg-slate-100 inline-block px-2 py-1 rounded-md self-start">
-                          {group.items.length} Dataset{group.items.length === 1 ? '' : 's'}
-                        </p>
-
-                        <div className="flex flex-col gap-2 flex-1">
-                          {group.items
-                            .slice(0, isExpanded ? undefined : 3)
-                            .map((dset) => (
-                              <div
-                                key={dset.id}
-                                onClick={() => openDataset(dset)}
-                                className="bg-white border border-slate-200 hover:border-blue-400 hover:shadow-md p-3 rounded-lg cursor-pointer flex justify-between items-center transition-all group/item"
-                              >
-                                <div className="flex flex-col overflow-hidden">
-                                  <span className="font-bold text-sm text-blue-700 truncate">
-                                    {dset.title || groupTitle}
-                                  </span>
-
-                                  <span className="text-[11px] text-slate-500 mt-1 flex gap-2">
-                                    <span>📅 {dset.date || 'No Date'}</span>
-                                    <span>🧪 {dset.testCount || 1} Tests</span>
-                                  </span>
-                                </div>
-
-                                {/* Rename / Delete — superuser only */}
-                                {currentUser?.role === 'superuser' && (
-                                  <div className="flex flex-col gap-1 opacity-100 md:opacity-0 group-hover/item:opacity-100 transition-all shrink-0 ml-2">
-                                    <button
-                                      onClick={(e) =>
-                                        renameDataset(e, dset.id, dset.title || groupTitle)
-                                      }
-                                      className="text-slate-500 hover:text-blue-600 hover:bg-blue-50 px-2 py-1 rounded text-xs font-bold transition-colors text-right"
-                                    >
-                                      Rename
-                                    </button>
-
-                                    <button
-                                      onClick={(e) => redirectDeleteToDefinitions(e, dset.title || groupTitle)}
-                                      className="text-slate-500 hover:text-red-600 hover:bg-red-50 px-2 py-1 rounded text-xs font-bold transition-colors text-right"
-                                    >
-                                      Delete
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
-                            ))}
-
-                          {group.items.length > 3 && (
-                            <button
-                              onClick={() => toggleGroup(group.key)}
-                              className="text-xs text-blue-600 bg-blue-50 hover:bg-blue-100 font-bold py-2 rounded-lg mt-2 text-center transition-colors w-full"
-                            >
-                              {isExpanded
-                                ? 'Hide Datasets'
-                                : `Show ${group.items.length - 3} more...`}
-                            </button>
-                          )}
-                        </div>
+                        <span className="text-[11px] text-slate-500 mt-1 flex gap-2">
+                          <span>📅 {dset.date || 'No Date'}</span>
+                          <span>🧪 {dset.testCount || 1} Tests</span>
+                        </span>
                       </div>
-                    );
-                  })}
+
+                      {/* Rename / Delete — superuser only */}
+                      {currentUser?.role === 'superuser' && (
+                        <div className="flex flex-col gap-1 opacity-100 md:opacity-0 group-hover/item:opacity-100 transition-all shrink-0 ml-2">
+                          <button
+                            onClick={(e) =>
+                              renameDataset(e, dset.id, dset.title || 'Untitled')
+                            }
+                            className="text-slate-500 hover:text-blue-600 hover:bg-blue-50 px-2 py-1 rounded text-xs font-bold transition-colors text-right"
+                          >
+                            Rename
+                          </button>
+
+                          <button
+                            onClick={(e) => redirectDeleteToDefinitions(e, dset.title || 'Untitled')}
+                            className="text-slate-500 hover:text-red-600 hover:bg-red-50 px-2 py-1 rounded text-xs font-bold transition-colors text-right"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
