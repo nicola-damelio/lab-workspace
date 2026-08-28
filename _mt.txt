@@ -1,0 +1,86 @@
+﻿node : C:\Users\ni
+col\lab-workspace\
+_migrate_test.cjs:
+49
+Au caractère 
+Ligne:1 : 46
++ ... n 'c:\Users\
+nicol\lab-workspac
+e'; node 
+_migrate_test.cjs 
+2>&1 | Out-F ...
++                 
+                  
+    ~~~~~~~~~~~~~~
+~~~~~~~~~~~~~
+    + CategoryInf 
+   o          :   
+  NotSpecified:   
+  (C:\Users\ni    
+col\...ate_te    
+st.cjs:49:Str    
+ing) [], Remo    
+teException
+    + FullyQualif 
+   iedErrorId :   
+  NativeCommand   
+ Error
+ 
+check('folder 
+path = Kinetics/Ne
+w_Instance_4/Repor
+t', JSON.stringify
+(sandbox.driveFold
+erPath(ctx)) === '
+["Kinetics","New_I
+nstance_4","Report
+"]', JSON.stringif
+y(sandbox.driveFol
+derPath(ctx)));
+                  
+                  
+                  
+                  
+     ^
+
+TypeError: sandbox
+.driveFolderPath 
+is not a function
+    at Object.<ano
+nymous> (C:\Users\
+nicol\lab-workspac
+e\_migrate_test.cj
+s:49:78)
+    at 
+Module._compile (n
+ode:internal/modul
+es/cjs/loader:1934
+:14)
+    at Object..js 
+(node:internal/mod
+ules/cjs/loader:20
+74:10)
+    at 
+Module.load (node:
+internal/modules/c
+js/loader:1656:32)
+    at 
+Module._load (node
+:internal/modules/
+cjs/loader:1448:12
+)
+    at 
+wrapModuleLoad (no
+de:internal/module
+s/cjs/loader:261:1
+9)
+    at Module.exec
+uteUserEntryPoint 
+[as runMain] (node
+:internal/modules/
+run_main:154:5)
+    at node:intern
+al/main/run_main_m
+odule:33:47
+
+Node.js v26.5.1

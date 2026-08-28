@@ -3,7 +3,7 @@ import { suggestDriveFileName, getDriveFolderUrl, setDriveFolderUrl, openDrive, 
 import { DriveUploadButton } from './DriveUpload';
 import { docxToHtml } from '../utils/docxImport';
 import { getRenderableDriveUrl, repairContentImages } from '../data/constants';
-import { archiveFileToDrive, uploadLocalFile, dataUrlToBlob, withExtension } from '../utils/driveUpload';
+import { archiveFileToDrive, uploadLocalFile, dataUrlToBlob, withExtension, getDriveToken } from '../utils/driveUpload';
 
 export const RichTextEditor = ({
   value, onChange, placeholder, toolbarExtra = [],
@@ -19,6 +19,7 @@ export const RichTextEditor = ({
     const [figureDraft, setFigureDraft] = useState(null); // null | { url, caption }
     const [driveFolderDraft, setDriveFolderDraft] = useState(getDriveFolderUrl());
     const [toolbarOpen, setToolbarOpen] = useState(true); // collapsible toolbar (more vertical space)
+    const [pasteNotice, setPasteNotice] = useState(''); // shown when an image had to stay LOCAL (Drive unavailable)
 
     // Full-path suggested file name for the figure being inserted (figure1, figure2, ...)
     const figureSuffix = `figure${(editorRef.current ? editorRef.current.querySelectorAll('figure').length : 0) + 1}`;
@@ -257,6 +258,8 @@ export const RichTextEditor = ({
                 const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0, width, height);
                 const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
                 let imgSrc = dataUrl;
+                let uploadedToDrive = false;
+                let driveError = '';
                 try {
                     const pastedNum = (editorRef.current ? editorRef.current.querySelectorAll('img').length : 0) + 1;
                     const pastedTitle = `pasted_image_${pastedNum}`;
@@ -266,8 +269,26 @@ export const RichTextEditor = ({
                         file: dataUrlToBlob(dataUrl),
                         ctx: { ...(fileNaming || {}), title: pastedTitle }
                     });
-                    if (drive && drive.driveUrl) imgSrc = getRenderableDriveUrl(drive.driveUrl);
-                } catch { /* Drive unavailable — keep the local data URL */ }
+                    if (drive && drive.driveUrl) {
+                        imgSrc = getRenderableDriveUrl(drive.driveUrl);
+                        uploadedToDrive = true;
+                    } else {
+                        driveError = 'upload returned no Drive link';
+                    }
+                } catch (err) {
+                    driveError = err && err.message ? String(err.message) : 'Drive error';
+                }
+                if (!uploadedToDrive) {
+                    // NOT silent anymore: a local (base64) image never reaches a
+                    // Drive folder, so the user must know. If Drive is simply not
+                    // connected, offer to connect it right away.
+                    setPasteNotice('⚠ Image inserted as a LOCAL copy — it was NOT saved to Google Drive'
+                        + (driveError ? ` (${driveError})` : '')
+                        + '. Connect Drive and paste it again to archive it in the instance folder.');
+                    if (!getDriveToken()) {
+                        try { window.dispatchEvent(new CustomEvent('lab:connect-drive')); } catch { /* ignore */ }
+                    }
+                }
                 document.execCommand('insertImage', false, imgSrc);
                 onChange(editorRef.current.innerHTML);
             };
@@ -358,6 +379,13 @@ export const RichTextEditor = ({
                         title="Collapse toolbar (give more vertical space to the text)"
                         className="px-1.5 py-0.5 text-[10px] font-bold text-slate-400 hover:text-slate-600 bg-white border border-slate-200 rounded shadow-sm transition">▴</button>
             </div>
+            )}
+            {pasteNotice && (
+                <div className="flex items-start justify-between gap-2 px-3 py-1.5 bg-amber-50 border-b border-amber-200 text-[11px] text-amber-800 shrink-0">
+                    <span className="flex-1">{pasteNotice}</span>
+                    <button type="button" onClick={() => setPasteNotice('')}
+                            className="font-bold text-amber-500 hover:text-amber-700 px-1 text-xs" title="Dismiss">×</button>
+                </div>
             )}
             {!readOnly && !toolbarOpen && (
             <div className="flex items-center justify-end px-1 py-0.5 bg-slate-50 border-b border-slate-200 shrink-0">
