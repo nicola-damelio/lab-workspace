@@ -1010,6 +1010,36 @@ try {
   setModelCount(0);
 }
 
+// Multi-chain PDB (protein complexes / docked complexes): expose each CHAIN as
+// its own entry in the Molecules selector so the partners can be viewed alone
+// or together. Skipped for multi-MODEL files (the Model selector covers those).
+try {
+  const ngl = window.NGL;
+  const struct = component.structure;
+  const frameCount = struct ? struct.frameCount : 0;
+  if (ngl && struct && frameCount <= 1 && typeof struct.getChainList === 'function') {
+    const chainIds = [...new Set((struct.getChainList() || [])
+      .map((c) => (c && c.name ? String(c.name) : ''))
+      .filter((x) => x !== ''))];
+    if (chainIds.length > 1) {
+      chainIds.forEach((cid, ci) => {
+        try {
+          const view = struct.getView(new ngl.Selection(`:${cid}`));
+          if (!view || !view.atomCount) return;
+          const chainComp = stage.addComponentFromObject(view, { name: `Chain ${cid}` });
+          try { chainComp.addRepresentation('cartoon', { sele: 'protein', color: 'residueindex', quality: 'high' }); } catch {}
+          try { chainComp.addRepresentation('ball+stick', { sele: 'hetero and not water', colorScheme: 'element', aspectRatio: 1.1 }); } catch {}
+          extraCompsRef.current.push({ id: `chain_${Date.now()}_${ci}`, name: `Chain ${cid}`, comp: chainComp });
+          try { chainComp.setVisibility(false); } catch {}
+        } catch { /* chain split failed — keep it inside the main component */ }
+      });
+      if (extraCompsRef.current.length > 0) {
+        setExtraMols(extraCompsRef.current.map(({ id: xid, name: xname }) => ({ id: xid, name: xname })));
+      }
+    }
+  }
+} catch { /* NGL chain APIs unavailable — keep the whole structure as one component */ }
+
 // Expose the 1-letter sequence parsed from the structure so the pages can
 // auto-fill the sequence field when it is empty (enables the per-atom table).
 if (typeof onStructureSequence === 'function') {
@@ -1791,8 +1821,10 @@ try {
   if (!stage) return;
   const comp = await stage.loadFile(file);
   const isProtein = moleculeTypeRef.current === 'protein';
-  try { comp.addRepresentation('cartoon', { colorScheme: 'element' }); } catch {}
-  try { comp.addRepresentation('ball+stick', { sele: 'hetero', colorScheme: 'element', aspectRatio: 1.2 }); } catch {}
+  // Match the MAIN structure's styling so extra molecules do not look gray:
+  // proteins get the rainbow (residue-index) cartoon, small molecules keep CPK.
+  try { comp.addRepresentation('cartoon', { sele: 'protein', color: 'residueindex', quality: 'high' }); } catch {}
+  try { comp.addRepresentation('ball+stick', { sele: 'hetero and not water', colorScheme: 'element', aspectRatio: 1.1 }); } catch {}
   if (!isProtein) {
     try { if (comp.reprList && comp.reprList[0]) comp.removeRepresentation(comp.reprList[0]); } catch {}
     try { comp.addRepresentation('ball+stick', { colorScheme: 'element', multipleBond: true }); } catch {}
@@ -1847,15 +1879,23 @@ rest.forEach((f) => {
 e.target.value = '';
 }, [onStructureFile, driveNaming, clearExtraMolecules]);
 
-// Show exactly one molecule at a time (main structure or an extra uploaded file).
+// Show exactly one molecule at a time (main structure or an extra uploaded file),
+// or ALL of them together when the user picks the "Show all" entry.
 const handleMolSelect = (key) => {
 setActiveMolKey(key);
-try { if (componentRef.current) componentRef.current.setVisibility(key === 'main'); } catch {}
+const showAll = key === 'all';
+try { if (componentRef.current) componentRef.current.setVisibility(key === 'main' || showAll); } catch {}
 extraCompsRef.current.forEach(({ id, comp }) => {
-  try { comp.setVisibility(key === id); } catch {}
+  try { comp.setVisibility(showAll || key === id); } catch {}
 });
-const target = key === 'main' ? componentRef.current : (extraCompsRef.current.find((x) => x.id === key) || {}).comp;
-if (target) { try { target.autoView(); } catch {} }
+if (showAll) {
+  // Fit EVERYTHING (main + extra molecules / chains) into the view.
+  try { if (stageRef.current && typeof stageRef.current.autoView === 'function') stageRef.current.autoView(); } catch {}
+  try { if (componentRef.current) componentRef.current.autoView(); } catch {}
+} else {
+  const target = key === 'main' ? componentRef.current : (extraCompsRef.current.find((x) => x.id === key) || {}).comp;
+  if (target) { try { target.autoView(); } catch {} }
+}
 try { if (stageRef.current) stageRef.current.handleResize(); } catch {}
 };
 
@@ -1944,6 +1984,7 @@ className="border border-slate-300 rounded-md px-1.5 py-1.5 text-[11px] bg-white
 {extraMols.map((m) => (
 <option key={m.id} value={m.id}>{m.name}</option>
 ))}
+<option value="all">🔀 Show all together</option>
 </select>
 )}
 
