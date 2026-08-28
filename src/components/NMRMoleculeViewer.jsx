@@ -539,6 +539,18 @@ const [modelCount, setModelCount] = useState(0);
 const [modelIdx, setModelIdx] = useState(0);
 const extraCompsRef = useRef([]);                  // [{ id, name, comp }]
 
+// Remove every extra uploaded molecule (its NGL components). Called at the START
+// of any new main-structure load — NOT after it — so a freshly-selected batch
+// of files is never wiped by the main load that runs concurrently with them.
+const clearExtraMolecules = useCallback(() => {
+  extraCompsRef.current.forEach(({ comp }) => {
+    try { if (stageRef.current) stageRef.current.removeComponent(comp); } catch {}
+  });
+  extraCompsRef.current = [];
+  setExtraMols([]);
+  setActiveMolKey('main');
+}, []);
+
 // ---- Atom renaming (3D, post-generation) ----
 const [renames, setRenames] = useState(() => (atomRenames && typeof atomRenames === 'object' ? { ...atomRenames } : {}));
 const renamesRef = useRef(renames);
@@ -765,6 +777,7 @@ useEffect(() => {
 if (structureFileData === lastSeenFileDataRef.current) return;
 lastSeenFileDataRef.current = structureFileData;
 if (!structureFileData) return;
+clearExtraMolecules();
 setManualOverride(true);
 setFile(null);
 try {
@@ -780,7 +793,7 @@ requestStructureLoad({ file: fakeFile, url: null, ts: Date.now() });
 setErrorMsg('Failed to decode structure file data.');
 setStatus('error');
 }
-}, [structureFileData, structureFileName, structureFormat]);
+}, [structureFileData, structureFileName, structureFormat, clearExtraMolecules]);
 
 useEffect(() => {
 if (structureText !== lastSeenTextRef.current) {
@@ -794,18 +807,20 @@ if (manualOverride) return;
 if (!structureText) { lastLoadedTextRef.current = null; return; }
 if (structureText !== lastLoadedTextRef.current) {
 lastLoadedTextRef.current = structureText;
+clearExtraMolecules();
 setFile(null);
 requestStructureLoad({ file: null, url: null, text: structureText, ext: structureTextExt || 'pdb', ts: Date.now() });
 }
-}, [structureText, structureTextExt, manualOverride]);
+}, [structureText, structureTextExt, manualOverride, clearExtraMolecules]);
 
 useEffect(() => {
 if (manualOverride || structureText) return;
 if (src) {
 setFile(null);
+clearExtraMolecules();
 setLoadRequest({ file: null, url: src, ts: Date.now() });
 }
-}, [src, structureText, manualOverride]);
+}, [src, structureText, manualOverride, clearExtraMolecules]);
 
 useEffect(() => {
 if (manualOverride || structureText || loadRequest) return;
@@ -995,13 +1010,6 @@ try {
 } catch {
   setModelCount(0);
 }
-// A new main structure replaces any extra uploaded molecules.
-extraCompsRef.current.forEach(({ comp }) => {
-  try { if (stageRef.current) stageRef.current.removeComponent(comp); } catch {}
-});
-extraCompsRef.current = [];
-setExtraMols([]);
-setActiveMolKey('main');
 
 // Expose the 1-letter sequence parsed from the structure so the pages can
 // auto-fill the sequence field when it is empty (enables the per-atom table).
@@ -1808,6 +1816,7 @@ try {
 const handleFileChange = useCallback((e) => {
 const files = Array.from(e.target.files || []);
 if (files.length === 0) return;
+clearExtraMolecules();
 setManualOverride(true);
 setTrajFile(null);
 const [first, ...rest] = files;
@@ -1823,7 +1832,7 @@ rest.forEach((f, i) => {
   if (driveNaming) archiveFileToDrive({ file: f, ctx: driveNaming }).catch(() => {});
 });
 e.target.value = '';
-}, [onStructureFile, driveNaming, loadExtraMolecule]);
+}, [onStructureFile, driveNaming, loadExtraMolecule, clearExtraMolecules]);
 
 // Show exactly one molecule at a time (main structure or an extra uploaded file).
 const handleMolSelect = (key) => {
@@ -1847,12 +1856,13 @@ if (c && typeof c.setFrame === 'function') { try { c.setFrame(idx); } catch {} }
 const handlePdbIdLoad = useCallback(() => {
 const value = pdbId.trim();
 if (!value) return;
+clearExtraMolecules();
 setManualOverride(true);
 setFile(null);
 setTrajFile(null);
 setLoadRequest({ file: null, url: value, ts: Date.now() });
 onStructureSrc?.(value);   // share the web/PDB topology with the analysis sections
-}, [pdbId, onStructureSrc]);
+}, [pdbId, onStructureSrc, clearExtraMolecules]);
 
 // ---- Abort the current long-running operation (vertical-bar / global Stop) ----
 // Stops trajectory playback, closes the frame-selection modal and cancels the

@@ -23,7 +23,7 @@ export const DriveImageMigration = ({ tests, setTests, datasetTitle = '' }) => {
 
   const refCount = countTestImageRefs(tests);
   const preview = showPreview ? previewTestDriveFiles(tests) : [];
-  const emptyInstance = preview.filter((p) => !p.instanceName);
+  const autoNamed = preview.filter((p) => p.autoNamed);
 
   const run = async () => {
     if (!getDriveToken()) {
@@ -106,11 +106,11 @@ export const DriveImageMigration = ({ tests, setTests, datasetTitle = '' }) => {
 
       {showPreview && (
         <div className="mt-3 pt-3 border-t border-slate-100">
-          {emptyInstance.length > 0 && (
-            <p className="text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 mb-2">
-              ⚠️ {emptyInstance.length} test{emptyInstance.length === 1 ? '' : 's'} have an <b>EMPTY instance name</b> —
-              those will go to <code>&lt;test&gt;/{TEST_IMAGE_SECTION}</code> with <b>no instance folder</b>.
-              If you see a name in the app tab, it is stored in the test field <code>instanceName</code>.
+          {autoNamed.length > 0 && (
+            <p className="text-[11px] font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-lg px-2 py-1.5 mb-2">
+              ℹ️ {autoNamed.length} unnamed instance{autoNamed.length === 1 ? '' : 's'} will be
+              auto-renamed <code>instance1</code>, <code>instance2</code>, … (in the order shown in the app)
+              and get their own folder — the test data is updated accordingly.
             </p>
           )}
           <ul className="max-h-60 overflow-y-auto custom-scrollbar text-[11px] space-y-1.5">
@@ -120,8 +120,8 @@ export const DriveImageMigration = ({ tests, setTests, datasetTitle = '' }) => {
                 <div className="min-w-0">
                   <div className="font-bold text-slate-700 truncate">
                     {p.test}
-                    <span className={`ml-1.5 font-semibold ${p.instanceName ? 'text-emerald-600' : 'text-amber-600'}`}>
-                      {p.instanceName ? `inst: "${p.instanceName}"` : 'inst: (empty)'}
+                    <span className={`ml-1.5 font-semibold ${p.autoNamed ? 'text-blue-600' : 'text-emerald-600'}`}>
+                      inst: &quot;{p.instanceName}&quot;{p.autoNamed ? ' (auto)' : ''}
                     </span>
                   </div>
                   <div className="text-slate-500 font-mono text-[10px] truncate">

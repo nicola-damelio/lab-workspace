@@ -88,11 +88,38 @@ const docTitleFromName = (name, scientist) => {
   return base.trim();
 };
 
+/** Instances are grouped by test name. An instance with NO instanceName is an
+ *  UNNAMED instance — give it a real name ("instance1", "instance2", …) based
+ *  on its position among the unnamed siblings (same order the app uses:
+ *  instanceOrder first, then date), so every instance maps to its own Drive
+ *  folder (<test>/<instance>/Report/…). */
+export const effectiveInstanceName = (test, allTests) => {
+  if (!test) return '';
+  const own = String(test.instanceName || '').trim();
+  if (own) return own;
+  const siblings = (Array.isArray(allTests) ? allTests : [])
+    .filter((t) => t && String(t.name || '') === String(test.name || '') && String(t.name || '').trim() !== '');
+  const ordered = siblings.slice().sort((a, b) => {
+    const oa = a.instanceOrder;
+    const ob = b.instanceOrder;
+    const hasA = Number.isFinite(oa);
+    const hasB = Number.isFinite(ob);
+    if (hasA && hasB) return oa - ob;
+    if (hasA) return -1;
+    if (hasB) return 1;
+    return (a.date || '').localeCompare(b.date || '');
+  });
+  const unnamed = ordered.filter((t) => !t.instanceName || !String(t.instanceName).trim());
+  const idx = unnamed.findIndex((t) => t.id === test.id);
+  return `instance${idx >= 0 ? idx + 1 : unnamed.length + 1}`;
+};
+
 /** Collect every Drive-linked FILE reference of one test — figures/images,
  *  ⭐ starred items, attached documents (PDFs etc.) and every <img>/<a> that
  *  points at a Drive file inside rich-text HTML.
+ *  `allTests` (optional) is used to name unnamed instances ("instance1", …).
  *  @returns [{ where, url, fileId, title, ctx }] */
-export const collectTestImageRefs = (test) => {
+export const collectTestImageRefs = (test, allTests) => {
   const refs = [];
   if (!test || typeof test !== 'object') return refs;
 
@@ -100,9 +127,9 @@ export const collectTestImageRefs = (test) => {
     project: (test.projectNames || [])[0] || '',
     test: test.name || '',
     // Instances are grouped by test name; each instance keeps its own label
-    // (instanceName). An unnamed instance simply has NO instance folder —
-    // exactly like every DriveUpload in the app (instance: instanceName || '').
-    instance: test.instanceName || '',
+    // (instanceName). Unnamed instances get a real name ("instance1", …) so
+    // every instance maps to its own Drive folder.
+    instance: effectiveInstanceName(test, allTests),
     scientist: test.operator || '',
     section: TEST_IMAGE_SECTION
   };
@@ -172,7 +199,7 @@ export const collectTestImageRefs = (test) => {
 /** Count the Drive-linked file references of a test (for the UI). */
 export const countTestImageRefs = (tests) =>
   (Array.isArray(tests) ? tests : [])
-    .reduce((n, t) => n + collectTestImageRefs(t).length, 0);
+    .reduce((n, t) => n + collectTestImageRefs(t, tests).length, 0);
 
 /** DRY-RUN preview — shows, for every test with Drive-linked files, the exact
  *  target Drive folder and the instance name the migration will use. Nothing
@@ -181,13 +208,15 @@ export const countTestImageRefs = (tests) =>
 export const previewTestDriveFiles = (tests) =>
   (Array.isArray(tests) ? tests : [])
     .map((t) => {
-      const refs = collectTestImageRefs(t);
+      const refs = collectTestImageRefs(t, tests);
       if (refs.length === 0) return null;
       const ctx = refs[0].ctx;
+      const named = Boolean(t.instanceName && String(t.instanceName).trim());
       return {
         test: t.name || '(untitled)',
         id: t.id || '',
-        instanceName: t.instanceName || '',
+        instanceName: effectiveInstanceName(t, tests),
+        autoNamed: !named,
         folder: ['Lab Workspace', '<dataset>', ...driveFolderPath(ctx)].join('/'),
         files: refs.map((r) => ({ title: r.title || '(link)', url: r.url }))
       };
@@ -318,31 +347,41 @@ export const downloadDriveFileBytes = async (fileId) => {
 export const migrateTestDriveImages = async ({ tests, onProgress = () => {} } = {}) => {
   const list = Array.isArray(tests) ? tests : [];
 
-  // 1) Collect all references (one per image occurrence).
+  // 1) Work on a shallow copy; image arrays / starredItems get fresh arrays.
+  const nextTests = list.map((t) => ({
+    ...t,
+    starredItems: Array.isArray(t.starredItems) ? t.starredItems.slice() : t.starredItems
+  }));
+
+  // 1b) UNNAMED instances get a real name ("instance1", "instance2", … in the
+  // sibling order) so every instance maps to its own Drive folder
+  // (<test>/<instance>/Report/…). Applied to ALL tests, even without files,
+  // so future app uploads land in the same folder too.
+  nextTests.forEach((t, i) => {
+    if (!t.instanceName || !String(t.instanceName).trim()) {
+      nextTests[i] = { ...t, instanceName: effectiveInstanceName(t, nextTests) };
+    }
+  });
+
+  // 2) Collect all references (one per file occurrence).
   const allRefs = [];
-  list.forEach((test, ti) => {
-    collectTestImageRefs(test).forEach((r) => allRefs.push({ test, ti, ...r }));
+  nextTests.forEach((test, ti) => {
+    collectTestImageRefs(test, nextTests).forEach((r) => allRefs.push({ test, ti, ...r }));
   });
 
   const summary = { moved: 0, copied: 0, skipped: 0, failed: 0, details: [] };
-  if (allRefs.length === 0) return { nextTests: list, summary };
+  if (allRefs.length === 0) return { nextTests, summary };
 
   if (!getDriveToken()) {
     throw new Error('Google Drive is not connected — connect it from the sidebar first.');
   }
 
-  // 2) Group by Drive file id (one file may be referenced several times).
+  // 3) Group by Drive file id (one file may be referenced several times).
   const groups = new Map();
   allRefs.forEach((ref) => {
     if (!groups.has(ref.fileId)) groups.set(ref.fileId, []);
     groups.get(ref.fileId).push(ref);
   });
-
-  // 3) Work on a shallow copy; image arrays / starredItems get fresh arrays.
-  const nextTests = list.map((t) => ({
-    ...t,
-    starredItems: Array.isArray(t.starredItems) ? t.starredItems.slice() : t.starredItems
-  }));
 
   const usedNames = new Map();
   const total = groups.size;
