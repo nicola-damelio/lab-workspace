@@ -9,7 +9,7 @@ import { StorageFinder } from './storageModules';
 import { StorageList, StorageDetail } from '../Storage';
 
 export const StorageModule = ({
-  currentModule, tests, setTests, storages, operatorNames,
+  currentModule, tests, setTests, storages, setStorages, operatorNames,
   setActiveTestId, setCurrentModule, setActiveStorageId, setStorageModal,
   handlePrint, activeStorageId, jumpToTest, setMoveModal, createEmptyTest
 }) => (
@@ -47,6 +47,7 @@ export const StorageModule = ({
     {currentModule === 'storage-detail' && (
               <StorageDetail
                 storages={storages}
+                setStorages={setStorages}
                 activeStorageId={activeStorageId}
                 tests={tests}
                 setTests={setTests}

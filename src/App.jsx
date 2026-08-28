@@ -2775,7 +2775,7 @@ const openDataset = (dset) => {
             />)}
 
             <StorageModule
-              currentModule={currentModule} tests={tests} setTests={setTests} storages={storages}
+              currentModule={currentModule} tests={tests} setTests={setTests} storages={storages} setStorages={setStorages}
               operatorNames={operatorNames} setActiveTestId={setActiveTestId} setCurrentModule={setCurrentModule}
               setActiveStorageId={setActiveStorageId} setStorageModal={setStorageModal}
               handlePrint={handlePrint} activeStorageId={activeStorageId}

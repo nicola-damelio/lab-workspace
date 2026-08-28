@@ -3,6 +3,8 @@ import { getDirectImageUrl, BOX_ROW_LABELS, DEF_COMPOUNDS } from '../data/consta
 import { RichTextEditor } from './RichTextEditor';
 import { Icon } from './Icons';
 import { markAttachmentsDeleted } from '../utils/driveUpload';
+import { DriveUploadButton } from './DriveUpload';
+import { sanitizeSlug } from '../utils/driveNaming';
 
 // Helper to bypass Google Drive CORS blocks
 const getProxiedImage = (url) => {
@@ -13,6 +15,36 @@ const getProxiedImage = (url) => {
     }
     return directUrl;
 };
+
+// One photo slot for a box: preview + upload-from-PC (saved to Drive) + remove.
+// Used twice per box — "Box Photo" (external, to locate it) and "Inside Photo"
+// (to see its contents). Both live under storage/<box>/[<instance>/]image/.
+const BoxPhotoSlot = ({ url, label, hint, path, suggestedName, onSet, onClear }) => (
+    <div className="flex items-center gap-3">
+        {url ? (
+            <img src={getProxiedImage(url)} alt={label} referrerPolicy="no-referrer"
+                 className="w-20 h-20 object-cover rounded-xl border border-slate-200 shadow-sm"/>
+        ) : (
+            <div className="w-20 h-20 rounded-xl border border-dashed border-slate-300 bg-slate-50 flex items-center justify-center text-[10px] text-slate-400 px-1 text-center">{hint}</div>
+        )}
+        <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-bold text-slate-500 uppercase">{label}</label>
+            <DriveUploadButton
+                label={url ? '⬆ Replace' : '⬆ Upload'}
+                accept="image/*"
+                suggestedName={suggestedName}
+                path={path}
+                onDone={({ dataUrl, drive }) => onSet(drive ? drive.driveUrl : dataUrl)}
+            />
+            {url && (
+                <button type="button" onClick={onClear}
+                        className="text-[10px] font-bold text-red-500 hover:text-red-700 underline self-start">
+                    Remove
+                </button>
+            )}
+        </div>
+    </div>
+);
 
 // --- MODALS FOR STORAGE & BOX MOVEMENT ---
 export const StorageModals = ({ storageModal, setStorageModal, storages, setStorages, moveModal, setMoveModal, tests, setTests }) => {
@@ -204,7 +236,7 @@ export const StorageList = ({ storages, tests, setStorageModal, setActiveStorage
 };
 
 // --- STORAGE DETAIL VIEW ---
-export const StorageDetail = ({ storages, activeStorageId, tests, setTests, setCurrentModule, handlePrint, jumpToTest, setMoveModal, createEmptyTest, setActiveTestId }) => {
+export const StorageDetail = ({ storages, activeStorageId, tests, setTests, setStorages, setCurrentModule, handlePrint, jumpToTest, setMoveModal, createEmptyTest, setActiveTestId }) => {
     const st = storages.find(s => s.id === activeStorageId);
     if (!st) return <div className="p-6">Storage not found.</div>;
     
@@ -238,14 +270,34 @@ export const StorageDetail = ({ storages, activeStorageId, tests, setTests, setC
                 </div>
             </div>
             <div className="flex-1 flex flex-col xl:flex-row gap-6 min-h-0">
-                {st.imageUrl && (
-                    <div className="w-full xl:w-1/3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm shrink-0 flex flex-col no-print">
-                        <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Reference Image</h3>
-                        <div className="flex-1 rounded-lg overflow-hidden border border-slate-100 bg-slate-100">
+                <div className="w-full xl:w-1/3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm shrink-0 flex flex-col no-print">
+                    <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Reference Image</h3>
+                    {st.imageUrl ? (
+                        <div className="flex-1 rounded-lg overflow-hidden border border-slate-100 bg-slate-100 mb-3">
                             <img src={getProxiedImage(st.imageUrl)} alt={st.name} referrerPolicy="no-referrer" className="w-full h-full object-cover"/>
                         </div>
-                    </div>
-                )}
+                    ) : (
+                        <div className="flex-1 rounded-lg border border-dashed border-slate-200 bg-slate-50 flex items-center justify-center text-[11px] text-slate-400 mb-3 min-h-[110px]">
+                            No image yet
+                        </div>
+                    )}
+                    <DriveUploadButton
+                        label={st.imageUrl ? '⬆ Replace image' : '⬆ Upload image'}
+                        accept="image/*"
+                        suggestedName={sanitizeSlug(st.name) + '_image'}
+                        path={['storage', st.name, 'image']}
+                        onDone={({ dataUrl, drive }) =>
+                            setStorages(prev => prev.map(s => s.id === st.id ? { ...s, imageUrl: drive ? drive.driveUrl : dataUrl } : s))
+                        }
+                    />
+                    {st.imageUrl && (
+                        <button type="button"
+                                onClick={() => setStorages(prev => prev.map(s => s.id === st.id ? { ...s, imageUrl: '' } : s))}
+                                className="text-[10px] font-bold text-red-500 hover:text-red-700 underline self-start mt-2">
+                            Remove image
+                        </button>
+                    )}
+                </div>
                 <div className="flex-1 bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col">
                     <h3 className="text-xs font-bold text-slate-500 uppercase mb-4 border-b border-slate-100 pb-2 flex justify-between">
                         <span>Interactive Grid</span>
@@ -263,7 +315,15 @@ export const StorageDetail = ({ storages, activeStorageId, tests, setTests, setC
                                         <span className="absolute top-1 left-1.5 text-[9px] font-black text-slate-300 select-none">{i+1}</span>
                                         {box ? (
                                             <React.Fragment>
-                                                <span className="text-indigo-500 mb-1"><Icon name="box" size={26} /></span>
+                                                {box.boxImageUrl ? (
+                                                    <img src={getProxiedImage(box.boxImageUrl)} alt={box.name} referrerPolicy="no-referrer" className="w-10 h-10 object-cover rounded-lg border border-slate-200 mb-1 shadow-sm"/>
+                                                ) : (
+                                                    <span className="text-indigo-500 mb-1"><Icon name="box" size={26} /></span>
+                                                )}
+                                                {box.boxContentsImageUrl && (
+                                                    <span className="absolute bottom-1 right-1 w-4 h-4 bg-white border border-slate-300 rounded-full flex items-center justify-center text-[8px] shadow-sm"
+                                                          title="Inside photo available">📷</span>
+                                                )}
                                                 <span className="text-[10px] font-bold text-indigo-900 leading-tight w-full truncate">{box.name}</span>
                                                 <span className="text-[9px] text-slate-500 truncate w-full">{box.instanceName || box.date}</span>
                                                 <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20 no-print">
@@ -481,6 +541,26 @@ const printBoxLabel = () => {
                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col mb-6">
                     <label className="text-xs font-bold text-slate-600 mb-2 flex items-center gap-1"><Icon name="document" size={13} /> General Box Notes</label>
                     <RichTextEditor value={activeTest.comments || ''} onChange={val => updateActiveTest({comments: val})} placeholder="Add general box notes here..." />
+                </div>
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-start gap-6 mb-6 no-print">
+                    <BoxPhotoSlot
+                        url={activeTest.boxImageUrl}
+                        label="Box Photo (locate)"
+                        hint="No photo"
+                        path={['storage', activeTest.name || 'box', activeTest.instanceName || '', 'image']}
+                        suggestedName={sanitizeSlug((activeTest.name || 'box') + (activeTest.instanceName ? '_' + activeTest.instanceName : '')) + '_photo'}
+                        onSet={(v) => updateActiveTest({ boxImageUrl: v })}
+                        onClear={() => updateActiveTest({ boxImageUrl: '' })}
+                    />
+                    <BoxPhotoSlot
+                        url={activeTest.boxContentsImageUrl}
+                        label="Inside Photo (contents)"
+                        hint="No photo"
+                        path={['storage', activeTest.name || 'box', activeTest.instanceName || '', 'image']}
+                        suggestedName={sanitizeSlug((activeTest.name || 'box') + (activeTest.instanceName ? '_' + activeTest.instanceName : '')) + '_contents'}
+                        onSet={(v) => updateActiveTest({ boxContentsImageUrl: v })}
+                        onClear={() => updateActiveTest({ boxContentsImageUrl: '' })}
+                    />
                 </div>
                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap gap-4 items-center mb-6 no-print">
                     <div className="flex items-center gap-2">
