@@ -105,6 +105,13 @@ const driveFetch = async (path, opts = {}) => {
   });
 
   if (res.status === 401 || res.status === 403) {
+    if (res.status === 401) {
+      // The stored token expired or was revoked: forget it and let the UI
+      // offer a fresh Google sign-in (the sidebar switches back to
+      // "Connect Drive" instead of silently failing every upload).
+      clearDriveToken();
+      try { window.dispatchEvent(new CustomEvent('lab:drive-disconnected')); } catch { /* ignore */ }
+    }
     throwCode('TOKEN_EXPIRED', 'Drive access expired — please reconnect Google Drive.');
   }
   if (!res.ok) {

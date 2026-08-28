@@ -1293,7 +1293,9 @@ export const Data = ({ ctx }) => {
       }
 
       setFcsMsg(driveConnected
-        ? `✅ Successfully loaded ${results.length} file(s) — ${driveSaved} saved to Google Drive.`
+        ? (driveSaved === results.length
+            ? `✅ Successfully loaded ${results.length} file(s) — all saved to Google Drive.`
+            : `⚠️ Successfully loaded ${results.length} file(s) — ${driveSaved} saved to Google Drive. Drive access expired or unavailable: reconnect Google Drive, then use “Archive FCS to Drive”.`)
         : `✅ Successfully loaded ${results.length} file(s). (Drive not connected — raw files not archived.)`);
       setUpdater(u => u + 1);
     } catch (err) {

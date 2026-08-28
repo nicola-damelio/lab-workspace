@@ -1312,7 +1312,9 @@ export const Data = ({ ctx }) => {
       }
     }
     setJascoMsg(driveConnected
-      ? `✅ Imported ${results.length} file(s) — ${driveSaved} saved to Google Drive.`
+      ? (driveSaved === results.length
+          ? `✅ Imported ${results.length} file(s) — all saved to Google Drive.`
+          : `⚠️ Imported ${results.length} file(s) — ${driveSaved} saved to Google Drive. Drive access expired or unavailable: reconnect Google Drive, then use “Archive spectra to Drive” to save the raw file(s).`)
       : `✅ Imported ${results.length} file(s). (Drive not connected — raw files not archived.)`);
     if (jascoFileRef.current) jascoFileRef.current.value = '';
   };

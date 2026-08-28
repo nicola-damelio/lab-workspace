@@ -31,9 +31,14 @@ export const AppSidebar = ({
       }
     };
     const onConnected = () => { setDriveConnected(!!getDriveToken()); refreshAccount(); };
+    const onDisconnected = () => { setDriveConnected(false); setDriveAccount(''); };
     window.addEventListener('lab:drive-connected', onConnected);
+    window.addEventListener('lab:drive-disconnected', onDisconnected);
     refreshAccount(); // on first load, show which account is connected
-    return () => window.removeEventListener('lab:drive-connected', onConnected);
+    return () => {
+      window.removeEventListener('lab:drive-connected', onConnected);
+      window.removeEventListener('lab:drive-disconnected', onDisconnected);
+    };
   }, []);
 
   return (

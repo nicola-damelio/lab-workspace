@@ -4817,7 +4817,9 @@ export const DataSection = ({ ctx }) => {
       }
     }
     setNmrBrukerMsg(driveConnected
-      ? `✅ Imported ${selected.length} spectrum/spectra — ${driveSaved} raw 1r file(s) saved to Google Drive.`
+      ? (driveSaved === selected.length
+          ? `✅ Imported ${selected.length} spectrum/spectra — all raw 1r file(s) saved to Google Drive.`
+          : `⚠️ Imported ${selected.length} spectrum/spectra — ${driveSaved} raw 1r file(s) saved to Google Drive. Drive access expired or unavailable: reconnect Google Drive and re-import.`)
       : `✅ Imported ${selected.length} spectrum/spectra. (Drive not connected — raw files not archived.)`);
   };
 

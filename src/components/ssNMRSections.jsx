@@ -1179,7 +1179,9 @@ export const Data = ({ ctx }) => {
       }
     }
     setBrukerMsg(driveConnected
-      ? `✅ Successfully imported ${selected.length} spectrum/spectra — ${driveSaved} raw 1r file(s) saved to Google Drive.`
+      ? (driveSaved === selected.length
+          ? `✅ Successfully imported ${selected.length} spectrum/spectra — all raw 1r file(s) saved to Google Drive.`
+          : `⚠️ Successfully imported ${selected.length} spectrum/spectra — ${driveSaved} raw 1r file(s) saved to Google Drive. Drive access expired or unavailable: reconnect Google Drive and re-import.`)
       : `✅ Successfully imported ${selected.length} spectrum/spectra. (Drive not connected — raw files not archived.)`);
   };
 
