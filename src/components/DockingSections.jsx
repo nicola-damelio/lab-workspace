@@ -247,27 +247,27 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
           )}
 
           {/* Ligand panel */}
-          <div className="mt-4 bg-amber-50 border border-amber-200 rounded-xl p-4">
-            <label className="block text-xs font-bold text-amber-700 uppercase mb-3 flex items-center gap-1.5"><Icon name="atom" size={14} /> Ligand</label>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div className="flex flex-col gap-1">
+          <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg p-2.5">
+            <label className="block text-[10px] font-bold text-amber-700 uppercase mb-2 flex items-center gap-1.5"><Icon name="atom" size={13} /> Ligand</label>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <div className="flex flex-col gap-0.5">
                 <label className="text-[10px] font-bold text-slate-500 uppercase">Ligand SMILES</label>
                 <input
                   type="text"
                   value={d.ligandSmiles}
                   onChange={(e) => updateActiveTest({ ligandSmiles: e.target.value })}
                   placeholder="e.g. CC(=O)Oc1ccccc1C(=O)O"
-                  className="border border-slate-300 rounded-lg px-3 py-2 font-mono text-sm bg-white outline-none focus:border-amber-500"
+                  className="border border-slate-300 rounded-md px-2 py-1.5 font-mono text-xs bg-white outline-none focus:border-amber-500"
                 />
               </div>
-              <div className="flex flex-col gap-1">
+              <div className="flex flex-col gap-0.5">
                 <label className="text-[10px] font-bold text-slate-500 uppercase">Ligand PDB / 3-letter ID</label>
                 <input
                   type="text"
                   value={d.ligandPdbId}
                   onChange={(e) => updateActiveTest({ ligandPdbId: e.target.value })}
                   placeholder="e.g. ASN, IBU, STI"
-                  className="border border-slate-300 rounded-lg px-3 py-2 font-mono text-sm bg-white outline-none focus:border-amber-500 uppercase"
+                  className="border border-slate-300 rounded-md px-2 py-1.5 font-mono text-xs bg-white outline-none focus:border-amber-500 uppercase"
                 />
               </div>
             </div>
@@ -276,8 +276,8 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
 
         {/* Docking program + box */}
         <div className="w-full lg:w-80 flex flex-col gap-4">
-          <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
-            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">🎯 Docking Program</label>
+          <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200 flex flex-col gap-1.5">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">🎯 Docking Program</label>
             <select
               value={d.dockingProgram}
               onChange={(e) => {
@@ -289,38 +289,44 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
                   searchAlgorithm: info.searchAlgorithms[0] || ''
                 });
               }}
-              className="w-full border border-slate-300 rounded-lg p-2 text-sm bg-white outline-none focus:border-blue-500 font-semibold mb-2"
+              className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold"
             >
               {Object.entries(DOCKING_PROGRAMS).map(([k, v]) => (
                 <option key={k} value={k}>{v.name}</option>
               ))}
             </select>
-            <p className="text-[10px] text-slate-400 mb-2">{d.programInfo.description}</p>
-            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Scoring Function</label>
-            <select
-              value={d.scoringFunction}
-              onChange={(e) => updateActiveTest({ scoringFunction: e.target.value })}
-              className="w-full border border-slate-300 rounded-lg p-2 text-xs bg-white outline-none focus:border-blue-500 mb-2"
-            >
-              {getScoringFunctions(d.dockingProgram).map((s) => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
-            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Search Algorithm</label>
-            <select
-              value={d.searchAlgorithm}
-              onChange={(e) => updateActiveTest({ searchAlgorithm: e.target.value })}
-              className="w-full border border-slate-300 rounded-lg p-2 text-xs bg-white outline-none focus:border-blue-500"
-            >
-              {getSearchAlgorithms(d.dockingProgram).map((s) => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
+            <p className="text-[10px] text-slate-400 leading-snug">{d.programInfo.description}</p>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">Scoring Function</label>
+                <select
+                  value={d.scoringFunction}
+                  onChange={(e) => updateActiveTest({ scoringFunction: e.target.value })}
+                  className="w-full border border-slate-300 rounded-md px-1.5 py-1 text-xs bg-white outline-none focus:border-blue-500"
+                >
+                  {getScoringFunctions(d.dockingProgram).map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">Search Algorithm</label>
+                <select
+                  value={d.searchAlgorithm}
+                  onChange={(e) => updateActiveTest({ searchAlgorithm: e.target.value })}
+                  className="w-full border border-slate-300 rounded-md px-1.5 py-1 text-xs bg-white outline-none focus:border-blue-500"
+                >
+                  {getSearchAlgorithms(d.dockingProgram).map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
           </div>
 
-          <div className="bg-sky-50 p-4 rounded-lg border border-sky-200">
-            <label className="block text-xs font-bold text-sky-700 uppercase mb-3">📦 Docking Box / Grid</label>
-            <div className="grid grid-cols-3 gap-2">
+          <div className="bg-sky-50 p-2.5 rounded-lg border border-sky-200">
+            <label className="block text-[10px] font-bold text-sky-700 uppercase mb-2">📦 Docking Box / Grid</label>
+            <div className="grid grid-cols-3 gap-1.5">
               {[['Center X', 'boxCenterX', d.boxCenterX], ['Center Y', 'boxCenterY', d.boxCenterY], ['Center Z', 'boxCenterZ', d.boxCenterZ],
                 ['Size X (Å)', 'boxSizeX', d.boxSizeX], ['Size Y (Å)', 'boxSizeY', d.boxSizeY], ['Size Z (Å)', 'boxSizeZ', d.boxSizeZ]].map(([lab, key, val]) => (
                 <div key={key} className="flex flex-col gap-0.5">
@@ -329,7 +335,7 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
                     type="text"
                     value={val}
                     onChange={(e) => updateActiveTest({ [key]: e.target.value })}
-                    className="border border-slate-300 rounded px-2 py-1 text-xs bg-white outline-none focus:border-sky-500"
+                    className="border border-slate-300 rounded px-1.5 py-1 text-xs bg-white outline-none focus:border-sky-500"
                   />
                 </div>
               ))}
@@ -392,17 +398,15 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
           </div>
 
           {structureMode === '3d' && (
-            <div className="mb-3 grid grid-cols-1 md:grid-cols-2 gap-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-bold text-slate-500 uppercase">Receptor topology (PDB ID / URL)</label>
-                <input
-                  type="text"
-                  value={activeTest.structureSrc || ''}
-                  onChange={(e) => updateActiveTest({ structureSrc: e.target.value })}
-                  placeholder="e.g. 1UBQ"
-                  className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500"
-                />
-              </div>
+            <div className="mb-2 flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5">
+              <label className="text-[10px] font-bold text-slate-500 uppercase whitespace-nowrap">Receptor topology (PDB ID / URL)</label>
+              <input
+                type="text"
+                value={activeTest.structureSrc || ''}
+                onChange={(e) => updateActiveTest({ structureSrc: e.target.value })}
+                placeholder="e.g. 1UBQ"
+                className="flex-1 min-w-0 border border-slate-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-blue-500"
+              />
             </div>
           )}
 

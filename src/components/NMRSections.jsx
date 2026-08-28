@@ -4017,14 +4017,10 @@ const generatedStructure = useMemo(() => {
         </div>
         
         {structureMode === '3d' && (
-          <div className="mb-3 grid grid-cols-1 md:grid-cols-4 gap-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
-            <div className="flex flex-col gap-1 col-span-3">
-              <label className="text-[10px] font-bold text-slate-500 uppercase">PDB ID / URL / local file</label>
-              <div className="flex gap-2">
-                <input type="text" value={localPdbInput} onChange={(e) => setLocalPdbInput(e.target.value)} onBlur={applyPdbInput} onKeyDown={(e) => { if (e.key === 'Enter') applyPdbInput(); }} placeholder="e.g. 1UBQ or /structures/POPC.pdb" className="flex-1 border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500" />
-                <button onClick={applyPdbInput} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs transition-colors">Load</button>
-              </div>
-            </div>
+          <div className="mb-2 flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5">
+            <label className="text-[10px] font-bold text-slate-500 uppercase whitespace-nowrap">PDB ID / URL / local file</label>
+            <input type="text" value={localPdbInput} onChange={(e) => setLocalPdbInput(e.target.value)} onBlur={applyPdbInput} onKeyDown={(e) => { if (e.key === 'Enter') applyPdbInput(); }} placeholder="e.g. 1UBQ or /structures/POPC.pdb" className="flex-1 min-w-0 border border-slate-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-blue-500" />
+            <button onClick={applyPdbInput} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1 rounded-md text-xs transition-colors">Load</button>
           </div>
         )}
         

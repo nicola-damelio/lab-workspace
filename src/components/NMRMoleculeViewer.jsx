@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+﻿import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ensureNGL } from '../utils/ngl';
 import { readXtcFrames, countXtcFrames, countXtcFramesInFile } from '../utils/xtcDecoder';
 import { abortControl } from '../utils/abortControl';
@@ -1937,7 +1937,7 @@ return (
 <div className="flex flex-wrap items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg p-1.5">
 <label
 title="Load structure file(s) from your computer — the first is the main structure, the rest appear in the Molecules selector"
-className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white font-bold px-2.5 py-1.5 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1"
+className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white font-bold px-2.5 py-1.5 rounded-md text-xs shadow-sm transition-colors inline-flex items-center gap-1"
 >
 📂 PDB file(s)
 <input
@@ -1952,7 +1952,7 @@ className="hidden"
 type="button"
 onClick={() => setShowAssignedFlag(!showManualHighlight)}
 title="Show / hide the green highlight on manually assigned atoms"
-className={`text-[11px] font-bold px-2 py-1.5 rounded-md border transition-colors h-7 ${showManualHighlight ? 'bg-green-50 border-green-300 text-green-700' : 'bg-slate-100 border-slate-300 text-slate-500'}`}
+className={`text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8 ${showManualHighlight ? 'bg-green-50 border-green-300 text-green-700' : 'bg-slate-100 border-slate-300 text-slate-500'}`}
 >
 {showManualHighlight ? '🟢 Assigned' : '⚪ Assigned'}
 </button>
@@ -1966,7 +1966,7 @@ className={`text-[11px] font-bold px-2 py-1.5 rounded-md border transition-color
 value={modelIdx}
 onChange={(e) => handleModelChange(parseInt(e.target.value, 10) || 0)}
 title="Multi-model PDB (docking clusters / ensembles) — view one MODEL at a time"
-className="border border-slate-300 rounded-md px-1.5 py-1.5 text-[11px] bg-white outline-none focus:border-blue-500 h-7"
+className="border border-slate-300 rounded-md px-1.5 py-1.5 text-xs bg-white outline-none focus:border-blue-500 h-8"
 >
 {Array.from({ length: modelCount }, (_, i) => (
 <option key={i} value={i}>Model {i + 1}</option>
@@ -1978,7 +1978,7 @@ className="border border-slate-300 rounded-md px-1.5 py-1.5 text-[11px] bg-white
 value={activeMolKey}
 onChange={(e) => handleMolSelect(e.target.value)}
 title="Multiple structures loaded — show one at a time"
-className="border border-slate-300 rounded-md px-1.5 py-1.5 text-[11px] bg-white outline-none focus:border-blue-500 h-7 max-w-[180px]"
+className="border border-slate-300 rounded-md px-1.5 py-1.5 text-xs bg-white outline-none focus:border-blue-500 h-8 max-w-[180px]"
 >
 <option value="main">Main{file ? ` (${file.name})` : ''}</option>
 {extraMols.map((m) => (
@@ -1998,12 +1998,12 @@ if (e.key === 'Enter') handlePdbIdLoad();
 }}
 placeholder="PDB ID or URL"
 title="Load from a PDB ID (e.g. 1TUP), rcsb: or a plain https URL"
-className="border border-slate-300 rounded-md px-2 py-1.5 text-[11px] w-40 bg-white outline-none focus:border-blue-500 font-mono h-7"
+className="border border-slate-300 rounded-md px-2 py-1.5 text-xs w-40 bg-white outline-none focus:border-blue-500 font-mono h-8"
 />
 <button
 type="button"
 onClick={handlePdbIdLoad}
-className="bg-slate-600 hover:bg-slate-700 text-white font-bold px-2 py-1.5 rounded-md text-[11px] shadow-sm transition-colors h-7"
+className="bg-slate-600 hover:bg-slate-700 text-white font-bold px-2 py-1.5 rounded-md text-xs shadow-sm transition-colors h-8"
 >
 Load
 </button>
@@ -2011,7 +2011,7 @@ Load
 
 <label
 title="Load a trajectory (XTC/TRR/DCD) to animate the structure"
-className="cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-2.5 py-1.5 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1"
+className="cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-2.5 py-1.5 rounded-md text-xs shadow-sm transition-colors inline-flex items-center gap-1"
 >
 📂 Trajectory
 <input
@@ -2030,7 +2030,7 @@ className="hidden"
 {(trajFile || trajectoryFile).name}
 </span>
 )}
-<label title="Show atom names" className="flex items-center gap-1 text-[11px] font-bold text-slate-700 cursor-pointer h-7 whitespace-nowrap">
+<label title="Show atom names" className="flex items-center gap-1 text-xs font-bold text-slate-700 cursor-pointer h-8 whitespace-nowrap">
 <input
 type="checkbox"
 checked={showLabels}
@@ -2046,7 +2046,7 @@ Names
 type="button"
 onClick={() => setShowRenumberPanel((v) => !v)}
 title="Renumber residues"
-className="text-[11px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-md px-2 py-1.5 h-7 whitespace-nowrap"
+className="text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-md px-2 py-1.5 h-8 whitespace-nowrap"
 >
 🔢 Renumber{showRenumberPanel ? ' ▲' : ' ▼'}
 </button>
@@ -2104,7 +2104,7 @@ title="New residue number (blank = keep the original)"
 title="Side chain style"
 value={sidechainStyle}
 onChange={(e) => setSidechainStyle(e.target.value)}
-className="border border-slate-300 rounded-md px-1.5 py-1.5 text-[11px] bg-white outline-none focus:border-blue-500 h-7"
+className="border border-slate-300 rounded-md px-1.5 py-1.5 text-xs bg-white outline-none focus:border-blue-500 h-8"
 >
 <option value="none">Side: Hidden</option>
 <option value="line">Side: Lines</option>
@@ -2117,7 +2117,7 @@ className="border border-slate-300 rounded-md px-1.5 py-1.5 text-[11px] bg-white
 title="Backbone style"
 value={backboneStyle}
 onChange={(e) => setBackboneStyle(e.target.value)}
-className="border border-slate-300 rounded-md px-1.5 py-1.5 text-[11px] bg-white outline-none focus:border-blue-500 h-7"
+className="border border-slate-300 rounded-md px-1.5 py-1.5 text-xs bg-white outline-none focus:border-blue-500 h-8"
 >
 <option value="cartoon">Backbone: Cartoon</option>
 <option value="tube">Backbone: Tube</option>
@@ -2135,7 +2135,7 @@ className="border border-slate-300 rounded-md px-1.5 py-1.5 text-[11px] bg-white
 title="Molecule style"
 value={moleculeStyle}
 onChange={(e) => setMoleculeStyle(e.target.value)}
-className="border border-slate-300 rounded-md px-1.5 py-1.5 text-[11px] bg-white outline-none focus:border-blue-500 h-7"
+className="border border-slate-300 rounded-md px-1.5 py-1.5 text-xs bg-white outline-none focus:border-blue-500 h-8"
 >
 <option value="ball+stick">Mol: Ball &amp; Stick</option>
 <option value="stick">Mol: Sticks</option>
@@ -2232,13 +2232,13 @@ className="border border-slate-300 rounded-md px-1.5 py-1.5 text-[11px] bg-white
     </div>
     <label className="text-[10px] font-bold text-slate-500 uppercase">Paste a PyMOL script (select / show / hide / color / set sphere_scale·transparency / bg_color / cartoon / surface / spectrum / util.ray_shadows)</label>
     <textarea value={pymolScript} onChange={(e) => setPymolScript(e.target.value)} rows={6}
-      className="w-full border border-violet-300 rounded-lg p-2 text-[11px] font-mono outline-none focus:border-violet-500 bg-white"
+      className="w-full border border-violet-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-violet-500 bg-white"
       placeholder={'select peptide, polymer.protein\nshow cartoon, peptide\ncolor gold, name CA and peptide\nset sphere_scale, 0.6, headgroups\nset sphere_transparency, 0.3, upper_headgroups\nbg_color white'} />
     <div className="flex flex-wrap items-center gap-2">
       <span className="text-[10px] font-bold text-slate-500 uppercase">Effects</span>
-      <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600"><input type="checkbox" checked={autoShowSel} onChange={(e) => setAutoShowSel(e.target.checked)} className="accent-violet-600" /> Auto-show parsed selections</label>
-      <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600"><input type="checkbox" checked={qualityHigh} onChange={(e) => setQualityHigh(e.target.checked)} className="accent-violet-600" /> High quality (ray-shadows approx.)</label>
-      <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600">BG <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)} className="w-8 h-6 border border-slate-300 rounded cursor-pointer" /></label>
+      <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600"><input type="checkbox" checked={autoShowSel} onChange={(e) => setAutoShowSel(e.target.checked)} className="accent-violet-600" /> Auto-show parsed selections</label>
+      <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600"><input type="checkbox" checked={qualityHigh} onChange={(e) => setQualityHigh(e.target.checked)} className="accent-violet-600" /> High quality (ray-shadows approx.)</label>
+      <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600">BG <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)} className="w-8 h-6 border border-slate-300 rounded cursor-pointer" /></label>
     </div>
     {pymolLog && <pre className="text-[10px] text-slate-600 bg-white border border-violet-200 rounded-lg p-2 whitespace-pre-wrap max-h-24 overflow-y-auto">{pymolLog}</pre>}
     {selections.length > 0 && (
@@ -2287,7 +2287,7 @@ className="border border-indigo-300 rounded-lg px-2 py-1 text-xs bg-white outlin
 </div>
 <div className="w-full">
 {trajStatus === 'loading' && (
-  <span className="text-[11px] font-bold text-indigo-600">
+  <span className="text-xs font-bold text-indigo-600">
     ⏳ Loading trajectory ({trajectoryFormat.toUpperCase()})…
     {numFrames > 0 && (
       <span className="text-indigo-500 font-mono font-semibold">
@@ -2299,11 +2299,11 @@ className="border border-indigo-300 rounded-lg px-2 py-1 text-xs bg-white outlin
   </span>
 )}
 {trajStatus === 'ready' && (
-  <span className="text-[11px] font-bold text-emerald-600">
+  <span className="text-xs font-bold text-emerald-600">
     ✓ {trajectoryFormat.toUpperCase()}: {numFrames} frames total → playing {keptFrames} (stride {effStride})
   </span>
 )}
-{trajStatus === 'error' && <span className="text-[11px] font-bold text-red-600">⚠️ {trajError}</span>}
+{trajStatus === 'error' && <span className="text-xs font-bold text-red-600">⚠️ {trajError}</span>}
 </div>
 </div>
 )}
@@ -2467,7 +2467,7 @@ className="text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-3 p
 
 {/* Large-structure warning banner (non-blocking) */}
 {largeInfo && (
-<div className="flex flex-wrap items-center gap-2 bg-amber-50 border border-amber-300 text-amber-900 rounded-lg px-3 py-2 text-[11px] font-bold shadow-sm">
+<div className="flex flex-wrap items-center gap-2 bg-amber-50 border border-amber-300 text-amber-900 rounded-lg px-3 py-2 text-xs font-bold shadow-sm">
 <span>
 ⚠️ Large structure
 {largeInfo.nAtoms ? ` (${largeInfo.nAtoms.toLocaleString()} atoms)` : ''}:

@@ -931,7 +931,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
           </div>
 
           {structureMode === '3d' && (
-            <div className="mb-3 flex flex-col gap-3 bg-slate-50 border border-slate-200 rounded-xl p-3">
+            <div className="mb-2 flex flex-col gap-2 bg-slate-50 border border-slate-200 rounded-lg p-2">
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <span className="text-[10px] font-bold text-slate-500 uppercase">
                   🧬 System files — loaded with the 3D viewer buttons below
@@ -953,10 +953,10 @@ export const MDExperimentSetupSection = ({ ctx }) => {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                <div className="flex flex-col gap-1">
+                <div className="flex flex-col gap-0.5">
                   <label className="text-[10px] font-bold text-slate-500 uppercase">Topology format</label>
                   <select value={activeTest.structureFormat || 'auto'} onChange={(e) => updateActiveTest({ structureFormat: e.target.value })}
-                    className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
+                    className="border border-slate-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-blue-500">
                     <option value="auto">Auto-detect</option>
                     <option value="pdb">PDB</option>
                     <option value="gro">GRO</option>
@@ -967,32 +967,32 @@ export const MDExperimentSetupSection = ({ ctx }) => {
                   </select>
                 </div>
 
-                <div className="flex flex-col gap-1">
+                <div className="flex flex-col gap-0.5">
                   <label className="text-[10px] font-bold text-slate-500 uppercase">Atom labels</label>
-                  <select value={atomLabelMode} onChange={(e) => updateActiveTest({ atomLabelMode: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
+                  <select value={atomLabelMode} onChange={(e) => updateActiveTest({ atomLabelMode: e.target.value })} className="border border-slate-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-blue-500">
                     <option value="none">No labels</option>
                     <option value="selected">Selected labels</option>
                     <option value="all">All labels</option>
                   </select>
                 </div>
 
-                <div className="flex flex-col gap-1">
+                <div className="flex flex-col gap-0.5">
                   <label className="text-[10px] font-bold text-slate-500 uppercase">Trajectory format</label>
-                  <select value={d.trajectoryFormat} onChange={(e) => updateActiveTest({ trajectoryFormat: e.target.value })} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500">
+                  <select value={d.trajectoryFormat} onChange={(e) => updateActiveTest({ trajectoryFormat: e.target.value })} className="border border-slate-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-blue-500">
                     {TRAJECTORY_FORMATS.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
                   </select>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3 pt-3 border-t border-slate-200">
-                <div className="flex flex-col gap-1">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-1 pt-2 border-t border-slate-200">
+                <div className="flex flex-col gap-0.5">
                   <label className="text-[10px] font-bold text-slate-500 uppercase">🎞️ Trajectory online link (web / Drive)</label>
                   <input 
                     type="text" 
                     value={d.trajectoryUrl} 
                     onChange={(e) => updateActiveTest({ trajectoryUrl: e.target.value })}
                     placeholder="https://…/trajectory.xtc (or Google Drive link)"
-                    className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-mono" 
+                    className="border border-slate-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-mono" 
                   />
                   <div className="flex items-center gap-2 flex-wrap mt-0.5">
                     <span className="text-[10px] text-slate-400">Detected: <b>{getTrajectoryFormatInfo(d.trajectoryFormat).label}</b></span>
