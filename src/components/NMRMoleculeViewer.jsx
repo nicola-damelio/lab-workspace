@@ -1893,14 +1893,13 @@ const handleAbort = () => {
 
 return (
 <div className="flex flex-col gap-3">
-{/* Topology and Structure Controls */}
-<div className="flex flex-wrap items-end gap-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
-<div className="flex flex-col gap-1">
-<label className="text-[10px] font-bold text-slate-500 uppercase">
-Load local file
-</label>
-<label className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm transition-colors inline-flex items-center gap-2">
-📂 Choose PDB / GRO / CIF file(s)
+{/* Topology and Structure Controls (compact) */}
+<div className="flex flex-wrap items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg p-1.5">
+<label
+title="Load structure file(s) from your computer — the first is the main structure, the rest appear in the Molecules selector"
+className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white font-bold px-2.5 py-1.5 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1"
+>
+📂 PDB file(s)
 <input
 type="file"
 accept=".pdb,.gro,.cif,.bcif,.ent,.mol2,.sdf"
@@ -1912,58 +1911,43 @@ className="hidden"
 <button
 type="button"
 onClick={() => setShowAssignedFlag(!showManualHighlight)}
-className={`text-[10px] font-bold px-3 py-2 rounded-lg border transition-colors ${showManualHighlight ? 'bg-green-50 border-green-300 text-green-700' : 'bg-slate-100 border-slate-300 text-slate-500'}`}
 title="Show / hide the green highlight on manually assigned atoms"
+className={`text-[11px] font-bold px-2 py-1.5 rounded-md border transition-colors h-7 ${showManualHighlight ? 'bg-green-50 border-green-300 text-green-700' : 'bg-slate-100 border-slate-300 text-slate-500'}`}
 >
-{showManualHighlight ? '🟢 Assigned atoms ON' : '⚪ Assigned atoms OFF'}
+{showManualHighlight ? '🟢 Assigned' : '⚪ Assigned'}
 </button>
 {file && (
-<span className="text-[10px] text-slate-500 max-w-[200px] truncate">
+<span title={file.name} className="text-[10px] text-slate-500 max-w-[120px] truncate">
 {file.name}
 </span>
 )}
 {modelCount > 1 && trajStatus === 'none' && (
-<div className="flex flex-col gap-1">
-<label className="text-[10px] font-bold text-slate-500 uppercase">
-Model (multi-model PDB)
-</label>
 <select
 value={modelIdx}
 onChange={(e) => handleModelChange(parseInt(e.target.value, 10) || 0)}
-title="This PDB contains several MODEL records (docking clusters / ensembles) — view one at a time"
-className="border border-slate-300 rounded-lg px-2 py-2 text-xs bg-white outline-none focus:border-blue-500"
+title="Multi-model PDB (docking clusters / ensembles) — view one MODEL at a time"
+className="border border-slate-300 rounded-md px-1.5 py-1.5 text-[11px] bg-white outline-none focus:border-blue-500 h-7"
 >
 {Array.from({ length: modelCount }, (_, i) => (
 <option key={i} value={i}>Model {i + 1}</option>
 ))}
 </select>
-</div>
 )}
 {extraMols.length > 0 && (
-<div className="flex flex-col gap-1">
-<label className="text-[10px] font-bold text-slate-500 uppercase">
-Molecules
-</label>
 <select
 value={activeMolKey}
 onChange={(e) => handleMolSelect(e.target.value)}
-title="Multiple structures are loaded — show one at a time"
-className="border border-slate-300 rounded-lg px-2 py-2 text-xs bg-white outline-none focus:border-blue-500 max-w-[220px]"
+title="Multiple structures loaded — show one at a time"
+className="border border-slate-300 rounded-md px-1.5 py-1.5 text-[11px] bg-white outline-none focus:border-blue-500 h-7 max-w-[180px]"
 >
-<option value="main">Main structure{file ? ` (${file.name})` : ''}</option>
+<option value="main">Main{file ? ` (${file.name})` : ''}</option>
 {extraMols.map((m) => (
 <option key={m.id} value={m.id}>{m.name}</option>
 ))}
 </select>
-</div>
 )}
-</div>
 
-<div className="flex flex-col gap-1">
-<label className="text-[10px] font-bold text-slate-500 uppercase">
-PDB ID or URL
-</label>
-<div className="flex gap-1">
+<div className="flex items-center gap-1">
 <input
 type="text"
 value={pdbId}
@@ -1971,26 +1955,24 @@ onChange={(e) => setPdbId(e.target.value)}
 onKeyDown={(e) => {
 if (e.key === 'Enter') handlePdbIdLoad();
 }}
-placeholder="1TUP or https://files.rcsb.org/download/1TUP.cif"
-className="border border-slate-300 rounded-lg px-3 py-2 text-xs w-72 bg-white outline-none focus:border-blue-500 font-mono"
+placeholder="PDB ID or URL"
+title="Load from a PDB ID (e.g. 1TUP), rcsb: or a plain https URL"
+className="border border-slate-300 rounded-md px-2 py-1.5 text-[11px] w-40 bg-white outline-none focus:border-blue-500 font-mono h-7"
 />
 <button
 type="button"
 onClick={handlePdbIdLoad}
-className="bg-slate-600 hover:bg-slate-700 text-white font-bold px-3 py-2 rounded-lg text-xs shadow-sm transition-colors"
+className="bg-slate-600 hover:bg-slate-700 text-white font-bold px-2 py-1.5 rounded-md text-[11px] shadow-sm transition-colors h-7"
 >
 Load
 </button>
 </div>
-</div>
 
-{/* Trajectory Loader */}
-<div className="flex flex-col gap-1">
-<label className="text-[10px] font-bold text-slate-500 uppercase">
-Load Trajectory
-</label>
-<label className="cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm transition-colors inline-flex items-center gap-2">
-📂 Choose XTC / TRR
+<label
+title="Load a trajectory (XTC/TRR/DCD) to animate the structure"
+className="cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-2.5 py-1.5 rounded-md text-[11px] shadow-sm transition-colors inline-flex items-center gap-1"
+>
+📂 Trajectory
 <input
 type="file"
 accept=".xtc,.trr,.dcd"
@@ -2003,36 +1985,29 @@ className="hidden"
 />
 </label>
 {(trajFile || trajectoryFile) && (
-<span className="text-[10px] text-slate-500 max-w-[150px] truncate">
+<span title={(trajFile || trajectoryFile).name} className="text-[10px] text-slate-500 max-w-[110px] truncate">
 {(trajFile || trajectoryFile).name}
 </span>
 )}
-</div>
-
-<div className="flex flex-col gap-1">
-<label className="text-[10px] font-bold text-slate-500 uppercase">
-Labels
-</label>
-<label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer h-8">
+<label title="Show atom names" className="flex items-center gap-1 text-[11px] font-bold text-slate-700 cursor-pointer h-7 whitespace-nowrap">
 <input
 type="checkbox"
 checked={showLabels}
 onChange={(e) => setShowLabels(e.target.checked)}
-className="w-4 h-4 accent-blue-600"
+className="w-3.5 h-3.5 accent-blue-600"
 />
-Show atom names
+Names
 </label>
-</div>
 
 {/* Residue renumbering */}
 <div className="flex flex-col gap-1">
 <button
 type="button"
 onClick={() => setShowRenumberPanel((v) => !v)}
-className="text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg px-2 py-1.5 text-left flex items-center justify-between gap-2"
+title="Renumber residues"
+className="text-[11px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-md px-2 py-1.5 h-7 whitespace-nowrap"
 >
-<span>🔢 Renumber residues</span>
-<span className="text-slate-400">{showRenumberPanel ? '▲' : '▼'}</span>
+🔢 Renumber{showRenumberPanel ? ' ▲' : ' ▼'}
 </button>
 {showRenumberPanel && residueInfo.length > 0 && (
 <div className="border border-slate-200 rounded-lg bg-white shadow-sm p-2 flex flex-col gap-1.5 max-h-56 overflow-y-auto">
@@ -2084,61 +2059,49 @@ title="New residue number (blank = keep the original)"
 )}
 </div>
 
-<div className="flex flex-col gap-1">
-<label className="text-[10px] font-bold text-slate-500 uppercase">
-Side Chains
-</label>
 <select
+title="Side chain style"
 value={sidechainStyle}
 onChange={(e) => setSidechainStyle(e.target.value)}
-className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 h-8"
+className="border border-slate-300 rounded-md px-1.5 py-1.5 text-[11px] bg-white outline-none focus:border-blue-500 h-7"
 >
-<option value="none">Hidden</option>
-<option value="line">Lines (Thin)</option>
-<option value="licorice">Licorice (Thick)</option>
-<option value="ball+stick">Ball &amp; Stick</option>
-<option value="spacefill">Spacefill</option>
+<option value="none">Side: Hidden</option>
+<option value="line">Side: Lines</option>
+<option value="licorice">Side: Licorice</option>
+<option value="ball+stick">Side: Ball &amp; Stick</option>
+<option value="spacefill">Side: Spacefill</option>
 </select>
-</div>
 
-<div className="flex flex-col gap-1">
-<label className="text-[10px] font-bold text-slate-500 uppercase">
-Backbone
-</label>
 <select
+title="Backbone style"
 value={backboneStyle}
 onChange={(e) => setBackboneStyle(e.target.value)}
-className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 h-8"
+className="border border-slate-300 rounded-md px-1.5 py-1.5 text-[11px] bg-white outline-none focus:border-blue-500 h-7"
 >
-<option value="cartoon">Cartoon</option>
-<option value="tube">Cartoon (Tube)</option>
-<option value="ball+stick">Ball &amp; Stick</option>
-<option value="sticks">Sticks</option>
-<option value="lines">Lines</option>
-<option value="spheres">Spheres</option>
-<option value="hidden">Hidden</option>
+<option value="cartoon">Backbone: Cartoon</option>
+<option value="tube">Backbone: Tube</option>
+<option value="ball+stick">Backbone: Ball &amp; Stick</option>
+<option value="sticks">Backbone: Sticks</option>
+<option value="lines">Backbone: Lines</option>
+<option value="spheres">Backbone: Spheres</option>
+<option value="hidden">Backbone: Hidden</option>
 </select>
-</div>
 
 {/* Molecule Style — for NON-protein molecules (they previously had no
     visualization options at all). */}
 {['organic', 'lipid', 'sugar', 'dna', 'rna'].includes(moleculeType) && (
-<div className="flex flex-col gap-1">
-<label className="text-[10px] font-bold text-slate-500 uppercase">
-Molecule Style
-</label>
 <select
+title="Molecule style"
 value={moleculeStyle}
 onChange={(e) => setMoleculeStyle(e.target.value)}
-className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 h-8"
+className="border border-slate-300 rounded-md px-1.5 py-1.5 text-[11px] bg-white outline-none focus:border-blue-500 h-7"
 >
-<option value="ball+stick">Ball &amp; Stick</option>
-<option value="stick">Sticks</option>
-<option value="line">Lines</option>
-<option value="spheres">Spheres</option>
-<option value="surface">Surface</option>
+<option value="ball+stick">Mol: Ball &amp; Stick</option>
+<option value="stick">Mol: Sticks</option>
+<option value="line">Mol: Lines</option>
+<option value="spheres">Mol: Spheres</option>
+<option value="surface">Mol: Surface</option>
 </select>
-</div>
 )}
 
 </div>
