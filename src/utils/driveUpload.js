@@ -10,15 +10,15 @@
         access token is stored in localStorage.
      2. uploadLocalFile() PUTs the file to the Drive API (multipart upload)
         into the leaf folder of the app-schema path (creating every missing
-        folder along the way). Everything lives inside ONE major folder named
-        after the main file (the dataset) — under the user's saved folder URL
-        if provided, otherwise at the Drive root ("Lab Workspace" before a
-        dataset title is set).
+        folder along the way). Everything lives inside the app's "Lab Workspace"
+        folder, under one major folder named after the main file (the dataset).
      3. The file is shared as "anyone with the link" so the app can display
         it (thumbnails/embed) and others can open it.
-     4. When a project / test / instance / protocol is renamed, the matching
-        Drive FOLDER is renamed too; when a test is added to a project its
-        files are moved under the project folder.
+     4. When a project / test / section / instance / protocol is renamed, the
+        matching Drive FOLDER is renamed too (never recreated); when a test is
+        added to a project its files are moved under the project folder and the
+        now-empty old folders are removed; deleting a test removes its Drive
+        folder (all of its files). The Drive tree mirrors the program.
 
    Everything degrades gracefully: if no Drive token is available the caller
    still receives the file as a data URL (temporary in-app attachment).
@@ -125,48 +125,82 @@ const driveFetch = async (path, opts = {}) => {
   return res;
 };
 
-// ── Dataset-root folder ────────────────────────────────────────────────────
+// ── Dataset folder inside "Lab Workspace" ──────────────────────────────────
 // The whole workspace is saved as ONE main file (the dataset) whose title the
-// user can edit in the sidebar. On Drive every folder the app creates is put
-// inside a MAJOR folder named after that main file:
-//     <saved folder or Drive root>/<dataset title>/<project>/<test>/…
-// When the dataset title changes, the app-created major folder is renamed in
-// place so every already-uploaded file follows.
+// user can edit in the sidebar. On Drive every folder the app creates lives
+// inside the app's "Lab Workspace" root folder, under a major folder named
+// after the dataset:
+//     <Lab Workspace>/<dataset title>/<project>/<test>/<section>/…
+// When the dataset title changes, the dataset folder is renamed in place so
+// every already-uploaded file follows.
 
 let driveRootId = '';            // dataset id the root folder belongs to
-let driveRootName = '';          // desired root folder name ('' → 'Lab Workspace')
+let driveRootName = '';          // desired dataset folder name ('' → Lab Workspace root)
 let driveRootResolvedId = '';    // dataset id of the cached labDriveFolderId
-let driveRootResolvedName = '';  // name the cached labDriveFolderId was created with
+let driveRootResolvedName = '';  // dataset-name the cached labDriveFolderId was created with
 
 /** Tell the Drive layer which main file (dataset) is currently open, so the
- *  root folder on Drive is named after it. Called by App.jsx whenever the
- *  current dataset id or title changes. */
+ *  dataset folder on Drive (inside "Lab Workspace") is named after it.
+ *  Called by App.jsx whenever the current dataset id or title changes. */
 export const setDriveRootContext = ({ id = '', name = '' } = {}) => {
   const nextId = String(id || '');
   const nextName = String(name || '').trim();
   if (nextId === driveRootId && nextName === driveRootName) return;
   driveRootId = nextId;
   driveRootName = nextName;
-  // If we moved to a different dataset, the cached folder id belongs to the
-  // previous one: drop it so the new dataset gets its own major folder.
+  // Different dataset → the cached folder id belongs to the previous one:
+  // drop it so the new dataset gets its own folder.
   if (nextId !== driveRootResolvedId) setDriveFolderId('');
 };
 
-/** Resolve the target folder id: the MAJOR folder named after the main file
- *  (dataset title), created inside the user's saved folder URL if provided,
- *  otherwise at the Drive root ('Lab Workspace' when no title is set yet). */
+/** Find (or create) the app's "Lab Workspace" root folder (inside the user's
+ *  saved Drive folder URL if one is set, otherwise at the Drive root). */
+const ensureLabWorkspaceFolder = async () => {
+  let containerId = '';
+  try {
+    const { getDriveFolderUrl } = await import('./driveNaming');
+    containerId = extractDriveFolderId(getDriveFolderUrl());
+  } catch { /* ignore */ }
+
+  if (containerId) {
+    const id = await findFolderByName('Lab Workspace', containerId);
+    if (id) return id;
+    return findOrCreateFolder('Lab Workspace', containerId);
+  }
+
+  // Otherwise find (or create) "Lab Workspace" at the Drive root.
+  const q = encodeURIComponent(
+    "name='Lab Workspace' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+  );
+  const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=10`);
+  const j = await res.json();
+  const existing = (j.files || []).find((f) => f.name === 'Lab Workspace');
+  if (existing) return existing.id;
+
+  const c = await driveFetch('/drive/v3/files?fields=id,name', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Lab Workspace', mimeType: 'application/vnd.google-apps.folder' })
+  });
+  const created = await c.json();
+  return created.id;
+};
+
+/** Resolve the upload root folder: "Lab Workspace" → the dataset folder inside
+ *  it (when the dataset has a title). Everything else (projects, tests,
+ *  sections, protocols, publications…) is created under this root. */
 export const ensureDriveFolder = async () => {
-  const name = driveRootName ? sanitizeSlug(driveRootName) : 'Lab Workspace';
+  const name = driveRootName ? sanitizeSlug(driveRootName) : '';
   const saved = getDriveFolderId();
 
-  // Fast path: the cached folder id already belongs to this dataset and name.
+  // Fast path: the cached folder already belongs to this dataset and name.
   if (saved && driveRootResolvedId === driveRootId && driveRootResolvedName === name) {
     return saved;
   }
 
-  // Same dataset, but the title changed → rename the app-created major folder
+  // Same dataset, but the title changed → rename the app-created dataset folder
   // in place so every already-uploaded file follows.
-  if (saved && driveRootResolvedId === driveRootId && driveRootResolvedName && driveRootResolvedName !== name) {
+  if (name && saved && driveRootResolvedId === driveRootId && driveRootResolvedName && driveRootResolvedName !== name) {
     try {
       const metaRes = await driveFetch(`/drive/v3/files/${saved}?fields=id,name`);
       const meta = await metaRes.json();
@@ -175,39 +209,16 @@ export const ensureDriveFolder = async () => {
         driveRootResolvedName = name;
         return saved;
       }
-    } catch { /* not app-created or gone → resolve a fresh root below */ }
+    } catch { /* not app-created or gone → resolve a fresh dataset folder */ }
   }
 
-  // Find (or create) the major folder.
-  let containerId = '';
-  try {
-    const { getDriveFolderUrl } = await import('./driveNaming');
-    containerId = extractDriveFolderId(getDriveFolderUrl());
-  } catch { /* ignore */ }
+  const workspaceId = await ensureLabWorkspaceFolder();
+  if (!workspaceId) return '';
 
-  let rootId = '';
-  if (containerId) {
-    rootId = await findFolderByName(name, containerId);
-    if (!rootId) rootId = await findOrCreateFolder(name, containerId);
-  } else {
-    // Find (or create) the major folder at the Drive root.
-    const q = encodeURIComponent(
-      `name='${escapeDriveQuery(name)}' and mimeType='application/vnd.google-apps.folder' and trashed=false`
-    );
-    const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=10`);
-    const j = await res.json();
-    const existing = (j.files || []).find((f) => f.name === name);
-    if (existing) {
-      rootId = existing.id;
-    } else {
-      const c = await driveFetch('/drive/v3/files?fields=id,name', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder' })
-      });
-      const created = await c.json();
-      rootId = created.id;
-    }
+  let rootId = workspaceId;
+  if (name) {
+    rootId = await findFolderByName(name, workspaceId);
+    if (!rootId) rootId = await findOrCreateFolder(name, workspaceId);
   }
 
   if (rootId) {
@@ -331,6 +342,59 @@ export const moveDriveFile = async (fileId, newParentId) => {
     body: '{}'
   });
   return true;
+};
+
+/** Trash the folder chain that a moved file just left, BOTTOM-UP, but only the
+ *  folders that became completely empty (no visible files/folders inside).
+ *  Folders that still contain anything — e.g. other files of the same test, or
+ *  the freshly-created folders of the NEW path — are kept. `path` is the
+ *  recorded {name,id} chain (from the app root down to the old leaf folder). */
+export const trashEmptyFolderChain = async (path) => {
+  if (!Array.isArray(path) || path.length === 0) return;
+  for (let i = path.length - 1; i >= 0; i--) {
+    const folderId = path[i] && path[i].id;
+    if (!folderId) continue;
+    let empty = false;
+    try {
+      const q = encodeURIComponent(`'${folderId}' in parents and trashed=false`);
+      const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id)&pageSize=10`);
+      const j = await res.json();
+      empty = !Array.isArray(j.files) || j.files.length === 0;
+    } catch { empty = false; }
+    if (!empty) break; // this folder (and everything above it) still has content — keep it
+    try {
+      await driveFetch(`/drive/v3/files/${folderId}?fields=id`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trashed: true })
+      });
+    } catch { /* not app-created or gone — keep going */ }
+  }
+};
+
+/** Trash the Drive folder that mirrors a test, so ALL of its files (raw data,
+ *  attachments, reports…) are removed together — the Drive mirrors the app:
+ *  a test deleted here disappears from Drive too. */
+export const deleteTestDriveFolder = async (test) => {
+  if (!getDriveToken() || !test || !test.name) return 0;
+  try {
+    const root = await ensureDriveFolder();
+    if (!root) return 0;
+    let parent = root;
+    const project = (test.projectNames || [])[0] || '';
+    if (project) {
+      parent = await findFolderByName(sanitizeSlug(project), parent);
+      if (!parent) return 0;
+    }
+    const testFolderId = await findFolderByName(sanitizeSlug(test.name), parent);
+    if (!testFolderId) return 0;
+    await driveFetch(`/drive/v3/files/${testFolderId}?fields=id`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trashed: true })
+    });
+    return 1;
+  } catch { return 0; }
 };
 
 /**
@@ -653,9 +717,17 @@ export const renameDriveFilesFor = async ({ field, oldValue, newValue, scope = n
       } else {
         // Structural change (or folder not found): move the file into the new
         // leaf folder, creating the folders as needed.
+        const oldLeafChain = entry.path || null;
         const resolved = await resolveDrivePath(newCtx);
         await moveDriveFile(fileId, resolved.leafId);
         newPath = resolved.path;
+        // The folder(s) the file just left are now empty (every tracked file of
+        // this context moved with it) — trash them so the OLD path does not
+        // linger on Drive. Only completely empty folders are trashed, so a
+        // folder that still holds other files is never touched.
+        if (oldLeafChain && oldLeafChain.length > 0) {
+          try { await trashEmptyFolderChain(oldLeafChain); } catch { /* keep going */ }
+        }
       }
 
       const newName = suggestDriveFileName(newCtx) + ext;

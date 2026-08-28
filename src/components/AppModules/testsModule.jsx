@@ -6,7 +6,7 @@
 import React from 'react';
 import { PRIMARY_CATEGORIES } from '../../data/testTypes';
 import { Icon } from '../Icons';
-import { markAttachmentsDeleted } from '../../utils/driveUpload';
+import { markAttachmentsDeleted, deleteTestDriveFolder } from '../../utils/driveUpload';
 
 const TEST_CARD_ICON = {
   nmr: 'chart-line',
@@ -77,6 +77,8 @@ export const TestsModule = ({
                   setTests((prev) => prev.filter((t) => t.id !== test.id));
                   // Mark any Google Drive attachments of this test as deleted.
                   markAttachmentsDeleted(test).catch(() => {});
+                  // Remove the test's Drive folder too — the Drive tree mirrors the program.
+                  deleteTestDriveFolder(test).catch(() => {});
                 };
                 const rejectDeletion = (test) => {
                   setTests((prev) => prev.map((t) =>

@@ -6,7 +6,7 @@
 import React, { lazy, useRef } from 'react';
 import { BoxDetail } from '../Storage';
 import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES, EXPERIMENT_TYPES } from '../../data/testTypes';
-import { markAttachmentsDeleted, renameDriveFilesFor } from '../../utils/driveUpload';
+import { markAttachmentsDeleted, renameDriveFilesFor, deleteTestDriveFolder } from '../../utils/driveUpload';
 import { Icon } from '../Icons';
 // Lazy renderers (kept as dynamic imports so each stays its own chunk).
 const NMRTestRenderer = lazy(() => import('../NMRTestRenderer').then(m => ({ default: m.NMRTestRenderer })));
@@ -208,6 +208,8 @@ const TestHeader = (
                               setTests((prev) => prev.filter((t) => t.id !== activeTest.id));
                               setCurrentModule('tests');
                               markAttachmentsDeleted(activeTest).catch(() => {});
+                              // Remove the test's Drive folder too — the Drive tree mirrors the program.
+                              deleteTestDriveFolder(activeTest).catch(() => {});
                             }
                           }}
                           className="bg-red-50 text-red-600 hover:bg-red-100 hover:border-red-300 font-bold py-2 px-3 rounded-lg text-xs transition-colors border border-red-200 shadow-sm"

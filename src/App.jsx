@@ -816,9 +816,9 @@ if (customType === 'dosy') {
   const [appClipboard, setAppClipboard] = useState(null);
   const [datasetTitle, setDatasetTitle] = useState('');
   const [datasetSubtitle, setDatasetSubtitle] = useState('');
-  // Keep the Google Drive ROOT folder in sync with the main file (dataset) that
-  // is open: every Drive folder (projects, tests, protocols, publications…) is
-  // created inside one major folder named after the dataset.
+  // Keep the Google Drive dataset folder in sync with the main file (dataset)
+  // that is open: everything the app uploads lives inside Lab Workspace →
+  // a folder named after the dataset (see driveUpload.ensureDriveFolder).
   useEffect(() => {
     setDriveRootContext({ id: currentDatasetId || '', name: datasetTitle || '' });
     // eslint-disable-next-line react-hooks/exhaustive-deps

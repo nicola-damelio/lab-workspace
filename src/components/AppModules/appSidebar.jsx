@@ -223,7 +223,7 @@ export const AppSidebar = ({
                     className={`flex items-center justify-between gap-1 bg-emerald-50 border border-emerald-200 rounded py-1.5 px-2 ${
                       !isSidebarOpen ? 'flex-col px-1' : ''
                     }`}
-                    title="Google Drive connected — uploaded files are renamed and saved automatically, organised in folders that mirror the app, all inside a main folder named after this file (dataset)"
+                    title="Google Drive connected — uploaded files are renamed and saved automatically, organised in folders that mirror the app, inside your Lab Workspace folder"
                   >
                     <span className="text-[10px] font-bold text-emerald-700 flex items-center gap-1">
                       <Icon name="cloud" size={12} />
@@ -243,7 +243,7 @@ export const AppSidebar = ({
                       className={`w-full text-center bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors flex items-center justify-center gap-1 ${
                         !isSidebarOpen ? 'py-2 px-0 text-[10px]' : ''
                       }`}
-                      title="Connect Google Drive so uploaded images/documents are automatically renamed and saved into folders that mirror the app, all inside a main folder named after this file (dataset)"
+                      title="Connect Google Drive so uploaded images/documents are automatically renamed and saved into folders that mirror the app, inside your Lab Workspace folder"
                     >
                       <Icon name="cloud" size={14} /> {isSidebarOpen ? 'Connect Drive' : ''}
                     </button>
