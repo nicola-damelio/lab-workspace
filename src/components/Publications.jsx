@@ -6,6 +6,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { Icon } from './Icons';
+import { DriveUploadButton } from './DriveUpload';
 
 const JOURNALS_STORAGE_KEY = 'labWorkspace_journals';
 
@@ -534,6 +535,34 @@ const fetchJournalImpactFactor = async (journalName) => {
     year: new Date().getFullYear()
   };
 };
+
+/* PDF attachment cell used in the publications tables: uploads the PDF to
+   Google Drive at the given folder `path`, with an optional `fileSuffix`
+   (publication year / keywords) appended to the file name, and lets the user
+   open or remove the attached PDF. */
+const PubPdfCell = ({ p, path, fileSuffix, onSetPdf }) => (
+  <div className="flex flex-col gap-1">
+    <DriveUploadButton
+      accept=".pdf,.PDF"
+      label="⬆ PDF"
+      naming={{}}
+      path={path}
+      fileSuffix={fileSuffix}
+      onDone={({ dataUrl, drive }) => onSetPdf(drive ? drive.driveUrl : dataUrl)}
+      className="bg-red-50 text-red-600 border border-red-200 hover:bg-red-100"
+    />
+    {p.pdf ? (
+      <div className="flex items-center gap-1.5">
+        <a href={p.pdf} target="_blank" rel="noreferrer"
+           className="text-blue-600 hover:underline text-[10px] truncate block max-w-[110px]">📄 Open</a>
+        <button type="button" onClick={() => onSetPdf('')}
+                className="text-red-400 hover:text-red-600 text-xs px-0.5" title="Remove PDF">✕</button>
+      </div>
+    ) : (
+      <span className="text-slate-300 text-[10px]">no pdf</span>
+    )}
+  </div>
+);
 
 export const PublicationsSection = ({ scientists = [], defaultScientist = '', currentUser }) => {
   const [journals, setJournals] = useState(() => {
@@ -1353,7 +1382,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
       </div>
     </div>
   );
-  const pubCols = ['Scientist', 'Title', 'Authors', 'Journal', 'Year', 'Links', 'Comments', ''];
+  const pubCols = ['Scientist', 'Title', 'Authors', 'Journal', 'Year', 'Links', 'PDF', 'Comments', ''];
 
   const renderPublications = () => (
     <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
@@ -1541,6 +1570,10 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                             </div>
                           )}
                         </td>
+                        <td className="px-3 py-2 border-b border-slate-100 align-top" onClick={(e) => e.stopPropagation()}>
+                          <PubPdfCell p={p} path={['publications', p.scientist || '', 'own_publications']} fileSuffix={p.year || ''}
+                                      onSetPdf={(pdf) => patchPub(p.id, { pdf })} />
+                        </td>
                         <td className="px-3 py-2 border-b border-slate-100 align-top text-xs text-slate-600"><span className="line-clamp-2">{p.comments || '—'}</span></td>
                         <td className="px-3 py-2 border-b border-slate-100 text-right align-top whitespace-nowrap">
                           <button type="button" onClick={(e) => { e.stopPropagation(); toggleExcludePub(p); }}
@@ -1635,7 +1668,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     </section>
 
   );
-  const paperCols = ['Labels', 'Title', 'Link', 'Scientist', 'Comments', ''];
+  const paperCols = ['Labels', 'Title', 'Link', 'Scientist', 'PDF', 'Comments', ''];
 
   const renderPapers = () => (
     <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
@@ -1871,6 +1904,10 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                           ) : <span className="text-slate-300">—</span>}
                         </td>
                         <td className="px-3 py-2 border-b border-slate-100 align-top text-xs text-slate-600">{p.scientist || '—'}</td>
+                        <td className="px-3 py-2 border-b border-slate-100 align-top" onClick={(e) => e.stopPropagation()}>
+                          <PubPdfCell p={p} path={['publications', p.scientist || '', 'relevant_publications']} fileSuffix={p.labels || []}
+                                      onSetPdf={(pdf) => patchPaper(p.id, { pdf })} />
+                        </td>
                         <td className="px-3 py-2 border-b border-slate-100 align-top text-xs text-slate-600"><span className="line-clamp-2">{p.comments || '—'}</span></td>
                         <td className="px-3 py-2 border-b border-slate-100 text-right align-top whitespace-nowrap">
                           <button type="button" onClick={(e) => { e.stopPropagation(); removePaper(p.id, p.title); }}
@@ -2152,14 +2189,14 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
             <table className="w-full text-sm border-collapse">
               <thead className="sticky top-0 bg-slate-100 z-10">
                 <tr>
-                  {['Project', 'Title', 'Link', 'Scientist', 'Comments', ''].map((h, hi) => (
+                  {['Project', 'Title', 'Link', 'Scientist', 'PDF', 'Comments', ''].map((h, hi) => (
                     <th key={hi} className="text-left text-[10px] font-bold text-slate-500 uppercase tracking-wide px-3 py-2 border-b border-slate-200">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {pbRows.length === 0 ? (
-                  <tr><td colSpan={6} className="text-xs text-slate-400 italic px-3 py-3">No project bibliography papers yet — use “+ Add paper” to label a paper with a project name.</td></tr>
+                  <tr><td colSpan={7} className="text-xs text-slate-400 italic px-3 py-3">No project bibliography papers yet — use “+ Add paper” to label a paper with a project name.</td></tr>
                 ) : (
                   pbRows.map((p, idx) => {
                     const isOpen = pbExpanded === p.id;
@@ -2180,6 +2217,10 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                             ) : <span className="text-slate-300">—</span>}
                           </td>
                           <td className="px-3 py-2 border-b border-slate-100 align-top text-xs text-slate-600">{p.projectScientist || '—'}</td>
+                          <td className="px-3 py-2 border-b border-slate-100 align-top" onClick={(e) => e.stopPropagation()}>
+                            <PubPdfCell p={p} path={['publications', p.projectName || '', p.projectScientist || '']} fileSuffix={null}
+                                        onSetPdf={(pdf) => patchPbPaper(p.projectId, p.id, { pdf })} />
+                          </td>
                           <td className="px-3 py-2 border-b border-slate-100 align-top text-xs text-slate-600"><span className="line-clamp-2">{p.comments || '—'}</span></td>
                           <td className="px-3 py-2 border-b border-slate-100 text-right align-top whitespace-nowrap">
                             <button type="button" onClick={(e) => { e.stopPropagation(); removePbPaper(p.projectId, p.id); }}
@@ -2189,7 +2230,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
 
                         {isOpen && (
                           <tr className="bg-violet-50/40">
-                            <td colSpan={6} className="px-4 py-3 border-b border-slate-200">
+                            <td colSpan={7} className="px-4 py-3 border-b border-slate-200">
                               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                                 <div className="lg:col-span-2">
                                   <label className={labelCls}>Title</label>

@@ -20,7 +20,7 @@ import { NotebookModule, CalculationsModule, PublicationsModule } from './compon
 import { ProjectsModule } from './components/AppModules/projectsModule';
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
 import {normalizeOperators} from './utils/auth';
-import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis } from './utils/driveUpload';
+import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, setDriveRootContext } from './utils/driveUpload';
 
 import { ScientistLoginGate, ScientistLoginModal } from './components/AppModules/definitionsManagers';
 
@@ -816,6 +816,13 @@ if (customType === 'dosy') {
   const [appClipboard, setAppClipboard] = useState(null);
   const [datasetTitle, setDatasetTitle] = useState('');
   const [datasetSubtitle, setDatasetSubtitle] = useState('');
+  // Keep the Google Drive ROOT folder in sync with the main file (dataset) that
+  // is open: every Drive folder (projects, tests, protocols, publications…) is
+  // created inside one major folder named after the dataset.
+  useEffect(() => {
+    setDriveRootContext({ id: currentDatasetId || '', name: datasetTitle || '' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentDatasetId, datasetTitle]);
   const [customCmpds, setCustomCmpds] = useState([]);
   const [customCellLines, setCustomCellLines] = useState([]);
   const [customConc, setCustomConc] = useState({});

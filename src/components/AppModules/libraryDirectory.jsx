@@ -253,8 +253,8 @@ export const LibraryDirectory = ({
         </button>
       </div>
 
-      {/* COMPOUND / CELL LINE / PLASMID */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {/* COMPOUND / CELL LINE / PLASMID — always stacked, never side by side */}
+      <div className="grid grid-cols-1 gap-4">
         <div>
           <h4 className="text-xs font-bold text-slate-500 mb-2">Compounds ({compoundRows.length})</h4>
           <LibraryTable
@@ -302,8 +302,8 @@ export const LibraryDirectory = ({
         </div>
       </div>
 
-      {/* SOLVENTS / BUFFERS / ADDITIVES */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
+      {/* SOLVENTS / BUFFERS / ADDITIVES — always stacked, never side by side */}
+      <div className="grid grid-cols-1 gap-4 mt-4">
         <div>
           <h4 className="text-xs font-bold text-slate-500 mb-2">Solvents & Media ({solventRows.length})</h4>
           <LibraryTable
@@ -353,8 +353,8 @@ export const LibraryDirectory = ({
         </div>
       </div>
 
-      {/* NMR INSTRUMENTS / NMR PROBES / NMR EXPERIMENTS (PULSE PROGRAMS) */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
+      {/* NMR INSTRUMENTS / NMR PROBES / NMR EXPERIMENTS (PULSE PROGRAMS) — always stacked, never side by side */}
+      <div className="grid grid-cols-1 gap-4 mt-4">
         <div>
           <h4 className="text-xs font-bold text-slate-500 mb-2">NMR Instruments ({nmrInstrumentRows.length})</h4>
           <LibraryTable

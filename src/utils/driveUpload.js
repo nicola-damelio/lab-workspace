@@ -10,8 +10,10 @@
         access token is stored in localStorage.
      2. uploadLocalFile() PUTs the file to the Drive API (multipart upload)
         into the leaf folder of the app-schema path (creating every missing
-        folder along the way), under the user's saved folder URL if provided,
-        otherwise a "Lab Workspace" folder that is created automatically.
+        folder along the way). Everything lives inside ONE major folder named
+        after the main file (the dataset) — under the user's saved folder URL
+        if provided, otherwise at the Drive root ("Lab Workspace" before a
+        dataset title is set).
      3. The file is shared as "anyone with the link" so the app can display
         it (thumbnails/embed) and others can open it.
      4. When a project / test / instance / protocol is renamed, the matching
@@ -116,42 +118,97 @@ const driveFetch = async (path, opts = {}) => {
   return res;
 };
 
-/** Resolve the target folder id: saved URL → saved id → 'Lab Workspace' (auto-created). */
-export const ensureDriveFolder = async () => {
-  const saved = getDriveFolderId();
-  if (saved) return saved;
+// ── Dataset-root folder ────────────────────────────────────────────────────
+// The whole workspace is saved as ONE main file (the dataset) whose title the
+// user can edit in the sidebar. On Drive every folder the app creates is put
+// inside a MAJOR folder named after that main file:
+//     <saved folder or Drive root>/<dataset title>/<project>/<test>/…
+// When the dataset title changes, the app-created major folder is renamed in
+// place so every already-uploaded file follows.
 
-  // If the user saved a Drive folder URL, upload into that folder.
-  let folderUrlId = '';
+let driveRootId = '';            // dataset id the root folder belongs to
+let driveRootName = '';          // desired root folder name ('' → 'Lab Workspace')
+let driveRootResolvedId = '';    // dataset id of the cached labDriveFolderId
+let driveRootResolvedName = '';  // name the cached labDriveFolderId was created with
+
+/** Tell the Drive layer which main file (dataset) is currently open, so the
+ *  root folder on Drive is named after it. Called by App.jsx whenever the
+ *  current dataset id or title changes. */
+export const setDriveRootContext = ({ id = '', name = '' } = {}) => {
+  const nextId = String(id || '');
+  const nextName = String(name || '').trim();
+  if (nextId === driveRootId && nextName === driveRootName) return;
+  driveRootId = nextId;
+  driveRootName = nextName;
+  // If we moved to a different dataset, the cached folder id belongs to the
+  // previous one: drop it so the new dataset gets its own major folder.
+  if (nextId !== driveRootResolvedId) setDriveFolderId('');
+};
+
+/** Resolve the target folder id: the MAJOR folder named after the main file
+ *  (dataset title), created inside the user's saved folder URL if provided,
+ *  otherwise at the Drive root ('Lab Workspace' when no title is set yet). */
+export const ensureDriveFolder = async () => {
+  const name = driveRootName ? sanitizeSlug(driveRootName) : 'Lab Workspace';
+  const saved = getDriveFolderId();
+
+  // Fast path: the cached folder id already belongs to this dataset and name.
+  if (saved && driveRootResolvedId === driveRootId && driveRootResolvedName === name) {
+    return saved;
+  }
+
+  // Same dataset, but the title changed → rename the app-created major folder
+  // in place so every already-uploaded file follows.
+  if (saved && driveRootResolvedId === driveRootId && driveRootResolvedName && driveRootResolvedName !== name) {
+    try {
+      const metaRes = await driveFetch(`/drive/v3/files/${saved}?fields=id,name`);
+      const meta = await metaRes.json();
+      if (meta && meta.name === driveRootResolvedName) {
+        await renameDriveFile(saved, name);
+        driveRootResolvedName = name;
+        return saved;
+      }
+    } catch { /* not app-created or gone → resolve a fresh root below */ }
+  }
+
+  // Find (or create) the major folder.
+  let containerId = '';
   try {
     const { getDriveFolderUrl } = await import('./driveNaming');
-    folderUrlId = extractDriveFolderId(getDriveFolderUrl());
+    containerId = extractDriveFolderId(getDriveFolderUrl());
   } catch { /* ignore */ }
-  if (folderUrlId) {
-    setDriveFolderId(folderUrlId);
-    return folderUrlId;
+
+  let rootId = '';
+  if (containerId) {
+    rootId = await findFolderByName(name, containerId);
+    if (!rootId) rootId = await findOrCreateFolder(name, containerId);
+  } else {
+    // Find (or create) the major folder at the Drive root.
+    const q = encodeURIComponent(
+      `name='${escapeDriveQuery(name)}' and mimeType='application/vnd.google-apps.folder' and trashed=false`
+    );
+    const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=10`);
+    const j = await res.json();
+    const existing = (j.files || []).find((f) => f.name === name);
+    if (existing) {
+      rootId = existing.id;
+    } else {
+      const c = await driveFetch('/drive/v3/files?fields=id,name', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder' })
+      });
+      const created = await c.json();
+      rootId = created.id;
+    }
   }
 
-  // Otherwise find (or create) a dedicated "Lab Workspace" folder.
-  const q = encodeURIComponent(
-    "name='Lab Workspace' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-  );
-  const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=10`);
-  const j = await res.json();
-  const existing = (j.files || []).find((f) => f.name === 'Lab Workspace');
-  if (existing) {
-    setDriveFolderId(existing.id);
-    return existing.id;
+  if (rootId) {
+    setDriveFolderId(rootId);
+    driveRootResolvedId = driveRootId;
+    driveRootResolvedName = name;
   }
-
-  const c = await driveFetch('/drive/v3/files?fields=id,name', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: 'Lab Workspace', mimeType: 'application/vnd.google-apps.folder' })
-  });
-  const created = await c.json();
-  setDriveFolderId(created.id);
-  return created.id;
+  return rootId;
 };
 
 // ── App-schema FOLDER helpers ─────────────────────────────────────────────
@@ -195,18 +252,24 @@ export const findOrCreateFolder = async (name, parentId) => {
   return String(created.id);
 };
 
-/** Resolve (creating as needed) the folder chain described by `ctx`.
+/** Resolve (creating as needed) the folder chain described by explicit folder
+ *  NAMES (each sanitized; empty segments skipped).
  *  @returns {{ leafId:string, path:Array<{name:string,id:string}> }} */
-export const resolveDrivePath = async (ctx) => {
-  const names = driveFolderPath(ctx);
+export const resolveDrivePathFromNames = async (names) => {
   let parent = await ensureDriveFolder();
   const path = [];
-  for (const name of names) {
+  for (const raw of names || []) {
+    const name = sanitizeSlug(raw);
+    if (!name) continue;
     parent = await findOrCreateFolder(name, parent);
     path.push({ name, id: parent });
   }
   return { leafId: parent, path };
 };
+
+/** Resolve (creating as needed) the folder chain described by `ctx`.
+ *  @returns {{ leafId:string, path:Array<{name:string,id:string}> }} */
+export const resolveDrivePath = async (ctx) => resolveDrivePathFromNames(driveFolderPath(ctx));
 
 /** The folder name that belongs to a schema level for a naming context. */
 const segmentNameAt = (ctx, level) => {
@@ -273,12 +336,17 @@ export const moveDriveFile = async (fileId, newParentId) => {
  * a duplicate — so updating a figure/document tomorrow reuses the same file.
  * @returns {{ id:string, name:string, driveUrl:string }}
  */
-export const uploadLocalFile = async ({ name, mimeType, file, ctx = null }) => {
+export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path = null }) => {
   // Upload into the leaf folder that mirrors the app schema
-  // (<project>/<test>/<section>/<instance>/…), creating the folders as needed.
+  // (<project>/<test>/<section>/<instance>/… or an explicit `path` like
+  // publications/<scientist>/own_publications), creating folders as needed.
   let folderId = await ensureDriveFolder();
   let drivePath = null;
-  if (ctx && typeof ctx === 'object' && driveFolderPath(ctx).length > 0) {
+  if (Array.isArray(path) && path.length > 0) {
+    const resolved = await resolveDrivePathFromNames(path);
+    folderId = resolved.leafId;
+    drivePath = resolved.path;
+  } else if (ctx && typeof ctx === 'object' && driveFolderPath(ctx).length > 0) {
     const resolved = await resolveDrivePath(ctx);
     folderId = resolved.leafId;
     drivePath = resolved.path;

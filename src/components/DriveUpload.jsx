@@ -18,7 +18,7 @@
 
 import React, { useRef, useState } from 'react';
 import { readFileAsDataURL, withExtension, uploadLocalFile, getDriveToken } from '../utils/driveUpload';
-import { suggestDriveFileName } from '../utils/driveNaming';
+import { suggestDriveFileName, sanitizeSlug } from '../utils/driveNaming';
 
 export const DriveUploadButton = ({
   accept = 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,.jws,.xtc,.trr,.dcd',
@@ -27,6 +27,8 @@ export const DriveUploadButton = ({
   className = '',
   preloadedFile = null,
   naming = null,
+  path = null,
+  fileSuffix = null,
   onDone,
   onError
 }) => {
@@ -56,9 +58,17 @@ export const DriveUploadButton = ({
         const baseName = String(file.name || '').replace(/\.[^/.]+$/, '');
         if (baseName) namingCtx.title = baseName;
       }
-      const computed = namingCtx
+      let computed = namingCtx
         ? suggestDriveFileName(namingCtx)
         : (suggestedName || 'file');
+      // Optional suffix appended to the base name (e.g. publication year or
+      // keywords): base_suffix.ext
+      if (fileSuffix) {
+        const sfx = Array.isArray(fileSuffix)
+          ? fileSuffix.filter(Boolean).map(sanitizeSlug).join('_')
+          : sanitizeSlug(String(fileSuffix));
+        if (sfx) computed = `${computed}_${sfx}`;
+      }
       const name = withExtension(computed, file.name || computed);
       const mimeType = file.type || 'application/octet-stream';
 
@@ -66,7 +76,7 @@ export const DriveUploadButton = ({
       let driveError = '';
       if (getDriveToken()) {
         try {
-          drive = await uploadLocalFile({ name, mimeType, file, ctx: namingCtx });
+          drive = await uploadLocalFile({ name, mimeType, file, ctx: namingCtx, path });
         } catch (err) {
           drive = null;
           driveError = err && err.message ? String(err.message) : 'unknown Drive error';
