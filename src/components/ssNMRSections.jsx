@@ -12,7 +12,7 @@ import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, seriesColorFor
 export { CollapsibleSection };
 export { VIS_PALETTES };
 import { DriveUploadButton } from './DriveUpload';
-import { suggestDriveFileName } from '../utils/driveNaming';
+import { suggestDriveFileName, driveFolderPath, sanitizeSlug } from '../utils/driveNaming';
 import { uploadLocalFile, getDriveToken } from '../utils/driveUpload';
 
 const HAS_EB = typeof ErrorBar !== 'undefined';
@@ -1045,9 +1045,11 @@ export const Data = ({ ctx }) => {
         let title = 'Bruker 1r';
         let expType = '';   // from the experiment dir "pulseprogram" file
         let fileTitle = ''; // from the "<dataset>/pdata/1/title" file
+        let expDir = '';    // webkitRelativePath of the experiment folder (expno)
+        let expNum = '';    // the Bruker experiment number (e.g. "1", "2", …)
         
         if (pdataIndex > 0) {
-          const expDir = pathParts.slice(0, pdataIndex).join('/');
+          expDir = pathParts.slice(0, pdataIndex).join('/');
           const targetAcqusPath = expDir + '/acqus';
           acqusFile = files.find(f => f.webkitRelativePath === targetAcqusPath);
           
@@ -1070,7 +1072,7 @@ export const Data = ({ ctx }) => {
             try { fileTitle = (await titleFile.text()).trim(); } catch { /* ignore */ }
           }
           
-          const expNum = pathParts[pdataIndex - 1];
+          expNum = pathParts[pdataIndex - 1];
           const procNum = pathParts[pdataIndex + 1];
           title = `Exp ${expNum}${procNum && procNum !== '1' ? ` (Proc ${procNum})` : ''}`;
         }
@@ -1090,6 +1092,13 @@ export const Data = ({ ctx }) => {
           parsed.filename = title;
           parsed.expType = expType;
           parsed.fileTitle = fileTitle;
+          parsed.expDir = expDir;
+          parsed.expNum = expNum;
+          // All the files of the experiment directory (acqus, … and pdata/1/1r),
+          // used later to archive the whole expno folder on Drive.
+          parsed.expFiles = expDir
+            ? files.filter((f) => f.webkitRelativePath === expDir || f.webkitRelativePath.startsWith(expDir + '/'))
+            : [oneR];
           parsed.rawFile = oneR; // keep the raw 1r file for Drive archiving
           results.push(parsed);
         }
@@ -1155,7 +1164,9 @@ export const Data = ({ ctx }) => {
     setPendingSpectra([]);
     setSelectedSpectraIds([]);
 
-    // Archive the RAW 1r file(s) to Google Drive automatically (best-effort).
+    // Archive the RAW Bruker experiment folder(s) to Google Drive (best-effort).
+    // For every experiment the WHOLE expno directory is saved, preserving its
+    // structure: <…>/<instance>/Data/<expno>/acqus …, <expno>/pdata/1/1r.
     const driveConnected = getDriveToken();
     let driveSaved = 0;
     if (driveConnected) {
@@ -1167,15 +1178,30 @@ export const Data = ({ ctx }) => {
         subsection: 'Bruker 1r'
       };
       for (let i = 0; i < selected.length; i++) {
-        const raw = selected[i].parsed && selected[i].parsed.rawFile;
-        if (!raw) continue;
+        const p = selected[i].parsed;
+        if (!p || !p.rawFile) continue;
         try {
           // The importer renames the instance to the file title (async state
           // update — activeTest.instanceName is still the old value here).
           const instanceForFile = String(selected[i].filename || '').trim() || activeTest.instanceName || '';
-          const title = selected[i].filename || `Exp${i + 1}`;
-          const name = suggestDriveFileName({ ...driveCtx, instance: instanceForFile, title, suffix: 'bruker1r' }) + '.1r';
-          await uploadLocalFile({ name, mimeType: 'application/octet-stream', file: raw, ctx: { ...driveCtx, instance: instanceForFile, title, suffix: 'bruker1r' } });
+          const expNum = p.expNum || `exp${i + 1}`;
+          const expFiles = (Array.isArray(p.expFiles) && p.expFiles.length > 0) ? p.expFiles : [p.rawFile];
+          const basePath = driveFolderPath({ ...driveCtx, instance: instanceForFile });
+          for (const f of expFiles) {
+            const rel = (p.expDir && String(f.webkitRelativePath || '').startsWith(p.expDir))
+              ? String(f.webkitRelativePath).slice(p.expDir.length).replace(/^\/+/, '')
+              : f.name;
+            const relParts = rel.split('/').filter(Boolean);
+            const fileName = relParts.pop() || f.name;
+            const path = [...basePath, sanitizeSlug(expNum), ...relParts.map((s) => sanitizeSlug(s))];
+            await uploadLocalFile({
+              name: fileName,
+              mimeType: f.type || 'application/octet-stream',
+              file: f,
+              ctx: { ...driveCtx, instance: instanceForFile, expno: expNum },
+              path
+            });
+          }
           driveSaved++;
         } catch (err) { console.warn('Bruker Drive archive failed:', err && err.message); }
       }

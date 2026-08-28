@@ -421,9 +421,26 @@ export const moveTestFolderIntoProject = async ({ testName, projectName }) => {
   try {
     const root = await ensureDriveFolder();
     if (!root) return 0;
-    const testFolderId = await findFolderByName(sanitizeSlug(testName), root);
+
+    let testFolderId = await findFolderByName(sanitizeSlug(testName), root);
+    if (!testFolderId) {
+      // Fallback: locate it through the registry — a file uploaded for this
+      // standalone test knows its exact folder chain.
+      const reg = getDriveFileRegistry();
+      for (const entry of Object.values(reg)) {
+        if (!entry || entry.deleted) continue;
+        const ctx = entry.ctx || {};
+        if (String(ctx.test || '') !== String(testName)) continue;
+        if (String(ctx.project || '')) continue; // already inside a project folder
+        const seg = (entry.path || []).find((s) => s && s.name === sanitizeSlug(testName));
+        if (seg && seg.id) { testFolderId = seg.id; break; }
+      }
+    }
     if (!testFolderId) return 0; // no standalone test folder on Drive — nothing to move
+
     const projectFolderId = await findOrCreateFolder(sanitizeSlug(projectName), root);
+    // Already inside the project folder → nothing to do.
+    if ((await findFolderByName(sanitizeSlug(testName), projectFolderId)) === testFolderId) return 0;
 
     // Move the whole test folder into the project folder (children follow).
     const params = new URLSearchParams();
@@ -453,7 +470,8 @@ export const moveTestFolderIntoProject = async ({ testName, projectName }) => {
     }
     if (count > 0) saveDriveFileRegistry(reg);
     return count;
-  } catch {
+  } catch (err) {
+    console.warn('moveTestFolderIntoProject failed:', err && err.message);
     // Folder move failed (e.g. the folder is not app-owned): fall back to
     // moving the individual files and cleaning up the empty old folders.
     try {
@@ -464,6 +482,88 @@ export const moveTestFolderIntoProject = async ({ testName, projectName }) => {
         scope: { test: testName }
       });
     } catch { return 0; }
+  }
+};
+
+/** Move a test's WHOLE Drive folder OUT of a project folder, back to the
+ *  dataset root — used when a test is removed from a project. The folder is
+ *  MOVED (never copied), so no duplicate remains.
+ *  If the folder cannot be moved directly, it falls back to moving the
+ *  individual files out of the project folder.
+ *  @returns {Promise<number>} number of registry entries updated */
+export const moveTestFolderOutOfProject = async ({ testName, projectName }) => {
+  if (!getDriveToken() || !testName || !projectName) return 0;
+  try {
+    const root = await ensureDriveFolder();
+    if (!root) return 0;
+    const projectFolderId = await findFolderByName(sanitizeSlug(projectName), root);
+    if (!projectFolderId) return 0; // project folder not on Drive
+
+    let testFolderId = await findFolderByName(sanitizeSlug(testName), projectFolderId);
+    if (!testFolderId) {
+      // Fallback: locate it through the registry — a file uploaded for this
+      // test inside this project knows its exact folder chain.
+      const reg = getDriveFileRegistry();
+      for (const entry of Object.values(reg)) {
+        if (!entry || entry.deleted) continue;
+        const ctx = entry.ctx || {};
+        if (String(ctx.test || '') !== String(testName)) continue;
+        if (String(ctx.project || '') !== String(projectName)) continue;
+        const seg = (entry.path || []).find((s) => s && s.name === sanitizeSlug(testName));
+        if (seg && seg.id) { testFolderId = seg.id; break; }
+      }
+    }
+    if (!testFolderId) return 0; // test not inside this project folder
+
+    // Move the whole test folder back to the dataset root (children follow).
+    const params = new URLSearchParams();
+    params.set('addParents', root);
+    params.set('removeParents', projectFolderId);
+    await driveFetch(`/drive/v3/files/${testFolderId}?${params.toString()}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}'
+    });
+
+    // Keep the registry in sync: drop the project from ctx and from the paths.
+    const reg = getDriveFileRegistry();
+    let count = 0;
+    for (const [fileId, entry] of Object.entries(reg)) {
+      if (!entry || entry.deleted) continue;
+      const ctx = entry.ctx || {};
+      if (String(ctx.test || '') !== String(testName)) continue;
+      if (String(ctx.project || '') !== String(projectName)) continue;
+      const newCtx = { ...ctx, project: '' };
+      const chain = Array.isArray(entry.path) ? entry.path : [];
+      const newPath = chain.filter((seg) => !(seg && seg.name === sanitizeSlug(projectName)));
+      reg[fileId] = { ...entry, ctx: newCtx, path: newPath, at: Date.now() };
+      count++;
+    }
+    if (count > 0) saveDriveFileRegistry(reg);
+    return count;
+  } catch (err) {
+    console.warn('moveTestFolderOutOfProject failed:', err && err.message);
+    // Fallback: move the individual files out of the project folder (creating
+    // the standalone folders at the dataset root as needed).
+    let moved = 0;
+    const reg = getDriveFileRegistry();
+    for (const [fileId, entry] of Object.entries(reg)) {
+      if (!entry || entry.deleted) continue;
+      const ctx = entry.ctx || {};
+      if (String(ctx.test || '') !== String(testName)) continue;
+      if (String(ctx.project || '') !== String(projectName)) continue;
+      try {
+        const newCtx = { ...ctx, project: '' };
+        const resolved = await resolveDrivePath(newCtx);
+        await moveDriveFile(fileId, resolved.leafId);
+        const chain = Array.isArray(entry.path) ? entry.path : [];
+        reg[fileId] = { ...entry, ctx: newCtx, path: resolved.path, at: Date.now() };
+        if (chain.length) { try { await trashEmptyFolderChain(chain); } catch { /* keep going */ } }
+        moved++;
+      } catch { /* keep going */ }
+    }
+    if (moved > 0) saveDriveFileRegistry(reg);
+    return moved;
   }
 };
 
@@ -723,7 +823,15 @@ export const renameDriveFilesFor = async ({ field, oldValue, newValue, scope = n
   const matches = Object.entries(reg).filter(([, entry]) => {
     if (!entry || entry.deleted) return false; // never revive files marked as deleted
     const ctx = entry.ctx || {};
-    if (String(ctx[field] || '') !== String(oldValue)) return false;
+    const ctxValue = String(ctx[field] || '');
+    const inCtx = ctxValue === String(oldValue);
+    // Old uploads may lack the field in ctx but still sit in a folder that
+    // matches (e.g. the instance folder); only then fall back to the path.
+    const ctxMissing = !ctxValue;
+    const inPath = Array.isArray(entry.path) && entry.path.some(
+      (seg) => seg && seg.name === sanitizeSlug(oldValue)
+    );
+    if (!inCtx && !(ctxMissing && inPath)) return false;
     // Optional extra context filter (e.g. only files of one test): every
     // key in `scope` must match the recorded naming context too.
     if (scope) {
@@ -742,7 +850,9 @@ export const renameDriveFilesFor = async ({ field, oldValue, newValue, scope = n
   // (structural change or the folder could not be located).
   const plans = [];
   for (const [fileId, entry] of matches) {
-    const oldCtx = entry.ctx || {};
+    // If the entry matched only via its stored path, its ctx may miss the old
+    // value — assume the old value so pathIndexOf works.
+    const oldCtx = { ...(entry.ctx || {}), [field]: oldValue };
     const newCtx = { ...oldCtx, [field]: newValue };
     const ext = /(\.[a-zA-Z0-9]{1,10})$/.exec(String(entry.name || ''))?.[1] || '';
     // The position of this field inside the ACTUAL folder path (a standalone
@@ -751,10 +861,12 @@ export const renameDriveFilesFor = async ({ field, oldValue, newValue, scope = n
     // The new folder name at that position, computed from the full context
     // (e.g. for protocols the folder is <protocol>_<scientist>, so renaming the
     // scientist renames the folder too).
-    const newFolderName = pathIndex >= 0 ? (driveFolderPath(newCtx)[pathIndex] || '') : '';
+    const newFolderName = (pathIndex >= 0 && String(newValue || '')) ? (driveFolderPath(newCtx)[pathIndex] || '') : '';
     const oldFolderName = pathIndex >= 0 ? (driveFolderPath(oldCtx)[pathIndex] || '') : '';
     let folderSeg = null;
-    if (isFolderLevel && String(oldValue) !== '' && pathIndex >= 0) {
+    // When the field is being REMOVED (newValue === ''), the path structure
+    // changes, so the folder must be MOVED, never renamed.
+    if (isFolderLevel && String(oldValue) !== '' && String(newValue || '') && pathIndex >= 0) {
       try {
         const id = await resolveFolderIdAtPathIndex(oldCtx, entry.path, pathIndex);
         if (id) folderSeg = { id };

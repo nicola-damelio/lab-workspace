@@ -6,7 +6,7 @@ import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigF
 import { loadProjects, saveProjects, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId } from './projectsModule';
 import { suggestDriveFileName, openDrive } from '../../utils/driveNaming';
 import { DriveUploadButton } from '../DriveUpload';
-import { markAttachmentsDeleted, renameDriveFilesFor, moveTestFolderIntoProject } from '../../utils/driveUpload';
+import { markAttachmentsDeleted, renameDriveFilesFor, moveTestFolderIntoProject, moveTestFolderOutOfProject } from '../../utils/driveUpload';
 import { repairContentImages } from '../../data/constants';
 
 /* =========================================================================
@@ -625,8 +625,22 @@ export const ProjectDetailModule = ({
     setLinkTestId('');
   };
 
-  const removeExperiment = (expId) =>
+  const removeExperiment = (expId) => {
+    const exp = (project.experiments || []).find((e) => e.id === expId);
+    const test = exp && exp.testId ? tests.find((t) => t.id === exp.testId) : null;
     updateProject({ experiments: (project.experiments || []).filter((e) => e.id !== expId) });
+    if (test) {
+      // The test is no longer associated with this project: remove the project
+      // from its list and MOVE its Drive folder back out of the project folder
+      // (the Drive tree mirrors the program — never copied, no duplicate).
+      setTests((prev) => prev.map((t) =>
+        t.id === test.id
+          ? { ...t, projectNames: (t.projectNames || []).filter((pn) => pn !== project.name) }
+          : t
+      ));
+      moveTestFolderOutOfProject({ testName: test.name, projectName: project.name }).catch(() => {});
+    }
+  };
 
   const openTest = (testId) => { if (jumpToTest) jumpToTest(testId); else { setActiveTestId(testId); setCurrentModule('active-test'); } };
 
