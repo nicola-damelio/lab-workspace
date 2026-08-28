@@ -1162,65 +1162,60 @@ export const ProjectDetailModule = ({
     );
   };
 
-  // ---- Comments & review section ----
-  const renderCommentsSection = () => {
+  // ---- Coworkers chips (shown in the project header, next to the owner) ----
+  const renderCoworkers = () => {
     const userList = (operatorNames || []).filter((n) => String(n).trim());
     const ownerInList = project.scientist && !userList.includes(project.scientist);
     const shownUsers = [...new Set([...userList, ...(ownerInList ? [project.scientist] : [])])]
       .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[10px] font-black uppercase tracking-wide text-slate-500">👥 Coworkers:</span>
+        {shownUsers.length === 0 ? (
+          <span className="text-[10px] italic text-slate-400">No users in the list yet — add them in Definitions → Scientists &amp; Operators.</span>
+        ) : (
+          shownUsers.map((u) => {
+            const isOwnerName = u === project.scientist;
+            const perm = isOwnerName ? 'owner' : (authList.find((c) => c.name === u)?.permission || 'none');
+            const disabled = !isOwner || isOwnerName;
+            return (
+              <div key={u} className={`flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg border transition-colors ${
+                perm === 'owner' ? 'bg-amber-50 border-amber-200 text-amber-700'
+                  : perm !== 'none' ? 'bg-blue-50 border-blue-200 text-blue-700'
+                  : 'bg-white text-slate-600 border-slate-300'
+              } ${disabled ? 'opacity-70' : ''}`}>
+                <span>{isOwnerName ? '👑 ' : ''}{u}</span>
+                {disabled ? (
+                  <span className="text-[9px] uppercase">{perm === 'owner' ? 'owner' : (perm === 'modify' ? 'modify' : (perm === 'view' ? 'view' : '—'))}</span>
+                ) : (
+                  <select
+                    value={perm}
+                    onChange={(e) => setCoworkerPermission(u, e.target.value === 'none' ? '' : e.target.value)}
+                    className="bg-transparent text-[10px] font-bold outline-none cursor-pointer"
+                    title={`Permission of ${u} — view = read-only, modify = can edit`}
+                  >
+                    <option value="none">none</option>
+                    <option value="view">view</option>
+                    <option value="modify">modify</option>
+                  </select>
+                )}
+              </div>
+            );
+          })
+        )}
+        {isOwner && <span className="text-[10px] text-slate-400">(owner &amp; superusers always have full access)</span>}
+      </div>
+    );
+  };
+
+  // ---- Comments & review section ----
+  const renderCommentsSection = () => {
     return (
       <SectionCard title="💬 Comments & review"
                    open={openSections.comments} onToggle={() => toggleSection('comments')}
                    badge={<span className={`text-[10px] font-bold rounded-full px-2 py-0.5 ${openComments ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
                      {openComments} open
                    </span>}>
-        {/* Coworkers */}
-        <div className="mb-4">
-          <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
-            <h4 className="text-xs font-black uppercase tracking-wide text-slate-500">Coworkers (view / modify)</h4>
-            {isOwner && <span className="text-[10px] text-slate-400">owner &amp; superusers always have full access</span>}
-          </div>
-          <p className="text-[10px] text-slate-500 mb-2">
-            Add coworkers and choose their permission: <b>view</b> (read-only) or <b>modify</b> (they can see and edit).
-          </p>
-          {shownUsers.length === 0 ? (
-            <p className="text-xs italic text-slate-400 bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-2">
-              No users in the list yet — add scientists in Definitions → Scientists &amp; Operators.
-            </p>
-          ) : (
-            <div className="flex flex-wrap gap-1.5 items-center">
-              {shownUsers.map((u) => {
-                const isOwnerName = u === project.scientist;
-                const perm = isOwnerName ? 'owner' : (authList.find((c) => c.name === u)?.permission || 'none');
-                const disabled = !isOwner || isOwnerName;
-                return (
-                  <div key={u} className={`flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg border transition-colors ${
-                    perm === 'owner' ? 'bg-amber-50 border-amber-200 text-amber-700'
-                      : perm !== 'none' ? 'bg-blue-50 border-blue-200 text-blue-700'
-                      : 'bg-white text-slate-600 border-slate-300'
-                  } ${disabled ? 'opacity-70' : ''}`}>
-                    <span>{isOwnerName ? '👑 ' : ''}{u}</span>
-                    {disabled ? (
-                      <span className="text-[9px] uppercase">{perm === 'owner' ? 'owner' : (perm === 'modify' ? 'modify' : (perm === 'view' ? 'view' : '—'))}</span>
-                    ) : (
-                      <select
-                        value={perm}
-                        onChange={(e) => setCoworkerPermission(u, e.target.value === 'none' ? '' : e.target.value)}
-                        className="bg-transparent text-[10px] font-bold outline-none cursor-pointer"
-                        title={`Permission of ${u} — view = read-only, modify = can edit`}
-                      >
-                        <option value="none">none</option>
-                        <option value="view">view</option>
-                        <option value="modify">modify</option>
-                      </select>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
         {/* Composer */}
         {isAuthorized ? (
           <div className="mb-4">
@@ -1378,6 +1373,11 @@ export const ProjectDetailModule = ({
               🧪 You are editing your own project. Superusers see all projects and can filter by scientist.
             </div>
           )}
+
+          {/* Coworkers (view / modify) — next to the owner */}
+          <div className="flex flex-col gap-1 pt-2 mt-1 border-t border-slate-100">
+            {renderCoworkers()}
+          </div>
         </div>
 
         {/* ---------- Scientific background ---------- */}
