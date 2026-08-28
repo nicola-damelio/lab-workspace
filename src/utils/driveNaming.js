@@ -10,12 +10,12 @@
      - copyText()              → clipboard helper with a textarea fallback
 
    Folder layout on Drive (inside "Lab Workspace" → the dataset folder):
-       <project>/<test>/<instance>/<subsection>/<title>_<scientist>.<ext>
+       <project>/<test>/<instance>/<section>/<title>_<scientist>.<ext>
    A standalone protocol lives under a fixed "protocols" container, in its own
    scientist-tagged folder:
        protocols/<protocol>_<scientist>/<title>.<ext>
    A test that is not part of any project lives at:
-       <test>/<instance>/<subsection>/<title>_<scientist>.<ext>
+       <test>/<instance>/<section>/<title>_<scientist>.<ext>
    ========================================================================= */
 
 /** Shared slug-maker for folder and file names. */
@@ -50,9 +50,10 @@ export const suggestDriveFileName = ({
 };
 
 /** The Drive folder path (folder NAMES only) that mirrors the app schema:
- *  [project, test, instance, subsection] for test files — the section is NOT a
- *  folder level and the instance comes right after the test; [project, section]
- *  for project documents; [protocols, <protocol>_<scientist>] for protocols. */
+ *  [project, test, instance, section] for test files — the instance comes right
+ *  after the test and the SECTION (e.g. Data/Setup/Report) is the leaf folder;
+ *  [project, section] for project documents; [protocols, <protocol>_<scientist>]
+ *  for protocols. */
 export const driveFolderPath = (ctx = {}) => {
   if (!ctx || typeof ctx !== 'object') return [];
   if (ctx.protocol) {
@@ -64,14 +65,11 @@ export const driveFolderPath = (ctx = {}) => {
   const segs = [];
   if (ctx.project) segs.push(ctx.project);
   if (ctx.test) {
-    // Test files: Project/Test/Instance/Subsection
+    // Test files: Project/Test/Instance/Section
     segs.push(ctx.test);
     if (ctx.instance) segs.push(ctx.instance);
-    if (ctx.subsection) segs.push(ctx.subsection);
-  } else if (ctx.section) {
-    // Project / generic documents: Project/Section
-    segs.push(ctx.section);
   }
+  if (ctx.section) segs.push(ctx.section);
   return segs.map(sanitizeSlug).filter(Boolean);
 };
 

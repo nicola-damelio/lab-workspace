@@ -4800,7 +4800,6 @@ export const DataSection = ({ ctx }) => {
       const driveCtx = {
         project: (activeTest.projectNames || [])[0] || '',
         test: activeTest.name || '',
-        instance: activeTest.instanceName || '',
         scientist: activeTest.operator || '',
         section: 'Data',
         subsection: 'Bruker 1r'
@@ -4809,9 +4808,12 @@ export const DataSection = ({ ctx }) => {
         const raw = selected[i].parsed && selected[i].parsed.rawFile;
         if (!raw) continue;
         try {
+          // The importer renames the instance to the file title (async state
+          // update — activeTest.instanceName is still the old value here).
+          const instanceForFile = String(selected[i].filename || '').trim() || activeTest.instanceName || '';
           const title = selected[i].filename || `Exp${i + 1}`;
-          const name = suggestDriveFileName({ ...driveCtx, title, suffix: 'bruker1r' }) + '.1r';
-          await uploadLocalFile({ name, mimeType: 'application/octet-stream', file: raw, ctx: { ...driveCtx, title, suffix: 'bruker1r' } });
+          const name = suggestDriveFileName({ ...driveCtx, instance: instanceForFile, title, suffix: 'bruker1r' }) + '.1r';
+          await uploadLocalFile({ name, mimeType: 'application/octet-stream', file: raw, ctx: { ...driveCtx, instance: instanceForFile, title, suffix: 'bruker1r' } });
           driveSaved++;
         } catch (err) { console.warn('Bruker Drive archive failed:', err && err.message); }
       }

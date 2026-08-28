@@ -1270,7 +1270,6 @@ export const Data = ({ ctx }) => {
         const driveCtx = {
           project: (activeTest.projectNames || [])[0] || '',
           test: activeTest.name || '',
-          instance: activeTest.instanceName || '',
           scientist: activeTest.operator || '',
           section: 'Data',
           subsection: 'Flow Cytometry'
@@ -1278,13 +1277,16 @@ export const Data = ({ ctx }) => {
         for (let i = 0; i < results.length; i++) {
           const file = results[i].file;
           try {
+            // The importer renames the instance to the file name (async state
+            // update — activeTest.instanceName is still the old value here).
+            const instanceForFile = ((results[i].parsed && results[i].parsed.filename) || '').replace(/\.[^/.]+$/, '') || activeTest.instanceName || '';
             const base = String(file.name || '').replace(/\.[^/.]+$/, '');
             const suffix = results.length > 1 ? `fcs${i + 1}` : 'fcs';
             const name = withExtension(
-              suggestDriveFileName({ ...driveCtx, title: base, suffix }),
+              suggestDriveFileName({ ...driveCtx, instance: instanceForFile, title: base, suffix }),
               file.name || 'fcs'
             );
-            await uploadLocalFile({ name, mimeType: file.type || 'application/octet-stream', file, ctx: { ...driveCtx, title: base, suffix } });
+            await uploadLocalFile({ name, mimeType: file.type || 'application/octet-stream', file, ctx: { ...driveCtx, instance: instanceForFile, title: base, suffix } });
             driveSaved++;
           } catch (err) {
             console.warn('FCS Drive archive failed:', err && err.message);

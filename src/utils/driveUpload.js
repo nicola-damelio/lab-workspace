@@ -12,10 +12,10 @@
         into the leaf folder of the app-schema path (creating every missing
         folder along the way). Everything lives inside the app's "Lab Workspace"
         folder → a folder named after the main file (the dataset) →
-        <project>/<test>/<instance>/<subsection>/…
+        <project>/<test>/<instance>/<section>/…
      3. The file is shared as "anyone with the link" so the app can display
         it (thumbnails/embed) and others can open it.
-     4. When a project / test / instance / subsection / protocol is renamed, the
+     4. When a project / test / instance / section / protocol is renamed, the
         matching Drive FOLDER is renamed too (never recreated); when a test is
         added to a project its WHOLE Drive folder is moved into the project
         folder (no duplicate); deleting a test removes its Drive folder (all of
@@ -232,7 +232,7 @@ export const ensureDriveFolder = async () => {
 
 // ── App-schema FOLDER helpers ─────────────────────────────────────────────
 // Files are organised on Drive inside folders that mirror the app schema:
-//   <project>/<test>/<instance>/<subsection>/<file>
+//   <project>/<test>/<instance>/<section>/<file>
 //   protocols/<protocol>_<scientist>/<file>
 // The app only ever touches folders it created itself (drive.file scope).
 
