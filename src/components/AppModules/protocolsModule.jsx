@@ -631,11 +631,9 @@ const getProtocolImageFallback = (url) => {
                     type="button"
                     onClick={() => {
                       const current = assignedUsers(activeProtocol);
-                      const beforeScientist = current[0] || '';
                       const next = selected
                         ? current.filter((n) => n !== name)
                         : [...current, name];
-                      const afterScientist = next[0] || '';
 
                       setDatasetProtocols(
                         datasetProtocols.map((p) =>
@@ -644,18 +642,6 @@ const getProtocolImageFallback = (url) => {
                             : p
                         )
                       );
-
-                      // Keep the Drive folder in sync: the protocol folder is
-                      // protocols/<title>_<scientist>, so a change of the
-                      // assigned scientist renames it too.
-                      if (beforeScientist !== afterScientist) {
-                        renameDriveFilesFor({
-                          field: 'scientist',
-                          oldValue: beforeScientist,
-                          newValue: afterScientist,
-                          scope: { protocol: activeProtocol.title || '' }
-                        }).catch(() => {});
-                      }
                     }}
                     className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border shadow-sm transition-colors flex items-center gap-1 ${
                       selected

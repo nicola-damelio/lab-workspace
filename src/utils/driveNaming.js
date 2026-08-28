@@ -12,8 +12,8 @@
    Folder layout on Drive (inside "Lab Workspace" → the dataset folder):
        <project>/<test>/<instance>/<section>/<title>_<scientist>.<ext>
    A standalone protocol lives under a fixed "protocols" container, in its own
-   scientist-tagged folder:
-       protocols/<protocol>_<scientist>/<title>.<ext>
+   folder named after the protocol:
+       protocols/<protocol>/<title>.<ext>
    A test that is not part of any project lives at:
        <test>/<instance>/<section>/<title>_<scientist>.<ext>
    ========================================================================= */
@@ -32,8 +32,8 @@ export const sanitizeSlug = (s) => String(s || '')
  *  into the name (project, test, section, instance) now becomes a FOLDER
  *  hierarchy — see driveFolderPath(). `title` falls back to `suffix`/`kind`
  *  so placeholder names (no file chosen yet) still read sensibly.
- *  For protocols the scientist is already part of the folder
- *  (protocols/<protocol>_<scientist>), so it is NOT repeated in the file name.
+ *  For protocols the folder is named after the protocol only
+ *  (protocols/<protocol>), so the scientist is NOT repeated in the file name.
  *  No date prefix: re-uploading a file with the same name overwrites the
  *  existing Drive file (see driveUpload.uploadLocalFile) instead of
  *  creating a duplicate every day. */
@@ -52,15 +52,15 @@ export const suggestDriveFileName = ({
 /** The Drive folder path (folder NAMES only) that mirrors the app schema:
  *  [project, test, instance, section] for test files — the instance comes right
  *  after the test and the SECTION (e.g. Data/Setup/Report) is the leaf folder;
- *  [project, section] for project documents; [protocols, <protocol>_<scientist>]
- *  for protocols. */
+ *  [project, section] for project documents; [protocols, <protocol>]
+ *  for protocols (the folder is named after the protocol only). */
 export const driveFolderPath = (ctx = {}) => {
   if (!ctx || typeof ctx !== 'object') return [];
   if (ctx.protocol) {
-    return [
-      'protocols',
-      [sanitizeSlug(ctx.protocol), sanitizeSlug(ctx.scientist)].filter(Boolean).join('_')
-    ].filter(Boolean);
+    // Protocols live in their own container, in a folder named after the
+    // protocol only: protocols/<protocol> (the scientist is NOT part of the
+    // folder name).
+    return ['protocols', sanitizeSlug(ctx.protocol)].filter(Boolean);
   }
   const segs = [];
   if (ctx.project) segs.push(ctx.project);

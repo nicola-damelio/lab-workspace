@@ -7,6 +7,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Icon } from './Icons';
 import { DriveUploadButton } from './DriveUpload';
+import { extractDriveFileIds, trashDriveFile } from '../utils/driveUpload';
 
 const JOURNALS_STORAGE_KEY = 'labWorkspace_journals';
 
@@ -539,30 +540,39 @@ const fetchJournalImpactFactor = async (journalName) => {
 /* PDF attachment cell used in the publications tables: uploads the PDF to
    Google Drive at the given folder `path`, with an optional `fileSuffix`
    (publication year / keywords) appended to the file name, and lets the user
-   open or remove the attached PDF. */
-const PubPdfCell = ({ p, path, fileSuffix, onSetPdf }) => (
-  <div className="flex flex-col gap-1">
-    <DriveUploadButton
-      accept=".pdf,.PDF"
-      label="⬆ PDF"
-      naming={{}}
-      path={path}
-      fileSuffix={fileSuffix}
-      onDone={({ dataUrl, drive }) => onSetPdf(drive ? drive.driveUrl : dataUrl)}
-      className="bg-red-50 text-red-600 border border-red-200 hover:bg-red-100"
-    />
-    {p.pdf ? (
-      <div className="flex items-center gap-1.5">
-        <a href={p.pdf} target="_blank" rel="noreferrer"
-           className="text-blue-600 hover:underline text-[10px] truncate block max-w-[110px]">📄 Open</a>
-        <button type="button" onClick={() => onSetPdf('')}
-                className="text-red-400 hover:text-red-600 text-xs px-0.5" title="Remove PDF">✕</button>
-      </div>
-    ) : (
-      <span className="text-slate-300 text-[10px]">no pdf</span>
-    )}
-  </div>
-);
+   open or remove the attached PDF. Removing the PDF also TRASHES the Drive
+   file, so Drive keeps mirroring the app (no orphaned files). */
+const PubPdfCell = ({ p, path, fileSuffix, onSetPdf }) => {
+  const removePdf = () => {
+    onSetPdf('');
+    // Best-effort: delete the PDF from Drive too (it may be a data URL with no
+    // Drive file behind it — extractDriveFileIds simply returns [] then).
+    extractDriveFileIds(p.pdf || '').forEach((id) => { trashDriveFile(id); });
+  };
+  return (
+    <div className="flex flex-col gap-1">
+      <DriveUploadButton
+        accept=".pdf,.PDF"
+        label="⬆ PDF"
+        naming={{}}
+        path={path}
+        fileSuffix={fileSuffix}
+        onDone={({ dataUrl, drive }) => onSetPdf(drive ? drive.driveUrl : dataUrl)}
+        className="bg-red-50 text-red-600 border border-red-200 hover:bg-red-100"
+      />
+      {p.pdf ? (
+        <div className="flex items-center gap-1.5">
+          <a href={p.pdf} target="_blank" rel="noreferrer"
+             className="text-blue-600 hover:underline text-[10px] truncate block max-w-[110px]">📄 Open</a>
+          <button type="button" onClick={removePdf}
+                  className="text-red-400 hover:text-red-600 text-xs px-0.5" title="Remove PDF">✕</button>
+        </div>
+      ) : (
+        <span className="text-slate-300 text-[10px]">no pdf</span>
+      )}
+    </div>
+  );
+};
 
 export const PublicationsSection = ({ scientists = [], defaultScientist = '', currentUser }) => {
   const [journals, setJournals] = useState(() => {
@@ -2218,7 +2228,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                           </td>
                           <td className="px-3 py-2 border-b border-slate-100 align-top text-xs text-slate-600">{p.projectScientist || '—'}</td>
                           <td className="px-3 py-2 border-b border-slate-100 align-top" onClick={(e) => e.stopPropagation()}>
-                            <PubPdfCell p={p} path={['publications', p.projectName || '', p.projectScientist || '']} fileSuffix={null}
+                            <PubPdfCell p={p} path={['publications', 'Project publications', p.projectName || '', p.projectScientist || '']} fileSuffix={null}
                                         onSetPdf={(pdf) => patchPbPaper(p.projectId, p.id, { pdf })} />
                           </td>
                           <td className="px-3 py-2 border-b border-slate-100 align-top text-xs text-slate-600"><span className="line-clamp-2">{p.comments || '—'}</span></td>

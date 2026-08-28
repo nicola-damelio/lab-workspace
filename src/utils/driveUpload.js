@@ -297,7 +297,11 @@ export const resolveDrivePath = async (ctx) => resolveDrivePathFromNames(driveFo
 const pathIndexOf = (ctx, field) => {
   if (!ctx || typeof ctx !== 'object') return -1;
   if (field === 'project') return ctx.project ? 0 : -1;
-  if (field === 'protocol' || field === 'scientist') return ctx.protocol ? 1 : -1;
+  if (field === 'protocol') return ctx.protocol ? 1 : -1;
+  // The scientist is NOT a folder level (protocols/<protocol> only; test files
+  // already carry the scientist in the file name) — so renaming a scientist
+  // never renames a folder.
+  if (field === 'scientist') return -1;
   const value = field === 'test' ? ctx.test
     : field === 'section' ? ctx.section
       : field === 'subsection' ? ctx.subsection
@@ -443,14 +447,11 @@ export const moveTestFolderIntoProject = async ({ testName, projectName }) => {
     if ((await findFolderByName(sanitizeSlug(testName), projectFolderId)) === testFolderId) return 0;
 
     // Move the whole test folder into the project folder (children follow).
-    const params = new URLSearchParams();
-    params.set('addParents', projectFolderId);
-    params.set('removeParents', root);
-    await driveFetch(`/drive/v3/files/${testFolderId}?${params.toString()}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: '{}'
-    });
+    // moveDriveFile reads the folder's ACTUAL parents and removes ALL of them
+    // except the project folder — so the move can never leave the old copy
+    // behind (no duplicate), even when the folder's real parent differs from
+    // the dataset root (older layouts, moved folders, …).
+    await moveDriveFile(testFolderId, projectFolderId);
 
     // Keep the registry in sync: set ctx.project and prepend the project
     // folder to every recorded path of this (previously standalone) test.
@@ -516,14 +517,15 @@ export const moveTestFolderOutOfProject = async ({ testName, projectName }) => {
     if (!testFolderId) return 0; // test not inside this project folder
 
     // Move the whole test folder back to the dataset root (children follow).
-    const params = new URLSearchParams();
-    params.set('addParents', root);
-    params.set('removeParents', projectFolderId);
-    await driveFetch(`/drive/v3/files/${testFolderId}?${params.toString()}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: '{}'
-    });
+    // moveDriveFile removes the folder from ALL its current parents, so the
+    // move can never leave a copy inside the project (no duplicate).
+    await moveDriveFile(testFolderId, root);
+
+    // The project folder may now be empty (last test moved out) — trash it so
+    // Drive stays tidy. Folders that still hold project docs are kept.
+    try {
+      await trashEmptyFolderChain([{ name: sanitizeSlug(projectName), id: projectFolderId }]);
+    } catch { /* keep the project folder */ }
 
     // Keep the registry in sync: drop the project from ctx and from the paths.
     const reg = getDriveFileRegistry();
@@ -708,6 +710,30 @@ export const markDriveFileDeleted = async (fileId) => {
   }
 };
 
+/** Permanently remove a file from the Drive tree (moves it to the Drive Trash).
+ *  Used e.g. when a publication's PDF is removed from the table — Drive mirrors
+ *  the app, so the file disappears there too. */
+export const trashDriveFile = async (fileId) => {
+  if (!fileId) return false;
+  try {
+    const res = await driveFetch(`/drive/v3/files/${fileId}?fields=id`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trashed: true })
+    });
+    await res.json();
+    const reg = getDriveFileRegistry();
+    if (reg[fileId]) {
+      reg[fileId] = { ...reg[fileId], deleted: true, at: Date.now() };
+      saveDriveFileRegistry(reg);
+    }
+    return true;
+  } catch (err) {
+    console.warn('Could not trash Drive file:', err && err.message);
+    return false;
+  }
+};
+
 // ── Google Identity Services (proper Drive access) ─────────────────────────
 // The standard Firebase Google sign-in cannot get the drive.file scope from
 // Google. If GOOGLE_DRIVE_CLIENT_ID is configured, we use Google Identity
@@ -859,8 +885,8 @@ export const renameDriveFilesFor = async ({ field, oldValue, newValue, scope = n
     // test has no project level, so there the test lives at index 0).
     const pathIndex = pathIndexOf(oldCtx, field);
     // The new folder name at that position, computed from the full context
-    // (e.g. for protocols the folder is <protocol>_<scientist>, so renaming the
-    // scientist renames the folder too).
+    // (e.g. for protocols the folder is protocols/<protocol>, so renaming the
+    // protocol renames the folder; the scientist is not a folder level).
     const newFolderName = (pathIndex >= 0 && String(newValue || '')) ? (driveFolderPath(newCtx)[pathIndex] || '') : '';
     const oldFolderName = pathIndex >= 0 ? (driveFolderPath(oldCtx)[pathIndex] || '') : '';
     let folderSeg = null;
