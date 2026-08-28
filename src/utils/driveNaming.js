@@ -56,11 +56,13 @@ export const suggestDriveFileName = ({
  *  for protocols (the folder is named after the protocol only). */
 export const driveFolderPath = (ctx = {}) => {
   if (!ctx || typeof ctx !== 'object') return [];
-  if (ctx.protocol) {
+  if (ctx.protocol !== undefined) {
     // Protocols live in their own container, in a folder named after the
     // protocol only: protocols/<protocol> (the scientist is NOT part of the
-    // folder name).
-    return ['protocols', sanitizeSlug(ctx.protocol)].filter(Boolean);
+    // folder name). An empty/untitled protocol still lands INSIDE the
+    // protocols container — never at the dataset root.
+    const protoSlug = sanitizeSlug(ctx.protocol);
+    return protoSlug ? ['protocols', protoSlug] : ['protocols'];
   }
   const segs = [];
   if (ctx.project) segs.push(ctx.project);

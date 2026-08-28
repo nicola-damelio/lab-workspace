@@ -211,7 +211,11 @@ const getProtocolImageFallback = (url) => {
                             onFocus={() => { protoTitleBeforeEditRef.current = activeProtocol.title; }}
                             onBlur={() => {
                               const before = protoTitleBeforeEditRef.current;
-                              if (before && before !== activeProtocol.title) {
+                              // Rename the Drive folder even when the old title
+                              // was EMPTY (the guard must not skip ''): files
+                              // imported before the title existed then get
+                              // moved into the correctly-named protocol folder.
+                              if (before !== null && before !== activeProtocol.title) {
                                 renameDriveFilesFor({ field: 'protocol', oldValue: before, newValue: activeProtocol.title }).catch(() => {});
                               }
                               protoTitleBeforeEditRef.current = null;
@@ -323,11 +327,11 @@ const getProtocolImageFallback = (url) => {
 
     <DriveUploadButton
       suggestedName={suggestDriveFileName({
-        protocol: activeProtocol.title || '',
+        protocol: activeProtocol.title || 'Untitled Protocol',
         scientist: (activeProtocol.assignedTo || [])[0] || '',
         suffix: 'doc'
       })}
-      naming={{ protocol: activeProtocol.title || '', scientist: (activeProtocol.assignedTo || [])[0] || '', suffix: 'doc' }}
+      naming={{ protocol: activeProtocol.title || 'Untitled Protocol', scientist: (activeProtocol.assignedTo || [])[0] || '', suffix: 'doc' }}
       onDone={({ name, dataUrl, drive }) =>
         updateProtocol({
           documents: [
@@ -362,7 +366,7 @@ const getProtocolImageFallback = (url) => {
     linkButton
     figureButton
     docImportButton
-    fileNaming={{ protocol: activeProtocol.title || '', scientist: (activeProtocol.assignedTo || [])[0] || '' }}
+    fileNaming={{ protocol: activeProtocol.title || 'Untitled Protocol', scientist: (activeProtocol.assignedTo || [])[0] || '' }}
     onEditFocusChange={(editing) =>
       setExpandedGroups((p) => ({ ...p, protoSidebarOpen: !editing }))
     }

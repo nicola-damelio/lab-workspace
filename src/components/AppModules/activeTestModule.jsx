@@ -168,7 +168,9 @@ const TestHeader = (
                             onFocus={() => { testNameBeforeEditRef.current = activeTest.name; }}
                             onBlur={() => {
                               const before = testNameBeforeEditRef.current;
-                              if (before && before !== activeTest.name) {
+                              // Rename the Drive folder even when the old name
+                              // was EMPTY (never skip '').
+                              if (before !== null && before !== activeTest.name) {
                                 renameDriveFilesFor({ field: 'test', oldValue: before, newValue: activeTest.name }).catch(() => {});
                               }
                               testNameBeforeEditRef.current = null;

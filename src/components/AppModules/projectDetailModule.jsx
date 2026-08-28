@@ -1335,7 +1335,9 @@ export const ProjectDetailModule = ({
                  onFocus={() => { projectNameBeforeEditRef.current = project.name; }}
                  onBlur={() => {
                    const before = projectNameBeforeEditRef.current;
-                   if (before && before !== project.name) {
+                   // Rename the Drive folder even when the old name was EMPTY
+                   // (never skip '').
+                   if (before !== null && before !== project.name) {
                      renameDriveFilesFor({ field: 'project', oldValue: before, newValue: project.name }).catch(() => {});
                    }
                    projectNameBeforeEditRef.current = null;
