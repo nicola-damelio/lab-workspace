@@ -367,9 +367,6 @@ const getProtocolImageFallback = (url) => {
     figureButton
     docImportButton
     fileNaming={{ protocol: activeProtocol.title || 'Untitled Protocol', scientist: (activeProtocol.assignedTo || [])[0] || '' }}
-    onEditFocusChange={(editing) =>
-      setExpandedGroups((p) => ({ ...p, protoSidebarOpen: !editing }))
-    }
   />
 
   {protocolFigures.length > 0 && (

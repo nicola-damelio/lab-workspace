@@ -151,19 +151,18 @@ export const RichTextEditor = ({
     };
     // Notify parents (and the app) that the user started/stopped editing this text,
     // so surrounding side panels can retract to give the editor more space.
+    // The window events fire UNCONDITIONALLY so the app sidebar still retracts,
+    // while `onEditFocusChange` (if given) lets each caller decide its own
+    // behaviour — e.g. the protocol editor keeps its right sidebar visible.
     const handleEditFocus = () => {
         storeSel();
-        if (onEditFocusChange) {
-            onEditFocusChange(true);
-            try { window.dispatchEvent(new CustomEvent('lab:edit-focus')); } catch { /* ignore */ }
-        }
+        try { window.dispatchEvent(new CustomEvent('lab:edit-focus')); } catch { /* ignore */ }
+        if (onEditFocusChange) onEditFocusChange(true);
     };
     const handleBlur = (e) => {
         onChange(e.target.innerHTML);
-        if (onEditFocusChange) {
-            onEditFocusChange(false);
-            try { window.dispatchEvent(new CustomEvent('lab:edit-blur')); } catch { /* ignore */ }
-        }
+        try { window.dispatchEvent(new CustomEvent('lab:edit-blur')); } catch { /* ignore */ }
+        if (onEditFocusChange) onEditFocusChange(false);
     };
     // Import a Word (.docx) document: converts text + figures, saves figures to Drive
     const handleDocImport = async (e) => {
