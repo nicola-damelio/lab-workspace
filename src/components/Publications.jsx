@@ -2228,7 +2228,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                           </td>
                           <td className="px-3 py-2 border-b border-slate-100 align-top text-xs text-slate-600">{p.projectScientist || '—'}</td>
                           <td className="px-3 py-2 border-b border-slate-100 align-top" onClick={(e) => e.stopPropagation()}>
-                            <PubPdfCell p={p} path={['publications', 'Project publications', p.projectName || '', p.projectScientist || '']} fileSuffix={null}
+                            <PubPdfCell p={p} path={['publications', 'Project publications', p.projectName || '']} fileSuffix={null}
                                         onSetPdf={(pdf) => patchPbPaper(p.projectId, p.id, { pdf })} />
                           </td>
                           <td className="px-3 py-2 border-b border-slate-100 align-top text-xs text-slate-600"><span className="line-clamp-2">{p.comments || '—'}</span></td>
