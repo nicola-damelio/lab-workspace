@@ -1,0 +1,5 @@
+﻿      `----
+  help: Either include it or remove the dependency array.
+
+Found 106 warnings and 2 errors.
+Finished in 455ms on 95 files with 92 rules using 8 threads.

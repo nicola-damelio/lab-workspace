@@ -575,6 +575,17 @@ const PubPdfCell = ({ p, path, fileSuffix, onSetPdf }) => {
 };
 
 export const PublicationsSection = ({ scientists = [], defaultScientist = '', currentUser }) => {
+  // A user can delete a "Relevant paper" / "Publication of a scientist" entry
+  // only if they OWN it (the entry's scientist matches their name) or they are
+  // the supervisor. Entries of other users are protected.
+  const canManageEntry = (owner) =>
+    !!currentUser && (
+      currentUser.role === 'superuser' ||
+      String(currentUser.name || '') === String(owner || '')
+    );
+  // The journals table (impact factors + entries) is curated by the supervisor:
+  // only a superuser can edit impact factors or delete journals.
+  const isSuper = currentUser?.role === 'superuser';
   const [journals, setJournals] = useState(() => {
     try {
       const saved = localStorage.getItem(JOURNALS_STORAGE_KEY);
@@ -1291,9 +1302,10 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                           type="text"
                           value={j.impactFactor || ''}
                           onChange={(e) => patch(j.id, { impactFactor: e.target.value })}
+                          readOnly={!isSuper}
                           placeholder="—"
-                          title="Edit Impact Factor — the table re-sorts automatically"
-                          className="w-14 border border-slate-200 rounded px-1.5 py-0.5 text-xs text-right font-semibold text-slate-800 outline-none focus:border-indigo-400"
+                          title={isSuper ? 'Edit Impact Factor — the table re-sorts automatically' : 'Only the supervisor can edit impact factors'}
+                          className="w-14 border border-slate-200 rounded px-1.5 py-0.5 text-xs text-right font-semibold text-slate-800 outline-none focus:border-indigo-400 read-only:bg-slate-50 read-only:text-slate-600"
                         />
                         {(ifResults[j.id] || (j.ifUpdatedAt && j.ifSource)) && (
                           <div className="mt-1 text-[9px] leading-tight">
@@ -1336,10 +1348,12 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                         )}
                       </td>
                       <td className="px-3 py-2 border-b border-slate-100 text-right align-top whitespace-nowrap">
-                        <button type="button" onClick={(e) => { e.stopPropagation(); remove(j.id, j.name); }}
-                          className="text-red-400 hover:text-red-600 text-xs px-1" title="Delete journal">
-                          ✕
-                        </button>
+                        {isSuper && (
+                          <button type="button" onClick={(e) => { e.stopPropagation(); remove(j.id, j.name); }}
+                            className="text-red-400 hover:text-red-600 text-xs px-1" title="Delete journal">
+                            ✕
+                          </button>
+                        )}
                       </td>
                     </tr>
                     {isOpen && (
@@ -1352,7 +1366,8 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                             </div>
                             <div>
                               <label className={labelCls}>Impact Factor</label>
-                              <input className={inputCls} value={j.impactFactor || ''} onChange={(e) => patch(j.id, { impactFactor: e.target.value })} placeholder="e.g. 9.1" />
+                              <input className={inputCls} value={j.impactFactor || ''} onChange={(e) => patch(j.id, { impactFactor: e.target.value })} readOnly={!isSuper}
+                                     title={isSuper ? 'Edit Impact Factor' : 'Only the supervisor can edit impact factors'} placeholder="e.g. 9.1" />
                             </div>
                             <div>
                               <label className={labelCls}>Cost / APC</label>
@@ -1589,8 +1604,10 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                           <button type="button" onClick={(e) => { e.stopPropagation(); toggleExcludePub(p); }}
                                   className={excludedSet.has(pubExistsKey(p)) ? 'text-red-600 text-xs px-1' : 'text-slate-300 hover:text-red-500 text-xs px-1'}
                                   title="Never add this entry again (belongs to another author with the same name)">🚫</button>
-                          <button type="button" onClick={(e) => { e.stopPropagation(); removePub(p.id, p.title); }}
-                                  className="text-red-400 hover:text-red-600 text-xs px-1" title="Delete publication">✕</button>
+                          {canManageEntry(p.scientist) && (
+                            <button type="button" onClick={(e) => { e.stopPropagation(); removePub(p.id, p.title); }}
+                                    className="text-red-400 hover:text-red-600 text-xs px-1" title="Delete publication">✕</button>
+                          )}
                         </td>
                       </tr>
                       {isOpen && (
@@ -1920,8 +1937,10 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                         </td>
                         <td className="px-3 py-2 border-b border-slate-100 align-top text-xs text-slate-600"><span className="line-clamp-2">{p.comments || '—'}</span></td>
                         <td className="px-3 py-2 border-b border-slate-100 text-right align-top whitespace-nowrap">
-                          <button type="button" onClick={(e) => { e.stopPropagation(); removePaper(p.id, p.title); }}
-                                  className="text-red-400 hover:text-red-600 text-xs px-1" title="Delete paper">✕</button>
+                          {canManageEntry(p.scientist) && (
+                            <button type="button" onClick={(e) => { e.stopPropagation(); removePaper(p.id, p.title); }}
+                                    className="text-red-400 hover:text-red-600 text-xs px-1" title="Delete paper">✕</button>
+                          )}
                         </td>
                       </tr>
                       {isOpen && (
@@ -2376,9 +2395,9 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
             <button
               type="button"
               onClick={updateImpactFactors}
-              disabled={ifUpdating || sorted.length === 0}
+              disabled={ifUpdating || sorted.length === 0 || !isSuper}
               className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40 transition flex items-center gap-1.5"
-              title="Look up the current impact factor of every journal on the web (OpenAlex) and update the table"
+              title={isSuper ? 'Look up the current impact factor of every journal on the web (OpenAlex) and update the table' : 'Only the supervisor can update impact factors'}
             >
               {ifUpdating ? (
                 <>

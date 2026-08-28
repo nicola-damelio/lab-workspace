@@ -447,7 +447,6 @@ const [showGeneral, setShowGeneral] = useState(false);
 
   const [tableRows, setTableRows] = useState(2);
   const [tableCols, setTableCols] = useState(3);
-  const [reportWide, setReportWide] = useState(false); // wide editing (retract side panels)
 
   const planDateId = `plan-date-${t.id ?? 'unsaved'}`;
 
@@ -2174,7 +2173,6 @@ const details = [
                     docImportButton
                     minHeight={420}
                     maxHeight={6000}
-                    onEditFocusChange={setReportWide}
                     fileNaming={{
                       project: (t.projectNames || [])[0] || '',
                       test: t.name || '',
@@ -2186,7 +2184,9 @@ const details = [
                   />
                 </div>
 
-                {!reportWide && (
+                {/* Right sidebar: documents/links panel — always visible, even
+                    while editing the report text (the user asked for it to
+                    stay on screen). */}
                 <div className="flex-shrink-0 flex flex-col justify-start gap-4" style={{ maxWidth: '300px', minWidth: '180px' }}>
                   <div className="w-full flex flex-col items-end border-t lg:border-t-0 border-slate-200 pt-3 lg:pt-0">
                     <div className="flex flex-col gap-2 w-full max-h-[250px] overflow-y-auto custom-scrollbar">
@@ -2248,7 +2248,6 @@ const details = [
                     </div>
                   </div>
                 </div>
-              )}
               </div>
 
               {images.length > 0 && (

@@ -28,6 +28,18 @@ export const saveProjects = (list) => {
   try { localStorage.setItem(PROJECTS_KEY, JSON.stringify(list)); } catch { /* ignore */ }
 };
 
+/** Normalize a project's authorized-people list to [{ name, permission }].
+ *  Legacy entries stored as plain strings had full access → 'modify'.
+ *  permission is 'view' (read-only) or 'modify' (can see and edit). */
+export const normalizeAuthorized = (list) => {
+  if (!Array.isArray(list)) return [];
+  return list.map((x) => {
+    if (typeof x === 'string') return { name: x, permission: 'modify' };
+    const perm = x && (x.permission === 'view' || x.permission === 'modify') ? x.permission : 'modify';
+    return { name: x && x.name, permission: perm };
+  }).filter((x) => x && String(x.name).trim());
+};
+
 export const loadPublications = () => {
   try {
     const raw = localStorage.getItem('labWorkspace_publications');
@@ -84,8 +96,13 @@ export const ProjectsModule = ({
 
   const visible = useMemo(() => {
     let list = projects;
-    if (!isSuper) list = list.filter((p) => p.scientist === myName);
-    else if (scientistFilter !== 'ALL') list = list.filter((p) => p.scientist === scientistFilter);
+    if (!isSuper) {
+      // The owner and every coworker (view OR modify) can see the project.
+      list = list.filter((p) => {
+        if (p.scientist === myName) return true;
+        return normalizeAuthorized(p.authorizedPeople || []).some((c) => c.name === myName);
+      });
+    } else if (scientistFilter !== 'ALL') list = list.filter((p) => p.scientist === scientistFilter);
     return list;
   }, [projects, isSuper, myName, scientistFilter]);
 
@@ -130,7 +147,11 @@ export const ProjectsModule = ({
     if (target) markAttachmentsDeleted(target).catch(() => {});
   };
 
-  const canManage = (p) => isSuper || p.scientist === myName;
+  // Edit access: owner, superuser, or a coworker with 'modify' permission.
+  const canManage = (p) => isSuper || p.scientist === myName
+    || normalizeAuthorized(p.authorizedPeople || []).some((c) => c.name === myName && c.permission === 'modify');
+  // Deleting a project stays reserved for the owner / superuser.
+  const canDelete = (p) => isSuper || p.scientist === myName;
 
   return (
     <div className="p-4 md:p-6 h-full overflow-y-auto custom-scrollbar bg-slate-50">
@@ -225,6 +246,14 @@ export const ProjectsModule = ({
                   <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5">
                     👤 {p.scientist || 'Unassigned'}
                   </span>
+                  {(() => {
+                    const cws = normalizeAuthorized(p.authorizedPeople || []);
+                    return cws.length > 0 ? (
+                      <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold text-slate-600 bg-slate-100 border border-slate-200 rounded-full px-2 py-0.5" title={cws.map((c) => `${c.name} (${c.permission === 'modify' ? 'modify' : 'view'})`).join(', ')}>
+                        👥 {cws.length}
+                      </span>
+                    ) : null;
+                  })()}
                 </div>
                 <div className="flex items-center gap-2 text-[10px] font-bold text-slate-500">
                   <span className="bg-slate-100 rounded-full px-2 py-0.5">🧪 {(p.experiments || []).length} experiments</span>
@@ -242,14 +271,14 @@ export const ProjectsModule = ({
                     Open project
                   </button>
                   {canManage(p) && (
-                    <>
-                      <button onClick={() => { setCurrentProjectId(p.id); setCurrentModule('project-detail'); }}
-                              className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200"
-                              title="Edit">✏️</button>
-                      <button onClick={() => setConfirmDelete(p.id)}
-                              className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-red-50 text-red-500 hover:bg-red-100"
-                              title="Delete project">✕</button>
-                    </>
+                    <button onClick={() => { setCurrentProjectId(p.id); setCurrentModule('project-detail'); }}
+                            className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200"
+                            title="Edit">✏️</button>
+                  )}
+                  {canDelete(p) && (
+                    <button onClick={() => setConfirmDelete(p.id)}
+                            className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-red-50 text-red-500 hover:bg-red-100"
+                            title="Delete project">✕</button>
                   )}
                 </div>
               </div>

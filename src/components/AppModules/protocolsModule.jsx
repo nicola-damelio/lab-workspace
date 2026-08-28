@@ -3,7 +3,7 @@
    Protocols & Protocol Categories view, extracted from App.jsx. Props-only.
    ========================================================================= */
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { RichTextEditor } from '../RichTextEditor';
 import { BrukerPulseSequenceViewer } from '../DefinitionsExtra';
 import { getDirectImageUrl } from '../../data/constants';
@@ -56,6 +56,14 @@ const activeProtocol = activeProtoId
 const [tableRows, setTableRows] = useState(2);
 const [tableCols, setTableCols] = useState(3);
 const protoTitleBeforeEditRef = useRef(null); // Drive-file rename tracking
+
+// The protocol's right sidebar (Assigned Users / Attached Resources) is ALWAYS
+// visible when a protocol is opened — it is never auto-hidden by the text
+// editor, so it can only be collapsed by the explicit "Hide sidebar" button.
+useEffect(() => {
+  if (activeProtoId) setExpandedGroups((p) => ({ ...p, protoSidebarOpen: true }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [activeProtoId]);
 
 const protocolFigures = Array.isArray(activeProtocol?.images)
   ? activeProtocol.images
@@ -359,9 +367,9 @@ const getProtocolImageFallback = (url) => {
       )
     }
     placeholder="Write the detailed protocol steps here. You can paste images directly..."
-    minHeight={560}
+    minHeight={420}
     maxHeight={8000}
-    fillHeight={false}
+    fillHeight
     resizable
     linkButton
     figureButton
@@ -1151,25 +1159,28 @@ const newProto = {
       }))
     }
   >
-    <button
-      onClick={(e) => {
-        e.stopPropagation();
-        if (confirm('Delete this protocol?')) {
-          setDatasetProtocols(
-            datasetProtocols.filter((p) => p.id !== proto.id)
-          );
-          // The Drive mirrors the app: mark the attachments as deleted AND
-          // trash the protocol's folder (protocols/<protocol>) so it does not
-          // stay behind on Drive.
-          markAttachmentsDeleted(proto).catch(() => {});
-          deleteProtocolDriveFolder(proto).catch(() => {});
-        }
-      }}
-      className="absolute top-3 right-3 text-slate-300 hover:text-red-500 text-lg md:opacity-0 group-hover:opacity-100 transition-opacity no-print"
-      title="Delete Protocol"
-    >
-      &times;
-    </button>
+    {/* Delete protocol — superuser only */}
+    {currentUser?.role === 'superuser' && (
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          if (confirm('Delete this protocol?')) {
+            setDatasetProtocols(
+              datasetProtocols.filter((p) => p.id !== proto.id)
+            );
+            // The Drive mirrors the app: mark the attachments as deleted AND
+            // trash the protocol's folder (protocols/<protocol>) so it does not
+            // stay behind on Drive.
+            markAttachmentsDeleted(proto).catch(() => {});
+            deleteProtocolDriveFolder(proto).catch(() => {});
+          }
+        }}
+        className="absolute top-3 right-3 text-slate-300 hover:text-red-500 text-lg md:opacity-0 group-hover:opacity-100 transition-opacity no-print"
+        title="Delete Protocol"
+      >
+        &times;
+      </button>
+    )}
 
     <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded self-start mb-3 border border-emerald-200">
       {proto.category}

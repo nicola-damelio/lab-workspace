@@ -9,7 +9,7 @@ export const RichTextEditor = ({
   value, onChange, placeholder, toolbarExtra = [],
   minHeight = 120, maxHeight = 500, resizable = true, fillHeight = true,
   linkButton = false, figureButton = false, docImportButton = false, onEditFocusChange = null,
-  fileNaming = null
+  fileNaming = null, readOnly = false
 }) => {
     const editorRef = useRef(null);
     const selRef = useRef(null);
@@ -18,6 +18,7 @@ export const RichTextEditor = ({
     const [linkDraft, setLinkDraft] = useState(null); // null | { text, url }
     const [figureDraft, setFigureDraft] = useState(null); // null | { url, caption }
     const [driveFolderDraft, setDriveFolderDraft] = useState(getDriveFolderUrl());
+    const [toolbarOpen, setToolbarOpen] = useState(true); // collapsible toolbar (more vertical space)
 
     // Full-path suggested file name for the figure being inserted (figure1, figure2, ...)
     const figureSuffix = `figure${(editorRef.current ? editorRef.current.querySelectorAll('figure').length : 0) + 1}`;
@@ -50,9 +51,13 @@ export const RichTextEditor = ({
     const insertText = (text) => {
         const el = editorRef.current;
         if (!el) return;
-        el.focus();
+        // Capture the insertion point BEFORE focusing the editor: focusing can
+        // move the caret (and handleEditFocus re-stores the selection), which
+        // would insert at the START of the content instead of where the user
+        // clicked/typed.
         const sel = window.getSelection();
         const range = getEditorRange(el, sel) || caretAtEnd(el);
+        el.focus();
 
         // Prefer the native command where it is still supported (Firefox / Safari)
         try {
@@ -81,9 +86,11 @@ export const RichTextEditor = ({
     const insertHtml = (html) => {
         const el = editorRef.current;
         if (!el) return;
-        el.focus();
+        // Capture the insertion point BEFORE focusing the editor (focus can move
+        // the caret to the start and handleEditFocus re-stores the selection).
         const sel = window.getSelection();
         const range = getEditorRange(el, sel) || caretAtEnd(el);
+        el.focus();
 
         // Prefer the native command where it is still supported (Firefox / Safari)
         try {
@@ -149,9 +156,8 @@ export const RichTextEditor = ({
         insertHtml(`<figure style="margin:14px 0;text-align:center;break-inside:avoid;"><img src="${imgSrc}" alt="${alt}" style="display:block;margin:0 auto;max-width:100%;height:auto;border:1px solid #e2e8f0;border-radius:8px;background:#fff;box-shadow:0 1px 3px rgba(15,23,42,0.08);"/>${figCaption}</figure>`);
         setFigureDraft(null);
     };
-    // Notify parents (and the app) that the user started/stopped editing this text,
-    // so surrounding side panels can retract to give the editor more space.
-    // The window events fire UNCONDITIONALLY so the app sidebar still retracts,
+    // Notify parents (and the app) that the user started/stopped editing this
+    // text. The window events fire unconditionally (kept for any listener),
     // while `onEditFocusChange` (if given) lets each caller decide its own
     // behaviour — e.g. the protocol editor keeps its right sidebar visible.
     const handleEditFocus = () => {
@@ -289,15 +295,19 @@ export const RichTextEditor = ({
         insertImageBlob(file);
     };
     return (
-        <div className={`w-full ${fillHeight ? 'flex-1' : ''} flex flex-col border border-slate-300 rounded-md bg-white overflow-hidden shadow-sm transition-shadow focus-within:ring-1 focus-within:ring-blue-500 focus-within:border-blue-500`}>
+        <div className={`w-full ${fillHeight ? 'flex-1 min-h-0' : ''} flex flex-col border border-slate-300 rounded-md bg-white overflow-hidden shadow-sm transition-shadow focus-within:ring-1 focus-within:ring-blue-500 focus-within:border-blue-500`}>
             <style>{`.rte-content a { color:#2563eb; text-decoration:underline; } .rte-content a:hover { color:#1d4ed8; }`}</style>
+            {!readOnly && toolbarOpen && (
             <div className="flex gap-1 p-1 bg-slate-50 border-b border-slate-200 shrink-0 flex-wrap">
+                <button onClick={()=>execCmd('undo')} title="Undo (Ctrl+Z)"
+                        className="px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition font-bold">↩ Undo</button>
+                <div className="w-px bg-slate-300 mx-1 my-0.5"></div>
                 <button onClick={()=>execCmd('bold')} className="font-bold px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition">B</button>
                 <button onClick={()=>execCmd('italic')} className="italic px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition">I</button>
                 <button onClick={()=>execCmd('underline')} className="underline px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition">U</button>
                 <div className="w-px bg-slate-300 mx-1 my-0.5"></div>
                 <button onClick={()=>execCmd('justifyLeft')} className="px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition" title="Align Left">↤</button>
-                <button onClick={()=>execCmd('justifyCenter')} className="px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition" title="Center">≡</button>
+                <button onClick={()=>execCmd('justifyCenter')} className="px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition" title="Center text">≡ Center</button>
                 <button onClick={()=>execCmd('justifyFull')} className="px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition" title="Justify">▤</button>
                 <div className="w-px bg-slate-300 mx-1 my-0.5"></div>
                 <button onClick={()=>execCmd('insertUnorderedList')} className="px-2 py-0.5 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-100 text-xs text-slate-700 transition font-bold" title="Bullets">• List</button>
@@ -343,12 +353,24 @@ export const RichTextEditor = ({
                         {btn.label}
                     </button>
                 ))}
+                <div className="flex-1"></div>
+                <button type="button" onClick={() => setToolbarOpen(false)}
+                        title="Collapse toolbar (give more vertical space to the text)"
+                        className="px-1.5 py-0.5 text-[10px] font-bold text-slate-400 hover:text-slate-600 bg-white border border-slate-200 rounded shadow-sm transition">▴</button>
             </div>
-            <div ref={editorRef} contentEditable onPaste={handlePaste} onBlur={handleBlur}
+            )}
+            {!readOnly && !toolbarOpen && (
+            <div className="flex items-center justify-end px-1 py-0.5 bg-slate-50 border-b border-slate-200 shrink-0">
+                <button type="button" onClick={() => setToolbarOpen(true)}
+                        title="Show toolbar"
+                        className="px-1.5 py-0.5 text-[10px] font-bold text-slate-400 hover:text-slate-600 bg-white border border-slate-200 rounded shadow-sm transition">▾ Show toolbar</button>
+            </div>
+            )}
+            <div ref={editorRef} contentEditable={!readOnly} onPaste={handlePaste} onBlur={handleBlur}
                 onSelect={storeSel} onKeyUp={storeSel} onMouseUp={storeSel} onFocus={handleEditFocus}
                 onDrop={handleDrop}
-                className="p-3 text-sm text-slate-700 focus:outline-none custom-scrollbar shadow-inner bg-slate-50/50 rte-content" style={{ resize: 'vertical', minHeight: toPx(minHeight), maxHeight: toPx(maxHeight), overflowY: 'auto' }} data-placeholder={placeholder} />
-            {resizable && (
+                className={`p-3 text-sm text-slate-700 focus:outline-none custom-scrollbar shadow-inner bg-slate-50/50 rte-content ${fillHeight ? 'flex-1 min-h-0' : ''}`} style={{ resize: fillHeight ? 'none' : 'vertical', minHeight: toPx(minHeight), maxHeight: fillHeight ? 'none' : toPx(maxHeight), overflowY: 'auto' }} data-placeholder={placeholder} />
+            {!readOnly && !fillHeight && resizable && (
                 <div onMouseDown={startResize} title="Drag to resize the editor vertically"
                      className="shrink-0 h-3.5 flex items-center justify-center cursor-ns-resize select-none border-t border-slate-200 bg-slate-50 hover:bg-slate-200/70 transition-colors">
                     <span className="block w-12 h-1 rounded-full bg-slate-300" />

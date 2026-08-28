@@ -3,7 +3,7 @@ import { RichTextEditor } from '../RichTextEditor';
 import { SmartImage } from '../TestShellRenderer';
 import { loadPubFormat, pubCitationHtml } from '../Publications';
 import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigForType } from '../../utils/starredItems';
-import { loadProjects, saveProjects, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId } from './projectsModule';
+import { loadProjects, saveProjects, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId, normalizeAuthorized } from './projectsModule';
 import { suggestDriveFileName, openDrive } from '../../utils/driveNaming';
 import { DriveUploadButton } from '../DriveUpload';
 import { markAttachmentsDeleted, renameDriveFilesFor, moveTestFolderIntoProject, moveTestFolderOutOfProject } from '../../utils/driveUpload';
@@ -245,6 +245,15 @@ export const ProjectDetailModule = ({
   const project = projects.find((p) => p.id === currentProjectId);
   const pubFormat = useMemo(() => project?.pubFormat || loadPubFormat(), [project]);
 
+  // ---- Coworkers & permissions (computed early so every effect can use them) ----
+  // Each coworker gets 'view' (read-only) or 'modify' (see and edit).
+  // Legacy entries (plain strings) had full access → 'modify'.
+  const isOwner = !!project && (isSuper || project.scientist === myName);
+  const authList = project ? normalizeAuthorized(project.authorizedPeople || []) : [];
+  const myCoworker = authList.find((c) => c.name === myName) || null;
+  const canSee = !!currentUser && !!project && (isOwner || !!myCoworker);
+  const canModify = isOwner || (myCoworker && myCoworker.permission === 'modify');
+
   useEffect(() => { saveProjects(projects); }, [projects]);
 
   // Keep the persisted "Materials and Methods" snapshot fresh every time the
@@ -252,6 +261,7 @@ export const ProjectDetailModule = ({
   // Instrumental Setup and Experiment Setup of the included tests).
   useEffect(() => {
     if (!showExport || !project) return;
+    if (!canModify) return; // view-only coworkers must not change the data
     // Never overwrite a manually edited Materials & Methods text.
     if (project.materialsAndMethods?.edited) return;
     const parts = mmPartsFor(project, tests, true);
@@ -287,26 +297,24 @@ export const ProjectDetailModule = ({
     );
   }
 
-  const isOwner = isSuper || project.scientist === myName;
-
-  const updateProject = (patch) =>
+  const updateProject = (patch) => {
+    if (!canModify) return; // view-only coworkers cannot change anything
     setProjects((prev) => prev.map((p) =>
       p.id === project.id ? { ...p, ...patch, updatedAt: new Date().toISOString() } : p));
+  };
 
   // ---- Comments & review ----
-  // Authorized people are selected (by the owner) from the list of users.
-  // The owner and superusers are always authorized.
-  const authorizedPeople = project.authorizedPeople || [];
-  const isAuthorized = !!currentUser && (isSuper || project.scientist === myName || authorizedPeople.includes(myName));
   const comments = project.comments || [];
   const openComments = comments.filter((c) => !c.resolved).length;
+  // Comments modify the project state, so they follow the 'modify' permission.
+  const isAuthorized = canModify;
 
-  const toggleAuthorized = (name) =>
-    updateProject({
-      authorizedPeople: authorizedPeople.includes(name)
-        ? authorizedPeople.filter((x) => x !== name)
-        : [...authorizedPeople, name].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
-    });
+  const setCoworkerPermission = (name, permission) => {
+    const rest = authList.filter((c) => c.name !== name);
+    const next = permission ? [...rest, { name, permission }] : rest;
+    next.sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' }));
+    updateProject({ authorizedPeople: next });
+  };
 
   const addComment = () => {
     const text = commentDraft.trim();
@@ -726,17 +734,19 @@ export const ProjectDetailModule = ({
           linkButton
           figureButton
           docImportButton
+          readOnly={!canModify}
           minHeight={420}
           maxHeight={6000}
           onEditFocusChange={setTextEditing}
           fileNaming={{ project: project.name || '', section: label }}
-          toolbarExtra={[
+          toolbarExtra={canModify ? [
             { label: '▦ + Std Table', title: 'Insert a standard table at the cursor position', onClick: (insertText) => setTableDraft({ section: id, insertText }) },
             { label: '📎 + Document', title: 'Attach a document link', onClick: () => addSectionDoc(id) },
             { label: '📚 + Reference', title: 'Insert a numbered reference at the cursor position', onClick: (insertText) => setRefPicker({ insertText }) }
-          ]}
+          ] : []}
         />
 
+        {canModify && (
         <DriveUploadButton
           suggestedName={suggestDriveFileName({ project: project.name || '', section: label, suffix: 'doc' })}
           naming={{ project: project.name || '', section: label, suffix: 'doc' }}
@@ -745,6 +755,7 @@ export const ProjectDetailModule = ({
           }
           label="⬆ Upload document"
         />
+        )}
 
         {figures.length > 0 && (
           <div className="mt-4 pt-4 border-t border-slate-200">
@@ -1163,38 +1174,47 @@ export const ProjectDetailModule = ({
                    badge={<span className={`text-[10px] font-bold rounded-full px-2 py-0.5 ${openComments ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
                      {openComments} open
                    </span>}>
-        {/* Authorized people */}
+        {/* Coworkers */}
         <div className="mb-4">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
-            <h4 className="text-xs font-black uppercase tracking-wide text-slate-500">Authorized people (from the list of users)</h4>
-            {isOwner && <span className="text-[10px] text-slate-400">owner &amp; superusers always included</span>}
+            <h4 className="text-xs font-black uppercase tracking-wide text-slate-500">Coworkers (view / modify)</h4>
+            {isOwner && <span className="text-[10px] text-slate-400">owner &amp; superusers always have full access</span>}
           </div>
           <p className="text-[10px] text-slate-500 mb-2">
-            Only the people below can add comments, answer them and resolve them.
+            Add coworkers and choose their permission: <b>view</b> (read-only) or <b>modify</b> (they can see and edit).
           </p>
           {shownUsers.length === 0 ? (
             <p className="text-xs italic text-slate-400 bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-2">
               No users in the list yet — add scientists in Definitions → Scientists &amp; Operators.
             </p>
           ) : (
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap gap-1.5 items-center">
               {shownUsers.map((u) => {
                 const isOwnerName = u === project.scientist;
-                const on = isOwnerName || authorizedPeople.includes(u);
+                const perm = isOwnerName ? 'owner' : (authList.find((c) => c.name === u)?.permission || 'none');
                 const disabled = !isOwner || isOwnerName;
                 return (
-                  <button key={u} type="button" disabled={disabled}
-                          onClick={() => toggleAuthorized(u)}
-                          title={isOwnerName
-                            ? 'The project owner is always authorized'
-                            : (disabled ? 'Only the project owner can change this list' : (on ? 'Click to remove access' : 'Click to give access'))}
-                          className={`text-[10px] font-bold px-2 py-1 rounded-full border transition-colors ${
-                            on
-                              ? 'bg-blue-600 text-white border-blue-600'
-                              : 'bg-white text-slate-600 border-slate-300 hover:border-blue-400'
-                          } ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}>
-                    {isOwnerName ? '👑 ' : ''}{u}{on ? ' ✓' : ''}
-                  </button>
+                  <div key={u} className={`flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg border transition-colors ${
+                    perm === 'owner' ? 'bg-amber-50 border-amber-200 text-amber-700'
+                      : perm !== 'none' ? 'bg-blue-50 border-blue-200 text-blue-700'
+                      : 'bg-white text-slate-600 border-slate-300'
+                  } ${disabled ? 'opacity-70' : ''}`}>
+                    <span>{isOwnerName ? '👑 ' : ''}{u}</span>
+                    {disabled ? (
+                      <span className="text-[9px] uppercase">{perm === 'owner' ? 'owner' : (perm === 'modify' ? 'modify' : (perm === 'view' ? 'view' : '—'))}</span>
+                    ) : (
+                      <select
+                        value={perm}
+                        onChange={(e) => setCoworkerPermission(u, e.target.value === 'none' ? '' : e.target.value)}
+                        className="bg-transparent text-[10px] font-bold outline-none cursor-pointer"
+                        title={`Permission of ${u} — view = read-only, modify = can edit`}
+                      >
+                        <option value="none">none</option>
+                        <option value="view">view</option>
+                        <option value="modify">modify</option>
+                      </select>
+                    )}
+                  </div>
                 );
               })}
             </div>
@@ -1332,6 +1352,7 @@ export const ProjectDetailModule = ({
           </div>
           <input className={inputCls} value={project.name}
                  onChange={(e) => updateProject({ name: e.target.value })}
+                 readOnly={!canModify}
                  onFocus={() => { projectNameBeforeEditRef.current = project.name; }}
                  onBlur={() => {
                    const before = projectNameBeforeEditRef.current;
@@ -1343,7 +1364,16 @@ export const ProjectDetailModule = ({
                    projectNameBeforeEditRef.current = null;
                  }}
                  placeholder="Project name" />
-          {!isSuper && currentUser && (
+          {canSee && !isOwner && (
+            <div className={`text-[10px] rounded-lg px-3 py-1.5 border ${
+              canModify ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-slate-50 text-slate-500 border-slate-200'
+            }`}>
+              {canModify
+                ? '✏️ You are a coworker with modify permission — you can edit this project.'
+                : '👁 You have view-only access to this project — editing is disabled.'}
+            </div>
+          )}
+          {!isSuper && currentUser && isOwner && (
             <div className="text-[10px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5">
               🧪 You are editing your own project. Superusers see all projects and can filter by scientist.
             </div>
@@ -1364,6 +1394,7 @@ export const ProjectDetailModule = ({
             type creates the classic test page and makes its button appear inside the collapsible window below —
             each button is the link to that test page.
           </p>
+          {canModify && (
           <div className="flex flex-wrap gap-1.5">
             {TEST_TYPE_OPTIONS.map((opt) => (
               <button key={opt.type} type="button" onClick={() => addExperiment(opt.type)}
@@ -1372,7 +1403,8 @@ export const ProjectDetailModule = ({
               </button>
             ))}
           </div>
-          {visibleTests.length > 0 && (
+          )}
+          {canModify && visibleTests.length > 0 && (
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <label className="text-[10px] font-black uppercase tracking-wide text-slate-400">Link existing test:</label>
               <select value={linkTestId} onChange={(e) => setLinkTestId(e.target.value)}
@@ -1414,20 +1446,24 @@ export const ProjectDetailModule = ({
                       <span className="text-xs font-bold text-slate-700 truncate">{test?.name || 'Test'}</span>
                       <span className="text-[10px] text-slate-400 hidden md:inline">📅 {test?.date || '—'}</span>
                     </button>
-                    <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 cursor-pointer"
-                           title="Include this test in the exported project document (its ⭐-starred figures, plots and tables)">
-                      <input type="checkbox" checked={!!exp.includeInDocument} onChange={() => toggleInclude(exp.id)}
-                             className="w-3.5 h-3.5 accent-blue-600" />
-                      Include
-                    </label>
+                    {canModify && (
+                      <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 cursor-pointer"
+                             title="Include this test in the exported project document (its ⭐-starred figures, plots and tables)">
+                        <input type="checkbox" checked={!!exp.includeInDocument} onChange={() => toggleInclude(exp.id)}
+                               className="w-3.5 h-3.5 accent-blue-600" />
+                        Include
+                      </label>
+                    )}
                     <span className="text-[10px] font-bold text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 whitespace-nowrap"
                           title="Items ⭐-starred on the test page that will be imported into the document">
                       ⭐ {getStarredItems(test).length}
                     </span>
-                    <button onClick={() => removeExperiment(exp.id)}
-                            className="shrink-0 text-red-400 hover:text-red-600 text-xs px-1.5" title="Remove from project">
-                      ✕
-                    </button>
+                    {canModify && (
+                      <button onClick={() => removeExperiment(exp.id)}
+                              className="shrink-0 text-red-400 hover:text-red-600 text-xs px-1.5" title="Remove from project">
+                        ✕
+                      </button>
+                    )}
                   </div>
                 );
               })}
@@ -1449,18 +1485,22 @@ export const ProjectDetailModule = ({
             </p>
             <div className="flex items-center gap-2">
               {mmFeedback && <span className="text-[10px] font-bold text-emerald-600">{mmFeedback}</span>}
-              <button type="button"
-                      onClick={() => { setMmEditOpen(true); setMmDraft(project.materialsAndMethods?.text || mmPartsFor(project, tests, false).map((p) => `${p.name}: ${p.text}`).join('\n')); }}
-                      className="text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 rounded-lg px-2 py-1 shadow-sm transition-colors whitespace-nowrap"
-                      title="Edit the Materials & Methods text that will appear in the exported document">
-                ✏️ Edit text
-              </button>
-              <button type="button"
-                      onClick={() => { regenerateMaterialsAndMethods(false, false); setMmEditOpen(false); }}
-                      className="text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 rounded-lg px-2 py-1 shadow-sm transition-colors whitespace-nowrap"
-                      title="Regenerate this section from the current Experimental Conditions, Instrumental Setup and Experiment Setup of the linked tests">
-                🔄 Update from tests
-              </button>
+              {canModify && (
+                <>
+                  <button type="button"
+                          onClick={() => { setMmEditOpen(true); setMmDraft(project.materialsAndMethods?.text || mmPartsFor(project, tests, false).map((p) => `${p.name}: ${p.text}`).join('\n')); }}
+                          className="text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 rounded-lg px-2 py-1 shadow-sm transition-colors whitespace-nowrap"
+                          title="Edit the Materials & Methods text that will appear in the exported document">
+                    ✏️ Edit text
+                  </button>
+                  <button type="button"
+                          onClick={() => { regenerateMaterialsAndMethods(false, false); setMmEditOpen(false); }}
+                          className="text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 rounded-lg px-2 py-1 shadow-sm transition-colors whitespace-nowrap"
+                          title="Regenerate this section from the current Experimental Conditions, Instrumental Setup and Experiment Setup of the linked tests">
+                    🔄 Update from tests
+                  </button>
+                </>
+              )}
             </div>
           </div>
 

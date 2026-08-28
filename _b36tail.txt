@@ -1,0 +1,3 @@
+﻿[33m[33m[INEFFECTIVE_DYNAMIC_IMPORT] [0msrc/components/Publications.jsx is dynamically imported by src/components/AppModules/miscModules.jsx but also statically imported by src/components/AppModules/projectDetailModule.jsx, dynamic import will not move module into another chunk.
+[39m
+[32mâœ“ built in 2.31s[39m
