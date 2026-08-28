@@ -8,6 +8,8 @@ import {
 } from 'recharts';
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, VIS_PALETTES, PER_ATOM_COLORS, seriesColorFor } from '../utils/chartStyle';
+import { suggestDriveFileName } from '../utils/driveNaming';
+import { uploadLocalFile, getDriveToken } from '../utils/driveUpload';
 import {
   AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, CARBON_RANGE_DB,
   SS_CORRECTIONS, SS_META, DNA_FORM_OFFSETS, SUGAR_ANOMER_OFFSETS,
@@ -4736,6 +4738,7 @@ export const DataSection = ({ ctx }) => {
           parsed.filename = title;
           parsed.expType = expType;
           parsed.fileTitle = fileTitle;
+          parsed.rawFile = oneR; // keep the raw 1r file for Drive archiving
           results.push(parsed);
         }
       }
@@ -4755,7 +4758,7 @@ export const DataSection = ({ ctx }) => {
   };
 
   // Import only the experiments the user ticked in the selection dialog.
-  const importSelectedSpectra = () => {
+  const importSelectedSpectra = async () => {
     const selected = pendingSpectra.filter(p => selectedSpectraIds.includes(p.id));
     if (!selected.length) { setNmrBrukerMsg('⚠️ Select at least one spectrum to import.'); return; }
 
@@ -4778,7 +4781,31 @@ export const DataSection = ({ ctx }) => {
 
     setPendingSpectra([]);
     setSelectedSpectraIds([]);
-    setNmrBrukerMsg(`✅ Imported ${selected.length} spectrum/spectra.`);
+
+    // Archive the RAW 1r file(s) to Google Drive automatically (best-effort).
+    const driveConnected = getDriveToken();
+    let driveSaved = 0;
+    if (driveConnected) {
+      const driveCtx = {
+        project: (activeTest.projectNames || [])[0] || '',
+        test: activeTest.name || activeTest.instanceName || '',
+        section: 'Data',
+        subsection: 'Bruker 1r'
+      };
+      for (let i = 0; i < selected.length; i++) {
+        const raw = selected[i].parsed && selected[i].parsed.rawFile;
+        if (!raw) continue;
+        try {
+          const title = selected[i].filename || `Exp${i + 1}`;
+          const name = suggestDriveFileName({ ...driveCtx, title, suffix: 'bruker1r' }) + '.1r';
+          await uploadLocalFile({ name, mimeType: 'application/octet-stream', file: raw, ctx: { ...driveCtx, title, suffix: 'bruker1r' } });
+          driveSaved++;
+        } catch (err) { console.warn('Bruker Drive archive failed:', err && err.message); }
+      }
+    }
+    setNmrBrukerMsg(driveConnected
+      ? `✅ Imported ${selected.length} spectrum/spectra — ${driveSaved} raw 1r file(s) saved to Google Drive.`
+      : `✅ Imported ${selected.length} spectrum/spectra. (Drive not connected — raw files not archived.)`);
   };
 
   const importFromUrl = async () => {

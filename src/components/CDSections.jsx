@@ -16,6 +16,7 @@ import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, seriesColorFor
 import { parseJascoJwsBinary, isJascoJwsBinary } from '../utils/jascoJws';
 import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
+import { uploadLocalFile, withExtension, getDriveToken } from '../utils/driveUpload';
 export { CollapsibleSection };
 export { VIS_PALETTES };
 
@@ -1241,6 +1242,7 @@ export const Data = ({ ctx }) => {
         }
         if (parsed.xs.length) {
           parsed.filename = f.name;
+          parsed.rawFile = f; // keep the raw file for Drive archiving
           results.push(parsed);
         } else {
           failed.push(f.name);
@@ -1282,7 +1284,34 @@ export const Data = ({ ctx }) => {
         return [...prevTests, ...newTests];
       });
     }
-    setJascoMsg(`✅ Imported ${results.length} file(s).`);
+    // Archive the RAW Jasco file(s) to Google Drive automatically (best-effort).
+    const driveConnected = getDriveToken();
+    let driveSaved = 0;
+    if (driveConnected) {
+      const driveCtx = {
+        project: (activeTest.projectNames || [])[0] || '',
+        test: activeTest.name || activeTest.instanceName || '',
+        section: 'Data',
+        subsection: 'Spectra'
+      };
+      for (let i = 0; i < results.length; i++) {
+        const file = results[i].rawFile;
+        if (!file) continue;
+        try {
+          const base = String(file.name || '').replace(/\.[^/.]+$/, '');
+          const suffix = results.length > 1 ? `spectrum${i + 1}` : 'spectrum';
+          const name = withExtension(
+            suggestDriveFileName({ ...driveCtx, title: base, suffix }),
+            file.name || 'jws'
+          );
+          await uploadLocalFile({ name, mimeType: file.type || 'application/octet-stream', file, ctx: { ...driveCtx, title: base, suffix } });
+          driveSaved++;
+        } catch (err) { console.warn('Jasco Drive archive failed:', err && err.message); }
+      }
+    }
+    setJascoMsg(driveConnected
+      ? `✅ Imported ${results.length} file(s) — ${driveSaved} saved to Google Drive.`
+      : `✅ Imported ${results.length} file(s). (Drive not connected — raw files not archived.)`);
     if (jascoFileRef.current) jascoFileRef.current.value = '';
   };
 
