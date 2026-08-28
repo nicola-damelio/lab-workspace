@@ -9,8 +9,9 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { SearchableSelect } from '../SearchableSelect';
 import { RichTextEditor } from '../RichTextEditor';
 import { CALC_INPUT_CLS, CALC_LABEL_CLS } from '../../utils/styles';
+import { LibraryDocUpload } from '../DefinitionsExtra';
 
-export const LinksManager = ({ links = [], setLinks }) => {
+export const LinksManager = ({ links = [], setLinks, tableName = '', elementName = '' }) => {
   const addLink = () => setLinks([...links, { url: '', description: '' }]);
   const updateLink = (idx, field, val) => {
     const newLinks = [...links];
@@ -48,6 +49,12 @@ export const LinksManager = ({ links = [], setLinks }) => {
           </button>
         </div>
       ))}
+      {tableName && elementName && (
+        <div className="mb-2">
+          <LibraryDocUpload tableName={tableName} elementName={elementName}
+                            onAdded={(l) => setLinks([...links, l])} />
+        </div>
+      )}
       <button
         type="button"
         onClick={addLink}
@@ -231,7 +238,7 @@ export const CellLineDefinitionSection = ({
           <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Growth conditions, morphology, etc." className={`${CALC_INPUT_CLS} h-20`} />
         </div>
 
-        <LinksManager links={links} setLinks={setLinks} />
+        <LinksManager links={links} setLinks={setLinks} tableName="cellLines" elementName={selectedName || newName.trim()} />
 
         <div className="lg:col-span-12 flex justify-end gap-2 mt-2">
           {selectedName && (
@@ -368,7 +375,7 @@ export const PlasmidDefinitionSection = ({
           <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Cloning strategy, usage, etc." className={`${CALC_INPUT_CLS} h-20`} />
         </div>
 
-        <LinksManager links={links} setLinks={setLinks} />
+        <LinksManager links={links} setLinks={setLinks} tableName="plasmids" elementName={selectedName || newName.trim()} />
 
         <div className="lg:col-span-12 flex justify-end gap-2 mt-2">
           {selectedName && (

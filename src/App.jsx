@@ -2724,7 +2724,7 @@ const openDataset = (dset) => {
             {currentModule === 'dashboard' && (<DashboardModule
               datasetTitle={datasetTitle} setDatasetTitle={setDatasetTitle}
               datasetSubtitle={datasetSubtitle}
-              handlePrint={handlePrint} tests={tests} storages={storages}
+              handlePrint={handlePrint} tests={tests} setTests={setTests} storages={storages}
               setCurrentModule={setCurrentModule} mergedPlan={mergedPlan}
             />)}
 

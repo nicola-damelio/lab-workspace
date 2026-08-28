@@ -436,7 +436,7 @@ export const CompoundDefinitionSection = ({
         />
       </div>
 
-      <LinksManager links={links} setLinks={setLinks} />
+      <LinksManager links={links} setLinks={setLinks} tableName="compounds" elementName={selectedName || newName.trim()} />
 
       <div className="grid grid-cols-1 md:grid-cols-12 gap-3 mt-4 mb-4">
         <div className="md:col-span-3">

@@ -5,8 +5,9 @@
 
 import React, { useState } from 'react';
 import { Icon } from '../Icons';
+import { DriveImageMigration } from '../DriveImageMigration';
 
-export const DashboardModule = ({ datasetTitle, setDatasetTitle, datasetSubtitle, handlePrint, tests, storages, setCurrentModule, mergedPlan }) => {
+export const DashboardModule = ({ datasetTitle, setDatasetTitle, datasetSubtitle, handlePrint, tests, setTests, storages, setCurrentModule, mergedPlan }) => {
   const [projectCount] = useState(() => {
     try {
       const raw = localStorage.getItem('labWorkspace_projects');
@@ -172,6 +173,10 @@ export const DashboardModule = ({ datasetTitle, setDatasetTitle, datasetSubtitle
                         <p className="text-xs text-slate-500">{mod.desc}</p>
                       </button>
                     ))}
+                  </div>
+
+                  <div className="mt-4">
+                    <DriveImageMigration tests={tests} setTests={setTests} />
                   </div>
                 </div>
               </div>

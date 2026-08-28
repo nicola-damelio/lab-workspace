@@ -100,6 +100,39 @@ export const LibraryDirectory = ({
       csv.push(`${escapeCsv(name)},${escapeCsv(desc)},${escapeCsv(mw)},${escapeCsv(comments)}`);
     });
 
+    csv.push("");
+    csv.push("--- NMR INSTRUMENTS ---");
+    csv.push("Name,Frequency (MHz),Manufacturer,Comments");
+    (nmrInstruments || []).forEach(i => {
+      const name = typeof i === 'string' ? i : i.name;
+      const freq = typeof i === 'string' ? '' : i.frequency;
+      const man = typeof i === 'string' ? '' : i.manufacturer;
+      const comments = typeof i === 'string' ? '' : i.comments;
+      csv.push(`${escapeCsv(name)},${escapeCsv(freq)},${escapeCsv(man)},${escapeCsv(comments)}`);
+    });
+
+    csv.push("");
+    csv.push("--- NMR PROBES ---");
+    csv.push("Name,Type,Field (MHz),Comments");
+    (nmrProbes || []).forEach(p => {
+      const name = typeof p === 'string' ? p : p.name;
+      const type = typeof p === 'string' ? '' : [p.type, p.subtype].filter(Boolean).join(' / ');
+      const field = typeof p === 'string' ? '' : p.field;
+      const comments = typeof p === 'string' ? '' : p.comments;
+      csv.push(`${escapeCsv(name)},${escapeCsv(type)},${escapeCsv(field)},${escapeCsv(comments)}`);
+    });
+
+    csv.push("");
+    csv.push("--- NMR EXPERIMENTS / PULSE PROGRAMS ---");
+    csv.push("Name,Dimensions,Nuclei,Comments");
+    (nmrExperiments || []).forEach(e => {
+      const name = typeof e === 'string' ? e : e.name;
+      const dim = typeof e === 'string' ? '' : e.dimensions;
+      const nuclei = typeof e === 'string' ? '' : (Array.isArray(e.nuclei) ? e.nuclei.filter(Boolean).join(', ') : (e.nuclei || ''));
+      const comments = typeof e === 'string' ? '' : e.comments;
+      csv.push(`${escapeCsv(name)},${escapeCsv(dim)},${escapeCsv(nuclei)},${escapeCsv(comments)}`);
+    });
+
     const blob = new Blob([csv.join('\n')], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

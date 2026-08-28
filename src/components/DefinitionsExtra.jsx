@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { SearchableSelect } from './SearchableSelect';
+import { uploadLocalFile, withExtension } from '../utils/driveUpload';
+import { sanitizeSlug } from '../utils/driveNaming';
 
 /* ============================================================
    DefinitionsExtra — Solvents, Buffers, Additives,
@@ -118,7 +120,7 @@ const Select = ({ label, value, onChange, options, className = '' }) => {
   );
 };
 
-export const LinksManager = ({ links = [], setLinks }) => {
+export const LinksManager = ({ links = [], setLinks, tableName = '', elementName = '' }) => {
   const addLink = () => setLinks([...links, { url: '', description: '' }]);
   const updateLink = (idx, field, val) => {
     const newLinks = [...links];
@@ -137,7 +139,49 @@ export const LinksManager = ({ links = [], setLinks }) => {
           <button type="button" onClick={() => removeLink(i)} className="text-red-500 hover:text-red-700 font-bold px-2 py-1 text-lg leading-none">×</button>
         </div>
       ))}
+      {tableName && elementName && (
+        <LibraryDocUpload tableName={tableName} elementName={elementName}
+                          onAdded={(l) => setLinks([...links, l])} />
+      )}
       <button type="button" onClick={addLink} className="text-xs bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 font-semibold px-3 py-1.5 rounded-lg transition-colors self-start shadow-sm">+ Add Link</button>
+    </div>
+  );
+};
+
+/* Upload a documentation file of a library element into
+   <Lab Workspace>/<dataset>/library/<tableName>/<elementName>_<originalName>.
+   The Drive link is added to the element's links via onAdded. */
+export const LibraryDocUpload = ({ tableName = '', elementName = '', onAdded }) => {
+  const inputRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+  if (!tableName || !elementName) return null;
+  const handleFile = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (e.target.value) e.target.value = '';
+    if (!file) return;
+    setBusy(true);
+    try {
+      const base = String(file.name || '').replace(/\.[^/.]+$/, '');
+      const drive = await uploadLocalFile({
+        name: withExtension(`${sanitizeSlug(elementName)}_${base}`, file.name || 'file'),
+        mimeType: file.type || 'application/octet-stream',
+        file,
+        path: ['library', tableName]
+      });
+      if (drive && drive.driveUrl && onAdded) {
+        onAdded({ description: `${base} (documentation)`, url: drive.driveUrl });
+      }
+    } catch { alert('Could not upload the documentation to Google Drive.'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="flex items-center gap-2">
+      <input ref={inputRef} type="file" className="hidden" onChange={handleFile} />
+      <button type="button" disabled={busy} onClick={() => inputRef.current && inputRef.current.click()}
+              className="text-[10px] font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg px-2.5 py-1.5 shadow-sm transition-colors disabled:opacity-50">
+        {busy ? '⏳ Uploading…' : '⬆ Upload documentation to Drive'}
+      </button>
+      <span className="text-[10px] text-slate-400">library/{tableName}/{elementName}_file</span>
     </div>
   );
 };
@@ -232,7 +276,7 @@ export const SolventsManager = ({ solvents = [], setSolvents, selectedId, onSele
           <textarea value={comments} onChange={e => setComments(e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-blue-500 mt-1" rows={2} />
         </div>
         <div className="md:col-span-12">
-          <LinksManager links={links} setLinks={setLinks} />
+          <LinksManager links={links} setLinks={setLinks} tableName="solvents" elementName={selectedName || newName.trim()} />
         </div>
         <div className="md:col-span-12 flex justify-end gap-2 mt-2">
           {selectedName && (
@@ -331,7 +375,7 @@ export const BuffersManager = ({ buffers = [], setBuffers, selectedId, onSelect 
           <textarea value={comments} onChange={e => setComments(e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-blue-500 mt-1" rows={2} />
         </div>
         <div className="md:col-span-12">
-          <LinksManager links={links} setLinks={setLinks} />
+          <LinksManager links={links} setLinks={setLinks} tableName="buffers" elementName={selectedName || newName.trim()} />
         </div>
         <div className="md:col-span-12 flex justify-end gap-2 mt-2">
           {selectedName && (
@@ -430,7 +474,7 @@ export const AdditivesManager = ({ additives = [], setAdditives, selectedId, onS
           <textarea value={comments} onChange={e => setComments(e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-blue-500 mt-1" rows={2} />
         </div>
         <div className="md:col-span-12">
-          <LinksManager links={links} setLinks={setLinks} />
+          <LinksManager links={links} setLinks={setLinks} tableName="additives" elementName={selectedName || newName.trim()} />
         </div>
         <div className="md:col-span-12 flex justify-end gap-2 mt-2">
           {selectedName && (
@@ -544,7 +588,7 @@ export const NMRProbesManager = ({ nmrProbes = [], setNmrProbes, selectedId, onS
           <textarea value={comments} onChange={e => setComments(e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-blue-500 mt-1" rows={2} />
         </div>
         <div className="md:col-span-12">
-          <LinksManager links={links} setLinks={setLinks} />
+          <LinksManager links={links} setLinks={setLinks} tableName="nmrProbes" elementName={selectedName || newName.trim()} />
         </div>
         <div className="md:col-span-12 flex justify-end gap-2 mt-2">
           {selectedName && (
@@ -648,7 +692,7 @@ export const NMRInstrumentsManager = ({ nmrInstruments = [], setNmrInstruments, 
           <textarea value={comments} onChange={e => setComments(e.target.value)} className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-blue-500 mt-1" rows={2} />
         </div>
         <div className="md:col-span-12">
-          <LinksManager links={links} setLinks={setLinks} />
+          <LinksManager links={links} setLinks={setLinks} tableName="nmrInstruments" elementName={selectedName || newName.trim()} />
         </div>
         <div className="md:col-span-12 flex justify-end gap-2 mt-2">
           {selectedName && (
@@ -1480,6 +1524,7 @@ export const NMRExperimentsManager = ({
   const [pulseSequenceLink, setPulseSequenceLink] = useState('');
   const [viewerOpen, setViewerOpen] = useState(false);
   const [loadingFromLink, setLoadingFromLink] = useState(false);
+  const [savingPulse, setSavingPulse] = useState(false);
   const [pulseStatus, setPulseStatus] = useState('');
 
   const normalized = (Array.isArray(nmrExperiments) ? nmrExperiments : []).map(
@@ -1539,6 +1584,33 @@ export const NMRExperimentsManager = ({
       );
     } finally {
       setLoadingFromLink(false);
+    }
+  };
+
+  // Save the pasted pulse sequence as a real file on Drive:
+  // <Lab Workspace>/<dataset>/library/nmrExperiments/<name>_pulseSequence.txt
+  const savePulseToDrive = async () => {
+    const expName = (selectedName || newName.trim()).trim();
+    if (!expName || !pulseSequence.trim()) return;
+    setSavingPulse(true);
+    setPulseStatus('');
+    try {
+      const drive = await uploadLocalFile({
+        name: `${sanitizeSlug(expName)}_pulseSequence.txt`,
+        mimeType: 'text/plain',
+        file: new Blob([pulseSequence], { type: 'text/plain' }),
+        path: ['library', 'nmrExperiments']
+      });
+      if (drive && drive.driveUrl) {
+        setPulseSequenceLink(drive.driveUrl);
+        setPulseStatus(`✓ Pulse sequence saved to Drive: library/nmrExperiments/${expName}_pulseSequence.txt`);
+      } else {
+        setPulseStatus('Drive upload failed — connect Google Drive and try again.');
+      }
+    } catch {
+      setPulseStatus('Could not save the pulse sequence to Google Drive.');
+    } finally {
+      setSavingPulse(false);
     }
   };
 
@@ -1684,6 +1756,16 @@ export const NMRExperimentsManager = ({
             {loadingFromLink ? 'Loading...' : 'Load from Link'}
           </button>
 
+          <button
+            type="button"
+            onClick={savePulseToDrive}
+            disabled={savingPulse || !pulseSequence.trim() || !(selectedName || newName.trim())}
+            className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold px-3 py-2 rounded-lg text-xs shadow-sm transition-colors"
+            title="Save the pulse-sequence text as a file in library/nmrExperiments/<name>_pulseSequence.txt"
+          >
+            {savingPulse ? 'Saving…' : '⬆ Save Pulse Sequence to Drive'}
+          </button>
+
           {pulseSequenceLink.trim() && (
             <a
               href={normalizePulseLinkUrl(pulseSequenceLink)}
@@ -1724,7 +1806,7 @@ export const NMRExperimentsManager = ({
         </div>
 
         <div className="md:col-span-12">
-          <LinksManager links={links} setLinks={setLinks} />
+          <LinksManager links={links} setLinks={setLinks} tableName="nmrExperiments" elementName={selectedName || newName.trim()} />
         </div>
 
         <div className="md:col-span-12 flex justify-end mt-2">

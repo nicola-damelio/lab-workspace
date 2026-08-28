@@ -298,6 +298,30 @@ export const findFolderByName = async (name, parentId) => {
   } catch { return ''; }
 };
 
+/** Find an existing app-created file by exact name inside `parentId` ('' if missing). */
+export const findDriveFileByName = async (name, parentId) => {
+  if (!name || !parentId) return '';
+  try {
+    const q = encodeURIComponent(
+      `name='${escapeDriveQuery(name)}' and '${parentId}' in parents and trashed=false`
+    );
+    const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=10`);
+    const j = await res.json();
+    const found = (j.files || []).find((f) => f.name === name);
+    return found ? String(found.id) : '';
+  } catch { return ''; }
+};
+
+/** Fetch a Drive file's id + name. Only files the app created are readable
+ *  under the drive.file scope — external files throw and should be skipped. */
+export const getDriveFileMeta = async (fileId) => {
+  if (!fileId) throw new Error('No file id');
+  const res = await driveFetch(`/drive/v3/files/${fileId}?fields=id,name`);
+  const meta = await res.json();
+  if (!meta || !meta.id) throw new Error('File not found');
+  return { id: String(meta.id), name: String(meta.name || '') };
+};
+
 /** Find a folder or create it (app-owned) inside `parentId`. */
 export const findOrCreateFolder = async (name, parentId) => {
   const existing = await findFolderByName(name, parentId);
