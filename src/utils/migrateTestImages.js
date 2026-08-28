@@ -24,11 +24,13 @@
 import {
   getDriveToken,
   getDriveFileMeta,
+  getDriveFileRegistry,
   findDriveFileByName,
   resolveDrivePathFromNames,
   moveDriveFile,
   renameDriveFile,
   registerDriveFile,
+  trashEmptyFolderChain,
   uploadLocalFile
 } from './driveUpload';
 import { driveFolderPath, suggestDriveFileName } from './driveNaming';
@@ -74,7 +76,10 @@ export const collectTestImageRefs = (test) => {
   const ctx = {
     project: (test.projectNames || [])[0] || '',
     test: test.name || '',
-    instance: test.instanceName || '',
+    // Instances are grouped by test name; an unnamed instance is labelled
+    // "Primary" in the app — mirror that on Drive so the instance folder is
+    // always present: <test>/<instance>/Report/…
+    instance: test.instanceName || 'Primary',
     scientist: test.operator || '',
     section: TEST_IMAGE_SECTION
   };
@@ -315,11 +320,17 @@ export const migrateTestDriveImages = async ({ tests, onProgress = () => {} } = 
       const extMatch = /(\.[a-zA-Z0-9]{1,10})$/.exec(curName);
       const ext = extMatch ? extMatch[1] : '';
       finalName = await pickUniqueName(resolved.leafId, base + ext, usedNames, fileId);
+      const oldPath = (getDriveFileRegistry()[fileId] || {}).path || null;
       await moveDriveFile(fileId, resolved.leafId);
       if (finalName !== curName) await renameDriveFile(fileId, finalName);
       // Register WITH the title so future project/test renames recompute the
       // same <title>_<scientist> name (instead of falling back to "File").
       registerDriveFile(fileId, finalName, { ...ctx, title: first.title }, resolved.path);
+      // The folder the file just left may now be empty (e.g. an instance-less
+      // <test>/Report from an earlier run) — trash it so Drive stays tidy.
+      if (Array.isArray(oldPath) && oldPath.length > 0) {
+        try { await trashEmptyFolderChain(oldPath); } catch { /* keep going */ }
+      }
       newUrl = `https://drive.google.com/file/d/${fileId}/view`;
       status = 'moved';
     } catch {
