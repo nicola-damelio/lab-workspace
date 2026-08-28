@@ -2789,6 +2789,9 @@ const openDataset = (dset) => {
               setExpandedGroups={setExpandedGroups} setLoginModal={setLoginModal}
               setTestCategories={setTestCategories} setTests={setTests} testCategories={testCategories}
               tests={tests} unlockedTestIds={unlockedTestIds}
+              allCellLines={allCellLines} allCmpds={allCmpds} operatorNames={operatorNames} plasmidMeta={plasmidMeta}
+              solvents={solvents} buffers={buffers} additives={additives}
+              nmrInstruments={nmrInstruments} nmrProbes={nmrProbes} nmrExperiments={nmrExperiments}
             />)}
             {currentModule === 'protocols' && (<ProtocolsModule
               datasetProtocols={datasetProtocols} expandedGroups={expandedGroups} handlePrint={handlePrint}
