@@ -456,6 +456,30 @@ else if (traj.trajectory && typeof traj.trajectory.setFrame === 'function') traj
 } catch {}
 };
 
+/** Split a text PDB file into one Blob per CHAIN (ATOM/HETATM grouped by the
+ *  chain-id column, lines 22). Returns [] when the file has 0 or 1 chains or
+ *  cannot be read — the caller keeps the whole structure as a single component.
+ *  Deterministic text parsing, so it does not depend on NGL internals. */
+const splitPdbFileIntoChains = async (file) => {
+  if (!file) return [];
+  let text = '';
+  try { text = await file.text(); } catch { return []; }
+  const chainLines = {};
+  for (const line of String(text || '').split(/\r?\n/)) {
+    const rec = line.slice(0, 6).trim();
+    if (rec !== 'ATOM' && rec !== 'HETATM') continue;
+    const chain = line.slice(21, 22).trim() || '_';
+    if (!chainLines[chain]) chainLines[chain] = [];
+    chainLines[chain].push(line);
+  }
+  const ids = Object.keys(chainLines);
+  if (ids.length <= 1) return [];
+  return ids.map((cid) => ({
+    chainId: cid,
+    blob: new Blob([`${chainLines[cid].join('\n')}\nEND\n`], { type: 'text/plain' })
+  }));
+};
+
 // ============================================================================
 // MAIN COMPONENT
 // ============================================================================
@@ -877,6 +901,57 @@ const addDefaultReps = (component) => {
   try { trackBase(component.addRepresentation('ball+stick', { sele: 'hetero and not water', aspectRatio: 1.1 })); } catch {}
 };
 
+// Apply the CURRENT style selectors (Backbone / Molecule Style) to ANY component
+// — the main structure OR an extra molecule/chain — so changing a style updates
+// everything, not just the main structure. Proteins use the backbone selector
+// (+ hetero ball+stick); other molecules use the Molecule Style selector.
+// Returns the list of representation objects added (so callers can remove them).
+const applyCurrentStyleTo = useCallback((comp, baseReps) => {
+  if (!comp || !comp.structure) return baseReps || [];
+  (baseReps || []).forEach((r) => { try { comp.removeRepresentation(r); } catch {} });
+  const next = [];
+  let isProteinish = false;
+  try { isProteinish = (comp.structure.getAtomSet('protein').count || 0) > 0; } catch {
+    isProteinish = moleculeTypeRef.current === 'protein';
+  }
+  if (isProteinish) {
+    const bb = backboneStyleRef.current || 'cartoon';
+    try {
+      if (bb === 'cartoon') next.push(comp.addRepresentation('cartoon', { sele: 'protein', color: 'residueindex', quality: 'high' }));
+      else if (bb === 'tube') next.push(comp.addRepresentation('cartoon', { sele: 'protein', color: 'residueindex', radius: 0.3, quality: 'high' }));
+      else if (bb === 'ball+stick') next.push(comp.addRepresentation('ball+stick', { sele: 'protein', colorScheme: 'element', multipleBond: true, aspectRatio: 1.1 }));
+      else if (bb === 'sticks') next.push(comp.addRepresentation('ball+stick', { sele: 'protein and not sidechain', colorScheme: 'element', multipleBond: true, aspectRatio: 1.1 }));
+      else if (bb === 'lines') next.push(comp.addRepresentation('line', { sele: 'protein', colorScheme: 'element' }));
+      else if (bb === 'spheres') next.push(comp.addRepresentation('spacefill', { sele: 'protein', colorScheme: 'element', scale: 0.6 }));
+    } catch {}
+    try { next.push(comp.addRepresentation('ball+stick', { sele: 'hetero and not water', colorScheme: 'element', aspectRatio: 1.1 })); } catch {}
+  } else {
+    const ms = moleculeStyleRef.current || 'ball+stick';
+    try {
+      if (ms === 'ball+stick') next.push(comp.addRepresentation('ball+stick', { colorScheme: 'element', multipleBond: true, aspectRatio: 1.3 }));
+      else if (ms === 'stick') next.push(comp.addRepresentation('stick', { colorScheme: 'element', multipleBond: true }));
+      else if (ms === 'line') next.push(comp.addRepresentation('line', { colorScheme: 'element' }));
+      else if (ms === 'spheres') next.push(comp.addRepresentation('spacefill', { colorScheme: 'element', scale: 0.7 }));
+      else if (ms === 'surface') next.push(comp.addRepresentation('surface', { colorScheme: 'element' }));
+    } catch {}
+  }
+  return next;
+}, []);
+
+// Load ONE chain of a multi-chain PDB as its own (hidden) NGL component and add
+// it to the Molecules selector. Called by the main-load effect after the whole
+// structure is parsed.
+const loadChainMolecule = useCallback(async (blob, name, ci) => {
+  const stage = stageRef.current;
+  if (!stage) return;
+  try {
+    const comp = await stage.loadFile(blob, { ext: 'pdb' });
+    const baseReps = applyCurrentStyleTo(comp, []);
+    extraCompsRef.current.push({ id: `chain_${Date.now()}_${ci}`, name, comp, baseReps });
+    try { comp.setVisibility(false); } catch {}
+  } catch { /* chain load failed — keep it inside the main component */ }
+}, [applyCurrentStyleTo]);
+
 // Main structure load
 useEffect(() => {
 if (!loadRequest || (!loadRequest.file && !loadRequest.url && !loadRequest.text)) return;
@@ -1012,33 +1087,22 @@ try {
 
 // Multi-chain PDB (protein complexes / docked complexes): expose each CHAIN as
 // its own entry in the Molecules selector so the partners can be viewed alone
-// or together. Skipped for multi-MODEL files (the Model selector covers those).
+// or together. Uses the PDB TEXT (deterministic, NGL-version independent) to
+// split ATOM/HETATM lines by chain id. Skipped for multi-MODEL files (the Model
+// selector covers those) and for non-PDB / binary inputs.
 try {
-  const ngl = window.NGL;
-  const struct = component.structure;
-  const frameCount = struct ? struct.frameCount : 0;
-  if (ngl && struct && frameCount <= 1 && typeof struct.getChainList === 'function') {
-    const chainIds = [...new Set((struct.getChainList() || [])
-      .map((c) => (c && c.name ? String(c.name) : ''))
-      .filter((x) => x !== ''))];
-    if (chainIds.length > 1) {
-      chainIds.forEach((cid, ci) => {
-        try {
-          const view = struct.getView(new ngl.Selection(`:${cid}`));
-          if (!view || !view.atomCount) return;
-          const chainComp = stage.addComponentFromObject(view, { name: `Chain ${cid}` });
-          try { chainComp.addRepresentation('cartoon', { sele: 'protein', color: 'residueindex', quality: 'high' }); } catch {}
-          try { chainComp.addRepresentation('ball+stick', { sele: 'hetero and not water', colorScheme: 'element', aspectRatio: 1.1 }); } catch {}
-          extraCompsRef.current.push({ id: `chain_${Date.now()}_${ci}`, name: `Chain ${cid}`, comp: chainComp });
-          try { chainComp.setVisibility(false); } catch {}
-        } catch { /* chain split failed — keep it inside the main component */ }
-      });
-      if (extraCompsRef.current.length > 0) {
-        setExtraMols(extraCompsRef.current.map(({ id: xid, name: xname }) => ({ id: xid, name: xname })));
+  const frameCount = component.structure ? component.structure.frameCount : 0;
+  const srcFile = loadRequest && loadRequest.file;
+  if (frameCount <= 1 && srcFile && /\.(pdb|ent)$/i.test(String(srcFile.name || ''))) {
+    const chainParts = await splitPdbFileIntoChains(srcFile);
+    if (chainParts.length > 1) {
+      for (let ci = 0; ci < chainParts.length; ci++) {
+        await loadChainMolecule(chainParts[ci].blob, `Chain ${chainParts[ci].chainId}`, ci);
       }
+      setExtraMols(extraCompsRef.current.map(({ id: xid, name: xname }) => ({ id: xid, name: xname })));
     }
   }
-} catch { /* NGL chain APIs unavailable — keep the whole structure as one component */ }
+} catch { /* chain splitting failed — keep the whole structure as one component */ }
 
 // Expose the 1-letter sequence parsed from the structure so the pages can
 // auto-fill the sequence field when it is empty (enables the per-atom table).
@@ -1486,6 +1550,19 @@ useEffect(() => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [status, selections, selStyles, pymolActive, hideAll, backboneStyle, moleculeStyle]);
 
+// Re-apply the current style selectors to EVERY extra molecule / chain when the
+// user changes Backbone or Molecule Style — so the styles work for all loaded
+// structures, not just the main one.
+useEffect(() => {
+  if (status !== 'ready') return;
+  extraCompsRef.current.forEach((entry) => {
+    if (entry && entry.comp) {
+      entry.baseReps = applyCurrentStyleTo(entry.comp, entry.baseReps || []);
+    }
+  });
+  try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
+}, [backboneStyle, moleculeStyle, status, applyCurrentStyleTo]);
+
 // Background colour + quality ("ray shadows" approximation)
 useEffect(() => {
   const stage = stageRef.current;
@@ -1820,18 +1897,12 @@ try {
   const stage = stageRef.current;
   if (!stage) return;
   const comp = await stage.loadFile(file);
-  const isProtein = moleculeTypeRef.current === 'protein';
-  // Match the MAIN structure's styling so extra molecules do not look gray:
-  // proteins get the rainbow (residue-index) cartoon, small molecules keep CPK.
-  try { comp.addRepresentation('cartoon', { sele: 'protein', color: 'residueindex', quality: 'high' }); } catch {}
-  try { comp.addRepresentation('ball+stick', { sele: 'hetero and not water', colorScheme: 'element', aspectRatio: 1.1 }); } catch {}
-  if (!isProtein) {
-    try { if (comp.reprList && comp.reprList[0]) comp.removeRepresentation(comp.reprList[0]); } catch {}
-    try { comp.addRepresentation('ball+stick', { colorScheme: 'element', multipleBond: true }); } catch {}
-  }
+  // Style it with the CURRENT selectors (Backbone / Molecule Style) so extra
+  // molecules follow the user's choices and never look like a gray blob.
+  const baseReps = applyCurrentStyleTo(comp, []);
   const name = file.name || `Molecule ${n}`;
   const id = `mol_${Date.now()}_${n}`;
-  extraCompsRef.current.push({ id, name, comp });
+  extraCompsRef.current.push({ id, name, comp, baseReps });
   setExtraMols(extraCompsRef.current.map(({ id: xid, name: xname }) => ({ id: xid, name: xname })));
   try { comp.setVisibility(false); } catch {}
   // NOTE: no comp.autoView() here — the extra is HIDDEN and autoView would move
@@ -1840,7 +1911,7 @@ try {
 } catch (err) {
   console.warn('Could not load additional molecule:', err && err.message);
 }
-}, []);
+}, [applyCurrentStyleTo]);
 
 // Flush the pending extra files once the MAIN structure is ready. This runs
 // AFTER the main load has called stage.removeAllComponents(), so the extras can
@@ -1888,15 +1959,23 @@ try { if (componentRef.current) componentRef.current.setVisibility(key === 'main
 extraCompsRef.current.forEach(({ id, comp }) => {
   try { comp.setVisibility(showAll || key === id); } catch {}
 });
-if (showAll) {
-  // Fit EVERYTHING (main + extra molecules / chains) into the view.
-  try { if (stageRef.current && typeof stageRef.current.autoView === 'function') stageRef.current.autoView(); } catch {}
-  try { if (componentRef.current) componentRef.current.autoView(); } catch {}
-} else {
-  const target = key === 'main' ? componentRef.current : (extraCompsRef.current.find((x) => x.id === key) || {}).comp;
-  if (target) { try { target.autoView(); } catch {} }
-}
-try { if (stageRef.current) stageRef.current.handleResize(); } catch {}
+// Force NGL to re-render with the new visibility immediately.
+try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
+// Fit the camera to the visible content AFTER the visibility took effect.
+requestAnimationFrame(() => {
+  try {
+    const stage = stageRef.current;
+    if (!stage) return;
+    if (showAll) {
+      if (typeof stage.autoView === 'function') stage.autoView();
+      else if (componentRef.current) componentRef.current.autoView();
+    } else {
+      const target = key === 'main' ? componentRef.current : (extraCompsRef.current.find((x) => x.id === key) || {}).comp;
+      if (target) { try { target.autoView(); } catch {} }
+    }
+    try { stage.handleResize(); } catch {}
+  } catch {}
+});
 };
 
 // Switch the displayed MODEL of a multi-model PDB (docking clusters/ensembles).
@@ -2129,8 +2208,9 @@ className="border border-slate-300 rounded-md px-1.5 py-1.5 text-xs bg-white out
 </select>
 
 {/* Molecule Style — for NON-protein molecules (they previously had no
-    visualization options at all). */}
-{['organic', 'lipid', 'sugar', 'dna', 'rna'].includes(moleculeType) && (
+    visualization options at all). Also shown whenever extra molecules/chains are
+    loaded, so a non-protein structure can always be styled. */}
+{(['organic', 'lipid', 'sugar', 'dna', 'rna'].includes(moleculeType) || extraMols.length > 0) && (
 <select
 title="Molecule style"
 value={moleculeStyle}
