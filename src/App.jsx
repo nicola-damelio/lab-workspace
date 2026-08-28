@@ -458,6 +458,7 @@ export { CLASSIFICATION_MAP, PRIMARY_CATEGORIES, EXPERIMENT_TYPES } from './data
 MAIN APP
 ========================================================= */
 export default function App() {
+  try { console.info('Lab Workspace build:', typeof __APP_COMMIT__ !== 'undefined' ? __APP_COMMIT__ : 'dev'); } catch { /* ignore */ }
   const createEmptyTest = (id, num, customType = 'plate-96') => {
 const baseTest = {
   id,

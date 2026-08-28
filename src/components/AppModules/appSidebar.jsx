@@ -254,6 +254,11 @@ export const AppSidebar = ({
                   <Icon name="printer" size={14} /> {isSidebarOpen ? 'Print / Export PDF' : ''}
                 </button>
 
+                {/* Build version — helps confirm the deployed code is the latest */}
+                <div className={`text-[8px] text-slate-300 ${!isSidebarOpen ? 'hidden' : ''}`} title="Build version (commit on GitHub)">
+                  build {typeof __APP_COMMIT__ !== 'undefined' ? __APP_COMMIT__ : 'dev'}
+                </div>
+
                 {/* Load HTML + Save HTML — superuser only */}
                 {currentUser?.role === 'superuser' && (
                   <div className={`flex ${isSidebarOpen ? 'gap-2' : 'flex-col gap-2 w-full'}`}>

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ensureNGL } from '../utils/ngl';
 import { readXtcFrames, countXtcFrames, countXtcFramesInFile } from '../utils/xtcDecoder';
 import { abortControl } from '../utils/abortControl';
+import { archiveFileToDrive } from '../utils/driveUpload';
 
 /* ---- Shared "Assigned atoms" highlight flag ---------------------------------
    The green "assigned atoms" highlight is shown both on the 3D molecule viewer
@@ -489,6 +490,7 @@ trajectoryFormat = 'xtc',
 onStructureFile,
 onStructureSrc,
 onTrajectoryFile,
+driveNaming = null,   // naming context → archive chosen structure files to Drive
 onAtomClick,
 selectedKeys,
 manualKeys = [],
@@ -1756,8 +1758,9 @@ setPdbId('');
 setTrajFile(null);
 requestStructureLoad({ file: f, url: null, ts: Date.now() });
 onStructureFile?.(f);   // share the chosen topology with the analysis sections
+if (driveNaming) archiveFileToDrive({ file: f, ctx: driveNaming }).catch(() => {});
 e.target.value = '';
-}, [onStructureFile]);
+}, [onStructureFile, driveNaming]);
 
 const handlePdbIdLoad = useCallback(() => {
 const value = pdbId.trim();

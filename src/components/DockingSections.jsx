@@ -416,6 +416,7 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
                 selectedKeys={selectedKeys}
                 manualKeys={manualKeys}
                 onAtomClick={handleAtomClick}
+                driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || activeTest.instanceName || '', section: 'Data', subsection: 'Docking' }}
                 atomRenames={activeTest.atomRenames || {}}
                 onAtomRenames={(map) => updateActiveTest({ atomRenames: map })}
                 resRenumber={activeTest.resRenumber || {}}
