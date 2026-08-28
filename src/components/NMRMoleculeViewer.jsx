@@ -456,28 +456,106 @@ else if (traj.trajectory && typeof traj.trajectory.setFrame === 'function') traj
 } catch {}
 };
 
-/** Split a text PDB file into one Blob per CHAIN (ATOM/HETATM grouped by the
- *  chain-id column, lines 22). Returns [] when the file has 0 or 1 chains or
- *  cannot be read — the caller keeps the whole structure as a single component.
- *  Deterministic text parsing, so it does not depend on NGL internals. */
-const splitPdbFileIntoChains = async (file) => {
+/** Split a text PDB file into one Blob per MOLECULE (connected fragment).
+ *  Atoms are grouped by COVALENT connectivity: CONECT records first, then
+ *  implicit bonds by proximity (≤ 2.0 Å, via a spatial grid). This separates:
+ *   - distinct chains (protein + ligand chain, complexes),
+ *   - separate molecules that share ONE chain (receptor + ligand in chain A),
+ *   - multimeric complexes held together only by non-covalent contacts.
+ *  Pure-water fragments are skipped, so a hydrated protein does not explode
+ *  into dozens of tiny "molecule" entries. Returns [] when the file has 0/1
+ *  molecules or cannot be read — the caller keeps the whole structure.
+ *  Deterministic text parsing — independent of NGL internals. */
+const splitPdbFileIntoMolecules = async (file) => {
   if (!file) return [];
   let text = '';
   try { text = await file.text(); } catch { return []; }
-  const chainLines = {};
-  for (const line of String(text || '').split(/\r?\n/)) {
+  const lines = String(text || '').split(/\r?\n/);
+
+  const atoms = [];                 // { line, chain, resname, x, y, z }
+  const conectBonds = [];           // [i, j] pairs into `atoms`
+  const conectIndex = new Map();    // serial -> atom index
+  for (const line of lines) {
     const rec = line.slice(0, 6).trim();
-    if (rec !== 'ATOM' && rec !== 'HETATM') continue;
-    const chain = line.slice(21, 22).trim() || '_';
-    if (!chainLines[chain]) chainLines[chain] = [];
-    chainLines[chain].push(line);
+    if (rec === 'ATOM' || rec === 'HETATM') {
+      const serial = parseInt(line.slice(6, 11), 10);
+      const idx = atoms.length;
+      const x = parseFloat(line.slice(30, 38));
+      const y = parseFloat(line.slice(38, 46));
+      const z = parseFloat(line.slice(46, 54));
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue; // invalid coords
+      atoms.push({
+        line,
+        chain: line.slice(21, 22).trim() || '_',
+        resname: line.slice(17, 20).trim(),
+        x, y, z
+      });
+      if (Number.isFinite(serial)) conectIndex.set(serial, idx);
+    } else if (rec === 'CONECT') {
+      const serial = parseInt(line.slice(6, 11), 10);
+      const a = conectIndex.get(serial);
+      if (a === undefined) continue;
+      for (let s = 11; s + 5 <= line.length; s += 5) {
+        const bs = parseInt(line.slice(s, s + 5), 10);
+        const b = conectIndex.get(bs);
+        if (b === undefined) continue;
+        conectBonds.push([a, b]);
+      }
+    }
   }
-  const ids = Object.keys(chainLines);
-  if (ids.length <= 1) return [];
-  return ids.map((cid) => ({
-    chainId: cid,
-    blob: new Blob([`${chainLines[cid].join('\n')}\nEND\n`], { type: 'text/plain' })
-  }));
+  if (atoms.length === 0) return [];
+
+  const parent = atoms.map((_, i) => i);
+  const find = (x) => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
+  const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; };
+  conectBonds.forEach(([a, b]) => union(a, b));
+
+  // Implicit covalent bonds by proximity — spatial grid keeps this O(n).
+  const BOND_DIST = 2.0;
+  const grid = new Map();
+  const cellKey = (cx, cy, cz) => `${cx}|${cy}|${cz}`;
+  atoms.forEach((a, i) => {
+    const key = cellKey(Math.floor(a.x / BOND_DIST), Math.floor(a.y / BOND_DIST), Math.floor(a.z / BOND_DIST));
+    if (!grid.has(key)) grid.set(key, []);
+    grid.get(key).push(i);
+  });
+  for (let i = 0; i < atoms.length; i++) {
+    const a = atoms[i];
+    const cx = Math.floor(a.x / BOND_DIST), cy = Math.floor(a.y / BOND_DIST), cz = Math.floor(a.z / BOND_DIST);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          const cell = grid.get(cellKey(cx + dx, cy + dy, cz + dz));
+          if (!cell) continue;
+          for (const j of cell) {
+            if (j <= i) continue;
+            const b = atoms[j];
+            const ddx = a.x - b.x, ddy = a.y - b.y, ddz = a.z - b.z;
+            if (ddx * ddx + ddy * ddy + ddz * ddz <= BOND_DIST * BOND_DIST) union(i, j);
+          }
+        }
+      }
+    }
+  }
+
+  // Group by root; skip pure-water fragments; cap the number of entries.
+  const groups = new Map();
+  atoms.forEach((_, i) => {
+    const r = find(i);
+    if (!groups.has(r)) groups.set(r, []);
+    groups.get(r).push(i);
+  });
+  const parts = [];
+  groups.forEach((idxs) => {
+    if (parts.length >= 30) return;
+    const pureWater = idxs.every((i) => atoms[i].resname === 'HOH' || atoms[i].resname === 'WAT');
+    if (pureWater) return;
+    parts.push({
+      chainId: atoms[idxs[0]].chain,
+      blob: new Blob([idxs.map((i) => atoms[i].line).join('\n') + '\nEND\n'], { type: 'text/plain' })
+    });
+  });
+  return parts;
 };
 
 // ============================================================================
@@ -1085,24 +1163,24 @@ try {
   setModelCount(0);
 }
 
-// Multi-chain PDB (protein complexes / docked complexes): expose each CHAIN as
-// its own entry in the Molecules selector so the partners can be viewed alone
-// or together. Uses the PDB TEXT (deterministic, NGL-version independent) to
-// split ATOM/HETATM lines by chain id. Skipped for multi-MODEL files (the Model
-// selector covers those) and for non-PDB / binary inputs.
+// Multi-molecule PDB (complexes / protein + ligand / docking poses): expose each
+// MOLECULE as its own entry in the Molecules selector so the partners can be
+// viewed alone or together. Uses the PDB TEXT (deterministic, NGL-version
+// independent) with connectivity from CONECT + proximity. Skipped for
+// multi-MODEL files (the Model selector covers those) and non-PDB inputs.
 try {
   const frameCount = component.structure ? component.structure.frameCount : 0;
   const srcFile = loadRequest && loadRequest.file;
   if (frameCount <= 1 && srcFile && /\.(pdb|ent)$/i.test(String(srcFile.name || ''))) {
-    const chainParts = await splitPdbFileIntoChains(srcFile);
-    if (chainParts.length > 1) {
-      for (let ci = 0; ci < chainParts.length; ci++) {
-        await loadChainMolecule(chainParts[ci].blob, `Chain ${chainParts[ci].chainId}`, ci);
+    const moleculeParts = await splitPdbFileIntoMolecules(srcFile);
+    if (moleculeParts.length > 1) {
+      for (let ci = 0; ci < moleculeParts.length; ci++) {
+        await loadChainMolecule(moleculeParts[ci].blob, `Molecule ${ci + 1} (${moleculeParts[ci].chainId})`, ci);
       }
       setExtraMols(extraCompsRef.current.map(({ id: xid, name: xname }) => ({ id: xid, name: xname })));
     }
   }
-} catch { /* chain splitting failed — keep the whole structure as one component */ }
+} catch { /* molecule splitting failed — keep the whole structure as one component */ }
 
 // Expose the 1-letter sequence parsed from the structure so the pages can
 // auto-fill the sequence field when it is empty (enables the per-atom table).
@@ -2077,7 +2155,7 @@ if (e.key === 'Enter') handlePdbIdLoad();
 }}
 placeholder="PDB ID or URL"
 title="Load from a PDB ID (e.g. 1TUP), rcsb: or a plain https URL"
-className="border border-slate-300 rounded-md px-2 py-1.5 text-xs w-40 bg-white outline-none focus:border-blue-500 font-mono h-8"
+className="border border-slate-300 rounded-md px-2 py-1.5 text-xs w-28 bg-white outline-none focus:border-blue-500 font-mono h-8"
 />
 <button
 type="button"
