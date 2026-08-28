@@ -11,14 +11,15 @@
      2. uploadLocalFile() PUTs the file to the Drive API (multipart upload)
         into the leaf folder of the app-schema path (creating every missing
         folder along the way). Everything lives inside the app's "Lab Workspace"
-        folder, under one major folder named after the main file (the dataset).
+        folder → a folder named after the main file (the dataset) →
+        <project>/<test>/<instance>/<subsection>/…
      3. The file is shared as "anyone with the link" so the app can display
         it (thumbnails/embed) and others can open it.
-     4. When a project / test / section / instance / protocol is renamed, the
+     4. When a project / test / instance / subsection / protocol is renamed, the
         matching Drive FOLDER is renamed too (never recreated); when a test is
-        added to a project its files are moved under the project folder and the
-        now-empty old folders are removed; deleting a test removes its Drive
-        folder (all of its files). The Drive tree mirrors the program.
+        added to a project its WHOLE Drive folder is moved into the project
+        folder (no duplicate); deleting a test removes its Drive folder (all of
+        its files). The Drive tree mirrors the program.
 
    Everything degrades gracefully: if no Drive token is available the caller
    still receives the file as a data URL (temporary in-app attachment).
@@ -231,7 +232,7 @@ export const ensureDriveFolder = async () => {
 
 // ── App-schema FOLDER helpers ─────────────────────────────────────────────
 // Files are organised on Drive inside folders that mirror the app schema:
-//   <project>/<test>/<section>/<instance>/<file>
+//   <project>/<test>/<instance>/<subsection>/<file>
 //   protocols/<protocol>_<scientist>/<file>
 // The app only ever touches folders it created itself (drive.file scope).
 
@@ -292,29 +293,34 @@ export const resolveDrivePath = async (ctx) => resolveDrivePathFromNames(driveFo
 /** The index of a naming-context field inside the ACTUAL folder path
  *  (driveFolderPath order). -1 when the field is not a folder level or its
  *  value is empty. This follows the real path, so a test WITHOUT a project
- *  lives at index 0 (Lab Workspace → test → section → …), not index 1. */
+ *  lives at index 0 (Lab Workspace → test → instance → …), not index 1. */
 const pathIndexOf = (ctx, field) => {
   if (!ctx || typeof ctx !== 'object') return -1;
   if (field === 'project') return ctx.project ? 0 : -1;
   if (field === 'protocol' || field === 'scientist') return ctx.protocol ? 1 : -1;
   const value = field === 'test' ? ctx.test
     : field === 'section' ? ctx.section
-      : field === 'instance' ? ctx.instance : '';
+      : field === 'subsection' ? ctx.subsection
+        : field === 'instance' ? ctx.instance : '';
   if (!value) return -1;
   return driveFolderPath(ctx).indexOf(sanitizeSlug(value));
 };
 
 /** Resolve the folder id at a position of the ctx's actual folder path by
  *  walking the chain from the dataset root (lookup only — nothing is created).
- *  Returns '' when the folder is missing. */
+ *  The stored path is searched by segment NAME (not index), so it also works
+ *  for files recorded before the path layout was changed. Returns '' when the
+ *  folder is missing. */
 const resolveFolderIdAtPathIndex = async (ctx, path, index) => {
   const names = driveFolderPath(ctx);
   const name = names[index];
   if (!name) return '';
-  if (path && path[index] && path[index].id) return String(path[index].id);
+  if (Array.isArray(path)) {
+    const seg = path.find((s) => s && s.name === name);
+    if (seg && seg.id) return String(seg.id);
+  }
   let parent = await ensureDriveFolder();
   for (let i = 0; i < index; i++) {
-    if (path && path[i] && path[i].id) { parent = String(path[i].id); continue; }
     parent = await findFolderByName(names[i], parent);
     if (!parent) return '';
   }
@@ -402,6 +408,63 @@ export const deleteTestDriveFolder = async (test) => {
     });
     return 1;
   } catch { return 0; }
+};
+
+/** Move a test's WHOLE Drive folder into a project folder — used when an
+ *  existing standalone test is linked to a project. The folder is MOVED (never
+ *  copied), so the old path disappears and no duplicate remains on Drive.
+ *  If the folder cannot be moved directly, it falls back to moving the
+ *  individual files and cleaning up the empty old folders.
+ *  @returns {Promise<number>} number of registry entries updated */
+export const moveTestFolderIntoProject = async ({ testName, projectName }) => {
+  if (!getDriveToken() || !testName || !projectName) return 0;
+  try {
+    const root = await ensureDriveFolder();
+    if (!root) return 0;
+    const testFolderId = await findFolderByName(sanitizeSlug(testName), root);
+    if (!testFolderId) return 0; // no standalone test folder on Drive — nothing to move
+    const projectFolderId = await findOrCreateFolder(sanitizeSlug(projectName), root);
+
+    // Move the whole test folder into the project folder (children follow).
+    const params = new URLSearchParams();
+    params.set('addParents', projectFolderId);
+    params.set('removeParents', root);
+    await driveFetch(`/drive/v3/files/${testFolderId}?${params.toString()}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}'
+    });
+
+    // Keep the registry in sync: set ctx.project and prepend the project
+    // folder to every recorded path of this (previously standalone) test.
+    const reg = getDriveFileRegistry();
+    let count = 0;
+    for (const [fileId, entry] of Object.entries(reg)) {
+      if (!entry || entry.deleted) continue;
+      const ctx = entry.ctx || {};
+      if (String(ctx.test || '') !== String(testName)) continue;
+      if (String(ctx.project || '')) continue; // already inside a project folder
+      const newPath = [
+        { name: sanitizeSlug(projectName), id: projectFolderId },
+        ...(Array.isArray(entry.path) ? entry.path : [])
+      ];
+      reg[fileId] = { ...entry, ctx: { ...ctx, project: projectName }, path: newPath, at: Date.now() };
+      count++;
+    }
+    if (count > 0) saveDriveFileRegistry(reg);
+    return count;
+  } catch {
+    // Folder move failed (e.g. the folder is not app-owned): fall back to
+    // moving the individual files and cleaning up the empty old folders.
+    try {
+      return await renameDriveFilesFor({
+        field: 'project',
+        oldValue: '',
+        newValue: projectName,
+        scope: { test: testName }
+      });
+    } catch { return 0; }
+  }
 };
 
 /**
@@ -672,7 +735,7 @@ export const renameDriveFilesFor = async ({ field, oldValue, newValue, scope = n
   });
   if (matches.length === 0) return 0;
 
-  const FOLDER_FIELDS = ['protocol', 'scientist', 'project', 'test', 'section', 'instance'];
+  const FOLDER_FIELDS = ['protocol', 'scientist', 'project', 'test', 'section', 'subsection', 'instance'];
   const isFolderLevel = FOLDER_FIELDS.includes(field);
 
   // Phase 1 — plan each file: a folder rename (pure rename) or a file move
@@ -689,6 +752,7 @@ export const renameDriveFilesFor = async ({ field, oldValue, newValue, scope = n
     // (e.g. for protocols the folder is <protocol>_<scientist>, so renaming the
     // scientist renames the folder too).
     const newFolderName = pathIndex >= 0 ? (driveFolderPath(newCtx)[pathIndex] || '') : '';
+    const oldFolderName = pathIndex >= 0 ? (driveFolderPath(oldCtx)[pathIndex] || '') : '';
     let folderSeg = null;
     if (isFolderLevel && String(oldValue) !== '' && pathIndex >= 0) {
       try {
@@ -696,7 +760,7 @@ export const renameDriveFilesFor = async ({ field, oldValue, newValue, scope = n
         if (id) folderSeg = { id };
       } catch { /* folder lookup failed → the file will be moved instead */ }
     }
-    plans.push({ fileId, entry, oldCtx, newCtx, folderSeg, ext, newFolderName, pathIndex });
+    plans.push({ fileId, entry, oldCtx, newCtx, folderSeg, ext, newFolderName, oldFolderName, pathIndex });
   }
 
   // Phase 2 — rename every affected folder once (renaming a folder moves ALL of
@@ -714,14 +778,15 @@ export const renameDriveFilesFor = async ({ field, oldValue, newValue, scope = n
   let count = 0;
   for (const plan of plans) {
     try {
-      const { fileId, entry, newCtx, folderSeg, ext, newFolderName, pathIndex } = plan;
+      const { fileId, entry, newCtx, folderSeg, ext, newFolderName, oldFolderName } = plan;
       let newPath = entry.path || null;
 
       if (folderSeg && renamedFolderIds.has(folderSeg.id)) {
         // Folder renamed in place — the file already follows it; just update
-        // the recorded folder-name segment.
-        newPath = (entry.path || []).map((seg, i) =>
-          i === pathIndex ? { ...seg, name: newFolderName || sanitizeSlug(newValue) } : seg
+        // the recorded folder-name segment (matched by NAME, so it also works
+        // for paths recorded with an older folder order).
+        newPath = (entry.path || []).map((seg) =>
+          seg && seg.name === oldFolderName ? { ...seg, name: newFolderName || sanitizeSlug(newValue) } : seg
         );
       } else {
         // Structural change (or folder not found): move the file into the new

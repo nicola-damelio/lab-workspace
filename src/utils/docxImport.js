@@ -6,9 +6,10 @@
      1. Unzips the .docx (a ZIP container) with fflate.
      2. Parses word/document.xml (paragraphs, headings, runs, bold/italic,
         line breaks, tables) and the embedded figures (word/media/*).
-     3. Renames each figure with the full-path convention and uploads it to
-        Google Drive (Drive link used inline). Falls back to data URLs
-        (temporary) if Drive is not connected.
+     3. Saves each figure (and the original .docx) to Google Drive following
+        the app's folder schema (Lab Workspace → dataset → project/test/…
+        → section/instance), using the naming context passed by the editor.
+        Falls back to data URLs (temporary) if Drive is not connected.
      4. Uses the caption paragraph right after a figure ("Figure 1: ...")
         as the figure caption.
    ========================================================================= */
@@ -146,18 +147,22 @@ const renderParagraph = (p) => {
   return { type: 'text', html: `<p${align}>${listMark}${html}</p>` };
 };
 
-/** Upload one embedded image to Drive (or produce a temporary data URL). */
-const resolveImage = async (rId, index, naming, files, rels) => {
+/** Upload one embedded image to Drive (or produce a temporary data URL).
+ *  `figureOffset` = number of figures already in the editor, so the imported
+ *  images keep numbering after them (figure4, figure5, …) instead of colliding
+ *  with — and overwriting — the Drive files of existing figures. */
+const resolveImage = async (rId, index, naming, files, rels, figureOffset = 0) => {
   const target = rels[rId] || '';
   const path = mediaPathOf(target);
   const bytes = files[path] || files[path.replace(/^word\//, '')];
   if (!bytes || !bytes.length) {
-    return { url: '', name: `figure${index + 1}`, drive: false, missing: true };
+    return { url: '', name: `figure${figureOffset + index + 1}`, drive: false, missing: true };
   }
   const mime = mimeOf(path);
   const ext = extOf(path);
+  const figNum = figureOffset + index + 1;
   const name = withExtension(
-    suggestDriveFileName({ ...naming, title: `figure${index + 1}` }),
+    suggestDriveFileName({ ...naming, title: `figure${figNum}` }),
     `f.${ext}`
   );
   const blob = new Blob([bytes], { type: mime });
@@ -165,7 +170,7 @@ const resolveImage = async (rId, index, naming, files, rels) => {
   let drive = null;
   if (getDriveToken()) {
     try {
-      drive = await uploadLocalFile({ name, mimeType: mime, file: blob, ctx: { ...naming, title: `figure${index + 1}` } });
+      drive = await uploadLocalFile({ name, mimeType: mime, file: blob, ctx: { ...naming, title: `figure${figNum}` } });
     } catch { drive = null; }
   }
   if (drive) return { url: drive.driveUrl, name, drive: true };
@@ -174,9 +179,13 @@ const resolveImage = async (rId, index, naming, files, rels) => {
 
 /**
  * Convert a .docx ArrayBuffer into rich-text HTML.
+ * @param {object} options
+ * @param {ArrayBuffer} options.arrayBuffer
+ * @param {object} [options.naming]   Drive naming context (project/test/section/…)
+ * @param {number} [options.figureOffset] figures already present in the editor
  * @returns {{ html: string, stats: { images:number, uploadedToDrive:number, locallyStored:number } }}
  */
-export const docxToHtml = async ({ arrayBuffer, naming = {} }) => {
+export const docxToHtml = async ({ arrayBuffer, naming = {}, figureOffset = 0 }) => {
   let files;
   try {
     files = unzipSync(new Uint8Array(arrayBuffer));
@@ -249,7 +258,7 @@ export const docxToHtml = async ({ arrayBuffer, naming = {} }) => {
   // Upload the images (sequentially) so Drive rate limits are respected.
   const results = [];
   for (let i = 0; i < imgRids.length; i++) {
-    results.push(await resolveImage(imgRids[i], i, naming, files, rels));
+    results.push(await resolveImage(imgRids[i], i, naming, files, rels, figureOffset));
   }
 
   let html = '';

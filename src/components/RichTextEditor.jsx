@@ -175,15 +175,21 @@ export const RichTextEditor = ({
             // Archive the original .docx to Drive as well (figures are already saved separately).
             archiveFileToDrive({ file, ctx: { ...(fileNaming || {}), suffix: 'docx' } }).catch(() => {});
             const arrayBuffer = await file.arrayBuffer();
-            const result = await docxToHtml({ arrayBuffer, naming: fileNaming || {} });
+            // Number the imported figures after the ones already in the editor so
+            // they never overwrite existing Drive files (figure1, figure2, …).
+            const figureOffset = editorRef.current ? editorRef.current.querySelectorAll('figure').length : 0;
+            const result = await docxToHtml({ arrayBuffer, naming: fileNaming || {}, figureOffset });
             if (!result.html.trim()) {
                 alert('The Word document produced no readable content.');
                 return;
             }
             insertHtml(result.html);
             const { images, uploadedToDrive, locallyStored } = result.stats;
+            const saveNote = locallyStored
+                ? `, ${locallyStored} stored locally — connect Drive to save them`
+                : (uploadedToDrive > 0 ? ' — saved into your Drive folders' : '');
             const msg = images > 0
-                ? `Word document imported: ${images} figure${images === 1 ? '' : 's'} (${uploadedToDrive} saved to Google Drive${locallyStored ? `, ${locallyStored} stored locally — connect Drive to save them` : ''}).`
+                ? `Word document imported: ${images} figure${images === 1 ? '' : 's'} (${uploadedToDrive} saved to Google Drive${saveNote}).`
                 : 'Word document imported.';
             alert(msg);
         } catch (err) {

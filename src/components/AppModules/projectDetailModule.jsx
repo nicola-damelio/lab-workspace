@@ -6,7 +6,7 @@ import { getStarredItems, buildStarCaption, buildMaterialsAndMethods, tabConfigF
 import { loadProjects, saveProjects, loadPublications, TEST_TYPE_OPTIONS, testTypeLabel, genProjectId } from './projectsModule';
 import { suggestDriveFileName, openDrive } from '../../utils/driveNaming';
 import { DriveUploadButton } from '../DriveUpload';
-import { markAttachmentsDeleted, renameDriveFilesFor } from '../../utils/driveUpload';
+import { markAttachmentsDeleted, renameDriveFilesFor, moveTestFolderIntoProject } from '../../utils/driveUpload';
 import { repairContentImages } from '../../data/constants';
 
 /* =========================================================================
@@ -612,13 +612,9 @@ export const ProjectDetailModule = ({
     setTests((prev) => prev.map((t) => t.id === test.id
       ? { ...t, projectNames: [...new Set([...(t.projectNames || []), project.name])] } : t));
     // The test may have been standalone before (files at <test>/… on Drive);
-    // now that it belongs to a project they must move under <project>/<test>/…
-    renameDriveFilesFor({
-      field: 'project',
-      oldValue: '',
-      newValue: project.name,
-      scope: { test: test.name }
-    }).catch(() => {});
+    // now that it belongs to a project its WHOLE Drive folder is moved under
+    // <project>/<test>/… (never copied, so no duplicate folder remains).
+    moveTestFolderIntoProject({ testName: test.name, projectName: project.name }).catch(() => {});
     updateProject({
       experiments: [...(project.experiments || []), {
         id: genProjectId(), testId: test.id, type: test.type || 'plate-96',
