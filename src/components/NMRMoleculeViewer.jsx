@@ -232,24 +232,9 @@ const translateSelection = (expr) => {
 const normalizeStructureSource = (raw) => {
 const value = (raw || '').trim();
 if (!value) return null;
-const driveMatch = value.match(/drive\.google\.com\/file\/d\/([^/?]+)/) || value.match(/drive\.google\.com\/(?:open|uc)[^#]*[?&]id=([^&#]+)/);
-if (driveMatch) {
-const id = driveMatch[1];
-const path = value.split(/[?#]/)[0];
-let ext = path.includes('.') ? path.split('.').pop().toLowerCase() : 'pdb';
-if (!['pdb', 'cif', 'mmcif', 'bcif', 'mol2', 'sdf'].includes(ext)) {
-ext = 'pdb';
-}
-const extParam = ext === 'mmcif' ? 'cif' : ext;
-return {
-url: `https://lh3.googleusercontent.com/d/${id}`,
-params: { ext: extParam },
-fallbacks: [
-{ url: `https://drive.google.com/thumbnail?id=${id}&sz=w1600`, params: { ext: extParam } },
-{ url: `https://drive.google.com/uc?export=download&id=${id}`, params: { ext: extParam } }
-]
-};
-}
+// NOTE: Google-Drive link loading was removed — structures are uploaded from
+// the PC (and archived to Drive automatically), so pasting a Drive link as the
+// source is no longer needed. PDB IDs, rcsb: and plain https URLs still work.
 if (/^(https?:|blob:|data:)/i.test(value)) {
 const path = value.split(/[?#]/)[0];
 const ext = path.includes('.') ? path.split('.').pop().toLowerCase() : '';
@@ -638,7 +623,6 @@ const [autoShowSel, setAutoShowSel] = useState(true); // auto-visibility of pars
 const [hideAll, setHideAll] = useState(false);        // remove every representation
 const [bgColor, setBgColor] = useState('#f8fafc');
 const [qualityHigh, setQualityHigh] = useState(false);
-const [fogEnabled, setFogEnabled] = useState(false);
 
 const persistRenames = (next) => {
   setRenames(next);
@@ -1469,11 +1453,7 @@ useEffect(() => {
   if (!stage) return;
   try { stage.setParameters({ backgroundColor: bgColor }); } catch {}
   try { stage.setQuality(qualityHigh ? 'high' : 'medium'); } catch {}
-  // NGL fog is recomputed on every render from the (relative 0-100) fogNear/fogFar
-  // stage parameters. fogNear=1 / fogFar=100 spans the whole model depth (visible
-  // depth fog); fogNear=50 restores NGL's default crisp appearance (fog off).
-  try { stage.setParameters({ fogNear: fogEnabled ? 1 : 50, fogFar: 100 }); } catch {}
-}, [bgColor, qualityHigh, fogEnabled, status]);
+}, [bgColor, qualityHigh, status]);
 
 const parsePyMOL = (text) => {
   const sels = [];
@@ -2152,23 +2132,6 @@ className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white outline
 </div>
 )}
 
-{/* 3D View — always-visible effects (the Fog toggle is no longer buried in
-    the Selections & PyMOL panel). */}
-<div className="flex flex-col gap-1">
-<label className="text-[10px] font-bold text-slate-500 uppercase">
-3D View
-</label>
-<label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer h-8">
-<input
-type="checkbox"
-checked={fogEnabled}
-onChange={(e) => setFogEnabled(e.target.checked)}
-className="w-4 h-4 accent-violet-600"
-title="Depth fog: fade the far side of the molecule into the background"
-/>
-🌫️ Fog
-</label>
-</div>
 </div>
 
 {/* View enhancement panels: Atom renaming + Selections / PyMOL */}

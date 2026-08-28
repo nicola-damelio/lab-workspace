@@ -81,6 +81,26 @@ const CalcResultBox = ({ ok, children }) => {
   );
 };
 
+// "Formula & procedure" info block shown at the top of every calculator:
+// the exact formula used (math notation) plus a short step-by-step procedure.
+const CalcInfo = ({ lines = [], steps = [] }) => (
+  <div className="md:col-span-12 rounded-lg bg-indigo-50 border border-indigo-200 px-3 py-2.5">
+    <p className="text-[10px] font-bold text-indigo-700 uppercase tracking-wide mb-1">Formula &amp; procedure</p>
+    {lines.map((l, i) => (
+      <p key={i} className="text-xs font-mono text-indigo-900 bg-white/70 border border-indigo-100 rounded px-2 py-1 mb-1">
+        {l}
+      </p>
+    ))}
+    {steps.length > 0 && (
+      <ol className="text-[11px] text-indigo-800 leading-relaxed list-decimal list-inside space-y-0.5">
+        {steps.map((s, i) => (
+          <li key={i}>{s}</li>
+        ))}
+      </ol>
+    )}
+  </div>
+);
+
 const DEFAULT_MG_CALC = {
   conc: '10',
   concUnit: 'µM',
@@ -113,6 +133,16 @@ const HowManyMg = ({ mw, data, onChange }) => {
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+      <CalcInfo
+        lines={[
+          'moles = concentration (M) × volume (L)',
+          'mass (mg) = moles × molecular weight (g/mol) × 1000'
+        ]}
+        steps={[
+          'Enter the required concentration and the final volume.',
+          'The app converts to M and L, computes the moles (C × V) and multiplies by the MW to give the amount of compound to weigh, in mg.'
+        ]}
+      />
       <div className="md:col-span-3">
         <CalcField label="Required concentration">
           <input
@@ -182,6 +212,17 @@ const HowManyUl = ({ mw, data, onChange }) => {
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+      <CalcInfo
+        lines={[
+          'moles = mass (g) ÷ molecular weight (g/mol)',
+          'volume (L) = moles ÷ concentration (M)',
+          'volume (µL) = volume (L) × 10⁶'
+        ]}
+        steps={[
+          'Enter the weighed amount of compound and the desired concentration.',
+          'The app computes the moles (mass ÷ MW), then the volume of solvent that brings them to the target concentration.'
+        ]}
+      />
       <div className="md:col-span-3">
         <CalcField label="Amount of compound">
           <input
@@ -255,6 +296,16 @@ const HowManyUlForAllExperiments = ({ mw, data, onChange }) => {
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+      <CalcInfo
+        lines={[
+          'total volume = volume per experiment × repetitions × experiments',
+          'mass (mg) = total volume (L) × concentration (M) × MW × 1000   (optional)'
+        ]}
+        steps={[
+          'Enter the volume needed for one experiment, the repetitions and the total number of experiments.',
+          'The app multiplies them to get the total stock-solution volume to prepare — and, when a concentration is given, the total mass of compound required.'
+        ]}
+      />
       <div className="md:col-span-2">
         <CalcField label="Volume per experiment">
           <input
