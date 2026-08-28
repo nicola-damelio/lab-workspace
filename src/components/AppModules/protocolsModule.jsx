@@ -10,7 +10,7 @@ import { getDirectImageUrl } from '../../data/constants';
 import { Icon } from '../Icons';
 import { suggestDriveFileName, openDrive } from '../../utils/driveNaming';
 import { DriveUploadButton } from '../DriveUpload';
-import { renameDriveFilesFor, markAttachmentsDeleted } from '../../utils/driveUpload';
+import { renameDriveFilesFor, markAttachmentsDeleted, uploadLocalFile } from '../../utils/driveUpload';
 
 export const ProtocolsModule = ({
   datasetProtocols, expandedGroups, handlePrint, nmrExperiments,
@@ -861,35 +861,46 @@ const getProtocolImageFallback = (url) => {
           <input
             type="file"
             multiple
-            onChange={(e) => {
-              const files = Array.from(e.target.files);
+            onChange={async (e) => {
+              const files = Array.from(e.target.files || []);
               if (!files.length) return;
+              e.target.value = '';
+              // Upload every selected file as a REAL file into the protocol's
+              // Drive folder (protocols/<protocol>) — never base64-encoded into
+              // the dataset: encoding large files into data URLs would freeze
+              // the app and would not create the Drive folder.
+              const protoCtx = { protocol: activeProtocol.title || '' };
+              const added = [];
+              await Promise.all(files.map(async (file) => {
+                try {
+                  const base = String(file.name || '').replace(/\.[^/.]+$/, '');
+                  const drive = await uploadLocalFile({
+                    name: suggestDriveFileName({ ...protoCtx, title: base || 'attachment' }),
+                    mimeType: file.type || 'application/octet-stream',
+                    file,
+                    ctx: protoCtx
+                  });
+                  if (drive && drive.driveUrl) {
+                    added.push({
+                      id: Date.now().toString() + Math.random(),
+                      name: drive.name || file.name,
+                      url: drive.driveUrl
+                    });
+                  }
+                } catch { /* skip files that cannot be uploaded */ }
+              }));
 
-              const newLinksPromises = files.map(
-                (file) =>
-                  new Promise((resolve) => {
-                    const reader = new FileReader();
-                    reader.onload = (ev) =>
-                      resolve({
-                        id: Date.now().toString() + Math.random(),
-                        name: file.name,
-                        url: ev.target.result
-                      });
-                    reader.readAsDataURL(file);
-                  })
-              );
-
-              Promise.all(newLinksPromises).then((newLinks) => {
+              if (added.length > 0) {
                 setDatasetProtocols(
                   datasetProtocols.map((p) =>
                     p.id === activeProtocol.id
-                      ? { ...p, links: [...(p.links || []), ...newLinks] }
+                      ? { ...p, links: [...(p.links || []), ...added] }
                       : p
                   )
                 );
-              });
-
-              e.target.value = '';
+              } else {
+                alert('Could not upload the selected files to Google Drive. Connect Drive and try again.');
+              }
             }}
             className="hidden"
           />

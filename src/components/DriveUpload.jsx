@@ -95,12 +95,21 @@ export const DriveUploadButton = ({
         setLastFileName('');
         if (onDone) onDone({ name, file, drive, mimeType, dataUrl: null });
       } else {
-        // Temporary in-app copy — the file still works, but warn for big files.
-        const dataUrl = await readFileAsDataURL(file);
-        setStatus('local');
-        setLastDataUrl(dataUrl);
-        setLastFileName(name);
-        if (onDone) onDone({ name, file, drive: null, mimeType, dataUrl });
+        // Temporary in-app copy — but ONLY for small files. Encoding a large
+        // file into a data URL would freeze the app and bloat the saved
+        // dataset, so big files are NOT stored locally: the user is asked to
+        // connect/reconnect Google Drive and upload again.
+        if (file.size > 3 * 1024 * 1024) {
+          setStatus('error');
+          setLastDriveError('File too large to store locally — connect Google Drive and upload it again.');
+          if (onError) onError(new Error('File too large to store locally'));
+        } else {
+          const dataUrl = await readFileAsDataURL(file);
+          setStatus('local');
+          setLastDataUrl(dataUrl);
+          setLastFileName(name);
+          if (onDone) onDone({ name, file, drive: null, mimeType, dataUrl });
+        }
       }
     } catch (err) {
       setStatus('error');
