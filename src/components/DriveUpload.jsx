@@ -18,6 +18,7 @@
 
 import React, { useRef, useState } from 'react';
 import { readFileAsDataURL, withExtension, uploadLocalFile, getDriveToken } from '../utils/driveUpload';
+import { suggestDriveFileName } from '../utils/driveNaming';
 
 export const DriveUploadButton = ({
   accept = 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,.jws,.xtc,.trr,.dcd',
@@ -46,14 +47,26 @@ export const DriveUploadButton = ({
     setLastDrive(null);
     setLastDriveError('');
     try {
-      const name = withExtension(suggestedName, file.name || suggestedName);
+      // Short file name: the ORIGINAL file name (or an explicit title) plus the
+      // scientist. The project/test/section/instance context is reproduced as a
+      // FOLDER hierarchy on Drive (see driveNaming.driveFolderPath), so it is no
+      // longer stuffed into the file name.
+      const namingCtx = naming && typeof naming === 'object' ? { ...naming } : null;
+      if (namingCtx && !namingCtx.title) {
+        const baseName = String(file.name || '').replace(/\.[^/.]+$/, '');
+        if (baseName) namingCtx.title = baseName;
+      }
+      const computed = namingCtx
+        ? suggestDriveFileName(namingCtx)
+        : (suggestedName || 'file');
+      const name = withExtension(computed, file.name || computed);
       const mimeType = file.type || 'application/octet-stream';
 
       let drive = null;
       let driveError = '';
       if (getDriveToken()) {
         try {
-          drive = await uploadLocalFile({ name, mimeType, file, ctx: naming });
+          drive = await uploadLocalFile({ name, mimeType, file, ctx: namingCtx });
         } catch (err) {
           drive = null;
           driveError = err && err.message ? String(err.message) : 'unknown Drive error';

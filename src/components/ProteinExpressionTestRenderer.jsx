@@ -499,6 +499,7 @@ const ProteinDataSection = ({ ctx }) => {
                 project: (ctx.activeTest?.projectNames || [])[0] || '',
                 test: ctx.activeTest?.name || '',
                 instance: ctx.activeTest?.instanceName || '',
+                scientist: ctx.activeTest?.operator || '',
                 section: 'Data',
                 subsection: 'Gel',
                 suffix: 'gel'

@@ -92,6 +92,7 @@ const addProtocolDocument = () =>
         id: Date.now() + '-' + Math.random().toString(36).slice(2),
         name: suggestDriveFileName({
           protocol: activeProtocol.title || '',
+          scientist: (activeProtocol.assignedTo || [])[0] || '',
           suffix: 'doc'
         }),
         type: 'link',
@@ -323,9 +324,10 @@ const getProtocolImageFallback = (url) => {
     <DriveUploadButton
       suggestedName={suggestDriveFileName({
         protocol: activeProtocol.title || '',
+        scientist: (activeProtocol.assignedTo || [])[0] || '',
         suffix: 'doc'
       })}
-      naming={{ protocol: activeProtocol.title || '', suffix: 'doc' }}
+      naming={{ protocol: activeProtocol.title || '', scientist: (activeProtocol.assignedTo || [])[0] || '', suffix: 'doc' }}
       onDone={({ name, dataUrl, drive }) =>
         updateProtocol({
           documents: [
@@ -360,7 +362,7 @@ const getProtocolImageFallback = (url) => {
     linkButton
     figureButton
     docImportButton
-    fileNaming={{ protocol: activeProtocol.title || '' }}
+    fileNaming={{ protocol: activeProtocol.title || '', scientist: (activeProtocol.assignedTo || [])[0] || '' }}
     onEditFocusChange={(editing) =>
       setExpandedGroups((p) => ({ ...p, protoSidebarOpen: !editing }))
     }
@@ -629,9 +631,11 @@ const getProtocolImageFallback = (url) => {
                     type="button"
                     onClick={() => {
                       const current = assignedUsers(activeProtocol);
+                      const beforeScientist = current[0] || '';
                       const next = selected
                         ? current.filter((n) => n !== name)
                         : [...current, name];
+                      const afterScientist = next[0] || '';
 
                       setDatasetProtocols(
                         datasetProtocols.map((p) =>
@@ -640,6 +644,18 @@ const getProtocolImageFallback = (url) => {
                             : p
                         )
                       );
+
+                      // Keep the Drive folder in sync: the protocol folder is
+                      // protocols/<title>_<scientist>, so a change of the
+                      // assigned scientist renames it too.
+                      if (beforeScientist !== afterScientist) {
+                        renameDriveFilesFor({
+                          field: 'scientist',
+                          oldValue: beforeScientist,
+                          newValue: afterScientist,
+                          scope: { protocol: activeProtocol.title || '' }
+                        }).catch(() => {});
+                      }
                     }}
                     className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border shadow-sm transition-colors flex items-center gap-1 ${
                       selected

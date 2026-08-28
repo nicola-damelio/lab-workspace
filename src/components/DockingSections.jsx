@@ -416,7 +416,7 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
                 selectedKeys={selectedKeys}
                 manualKeys={manualKeys}
                 onAtomClick={handleAtomClick}
-                driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', section: 'Data', subsection: 'Docking' }}
+                driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Docking' }}
                 atomRenames={activeTest.atomRenames || {}}
                 onAtomRenames={(map) => updateActiveTest({ atomRenames: map })}
                 resRenumber={activeTest.resRenumber || {}}
@@ -520,6 +520,7 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
             project: (ctx.activeTest?.projectNames || [])[0] || '',
             test: ctx.activeTest?.name || '',
             instance: ctx.activeTest?.instanceName || '',
+            scientist: ctx.activeTest?.operator || '',
             section: 'Data',
             subsection: 'Docking',
             suffix: 'docking'

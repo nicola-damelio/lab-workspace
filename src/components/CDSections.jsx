@@ -1292,6 +1292,7 @@ export const Data = ({ ctx }) => {
         project: (activeTest.projectNames || [])[0] || '',
         test: activeTest.name || '',
         instance: activeTest.instanceName || '',
+        scientist: activeTest.operator || '',
         section: 'Data',
         subsection: 'Spectra'
       };
@@ -1609,6 +1610,7 @@ export const Data = ({ ctx }) => {
                 project: (activeTest.projectNames || [])[0] || '',
                 test: activeTest.name || '',
                 instance: activeTest.instanceName || '',
+                scientist: activeTest.operator || '',
                 section: 'Data',
                 subsection: 'Spectra',
                 suffix: 'spectrum'

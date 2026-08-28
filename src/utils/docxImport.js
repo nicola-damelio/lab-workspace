@@ -157,7 +157,7 @@ const resolveImage = async (rId, index, naming, files, rels) => {
   const mime = mimeOf(path);
   const ext = extOf(path);
   const name = withExtension(
-    suggestDriveFileName({ ...naming, suffix: `figure${index + 1}` }),
+    suggestDriveFileName({ ...naming, title: `figure${index + 1}` }),
     `f.${ext}`
   );
   const blob = new Blob([bytes], { type: mime });
@@ -165,7 +165,7 @@ const resolveImage = async (rId, index, naming, files, rels) => {
   let drive = null;
   if (getDriveToken()) {
     try {
-      drive = await uploadLocalFile({ name, mimeType: mime, file: blob, ctx: { ...naming, suffix: `figure${index + 1}` } });
+      drive = await uploadLocalFile({ name, mimeType: mime, file: blob, ctx: { ...naming, title: `figure${index + 1}` } });
     } catch { drive = null; }
   }
   if (drive) return { url: drive.driveUrl, name, drive: true };

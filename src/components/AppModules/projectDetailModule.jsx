@@ -611,6 +611,14 @@ export const ProjectDetailModule = ({
     if ((project.experiments || []).some((e) => e.testId === test.id)) return;
     setTests((prev) => prev.map((t) => t.id === test.id
       ? { ...t, projectNames: [...new Set([...(t.projectNames || []), project.name])] } : t));
+    // The test may have been standalone before (files at <test>/… on Drive);
+    // now that it belongs to a project they must move under <project>/<test>/…
+    renameDriveFilesFor({
+      field: 'project',
+      oldValue: '',
+      newValue: project.name,
+      scope: { test: test.name }
+    }).catch(() => {});
     updateProject({
       experiments: [...(project.experiments || []), {
         id: genProjectId(), testId: test.id, type: test.type || 'plate-96',

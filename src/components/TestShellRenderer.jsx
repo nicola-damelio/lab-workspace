@@ -864,7 +864,7 @@ const [showGeneral, setShowGeneral] = useState(false);
   const handleMdParamFile = (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
-    archiveFileToDrive({ file, ctx: { project: (t.projectNames || [])[0] || '', test: t.name || '', instance: t.instanceName || '', section: 'Setup', subsection: 'Parameters', suffix: 'parameters' } }).catch(() => {});
+    archiveFileToDrive({ file, ctx: { project: (t.projectNames || [])[0] || '', test: t.name || '', instance: t.instanceName || '', scientist: t.operator || '', section: 'Setup', subsection: 'Parameters', suffix: 'parameters' } }).catch(() => {});
 
     const reader = new FileReader();
 
@@ -1677,6 +1677,7 @@ const details = [
                     project: (t.projectNames || [])[0] || '',
                     test: t.name || '',
                     instance: t.instanceName || '',
+                    scientist: t.operator || '',
                     section: 'Setup',
                     subsection: 'Parameters',
                     suffix: 'parameters'
@@ -2113,6 +2114,7 @@ const details = [
                               project: (t.projectNames || [])[0] || '',
                               test: t.name || '',
                               instance: t.instanceName || '',
+                              scientist: t.operator || '',
                               section: 'Report',
                               subsection: 'Documents',
                               suffix: 'doc'
@@ -2140,6 +2142,7 @@ const details = [
                           project: (t.projectNames || [])[0] || '',
                           test: t.name || '',
                           instance: t.instanceName || '',
+                          scientist: t.operator || '',
                           section: 'Report',
                           subsection: 'Documents',
                           suffix: 'doc'
@@ -2176,6 +2179,7 @@ const details = [
                       project: (t.projectNames || [])[0] || '',
                       test: t.name || '',
                       instance: t.instanceName || '',
+                      scientist: t.operator || '',
                       section: 'Report',
                       subsection: 'Notes'
                     }}

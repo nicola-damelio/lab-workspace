@@ -21,7 +21,7 @@ export const RichTextEditor = ({
 
     // Full-path suggested file name for the figure being inserted (figure1, figure2, ...)
     const figureSuffix = `figure${(editorRef.current ? editorRef.current.querySelectorAll('figure').length : 0) + 1}`;
-    const figureSuggestedName = suggestDriveFileName({ ...(fileNaming || {}), suffix: figureSuffix });
+    const figureSuggestedName = suggestDriveFileName({ ...(fileNaming || {}), title: figureSuffix });
     useEffect(() => { if (editorRef.current && editorRef.current.innerHTML !== value) editorRef.current.innerHTML = repairContentImages(value || ''); }, [value]);
     const execCmd = (cmd, val=null) => { document.execCommand(cmd, false, val); onChange(editorRef.current.innerHTML); editorRef.current.focus(); };
     const storeSel = () => {
@@ -424,7 +424,7 @@ export const RichTextEditor = ({
 
                         <DriveUploadButton
                           suggestedName={figureSuggestedName}
-                          naming={{ ...(fileNaming || {}), suffix: figureSuffix }}
+                          naming={{ ...(fileNaming || {}), title: figureSuffix }}
                           onDone={({ dataUrl, drive }) =>
                             setFigureDraft((d) => ({ ...d, url: drive ? drive.driveUrl : dataUrl }))
                           }

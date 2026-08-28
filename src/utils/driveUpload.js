@@ -1,17 +1,22 @@
 /* =========================================================================
    src/utils/driveUpload.js
    Uploads locally-chosen files to the user's Google Drive, automatically
-   renamed with the app's naming convention, into ONE tidy folder.
+   renamed with the app's naming convention, and organised into FOLDERS that
+   mirror the app schema (project / test / section / instance).
 
    How it works:
      1. The Google sign-in requests the "drive.file" OAuth scope (files the
         app creates only — nothing else is touched). The resulting Google
-        access token is stored in sessionStorage.
+        access token is stored in localStorage.
      2. uploadLocalFile() PUTs the file to the Drive API (multipart upload)
-        into a folder the app owns: the user's saved folder URL if provided,
+        into the leaf folder of the app-schema path (creating every missing
+        folder along the way), under the user's saved folder URL if provided,
         otherwise a "Lab Workspace" folder that is created automatically.
      3. The file is shared as "anyone with the link" so the app can display
         it (thumbnails/embed) and others can open it.
+     4. When a project / test / instance / protocol is renamed, the matching
+        Drive FOLDER is renamed too; when a test is added to a project its
+        files are moved under the project folder.
 
    Everything degrades gracefully: if no Drive token is available the caller
    still receives the file as a data URL (temporary in-app attachment).
@@ -19,7 +24,7 @@
 
 const TOKEN_KEY = 'labDriveAccessToken';
 const FOLDER_ID_KEY = 'labDriveFolderId';
-import { suggestDriveFileName } from './driveNaming';
+import { suggestDriveFileName, sanitizeSlug, driveFolderPath } from './driveNaming';
 
 /** The Google OAuth access token (with drive.file scope) from the last sign-in.
  *  Stored in localStorage so it survives tab switches / page reloads (the
@@ -149,6 +154,115 @@ export const ensureDriveFolder = async () => {
   return created.id;
 };
 
+// ── App-schema FOLDER helpers ─────────────────────────────────────────────
+// Files are organised on Drive inside folders that mirror the app schema:
+//   <project>/<test>/<section>/<instance>/<file>
+//   protocols/<protocol>_<scientist>/<file>
+// The app only ever touches folders it created itself (drive.file scope).
+
+/** Escape a value for a Drive files.list `q` query. */
+const escapeDriveQuery = (v) => String(v || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+/** Find an existing app-created folder by exact name inside `parentId` ('' if missing). */
+export const findFolderByName = async (name, parentId) => {
+  if (!name || !parentId) return '';
+  try {
+    const q = encodeURIComponent(
+      `name='${escapeDriveQuery(name)}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`
+    );
+    const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=10`);
+    const j = await res.json();
+    const found = (j.files || []).find((f) => f.name === name);
+    return found ? String(found.id) : '';
+  } catch { return ''; }
+};
+
+/** Find a folder or create it (app-owned) inside `parentId`. */
+export const findOrCreateFolder = async (name, parentId) => {
+  const existing = await findFolderByName(name, parentId);
+  if (existing) return existing;
+  const c = await driveFetch('/drive/v3/files?fields=id,name', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name,
+      mimeType: 'application/vnd.google-apps.folder',
+      parents: [parentId]
+    })
+  });
+  const created = await c.json();
+  if (!created || !created.id) throwCode('DRIVE_ERROR', 'Drive returned no folder.');
+  return String(created.id);
+};
+
+/** Resolve (creating as needed) the folder chain described by `ctx`.
+ *  @returns {{ leafId:string, path:Array<{name:string,id:string}> }} */
+export const resolveDrivePath = async (ctx) => {
+  const names = driveFolderPath(ctx);
+  let parent = await ensureDriveFolder();
+  const path = [];
+  for (const name of names) {
+    parent = await findOrCreateFolder(name, parent);
+    path.push({ name, id: parent });
+  }
+  return { leafId: parent, path };
+};
+
+/** The folder name that belongs to a schema level for a naming context. */
+const segmentNameAt = (ctx, level) => {
+  if (ctx.protocol) {
+    // Protocol path: ['protocols', '<protocol>_<scientist>']
+    if (level === 0) return 'protocols';
+    if (level === 1) return [ctx.protocol, ctx.scientist].filter(Boolean).join('_');
+    return '';
+  }
+  if (level === 0) return ctx.project || '';
+  if (level === 1) return ctx.test || '';
+  if (level === 2) return ctx.section || '';
+  if (level === 3) return ctx.instance || '';
+  return '';
+};
+
+/** Resolve the folder id at a schema level by walking the chain from the root
+ *  (lookup only — nothing is created). Returns '' when the folder is missing. */
+const resolveFolderIdAtLevel = async (ctx, path, level) => {
+  if (path && path[level] && path[level].id) return String(path[level].id);
+  if (level === 0) {
+    const rootId = await ensureDriveFolder();
+    const name = sanitizeSlug(segmentNameAt(ctx, 0));
+    return name ? findFolderByName(name, rootId) : '';
+  }
+  let parent = await ensureDriveFolder();
+  for (let i = 0; i <= level - 1; i++) {
+    if (path && path[i] && path[i].id) { parent = String(path[i].id); continue; }
+    const name = sanitizeSlug(segmentNameAt(ctx, i));
+    if (!name) return '';
+    parent = await findFolderByName(name, parent);
+    if (!parent) return '';
+  }
+  const own = sanitizeSlug(segmentNameAt(ctx, level));
+  return own ? findFolderByName(own, parent) : '';
+};
+
+/** Move a file into `newParentId` (removing it from its current parents). */
+export const moveDriveFile = async (fileId, newParentId) => {
+  if (!fileId || !newParentId) return false;
+  const res = await driveFetch(`/drive/v3/files/${fileId}?fields=parents`);
+  const meta = await res.json();
+  const parents = Array.isArray(meta.parents) ? meta.parents : [];
+  const toRemove = parents.filter((p) => p !== newParentId);
+  if (toRemove.length === 0) return true; // already in place
+  const params = new URLSearchParams();
+  params.set('addParents', newParentId);
+  toRemove.forEach((p) => params.append('removeParents', p));
+  await driveFetch(`/drive/v3/files/${fileId}?${params.toString()}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}'
+  });
+  return true;
+};
+
 /**
  * Upload one file to the Drive folder and share it as "anyone with the link".
  * `file` can be a raw File/Blob (recommended — works for large files like
@@ -160,7 +274,15 @@ export const ensureDriveFolder = async () => {
  * @returns {{ id:string, name:string, driveUrl:string }}
  */
 export const uploadLocalFile = async ({ name, mimeType, file, ctx = null }) => {
-  const folderId = await ensureDriveFolder();
+  // Upload into the leaf folder that mirrors the app schema
+  // (<project>/<test>/<section>/<instance>/…), creating the folders as needed.
+  let folderId = await ensureDriveFolder();
+  let drivePath = null;
+  if (ctx && typeof ctx === 'object' && driveFolderPath(ctx).length > 0) {
+    const resolved = await resolveDrivePath(ctx);
+    folderId = resolved.leafId;
+    drivePath = resolved.path;
+  }
   // Accept a raw Blob/File (streamed directly, no base64 overhead) or a data URL.
   const blob = typeof file === 'string' ? dataUrlToBlob(file) : file;
   const type = mimeType || blob.type || 'application/octet-stream';
@@ -207,8 +329,9 @@ export const uploadLocalFile = async ({ name, mimeType, file, ctx = null }) => {
     });
   } catch { /* link may stay private to the owner — upload still succeeded */ }
 
-  // Remember the naming context so later project/test renames can rename the file too.
-  if (ctx) registerDriveFile(fileMeta.id, fileMeta.name, ctx);
+  // Remember the naming context (and the folder path) so later project/test
+  // renames can rename/move the Drive file to match.
+  if (ctx) registerDriveFile(fileMeta.id, fileMeta.name, ctx, drivePath);
 
   return { id: fileMeta.id, name: fileMeta.name, driveUrl: `https://drive.google.com/file/d/${fileMeta.id}/view` };
 };
@@ -341,11 +464,12 @@ const saveDriveFileRegistry = (reg) => {
   try { localStorage.setItem(FILE_REGISTRY_KEY, JSON.stringify(reg)); } catch { /* ignore */ }
 };
 
-/** Record an uploaded Drive file with the naming context that produced it. */
-export const registerDriveFile = (fileId, name, ctx) => {
+/** Record an uploaded Drive file with the naming context that produced it
+ *  and the folder chain ({name,id} from the app root down) it was uploaded to. */
+export const registerDriveFile = (fileId, name, ctx, path = null) => {
   if (!fileId) return;
   const reg = getDriveFileRegistry();
-  reg[fileId] = { name: String(name || ''), ctx: ctx || {}, at: Date.now() };
+  reg[fileId] = { name: String(name || ''), ctx: ctx || {}, path: path || null, at: Date.now() };
   saveDriveFileRegistry(reg);
 };
 
@@ -369,11 +493,17 @@ export const archiveFileToDrive = async ({ file, ctx = {}, title = '', suffix = 
 };
 
 /**
- * Rename every recorded Drive file whose naming context contains `oldValue`
- * for the given field (project | test | instance | protocol | section | subsection),
- * rebuilding its name with the new value. `scope` (optional) restricts the
- * rename to files whose context also matches every { field: value } it lists.
- * @returns {Promise<number>} number of files renamed
+ * Keep the Drive file tree in sync when a naming context value changes.
+ *
+ *  • project / test / instance / protocol rename → the matching Drive FOLDER is
+ *    renamed in place (all files inside follow automatically), so the folder
+ *    name always mirrors the current entity name.
+ *  • structural changes (oldValue === '' — e.g. a test being added to a
+ *    project) → every matching file is MOVED to the new leaf folder.
+ *
+ * `scope` (optional) restricts the rename to files whose context also matches
+ * every { field: value } it lists.
+ * @returns {Promise<number>} number of files updated
  */
 export const renameDriveFilesFor = async ({ field, oldValue, newValue, scope = null }) => {
   if (!field || oldValue === undefined || newValue === undefined) return 0;
@@ -381,29 +511,85 @@ export const renameDriveFilesFor = async ({ field, oldValue, newValue, scope = n
   if (!getDriveToken()) return 0;
 
   const reg = getDriveFileRegistry();
-  let count = 0;
-  for (const [fileId, entry] of Object.entries(reg)) {
-    if (!entry || entry.deleted) continue; // never revive files marked as deleted
+  const matches = Object.entries(reg).filter(([, entry]) => {
+    if (!entry || entry.deleted) return false; // never revive files marked as deleted
     const ctx = entry.ctx || {};
-    if (String(ctx[field] || '') !== String(oldValue)) continue;
+    if (String(ctx[field] || '') !== String(oldValue)) return false;
     // Optional extra context filter (e.g. only files of one test): every
     // key in `scope` must match the recorded naming context too.
     if (scope) {
-      const scopedIn = Object.entries(scope).every(
+      return Object.entries(scope).every(
         ([k, v]) => String(ctx[k] || '') === String(v)
       );
-      if (!scopedIn) continue;
     }
+    return true;
+  });
+  if (matches.length === 0) return 0;
 
-    const newCtx = { ...ctx, [field]: newValue };
+  const FIELD_LEVEL = { protocol: 1, scientist: 1, project: 0, test: 1, section: 2, instance: 3 };
+  const level = FIELD_LEVEL[field]; // undefined → the field is not a folder level
+  const isFolderLevel = level !== undefined;
+
+  // Phase 1 — plan each file: a folder rename (pure rename) or a file move
+  // (structural change or the folder could not be located).
+  const plans = [];
+  for (const [fileId, entry] of matches) {
+    const oldCtx = entry.ctx || {};
+    const newCtx = { ...oldCtx, [field]: newValue };
     const ext = /(\.[a-zA-Z0-9]{1,10})$/.exec(String(entry.name || ''))?.[1] || '';
-    const newName = suggestDriveFileName(newCtx) + ext;
+    // The new folder name at the changed level, computed from the full context
+    // (e.g. for protocols the folder is <protocol>_<scientist>, so renaming the
+    // scientist renames the folder too).
+    const newFolderName = driveFolderPath(newCtx)[level] || '';
+    let folderSeg = null;
+    if (isFolderLevel && String(oldValue) !== '') {
+      try {
+        const id = await resolveFolderIdAtLevel(oldCtx, entry.path, level);
+        if (id) folderSeg = { id, name: sanitizeSlug(segmentNameAt(oldCtx, level)) };
+      } catch { /* folder lookup failed → the file will be moved instead */ }
+    }
+    plans.push({ fileId, entry, oldCtx, newCtx, folderSeg, ext, newFolderName });
+  }
 
+  // Phase 2 — rename every affected folder once (renaming a folder moves ALL of
+  // its children automatically, which is exactly what the app schema needs).
+  const renamedFolderIds = new Set();
+  for (const plan of plans) {
+    if (!plan.folderSeg || renamedFolderIds.has(plan.folderSeg.id)) continue;
     try {
-      await renameDriveFile(fileId, newName);
-      reg[fileId] = { ...entry, name: newName, ctx: newCtx, at: Date.now() };
+      await renameDriveFile(plan.folderSeg.id, plan.newFolderName || sanitizeSlug(newValue));
+      renamedFolderIds.add(plan.folderSeg.id);
+    } catch { plan.folderSeg = null; }
+  }
+
+  // Phase 3 — update the registry; move the files whose folder was not renamed.
+  let count = 0;
+  for (const plan of plans) {
+    try {
+      const { fileId, entry, newCtx, folderSeg, ext, newFolderName } = plan;
+      let newPath = entry.path || null;
+
+      if (folderSeg && renamedFolderIds.has(folderSeg.id)) {
+        // Folder renamed in place — the file already follows it; just update
+        // the recorded folder-name segment.
+        newPath = (entry.path || []).map((seg, i) =>
+          i === level ? { ...seg, name: newFolderName || sanitizeSlug(newValue) } : seg
+        );
+      } else {
+        // Structural change (or folder not found): move the file into the new
+        // leaf folder, creating the folders as needed.
+        const resolved = await resolveDrivePath(newCtx);
+        await moveDriveFile(fileId, resolved.leafId);
+        newPath = resolved.path;
+      }
+
+      const newName = suggestDriveFileName(newCtx) + ext;
+      if (newName !== entry.name) {
+        try { await renameDriveFile(fileId, newName); } catch { /* keep going */ }
+      }
+      reg[fileId] = { ...entry, name: newName, ctx: newCtx, path: newPath, at: Date.now() };
       count++;
-    } catch { /* skip files that cannot be renamed (e.g. not app-created) */ }
+    } catch { /* skip files that cannot be updated (e.g. not app-created) */ }
   }
 
   if (count > 0) saveDriveFileRegistry(reg);
