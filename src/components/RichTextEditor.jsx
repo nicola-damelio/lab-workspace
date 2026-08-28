@@ -3,7 +3,7 @@ import { suggestDriveFileName, getDriveFolderUrl, setDriveFolderUrl, openDrive, 
 import { DriveUploadButton } from './DriveUpload';
 import { docxToHtml } from '../utils/docxImport';
 import { getRenderableDriveUrl, repairContentImages } from '../data/constants';
-import { archiveFileToDrive } from '../utils/driveUpload';
+import { archiveFileToDrive, uploadLocalFile, dataUrlToBlob, withExtension } from '../utils/driveUpload';
 
 export const RichTextEditor = ({
   value, onChange, placeholder, toolbarExtra = [],
@@ -232,33 +232,61 @@ export const RichTextEditor = ({
         window.addEventListener('mouseup', onUp);
         document.body.style.cursor = 'ns-resize';
     };
+    // Insert an image that was pasted or dropped into the editor: resizes it,
+    // saves it to the context's Drive folder (protocols/<protocol>,
+    // <project>/<section>, test/…/Report) as a REAL file, and inserts the Drive
+    // URL. Falls back to a data URL only when Drive is unavailable — so pasted
+    // images live in Drive too, not just as base64 inside the dataset.
+    const insertImageBlob = (blob) => {
+        if (!blob) return;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const img = new Image();
+            img.onload = async () => {
+                const canvas = document.createElement('canvas');
+                let width = img.width; let height = img.height;
+                const MAX_WIDTH = 1200;
+                if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
+                canvas.width = width; canvas.height = height;
+                const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0, width, height);
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                let imgSrc = dataUrl;
+                try {
+                    const pastedNum = (editorRef.current ? editorRef.current.querySelectorAll('img').length : 0) + 1;
+                    const pastedTitle = `pasted_image_${pastedNum}`;
+                    const drive = await uploadLocalFile({
+                        name: withExtension(suggestDriveFileName({ ...(fileNaming || {}), title: pastedTitle }), `${pastedTitle}.jpg`),
+                        mimeType: 'image/jpeg',
+                        file: dataUrlToBlob(dataUrl),
+                        ctx: { ...(fileNaming || {}), title: pastedTitle }
+                    });
+                    if (drive && drive.driveUrl) imgSrc = getRenderableDriveUrl(drive.driveUrl);
+                } catch { /* Drive unavailable — keep the local data URL */ }
+                document.execCommand('insertImage', false, imgSrc);
+                onChange(editorRef.current.innerHTML);
+            };
+            img.src = event.target.result;
+        };
+        reader.readAsDataURL(blob);
+    };
     const handlePaste = (e) => {
         const items = (e.clipboardData || e.originalEvent?.clipboardData)?.items;
         if (!items) return;
         for (let i = 0; i < items.length; i++) {
             if (items[i].type.indexOf('image') !== -1) {
                 e.preventDefault();
-                const blob = items[i].getAsFile();
-                const reader = new FileReader();
-                reader.onload = (event) => {
-                    const img = new Image();
-                    img.onload = () => {
-                        const canvas = document.createElement('canvas');
-                        let width = img.width; let height = img.height;
-                        const MAX_WIDTH = 1200;
-                        if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
-                        canvas.width = width; canvas.height = height;
-                        const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0, width, height);
-                        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-                        document.execCommand('insertImage', false, dataUrl);
-                        onChange(editorRef.current.innerHTML);
-                    };
-                    img.src = event.target.result;
-                };
-                reader.readAsDataURL(blob);
+                insertImageBlob(items[i].getAsFile());
                 break;
             }
         }
+    };
+    // Drag-and-dropped images are saved to Drive just like pasted ones.
+    const handleDrop = (e) => {
+        const file = Array.from((e.dataTransfer && e.dataTransfer.files) || [])
+            .find((f) => f.type && String(f.type).indexOf('image/') === 0);
+        if (!file) return;
+        e.preventDefault();
+        insertImageBlob(file);
     };
     return (
         <div className={`w-full ${fillHeight ? 'flex-1' : ''} flex flex-col border border-slate-300 rounded-md bg-white overflow-hidden shadow-sm transition-shadow focus-within:ring-1 focus-within:ring-blue-500 focus-within:border-blue-500`}>
@@ -318,6 +346,7 @@ export const RichTextEditor = ({
             </div>
             <div ref={editorRef} contentEditable onPaste={handlePaste} onBlur={handleBlur}
                 onSelect={storeSel} onKeyUp={storeSel} onMouseUp={storeSel} onFocus={handleEditFocus}
+                onDrop={handleDrop}
                 className="p-3 text-sm text-slate-700 focus:outline-none custom-scrollbar shadow-inner bg-slate-50/50 rte-content" style={{ resize: 'vertical', minHeight: toPx(minHeight), maxHeight: toPx(maxHeight), overflowY: 'auto' }} data-placeholder={placeholder} />
             {resizable && (
                 <div onMouseDown={startResize} title="Drag to resize the editor vertically"
