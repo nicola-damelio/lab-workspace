@@ -174,6 +174,26 @@ export const countTestImageRefs = (tests) =>
   (Array.isArray(tests) ? tests : [])
     .reduce((n, t) => n + collectTestImageRefs(t).length, 0);
 
+/** DRY-RUN preview — shows, for every test with Drive-linked files, the exact
+ *  target Drive folder and the instance name the migration will use. Nothing
+ *  is touched on Drive. Lets the user verify the <project>/<test>/<instance>/
+ *  <section> layout (and spot empty instance names) before running. */
+export const previewTestDriveFiles = (tests) =>
+  (Array.isArray(tests) ? tests : [])
+    .map((t) => {
+      const refs = collectTestImageRefs(t);
+      if (refs.length === 0) return null;
+      const ctx = refs[0].ctx;
+      return {
+        test: t.name || '(untitled)',
+        id: t.id || '',
+        instanceName: t.instanceName || '',
+        folder: ['Lab Workspace', '<dataset>', ...driveFolderPath(ctx)].join('/'),
+        files: refs.map((r) => ({ title: r.title || '(link)', url: r.url }))
+      };
+    })
+    .filter(Boolean);
+
 
 /** Pick a folder-unique file name (within this run), avoiding clobbering an
  *  existing different Drive file with the same name. */
@@ -338,18 +358,9 @@ export const migrateTestDriveImages = async ({ tests, onProgress = () => {} } = 
     let status = '';
     let finalName = '';
 
-    // 4) Resolve (creating as needed) the target folder once, up-front.
-    let resolved;
-    try {
-      resolved = await resolveDrivePathFromNames(folderPath);
-    } catch (err) {
-      summary.failed += 1;
-      summary.details.push({ fileId, test: testName, status: 'failed', reason: err && err.message });
-      onProgress({ fileId, status: 'failed', error: err && err.message });
-      continue;
-    }
-
     // 5a) Fast path — the file was created by the app: move + rename in place.
+    // The target folder is created ONLY once we know the file is real, so
+    // skipped/deleted files never leave empty folders behind on Drive.
     try {
       const meta = await getDriveFileMeta(fileId);
       const curName = meta.name || '';
@@ -359,6 +370,7 @@ export const migrateTestDriveImages = async ({ tests, onProgress = () => {} } = 
       // (e.g. an <a href> link with a generic anchor text).
       const curBase = curName.replace(/\.[a-zA-Z0-9]{1,10}$/, '');
       const base = suggestDriveFileName({ ...ctx, title: first.title || curBase });
+      const resolved = await resolveDrivePathFromNames(folderPath);
       finalName = await pickUniqueName(resolved.leafId, base + ext, usedNames, fileId);
       const oldPath = (getDriveFileRegistry()[fileId] || {}).path || null;
       await moveDriveFile(fileId, resolved.leafId);
@@ -376,6 +388,8 @@ export const migrateTestDriveImages = async ({ tests, onProgress = () => {} } = 
     } catch {
       // 5b) Fallback — not app-created (drive.file scope cannot move it): copy
       // the public bytes into a NEW app-created file in the correct folder.
+      // The download happens FIRST; the folder is created only afterwards, so
+      // un-downloadable files are skipped WITHOUT leaving empty folders.
       try {
         const dl = await downloadDriveFileBytes(fileId);
         const dlNameExt = dl.name ? /(\.[a-zA-Z0-9]{1,10})$/.exec(dl.name) : null;
@@ -387,6 +401,7 @@ export const migrateTestDriveImages = async ({ tests, onProgress = () => {} } = 
         // Google sent back with the download.
         const dlBase = (dl.name || '').replace(/\.[a-zA-Z0-9]{1,10}$/, '');
         const base = suggestDriveFileName({ ...ctx, title: first.title || dlBase });
+        const resolved = await resolveDrivePathFromNames(folderPath);
         finalName = await pickUniqueName(resolved.leafId, base + ext, usedNames, '');
         const drive = await uploadLocalFile({
           name: finalName,

@@ -11,6 +11,7 @@ import React, { useState } from 'react';
 import { getDriveToken } from '../utils/driveUpload';
 import {
   countTestImageRefs,
+  previewTestDriveFiles,
   migrateTestDriveImages,
   TEST_IMAGE_SECTION
 } from '../utils/migrateTestImages';
@@ -18,8 +19,11 @@ import {
 export const DriveImageMigration = ({ tests, setTests, datasetTitle = '' }) => {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
+  const [showPreview, setShowPreview] = useState(false);
 
   const refCount = countTestImageRefs(tests);
+  const preview = showPreview ? previewTestDriveFiles(tests) : [];
+  const emptyInstance = preview.filter((p) => !p.instanceName);
 
   const run = async () => {
     if (!getDriveToken()) {
@@ -74,20 +78,64 @@ export const DriveImageMigration = ({ tests, setTests, datasetTitle = '' }) => {
         figures, ⭐ starred items, attached documents (PDFs) and links in the report text.
       </p>
 
-      <button
-        type="button"
-        onClick={run}
-        disabled={busy || (refCount === 0 && !(s && (s.moved > 0 || s.copied > 0)))}
-        className={`text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm transition-colors ${
-          refCount === 0 && !(s && (s.moved > 0 || s.copied > 0))
-            ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-default'
-            : 'bg-indigo-600 hover:bg-indigo-700 text-white border border-indigo-700 disabled:opacity-60'
-        }`}
-      >
-        {busy ? 'Moving files…' : refCount === 0 && !(s && (s.moved > 0 || s.copied > 0))
-          ? 'No Drive-linked test files'
-          : '⬆ Move files to correct Drive folders'}
-      </button>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={run}
+          disabled={busy || (refCount === 0 && !(s && (s.moved > 0 || s.copied > 0)))}
+          className={`text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm transition-colors ${
+            refCount === 0 && !(s && (s.moved > 0 || s.copied > 0))
+              ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-default'
+              : 'bg-indigo-600 hover:bg-indigo-700 text-white border border-indigo-700 disabled:opacity-60'
+          }`}
+        >
+          {busy ? 'Moving files…' : refCount === 0 && !(s && (s.moved > 0 || s.copied > 0))
+            ? 'No Drive-linked test files'
+            : '⬆ Move files to correct Drive folders'}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setShowPreview((v) => !v)}
+          className="text-xs font-bold px-3 py-1.5 rounded-lg border transition-colors bg-white border-slate-300 text-slate-600 hover:bg-slate-50"
+          title="Dry run — show every test, its detected instance name and the exact target folder (nothing is touched on Drive)"
+        >
+          {showPreview ? '👁 Hide preview' : '👁 Preview target folders'}
+        </button>
+      </div>
+
+      {showPreview && (
+        <div className="mt-3 pt-3 border-t border-slate-100">
+          {emptyInstance.length > 0 && (
+            <p className="text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 mb-2">
+              ⚠️ {emptyInstance.length} test{emptyInstance.length === 1 ? '' : 's'} have an <b>EMPTY instance name</b> —
+              those will go to <code>&lt;test&gt;/{TEST_IMAGE_SECTION}</code> with <b>no instance folder</b>.
+              If you see a name in the app tab, it is stored in the test field <code>instanceName</code>.
+            </p>
+          )}
+          <ul className="max-h-60 overflow-y-auto custom-scrollbar text-[11px] space-y-1.5">
+            {preview.map((p) => (
+              <li key={p.id || p.test} className="flex items-start gap-1.5">
+                <span className="text-slate-400 mt-0.5">•</span>
+                <div className="min-w-0">
+                  <div className="font-bold text-slate-700 truncate">
+                    {p.test}
+                    <span className={`ml-1.5 font-semibold ${p.instanceName ? 'text-emerald-600' : 'text-amber-600'}`}>
+                      {p.instanceName ? `inst: "${p.instanceName}"` : 'inst: (empty)'}
+                    </span>
+                  </div>
+                  <div className="text-slate-500 font-mono text-[10px] truncate">
+                    → {p.folder}/{p.files.length} file{p.files.length === 1 ? '' : 's'}
+                  </div>
+                </div>
+              </li>
+            ))}
+            {preview.length === 0 && (
+              <li className="text-slate-400">No Drive-linked files found in any test.</li>
+            )}
+          </ul>
+        </div>
+      )}
 
       {busy && (
         <p className="text-[11px] text-indigo-600 font-bold mt-2 animate-pulse">
