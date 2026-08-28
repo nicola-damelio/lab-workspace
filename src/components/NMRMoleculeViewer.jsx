@@ -538,6 +538,11 @@ const [activeMolKey, setActiveMolKey] = useState('main');
 const [modelCount, setModelCount] = useState(0);
 const [modelIdx, setModelIdx] = useState(0);
 const extraCompsRef = useRef([]);                  // [{ id, name, comp }]
+// Files chosen as "additional molecules" that must wait until the MAIN structure
+// has finished loading — the main load calls stage.removeAllComponents(), which
+// would wipe any component added concurrently. They are flushed once the main
+// structure is ready (status === 'ready'), then cleared.
+const pendingExtraFilesRef = useRef([]);           // [{ file, n }]
 
 // Remove every extra uploaded molecule (its NGL components). Called at the START
 // of any new main-structure load — NOT after it — so a freshly-selected batch
@@ -547,6 +552,7 @@ const clearExtraMolecules = useCallback(() => {
     try { if (stageRef.current) stageRef.current.removeComponent(comp); } catch {}
   });
   extraCompsRef.current = [];
+  pendingExtraFilesRef.current = [];
   setExtraMols([]);
   setActiveMolKey('main');
 }, []);
@@ -1807,11 +1813,26 @@ try {
   extraCompsRef.current.push({ id, name, comp });
   setExtraMols(extraCompsRef.current.map(({ id: xid, name: xname }) => ({ id: xid, name: xname })));
   try { comp.setVisibility(false); } catch {}
-  try { comp.autoView(); } catch {}
+  // NOTE: no comp.autoView() here — the extra is HIDDEN and autoView would move
+  // the camera away from the main structure. The camera is re-centred on the
+  // selected molecule by handleMolSelect (and on the main one after a flush).
 } catch (err) {
   console.warn('Could not load additional molecule:', err && err.message);
 }
 }, []);
+
+// Flush the pending extra files once the MAIN structure is ready. This runs
+// AFTER the main load has called stage.removeAllComponents(), so the extras can
+// never be wiped by it. Then re-centre the camera on the main structure.
+useEffect(() => {
+  if (status !== 'ready') return;
+  const pending = pendingExtraFilesRef.current;
+  if (!pending || pending.length === 0) return;
+  pendingExtraFilesRef.current = [];
+  pending.forEach(({ file, n }) => { loadExtraMolecule(file, n); });
+  try { if (componentRef.current) componentRef.current.autoView(); } catch {}
+  try { if (stageRef.current) stageRef.current.handleResize(); } catch {}
+}, [status, loadExtraMolecule]);
 
 const handleFileChange = useCallback((e) => {
 const files = Array.from(e.target.files || []);
@@ -1827,12 +1848,15 @@ onStructureFile?.(first);   // share the chosen topology with the analysis secti
 if (driveNaming) archiveFileToDrive({ file: first, ctx: driveNaming }).catch(() => {});
 // Additional structures (docking complexes / clusters / poses) are loaded as
 // separate NGL components and shown ONE AT A TIME via the "Molecules" selector.
-rest.forEach((f, i) => {
-  loadExtraMolecule(f, i + 1);
+// They are deferred (pendingExtraFilesRef) until the MAIN structure is ready:
+// the main load calls stage.removeAllComponents(), which would wipe any
+// component added while it runs.
+pendingExtraFilesRef.current = rest.map((f, i) => ({ file: f, n: i + 1 }));
+rest.forEach((f) => {
   if (driveNaming) archiveFileToDrive({ file: f, ctx: driveNaming }).catch(() => {});
 });
 e.target.value = '';
-}, [onStructureFile, driveNaming, loadExtraMolecule, clearExtraMolecules]);
+}, [onStructureFile, driveNaming, clearExtraMolecules]);
 
 // Show exactly one molecule at a time (main structure or an extra uploaded file).
 const handleMolSelect = (key) => {
