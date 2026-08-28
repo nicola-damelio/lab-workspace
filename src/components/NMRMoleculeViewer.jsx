@@ -457,11 +457,15 @@ else if (traj.trajectory && typeof traj.trajectory.setFrame === 'function') traj
 };
 
 /** Split a text PDB file into one Blob per MOLECULE (connected fragment).
- *  Atoms are grouped by COVALENT connectivity: CONECT records first, then
- *  implicit bonds by proximity (≤ 2.0 Å, via a spatial grid). This separates:
+ *  Atoms are grouped by COVALENT connectivity scoped to their MODEL record:
+ *  CONECT bonds first, then implicit bonds by proximity (≤ 2.0 Å, via a
+ *  spatial grid). This separates:
  *   - distinct chains (protein + ligand chain, complexes),
  *   - separate molecules that share ONE chain (receptor + ligand in chain A),
- *   - multimeric complexes held together only by non-covalent contacts.
+ *   - multimeric complexes held together only by non-covalent contacts,
+ *   - overlapping conformers of a multi-MODEL PDB (NMR ensembles / docking
+ *     clusters) — bonds never cross MODEL boundaries, so conformers with
+ *     identical/overlapping coordinates are never merged into a single blob.
  *  Pure-water fragments are skipped, so a hydrated protein does not explode
  *  into dozens of tiny "molecule" entries. Returns [] when the file has 0/1
  *  molecules or cannot be read — the caller keeps the whole structure.
@@ -472,11 +476,20 @@ const splitPdbFileIntoMolecules = async (file) => {
   try { text = await file.text(); } catch { return []; }
   const lines = String(text || '').split(/\r?\n/);
 
-  const atoms = [];                 // { line, chain, resname, x, y, z }
+  const atoms = [];                 // { line, chain, resname, model, x, y, z }
   const conectBonds = [];           // [i, j] pairs into `atoms`
-  const conectIndex = new Map();    // serial -> atom index
+  const conectIndex = new Map();    // serial -> first atom index (bonds are
+                                    // same-MODEL filtered below, so restarted
+                                    // serials can never merge two conformers)
+  let model = 0;                    // 0-based index of the MODEL block owning the current atoms
+  let blocksSeen = 0;               // number of MODEL records seen so far
   for (const line of lines) {
     const rec = line.slice(0, 6).trim();
+    if (rec === 'MODEL') {
+      model = blocksSeen;   // the next block gets the next 0-based index
+      blocksSeen += 1;
+      continue;
+    }
     if (rec === 'ATOM' || rec === 'HETATM') {
       const serial = parseInt(line.slice(6, 11), 10);
       const idx = atoms.length;
@@ -488,9 +501,10 @@ const splitPdbFileIntoMolecules = async (file) => {
         line,
         chain: line.slice(21, 22).trim() || '_',
         resname: line.slice(17, 20).trim(),
+        model,
         x, y, z
       });
-      if (Number.isFinite(serial)) conectIndex.set(serial, idx);
+      if (Number.isFinite(serial) && !conectIndex.has(serial)) conectIndex.set(serial, idx);
     } else if (rec === 'CONECT') {
       const serial = parseInt(line.slice(6, 11), 10);
       const a = conectIndex.get(serial);
@@ -504,13 +518,17 @@ const splitPdbFileIntoMolecules = async (file) => {
     }
   }
   if (atoms.length === 0) return [];
+  const modelCount = blocksSeen > 0 ? blocksSeen : 1;  // 1 = no MODEL records (single model)
 
   const parent = atoms.map((_, i) => i);
   const find = (x) => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
   const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; };
-  conectBonds.forEach(([a, b]) => union(a, b));
+  // CONECT bonds are only valid INSIDE one MODEL — serial numbers may repeat
+  // across conformers, and a bond between different models would merge them.
+  conectBonds.forEach(([a, b]) => { if (atoms[a].model === atoms[b].model) union(a, b); });
 
   // Implicit covalent bonds by proximity — spatial grid keeps this O(n).
+  // Same-MODEL rule again: overlapping conformers of an ensemble never merge.
   const BOND_DIST = 2.0;
   const grid = new Map();
   const cellKey = (cx, cy, cz) => `${cx}|${cy}|${cz}`;
@@ -530,6 +548,7 @@ const splitPdbFileIntoMolecules = async (file) => {
           for (const j of cell) {
             if (j <= i) continue;
             const b = atoms[j];
+            if (a.model !== b.model) continue;
             const ddx = a.x - b.x, ddy = a.y - b.y, ddz = a.z - b.z;
             if (ddx * ddx + ddy * ddy + ddz * ddz <= BOND_DIST * BOND_DIST) union(i, j);
           }
@@ -552,6 +571,8 @@ const splitPdbFileIntoMolecules = async (file) => {
     if (pureWater) return;
     parts.push({
       chainId: atoms[idxs[0]].chain,
+      model: atoms[idxs[0]].model,
+      modelCount,
       blob: new Blob([idxs.map((i) => atoms[i].line).join('\n') + '\nEND\n'], { type: 'text/plain' })
     });
   });
@@ -618,12 +639,11 @@ const [moleculeStyle, setMoleculeStyle] = useState('ball+stick');
 
 // ---- Multiple structures & multi-model PDB (docking clusters: HADDOCK/AutoDock) ----
 // extraMols = extra loaded structure files (each its own NGL component); the
-// "Molecules" selector shows exactly one at a time. modelCount > 1 means the
-// loaded PDB contains several MODEL records → "Model" selector (setFrame).
+// "Molecules" selector shows exactly one at a time. Multi-MODEL PDB files
+// (NMR ensembles / docking clusters) are split into one entry per MODEL by the
+// main-load effect, so they appear in the same "Molecules" selector.
 const [extraMols, setExtraMols] = useState([]);    // [{ id, name }]
 const [activeMolKey, setActiveMolKey] = useState('main');
-const [modelCount, setModelCount] = useState(0);
-const [modelIdx, setModelIdx] = useState(0);
 const extraCompsRef = useRef([]);                  // [{ id, name, comp }]
 // Files chosen as "additional molecules" that must wait until the MAIN structure
 // has finished loading — the main load calls stage.removeAllComponents(), which
@@ -1149,35 +1169,46 @@ setLargeInfo(null);
 }
 addDefaultReps(component);
 
-// Multi-model PDB files (docking ensembles / clusters — HADDOCK, AutoDock,
-// NMR ensembles) are exposed through a "Model" selector so the user can look
-// at one pose/cluster at a time.
+// Multi-MODEL PDB files (ensembles / docking clusters / NMR structures):
+// NGL 2.4.0 does not expose structure.frameCount (and StructureComponent has
+// no setFrame), so the MODEL count comes from structure.modelStore.count —
+// the number of MODEL records the PDB parser created. The per-MODEL /
+// per-molecule text split below exposes each entry in the Molecules selector.
+let nglModelCount = 0;
 try {
-  const fc = component.structure ? component.structure.frameCount : 0;
-  setModelCount(fc > 1 ? fc : 0);
-  setModelIdx(0);
-  if (fc > 1 && typeof component.setFrame === 'function') {
-    try { component.setFrame(0); } catch {}
-  }
-} catch {
-  setModelCount(0);
-}
+  nglModelCount = component.structure && component.structure.modelStore
+    ? component.structure.modelStore.count : 0;
+} catch { nglModelCount = 0; }
 
-// Multi-molecule PDB (complexes / protein + ligand / docking poses): expose each
-// MOLECULE as its own entry in the Molecules selector so the partners can be
-// viewed alone or together. Uses the PDB TEXT (deterministic, NGL-version
-// independent) with connectivity from CONECT + proximity. Skipped for
-// multi-MODEL files (the Model selector covers those) and non-PDB inputs.
+// Multi-molecule / multi-MODEL PDB (complexes, docking poses, NMR ensembles):
+// expose each MOLECULE — or each MODEL conformer — as its own entry in the
+// Molecules selector so the partners can be viewed alone or together. Uses the
+// PDB TEXT (deterministic, NGL-version independent) with connectivity from
+// CONECT + proximity, scoped to MODEL records. Non-PDB inputs are skipped.
 try {
-  const frameCount = component.structure ? component.structure.frameCount : 0;
   const srcFile = loadRequest && loadRequest.file;
-  if (frameCount <= 1 && srcFile && /\.(pdb|ent)$/i.test(String(srcFile.name || ''))) {
-    const moleculeParts = await splitPdbFileIntoMolecules(srcFile);
-    if (moleculeParts.length > 1) {
-      for (let ci = 0; ci < moleculeParts.length; ci++) {
-        await loadChainMolecule(moleculeParts[ci].blob, `Molecule ${ci + 1} (${moleculeParts[ci].chainId})`, ci);
+  const textIsPdb = !!(loadRequest && loadRequest.text && ['pdb', 'ent'].includes(String(loadRequest.ext || '').toLowerCase()));
+  if (srcFile || textIsPdb) {
+    const isPdb = srcFile
+      ? /\.(pdb|ent)$/i.test(String(srcFile.name || ''))
+      : textIsPdb;
+    if (isPdb) {
+      const srcForSplit = srcFile || new Blob([loadRequest.text], { type: 'text/plain' });
+      const moleculeParts = await splitPdbFileIntoMolecules(srcForSplit);
+      if (moleculeParts.length > 1) {
+        const multiModel = nglModelCount > 1 || (moleculeParts[0] && moleculeParts[0].modelCount > 1);
+        const perModelCounts = new Map();
+        moleculeParts.forEach((p) => perModelCounts.set(p.model, (perModelCounts.get(p.model) || 0) + 1));
+        const onePartPerModel = moleculeParts.every((p) => perModelCounts.get(p.model) === 1);
+        for (let ci = 0; ci < moleculeParts.length; ci++) {
+          const part = moleculeParts[ci];
+          const label = multiModel
+            ? (onePartPerModel ? `Model ${part.model + 1}` : `Molecule ${ci + 1} (Model ${part.model + 1})`)
+            : `Molecule ${ci + 1} (${part.chainId})`;
+          await loadChainMolecule(part.blob, label, ci);
+        }
+        setExtraMols(extraCompsRef.current.map(({ id: xid, name: xname }) => ({ id: xid, name: xname })));
       }
-      setExtraMols(extraCompsRef.current.map(({ id: xid, name: xname }) => ({ id: xid, name: xname })));
     }
   }
 } catch { /* molecule splitting failed — keep the whole structure as one component */ }
@@ -2056,13 +2087,6 @@ requestAnimationFrame(() => {
 });
 };
 
-// Switch the displayed MODEL of a multi-model PDB (docking clusters/ensembles).
-const handleModelChange = (idx) => {
-setModelIdx(idx);
-const c = componentRef.current;
-if (c && typeof c.setFrame === 'function') { try { c.setFrame(idx); } catch {} }
-};
-
 const handlePdbIdLoad = useCallback(() => {
 const value = pdbId.trim();
 if (!value) return;
@@ -2117,18 +2141,6 @@ className={`text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-
 <span title={file.name} className="text-[10px] text-slate-500 max-w-[120px] truncate">
 {file.name}
 </span>
-)}
-{modelCount > 1 && trajStatus === 'none' && (
-<select
-value={modelIdx}
-onChange={(e) => handleModelChange(parseInt(e.target.value, 10) || 0)}
-title="Multi-model PDB (docking clusters / ensembles) — view one MODEL at a time"
-className="border border-slate-300 rounded-md px-1.5 py-1.5 text-xs bg-white outline-none focus:border-blue-500 h-8"
->
-{Array.from({ length: modelCount }, (_, i) => (
-<option key={i} value={i}>Model {i + 1}</option>
-))}
-</select>
 )}
 {extraMols.length > 0 && (
 <select
