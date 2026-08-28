@@ -386,14 +386,16 @@ const GelPanel = ({ ctx }) => {
         <DriveUploadButton
           suggestedName={suggestDriveFileName({
             project: (activeTest.projectNames || [])[0] || '',
-            test: activeTest.name || activeTest.instanceName || '',
+            test: activeTest.name || '',
+            instance: activeTest.instanceName || '',
             section: 'Data',
             subsection: 'Gel',
             suffix: 'gel'
           })}
           naming={{
             project: (activeTest.projectNames || [])[0] || '',
-            test: activeTest.name || activeTest.instanceName || '',
+            test: activeTest.name || '',
+            instance: activeTest.instanceName || '',
             section: 'Data',
             subsection: 'Gel',
             suffix: 'gel'
@@ -539,14 +541,16 @@ export const CloningDataSection = ({ ctx }) => {
           <DriveUploadButton
             suggestedName={suggestDriveFileName({
               project: (activeTest.projectNames || [])[0] || '',
-              test: activeTest.name || activeTest.instanceName || '',
+              test: activeTest.name || '',
+              instance: activeTest.instanceName || '',
               section: 'Data',
               subsection: 'UV Spectra',
               suffix: 'uvspectrum'
             })}
             naming={{
               project: (activeTest.projectNames || [])[0] || '',
-              test: activeTest.name || activeTest.instanceName || '',
+              test: activeTest.name || '',
+              instance: activeTest.instanceName || '',
               section: 'Data',
               subsection: 'UV Spectra',
               suffix: 'uvspectrum'

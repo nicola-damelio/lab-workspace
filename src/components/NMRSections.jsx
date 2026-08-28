@@ -3856,11 +3856,22 @@ const generatedStructure = useMemo(() => {
   };
 
   const downloadPdbFile = async () => {
+    // Localized base name: Project_Test_Instance_Data_Structure_3D → unique per
+    // condition and per subsection of the test page, so no two saved files clash.
+    const pdbBase = suggestDriveFileName({
+      project: (activeTest.projectNames || [])[0] || '',
+      test: activeTest.name || '',
+      instance: activeTest.instanceName || '',
+      section: 'Data',
+      subsection: 'Structure',
+      title: '3D'
+    });
+
     // Already-generated/-fetched structure text (protein/DNA/RNA backbone, or a successfully
     // resolved organic structure) can be downloaded directly without another network round trip.
     if (structureText) {
       const ext = structureTextExt === 'sdf' ? 'sdf' : 'pdb';
-      triggerDownload(structureText, `${activeTest.name || d.moleculeType || 'structure'}_3D.${ext}`);
+      triggerDownload(structureText, `${pdbBase}.${ext}`);
       return;
     }
 
@@ -3868,7 +3879,7 @@ const generatedStructure = useMemo(() => {
     if (targetSmiles) {
       try {
         const { text, ext } = await resolveOrganicStructureText(targetSmiles);
-        triggerDownload(text, `${activeTest.name || 'molecule'}_3D.${ext}`);
+        triggerDownload(text, `${pdbBase}.${ext}`);
       } catch (e) {
         alert('Failed to generate a 3D structure for this SMILES: ' + e.message);
       }
@@ -3878,7 +3889,7 @@ const generatedStructure = useMemo(() => {
         const text = d.moleculeType === 'protein'
           ? proteinSequenceToPdbText(d.seq, activeTest.secondaryStructure || '', activeTest.name || 'PROTEIN')
           : nucleicSequenceToPdbText(d.seq, d.moleculeType, activeTest.name || 'NUCLEIC_ACID');
-        triggerDownload(text, `${activeTest.name || d.moleculeType}_3D.pdb`);
+        triggerDownload(text, `${pdbBase}.pdb`);
       } catch (e) {
         alert('Failed to generate structure: ' + e.message);
       }
@@ -4022,7 +4033,7 @@ const generatedStructure = useMemo(() => {
         <div style={{ display: structureMode === '3d' ? 'block' : 'none' }} aria-hidden={structureMode !== '3d'}>
           {hasOpened3D && (
             <div className="flex flex-col gap-2">
-              <NMRMoleculeViewer key={structureSrc || (generatedStructure ? 'generated' : 'no-structure-src')} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} externalLoading={organicFetch.loading} externalError={organicFetch.error} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq) => { if (seq && !activeTest.proteinSequence && ['protein', 'dna', 'rna'].includes(d.moleculeType)) updateActiveTest({ proteinSequence: seq }); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || activeTest.instanceName || '', section: 'Data', subsection: 'Structure' }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '620px' : '520px'} />
+              <NMRMoleculeViewer key={structureSrc || (generatedStructure ? 'generated' : 'no-structure-src')} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} externalLoading={organicFetch.loading} externalError={organicFetch.error} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq) => { if (seq && !activeTest.proteinSequence && ['protein', 'dna', 'rna'].includes(d.moleculeType)) updateActiveTest({ proteinSequence: seq }); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', section: 'Data', subsection: 'Structure' }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '620px' : '520px'} />
               <button onClick={downloadPdbFile} className="self-center mt-2 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-xs rounded-lg hover:bg-indigo-100 transition-colors shadow-sm">📥 Download 3D PDB File</button>
             </div>
           )}
@@ -4788,7 +4799,8 @@ export const DataSection = ({ ctx }) => {
     if (driveConnected) {
       const driveCtx = {
         project: (activeTest.projectNames || [])[0] || '',
-        test: activeTest.name || activeTest.instanceName || '',
+        test: activeTest.name || '',
+        instance: activeTest.instanceName || '',
         section: 'Data',
         subsection: 'Bruker 1r'
       };

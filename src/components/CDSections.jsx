@@ -1290,7 +1290,8 @@ export const Data = ({ ctx }) => {
     if (driveConnected) {
       const driveCtx = {
         project: (activeTest.projectNames || [])[0] || '',
-        test: activeTest.name || activeTest.instanceName || '',
+        test: activeTest.name || '',
+        instance: activeTest.instanceName || '',
         section: 'Data',
         subsection: 'Spectra'
       };
@@ -1598,14 +1599,16 @@ export const Data = ({ ctx }) => {
             <DriveUploadButton
               suggestedName={suggestDriveFileName({
                 project: (activeTest.projectNames || [])[0] || '',
-                test: activeTest.name || activeTest.instanceName || '',
+                test: activeTest.name || '',
+                instance: activeTest.instanceName || '',
                 section: 'Data',
                 subsection: 'Spectra',
                 suffix: 'spectrum'
               })}
               naming={{
                 project: (activeTest.projectNames || [])[0] || '',
-                test: activeTest.name || activeTest.instanceName || '',
+                test: activeTest.name || '',
+                instance: activeTest.instanceName || '',
                 section: 'Data',
                 subsection: 'Spectra',
                 suffix: 'spectrum'

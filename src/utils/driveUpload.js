@@ -370,11 +370,12 @@ export const archiveFileToDrive = async ({ file, ctx = {}, title = '', suffix = 
 
 /**
  * Rename every recorded Drive file whose naming context contains `oldValue`
- * for the given field (project | test | protocol | section | subsection),
- * rebuilding its name with the new value.
+ * for the given field (project | test | instance | protocol | section | subsection),
+ * rebuilding its name with the new value. `scope` (optional) restricts the
+ * rename to files whose context also matches every { field: value } it lists.
  * @returns {Promise<number>} number of files renamed
  */
-export const renameDriveFilesFor = async ({ field, oldValue, newValue }) => {
+export const renameDriveFilesFor = async ({ field, oldValue, newValue, scope = null }) => {
   if (!field || oldValue === undefined || newValue === undefined) return 0;
   if (String(oldValue) === String(newValue)) return 0;
   if (!getDriveToken()) return 0;
@@ -385,6 +386,14 @@ export const renameDriveFilesFor = async ({ field, oldValue, newValue }) => {
     if (!entry || entry.deleted) continue; // never revive files marked as deleted
     const ctx = entry.ctx || {};
     if (String(ctx[field] || '') !== String(oldValue)) continue;
+    // Optional extra context filter (e.g. only files of one test): every
+    // key in `scope` must match the recorded naming context too.
+    if (scope) {
+      const scopedIn = Object.entries(scope).every(
+        ([k, v]) => String(ctx[k] || '') === String(v)
+      );
+      if (!scopedIn) continue;
+    }
 
     const newCtx = { ...ctx, [field]: newValue };
     const ext = /(\.[a-zA-Z0-9]{1,10})$/.exec(String(entry.name || ''))?.[1] || '';

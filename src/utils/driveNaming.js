@@ -9,8 +9,8 @@
    ========================================================================= */
 
 /** Build a clean file name that *contains the full path*:
- *  Project_Test_Section_Subsection_Title_suffix
- *  e.g. MyProject_CDrun1_Data_Spectra_figure1.png
+ *  Project_Test_Instance_Section_Subsection_Title_suffix
+ *  e.g. MyProject_CDrun1_Rep1_Data_Spectra_figure1.png
  *       MyProtocol_doc.pdf
  *  No date prefix: re-uploading a file with the same name overwrites the
  *  existing Drive file (see driveUpload.uploadLocalFile) instead of
@@ -18,7 +18,7 @@
  */
 export const suggestDriveFileName = ({
   kind = 'File', title = '', suffix = '',
-  project = '', protocol = '', test = '', section = '', subsection = ''
+  project = '', protocol = '', test = '', instance = '', section = '', subsection = ''
 }) => {
   const sanitize = (s) => String(s || '')
     .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '') // strip emoji pictographs
@@ -29,7 +29,7 @@ export const suggestDriveFileName = ({
     .replace(/^_+|_+$/g, '')
     .slice(0, 60);
 
-  const parts = [project, protocol, test, section, subsection, title, suffix];
+  const parts = [project, protocol, test, instance, section, subsection, title, suffix];
   const slug = parts.map(sanitize).filter(Boolean).join('_');
 
   return slug || kind || 'file';

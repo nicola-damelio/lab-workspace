@@ -33,6 +33,7 @@ export const ActiveTestModule = ({
 }) => {
                 const dragInstanceId = React.useRef(null); // dragged instance tab (for reordering)
                 const testNameBeforeEditRef = useRef(null); // Drive-file rename tracking
+                const instanceNameBeforeEditRef = useRef(null); // Drive-file rename tracking (instance)
                 const activeTest = tests.find((t) => t.id === activeTestId);
 
                 if (!activeTest) return <div className="p-6">Test not found.</div>;
@@ -353,6 +354,23 @@ const TestHeader = (
                             type="text"
                             value={activeTest.instanceName || ''}
                             onChange={(e) => updateActiveTest({ instanceName: e.target.value })}
+                            onFocus={() => { instanceNameBeforeEditRef.current = activeTest.instanceName || ''; }}
+                            onBlur={() => {
+                              const before = instanceNameBeforeEditRef.current;
+                              const after = activeTest.instanceName || '';
+                              if (before !== null && before !== after) {
+                                renameDriveFilesFor({
+                                  field: 'instance',
+                                  oldValue: before,
+                                  newValue: after,
+                                  scope: {
+                                    project: (activeTest.projectNames || [])[0] || '',
+                                    test: activeTest.name || ''
+                                  }
+                                }).catch(() => {});
+                              }
+                              instanceNameBeforeEditRef.current = null;
+                            }}
                             className="bg-slate-50 border border-slate-200 text-xs px-2 py-1.5 rounded-lg outline-none focus:border-blue-500"
                             placeholder="e.g. 24h / Rep 1"
                           />

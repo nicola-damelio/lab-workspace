@@ -684,7 +684,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
       updateActiveTest({ structureFileData: null, structureFileName: null });
       return;
     }
-    archiveFileToDrive({ file, ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || activeTest.instanceName || '', section: 'Setup', subsection: 'Structure', suffix: 'structure' } }).catch(() => {});
+    archiveFileToDrive({ file, ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', section: 'Setup', subsection: 'Structure', suffix: 'structure' } }).catch(() => {});
     const reader = new FileReader();
     reader.onload = (e) => {
       updateActiveTest({ structureFileData: e.target.result, structureFileName: file.name });
@@ -699,7 +699,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
       blobStore.remove(trajBlobKey(activeTest.id));
       return;
     }
-    archiveFileToDrive({ file, ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || activeTest.instanceName || '', section: 'Setup', subsection: 'Trajectory', suffix: 'trajectory' } }).catch(() => {});
+    archiveFileToDrive({ file, ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', section: 'Setup', subsection: 'Trajectory', suffix: 'trajectory' } }).catch(() => {});
     setTrajectoryFile(file);
     updateActiveTest({ trajectoryFileName: file.name });
     const cache = localFileCache.get(activeTest.id) || {};
@@ -1031,14 +1031,16 @@ export const MDExperimentSetupSection = ({ ctx }) => {
                     <DriveUploadButton
                       suggestedName={suggestDriveFileName({
                         project: (activeTest.projectNames || [])[0] || '',
-                        test: activeTest.name || activeTest.instanceName || '',
+                        test: activeTest.name || '',
+                        instance: activeTest.instanceName || '',
                         section: 'Setup',
                         subsection: 'Trajectory',
                         suffix: 'trajectory'
                       })}
                       naming={{
                         project: (activeTest.projectNames || [])[0] || '',
-                        test: activeTest.name || activeTest.instanceName || '',
+                        test: activeTest.name || '',
+                        instance: activeTest.instanceName || '',
                         section: 'Setup',
                         subsection: 'Trajectory',
                         suffix: 'trajectory'
@@ -1954,7 +1956,7 @@ export const MDAnalysisSection = ({ ctx }) => {
   const handleEnergyFile = (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
-    archiveFileToDrive({ file, ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || activeTest.instanceName || '', section: 'Analysis', subsection: 'Energy', suffix: 'energy' } }).catch(() => {});
+    archiveFileToDrive({ file, ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', section: 'Analysis', subsection: 'Energy', suffix: 'energy' } }).catch(() => {});
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
@@ -2039,14 +2041,16 @@ export const MDAnalysisSection = ({ ctx }) => {
             <DriveUploadButton
               suggestedName={suggestDriveFileName({
                 project: (activeTest.projectNames || [])[0] || '',
-                test: activeTest.name || activeTest.instanceName || '',
+                test: activeTest.name || '',
+                instance: activeTest.instanceName || '',
                 section: 'Analysis',
                 subsection: 'Energy',
                 suffix: 'energy'
               })}
               naming={{
                 project: (activeTest.projectNames || [])[0] || '',
-                test: activeTest.name || activeTest.instanceName || '',
+                test: activeTest.name || '',
+                instance: activeTest.instanceName || '',
                 section: 'Analysis',
                 subsection: 'Energy',
                 suffix: 'energy'
@@ -2791,20 +2795,22 @@ export const MDMembraneContactSection = ({ ctx }) => {
         </button>
         <label className="text-xs font-bold text-slate-600">Additional runs to overlay (like POPC+CHD(1)…(3))
           <input type="file" multiple accept=".xtc,.trr,.dcd" className={`${inp} block mt-1`}
-                 onChange={(e) => { const _files = Array.from(e.target.files || []); setExtraRuns(_files); _files.forEach((_f) => archiveFileToDrive({ file: _f, ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || activeTest.instanceName || '', section: 'Analysis', subsection: 'Trajectory', suffix: 'trajectory' } }).catch(() => {})); }} />
+                 onChange={(e) => { const _files = Array.from(e.target.files || []); setExtraRuns(_files); _files.forEach((_f) => archiveFileToDrive({ file: _f, ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', section: 'Analysis', subsection: 'Trajectory', suffix: 'trajectory' } }).catch(() => {})); }} />
         </label>
         <div className="mt-1">
           <DriveUploadButton
             suggestedName={suggestDriveFileName({
               project: (activeTest.projectNames || [])[0] || '',
-              test: activeTest.name || activeTest.instanceName || '',
+              test: activeTest.name || '',
+              instance: activeTest.instanceName || '',
               section: 'Analysis',
               subsection: 'Trajectory',
               suffix: 'trajectory'
             })}
             naming={{
               project: (activeTest.projectNames || [])[0] || '',
-              test: activeTest.name || activeTest.instanceName || '',
+              test: activeTest.name || '',
+              instance: activeTest.instanceName || '',
               section: 'Analysis',
               subsection: 'Trajectory',
               suffix: 'trajectory'
@@ -2986,7 +2992,7 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
   const handleChargeFiles = async (fileList) => {
     const files = Array.from(fileList || []);
     if (files.length === 0) { setChargeInfo({ map: null, count: 0, files: [] }); return; }
-    for (const f of files) archiveFileToDrive({ file: f, ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || activeTest.instanceName || '', section: 'Analysis', subsection: 'Charges', suffix: 'charges' } }).catch(() => {});
+    for (const f of files) archiveFileToDrive({ file: f, ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', section: 'Analysis', subsection: 'Charges', suffix: 'charges' } }).catch(() => {});
     const texts = [];
     for (const f of files) texts.push(await f.text());
     const map = parseChargeMap(texts);
@@ -3182,20 +3188,22 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
         )}
         <label className="text-xs font-bold text-slate-600">Additional runs to overlay
           <input type="file" multiple accept=".xtc,.trr,.dcd" className={`${inp} block mt-1`}
-                 onChange={(e) => { const _files = Array.from(e.target.files || []); setExtraRuns(_files); _files.forEach((_f) => archiveFileToDrive({ file: _f, ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || activeTest.instanceName || '', section: 'Analysis', subsection: 'Trajectory', suffix: 'trajectory' } }).catch(() => {})); }} />
+                 onChange={(e) => { const _files = Array.from(e.target.files || []); setExtraRuns(_files); _files.forEach((_f) => archiveFileToDrive({ file: _f, ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', section: 'Analysis', subsection: 'Trajectory', suffix: 'trajectory' } }).catch(() => {})); }} />
         </label>
         <div className="mt-1">
           <DriveUploadButton
             suggestedName={suggestDriveFileName({
               project: (activeTest.projectNames || [])[0] || '',
-              test: activeTest.name || activeTest.instanceName || '',
+              test: activeTest.name || '',
+              instance: activeTest.instanceName || '',
               section: 'Analysis',
               subsection: 'Trajectory',
               suffix: 'trajectory'
             })}
             naming={{
               project: (activeTest.projectNames || [])[0] || '',
-              test: activeTest.name || activeTest.instanceName || '',
+              test: activeTest.name || '',
+              instance: activeTest.instanceName || '',
               section: 'Analysis',
               subsection: 'Trajectory',
               suffix: 'trajectory'
@@ -3213,14 +3221,16 @@ export const MDMembraneProfilesSection = ({ ctx }) => {
           <DriveUploadButton
             suggestedName={suggestDriveFileName({
               project: (activeTest.projectNames || [])[0] || '',
-              test: activeTest.name || activeTest.instanceName || '',
+              test: activeTest.name || '',
+              instance: activeTest.instanceName || '',
               section: 'Analysis',
               subsection: 'Charges',
               suffix: 'charges'
             })}
             naming={{
               project: (activeTest.projectNames || [])[0] || '',
-              test: activeTest.name || activeTest.instanceName || '',
+              test: activeTest.name || '',
+              instance: activeTest.instanceName || '',
               section: 'Analysis',
               subsection: 'Charges',
               suffix: 'charges'
@@ -3783,20 +3793,22 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
         )}
         <label className="text-xs font-bold text-slate-600">Additional runs to overlay
           <input type="file" multiple accept=".xtc,.trr,.dcd" className={`${inp} block mt-1`}
-                 onChange={(e) => { const _files = Array.from(e.target.files || []); setExtraRuns(_files); _files.forEach((_f) => archiveFileToDrive({ file: _f, ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || activeTest.instanceName || '', section: 'Analysis', subsection: 'Trajectory', suffix: 'trajectory' } }).catch(() => {})); }} />
+                 onChange={(e) => { const _files = Array.from(e.target.files || []); setExtraRuns(_files); _files.forEach((_f) => archiveFileToDrive({ file: _f, ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', section: 'Analysis', subsection: 'Trajectory', suffix: 'trajectory' } }).catch(() => {})); }} />
         </label>
         <div className="mt-1">
           <DriveUploadButton
             suggestedName={suggestDriveFileName({
               project: (activeTest.projectNames || [])[0] || '',
-              test: activeTest.name || activeTest.instanceName || '',
+              test: activeTest.name || '',
+              instance: activeTest.instanceName || '',
               section: 'Analysis',
               subsection: 'Trajectory',
               suffix: 'trajectory'
             })}
             naming={{
               project: (activeTest.projectNames || [])[0] || '',
-              test: activeTest.name || activeTest.instanceName || '',
+              test: activeTest.name || '',
+              instance: activeTest.instanceName || '',
               section: 'Analysis',
               subsection: 'Trajectory',
               suffix: 'trajectory'

@@ -489,14 +489,16 @@ const ProteinDataSection = ({ ctx }) => {
             <DriveUploadButton
               suggestedName={suggestDriveFileName({
                 project: (ctx.activeTest?.projectNames || [])[0] || '',
-                test: ctx.activeTest?.name || ctx.activeTest?.instanceName || '',
+                test: ctx.activeTest?.name || '',
+                instance: ctx.activeTest?.instanceName || '',
                 section: 'Data',
                 subsection: 'Gel',
                 suffix: 'gel'
               })}
               naming={{
                 project: (ctx.activeTest?.projectNames || [])[0] || '',
-                test: ctx.activeTest?.name || ctx.activeTest?.instanceName || '',
+                test: ctx.activeTest?.name || '',
+                instance: ctx.activeTest?.instanceName || '',
                 section: 'Data',
                 subsection: 'Gel',
                 suffix: 'gel'

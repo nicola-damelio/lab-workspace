@@ -864,7 +864,7 @@ const [showGeneral, setShowGeneral] = useState(false);
   const handleMdParamFile = (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
-    archiveFileToDrive({ file, ctx: { project: (t.projectNames || [])[0] || '', test: t.name || t.instanceName || '', section: 'Setup', subsection: 'Parameters', suffix: 'parameters' } }).catch(() => {});
+    archiveFileToDrive({ file, ctx: { project: (t.projectNames || [])[0] || '', test: t.name || '', instance: t.instanceName || '', section: 'Setup', subsection: 'Parameters', suffix: 'parameters' } }).catch(() => {});
 
     const reader = new FileReader();
 
@@ -1667,14 +1667,16 @@ const details = [
                 <DriveUploadButton
                   suggestedName={suggestDriveFileName({
                     project: (t.projectNames || [])[0] || '',
-                    test: t.name || t.instanceName || '',
+                    test: t.name || '',
+                    instance: t.instanceName || '',
                     section: 'Setup',
                     subsection: 'Parameters',
                     suffix: 'parameters'
                   })}
                   naming={{
                     project: (t.projectNames || [])[0] || '',
-                    test: t.name || t.instanceName || '',
+                    test: t.name || '',
+                    instance: t.instanceName || '',
                     section: 'Setup',
                     subsection: 'Parameters',
                     suffix: 'parameters'
@@ -2109,8 +2111,10 @@ const details = [
                             id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
                             name: suggestDriveFileName({
                               project: (t.projectNames || [])[0] || '',
-                              test: t.name || t.instanceName || '',
+                              test: t.name || '',
+                              instance: t.instanceName || '',
                               section: 'Report',
+                              subsection: 'Documents',
                               suffix: 'doc'
                             }),
                             type: 'link',
@@ -2126,14 +2130,18 @@ const details = [
                       <DriveUploadButton
                         suggestedName={suggestDriveFileName({
                           project: (t.projectNames || [])[0] || '',
-                          test: t.name || t.instanceName || '',
+                          test: t.name || '',
+                          instance: t.instanceName || '',
                           section: 'Report',
+                          subsection: 'Documents',
                           suffix: 'doc'
                         })}
                         naming={{
                           project: (t.projectNames || [])[0] || '',
-                          test: t.name || t.instanceName || '',
+                          test: t.name || '',
+                          instance: t.instanceName || '',
                           section: 'Report',
+                          subsection: 'Documents',
                           suffix: 'doc'
                         }}
                         onDone={({ name, dataUrl, drive }) =>
@@ -2166,8 +2174,10 @@ const details = [
                     onEditFocusChange={setReportWide}
                     fileNaming={{
                       project: (t.projectNames || [])[0] || '',
-                      test: t.name || t.instanceName || '',
-                      section: 'Report'
+                      test: t.name || '',
+                      instance: t.instanceName || '',
+                      section: 'Report',
+                      subsection: 'Notes'
                     }}
                   />
                 </div>
