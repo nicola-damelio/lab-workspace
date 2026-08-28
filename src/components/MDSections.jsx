@@ -1062,7 +1062,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
             {hasOpened3D && (
               
 <NMRMoleculeViewer
-  key={`${activeTest.structureSrc || 'no-src'}|${activeTest.structureFileName || 'no-file'}|${trajectoryFile ? trajectoryFile.name : 'no-traj-file'}|${d.trajectoryUrl || 'no-traj'}|${activeTest.smiles || 'no-smiles'}`}
+  key={`${activeTest.structureSrc || 'no-src'}|${trajectoryFile ? trajectoryFile.name : 'no-traj-file'}|${d.trajectoryUrl || 'no-traj'}|${activeTest.smiles || 'no-smiles'}`}
   src={activeTest.structureSrc}
   structureFileData={activeTest.structureFileData}
   structureFileName={activeTest.structureFileName}

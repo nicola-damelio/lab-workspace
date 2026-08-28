@@ -767,6 +767,15 @@ useEffect(() => {
 if (structureFileData === lastSeenFileDataRef.current) return;
 lastSeenFileDataRef.current = structureFileData;
 if (!structureFileData) return;
+// If this data URL is just the ECHO of the file the user picked in this viewer
+// (the parent stored it back via onStructureFile — e.g. the MD page persists
+// the topology), there is nothing to reload: reloading would call
+// clearExtraMolecules() and wipe the additional molecules chosen in the same
+// batch. The structure is already being loaded from the original File.
+try {
+  const activeFile = loadRequest && loadRequest.file;
+  if (activeFile && structureFileName && String(activeFile.name || '') === String(structureFileName)) return;
+} catch { /* keep going */ }
 clearExtraMolecules();
 setManualOverride(true);
 setFile(null);
@@ -783,7 +792,7 @@ requestStructureLoad({ file: fakeFile, url: null, ts: Date.now() });
 setErrorMsg('Failed to decode structure file data.');
 setStatus('error');
 }
-}, [structureFileData, structureFileName, structureFormat, clearExtraMolecules]);
+}, [structureFileData, structureFileName, structureFormat, loadRequest, clearExtraMolecules]);
 
 useEffect(() => {
 if (structureText !== lastSeenTextRef.current) {
