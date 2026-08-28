@@ -20,7 +20,7 @@ import { NotebookModule, CalculationsModule, PublicationsModule } from './compon
 import { ProjectsModule } from './components/AppModules/projectsModule';
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
 import {normalizeOperators} from './utils/auth';
-import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, setDriveRootContext } from './utils/driveUpload';
+import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, setDriveRootContext, ensureDriveFolder, getDriveToken } from './utils/driveUpload';
 
 import { ScientistLoginGate, ScientistLoginModal } from './components/AppModules/definitionsManagers';
 
@@ -819,8 +819,20 @@ if (customType === 'dosy') {
   // Keep the Google Drive dataset folder in sync with the main file (dataset)
   // that is open: everything the app uploads lives inside Lab Workspace →
   // a folder named after the dataset (see driveUpload.ensureDriveFolder).
+  // Renaming the dataset renames that Drive folder right away (debounced), so
+  // the name shown at the top of the app and the Drive folder name are one
+  // and the same.
+  const driveRenameTimeoutRef = useRef(null);
   useEffect(() => {
     setDriveRootContext({ id: currentDatasetId || '', name: datasetTitle || '' });
+    if (!currentDatasetId || !getDriveToken()) return;
+    if (driveRenameTimeoutRef.current) clearTimeout(driveRenameTimeoutRef.current);
+    driveRenameTimeoutRef.current = setTimeout(() => {
+      ensureDriveFolder().catch(() => {});
+    }, 800);
+    return () => {
+      if (driveRenameTimeoutRef.current) clearTimeout(driveRenameTimeoutRef.current);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentDatasetId, datasetTitle]);
   const [customCmpds, setCustomCmpds] = useState([]);
@@ -1903,11 +1915,13 @@ const openDataset = (dset) => {
       }
 
       setDatasetTitle(
-        s.datasetTitle !== undefined
+        dset.title && String(dset.title).trim()
+          ? dset.title
+          : s.datasetTitle !== undefined
           ? s.datasetTitle
           : s.reportTitle !== undefined
           ? s.reportTitle
-          : dset.title || 'Untitled'
+          : 'Untitled'
       );
 
       setDatasetSubtitle(
@@ -2823,7 +2837,8 @@ const openDataset = (dset) => {
           {/* MAIN CONTENT */}
           <div className="flex-1 flex flex-col bg-slate-50 h-full overflow-hidden relative">
             {currentModule === 'dashboard' && (<DashboardModule
-              datasetTitle={datasetTitle} datasetSubtitle={datasetSubtitle}
+              datasetTitle={datasetTitle} setDatasetTitle={setDatasetTitle}
+              datasetSubtitle={datasetSubtitle}
               handlePrint={handlePrint} tests={tests} storages={storages}
               setCurrentModule={setCurrentModule} mergedPlan={mergedPlan}
             />)}

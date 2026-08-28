@@ -6,7 +6,7 @@
 import React, { useState } from 'react';
 import { Icon } from '../Icons';
 
-export const DashboardModule = ({ datasetTitle, datasetSubtitle, handlePrint, tests, storages, setCurrentModule, mergedPlan }) => {
+export const DashboardModule = ({ datasetTitle, setDatasetTitle, datasetSubtitle, handlePrint, tests, storages, setCurrentModule, mergedPlan }) => {
   const [projectCount] = useState(() => {
     try {
       const raw = localStorage.getItem('labWorkspace_projects');
@@ -21,9 +21,13 @@ export const DashboardModule = ({ datasetTitle, datasetSubtitle, handlePrint, te
                 <div className="max-w-6xl mx-auto">
                   <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-3 border-b border-slate-200 pb-2 gap-2">
                     <div>
-                      <h1 className="text-lg md:text-xl font-bold text-slate-800">
-                        {datasetTitle || 'Dataset Overview'}
-                      </h1>
+                      <input
+                        value={datasetTitle || ''}
+                        onChange={(e) => setDatasetTitle(e.target.value)}
+                        placeholder="Dataset Title"
+                        title="Rename the dataset — the Drive folder follows automatically"
+                        className="text-lg md:text-xl font-bold text-slate-800 bg-transparent border-b border-dashed border-transparent hover:border-slate-300 focus:border-blue-400 outline-none w-full md:w-auto max-w-full truncate"
+                      />
 
                       <p className="text-xs md:text-sm text-slate-500 mt-0.5">
                         {datasetSubtitle ||

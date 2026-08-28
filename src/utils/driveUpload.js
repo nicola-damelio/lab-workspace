@@ -27,6 +27,8 @@
 
 const TOKEN_KEY = 'labDriveAccessToken';
 const FOLDER_ID_KEY = 'labDriveFolderId';
+const FOLDER_DATASET_KEY = 'labDriveFolderDatasetId';
+const FOLDER_NAME_KEY = 'labDriveFolderName';
 import { suggestDriveFileName, sanitizeSlug, driveFolderPath } from './driveNaming';
 
 /** The Google OAuth access token (with drive.file scope) from the last sign-in.
@@ -61,6 +63,24 @@ export const getDriveFolderId = () => {
 
 export const setDriveFolderId = (id) => {
   try { localStorage.setItem(FOLDER_ID_KEY, String(id || '')); } catch { /* ignore */ }
+};
+
+/** The dataset id the cached folder id belongs to. Persisted alongside the
+ *  folder id so a page reload does NOT lose the link between the dataset and
+ *  its Drive folder — this is what lets the folder be RENAMED in place when
+ *  the dataset title changes (instead of creating a second folder). */
+const getDriveFolderDatasetId = () => {
+  try { return localStorage.getItem(FOLDER_DATASET_KEY) || ''; } catch { return ''; }
+};
+const setDriveFolderDatasetId = (id) => {
+  try { localStorage.setItem(FOLDER_DATASET_KEY, String(id || '')); } catch { /* ignore */ }
+};
+/** The folder name the cached id was created / last renamed with. */
+const getDriveFolderName = () => {
+  try { return localStorage.getItem(FOLDER_NAME_KEY) || ''; } catch { return ''; }
+};
+const setDriveFolderName = (name) => {
+  try { localStorage.setItem(FOLDER_NAME_KEY, String(name || '')); } catch { /* ignore */ }
 };
 
 /** Read a File as a data URL (the "temporary in-app" copy). */
@@ -137,8 +157,8 @@ const driveFetch = async (path, opts = {}) => {
 
 let driveRootId = '';            // dataset id the root folder belongs to
 let driveRootName = '';          // desired dataset folder name ('' → Lab Workspace root)
-let driveRootResolvedId = '';    // dataset id of the cached labDriveFolderId
-let driveRootResolvedName = '';  // dataset-name the cached labDriveFolderId was created with
+let driveRootResolvedId = getDriveFolderDatasetId();   // dataset id of the cached labDriveFolderId
+let driveRootResolvedName = getDriveFolderName();      // dataset-name the cached labDriveFolderId was created with
 
 /** Tell the Drive layer which main file (dataset) is currently open, so the
  *  dataset folder on Drive (inside "Lab Workspace") is named after it.
@@ -149,9 +169,12 @@ export const setDriveRootContext = ({ id = '', name = '' } = {}) => {
   if (nextId === driveRootId && nextName === driveRootName) return;
   driveRootId = nextId;
   driveRootName = nextName;
-  // Different dataset → the cached folder id belongs to the previous one:
-  // drop it so the new dataset gets its own folder.
-  if (nextId !== driveRootResolvedId) setDriveFolderId('');
+  // Switching to a DIFFERENT dataset → the cached folder id belongs to the
+  // previous one: drop it so the new dataset gets its own folder. An EMPTY id
+  // (nothing open yet / going back to the explorer) keeps the cache, so
+  // re-opening the same dataset after a reload still knows its folder and can
+  // rename it in place.
+  if (nextId && nextId !== driveRootResolvedId) setDriveFolderId('');
 };
 
 /** Find (or create) the app's "Lab Workspace" root folder (inside the user's
@@ -208,9 +231,29 @@ export const ensureDriveFolder = async () => {
       if (meta && meta.name === driveRootResolvedName) {
         await renameDriveFile(saved, name);
         driveRootResolvedName = name;
+        setDriveFolderName(name);
         return saved;
       }
-    } catch { /* not app-created or gone → resolve a fresh dataset folder */ }
+    } catch { /* not app-created or gone → fall back to an old-name lookup */ }
+  }
+
+  // Same dataset, title changed, but the cached folder id is missing or stale
+  // (e.g. after a tab/browser change): find the folder by its RECORDED name
+  // under Lab Workspace and RENAME that one — never silently create a second
+  // folder while the old one still exists on Drive.
+  if (name && driveRootResolvedId === driveRootId && driveRootResolvedName && driveRootResolvedName !== name) {
+    try {
+      const workspaceId = await ensureLabWorkspaceFolder();
+      const oldId = workspaceId ? await findFolderByName(driveRootResolvedName, workspaceId) : '';
+      if (oldId) {
+        await renameDriveFile(oldId, name);
+        setDriveFolderId(oldId);
+        setDriveFolderDatasetId(driveRootId);
+        setDriveFolderName(name);
+        driveRootResolvedName = name;
+        return oldId;
+      }
+    } catch { /* fall through to a plain lookup/create */ }
   }
 
   const workspaceId = await ensureLabWorkspaceFolder();
@@ -224,6 +267,8 @@ export const ensureDriveFolder = async () => {
 
   if (rootId) {
     setDriveFolderId(rootId);
+    setDriveFolderDatasetId(driveRootId);
+    setDriveFolderName(name);
     driveRootResolvedId = driveRootId;
     driveRootResolvedName = name;
   }
@@ -233,7 +278,7 @@ export const ensureDriveFolder = async () => {
 // ── App-schema FOLDER helpers ─────────────────────────────────────────────
 // Files are organised on Drive inside folders that mirror the app schema:
 //   <project>/<test>/<instance>/<section>/<file>
-//   protocols/<protocol>_<scientist>/<file>
+//   protocols/<protocol>/<file>
 // The app only ever touches folders it created itself (drive.file scope).
 
 /** Escape a value for a Drive files.list `q` query. */
