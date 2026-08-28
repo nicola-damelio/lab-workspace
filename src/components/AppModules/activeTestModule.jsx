@@ -176,7 +176,7 @@ const TestHeader = (
                               testNameBeforeEditRef.current = null;
                             }}
                             className="text-base font-black text-slate-800 bg-transparent border-none outline-none focus:ring-1 focus:ring-blue-500 rounded px-1 w-full md:w-64"
-                            placeholder="Test Name"
+                            placeholder={isBox ? 'Box Name' : 'Test Name'}
                           />
 
                           <div className="text-[11px] text-slate-500 font-medium px-1 mt-0.5 flex flex-wrap items-center gap-1.5">
@@ -204,7 +204,9 @@ const TestHeader = (
                           onClick={() => {
                             if (
                               window.confirm(
-                                'Sei sicuro di voler eliminare definitivamente questo test?'
+                                isBox
+                                  ? 'Sei sicuro di voler eliminare definitivamente questo box?'
+                                  : 'Sei sicuro di voler eliminare definitivamente questo test?'
                               )
                             ) {
                               setTests((prev) => prev.filter((t) => t.id !== activeTest.id));
@@ -283,6 +285,8 @@ const TestHeader = (
   )}
 </React.Fragment>
 
+                    {!isBox && (
+                    <>
                     <div className="flex flex-col flex-1 min-w-[140px]">
                        <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
                          Primary Class.
@@ -349,6 +353,8 @@ const TestHeader = (
                             ))}
                           </select>
                         </div>
+                    </>
+                    )}
 
                         <div className="flex flex-col flex-1 min-w-[110px]">
                           <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
@@ -392,6 +398,7 @@ const TestHeader = (
                           />
                         </div>
                         
+                        {!isBox && (
                         <div className="flex flex-col items-center justify-center self-end mb-1">
                           <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600 cursor-pointer hover:text-blue-600 transition-colors">
                             <input
@@ -403,6 +410,7 @@ const TestHeader = (
                             ⭐ Best
                           </label>
                         </div>
+                        )}
                       </div>
                     </div>
 

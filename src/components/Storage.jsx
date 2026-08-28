@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { getDirectImageUrl, BOX_ROW_LABELS, DEF_COMPOUNDS } from '../data/constants';
 import { RichTextEditor } from './RichTextEditor';
 import { Icon } from './Icons';
@@ -19,32 +19,56 @@ const getProxiedImage = (url) => {
 // One photo slot for a box: preview + upload-from-PC (saved to Drive) + remove.
 // Used twice per box — "Box Photo" (external, to locate it) and "Inside Photo"
 // (to see its contents). Both live under storage/<box>/[<instance>/]image/.
-const BoxPhotoSlot = ({ url, label, hint, path, suggestedName, onSet, onClear }) => (
-    <div className="flex items-center gap-3">
-        {url ? (
-            <img src={getProxiedImage(url)} alt={label} referrerPolicy="no-referrer"
-                 className="w-20 h-20 object-cover rounded-xl border border-slate-200 shadow-sm"/>
-        ) : (
-            <div className="w-20 h-20 rounded-xl border border-dashed border-slate-300 bg-slate-50 flex items-center justify-center text-[10px] text-slate-400 px-1 text-center">{hint}</div>
-        )}
-        <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-slate-500 uppercase">{label}</label>
-            <DriveUploadButton
-                label={url ? '⬆ Replace' : '⬆ Upload'}
-                accept="image/*"
-                suggestedName={suggestedName}
-                path={path}
-                onDone={({ dataUrl, drive }) => onSet(drive ? drive.driveUrl : dataUrl)}
-            />
-            {url && (
-                <button type="button" onClick={onClear}
-                        className="text-[10px] font-bold text-red-500 hover:text-red-700 underline self-start">
-                    Remove
-                </button>
+// The preview is 2x the old size and clickable to open a full-screen zoom.
+const BoxPhotoSlot = ({ url, label, hint, path, suggestedName, onSet, onClear }) => {
+    const [zoom, setZoom] = useState(false);
+    return (
+        <>
+            <div className="flex items-center gap-3">
+                {url ? (
+                    <img src={getProxiedImage(url)} alt={label} referrerPolicy="no-referrer"
+                         onClick={() => setZoom(true)}
+                         className="w-40 h-40 object-cover rounded-xl border border-slate-200 shadow-sm cursor-zoom-in"/>
+                ) : (
+                    <div className="w-40 h-40 rounded-xl border border-dashed border-slate-300 bg-slate-50 flex items-center justify-center text-[10px] text-slate-400 px-1 text-center">{hint}</div>
+                )}
+                <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-slate-500 uppercase">{label}</label>
+                    <DriveUploadButton
+                        label={url ? '⬆ Replace' : '⬆ Upload'}
+                        accept="image/*"
+                        suggestedName={suggestedName}
+                        path={path}
+                        onDone={({ dataUrl, drive }) => onSet(drive ? drive.driveUrl : dataUrl)}
+                    />
+                    {url && (
+                        <button type="button" onClick={() => setZoom(true)}
+                                className="text-[10px] font-bold text-blue-600 hover:text-blue-800 underline self-start">
+                            🔍 Zoom
+                        </button>
+                    )}
+                    {url && (
+                        <button type="button" onClick={onClear}
+                                className="text-[10px] font-bold text-red-500 hover:text-red-700 underline self-start">
+                            Remove
+                        </button>
+                    )}
+                </div>
+            </div>
+            {zoom && url && (
+                <div className="fixed inset-0 bg-slate-900/85 z-[999999] flex items-center justify-center p-6 cursor-zoom-out"
+                     onClick={() => setZoom(false)}>
+                    <img src={getProxiedImage(url)} alt={label} referrerPolicy="no-referrer"
+                         className="max-w-full max-h-full object-contain rounded-lg shadow-2xl bg-white p-1"/>
+                    <button type="button"
+                            onClick={() => setZoom(false)}
+                            className="absolute top-3 right-3 text-white text-2xl font-black w-10 h-10 bg-slate-700/80 hover:bg-slate-600 rounded-full"
+                            title="Close">×</button>
+                </div>
             )}
-        </div>
-    </div>
-);
+        </>
+    );
+};
 
 // --- MODALS FOR STORAGE & BOX MOVEMENT ---
 export const StorageModals = ({ storageModal, setStorageModal, storages, setStorages, moveModal, setMoveModal, tests, setTests }) => {

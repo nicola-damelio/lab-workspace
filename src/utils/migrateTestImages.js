@@ -141,6 +141,10 @@ export const effectiveInstanceName = (test, allTests) => {
 export const collectTestImageRefs = (test, allTests) => {
   const refs = [];
   if (!test || typeof test !== 'object') return refs;
+  // Storage boxes (plate-9x9box) are NOT test pages — their files live under
+  // storage/<box>/…, never under <test>/<instance>/Report. Exclude them so the
+  // migration never moves box files into test folders.
+  if (String(test.type || '') === 'plate-9x9box') return refs;
 
   const ctx = {
     project: (test.projectNames || [])[0] || '',

@@ -254,6 +254,8 @@ export const ProjectDetailModule = ({
     const linkedIds = new Set((project?.experiments || []).map((e) => e.testId));
     const byName = new Map();
     visibleTests.forEach((t) => {
+      // Storage boxes are not experiments — they must not appear in the linker.
+      if (String(t.type || '') === 'plate-9x9box') return;
       const n = String(t.name || '').trim();
       if (!n) return;
       if (!byName.has(n)) byName.set(n, []);
