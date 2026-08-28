@@ -316,10 +316,28 @@ export const findDriveFileByName = async (name, parentId) => {
  *  under the drive.file scope — external files throw and should be skipped. */
 export const getDriveFileMeta = async (fileId) => {
   if (!fileId) throw new Error('No file id');
-  const res = await driveFetch(`/drive/v3/files/${fileId}?fields=id,name`);
+  const res = await driveFetch(`/drive/v3/files/${fileId}?fields=id,name,trashed`);
   const meta = await res.json();
   if (!meta || !meta.id) throw new Error('File not found');
-  return { id: String(meta.id), name: String(meta.name || '') };
+  return { id: String(meta.id), name: String(meta.name || ''), trashed: Boolean(meta.trashed) };
+};
+
+/** Restore a trashed Drive file (e.g. after the user deleted its old folder —
+ *  the file survives in the trash and can be moved back into a visible folder). */
+export const untrashDriveFile = async (fileId) => {
+  if (!fileId) return false;
+  try {
+    const res = await driveFetch(`/drive/v3/files/${fileId}?fields=id`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trashed: false })
+    });
+    await res.json();
+    return true;
+  } catch (err) {
+    console.warn('Could not restore trashed Drive file:', err && err.message);
+    return false;
+  }
 };
 
 /** Find a folder or create it (app-owned) inside `parentId`. */

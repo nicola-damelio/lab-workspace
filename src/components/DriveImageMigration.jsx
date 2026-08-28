@@ -187,7 +187,8 @@ export const DriveImageMigration = ({ tests, setTests, datasetTitle = '' }) => {
                       ? <> → <span className="text-slate-400">
                           Lab Workspace/{datasetTitle || '<dataset>'}/{d.folder}/
                         </span><span className="font-semibold text-slate-700">{d.name}</span>
-                          {d.status === 'copied' && <span className="text-blue-500"> (copied)</span>}</>
+                          {d.status === 'copied' && <span className="text-blue-500"> (copied)</span>}
+                          {d.restored && <span className="text-emerald-600"> (restored from trash)</span>}</> 
                       : <> — <span className="text-slate-400">{d.reason || d.status}</span></>}
                   </span>
                 </li>

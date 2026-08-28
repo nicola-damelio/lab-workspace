@@ -31,6 +31,7 @@ import {
   renameDriveFile,
   registerDriveFile,
   trashEmptyFolderChain,
+  untrashDriveFile,
   uploadLocalFile
 } from './driveUpload';
 import { driveFolderPath, suggestDriveFileName, sanitizeSlug } from './driveNaming';
@@ -396,12 +397,21 @@ export const migrateTestDriveImages = async ({ tests, onProgress = () => {} } = 
     let newUrl = '';
     let status = '';
     let finalName = '';
+    let restored = false;
 
     // 5a) Fast path — the file was created by the app: move + rename in place.
     // The target folder is created ONLY once we know the file is real, so
     // skipped/deleted files never leave empty folders behind on Drive.
     try {
       const meta = await getDriveFileMeta(fileId);
+      // The user may have trashed the OLD folder earlier (and its files went to
+      // the Drive trash). Restore the file first, otherwise the move would put
+      // a STILL-TRASHED file into the new folder → empty-looking directory.
+      if (meta.trashed) {
+        const restoredOk = await untrashDriveFile(fileId);
+        if (!restoredOk) throw new Error('file is in the trash and could not be restored');
+        restored = true;
+      }
       const curName = meta.name || '';
       const extMatch = /(\.[a-zA-Z0-9]{1,10})$/.exec(curName);
       const ext = extMatch ? extMatch[1] : '';
@@ -470,7 +480,7 @@ export const migrateTestDriveImages = async ({ tests, onProgress = () => {} } = 
     summary[status] += 1;
     summary.details.push({
       fileId, test: testName, status,
-      folder: folderLabel, name: finalName
+      folder: folderLabel, name: finalName, restored
     });
 
     done += 1;

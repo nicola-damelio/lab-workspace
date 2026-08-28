@@ -464,7 +464,9 @@ const baseTest = {
   id,
   name: `Test ${num}`,
   date: new Date().toISOString().split('T')[0],
-  instanceName: '',
+  // The first instance is ALWAYS present and non-empty: a brand-new test gets
+  // a real instance name right away (instance1) instead of an unnamed one.
+  instanceName: 'instance1',
   testCategory: 'Activity',
   secondaryCategory: '',
   bestMeasurement: false,
