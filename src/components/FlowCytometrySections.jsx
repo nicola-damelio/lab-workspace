@@ -6,7 +6,7 @@ import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 import { ChartControlBar, SharedChartStylePanel, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES, seriesColorFor } from '../utils/chartStyle';
-import { PLATES_DEF } from '../data/constants';
+import { PLATES_DEF, formatConc } from '../data/constants';
 export { VIS_PALETTES };
 
 const COLORS = VIS_PALETTES.default;
@@ -1101,7 +1101,8 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
   // Apply the ACTIVE instance's exact settings to every other instance of the
   // experiment: chart styles (characters, ranges, log…), the automatic
   // treatment (singlets / debris / manual filters), the 2D zoom, parameter
-  // renames, the staining panel and the hidden-series map.
+  // renames, the staining panel, the hidden-series map and the experimental
+  // setup plate (fcPlate).
   const copySettingsToAllInstances = () => {
     if (typeof ctx.setTests !== 'function') return;
     const others = instances.filter(i => i.id !== activeTest.id && !i.extra);
@@ -1118,7 +1119,8 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
       paramRenames: clone(activeTest.paramRenames),
       fcPanel: clone(activeTest.fcPanel),
       hiddenSeries: clone(activeTest.hiddenSeries),
-      fcZoom2D: clone(activeTest.fcZoom2D)
+      fcZoom2D: clone(activeTest.fcZoom2D),
+      fcPlate: clone(activeTest.fcPlate)
     };
     ctx.setTests(prev => prev.map(t =>
       (t.id !== activeTest.id && t.name === activeTest.name && t.name.trim() !== '')
@@ -1301,7 +1303,7 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
             <button
               type="button"
               onClick={copySettingsToAllInstances}
-              title="Apply this instance's exact settings to every other instance: chart styles (characters, ranges, log), automatic filters, 2D zoom, parameter renames, panel, colors"
+              title="Apply this instance's exact settings to every other instance: chart styles (characters, ranges, log), automatic filters, 2D zoom, parameter renames, panel, colors and the Experimental Setup plate"
               className="text-sm font-bold bg-white border border-slate-300 px-3 py-1.5 rounded-lg shadow-sm hover:bg-slate-50 whitespace-nowrap"
             >
               📋 Copy settings to all
@@ -1600,10 +1602,11 @@ export const InstrumentalSetup = ({ ctx }) => {
   );
 };
 // =========================================================================
-// EXPERIMENTAL SETUP — plate structure definition (simplified version of the
-// plate page: no intensities/regions, only the layout). Shows the interactive
-// well table and the plate map side by side. Stored in activeTest.fcPlate
-// { plateType, grid } where grid is rows x cols of well labels.
+// EXPERIMENTAL SETUP — plate layout with predefined compounds and degrading
+// concentrations (same interactive table as the plate Data section, minus
+// intensities and regions). A compound is assigned per row / column / cell;
+// the concentration degrades by the dilution factor along the assignment
+// direction (top / dil^step). Stored in activeTest.fcPlate.
 // =========================================================================
 const FLOW_PLATE_OPTIONS = [
   { value: '96', label: '96-well Plate' },
@@ -1614,40 +1617,108 @@ const FLOW_PLATE_OPTIONS = [
   { value: '1', label: '1 Petri Dish' }
 ];
 const PLATE_ROWS_LETTERS = 'ABCDEFGHIJKL'.split('');
+const plateCmpColor = (name) => {
+  let h = 0;
+  for (let i = 0; i < String(name || '').length; i++) h = (h * 31 + String(name).charCodeAt(i)) % 360;
+  return `hsl(${h}, 62%, 46%)`;
+};
 
 export const ExperimentalSetup = ({ ctx }) => {
   const { activeTest = {}, updateActiveTest } = ctx || {};
   const update = (u) => { if (updateActiveTest) updateActiveTest(u); };
+  const allCmpds = (Array.isArray(ctx?.allCmpds) ? ctx.allCmpds : []).filter(Boolean);
 
   const fcPlate = activeTest.fcPlate || {};
   const plateType = PLATES_DEF[fcPlate.plateType] ? fcPlate.plateType : '96';
   const dim = PLATES_DEF[plateType] || PLATES_DEF['96'];
-  const rawGrid = Array.isArray(fcPlate.grid) ? fcPlate.grid : [];
-  const grid = Array.from({ length: dim.rows }, (_, r) => {
-    const row = rawGrid[r];
-    return Array.isArray(row) && row.length === dim.cols ? row.map((v) => String(v ?? '')) : Array(dim.cols).fill('');
-  });
-  const ROWS = PLATE_ROWS_LETTERS.slice(0, dim.rows);
-  const COLS = Array.from({ length: dim.cols }, (_, i) => i + 1);
+  const rows = dim.rows, cols = dim.cols;
+  const ROWS = PLATE_ROWS_LETTERS.slice(0, rows);
+  const COLS = Array.from({ length: cols }, (_, i) => i + 1);
 
+  const rowCompounds = Array.isArray(fcPlate.rowCompounds) ? fcPlate.rowCompounds : [];
+  const compounds = Array.isArray(fcPlate.compounds) ? fcPlate.compounds : [];
+  const cellConfig = Array.isArray(fcPlate.cellConfig) ? fcPlate.cellConfig : [];
+  const tConc = parseFloat(String(fcPlate.topConcStr ?? '100').replace(',', '.')) || 0;
+  const dFact = parseFloat(String(fcPlate.dilFactorStr ?? '3').replace(',', '.')) || 1;
+  const unit = fcPlate.unit || 'µM';
+  const customConc = fcPlate.customConc || {};
+
+  const cellCfg = (r, c) => {
+    const row = cellConfig[r];
+    const cfg = Array.isArray(row) ? row[c] : null;
+    return cfg && typeof cfg === 'object' ? cfg : {};
+  };
   const setPlate = (patch) => update({ fcPlate: { ...fcPlate, ...patch } });
+  const setCellCfg = (r, c, patch) => {
+    const nCfg = Array.from({ length: rows }, (_, ri) =>
+      Array.from({ length: cols }, (_, ci) => (ri === r && ci === c ? { ...cellCfg(ri, ci), ...patch } : cellCfg(ri, ci)))
+    );
+    setPlate({ cellConfig: nCfg });
+  };
+
+  const isCtrl = (x) => ['cells', 'medium', 'pbs'].includes(String(x).toLowerCase());
+  const getRole = (r, c) => {
+    const cfg = cellCfg(r, c);
+    if (cfg.role !== null && cfg.role !== undefined && cfg.role !== '') return cfg.role;
+    const rCmp = rowCompounds[r] || '';
+    const cCmp = compounds[c] || '';
+    if (rCmp && !cCmp) return rCmp;
+    if (cCmp && !rCmp) return cCmp;
+    if (!rCmp && !cCmp) return null;
+    if (isCtrl(rCmp) && !isCtrl(cCmp)) return rCmp;
+    if (isCtrl(cCmp) && !isCtrl(rCmp)) return cCmp;
+    return rCmp;
+  };
+
+  const concOf = (r, c, role) => {
+    const rl = role !== undefined ? role : getRole(r, c);
+    if (!rl) return null;
+    const cfg = cellCfg(r, c);
+    if (cfg.conc !== null && cfg.conc !== undefined && cfg.conc !== '') return Number(cfg.conc);
+    const s = customConc[rl]
+      ? { top: parseFloat(customConc[rl].top) || 0, dil: parseFloat(customConc[rl].dil) || 1 }
+      : { top: tConc, dil: dFact };
+    let isHoriz = false;
+    if (rowCompounds[r] === rl) isHoriz = true;
+    else if (compounds[c] === rl) isHoriz = false;
+    else if ((rowCompounds || []).includes(rl)) isHoriz = true;
+    let step = 0;
+    if (isHoriz) { for (let i = 0; i < c; i++) if (getRole(r, i) === rl) step++; }
+    else { for (let i = 0; i < r; i++) if (getRole(i, c) === rl) step++; }
+    return s.dil > 0 ? s.top / Math.pow(s.dil, step) : 0;
+  };
 
   const changeFormat = (newType) => {
     const nd = PLATES_DEF[newType] || PLATES_DEF['96'];
-    const nGrid = Array.from({ length: nd.rows }, (_, r) =>
-      Array.from({ length: nd.cols }, (_, c) => (grid[r] && grid[r][c]) || '')
-    );
-    setPlate({ plateType: newType, grid: nGrid });
+    setPlate({
+      plateType: newType,
+      rowCompounds: Array.from({ length: nd.rows }, (_, r) => rowCompounds[r] || ''),
+      compounds: Array.from({ length: nd.cols }, (_, c) => compounds[c] || ''),
+      cellConfig: Array.from({ length: nd.rows }, (_, r) =>
+        Array.from({ length: nd.cols }, (_, c) => ({ role: cellCfg(r, c).role ?? null, conc: cellCfg(r, c).conc ?? null }))
+      )
+    });
   };
 
-  const setCell = (r, c, val) => {
-    const nGrid = grid.map((row) => [...row]);
-    nGrid[r][c] = val;
-    setPlate({ grid: nGrid });
+  const updateRowCmp = (r, val) => {
+    const n = [...rowCompounds];
+    n[r] = val;
+    setPlate({ rowCompounds: n });
   };
+  const updateCmp = (c, val) => {
+    const n = [...compounds];
+    n[c] = val;
+    setPlate({ compounds: n });
+  };
+  const clearOverrides = () => setPlate({ cellConfig: Array.from({ length: rows }, () => Array.from({ length: cols }, () => ({ role: null, conc: null }))) });
 
-  const clearPlate = () => setPlate({ grid: Array.from({ length: dim.rows }, () => Array(dim.cols).fill('')) });
-  const wellCount = grid.flat().filter((v) => String(v || '').trim() !== '').length;
+  const [selectedCell, setSelectedCell] = useState(null); // { r, c }
+  let assignedCount = 0;
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) if (getRole(r, c)) assignedCount++;
+  const sel = selectedCell;
+  const selRole = sel ? (getRole(sel.r, sel.c) || '') : '';
+  const selConc = sel ? concOf(sel.r, sel.c) : null;
+  const selOverrideConc = sel ? cellCfg(sel.r, sel.c).conc ?? '' : '';
 
   return (
     <div className="flex flex-col gap-4">
@@ -1662,53 +1733,120 @@ export const ExperimentalSetup = ({ ctx }) => {
             {FLOW_PLATE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </div>
-        <span className="text-xs text-slate-500 font-bold pb-1.5">{dim.rows} x {dim.cols} wells - {wellCount} assigned</span>
-        <button
-          type="button"
-          onClick={clearPlate}
-          className="text-xs font-bold bg-white border border-slate-300 px-3 py-1.5 rounded-lg shadow-sm hover:bg-slate-50 whitespace-nowrap"
-        >
-          Clear plate
+        <div>
+          <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Max Conc</label>
+          <input type="number" step="0.1" value={fcPlate.topConcStr ?? '100'}
+            onChange={(e) => setPlate({ topConcStr: e.target.value })}
+            className="border border-slate-300 rounded-lg p-1.5 w-20 text-xs outline-none focus:border-blue-500" />
+        </div>
+        <div>
+          <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Dil. Factor</label>
+          <input type="number" step="0.1" value={fcPlate.dilFactorStr ?? '3'}
+            onChange={(e) => setPlate({ dilFactorStr: e.target.value })}
+            className="border border-slate-300 rounded-lg p-1.5 w-16 text-xs outline-none focus:border-blue-500" />
+        </div>
+        <div>
+          <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Unit</label>
+          <select value={unit} onChange={(e) => setPlate({ unit: e.target.value })}
+            className="border border-slate-300 rounded-lg p-1.5 w-24 text-xs bg-white font-bold text-slate-800 outline-none">
+            <option value="µM">µM</option>
+            <option value="mM">mM</option>
+            <option value="nM">nM</option>
+            <option value="µg/mL">µg/mL</option>
+            <option value="mg/mL">mg/mL</option>
+          </select>
+        </div>
+        <span className="text-xs text-slate-500 font-bold pb-1.5">{rows} x {cols} wells · {assignedCount} assigned</span>
+        <button type="button" onClick={clearOverrides}
+          className="text-xs font-bold bg-white border border-slate-300 px-3 py-1.5 rounded-lg shadow-sm hover:bg-slate-50 whitespace-nowrap">
+          🧹 Clear cell overrides
         </button>
       </div>
+
+      {/* Per-well editor for the selected cell */}
+      {sel && (
+        <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 flex flex-wrap items-center gap-3">
+          <span className="text-xs font-bold text-indigo-800">Well {ROWS[sel.r]}{sel.c + 1}</span>
+          <select value={selRole} onChange={(e) => setCellCfg(sel.r, sel.c, { role: e.target.value })}
+            className="border border-indigo-300 rounded px-2 py-1 text-xs bg-white outline-none font-bold text-indigo-800">
+            <option value="">inherit (row/col)</option>
+            {allCmpds.map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+          <input type="number" step="0.1" value={selOverrideConc}
+            onChange={(e) => setCellCfg(sel.r, sel.c, { conc: e.target.value === '' ? null : e.target.value })}
+            placeholder="Conc override" title="Optional per-well concentration override"
+            className="border border-indigo-300 rounded px-2 py-1 text-xs w-28 bg-white outline-none" />
+          <span className="text-[10px] font-bold text-indigo-700">
+            {selRole ? `Auto: ${formatConc(selConc)} ${unit}` : 'no compound assigned'}
+          </span>
+          <button type="button" onClick={() => setCellCfg(sel.r, sel.c, { role: null, conc: null })}
+            className="text-[10px] font-bold bg-white border border-red-300 text-red-600 px-2 py-1 rounded shadow-sm hover:bg-red-50">Clear override</button>
+          <button type="button" onClick={() => setSelectedCell(null)}
+            className="text-slate-400 hover:text-slate-700 font-black px-1">✕</button>
+        </div>
+      )}
 
 
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-        {/* Interactive well table (structure only — no intensities/regions) */}
+        {/* Interactive compound / concentration table (no intensities, no regions) */}
         <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm min-w-0">
           <h4 className="text-xs font-bold text-slate-700 uppercase mb-2">Interactive Table</h4>
           <div className="overflow-x-auto custom-scrollbar">
-            <table className="text-[11px] text-center border-separate" style={{ borderSpacing: 2 }}>
+            <table className="w-full border-collapse table-fixed min-w-[640px] text-[11px] text-center">
               <thead>
                 <tr>
-                  <th className="w-5" />
-                  {COLS.map((c) => <th key={c} className="text-slate-500 font-bold px-0.5">{c}</th>)}
+                  <th className="bg-slate-200 border border-slate-300 p-1 text-slate-600 w-8">R\C</th>
+                  <th className="bg-slate-100 border border-slate-300 p-1 text-slate-600 w-24">Row Cmpd →</th>
+                  {COLS.map((col, c) => (
+                    <th key={col} className="bg-slate-50 border border-slate-300 p-1">
+                      <div className="text-[11px] text-slate-500 font-black">{col}</div>
+                      <select value={compounds[c] || ''} onChange={(e) => updateCmp(c, e.target.value)}
+                        className="w-full text-center border border-slate-300 rounded p-0.5 font-bold text-blue-800 text-[10px] h-6 bg-white cursor-pointer outline-none">
+                        <option value="">Col Cmpd ↓</option>
+                        {allCmpds.map((o) => <option key={o} value={o}>{o}</option>)}
+                      </select>
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {ROWS.map((rLetter, r) => (
-                  <tr key={rLetter}>
-                    <th className="text-slate-500 font-bold pr-1">{rLetter}</th>
-                    {COLS.map((c) => (
-                      <td key={c} className="p-0">
-                        <input
-                          type="text"
-                          value={grid[r][c - 1]}
-                          onChange={(e) => setCell(r, c - 1, e.target.value)}
-                          placeholder="-"
-                          title={`${rLetter}${c}`}
-                          className="w-14 border border-slate-200 rounded px-1 py-1 text-center text-[11px] outline-none focus:border-blue-400 focus:bg-blue-50 bg-white"
-                        />
-                      </td>
-                    ))}
+                {ROWS.map((rl, r) => (
+                  <tr key={rl}>
+                    <td className="bg-slate-100 border border-slate-300 font-black text-xs text-slate-700">{rl}</td>
+                    <td className="bg-slate-50 border border-slate-300 p-1 align-middle">
+                      <select value={rowCompounds[r] || ''} onChange={(e) => updateRowCmp(r, e.target.value)}
+                        className="w-full text-center border border-slate-300 rounded p-0.5 font-bold text-blue-800 text-[10px] h-6 bg-white cursor-pointer outline-none">
+                        <option value="">Row Cmpd →</option>
+                        {allCmpds.map((o) => <option key={o} value={o}>{o}</option>)}
+                      </select>
+                    </td>
+                    {COLS.map((col, c) => {
+                      const role = getRole(r, c);
+                      const conc = role ? concOf(r, c, role) : null;
+                      const isSel = sel && sel.r === r && sel.c === c;
+                      return (
+                        <td key={col} onClick={() => setSelectedCell({ r, c })}
+                          title={`${rl}${col} — click to edit`}
+                          className={`border border-slate-200 p-1 align-middle cursor-pointer transition-colors ${isSel ? 'bg-indigo-100 ring-2 ring-indigo-400' : role ? 'hover:bg-blue-50' : 'bg-slate-50/50 hover:bg-blue-50'}`}>
+                          {role ? (
+                            <div className="flex flex-col leading-tight">
+                              <span className="font-bold text-[10px] truncate" style={{ color: plateCmpColor(role) }}>{role}</span>
+                              <span className="text-[9px] text-slate-600">{conc != null ? `${formatConc(conc)} ${unit}` : '—'}</span>
+                            </div>
+                          ) : (
+                            <span className="text-slate-300 text-[10px]">—</span>
+                          )}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
           <p className="text-[10px] text-slate-400 mt-2">
-            Type a label for each well to define the plate structure (no intensities or regions).
+            Assign a compound to rows / columns (or click a well for a per-well override). Concentrations degrade by the dilution factor.
           </p>
         </div>
 
@@ -1717,21 +1855,23 @@ export const ExperimentalSetup = ({ ctx }) => {
           <h4 className="text-xs font-bold text-slate-700 uppercase mb-2">Plate Map</h4>
           <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 overflow-x-auto">
             <div className="flex flex-col gap-1 min-w-max">
-              <div className="flex gap-1 mb-0.5 pl-6">
-                {COLS.map((c) => <div key={c} className="w-10 text-center text-[9px] font-bold text-slate-500">{c}</div>)}
+              <div className="flex gap-1 mb-0.5 pl-5">
+                {COLS.map((c) => <div key={c} className="w-11 text-center text-[9px] font-bold text-slate-500">{c}</div>)}
               </div>
-              {ROWS.map((rLetter, r) => (
-                <div key={rLetter} className="flex gap-1 items-center">
-                  <div className="w-5 text-[9px] font-bold text-slate-500 text-right pr-1">{rLetter}</div>
-                  {COLS.map((c) => {
-                    const label = String(grid[r][c - 1] || '').trim();
+              {ROWS.map((rl, r) => (
+                <div key={rl} className="flex gap-1 items-center">
+                  <div className="w-4 text-[9px] font-bold text-slate-500 text-right pr-1">{rl}</div>
+                  {COLS.map((col, c) => {
+                    const role = getRole(r, c);
+                    const conc = role ? concOf(r, c, role) : null;
+                    const isSel = sel && sel.r === r && sel.c === c;
                     return (
-                      <div
-                        key={c}
-                        title={`${rLetter}${c}: ${label || 'empty'}`}
-                        className={`w-10 h-9 rounded-md border flex items-center justify-center text-[8px] font-bold leading-tight px-0.5 text-center transition-colors ${label ? 'bg-blue-500 text-white border-blue-600' : 'bg-white text-slate-400 border-slate-200'}`}
-                      >
-                        {label || '.'}
+                      <div key={col} title={`${rl}${col}: ${role || 'empty'}${conc != null ? ' · ' + formatConc(conc) + ' ' + unit : ''}`}
+                        onClick={() => setSelectedCell({ r, c })}
+                        className={`w-11 h-9 rounded-md border flex flex-col items-center justify-center text-[8px] font-bold leading-tight px-0.5 text-center transition-colors cursor-pointer ${isSel ? 'ring-2 ring-indigo-400' : ''} ${role ? 'text-white border-black/10' : 'bg-white text-slate-400 border-slate-200'}`}
+                        style={role ? { backgroundColor: plateCmpColor(role) } : undefined}>
+                        <span className="truncate max-w-full">{role || '·'}</span>
+                        {conc != null && <span className="text-[7px] opacity-90">{formatConc(conc)}</span>}
                       </div>
                     );
                   })}
