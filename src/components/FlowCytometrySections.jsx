@@ -654,6 +654,11 @@ export const FCSOverlayVisualization = ({ ctx }) => {
     if (instancesLinked(activeTest) && ctx) {
       if (typeof ctx.getInstances === 'function') { try { list = ctx.getInstances(); } catch {} }
       if (!list && Array.isArray(ctx.instances) && ctx.instances.length) list = ctx.instances;
+      if (!list && Array.isArray(ctx.siblings) && ctx.siblings.length) list = ctx.siblings;
+      if (!list && (Array.isArray(ctx.tests) || Array.isArray(ctx.allTests))) {
+        const all = ctx.tests || ctx.allTests;
+        list = activeTest.name ? all.filter((t) => t && t.name === activeTest.name) : all;
+      }
     }
     if (!list || !list.length) list = [activeTest];
     const norm = list.filter(Boolean).map(t => ({ id: t.id, name: t.instanceName || t.name, test: t }));
@@ -1103,9 +1108,32 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
   // treatment (singlets / debris / manual filters), the 2D zoom, parameter
   // renames, the staining panel, the hidden-series map and the experimental
   // setup plate (fcPlate).
+  //
+  // IMPORTANT: the targets are the SIBLING instances of the same experiment
+  // group (same `name`), resolved independently of the linked/single-instance
+  // display mode — in "single instance" mode (toggle OFF, or files uploaded
+  // into the current instance) the overlay `instances` list only contains the
+  // current test, but the siblings still exist and must be updated.
   const copySettingsToAllInstances = () => {
     if (typeof ctx.setTests !== 'function') return;
-    const others = instances.filter(i => i.id !== activeTest.id && !i.extra);
+    const sources = [];
+    if (typeof ctx.getInstances === 'function') { try { sources.push(...(ctx.getInstances() || [])); } catch {} }
+    if (Array.isArray(ctx.instances)) sources.push(...ctx.instances);
+    if (Array.isArray(ctx.siblings)) sources.push(...ctx.siblings);
+    if (Array.isArray(ctx.tests)) sources.push(...ctx.tests);
+    if (Array.isArray(ctx.allTests)) sources.push(...ctx.allTests);
+    // The overlay `instances` entries are normalized { id, name, test } objects.
+    if (Array.isArray(instances)) sources.push(...instances.map((i) => i.test).filter(Boolean));
+    const seen = new Set();
+    const others = [];
+    sources.forEach((t) => {
+      if (!t || !t.id || seen.has(t.id)) return;
+      seen.add(t.id);
+      if (t.id === activeTest.id) return;
+      if (t.extra) return;
+      if (activeTest.name && String(t.name || '') !== String(activeTest.name || '')) return;
+      others.push(t);
+    });
     if (others.length === 0) { alert('There are no other instances to copy the settings to.'); return; }
     if (!window.confirm(`Apply the current settings to ${others.length} other instance(s)?`)) return;
     const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
@@ -1123,7 +1151,7 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
       fcPlate: clone(activeTest.fcPlate)
     };
     ctx.setTests(prev => prev.map(t =>
-      (t.id !== activeTest.id && t.name === activeTest.name && t.name.trim() !== '')
+      (others.some(o => o.id === t.id))
         ? { ...t, ...patch }
         : t
     ));
