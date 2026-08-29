@@ -116,7 +116,7 @@ export const dataUrlToBlob = (dataUrl) => {
   return new Blob([bytes], { type: mime });
 };
 
-const driveFetch = async (path, opts = {}) => {
+export const driveFetch = async (path, opts = {}) => {
   const token = getDriveToken();
   if (!token) throwCode('NO_TOKEN', 'Google Drive is not connected.');
 

@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
-import { uploadLocalFile, withExtension, getDriveToken } from '../utils/driveUpload';
+import { uploadLocalFile, withExtension, getDriveToken, getDriveFileRegistry, driveFetch } from '../utils/driveUpload';
 import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Line, ComposedChart, Area, ReferenceArea} from 'recharts';
 import { ChartControlBar, SharedChartStylePanel, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
@@ -1553,6 +1553,97 @@ export const InstrumentalSetup = ({ ctx }) => {
 // =========================================================================
 export const globalFcsCache = {};
 
+// -------------------------------------------------------------------------
+// FCS PERSISTENCE — the parsed .fcs data is kept in the module cache above
+// (fast) but is ALSO serialized onto the test object (activeTest.fcParsed /
+// fcExtraFiles[].data) so it survives closing and reopening the experiment.
+// The dataset payload is LZ-compressed for Firestore (1MB/doc limit) and
+// float data barely compresses, so only files whose base64 events fit under
+// ~600KB are persisted; larger ones keep the in-memory-only behaviour.
+// -------------------------------------------------------------------------
+const FCS_PERSIST_LIMIT = 600 * 1024;
+
+const fcsTypedArrayToB64 = (arr) => {
+  const bytes = new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
+  let bin = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+};
+
+const fcsB64ToTypedArray = (b64, Ctor) => {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Ctor(bytes.buffer);
+};
+
+const FCS_CTORS = { F: Float32Array, D: Float64Array, U32: Uint32Array, I: Uint16Array };
+
+const fcsDataTypeOf = (arr) => {
+  if (arr instanceof Float32Array) return 'F';
+  if (arr instanceof Float64Array) return 'D';
+  if (arr instanceof Uint32Array) return 'U32';
+  return 'I';
+};
+
+/** Compact serialization of a parsed FCS structure (events → base64). Returns
+ *  null when the file is too large to persist (kept in cache only). */
+const serializeFcsForSave = (parsed) => {
+  if (!parsed || !parsed.events || typeof parsed.numEvents !== 'number') return null;
+  let eventsB64 = '';
+  try { eventsB64 = fcsTypedArrayToB64(parsed.events); }
+  catch { return null; }
+  if (!eventsB64 || eventsB64.length > FCS_PERSIST_LIMIT) return null;
+  return {
+    version: parsed.version,
+    numParams: parsed.numParams,
+    numEvents: parsed.numEvents,
+    params: parsed.params,
+    textDict: parsed.textDict,
+    filename: parsed.filename || '',
+    dataType: fcsDataTypeOf(parsed.events),
+    eventsB64
+  };
+};
+
+/** Rebuild a parsed FCS structure from the persisted serialization. */
+const deserializeFcsFromSave = (saved) => {
+  if (!saved || typeof saved.eventsB64 !== 'string' || !saved.eventsB64) return null;
+  const Ctor = FCS_CTORS[saved.dataType] || Float32Array;
+  try {
+    const events = fcsB64ToTypedArray(saved.eventsB64, Ctor);
+    if (events.length !== (saved.numEvents || 0) * (saved.numParams || 0)) return null;
+    return {
+      version: saved.version,
+      numParams: saved.numParams,
+      numEvents: saved.numEvents,
+      params: Array.isArray(saved.params) ? saved.params : [],
+      textDict: saved.textDict || {},
+      filename: saved.filename || '',
+      events
+    };
+  } catch { return null; }
+};
+
+/** Fill the in-memory cache from the persisted data for the active test and
+ *  its extra spectra. Idempotent — only missing entries are restored. */
+export const restoreFcsCacheFromTest = (activeTest = {}) => {
+  if (!activeTest || typeof activeTest !== 'object') return;
+  if (activeTest.fcParsed && !globalFcsCache[activeTest.id]) {
+    const parsed = deserializeFcsFromSave(activeTest.fcParsed);
+    if (parsed) globalFcsCache[activeTest.id] = parsed;
+  }
+  (activeTest.fcExtraFiles || []).forEach((f) => {
+    if (f && f.data && !globalFcsCache[f.id]) {
+      const parsed = deserializeFcsFromSave(f.data);
+      if (parsed) globalFcsCache[f.id] = parsed;
+    }
+  });
+};
+
 // =========================================================================
 // MAIN DATA SECTION
 // =========================================================================
@@ -1565,6 +1656,19 @@ export const globalFcsCache = {};
 export const Data = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const t = activeTest || {};
+  // Restore the in-memory FCS cache from the persisted data when the test is
+  // reopened (idempotent — only fills missing entries).
+  restoreFcsCacheFromTest(t);
+  // True when the test previously received FCS data that was too large to
+  // persist and the in-memory cache is empty (e.g. after a page reload).
+  const persistedFcsWasTooLarge = !globalFcsCache[t.id] && (
+    t.fcParsed === null || (t.fcExtraFiles || []).some((f) => f && f.data === null)
+  );
+  // Offer the Drive fallback whenever the cache is empty but the test has
+  // previously-uploaded flow data and Google Drive is connected.
+  const showRestoreFromDrive = !globalFcsCache[t.id] && getDriveToken() && (
+    t.fcParsed !== undefined || (t.fcExtraFiles || []).length > 0
+  );
 
   const panel = Array.isArray(t.fcPanel) ? t.fcPanel : [];
   const updatePanel = (newPanel) => updateActiveTest({ fcPanel: newPanel });
@@ -1626,6 +1730,8 @@ export const Data = ({ ctx }) => {
       globalFcsCache[activeTest.id] = first;
       const metadataUpdates = mapFCSMetadata(first.textDict);
       metadataUpdates.instanceName = first.filename.replace(/\.[^/.]+$/, "");
+      // Persist the parsed data on the test so it survives close/reopen.
+      metadataUpdates.fcParsed = serializeFcsForSave(first);
       
       const currentPanel = Array.isArray(t.fcPanel) ? t.fcPanel : [];
       if (currentPanel.length === 0) {
@@ -1648,7 +1754,7 @@ export const Data = ({ ctx }) => {
             const parsed = results[i].parsed;
             const extraId = 'fcx' + Date.now() + i + Math.random().toString(36).substring(2, 5);
             globalFcsCache[extraId] = parsed;
-            extraFiles.push({ id: extraId, filename: parsed.filename || `Spectrum ${i + 1}` });
+            extraFiles.push({ id: extraId, filename: parsed.filename || `Spectrum ${i + 1}`, data: serializeFcsForSave(parsed) });
           }
           updateActiveTest({ fcExtraFiles: extraFiles });
         } else if (ctx.setTests) {
@@ -1664,6 +1770,7 @@ export const Data = ({ ctx }) => {
                   const cloned = JSON.parse(JSON.stringify(activeTest));
                   cloned.id = newId;
                   cloned.instanceName = parsed.filename.replace(/\.[^/.]+$/, "");
+                  cloned.fcParsed = serializeFcsForSave(parsed);
                   Object.assign(cloned, meta); 
                   
                   newTests.push(cloned);
@@ -1715,6 +1822,71 @@ export const Data = ({ ctx }) => {
       console.error('FCS Parse Error:', err);
     }
     e.target.value = '';
+  };
+
+  // Re-download the raw .fcs files that were archived to Google Drive and
+  // re-parse them into the in-memory cache — the fallback for files too large
+  // to persist inside the dataset payload.
+  const [restoringFromDrive, setRestoringFromDrive] = useState(false);
+  const handleRestoreFromDrive = async () => {
+    if (!getDriveToken()) { setFcsMsg('⚠️ Google Drive non è collegato.'); return; }
+    setRestoringFromDrive(true);
+    setFcsMsg('⬇️ Download dei file .fcs da Google Drive…');
+    try {
+      const reg = getDriveFileRegistry();
+      const testName = activeTest.name || '';
+      const entries = Object.values(reg).filter((e) =>
+        e && !e.deleted &&
+        String(e.ctx?.test || '') === String(testName) &&
+        String(e.ctx?.subsection || '') === 'Flow Cytometry'
+      );
+      if (entries.length === 0) {
+        setFcsMsg('⚠️ Nessun file .fcs trovato su Google Drive per questo esperimento.');
+        return;
+      }
+      let restored = 0;
+      let mainDone = false;
+      let mainSerialized = undefined;
+      const extras = [...(t.fcExtraFiles || [])];
+      for (const entry of entries) {
+        try {
+          const res = await driveFetch(`/drive/v3/files/${entry.id}?alt=media`);
+          if (!res || !res.ok) continue;
+          const buf = await res.arrayBuffer();
+          const parsed = parseFCSFile(buf);
+          if (!parsed || typeof parsed.numEvents !== 'number') continue;
+          parsed.filename = entry.name || 'restored.fcs';
+          if (!mainDone) {
+            globalFcsCache[activeTest.id] = parsed;
+            mainDone = true;
+            mainSerialized = serializeFcsForSave(parsed);
+          } else {
+            const stem = String(parsed.filename || '').replace(/\.[^/.]+$/, '');
+            let extra = extras.find((x) => x && String(x.filename || '').replace(/\.[^/.]+$/, '') === stem);
+            if (!extra) {
+              extra = { id: 'fcxR' + Date.now() + Math.random().toString(36).slice(2, 6), filename: parsed.filename, data: null };
+              extras.push(extra);
+            }
+            globalFcsCache[extra.id] = parsed;
+            extra.data = serializeFcsForSave(parsed) || extra.data;
+          }
+          restored++;
+        } catch { /* keep going with the next file */ }
+      }
+      const updates = {};
+      if (mainSerialized !== undefined) updates.fcParsed = mainSerialized;
+      if (extras.length) updates.fcExtraFiles = extras;
+      if (Object.keys(updates).length) updateActiveTest(updates);
+      setUpdater(u => u + 1);
+      setFcsMsg(restored > 0
+        ? `✅ Ripristinati ${restored} file .fcs da Google Drive.`
+        : '⚠️ Non è stato possibile scaricare i file .fcs (token scaduto? riconnetti Google Drive e riprova).');
+    } catch (err) {
+      setFcsMsg(`⚠️ Errore restore: ${err.message}`);
+      console.error('FCS Drive restore error:', err);
+    } finally {
+      setRestoringFromDrive(false);
+    }
   };
 
   const [importText, setImportText] = useState('');
@@ -1796,7 +1968,24 @@ export const Data = ({ ctx }) => {
               label="⬆ Archive FCS to Drive"
               className="bg-indigo-50 text-indigo-800 border border-indigo-200 hover:bg-indigo-100"
             />
+            {showRestoreFromDrive && (
+              <button
+                type="button"
+                onClick={handleRestoreFromDrive}
+                disabled={restoringFromDrive}
+                title="Scarica e ri-parse i file .fcs archiviati su Google Drive"
+                className="bg-indigo-50 text-indigo-800 border border-indigo-200 hover:bg-indigo-100 font-bold px-3 py-2 rounded-lg text-xs shadow-sm transition-colors disabled:opacity-50"
+              >
+                {restoringFromDrive ? '⬇️ Download…' : '⬇️ Restore from Drive'}
+              </button>
+            )}
           </div>
+          {persistedFcsWasTooLarge && (
+            <p className="text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              ⚠️ I file .fcs di questo esperimento erano troppo grandi per essere salvati nel dataset —
+              ricaricali per rivederli dopo la riapertura.
+            </p>
+          )}
         </div>
 
         <FCSDataVisualizations ctx={ctx} updater={updater} />
@@ -1873,6 +2062,9 @@ export const Data = ({ ctx }) => {
 
 export const DataAnalysis = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
+  // Restore the in-memory FCS cache from the persisted data when the test is
+  // reopened (idempotent — only fills missing entries).
+  restoreFcsCacheFromTest(activeTest);
   const populations = Array.isArray(activeTest.fcPopulations) ? activeTest.fcPopulations : [];
   
   const chartData = populations.filter(p => p.percentParent !== '' && p.percentParent !== undefined).map(p => ({
