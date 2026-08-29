@@ -3,6 +3,7 @@ import { getDirectImageUrl, repairContentImages } from '../data/constants';
 import { FCSDataVisualizations } from './FlowCytometrySections';
 import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES } from '../data/testTypes';
 import { SearchableSelect } from './SearchableSelect';
+import { getNmr1dDisplay } from './NMRSections';
 import { getTestTypeMeta, getNotebookTypeKey } from './testTypeMeta';
 import { Icon } from './Icons';
 import { NOTEBOOK_ANALYSIS_PREVIEWS, RemovablePanel, ChunkedTable, NMRSpectraPreview, PlateGridPreview, Formula2DPreview, CDSpectraChart, CDSimChartPreview, CloningUvSpectraChart, CloningSimChartPreview, ProteinChromatogramChart, NMR_SPECTRUM_TYPES, NMRFittingSimPreview, MDParamsPreview, MDAtomTablePreview, normalizeImagePreview } from './notebookPreviews';
@@ -461,7 +462,8 @@ export const NotebookTestItem = ({
            {/* 1D imported Bruker spectrum in LabNotebook (Data tick) */}
            {isNMR && localTest.nmr1dSpectrum && localTest.nmr1dSpectrum.xs && localTest.nmr1dSpectrum.xs.length > 0 && (() => {
              const spec = localTest.nmr1dSpectrum;
-             const xs = spec.xs, ys = spec.ys;
+             const disp = getNmr1dDisplay(spec) || { xs: spec.xs, ys: spec.ys };
+             const xs = disp.xs, ys = disp.ys;
              const maxY = Math.max(...ys.map(Math.abs), 1);
              const svgW = 480, plotH = 100, axisH = 26, totalH = plotH + axisH;
              const padL = 6, padR = 6;
@@ -509,6 +511,62 @@ export const NotebookTestItem = ({
                </div>
              );
            })()}
+            {/* 2D spectrum images (uploaded images + predicted peaks) */}
+            {isNMR && (Array.isArray(localTest.nmr2dImages) ? localTest.nmr2dImages : (localTest.nmr2dImage ? [localTest.nmr2dImage] : [])).length > 0 && (() => {
+              const imgs = Array.isArray(localTest.nmr2dImages) ? localTest.nmr2dImages : [localTest.nmr2dImage];
+              return (
+                <div className="flex flex-col items-center w-full mt-2 gap-1">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase">
+                    2D Spectrum Images — predicted peaks
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full">
+                    {imgs.map((cfg, idx) => {
+                      if (!cfg || !cfg.image) return null;
+                      const imgW = cfg.imgW || 600, imgH = cfg.imgH || 480;
+                      const placed = Array.isArray(cfg.placedPeaks) ? cfg.placedPeaks : [];
+                      const color = cfg.peakColor || '#ef4444';
+                      const labelColor = cfg.labelColor || color;
+                      const fontSize = cfg.labelFontSize || 11;
+                      const peakSize = cfg.peakSize || 4;
+                      const showLabels = cfg.showLabels !== false;
+                      return (
+                        <div key={idx} className="flex flex-col items-center w-full gap-1">
+                          <span className="text-[9px] font-bold text-slate-500 uppercase">
+                            {cfg.title || `2D Spectrum ${idx + 1}`}
+                          </span>
+                          <div className="relative w-full" style={{ maxWidth: imgW, aspectRatio: `${imgW} / ${imgH}` }}>
+                            <img src={cfg.image} alt="2D spectrum" className="absolute inset-0 w-full h-full object-contain rounded-lg border border-slate-200 bg-white" />
+                            <svg viewBox={`0 0 ${imgW} ${imgH}`} className="absolute inset-0 w-full h-full">
+                              {showLabels && placed.map((pk, i) => {
+                                const ldx = pk.ldx || 0, ldy = pk.ldy || 0;
+                                return (
+                                <g key={i}>
+                                  <circle cx={pk.px} cy={pk.py} r={peakSize} fill={color} stroke="white" strokeWidth={1} opacity={0.85} />
+                                  {(ldx !== 0 || ldy !== 0) && (
+                                    <line x1={pk.px + peakSize + 1} y1={pk.py} x2={pk.px + ldx + peakSize + 2} y2={pk.py + ldy - peakSize - 2} stroke={color} strokeWidth={1} opacity={0.45} />
+                                  )}
+                                  {pk.label && (
+                                    <text x={pk.px + ldx + peakSize + 2} y={pk.py + ldy - peakSize - 2} fontSize={fontSize} fill="rgba(255,255,255,0.55)" stroke="rgba(255,255,255,0.55)" strokeWidth={3} strokeLinejoin="round" fontWeight="bold">{pk.label}</text>
+                                  )}
+                                  {pk.label && (
+                                    <text x={pk.px + ldx + peakSize + 2} y={pk.py + ldy - peakSize - 2} fontSize={fontSize} fill={labelColor} fontWeight="bold">{pk.label}</text>
+                                  )}
+                                </g>
+                                );
+                              })}
+                            </svg>
+                          </div>
+                          {placed.length === 0 && (
+                            <p className="text-[9px] text-slate-400 italic">No predicted peaks stored — open the 2D overlay on the NMR page to place them.</p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+
            {isNMRFitting && localTest.nmrTables && localTest.nmrTables.length > 0 && (
             <div className="flex flex-col gap-4 mt-2">
               <div className="flex justify-between items-center border-b border-slate-100 pb-2">

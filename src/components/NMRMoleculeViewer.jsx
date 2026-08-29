@@ -96,6 +96,39 @@ const extractStructureSequence = (component) => {
   return seq;
 };
 
+// Per-residue "tick" list for the sequence strip above the 3D viewport.
+// Iterates the structure's residues in the same order as extractStructureSequence
+// so tick index i ↔ residue ri = resno - 1 (the app-wide convention used by
+// mapPdbAtomToNmrKeys and the per-atom tables). Also precomputes the PDB atom
+// names of each residue in ONE pass so tick clicks never need a full-structure
+// atom scan (which can freeze the page on large / multi-model systems).
+const collectResidueTicks = (component) => {
+  if (!component || !component.structure) return [];
+  const out = [];
+  const atomsByRes = new Map(); // `${chainid}|${resno}` -> Set(PDB atom names)
+  try {
+    component.structure.eachAtom((a) => {
+      const key = `${String(a.chainid || a.chain || '')}|${a.resno}`;
+      if (!atomsByRes.has(key)) atomsByRes.set(key, new Set());
+      const nm = String(a.atomname || '').trim();
+      if (nm) atomsByRes.get(key).add(nm);
+    });
+    component.structure.eachResidue((r) => {
+      const name = String((r && (r.resname || r.restype)) || '').toUpperCase();
+      const code = AA3_TO_1[name] || (name.length === 1 && /[ACGTU]/.test(name) ? name : '');
+      const chainid = r && (r.chainid || r.chain) ? String(r.chainid || r.chain) : '';
+      out.push({
+        resno: r && r.resno != null ? r.resno : out.length + 1,
+        resname: name || String((r && r.restype) || 'UNK'),
+        code: code || (name.length === 1 ? name : ''),
+        chainid,
+        atomNames: [...(atomsByRes.get(`${chainid}|${r.resno}`) || [])],
+      });
+    });
+  } catch { /* keep partial list */ }
+  return out;
+};
+
 // NGL selection string for the first chain of a structure (":A", ":B", …),
 // used to render only that chain on very large systems.
 const detectFirstChainSelection = (component) => {
@@ -619,6 +652,8 @@ const stageReadyRef = useRef(null);
 const componentRef = useRef(null);
 const highlightCompRef = useRef(null);
 const manualHighlightCompRef = useRef(null);
+const stripHighlightCompRef = useRef(null);   // whole-residue amber highlight from a tick click
+const stripResidueRiRef = useRef(null);       // residue index (ri) selected via the strip
 const labelCompRef = useRef(null);
 const sidechainCompRef = useRef(null);
 const abortRef = useRef(null); // { token, label, cancel } of the active long-running operation (structure / trajectory load)
@@ -643,7 +678,8 @@ const [moleculeStyle, setMoleculeStyle] = useState('ball+stick');
 // (NMR ensembles / docking clusters) are split into one entry per MODEL by the
 // main-load effect, so they appear in the same "Molecules" selector.
 const [extraMols, setExtraMols] = useState([]);    // [{ id, name }]
-const [activeMolKey, setActiveMolKey] = useState('main');
+const [visibleMolKeys, setVisibleMolKeys] = useState(() => new Set(['main'])); // multi-select: which structures are shown
+const [residueTicks, setResidueTicks] = useState([]); // [{ resno, resname, code, chainid }] — sequence strip above the 3D view
 const extraCompsRef = useRef([]);                  // [{ id, name, comp }]
 // Files chosen as "additional molecules" that must wait until the MAIN structure
 // has finished loading — the main load calls stage.removeAllComponents(), which
@@ -661,7 +697,7 @@ const clearExtraMolecules = useCallback(() => {
   extraCompsRef.current = [];
   pendingExtraFilesRef.current = [];
   setExtraMols([]);
-  setActiveMolKey('main');
+  setVisibleMolKeys(new Set(['main']));
 }, []);
 
 // ---- Atom renaming (3D, post-generation) ----
@@ -736,7 +772,7 @@ const [showAtomPanel, setShowAtomPanel] = useState(false);
 
 // ---- PyMOL-style selections & effects ----
 const [selections, setSelections] = useState([]);      // [{ name, expr }]
-const [selStyles, setSelStyles] = useState({});        // key -> { cartoon, stick, sphere, surface, color, transparency, sphereScale }
+const [selStyles, setSelStyles] = useState({});        // key -> { cartoon, ribbon, tube, stick, sphere, surface, color, colorMode, transparency, sphereScale }
 const [pymolActive, setPymolActive] = useState(false);
 const [pymolScript, setPymolScript] = useState('');
 const [pymolLog, setPymolLog] = useState('');
@@ -1065,6 +1101,8 @@ abortRef.current = {
     setLoadRequest(null);
     componentRef.current = null;
     setSelections([]);
+    setResidueTicks([]);
+    stripResidueRiRef.current = null;
     setLargeMode(false);
     setLargeInfo(null);
     try { if (stageRef.current) stageRef.current.removeAllComponents(); } catch {}
@@ -1219,6 +1257,9 @@ if (typeof onStructureSequence === 'function') {
 const seq = extractStructureSequence(component);
 if (seq) onStructureSequence(seq);
 }
+// Build the residue strip ticks (resno / resname / 1-letter code per residue).
+setResidueTicks(collectResidueTicks(component));
+stripResidueRiRef.current = null;
 
 component.autoView();
 requestAnimationFrame(() => {
@@ -1236,6 +1277,8 @@ finishStructLoad();
 if (!cancelled) {
 const raw = (err && err.message ? String(err.message) : '').trim();
 setErrorMsg(raw || 'Failed to load structure.');
+setResidueTicks([]);
+stripResidueRiRef.current = null;
 finishStructLoad();
 setStatus('error');
 }
@@ -1612,6 +1655,45 @@ const selectionAtomCount = (key) => {
   }
 };
 
+// PDB anchor atoms used to build a SMALL, page-friendly key set when a residue
+// tick is clicked. Keeping selectedAtomKeys small (≈ the size of a normal 3D
+// atom click) avoids heavy re-renders in the spectra / per-atom tables; the WHOLE
+// residue is still highlighted in 3D via a single-clause NGL representation.
+const RESIDUE_ANCHOR_ATOMS = {
+  protein: ['N', 'CA', 'C', 'O', 'CB'],
+  dna: ['P', "O5'", "C5'", "C1'", "O3'"],
+  rna: ['P', "O5'", "C5'", "C1'", "O3'"],
+};
+
+// Click a residue tick → select that residue (toggles off on the second click via
+// the page's handleAtomClick, which compares the key list). Uses the atom names
+// precomputed in collectResidueTicks — NO full-structure atom scan per click.
+const handleResidueTickClick = (tick) => {
+  const ri = tick.resno - 1;
+  stripResidueRiRef.current = ri;
+  if (!onAtomClickRef.current) return;
+  const seq = Array.isArray(parsedSeqRef.current) ? parsedSeqRef.current : [];
+  const anchors = RESIDUE_ANCHOR_ATOMS[moleculeTypeRef.current] || ['N', 'CA', 'C', 'O'];
+  const keys = [];
+  (tick.atomNames || []).forEach((an) => {
+    const upper = String(an || '').trim().toUpperCase();
+    if (!anchors.includes(upper)) return;
+    if (seq.length && ri >= 0 && ri < seq.length) {
+      const mapped = mapPdbAtomToNmrKeys(an, tick.resno, seq, moleculeTypeRef.current, namingConventionRef.current);
+      if (mapped && Array.isArray(mapped.keys) && mapped.keys.length) {
+        mapped.keys.forEach((k) => { if (!keys.includes(k)) keys.push(k); });
+        return;
+      }
+    }
+    if (!keys.includes(`${ri}-${upper}`)) keys.push(`${ri}-${upper}`);
+  });
+  if (keys.length === 0) {
+    const anchor = moleculeTypeRef.current === 'dna' || moleculeTypeRef.current === 'rna' ? 'P' : 'CA';
+    keys.push(`${ri}-${anchor}`);
+  }
+  onAtomClickRef.current(ri, keys);
+};
+
 // Rebuild all selection representations from selStyles.
 useEffect(() => {
   const component = componentRef.current;
@@ -1638,16 +1720,21 @@ useEffect(() => {
     const st = styles[key] || {};
     const expr = selKeyExpr(key);
     if (!expr || expr === '') return;
-    const color = st.color != null ? st.color : undefined;
+    // Colouring metaphor: a NGL colorScheme (element/chain/resname/sstruc/…) or
+    // a plain solid colour when "Solid" is selected.
+    const colorScheme = st.colorMode && st.colorMode !== 'solid' ? st.colorMode : undefined;
+    const color = colorScheme ? undefined : (st.color != null ? st.color : undefined);
     const opacity = st.transparency != null ? Math.max(0, Math.min(1, 1 - st.transparency)) : undefined;
     const reps = [];
     const add = (type, params) => {
-      try { reps.push(component.addRepresentation(type, { sele: expr, ...params })); } catch {}
+      try { reps.push(component.addRepresentation(type, { sele: expr, color, colorScheme, ...params })); } catch {}
     };
-    if (st.cartoon) add('cartoon', { color, opacity });
-    if (st.sphere) add('spacefill', { scale: st.sphereScale || 1, color, opacity, multipleBond: true });
-    if (st.stick) add('ball+stick', { color, opacity, multipleBond: true });
-    if (st.surface) add('surface', { color, opacity: opacity != null ? opacity : 0.5 });
+    if (st.cartoon) add('cartoon', { colorScheme, opacity });
+    if (st.ribbon) add('ribbon', { colorScheme, opacity });
+    if (st.tube) add('tube', { colorScheme, opacity });
+    if (st.sphere) add('spacefill', { scale: st.sphereScale || 1, colorScheme, opacity, multipleBond: true });
+    if (st.stick) add('ball+stick', { colorScheme, opacity, multipleBond: true });
+    if (st.surface) add('surface', { colorScheme, opacity: opacity != null ? opacity : 0.5 });
     selCompsRef.current[key] = reps;
   });
   return () => {
@@ -1750,12 +1837,12 @@ const applyPyMOLScript = (text) => {
       ...sels,
     ];
     setSelections(nextSels);
-    const styleOf = (st) => (st === 'sphere' ? 'sphere' : st === 'stick' || st === 'sticks' ? 'stick' : st === 'cartoon' ? 'cartoon' : st === 'surface' ? 'surface' : st === 'line' || st === 'lines' ? 'line' : null);
+    const styleOf = (st) => (st === 'sphere' ? 'sphere' : st === 'stick' || st === 'sticks' ? 'stick' : st === 'cartoon' ? 'cartoon' : st === 'ribbon' ? 'ribbon' : st === 'tube' ? 'tube' : st === 'surface' ? 'surface' : st === 'line' || st === 'lines' ? 'line' : null);
     const next = { ...selStylesRef.current };
     // Reset every selection the script mentions to "hidden", then apply commands
     sels.forEach((s) => {
       const cur = next[s.name] || {};
-      next[s.name] = { ...cur, cartoon: false, stick: false, sphere: false, surface: false };
+      next[s.name] = { ...cur, cartoon: false, ribbon: false, tube: false, stick: false, sphere: false, surface: false };
     });
     acts.forEach((a) => {
       const key = names.has(a.sel) ? a.sel : (a.sel === 'all' ? 'all' : a.sel);
@@ -1764,7 +1851,7 @@ const applyPyMOLScript = (text) => {
         const st = styleOf(a.style);
         if (st) next[key] = { ...cur, [st]: a.type === 'show' };
         if (a.style === 'everything' || a.style === 'all') {
-          next[key] = { ...cur, cartoon: a.type === 'show', stick: a.type === 'show', sphere: a.type === 'show', surface: a.type === 'show' };
+          next[key] = { ...cur, cartoon: a.type === 'show', ribbon: a.type === 'show', tube: a.type === 'show', stick: a.type === 'show', sphere: a.type === 'show', surface: a.type === 'show' };
         }
       } else if (a.type === 'color') {
         const c = colorDefs[a.color] || parseColorInt(a.color);
@@ -1786,7 +1873,8 @@ const applyPyMOLScript = (text) => {
       } else if (a.type === 'surface') {
         next[key] = { ...cur, surface: true };
       } else if (a.type === 'spectrum') {
-        log.push('• spectrum (by residue) approximated with per-residue rainbow colour');
+        next[key] = { ...cur, colorMode: 'residueindex' };
+        log.push('• spectrum → per-residue rainbow colouring applied');
       }
     });
     setSelStyles(next);
@@ -1801,7 +1889,7 @@ const applyPyMOLScript = (text) => {
       const shown = {};
       Object.keys(next).forEach((k) => {
         const s = next[k] || {};
-        if (s.cartoon || s.stick || s.sphere || s.surface) shown[k] = true;
+        if (s.cartoon || s.ribbon || s.tube || s.stick || s.sphere || s.surface) shown[k] = true;
       });
       const patch = {};
       sels.forEach((s) => {
@@ -1915,6 +2003,10 @@ if (manualHighlightCompRef.current) {
 try { component.removeRepresentation(manualHighlightCompRef.current); } catch {}
 manualHighlightCompRef.current = null;
 }
+if (stripHighlightCompRef.current) {
+try { component.removeRepresentation(stripHighlightCompRef.current); } catch {}
+stripHighlightCompRef.current = null;
+}
 };
 clearHighlights();
 
@@ -1988,16 +2080,35 @@ return parts.length > 0 ? parts.join(' or ') : null;
 try {
 const selSele = buildSele(sel);
 if (selSele) {
-highlightCompRef.current = component.addRepresentation('ball+stick', { sele: selSele, color: SELECT_COLOR_HEX, aspectRatio: 1.5, radius: 0.4 });
+  highlightCompRef.current = component.addRepresentation('ball+stick', { sele: selSele, color: SELECT_COLOR_HEX, aspectRatio: 1.5, radius: 0.4 });
 }
 const manSele = buildSele(man);
 if (manSele && showManualHighlight) {
-manualHighlightCompRef.current = component.addRepresentation('ball+stick', { sele: manSele, color: MANUAL_COLOR_HEX, aspectRatio: 1.5, radius: 0.4 });
+  manualHighlightCompRef.current = component.addRepresentation('ball+stick', { sele: manSele, color: MANUAL_COLOR_HEX, aspectRatio: 1.5, radius: 0.4 });
 }
 } catch {}
 
+// Whole-residue highlight for tick clicks: when the current selection was made
+// via the residue strip (stripResidueRiRef), show the ENTIRE residue with a
+// single cheap NGL clause instead of enumerating every atom.
+const stripRi = stripResidueRiRef.current;
+if (
+  stripRi !== null && sel.length > 0 &&
+  sel.every((k) => parseInt(String(k).split('-')[0], 10) === stripRi) &&
+  Array.isArray(residueTicks) && residueTicks[stripRi]
+) {
+  const tick = residueTicks[stripRi];
+  const chainClause = tick.chainid ? `:${tick.chainid}` : '';
+  try {
+    stripHighlightCompRef.current = component.addRepresentation('ball+stick', {
+      sele: `${chainClause} and ${tick.resno}`,
+      color: SELECT_COLOR_HEX, aspectRatio: 1.5, radius: 0.4,
+    });
+  } catch {}
+}
+
 return clearHighlights;
-}, [selectedKeys, manualKeys, status, showManualHighlight]);
+}, [selectedKeys, manualKeys, status, showManualHighlight, residueTicks]);
 
 // Load an additional structure file as its own NGL component (hidden by default —
 // the "Molecules" selector reveals one at a time).
@@ -2016,7 +2127,7 @@ try {
   try { comp.setVisibility(false); } catch {}
   // NOTE: no comp.autoView() here — the extra is HIDDEN and autoView would move
   // the camera away from the main structure. The camera is re-centred on the
-  // selected molecule by handleMolSelect (and on the main one after a flush).
+  // main one after a flush; the Molecules bar (right side) toggles visibility.
 } catch (err) {
   console.warn('Could not load additional molecule:', err && err.message);
 }
@@ -2048,7 +2159,8 @@ requestStructureLoad({ file: first, url: null, ts: Date.now() });
 onStructureFile?.(first);   // share the chosen topology with the analysis sections
 if (driveNaming) archiveFileToDrive({ file: first, ctx: driveNaming }).catch(() => {});
 // Additional structures (docking complexes / clusters / poses) are loaded as
-// separate NGL components and shown ONE AT A TIME via the "Molecules" selector.
+// separate NGL components and shown via the "Molecules" bar (right side,
+// multi-select — any combination can be displayed together).
 // They are deferred (pendingExtraFilesRef) until the MAIN structure is ready:
 // the main load calls stage.removeAllComponents(), which would wipe any
 // component added while it runs.
@@ -2059,33 +2171,24 @@ rest.forEach((f) => {
 e.target.value = '';
 }, [onStructureFile, driveNaming, clearExtraMolecules]);
 
-// Show exactly one molecule at a time (main structure or an extra uploaded file),
-// or ALL of them together when the user picks the "Show all" entry.
-const handleMolSelect = (key) => {
-setActiveMolKey(key);
-const showAll = key === 'all';
-try { if (componentRef.current) componentRef.current.setVisibility(key === 'main' || showAll); } catch {}
-extraCompsRef.current.forEach(({ id, comp }) => {
-  try { comp.setVisibility(showAll || key === id); } catch {}
-});
-// Force NGL to re-render with the new visibility immediately.
-try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
-// Fit the camera to the visible content AFTER the visibility took effect.
-requestAnimationFrame(() => {
-  try {
-    const stage = stageRef.current;
-    if (!stage) return;
-    if (showAll) {
-      if (typeof stage.autoView === 'function') stage.autoView();
-      else if (componentRef.current) componentRef.current.autoView();
-    } else {
-      const target = key === 'main' ? componentRef.current : (extraCompsRef.current.find((x) => x.id === key) || {}).comp;
-      if (target) { try { target.autoView(); } catch {} }
-    }
-    try { stage.handleResize(); } catch {}
-  } catch {}
+// Show/hide any combination of loaded structures (main + extra uploaded files).
+// Only the selected molecules are displayed; the rest stay hidden.
+const toggleMol = (key) => {
+setVisibleMolKeys((prev) => {
+  const next = new Set(prev);
+  if (next.has(key)) next.delete(key); else next.add(key);
+  return next;
 });
 };
+// Apply the molecule visibility to the NGL components whenever the selection changes.
+useEffect(() => {
+const show = (k) => visibleMolKeys.has(k);
+try { if (componentRef.current) componentRef.current.setVisibility(show('main')); } catch {}
+extraCompsRef.current.forEach(({ id, comp }) => {
+  try { comp.setVisibility(show(id)); } catch {}
+});
+try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
+}, [visibleMolKeys]);
 
 const handlePdbIdLoad = useCallback(() => {
 const value = pdbId.trim();
@@ -2097,6 +2200,51 @@ setTrajFile(null);
 setLoadRequest({ file: null, url: value, ts: Date.now() });
 onStructureSrc?.(value);   // share the web/PDB topology with the analysis sections
 }, [pdbId, onStructureSrc, clearExtraMolecules]);
+
+// ---- Empty the viewer completely ----
+// Removes every loaded structure (main + extras), clears the residue strip, the
+// Molecules / Selections bars and any trajectory, cancels in-flight loads, and
+// returns the viewer to its empty idle state so a brand-new molecule can be
+// loaded (nothing from the previous molecule remains on screen).
+const handleClearViewer = () => {
+  abortControl.abortAll();
+  clearExtraMolecules();
+  try { if (stageRef.current) stageRef.current.removeAllComponents(); } catch {}
+  componentRef.current = null;
+  highlightCompRef.current = null;
+  manualHighlightCompRef.current = null;
+  stripHighlightCompRef.current = null;
+  stripResidueRiRef.current = null;
+  labelCompRef.current = null;
+  sidechainCompRef.current = null;
+  selCompsRef.current = {};
+  baseCompsRef.current = [];
+  setFile(null);
+  setPdbId('');
+  setLoadRequest(null);
+  setStatus('idle');
+  setErrorMsg('');
+  setResidueTicks([]);
+  setSelections([]);
+  setSelStyles({});
+  setPymolActive(false);
+  setPymolLog('');
+  setPymolScript('');
+  setShowPymolPanel(false);
+  setHideAll(false);
+  setHoverInfo(null);
+  setTrajFile(null);
+  setTrajAborted(false); // a fresh trajectory pick is always allowed again
+  setTrajStatus('none');
+  setTrajError('');
+  setPlaying(false);
+  setNumFrames(0);
+  setCurrentFrame(0);
+  setPendingTraj(null);
+  setExtraMols([]);
+  setVisibleMolKeys(new Set(['main']));
+  try { if (stageRef.current && typeof stageRef.current.handleResize === 'function') stageRef.current.handleResize(); } catch {}
+};
 
 // ---- Abort the current long-running operation (vertical-bar / global Stop) ----
 // Stops trajectory playback, closes the frame-selection modal and cancels the
@@ -2117,7 +2265,7 @@ return (
 {/* Topology and Structure Controls (compact) */}
 <div className="flex flex-wrap items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg p-1.5">
 <label
-title="Load structure file(s) from your computer — the first is the main structure, the rest appear in the Molecules selector"
+title="Load structure file(s) from your computer — the first is the main structure, the rest appear in the Molecules bar (right side, multi-select)"
 className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white font-bold px-2.5 py-1.5 rounded-md text-xs shadow-sm transition-colors inline-flex items-center gap-1"
 >
 📂 PDB file(s)
@@ -2141,20 +2289,6 @@ className={`text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-
 <span title={file.name} className="text-[10px] text-slate-500 max-w-[120px] truncate">
 {file.name}
 </span>
-)}
-{extraMols.length > 0 && (
-<select
-value={activeMolKey}
-onChange={(e) => handleMolSelect(e.target.value)}
-title="Multiple structures loaded — show one at a time"
-className="border border-slate-300 rounded-md px-1.5 py-1.5 text-xs bg-white outline-none focus:border-blue-500 h-8 max-w-[180px]"
->
-<option value="main">Main{file ? ` (${file.name})` : ''}</option>
-{extraMols.map((m) => (
-<option key={m.id} value={m.id}>{m.name}</option>
-))}
-<option value="all">🔀 Show all together</option>
-</select>
 )}
 
 <div className="flex items-center gap-1">
@@ -2198,6 +2332,16 @@ className="hidden"
 <span title={(trajFile || trajectoryFile).name} className="text-[10px] text-slate-500 max-w-[110px] truncate">
 {(trajFile || trajectoryFile).name}
 </span>
+)}
+{(file || residueTicks.length > 0 || extraMols.length > 0 || trajFile || trajectoryFile || status === 'ready' || status === 'loading' || status === 'error') && (
+<button
+type="button"
+onClick={handleClearViewer}
+title="Empty the viewer completely (remove all molecules, the sequence strip and any trajectory) so you can load a fresh molecule"
+className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8 bg-white border-red-300 text-red-600 hover:bg-red-50 whitespace-nowrap"
+>
+🗑 Clear
+</button>
 )}
 <label title="Show atom names" className="flex items-center gap-1 text-xs font-bold text-slate-700 cursor-pointer h-8 whitespace-nowrap">
 <input
@@ -2400,7 +2544,7 @@ className="border border-slate-300 rounded-md px-1.5 py-1.5 text-xs bg-white out
         <button type="button" onClick={clearPyMOL} className="px-2 py-1 text-[10px] font-bold rounded bg-white border border-red-300 text-red-600 hover:bg-red-50">Clear</button>
       </div>
     </div>
-    <label className="text-[10px] font-bold text-slate-500 uppercase">Paste a PyMOL script (select / show / hide / color / set sphere_scale·transparency / bg_color / cartoon / surface / spectrum / util.ray_shadows)</label>
+    <label className="text-[10px] font-bold text-slate-500 uppercase">Paste a PyMOL script (select / show / hide / color / set sphere_scale·transparency / bg_color / cartoon · ribbon · tube / surface / spectrum / util.ray_shadows)</label>
     <textarea value={pymolScript} onChange={(e) => setPymolScript(e.target.value)} rows={6}
       className="w-full border border-violet-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-violet-500 bg-white"
       placeholder={'select peptide, polymer.protein\nshow cartoon, peptide\ncolor gold, name CA and peptide\nset sphere_scale, 0.6, headgroups\nset sphere_transparency, 0.3, upper_headgroups\nbg_color white'} />
@@ -2478,6 +2622,30 @@ className="border border-indigo-300 rounded-lg px-2 py-1 text-xs bg-white outlin
 </div>
 )}
 
+{/* Residue sequence strip — click a tick to select that whole residue */}
+{residueTicks.length > 0 && moleculeType !== 'organic' && (
+  <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-2 py-1.5">
+    <span className="text-[9px] font-black text-slate-500 uppercase shrink-0">Residues</span>
+    <div className="flex gap-0.5 overflow-x-auto custom-scrollbar items-stretch py-0.5">
+      {residueTicks.map((r, i) => {
+        if (residueTicks.length > 900 && i % 5 !== 0) return null;
+        if (residueTicks.length > 450 && i % 3 !== 0) return null;
+        if (residueTicks.length > 200 && i % 2 !== 0) return null;
+        const isSel = selectedKeys && selectedKeys.some((k) => parseInt(String(k).split('-')[0], 10) === r.resno - 1);
+        return (
+          <button key={`${r.chainid}-${r.resno}`} type="button"
+            onClick={() => handleResidueTickClick(r)}
+            title={`${r.resname} ${r.resno}${r.chainid ? ` (chain ${r.chainid})` : ''} — click to select`}
+            className={`w-7 h-9 shrink-0 rounded-md border flex flex-col items-center justify-center gap-px leading-none transition-colors ${isSel ? 'bg-amber-400 border-amber-600' : 'bg-white border-slate-300 hover:border-amber-400 hover:bg-amber-50'}`}>
+            <span className="text-[6px] font-bold text-slate-400 leading-none">{r.resno}</span>
+            <span className={`text-[10px] font-black leading-none ${isSel ? 'text-amber-950' : 'text-slate-700'}`}>{r.code || (r.resname ? r.resname.slice(0, 1) : '?')}</span>
+          </button>
+        );
+      })}
+    </div>
+  </div>
+)}
+
 {/* 3D Viewport */}
 <div
 className="relative border border-slate-200 rounded-xl overflow-hidden bg-white"
@@ -2485,9 +2653,40 @@ style={{ height }}
 >
 <div ref={containerRef} className="w-full h-full" />
 
+{/* Vertical Molecules bar (right side) — multi-select which structures to display */}
+{extraMols.length > 0 && (
+  <div className="absolute top-2 right-2 bottom-2 w-44 z-40 flex flex-col gap-2 bg-white/95 border border-blue-200 rounded-xl shadow-lg p-2 overflow-hidden">
+    <div className="flex items-center justify-between gap-2 shrink-0">
+      <span className="text-[10px] font-black text-blue-700 uppercase tracking-wide">Molecules</span>
+      <span className="flex gap-1">
+        <button type="button"
+          onClick={() => setVisibleMolKeys(new Set(extraCompsRef.current.map(({ id }) => id).concat(['main'])))}
+          className="px-1.5 py-0.5 text-[8px] font-bold rounded border bg-white border-blue-300 text-blue-600 hover:bg-blue-50"
+          title="Show every structure">All</button>
+        <button type="button"
+          onClick={() => setVisibleMolKeys(new Set(['main']))}
+          className="px-1.5 py-0.5 text-[8px] font-bold rounded border bg-white border-slate-300 text-slate-500 hover:bg-slate-50"
+          title="Show only the main structure">Main</button>
+      </span>
+    </div>
+    <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-0.5">
+      <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-700 cursor-pointer hover:bg-blue-50 rounded px-1 py-0.5" title="Main structure">
+        <input type="checkbox" checked={visibleMolKeys.has('main')} onChange={() => toggleMol('main')} className="accent-blue-600 w-3.5 h-3.5" />
+        <span className="truncate">Main{file ? ` (${file.name})` : ''}</span>
+      </label>
+      {extraMols.map((m) => (
+        <label key={m.id} className="flex items-center gap-1.5 text-[10px] font-bold text-slate-700 cursor-pointer hover:bg-blue-50 rounded px-1 py-0.5" title={m.name}>
+          <input type="checkbox" checked={visibleMolKeys.has(m.id)} onChange={() => toggleMol(m.id)} className="accent-blue-600 w-3.5 h-3.5" />
+          <span className="truncate">{m.name}</span>
+        </label>
+      ))}
+    </div>
+  </div>
+)}
+
 {/* Vertical selections bar (right side of the viewer) — also hosts the Abort button */}
 {(selections.length > 0 || status === 'loading' || trajStatus === 'loading' || playing) && (
-  <div className="absolute top-2 right-2 bottom-2 w-60 z-30 flex flex-col gap-2 bg-white/95 border border-violet-200 rounded-xl shadow-lg p-2 overflow-hidden">
+  <div className={`absolute top-2 ${extraMols.length > 0 ? 'right-[11.5rem]' : 'right-2'} bottom-2 w-60 z-30 flex flex-col gap-2 bg-white/95 border border-violet-200 rounded-xl shadow-lg p-2 overflow-hidden`}>
     {selections.length > 0 && (
     <>
     <div className="flex items-center justify-between gap-2 shrink-0">
@@ -2509,16 +2708,32 @@ style={{ height }}
               <span className="text-[8px] text-slate-400 font-mono shrink-0">{n != null ? `${n} atoms` : '—'}</span>
             </div>
             <div className="flex items-center gap-1 flex-wrap">
-              {['cartoon', 'stick', 'sphere', 'surface'].map((style) => (
+              {['cartoon', 'ribbon', 'tube', 'stick', 'sphere', 'surface'].map((style) => (
                 <button key={style} type="button"
                   onClick={() => setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), [style]: !((selStylesRef.current[s.name] || {})[style]) } })}
                   className={`px-1.5 py-0.5 text-[8px] font-bold rounded border ${st[style] ? 'bg-violet-600 text-white border-violet-600' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-violet-50'}`}>
                   {style}
                 </button>
               ))}
+            </div>
+            <div className="flex items-center gap-1 flex-wrap">
+              <span className="text-[8px] font-bold text-slate-500 uppercase">Colour</span>
+              <select value={st.colorMode || 'solid'}
+                onChange={(e) => setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), colorMode: e.target.value } })}
+                className="text-[8px] border border-slate-300 rounded bg-white text-slate-600 outline-none focus:border-violet-500 h-5"
+                title="Colouring metaphor">
+                <option value="solid">Solid</option>
+                <option value="element">Atom type</option>
+                <option value="chainid">Chain</option>
+                <option value="resname">Residue</option>
+                <option value="sstruc">2° structure</option>
+                <option value="hydrophobicity">Hydrophobicity</option>
+              </select>
               <input type="color" value={st.color != null ? `#${st.color.toString(16).padStart(6, '0')}` : '#000000'}
+                disabled={(st.colorMode || 'solid') !== 'solid'}
                 onChange={(e) => { const c = parseInt(e.target.value.slice(1), 16); setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), color: c } }); }}
-                className="w-5 h-5 border border-slate-300 rounded cursor-pointer" title="Colour" />
+                className={`w-5 h-5 border border-slate-300 rounded cursor-pointer ${(st.colorMode || 'solid') !== 'solid' ? 'opacity-30 cursor-not-allowed' : ''}`}
+                title="Solid colour (used when Colour = Solid)" />
             </div>
             <label className="flex items-center gap-1 text-[8px] text-slate-500">
               transp

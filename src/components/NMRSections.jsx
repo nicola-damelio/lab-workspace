@@ -1292,6 +1292,8 @@ const PeakLabelOverlay = ({ markers, dom, marginLeft, marginRight, marginTop, ma
   const FONT_SIZE = fontSize;
   const ARROW_LEN = 10;
   const TICK_LEN = 6;
+  // Leader/tick lines are intentionally much lighter than the label text.
+  const lightColor = color + '66';
 
   const placed = [];
   const sorted = [...visible].sort((a, b) => ppmToX(a.ppm) - ppmToX(b.ppm));
@@ -1344,7 +1346,7 @@ const PeakLabelOverlay = ({ markers, dom, marginLeft, marginRight, marginTop, ma
         <svg width={w} height={h} style={{ position: 'absolute', top: 0, left: 0, overflow: 'visible' }}>
           <defs>
             <marker id="pk-arrow" markerWidth="5" markerHeight="5" refX="2" refY="2.5" orient="auto">
-              <path d="M0,0 L0,5 L4,2.5 z" fill={color} />
+              <path d="M0,0 L0,5 L4,2.5 z" fill={lightColor} />
             </marker>
           </defs>
           {placed.map((p, i) => {
@@ -1352,11 +1354,10 @@ const PeakLabelOverlay = ({ markers, dom, marginLeft, marginRight, marginTop, ma
             const arrowEndY = marginTop - TICK_LEN - 1;
             return (
               <g key={i}>
-                <line x1={p.peakCx} y1={marginTop} x2={p.peakCx} y2={marginTop - TICK_LEN} stroke={color} strokeWidth={1.5} />
+                <line x1={p.peakCx} y1={marginTop} x2={p.peakCx} y2={marginTop - TICK_LEN} stroke={lightColor} strokeWidth={1.5} />
                 {arrowStartY < arrowEndY && (
-                  <line x1={p.cx} y1={arrowStartY} x2={p.peakCx} y2={arrowEndY} stroke={color} strokeWidth={1} markerEnd="url(#pk-arrow)" />
+                  <line x1={p.cx} y1={arrowStartY} x2={p.peakCx} y2={arrowEndY} stroke={lightColor} strokeWidth={1} markerEnd="url(#pk-arrow)" />
                 )}
-                <rect x={p.cx - p.tw / 2} y={p.cy} width={p.tw} height={LABEL_H} rx={2} fill="white" stroke={color} strokeWidth={0.8} opacity={0.95} />
                 <text x={p.cx} y={p.cy + LABEL_H / 2 + FONT_SIZE / 2 - 1} textAnchor="middle" fontSize={FONT_SIZE} fontFamily="monospace" fontWeight="bold" fill={color}>
                   {p.label}
                 </text>
@@ -1607,8 +1608,8 @@ const place2DLabels = (crossPeakData, { showLabels, format, dim, yRange, boxW, a
   // collision boxes match the rendered label (which is centered + white halo).
   const CHAR_PX = fontSize * 0.58, LINE_PX = fontSize * 1.28, HALO_PX = 1.5;
 
-  // Group cross-peaks that share the same position — each group's labels are
-  // arranged on an equi-spaced circle around that shared position.
+  // Group cross-peaks that share the same position — coincident peaks have to
+  // share the same label area, so they are processed together.
   const groups = new Map();
   crossPeakData.forEach((p) => {
     const key = `${(+p.x).toFixed(4)}|${(+p.y).toFixed(4)}`;
@@ -1632,60 +1633,52 @@ const place2DLabels = (crossPeakData, { showLabels, format, dim, yRange, boxW, a
     return { cx: p.x + dxPx * xPpmPerPx, cy: p.y - dyPx * yPpmPerPx, hw, hh };
   };
 
-  const R0 = 10;   // short distance from the peak (px)
-  const DR = 6;    // radius step when no angle is free (px)
-  const rings = 3; // hard cap: never search further than R0 + 3*DR ≈ 28px
+  // A spot is free when it does not collide with an already-placed label and
+  // does not cover another peak marker (same-group peaks are allowed — their
+  // labels share the position on purpose).
+  const isFree = (box, ownSet) =>
+    !placed.some((u) => overlaps(box, u)) &&
+    !peaks.some((pt) => !ownSet.has(pt.p) && Math.abs(pt.x - box.cx) < box.hw + 0.03 && Math.abs(pt.y - box.cy) < box.hh + 0.03);
 
-  // Try to place the group. Rotations sweep the equi-spaced arrangement around
-  // the peak; only when every angle at the current radius is blocked do we move
-  // to the next radius. `checkPeaks` controls whether covering another peak is
-  // forbidden (relaxed when the spectrum is too dense to keep labels close).
-  const tryPlace = (group, baseAngles, rotations, checkPeaks) => {
-    const ownSet = new Set(group);
-    for (let ring = 0; ring <= rings; ring++) {
-      const R = R0 + ring * DR;
-      for (const rot of rotations) {
-        const entries = group.map((p, k) => {
-          const ang = baseAngles[k] + rot;
-          const dxPx = R * Math.cos(ang);
-          const dyPx = -R * Math.sin(ang);
-          return { box: boxFor(p, dxPx, dyPx), p, dpx: dxPx - (p.size || 5) - 5, dpy: dyPx + (p.size || 5) + 5 };
-        });
-        const free = entries.every((e) =>
-          !placed.some((u) => overlaps(e.box, u)) &&
-          (!checkPeaks || !peaks.some((pt) => !ownSet.has(pt.p) && Math.abs(pt.x - e.box.cx) < e.box.hw + 0.03 && Math.abs(pt.y - e.box.cy) < e.box.hh + 0.03))
-        );
-        if (free) {
-          entries.forEach((e) => { placed.push(e.box); result.push({ ...e.p, labelDx: e.dpx, labelDy: e.dpy }); });
-          return true;
-        }
+  // Search outward from the BASE spot for the closest free position. Only labels
+  // that would overlap get displaced — everything else stays right next to its peak.
+  const tryDisplace = (p, ownSet) => {
+    const r = p.size || 5;
+    for (let ring = 1; ring <= 10; ring++) {
+      const step = Math.max(8, Math.round((2 * Math.PI * ring * 5) / 9));
+      for (let k = 0; k < step; k++) {
+        const ang = (2 * Math.PI * k) / step;
+        const ox = ring * 5 * Math.cos(ang);
+        const oy = ring * 5 * Math.sin(ang);
+        const box = boxFor(p, r + 5 + ox, -(r + 5) + oy);
+        if (isFree(box, ownSet)) return { labelDx: ox, labelDy: oy, box };
       }
     }
-    return false;
+    return null;
   };
 
   orderedGroups.forEach((group) => {
-    const n = group.length;
-    // Equi-spaced angles around the peak, starting at the top (π/2).
-    const baseAngles = Array.from({ length: n }, (_, k) => Math.PI / 2 + (2 * Math.PI * k) / n);
-    const rotCount = Math.max(12, n * 6);
-    const rotations = Array.from({ length: rotCount }, (_, i) => (2 * Math.PI * i) / rotCount);
-
-    // 1) Close + clear of every peak and label.
-    if (tryPlace(group, baseAngles, rotations, true)) return;
-
-    // 2) Dense region: still avoid other labels, but allow sitting near another
-    //    peak — keeps labels close instead of orbiting far away.
-    if (tryPlace(group, baseAngles, rotations, false)) return;
-
-    // 3) Ultimate fallback — closest radius, first arrangement.
-    group.forEach((p, k) => {
-      const ang = baseAngles[k];
-      const dxPx = R0 * Math.cos(ang);
-      const dyPx = -R0 * Math.sin(ang);
-      const box = boxFor(p, dxPx, dyPx);
-      placed.push(box);
-      result.push({ ...p, labelDx: dxPx - (p.size || 5) - 5, labelDy: dyPx + (p.size || 5) + 5 });
+    const ownSet = new Set(group);
+    group.forEach((p) => {
+      const r = p.size || 5;
+      // 1) The closest spot — right next to the peak (labelDx/labelDy = 0).
+      //    Used whenever nothing else collides with the label.
+      const baseBox = boxFor(p, r + 5, -(r + 5));
+      if (isFree(baseBox, ownSet)) {
+        placed.push(baseBox);
+        result.push({ ...p, labelDx: 0, labelDy: 0 });
+        return;
+      }
+      // 2) Overlapping — displace only this label to the nearest free spot.
+      const displaced = tryDisplace(p, ownSet);
+      if (displaced) {
+        placed.push(displaced.box);
+        result.push({ ...p, labelDx: displaced.labelDx, labelDy: displaced.labelDy });
+        return;
+      }
+      // 3) Last resort (very crowded spectrum) — stay next to the peak anyway.
+      placed.push(baseBox);
+      result.push({ ...p, labelDx: 0, labelDy: 0 });
     });
   });
 
@@ -1803,7 +1796,7 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
                 <Scatter name="Diagonal" data={[{ x: 0, y: 0 }, { x: 11, y: 11 }]} line={{ stroke: '#cbd5e1', strokeWidth: 1 }} shape={(props) => <circle cx={props.cx || 0} cy={props.cy || 0} r={0} />} legendType="none" isAnimationActive={false} />
                 
                 <Scatter data={diagonalData} fill={diagonalColor} shape={shape} isAnimationActive={false} />
-                <Scatter data={processedCrossPeaks} shape={shape} isAnimationActive={false} />
+                {simShowLabels && <Scatter data={processedCrossPeaks} shape={shape} isAnimationActive={false} />}
                 {refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} y1={refAreaTop} y2={refAreaBottom} strokeOpacity={0.3} fill="#cbd5e1" />}
               </ScatterChart>
             </ResponsiveContainer>
@@ -1899,7 +1892,7 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
                 <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} />
                 <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : yTicks} interval={0} tickLine={false} tick={<CustomYTick13C isZoomed={isZoomed} fs={fs} />} label={{ value: yAxisLabel, angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fs + 1 }} />
                 <Tooltip content={<NMRTooltip diagonalColor="#8b5cf6" selectedKeys={selectedKeys} />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
-                <Scatter data={processedCrossPeaks} shape={(props) => {
+                {simShowLabels && <Scatter data={processedCrossPeaks} shape={(props) => {
                   const { cx, cy, payload } = props;
                   if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
                   const isSel = selectedKeys && payload.keys && payload.keys.some((k) => selectedKeys.includes(k));
@@ -1928,7 +1921,7 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
                       )}
                     </g>
                   );
-                }} isAnimationActive={false} />
+                }} isAnimationActive={false} />}
                 {refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} y1={refAreaTop} y2={refAreaBottom} strokeOpacity={0.3} fill="#cbd5e1" />}
               </ScatterChart>
             </ResponsiveContainer>
@@ -4157,15 +4150,16 @@ const _nmrPpmAxis = (swHz, o1Hz, sfo1MHz, n) => {
   for (let i=0;i<n;i++) xs[i] = left - i*step;
   return xs;
 };
-const _nmrDownsample = (xs, ys, max=6000) => {
-  if (ys.length <= max) return {xs:Array.from(xs), ys:Array.from(ys)};
-  const out = {xs:[], ys:[]}; const bucket = ys.length/max;
+const _nmrDownsample = (xs, ys, max=6000, ys2=null) => {
+  if (ys.length <= max) return {xs:Array.from(xs), ys:Array.from(ys), ys2: ys2 ? Array.from(ys2) : null};
+  const out = {xs:[], ys:[], ys2: ys2 ? [] : null}; const bucket = ys.length/max;
   for (let b=0;b<max;b++) {
     const s=Math.floor(b*bucket); const e=Math.max(s+1,Math.floor((b+1)*bucket));
     let iMin=s, iMax=s;
     for (let i=s;i<e;i++) { if(ys[i]<ys[iMin]) iMin=i; if(ys[i]>ys[iMax]) iMax=i; }
     const [a,z] = iMin<iMax ? [iMin,iMax] : [iMax,iMin];
     out.xs.push(xs[a],xs[z]); out.ys.push(ys[a],ys[z]);
+    if (ys2) out.ys2.push(ys2[a],ys2[z]);
   }
   return out;
 };
@@ -4177,13 +4171,14 @@ const _nmrResolveDrive = (url) => {
   if (m && /drive\.google\.com/.test(u)) return `https://drive.google.com/uc?export=download&id=${m[1]}`;
   return u;
 };
-// Main import — returns { xs:ppmArray, ys:intensityArray, meta, nPoints, error? }
-const importBruker1rPpm = ({dataBuffer, acqusText='', manualSWppm=null, manualO1ppm=0, title='', forceLE=null}) => {
+// Main import — returns { xs:ppmArray, ys:intensityArray, ysImag:imagArray|null, meta, nPoints, error? }
+const importBruker1rPpm = ({dataBuffer, imagBuffer=null, acqusText='', manualSWppm=null, manualO1ppm=0, title='', forceLE=null}) => {
   if (!dataBuffer || dataBuffer.byteLength < 16) return {error:'Empty or invalid 1r file.'};
   if (new TextDecoder().decode(new Uint8Array(dataBuffer.slice(0,32))).includes('<!DOC'))
     return {error:'Drive returned a web page — set sharing to "Anyone with the link".' };
   const acqus = acqusText && acqusText.trim().startsWith('##') ? _nmrParseBrukerParams(acqusText) : {};
   const {y, littleEndian, autoEndian} = _nmrDecode1rAuto(dataBuffer, forceLE);
+  const imag = (imagBuffer && imagBuffer.byteLength >= 16) ? _nmrDecode1r(imagBuffer, littleEndian) : null;
   const swHz = _nmrBrukerNum(acqus,'SW_h');
   const sfo1 = _nmrBrukerNum(acqus,'SFO1');      // MHz
   const o1Hz = _nmrBrukerNum(acqus,'O1');          // Hz
@@ -4198,9 +4193,9 @@ const importBruker1rPpm = ({dataBuffer, acqusText='', manualSWppm=null, manualO1
   } else {
     return {error:'No valid acqus (need SFO1 + SW_h + O1) and no manual spectral width — cannot build the ppm axis.'};
   }
-  const ds = _nmrDownsample(xs, y, 6000);
+  const ds = _nmrDownsample(xs, y, 6000, imag);
   return {
-    xs: ds.xs, ys: ds.ys, littleEndian, autoEndian, nPoints: y.length,
+    xs: ds.xs, ys: ds.ys, ysImag: ds.ys2, littleEndian, autoEndian, nPoints: y.length,
     meta: {
       swPpm: swHz>0&&sfo1>0 ? swHz/(sfo1*1e6)*1e6 : manualSWppm,
       o1Ppm: sfo1>0 ? o1Hz/(sfo1*1e6)*1e6 : manualO1ppm,
@@ -4208,6 +4203,30 @@ const importBruker1rPpm = ({dataBuffer, acqusText='', manualSWppm=null, manualO1
       title: title || acqus.TITLE || ''
     }
   };
+};
+// Display-ready 1D spectrum: applies the ppm calibration offset and, when the
+// imaginary part was imported (1i file), the zero-order phase correction.
+export const getNmr1dDisplay = (spec) => {
+  if (!spec || !Array.isArray(spec.xs) || !Array.isArray(spec.ys)) return null;
+  const cal = Number(spec.calibration) || 0;
+  const ph0 = Number(spec.phaseDeg) || 0;
+  const ph1 = Number(spec.phase1Deg) || 0;
+  const hasImag = Array.isArray(spec.ysImag) && spec.ysImag.length === spec.ys.length;
+  let xs = spec.xs;
+  let ys = spec.ys;
+  if (cal !== 0) xs = spec.xs.map((x) => x + cal);
+  if (hasImag && (ph0 !== 0 || ph1 !== 0)) {
+    // Zero-order (ph0) + first-order (ph1, pivoting at the spectrum centre)
+    // phase correction: y' = Re·cos φ + Im·sin φ.
+    const n = spec.ys.length;
+    const half = n / 2;
+    ys = spec.ys.map((r, i) => {
+      const phi = (ph0 + ph1 * ((i - (n - 1) / 2) / half)) * Math.PI / 180;
+      const c = Math.cos(phi), s = Math.sin(phi);
+      return r * c + spec.ysImag[i] * s;
+    });
+  }
+  return { xs, ys };
 };
 // =========================================================================
 // NMR 1D SPECTRA OVERLAY & PALETTE MANAGER
@@ -4313,12 +4332,13 @@ const chartRef = useRef(null);
     const defaultColors = VIS_PALETTES.default;
     instances.forEach((inst, idx) => {
       const spec = inst.test.nmr1dSpectrum;
-      if (!spec || !Array.isArray(spec.xs) || spec.xs.length === 0) return;
+      const disp = getNmr1dDisplay(spec);
+      if (!disp || !disp.xs.length) return;
       
-      const step = Math.max(1, Math.floor(spec.xs.length / 2000));
+      const step = Math.max(1, Math.floor(disp.xs.length / 2000));
       const data = [];
-      for (let i = 0; i < spec.xs.length; i += step) {
-        data.push({ x: spec.xs[i], y: spec.ys[i] });
+      for (let i = 0; i < disp.xs.length; i += step) {
+        data.push({ x: disp.xs[i], y: disp.ys[i] });
       }
       
       out.push({
@@ -4501,6 +4521,391 @@ const onUp = () => {
 };
 
 // =========================================================================
+// NMR 2D SPECTRUM IMAGE OVERLAY (Data section — after the 1D Bruker import)
+// Upload a real 2D spectrum image (with axes) and overlay the predicted
+// cross-peaks at their chemical shifts using the axis ranges of the spectrum
+// type. No heavy 2D data upload is needed — only the image.
+// =========================================================================
+const NMR_2D_TYPES = {
+  hsqc:    { label: '¹H–¹³C HSQC',  f2: [0, 11],    f1: [10, 150],  peaks: 'hsqcPeaks',    yAxis: '¹³C F1' },
+  hsqc15n: { label: '¹H–¹⁵N HSQC',  f2: [0, 11],    f1: [95, 135],  peaks: 'hsqc15NPeaks', yAxis: '¹⁵N F1' },
+  cosy:    { label: '¹H–¹H COSY',   f2: [0, 11],    f1: [0, 11],    peaks: 'cosyPeaks',    yAxis: '¹H F1' },
+  tocsy:   { label: '¹H–¹H TOCSY',  f2: [0, 11],    f1: [0, 11],    peaks: 'tocsyPeaks',   yAxis: '¹H F1' },
+  noesy:   { label: '¹H–¹H NOESY',  f2: [0, 11],    f1: [0, 11],    peaks: 'noesyPeaks',   yAxis: '¹H F1' }
+};
+
+const NMR2DSpectrumItem = ({ cfg, d, updateItem, onRemove }) => {
+  const setCfg = (patch) => updateItem(patch);
+
+  const typeDef = NMR_2D_TYPES[cfg.spectrumType] || NMR_2D_TYPES.hsqc;
+  const f2Min = Number(cfg.f2Min), f2Max = Number(cfg.f2Max);
+  const f1Min = Number(cfg.f1Min), f1Max = Number(cfg.f1Max);
+  const f2Valid = Number.isFinite(f2Min) && Number.isFinite(f2Max) && f2Max !== f2Min;
+  const f1Valid = Number.isFinite(f1Min) && Number.isFinite(f1Max) && f1Max !== f1Min;
+
+  const peaks = (d && d.peaks && Array.isArray(d.peaks[typeDef.peaks])) ? d.peaks[typeDef.peaks] : [];
+  const imgW = cfg.imgW || 600, imgH = cfg.imgH || 480;
+
+  // ---- 2D click-to-calibrate: two clicked points define a full linear
+  // ppm ↔ pixel mapping per axis (handles image margins & non-standard axes).
+  const [calibPicking, setCalibPicking] = useState(false);
+  const [calibPicked, setCalibPicked] = useState(null); // { px, py } in image coords
+  const [calibDraftF2, setCalibDraftF2] = useState('');
+  const [calibDraftF1, setCalibDraftF1] = useState('');
+
+  const cal = (Array.isArray(cfg.calib) && cfg.calib.length >= 2) ? cfg.calib : null;
+  let f2Slope = null, f2Inter = null, f1Slope = null, f1Inter = null;
+  if (cal && Number(cal[1].px) !== Number(cal[0].px) && Number(cal[1].py) !== Number(cal[0].py)) {
+    f2Slope = (Number(cal[1].f2) - Number(cal[0].f2)) / (Number(cal[1].px) - Number(cal[0].px));
+    f2Inter = Number(cal[0].f2) - f2Slope * Number(cal[0].px);
+    f1Slope = (Number(cal[1].f1) - Number(cal[0].f1)) / (Number(cal[1].py) - Number(cal[0].py));
+    f1Inter = Number(cal[0].f1) - f1Slope * Number(cal[0].py);
+  }
+
+  const addCalibPoint = () => {
+    const f2 = parseFloat(calibDraftF2), f1 = parseFloat(calibDraftF1);
+    if (!calibPicked || !Number.isFinite(f2) || !Number.isFinite(f1)) return;
+    const pts = Array.isArray(cfg.calib) ? cfg.calib : [];
+    const next = pts.length >= 2 ? [{ ...calibPicked, f2, f1 }] : [...pts, { ...calibPicked, f2, f1 }];
+    setCfg({ calib: next });
+    setCalibPicked(null);
+    setCalibDraftF2('');
+    setCalibDraftF1('');
+  };
+
+  const onImageClick = (e) => {
+    if (!calibPicking) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const px = (e.clientX - rect.left) / rect.width * imgW;
+    const py = (e.clientY - rect.top) / rect.height * imgH;
+    setCalibPicked({ px, py });
+    setCalibPicking(false);
+  };
+
+  // ppm → pixel: uses the 2-point calibration when available (handles image
+  // margins and non-standard axes); otherwise the axis ranges (reversed — high
+  // ppm left / top).
+  const X = (ppm) => {
+    if (f2Slope !== null && f2Slope !== 0) return (Number(ppm) - f2Inter) / f2Slope;
+    return f2Valid ? (f2Max - Number(ppm)) / (f2Max - f2Min) * imgW : 0;
+  };
+  const Y = (ppm) => {
+    if (f1Slope !== null && f1Slope !== 0) return (Number(ppm) - f1Inter) / f1Slope;
+    return f1Valid ? (f1Max - Number(ppm)) / (f1Max - f1Min) * imgH : 0;
+  };
+
+  const visiblePeaks = peaks
+    .map((p) => ({ p, px: X(Number(p.x)), py: Y(Number(p.y)) }))
+    .filter(({ px, py }) => Number.isFinite(px) && Number.isFinite(py) && px >= 0 && px <= imgW && py >= 0 && py <= imgH);
+
+  // Display settings (label format/dimension match the simulation section).
+  const labelFormat = cfg.labelFormat || 'resNum_code_atom';
+  const labelDim = cfg.labelDim || 'both';
+  const fontSize = cfg.labelFontSize || 11;
+  const color = cfg.peakColor || '#ef4444';
+  const labelColor = cfg.labelColor || color;
+  const peakSize = cfg.peakSize || 4;
+  const zoom = Math.max(30, Math.min(200, Number(cfg.zoom) || 100));
+
+  // Label layout in image pixels: every label starts at its BASE position next
+  // to the peak (right + up). Only labels that would overlap ANOTHER label get
+  // displaced to the nearest free spot — isolated labels stay right next to
+  // their peak. Displaced labels get a faint leader line back to their peak.
+  const layout = (() => {
+    const boxes = [];
+    const result = [];
+    const lineH = fontSize * 1.28;
+    const boxFor = (px, py, label) => {
+      const lines = String(label || '').split('\n');
+      const w = Math.max(1, ...lines.map((l) => l.length * fontSize * 0.58)) + 3;
+      const h = lines.length * lineH;
+      return { x: px + peakSize + 2, y: py - peakSize - 2 - h + fontSize * 0.75, w, h };
+    };
+    const overlap = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+    visiblePeaks.forEach(({ p, px, py }) => {
+      const label = getPeakLabelText(p, labelFormat, labelDim);
+      const base = boxFor(px, py, label);
+      if (!boxes.some((u) => overlap(base, u))) {
+        boxes.push(base);
+        result.push({ p, px, py, label, ldx: 0, ldy: 0 });
+        return;
+      }
+      let placedBox = null;
+      for (let ring = 1; ring <= 10 && !placedBox; ring++) {
+        const step = Math.max(8, Math.round((2 * Math.PI * ring * 5) / 9));
+        for (let k = 0; k < step; k++) {
+          const ang = (2 * Math.PI * k) / step;
+          const ox = ring * 5 * Math.cos(ang);
+          const oy = ring * 5 * Math.sin(ang);
+          const box = boxFor(px + ox, py + oy, label);
+          if (!boxes.some((u) => overlap(box, u))) {
+            boxes.push(box);
+            result.push({ p, px, py, label, ldx: ox, ldy: oy });
+            placedBox = box;
+            break;
+          }
+        }
+      }
+      if (!placedBox) {
+        boxes.push(base);
+        result.push({ p, px, py, label, ldx: 0, ldy: 0 });
+      }
+    });
+    return result;
+  })();
+
+  // Persist the rendered peak positions (in image coordinates) so the Lab
+  // Notebook can reproduce the overlay without the live simulation data.
+  useEffect(() => {
+    const placed = layout.map(({ px, py, label, ldx, ldy }) => ({
+      px, py, label, ldx, ldy
+    }));
+    const key = JSON.stringify(placed);
+    if (key !== cfg.placedKey) {
+      updateItem({ placedKey: key, placedPeaks: placed });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cfg, peaks, labelFormat, labelDim, layout]);
+
+  const onUpload = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        setCfg({ image: reader.result, imgW: img.naturalWidth, imgH: img.naturalHeight });
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+    if (e.target) e.target.value = '';
+  };
+
+  if (!cfg.image) {
+    return (
+      <div className="bg-white border border-sky-200 rounded-xl p-4 flex flex-col gap-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <h4 className="text-sm font-bold text-sky-900">🖼️ 2D Spectrum Image — overlay predicted peaks</h4>
+          <button type="button" onClick={onRemove} className="text-[10px] text-red-400 hover:text-red-600 font-bold">× Remove</button>
+        </div>
+        <span className="text-xs text-slate-500">
+          Upload a real 2D spectrum image (a screenshot with axes is fine). The app overlays the predicted cross-peaks
+          at their chemical shifts using the axis ranges — no heavy 2D data upload needed.
+        </span>
+        <label className="bg-sky-50 border border-sky-300 hover:bg-sky-100 text-sky-800 font-bold px-3 py-2 rounded-lg text-xs cursor-pointer shadow-sm transition-colors flex items-center gap-2 self-start">
+          <span className="text-xl">🖼️</span> Upload 2D spectrum image…
+          <input type="file" accept="image/*" onChange={onUpload} className="hidden" />
+        </label>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white border border-sky-200 rounded-xl p-4 flex flex-col gap-3">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h4 className="text-sm font-bold text-sky-900">🖼️ 2D Spectrum Image — overlay predicted peaks</h4>
+        <button type="button" onClick={onRemove} className="text-[10px] text-red-400 hover:text-red-600 font-bold">× Remove</button>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3 bg-sky-50 border border-sky-200 rounded-lg p-3">
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] font-bold text-sky-800 uppercase">Spectrum type</span>
+          <select value={cfg.spectrumType || 'hsqc'} onChange={(e) => {
+            const t = NMR_2D_TYPES[e.target.value];
+            setCfg({ spectrumType: e.target.value, f2Min: String(t.f2[0]), f2Max: String(t.f2[1]), f1Min: String(t.f1[0]), f1Max: String(t.f1[1]) });
+          }} className="border border-sky-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-sky-500">
+            {Object.entries(NMR_2D_TYPES).map(([k, t]) => <option key={k} value={k}>{t.label}</option>)}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] font-bold text-sky-800 uppercase">F2 ¹H min/max (ppm)</span>
+          <span className="flex gap-1">
+            <input type="number" step="0.1" value={cfg.f2Min} onChange={(e) => setCfg({ f2Min: e.target.value })} className="w-16 border border-sky-300 rounded px-1.5 py-1 text-[11px] font-mono bg-white outline-none" />
+            <input type="number" step="0.1" value={cfg.f2Max} onChange={(e) => setCfg({ f2Max: e.target.value })} className="w-16 border border-sky-300 rounded px-1.5 py-1 text-[11px] font-mono bg-white outline-none" />
+          </span>
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] font-bold text-sky-800 uppercase">{typeDef.yAxis} min/max</span>
+          <span className="flex gap-1">
+            <input type="number" step="0.1" value={cfg.f1Min} onChange={(e) => setCfg({ f1Min: e.target.value })} className="w-16 border border-sky-300 rounded px-1.5 py-1 text-[11px] font-mono bg-white outline-none" />
+            <input type="number" step="0.1" value={cfg.f1Max} onChange={(e) => setCfg({ f1Max: e.target.value })} className="w-16 border border-sky-300 rounded px-1.5 py-1 text-[11px] font-mono bg-white outline-none" />
+          </span>
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] font-bold text-sky-800 uppercase">Peak size</span>
+          <input type="number" min="2" max="12" step="1" value={peakSize} onChange={(e) => setCfg({ peakSize: parseInt(e.target.value, 10) || 4 })} className="w-14 border border-sky-300 rounded px-1.5 py-1 text-[11px] font-mono bg-white outline-none" />
+        </label>
+        <span className="flex flex-col gap-1">
+          <span className="text-[10px] font-bold text-sky-800 uppercase">Calibrate</span>
+          <span className="flex items-center gap-1">
+            {!calibPicking ? (
+              <button type="button" onClick={() => setCalibPicking(true)} className="bg-white border border-sky-300 hover:bg-sky-100 text-sky-700 font-bold px-2 py-1 rounded shadow-sm">🎯 Click 2 peaks…</button>
+            ) : (
+              <span className="flex items-center gap-1 font-bold text-sky-800">Click a peak/axis tick…
+                <button type="button" onClick={() => setCalibPicking(false)} className="text-slate-500 hover:text-slate-700 underline">cancel</button>
+              </span>
+            )}
+            {calibPicked && (
+              <span className="flex items-center gap-1 text-sky-800">
+                → F2
+                <input type="number" step="0.01" value={calibDraftF2} onChange={(e) => setCalibDraftF2(e.target.value)} placeholder="ppm" className="w-14 border border-sky-300 rounded px-1 py-0.5 text-[11px] font-mono bg-white outline-none" />
+                F1
+                <input type="number" step="0.01" value={calibDraftF1} onChange={(e) => setCalibDraftF1(e.target.value)} placeholder="ppm" className="w-14 border border-sky-300 rounded px-1 py-0.5 text-[11px] font-mono bg-white outline-none" />
+                <button type="button" onClick={addCalibPoint} className="bg-sky-600 hover:bg-sky-700 text-white font-bold px-2 py-1 rounded shadow-sm">Add point</button>
+              </span>
+            )}
+            {(Array.isArray(cfg.calib) && cfg.calib.length > 0) && (
+              <button type="button" onClick={() => setCfg({ calib: [] })} className="text-slate-500 hover:text-slate-700 underline text-[10px]">
+                clear ({cfg.calib.length}/2)
+              </button>
+            )}
+          </span>
+        </span>
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] font-bold text-sky-800 uppercase">Zoom {zoom}%</span>
+          <input type="range" min="40" max="200" step="5" value={zoom} onChange={(e) => setCfg({ zoom: parseInt(e.target.value, 10) || 100 })} className="w-28 accent-sky-600" title="Resize the displayed image" />
+        </label>
+        <label className="flex items-center gap-1 text-[11px] font-bold text-sky-700 cursor-pointer">
+          <input type="checkbox" checked={cfg.showLabels !== false} onChange={(e) => setCfg({ showLabels: e.target.checked })} className="accent-sky-600" />
+          Peak labels
+        </label>
+        {cfg.showLabels !== false && (
+          <>
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold text-sky-800 uppercase">Label format</span>
+              <select value={labelFormat} onChange={(e) => setCfg({ labelFormat: e.target.value })}
+                      className="border border-sky-300 rounded-lg px-1.5 py-1 text-[11px] bg-white outline-none focus:border-sky-500">
+                <option value="resNum">Residue number only (1)</option>
+                <option value="resNum_code">Res + code (1A)</option>
+                <option value="resNum_code_atom">Res + code + atom (1A Hα)</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold text-sky-800 uppercase">Label dim</span>
+              <select value={labelDim} onChange={(e) => setCfg({ labelDim: e.target.value })}
+                      className="border border-sky-300 rounded-lg px-1.5 py-1 text-[11px] bg-white outline-none focus:border-sky-500">
+                <option value="both">Both (F2 + F1)</option>
+                <option value="direct">Only F2</option>
+                <option value="indirect">Only F1</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold text-sky-800 uppercase">Label size</span>
+              <input type="number" min="6" max="24" value={fontSize}
+                     onChange={(e) => setCfg({ labelFontSize: parseInt(e.target.value, 10) || 11 })}
+                     className="w-14 border border-sky-300 rounded px-1.5 py-1 text-[11px] font-mono bg-white outline-none" />
+            </label>
+            <label className="flex items-center gap-1 text-[11px] font-bold text-sky-700 cursor-pointer">
+              <input type="color" value={labelColor} onChange={(e) => setCfg({ labelColor: e.target.value })} className="w-6 h-6 rounded border border-sky-300 bg-white p-0 cursor-pointer" />
+              Label color
+            </label>
+          </>
+        )}
+        <label className="flex items-center gap-1 text-[11px] font-bold text-sky-700 cursor-pointer">
+          <input type="color" value={color} onChange={(e) => setCfg({ peakColor: e.target.value })} className="w-6 h-6 rounded border border-sky-300 bg-white p-0 cursor-pointer" />
+          Peak color
+        </label>
+      </div>
+
+      <div className="relative self-center w-full" style={{ maxWidth: imgW, width: Math.round(imgW * zoom / 100) + 'px', aspectRatio: `${imgW} / ${imgH}` }}
+           onClick={onImageClick} title={calibPicking ? 'Click a known peak (or an axis tick) on the image…' : undefined}>
+        <img src={cfg.image} alt="2D spectrum" className="absolute inset-0 w-full h-full object-contain rounded-lg border border-slate-200 shadow-sm bg-white" />
+        <svg viewBox={`0 0 ${imgW} ${imgH}`} className="absolute inset-0 w-full h-full" style={{ pointerEvents: 'none' }}>
+          {cfg.showLabels !== false && layout.map(({ px, py, label, ldx, ldy }, i) => (
+            <g key={i}>
+              <circle cx={px} cy={py} r={peakSize} fill={color} stroke="white" strokeWidth={1} opacity={0.85} />
+              {(ldx !== 0 || ldy !== 0) && (
+                <line x1={px + peakSize + 1} y1={py} x2={px + ldx + peakSize + 2} y2={py + ldy - peakSize - 2} stroke={color} strokeWidth={1} opacity={0.45} />
+              )}
+              {label && <text x={px + ldx + peakSize + 2} y={py + ldy - peakSize - 2} fontSize={fontSize} fill="rgba(255,255,255,0.55)" stroke="rgba(255,255,255,0.55)" strokeWidth={3} strokeLinejoin="round" fontWeight="bold">{label}</text>}
+              {label && <text x={px + ldx + peakSize + 2} y={py + ldy - peakSize - 2} fontSize={fontSize} fill={labelColor} fontWeight="bold">{label}</text>}
+            </g>
+          ))}
+          {(cal || []).map((c, i) => (
+            <g key={`cal${i}`}>
+              <line x1={c.px - 8} y1={c.py} x2={c.px + 8} y2={c.py} stroke="#22c55e" strokeWidth={2} />
+              <line x1={c.px} y1={c.py - 8} x2={c.px} y2={c.py + 8} stroke="#22c55e" strokeWidth={2} />
+              <text x={c.px + 10} y={c.py - 6} fontSize={11} fill="rgba(255,255,255,0.6)" stroke="rgba(255,255,255,0.6)" strokeWidth={3} fontWeight="bold">{`${i + 1}  ${Number(c.f2).toFixed(2)} / ${Number(c.f1).toFixed(2)}`}</text>
+              <text x={c.px + 10} y={c.py - 6} fontSize={11} fill="#15803d" fontWeight="bold">{`${i + 1}  ${Number(c.f2).toFixed(2)} / ${Number(c.f1).toFixed(2)}`}</text>
+            </g>
+          ))}
+          {calibPicked && (
+            <g>
+              <line x1={calibPicked.px - 10} y1={calibPicked.py} x2={calibPicked.px + 10} y2={calibPicked.py} stroke="#3b82f6" strokeWidth={2} />
+              <line x1={calibPicked.px} y1={calibPicked.py - 10} x2={calibPicked.px} y2={calibPicked.py + 10} stroke="#3b82f6" strokeWidth={2} />
+            </g>
+          )}
+        </svg>
+      </div>
+
+      <p className="text-[10px] text-slate-400">
+        {peaks.length === 0
+          ? 'No predicted cross-peaks available yet — build the molecule sequence first.'
+          : cal
+            ? `${visiblePeaks.length} of ${peaks.length} predicted cross-peaks shown · calibrated from ${cal.length} points.`
+            : `${visiblePeaks.length} of ${peaks.length} predicted cross-peaks shown. Adjust the axis ranges, or use 🎯 Calibrate to align the peaks exactly with the image.`}
+      </p>
+    </div>
+  );
+};
+
+
+
+// Grid manager: holds an array of 2D spectrum images, each in its own card,
+// laid out in two columns.
+const NMR2DSpectrumOverlay = ({ ctx, d }) => {
+  const { activeTest, updateActiveTest } = ctx;
+  // Backward compatibility: migrate the old single-image field to the array.
+  const items = Array.isArray(activeTest.nmr2dImages)
+    ? activeTest.nmr2dImages
+    : (activeTest.nmr2dImage ? [{ id: 'img_legacy', ...activeTest.nmr2dImage }] : []);
+  const setItems = (next) => updateActiveTest({ nmr2dImages: next, nmr2dImage: null });
+  const updateItem = (id, patch) => setItems(items.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+  const removeItem = (id) => setItems(items.filter((it) => it.id !== id));
+  const addItem = () => setItems([...items, { id: 'img' + Date.now() + Math.random().toString(36).slice(2, 6) }]);
+
+  return (
+    <div className="bg-white border border-sky-200 rounded-xl p-4 flex flex-col gap-3">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h4 className="text-sm font-bold text-sky-900">🖼️ 2D Spectrum Images — overlay predicted peaks</h4>
+        <button type="button" onClick={addItem}
+                className="text-xs bg-sky-600 hover:bg-sky-700 text-white font-bold px-3 py-1.5 rounded-lg shadow-sm transition-colors">+ Add 2D spectrum image</button>
+      </div>
+
+      {items.length === 0 && (
+        <div className="flex flex-col gap-2">
+          <span className="text-xs text-slate-500">
+            Upload one or more real 2D spectrum images (screenshots with axes are fine). The app overlays the predicted
+            cross-peaks at their chemical shifts — no heavy 2D data upload needed.
+          </span>
+          <button type="button" onClick={addItem}
+                  className="bg-sky-50 border border-sky-300 hover:bg-sky-100 text-sky-800 font-bold px-3 py-2 rounded-lg text-xs cursor-pointer shadow-sm transition-colors flex items-center gap-2 self-start">
+            <span className="text-xl">🖼️</span> Upload 2D spectrum image…
+          </button>
+        </div>
+      )}
+
+      {items.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+          {items.map((it) => (
+            <NMR2DSpectrumItem
+              key={it.id}
+              cfg={it}
+              d={d}
+              updateItem={(patch) => updateItem(it.id, patch)}
+              onRemove={() => removeItem(it.id)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+
+// =========================================================================
 // NMRSections.jsx - REPLACE DataSection COMPONENT
 // =========================================================================
 export const DataSection = ({ ctx }) => {
@@ -4515,6 +4920,7 @@ export const DataSection = ({ ctx }) => {
   // ---- Bruker 1r import (ppm axis) ----
   const [nmrBrukerDataUrl, setNmrBrukerDataUrl] = useState('');
   const [nmrBrukerAcqusUrl, setNmrBrukerAcqusUrl] = useState('');
+  const [nmrBrukerImagUrl, setNmrBrukerImagUrl] = useState(''); // optional 1i link (needed for phase correction)
   const [nmrBrukerSwPpm, setNmrBrukerSwPpm] = useState('');
   const [nmrBrukerO1Ppm, setNmrBrukerO1Ppm] = useState('');
   const [nmrBrukerMsg, setNmrBrukerMsg] = useState('');
@@ -4527,6 +4933,12 @@ export const DataSection = ({ ctx }) => {
   const brukerDragRef = useRef(false);
   const brukerChartRef = useRef(null);
   const nmrBrukerFileRef = useRef(null);
+
+  // ---- 1D spectrum calibration & phase state ----
+  const [calibPicking, setCalibPicking] = useState(false);
+  const [calibPickedPpm, setCalibPickedPpm] = useState(null);
+  const [calibTarget, setCalibTarget] = useState('');
+  const [calibManual, setCalibManual] = useState('');
   
   // Discovered-but-not-yet-imported Bruker spectra (folder import shows a
   // selection dialog so the user can pick which experiments to import).
@@ -4747,11 +5159,12 @@ export const DataSection = ({ ctx }) => {
       (parsed.autoEndian ? ' \u00b7 endian auto-detected (' + (parsed.littleEndian ? 'LE' : 'BE') + ')' : '') +
       ' \u00b7 SW = ' + (parsed.meta.swPpm ? parsed.meta.swPpm.toFixed(2) : '?') + ' ppm');
     
-    const updates = { nmr1dSpectrum: { xs: parsed.xs, ys: parsed.ys, meta: parsed.meta, title: parsed.meta.title || 'Imported 1r' } };
+    const updates = { nmr1dSpectrum: { xs: parsed.xs, ys: parsed.ys, ysImag: parsed.ysImag || null, meta: parsed.meta, title: parsed.meta.title || 'Imported 1r', calibration: 0, phaseDeg: 0, phase1Deg: 0 } };
     if (filename) updates.instanceName = filename;
     
     updateActiveTest(updates);
     setBrukerZoomDom(null);
+    setCalibPickedPpm(null);
   };
 
   // Folder Import logic
@@ -4808,10 +5221,16 @@ export const DataSection = ({ ctx }) => {
         }
         
         const dataBuffer = await oneR.arrayBuffer();
+        // If the same pdata folder also contains the imaginary part (1i), read
+        // it so the spectrum can later be phase-corrected.
+        const oneIPath = oneR.webkitRelativePath.replace(/\/1r$/, '/1i');
+        const oneIFile = files.find(f => f.webkitRelativePath === oneIPath);
+        const imagBuffer = oneIFile ? await oneIFile.arrayBuffer() : null;
         const acqusText = acqusFile ? await acqusFile.text() : '';
         
         const parsed = importBruker1rPpm({ 
           dataBuffer, 
+          imagBuffer,
           acqusText, 
           manualSWppm: parseManual(nmrBrukerSwPpm), 
           manualO1ppm: parseManual(nmrBrukerO1Ppm) || 0, 
@@ -4863,7 +5282,7 @@ export const DataSection = ({ ctx }) => {
            const cloned = JSON.parse(JSON.stringify(activeTest));
            cloned.id = 't' + Date.now() + i + Math.random().toString(36).substring(2,5);
            cloned.instanceName = selected[i].filename;
-           cloned.nmr1dSpectrum = { xs: p.xs, ys: p.ys, meta: p.meta, title: p.meta.title || 'Imported 1r' };
+           cloned.nmr1dSpectrum = { xs: p.xs, ys: p.ys, ysImag: p.ysImag || null, meta: p.meta, title: p.meta.title || 'Imported 1r', calibration: 0, phaseDeg: 0, phase1Deg: 0 };
            newTests.push(cloned);
          }
          return [...prev, ...newTests];
@@ -4932,7 +5351,11 @@ export const DataSection = ({ ctx }) => {
       if (nmrBrukerAcqusUrl.trim()) {
         try { acqusText = await (await fetch(_nmrResolveDrive(nmrBrukerAcqusUrl))).text(); } catch { acqusText = ''; }
       }
-      applyNmrBruker(importBruker1rPpm({ dataBuffer: await res.arrayBuffer(), acqusText, manualSWppm: parseManual(nmrBrukerSwPpm), manualO1ppm: parseManual(nmrBrukerO1Ppm)||0 }), null);
+      let imagBuffer = null;
+      if (nmrBrukerImagUrl.trim()) {
+        try { imagBuffer = await (await fetch(_nmrResolveDrive(nmrBrukerImagUrl))).arrayBuffer(); } catch { imagBuffer = null; }
+      }
+      applyNmrBruker(importBruker1rPpm({ dataBuffer: await res.arrayBuffer(), imagBuffer, acqusText, manualSWppm: parseManual(nmrBrukerSwPpm), manualO1ppm: parseManual(nmrBrukerO1Ppm)||0 }), null);
     } catch (e) { setNmrBrukerMsg('\u26a0\ufe0f Fetch failed: ' + e.message); }
     setNmrBrukerBusy(false);
   };
@@ -4941,7 +5364,8 @@ export const DataSection = ({ ctx }) => {
     const spec = activeTest.nmr1dSpectrum;
     const hasSpec = spec && Array.isArray(spec.xs) && spec.xs.length > 0;
     if (!hasSpec) return null;
-    const xs = spec.xs, ys = spec.ys;
+    const disp = getNmr1dDisplay(spec) || { xs: spec.xs, ys: spec.ys };
+    const xs = disp.xs, ys = disp.ys;
    const xFull = [Math.min(...xs), Math.max(...xs)];
 const dom = brukerZoomDom || xFull;
     const isZoomed = !!(brukerZoomDom);
@@ -4979,6 +5403,12 @@ const dom = brukerZoomDom || xFull;
     };
     const onDown = (e) => {
       const v = getX(e.clientX); if (v===null) return;
+      // In calibration-pick mode a single click selects the ppm under the cursor.
+      if (calibPicking) {
+        setCalibPickedPpm(v);
+        setCalibPicking(false);
+        return;
+      }
       brukerDragRef.current = true; setBrukerRefL(v); setBrukerRefR(v);
     };
     const onMove = (e) => {
@@ -5035,6 +5465,92 @@ const dom = brukerZoomDom || xFull;
             <button type="button" onClick={() => { updateActiveTest({nmr1dSpectrum: null}); setBrukerZoomDom(null); setNmrBrukerMsg(''); }} className="text-[10px] text-red-400 hover:text-red-600 font-bold">× Remove</button>
           </div>
         </div>
+
+        {/* ---- ppm calibration & phase correction (PH0 + PH1) ---- */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2 text-[11px]">
+          <span className="font-bold text-sky-800 uppercase text-[10px]">Calibrate</span>
+          {!calibPicking ? (
+            <button type="button" onClick={() => setCalibPicking(true)} className="bg-white border border-sky-300 hover:bg-sky-100 text-sky-700 font-bold px-2 py-1 rounded shadow-sm">🎯 Click a peak…</button>
+          ) : (
+            <span className="flex items-center gap-2 font-bold text-sky-800">
+              Click on the peak in the spectrum…
+              <button type="button" onClick={() => setCalibPicking(false)} className="text-slate-500 hover:text-slate-700 underline">cancel</button>
+            </span>
+          )}
+          {calibPickedPpm !== null && (
+            <span className="flex items-center gap-1">
+              Picked <b className="font-mono">{calibPickedPpm.toFixed(3)}</b> ppm → set to
+              <input type="number" step="0.001" value={calibTarget}
+                onChange={(e) => setCalibTarget(e.target.value)}
+                onWheel={(e) => e.target.blur()}
+                placeholder="true ppm"
+                className="w-20 border border-sky-300 rounded px-1.5 py-0.5 text-[11px] font-mono bg-white outline-none focus:border-sky-500" />
+              <button type="button"
+                onClick={() => {
+                  const t = parseFloat(calibTarget);
+                  if (Number.isFinite(t) && calibPickedPpm !== null) {
+                    const cur = Number(spec.calibration) || 0;
+                    updateActiveTest({ nmr1dSpectrum: { ...spec, calibration: cur + (t - calibPickedPpm) } });
+                    setBrukerZoomDom(null);
+                    setCalibPickedPpm(null);
+                    setCalibTarget('');
+                  }
+                }}
+                className="bg-sky-600 hover:bg-sky-700 text-white font-bold px-2 py-1 rounded shadow-sm">Apply</button>
+            </span>
+          )}
+          <span className="flex items-center gap-1">
+            Offset
+            <input type="number" step="0.001" value={calibManual}
+              onChange={(e) => setCalibManual(e.target.value)}
+              onWheel={(e) => e.target.blur()}
+              placeholder={(Number(spec.calibration) || 0).toFixed(3)}
+              className="w-20 border border-sky-300 rounded px-1.5 py-0.5 text-[11px] font-mono bg-white outline-none focus:border-sky-500" />
+            <button type="button"
+              onClick={() => {
+                const v = parseFloat(calibManual);
+                if (Number.isFinite(v)) { updateActiveTest({ nmr1dSpectrum: { ...spec, calibration: v } }); setBrukerZoomDom(null); setCalibManual(''); }
+              }}
+              className="bg-white border border-sky-300 hover:bg-sky-100 text-sky-700 font-bold px-2 py-1 rounded shadow-sm">Set</button>
+            <button type="button"
+              onClick={() => { updateActiveTest({ nmr1dSpectrum: { ...spec, calibration: 0 } }); setBrukerZoomDom(null); }}
+              className="text-slate-400 hover:text-slate-600 underline">reset</button>
+          </span>
+          <span className="text-slate-500">calib = <b className="font-mono">{(Number(spec.calibration) || 0) >= 0 ? '+' : ''}{(Number(spec.calibration) || 0).toFixed(3)} ppm</b></span>
+
+          <span className="font-bold text-sky-800 uppercase text-[10px] ml-2">Phase PH0</span>
+          {Array.isArray(spec.ysImag) && spec.ysImag.length === spec.ys.length ? (
+            <span className="flex items-center gap-1">
+              <input type="range" min="-180" max="180" step="1" value={Number(spec.phaseDeg) || 0}
+                onChange={(e) => updateActiveTest({ nmr1dSpectrum: { ...spec, phaseDeg: parseInt(e.target.value, 10) || 0 } })}
+                className="w-24 accent-sky-600" />
+              <input type="number" min="-180" max="180" step="1" value={Number(spec.phaseDeg) || 0}
+                onChange={(e) => updateActiveTest({ nmr1dSpectrum: { ...spec, phaseDeg: parseInt(e.target.value, 10) || 0 } })}
+                onWheel={(e) => e.target.blur()}
+                className="w-14 border border-sky-300 rounded px-1.5 py-0.5 text-[11px] font-mono bg-white outline-none focus:border-sky-500" />°
+            </span>
+          ) : (
+            <span className="text-amber-600 italic">needs the 1i imaginary file (re-import the Bruker folder to enable)</span>
+          )}
+          <span className="font-bold text-sky-800 uppercase text-[10px]">PH1</span>
+          {Array.isArray(spec.ysImag) && spec.ysImag.length === spec.ys.length ? (
+            <span className="flex items-center gap-1">
+              <input type="range" min="-180" max="180" step="1" value={Number(spec.phase1Deg) || 0}
+                onChange={(e) => updateActiveTest({ nmr1dSpectrum: { ...spec, phase1Deg: parseInt(e.target.value, 10) || 0 } })}
+                className="w-24 accent-sky-600" />
+              <input type="number" min="-180" max="180" step="1" value={Number(spec.phase1Deg) || 0}
+                onChange={(e) => updateActiveTest({ nmr1dSpectrum: { ...spec, phase1Deg: parseInt(e.target.value, 10) || 0 } })}
+                onWheel={(e) => e.target.blur()}
+                className="w-14 border border-sky-300 rounded px-1.5 py-0.5 text-[11px] font-mono bg-white outline-none focus:border-sky-500" />°
+              <button type="button"
+                onClick={() => updateActiveTest({ nmr1dSpectrum: { ...spec, phaseDeg: 0, phase1Deg: 0 } })}
+                className="text-slate-400 hover:text-slate-600 underline">reset</button>
+            </span>
+          ) : null}
+        </div>
+
+
+
         <div ref={brukerChartRef} className="select-none" style={{height: PANEL_H, backgroundColor: 'white', position: 'relative'}}
              onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}>
        <ResponsiveContainer width="100%" height="100%">
@@ -5310,6 +5826,8 @@ const dom = brukerZoomDom || xFull;
               placeholder="Link to 1r (…/file/d/…/view)" className="border border-sky-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-sky-500 bg-white" />
             <input type="text" value={nmrBrukerAcqusUrl} onChange={e => setNmrBrukerAcqusUrl(e.target.value)}
               placeholder="Link to acqus (optional)" className="border border-sky-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-sky-500 bg-white" />
+            <input type="text" value={nmrBrukerImagUrl} onChange={e => setNmrBrukerImagUrl(e.target.value)}
+              placeholder="Link to 1i (optional — enables phase correction)" className="border border-sky-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-sky-500 bg-white" />
             <button type="button" onClick={importFromUrl} disabled={nmrBrukerBusy}
               className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm">
               {nmrBrukerBusy ? 'Importing\u2026' : 'Import from links'}
@@ -5577,6 +6095,12 @@ const dom = brukerZoomDom || xFull;
           </div>
         </div>
       )}
+
+
+   {/* ---- 2D spectrum image overlay (after the 1D part) ---- */}
+   <NMR2DSpectrumOverlay ctx={ctx} d={d} />
+
+
     </div>
   );
 };
@@ -6658,8 +7182,36 @@ export const SimulationsSection = ({ ctx }) => {
         <button type="button" onClick={() => setShowCfg(!showCfg)} className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${showCfg ? 'bg-slate-200 border-slate-400 text-slate-900' : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'}`}>⚙️ Chart Parameters</button>
         <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer ml-1 border-l border-slate-200 pl-3">
           <input type="checkbox" checked={simCfg.simShowLabels} onChange={(e) => setCfg({ simShowLabels: e.target.checked })} className="accent-blue-600 w-4 h-4" />
-          Show Peak Labels
+          Peak labels
         </label>
+        {simCfg.simShowLabels && (
+          <>
+            <select value={simCfg.simLabelFormat} onChange={(e) => setCfg({ simLabelFormat: e.target.value })}
+                    className="border border-slate-300 rounded-md px-2 py-1 text-xs outline-none bg-white font-semibold" title="Label format">
+              <option value="resNum">Residue number only (e.g. 1)</option>
+              <option value="resNum_code">Residue + code (e.g. 1A)</option>
+              <option value="resNum_code_atom">Res + code + atom (e.g. 1A Hα)</option>
+            </select>
+            <select value={simCfg.simLabelDim} onChange={(e) => setCfg({ simLabelDim: e.target.value })}
+                    className="border border-slate-300 rounded-md px-2 py-1 text-xs outline-none bg-white font-semibold" title="Label dimension (2D spectra)">
+              <option value="both">Both (F2 + F1)</option>
+              <option value="direct">Only F2 (direct)</option>
+              <option value="indirect">Only F1 (indirect)</option>
+            </select>
+            <label className="flex items-center gap-1 text-[11px] font-bold text-slate-600" title="Peak label font size">
+              Size
+              <input type="number" min="6" max="24" value={simCfg.simLabelFontSize}
+                     onChange={(e) => setCfg({ simLabelFontSize: parseInt(e.target.value, 10) || 12 })}
+                     className="w-12 border border-slate-300 rounded px-1 py-0.5 text-[11px] bg-white outline-none" />
+            </label>
+            <label className="flex items-center gap-1 text-[11px] font-bold text-slate-600 cursor-pointer" title="Peak label color">
+              Color
+              <input type="color" value={simCfg.simLabelColor || '#b91c1c'}
+                     onChange={(e) => setCfg({ simLabelColor: e.target.value })}
+                     className="w-6 h-6 rounded border border-slate-300 bg-white p-0 cursor-pointer" />
+            </label>
+          </>
+        )}
         <span className="text-[10px] text-slate-400 ml-2">13C axis: 0–220 ppm · 2D spectra: square (aspect {simCfg.aspect2D}) · HSQC side by side</span>
       </div>
       {showCfg && (
@@ -6679,41 +7231,6 @@ export const SimulationsSection = ({ ctx }) => {
               <button type="button" onClick={() => setCfg({ aspect2D: 1 })} className="text-[10px] font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100 px-2 py-1 rounded shrink-0">⬛ Square</button>
             </div>
           </div>
-          {simCfg.simShowLabels && (
-            <div className="flex flex-col gap-3 md:col-span-3 pt-4 border-t border-slate-100 mt-2">
-              <h5 className="text-xs font-bold text-slate-600 uppercase">Label Format Options</h5>
-              <div className="flex flex-wrap gap-4">
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-bold text-slate-500">Label Format</label>
-                  <select value={simCfg.simLabelFormat} onChange={(e) => setCfg({ simLabelFormat: e.target.value })} className="border border-slate-300 rounded-md px-2 py-1.5 text-xs outline-none bg-white font-semibold">
-                    <option value="resNum">Residue Number Only (e.g. 1)</option>
-                    <option value="resNum_code">Residue Number + Code (e.g. 1A)</option>
-                    <option value="resNum_code_atom">Res Num + Code + Atom (e.g. 1A Hα)</option>
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-bold text-slate-500">Label Dimension (2D Spectra)</label>
-                  <select value={simCfg.simLabelDim} onChange={(e) => setCfg({ simLabelDim: e.target.value })} className="border border-slate-300 rounded-md px-2 py-1.5 text-xs outline-none bg-white font-semibold">
-                    <option value="direct">Direct Dimension Only (F2)</option>
-                    <option value="indirect">Indirect Dimension Only (F1)</option>
-                    <option value="both">Both Dimensions</option>
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-bold text-slate-500">Peak Label Font Size: {simCfg.simLabelFontSize}</label>
-                  <input type="range" min="6" max="24" step="1" value={simCfg.simLabelFontSize} onChange={(e) => setCfg({ simLabelFontSize: parseInt(e.target.value, 10) })} className="accent-blue-600 mt-1" />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-bold text-slate-500">Peak Label Color</label>
-                  <div className="flex items-center gap-2">
-                    <input type="color" value={simCfg.simLabelColor || '#b91c1c'} onChange={(e) => setCfg({ simLabelColor: e.target.value })} className="w-9 h-8 rounded border border-slate-300 bg-white p-0.5 cursor-pointer" />
-                    <span className="text-[10px] text-slate-400 font-mono">{simCfg.simLabelColor || '#b91c1c'}</span>
-                    <button type="button" onClick={() => setCfg({ simLabelColor: '#b91c1c' })} className="text-[10px] font-bold bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 px-2 py-1 rounded">Reset</button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
       )}
       {selectedKeys && (

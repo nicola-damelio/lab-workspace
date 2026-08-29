@@ -20,6 +20,16 @@ export const RichTextEditor = ({
     const [driveFolderDraft, setDriveFolderDraft] = useState(getDriveFolderUrl());
     const [toolbarOpen, setToolbarOpen] = useState(true); // collapsible toolbar (more vertical space)
     const [pasteNotice, setPasteNotice] = useState(''); // shown when an image had to stay LOCAL (Drive unavailable)
+    const [selImg, setSelImg] = useState(null);   // currently selected image (for resizing)
+    const [selImgW, setSelImgW] = useState(100);  // its display width (%)
+
+    // Deselect the resized image and clear its highlight class.
+    const clearSelImg = () => {
+        if (editorRef.current) {
+            editorRef.current.querySelectorAll('img.rte-img-sel').forEach((im) => im.classList.remove('rte-img-sel'));
+        }
+        setSelImg(null);
+    };
 
     // Full-path suggested file name for the figure being inserted (figure1, figure2, ...)
     const figureSuffix = `figure${(editorRef.current ? editorRef.current.querySelectorAll('figure').length : 0) + 1}`;
@@ -315,9 +325,35 @@ export const RichTextEditor = ({
         e.preventDefault();
         insertImageBlob(file);
     };
+    // ---- Image resizing: clicking an inserted figure selects it ----
+    const onEditorMouseUp = (e) => {
+        storeSel();
+        const t = e.target;
+        if (!t || !editorRef.current || !editorRef.current.contains(t)) return;
+        if (t.tagName === 'IMG') {
+            editorRef.current.querySelectorAll('img.rte-img-sel').forEach((im) => im.classList.remove('rte-img-sel'));
+            t.classList.add('rte-img-sel');
+            setSelImg(t);
+            const m = /([\d.]+)%/.exec(t.style.width || '');
+            setSelImgW(m ? parseFloat(m[1]) : 100);
+        } else {
+            clearSelImg();
+        }
+    };
+    const onEditorKeyDown = (e) => { if (e.key === 'Escape') clearSelImg(); };
+    const applyImgWidth = (pct) => {
+        const img = selImg;
+        if (!img) return;
+        if (pct >= 100) img.style.removeProperty('width');
+        else img.style.width = pct + '%';
+        img.style.maxWidth = '100%';
+        img.style.height = 'auto';
+        setSelImgW(pct >= 100 ? 100 : pct);
+        if (editorRef.current) onChange(editorRef.current.innerHTML);
+    };
     return (
         <div className={`w-full ${fillHeight ? 'flex-1 min-h-0' : ''} flex flex-col border border-slate-300 rounded-md bg-white overflow-hidden shadow-sm transition-shadow focus-within:ring-1 focus-within:ring-blue-500 focus-within:border-blue-500`}>
-            <style>{`.rte-content a { color:#2563eb; text-decoration:underline; } .rte-content a:hover { color:#1d4ed8; }`}</style>
+            <style>{`.rte-content a { color:#2563eb; text-decoration:underline; } .rte-content a:hover { color:#1d4ed8; } .rte-content img.rte-img-sel { outline: 2px solid #3b82f6; outline-offset: 2px; }`}</style>
             {!readOnly && toolbarOpen && (
             <div className="flex gap-1 p-1 bg-slate-50 border-b border-slate-200 shrink-0 flex-wrap">
                 <button onClick={()=>execCmd('undo')} title="Undo (Ctrl+Z)"
@@ -394,8 +430,26 @@ export const RichTextEditor = ({
                         className="px-1.5 py-0.5 text-[10px] font-bold text-slate-400 hover:text-slate-600 bg-white border border-slate-200 rounded shadow-sm transition">▾ Show toolbar</button>
             </div>
             )}
+            {!readOnly && selImg && (
+                <div className="flex items-center gap-2 px-2 py-1 bg-blue-50 border-b border-blue-200 shrink-0 flex-wrap">
+                    <span className="text-[10px] font-bold text-blue-700 uppercase">🖼 Image size</span>
+                    <input type="range" min="15" max="100" step="5" value={selImgW}
+                           onChange={(e) => applyImgWidth(parseInt(e.target.value, 10))}
+                           className="w-32 accent-blue-600" title="Drag to resize the figure" />
+                    <span className="text-[10px] font-bold text-blue-700 font-mono w-9">{selImgW}%</span>
+                    {[25, 50, 75].map((p) => (
+                        <button key={p} type="button" onClick={() => applyImgWidth(p)}
+                                className="text-[10px] font-bold bg-white border border-blue-300 text-blue-700 px-1.5 py-0.5 rounded hover:bg-blue-100 shadow-sm">{p}%</button>
+                    ))}
+                    <button type="button" onClick={() => applyImgWidth(100)}
+                            className="text-[10px] font-bold bg-white border border-blue-300 text-blue-700 px-1.5 py-0.5 rounded hover:bg-blue-100 shadow-sm">Full</button>
+                    <span className="flex-1" />
+                    <button type="button" onClick={clearSelImg}
+                            className="text-[10px] font-bold text-blue-500 hover:text-blue-700 underline">Done</button>
+                </div>
+            )}
             <div ref={editorRef} contentEditable={!readOnly} onPaste={handlePaste} onBlur={handleBlur}
-                onSelect={storeSel} onKeyUp={storeSel} onMouseUp={storeSel} onFocus={handleEditFocus}
+                onSelect={storeSel} onKeyUp={storeSel} onMouseUp={onEditorMouseUp} onKeyDown={onEditorKeyDown} onFocus={handleEditFocus}
                 onDrop={handleDrop}
                 className={`p-3 text-sm text-slate-700 focus:outline-none custom-scrollbar shadow-inner bg-slate-50/50 rte-content ${fillHeight ? 'flex-1 min-h-0' : ''}`} style={{ resize: fillHeight ? 'none' : 'vertical', minHeight: toPx(minHeight), maxHeight: fillHeight ? 'none' : toPx(maxHeight), overflowY: 'auto' }} data-placeholder={placeholder} />
             {!readOnly && !fillHeight && resizable && (
