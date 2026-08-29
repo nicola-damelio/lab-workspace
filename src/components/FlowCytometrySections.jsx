@@ -1645,16 +1645,21 @@ const FLOW_PLATE_OPTIONS = [
   { value: '1', label: '1 Petri Dish' }
 ];
 const PLATE_ROWS_LETTERS = 'ABCDEFGHIJKL'.split('');
-const plateCmpColor = (name) => {
+const hashHex = (name) => {
   let h = 0;
-  for (let i = 0; i < String(name || '').length; i++) h = (h * 31 + String(name).charCodeAt(i)) % 360;
-  return `hsl(${h}, 62%, 46%)`;
+  const s = String(name || '');
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return '#' + [0, 1, 2].map((i) => ((h >> (i * 8)) & 255).toString(16).padStart(2, '0')).join('');
+};
+const plateCmpColor = (name, cmpColors = {}) => {
+  const stored = cmpColors[name];
+  if (stored && /^#[0-9a-f]{6}$/i.test(stored)) return stored.toLowerCase();
+  return hashHex(name);
 };
 
 export const ExperimentalSetup = ({ ctx }) => {
   const { activeTest = {}, updateActiveTest } = ctx || {};
   const update = (u) => { if (updateActiveTest) updateActiveTest(u); };
-  const allCmpds = (Array.isArray(ctx?.allCmpds) ? ctx.allCmpds : []).filter(Boolean);
 
   const fcPlate = activeTest.fcPlate || {};
   const plateType = PLATES_DEF[fcPlate.plateType] ? fcPlate.plateType : '96';
@@ -1670,6 +1675,27 @@ export const ExperimentalSetup = ({ ctx }) => {
   const dFact = parseFloat(String(fcPlate.dilFactorStr ?? '3').replace(',', '.')) || 1;
   const unit = fcPlate.unit || 'µM';
   const customConc = fcPlate.customConc || {};
+  const cmpColors = fcPlate.cmpColors || {};
+
+  // Compound dropdown = Library (allCmpds) + Compound Definition library
+  // (compoundMeta) + every compound already placed on the plate, so existing
+  // assignments never disappear from the list.
+  const compoundOptions = (() => {
+    const set = new Set();
+    (Array.isArray(ctx?.allCmpds) ? ctx.allCmpds : []).forEach((c) => c && set.add(c));
+    Object.keys(ctx?.compoundMeta || {}).forEach((c) => c && set.add(c));
+    (rowCompounds || []).forEach((c) => c && set.add(c));
+    (compounds || []).forEach((c) => c && set.add(c));
+    (cellConfig || []).forEach((row) => (row || []).forEach((cfg) => cfg && cfg.role && set.add(cfg.role)));
+    return [...set].sort((a, b) => a.localeCompare(b));
+  })();
+
+  const usedCompounds = (() => {
+    const set = new Set();
+    [...(rowCompounds || []), ...(compounds || []), ...Object.keys(customConc)].forEach((c) => c && set.add(c));
+    (cellConfig || []).forEach((row) => (row || []).forEach((cfg) => cfg && cfg.role && set.add(cfg.role)));
+    return [...set].sort((a, b) => a.localeCompare(b));
+  })();
 
   const cellCfg = (r, c) => {
     const row = cellConfig[r];
@@ -1677,9 +1703,44 @@ export const ExperimentalSetup = ({ ctx }) => {
     return cfg && typeof cfg === 'object' ? cfg : {};
   };
   const setPlate = (patch) => update({ fcPlate: { ...fcPlate, ...patch } });
-  const setCellCfg = (r, c, patch) => {
+
+  // ---- multi-cell mouse selection (same as the plate Data table) ----
+  const [selStart, setSelStart] = useState(null);
+  const [selEnd, setSelEnd] = useState(null);
+  const [dragMode, setDragMode] = useState('none');
+  const activeSel = selStart && selEnd
+    ? { minR: Math.min(selStart.r, selEnd.r), maxR: Math.max(selStart.r, selEnd.r), minC: Math.min(selStart.c, selEnd.c), maxC: Math.max(selStart.c, selEnd.c) }
+    : null;
+
+  useEffect(() => {
+    const up = () => { if (dragMode === 'selecting') setDragMode('none'); };
+    window.addEventListener('mouseup', up);
+    return () => window.removeEventListener('mouseup', up);
+  }, [dragMode]);
+
+  const onCellMouseDown = (e, r, c) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    setSelStart({ r, c });
+    setSelEnd({ r, c });
+    setDragMode('selecting');
+  };
+  const onCellMouseEnter = (r, c) => { if (dragMode === 'selecting') setSelEnd({ r, c }); };
+  const clearSelection = () => { setSelStart(null); setSelEnd(null); setDragMode('none'); };
+
+  // Apply a compound / concentration override to every cell of the selection.
+  const patchSelection = (patch) => {
+    if (!activeSel) return;
     const nCfg = Array.from({ length: rows }, (_, ri) =>
-      Array.from({ length: cols }, (_, ci) => (ri === r && ci === c ? { ...cellCfg(ri, ci), ...patch } : cellCfg(ri, ci)))
+      Array.from({ length: cols }, (_, ci) => {
+        const base = cellCfg(ri, ci);
+        const inside = ri >= activeSel.minR && ri <= activeSel.maxR && ci >= activeSel.minC && ci <= activeSel.maxC;
+        if (!inside) return base;
+        const next = { ...base };
+        if ('role' in patch) next.role = patch.role === '' || patch.role === null ? null : patch.role;
+        if ('conc' in patch) next.conc = patch.conc === '' || patch.conc === null ? null : Number(patch.conc);
+        return next;
+      })
     );
     setPlate({ cellConfig: nCfg });
   };
@@ -1740,13 +1801,36 @@ export const ExperimentalSetup = ({ ctx }) => {
   };
   const clearOverrides = () => setPlate({ cellConfig: Array.from({ length: rows }, () => Array.from({ length: cols }, () => ({ role: null, conc: null }))) });
 
-  const [selectedCell, setSelectedCell] = useState(null); // { r, c }
   let assignedCount = 0;
   for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) if (getRole(r, c)) assignedCount++;
-  const sel = selectedCell;
-  const selRole = sel ? (getRole(sel.r, sel.c) || '') : '';
-  const selConc = sel ? concOf(sel.r, sel.c) : null;
-  const selOverrideConc = sel ? cellCfg(sel.r, sel.c).conc ?? '' : '';
+  // Shared value among all cells of the selection ('' when mixed / none).
+  const selRoleValues = activeSel ? (() => { const v = new Set(); for (let r = activeSel.minR; r <= activeSel.maxR; r++) for (let c = activeSel.minC; c <= activeSel.maxC; c++) v.add(getRole(r, c) || ''); return [...v]; })() : [];
+  const selCommonRole = selRoleValues.length === 1 ? selRoleValues[0] : '';
+  const selConcValues = activeSel ? (() => { const v = new Set(); for (let r = activeSel.minR; r <= activeSel.maxR; r++) for (let c = activeSel.minC; c <= activeSel.maxC; c++) v.add(cellCfg(r, c).conc ?? ''); return [...v]; })() : [];
+  const selCommonConc = selConcValues.length === 1 ? selConcValues[0] : '';
+  const selLabel = activeSel
+    ? (activeSel.minR === activeSel.maxR && activeSel.minC === activeSel.maxC
+        ? `Well ${ROWS[activeSel.minR]}${activeSel.minC + 1}`
+        : `Selection ${ROWS[activeSel.minR]}${activeSel.minC + 1}:${ROWS[activeSel.maxR]}${activeSel.maxC + 1}`)
+    : '';
+
+  // ---- custom concentrations (per compound) ----
+  const [ccSel, setCcSel] = useState('');
+  const [ccTop, setCcTop] = useState('');
+  const [ccDil, setCcDil] = useState(String(dFact));
+  const addCustomConc = () => {
+    const t = parseFloat(String(ccTop).replace(',', '.'));
+    const d = parseFloat(String(ccDil).replace(',', '.')) || dFact;
+    if (ccSel && !isNaN(t) && t > 0 && d > 0) {
+      setPlate({ customConc: { ...customConc, [ccSel]: { top: t, dil: d } } });
+      setCcTop('');
+    }
+  };
+  const removeCustomConc = (name) => {
+    const n = { ...customConc };
+    delete n[name];
+    setPlate({ customConc: n });
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -1791,28 +1875,78 @@ export const ExperimentalSetup = ({ ctx }) => {
         </button>
       </div>
 
-      {/* Per-well editor for the selected cell */}
-      {sel && (
+      {/* Selection toolbar (drag over wells to select a range) */}
+      {activeSel && (
         <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 flex flex-wrap items-center gap-3">
-          <span className="text-xs font-bold text-indigo-800">Well {ROWS[sel.r]}{sel.c + 1}</span>
-          <select value={selRole} onChange={(e) => setCellCfg(sel.r, sel.c, { role: e.target.value })}
+          <span className="text-xs font-bold text-indigo-800">{selLabel}</span>
+          <select value={selCommonRole} onChange={(e) => patchSelection({ role: e.target.value })}
             className="border border-indigo-300 rounded px-2 py-1 text-xs bg-white outline-none font-bold text-indigo-800">
             <option value="">inherit (row/col)</option>
-            {allCmpds.map((o) => <option key={o} value={o}>{o}</option>)}
+            {compoundOptions.map((o) => <option key={o} value={o}>{o}</option>)}
           </select>
-          <input type="number" step="0.1" value={selOverrideConc}
-            onChange={(e) => setCellCfg(sel.r, sel.c, { conc: e.target.value === '' ? null : e.target.value })}
-            placeholder="Conc override" title="Optional per-well concentration override"
+          <input type="number" step="0.1" value={selCommonConc}
+            onChange={(e) => patchSelection({ conc: e.target.value === '' ? null : e.target.value })}
+            placeholder="Conc override" title="Optional concentration override for the whole selection"
             className="border border-indigo-300 rounded px-2 py-1 text-xs w-28 bg-white outline-none" />
-          <span className="text-[10px] font-bold text-indigo-700">
-            {selRole ? `Auto: ${formatConc(selConc)} ${unit}` : 'no compound assigned'}
-          </span>
-          <button type="button" onClick={() => setCellCfg(sel.r, sel.c, { role: null, conc: null })}
-            className="text-[10px] font-bold bg-white border border-red-300 text-red-600 px-2 py-1 rounded shadow-sm hover:bg-red-50">Clear override</button>
-          <button type="button" onClick={() => setSelectedCell(null)}
+          <button type="button" onClick={() => patchSelection({ role: null, conc: null })}
+            className="text-[10px] font-bold bg-white border border-red-300 text-red-600 px-2 py-1 rounded shadow-sm hover:bg-red-50">Clear cells</button>
+          <button type="button" onClick={clearSelection}
             className="text-slate-400 hover:text-slate-700 font-black px-1">✕</button>
         </div>
       )}
+
+      {/* Custom concentrations per compound + per-compound colors */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="border border-slate-200 bg-slate-50 rounded-lg p-3 flex flex-col gap-2">
+          <div className="text-[10px] uppercase font-bold text-slate-500">Custom Concentrations</div>
+          <div className="flex flex-wrap gap-2 items-center">
+            <select value={ccSel} onChange={(e) => setCcSel(e.target.value)}
+              className="border border-slate-300 rounded-lg p-1.5 text-xs w-32 bg-white outline-none">
+              <option value="">Compound…</option>
+              {compoundOptions.map((o) => <option key={o} value={o}>{o}</option>)}
+            </select>
+            <input type="number" step="0.1" value={ccTop} onChange={(e) => setCcTop(e.target.value)}
+              placeholder={`Top ${unit}`} className="border border-slate-300 rounded-lg p-1.5 w-24 text-xs outline-none" />
+            <input type="number" step="0.1" value={ccDil} onChange={(e) => setCcDil(e.target.value)}
+              placeholder="Dil" className="border border-slate-300 rounded-lg p-1.5 w-16 text-xs outline-none" />
+            <button type="button" onClick={addCustomConc}
+              className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm">Set</button>
+          </div>
+          {Object.keys(customConc).length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-1">
+              {Object.entries(customConc).map(([c, s]) => (
+                <span key={c} className="bg-indigo-50 border border-indigo-200 text-indigo-800 text-[10px] px-2 py-0.5 rounded-md flex items-center gap-1 font-bold shadow-sm">
+                  {c}: {s.top}{unit} ÷ {s.dil}
+                  <button type="button" onClick={() => removeCustomConc(c)} className="text-red-500 hover:text-red-700 font-black">×</button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="border border-slate-200 bg-slate-50 rounded-lg p-3 flex flex-col gap-2">
+          <div className="text-[10px] uppercase font-bold text-slate-500">Compound Colors</div>
+          {usedCompounds.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {usedCompounds.map((cmp) => {
+                const hex = plateCmpColor(cmp, cmpColors);
+                return (
+                  <span key={cmp} className="bg-white border border-slate-200 text-slate-700 text-[11px] px-2 py-1 rounded-md flex items-center gap-1.5 font-bold shadow-sm" title={`Click the dot to change the color of ${cmp}`}>
+                    <label className="relative cursor-pointer inline-flex items-center" style={{ width: 14, height: 14 }}>
+                      <span style={{ width: 14, height: 14, borderRadius: 9999, backgroundColor: hex, display: 'inline-block', border: '1px solid rgba(15,23,42,0.15)' }} />
+                      <input type="color" value={hex} style={{ position: 'absolute', opacity: 0, width: 0, height: 0 }}
+                        onChange={(e) => setPlate({ cmpColors: { ...cmpColors, [cmp]: e.target.value } })} />
+                    </label>
+                    {cmp}
+                  </span>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-[10px] text-slate-400">Assign compounds to see them here and pick a color.</p>
+          )}
+        </div>
+      </div>
 
 
 
@@ -1821,7 +1955,7 @@ export const ExperimentalSetup = ({ ctx }) => {
         <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm min-w-0">
           <h4 className="text-xs font-bold text-slate-700 uppercase mb-2">Interactive Table</h4>
           <div className="overflow-x-auto custom-scrollbar">
-            <table className="w-full border-collapse table-fixed min-w-[640px] text-[11px] text-center">
+            <table className="w-full border-collapse table-fixed min-w-[640px] text-[11px] text-center select-none">
               <thead>
                 <tr>
                   <th className="bg-slate-200 border border-slate-300 p-1 text-slate-600 w-8">R\C</th>
@@ -1832,7 +1966,7 @@ export const ExperimentalSetup = ({ ctx }) => {
                       <select value={compounds[c] || ''} onChange={(e) => updateCmp(c, e.target.value)}
                         className="w-full text-center border border-slate-300 rounded p-0.5 font-bold text-blue-800 text-[10px] h-6 bg-white cursor-pointer outline-none">
                         <option value="">Col Cmpd ↓</option>
-                        {allCmpds.map((o) => <option key={o} value={o}>{o}</option>)}
+                        {compoundOptions.map((o) => <option key={o} value={o}>{o}</option>)}
                       </select>
                     </th>
                   ))}
@@ -1846,20 +1980,22 @@ export const ExperimentalSetup = ({ ctx }) => {
                       <select value={rowCompounds[r] || ''} onChange={(e) => updateRowCmp(r, e.target.value)}
                         className="w-full text-center border border-slate-300 rounded p-0.5 font-bold text-blue-800 text-[10px] h-6 bg-white cursor-pointer outline-none">
                         <option value="">Row Cmpd →</option>
-                        {allCmpds.map((o) => <option key={o} value={o}>{o}</option>)}
+                        {compoundOptions.map((o) => <option key={o} value={o}>{o}</option>)}
                       </select>
                     </td>
                     {COLS.map((col, c) => {
                       const role = getRole(r, c);
                       const conc = role ? concOf(r, c, role) : null;
-                      const isSel = sel && sel.r === r && sel.c === c;
+                      const isSel = activeSel && r >= activeSel.minR && r <= activeSel.maxR && c >= activeSel.minC && c <= activeSel.maxC;
                       return (
-                        <td key={col} onClick={() => setSelectedCell({ r, c })}
-                          title={`${rl}${col} — click to edit`}
-                          className={`border border-slate-200 p-1 align-middle cursor-pointer transition-colors ${isSel ? 'bg-indigo-100 ring-2 ring-indigo-400' : role ? 'hover:bg-blue-50' : 'bg-slate-50/50 hover:bg-blue-50'}`}>
+                        <td key={col}
+                          onMouseDown={(e) => onCellMouseDown(e, r, c)}
+                          onMouseEnter={() => onCellMouseEnter(r, c)}
+                          title={`${rl}${col} — drag to select`}
+                          className={`border border-slate-200 p-1 align-middle cursor-pointer transition-colors ${isSel ? 'bg-indigo-100 ring-2 ring-inset ring-indigo-400' : role ? 'hover:bg-blue-50' : 'bg-slate-50/50 hover:bg-blue-50'}`}>
                           {role ? (
                             <div className="flex flex-col leading-tight">
-                              <span className="font-bold text-[10px] truncate" style={{ color: plateCmpColor(role) }}>{role}</span>
+                              <span className="font-bold text-[10px] truncate" style={{ color: plateCmpColor(role, cmpColors) }}>{role}</span>
                               <span className="text-[9px] text-slate-600">{conc != null ? `${formatConc(conc)} ${unit}` : '—'}</span>
                             </div>
                           ) : (
@@ -1874,7 +2010,7 @@ export const ExperimentalSetup = ({ ctx }) => {
             </table>
           </div>
           <p className="text-[10px] text-slate-400 mt-2">
-            Assign a compound to rows / columns (or click a well for a per-well override). Concentrations degrade by the dilution factor.
+            Drag over wells to select a range, then assign a compound / concentration to the whole selection. Row/column compounds degrade by the dilution factor.
           </p>
         </div>
 
@@ -1892,12 +2028,13 @@ export const ExperimentalSetup = ({ ctx }) => {
                   {COLS.map((col, c) => {
                     const role = getRole(r, c);
                     const conc = role ? concOf(r, c, role) : null;
-                    const isSel = sel && sel.r === r && sel.c === c;
+                    const isSel = activeSel && r >= activeSel.minR && r <= activeSel.maxR && c >= activeSel.minC && c <= activeSel.maxC;
                     return (
                       <div key={col} title={`${rl}${col}: ${role || 'empty'}${conc != null ? ' · ' + formatConc(conc) + ' ' + unit : ''}`}
-                        onClick={() => setSelectedCell({ r, c })}
-                        className={`w-11 h-9 rounded-md border flex flex-col items-center justify-center text-[8px] font-bold leading-tight px-0.5 text-center transition-colors cursor-pointer ${isSel ? 'ring-2 ring-indigo-400' : ''} ${role ? 'text-white border-black/10' : 'bg-white text-slate-400 border-slate-200'}`}
-                        style={role ? { backgroundColor: plateCmpColor(role) } : undefined}>
+                        onMouseDown={(e) => onCellMouseDown(e, r, c)}
+                        onMouseEnter={() => onCellMouseEnter(r, c)}
+                        className={`w-11 h-9 rounded-md border flex flex-col items-center justify-center text-[8px] font-bold leading-tight px-0.5 text-center transition-colors cursor-pointer select-none ${isSel ? 'ring-2 ring-inset ring-indigo-500' : ''} ${role ? 'text-white border-black/10' : 'bg-white text-slate-400 border-slate-200'}`}
+                        style={role ? { backgroundColor: plateCmpColor(role, cmpColors) } : undefined}>
                         <span className="truncate max-w-full">{role || '·'}</span>
                         {conc != null && <span className="text-[7px] opacity-90">{formatConc(conc)}</span>}
                       </div>
