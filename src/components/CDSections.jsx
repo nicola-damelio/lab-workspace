@@ -380,13 +380,111 @@ const pathLengthToCm = (vStr, unit) => {
   return String(unit || 'cm') === 'mm' ? v / 10 : v;
 };
 
-const molarEllipticityFactor = (inst, mw) => {
+// Δε = [θ] / 3298.2  (mdeg → molar circular dichroism, M⁻¹·cm⁻¹)
+const THETA_TO_DELTA_EPS = 3298.2;
+
+// All supported post-conversion units (stored in test.thetaMode)
+const CD_THETA_MODES = ['molar', 'mre', 'deps', 'depsRes'];
+const CD_THETA_NEEDS_N = ['mre', 'depsRes'];
+
+// Conversion factor (× mdeg) for the selected unit:
+//   molar    [θ]_M   = mdeg × MW/(10·c·l)
+//   mre      [θ]_R   = mdeg × MW/(10·c·l·N)
+//   deps     Δε      = mdeg × MW/(3298.2·10·c·l)
+//   depsRes  Δε/res  = mdeg × MW/(3298.2·10·c·l·N)
+const cdConversionFactor = (inst, mw, residues, modeOverride) => {
   const t = inst?.test || inst || {};
+  const mode = CD_THETA_MODES.includes(modeOverride)
+    ? modeOverride
+    : CD_THETA_MODES.includes(t.thetaMode) ? t.thetaMode : 'mre';
   const cMg = concentrationToMgPerMl(t.concentration, t.concentrationUnit, mw);
   const lCm = pathLengthToCm(t.pathLength, t.pathLengthUnit);
   if (!cMg || !lCm || !mw) return null;
-  return mw / (10 * cMg * lCm);
+  const n = parseInt(residues, 10);
+  const hasN = Number.isFinite(n) && n > 0;
+  const base = mw / (10 * cMg * lCm); // molar ellipticity factor (deg·cm²·dmol⁻¹ per mdeg)
+  switch (mode) {
+    case 'mre': return hasN ? base / n : null;
+    case 'deps': return base / THETA_TO_DELTA_EPS;
+    case 'depsRes': return hasN ? base / (THETA_TO_DELTA_EPS * n) : null;
+    case 'molar':
+    default: return base;
+  }
 };
+
+// Scale factor that converts a reference value in MRE [θ]_R (deg·cm²·dmol⁻¹
+// per residue) into the experimental unit given by thetaMode. Used by the
+// fitters so the reconstruction and scaleK are expressed in the chosen unit.
+const cdUnitScale = (mode, residues) => {
+  const n = parseInt(residues, 10);
+  const hasN = Number.isFinite(n) && n > 0;
+  switch (mode) {
+    case 'molar': return hasN ? n : 1;
+    case 'deps': return hasN ? n / THETA_TO_DELTA_EPS : 1 / THETA_TO_DELTA_EPS;
+    case 'depsRes': return 1 / THETA_TO_DELTA_EPS;
+    case 'mre':
+    default: return 1;
+  }
+};
+
+// Number of amino-acid residues / nucleotides used by the per-residue units.
+// Manual override first, then the compound's sequence length (if defined).
+const getResidueCount = (inst, ctx) => {
+  const t = inst?.test || inst || {};
+  const manual = parseInt(t.manualResidues, 10);
+  if (Number.isFinite(manual) && manual > 0) return manual;
+  const meta = ctx?.compoundMeta || {};
+  const cmps =
+    Array.isArray(t.selectedCompounds) && t.selectedCompounds.length
+      ? t.selectedCompounds
+      : t.compound
+        ? [t.compound]
+        : [];
+  for (const c of cmps) {
+    const n = Number(meta[c]?.length);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
+};
+
+// Where the residue count comes from ('manual' | compound name | null)
+const residueCountSource = (inst, ctx) => {
+  const t = inst?.test || inst || {};
+  if (parseInt(t.manualResidues, 10) > 0) return 'manual';
+  const meta = ctx?.compoundMeta || {};
+  const cmps =
+    Array.isArray(t.selectedCompounds) && t.selectedCompounds.length
+      ? t.selectedCompounds
+      : t.compound
+        ? [t.compound]
+        : [];
+  for (const c of cmps) {
+    const n = Number(meta[c]?.length);
+    if (Number.isFinite(n) && n > 0) return c;
+  }
+  return null;
+};
+
+// The theta mode actually used to produce the stored spectra. Legacy spectra
+// converted before thetaMode existed were computed with the full MW → molar
+// ellipticity, so the default for DISPLAY is 'molar'.
+const thetaModeOf = (test) => {
+  const m = test && test.thetaMode;
+  return CD_THETA_MODES.includes(m) ? m : 'molar';
+};
+const thetaUnitLabel = (mode) => ({
+  molar: 'Molar Ellipticity [θ] (deg·cm²·dmol⁻¹)',
+  mre: 'Mean Residue Ellipticity [θ] (deg·cm²·dmol⁻¹)',
+  deps: 'Molar circular dichroism Δε (M⁻¹·cm⁻¹)',
+  depsRes: 'Mean-residue circular dichroism Δε (M⁻¹·cm⁻¹)'
+}[mode] || 'Molar Ellipticity [θ] (deg·cm²·dmol⁻¹)');
+const thetaUnitShort = (mode) => ({
+  molar: 'Molar [θ] (deg·cm²·dmol⁻¹)',
+  mre: 'MRE [θ] (deg·cm²·dmol⁻¹)',
+  deps: 'Δε (M⁻¹·cm⁻¹)',
+  depsRes: 'Δε/res (M⁻¹·cm⁻¹)'
+}[mode] || 'Molar [θ] (deg·cm²·dmol⁻¹)');
+const thetaUnitTag = (mode) => ({ molar: '[θ]ₘ', mre: '[θ]ᵣ', deps: 'Δε', depsRes: 'Δεᵣ' }[mode] || '[θ]');
 
 const getCompoundMW = (inst, ctx) => {
   const t = inst?.test || inst || {};
@@ -482,16 +580,23 @@ const gqParallelKnots = [{ x: 220, y: 40 }, { x: 225, y: 0 }, { x: 230, y: -50 }
 const gqHybridKnots = [{ x: 220, y: 110 }, { x: 225, y: 50 }, { x: 230, y: 0 }, { x: 236, y: -32 }, { x: 245, y: 0 }, { x: 250, y: 40 }, { x: 260, y: 110 }, { x: 270, y: 142 }, { x: 280, y: 160 }, { x: 288, y: 190 }, { x: 300, y: 140 }, { x: 310, y: 20 }, { x: 320, y: 5 }];
 const gqAntiparallelKnots = [{ x: 220, y: 65 }, { x: 225, y: 30 }, { x: 233, y: 4 }, { x: 240, y: 25 }, { x: 248, y: 50 }, { x: 255, y: 0 }, { x: 260, y: -50 }, { x: 265, y: -70 }, { x: 272, y: -30 }, { x: 280, y: 0 }, { x: 290, y: 60 }, { x: 297, y: 78 }, { x: 305, y: 50 }, { x: 315, y: 0 }, { x: 320, y: -4 }];
 
+// Protein components (α/β/turn/coil) are expressed in mean-residue
+// ellipticity (deg·cm²·dmol⁻¹ per residue). The DNA/G-quadruplex knots were
+// hand-drawn in arbitrary relative units; these scale factors bring them into
+// the same order of magnitude as literature molar ellipticity per nucleotide
+// (deg·cm²·dmol⁻¹). Shape is unchanged — only the absolute amplitude.
+const DNA_CD_SCALE = 800;   // B-, A-, Z-DNA (per nucleotide)
+const GQ_CD_SCALE = 200;    // G-quadruplex (per nucleotide)
 export const splineAlpha = new NaturalCubicSpline(alphaKnots.map((p) => p.x), alphaKnots.map((p) => p.y));
 export const splineBeta = new NaturalCubicSpline(betaKnots.map((p) => p.x), betaKnots.map((p) => p.y));
 export const splineTurn = new NaturalCubicSpline(turnKnots.map((p) => p.x), turnKnots.map((p) => p.y));
 export const splineCoil = new NaturalCubicSpline(coilKnots.map((p) => p.x), coilKnots.map((p) => p.y));
-export const splineADNA = new NaturalCubicSpline(aDnaKnots.map((p) => p.x), aDnaKnots.map((p) => p.y));
-export const splineBDNA = new NaturalCubicSpline(bDnaKnots.map((p) => p.x), bDnaKnots.map((p) => p.y));
-export const splineZDNA = new NaturalCubicSpline(zDnaKnots.map((p) => p.x), zDnaKnots.map((p) => p.y));
-export const splineGQP = new NaturalCubicSpline(gqParallelKnots.map((p) => p.x), gqParallelKnots.map((p) => p.y));
-export const splineGQH = new NaturalCubicSpline(gqHybridKnots.map((p) => p.x), gqHybridKnots.map((p) => p.y));
-export const splineGQA = new NaturalCubicSpline(gqAntiparallelKnots.map((p) => p.x), gqAntiparallelKnots.map((p) => p.y));
+export const splineADNA = new NaturalCubicSpline(aDnaKnots.map((p) => p.x), aDnaKnots.map((p) => p.y * DNA_CD_SCALE));
+export const splineBDNA = new NaturalCubicSpline(bDnaKnots.map((p) => p.x), bDnaKnots.map((p) => p.y * DNA_CD_SCALE));
+export const splineZDNA = new NaturalCubicSpline(zDnaKnots.map((p) => p.x), zDnaKnots.map((p) => p.y * DNA_CD_SCALE));
+export const splineGQP = new NaturalCubicSpline(gqParallelKnots.map((p) => p.x), gqParallelKnots.map((p) => p.y * GQ_CD_SCALE));
+export const splineGQH = new NaturalCubicSpline(gqHybridKnots.map((p) => p.x), gqHybridKnots.map((p) => p.y * GQ_CD_SCALE));
+export const splineGQA = new NaturalCubicSpline(gqAntiparallelKnots.map((p) => p.x), gqAntiparallelKnots.map((p) => p.y * GQ_CD_SCALE));
 
 export const CD_FIT_COMPONENTS = {
   alpha: { label: 'α-Helix', spline: splineAlpha, color: '#3b82f6', min: 176, max: 260 },
@@ -773,8 +878,14 @@ Returns { success, fractions, scaleK, fitCurve, r2, nPoints, activeBases, fitMin
 DYNAMIC PURE-COMPONENT CD SPECTRUM FITTER (Adaptive Regularization)
 Returns { success, fractions, scaleK, fitCurve, r2, nPoints, activeBases, fitMin, fitMax }
 ======================================================================== */
-const fitCdSpectrum = (wavelengths, values, selectedKeys = ['alpha', 'beta', 'turn', 'coil']) => {
+const fitCdSpectrum = (wavelengths, values, selectedKeys = ['alpha', 'beta', 'turn', 'coil'], opts = {}) => {
   if (!selectedKeys.length) return { error: 'No components selected.' };
+
+  // Unit-aware reference scale: the pure-component splines are in MRE [θ]_R.
+  // Scale them into the experimental unit (molar, MRE, Δε, Δε/res) so that
+  // scaleK ≈ 1 and the simulated curve is in the same unit as the data.
+  const uScale = cdUnitScale(opts.thetaMode, opts.residues);
+  const compEval = (k, w) => evalComponent(k, w) * uScale;
   
   // Calculate strict overlap domain of ALL selected components
   const fitMin = Math.max(...selectedKeys.map(k => CD_FIT_COMPONENTS[k].min));
@@ -801,7 +912,7 @@ const fitCdSpectrum = (wavelengths, values, selectedKeys = ['alpha', 'beta', 'tu
   const kLen = selectedKeys.length;
 
   // Normalize column vectors to prevent scale imbalances
-  const rawA = fitPairs.map(({ w }) => selectedKeys.map(k => evalComponent(k, w)));
+  const rawA = fitPairs.map(({ w }) => selectedKeys.map(k => compEval(k, w)));
   const colMax = Array.from({ length: kLen }, (_, j) => Math.max(1e-9, ...rawA.map((r) => Math.abs(r[j]))));
   const A = rawA.map((r) => r.map((v, j) => v / colMax[j]));
   const bMax = Math.max(1e-9, ...fitPairs.map(({ v }) => Math.abs(v)));
@@ -855,7 +966,7 @@ const fitCdSpectrum = (wavelengths, values, selectedKeys = ['alpha', 'beta', 'tu
   fitPairs.forEach(({ w, v }) => {
     let t = 0;
     selectedKeys.forEach((k, idx) => {
-      t += evalComponent(k, w) * (clamped[idx] / sum);
+      t += compEval(k, w) * (clamped[idx] / sum);
     });
     num += v * t;
     den += t * t;
@@ -868,7 +979,7 @@ const fitCdSpectrum = (wavelengths, values, selectedKeys = ['alpha', 'beta', 'tu
   const fitCurve = fitPairs.map(({ w }) => {
     let y = 0;
     selectedKeys.forEach((k, idx) => {
-      y += evalComponent(k, w) * (clamped[idx] / sum);
+      y += compEval(k, w) * (clamped[idx] / sum);
     });
     return { x: w, y: scaleK * y };
   });
@@ -892,7 +1003,262 @@ const fitCdSpectrum = (wavelengths, values, selectedKeys = ['alpha', 'beta', 'tu
   return {
     success: true,
     fractions, scaleK, fitCurve, r2, nPoints: n, activeBases: selectedKeys,
-    fitMin, fitMax
+    fitMin, fitMax, thetaMode: opts.thetaMode || 'mre', residues: opts.residues
+  };
+};
+
+/* ========================================================================
+CLASSICAL REFERENCE-SET DECONVOLUTION (CONTIN / CDSSTR / SELCON style)
+Classical alternative to the pure-component fitter above. Protocol:
+
+  1. A reference database is built from the same pure-component splines:
+     many synthetic spectra with KNOWN compositions (fractions sum to 1),
+     including near-pure corner references and random interior compositions.
+  2. Variable selection (as in CONTIN/CDSSTR): only the references most
+     correlated with the experimental spectrum are kept.
+  3. The experimental spectrum is fitted as a NON-NEGATIVE linear
+     combination of the selected references (A·x ≈ b, x ≥ 0), solved with
+     the Lawson–Hanson active-set NNLS algorithm (plus a small ridge for
+     stability, like CONTIN's regularization).
+  4. The composition is the weighted average of the reference compositions,
+     normalised to 100%.
+
+This is the same general protocol used by the classical programs CONTIN,
+SELCON3, CDSSTR and K2D — and the idea BeStSel builds on. It is NOT the
+exact BeStSel implementation: BeStSel uses its own proprietary reference
+database (37 proteins measured down to 175 nm), a 5-state output (α,
+antiparallel β, parallel β, turn, other) and its own band-position
+optimisation. Here the references are generated from the built-in
+pure-component spectra, so results are approximate but comparable.
+
+Returns the SAME shape as fitCdSpectrum so the donut, overlay, saved-fits
+table and buildSimulatedCurve keep working unchanged.
+======================================================================= */
+const pearsonCorr = (a, b) => {
+  const n = a.length;
+  if (n < 2) return 0;
+  const ma = a.reduce((s, v) => s + v, 0) / n;
+  const mb = b.reduce((s, v) => s + v, 0) / n;
+  let num = 0, da = 0, db = 0;
+  for (let i = 0; i < n; i++) {
+    const x = a[i] - ma, y = b[i] - mb;
+    num += x * y; da += x * x; db += y * y;
+  }
+  const den = Math.sqrt(da * db);
+  return den > 0 ? num / den : 0;
+};
+
+// Root-mean-square (unit-shape) normalisation. Used before the NNLS solve so
+// that references of very different amplitudes (α-helix ~66 000 vs β-sheet
+// ~12 000 mean-residue ellipticity) are compared by SHAPE alone, exactly as
+// the classical methods do. The absolute scale is recovered via scaleK.
+const rmsNorm = (arr) => {
+  const r = Math.sqrt(arr.reduce((s, v) => s + v * v, 0) / Math.max(1, arr.length));
+  return r > 1e-12 ? r : 1;
+};
+
+// Build the classical reference database: near-pure corner references (one
+// per selected component) plus `count` random interior compositions drawn
+// uniformly over the simplex (Dirichlet(1)). Each reference stores its known
+// composition `frac` and its spectrum evaluated at the fit wavelengths.
+const buildClassicalReferenceSet = (selectedKeys, fitWavelengths, count) => {
+  const refs = [];
+  const pushRef = (frac) => {
+    const spectrum = fitWavelengths.map((w) => {
+      let y = 0;
+      selectedKeys.forEach((k, j) => { y += evalComponent(k, w) * frac[j]; });
+      return y;
+    });
+    refs.push({ frac: frac.slice(), spectrum });
+  };
+  selectedKeys.forEach((k, j) => {
+    const others = Math.max(1, selectedKeys.length - 1);
+    pushRef(selectedKeys.map((_, i) => (i === j ? 0.98 : 0.02 / others)));
+  });
+  for (let i = 0; i < count; i++) {
+    const raw = selectedKeys.map(() => -Math.log(1 - Math.random()));
+    const sum = raw.reduce((a, v) => a + v, 0);
+    pushRef(raw.map((v) => v / sum));
+  }
+  return refs;
+};
+
+// Lawson–Hanson active-set NNLS: min ||A·x − b||² subject to x ≥ 0.
+// A is (m wavelengths × n references), b is (m). A mild ridge is added to
+// the normal-equation diagonal for stability (CONTIN-style regularization).
+const nnlsSolve = (A, b, { ridge = 1e-5, maxIter = 300 } = {}) => {
+  const m = A.length, n = A[0].length;
+  if (!m || !n) return null;
+  const AtA = Array.from({ length: n }, () => new Array(n).fill(0));
+  const Atb = new Array(n).fill(0);
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      let s = 0;
+      for (let k = 0; k < m; k++) s += A[k][i] * A[k][j];
+      AtA[i][j] = s;
+    }
+    let s = 0;
+    for (let k = 0; k < m; k++) s += A[k][i] * b[k];
+    Atb[i] = s;
+  }
+  const diagMean = AtA.reduce((a, row, i) => a + row[i], 0) / Math.max(1, n);
+  const reg = Math.max(0, ridge) * Math.max(1e-12, diagMean);
+  const x = new Array(n).fill(0);
+  const passive = new Array(n).fill(false);
+  const w = new Array(n).fill(0);
+  for (let iter = 0; iter < maxIter; iter++) {
+    for (let i = 0; i < n; i++) {
+      let s = Atb[i];
+      for (let j = 0; j < n; j++) s -= AtA[i][j] * x[j];
+      w[i] = s;
+    }
+    let t = -1, tMax = 0;
+    for (let j = 0; j < n; j++) {
+      if (!passive[j] && w[j] > tMax) { tMax = w[j]; t = j; }
+    }
+    if (t < 0 || tMax <= 1e-13) break;
+    passive[t] = true;
+    for (;;) {
+      const idx = [];
+      for (let j = 0; j < n; j++) if (passive[j]) idx.push(j);
+      if (!idx.length) break;
+      const p = idx.length;
+      const subA = Array.from({ length: p }, (_, r) =>
+        Array.from({ length: p }, (_, c) => AtA[idx[r]][idx[c]] + (r === c ? reg : 0)));
+      const subB = idx.map((j) => Atb[j]);
+      const zSub = gaussSolve(subA, subB);
+      const z = new Array(n).fill(0);
+      if (zSub) idx.forEach((j, r) => { z[j] = zSub[r]; });
+      let alpha = Infinity, jStar = -1;
+      for (const j of idx) {
+        if (z[j] <= 1e-13) {
+          const r = x[j] / (x[j] - z[j] + 1e-300);
+          if (r >= 0 && r < alpha) { alpha = r; jStar = j; }
+        }
+      }
+      if (jStar < 0) {
+        idx.forEach((j) => { x[j] = z[j]; });
+        break;
+      }
+      for (const j of idx) x[j] += alpha * (z[j] - x[j]);
+      passive[jStar] = false;
+    }
+  }
+  return x;
+};
+
+const fitCdSpectrumClassical = (wavelengths, values, selectedKeys = ['alpha', 'beta', 'turn', 'coil'], opts = {}) => {
+  if (!selectedKeys.length) return { error: 'No components selected.' };
+
+  // Unit-aware reference scale (same convention as the pure-component fitter).
+  const uScale = cdUnitScale(opts.thetaMode, opts.residues);
+  const compEval = (k, w) => evalComponent(k, w) * uScale;
+
+  const fitMin = Math.max(...selectedKeys.map((k) => CD_FIT_COMPONENTS[k].min));
+  const fitMax = Math.min(...selectedKeys.map((k) => CD_FIT_COMPONENTS[k].max));
+  if (fitMin >= fitMax) {
+    return { error: `No overlapping wavelength domain for selected components. (Min: ${fitMin}nm, Max: ${fitMax}nm)` };
+  }
+
+  const fitPairs = [];
+  for (let i = 0; i < wavelengths.length; i++) {
+    const w = wavelengths[i], v = values[i];
+    if (w >= fitMin && w <= fitMax && v !== undefined && Number.isFinite(v)) {
+      fitPairs.push({ w, v });
+    }
+  }
+  if (fitPairs.length < 10) {
+    return { error: `Not enough data points between ${fitMin} and ${fitMax} nm (found ${fitPairs.length}, need at least 10).` };
+  }
+
+  const n = fitPairs.length;
+  const fitWls = fitPairs.map((p) => p.w);
+  const bArr = fitPairs.map((p) => p.v);
+
+  // 1) Build the classical reference database.
+  const nRefs = Math.max(20, Math.min(1000, Math.round(opts.nRefs || 400)));
+  const refs = buildClassicalReferenceSet(selectedKeys, fitWls, nRefs);
+
+  // 2) Variable selection: keep the references most correlated with the query.
+  const topK = Math.max(2, Math.min(refs.length, Math.round(opts.topK || 30)));
+  const ranked = refs
+    .map((ref, i) => ({ i, r: pearsonCorr(ref.spectrum, bArr) }))
+    .sort((a, b2) => b2.r - a.r);
+  const selected = ranked.slice(0, topK);
+
+  // 3) NNLS fit of the selected references to the query. Both the query and
+  //    every reference are normalised to unit RMS so the fit compares SHAPE
+  //    alone (the absolute scale is recovered afterwards via scaleK).
+  //    Design matrix A is built rows = wavelengths, columns = references.
+  const qRms = rmsNorm(bArr);
+  const b = bArr.map((v) => v / qRms);
+  const Acols = selected.map(({ i }) => {
+    const s = refs[i].spectrum;
+    const r = rmsNorm(s);
+    return s.map((y) => y / r);
+  });
+  const A = bArr.map((_, w) => Acols.map((col) => col[w]));
+  const x = nnlsSolve(A, b, { ridge: opts.ridge ?? 1e-5, maxIter: 400 });
+  if (!x) {
+    return { error: 'NNLS did not converge. Try increasing the number of reference spectra or the ridge.' };
+  }
+
+  const used = selected.filter((_, idx) => x[idx] > 1e-12);
+  if (!used.length) {
+    return { error: 'Fit resulted in 0 weight for all references. Check if the spectrum is inverted or severely baseline-shifted.' };
+  }
+
+  // 4) Composition = weighted average of the reference compositions.
+  const fr = selectedKeys.map((_, k) =>
+    selected.reduce((s, sel, idx) => s + x[idx] * refs[sel.i].frac[k], 0));
+  const sumFr = fr.reduce((a, v) => a + v, 0);
+  if (!Number.isFinite(sumFr) || sumFr <= 1e-12) {
+    return { error: 'Fit resulted in 0% for all components. Check if the spectrum is inverted or severely baseline-shifted.' };
+  }
+  const norm = fr.map((v) => Math.round((v / sumFr) * 1000) / 10);
+  const diff = +(100 - norm.reduce((a, v) => a + v, 0)).toFixed(1);
+  if (diff !== 0) {
+    const maxIdx = norm.indexOf(Math.max(...norm));
+    norm[maxIdx] = +(norm[maxIdx] + diff).toFixed(1);
+  }
+
+  // 5) Reconstruct the fit curve from the fraction-weighted pure components
+  //    (same convention as the pure-component fitter) and compute scaleK.
+  const tArr = fitPairs.map(({ w }) => {
+    let t = 0;
+    selectedKeys.forEach((k, i) => { t += compEval(k, w) * (norm[i] / 100); });
+    return t;
+  });
+  let num = 0, den = 0;
+  fitPairs.forEach(({ v }, i) => { num += v * tArr[i]; den += tArr[i] * tArr[i]; });
+  const scaleK = den > 0 ? num / den : 1;
+  if (!Number.isFinite(scaleK)) return { error: 'Scale factor calculation failed.' };
+
+  const fitCurve = fitPairs.map(({ w }, i) => ({ x: w, y: scaleK * tArr[i] }));
+
+  // 6) R-squared on the scaled reconstruction.
+  const meanY = fitPairs.reduce((a, p) => a + p.v, 0) / n;
+  let ssRes = 0, ssTot = 0;
+  fitPairs.forEach(({ v }, i) => {
+    ssRes += (v - fitCurve[i].y) ** 2;
+    ssTot += (v - meanY) ** 2;
+  });
+  const r2 = ssTot > 0 ? 1 - ssRes / ssTot : 1;
+
+  if (!norm.every(Number.isFinite) || !Number.isFinite(r2)) {
+    return { error: 'Statistical calculations failed (NaN encountered).' };
+  }
+
+  const fractions = {};
+  selectedKeys.forEach((k, i) => { fractions[k] = norm[i]; });
+
+  return {
+    success: true,
+    method: 'classical',
+    algorithm: 'nnls',
+    fractions, scaleK, fitCurve, r2, nPoints: n, activeBases: selectedKeys,
+    fitMin, fitMax, nRefs: refs.length, refsUsed: used.length,
+    thetaMode: opts.thetaMode || 'mre', residues: opts.residues
   };
 };
 
@@ -903,6 +1269,9 @@ const buildSimulatedCurve = (fitRes, wavelengths) => {
     alpha: fitRes.alpha, beta: fitRes.beta, turn: fitRes.turn, coil: fitRes.coil
   };
   const scaleK = fitRes.scaleK || 1;
+  // Express the reconstruction in the same unit as the stored experimental
+  // data (the fit stores thetaMode / residues; legacy fits default to MRE).
+  const uScale = cdUnitScale(fitRes.thetaMode, fitRes.residues);
   let tot = bases.reduce((sum, k) => sum + (fractions[k] || 0), 0);
   if (tot === 0) tot = 100;
 
@@ -911,7 +1280,7 @@ const buildSimulatedCurve = (fitRes, wavelengths) => {
     .map((w) => {
       let y = 0;
       bases.forEach((k) => {
-        y += evalComponent(k, w) * ((fractions[k] || 0) / tot);
+        y += uScale * evalComponent(k, w) * ((fractions[k] || 0) / tot);
       });
       return { x: w, y: scaleK * y };
     });
@@ -1342,32 +1711,44 @@ export const Data = ({ ctx }) => {
     if (manual && manual > 0) return 'manual';
     return mw ? 'compound' : null;
   })();
-  const meFactor = activeInstance ? molarEllipticityFactor(activeInstance, mw) : null;
+  const thetaMode = CD_THETA_MODES.includes(activeTest.thetaMode) ? activeTest.thetaMode : 'mre';
+  const residues = activeInstance ? getResidueCount(activeInstance, ctx) : null;
+  const residueSource = activeInstance ? residueCountSource(activeInstance, ctx) : null;
+  const needsN = CD_THETA_NEEDS_N.includes(thetaMode);
+  const meFactor = activeInstance ? cdConversionFactor(activeInstance, mw, residues) : null;
   const convertToMolarEllipticity = () => {
     if (!mw) { alert('Molecular weight is required. Select a compound with a defined MW or fill the manual MW field.'); return; }
-    if (!meFactor) { alert('Fill the concentration and cuvette path length in the Experimental Conditions section of this tab.'); return; }
-    if (!window.confirm('Convert all spectra of the ACTIVE condition to Mean Residue Ellipticity [θ]?\nThe raw spectra are kept as a backup (revert button).')) return;
+    if (!meFactor) {
+      if (needsN && !residues) { alert(`Set the number of residues (N) to convert to ${thetaUnitLabel(thetaMode)}.`); return; }
+      alert('Fill the concentration and cuvette path length in the Experimental Conditions section of this tab.'); return;
+    }
+    if (!window.confirm(`Convert all spectra of the ACTIVE condition to ${thetaUnitLabel(thetaMode)}?\nThe raw spectra are kept as a backup (revert button).`)) return;
     const cols = (activeTest.spectraColumns || []).map((c) => ({
       ...c, data: String(c.data || '').split(/[\n,]+/).map((s) => { const n = parseFloat(String(s).trim()); return Number.isFinite(n) ? String(n * meFactor) : s; }).join('\n')
     }));
-    updateActiveTest({ spectraColumns: cols, rawSpectraColumns: activeTest.spectraColumns, yUnit: 'theta' });
+    updateActiveTest({ spectraColumns: cols, rawSpectraColumns: activeTest.spectraColumns, yUnit: 'theta', thetaMode, thetaResidues: residues || undefined });
   };
   const convertAllInstances = () => {
-    if (!window.confirm('Convert the spectra of ALL conditions to [θ] using each tab\'s own concentration / path length / MW?')) return;
-    let done = 0;
+    if (!window.confirm(`Convert the spectra of ALL conditions to ${thetaUnitLabel(thetaMode)} using each tab's own concentration / path length / MW?`)) return;
+    let done = 0, skippedN = 0;
     instances.forEach((inst) => {
       const t = inst.test || {};
       if (t.yUnit === 'theta') return;
       const instMw = getMWForInstance(inst, ctx);
-      const factor = molarEllipticityFactor(inst, instMw);
-      if (!factor || !Array.isArray(t.spectraColumns) || !t.spectraColumns.length) return;
+      const instRes = getResidueCount(inst, ctx);
+      const instMode = CD_THETA_MODES.includes(t.thetaMode) ? t.thetaMode : thetaMode;
+      const factor = cdConversionFactor(inst, instMw, instRes, instMode);
+      if (!factor || !Array.isArray(t.spectraColumns) || !t.spectraColumns.length) {
+        if (CD_THETA_NEEDS_N.includes(instMode) && !instRes) skippedN++;
+        return;
+      }
       const cols = t.spectraColumns.map((c) => ({
         ...c, data: String(c.data || '').split(/[\n,]+/).map((s) => { const n = parseFloat(String(s).trim()); return Number.isFinite(n) ? String(n * factor) : s; }).join('\n')
       }));
-      patchInstance(ctx, activeTest, inst.id, { spectraColumns: cols, rawSpectraColumns: t.spectraColumns, yUnit: 'theta' });
+      patchInstance(ctx, activeTest, inst.id, { spectraColumns: cols, rawSpectraColumns: t.spectraColumns, yUnit: 'theta', thetaMode: instMode, thetaResidues: instRes || undefined });
       done++;
     });
-    alert(`Converted ${done} condition(s) to molar ellipticity.`);
+    alert(`Converted ${done} condition(s) to ${thetaUnitLabel(thetaMode)}${skippedN ? ` — ${skippedN} skipped (no residue count for the per-residue unit).` : ''}.`);
   };
   const revertConversion = () => {
     if (!Array.isArray(activeTest.rawSpectraColumns)) return;
@@ -1637,8 +2018,25 @@ export const Data = ({ ctx }) => {
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3">
-          <h4 className="text-sm font-bold text-slate-700">🧮 Molar Ellipticity [θ]</h4>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+          <h4 className="text-sm font-bold text-slate-700">🧮 Ellipticity conversion — [θ] / Δε</h4>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[10px] font-black uppercase tracking-wide text-slate-400">Convert to:</span>
+            <div className="flex flex-wrap rounded-lg overflow-hidden border border-slate-200 bg-white">
+              {[
+                { id: 'mre', label: 'MRE [θ]ᵣ', title: 'Mean residue ellipticity per residue: MW/(10·c·l·N)' },
+                { id: 'molar', label: 'Molar [θ]ₘ', title: 'Molar ellipticity per molecule: MW/(10·c·l)' },
+                { id: 'deps', label: 'Δε', title: 'Molar circular dichroism per molecule: MW/(3298.2·10·c·l)' },
+                { id: 'depsRes', label: 'Δεᵣ', title: 'Circular dichroism per residue: MW/(3298.2·10·c·l·N)' }
+              ].map((opt) => (
+                <button key={opt.id} type="button" title={opt.title}
+                        onClick={() => updateActiveTest({ thetaMode: opt.id })}
+                        className={`px-3 py-1.5 text-[11px] font-bold transition-colors ${thetaMode === opt.id ? 'bg-violet-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
             <div className="flex flex-col gap-1">
               <label className={LABEL_CLS}>Compound MW (from Library)</label>
               <div className="border border-slate-200 bg-slate-50 rounded-lg px-3 py-2 text-sm font-bold text-slate-700">
@@ -1655,25 +2053,40 @@ export const Data = ({ ctx }) => {
               <input type="number" onWheel={(e) => e.target.blur()} value={activeTest.manualMW || ''} onChange={(e) => updateActiveTest({ manualMW: e.target.value })} placeholder={compoundMW ? `auto: ${compoundMW.value}` : 'optional'} className={INPUT_CLS} />
             </div>
             <div className="flex flex-col gap-1">
+              <label className={LABEL_CLS}>Number of residues (N){needsN ? ' *' : ''}</label>
+              <input type="number" min="1" onWheel={(e) => e.target.blur()} value={activeTest.manualResidues || ''} onChange={(e) => updateActiveTest({ manualResidues: e.target.value })}
+                     placeholder={residues ? String(residues) : 'required for ' + (thetaMode === 'mre' ? 'MRE' : 'Δεᵣ')} className={INPUT_CLS} />
+              {residueSource === 'manual' ? (
+                <div className="flex items-center justify-between gap-1">
+                  <span className="text-[9px] text-slate-400">Manual override: N = {residues}</span>
+                  {compoundMW && <button type="button" onClick={() => updateActiveTest({ manualResidues: '' })} className="text-[9px] font-bold text-blue-600 hover:text-blue-800">↺ Use compound N</button>}
+                </div>
+              ) : residueSource ? (
+                <span className="text-[9px] text-slate-400">Auto from "{residueSource}": N = {residues}</span>
+              ) : (
+                <span className="text-[9px] text-amber-600">Not available — set N for MRE / Δεᵣ.</span>
+              )}
+            </div>
+            <div className="flex flex-col gap-1">
               <label className={LABEL_CLS}>Conversion factor (this tab)</label>
               <div className="border border-slate-200 bg-slate-50 rounded-lg px-3 py-2 text-sm font-bold text-slate-700">
-                {meFactor ? meFactor.toPrecision(4) : '— (need conc + path + MW)'}
+                {meFactor ? `${meFactor.toPrecision(4)} / mdeg` : needsN && !residues ? '— need N' : '— need conc + path + MW'}
               </div>
             </div>
             <div className="flex flex-col gap-2">
-              <button type="button" onClick={convertToMolarEllipticity} className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-3 py-2 rounded-lg text-xs shadow-sm">Convert ACTIVE → [θ]</button>
-              <button type="button" onClick={convertAllInstances} className="bg-violet-50 border border-violet-300 text-violet-700 hover:bg-violet-100 font-bold px-3 py-2 rounded-lg text-xs shadow-sm">Convert ALL conditions → [θ]</button>
+              <button type="button" onClick={convertToMolarEllipticity} className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-3 py-2 rounded-lg text-xs shadow-sm">Convert ACTIVE → {thetaUnitTag(thetaMode)}</button>
+              <button type="button" onClick={convertAllInstances} className="bg-violet-50 border border-violet-300 text-violet-700 hover:bg-violet-100 font-bold px-3 py-2 rounded-lg text-xs shadow-sm">Convert ALL conditions → {thetaUnitTag(thetaMode)}</button>
             </div>
           </div>
-          <div className="flex items-center gap-3 mt-2">
+          <div className="flex flex-wrap items-center gap-3 mt-2">
             <span className={`text-xs font-bold px-2 py-1 rounded ${yUnit === 'theta' ? 'bg-violet-100 text-violet-800' : 'bg-slate-100 text-slate-600'}`}>
-              Current Y unit: {yUnit === 'theta' ? 'Mean Residue Ellipticity (deg·cm²·dmol⁻¹)' : 'Ellipticity (mdeg)'}
+              Current Y unit: {yUnit === 'theta' ? thetaUnitLabel(thetaModeOf(activeTest)) : 'Ellipticity (mdeg)'}
             </span>
             {yUnit === 'theta' && Array.isArray(activeTest.rawSpectraColumns) && (
               <button type="button" onClick={revertConversion} className="text-xs font-bold bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 px-3 py-1.5 rounded-lg shadow-sm">↩️ Revert to raw mdeg</button>
             )}
             {yUnit === 'mdeg' && Array.isArray(activeTest.thetaSpectraColumns) && (
-              <button type="button" onClick={restoreMolarEllipticity} className="text-xs font-bold bg-violet-50 border border-violet-200 text-violet-700 hover:bg-violet-100 px-3 py-1.5 rounded-lg shadow-sm">↪️ Revert to [θ] Molar Ellipticity</button>
+              <button type="button" onClick={restoreMolarEllipticity} className="text-xs font-bold bg-violet-50 border border-violet-200 text-violet-700 hover:bg-violet-100 px-3 py-1.5 rounded-lg shadow-sm">↪️ Restore converted spectra</button>
             )}
           </div>
         </div>
@@ -1820,7 +2233,7 @@ export const SpectraVisualization = ({ ctx }) => {
 
   const chartRef = useRef(null);
   const zoom = useXZoom(chartRef, dataDomain);
-  const yLabel = activeTest.yUnit === 'theta' ? '[θ] (deg·cm²·dmol⁻¹)' : 'Ellipticity (mdeg)';
+  const yLabel = activeTest.yUnit === 'theta' ? thetaUnitShort(thetaModeOf(activeTest)) : 'Ellipticity (mdeg)';
   const xLabel = cfg.xAxisLabel || 'Wavelength (nm)';
   const yLab = cfg.yAxisLabel || yLabel;
 
@@ -1955,6 +2368,9 @@ export const SpectrumFitting = ({ ctx }) => {
   const [fsFit, setFsFit] = useState(false);
   const [showCfg, setShowCfg] = useState(false);
   const [selectedFitBases, setSelectedFitBases] = useState(['alpha', 'beta', 'turn', 'coil']);
+  const [fitMethod, setFitMethod] = useState('pure'); // 'pure' | 'classical'
+  const [classicalOpts, setClassicalOpts] = useState({ nRefs: 400, topK: 30, ridge: 1e-5 });
+  const patchClassicalOpts = (patch) => setClassicalOpts((prev) => ({ ...prev, ...patch }));
   
   const cfg = { ...DEFAULT_CHART_STYLE, ...(activeTest.vizCfg || {}) };
   const setCfg = (patch) => updateActiveTest({ vizCfg: { ...cfg, ...patch } });
@@ -1977,8 +2393,17 @@ export const SpectrumFitting = ({ ctx }) => {
     if (!fitInst || !spec) { setMsg('Select a condition and a spectrum.'); return; }
     if (selectedFitBases.length === 0) { setMsg('Select at least one component to fit.'); return; }
     
-    // Catch the detailed response object
-    const res = fitCdSpectrum(fitParsed.parsedWavelengths, spec.values, selectedFitBases);
+    // Unit-aware options: the fit scales the MRE reference components into the
+    // unit the experimental spectra were converted to (mdeg → unit scale 1,
+    // letting scaleK absorb the raw scale).
+    const unitOpts = fitInst.test.yUnit === 'theta'
+      ? { thetaMode: thetaModeOf(fitInst.test), residues: fitInst.test.thetaResidues || getResidueCount(fitInst, ctx) }
+      : { thetaMode: 'mre', residues: null };
+    
+    // Catch the detailed response object — dispatch to the selected algorithm
+    const res = fitMethod === 'classical'
+      ? fitCdSpectrumClassical(fitParsed.parsedWavelengths, spec.values, selectedFitBases, { ...classicalOpts, ...unitOpts })
+      : fitCdSpectrum(fitParsed.parsedWavelengths, spec.values, selectedFitBases, unitOpts);
     
     // Display specific errors to the user if the math fails
     if (res.error) { 
@@ -1990,6 +2415,10 @@ export const SpectrumFitting = ({ ctx }) => {
       fractions: res.fractions, activeBases: res.activeBases,
       scaleK: res.scaleK, r2: res.r2, nPoints: res.nPoints,
       savedAt: new Date().toLocaleString(),
+      method: res.method || 'pure',
+      algorithm: res.algorithm,
+      nRefs: res.nRefs, refsUsed: res.refsUsed,
+      thetaMode: res.thetaMode, residues: res.residues,
       alpha: res.fractions.alpha || 0, beta: res.fractions.beta || 0, turn: res.fractions.turn || 0, coil: res.fractions.coil || 0
     };
     
@@ -2000,7 +2429,11 @@ export const SpectrumFitting = ({ ctx }) => {
     patchInstance(ctx, activeTest, fitInst.id, { ssFits, structureComposition });
     
     // Output exactly which wavelengths were successfully overlapped and fitted
-    setMsg(`✅ Fit stored — R² = ${res.r2.toFixed(4)} (${res.nPoints} pts, ${res.fitMin}-${res.fitMax}nm).`);
+    const methodLabel = res.method === 'classical'
+      ? `Classical NNLS (${res.nRefs} refs, ${res.refsUsed} used)`
+      : 'Pure-component';
+    const unitTag = fitInst.test.yUnit === 'theta' ? ` · unit: ${thetaUnitShort(thetaModeOf(fitInst.test))}` : '';
+    setMsg(`✅ ${methodLabel} fit stored — R² = ${res.r2.toFixed(4)} (${res.nPoints} pts, ${res.fitMin}-${res.fitMax}nm)${unitTag}.`);
   };
 
   const deleteFit = (inst, specId) => {
@@ -2039,11 +2472,51 @@ export const SpectrumFitting = ({ ctx }) => {
   return (
     <div className="flex flex-col gap-4 border border-slate-200 rounded-xl p-4 bg-white shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h4 className="text-sm font-bold text-slate-700">🧬 Fitting — Pure Component Decomposition</h4>
+        <h4 className="text-sm font-bold text-slate-700">🧬 Fitting — Secondary Structure Decomposition</h4>
         <div className="flex gap-2 items-center">
           <ChartControlBar showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)} className="flex gap-2" />
-          <span className="text-[9px] bg-purple-100 text-purple-800 px-2 py-0.5 rounded font-bold">Customizable Pure Components</span>
+          <span className={`text-[9px] px-2 py-0.5 rounded font-bold ${fitMethod === 'classical' ? 'bg-cyan-100 text-cyan-800' : 'bg-purple-100 text-purple-800'}`}>
+            {fitMethod === 'classical' ? 'Classical Reference Deconvolution' : 'Customizable Pure Components'}
+          </span>
         </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg p-2.5">
+        <span className="text-[10px] font-black uppercase tracking-wide text-slate-400">Method:</span>
+        <div className="flex rounded-lg overflow-hidden border border-slate-200 bg-white">
+          <button type="button" onClick={() => setFitMethod('pure')}
+                  className={`px-3 py-1.5 text-[11px] font-bold transition-colors ${fitMethod === 'pure' ? 'bg-purple-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                  title="Fits the spectrum directly to the built-in pure component splines (adaptive ridge least squares)">
+            🎯 Pure components
+          </button>
+          <button type="button" onClick={() => setFitMethod('classical')}
+                  className={`px-3 py-1.5 text-[11px] font-bold transition-colors ${fitMethod === 'classical' ? 'bg-cyan-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                  title="Classical reference-set deconvolution (CONTIN / CDSSTR / SELCON style): NNLS fit on a database of reference spectra with known composition">
+            📚 Classical (reference NNLS)
+          </button>
+        </div>
+        {fitMethod === 'classical' && (
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500">
+              Reference spectra
+              <input type="number" min="20" max="1000" step="10" value={classicalOpts.nRefs}
+                     onChange={(e) => patchClassicalOpts({ nRefs: parseInt(e.target.value, 10) || 400 })}
+                     className="w-20 border border-slate-300 rounded px-1.5 py-1 text-[11px] bg-white outline-none focus:border-cyan-500 font-semibold" />
+            </label>
+            <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500" title="Variable selection: keep only the references most similar to the spectrum">
+              Top similar
+              <input type="number" min="2" max="200" step="1" value={classicalOpts.topK}
+                     onChange={(e) => patchClassicalOpts({ topK: parseInt(e.target.value, 10) || 30 })}
+                     className="w-16 border border-slate-300 rounded px-1.5 py-1 text-[11px] bg-white outline-none focus:border-cyan-500 font-semibold" />
+            </label>
+            <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500" title="Ridge regularization on the normal-equation diagonal (CONTIN-style)">
+              Ridge (×10⁻⁵)
+              <input type="number" min="0" max="1000" step="1" value={Math.round((classicalOpts.ridge ?? 1e-5) * 1e5)}
+                     onChange={(e) => patchClassicalOpts({ ridge: (parseFloat(e.target.value) || 0) * 1e-5 })}
+                     className="w-16 border border-slate-300 rounded px-1.5 py-1 text-[11px] bg-white outline-none focus:border-cyan-500 font-semibold" />
+            </label>
+          </div>
+        )}
       </div>
 
       <div className="flex flex-col gap-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
@@ -2093,7 +2566,9 @@ export const SpectrumFitting = ({ ctx }) => {
               })}
             </div>
             <p className="text-xs text-slate-500">
-              Fit quality: <b>R² = {Number(savedFit.r2 || 0).toFixed(4)}</b> · {savedFit.nPoints} points · scale k = {Number(savedFit.scaleK || 0).toFixed(4)} · saved {savedFit.savedAt}
+              Fit quality: <b>R² = {Number(savedFit.r2 || 0).toFixed(4)}</b> · {savedFit.nPoints} points · scale k = {Number(savedFit.scaleK || 0).toFixed(4)}
+              {savedFit.method === 'classical'
+                ? ` · method: classical NNLS (${savedFit.nRefs} refs, ${savedFit.refsUsed} used)` : ''} · saved {savedFit.savedAt}
             </p>
             <DonutSS res={savedFit} />
           </div>
@@ -2111,7 +2586,7 @@ export const SpectrumFitting = ({ ctx }) => {
                   <LineChart margin={CHART_MARGIN}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                     <XAxis type="number" dataKey="x" domain={[dom(cfg.xMin) ?? zoomFit.domain[0], dom(cfg.xMax) ?? zoomFit.domain[1]]} allowDataOverflow ticks={makeTicks(zoomFit.domain, cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} />} tickMargin={10} label={{ value: cfg.xAxisLabel || 'Wavelength (nm)', position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
-                    <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} allowDataOverflow tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={{ value: cfg.yAxisLabel || ((fitInst && fitInst.test.yUnit === 'theta') ? '[θ] (deg·cm²·dmol⁻¹)' : 'Ellipticity (mdeg)'), angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                    <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} allowDataOverflow tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={{ value: cfg.yAxisLabel || ((fitInst && fitInst.test.yUnit === 'theta') ? thetaUnitShort(thetaModeOf(fitInst.test)) : 'Ellipticity (mdeg)'), angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
                     <Line data={expData} type="monotone" dataKey="y" name="Experimental" stroke="#3b82f6" strokeWidth={cfg.lineThickness || 2} dot={false} connectNulls isAnimationActive={false} />
                     <Line data={simData} type="monotone" dataKey="y" name="Simulated (fit)" stroke="#ef4444" strokeWidth={cfg.lineThickness || 2} strokeDasharray="7 5" dot={false} connectNulls isAnimationActive={false} />
                     <Tooltip />
@@ -2120,7 +2595,7 @@ export const SpectrumFitting = ({ ctx }) => {
                   </LineChart>
                 </ResponsiveContainer>
               </div>
-              <p className="text-[10px] text-slate-400 mt-1">💡 Blue = experimental · Red dashed = reconstructed from fitted pure components. Drag to zoom.</p>
+              <p className="text-[10px] text-slate-400 mt-1">💡 Blue = experimental · Red dashed = reconstructed from the fit ({savedFit.method === 'classical' ? 'reference-set NNLS' : 'pure components'}). Drag to zoom.</p>
             </div>
           </div>
         </div>
@@ -2133,6 +2608,7 @@ export const SpectrumFitting = ({ ctx }) => {
               <tr>
                 <th className="px-3 py-2">Condition</th>
                 <th className="px-3 py-2">Spectrum</th>
+                <th className="px-3 py-2">Method</th>
                 <th className="px-3 py-2">Composition</th>
                 <th className="px-3 py-2">R²</th>
                 <th className="px-3 py-2">Saved</th>
@@ -2144,6 +2620,11 @@ export const SpectrumFitting = ({ ctx }) => {
                 <tr key={`${row.inst.id}-${row.specId}`}>
                   <td className="px-3 py-1.5 font-bold text-slate-700">{row.inst.name}</td>
                   <td className="px-3 py-1.5 text-slate-600">{row.title}</td>
+                  <td className="px-3 py-1.5 text-[11px] whitespace-nowrap">
+                    {row.res.method === 'classical'
+                      ? <span className="font-bold text-cyan-700" title={`${row.res.nRefs} reference spectra, ${row.res.refsUsed} used`}>Classical NNLS</span>
+                      : <span className="font-bold text-purple-700">Pure comp.</span>}
+                  </td>
                   <td className="px-3 py-1.5 text-[11px] leading-tight">
                     {(row.res.activeBases || ['alpha', 'beta', 'turn', 'coil']).map(k => {
                       const v = row.res.fractions ? row.res.fractions[k] : row.res[k];
@@ -2667,7 +3148,7 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
     return <g key={`d-${s.key}-${index}`}>{el}</g>;
   };
 
-  const yLab = cfg.yAxisLabel || (plot.yMode === 'ss' ? 'Component Fraction (%)' : `CD intensity (${(d.activeInstance && d.activeInstance.test.yUnit === 'theta') ? 'deg·cm²·dmol⁻¹' : 'mdeg'})`);
+  const yLab = cfg.yAxisLabel || (plot.yMode === 'ss' ? 'Component Fraction (%)' : `CD intensity (${(d.activeInstance && d.activeInstance.test.yUnit === 'theta') ? thetaUnitShort(thetaModeOf(d.activeInstance.test)) : 'mdeg'})`);
   const xLab = cfg.xAxisLabel || `${xFieldLabel} (per condition)`;
   const yUnitSuffix = xFieldDef && xFieldDef.unitKey && d.activeInstance ? getExpUnit(d.activeInstance, xFieldDef) : '';
 
@@ -3684,7 +4165,7 @@ export const NotebookExtra = ({ ctx, checkId }) => {
     if (!d.activeParsed.parsedSpectra.length) return '';
     const titles = d.activeParsed.parsedSpectra.map((s) => s.title || 'Spectrum').join(', ');
     const wl = d.activeParsed.parsedWavelengths;
-    return `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;"><b>Spectra (${d.activeInstance ? d.activeInstance.name : 'Condition'}):</b> ${titles}<br/><span style="font-size: 11px; color: #64748b;">Wavelength range: ${wl.length ? `${Math.min(...wl)}–${Math.max(...wl)} nm (${wl.length} points)` : 'N/A'} · Y unit: ${activeTest.yUnit === 'theta' ? 'Mean Residue Ellipticity (deg·cm²·dmol⁻¹)' : 'mdeg'}</span></p>`;
+    return `<p style="font-size: 12px; color: #475569; margin-bottom: 8px;"><b>Spectra (${d.activeInstance ? d.activeInstance.name : 'Condition'}):</b> ${titles}<br/><span style="font-size: 11px; color: #64748b;">Wavelength range: ${wl.length ? `${Math.min(...wl)}–${Math.max(...wl)} nm (${wl.length} points)` : 'N/A'} · Y unit: ${activeTest.yUnit === 'theta' ? thetaUnitLabel(thetaModeOf(activeTest)) : 'mdeg'}</span></p>`;
   }
   if (checkId === 'struct' || checkId === 'table') {
     const rows = [];

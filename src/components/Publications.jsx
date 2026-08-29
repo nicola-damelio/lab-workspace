@@ -79,6 +79,15 @@ export const pubFieldValue = (pub, id) => {
   }
 };
 
+// Build the link to the paper page from a raw DOI value. Accepts a bare DOI
+// ("10.xxxx/…") or a value that is already a full http(s) URL.
+export const pubDoiUrl = (raw) => {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  if (/^https?:\/\//i.test(s)) return s;
+  return `https://doi.org/${s}`;
+};
+
 const pubWrap = (val, style) => {
   if (style === 'bold') return `<b>${val}</b>`;
   if (style === 'italic') return `<i>${val}</i>`;
@@ -139,6 +148,21 @@ export const pubCitationHtml = (pub, fmt, scientists) => {
     }
     const val = pubFieldValue(pub, f.id);
     if (!val) return;
+    if (f.id === 'doi') {
+      // The DOI is always a link to the paper page. When linkText is set
+      // (e.g. the literal word "doi"), show that instead of the DOI value.
+      const href = pubDoiUrl(val);
+      const link = `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" class="pub-doi-link">`;
+      if (f.linkText) {
+        // "doi" label option: render just the linked word, ignoring prefix/suffix
+        parts.push(pubWrap(`${link}${escapeHtml(f.linkText)}</a>`, f.style));
+      } else {
+        // Wrap the whole field (prefix + value + suffix) in the link
+        const display = `${escapeHtml(f.prefix || '')}${escapeHtml(val)}${escapeHtml(f.suffix || '')}`;
+        parts.push(pubWrap(`${link}${display}</a>`, f.style));
+      }
+      return;
+    }
     parts.push(`${f.prefix || ''}${pubWrap(val, f.style)}${f.suffix || ''}`);
   });
   return parts.join(' ');
@@ -156,6 +180,15 @@ export const pubCitationText = (pub, fmt, scientists) => {
     }
     const val = pubFieldValue(pub, f.id);
     if (!val) return;
+    if (f.id === 'doi') {
+      if (f.linkText) {
+        // "doi" label option: render just the word, ignoring prefix/suffix
+        parts.push(f.linkText);
+      } else {
+        parts.push(`${f.prefix || ''}${val}${f.suffix || ''}`);
+      }
+      return;
+    }
     parts.push(`${f.prefix || ''}${val}${f.suffix || ''}`);
   });
   return parts.join(' ');
@@ -628,6 +661,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
   const [pubFilter, setPubFilter] = useState('all');
   const [pubFormat, setPubFormat] = useState(loadPubFormat);
   const [pubFormatScope, setPubFormatScope] = useState('default'); // 'default' | project name
+  const [pubAddField, setPubAddField] = useState('doi'); // field id to add via the "+ Add field" control
   useEffect(() => {
     try { localStorage.setItem(PUB_FORMAT_KEY, JSON.stringify(pubFormat)); } catch { /* ignore */ }
   }, [pubFormat]);
@@ -2023,6 +2057,22 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     fields[j] = { ...fields[j], order: tmp };
     setActiveFormat(pubCustomFormat(fields));
   };
+  // Add a field (e.g. DOI) that is not part of the current format yet.
+  const pubAddNewField = () => {
+    if (!pubAddField || activeFormat.fields.some((f) => f.id === pubAddField)) return;
+    const maxOrder = activeFormat.fields.reduce((m, f) => Math.max(m, f.order), -1);
+    setActiveFormat(pubCustomFormat([
+      ...activeFormat.fields,
+      { id: pubAddField, enabled: true, order: maxOrder + 1, style: 'normal', prefix: '', suffix: '' }
+    ]));
+    // Keep the dropdown on a field that is still missing (never the one just added).
+    setPubAddField((prev) => {
+      const stillMissing = Object.keys(PUB_FIELD_LABELS).filter(
+        (id) => id !== prev && !activeFormat.fields.some((f) => f.id === id)
+      );
+      return stillMissing.length ? stillMissing[0] : prev;
+    });
+  };
   // Sample citation: a realistic long author list, extended with the current
   // lab scientists (user list) so the "et al." / always-show / underline
   // options are visible in the preview.
@@ -2130,6 +2180,15 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
               <input type="text" value={f.suffix || ''} onChange={(e) => pubPatchField(f.id, { suffix: e.target.value })}
                      placeholder="suffix" title="Text after this field"
                      className="w-24 border border-slate-300 rounded px-1.5 py-0.5 text-[11px] bg-white outline-none" />
+              {f.id === 'doi' && (
+                <label className="flex items-center gap-1 text-[11px] font-semibold text-slate-600 cursor-pointer whitespace-nowrap"
+                       title="Show the word “doi” as the link to the paper page instead of the DOI value">
+                  <input type="checkbox" checked={!!f.linkText}
+                         onChange={(e) => pubPatchField(f.id, { linkText: e.target.checked ? 'doi' : '' })}
+                         className="w-3.5 h-3.5 accent-indigo-600" />
+                  “doi” link
+                </label>
+              )}
               <div className="ml-auto flex items-center gap-0.5">
                 <button type="button" onClick={() => pubMoveField(f.id, -1)} title="Move up"
                         className="w-6 h-6 flex items-center justify-center rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold">▲</button>
@@ -2139,6 +2198,22 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
             </div>
           ))}
         </div>
+
+        {Object.keys(PUB_FIELD_LABELS).some((id) => !activeFormat.fields.some((f) => f.id === id)) && (
+          <div className="flex flex-wrap items-center gap-2 mt-3">
+            <span className="text-[11px] font-bold text-slate-500">+ Add field:</span>
+            <select value={pubAddField} onChange={(e) => setPubAddField(e.target.value)}
+                    className="border border-slate-300 rounded px-1.5 py-0.5 text-[11px] bg-white outline-none">
+              {Object.entries(PUB_FIELD_LABELS)
+                .filter(([id]) => !activeFormat.fields.some((f) => f.id === id))
+                .map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+            </select>
+            <button type="button" onClick={pubAddNewField}
+                    className="px-2.5 py-0.5 rounded-md bg-indigo-600 text-white text-[11px] font-semibold hover:bg-indigo-700 transition">
+              Add
+            </button>
+          </div>
+        )}
       </div>
     </section>
   );

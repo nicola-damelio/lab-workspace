@@ -334,6 +334,8 @@ const migrateLoadedDataset = (s) => {
         pathLength: '1',
         otherMolecule: '',
         ratio: '',
+        manualMW: '',
+        manualResidues: '',
         wavelengthData: '',
         spectraColumns: [],
         structureComposition: {
@@ -623,6 +625,8 @@ const baseTest = {
         pathLength: '1',
         otherMolecule: '',
         ratio: '',
+        manualMW: '',
+        manualResidues: '',
         wavelengthData: '',
         spectraColumns: [],
         structureComposition: {
