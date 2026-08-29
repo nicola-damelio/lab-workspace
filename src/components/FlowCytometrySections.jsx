@@ -1708,6 +1708,10 @@ export const ExperimentalSetup = ({ ctx }) => {
   const [selStart, setSelStart] = useState(null);
   const [selEnd, setSelEnd] = useState(null);
   const [dragMode, setDragMode] = useState('none');
+  // Fullscreen toggles for the Interactive Table / Plate Map (same pattern
+  // as the Multiwell Plate page: FS_CLASSES + OVERLAY_CLASSES).
+  const [fsPanel, setFsPanel] = useState(null);
+  const toggleFs = (id) => setFsPanel((prev) => (prev === id ? null : id));
   const activeSel = selStart && selEnd
     ? { minR: Math.min(selStart.r, selEnd.r), maxR: Math.max(selStart.r, selEnd.r), minC: Math.min(selStart.c, selEnd.c), maxC: Math.max(selStart.c, selEnd.c) }
     : null;
@@ -1952,9 +1956,21 @@ export const ExperimentalSetup = ({ ctx }) => {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
         {/* Interactive compound / concentration table (no intensities, no regions) */}
-        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm min-w-0">
-          <h4 className="text-xs font-bold text-slate-700 uppercase mb-2">Interactive Table</h4>
-          <div className="overflow-x-auto custom-scrollbar">
+        <div className="relative">
+          {fsPanel === 'table' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('table')} />}
+          <div className={`bg-white border border-slate-200 rounded-xl p-3 shadow-sm min-w-0 flex flex-col ${fsPanel === 'table' ? FS_CLASSES : ''}`}>
+            <div className="flex justify-between items-center mb-2 shrink-0 gap-2">
+              <h4 className="text-xs font-bold text-slate-700 uppercase">Interactive Table</h4>
+              <button
+                type="button"
+                onClick={() => toggleFs('table')}
+                className="text-slate-400 hover:text-blue-600 bg-slate-100 hover:bg-blue-100 rounded p-1 transition-colors"
+                title={fsPanel === 'table' ? 'Exit fullscreen' : 'Fullscreen'}
+              >
+                {fsPanel === 'table' ? '↙️' : '↗️'}
+              </button>
+            </div>
+            <div className={`overflow-x-auto custom-scrollbar ${fsPanel === 'table' ? 'flex-1' : ''}`} style={fsPanel === 'table' ? { minHeight: 0 } : undefined}>
             <table className="w-full border-collapse table-fixed min-w-[640px] text-[11px] text-center select-none">
               <thead>
                 <tr>
@@ -2008,16 +2024,29 @@ export const ExperimentalSetup = ({ ctx }) => {
                 ))}
               </tbody>
             </table>
+            </div>
+            <p className="text-[10px] text-slate-400 mt-2 shrink-0">
+              Drag over wells to select a range, then assign a compound / concentration to the whole selection. Row/column compounds degrade by the dilution factor.
+            </p>
           </div>
-          <p className="text-[10px] text-slate-400 mt-2">
-            Drag over wells to select a range, then assign a compound / concentration to the whole selection. Row/column compounds degrade by the dilution factor.
-          </p>
         </div>
 
         {/* Visual plate map */}
-        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm min-w-0">
-          <h4 className="text-xs font-bold text-slate-700 uppercase mb-2">Plate Map</h4>
-          <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 overflow-x-auto">
+        <div className="relative">
+          {fsPanel === 'map' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('map')} />}
+          <div className={`bg-white border border-slate-200 rounded-xl p-3 shadow-sm min-w-0 flex flex-col ${fsPanel === 'map' ? FS_CLASSES : ''}`}>
+            <div className="flex justify-between items-center mb-2 shrink-0 gap-2">
+              <h4 className="text-xs font-bold text-slate-700 uppercase">Plate Map</h4>
+              <button
+                type="button"
+                onClick={() => toggleFs('map')}
+                className="text-slate-400 hover:text-blue-600 bg-slate-100 hover:bg-blue-100 rounded p-1 transition-colors"
+                title={fsPanel === 'map' ? 'Exit fullscreen' : 'Fullscreen'}
+              >
+                {fsPanel === 'map' ? '↙️' : '↗️'}
+              </button>
+            </div>
+            <div className={`bg-slate-50 border border-slate-200 rounded-lg p-3 overflow-x-auto ${fsPanel === 'map' ? 'flex-1' : ''}`} style={fsPanel === 'map' ? { minHeight: 0 } : undefined}>
             <div className="flex flex-col gap-1 min-w-max">
               <div className="flex gap-1 mb-0.5 pl-5">
                 {COLS.map((c) => <div key={c} className="w-11 text-center text-[9px] font-bold text-slate-500">{c}</div>)}
@@ -2042,6 +2071,7 @@ export const ExperimentalSetup = ({ ctx }) => {
                   })}
                 </div>
               ))}
+            </div>
             </div>
           </div>
         </div>
