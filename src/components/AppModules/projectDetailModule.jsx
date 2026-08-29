@@ -7,7 +7,6 @@ import { loadProjects, saveProjects, loadPublications, TEST_TYPE_OPTIONS, testTy
 import { suggestDriveFileName, openDrive } from '../../utils/driveNaming';
 import { DriveUploadButton } from '../DriveUpload';
 import { markAttachmentsDeleted, renameDriveFilesFor, moveTestFolderIntoProject, moveTestFolderOutOfProject } from '../../utils/driveUpload';
-import { effectiveInstanceName } from '../../utils/migrateTestImages';
 import { repairContentImages } from '../../data/constants';
 
 /* =========================================================================
@@ -552,9 +551,32 @@ export const ProjectDetailModule = ({
   const removeSectionDoc = (sec, docId) =>
     patchDocs(sec, sectionDocs(sec).filter((d) => d.id !== docId));
 
-  const toggleInclude = (expId) =>
+  const toggleIncludeGroup = (group) => {
+    // One "Include" checkbox per experiment (group of condition instances):
+    // toggling it applies to every instance of the same test name at once.
+    const next = !group.entries.every((e) => e.includeInDocument);
+    const ids = new Set(group.entries.map((e) => e.id));
     updateProject({ experiments: (project.experiments || []).map((e) =>
-      (e.id === expId ? { ...e, includeInDocument: !e.includeInDocument } : e)) });
+      (ids.has(e.id) ? { ...e, includeInDocument: next } : e)) });
+  };
+
+  // Group the project's experiment entries by test NAME so that a test with
+  // several condition instances appears as ONE experiment in the list.
+  const experimentsGrouped = (experiments, testsList) => {
+    const groups = [];
+    const byName = new Map();
+    (experiments || []).forEach((exp) => {
+      const t = exp.testId ? testsList.find((x) => x.id === exp.testId) : null;
+      const name = t ? String(t.name || '').trim() : '';
+      const key = name || `#${exp.id}`;
+      if (!byName.has(key)) {
+        byName.set(key, { name, entries: [] });
+        groups.push(byName.get(key));
+      }
+      byName.get(key).entries.push(exp);
+    });
+    return groups;
+  };
 
   const toggleSection = (id) => setOpenSections((prev) => ({ ...prev, [id]: !prev[id] }));
 
@@ -1472,7 +1494,7 @@ export const ProjectDetailModule = ({
 
         {/* ---------- Experiments: collapsible window with the added tests ---------- */}
         <SectionCard title="🧪 Experiments in this project" open={openSections.expWindow} onToggle={() => toggleSection('expWindow')}
-                     badge={<span className="text-[10px] font-bold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">{(project.experiments || []).length}</span>}>
+                     badge={<span className="text-[10px] font-bold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">{experimentsGrouped(project.experiments, tests).length}</span>}>
           {(project.experiments || []).length === 0 ? (
             <div className="text-xs italic text-slate-400 bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-6 text-center">
               No experiments yet — click a test type above to add the first one. Its button will appear here as a link
@@ -1480,10 +1502,17 @@ export const ProjectDetailModule = ({
             </div>
           ) : (
             <div className="flex flex-col gap-1.5">
-              {(project.experiments || []).map((exp) => {
-                const test = tests.find((t) => t.id === exp.testId);
+              {experimentsGrouped(project.experiments, tests).map((group) => {
+                const exp = group.entries[0];
+                const test = exp.testId ? tests.find((t) => t.id === exp.testId) : null;
+                const allIncluded = group.entries.every((e) => e.includeInDocument);
+                const starCount = group.entries.reduce((s, e) => {
+                  const t = e.testId ? tests.find((x) => x.id === e.testId) : null;
+                  return s + (t ? getStarredItems(t).length : 0);
+                }, 0);
+                const condCount = group.entries.length;
                 return (
-                  <div key={exp.id}
+                  <div key={group.entries.map((e) => e.id).join('|')}
                        className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-lg p-2 hover:border-blue-300 hover:shadow-sm transition-shadow">
                     <button onClick={() => openTest(exp.testId)}
                             className="flex items-center gap-2 min-w-0 text-left">
@@ -1491,21 +1520,27 @@ export const ProjectDetailModule = ({
                         {exp.label}
                       </span>
                       <span className="text-xs font-bold text-slate-700 truncate">
-                        {test?.name || 'Test'}{test ? ` · ${effectiveInstanceName(test, tests)}` : ''}
+                        {test?.name || group.name || 'Test'}
                       </span>
+                      {condCount > 1 && (
+                        <span className="text-[10px] font-semibold text-slate-400 whitespace-nowrap"
+                              title={`${condCount} condition instance(s) of this experiment`}>
+                          ({condCount} conditions)
+                        </span>
+                      )}
                       <span className="text-[10px] text-slate-400 hidden md:inline">📅 {test?.date || '—'}</span>
                     </button>
                     {canModify && (
                       <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 cursor-pointer"
                              title="Include this test in the exported project document (its ⭐-starred figures, plots and tables)">
-                        <input type="checkbox" checked={!!exp.includeInDocument} onChange={() => toggleInclude(exp.id)}
+                        <input type="checkbox" checked={allIncluded} onChange={() => toggleIncludeGroup(group)}
                                className="w-3.5 h-3.5 accent-blue-600" />
                         Include
                       </label>
                     )}
                     <span className="text-[10px] font-bold text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 whitespace-nowrap"
-                          title="Items ⭐-starred on the test page that will be imported into the document">
-                      ⭐ {getStarredItems(test).length}
+                          title="Items ⭐-starred on the test pages that will be imported into the document">
+                      ⭐ {starCount}
                     </span>
                     {canModify && (
                       <button onClick={() => removeExperiment(exp.id)}

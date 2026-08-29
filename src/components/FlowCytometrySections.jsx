@@ -3,7 +3,7 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
 import { uploadLocalFile, withExtension, getDriveToken } from '../utils/driveUpload';
-import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LineChart, Line, ReferenceArea} from 'recharts';
+import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LineChart, Line, ComposedChart, Area, ReferenceArea} from 'recharts';
 import { ChartControlBar, SharedChartStylePanel } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES, seriesColorFor } from '../utils/chartStyle';
@@ -13,6 +13,31 @@ const COLORS = VIS_PALETTES.default;
 const DEFAULT_CHART_STYLE = { height: 380, aspect: 1.8, fontSize: 12, tickStep: '', tickAngle: 0, ptStyle: 'circle', ptSize: 5, lineStyle: 'solid', lineThickness: 2, legend: 'top', colors: {}, barRadius: 3, xMin: '', xMax: '', yMin: '', yMax: '', xAxisLabel: '', yAxisLabel: '' };
 // FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES now live in ../utils/chartStyle.
 // CollapsibleSection now lives in ./ui (single shared definition).
+
+// Gaussian smoothing of a histogram/curve. `sigma` is in bins; returns a new
+// array of the same length (boundaries are handled by re-normalising the
+// truncated kernel).
+const gaussSmooth = (arr, sigma = 2) => {
+  const s = Math.max(0.3, Number(sigma) || 2);
+  const radius = Math.ceil(s * 3);
+  let kernel = [];
+  let ksum = 0;
+  for (let d = -radius; d <= radius; d++) {
+    const k = Math.exp(-(d * d) / (2 * s * s));
+    kernel.push(k);
+    ksum += k;
+  }
+  kernel = kernel.map((k) => k / ksum);
+  const n = arr.length;
+  return arr.map((_, i) => {
+    let acc = 0;
+    for (let d = -radius; d <= radius; d++) {
+      const j = i + d;
+      if (j >= 0 && j < n) acc += arr[j] * kernel[d + radius];
+    }
+    return acc;
+  });
+};
 
 // Resolve the colour of an FCS overlay series through the shared palette system:
 //   per-series overrides (style-panel colors + the page's own palette presets)
@@ -588,6 +613,35 @@ export const FCSOverlayVisualization = ({ ctx }) => {
 
   const [overlayParam, setOverlayParam] = useState('');
   const [logScale, setLogScale] = useState(false);
+  // When ON, each curve is drawn in its OWN small chart, stacked vertically in
+  // a tall panel on the right of the superposed overlay.
+  const [splitStack, setSplitStack] = useState(!!vizCfgAna.splitStack);
+  const toggleSplitStack = () => {
+    setSplitStack((v) => {
+      const nv = !v;
+      setVizCfgAna({ splitStack: nv });
+      return nv;
+    });
+  };
+  // Histogram cosmetics: superimpose a smoothed line and/or fill the area
+  // under the curve (per peak) with the series colour.
+  const [smoothHist, setSmoothHist] = useState(!!vizCfgAna.smoothHist);
+  const [fillHist, setFillHist] = useState(!!vizCfgAna.fillHist);
+  const [smoothSigma, setSmoothSigma] = useState(Number(vizCfgAna.smoothSigma) || 2);
+  const toggleSmooth = () => {
+    setSmoothHist((v) => {
+      const nv = !v;
+      setVizCfgAna({ smoothHist: nv });
+      return nv;
+    });
+  };
+  const toggleFill = () => {
+    setFillHist((v) => {
+      const nv = !v;
+      setVizCfgAna({ fillHist: nv });
+      return nv;
+    });
+  };
 
   useEffect(() => {
     if (rawSharedParams.length > 0 && !rawSharedParams.find(p => p.name.toUpperCase() === overlayParam)) {
@@ -628,10 +682,16 @@ export const FCSOverlayVisualization = ({ ctx }) => {
         if (bIdx < 0) bIdx = 0;
         bins[bIdx][series.id]++;
       }
+      // Smoothed version of the histogram (superimposed line / filled area).
+      if (smoothHist || fillHist) {
+        const counts = bins.map(b => b[series.id]);
+        const sm = gaussSmooth(counts, smoothSigma);
+        bins.forEach((b, i) => { b[series.id + '_sm'] = sm[i]; });
+      }
     });
 
     return { bins, domain: [globalMin, globalMax] };
-  }, [overlayParam, visibleInstances, logScale]);
+  }, [overlayParam, visibleInstances, logScale, smoothHist, fillHist, smoothSigma]);
 
   const chartRef = useRef(null);
   const zoom = useXZoom(chartRef, chartData.domain);
@@ -691,6 +751,23 @@ export const FCSOverlayVisualization = ({ ctx }) => {
             <label className="flex items-center gap-1 text-xs font-bold text-slate-700 cursor-pointer mr-2">
               <input type="checkbox" checked={logScale} onChange={e => setLogScale(e.target.checked)} className="w-3.5 h-3.5 accent-blue-600" /> Log
             </label>
+            <label className="flex items-center gap-1 text-xs font-bold text-slate-700 cursor-pointer mr-2"
+                   title="Split the superposed curves into separate graphs, stacked vertically on the right">
+              <input type="checkbox" checked={splitStack} onChange={toggleSplitStack} className="w-3.5 h-3.5 accent-blue-600" /> Split
+            </label>
+            <label className="flex items-center gap-1 text-xs font-bold text-slate-700 cursor-pointer mr-1"
+                   title="Superimpose a Gaussian-smoothed line over each histogram">
+              <input type="checkbox" checked={smoothHist} onChange={toggleSmooth} className="w-3.5 h-3.5 accent-blue-600" /> Smooth
+            </label>
+            {smoothHist && (
+              <input type="number" min="0.5" max="6" step="0.5" value={smoothSigma}
+                     onChange={(e) => { const v = parseFloat(e.target.value); setSmoothSigma(v || 2); setVizCfgAna({ smoothSigma: v || 2 }); }}
+                     title="Smoothing strength (σ, in bins)" className="w-14 border border-slate-300 rounded px-1 py-0.5 text-[11px] bg-white outline-none focus:border-blue-500" />
+            )}
+            <label className="flex items-center gap-1 text-xs font-bold text-slate-700 cursor-pointer mr-2"
+                   title="Colour the area under each curve / peak with the series colour">
+              <input type="checkbox" checked={fillHist} onChange={toggleFill} className="w-3.5 h-3.5 accent-blue-600" /> Fill
+            </label>
             <ChartControlBar showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)} />
             <button type="button" onClick={() => setFs(!fs)} className="font-bold py-1 px-2 rounded-lg text-[10px] border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 shadow-sm">{fs ? '↙️ Exit' : '↗️ Fullscreen'}</button>
           </div>
@@ -698,18 +775,55 @@ export const FCSOverlayVisualization = ({ ctx }) => {
         
         {showCfg && <SharedChartStylePanel cfg={cfgAna} setCfg={setVizCfgAna} series={visibleInstances.map(s => ({ key: s.id, label: s.name, color: s.color }))} unit="a.u." />}
         
-        <div ref={chartRef} onMouseDown={zoom.onMouseDown} className={`bg-slate-50 rounded border border-slate-200 p-2 select-none relative overflow-hidden cursor-crosshair ${fs ? 'flex-1 min-h-0' : 'h-[300px]'}`}>
-          {zoom.isZoomed && <button type="button" onClick={zoom.reset} className="absolute top-2 right-2 z-10 text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData.bins} margin={{ top: 10, right: 20, left: 75, bottom: 45 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="x" type="number" domain={zoom.domain} allowDataOverflow tickFormatter={(v) => v.toFixed(logScale ? 1 : 0)} tick={{ fontSize: Math.max(9, cfgAna.fontSize - 2) }} label={{ value: `${label1D}${logScale ? ' (Log)' : ''}`, position: 'insideBottom', offset: -10, fontSize: cfgAna.fontSize }} />
-              <YAxis tick={{ fontSize: Math.max(9, cfgAna.fontSize - 2) }} label={{ value: 'Count', angle: -90, position: 'insideLeft', offset: -5, fontSize: cfgAna.fontSize }} />
-              <Tooltip labelFormatter={(label) => `Value: ${Number(label).toFixed(logScale ? 2 : 0)}`} formatter={(value) => [value, 'Events']} />
-              {visibleInstances.map(s => <Line key={s.id} type="monotone" dataKey={s.id} name={s.name} stroke={s.color} strokeWidth={cfgAna.lineThickness || 2} dot={false} isAnimationActive={false} />)}
-              {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
-            </LineChart>
-          </ResponsiveContainer>
+        <div className={`${fs ? 'flex-1 min-h-0' : ''} ${splitStack ? 'flex flex-col lg:flex-row gap-3' : ''}`}>
+          <div ref={chartRef} onMouseDown={zoom.onMouseDown} className={`bg-slate-50 rounded border border-slate-200 p-2 select-none relative overflow-hidden cursor-crosshair min-w-0 ${fs ? 'flex-1 min-h-0' : splitStack ? 'lg:w-[54%] h-[300px]' : 'w-full h-[300px]'}`}>
+            {zoom.isZoomed && <button type="button" onClick={zoom.reset} className="absolute top-2 right-2 z-10 text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={chartData.bins} margin={{ top: 10, right: 20, left: 75, bottom: 45 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis dataKey="x" type="number" domain={zoom.domain} allowDataOverflow tickFormatter={(v) => v.toFixed(logScale ? 1 : 0)} tick={{ fontSize: Math.max(9, cfgAna.fontSize - 2) }} label={{ value: `${label1D}${logScale ? ' (Log)' : ''}`, position: 'insideBottom', offset: -10, fontSize: cfgAna.fontSize }} />
+                <YAxis tick={{ fontSize: Math.max(9, cfgAna.fontSize - 2) }} label={{ value: 'Count', angle: -90, position: 'insideLeft', offset: -5, fontSize: cfgAna.fontSize }} />
+                <Tooltip labelFormatter={(label) => `Value: ${Number(label).toFixed(logScale ? 2 : 0)}`} formatter={(value) => [value, 'Events']} />
+                {visibleInstances.map(s => (
+                  <React.Fragment key={s.id}>
+                    {fillHist && <Area type="monotone" dataKey={smoothHist ? s.id + '_sm' : s.id} name={s.name} stroke="none" fill={s.color} fillOpacity={0.3} isAnimationActive={false} />}
+                    <Line type="monotone" dataKey={s.id} name={s.name} stroke={s.color} strokeWidth={smoothHist ? Math.max(1, (cfgAna.lineThickness || 2) - 1) : (cfgAna.lineThickness || 2)} strokeOpacity={smoothHist ? 0.45 : 1} dot={false} isAnimationActive={false} />
+                    {smoothHist && <Line type="monotone" dataKey={s.id + '_sm'} name={`${s.name} (smooth)`} stroke={s.color} strokeWidth={cfgAna.lineThickness || 2} dot={false} isAnimationActive={false} />}
+                  </React.Fragment>
+                ))}
+                {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+
+          {splitStack && (
+            <div className={`bg-white rounded border border-slate-200 flex flex-col overflow-hidden ${fs ? 'w-[46%] min-h-0' : 'w-full lg:w-[46%] max-h-[560px]'}`}>
+              <div className="shrink-0 px-2.5 py-1.5 bg-slate-100 border-b border-slate-200 text-[10px] font-black uppercase tracking-wide text-slate-500 flex items-center justify-between gap-2">
+                <span>📚 Split view — single curves</span>
+                <span className="text-slate-400">{visibleInstances.length} {visibleInstances.length === 1 ? 'curve' : 'curves'}</span>
+              </div>
+              <div className="overflow-y-auto custom-scrollbar flex-1">
+                {visibleInstances.map((s, i) => (
+                  <div key={s.id} className="border-b border-slate-100 last:border-b-0">
+                    <div className="px-2.5 pt-1.5 pb-0.5 text-[10px] font-bold truncate flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: s.color }} />
+                      <span className="text-slate-700 truncate">{s.name}</span>
+                    </div>
+                    <ResponsiveContainer width="100%" height={86}>
+                      <ComposedChart data={chartData.bins} margin={{ top: 2, right: 8, left: 0, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                        <XAxis dataKey="x" type="number" domain={zoom.domain} allowDataOverflow hide={i < visibleInstances.length - 1} tick={{ fontSize: 8, fill: '#94a3b8' }} />
+                        <YAxis tick={{ fontSize: 8, fill: '#94a3b8' }} width={34} />
+                        {fillHist && <Area type="monotone" dataKey={smoothHist ? s.id + '_sm' : s.id} name={s.name} stroke="none" fill={s.color} fillOpacity={0.3} isAnimationActive={false} />}
+                        <Line type="monotone" dataKey={s.id} name={s.name} stroke={s.color} strokeWidth={smoothHist ? 1 : (cfgAna.lineThickness || 2)} strokeOpacity={smoothHist ? 0.5 : 1} dot={false} isAnimationActive={false} />
+                        {smoothHist && <Line type="monotone" dataKey={s.id + '_sm'} name={`${s.name} (smooth)`} stroke={s.color} strokeWidth={cfgAna.lineThickness || 2} dot={false} isAnimationActive={false} />}
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </>

@@ -11,6 +11,17 @@ import { NOTEBOOK_ANALYSIS_PREVIEWS, RemovablePanel, ChunkedTable, NMRSpectraPre
 /* ============================================================================
    NOTEBOOK TEST ITEM
 ========================================================================== */
+// Append the unit to a numeric condition value when available. `fallback` is
+// used only for legacy data that predates the unit fields. If the value
+// already contains the unit string, it is left untouched.
+const fmtVal = (value, unit, fallback = '') => {
+  const v = String(value ?? '');
+  if (!v) return '';
+  const u = String(unit || fallback || '').trim();
+  if (!u) return v;
+  return v.includes(u) ? v : `${v} ${u}`;
+};
+
 export const NotebookTestItem = ({
   test, tests, jumpToTest,
   showConditions, showMolecularFormula, showInstrumental, showReport, showImages,
@@ -170,13 +181,13 @@ export const NotebookTestItem = ({
 
         <RemovablePanel title="Experimental Conditions" visible={showCondLocal} setVisible={setShowCondLocal}>
           <div className="flex flex-wrap gap-2">
-            {localTest.concentration && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Conc: {localTest.concentration}</span>}
+            {localTest.concentration && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Conc: {fmtVal(localTest.concentration, localTest.concentrationUnit, 'µM')}</span>}
             {(localTest.solvent || localTest.solventName) && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Solvent: {localTest.solvent || localTest.solventName}</span>}
             {(localTest.buffer || localTest.bufferName) && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Buffer: {localTest.buffer || localTest.bufferName}</span>}
-            {(localTest.additive || localTest.additiveName) && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Additive: {localTest.additive || localTest.additiveName} {localTest.additiveConc} {localTest.additiveUnit}</span>}
-            {localTest.temperature && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">T: {localTest.temperature}</span>}
+            {(localTest.additive || localTest.additiveName) && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Additive: {localTest.additive || localTest.additiveName} {fmtVal(localTest.additiveConc, localTest.additiveUnit)}</span>}
+            {localTest.temperature && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">T: {fmtVal(localTest.temperature, localTest.temperatureUnit, '°C')}</span>}
             {localTest.ph && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">pH: {localTest.ph}</span>}
-            {localTest.saltConcentration && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Salt: {localTest.saltConcentration}</span>}
+            {localTest.saltConcentration && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Salt: {fmtVal(localTest.saltConcentration, localTest.saltConcentrationUnit, 'mM')}</span>}
             {localTest.otherMolecule && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Ligand: {localTest.otherMolecule}</span>}
             {localTest.ratio && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Ratio: {localTest.ratio}</span>}
             
@@ -195,14 +206,14 @@ export const NotebookTestItem = ({
             {/* Protein Expression specific fields */}
             {isProteinExp && (
               <>
-                {localTest.cultureVolume && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Culture: {localTest.cultureVolume}</span>}
+                {localTest.cultureVolume && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Culture: {fmtVal(localTest.cultureVolume, localTest.cultureVolumeUnit, 'mL')}</span>}
                 {localTest.medium && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Medium: {localTest.medium}</span>}
-                {localTest.antibiotic && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Antibiotic: {localTest.antibiotic}</span>}
+                {localTest.antibiotic && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Antibiotic: {fmtVal(localTest.antibiotic, localTest.antibioticUnit, 'µg/mL')}</span>}
                 {localTest.inductionMethod && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Induction: {localTest.inductionMethod}</span>}
-                {localTest.iptgConcentration && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">IPTG: {localTest.iptgConcentration}</span>}
+                {localTest.iptgConcentration && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">IPTG: {fmtVal(localTest.iptgConcentration, localTest.iptgConcentrationUnit, 'mM')}</span>}
                 {localTest.inductionOD && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Ind. OD: {localTest.inductionOD}</span>}
-                {localTest.inductionTemp && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Ind. Temp: {localTest.inductionTemp}</span>}
-                {localTest.inductionDuration && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Ind. Duration: {localTest.inductionDuration}</span>}
+                {localTest.inductionTemp && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Ind. Temp: {fmtVal(localTest.inductionTemp, localTest.inductionTempUnit, '°C')}</span>}
+                {localTest.inductionDuration && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Ind. Duration: {fmtVal(localTest.inductionDuration, localTest.inductionDurationUnit, 'h')}</span>}
                 {localTest.harvestOD && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Harvest OD: {localTest.harvestOD}</span>}
                 {localTest.lysisMethod && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Lysis: {localTest.lysisMethod}</span>}
                 {localTest.lysisBuffer && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Lysis Buf: {localTest.lysisBuffer}</span>}
@@ -243,7 +254,7 @@ export const NotebookTestItem = ({
             {(localTest.spectrometer || localTest.instrument || localTest.nmrInstrument) && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Instrument: {localTest.spectrometer || localTest.instrument || localTest.nmrInstrument}</span>}
             {(localTest.probe || localTest.nmrProbe) && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Probe: {localTest.probe || localTest.nmrProbe}</span>}
             {(localTest.pulseSequence || localTest.experiment || localTest.nmrExperiment) && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Pulse Seq: {localTest.pulseSequence || localTest.experiment || localTest.nmrExperiment}</span>}
-            {localTest.pathLength && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Path Length: {localTest.pathLength}</span>}
+            {localTest.pathLength && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Path Length: {fmtVal(localTest.pathLength, localTest.pathLengthUnit, 'cm')}</span>}
             
             {/* Flow Cytometry specific fields */}
             {isFlow && (
