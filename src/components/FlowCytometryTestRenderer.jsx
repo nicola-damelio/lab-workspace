@@ -2,7 +2,7 @@
 import React from 'react';
 import TestShellRenderer from './TestShellRenderer';
 import { FLOW_CYTOMETRY_TAB_CONFIG } from './tabConfigs';
-import { All, InstrumentalSetup, NotebookExtra } from './FlowCytometrySections';
+import { All, InstrumentalSetup, ExperimentalSetup, NotebookExtra } from './FlowCytometrySections';
 
 export const FlowCytometryTestRenderer = (props) => {
   const appCategories =
@@ -22,6 +22,7 @@ export const FlowCytometryTestRenderer = (props) => {
       custom={{
         All: All,
         InstrumentalSetup: InstrumentalSetup,
+        ExperimentalSetup: ExperimentalSetup,
         buildNotebookHtml: (checked, ctx) => {
           let html = '';
           if (checked.cond) html += NotebookExtra({ ctx, checkId: 'cond' });

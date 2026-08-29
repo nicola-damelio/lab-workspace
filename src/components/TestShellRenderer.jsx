@@ -1259,6 +1259,8 @@ const details = [
 
   const InstrumentalSetupSection = custom.InstrumentalSetup || null;
 
+  const ExperimentalSetupSection = custom.ExperimentalSetup || null;
+
   const DataSection = config.DataSection || custom.Data || null;
 
   const DataAnalysisSection =
@@ -1757,6 +1759,12 @@ const details = [
               )}
             </div>
           </CollapsibleSection>
+
+          {!mandatoryBlocked && ExperimentalSetupSection && (
+            <CollapsibleSection title="Experimental Setup" icon="🧪" defaultOpen={false}>
+              <ExperimentalSetupSection ctx={ctx} />
+            </CollapsibleSection>
+          )}
 
           {otherSubsectionCustomFields.map((group) => (
             <CollapsibleSection

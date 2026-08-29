@@ -1,12 +1,12 @@
 // components/FlowCytometrySections.jsx
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
 import { uploadLocalFile, withExtension, getDriveToken, getDriveFileRegistry, driveFetch } from '../utils/driveUpload';
 import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Line, ComposedChart, Area, ReferenceArea} from 'recharts';
 import { ChartControlBar, SharedChartStylePanel, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES, seriesColorFor } from '../utils/chartStyle';
+import { PLATES_DEF } from '../data/constants';
 export { VIS_PALETTES };
 
 const COLORS = VIS_PALETTES.default;
@@ -1098,6 +1098,35 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
     }
   };
 
+  // Apply the ACTIVE instance's exact settings to every other instance of the
+  // experiment: chart styles (characters, ranges, log…), the automatic
+  // treatment (singlets / debris / manual filters), the 2D zoom, parameter
+  // renames, the staining panel and the hidden-series map.
+  const copySettingsToAllInstances = () => {
+    if (typeof ctx.setTests !== 'function') return;
+    const others = instances.filter(i => i.id !== activeTest.id && !i.extra);
+    if (others.length === 0) { alert('There are no other instances to copy the settings to.'); return; }
+    if (!window.confirm(`Apply the current settings to ${others.length} other instance(s)?`)) return;
+    const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
+    const patch = {
+      vizCfgAnalysis: clone(activeTest.vizCfgAnalysis),
+      vizCfg1D: clone(activeTest.vizCfg1D),
+      vizCfg2D: clone(activeTest.vizCfg2D),
+      vizCfgFreq: clone(activeTest.vizCfgFreq),
+      vizCfgSplit: clone(activeTest.vizCfgSplit),
+      fcAutoGates: clone(activeTest.fcAutoGates),
+      paramRenames: clone(activeTest.paramRenames),
+      fcPanel: clone(activeTest.fcPanel),
+      hiddenSeries: clone(activeTest.hiddenSeries),
+      fcZoom2D: clone(activeTest.fcZoom2D)
+    };
+    ctx.setTests(prev => prev.map(t =>
+      (t.id !== activeTest.id && t.name === activeTest.name && t.name.trim() !== '')
+        ? { ...t, ...patch }
+        : t
+    ));
+  };
+
   // Graphical Parameters' "Log X" is the SAME control as the native "Log"
   // checkbox of the 1D histogram (the histogram pre-transforms channel values
   // with log10), so the panel command is mirrored onto the local toggle.
@@ -1118,10 +1147,21 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
     }
   }, [rawSharedParams, overlayParam1D, xParam2D, yParam2D]);
 
+  // The saved 2D zoom (stable object reference) that matches the current
+  // axes/log settings — restored on open/param change and copied to instances.
+  const savedZoom2D =
+    activeTest.fcZoom2D &&
+    activeTest.fcZoom2D.xParam === xParam2D &&
+    activeTest.fcZoom2D.yParam === yParam2D &&
+    !!activeTest.fcZoom2D.logX === logX2D &&
+    !!activeTest.fcZoom2D.logY === logY2D
+      ? activeTest.fcZoom2D
+      : null;
+
   useEffect(() => {
-    setXDomain2D(null);
-    setYDomain2D(null);
-  }, [xParam2D, yParam2D, logX2D, logY2D]);
+    setXDomain2D(savedZoom2D ? savedZoom2D.x : null);
+    setYDomain2D(savedZoom2D ? savedZoom2D.y : null);
+  }, [xParam2D, yParam2D, logX2D, logY2D, savedZoom2D]);
 
   const chartData1D = useMemo(() => {
     if (!overlayParam1D || !visibleInstances.length) return { bins: [], domain: [0, 1] };
@@ -1257,6 +1297,14 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
                     className={`text-sm font-bold px-3 py-1.5 rounded-lg shadow-sm hover:bg-slate-50 border whitespace-nowrap ${showAutoGates ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white border-slate-300 text-slate-700'}`}
                     title="Automatic treatment: singlets, debris exclusion and a manual channel filter">
               🤖 Auto treatment
+            </button>
+            <button
+              type="button"
+              onClick={copySettingsToAllInstances}
+              title="Apply this instance's exact settings to every other instance: chart styles (characters, ranges, log), automatic filters, 2D zoom, parameter renames, panel, colors"
+              className="text-sm font-bold bg-white border border-slate-300 px-3 py-1.5 rounded-lg shadow-sm hover:bg-slate-50 whitespace-nowrap"
+            >
+              📋 Copy settings to all
             </button>
           </div>
         </div>
@@ -1471,7 +1519,7 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
                   <button onClick={() => setInteractionMode('zoom')} className={`text-xs font-bold px-3 py-1 rounded shadow-sm transition-colors ${interactionMode === 'zoom' ? 'bg-blue-600 text-white' : 'bg-white border border-slate-300 text-slate-600 hover:bg-slate-100'}`}>🔍 Zoom</button>
               </div>
               {xDomain2D && yDomain2D && (
-                  <button onClick={() => { setXDomain2D(null); setYDomain2D(null); }} className="text-[10px] font-bold bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded shadow-sm">Reset Zoom</button>
+                  <button onClick={() => { setXDomain2D(null); setYDomain2D(null); updateActiveTest({ fcZoom2D: undefined }); }} className="text-[10px] font-bold bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded shadow-sm">Reset Zoom</button>
               )}
             </div>
 
@@ -1491,7 +1539,11 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
                interactionMode={interactionMode}
                xDomain={xDomain2D || (autoDomain2D && autoDomain2D.x) || undefined}
                yDomain={yDomain2D || (autoDomain2D && autoDomain2D.y) || undefined}
-               onZoom={({ xDomain, yDomain }) => { setXDomain2D(xDomain); setYDomain2D(yDomain); }}
+               onZoom={({ xDomain, yDomain }) => {
+                 setXDomain2D(xDomain);
+                 setYDomain2D(yDomain);
+                 updateActiveTest({ fcZoom2D: { x: xDomain, y: yDomain, xParam: xParam2D, yParam: yParam2D, logX: logX2D, logY: logY2D } });
+               }}
             />
           </div>
         </>
@@ -1547,6 +1599,152 @@ export const InstrumentalSetup = ({ ctx }) => {
     </div>
   );
 };
+// =========================================================================
+// EXPERIMENTAL SETUP — plate structure definition (simplified version of the
+// plate page: no intensities/regions, only the layout). Shows the interactive
+// well table and the plate map side by side. Stored in activeTest.fcPlate
+// { plateType, grid } where grid is rows x cols of well labels.
+// =========================================================================
+const FLOW_PLATE_OPTIONS = [
+  { value: '96', label: '96-well Plate' },
+  { value: '48', label: '48-well Plate' },
+  { value: '24', label: '24-well Plate' },
+  { value: '12', label: '12-well Plate' },
+  { value: '6', label: '6-well Plate' },
+  { value: '1', label: '1 Petri Dish' }
+];
+const PLATE_ROWS_LETTERS = 'ABCDEFGHIJKL'.split('');
+
+export const ExperimentalSetup = ({ ctx }) => {
+  const { activeTest = {}, updateActiveTest } = ctx || {};
+  const update = (u) => { if (updateActiveTest) updateActiveTest(u); };
+
+  const fcPlate = activeTest.fcPlate || {};
+  const plateType = PLATES_DEF[fcPlate.plateType] ? fcPlate.plateType : '96';
+  const dim = PLATES_DEF[plateType] || PLATES_DEF['96'];
+  const rawGrid = Array.isArray(fcPlate.grid) ? fcPlate.grid : [];
+  const grid = Array.from({ length: dim.rows }, (_, r) => {
+    const row = rawGrid[r];
+    return Array.isArray(row) && row.length === dim.cols ? row.map((v) => String(v ?? '')) : Array(dim.cols).fill('');
+  });
+  const ROWS = PLATE_ROWS_LETTERS.slice(0, dim.rows);
+  const COLS = Array.from({ length: dim.cols }, (_, i) => i + 1);
+
+  const setPlate = (patch) => update({ fcPlate: { ...fcPlate, ...patch } });
+
+  const changeFormat = (newType) => {
+    const nd = PLATES_DEF[newType] || PLATES_DEF['96'];
+    const nGrid = Array.from({ length: nd.rows }, (_, r) =>
+      Array.from({ length: nd.cols }, (_, c) => (grid[r] && grid[r][c]) || '')
+    );
+    setPlate({ plateType: newType, grid: nGrid });
+  };
+
+  const setCell = (r, c, val) => {
+    const nGrid = grid.map((row) => [...row]);
+    nGrid[r][c] = val;
+    setPlate({ grid: nGrid });
+  };
+
+  const clearPlate = () => setPlate({ grid: Array.from({ length: dim.rows }, () => Array(dim.cols).fill('')) });
+  const wellCount = grid.flat().filter((v) => String(v || '').trim() !== '').length;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-end gap-3">
+        <div>
+          <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Plate Format</label>
+          <select
+            value={plateType}
+            onChange={(e) => changeFormat(e.target.value)}
+            className="border border-blue-300 text-blue-700 font-bold rounded-lg p-1.5 w-36 text-xs bg-blue-50 cursor-pointer outline-none"
+          >
+            {FLOW_PLATE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </div>
+        <span className="text-xs text-slate-500 font-bold pb-1.5">{dim.rows} x {dim.cols} wells - {wellCount} assigned</span>
+        <button
+          type="button"
+          onClick={clearPlate}
+          className="text-xs font-bold bg-white border border-slate-300 px-3 py-1.5 rounded-lg shadow-sm hover:bg-slate-50 whitespace-nowrap"
+        >
+          Clear plate
+        </button>
+      </div>
+
+
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+        {/* Interactive well table (structure only — no intensities/regions) */}
+        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm min-w-0">
+          <h4 className="text-xs font-bold text-slate-700 uppercase mb-2">Interactive Table</h4>
+          <div className="overflow-x-auto custom-scrollbar">
+            <table className="text-[11px] text-center border-separate" style={{ borderSpacing: 2 }}>
+              <thead>
+                <tr>
+                  <th className="w-5" />
+                  {COLS.map((c) => <th key={c} className="text-slate-500 font-bold px-0.5">{c}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {ROWS.map((rLetter, r) => (
+                  <tr key={rLetter}>
+                    <th className="text-slate-500 font-bold pr-1">{rLetter}</th>
+                    {COLS.map((c) => (
+                      <td key={c} className="p-0">
+                        <input
+                          type="text"
+                          value={grid[r][c - 1]}
+                          onChange={(e) => setCell(r, c - 1, e.target.value)}
+                          placeholder="-"
+                          title={`${rLetter}${c}`}
+                          className="w-14 border border-slate-200 rounded px-1 py-1 text-center text-[11px] outline-none focus:border-blue-400 focus:bg-blue-50 bg-white"
+                        />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-[10px] text-slate-400 mt-2">
+            Type a label for each well to define the plate structure (no intensities or regions).
+          </p>
+        </div>
+
+        {/* Visual plate map */}
+        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm min-w-0">
+          <h4 className="text-xs font-bold text-slate-700 uppercase mb-2">Plate Map</h4>
+          <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 overflow-x-auto">
+            <div className="flex flex-col gap-1 min-w-max">
+              <div className="flex gap-1 mb-0.5 pl-6">
+                {COLS.map((c) => <div key={c} className="w-10 text-center text-[9px] font-bold text-slate-500">{c}</div>)}
+              </div>
+              {ROWS.map((rLetter, r) => (
+                <div key={rLetter} className="flex gap-1 items-center">
+                  <div className="w-5 text-[9px] font-bold text-slate-500 text-right pr-1">{rLetter}</div>
+                  {COLS.map((c) => {
+                    const label = String(grid[r][c - 1] || '').trim();
+                    return (
+                      <div
+                        key={c}
+                        title={`${rLetter}${c}: ${label || 'empty'}`}
+                        className={`w-10 h-9 rounded-md border flex items-center justify-center text-[8px] font-bold leading-tight px-0.5 text-center transition-colors ${label ? 'bg-blue-500 text-white border-blue-600' : 'bg-white text-slate-400 border-slate-200'}`}
+                      >
+                        {label || '.'}
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 
 // =========================================================================
 // GLOBAL CACHE (Ties loaded files to their specific condition tab)
@@ -1664,11 +1862,9 @@ export const Data = ({ ctx }) => {
   const persistedFcsWasTooLarge = !globalFcsCache[t.id] && (
     t.fcParsed === null || (t.fcExtraFiles || []).some((f) => f && f.data === null)
   );
-  // Offer the Drive fallback whenever the cache is empty but the test has
-  // previously-uploaded flow data and Google Drive is connected.
-  const showRestoreFromDrive = !globalFcsCache[t.id] && getDriveToken() && (
-    t.fcParsed !== undefined || (t.fcExtraFiles || []).length > 0
-  );
+  // "Restore from Drive" is the primary recall action (upload is archived
+  // automatically): show it whenever Google Drive is connected.
+  const showRestoreFromDrive = getDriveToken();
 
   const panel = Array.isArray(t.fcPanel) ? t.fcPanel : [];
   const updatePanel = (newPanel) => updateActiveTest({ fcPanel: newPanel });
@@ -1692,10 +1888,10 @@ export const Data = ({ ctx }) => {
 
   const [updater, setUpdater] = useState(0);
   const [fcsMsg, setFcsMsg] = useState('');
-  // When several .fcs files are uploaded: 'separate' creates one condition
-  // (instance) per file (default, current behaviour); 'same' loads them all
-  // into the current instance as extra spectra.
-  const [fcsMultiMode, setFcsMultiMode] = useState('separate');
+  // When several .fcs files are uploaded: 'same' (default) loads them all into
+  // the current instance as extra spectra; 'separate' creates one condition
+  // (instance) per file.
+  const [fcsMultiMode, setFcsMultiMode] = useState('same');
 
   const handleFCSUpload = async (e) => {
     const files = Array.from(e.target.files);
@@ -1949,34 +2145,12 @@ export const Data = ({ ctx }) => {
               <option value="same">Multiple files → same instance</option>
             </select>
             {fcsMsg && <span className="text-xs font-bold text-indigo-900">{fcsMsg}</span>}
-            <DriveUploadButton
-              suggestedName={suggestDriveFileName({
-                project: (activeTest.projectNames || [])[0] || '',
-                test: activeTest.name || '',
-                instance: activeTest.instanceName || '',
-                section: 'Data',
-                subsection: 'Flow Cytometry',
-                suffix: 'fcs'
-              })}
-              naming={{
-                project: (activeTest.projectNames || [])[0] || '',
-                test: activeTest.name || '',
-                instance: activeTest.instanceName || '',
-                scientist: activeTest.operator || '',
-                section: 'Data',
-                subsection: 'Flow Cytometry',
-                suffix: 'fcs'
-              }}
-              accept=".fcs"
-              label="⬆ Archive FCS to Drive"
-              className="bg-indigo-50 text-indigo-800 border border-indigo-200 hover:bg-indigo-100"
-            />
             {showRestoreFromDrive && (
               <button
                 type="button"
                 onClick={handleRestoreFromDrive}
                 disabled={restoringFromDrive}
-                title="Scarica e ri-parse i file .fcs archiviati su Google Drive"
+                title="Scarica e ri-parse i file .fcs archiviati su Google Drive (il salvataggio è automatico all'upload)"
                 className="bg-indigo-50 text-indigo-800 border border-indigo-200 hover:bg-indigo-100 font-bold px-3 py-2 rounded-lg text-xs shadow-sm transition-colors disabled:opacity-50"
               >
                 {restoringFromDrive ? '⬇️ Download…' : '⬇️ Restore from Drive'}
