@@ -2,7 +2,7 @@
 
 
 import { MD_TAB_CONFIG } from './tabConfigs';
-import { seriesColorFor } from '../utils/chartStyle';
+import { seriesColorFor, chartBoxStyle } from '../utils/chartStyle';
 
 /* ============================================================================
    MDData — shared MD building blocks imported by MDSections.jsx
@@ -906,8 +906,8 @@ export const generateTemperatureData = (nFrames, baseTemperature = 300) => {
 // ================= MD CHART STYLE =================
 export const DEFAULT_MD_CHART_STYLE = {
   height: 380,
-  aspect: 1.8,
-  fontSize: 12,
+  aspect: 1,
+  fontSize: 16,
   tickStep: '',
   tickAngle: 0,
   pointStyle: 'circle',
@@ -960,12 +960,7 @@ export const mdDom = (v) => {
   return parseMDValue(v);
 };
 
-export const mdChartBoxStyle = (cfg) => ({
-  width: '100%',
-  aspectRatio: String(cfg.aspect || 1.8),
-  maxHeight: cfg.height || 380,
-  minHeight: 220
-});
+export const mdChartBoxStyle = (cfg, opts) => chartBoxStyle(cfg, opts);
 
 // ================= FITTING ENGINE =================
 export {

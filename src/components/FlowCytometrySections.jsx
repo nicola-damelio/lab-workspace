@@ -10,7 +10,7 @@ import { FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES, seriesColorFor } from '../ut
 export { VIS_PALETTES };
 
 const COLORS = VIS_PALETTES.default;
-const DEFAULT_CHART_STYLE = { height: 380, aspect: 1.8, fontSize: 12, tickStep: '', tickAngle: 0, ptStyle: 'circle', ptSize: 5, lineStyle: 'solid', lineThickness: 2, legend: 'top', colors: {}, barRadius: 3, xMin: '', xMax: '', yMin: '', yMax: '', xAxisLabel: '', yAxisLabel: '' };
+const DEFAULT_CHART_STYLE = { height: 380, aspect: 1, fontSize: 16, tickStep: '', tickAngle: 0, ptStyle: 'circle', ptSize: 5, lineStyle: 'solid', lineThickness: 2, legend: 'top', colors: {}, barRadius: 3, xMin: '', xMax: '', yMin: '', yMax: '', xAxisLabel: '', yAxisLabel: '' };
 // FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES now live in ../utils/chartStyle.
 // CollapsibleSection now lives in ./ui (single shared definition).
 
@@ -306,10 +306,55 @@ const isPointInPoly = (px, py, poly) => {
   return isInside;
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTOMATIC TREATMENT ("🤖 Auto treatment")
+//  1. Singlets  — keep events whose FSC-H differs from FSC-A by ≤ tolerance.
+//  2. Debris    — keep events with FSC-A ≥ minA AND SSC-A ≥ minSSC (inside #1).
+//  3. Manual    — (not automatic) keep events with X ≥ xMin AND Y ≥ yMin on the
+//                 user-chosen channels.
+// All thresholds are user-configurable; comparisons are on raw channel values.
+// ─────────────────────────────────────────────────────────────────────────────
+const DEFAULT_AUTO_GATES = {
+  singlets: { enabled: true, aParam: 'FSC-A', hParam: 'FSC-H', tolerance: 20000 },
+  debris: { enabled: true, aParam: 'FSC-A', sscParam: 'SSC-A', minA: 50000, minSSC: 50000 },
+  manual: { enabled: false, xParam: 'FSC-A', yParam: 'SSC-A', xMin: 0, yMin: 0 }
+};
+
+// Does event `eventIdx` of `fcs` pass all enabled automatic filters?
+const passesAutoGates = (fcs, eventIdx, auto) => {
+  if (!auto) return true;
+  const base = eventIdx * fcs.numParams;
+  const val = (paramName) => {
+    if (!paramName) return null;
+    const idx = fcs.params.findIndex((p) =>
+      (p.name || '').toUpperCase() === paramName || (p.label || '').toUpperCase() === paramName);
+    return idx >= 0 ? fcs.events[base + idx] : null;
+  };
+  const g = auto.singlets;
+  if (g && g.enabled) {
+    const a = val(g.aParam), h = val(g.hParam);
+    if (a === null || h === null) return false;
+    if (Math.abs(h - a) > Number(g.tolerance)) return false;
+  }
+  const d = auto.debris;
+  if (d && d.enabled) {
+    const a = val(d.aParam), ssc = val(d.sscParam);
+    if (a === null || ssc === null) return false;
+    if (a < Number(d.minA) || ssc < Number(d.minSSC)) return false;
+  }
+  const m = auto.manual;
+  if (m && m.enabled) {
+    const x = val(m.xParam), y = val(m.yParam);
+    if (x === null || y === null) return false;
+    if (x < Number(m.xMin) || y < Number(m.yMin)) return false;
+  }
+  return true;
+};
+
 // =========================================================================
 // CANVAS 2D OVERLAY
 // =========================================================================
-const Canvas2DPlotOverlay = ({ series, xParam, yParam, xLabel, yLabel, logX, logY, cfg, fs, gates, onAddGate, interactionMode, xDomain, yDomain, onZoom }) => {
+const Canvas2DPlotOverlay = ({ series, xParam, yParam, xLabel, yLabel, logX, logY, cfg, fs, gates, autoGates, onAddGate, interactionMode, xDomain, yDomain, onZoom }) => {
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
   const mappingRef = useRef(null);
@@ -363,6 +408,7 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, xLabel, yLabel, logX, log
             }
           }
           if (!pass) continue;
+          if (!passesAutoGates(s.fcs, i, autoGates)) continue;
 
           const x = transformValue(s.fcs.events[i * s.fcs.numParams + s.pX], logX);
           const y = transformValue(s.fcs.events[i * s.fcs.numParams + s.pY], logY);
@@ -412,6 +458,7 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, xLabel, yLabel, logX, log
             }
           }
           if (!pass) continue;
+          if (!passesAutoGates(s.fcs, i, autoGates)) continue;
 
           const x = transformValue(s.fcs.events[i * s.fcs.numParams + s.pX], logX);
           const y = transformValue(s.fcs.events[i * s.fcs.numParams + s.pY], logY);
@@ -481,7 +528,7 @@ const Canvas2DPlotOverlay = ({ series, xParam, yParam, xLabel, yLabel, logX, log
     const ro = new ResizeObserver(draw);
     ro.observe(wrap);
     return () => ro.disconnect();
-  }, [series, xParam, yParam, xLabel, yLabel, logX, logY, cfg, fs, drawPath, gates, interactionMode, xDomain, yDomain]);
+  }, [series, xParam, yParam, xLabel, yLabel, logX, logY, cfg, fs, drawPath, gates, autoGates, interactionMode, xDomain, yDomain]);
 
   const handleMouseDown = (e) => {
     if (!mappingRef.current) return;
@@ -589,6 +636,12 @@ export const FCSOverlayVisualization = ({ ctx }) => {
     if (!list || !list.length) list = [activeTest];
     const norm = list.filter(Boolean).map(t => ({ id: t.id, name: t.instanceName || t.name, test: t }));
     if (!norm.some(i => i.id === activeTest.id)) norm.unshift({ id: activeTest.id, name: activeTest.name, test: activeTest });
+    // Extra spectra loaded into the same instance ("Multiple files → same instance")
+    (activeTest.fcExtraFiles || []).forEach(f => {
+      if (!norm.some(i => i.id === f.id)) {
+        norm.push({ id: f.id, name: String(f.filename || '').replace(/\.[^/.]+$/, '') || f.filename || 'Spectrum', test: activeTest, extra: true });
+      }
+    });
     return norm;
   }, [ctx, activeTest]);
 
@@ -620,6 +673,15 @@ export const FCSOverlayVisualization = ({ ctx }) => {
     setSplitStack((v) => {
       const nv = !v;
       setVizCfgAna({ splitStack: nv });
+      return nv;
+    });
+  };
+  // When ON, every stacked mini-chart shares the SAME Y scale (global max).
+  const [splitSharedY, setSplitSharedY] = useState(!!vizCfgAna.splitSharedY);
+  const toggleSplitSharedY = () => {
+    setSplitSharedY((v) => {
+      const nv = !v;
+      setVizCfgAna({ splitSharedY: nv });
       return nv;
     });
   };
@@ -690,7 +752,15 @@ export const FCSOverlayVisualization = ({ ctx }) => {
       }
     });
 
-    return { bins, domain: [globalMin, globalMax] };
+    // Global maximum count across all visible curves — used to share the Y
+    // scale between the stacked split-view charts.
+    let maxCount = 0;
+    visibleInstances.forEach(s => {
+      bins.forEach(b => { const c = b[s.id] || 0; if (c > maxCount) maxCount = c; });
+    });
+    if (maxCount <= 0) maxCount = 1;
+
+    return { bins, domain: [globalMin, globalMax], maxCount };
   }, [overlayParam, visibleInstances, logScale, smoothHist, fillHist, smoothSigma]);
 
   const chartRef = useRef(null);
@@ -776,7 +846,7 @@ export const FCSOverlayVisualization = ({ ctx }) => {
         {showCfg && <SharedChartStylePanel cfg={cfgAna} setCfg={setVizCfgAna} series={visibleInstances.map(s => ({ key: s.id, label: s.name, color: s.color }))} unit="a.u." />}
         
         <div className={`${fs ? 'flex-1 min-h-0' : ''} ${splitStack ? 'flex flex-col lg:flex-row gap-3' : ''}`}>
-          <div ref={chartRef} onMouseDown={zoom.onMouseDown} className={`bg-slate-50 rounded border border-slate-200 p-2 select-none relative overflow-hidden cursor-crosshair min-w-0 ${fs ? 'flex-1 min-h-0' : splitStack ? 'lg:w-[54%] h-[300px]' : 'w-full h-[300px]'}`}>
+          <div ref={chartRef} onMouseDown={zoom.onMouseDown} className={`bg-slate-50 rounded border border-slate-200 p-2 select-none relative overflow-hidden cursor-crosshair min-w-0 ${fs ? 'flex-1 min-h-0' : splitStack ? 'lg:w-[54%] aspect-square max-h-[55vh]' : 'w-full aspect-square max-h-[55vh]'}`}>
             {zoom.isZoomed && <button type="button" onClick={zoom.reset} className="absolute top-2 right-2 z-10 text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={chartData.bins} margin={{ top: 10, right: 20, left: 75, bottom: 45 }}>
@@ -799,7 +869,13 @@ export const FCSOverlayVisualization = ({ ctx }) => {
           {splitStack && (
             <div className={`bg-white rounded border border-slate-200 flex flex-col overflow-hidden ${fs ? 'w-[46%] min-h-0' : 'w-full lg:w-[46%] max-h-[560px]'}`}>
               <div className="shrink-0 px-2.5 py-1.5 bg-slate-100 border-b border-slate-200 text-[10px] font-black uppercase tracking-wide text-slate-500 flex items-center justify-between gap-2">
-                <span>📚 Split view — single curves</span>
+                <span className="flex items-center gap-2">
+                  📚 Split view — single curves
+                  <label className="flex items-center gap-1 text-[10px] font-bold text-slate-600 cursor-pointer normal-case"
+                         title="Use the same Y scale on every stacked graph">
+                    <input type="checkbox" checked={splitSharedY} onChange={toggleSplitSharedY} className="w-3 h-3 accent-blue-600" /> Same Y
+                  </label>
+                </span>
                 <span className="text-slate-400">{visibleInstances.length} {visibleInstances.length === 1 ? 'curve' : 'curves'}</span>
               </div>
               <div className="overflow-y-auto custom-scrollbar flex-1">
@@ -809,11 +885,11 @@ export const FCSOverlayVisualization = ({ ctx }) => {
                       <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: s.color }} />
                       <span className="text-slate-700 truncate">{s.name}</span>
                     </div>
-                    <ResponsiveContainer width="100%" height={86}>
+                    <ResponsiveContainer width="100%" height={120}>
                       <ComposedChart data={chartData.bins} margin={{ top: 2, right: 8, left: 0, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                        <XAxis dataKey="x" type="number" domain={zoom.domain} allowDataOverflow hide={i < visibleInstances.length - 1} tick={{ fontSize: 8, fill: '#94a3b8' }} />
-                        <YAxis tick={{ fontSize: 8, fill: '#94a3b8' }} width={34} />
+                        <XAxis dataKey="x" type="number" domain={zoom.domain} allowDataOverflow hide={i < visibleInstances.length - 1} tick={{ fontSize: 16, fill: '#64748b' }} />
+                        <YAxis tick={{ fontSize: 16, fill: '#64748b' }} width={44} domain={splitSharedY ? [0, chartData.maxCount] : [0, 'auto']} />
                         {fillHist && <Area type="monotone" dataKey={smoothHist ? s.id + '_sm' : s.id} name={s.name} stroke="none" fill={s.color} fillOpacity={0.3} isAnimationActive={false} />}
                         <Line type="monotone" dataKey={s.id} name={s.name} stroke={s.color} strokeWidth={smoothHist ? 1 : (cfgAna.lineThickness || 2)} strokeOpacity={smoothHist ? 0.5 : 1} dot={false} isAnimationActive={false} />
                         {smoothHist && <Line type="monotone" dataKey={s.id + '_sm'} name={`${s.name} (smooth)`} stroke={s.color} strokeWidth={cfgAna.lineThickness || 2} dot={false} isAnimationActive={false} />}
@@ -856,6 +932,35 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
   const [hiddenSeries, setHiddenSeries] = useState({});
   const [gates, setGates] = useState([]);
 
+  // Automatic treatment ("🤖 Auto treatment"): singlets, debris, manual filter.
+  const [autoGates, setAutoGates] = useState(() => ({
+    singlets: { ...DEFAULT_AUTO_GATES.singlets, ...((activeTest.fcAutoGates || {}).singlets || {}) },
+    debris: { ...DEFAULT_AUTO_GATES.debris, ...((activeTest.fcAutoGates || {}).debris || {}) },
+    manual: { ...DEFAULT_AUTO_GATES.manual, ...((activeTest.fcAutoGates || {}).manual || {}) }
+  }));
+  const [showAutoGates, setShowAutoGates] = useState(false);
+  const patchAutoGate = (key, patch) => {
+    setAutoGates((prev) => {
+      const next = { ...prev, [key]: { ...prev[key], ...patch } };
+      updateActiveTest({ fcAutoGates: next });
+      return next;
+    });
+  };
+  const resetAutoGates = () => {
+    const next = {
+      singlets: { ...DEFAULT_AUTO_GATES.singlets },
+      debris: { ...DEFAULT_AUTO_GATES.debris },
+      manual: { ...DEFAULT_AUTO_GATES.manual }
+    };
+    setAutoGates(next);
+    updateActiveTest({ fcAutoGates: next });
+  };
+  // Remove an extra spectrum that was loaded into the same instance.
+  const removeExtraFile = (extraId) => {
+    delete globalFcsCache[extraId];
+    updateActiveTest({ fcExtraFiles: (activeTest.fcExtraFiles || []).filter((f) => f.id !== extraId) });
+  };
+
   const [interactionMode, setInteractionMode] = useState('gate'); 
   const [xDomain2D, setXDomain2D] = useState(null);
   const [yDomain2D, setYDomain2D] = useState(null);
@@ -887,6 +992,12 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
     if (!list || !list.length) list = [activeTest];
     const norm = list.filter(Boolean).map(t => ({ id: t.id, name: t.instanceName || t.name, test: t }));
     if (!norm.some(i => i.id === activeTest.id)) norm.unshift({ id: activeTest.id, name: activeTest.name, test: activeTest });
+    // Extra spectra loaded into the same instance ("Multiple files → same instance")
+    (activeTest.fcExtraFiles || []).forEach(f => {
+      if (!norm.some(i => i.id === f.id)) {
+        norm.push({ id: f.id, name: String(f.filename || '').replace(/\.[^/.]+$/, '') || f.filename || 'Spectrum', test: activeTest, extra: true });
+      }
+    });
     return norm;
   }, [ctx, activeTest]);
 
@@ -971,6 +1082,7 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
           }
         }
         if (!pass) continue;
+        if (!passesAutoGates(s.fcs, i, autoGates)) continue;
         
         let val = transformValue(s.fcs.events[i * s.fcs.numParams + pIdx]);
         channelData.push(val);
@@ -997,7 +1109,7 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
     });
 
     return { bins, domain: [globalMin, globalMax] };
-  }, [overlayParam1D, visibleInstances, log1D, gates]);
+  }, [overlayParam1D, visibleInstances, log1D, gates, autoGates]);
 
   // Shared auto X/Y domain for the 2D plot — computed at the parent level so the
   // 1D histogram and the 2D chart ALWAYS use the exact same value range (and
@@ -1023,6 +1135,7 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
           }
         }
         if (!pass) continue;
+        if (!passesAutoGates(s.fcs, i, autoGates)) continue;
         const x = tX(s.fcs.events[i * s.fcs.numParams + pX]);
         const y = tY(s.fcs.events[i * s.fcs.numParams + pY]);
         if (x < minX) minX = x; if (x > maxX) maxX = x;
@@ -1031,7 +1144,7 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
     });
     if (minX === Infinity) return { x: [0, 1000], y: [0, 1000] };
     return { x: [minX, maxX], y: [minY, maxY] };
-  }, [xParam2D, yParam2D, logX2D, logY2D, visibleInstances, gates]);
+  }, [xParam2D, yParam2D, logX2D, logY2D, visibleInstances, gates, autoGates]);
 
   // When the histogram parameter is the SAME as the 2D chart's X parameter (and
   // the log settings match), the histogram mirrors the 2D chart's X axis exactly.
@@ -1074,6 +1187,11 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
             <button onClick={() => applyPalette('custom')} className="text-[10px] font-bold bg-white border border-slate-300 px-2 py-1 rounded shadow-sm hover:bg-slate-50">Apply Custom</button>
             <span className="text-slate-300 hidden md:inline">|</span>
             <button onClick={() => setShowRenamer(!showRenamer)} className="text-[10px] font-bold bg-white border border-slate-300 px-2 py-1 rounded shadow-sm hover:bg-slate-50">✏️ Rename Parameters</button>
+            <button onClick={() => setShowAutoGates(!showAutoGates)}
+                    className={`text-[10px] font-bold px-2 py-1 rounded shadow-sm hover:bg-slate-50 border ${showAutoGates ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white border-slate-300 text-slate-700'}`}
+                    title="Automatic treatment: singlets, debris exclusion and a manual channel filter">
+              🤖 Auto treatment
+            </button>
           </div>
         </div>
 
@@ -1087,6 +1205,9 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
                 <input type="checkbox" checked={!isHidden} onChange={() => setHiddenSeries(p => ({ ...p, [inst.id]: !p[inst.id] }))} className="w-3.5 h-3.5 accent-blue-600 cursor-pointer" />
                 <input type="color" value={c} onChange={(e) => updateColor(inst.id, e.target.value)} className="w-5 h-5 rounded cursor-pointer border border-slate-300 p-0" />
                 <span className="truncate max-w-[200px] cursor-pointer select-none" onClick={() => setHiddenSeries(p => ({ ...p, [inst.id]: !p[inst.id] }))}>{displayName}</span>
+                {inst.extra && (
+                  <button onClick={() => removeExtraFile(inst.id)} className="text-red-400 hover:text-red-600 font-black px-1" title="Remove this spectrum from the instance">×</button>
+                )}
               </div>
             );
           })}
@@ -1119,6 +1240,96 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
             <button onClick={() => setGates([])} className="text-[10px] text-slate-500 hover:text-red-600 ml-auto font-bold underline">Clear All</button>
           </div>
         )}
+        {showAutoGates && (
+          <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-lg mt-2 flex flex-col gap-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-black uppercase tracking-wide text-emerald-700">🤖 Automatic treatment</span>
+              <button onClick={resetAutoGates} className="text-[10px] font-bold bg-white border border-slate-300 px-2 py-1 rounded shadow-sm hover:bg-slate-50">↺ Reset defaults</button>
+            </div>
+            <p className="text-[10px] text-slate-500">
+              Applied to every histogram, 2D scatter and gate. Filters run in order: singlets → debris → manual.
+            </p>
+
+            <div className="bg-white border border-slate-200 rounded-lg p-2.5 flex flex-col gap-1.5">
+              <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 cursor-pointer">
+                <input type="checkbox" checked={!!autoGates.singlets.enabled}
+                       onChange={(e) => patchAutoGate('singlets', { enabled: e.target.checked })} className="w-3.5 h-3.5 accent-emerald-600" />
+                1. Singlets — keep |H − A| ≤ tolerance
+              </label>
+              <div className="flex flex-wrap items-center gap-2 pl-6">
+                <select value={autoGates.singlets.aParam} onChange={(e) => patchAutoGate('singlets', { aParam: e.target.value })}
+                        className="border border-slate-300 rounded px-1.5 py-0.5 text-[11px] bg-white outline-none">
+                  {rawSharedParams.map(p => <option key={p.name} value={(p.name||'').toUpperCase()}>{getParamLabel(p, panelArray, paramRenames)}</option>)}
+                </select>
+                <span className="text-[10px] text-slate-400">vs</span>
+                <select value={autoGates.singlets.hParam} onChange={(e) => patchAutoGate('singlets', { hParam: e.target.value })}
+                        className="border border-slate-300 rounded px-1.5 py-0.5 text-[11px] bg-white outline-none">
+                  {rawSharedParams.map(p => <option key={p.name} value={(p.name||'').toUpperCase()}>{getParamLabel(p, panelArray, paramRenames)}</option>)}
+                </select>
+                <span className="text-[10px] text-slate-400">tolerance</span>
+                <input type="number" min="0" value={autoGates.singlets.tolerance}
+                       onChange={(e) => patchAutoGate('singlets', { tolerance: e.target.value })}
+                       className="w-24 border border-slate-300 rounded px-1.5 py-0.5 text-[11px] bg-white outline-none" />
+                <span className="text-[10px] text-slate-400">(e.g. FSC-A 50000 &amp; FSC-H 30000 → keep; FSC-H 29999 → exclude)</span>
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-lg p-2.5 flex flex-col gap-1.5">
+              <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 cursor-pointer">
+                <input type="checkbox" checked={!!autoGates.debris.enabled}
+                       onChange={(e) => patchAutoGate('debris', { enabled: e.target.checked })} className="w-3.5 h-3.5 accent-emerald-600" />
+                2. Debris exclusion (inside singlets) — keep A ≥ min AND SSC ≥ min
+              </label>
+              <div className="flex flex-wrap items-center gap-2 pl-6">
+                <select value={autoGates.debris.aParam} onChange={(e) => patchAutoGate('debris', { aParam: e.target.value })}
+                        className="border border-slate-300 rounded px-1.5 py-0.5 text-[11px] bg-white outline-none">
+                  {rawSharedParams.map(p => <option key={p.name} value={(p.name||'').toUpperCase()}>{getParamLabel(p, panelArray, paramRenames)}</option>)}
+                </select>
+                <span className="text-[10px] text-slate-400">≥</span>
+                <input type="number" min="0" value={autoGates.debris.minA}
+                       onChange={(e) => patchAutoGate('debris', { minA: e.target.value })}
+                       className="w-24 border border-slate-300 rounded px-1.5 py-0.5 text-[11px] bg-white outline-none" />
+                <span className="text-[10px] text-slate-400">and</span>
+                <select value={autoGates.debris.sscParam} onChange={(e) => patchAutoGate('debris', { sscParam: e.target.value })}
+                        className="border border-slate-300 rounded px-1.5 py-0.5 text-[11px] bg-white outline-none">
+                  {rawSharedParams.map(p => <option key={p.name} value={(p.name||'').toUpperCase()}>{getParamLabel(p, panelArray, paramRenames)}</option>)}
+                </select>
+                <span className="text-[10px] text-slate-400">≥</span>
+                <input type="number" min="0" value={autoGates.debris.minSSC}
+                       onChange={(e) => patchAutoGate('debris', { minSSC: e.target.value })}
+                       className="w-24 border border-slate-300 rounded px-1.5 py-0.5 text-[11px] bg-white outline-none" />
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-lg p-2.5 flex flex-col gap-1.5">
+              <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 cursor-pointer">
+                <input type="checkbox" checked={!!autoGates.manual.enabled}
+                       onChange={(e) => patchAutoGate('manual', { enabled: e.target.checked })} className="w-3.5 h-3.5 accent-emerald-600" />
+                3. Manual filter (both dimensions) — keep X ≥ min AND Y ≥ min
+              </label>
+              <div className="flex flex-wrap items-center gap-2 pl-6">
+                <select value={autoGates.manual.xParam} onChange={(e) => patchAutoGate('manual', { xParam: e.target.value })}
+                        className="border border-slate-300 rounded px-1.5 py-0.5 text-[11px] bg-white outline-none">
+                  {rawSharedParams.map(p => <option key={p.name} value={(p.name||'').toUpperCase()}>{getParamLabel(p, panelArray, paramRenames)}</option>)}
+                </select>
+                <span className="text-[10px] text-slate-400">≥</span>
+                <input type="number" min="0" value={autoGates.manual.xMin}
+                       onChange={(e) => patchAutoGate('manual', { xMin: e.target.value })}
+                       className="w-24 border border-slate-300 rounded px-1.5 py-0.5 text-[11px] bg-white outline-none" />
+                <span className="text-[10px] text-slate-400">and</span>
+                <select value={autoGates.manual.yParam} onChange={(e) => patchAutoGate('manual', { yParam: e.target.value })}
+                        className="border border-slate-300 rounded px-1.5 py-0.5 text-[11px] bg-white outline-none">
+                  {rawSharedParams.map(p => <option key={p.name} value={(p.name||'').toUpperCase()}>{getParamLabel(p, panelArray, paramRenames)}</option>)}
+                </select>
+                <span className="text-[10px] text-slate-400">≥</span>
+                <input type="number" min="0" value={autoGates.manual.yMin}
+                       onChange={(e) => patchAutoGate('manual', { yMin: e.target.value })}
+                       className="w-24 border border-slate-300 rounded px-1.5 py-0.5 text-[11px] bg-white outline-none" />
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 z-10 w-full mt-2">
@@ -1207,6 +1418,7 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
                cfg={cfg2D} 
                fs={fs2D} 
                gates={gates} 
+               autoGates={autoGates}
                onAddGate={(g) => setGates(prev => [...prev, g])} 
                interactionMode={interactionMode}
                xDomain={xDomain2D || (autoDomain2D && autoDomain2D.x) || undefined}
@@ -1308,6 +1520,10 @@ export const Data = ({ ctx }) => {
 
   const [updater, setUpdater] = useState(0);
   const [fcsMsg, setFcsMsg] = useState('');
+  // When several .fcs files are uploaded: 'separate' creates one condition
+  // (instance) per file (default, current behaviour); 'same' loads them all
+  // into the current instance as extra spectra.
+  const [fcsMultiMode, setFcsMultiMode] = useState('separate');
 
   const handleFCSUpload = async (e) => {
     const files = Array.from(e.target.files);
@@ -1355,8 +1571,19 @@ export const Data = ({ ctx }) => {
       }
       updateActiveTest(metadataUpdates);
 
-      // Handle SUBSEQUENT files by dynamically creating new tabs/instances
-      if (results.length > 1 && ctx.setTests) {
+      // Handle SUBSEQUENT files — either one instance (tab) per file (default),
+      // or all loaded into the SAME instance as extra spectra.
+      if (results.length > 1) {
+        if (fcsMultiMode === 'same') {
+          const extraFiles = [...(t.fcExtraFiles || [])];
+          for (let i = 1; i < results.length; i++) {
+            const parsed = results[i].parsed;
+            const extraId = 'fcx' + Date.now() + i + Math.random().toString(36).substring(2, 5);
+            globalFcsCache[extraId] = parsed;
+            extraFiles.push({ id: extraId, filename: parsed.filename || `Spectrum ${i + 1}` });
+          }
+          updateActiveTest({ fcExtraFiles: extraFiles });
+        } else if (ctx.setTests) {
           ctx.setTests(prevTests => {
               const newTests = [];
               for (let i = 1; i < results.length; i++) {
@@ -1375,6 +1602,7 @@ export const Data = ({ ctx }) => {
               }
               return [...prevTests, ...newTests];
           });
+        }
       }
 
       // Archive the RAW .fcs file(s) to Google Drive automatically (best-effort).
@@ -1471,6 +1699,12 @@ export const Data = ({ ctx }) => {
               📄 Choose .fcs file(s)…
               <input type="file" accept=".fcs" multiple onChange={handleFCSUpload} className="hidden" />
             </label>
+            <select value={fcsMultiMode} onChange={(e) => setFcsMultiMode(e.target.value)}
+                    className="text-[10px] font-bold bg-white border border-indigo-300 text-indigo-800 px-2 py-2 rounded-lg shadow-sm outline-none cursor-pointer"
+                    title="When uploading several .fcs files: load each into its own instance (condition tab) or load them all into the current instance">
+              <option value="separate">Multiple files → separate instances</option>
+              <option value="same">Multiple files → same instance</option>
+            </select>
             {fcsMsg && <span className="text-xs font-bold text-indigo-900">{fcsMsg}</span>}
             <DriveUploadButton
               suggestedName={suggestDriveFileName({

@@ -12,7 +12,7 @@ import {
 } from 'recharts';
 import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, AngledTick } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
-import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, seriesColorFor } from '../utils/chartStyle';
+import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, seriesColorFor, chartBoxStyle } from '../utils/chartStyle';
 import { parseJascoJwsBinary, isJascoJwsBinary } from '../utils/jascoJws';
 import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
@@ -1290,7 +1290,7 @@ const buildSimulatedCurve = (fitRes, wavelengths) => {
 SHARED CHART STYLE SYSTEM + DRAG-TO-ZOOM
 ======================================================================== */
 const DEFAULT_CHART_STYLE = {
-  height: 380, aspect: 1.8, fontSize: 12, tickStep: '', tickAngle: 0,
+  height: 380, aspect: 1, fontSize: 16, tickStep: '', tickAngle: 0,
   ptStyle: 'circle', ptSize: 5, lineStyle: 'solid', lineThickness: 2,
   legend: 'top', colors: {}, barRadius: 3,
   xMin: '', xMax: '', yMin: '', yMax: '', xAxisLabel: '', yAxisLabel: ''
@@ -1319,13 +1319,6 @@ const catInterval = (stepStr) => {
 
 const dom = (v) =>
   v === '' || v == null || parseManual(v) === null ? undefined : parseManual(v);
-
-const chartBoxStyle = (cfg) => ({
-  width: '100%',
-  aspectRatio: String(cfg.aspect || 1.8),
-  maxHeight: cfg.height || 380,
-  minHeight: 220
-});
 
 const ErrorTreatmentPanel = ({ plot, set, showFitToggle = true, customActions }) => {
   const shimTest = {
@@ -2238,7 +2231,7 @@ export const SpectraVisualization = ({ ctx }) => {
   const yLab = cfg.yAxisLabel || yLabel;
 
   const chartBody = (
-    <div ref={chartRef} onMouseDown={zoom.onMouseDown} style={fs ? { flex: 1, minHeight: 0 } : chartBoxStyle(cfg)} className={`bg-white border border-slate-200 rounded-xl p-3 select-none relative ${fs ? 'w-full' : ''}`}>
+    <div ref={chartRef} onMouseDown={zoom.onMouseDown} style={fs ? { flex: 1, minHeight: 0 } : chartBoxStyle(cfg, { square: false })} className={`bg-white border border-slate-200 rounded-xl p-3 select-none relative ${fs ? 'w-full' : ''}`}>
       {zoom.isZoomed && <button type="button" onClick={zoom.reset} className="absolute top-2 right-2 z-10 text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
       <ResponsiveContainer width="100%" height="100%">
         <LineChart margin={CHART_MARGIN}>

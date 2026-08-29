@@ -7,7 +7,7 @@ import {
   ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar, Cell
 } from 'recharts';
 import { CollapsibleSection } from './ui';
-import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, VIS_PALETTES, PER_ATOM_COLORS, seriesColorFor } from '../utils/chartStyle';
+import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, VIS_PALETTES, PER_ATOM_COLORS, seriesColorFor, chartBoxStyle } from '../utils/chartStyle';
 import { suggestDriveFileName, driveFolderPath, sanitizeSlug } from '../utils/driveNaming';
 import { uploadLocalFile, getDriveToken } from '../utils/driveUpload';
 import {
@@ -3454,7 +3454,7 @@ const useXZoom = (chartRef, dataDomain, margin = CHART_MARGIN) => {
 };
 
 const DEFAULT_CHART_STYLE = {
-  height: 380, aspect: 1.8, fontSize: 12, tickStep: '', tickAngle: 0,
+  height: 380, aspect: 1, fontSize: 16, tickStep: '', tickAngle: 0,
   pointStyle: 'circle', ptSize: 5, lineStyle: 'solid', lineThickness: 2,
   legend: 'top', colors: {}, barRadius: 3,
   xMin: '', xMax: '', yMin: '', yMax: '', xAxisLabel: '', yAxisLabel: ''
@@ -3475,7 +3475,6 @@ const catInterval = (stepStr) => {
   return n && n >= 1 ? Math.round(n) - 1 : 0;
 };
 const dom = (v) => (v === '' || v == null || parseManual(v) === null ? undefined : parseManual(v));
-const chartBoxStyle = (cfg) => ({ width: '100%', aspectRatio: String(cfg.aspect || 1.8), maxHeight: cfg.height || 380, minHeight: 220 });
 
 const NumField = ({ label, value, onChange, step = 1, w = 'w-full' }) => (
   <div className="flex flex-col gap-1">

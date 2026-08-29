@@ -4,7 +4,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceArea, ReferenceLine,
   ResponsiveContainer, ErrorBar
 } from 'recharts';
-import { BASE_COLOR_SWATCHES, shadesFromColor, rainbowColors } from '../utils/chartStyle';
+import { BASE_COLOR_SWATCHES, shadesFromColor, rainbowColors, DEFAULT_CHART_FONT_SIZE } from '../utils/chartStyle';
 import { Icon } from './Icons';
 
 
@@ -717,7 +717,7 @@ export const SharedChart = ({
     : [{ key: 'y', label: 'Series' }];
 
   const chartRef = useRef(null);
-  const fs = Number(cfg.fontSize) || 11;
+  const fs = Number(cfg.fontSize) || DEFAULT_CHART_FONT_SIZE;
   const dash = cfg.lineStyle === 'dashed' ? '4 4' : cfg.lineStyle === 'dotted' ? '1 3' : undefined;
   const strokeWidth = Number(cfg.lineThickness) || 2;
   const ptSize = Number(cfg.ptSize) || 4;

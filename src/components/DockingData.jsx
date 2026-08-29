@@ -1,5 +1,5 @@
 import React from 'react';
-import { seriesColorFor } from '../utils/chartStyle';
+import { seriesColorFor, chartBoxStyle } from '../utils/chartStyle';
 
 /* ============================================================================
    DockingData — shared molecular-docking building blocks imported by
@@ -648,8 +648,8 @@ export const generateHADDOCKPoses = (n = 20) => {
 // ================= DOCKING CHART STYLE =================
 export const DEFAULT_DOCKING_CHART_STYLE = {
   height: 380,
-  aspect: 1.8,
-  fontSize: 12,
+  aspect: 1,
+  fontSize: 16,
   tickStep: '',
   tickAngle: 0,
   pointStyle: 'circle',
@@ -692,12 +692,7 @@ export const dockDom = (v) => {
   return parseDockingValue(v);
 };
 
-export const dockChartBoxStyle = (cfg) => ({
-  width: '100%',
-  aspectRatio: String(cfg.aspect || 1.8),
-  maxHeight: cfg.height || 380,
-  minHeight: 220
-});
+export const dockChartBoxStyle = (cfg, opts) => chartBoxStyle(cfg, opts);
 
 // ================= EXPORT DEFAULT =================
 export default {

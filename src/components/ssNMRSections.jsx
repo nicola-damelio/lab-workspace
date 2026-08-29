@@ -8,7 +8,7 @@ import React, {useState, useEffect, useRef, useMemo} from 'react';
 import {XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar, Cell} from 'recharts';
 import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, AngledTick } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
-import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, seriesColorFor } from '../utils/chartStyle';
+import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, seriesColorFor, chartBoxStyle } from '../utils/chartStyle';
 export { CollapsibleSection };
 export { VIS_PALETTES };
 import { DriveUploadButton } from './DriveUpload';
@@ -705,7 +705,7 @@ const buildSimulatedCurve = (fitRes, xs) => {
 SHARED CHART STYLE SYSTEM + DRAG-TO-ZOOM
 ======================================================================== */
 const DEFAULT_CHART_STYLE = {
-  height: 380, aspect: 1.8, fontSize: 12, tickStep: '', tickAngle: 0,
+  height: 380, aspect: 1, fontSize: 16, tickStep: '', tickAngle: 0,
   ptStyle: 'circle', ptSize: 5, lineStyle: 'solid', lineThickness: 2,
   legend: 'top', colors: {}, barRadius: 3,
   xMin: '', xMax: '', yMin: '', yMax: '', xAxisLabel: '', yAxisLabel: ''
@@ -734,13 +734,6 @@ const catInterval = (stepStr) => {
 
 const dom = (v) =>
   v === '' || v == null || parseManual(v) === null ? undefined : parseManual(v);
-
-const chartBoxStyle = (cfg) => ({
-  width: '100%',
-  aspectRatio: String(cfg.aspect || 1.8),
-  maxHeight: cfg.height || 380,
-  minHeight: 220
-});
 
 const ErrorTreatmentPanel = ({ plot, set, showFitToggle = true, customActions }) => {
   const shimTest = {
