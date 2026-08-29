@@ -2047,7 +2047,10 @@ export const ExperimentalSetup = ({ ctx }) => {
               </button>
             </div>
             <div className={`bg-slate-50 border border-slate-200 rounded-lg p-3 overflow-x-auto ${fsPanel === 'map' ? 'flex-1' : ''}`} style={fsPanel === 'map' ? { minHeight: 0 } : undefined}>
-            <div className="flex flex-col gap-1 min-w-max">
+            {/* zoom: enlarges the map (layout + visuals) in fullscreen — unlike
+                transform: scale() it also grows the scrollable area, so the
+                whole enlarged map stays reachable via the scrollbars. */}
+            <div className="flex flex-col gap-1 min-w-max" style={fsPanel === 'map' ? { zoom: 1.75 } : undefined}>
               <div className="flex gap-1 mb-0.5 pl-5">
                 {COLS.map((c) => <div key={c} className="w-11 text-center text-[9px] font-bold text-slate-500">{c}</div>)}
               </div>
