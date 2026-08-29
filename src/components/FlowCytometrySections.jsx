@@ -1,5 +1,5 @@
 // components/FlowCytometrySections.jsx
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { suggestDriveFileName } from '../utils/driveNaming';
 import { uploadLocalFile, withExtension, getDriveToken, getDriveFileRegistry, driveFetch } from '../utils/driveUpload';
 import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Line, ComposedChart, Area, ReferenceArea} from 'recharts';
@@ -1657,6 +1657,131 @@ const plateCmpColor = (name, cmpColors = {}) => {
   return hashHex(name);
 };
 
+// =========================================================================
+// ZOOMABLE PLATE PANEL — wraps the Interactive Table / Plate Map in a
+// scrollable container with − / + / 1:1 zoom controls and Ctrl/Cmd + mouse
+// wheel zooming. The content is scaled with `transform: scale()` and placed
+// inside a spacer that grows with the zoom level, so the scrollbars always
+// cover the full (zoomed) extent and the panel stays usable while zoomed.
+// =========================================================================
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 4;
+
+const ZoomablePlatePanel = ({ children, className = '' }) => {
+  const [zoom, setZoom] = useState(1);
+  const [size, setSize] = useState(null);
+  const scrollRef = useRef(null);
+  const innerRef = useRef(null);
+
+  const clampZoom = (z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Number(z) || 1));
+
+  // Measure the unscaled content box (scale() does not affect layout size),
+  // keeping the previous value if nothing changed to avoid re-render loops.
+  const measure = useCallback(() => {
+    const el = innerRef.current;
+    if (!el) return;
+    const w = Math.max(el.scrollWidth, el.offsetWidth);
+    const h = Math.max(el.scrollHeight, el.offsetHeight);
+    setSize((prev) => (prev && prev.w === w && prev.h === h ? prev : { w, h }));
+  }, []);
+
+  // Re-measure when the content (rows/cols, plate type) or the container
+  // resizes. ResizeObserver reports the inner div's own box, which changes
+  // whenever the plate layout changes.
+  useEffect(() => {
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (innerRef.current) ro.observe(innerRef.current);
+    if (scrollRef.current) ro.observe(scrollRef.current);
+    return () => ro.disconnect();
+  }, [measure]);
+
+  // Ctrl/Cmd + mouse wheel zooms. Attached natively as a non-passive listener
+  // so preventDefault() works (React's synthetic wheel events are passive).
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return undefined;
+    const onWheel = (e) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      setZoom((prev) => clampZoom(prev * factor));
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const zoomIn = () => setZoom((prev) => clampZoom(prev * 1.25));
+  const zoomOut = () => setZoom((prev) => clampZoom(prev / 1.25));
+  const resetZoom = () => setZoom(1);
+
+  return (
+    <div className={`bg-slate-50 border border-slate-200 rounded-lg ${className}`}>
+      <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-slate-200 shrink-0">
+        <button
+          type="button"
+          onClick={zoomOut}
+          title="Zoom out"
+          className="w-6 h-6 flex items-center justify-center rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-black text-sm transition-colors"
+        >
+          −
+        </button>
+        <button
+          type="button"
+          onClick={zoomIn}
+          title="Zoom in"
+          className="w-6 h-6 flex items-center justify-center rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-black text-sm transition-colors"
+        >
+          +
+        </button>
+        <span className="text-[10px] font-bold text-slate-600 w-10 text-center tabular-nums">
+          {Math.round(zoom * 100)}%
+        </span>
+        <button
+          type="button"
+          onClick={resetZoom}
+          title="Reset zoom to 100%"
+          className="h-6 px-2 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-bold transition-colors"
+        >
+          1:1
+        </button>
+        <span className="ml-auto text-[9px] text-slate-400 select-none">
+          Ctrl/Cmd + scroll to zoom · scroll to pan
+        </span>
+      </div>
+      <div ref={scrollRef} className="overflow-auto custom-scrollbar">
+        {size ? (
+          <div
+            style={{
+              width: Math.max(1, Math.ceil(size.w * zoom)),
+              height: Math.max(1, Math.ceil(size.h * zoom)),
+              position: 'relative'
+            }}
+          >
+            <div
+              ref={innerRef}
+              className="p-3"
+              style={{
+                transform: `scale(${zoom})`,
+                transformOrigin: 'top left',
+                width: 'max-content',
+                maxWidth: 'none'
+              }}
+            >
+              {children}
+            </div>
+          </div>
+        ) : (
+          <div ref={innerRef} className="p-3" style={{ width: 'max-content', maxWidth: 'none' }}>
+            {children}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 export const ExperimentalSetup = ({ ctx }) => {
   const { activeTest = {}, updateActiveTest } = ctx || {};
   const update = (u) => { if (updateActiveTest) updateActiveTest(u); };
@@ -1954,7 +2079,7 @@ export const ExperimentalSetup = ({ ctx }) => {
         {/* Interactive compound / concentration table (no intensities, no regions) */}
         <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm min-w-0">
           <h4 className="text-xs font-bold text-slate-700 uppercase mb-2">Interactive Table</h4>
-          <div className="overflow-x-auto custom-scrollbar">
+          <ZoomablePlatePanel>
             <table className="w-full border-collapse table-fixed min-w-[640px] text-[11px] text-center select-none">
               <thead>
                 <tr>
@@ -2008,7 +2133,7 @@ export const ExperimentalSetup = ({ ctx }) => {
                 ))}
               </tbody>
             </table>
-          </div>
+          </ZoomablePlatePanel>
           <p className="text-[10px] text-slate-400 mt-2">
             Drag over wells to select a range, then assign a compound / concentration to the whole selection. Row/column compounds degrade by the dilution factor.
           </p>
@@ -2017,7 +2142,7 @@ export const ExperimentalSetup = ({ ctx }) => {
         {/* Visual plate map */}
         <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm min-w-0">
           <h4 className="text-xs font-bold text-slate-700 uppercase mb-2">Plate Map</h4>
-          <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 overflow-x-auto">
+          <ZoomablePlatePanel>
             <div className="flex flex-col gap-1 min-w-max">
               <div className="flex gap-1 mb-0.5 pl-5">
                 {COLS.map((c) => <div key={c} className="w-11 text-center text-[9px] font-bold text-slate-500">{c}</div>)}
@@ -2043,7 +2168,7 @@ export const ExperimentalSetup = ({ ctx }) => {
                 </div>
               ))}
             </div>
-          </div>
+          </ZoomablePlatePanel>
         </div>
       </div>
     </div>
