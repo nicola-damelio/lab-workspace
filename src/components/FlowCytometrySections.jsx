@@ -4,13 +4,16 @@ import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
 import { uploadLocalFile, withExtension, getDriveToken } from '../utils/driveUpload';
 import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Line, ComposedChart, Area, ReferenceArea} from 'recharts';
-import { ChartControlBar, SharedChartStylePanel, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgTickFormatter } from './SharedAnalysisTools';
+import { ChartControlBar, SharedChartStylePanel, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES, seriesColorFor } from '../utils/chartStyle';
 export { VIS_PALETTES };
 
 const COLORS = VIS_PALETTES.default;
 const DEFAULT_CHART_STYLE = { height: 380, aspect: 1, fontSize: 16, tickStep: '', tickAngle: 0, ptStyle: 'circle', ptSize: 5, lineStyle: 'solid', lineThickness: 2, legend: 'top', colors: {}, barRadius: 3, xMin: '', xMax: '', yMin: '', yMax: '', xAxisLabel: '', yAxisLabel: '' };
+// Compact defaults for the "Split view — single curves" mini charts (own
+// Graphical Parameters panel, saved in vizCfgSplit).
+const DEFAULT_SPLIT_STYLE = { height: 80, aspect: 1, fontSize: 11, tickStep: '', tickAngle: 0, ptStyle: 'circle', ptSize: 4, lineStyle: 'solid', lineThickness: 2, legend: 'none', colors: {}, barRadius: 2, xMin: '', xMax: '', yMin: '', yMax: '', xAxisLabel: '', yAxisLabel: '' };
 // FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES now live in ../utils/chartStyle.
 // CollapsibleSection now lives in ./ui (single shared definition).
 
@@ -626,6 +629,13 @@ export const FCSOverlayVisualization = ({ ctx }) => {
   const setVizCfgAna = (patch) => updateActiveTest({ vizCfgAnalysis: { ...vizCfgAna, ...patch } });
   const cfgAna = { ...DEFAULT_CHART_STYLE, ...vizCfgAna };
 
+  // Split view ("stacked spectra") has its OWN Graphical Parameters panel so the
+  // user can enlarge its characters / adjust its charts independently.
+  const vizCfgSplit = activeTest.vizCfgSplit || {};
+  const setVizCfgSplit = (patch) => updateActiveTest({ vizCfgSplit: { ...vizCfgSplit, ...patch } });
+  const cfgSplit = { ...DEFAULT_SPLIT_STYLE, ...vizCfgSplit };
+  const [showCfgSplit, setShowCfgSplit] = useState(false);
+
   const [fs, setFs] = useState(false);
   const [showCfg, setShowCfg] = useState(false);
 
@@ -638,11 +648,10 @@ export const FCSOverlayVisualization = ({ ctx }) => {
 
   const instances = useMemo(() => {
     let list = null;
-    // When spectra were uploaded as multiple files into THIS instance
-    // ("Multiple files → same instance"), never overlay the other instances:
-    // only this instance's spectra (main file + extras) are shown.
-    const hasExtras = (activeTest.fcExtraFiles || []).length > 0;
-    if (!hasExtras && ctx) {
+    // "Single instance" mode (the Instances linked toggle is OFF, or spectra
+    // were uploaded as multiple files into this instance) → never overlay the
+    // other instances: only this instance's spectra (main file + extras).
+    if (instancesLinked(activeTest) && ctx) {
       if (typeof ctx.getInstances === 'function') { try { list = ctx.getInstances(); } catch {} }
       if (!list && Array.isArray(ctx.instances) && ctx.instances.length) list = ctx.instances;
     }
@@ -816,7 +825,7 @@ export const FCSOverlayVisualization = ({ ctx }) => {
           <span className="text-[10px] font-bold text-slate-500 uppercase self-center mr-2 shrink-0">Colors:</span>
           
           <div className="flex flex-wrap items-center gap-2">
-            <select onChange={(e) => { if(e.target.value && e.target.value !== 'custom') applyPalette(e.target.value); e.target.value=''; }} className="text-[10px] font-bold bg-white border border-slate-300 px-2 py-1 rounded shadow-sm hover:bg-slate-50 outline-none cursor-pointer">
+            <select onChange={(e) => { if(e.target.value && e.target.value !== 'custom') applyPalette(e.target.value); e.target.value=''; }} className="text-sm font-bold bg-white border border-slate-300 px-3 py-1.5 rounded-lg shadow-sm hover:bg-slate-50 outline-none cursor-pointer min-w-[180px]">
               <option value="">🎨 Apply Palette...</option>
               {Object.keys(VIS_PALETTES).map(k => <option key={k} value={k}>{k.charAt(0).toUpperCase() + k.slice(1)}</option>)}
             </select>
@@ -826,16 +835,16 @@ export const FCSOverlayVisualization = ({ ctx }) => {
               placeholder="#f00, #0f0..." 
               value={customPaletteInput} 
               onChange={e => setCustomPaletteInput(e.target.value)} 
-              className="text-[10px] border border-slate-300 px-2 py-1 rounded w-32 outline-none focus:border-blue-500" 
+              className="text-sm border border-slate-300 px-2.5 py-1.5 rounded-lg w-36 outline-none focus:border-blue-500" 
             />
-            <button onClick={() => applyPalette('custom')} className="text-[10px] font-bold bg-white border border-slate-300 px-2 py-1 rounded shadow-sm hover:bg-slate-50">Apply Custom</button>
+            <button onClick={() => applyPalette('custom')} className="text-sm font-bold bg-white border border-slate-300 px-3 py-1.5 rounded-lg shadow-sm hover:bg-slate-50 whitespace-nowrap">Apply Custom</button>
           </div>
         </div>
 
         <div className="flex justify-between items-center z-10 shrink-0 border-b border-slate-100 pb-2">
           <h5 className="text-sm font-bold text-slate-700">1D Histogram (Data Analysis)</h5>
           <div className="flex items-center gap-2">
-            <select value={overlayParam} onChange={e => setOverlayParam(e.target.value)} className="border border-slate-300 rounded px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-bold text-blue-700 max-w-[120px]">
+            <select value={overlayParam} onChange={e => setOverlayParam(e.target.value)} className="border border-slate-300 rounded px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-bold text-blue-700 min-w-[130px] max-w-[240px]">
               {rawSharedParams.map(p => <option key={p.name} value={(p.name||'').toUpperCase()}>{getParamLabel(p, panelArray, paramRenames)}</option>)}
             </select>
             <label className="flex items-center gap-1 text-xs font-bold text-slate-700 cursor-pointer mr-2">
@@ -859,6 +868,7 @@ export const FCSOverlayVisualization = ({ ctx }) => {
               <input type="checkbox" checked={fillHist} onChange={toggleFill} className="w-3.5 h-3.5 accent-blue-600" /> Fill
             </label>
             <ChartControlBar showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)} />
+            <InstanceLinkToggle activeTest={activeTest} updateActiveTest={updateActiveTest} />
             <button type="button" onClick={() => setFs(!fs)} className="font-bold py-1 px-2 rounded-lg text-[10px] border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 shadow-sm">{fs ? '↙️ Exit' : '↗️ Fullscreen'}</button>
           </div>
         </div>
@@ -871,10 +881,10 @@ export const FCSOverlayVisualization = ({ ctx }) => {
             {zoom.isZoomed && <button type="button" onClick={zoom.reset} className="absolute top-2 right-2 z-10 text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
             {cfgAna.title && <div className="text-sm font-bold text-slate-700 mb-1">{cfgAna.title}</div>}
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={chartData.bins} margin={{ top: 10, right: 20, left: 75, bottom: 45 }}>
+              <ComposedChart data={chartData.bins} margin={cfgChartMargin(cfgAna, { top: 10, right: 20, left: 75, bottom: 45 })}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="x" type="number" domain={zoom.domain} allowDataOverflow ticks={cfgAxisTicks(cfgAna, 'x', zoom.domain)} tickFormatter={cfgTickFormatter(cfgAna, 'x') || ((v) => v.toFixed(logScale ? 1 : 0))} tick={{ fontSize: Math.max(9, cfgAna.fontSize - 2) }} label={{ value: `${label1D}${logScale ? ' (Log)' : ''}`, position: 'insideBottom', offset: -10, fontSize: cfgAna.fontSize }} />
-                <YAxis tick={{ fontSize: Math.max(9, cfgAna.fontSize - 2) }} scale={cfgLogScale(cfgAna, 'y')} tickFormatter={cfgTickFormatter(cfgAna, 'y') || undefined} ticks={cfgAna.yMin !== '' && cfgAna.yMin != null && cfgAna.yMax !== '' && cfgAna.yMax != null ? cfgAxisTicks(cfgAna, 'y', [Number(cfgAna.yMin), Number(cfgAna.yMax)]) : undefined} label={{ value: cfgAna.yAxisLabel || 'Count', angle: -90, position: 'insideLeft', offset: -5, fontSize: cfgAna.fontSize }} />
+                <XAxis dataKey="x" type="number" domain={zoom.domain} allowDataOverflow ticks={cfgAxisTicks(cfgAna, 'x', zoom.domain)} tickFormatter={cfgTickFormatter(cfgAna, 'x') || ((v) => v.toFixed(logScale ? 1 : 0))} tick={{ fontSize: Math.max(9, cfgAna.fontSize - 2) }} label={cfgAxisLabel(cfgAna, 'x', `${label1D}${logScale ? ' (Log)' : ''}`, 10)} />
+                <YAxis tick={{ fontSize: Math.max(9, cfgAna.fontSize - 2) }} scale={cfgLogScale(cfgAna, 'y')} tickFormatter={cfgTickFormatter(cfgAna, 'y') || undefined} ticks={cfgAna.yMin !== '' && cfgAna.yMin != null && cfgAna.yMax !== '' && cfgAna.yMax != null ? cfgAxisTicks(cfgAna, 'y', [Number(cfgAna.yMin), Number(cfgAna.yMax)]) : undefined} label={cfgAxisLabel(cfgAna, 'y', cfgAna.yAxisLabel || 'Count', 5)} />
                 <Tooltip labelFormatter={(label) => `Value: ${Number(label).toFixed(logScale ? 2 : 0)}`} formatter={(value) => [value, 'Events']} />
                 {visibleInstances.map(s => {
                   const color = cfgAna.colors?.[s.id] || s.color;
@@ -893,7 +903,8 @@ export const FCSOverlayVisualization = ({ ctx }) => {
           </div>
 
           {splitStack && (
-            <div className={`bg-white rounded border border-slate-200 flex flex-col overflow-hidden ${fs ? 'w-[46%] min-h-0' : 'w-full lg:w-[46%] max-h-[560px]'}`}>
+            <div className={`flex flex-col gap-2 min-w-0 ${fs ? 'w-[46%]' : 'w-full lg:w-[46%]'}`}>
+              <div className={`bg-white rounded border border-slate-200 flex flex-col overflow-hidden ${fs ? 'min-h-0 flex-1' : 'max-h-[560px]'}`}>
               <div className="shrink-0 px-2.5 py-1.5 bg-slate-100 border-b border-slate-200 text-[10px] font-black uppercase tracking-wide text-slate-500 flex items-center justify-between gap-2">
                 <span className="flex items-center gap-2">
                   📚 Split view — single curves
@@ -901,6 +912,7 @@ export const FCSOverlayVisualization = ({ ctx }) => {
                          title="Use the same Y scale on every stacked graph">
                     <input type="checkbox" checked={splitSharedY} onChange={toggleSplitSharedY} className="w-3 h-3 accent-blue-600" /> Same Y
                   </label>
+                  <ChartControlBar showCfg={showCfgSplit} onToggleCfg={() => setShowCfgSplit(!showCfgSplit)} />
                 </span>
                 <span className="text-slate-400">{visibleInstances.length} {visibleInstances.length === 1 ? 'curve' : 'curves'}</span>
               </div>
@@ -912,20 +924,24 @@ export const FCSOverlayVisualization = ({ ctx }) => {
                       <span className="text-slate-700 truncate">{s.name}</span>
                     </div>
                     <div className="w-1/2 mx-auto pb-1">
-                      <ResponsiveContainer width="100%" height={80}>
+                      <ResponsiveContainer width="100%" height={Number(cfgSplit.height) || 80}>
                         <ComposedChart data={chartData.bins} margin={{ top: 2, right: 4, left: 0, bottom: 0 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                          <XAxis dataKey="x" type="number" domain={zoom.domain} allowDataOverflow hide={i < visibleInstances.length - 1} tickFormatter={cfgTickFormatter(cfgAna, 'x') || undefined} tick={{ fontSize: 11, fill: '#64748b' }} />
-                          <YAxis tickFormatter={cfgTickFormatter(cfgAna, 'y') || undefined} tick={{ fontSize: 11, fill: '#64748b' }} width={32} domain={splitSharedY ? [0, chartData.maxCount] : [0, 'auto']} />
-                          {fillHist && <Area type="monotone" dataKey={smoothHist ? s.id + '_sm' : s.id} name={s.name} stroke="none" fill={s.color} fillOpacity={0.3} isAnimationActive={false} />}
-                          <Line type="monotone" dataKey={s.id} name={s.name} stroke={s.color} strokeWidth={smoothHist ? 1 : (cfgAna.lineThickness || 2)} strokeOpacity={smoothHist ? 0.5 : 1} dot={false} isAnimationActive={false} />
-                          {smoothHist && <Line type="monotone" dataKey={s.id + '_sm'} name={`${s.name} (smooth)`} stroke={s.color} strokeWidth={cfgAna.lineThickness || 2} dot={false} isAnimationActive={false} />}
+                          <XAxis dataKey="x" type="number" domain={zoom.domain} allowDataOverflow hide={i < visibleInstances.length - 1} tickFormatter={cfgTickFormatter(cfgSplit, 'x') || undefined} tick={{ fontSize: Math.max(9, Number(cfgSplit.fontSize) || 11), fill: '#64748b' }} />
+                          <YAxis tickFormatter={cfgTickFormatter(cfgSplit, 'y') || undefined} tick={{ fontSize: Math.max(9, Number(cfgSplit.fontSize) || 11), fill: '#64748b' }} width={Math.max(30, (Number(cfgSplit.fontSize) || 11) + 22)} domain={splitSharedY ? [0, chartData.maxCount] : [0, 'auto']} />
+                          {fillHist && <Area type="monotone" dataKey={smoothHist ? s.id + '_sm' : s.id} name={s.name} stroke="none" fill={cfgSplit.colors?.[s.id] || s.color} fillOpacity={Number(cfgSplit.areaOpacity ?? 0.3)} isAnimationActive={false} />}
+                          {cfgSeriesEl(cfgSplit, { key: s.id, data: chartData.bins, dataKey: s.id, name: s.name, stroke: cfgSplit.colors?.[s.id] || s.color })}
+                          {smoothHist && <Line type="monotone" dataKey={s.id + '_sm'} name={`${s.name} (smooth)`} stroke={cfgSplit.colors?.[s.id] || s.color} strokeWidth={cfgSplit.lineThickness || 2} strokeDasharray={cfgSplit.lineStyle === 'dashed' ? '7 5' : cfgSplit.lineStyle === 'dotted' ? '2 3' : undefined} dot={false} isAnimationActive={false} />}
                         </ComposedChart>
                       </ResponsiveContainer>
                     </div>
                   </div>
                 ))}
               </div>
+              </div>
+              {showCfgSplit && (
+                <SharedChartStylePanel cfg={cfgSplit} setCfg={setVizCfgSplit} series={visibleInstances.map(s => ({ key: s.id, label: s.name, color: s.color }))} unit="a.u." />
+              )}
             </div>
           )}
         </div>
@@ -1001,11 +1017,10 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
 
   const instances = useMemo(() => {
     let list = null;
-    // When spectra were uploaded as multiple files into THIS instance
-    // ("Multiple files → same instance"), never overlay the other instances:
-    // only this instance's spectra (main file + extras) are shown.
-    const hasExtras = (activeTest.fcExtraFiles || []).length > 0;
-    if (!hasExtras && ctx) {
+    // "Single instance" mode (the Instances linked toggle is OFF, or spectra
+    // were uploaded as multiple files into this instance) → never overlay the
+    // other instances: only this instance's spectra (main file + extras).
+    if (instancesLinked(activeTest) && ctx) {
       if (typeof ctx.getInstances === 'function') { try { list = ctx.getInstances(); } catch {} }
       if (!list && Array.isArray(ctx.instances) && ctx.instances.length) list = ctx.instances;
       if (!list && Array.isArray(ctx.siblings) && ctx.siblings.length) list = ctx.siblings;
@@ -1222,7 +1237,7 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
           <span className="text-[10px] font-bold text-slate-500 uppercase self-center mr-2 shrink-0">Colors:</span>
           
           <div className="flex flex-wrap items-center gap-2">
-            <select onChange={(e) => { if(e.target.value && e.target.value !== 'custom') applyPalette(e.target.value); e.target.value=''; }} className="text-[10px] font-bold bg-white border border-slate-300 px-2 py-1 rounded shadow-sm hover:bg-slate-50 outline-none cursor-pointer">
+            <select onChange={(e) => { if(e.target.value && e.target.value !== 'custom') applyPalette(e.target.value); e.target.value=''; }} className="text-sm font-bold bg-white border border-slate-300 px-3 py-1.5 rounded-lg shadow-sm hover:bg-slate-50 outline-none cursor-pointer min-w-[180px]">
               <option value="">🎨 Apply Palette...</option>
               {Object.keys(VIS_PALETTES).map(k => <option key={k} value={k}>{k.charAt(0).toUpperCase() + k.slice(1)}</option>)}
             </select>
@@ -1232,13 +1247,14 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
               placeholder="#f00, #0f0..." 
               value={customPaletteInput} 
               onChange={e => setCustomPaletteInput(e.target.value)} 
-              className="text-[10px] border border-slate-300 px-2 py-1 rounded w-32 outline-none focus:border-blue-500" 
+              className="text-sm border border-slate-300 px-2.5 py-1.5 rounded-lg w-36 outline-none focus:border-blue-500" 
             />
-            <button onClick={() => applyPalette('custom')} className="text-[10px] font-bold bg-white border border-slate-300 px-2 py-1 rounded shadow-sm hover:bg-slate-50">Apply Custom</button>
+            <button onClick={() => applyPalette('custom')} className="text-sm font-bold bg-white border border-slate-300 px-3 py-1.5 rounded-lg shadow-sm hover:bg-slate-50 whitespace-nowrap">Apply Custom</button>
             <span className="text-slate-300 hidden md:inline">|</span>
-            <button onClick={() => setShowRenamer(!showRenamer)} className="text-[10px] font-bold bg-white border border-slate-300 px-2 py-1 rounded shadow-sm hover:bg-slate-50">✏️ Rename Parameters</button>
+            <InstanceLinkToggle activeTest={activeTest} updateActiveTest={updateActiveTest} />
+            <button onClick={() => setShowRenamer(!showRenamer)} className="text-sm font-bold bg-white border border-slate-300 px-3 py-1.5 rounded-lg shadow-sm hover:bg-slate-50 whitespace-nowrap">✏️ Rename Parameters</button>
             <button onClick={() => setShowAutoGates(!showAutoGates)}
-                    className={`text-[10px] font-bold px-2 py-1 rounded shadow-sm hover:bg-slate-50 border ${showAutoGates ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white border-slate-300 text-slate-700'}`}
+                    className={`text-sm font-bold px-3 py-1.5 rounded-lg shadow-sm hover:bg-slate-50 border whitespace-nowrap ${showAutoGates ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white border-slate-300 text-slate-700'}`}
                     title="Automatic treatment: singlets, debris exclusion and a manual channel filter">
               🤖 Auto treatment
             </button>
@@ -1391,7 +1407,7 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
             <div className="flex justify-between items-center z-10 shrink-0 border-b border-slate-100 pb-2">
               <h5 className="text-sm font-bold text-slate-700">1D Histogram</h5>
               <div className="flex items-center gap-2">
-                <select value={overlayParam1D} onChange={e => setOverlayParam1D(e.target.value)} className="border border-slate-300 rounded px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-bold text-blue-700 max-w-[120px]">
+                <select value={overlayParam1D} onChange={e => setOverlayParam1D(e.target.value)} className="border border-slate-300 rounded px-2 py-1 text-xs bg-white outline-none focus:border-blue-500 font-bold text-blue-700 min-w-[130px] max-w-[240px]">
                   {rawSharedParams.map(p => <option key={p.name} value={(p.name||'').toUpperCase()}>{getParamLabel(p, panelArray, paramRenames)}</option>)}
                 </select>
                 <label className="flex items-center gap-1 text-xs font-bold text-slate-700 cursor-pointer mr-2">
@@ -1409,10 +1425,10 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
               {zoom1D.isZoomed && <button type="button" onClick={zoom1D.reset} className="absolute top-2 right-2 z-10 text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
               {cfg1D.title && <div className="text-sm font-bold text-slate-700 mb-1">{cfg1D.title}</div>}
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={chartData1D.bins} margin={{ top: 10, right: 20, left: 75, bottom: 45 }}>
+                <ComposedChart data={chartData1D.bins} margin={cfgChartMargin(cfg1D, { top: 10, right: 20, left: 75, bottom: 45 })}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="x" type="number" domain={histDomain} allowDataOverflow ticks={cfgAxisTicks(cfg1D, 'x', histDomain)} tickFormatter={cfgTickFormatter(cfg1D, 'x') || ((v) => v.toFixed(log1D ? 1 : 0))} tick={{ fontSize: Math.max(9, cfg1D.fontSize - 2) }} label={{ value: `${label1D}${log1D ? ' (Log)' : ''}`, position: 'insideBottom', offset: -10, fontSize: cfg1D.fontSize }} />
-                  <YAxis tick={{ fontSize: Math.max(9, cfg1D.fontSize - 2) }} scale={cfgLogScale(cfg1D, 'y')} tickFormatter={cfgTickFormatter(cfg1D, 'y') || undefined} ticks={cfg1D.yMin !== '' && cfg1D.yMin != null && cfg1D.yMax !== '' && cfg1D.yMax != null ? cfgAxisTicks(cfg1D, 'y', [Number(cfg1D.yMin), Number(cfg1D.yMax)]) : undefined} label={{ value: cfg1D.yAxisLabel || 'Count', angle: -90, position: 'insideLeft', offset: -5, fontSize: cfg1D.fontSize }} />
+                  <XAxis dataKey="x" type="number" domain={histDomain} allowDataOverflow ticks={cfgAxisTicks(cfg1D, 'x', histDomain)} tickFormatter={cfgTickFormatter(cfg1D, 'x') || ((v) => v.toFixed(log1D ? 1 : 0))} tick={{ fontSize: Math.max(9, cfg1D.fontSize - 2) }} label={cfgAxisLabel(cfg1D, 'x', `${label1D}${log1D ? ' (Log)' : ''}`, 10)} />
+                  <YAxis tick={{ fontSize: Math.max(9, cfg1D.fontSize - 2) }} scale={cfgLogScale(cfg1D, 'y')} tickFormatter={cfgTickFormatter(cfg1D, 'y') || undefined} ticks={cfg1D.yMin !== '' && cfg1D.yMin != null && cfg1D.yMax !== '' && cfg1D.yMax != null ? cfgAxisTicks(cfg1D, 'y', [Number(cfg1D.yMin), Number(cfg1D.yMax)]) : undefined} label={cfgAxisLabel(cfg1D, 'y', cfg1D.yAxisLabel || 'Count', 5)} />
                   <Tooltip labelFormatter={(label) => `Value: ${Number(label).toFixed(log1D ? 2 : 0)}`} formatter={(value) => [value, 'Events']} />
                   {visibleInstances.map(s => cfgSeriesEl(cfg1D, { key: s.id, data: chartData1D.bins, dataKey: s.id, name: s.name, stroke: cfg1D.colors?.[s.id] || s.color }))}
                   {zoom1D.refLo !== null && zoom1D.refHi !== null && <ReferenceArea x1={zoom1D.refLo} x2={zoom1D.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}

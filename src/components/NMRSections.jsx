@@ -1,5 +1,5 @@
 import NMRMoleculeViewer, { useShowAssignedFlag } from './NMRMoleculeViewer';
-import { ChartControlBar, SharedChartStylePanel, AngledTick, cfgTickFormatter } from './SharedAnalysisTools';
+import { ChartControlBar, SharedChartStylePanel, AngledTick, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
 import { Icon } from './Icons';
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
@@ -2090,13 +2090,17 @@ const normalizeInstance = (t, idx) => ({
 });
 const getInstances = (ctx, activeTest) => {
   let list = null;
-  if (ctx) {
-    if (typeof ctx.getInstances === 'function') { try { list = ctx.getInstances(); } catch { list = null; } }
-    if (!list && Array.isArray(ctx.instances) && ctx.instances.length) list = ctx.instances;
-    if (!list && Array.isArray(ctx.siblings) && ctx.siblings.length) list = ctx.siblings;
-    if (!list && (Array.isArray(ctx.tests) || Array.isArray(ctx.allTests))) {
-      const all = ctx.tests || ctx.allTests;
-      list = activeTest.name ? all.filter((t) => t && t.name === activeTest.name) : all;
+  // "Single instance" mode (the Instances linked toggle is OFF): show only the
+  // active instance everywhere.
+  if (instancesLinked(activeTest)) {
+    if (ctx) {
+      if (typeof ctx.getInstances === 'function') { try { list = ctx.getInstances(); } catch { list = null; } }
+      if (!list && Array.isArray(ctx.instances) && ctx.instances.length) list = ctx.instances;
+      if (!list && Array.isArray(ctx.siblings) && ctx.siblings.length) list = ctx.siblings;
+      if (!list && (Array.isArray(ctx.tests) || Array.isArray(ctx.allTests))) {
+        const all = ctx.tests || ctx.allTests;
+        list = activeTest.name ? all.filter((t) => t && t.name === activeTest.name) : all;
+      }
     }
   }
   if (!list || !list.length) list = [activeTest];
@@ -4237,7 +4241,9 @@ const NMRSpectraVisualization = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const instances = useMemo(() => {
     let list = null;
-    if (ctx) {
+    // "Single instance" mode (the Instances linked toggle is OFF): show only the
+    // active instance.
+    if (instancesLinked(activeTest) && ctx) {
       if (typeof ctx.getInstances === 'function') { try { list = ctx.getInstances(); } catch {} }
       if (!list && Array.isArray(ctx.instances) && ctx.instances.length) list = ctx.instances;
       if (!list && Array.isArray(ctx.siblings) && ctx.siblings.length) list = ctx.siblings;
@@ -4388,10 +4394,13 @@ const onUp = () => {
     <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3 mt-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h4 className="text-sm font-bold text-slate-700">📈 1D Spectra Overlay & Palette Manager</h4>
-        <label className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer">
-          <input type="checkbox" checked={showOverlay} onChange={e => setShowOverlay(e.target.checked)} className="w-4 h-4 accent-blue-600" />
-          Show Overlay
-        </label>
+        <div className="flex items-center gap-2">
+          <InstanceLinkToggle activeTest={activeTest} updateActiveTest={updateActiveTest} />
+          <label className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer">
+            <input type="checkbox" checked={showOverlay} onChange={e => setShowOverlay(e.target.checked)} className="w-4 h-4 accent-blue-600" />
+            Show Overlay
+          </label>
+        </div>
       </div>
 
  {showOverlay && seriesList.length > 0 && (
@@ -4447,7 +4456,7 @@ const onUp = () => {
                 if(e.target.value && e.target.value !== 'custom') applyPalette(e.target.value); 
                 e.target.value=''; 
               }} 
-              className="text-[10px] font-bold bg-white border border-slate-300 px-2 py-1 rounded shadow-sm hover:bg-slate-50 outline-none cursor-pointer"
+              className="text-sm font-bold bg-white border border-slate-300 px-3 py-1.5 rounded-lg shadow-sm hover:bg-slate-50 outline-none cursor-pointer min-w-[180px]"
             >
               <option value="">🎨 Apply Palette...</option>
               {Object.keys(VIS_PALETTES).map(k => <option key={k} value={k}>{k.charAt(0).toUpperCase() + k.slice(1)}</option>)}
@@ -4465,7 +4474,7 @@ const onUp = () => {
                 title={`Color ${idx + 1}`} 
               />
             ))}
-            <button onClick={() => applyPalette('custom')} className="text-[10px] font-bold bg-white border border-slate-300 px-2 py-1 rounded shadow-sm hover:bg-slate-50">Apply Custom</button>
+            <button onClick={() => applyPalette('custom')} className="text-sm font-bold bg-white border border-slate-300 px-3 py-1.5 rounded-lg shadow-sm hover:bg-slate-50 whitespace-nowrap">Apply Custom</button>
           </div>
         </div>
 
@@ -6255,12 +6264,12 @@ export const SecondaryShiftsSection = ({ ctx }) => {
                 </select>
                 <span className="text-slate-300 mx-1">|</span>
                 <span className="text-[10px] font-bold text-slate-500 uppercase">Colors:</span>
-                <select onChange={(e) => { if(e.target.value && e.target.value !== 'custom') applyPalette(e.target.value); e.target.value=''; }} className="text-[10px] font-bold bg-white border border-slate-300 px-2 py-1 rounded shadow-sm hover:bg-slate-50 outline-none cursor-pointer">
+                <select onChange={(e) => { if(e.target.value && e.target.value !== 'custom') applyPalette(e.target.value); e.target.value=''; }} className="text-sm font-bold bg-white border border-slate-300 px-3 py-1.5 rounded-lg shadow-sm hover:bg-slate-50 outline-none cursor-pointer min-w-[180px]">
                   <option value="">🎨 Apply Palette...</option>
                   {Object.keys(VIS_PALETTES).map(k => <option key={k} value={k}>{k.charAt(0).toUpperCase() + k.slice(1)}</option>)}
                 </select>
-                <input type="text" placeholder="#f00, #0f0..." value={customPaletteInput} onChange={e => setCustomPaletteInput(e.target.value)} className="text-[10px] border border-slate-300 px-2 py-1 rounded w-32 outline-none focus:border-purple-500" />
-                <button onClick={() => applyPalette('custom')} className="text-[10px] font-bold bg-white border border-slate-300 px-2 py-1 rounded shadow-sm hover:bg-slate-50">Apply</button>
+                <input type="text" placeholder="#f00, #0f0..." value={customPaletteInput} onChange={e => setCustomPaletteInput(e.target.value)} className="text-sm border border-slate-300 px-2.5 py-1.5 rounded-lg w-36 outline-none focus:border-purple-500" />
+                <button onClick={() => applyPalette('custom')} className="text-sm font-bold bg-white border border-slate-300 px-3 py-1.5 rounded-lg shadow-sm hover:bg-slate-50 whitespace-nowrap">Apply</button>
               </div>
             )}
           </>
@@ -6697,10 +6706,10 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
                 <div ref={chartRef} onMouseDown={isHist ? undefined : zoom.onMouseDown} style={chartBoxStyle(cfg)} className="bg-white border border-slate-200 rounded-xl p-3">
                   <ResponsiveContainer width="100%" height="100%">
                     {isHist ? (
-                      <BarChart data={catData} margin={{ top: 8, right: 16, bottom: 30, left: 12 }}>
+                      <BarChart data={catData} margin={cfgChartMargin(cfg, { top: 8, right: 16, bottom: 30, left: 12 })}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                        <XAxis dataKey="__condition" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} />} tickMargin={10} label={{ value: 'Condition', position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
-                        <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={{ value: yLab, angle: -90, position: 'insideLeft', offset: 6, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                        <XAxis dataKey="__condition" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} />} tickMargin={10} label={cfgAxisLabel(cfg, 'x', 'Condition', 22)} />
+                        <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={cfgAxisLabel(cfg, 'y', yLab, 6)} />
                         <Tooltip />
                         {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 10 }} />}
                         {refLines}
@@ -6714,12 +6723,12 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
                         })}
                       </BarChart>
                     ) : (
-                      <LineChart margin={{ top: 8, right: 16, bottom: 30, left: 12 }}>
+                      <LineChart margin={cfgChartMargin(cfg, { top: 8, right: 16, bottom: 30, left: 12 })}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                         <XAxis type="number" dataKey="x" domain={[dom(cfg.xMin) ?? zoom.domain[0], dom(cfg.xMax) ?? zoom.domain[1]]} ticks={xTicks}
                           tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} formatter={cfgTickFormatter(cfg, 'x') || undefined} />} tickMargin={10}
-                          label={{ value: xLab, position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
-                        <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={{ value: yLab, angle: -90, position: 'insideLeft', offset: 6, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                          label={cfgAxisLabel(cfg, 'x', xLab, 22)} />
+                        <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={cfgAxisLabel(cfg, 'y', yLab, 6)} />
                         <Tooltip />
                         {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 10 }} />}
                         {refLines}
@@ -6781,7 +6790,7 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
                         <BarChart data={paramData} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} />
                           <XAxis dataKey="name" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={Math.max(9, cfg.fontSize - 2)} />} />
-                          <YAxis tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: Math.max(9, cfg.fontSize - 2) }} label={{ value: paramGraphVar, angle: -90, position: 'insideLeft', fontSize: cfg.fontSize, fill: '#64748b' }} />
+                          <YAxis tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: Math.max(9, cfg.fontSize - 2) }} label={cfgAxisLabel(cfg, 'y', paramGraphVar, 0)} />
                           <Tooltip />
                           <Bar dataKey="val" isAnimationActive={false}>
                             {paramData.map((entry, idx) => <Cell key={idx} fill={entry.fill} />)}

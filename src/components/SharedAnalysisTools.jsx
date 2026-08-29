@@ -671,6 +671,31 @@ export const useYZoom = (chartRef, dataDomain, margin = { top: 10, right: 20, bo
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// INSTANCE LINKING — a per-test switch that decides whether the overlay shows
+// ALL instances/conditions together ("linked") or ONLY the active instance
+// ("single instance"). Flow Cytometry auto-defaults to single-instance when
+// spectra were uploaded as multiple files into the same instance.
+// ─────────────────────────────────────────────────────────────────────────────
+export const instancesLinked = (activeTest = {}) =>
+  activeTest.linkInstances !== false && !((activeTest.fcExtraFiles || []).length > 0);
+
+export const InstanceLinkToggle = ({ activeTest, updateActiveTest, className = '' }) => {
+  const linked = instancesLinked(activeTest);
+  return (
+    <button
+      type="button"
+      onClick={() => updateActiveTest({ linkInstances: !linked })}
+      title={linked
+        ? 'Instances are linked — all conditions are shown together. Click to see only this instance.'
+        : 'Only this instance is shown. Click to link all instances again.'}
+      className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors whitespace-nowrap ${linked ? 'bg-emerald-50 border-emerald-300 text-emerald-700 hover:bg-emerald-100' : 'bg-amber-100 border-amber-400 text-amber-800 hover:bg-amber-200'} ${className}`}
+    >
+      {linked ? '🔗 Instances linked' : '🔒 Single instance'}
+    </button>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SHARED CHART — fully-wired recharts body that honours every field of
 // SharedChartStylePanel, so the "Graphical Parameters" commands really modify
 // the spectrum / chromatogram / plot they are attached to (chart type, series
@@ -851,7 +876,7 @@ export const SharedChart = ({
       tick={tickPropsFor('x')}
       tickFormatter={cfgTickFormatter(cfg, 'x') || undefined}
       {...(xTicks ? { ticks: xTicks } : {})}
-      label={{ value: cfg.xAxisLabel || (unit ? `Value (${unit})` : 'Value'), position: 'insideBottom', offset: -18, fontSize: fs, fill: '#64748b' }}
+      label={cfgAxisLabel(cfg, 'x', cfg.xAxisLabel || (unit ? `Value (${unit})` : 'Value'), 18)}
     />,
     <YAxis
       key="y"
@@ -862,7 +887,7 @@ export const SharedChart = ({
       tickFormatter={cfgTickFormatter(cfg, 'y') || undefined}
       {...(yTicks ? { ticks: yTicks } : {})}
       width={yAxisWidth}
-      label={cfg.yAxisLabel ? { value: cfg.yAxisLabel, angle: -90, position: 'insideLeft', offset: 0, fontSize: fs, fill: '#64748b' } : undefined}
+      label={cfg.yAxisLabel ? cfgAxisLabel(cfg, 'y', cfg.yAxisLabel, 0) : undefined}
     />,
     <Tooltip
       key="tip"
@@ -893,7 +918,9 @@ export const SharedChart = ({
   ];
 
   const h = useChartFsHeight(Number(cfg.height) || height);
-  const resolvedMargin = { top: 8, right: 12, bottom: 34, ...margin, left: margin.left ?? yAxisWidth };
+  // Grow the axis areas with the panel font size so bigger ticks never overlap
+  // the axis titles.
+  const resolvedMargin = cfgChartMargin(cfg, { top: 8, right: 12, bottom: 34, ...margin, left: margin.left ?? yAxisWidth });
 
   return (
     <div className="flex flex-col gap-1">
@@ -1004,6 +1031,35 @@ export const cfgTickFormatter = (cfg = {}, axis = 'x') => {
     if (sci) return n.toExponential(nDec);
     return n.toFixed(nDec);
   };
+};
+
+/**
+ * Axis-title label props whose offset grows with the panel font size (and the
+ * tick angle), so larger tick labels never overlap the axis title.
+ *   cfg  -- style object (fontSize, tickAngle)
+ *   axis -- 'x' | 'y'
+ *   value-- label text
+ *   base -- offset used at the 12px base (default 25 for X, 20 for Y)
+ */
+export const cfgAxisLabel = (cfg = {}, axis = 'x', value = '', base) => {
+  const fs = Number(cfg.fontSize) || 16;
+  const extra = Math.max(0, fs - 12) + (Math.abs(Number(cfg.tickAngle) || 0) > 0 ? 8 : 0);
+  const baseOff = base ?? (axis === 'x' ? 25 : 20);
+  const offset = -(baseOff + extra * 1.6);
+  if (axis === 'x') {
+    return { value, position: 'insideBottom', offset, fill: '#64748b', fontSize: fs + 1 };
+  }
+  return { value, angle: -90, position: 'insideLeft', offset, fill: '#64748b', fontSize: fs + 1 };
+};
+
+/**
+ * Chart margin that grows with the panel font size so the axis areas have room
+ * for larger tick labels + titles. Pass the chart's base margin as `base`.
+ */
+export const cfgChartMargin = (cfg = {}, base = { top: 20, right: 20, bottom: 45, left: 50 }) => {
+  const fs = Number(cfg.fontSize) || 16;
+  const extra = Math.max(0, fs - 12);
+  return { ...base, bottom: (base.bottom ?? 45) + extra * 2.2, left: (base.left ?? 50) + extra * 2.2 };
 };
 
 
