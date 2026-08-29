@@ -1555,7 +1555,7 @@ const MDAnalysisChart = ({ title, data, dataKey = 'value', xKey = 'time', color,
       <div className="flex justify-between items-center mb-1">
         <h5 className="text-[12px] font-bold text-slate-700">{title}</h5>
         {zoom.isZoomed && (
-          <button type="button" onClick={zoom.reset} className="text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>
+          <button type="button" onClick={zoom.reset} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>
         )}
       </div>
       <div ref={chartRef} onMouseDown={chartType !== 'bar' ? zoom.onMouseDown : undefined} className="flex-1 w-full select-none" style={{ aspectRatio: String(aspect), minHeight: 200 }}>
@@ -2470,7 +2470,7 @@ const MDContactChart = ({ rows, series, yLabel, cfg }) => {
     <div className="flex flex-col gap-1">
       {zoom.isZoomed && (
         <div className="flex justify-end">
-          <button type="button" onClick={zoom.reset} className="text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">↩ Reset Zoom</button>
+          <button type="button" onClick={zoom.reset} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">↩ Reset Zoom</button>
         </div>
       )}
       <div className="flex gap-3">
@@ -2908,7 +2908,7 @@ const MDProfileChart = ({ rows, series, xKey, yLabel, xLabel, height = 380, rota
     <div className="flex flex-col gap-1">
       {isZoomed && reset && (
         <div className="flex justify-end">
-          <button type="button" onClick={reset} className="text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">↩ Reset Zoom</button>
+          <button type="button" onClick={reset} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">↩ Reset Zoom</button>
         </div>
       )}
       <div className="flex gap-3">
@@ -3849,7 +3849,7 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
 
           <ChartPanel title="Secondary structure content vs time" icon="📈"
                       headerExtra={contentZoom.isZoomed ? (
-                        <button type="button" onClick={contentZoom.reset} className="text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">↩ Reset Zoom</button>
+                        <button type="button" onClick={contentZoom.reset} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">↩ Reset Zoom</button>
                       ) : null}
                       cfgPanel={(
                         <div className="flex flex-col gap-3">
@@ -3935,7 +3935,7 @@ export const MDSecondaryStructureSection = ({ ctx }) => {
           {occRows.length > 0 && (
             <ChartPanel title={`Per-residue occupancy (${outputs[0].name})`} icon="📊"
                         headerExtra={occZoom.isZoomed ? (
-                          <button type="button" onClick={occZoom.reset} className="text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">↩ Reset Zoom</button>
+                          <button type="button" onClick={occZoom.reset} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">↩ Reset Zoom</button>
                         ) : null}
                         cfgPanel={(
                           <div className="flex flex-col gap-3">

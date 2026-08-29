@@ -3,8 +3,8 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
 import { uploadLocalFile, withExtension, getDriveToken } from '../utils/driveUpload';
-import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LineChart, Line, ComposedChart, Area, ReferenceArea} from 'recharts';
-import { ChartControlBar, SharedChartStylePanel } from './SharedAnalysisTools';
+import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Line, ComposedChart, Area, ReferenceArea} from 'recharts';
+import { ChartControlBar, SharedChartStylePanel, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgTickFormatter } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES, seriesColorFor } from '../utils/chartStyle';
 export { VIS_PALETTES };
@@ -320,6 +320,15 @@ const DEFAULT_AUTO_GATES = {
   manual: { enabled: false, xParam: 'FSC-A', yParam: 'SSC-A', xMin: 0, yMin: 0 }
 };
 
+// When a channel selector of an automatic filter is touched, the 2D chart is
+// pointed at exactly those two channels (singlets: A vs H · debris: A vs SSC ·
+// manual: X vs Y).
+const AUTO_FILTER_CHANNELS = {
+  singlets: { x: 'aParam', y: 'hParam' },
+  debris: { x: 'aParam', y: 'sscParam' },
+  manual: { x: 'xParam', y: 'yParam' }
+};
+
 // Does event `eventIdx` of `fcs` pass all enabled automatic filters?
 const passesAutoGates = (fcs, eventIdx, auto) => {
   if (!auto) return true;
@@ -629,7 +638,11 @@ export const FCSOverlayVisualization = ({ ctx }) => {
 
   const instances = useMemo(() => {
     let list = null;
-    if (ctx) {
+    // When spectra were uploaded as multiple files into THIS instance
+    // ("Multiple files → same instance"), never overlay the other instances:
+    // only this instance's spectra (main file + extras) are shown.
+    const hasExtras = (activeTest.fcExtraFiles || []).length > 0;
+    if (!hasExtras && ctx) {
       if (typeof ctx.getInstances === 'function') { try { list = ctx.getInstances(); } catch {} }
       if (!list && Array.isArray(ctx.instances) && ctx.instances.length) list = ctx.instances;
     }
@@ -704,6 +717,13 @@ export const FCSOverlayVisualization = ({ ctx }) => {
       return nv;
     });
   };
+
+  // Graphical Parameters' "Log X" is the SAME control as the native "Log"
+  // checkbox here: the panel writes cfgAna.xLog and the histogram pre-transforms
+  // the channel values with log10, so we keep them in sync.
+  useEffect(() => {
+    setLogScale(!!cfgAna.xLog);
+  }, [cfgAna.xLog]);
 
   useEffect(() => {
     if (rawSharedParams.length > 0 && !rawSharedParams.find(p => p.name.toUpperCase() === overlayParam)) {
@@ -819,7 +839,7 @@ export const FCSOverlayVisualization = ({ ctx }) => {
               {rawSharedParams.map(p => <option key={p.name} value={(p.name||'').toUpperCase()}>{getParamLabel(p, panelArray, paramRenames)}</option>)}
             </select>
             <label className="flex items-center gap-1 text-xs font-bold text-slate-700 cursor-pointer mr-2">
-              <input type="checkbox" checked={logScale} onChange={e => setLogScale(e.target.checked)} className="w-3.5 h-3.5 accent-blue-600" /> Log
+              <input type="checkbox" checked={logScale} onChange={e => { setLogScale(e.target.checked); setVizCfgAna({ xLog: e.target.checked }); }} className="w-3.5 h-3.5 accent-blue-600" /> Log
             </label>
             <label className="flex items-center gap-1 text-xs font-bold text-slate-700 cursor-pointer mr-2"
                    title="Split the superposed curves into separate graphs, stacked vertically on the right">
@@ -846,21 +866,27 @@ export const FCSOverlayVisualization = ({ ctx }) => {
         {showCfg && <SharedChartStylePanel cfg={cfgAna} setCfg={setVizCfgAna} series={visibleInstances.map(s => ({ key: s.id, label: s.name, color: s.color }))} unit="a.u." />}
         
         <div className={`${fs ? 'flex-1 min-h-0' : ''} ${splitStack ? 'flex flex-col lg:flex-row gap-3' : ''}`}>
-          <div ref={chartRef} onMouseDown={zoom.onMouseDown} className={`bg-slate-50 rounded border border-slate-200 p-2 select-none relative overflow-hidden cursor-crosshair min-w-0 ${fs ? 'flex-1 min-h-0' : splitStack ? 'lg:w-[54%] aspect-square max-h-[55vh]' : 'w-full aspect-square max-h-[55vh]'}`}>
-            {zoom.isZoomed && <button type="button" onClick={zoom.reset} className="absolute top-2 right-2 z-10 text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
+          <div ref={chartRef} onMouseDown={zoom.onMouseDown} className={`bg-slate-50 rounded border border-slate-200 p-2 select-none relative overflow-hidden cursor-crosshair min-w-0 ${fs ? 'flex-1 min-h-0' : splitStack ? 'lg:w-[54%]' : 'w-full'}`}
+               style={!fs ? { aspectRatio: String(Number(cfgAna.aspect) || 1), maxHeight: `min(${Number(cfgAna.height) || 380}px, 55vh)` } : undefined}>
+            {zoom.isZoomed && <button type="button" onClick={zoom.reset} className="absolute top-2 right-2 z-10 text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
+            {cfgAna.title && <div className="text-sm font-bold text-slate-700 mb-1">{cfgAna.title}</div>}
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={chartData.bins} margin={{ top: 10, right: 20, left: 75, bottom: 45 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="x" type="number" domain={zoom.domain} allowDataOverflow tickFormatter={(v) => v.toFixed(logScale ? 1 : 0)} tick={{ fontSize: Math.max(9, cfgAna.fontSize - 2) }} label={{ value: `${label1D}${logScale ? ' (Log)' : ''}`, position: 'insideBottom', offset: -10, fontSize: cfgAna.fontSize }} />
-                <YAxis tick={{ fontSize: Math.max(9, cfgAna.fontSize - 2) }} label={{ value: 'Count', angle: -90, position: 'insideLeft', offset: -5, fontSize: cfgAna.fontSize }} />
+                <XAxis dataKey="x" type="number" domain={zoom.domain} allowDataOverflow ticks={cfgAxisTicks(cfgAna, 'x', zoom.domain)} tickFormatter={cfgTickFormatter(cfgAna, 'x') || ((v) => v.toFixed(logScale ? 1 : 0))} tick={{ fontSize: Math.max(9, cfgAna.fontSize - 2) }} label={{ value: `${label1D}${logScale ? ' (Log)' : ''}`, position: 'insideBottom', offset: -10, fontSize: cfgAna.fontSize }} />
+                <YAxis tick={{ fontSize: Math.max(9, cfgAna.fontSize - 2) }} scale={cfgLogScale(cfgAna, 'y')} tickFormatter={cfgTickFormatter(cfgAna, 'y') || undefined} ticks={cfgAna.yMin !== '' && cfgAna.yMin != null && cfgAna.yMax !== '' && cfgAna.yMax != null ? cfgAxisTicks(cfgAna, 'y', [Number(cfgAna.yMin), Number(cfgAna.yMax)]) : undefined} label={{ value: cfgAna.yAxisLabel || 'Count', angle: -90, position: 'insideLeft', offset: -5, fontSize: cfgAna.fontSize }} />
                 <Tooltip labelFormatter={(label) => `Value: ${Number(label).toFixed(logScale ? 2 : 0)}`} formatter={(value) => [value, 'Events']} />
-                {visibleInstances.map(s => (
-                  <React.Fragment key={s.id}>
-                    {fillHist && <Area type="monotone" dataKey={smoothHist ? s.id + '_sm' : s.id} name={s.name} stroke="none" fill={s.color} fillOpacity={0.3} isAnimationActive={false} />}
-                    <Line type="monotone" dataKey={s.id} name={s.name} stroke={s.color} strokeWidth={smoothHist ? Math.max(1, (cfgAna.lineThickness || 2) - 1) : (cfgAna.lineThickness || 2)} strokeOpacity={smoothHist ? 0.45 : 1} dot={false} isAnimationActive={false} />
-                    {smoothHist && <Line type="monotone" dataKey={s.id + '_sm'} name={`${s.name} (smooth)`} stroke={s.color} strokeWidth={cfgAna.lineThickness || 2} dot={false} isAnimationActive={false} />}
-                  </React.Fragment>
-                ))}
+                {visibleInstances.map(s => {
+                  const color = cfgAna.colors?.[s.id] || s.color;
+                  const dash = cfgAna.lineStyle === 'dashed' ? '7 5' : cfgAna.lineStyle === 'dotted' ? '2 3' : undefined;
+                  return (
+                    <React.Fragment key={s.id}>
+                      {fillHist && <Area type="monotone" dataKey={smoothHist ? s.id + '_sm' : s.id} name={s.name} stroke="none" fill={color} fillOpacity={Number(cfgAna.areaOpacity ?? 0.3)} isAnimationActive={false} />}
+                      {cfgSeriesEl(cfgAna, { key: s.id, data: chartData.bins, dataKey: s.id, name: s.name, stroke: color })}
+                      {smoothHist && <Line type="monotone" dataKey={s.id + '_sm'} name={`${s.name} (smooth)`} stroke={color} strokeWidth={cfgAna.lineThickness || 2} strokeDasharray={dash} dot={false} isAnimationActive={false} />}
+                    </React.Fragment>
+                  );
+                })}
                 {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
               </ComposedChart>
             </ResponsiveContainer>
@@ -885,16 +911,18 @@ export const FCSOverlayVisualization = ({ ctx }) => {
                       <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: s.color }} />
                       <span className="text-slate-700 truncate">{s.name}</span>
                     </div>
-                    <ResponsiveContainer width="100%" height={120}>
-                      <ComposedChart data={chartData.bins} margin={{ top: 2, right: 8, left: 0, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                        <XAxis dataKey="x" type="number" domain={zoom.domain} allowDataOverflow hide={i < visibleInstances.length - 1} tick={{ fontSize: 16, fill: '#64748b' }} />
-                        <YAxis tick={{ fontSize: 16, fill: '#64748b' }} width={44} domain={splitSharedY ? [0, chartData.maxCount] : [0, 'auto']} />
-                        {fillHist && <Area type="monotone" dataKey={smoothHist ? s.id + '_sm' : s.id} name={s.name} stroke="none" fill={s.color} fillOpacity={0.3} isAnimationActive={false} />}
-                        <Line type="monotone" dataKey={s.id} name={s.name} stroke={s.color} strokeWidth={smoothHist ? 1 : (cfgAna.lineThickness || 2)} strokeOpacity={smoothHist ? 0.5 : 1} dot={false} isAnimationActive={false} />
-                        {smoothHist && <Line type="monotone" dataKey={s.id + '_sm'} name={`${s.name} (smooth)`} stroke={s.color} strokeWidth={cfgAna.lineThickness || 2} dot={false} isAnimationActive={false} />}
-                      </ComposedChart>
-                    </ResponsiveContainer>
+                    <div className="w-1/2 mx-auto pb-1">
+                      <ResponsiveContainer width="100%" height={80}>
+                        <ComposedChart data={chartData.bins} margin={{ top: 2, right: 4, left: 0, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                          <XAxis dataKey="x" type="number" domain={zoom.domain} allowDataOverflow hide={i < visibleInstances.length - 1} tickFormatter={cfgTickFormatter(cfgAna, 'x') || undefined} tick={{ fontSize: 11, fill: '#64748b' }} />
+                          <YAxis tickFormatter={cfgTickFormatter(cfgAna, 'y') || undefined} tick={{ fontSize: 11, fill: '#64748b' }} width={32} domain={splitSharedY ? [0, chartData.maxCount] : [0, 'auto']} />
+                          {fillHist && <Area type="monotone" dataKey={smoothHist ? s.id + '_sm' : s.id} name={s.name} stroke="none" fill={s.color} fillOpacity={0.3} isAnimationActive={false} />}
+                          <Line type="monotone" dataKey={s.id} name={s.name} stroke={s.color} strokeWidth={smoothHist ? 1 : (cfgAna.lineThickness || 2)} strokeOpacity={smoothHist ? 0.5 : 1} dot={false} isAnimationActive={false} />
+                          {smoothHist && <Line type="monotone" dataKey={s.id + '_sm'} name={`${s.name} (smooth)`} stroke={s.color} strokeWidth={cfgAna.lineThickness || 2} dot={false} isAnimationActive={false} />}
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -939,13 +967,6 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
     manual: { ...DEFAULT_AUTO_GATES.manual, ...((activeTest.fcAutoGates || {}).manual || {}) }
   }));
   const [showAutoGates, setShowAutoGates] = useState(false);
-  const patchAutoGate = (key, patch) => {
-    setAutoGates((prev) => {
-      const next = { ...prev, [key]: { ...prev[key], ...patch } };
-      updateActiveTest({ fcAutoGates: next });
-      return next;
-    });
-  };
   const resetAutoGates = () => {
     const next = {
       singlets: { ...DEFAULT_AUTO_GATES.singlets },
@@ -980,7 +1001,11 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
 
   const instances = useMemo(() => {
     let list = null;
-    if (ctx) {
+    // When spectra were uploaded as multiple files into THIS instance
+    // ("Multiple files → same instance"), never overlay the other instances:
+    // only this instance's spectra (main file + extras) are shown.
+    const hasExtras = (activeTest.fcExtraFiles || []).length > 0;
+    if (!hasExtras && ctx) {
       if (typeof ctx.getInstances === 'function') { try { list = ctx.getInstances(); } catch {} }
       if (!list && Array.isArray(ctx.instances) && ctx.instances.length) list = ctx.instances;
       if (!list && Array.isArray(ctx.siblings) && ctx.siblings.length) list = ctx.siblings;
@@ -1039,6 +1064,31 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
   const [overlayParam1D, setOverlayParam1D] = useState('');
   const [xParam2D, setXParam2D] = useState('');
   const [yParam2D, setYParam2D] = useState('');
+
+  // Edit an automatic filter. When one of its channel selectors is touched the
+  // 2D chart automatically switches to those exact axes (singlets: A vs H ·
+  // debris: A vs SSC · manual: X vs Y).
+  const patchAutoGate = (key, patch) => {
+    setAutoGates((prev) => {
+      const next = { ...prev, [key]: { ...prev[key], ...patch } };
+      updateActiveTest({ fcAutoGates: next });
+      return next;
+    });
+    const def = AUTO_FILTER_CHANNELS[key];
+    if (def && patch && typeof patch === 'object') {
+      const cur = { ...autoGates[key], ...patch };
+      const x = def.x in patch ? patch[def.x] : cur[def.x];
+      const y = def.y in patch ? patch[def.y] : cur[def.y];
+      if (x && y) { setXParam2D(x); setYParam2D(y); }
+    }
+  };
+
+  // Graphical Parameters' "Log X" is the SAME control as the native "Log"
+  // checkbox of the 1D histogram (the histogram pre-transforms channel values
+  // with log10), so the panel command is mirrored onto the local toggle.
+  useEffect(() => {
+    setLog1D(!!cfg1D.xLog);
+  }, [cfg1D.xLog]);
   
   const [log1D, setLog1D] = useState(false);
   const [logX2D, setLogX2D] = useState(false);
@@ -1244,7 +1294,7 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
           <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-lg mt-2 flex flex-col gap-3">
             <div className="flex items-center justify-between gap-2">
               <span className="text-[10px] font-black uppercase tracking-wide text-emerald-700">🤖 Automatic treatment</span>
-              <button onClick={resetAutoGates} className="text-[10px] font-bold bg-white border border-slate-300 px-2 py-1 rounded shadow-sm hover:bg-slate-50">↺ Reset defaults</button>
+              <button onClick={resetAutoGates} className="text-xs font-bold bg-white border border-slate-300 px-2 py-1 rounded shadow-sm hover:bg-slate-50">↺ Reset defaults</button>
             </div>
             <p className="text-[10px] text-slate-500">
               Applied to every histogram, 2D scatter and gate. Filters run in order: singlets → debris → manual.
@@ -1345,7 +1395,7 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
                   {rawSharedParams.map(p => <option key={p.name} value={(p.name||'').toUpperCase()}>{getParamLabel(p, panelArray, paramRenames)}</option>)}
                 </select>
                 <label className="flex items-center gap-1 text-xs font-bold text-slate-700 cursor-pointer mr-2">
-                  <input type="checkbox" checked={log1D} onChange={e => setLog1D(e.target.checked)} className="w-3.5 h-3.5 accent-blue-600" /> Log
+                  <input type="checkbox" checked={log1D} onChange={e => { setLog1D(e.target.checked); setVizCfg1D({ xLog: e.target.checked }); }} className="w-3.5 h-3.5 accent-blue-600" /> Log
                 </label>
                 <ChartControlBar showCfg={showCfg1D} onToggleCfg={() => setShowCfg1D(!showCfg1D)} />
                 <button type="button" onClick={() => setFs1D(!fs1D)} className="font-bold py-1 px-2 rounded-lg text-[10px] border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 shadow-sm">{fs1D ? '↙️ Exit' : '↗️ Fullscreen'}</button>
@@ -1354,17 +1404,19 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
             
             {showCfg1D && <SharedChartStylePanel cfg={cfg1D} setCfg={setVizCfg1D} series={visibleInstances.map(s => ({ key: s.id, label: s.name, color: s.color }))} unit="a.u." />}
             
-            <div ref={chartRef1D} onMouseDown={zoom1D.onMouseDown} className={`bg-slate-50 rounded border border-slate-200 p-2 select-none relative overflow-hidden cursor-crosshair w-full ${fs1D ? 'flex-1 min-h-0' : 'h-[300px]'}`}>
-              {zoom1D.isZoomed && <button type="button" onClick={zoom1D.reset} className="absolute top-2 right-2 z-10 text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
+            <div ref={chartRef1D} onMouseDown={zoom1D.onMouseDown} className={`bg-slate-50 rounded border border-slate-200 p-2 select-none relative overflow-hidden cursor-crosshair w-full ${fs1D ? 'flex-1 min-h-0' : ''}`}
+                 style={!fs1D ? { height: Math.min(Number(cfg1D.height) || 300, 560) } : undefined}>
+              {zoom1D.isZoomed && <button type="button" onClick={zoom1D.reset} className="absolute top-2 right-2 z-10 text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
+              {cfg1D.title && <div className="text-sm font-bold text-slate-700 mb-1">{cfg1D.title}</div>}
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData1D.bins} margin={{ top: 10, right: 20, left: 75, bottom: 45 }}>
+                <ComposedChart data={chartData1D.bins} margin={{ top: 10, right: 20, left: 75, bottom: 45 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="x" type="number" domain={histDomain} allowDataOverflow tickFormatter={(v) => v.toFixed(log1D ? 1 : 0)} tick={{ fontSize: Math.max(9, cfg1D.fontSize - 2) }} label={{ value: `${label1D}${log1D ? ' (Log)' : ''}`, position: 'insideBottom', offset: -10, fontSize: cfg1D.fontSize }} />
-                  <YAxis tick={{ fontSize: Math.max(9, cfg1D.fontSize - 2) }} label={{ value: 'Count', angle: -90, position: 'insideLeft', offset: -5, fontSize: cfg1D.fontSize }} />
+                  <XAxis dataKey="x" type="number" domain={histDomain} allowDataOverflow ticks={cfgAxisTicks(cfg1D, 'x', histDomain)} tickFormatter={cfgTickFormatter(cfg1D, 'x') || ((v) => v.toFixed(log1D ? 1 : 0))} tick={{ fontSize: Math.max(9, cfg1D.fontSize - 2) }} label={{ value: `${label1D}${log1D ? ' (Log)' : ''}`, position: 'insideBottom', offset: -10, fontSize: cfg1D.fontSize }} />
+                  <YAxis tick={{ fontSize: Math.max(9, cfg1D.fontSize - 2) }} scale={cfgLogScale(cfg1D, 'y')} tickFormatter={cfgTickFormatter(cfg1D, 'y') || undefined} ticks={cfg1D.yMin !== '' && cfg1D.yMin != null && cfg1D.yMax !== '' && cfg1D.yMax != null ? cfgAxisTicks(cfg1D, 'y', [Number(cfg1D.yMin), Number(cfg1D.yMax)]) : undefined} label={{ value: cfg1D.yAxisLabel || 'Count', angle: -90, position: 'insideLeft', offset: -5, fontSize: cfg1D.fontSize }} />
                   <Tooltip labelFormatter={(label) => `Value: ${Number(label).toFixed(log1D ? 2 : 0)}`} formatter={(value) => [value, 'Events']} />
-                  {visibleInstances.map(s => <Line key={s.id} type="monotone" dataKey={s.id} name={s.name} stroke={s.color} strokeWidth={cfg1D.lineThickness || 2} dot={false} isAnimationActive={false} />)}
+                  {visibleInstances.map(s => cfgSeriesEl(cfg1D, { key: s.id, data: chartData1D.bins, dataKey: s.id, name: s.name, stroke: cfg1D.colors?.[s.id] || s.color }))}
                   {zoom1D.refLo !== null && zoom1D.refHi !== null && <ReferenceArea x1={zoom1D.refLo} x2={zoom1D.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
-                </LineChart>
+                </ComposedChart>
               </ResponsiveContainer>
             </div>
           </div>

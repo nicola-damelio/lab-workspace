@@ -1,1 +1,24 @@
 @import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Readability floor for buttons — keep a similar, readable character size all
+   over the program. Buttons carrying the tiny arbitrary 9–11px sizes are
+   raised to the standard 12px (text-xs). Only the exact token
+   `text-[9px]/text-[10px]/text-[11px]` is matched (token-boundary), so
+   responsive variants (hover:, md:, …) and larger sizes stay untouched.
+   ------------------------------------------------------------------------- */
+button[class^="text-[9px]"],
+button[class*=" text-[9px]"],
+button[class^="text-[10px]"],
+button[class*=" text-[10px]"],
+button[class^="text-[11px]"],
+button[class*=" text-[11px]"],
+button [class^="text-[9px]"],
+button [class*=" text-[9px]"],
+button [class^="text-[10px]"],
+button [class*=" text-[10px]"],
+button [class^="text-[11px]"],
+button [class*=" text-[11px]"] {
+  font-size: 0.75rem !important;   /* 12px */
+  line-height: 1rem !important;
+}

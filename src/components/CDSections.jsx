@@ -8,9 +8,9 @@ import React, {useState, useEffect, useRef, useMemo} from 'react';
 import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line,
-  Legend, ErrorBar, Cell, PieChart, Pie
+  Legend, ErrorBar, Cell, PieChart, Pie, ComposedChart
 } from 'recharts';
-import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, AngledTick } from './SharedAnalysisTools';
+import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, AngledTick, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgAxisDomain, cfgTickFormatter } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, seriesColorFor, chartBoxStyle } from '../utils/chartStyle';
 import { parseJascoJwsBinary, isJascoJwsBinary } from '../utils/jascoJws';
@@ -2230,19 +2230,28 @@ export const SpectraVisualization = ({ ctx }) => {
   const xLabel = cfg.xAxisLabel || 'Wavelength (nm)';
   const yLab = cfg.yAxisLabel || yLabel;
 
+  const xScale = cfgLogScale(cfg, 'x');
+  const yScale = cfgLogScale(cfg, 'y');
+  const xDomain = cfgAxisDomain(cfg, 'x', zoom.domain);
+  const yMinV = dom(cfg.yMin), yMaxV = dom(cfg.yMax);
+  const yDomain = yScale === 'log'
+    ? [(yMinV != null && yMinV > 0 ? yMinV : 1e-3), (yMaxV != null ? yMaxV : 'auto')]
+    : [yMinV ?? 'auto', yMaxV ?? 'auto'];
+
   const chartBody = (
     <div ref={chartRef} onMouseDown={zoom.onMouseDown} style={fs ? { flex: 1, minHeight: 0 } : chartBoxStyle(cfg, { square: false })} className={`bg-white border border-slate-200 rounded-xl p-3 select-none relative ${fs ? 'w-full' : ''}`}>
-      {zoom.isZoomed && <button type="button" onClick={zoom.reset} className="absolute top-2 right-2 z-10 text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
+      {zoom.isZoomed && <button type="button" onClick={zoom.reset} className="absolute top-2 right-2 z-10 text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
+      {cfg.title && <h4 className="text-sm font-bold text-slate-700 mb-1">{cfg.title}</h4>}
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart margin={CHART_MARGIN}>
+        <ComposedChart margin={CHART_MARGIN}>
           <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-          <XAxis type="number" dataKey="x" domain={[dom(cfg.xMin) ?? zoom.domain[0], dom(cfg.xMax) ?? zoom.domain[1]]} allowDataOverflow ticks={makeTicks(zoom.domain, cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} />} tickMargin={10} label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
-          <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} allowDataOverflow tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={{ value: yLab, angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+          <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow scale={xScale} ticks={cfgAxisTicks(cfg, 'x', xDomain)} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} formatter={cfgTickFormatter(cfg, 'x') || undefined} />} tickMargin={10} label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+          <YAxis type="number" domain={yDomain} allowDataOverflow scale={yScale} ticks={yMinV != null && yMaxV != null ? cfgAxisTicks(cfg, 'y', [yMinV, yMaxV]) : undefined} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={{ value: yLab, angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
           <Tooltip />
           {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 8 }} />}
-          {visible.map((s) => <Line key={s.key} data={s.data} type="monotone" dataKey="y" name={s.label} stroke={s.color} strokeWidth={cfg.lineThickness || 2} strokeDasharray={lineDash(cfg.lineStyle)} strokeOpacity={1} dot={false} connectNulls isAnimationActive={false} />)}
+          {visible.map((s) => cfgSeriesEl(cfg, { key: s.key, data: s.data, dataKey: 'y', name: s.label, stroke: cfg.colors?.[s.key] || s.color }))}
           {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
-        </LineChart>
+        </ComposedChart>
       </ResponsiveContainer>
     </div>
   );
@@ -2302,7 +2311,7 @@ export const SpectraVisualization = ({ ctx }) => {
                 <div className={`flex flex-col bg-white ${fsSmall === s.key ? FS_CLASSES + ' p-6' : 'relative aspect-square p-2 cursor-pointer hover:shadow-lg transition-shadow border border-slate-200 rounded-lg group'}`} onClick={fsSmall !== s.key ? () => setFsSmall(s.key) : undefined}>
                   <div className="flex justify-between items-start mb-1 z-10">
                     <h4 className="text-xs font-bold text-slate-600 uppercase truncate w-[80%]" title={s.label}>{s.label}</h4>
-                    <button className={fsSmall === s.key ? 'text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5' : 'opacity-0 group-hover:opacity-100 text-slate-400 hover:text-blue-600 bg-slate-50 rounded p-1 text-[10px]'} onClick={(e) => { e.stopPropagation(); setFsSmall(fsSmall === s.key ? null : s.key); }}>{fsSmall === s.key ? '↙️' : '↗️'}</button>
+                    <button className={fsSmall === s.key ? 'text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5' : 'opacity-0 group-hover:opacity-100 text-slate-400 hover:text-blue-600 bg-slate-50 rounded p-1 text-xs'} onClick={(e) => { e.stopPropagation(); setFsSmall(fsSmall === s.key ? null : s.key); }}>{fsSmall === s.key ? '↙️' : '↗️'}</button>
                   </div>
                   <div className={`flex-1 relative min-h-0 ${fsSmall !== s.key ? 'pointer-events-none' : ''}`}>
                     <ResponsiveContainer width="100%" height="100%">
@@ -2573,19 +2582,23 @@ export const SpectrumFitting = ({ ctx }) => {
                 <span className="text-xs font-bold text-slate-600 uppercase">Experimental vs Simulated</span>
                 <button type="button" onClick={() => setFsFit(!fsFit)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 text-[10px]">{fsFit ? '↙️' : '↗️'}</button>
               </div>
-              <div ref={overlayRef} onMouseDown={zoomFit.onMouseDown} style={fsFit ? { flex: 1, minHeight: 0 } : { width: '100%', aspectRatio: '1.6', maxHeight: 380 }} className="bg-white border border-slate-200 rounded-xl p-3 select-none relative">
-                {zoomFit.isZoomed && <button type="button" onClick={zoomFit.reset} className="absolute top-2 right-2 z-10 text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
+              <div ref={overlayRef} onMouseDown={zoomFit.onMouseDown} style={fsFit ? { flex: 1, minHeight: 0 } : chartBoxStyle(cfg, { square: false })} className="bg-white border border-slate-200 rounded-xl p-3 select-none relative">
+                {zoomFit.isZoomed && <button type="button" onClick={zoomFit.reset} className="absolute top-2 right-2 z-10 text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
+                {cfg.title && <h4 className="text-sm font-bold text-slate-700 mb-1">{cfg.title}</h4>}
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart margin={CHART_MARGIN}>
+                  <ComposedChart margin={CHART_MARGIN}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    <XAxis type="number" dataKey="x" domain={[dom(cfg.xMin) ?? zoomFit.domain[0], dom(cfg.xMax) ?? zoomFit.domain[1]]} allowDataOverflow ticks={makeTicks(zoomFit.domain, cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} />} tickMargin={10} label={{ value: cfg.xAxisLabel || 'Wavelength (nm)', position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
-                    <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} allowDataOverflow tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={{ value: cfg.yAxisLabel || ((fitInst && fitInst.test.yUnit === 'theta') ? thetaUnitShort(thetaModeOf(fitInst.test)) : 'Ellipticity (mdeg)'), angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
-                    <Line data={expData} type="monotone" dataKey="y" name="Experimental" stroke="#3b82f6" strokeWidth={cfg.lineThickness || 2} dot={false} connectNulls isAnimationActive={false} />
-                    <Line data={simData} type="monotone" dataKey="y" name="Simulated (fit)" stroke="#ef4444" strokeWidth={cfg.lineThickness || 2} strokeDasharray="7 5" dot={false} connectNulls isAnimationActive={false} />
+                    <XAxis type="number" dataKey="x" domain={cfgAxisDomain(cfg, 'x', zoomFit.domain)} allowDataOverflow scale={cfgLogScale(cfg, 'x')} ticks={cfgAxisTicks(cfg, 'x', cfgAxisDomain(cfg, 'x', zoomFit.domain))} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} formatter={cfgTickFormatter(cfg, 'x') || undefined} />} tickMargin={10} label={{ value: cfg.xAxisLabel || 'Wavelength (nm)', position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                    <YAxis type="number" domain={cfgLogScale(cfg, 'y') === 'log'
+                        ? [((dom(cfg.yMin) != null && dom(cfg.yMin) > 0) ? dom(cfg.yMin) : 1e-3), (dom(cfg.yMax) != null ? dom(cfg.yMax) : 'auto')]
+                        : [dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']}
+                      allowDataOverflow scale={cfgLogScale(cfg, 'y')} ticks={dom(cfg.yMin) != null && dom(cfg.yMax) != null ? cfgAxisTicks(cfg, 'y', [dom(cfg.yMin), dom(cfg.yMax)]) : undefined} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={{ value: cfg.yAxisLabel || ((fitInst && fitInst.test.yUnit === 'theta') ? thetaUnitShort(thetaModeOf(fitInst.test)) : 'Ellipticity (mdeg)'), angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                    {cfgSeriesEl(cfg, { key: 'exp', data: expData, dataKey: 'y', name: 'Experimental', stroke: cfg.colors?.exp || '#3b82f6' })}
+                    {cfgSeriesEl(cfg, { key: 'sim', data: simData, dataKey: 'y', name: 'Simulated (fit)', stroke: cfg.colors?.sim || '#ef4444' })}
                     <Tooltip />
-                    <Legend verticalAlign="top" wrapperStyle={{ fontSize: 11 }} />
+                    {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize || 11 }} />}
                     {zoomFit.refLo !== null && zoomFit.refHi !== null && <ReferenceArea x1={zoomFit.refLo} x2={zoomFit.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
-                  </LineChart>
+                  </ComposedChart>
                 </ResponsiveContainer>
               </div>
               <p className="text-[10px] text-slate-400 mt-1">💡 Blue = experimental · Red dashed = reconstructed from the fit ({savedFit.method === 'classical' ? 'reference-set NNLS' : 'pure components'}). Drag to zoom.</p>
@@ -2862,7 +2875,7 @@ const Condition3DScatter = ({ series, colorOf, includedPts, xLabel, yLabel, zLab
             <button type="button" onClick={() => setChartType('bar')} className={`text-[10px] font-bold px-2 py-1 ${chartType === 'bar' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>Bars (3D histogram)</button>
           </div>
         )}
-        <button type="button" onClick={resetView} className="text-[10px] bg-white hover:bg-slate-50 border border-slate-300 text-slate-600 px-2 py-1 rounded-lg font-bold shadow-sm">Reset view</button>
+        <button type="button" onClick={resetView} className="text-xs bg-white hover:bg-slate-50 border border-slate-300 text-slate-600 px-2 py-1 rounded-lg font-bold shadow-sm">Reset view</button>
       </div>
     </div>
   );
@@ -3337,7 +3350,7 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
                   <div className="flex justify-between items-center mb-2 shrink-0">
                     <span className="text-xs font-bold text-slate-600 uppercase">{plot.title}</span>
                     <div className="flex gap-2">
-                      {!isHist && zoom.isZoomed && <button type="button" onClick={zoom.reset} className="text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
+                      {!isHist && zoom.isZoomed && <button type="button" onClick={zoom.reset} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
                       <button type="button" onClick={() => setFs(!fs)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 text-[10px]">{fs ? '↙️' : '↗️'}</button>
                     </div>
                   </div>
@@ -3361,7 +3374,7 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
                         <BarChart data={histData} margin={{ top: 8, right: 16, bottom: 30, left: 12 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                           <XAxis dataKey="__condition" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} />} tickMargin={10} label={{ value: 'Condition', position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
-                          <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={{ value: yLab, angle: -90, position: 'insideLeft', offset: 6, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                          <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={{ value: yLab, angle: -90, position: 'insideLeft', offset: 6, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
                           <Tooltip />
                           {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 10 }} />}
                           {refLines}
@@ -3377,8 +3390,8 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
                       ) : (
                         <LineChart margin={{ top: 8, right: 16, bottom: 30, left: 12 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                          <XAxis type="number" dataKey="x" domain={[dom(cfg.xMin) ?? zoom.domain[0], dom(cfg.xMax) ?? zoom.domain[1]]} ticks={makeTicks(zoom.domain, cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} />} tickMargin={10} allowDataOverflow label={{ value: `${xLab}${yUnitSuffix ? ` (${yUnitSuffix})` : ''}`, position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
-                          <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} allowDataOverflow label={{ value: yLab, angle: -90, position: 'insideLeft', offset: 6, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                          <XAxis type="number" dataKey="x" domain={[dom(cfg.xMin) ?? zoom.domain[0], dom(cfg.xMax) ?? zoom.domain[1]]} ticks={makeTicks(zoom.domain, cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} formatter={cfgTickFormatter(cfg, 'x') || undefined} />} tickMargin={10} allowDataOverflow label={{ value: `${xLab}${yUnitSuffix ? ` (${yUnitSuffix})` : ''}`, position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                          <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} allowDataOverflow label={{ value: yLab, angle: -90, position: 'insideLeft', offset: 6, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
                           <Tooltip />
                           {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 10 }} />}
                           {refLines}
@@ -3454,7 +3467,7 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
                     <div className="flex items-center justify-between mb-2">
                       <label className="text-xs font-bold text-slate-700">Fitted Parameter Chart</label>
                       <div className="flex items-center gap-2">
-                        {fitZoom.isZoomed && <button type="button" onClick={fitZoom.reset} className="text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
+                        {fitZoom.isZoomed && <button type="button" onClick={fitZoom.reset} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>}
                         <select value={paramGraphVar} onChange={(e) => setParamGraphVar(e.target.value)} className="border border-slate-300 rounded px-2 py-1 text-xs">
                           {paramKeys.map((k) => <option key={k} value={k}>{k}</option>)}
                         </select>
@@ -3465,7 +3478,7 @@ const ConditionPlotPanel = ({ d, plot, updatePlot, removePlot, duplicatePlot }) 
                         <BarChart data={paramData} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} />
                           <XAxis dataKey="name" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={Math.max(9, cfg.fontSize - 2)} />} />
-                          <YAxis domain={[dom(cfg.yMin) ?? fitZoom.domain[0], dom(cfg.yMax) ?? fitZoom.domain[1]]} allowDataOverflow tick={{ fontSize: Math.max(9, cfg.fontSize - 2) }} label={{ value: paramGraphVar, angle: -90, position: 'insideLeft', fontSize: cfg.fontSize, fill: '#64748b' }} />
+                          <YAxis domain={[dom(cfg.yMin) ?? fitZoom.domain[0], dom(cfg.yMax) ?? fitZoom.domain[1]]} allowDataOverflow tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: Math.max(9, cfg.fontSize - 2) }} label={{ value: paramGraphVar, angle: -90, position: 'insideLeft', fontSize: cfg.fontSize, fill: '#64748b' }} />
                           <Tooltip />
                           <Bar dataKey="val" isAnimationActive={false}>
                             {paramData.map((entry, idx) => <Cell key={idx} fill={entry.fill} />)}

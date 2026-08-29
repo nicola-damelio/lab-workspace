@@ -1,5 +1,5 @@
 import NMRMoleculeViewer, { useShowAssignedFlag } from './NMRMoleculeViewer';
-import { ChartControlBar, SharedChartStylePanel, AngledTick } from './SharedAnalysisTools';
+import { ChartControlBar, SharedChartStylePanel, AngledTick, cfgTickFormatter } from './SharedAnalysisTools';
 import { Icon } from './Icons';
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
@@ -4687,7 +4687,7 @@ const NMR2DSpectrumItem = ({ cfg, d, updateItem, onRemove }) => {
       <div className="bg-white border border-sky-200 rounded-xl p-4 flex flex-col gap-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <h4 className="text-sm font-bold text-sky-900">🖼️ 2D Spectrum Image — overlay predicted peaks</h4>
-          <button type="button" onClick={onRemove} className="text-[10px] text-red-400 hover:text-red-600 font-bold">× Remove</button>
+          <button type="button" onClick={onRemove} className="text-xs text-red-400 hover:text-red-600 font-bold">× Remove</button>
         </div>
         <span className="text-xs text-slate-500">
           Upload a real 2D spectrum image (a screenshot with axes is fine). The app overlays the predicted cross-peaks
@@ -4705,7 +4705,7 @@ const NMR2DSpectrumItem = ({ cfg, d, updateItem, onRemove }) => {
     <div className="bg-white border border-sky-200 rounded-xl p-4 flex flex-col gap-3">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h4 className="text-sm font-bold text-sky-900">🖼️ 2D Spectrum Image — overlay predicted peaks</h4>
-        <button type="button" onClick={onRemove} className="text-[10px] text-red-400 hover:text-red-600 font-bold">× Remove</button>
+        <button type="button" onClick={onRemove} className="text-xs text-red-400 hover:text-red-600 font-bold">× Remove</button>
       </div>
 
       <div className="flex flex-wrap items-center gap-3 bg-sky-50 border border-sky-200 rounded-lg p-3">
@@ -6620,7 +6620,7 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
           <div className="w-full lg:w-80 flex flex-col gap-2 shrink-0">
             <div className="flex items-center gap-2 flex-wrap">
               <label className="text-xs font-bold text-slate-600 uppercase">Atom(s) to plot</label>
-              <button type="button" onClick={selectAllFiltered} className="text-[10px] font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100 px-2 py-0.5 rounded">☑ Select all (filtered)</button>
+              <button type="button" onClick={selectAllFiltered} className="text-xs font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100 px-2 py-0.5 rounded">☑ Select all (filtered)</button>
               <button type="button" onClick={() => set({ atoms: [] })} className="text-[10px] font-bold text-red-500 hover:text-red-700 underline">Clear</button>
             </div>
             <input type="text" value={atomSearch} onChange={(e) => setAtomSearch(e.target.value)} placeholder="Search atom (e.g. Ala3 HN)…" className="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white" />
@@ -6692,7 +6692,7 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
             ) : (
               <div className="select-none relative">
                 {!isHist && zoom.isZoomed && (
-                  <button type="button" onClick={zoom.reset} className="absolute top-2 right-2 z-10 text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>
+                  <button type="button" onClick={zoom.reset} className="absolute top-2 right-2 z-10 text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>
                 )}
                 <div ref={chartRef} onMouseDown={isHist ? undefined : zoom.onMouseDown} style={chartBoxStyle(cfg)} className="bg-white border border-slate-200 rounded-xl p-3">
                   <ResponsiveContainer width="100%" height="100%">
@@ -6700,7 +6700,7 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
                       <BarChart data={catData} margin={{ top: 8, right: 16, bottom: 30, left: 12 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                         <XAxis dataKey="__condition" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} />} tickMargin={10} label={{ value: 'Condition', position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
-                        <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={{ value: yLab, angle: -90, position: 'insideLeft', offset: 6, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                        <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={{ value: yLab, angle: -90, position: 'insideLeft', offset: 6, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
                         <Tooltip />
                         {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 10 }} />}
                         {refLines}
@@ -6717,9 +6717,9 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
                       <LineChart margin={{ top: 8, right: 16, bottom: 30, left: 12 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                         <XAxis type="number" dataKey="x" domain={[dom(cfg.xMin) ?? zoom.domain[0], dom(cfg.xMax) ?? zoom.domain[1]]} ticks={xTicks}
-                          tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} />} tickMargin={10}
+                          tick={<AngledTick angle={cfg.tickAngle} fontSize={cfg.fontSize} formatter={cfgTickFormatter(cfg, 'x') || undefined} />} tickMargin={10}
                           label={{ value: xLab, position: 'insideBottom', offset: -22, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
-                        <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={{ value: yLab, angle: -90, position: 'insideLeft', offset: 6, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
+                        <YAxis type="number" domain={[dom(cfg.yMin) ?? 'auto', dom(cfg.yMax) ?? 'auto']} tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: cfg.fontSize, fill: '#64748b' }} label={{ value: yLab, angle: -90, position: 'insideLeft', offset: 6, fill: '#64748b', fontSize: cfg.fontSize + 1 }} />
                         <Tooltip />
                         {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 10 }} />}
                         {refLines}
@@ -6781,7 +6781,7 @@ export const ConditionPlotPanel = ({ ctx, d, plot, updatePlot, removePlot, dupli
                         <BarChart data={paramData} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} />
                           <XAxis dataKey="name" interval={catInterval(cfg.tickStep)} tick={<AngledTick angle={cfg.tickAngle} fontSize={Math.max(9, cfg.fontSize - 2)} />} />
-                          <YAxis tick={{ fontSize: Math.max(9, cfg.fontSize - 2) }} label={{ value: paramGraphVar, angle: -90, position: 'insideLeft', fontSize: cfg.fontSize, fill: '#64748b' }} />
+                          <YAxis tickFormatter={cfgTickFormatter(cfg, 'y') || undefined} tick={{ fontSize: Math.max(9, cfg.fontSize - 2) }} label={{ value: paramGraphVar, angle: -90, position: 'insideLeft', fontSize: cfg.fontSize, fill: '#64748b' }} />
                           <Tooltip />
                           <Bar dataKey="val" isAnimationActive={false}>
                             {paramData.map((entry, idx) => <Cell key={idx} fill={entry.fill} />)}
@@ -6949,7 +6949,7 @@ const PerAtomChartPanel = ({ ctx, d, chart, updateChart, removeChart }) => {
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[10px] font-bold text-slate-500 uppercase">Atom(s) to plot ({atoms.length} selected)</span>
-          <button type="button" onClick={selectAllFiltered} className="text-[10px] font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100 px-2 py-0.5 rounded">☑ Select all (filtered)</button>
+          <button type="button" onClick={selectAllFiltered} className="text-xs font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100 px-2 py-0.5 rounded">☑ Select all (filtered)</button>
           {atoms.length > 0 && <button type="button" onClick={() => setC({ atoms: [] })} className="text-[10px] font-bold text-red-500 hover:text-red-700 underline">Clear</button>}
         </div>
         <input type="text" value={atomSearch} onChange={e => setAtomSearch(e.target.value)}

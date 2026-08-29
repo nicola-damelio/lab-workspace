@@ -61,7 +61,7 @@ return (
  <div className= "bg-slate-50 border border-slate-200 rounded-lg p-3 flex flex-col gap-2 " >
  <div className= "flex justify-between items-center " >
  <span className= "text-xs font-black text-slate-700 " >{primer.name} </span >
- <button type= "button " onClick={copy} className= "text-[10px] font-bold bg-white border border-slate-300 hover:bg-blue-50 text-slate-600 px-2 py-1 rounded shadow-sm " >📋 Copy </button >
+ <button type= "button " onClick={copy} className= "text-xs font-bold bg-white border border-slate-300 hover:bg-blue-50 text-slate-600 px-2 py-1 rounded shadow-sm " >📋 Copy </button >
  </div >
  <p className= "font-mono text-[11px] text-slate-800 break-all bg-white border border-slate-200 rounded p-2 leading-relaxed " >{primer.seq} </p >
  <div className= "flex flex-wrap gap-2 text-[10px] font-bold " >

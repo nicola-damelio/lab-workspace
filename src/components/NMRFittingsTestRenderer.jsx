@@ -947,7 +947,7 @@ function IndividualDecayChart({ table, colIndex, colFit, chartCfg, isFs, onToggl
         <div className={`flex flex-col bg-white ${isFs ? FS_CLASSES + ' p-6' : 'relative aspect-square p-2 cursor-pointer hover:shadow-lg transition-shadow border border-slate-200 rounded-lg group'}`} onClick={!isFs ? onToggleFs : undefined}>
             <div className="flex justify-between items-start mb-1 z-10">
                 <h4 className="text-xs font-bold text-slate-600 uppercase">{residueName}</h4>
-                {!isFs && <button className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1 transition-all text-[10px]">↗️</button>}
+                {!isFs && <button className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1 transition-all text-xs">↗️</button>}
                 {isFs && <button onClick={(e) => { e.stopPropagation(); onToggleFs(); }} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5 transition-colors no-print">↙️</button>}
             </div>
             <div className={`flex-1 relative min-h-0 ${!isFs ? 'pointer-events-none' : ''}`}> <canvas ref={ref} /> </div>

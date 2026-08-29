@@ -249,7 +249,7 @@ export const ChartControlBar = ({
 // setting of SharedChartStylePanel (cfg.tickAngle). Previously copy-pasted in
 // CDSections / ssNMRSections / NMRSections.
 // ─────────────────────────────────────────────────────────────────────────────
-export const AngledTick = ({ x, y, payload, angle = 0, fontSize = 11, anchor = 'middle' }) => {
+export const AngledTick = ({ x, y, payload, angle = 0, fontSize = 11, anchor = 'middle', formatter }) => {
     const a = Number(angle) || 0;
     return (
         <g transform={`translate(${x || 0},${y || 0})`}>
@@ -261,7 +261,7 @@ export const AngledTick = ({ x, y, payload, angle = 0, fontSize = 11, anchor = '
                 fill="#64748b"
                 fontSize={fontSize}
             >
-                {String(payload.value)}
+                {formatter ? formatter(payload.value) : String(payload.value)}
             </text>
         </g>
     );
@@ -466,6 +466,14 @@ export const SharedChartStylePanel = ({ cfg = {}, setCfg, series = [], unit = 'a
                     <div className="flex flex-col gap-2 mt-1">
                         <CB label="Log X axis" checked={cfg.xLog} onChange={(v) => set({ xLog: v })} />
                         <CB label="Log Y axis" checked={cfg.yLog} onChange={(v) => set({ yLog: v })} />
+                    </div>
+                    <SF label="X decimals" value={cfg.xDecimals ?? ''} onChange={(v) => set({ xDecimals: v })}
+                        options={[['','Auto'],['0','0'],['1','1'],['2','2'],['3','3'],['4','4']]} />
+                    <SF label="Y decimals" value={cfg.yDecimals ?? ''} onChange={(v) => set({ yDecimals: v })}
+                        options={[['','Auto'],['0','0'],['1','1'],['2','2'],['3','3'],['4','4']]} />
+                    <div className="flex flex-col gap-2 mt-1">
+                        <CB label="Sci. notation X" checked={cfg.xSci} onChange={(v) => set({ xSci: v })} />
+                        <CB label="Sci. notation Y" checked={cfg.ySci} onChange={(v) => set({ ySci: v })} />
                     </div>
                 </div>
             </div>
@@ -782,9 +790,12 @@ export const SharedChart = ({
       : null
   );
 
-  const tickProps = tickAngle
-    ? <AngledTick angle={tickAngle} fontSize={fs} />
-    : { fontSize: fs, fill: '#64748b' };
+  const tickPropsFor = (axis) => {
+    const fmt = cfgTickFormatter(cfg, axis) || undefined;
+    return tickAngle
+      ? <AngledTick angle={tickAngle} fontSize={fs} formatter={fmt} />
+      : { fontSize: fs, fill: '#64748b' };
+  };
 
 
   const makeSeries = safeSeries.map((s, i) => {
@@ -837,7 +848,8 @@ export const SharedChart = ({
       domain={xDomain}
       allowDataOverflow
       scale={xLog ? 'log' : 'auto'}
-      tick={tickProps}
+      tick={tickPropsFor('x')}
+      tickFormatter={cfgTickFormatter(cfg, 'x') || undefined}
       {...(xTicks ? { ticks: xTicks } : {})}
       label={{ value: cfg.xAxisLabel || (unit ? `Value (${unit})` : 'Value'), position: 'insideBottom', offset: -18, fontSize: fs, fill: '#64748b' }}
     />,
@@ -846,7 +858,8 @@ export const SharedChart = ({
       domain={yDomain}
       allowDataOverflow
       scale={yLog ? 'log' : 'auto'}
-      tick={tickProps}
+      tick={tickPropsFor('y')}
+      tickFormatter={cfgTickFormatter(cfg, 'y') || undefined}
       {...(yTicks ? { ticks: yTicks } : {})}
       width={yAxisWidth}
       label={cfg.yAxisLabel ? { value: cfg.yAxisLabel, angle: -90, position: 'insideLeft', offset: 0, fontSize: fs, fill: '#64748b' } : undefined}
@@ -898,9 +911,100 @@ export const SharedChart = ({
         </ResponsiveContainer>
       </div>
       {zoom.isZoomed && (
-        <button type="button" onClick={zoom.reset} className="self-end text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>
+        <button type="button" onClick={zoom.reset} className="self-end text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-bold">Reset Zoom</button>
       )}
     </div>
   );
 };
+// ─────────────────────────────────────────────────────────────────────────────
+// CFG-DRIVEN CHART PIECES — translate a SharedChartStylePanel `cfg` into
+// recharts props, so the "Graphical Parameters" commands REALLY act on the
+// spectrum / histogram they are attached to (chart type, colours, line/point
+// styles, log axes, tick steps, ranges).
+// ─────────────────────────────────────────────────────────────────────────────
+const cfgDash = (cfg) =>
+  cfg.lineStyle === 'dashed' ? '7 5' : cfg.lineStyle === 'dotted' ? '2 3' : undefined;
+
+/** 'log' | 'auto' axis scale from the panel's xLog / yLog checkboxes. */
+export const cfgLogScale = (cfg = {}, axis = 'x') =>
+  ((axis === 'x' ? !!cfg.xLog : !!cfg.yLog) ? 'log' : 'auto');
+
+/** Explicit tick array when the panel sets a step (xTickStep/tickStep or yTickStep). */
+export const cfgAxisTicks = (cfg = {}, axis = 'x', domain) =>
+  numericTicks(
+    Number(domain?.[0]), Number(domain?.[1]),
+    axis === 'x' ? (cfg.xTickStep ?? cfg.tickStep) : cfg.yTickStep
+  );
+
+/**
+ * Log-safe domain for an axis: [cfg.xMin/xMax ?? fallback]. When the matching
+ * log flag is ON the low end is clamped to a small positive value (recharts
+ * needs strictly positive domains for a log scale).
+ */
+export const cfgAxisDomain = (cfg = {}, axis = 'x', fallback = [0, 1]) => {
+  const vMin = numOrNull(axis === 'x' ? cfg.xMin : cfg.yMin);
+  const vMax = numOrNull(axis === 'x' ? cfg.xMax : cfg.yMax);
+  let lo = vMin !== null ? vMin : fallback[0];
+  let hi = vMax !== null ? vMax : fallback[1];
+  const log = axis === 'x' ? !!cfg.xLog : !!cfg.yLog;
+  if (log && !(Number.isFinite(hi) && hi > 0)) hi = 1;
+  if (log && !(Number.isFinite(lo) && lo > 0)) lo = Math.max(1e-9, hi * 1e-3);
+  return [lo, hi];
+};
+
+/** Dot config from pointStyle + ptSize (false = no points). */
+const cfgDot = (cfg, stroke) => {
+  if (!cfg.pointStyle || cfg.pointStyle === 'none') return false;
+  const r = Number(cfg.ptSize) || 4;
+  return r > 0 ? { r, fill: stroke, strokeWidth: 0 } : false;
+};
+
+/**
+ * Recharts series element (Line / Area / Bar / scatter-like Line) that honours
+ * every "Chart Appearance" panel command. Use inside a ComposedChart (or any
+ * chart that can host the returned element).
+ *   opts: { key, data, dataKey, name, stroke }
+ */
+export const cfgSeriesEl = (cfg = {}, opts = {}) => {
+  const type = cfg.chartType || 'line';
+  const strokeWidth = Number(cfg.lineThickness) || 2;
+  const common = {
+    key: opts.key, data: opts.data, dataKey: opts.dataKey, name: opts.name,
+    stroke: opts.stroke, strokeWidth, strokeDasharray: cfgDash(cfg),
+    isAnimationActive: false,
+  };
+  if (type === 'bar') {
+    const r = Number(cfg.barRadius) || 3;
+    return <Bar {...common} fill={opts.stroke} stroke="none" radius={[r, r, 0, 0]} />;
+  }
+  if (type === 'area') {
+    return <Area {...common} type="monotone" fill={opts.stroke} fillOpacity={Number(cfg.areaOpacity ?? 0.15)} connectNulls />;
+  }
+  if (type === 'scatter') {
+    return <Line {...common} type="monotone" strokeOpacity={0.35} dot={cfgDot(cfg, opts.stroke)} activeDot={false} connectNulls />;
+  }
+  return <Line {...common} type="monotone" dot={cfgDot(cfg, opts.stroke)} activeDot={false} connectNulls />;
+};
+
+/**
+ * Tick label formatter for an axis from the panel's decimal / scientific
+ * controls: `xDecimals` / `yDecimals` ('' = auto) and `xSci` / `ySci`.
+ * Returns `null` when the user did not ask for any custom formatting, so
+ * callers can fall back to their own default (or recharts' default).
+ */
+export const cfgTickFormatter = (cfg = {}, axis = 'x') => {
+  const sci = axis === 'x' ? !!cfg.xSci : !!cfg.ySci;
+  const decRaw = axis === 'x' ? cfg.xDecimals : cfg.yDecimals;
+  const hasDec = decRaw !== '' && decRaw !== null && decRaw !== undefined;
+  if (!sci && !hasDec) return null;
+  const nDec = hasDec ? Number(decRaw) : 2;
+  return (v) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return String(v);
+    if (sci) return n.toExponential(nDec);
+    return n.toFixed(nDec);
+  };
+};
+
+
 

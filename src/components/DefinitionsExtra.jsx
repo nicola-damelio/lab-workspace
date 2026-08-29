@@ -1201,7 +1201,7 @@ export const BrukerPulseSequenceViewer = ({
                 <button
                   type="button"
                   onClick={fitWidth}
-                  className="h-7 px-2 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-[11px] font-bold transition-colors"
+                  className="h-7 px-2 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-bold transition-colors"
                   title="Fit diagram width"
                 >
                   Fit
@@ -1210,7 +1210,7 @@ export const BrukerPulseSequenceViewer = ({
                 <button
                   type="button"
                   onClick={resetView}
-                  className="h-7 px-2 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold transition-colors"
+                  className="h-7 px-2 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors"
                   title="Reset zoom and scroll"
                 >
                   1:1

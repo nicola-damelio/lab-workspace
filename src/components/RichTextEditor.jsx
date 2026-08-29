@@ -445,7 +445,7 @@ export const RichTextEditor = ({
                             className="text-[10px] font-bold bg-white border border-blue-300 text-blue-700 px-1.5 py-0.5 rounded hover:bg-blue-100 shadow-sm">Full</button>
                     <span className="flex-1" />
                     <button type="button" onClick={clearSelImg}
-                            className="text-[10px] font-bold text-blue-500 hover:text-blue-700 underline">Done</button>
+                            className="text-xs font-bold text-blue-500 hover:text-blue-700 underline">Done</button>
                 </div>
             )}
             <div ref={editorRef} contentEditable={!readOnly} onPaste={handlePaste} onBlur={handleBlur}
@@ -531,7 +531,7 @@ export const RichTextEditor = ({
                             <button
                               type="button"
                               onClick={openDrive}
-                              className="text-[10px] font-bold text-blue-600 hover:text-blue-800 underline whitespace-nowrap"
+                              className="text-xs font-bold text-blue-600 hover:text-blue-800 underline whitespace-nowrap"
                             >
                               Open Drive ↗
                             </button>

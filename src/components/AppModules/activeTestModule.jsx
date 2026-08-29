@@ -485,7 +485,7 @@ const TestHeader = (
 
                         <button
                           onClick={handleDuplicateInstance}
-                          className="shrink-0 px-3 py-1.5 md:py-1 text-[10px] font-bold text-blue-600 border border-dashed border-blue-400 rounded-full hover:bg-blue-100 transition-colors bg-white shadow-sm ml-2"
+                          className="shrink-0 px-3 py-1.5 md:py-1 text-xs font-bold text-blue-600 border border-dashed border-blue-400 rounded-full hover:bg-blue-100 transition-colors bg-white shadow-sm ml-2"
                         >
                           + Add Date/Condition copy
                         </button>

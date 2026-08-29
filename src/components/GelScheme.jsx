@@ -223,7 +223,7 @@ export const GelScheme = ({
           <button
             type="button"
             onClick={clearAll}
-            className="bg-white hover:bg-red-50 border border-slate-300 text-slate-600 hover:text-red-600 font-bold px-2.5 py-1 rounded-lg text-[11px] shadow-sm"
+            className="bg-white hover:bg-red-50 border border-slate-300 text-slate-600 hover:text-red-600 font-bold px-2.5 py-1 rounded-lg text-xs shadow-sm"
           >
             🧹 Clear all
           </button>

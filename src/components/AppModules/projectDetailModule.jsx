@@ -859,7 +859,7 @@ export const ProjectDetailModule = ({
             <div className="flex items-center justify-between mb-2">
               <h4 className="text-sm font-bold text-slate-700">Documents</h4>
               <button type="button" onClick={openDrive}
-                      className="text-[10px] font-bold text-blue-600 hover:text-blue-800 underline"
+                      className="text-xs font-bold text-blue-600 hover:text-blue-800 underline"
                       title="Open your Google Drive folder in a new tab">Open Drive ↗</button>
             </div>
             <div className="flex flex-col gap-1.5">
@@ -1077,9 +1077,9 @@ export const ProjectDetailModule = ({
               </p>
               <div className="flex gap-1.5">
                 <button onClick={acceptSuggestion}
-                        className="px-3 py-1 text-[11px] font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">✔ Accept suggestion</button>
+                        className="px-3 py-1 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">✔ Accept suggestion</button>
                 <button onClick={rejectSuggestion}
-                        className="px-3 py-1 text-[11px] font-bold rounded-lg bg-slate-200 text-slate-600 hover:bg-slate-300">✖ Reject</button>
+                        className="px-3 py-1 text-xs font-bold rounded-lg bg-slate-200 text-slate-600 hover:bg-slate-300">✖ Reject</button>
               </div>
             </div>
           )}
@@ -1484,7 +1484,7 @@ export const ProjectDetailModule = ({
                 ))}
               </select>
               <button onClick={linkExistingTest} disabled={!linkTestId}
-                      className="px-3 py-1 text-[10px] font-bold rounded-lg bg-slate-600 text-white hover:bg-slate-700 disabled:opacity-40">
+                      className="px-3 py-1 text-xs font-bold rounded-lg bg-slate-600 text-white hover:bg-slate-700 disabled:opacity-40">
                 + Link
               </button>
             </div>

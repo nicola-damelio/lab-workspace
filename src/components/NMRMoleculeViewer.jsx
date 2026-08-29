@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ensureNGL } from '../utils/ngl';
 import { readXtcFrames, countXtcFrames, countXtcFramesInFile } from '../utils/xtcDecoder';
 import { abortControl } from '../utils/abortControl';
@@ -2378,7 +2378,7 @@ title="Starting number"
 <button
 type="button"
 onClick={applyRenumberFrom}
-className="text-[9px] font-bold bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-1.5 py-0.5 rounded whitespace-nowrap"
+className="text-xs font-bold bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-1.5 py-0.5 rounded whitespace-nowrap"
 title="Renumber all residues consecutively starting from this number (no manual per-residue edits needed)"
 >
 Renumber from
@@ -2486,8 +2486,8 @@ className="border border-slate-300 rounded-md px-1.5 py-1.5 text-xs bg-white out
           className={`px-2 py-1 text-[10px] font-bold rounded border ${renameMode ? 'bg-amber-600 text-white border-amber-600' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-100'}`}>
           {renameMode ? '● Click an atom…' : 'Click-to-rename'}
         </button>
-        <button type="button" onClick={autoNameFrom2D} className="px-2 py-1 text-[10px] font-bold rounded bg-white border border-amber-300 text-amber-700 hover:bg-amber-100">Auto-name (2D)</button>
-        <button type="button" onClick={clearRenames} className="px-2 py-1 text-[10px] font-bold rounded bg-white border border-red-300 text-red-600 hover:bg-red-50">Clear overrides</button>
+        <button type="button" onClick={autoNameFrom2D} className="px-2 py-1 text-xs font-bold rounded bg-white border border-amber-300 text-amber-700 hover:bg-amber-100">Auto-name (2D)</button>
+        <button type="button" onClick={clearRenames} className="px-2 py-1 text-xs font-bold rounded bg-white border border-red-300 text-red-600 hover:bg-red-50">Clear overrides</button>
       </div>
     </div>
     <p className="text-[10px] text-slate-500">
@@ -2497,7 +2497,7 @@ className="border border-slate-300 rounded-md px-1.5 py-1.5 text-xs bg-white out
       <div className="flex items-center gap-2 bg-white border border-amber-300 rounded-lg p-2">
         <span className="text-xs font-bold text-slate-700">Atom #{renameTarget}:</span>
         <input value={renameDraft} onChange={(e) => setRenameDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') applyRename(); }} className="border border-slate-300 rounded px-2 py-1 text-xs outline-none focus:border-amber-500" />
-        <button type="button" onClick={applyRename} className="px-2 py-1 text-[10px] font-bold rounded bg-amber-600 text-white">OK</button>
+        <button type="button" onClick={applyRename} className="px-2 py-1 text-xs font-bold rounded bg-amber-600 text-white">OK</button>
         <button type="button" onClick={() => setRenameTarget(null)} className="px-2 py-1 text-[10px] font-bold rounded bg-slate-200 text-slate-700">Cancel</button>
       </div>
     )}
@@ -2541,7 +2541,7 @@ className="border border-slate-300 rounded-md px-1.5 py-1.5 text-xs bg-white out
       <span className="text-[10px] font-black text-violet-700 uppercase tracking-wide">Selections & PyMOL</span>
       <div className="flex gap-1.5">
         <button type="button" onClick={() => applyPyMOLScript(pymolScript)} className="px-2 py-1 text-[10px] font-bold rounded bg-violet-600 text-white hover:bg-violet-700">▶ Run script</button>
-        <button type="button" onClick={clearPyMOL} className="px-2 py-1 text-[10px] font-bold rounded bg-white border border-red-300 text-red-600 hover:bg-red-50">Clear</button>
+        <button type="button" onClick={clearPyMOL} className="px-2 py-1 text-xs font-bold rounded bg-white border border-red-300 text-red-600 hover:bg-red-50">Clear</button>
       </div>
     </div>
     <label className="text-[10px] font-bold text-slate-500 uppercase">Paste a PyMOL script (select / show / hide / color / set sphere_scale·transparency / bg_color / cartoon · ribbon · tube / surface / spectrum / util.ray_shadows)</label>
@@ -2749,7 +2749,7 @@ style={{ height }}
     )}
     <div className="shrink-0 border-t border-slate-100 pt-1.5 mt-1">
       <button type="button" onClick={handleAbort}
-        className={`w-full px-2 py-1 text-[10px] font-bold rounded-lg border transition-colors ${abortRef.current || playing ? 'bg-red-600 text-white border-red-600 hover:bg-red-700' : 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'}`}
+        className={`w-full px-2 py-1 text-xs font-bold rounded-lg border transition-colors ${abortRef.current || playing ? 'bg-red-600 text-white border-red-600 hover:bg-red-700' : 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'}`}
         disabled={!(abortRef.current || playing)}
         title={abortRef.current ? `Abort: ${abortRef.current.label}` : playing ? 'Stop trajectory playback' : 'No operation in progress'}>
         ⏹ Abort{abortRef.current ? ` (${abortRef.current.label})` : ''}
@@ -2862,7 +2862,7 @@ The rest of the molecule is loaded but hidden.
 <button
 type="button"
 onClick={showAllLargeAtoms}
-className="text-[10px] font-bold bg-white border border-amber-400 text-amber-800 hover:bg-amber-100 px-2.5 py-1 rounded-lg transition-colors"
+className="text-xs font-bold bg-white border border-amber-400 text-amber-800 hover:bg-amber-100 px-2.5 py-1 rounded-lg transition-colors"
 >
 👁 Show everything
 </button>

@@ -318,7 +318,7 @@ const getProtocolImageFallback = (url) => {
         type="button"
         onClick={insertProtocolTable}
         title="Insert a table with the selected dimensions at the end of the protocol content"
-        className="bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 font-bold px-2 py-1 rounded transition-colors text-[10px]"
+        className="bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 font-bold px-2 py-1 rounded transition-colors text-xs"
       >
         ▦ Insert Table
       </button>
@@ -328,7 +328,7 @@ const getProtocolImageFallback = (url) => {
       type="button"
       onClick={addProtocolDocument}
       title="Attach a document link"
-      className="bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border border-indigo-200 font-bold px-2 py-1 rounded transition-colors shadow-sm text-[10px] flex items-center gap-1"
+      className="bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border border-indigo-200 font-bold px-2 py-1 rounded transition-colors shadow-sm text-xs flex items-center gap-1"
     >
       <Icon name="link" size={12} /> + Add Document
     </button>
@@ -480,7 +480,7 @@ const getProtocolImageFallback = (url) => {
             <button
               type="button"
               onClick={openDrive}
-              className="text-[10px] font-bold text-blue-600 hover:text-blue-800 underline whitespace-nowrap"
+              className="text-xs font-bold text-blue-600 hover:text-blue-800 underline whitespace-nowrap"
               title="Open your Google Drive folder in a new tab"
             >
               Open Drive ↗

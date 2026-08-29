@@ -49,7 +49,7 @@ const BoxPhotoSlot = ({ url, label, hint, path, suggestedName, onSet, onClear })
                     )}
                     {url && (
                         <button type="button" onClick={onClear}
-                                className="text-[10px] font-bold text-red-500 hover:text-red-700 underline self-start">
+                                className="text-xs font-bold text-red-500 hover:text-red-700 underline self-start">
                             Remove
                         </button>
                     )}

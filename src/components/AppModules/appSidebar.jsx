@@ -210,7 +210,7 @@ export const AppSidebar = ({
                   <button
                     onClick={onGoogleLogin}
                     className={`w-full text-center bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors flex items-center justify-center gap-1 ${
-                      !isSidebarOpen ? 'py-2 px-0 text-[10px]' : ''
+                      !isSidebarOpen ? 'py-2 px-0 text-xs' : ''
                     }`}
                     title="Optional: sign in with Google to enable cloud sync (the app works fully without it)"
                   >
@@ -232,7 +232,7 @@ export const AppSidebar = ({
                     </span>
                     <button
                       onClick={openDrive}
-                      className="text-[10px] font-bold text-blue-600 hover:text-blue-800 underline"
+                      className="text-xs font-bold text-blue-600 hover:text-blue-800 underline"
                     >
                       Open ↗
                     </button>
@@ -242,7 +242,7 @@ export const AppSidebar = ({
                     <button
                       onClick={onConnectDrive}
                       className={`w-full text-center bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors flex items-center justify-center gap-1 ${
-                        !isSidebarOpen ? 'py-2 px-0 text-[10px]' : ''
+                        !isSidebarOpen ? 'py-2 px-0 text-xs' : ''
                       }`}
                       title="Connect Google Drive so uploaded images/documents are automatically renamed and saved into folders that mirror the app, inside your Lab Workspace folder"
                     >
@@ -253,7 +253,7 @@ export const AppSidebar = ({
                 <button
                   onClick={handlePrint}
                   className={`w-full text-center bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors flex items-center justify-center gap-1 ${
-                    !isSidebarOpen ? 'py-2 px-0 text-[10px]' : ''
+                    !isSidebarOpen ? 'py-2 px-0 text-xs' : ''
                   }`}
                   title="Print / Export PDF"
                 >
@@ -281,7 +281,7 @@ export const AppSidebar = ({
                     <button
                       onClick={exportHTML}
                       className={`flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold py-1.5 rounded text-xs shadow-sm transition-colors ${
-                        !isSidebarOpen ? 'py-2 px-0 text-[10px]' : ''
+                        !isSidebarOpen ? 'py-2 px-0 text-xs' : ''
                       }`}
                       title="Save HTML"
                     >

@@ -342,7 +342,7 @@ const LabelChips = ({ labels, options, onChange, placeholder }) => {
                onKeyDown={(e) => { if (e.key === 'Enter') addCustom(); }}
                placeholder={placeholder || 'Type a new label…'} />
         <button type="button" onClick={addCustom}
-                className="text-[10px] font-bold bg-indigo-600 text-white hover:bg-indigo-700 px-2 py-1 rounded shrink-0">Add</button>
+                className="text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 px-2 py-1 rounded shrink-0">Add</button>
       </div>
     </div>
   );
@@ -1462,7 +1462,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
               <input className="border border-slate-300 rounded px-2 py-1 text-xs w-40 bg-white outline-none focus:border-blue-500"
                      value={newScientistName} onChange={(e) => setNewScientistName(e.target.value)}
                      onKeyDown={(e) => { if (e.key === 'Enter') addScientist(); }} placeholder="Add scientist…" />
-              <button type="button" onClick={addScientist} className="text-[10px] font-bold bg-emerald-600 text-white hover:bg-emerald-700 px-2 py-1 rounded">Add</button>
+              <button type="button" onClick={addScientist} className="text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 px-2 py-1 rounded">Add</button>
               <button type="button" onClick={() => setShowAddScientist(false)} className="text-[10px] font-bold bg-slate-200 text-slate-700 px-2 py-1 rounded">✕</button>
             </div>
           ) : (
@@ -1545,7 +1545,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
               <div className="flex items-center justify-between mt-3 mb-1">
                 <span className="text-xs font-bold text-slate-600">{pubResults.length} result(s)</span>
                 <button type="button" onClick={addAllResults} disabled={!defaultScientist}
-                        className="text-[10px] font-bold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 px-2.5 py-1 rounded">
+                        className="text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 px-2.5 py-1 rounded">
                   ⤵ Insert all ({pubResults.length})
                 </button>
               </div>
@@ -1785,7 +1785,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
               <input className="border border-slate-300 rounded px-2 py-1 text-xs w-44 bg-white outline-none focus:border-blue-500"
                      value={newSubject} onChange={(e) => setNewSubject(e.target.value)}
                      onKeyDown={(e) => { if (e.key === 'Enter') addSubject(); }} placeholder="New subject…" />
-              <button type="button" onClick={addSubject} className="text-[10px] font-bold bg-indigo-600 text-white hover:bg-indigo-700 px-2 py-1 rounded">Add</button>
+              <button type="button" onClick={addSubject} className="text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 px-2 py-1 rounded">Add</button>
             </div>
           </div>
           <div className="flex flex-wrap gap-1.5">
@@ -1849,7 +1849,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
               <div className="flex items-center justify-between mt-3 mb-1">
                 <span className="text-xs font-bold text-slate-600">{paperResults.length} result(s)</span>
                 <button type="button" onClick={addAllPaperResults} disabled={!defaultScientist}
-                        className="text-[10px] font-bold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 px-2.5 py-1 rounded">
+                        className="text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 px-2.5 py-1 rounded">
                   ⤵ Insert all ({paperResults.length})
                 </button>
               </div>
@@ -2209,7 +2209,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
                 .map(([id, label]) => <option key={id} value={id}>{label}</option>)}
             </select>
             <button type="button" onClick={pubAddNewField}
-                    className="px-2.5 py-0.5 rounded-md bg-indigo-600 text-white text-[11px] font-semibold hover:bg-indigo-700 transition">
+                    className="px-2.5 py-0.5 rounded-md bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 transition">
               Add
             </button>
           </div>

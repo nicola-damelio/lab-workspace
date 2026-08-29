@@ -2193,7 +2193,7 @@ const details = [
                       <div className="flex items-center justify-between w-full mb-1">
                         <span className="text-[10px] font-bold text-slate-500 uppercase">🔗 Documents</span>
                         <button type="button" onClick={openDrive}
-                                className="text-[10px] font-bold text-blue-600 hover:text-blue-800 underline"
+                                className="text-xs font-bold text-blue-600 hover:text-blue-800 underline"
                                 title="Open your Google Drive folder in a new tab">
                           Open Drive ↗
                         </button>

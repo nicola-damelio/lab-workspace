@@ -20,7 +20,7 @@ import { DOSY_TAB_CONFIG } from './tabConfigs';
 import { NMRInstrumentalSetup } from './NMRInstrumentalSetup';
 import { makeTable, stokesEinsteinD, radiusFromMW, GAMMA_H } from './NMRFittingsTestRenderer';
 import { enableCellClipboard, cellAttrs } from '../utils/cellClipboard';
-import { ChartPanel, SharedErrorTreatment, SharedChartStylePanel } from './SharedAnalysisTools';
+import { ChartPanel, SharedErrorTreatment, SharedChartStylePanel, cfgTickFormatter } from './SharedAnalysisTools';
 import { shadesFromColor } from '../utils/chartStyle';
 import { StarToggle } from './StarToggle';
 import { isStarred, toggleStarredItem } from '../utils/starredItems';
@@ -481,13 +481,19 @@ const DOSYFitChart = ({ tables, params, cfg = {}, showExcl = true, outlierThresh
           x: {
             type: 'linear',
             title: { display: true, text: xTitle, font: { size: fs } },
-            ticks: { font: { size: fs - 1 } },
+            ticks: {
+              font: { size: fs - 1 },
+              callback: (v) => { const f = cfgTickFormatter(cfg, 'x'); return f ? f(v) : undefined; }
+            },
             min: cfg.xMin !== '' && cfg.xMin !== undefined && cfg.xMin !== null ? Number(cfg.xMin) : undefined,
             max: cfg.xMax !== '' && cfg.xMax !== undefined && cfg.xMax !== null ? Number(cfg.xMax) : undefined
           },
           y: {
             title: { display: true, text: yTitle, font: { size: fs } },
-            ticks: { font: { size: fs - 1 } },
+            ticks: {
+              font: { size: fs - 1 },
+              callback: (v) => { const f = cfgTickFormatter(cfg, 'y'); return f ? f(v) : undefined; }
+            },
             min: cfg.yMin !== '' && cfg.yMin !== undefined && cfg.yMin !== null ? Number(cfg.yMin) : undefined,
             max: cfg.yMax !== '' && cfg.yMax !== undefined && cfg.yMax !== null ? Number(cfg.yMax) : undefined
           }

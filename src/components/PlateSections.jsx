@@ -189,7 +189,7 @@ function IndividualDoseResponseChart({ cd, chartCfg, isFs, onToggleFs, unit, eSc
                     {cd.name}
                 </h4>
                 {!isFs && (
-                    <button className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1 transition-all text-[10px]">
+                    <button className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1 transition-all text-xs">
                         ↗️
                     </button>
                 )}
@@ -3235,7 +3235,7 @@ return (
 
                                                 <button
                                                     onClick={autoCalcControl}
-                                                    className="text-[10px] font-bold bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-2 py-1.5 rounded-md shadow-sm transition whitespace-nowrap"
+                                                    className="text-xs font-bold bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-2 py-1.5 rounded-md shadow-sm transition whitespace-nowrap"
                                                 >
                                                     🎯 Auto
                                                 </button>
@@ -3310,14 +3310,14 @@ return (
                                             <div className="flex flex-col gap-1">
                                                 <button
                                                     onClick={autoTouchAll}
-                                                    className="text-[10px] uppercase tracking-wider bg-amber-100 hover:bg-amber-200 text-amber-800 font-bold py-1.5 px-3 rounded-md shadow-sm flex items-center justify-center gap-1 transition-colors"
+                                                    className="text-xs uppercase tracking-wider bg-amber-100 hover:bg-amber-200 text-amber-800 font-bold py-1.5 px-3 rounded-md shadow-sm flex items-center justify-center gap-1 transition-colors"
                                                 >
                                                     🎯 Auto-Touch All SD
                                                 </button>
 
                                                 <button
                                                     onClick={revertNormalSD}
-                                                    className="text-[9px] uppercase tracking-wider bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-1 px-3 rounded-md shadow-sm flex items-center justify-center gap-1 transition-colors"
+                                                    className="text-xs uppercase tracking-wider bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-1 px-3 rounded-md shadow-sm flex items-center justify-center gap-1 transition-colors"
                                                 >
                                                     🔄 Revert Normal SD
                                                 </button>
