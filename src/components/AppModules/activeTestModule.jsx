@@ -117,6 +117,12 @@ export const ActiveTestModule = ({
                   newTest.images = [];
                   newTest.documents = [];
 
+                  // Flow Cytometry raw data must NOT be inherited: the FCS
+                  // cache is keyed per instance id, so a copy would share the
+                  // same files and deleting them would affect the original.
+                  delete newTest.fcParsed;
+                  delete newTest.fcExtraFiles;
+
                   if (
                     newTest.type.startsWith('plate-') &&
                     newTest.type !== 'plate-9x9box'
@@ -202,18 +208,29 @@ const TestHeader = (
                       <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full lg:w-auto flex-wrap">
                         <button
                           onClick={() => {
+                            // Deleting an experiment removes ALL its instances
+                            // (they share the name); a box is a single item.
+                            const group = (isBox || !(activeTest.name && activeTest.name.trim()))
+                              ? [activeTest]
+                              : tests.filter((t) => t.name === activeTest.name && t.name.trim() !== '');
+                            const count = group.length;
                             if (
                               window.confirm(
                                 isBox
                                   ? 'Sei sicuro di voler eliminare definitivamente questo box?'
-                                  : 'Sei sicuro di voler eliminare definitivamente questo test?'
+                                  : count > 1
+                                    ? `Sei sicuro di voler eliminare definitivamente l'esperimento "${activeTest.name}" (${count} istanze)?`
+                                    : 'Sei sicuro di voler eliminare definitivamente questo esperimento?'
                               )
                             ) {
-                              setTests((prev) => prev.filter((t) => t.id !== activeTest.id));
+                              const ids = new Set(group.map((t) => t.id));
+                              setTests((prev) => prev.filter((t) => !ids.has(t.id)));
                               setCurrentModule('tests');
-                              markAttachmentsDeleted(activeTest).catch(() => {});
-                              // Remove the test's Drive folder too — the Drive tree mirrors the program.
-                              deleteTestDriveFolder(activeTest).catch(() => {});
+                              group.forEach((t) => {
+                                markAttachmentsDeleted(t).catch(() => {});
+                                // Remove the test's Drive folder too — the Drive tree mirrors the program.
+                                deleteTestDriveFolder(t).catch(() => {});
+                              });
                             }
                           }}
                           className="bg-red-50 text-red-600 hover:bg-red-100 hover:border-red-300 font-bold py-2 px-3 rounded-lg text-xs transition-colors border border-red-200 shadow-sm"
@@ -447,28 +464,29 @@ const TestHeader = (
                             <span className="opacity-40 text-[9px] mr-0.5" aria-hidden="true">⠿</span>
                             <Icon name="calendar" size={12} className="mr-1 text-blue-700" /> {t.instanceName || t.date || `Cond ${idx + 1}`}
 
-                            {siblingTests.length > 1 && (
+                            {(
                               <span
                                 onClick={(e) => {
                                   e.stopPropagation();
-
+                                  const isLast = siblingTests.length <= 1;
                                   if (
                                     window.confirm(
-                                      `Delete condition ${t.instanceName || t.date}?`
+                                      isLast
+                                        ? `Delete condition ${t.instanceName || t.date}? This is the last instance — the whole experiment will be deleted.`
+                                        : `Delete condition ${t.instanceName || t.date}?`
                                     )
                                   ) {
                                     setTests((prev) => {
                                       const next = prev.filter((test) => test.id !== t.id);
-
-                                      if (activeTestId === t.id) {
+                                      if (!isLast && activeTestId === t.id) {
                                         setActiveTestId(
                                           next.find((x) => x.name === t.name)?.id ||
                                             next[0]?.id
                                         );
                                       }
-
                                       return next;
                                     });
+                                    if (isLast) setCurrentModule('tests');
                                   }
                                 }}
                                 className={`ml-1 px-1 opacity-100 md:opacity-0 group-hover:opacity-100 ${

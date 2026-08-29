@@ -1771,6 +1771,9 @@ export const Data = ({ ctx }) => {
                   cloned.id = newId;
                   cloned.instanceName = parsed.filename.replace(/\.[^/.]+$/, "");
                   cloned.fcParsed = serializeFcsForSave(parsed);
+                  // Do NOT inherit the first instance's extra spectra — each new
+                  // instance gets its own files.
+                  delete cloned.fcExtraFiles;
                   Object.assign(cloned, meta); 
                   
                   newTests.push(cloned);

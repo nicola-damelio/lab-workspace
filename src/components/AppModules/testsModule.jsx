@@ -117,11 +117,20 @@ export const TestsModule = ({
                   ));
                 };
                 const approveDeletion = (test) => {
-                  setTests((prev) => prev.filter((t) => t.id !== test.id));
-                  // Mark any Google Drive attachments of this test as deleted.
-                  markAttachmentsDeleted(test).catch(() => {});
-                  // Remove the test's Drive folder too — the Drive tree mirrors the program.
-                  deleteTestDriveFolder(test).catch(() => {});
+                  // Deleting an experiment removes ALL its instances (they share
+                  // the name); a box is a single item.
+                  const isBox = test.type === 'plate-9x9box';
+                  const group = isBox
+                    ? [test]
+                    : tests.filter((t) => t.id === test.id || (test.name && t.name === test.name));
+                  const groupIds = new Set(group.map((t) => t.id));
+                  setTests((prev) => prev.filter((t) => !groupIds.has(t.id)));
+                  group.forEach((t) => {
+                    // Mark any Google Drive attachments of this test as deleted.
+                    markAttachmentsDeleted(t).catch(() => {});
+                    // Remove the test's Drive folder too — the Drive tree mirrors the program.
+                    deleteTestDriveFolder(t).catch(() => {});
+                  });
                 };
                 const rejectDeletion = (test) => {
                   setTests((prev) => prev.map((t) =>
