@@ -1640,7 +1640,7 @@ export const Data = ({ ctx }) => {
           <h4 className="text-sm font-bold text-slate-700">🧮 Molar Ellipticity [θ]</h4>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
             <div className="flex flex-col gap-1">
-              <label className={LABEL_CLS}>Compound MW (from Definitions & Labels)</label>
+              <label className={LABEL_CLS}>Compound MW (from Library)</label>
               <div className="border border-slate-200 bg-slate-50 rounded-lg px-3 py-2 text-sm font-bold text-slate-700">
                 {compoundMW ? `${Number(compoundMW.value).toLocaleString()} Da` : 'Not found for selected compound'}
               </div>
@@ -3129,9 +3129,12 @@ export const DataAnalysis = ({ ctx }) => (
 /* ========================================================================
 SIMULATIONS — 1) PROTEIN CD MIXER
 ======================================================================== */
-const ProteinCDMixer = ({ isExpanded, onToggleExpand }) => {
+const ProteinCDMixer = ({ isExpanded, onToggleExpand, onSnapshot }) => {
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
+  const lastSnapshotRef = useRef('');
+  const onSnapshotRef = useRef(onSnapshot);
+  useEffect(() => { onSnapshotRef.current = onSnapshot; }, [onSnapshot]);
   const { width, height } = useElementSize(wrapRef);
   const [compositions, setCompositions] = useState({ helix: 0, sheet: 0, turn: 0, coil: 100 });
   const [autoNormalize, setAutoNormalize] = useState(true);
@@ -3214,6 +3217,17 @@ const ProteinCDMixer = ({ isExpanded, onToggleExpand }) => {
     ctx2.textAlign = 'center';
     ctx2.fillText('MRE (deg cm² dmol⁻¹)', 0, 0);
     ctx2.restore();
+
+    // Persist a PNG snapshot so the Lab Notebook can show this simulation.
+    if (onSnapshotRef.current) {
+      try {
+        const dataUrl = canvas.toDataURL('image/png');
+        if (dataUrl && dataUrl !== lastSnapshotRef.current) {
+          lastSnapshotRef.current = dataUrl;
+          onSnapshotRef.current(dataUrl);
+        }
+      } catch { /* ignore snapshot errors */ }
+    }
   }, [compositions, width, height]);
 
   return (
@@ -3319,7 +3333,7 @@ const normalizeCdSeries = (series) => {
   return series.map((s) => ({ ...s, values: s.values.map((v) => (v / maxAbs) * 100) }));
 };
 
-const buildCdLibraryData = ({ tab, selectedProtein, selectedDna, selectedGq, ratio, normalize }) => {
+export const buildCdLibraryData = ({ tab, selectedProtein, selectedDna, selectedGq, ratio, normalize }) => {
   let domain = { min: 176, max: 260 };
   if (tab === 'dna' || tab === 'gq' || tab.startsWith('dnaPep') || tab.startsWith('pepDna')) domain = { min: 180, max: 320 };
   const xs = [];
@@ -3358,9 +3372,12 @@ const buildCdLibraryData = ({ tab, selectedProtein, selectedDna, selectedGq, rat
   return { xs, series, domain };
 };
 
-const CDSpectraLibrary = ({ isExpanded, onToggleExpand }) => {
+const CDSpectraLibrary = ({ isExpanded, onToggleExpand, onSnapshot }) => {
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
+  const lastSnapshotRef = useRef('');
+  const onSnapshotRef = useRef(onSnapshot);
+  useEffect(() => { onSnapshotRef.current = onSnapshot; }, [onSnapshot]);
   const { width, height } = useElementSize(wrapRef);
   const [tab, setTab] = useState('protein');
   const [selectedProtein, setSelectedProtein] = useState(['alpha', 'beta', 'coil']);
@@ -3462,6 +3479,17 @@ const CDSpectraLibrary = ({ isExpanded, onToggleExpand }) => {
     ctx2.textAlign = 'center';
     ctx2.fillText(normalize ? 'Normalized CD (a.u.)' : 'CD (a.u.)', 0, 0);
     ctx2.restore();
+
+    // Persist a PNG snapshot so the Lab Notebook can show this simulation.
+    if (onSnapshotRef.current) {
+      try {
+        const dataUrl = canvas.toDataURL('image/png');
+        if (dataUrl && dataUrl !== lastSnapshotRef.current) {
+          lastSnapshotRef.current = dataUrl;
+          onSnapshotRef.current(dataUrl);
+        }
+      } catch { /* ignore snapshot errors */ }
+    }
   }, [plotData, width, height, normalize]);
 
   const toggleInArray = (setter, value) => {
@@ -3549,16 +3577,23 @@ const CDSpectraLibrary = ({ isExpanded, onToggleExpand }) => {
   );
 };
 
-export const Simulations = () => {
+export const Simulations = ({ ctx }) => {
+  const { updateActiveTest } = ctx || {};
   const [fsPanel, setFsPanel] = useState(null);
   const toggleFs = (id) => setFsPanel((prev) => (prev === id ? null : id));
+
+  const saveSnapshot = (field, label) => (image) => {
+    if (!updateActiveTest || !image) return;
+    updateActiveTest({ [field]: { label, image, savedAt: new Date().toISOString() } });
+  };
+
   return (
     <CollapsibleSection title="Simulations" icon="🧪" defaultOpen={false}>
       <div className="flex flex-col gap-6">
         {fsPanel === 'mixer' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('mixer')} />}
-        <ProteinCDMixer isExpanded={fsPanel === 'mixer'} onToggleExpand={() => toggleFs('mixer')} />
+        <ProteinCDMixer isExpanded={fsPanel === 'mixer'} onToggleExpand={() => toggleFs('mixer')} onSnapshot={saveSnapshot('cdSimMixer', 'Protein Secondary Structure Simulator')} />
         {fsPanel === 'library' && <div className={OVERLAY_CLASSES} onClick={() => toggleFs('library')} />}
-        <CDSpectraLibrary isExpanded={fsPanel === 'library'} onToggleExpand={() => toggleFs('library')} />
+        <CDSpectraLibrary isExpanded={fsPanel === 'library'} onToggleExpand={() => toggleFs('library')} onSnapshot={saveSnapshot('cdSimLibrary', 'CD Spectra Reference Library & DNA/Protein Mixture Simulator')} />
       </div>
     </CollapsibleSection>
   );
@@ -3682,7 +3717,7 @@ export const All = ({ ctx }) => (
   <div className="flex flex-col gap-6">
     <Data ctx={ctx} />
     <DataAnalysis ctx={ctx} />
-    <Simulations />
+    <Simulations ctx={ctx} />
   </div>
 );
 export default All;

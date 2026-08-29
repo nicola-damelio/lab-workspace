@@ -52,7 +52,7 @@ export const loadPublications = () => {
 };
 
 /* Test types that can be added to a project's Experiments subsection
-   (mirrors the "+ New test" buttons of Tests & Fittings). */
+   (mirrors the "+ New test" buttons of Experiments). */
 export const TEST_TYPE_OPTIONS = [
   { type: 'nmr', label: 'NMR', color: 'bg-emerald-600 hover:bg-emerald-700' },
   { type: 'ssnmr', label: 'ssNMR', color: 'bg-indigo-600 hover:bg-indigo-700' },

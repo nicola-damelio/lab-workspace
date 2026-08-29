@@ -110,22 +110,22 @@ export const DashboardModule = ({ datasetTitle, setDatasetTitle, datasetSubtitle
                         desc: 'Scientific background, experiments, discussion, conclusions and bibliography.'
                       },
                       {
+                        id: 'tests',
+                        icon: '🧪',
+                        title: 'Experiments',
+                        desc: 'Manage experimental plates, spectroscopic data, cloning, protein purification, and MD simulations.'
+                      },
+                      {
                         id: 'notebook',
                         icon: '📓',
                         title: 'Lab Notebook',
                         desc: 'Consolidated view of all experiment notes and results.'
                       },
                       {
-                        id: 'definitions',
-                        icon: '🏷️',
-                        title: 'Definitions & Labels',
-                        desc: 'Manage compounds, cell lines, and metadata fields.'
-                      },
-                      {
-                        id: 'tests',
-                        icon: '🧪',
-                        title: 'Tests & Assays',
-                        desc: 'Manage experimental plates, spectroscopic data, cloning, protein purification, and MD simulations.'
+                        id: 'library',
+                        icon: '📚',
+                        title: 'Library',
+                        desc: 'Manage compounds, cell lines, plasmids, solvents, buffers, additives, and NMR equipment.'
                       },
                       {
                         id: 'agenda',
@@ -156,6 +156,12 @@ export const DashboardModule = ({ datasetTitle, setDatasetTitle, datasetSubtitle
                         icon: '📰',
                         title: 'Publications & Journals',
                         desc: 'Target journals, impact factors, links and notes.'
+                      },
+                      {
+                        id: 'settings',
+                        icon: '⚙️',
+                        title: 'Settings',
+                        desc: 'Scientists, custom metadata fields, database cleanup, and Drive file management.'
                       }
                     ].map((mod) => (
                       <button

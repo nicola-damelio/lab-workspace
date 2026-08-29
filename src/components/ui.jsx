@@ -13,7 +13,7 @@ import { Icon } from './Icons';
                              (title + optional icon, headerExtra, rotating
                              chevron, p-6 content). Default: closed.
    CollapsibleSectionPanel : plain "panel" style used in the library /
-                             definitions screens (small uppercase title,
+                             settings screens (small uppercase title,
                              optional subtitle, ▲/▼ chevron, px-4 pb-4
                              content). Default: closed.
    ========================================================================= */

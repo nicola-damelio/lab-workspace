@@ -212,7 +212,7 @@ const buildCloningNotebookHtml = (checked, ctx) => {
 
 /* ============================================================================
 MAIN CLONING RENDERER
-Operators (from App.jsx → Definitions & Labels) are forwarded explicitly
+Operators (from App.jsx → Settings) are forwarded explicitly
 and rendered in the shell's Classification section.
 ========================================================================== */
 export const CloningTestRenderer = (props) => {

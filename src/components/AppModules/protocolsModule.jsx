@@ -601,11 +601,11 @@ const getProtocolImageFallback = (url) => {
     return `https://${raw}`;
   };
 
-  const openLinkedPulseInDefinitions = () => {
+  const openLinkedPulseInLibrary = () => {
     if (!linkedPulseName) return;
 
     setActiveLibrarySelection({ type: 'nmrExperiment', id: linkedPulseName });
-    setCurrentModule('definitions');
+    setCurrentModule('library');
 
     setTimeout(() => {
       const el = document.getElementById('section-nmrExperiment');
@@ -682,7 +682,7 @@ const getProtocolImageFallback = (url) => {
 
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 flex flex-col gap-2">
         <label className="text-[10px] font-bold text-blue-700 uppercase">
-          Pulse Sequence Link (Definitions & Labels)
+          Pulse Sequence Link (Library)
         </label>
 
         <select
@@ -716,11 +716,11 @@ const getProtocolImageFallback = (url) => {
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={openLinkedPulseInDefinitions}
+            onClick={openLinkedPulseInLibrary}
             disabled={!linkedPulseName}
             className="bg-white border border-blue-300 hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed text-blue-700 font-bold py-1.5 px-3 rounded-lg text-xs shadow-sm transition-colors"
           >
-            Open in Definitions
+            Open in Library
           </button>
 
           <button
@@ -751,7 +751,7 @@ const getProtocolImageFallback = (url) => {
 
         {!linkedPulse && (
           <p className="text-[11px] text-blue-700/80">
-            Choose a pulse program defined under Definitions & Labels → NMR
+            Choose a pulse program defined under Library → NMR
             Experiments / Pulse Programs.
           </p>
         )}
@@ -759,7 +759,7 @@ const getProtocolImageFallback = (url) => {
         {linkedPulse && !String(linkedPulse.pulseSequence || '').trim() && (
           <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
             This pulse program is linked, but it does not contain pulse-sequence
-            text yet. Open it in Definitions & Labels and paste the Bruker
+            text yet. Open it in the Library and paste the Bruker
             pulse-program text.
           </p>
         )}
@@ -1201,7 +1201,7 @@ const newProto = {
             id: proto.linkedPulseProgramName
           });
 
-          setCurrentModule('definitions');
+          setCurrentModule('library');
 
           setTimeout(() => {
             const el = document.getElementById('section-nmrExperiment');

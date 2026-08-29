@@ -1533,7 +1533,7 @@ export const MultiSelectDropdown = ({ options, selected, onToggle, placeholder }
       {open && (
         <div className="absolute z-[200] mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-xl max-h-56 overflow-y-auto custom-scrollbar">
           {options.length === 0 && (
-            <div className="px-3 py-2 text-xs text-slate-400 italic">No compounds defined. Add them in Definitions & Labels.</div>
+            <div className="px-3 py-2 text-xs text-slate-400 italic">No compounds defined. Add them in the Library.</div>
           )}
           {options.map((opt) => (
             <label key={opt} className="flex items-center gap-2 px-3 py-2 hover:bg-blue-50 cursor-pointer text-xs font-semibold text-slate-700 border-b border-slate-50 last:border-0">

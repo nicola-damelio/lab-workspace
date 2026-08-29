@@ -2,9 +2,9 @@
 //
 // IMPORTANT:
 // `fallbackCategories` are only used when no categories are provided
-// by Definitions & Labels.
+// by the Library.
 //
-// The categories provided by Definitions & Labels should be the primary source.
+// The categories provided by the Library should be the primary source.
 
 export const MD_TAB_CONFIG = {
   typeKey: 'md',
@@ -209,12 +209,12 @@ export const PROTEIN_EXPRESSION_TAB_CONFIG = {
 
 // Field type conventions for CD_TAB_CONFIG.conditionFields (see
 // TestShellRenderer.jsx renderConditionField):
-//   'solvent-select' / key 'solvent' -> dropdown fed by Definitions & Labels
+//   'solvent-select' / key 'solvent' -> dropdown fed by the Library
 //     solvents, with a free-text fallback for custom values.
 // Buffer/Additive are NOT listed as conditionFields — TestShellRenderer always
 // renders the shared <BufferAdditiveFields> component (bufferName/bufferConc/
 // bufferUnit, additiveName/additiveConc/additiveUnit) right after the
-// conditionFields grid, fed by Definitions & Labels buffers/additives. Adding a
+// conditionFields grid, fed by the Library buffers/additives. Adding a
 // 'buffer'/'additive' conditionFields entry here would create a second,
 // differently-keyed input that silently goes out of sync with it.
 //

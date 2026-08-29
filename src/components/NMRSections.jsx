@@ -1296,24 +1296,46 @@ const PeakLabelOverlay = ({ markers, dom, marginLeft, marginRight, marginTop, ma
   const placed = [];
   const sorted = [...visible].sort((a, b) => ppmToX(a.ppm) - ppmToX(b.ppm));
 
+  // Minimum vertical position so labels stay inside the container.
+  const minTop = 2;
+
   sorted.forEach(m => {
     const cx = ppmToX(m.ppm);
     const textW = m.label.length * FONT_SIZE * 0.6 + LABEL_PAD * 2;
-    let bestY = null;
+    const half = textW / 2;
+
+    // The label box must stay inside the available plot area.
+    const minCx = marginLeft + half;
+    const maxCx = marginLeft + plotW - half;
+
+    let best = null;
+    let lastValidY = null;
     for (let row = 0; row < 8; row++) {
       const candidateY = marginTop - TICK_LEN - ARROW_LEN - LABEL_H - row * (LABEL_H + 2);
-      if (candidateY < 2) continue;
-      const overlap = placed.some(p => p.row === row && Math.abs(p.cx - cx) < (textW / 2 + p.tw / 2 + 3));
-      if (!overlap) {
-        bestY = candidateY;
-        placed.push({ cx, cy: candidateY, tw: textW, row, label: m.label });
-        break;
+      if (candidateY < minTop) break;
+      if (lastValidY === null) lastValidY = candidateY;
+      const occupied = placed.filter(p => p.row === row);
+      // Scan outward from the peak to find the closest free x on this row, so
+      // labels stay as near as possible to their peak when space allows.
+      for (let step = 0; step <= 14; step++) {
+        const candidates = step === 0 ? [cx] : [cx - step * 8, cx + step * 8];
+        let found = null;
+        for (const x of candidates) {
+          const labelCx = Math.min(maxCx, Math.max(minCx, x));
+          const overlaps = occupied.some(p => Math.abs(p.cx - labelCx) < (half + p.tw / 2 + 3));
+          if (!overlaps) { found = labelCx; break; }
+        }
+        if (found !== null) { best = { cx: found, cy: candidateY, row }; break; }
       }
+      if (best) break;
     }
-    if (bestY === null) {
-      bestY = marginTop - TICK_LEN - ARROW_LEN - LABEL_H;
-      placed.push({ cx, cy: bestY, tw: textW, row: 0, label: m.label });
+    if (!best) {
+      // No free row found — fall back to the closest on-canvas position.
+      const labelCx = Math.min(maxCx, Math.max(minCx, cx));
+      const fallbackY = lastValidY !== null ? lastValidY : Math.max(minTop, marginTop - TICK_LEN - ARROW_LEN - LABEL_H);
+      best = { cx: labelCx, cy: fallbackY, row: 0 };
     }
+    placed.push({ cx: best.cx, peakCx: cx, cy: best.cy, tw: textW, row: best.row, label: m.label });
   });
 
   return (
@@ -1330,9 +1352,9 @@ const PeakLabelOverlay = ({ markers, dom, marginLeft, marginRight, marginTop, ma
             const arrowEndY = marginTop - TICK_LEN - 1;
             return (
               <g key={i}>
-                <line x1={p.cx} y1={marginTop} x2={p.cx} y2={marginTop - TICK_LEN} stroke={color} strokeWidth={1.5} />
+                <line x1={p.peakCx} y1={marginTop} x2={p.peakCx} y2={marginTop - TICK_LEN} stroke={color} strokeWidth={1.5} />
                 {arrowStartY < arrowEndY && (
-                  <line x1={p.cx} y1={arrowStartY} x2={p.cx} y2={arrowEndY} stroke={color} strokeWidth={1} markerEnd="url(#pk-arrow)" />
+                  <line x1={p.cx} y1={arrowStartY} x2={p.peakCx} y2={arrowEndY} stroke={color} strokeWidth={1} markerEnd="url(#pk-arrow)" />
                 )}
                 <rect x={p.cx - p.tw / 2} y={p.cy} width={p.tw} height={LABEL_H} rx={2} fill="white" stroke={color} strokeWidth={0.8} opacity={0.95} />
                 <text x={p.cx} y={p.cy + LABEL_H / 2 + FONT_SIZE / 2 - 1} textAnchor="middle" fontSize={FONT_SIZE} fontFamily="monospace" fontWeight="bold" fill={color}>
@@ -1581,40 +1603,93 @@ const place2DLabels = (crossPeakData, { showLabels, format, dim, yRange, boxW, a
   const plotH = Math.max(200, (aspect ? Math.round((Number(boxW) || 600) * aspect) : 300) - 65);
   const xPpmPerPx = 11 / plotW; // ¹H F2 ppm axis is always [0, 11]
   const yPpmPerPx = yRange / plotH;
-  const CHAR_PX = fontSize * 0.53, LINE_PX = fontSize * 1.25;
-  const placed = []; // already-placed label boxes { cx, cy, hw, hh } in ppm
-  const peaks = [];  // peak markers { x, y } in ppm
+  // Compact per-character estimate (bold text) + a small halo padding so the
+  // collision boxes match the rendered label (which is centered + white halo).
+  const CHAR_PX = fontSize * 0.58, LINE_PX = fontSize * 1.28, HALO_PX = 1.5;
+
+  // Group cross-peaks that share the same position — each group's labels are
+  // arranged on an equi-spaced circle around that shared position.
+  const groups = new Map();
+  crossPeakData.forEach((p) => {
+    const key = `${(+p.x).toFixed(4)}|${(+p.y).toFixed(4)}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(p);
+  });
+
+  // Denser clusters are placed first so they keep the closest spots.
+  const orderedGroups = [...groups.values()].sort((a, b) => b.length - a.length);
+
   const overlaps = (a, b) => Math.abs(a.cx - b.cx) < a.hw + b.hw && Math.abs(a.cy - b.cy) < a.hh + b.hh;
-  return crossPeakData.map((p) => {
+  const placed = []; // label boxes already reserved, in ppm
+  const peaks = crossPeakData.map((p) => ({ x: p.x, y: p.y, p })); // all peak markers, in ppm
+  const result = [];
+
+  // Label box (in ppm) for a cross-peak at a pixel offset (dxPx, dyPx) from its peak.
+  const boxFor = (p, dxPx, dyPx) => {
     const label = showLabels ? getPeakLabelText(p, format, dim) : '';
-    const r = p.size || 5;
-    const hw = (label.length * CHAR_PX * 0.5) * xPpmPerPx; // half label width in ppm
-    const hh = (LINE_PX * 0.5) * yPpmPerPx;                // half label height in ppm
-    const boxAt = (dpx, dpy) => ({
-      cx: p.x + (r + 5) * xPpmPerPx + dpx * xPpmPerPx,
-      cy: p.y - (r + 5) * yPpmPerPx + dpy * yPpmPerPx,
-      hw, hh
-    });
-    let best = null;
-    for (let ring = 1; ring <= 12 && !best; ring++) {
-      const radiusPx = ring * 9;
-      const steps = Math.max(8, Math.round((radiusPx * 2 * Math.PI) / 15));
-      for (let a = 0; a < steps; a++) {
-        const ang = (a / steps) * 2 * Math.PI;
-        const dpx = radiusPx * Math.cos(ang);
-        const dpy = radiusPx * Math.sin(ang);
-        const box = boxAt(dpx, dpy);
-        if (placed.some((u) => overlaps(box, u))) continue;
-        if (peaks.some((pt) => Math.abs(pt.x - box.cx) < hw + 0.03 && Math.abs(pt.y - box.cy) < hh + 0.03)) continue;
-        best = { dpx, dpy };
-        break;
+    const hw = ((label.length * CHAR_PX * 0.5) + HALO_PX) * xPpmPerPx;
+    const hh = ((LINE_PX * 0.5) + HALO_PX) * yPpmPerPx;
+    return { cx: p.x + dxPx * xPpmPerPx, cy: p.y - dyPx * yPpmPerPx, hw, hh };
+  };
+
+  const R0 = 10;   // short distance from the peak (px)
+  const DR = 6;    // radius step when no angle is free (px)
+  const rings = 3; // hard cap: never search further than R0 + 3*DR ≈ 28px
+
+  // Try to place the group. Rotations sweep the equi-spaced arrangement around
+  // the peak; only when every angle at the current radius is blocked do we move
+  // to the next radius. `checkPeaks` controls whether covering another peak is
+  // forbidden (relaxed when the spectrum is too dense to keep labels close).
+  const tryPlace = (group, baseAngles, rotations, checkPeaks) => {
+    const ownSet = new Set(group);
+    for (let ring = 0; ring <= rings; ring++) {
+      const R = R0 + ring * DR;
+      for (const rot of rotations) {
+        const entries = group.map((p, k) => {
+          const ang = baseAngles[k] + rot;
+          const dxPx = R * Math.cos(ang);
+          const dyPx = -R * Math.sin(ang);
+          return { box: boxFor(p, dxPx, dyPx), p, dpx: dxPx - (p.size || 5) - 5, dpy: dyPx + (p.size || 5) + 5 };
+        });
+        const free = entries.every((e) =>
+          !placed.some((u) => overlaps(e.box, u)) &&
+          (!checkPeaks || !peaks.some((pt) => !ownSet.has(pt.p) && Math.abs(pt.x - e.box.cx) < e.box.hw + 0.03 && Math.abs(pt.y - e.box.cy) < e.box.hh + 0.03))
+        );
+        if (free) {
+          entries.forEach((e) => { placed.push(e.box); result.push({ ...e.p, labelDx: e.dpx, labelDy: e.dpy }); });
+          return true;
+        }
       }
     }
-    const off = best || { dpx: 0, dpy: 0 };
-    placed.push(boxAt(off.dpx, off.dpy));
-    peaks.push({ x: p.x, y: p.y });
-    return { ...p, labelDx: off.dpx, labelDy: off.dpy };
+    return false;
+  };
+
+  orderedGroups.forEach((group) => {
+    const n = group.length;
+    // Equi-spaced angles around the peak, starting at the top (π/2).
+    const baseAngles = Array.from({ length: n }, (_, k) => Math.PI / 2 + (2 * Math.PI * k) / n);
+    const rotCount = Math.max(12, n * 6);
+    const rotations = Array.from({ length: rotCount }, (_, i) => (2 * Math.PI * i) / rotCount);
+
+    // 1) Close + clear of every peak and label.
+    if (tryPlace(group, baseAngles, rotations, true)) return;
+
+    // 2) Dense region: still avoid other labels, but allow sitting near another
+    //    peak — keeps labels close instead of orbiting far away.
+    if (tryPlace(group, baseAngles, rotations, false)) return;
+
+    // 3) Ultimate fallback — closest radius, first arrangement.
+    group.forEach((p, k) => {
+      const ang = baseAngles[k];
+      const dxPx = R0 * Math.cos(ang);
+      const dyPx = -R0 * Math.sin(ang);
+      const box = boxFor(p, dxPx, dyPx);
+      placed.push(box);
+      result.push({ ...p, labelDx: dxPx - (p.size || 5) - 5, labelDy: dyPx + (p.size || 5) + 5 });
+    });
   });
+
+  return result;
 };
 
 const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setExpandedPanel, panelId, diagonalColor, selectedKeys, manualKeys = [], aspect = 1, fs = 11, simCfg = {} }) => {
@@ -1696,8 +1771,8 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
         <circle cx={cx} cy={cy} r={isSel ? r + 2 : isMan ? r + 1.5 : r} fill={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : payload.type === 'Diagonal' ? fill : getNMRFillColor(payload)} stroke={isSel ? '#b45309' : isMan ? '#166534' : 'none'} strokeWidth={isSel ? 2 : isMan ? 1.5 : 0} opacity={0.85} />
         {textStr && (
           <g>
-            <text x={textX} y={textY} fontSize={simLabelFontSize} fill="white" stroke="white" strokeWidth={3} strokeLinejoin="round" fontWeight="bold">{textStr}</text>
-            <text x={textX} y={textY} fontSize={simLabelFontSize} fill={simLabelColor} fontWeight="bold">{textStr}</text>
+            <text x={textX} y={textY} fontSize={simLabelFontSize} textAnchor="middle" fill="rgba(255,255,255,0.5)" stroke="rgba(255,255,255,0.5)" strokeWidth={3} strokeLinejoin="round" fontWeight="bold">{textStr}</text>
+            <text x={textX} y={textY} fontSize={simLabelFontSize} textAnchor="middle" fill={simLabelColor} fontWeight="bold">{textStr}</text>
           </g>
         )}
       </g>
@@ -1847,8 +1922,8 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
                       <circle cx={cx} cy={cy} r={isSel ? r + 2 : isMan ? r + 1.5 : r} fill={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : getNMRFillColor(payload)} stroke={isSel ? '#b45309' : isMan ? '#166534' : 'none'} strokeWidth={isSel ? 2 : isMan ? 1.5 : 0} opacity={0.85} />
                       {textStr && (
                         <g>
-                          <text x={textX} y={textY} fontSize={simLabelFontSize} fill="white" stroke="white" strokeWidth={3} strokeLinejoin="round" fontWeight="bold">{textStr}</text>
-                          <text x={textX} y={textY} fontSize={simLabelFontSize} fill={simLabelColor} fontWeight="bold">{textStr}</text>
+                          <text x={textX} y={textY} fontSize={simLabelFontSize} textAnchor="middle" fill="rgba(255,255,255,0.5)" stroke="rgba(255,255,255,0.5)" strokeWidth={3} strokeLinejoin="round" fontWeight="bold">{textStr}</text>
+                          <text x={textX} y={textY} fontSize={simLabelFontSize} textAnchor="middle" fill={simLabelColor} fontWeight="bold">{textStr}</text>
                         </g>
                       )}
                     </g>
@@ -6515,7 +6590,7 @@ export const ClassificationSection = ({ ctx }) => {
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="flex flex-col gap-1">
-          <label className="text-[10px] font-bold text-slate-500 uppercase">Experiment Type (from Definitions)</label>
+          <label className="text-[10px] font-bold text-slate-500 uppercase">Experiment Type (from Library)</label>
           <select value={classification.experimentType || ''} onChange={(e) => set({ experimentType: e.target.value })}
             className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:border-blue-500">
             <option value="">-- Select --</option>
@@ -6523,7 +6598,7 @@ export const ClassificationSection = ({ ctx }) => {
           </select>
         </div>
         <div className="flex flex-col gap-1">
-          <label className="text-[10px] font-bold text-slate-500 uppercase">Operator(s) (from Definitions)</label>
+          <label className="text-[10px] font-bold text-slate-500 uppercase">Operator(s) (from Settings)</label>
           <div className="flex flex-wrap gap-2">
             {operators.map((name) => (
               <label key={name} className={`flex items-center gap-1.5 text-xs font-bold px-2.5 py-1.5 rounded-lg border cursor-pointer ${selectedOperators.includes(name) ? 'bg-blue-600 border-blue-700 text-white' : 'bg-white border-slate-300 text-slate-700'}`}>
@@ -6531,7 +6606,7 @@ export const ClassificationSection = ({ ctx }) => {
                 {name}
               </label>
             ))}
-            {operators.length === 0 && <span className="text-xs text-amber-600">⚠️ No operators found. Add them in Definitions → Scientists/Operators.</span>}
+            {operators.length === 0 && <span className="text-xs text-amber-600">⚠️ No operators found. Add them in Settings → Scientists/Operators.</span>}
           </div>
         </div>
       </div>

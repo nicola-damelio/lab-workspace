@@ -169,14 +169,15 @@ export const AppSidebar = ({
               {[
                 { id: 'dashboard', icon: '📊', label: 'Dataset Overview' },
                 { id: 'projects', icon: '📁', label: 'Projects' },
+                { id: 'tests', icon: '🧪', label: 'Experiments' },
                 { id: 'notebook', icon: '📓', label: 'Lab Notebook' },
-                { id: 'definitions', icon: '🏷️', label: 'Definitions & Labels' },
-                { id: 'tests', icon: '🧪', label: 'Tests & Fittings' },
+                { id: 'library', icon: '📚', label: 'Library' },
                 { id: 'agenda', icon: '🗓️', label: 'Agenda (Timeline)' },
                 { id: 'protocols', icon: '📝', label: 'Protocols' },
                 { id: 'storage', icon: '📦', label: 'Storage & Boxes' },
                 { id: 'calculations', icon: '🧮', label: 'Calculations' },
-                { id: 'publications', icon: '📰', label: 'Publications' }
+                { id: 'publications', icon: '📰', label: 'Publications' },
+                { id: 'settings', icon: '⚙️', label: 'Settings' }
               ].map((nav) => (
                 <button
                   key={nav.id}

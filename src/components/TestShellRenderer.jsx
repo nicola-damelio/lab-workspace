@@ -75,7 +75,7 @@ export const MultiSelectDropdown = ({
   onToggle,
   onClear,
   placeholder = 'Select…',
-  emptyHint = 'No options defined. Add them in Definitions & Labels.',
+  emptyHint = 'No options defined. Add them in the Library.',
   accent = 'blue'
 }) => {
   const [open, setOpen] = useState(false);
@@ -979,7 +979,7 @@ const [showGeneral, setShowGeneral] = useState(false);
   };
 
   /* ===== MANDATORY PARAMETERS (per special page + optional subsection) =====
-     Rules and per-page behavior come from the Definitions & Labels ->
+     Rules and per-page behavior come from the Settings ->
      Custom Metadata Fields -> Mandatory Parameters manager. Each rule is
      { page: 'all' | typeKey, subsection: '' | notebookCheck id, fieldName }.
      Behavior is looked up per page: 'block' | 'warning' | 'deactivate'
@@ -1406,7 +1406,7 @@ const details = [
 
                 <p className="text-xs text-slate-400 mt-1">
                   Secondary classification uses the same category list defined in
-                  Definitions & Labels.
+                  the Library.
                 </p>
               </div>
             </div>
@@ -1426,7 +1426,7 @@ const details = [
                       onToggle={toggleCompound}
                       onClear={clearCompounds}
                       placeholder="Select compound(s)..."
-                      emptyHint="No compounds defined. Add them in Definitions & Labels."
+                      emptyHint="No compounds defined. Add them in the Library."
                     />
                   )}
 
@@ -1439,7 +1439,7 @@ const details = [
                       onToggle={toggleCellLine}
                       onClear={() => update({ cellLines: [] })}
                       placeholder="Select cell line(s)..."
-                      emptyHint="No cell lines defined. Add them in Definitions & Labels."
+                      emptyHint="No cell lines defined. Add them in the Library."
                     />
                   )}
                 </div>

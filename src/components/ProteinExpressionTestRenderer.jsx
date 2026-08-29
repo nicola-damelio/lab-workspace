@@ -471,7 +471,7 @@ const ProteinDataSection = ({ ctx }) => {
               ctx={ctx}
               bandKind="protein"
               title="SDS-PAGE gel scheme"
-              subtitle="Scheme of the SDS-PAGE gel — click a well and add compounds from Definitions & Labels to show which sample is loaded in each lane."
+              subtitle="Scheme of the SDS-PAGE gel — click a well and add compounds from the Library to show which sample is loaded in each lane."
             />
           </div>
           <input

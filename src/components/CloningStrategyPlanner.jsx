@@ -8,8 +8,8 @@ RESTRICTION_ENZYMES, ENZYME_NAMES, scanAllEnzymes, codonOptimize
 
 /* ==========================================================================
 CLONING STRATEGY PLANNER
-Insert DNA auto-resolved from compoundMeta (Definitions & Labels)
-Plasmid selected from plasmidMeta (Definitions & Labels → Plasmids)
+Insert DNA auto-resolved from compoundMeta (Library)
+Plasmid selected from plasmidMeta (Library → Plasmids)
 Restriction/Ligation or Gibson Assembly primer design
 Manual primer entry for actual primers used
 ========================================================================== */
@@ -26,13 +26,13 @@ const resolveInsertSequence = (compoundName, compoundMeta) => {
 const meta = compoundMeta?.[compoundName];
 if (!meta) return { seq: '', source: null };
 if (meta.type === 'dna' && meta.sequence) {
-return { seq: cleanDna(meta.sequence), source: 'DNA sequence (Definitions & Labels)' };
+return { seq: cleanDna(meta.sequence), source: 'DNA sequence (Library)' };
 }
 if (meta.type === 'rna' && meta.sequence) {
 return { seq: cleanDna(String(meta.sequence).replace(/U/g, 'T')), source: 'RNA → DNA conversion' };
 }
 if (meta.dnaSequence) {
-return { seq: cleanDna(meta.dnaSequence), source: 'Saved codon-optimized DNA (Definitions & Labels)' };
+return { seq: cleanDna(meta.dnaSequence), source: 'Saved codon-optimized DNA (Library)' };
 }
 if (meta.type === 'protein' && meta.sequence) {
 return { seq: codonOptimize(meta.sequence, 'bacterial'), source: 'Codon-optimized on the fly (bacterial codons)' };
@@ -95,7 +95,7 @@ manualRevName: manualRevName.trim() || 'Reverse primer (manual)'
 });
 };
 
-/* Plasmid options — strictly the plasmids defined in Definitions & Labels → Plasmids */
+/* Plasmid options — strictly the plasmids defined in the Library → Plasmids */
 const plasmidOptions = useMemo(
 () => Object.keys(plasmidMeta || {}).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })),
 [plasmidMeta]
@@ -188,7 +188,7 @@ return (
          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3">
            <h4 className="text-xs font-black text-slate-600 uppercase">🧬 Insert</h4>
            <div>
-             <label className={LABEL_CLS}>Compound (from Definitions)</label>
+             <label className={LABEL_CLS}>Compound (from Library)</label>
              <select value={insertCompound} onChange={(e) => setStrategy({ insertCompound: e.target.value, insertSeq: '' })} className={INPUT_CLS}>
                <option value="">— Select compound —</option>
                {compoundOptions.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -206,14 +206,14 @@ return (
                  <button type="button" onClick={() => setStrategy({ insertSeq: '' })} className="text-[10px] font-bold text-blue-600 hover:underline">♻ Re-sync from compound</button>
                )}
              </div>
-             <textarea value={insertSeq} onChange={(e) => setStrategy({ insertSeq: e.target.value.toUpperCase() })} rows={5} className={`${INPUT_CLS} font-mono text-[11px]`} placeholder="Paste DNA here or define the compound in Definitions & Labels…" />
+             <textarea value={insertSeq} onChange={(e) => setStrategy({ insertSeq: e.target.value.toUpperCase() })} rows={5} className={`${INPUT_CLS} font-mono text-[11px]`} placeholder="Paste DNA here or define the compound in the Library…" />
            </div>
          </div>
-         {/* VECTOR — plasmid dropdown from Definitions & Labels */}
+         {/* VECTOR — plasmid dropdown from the Library */}
          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3">
            <h4 className="text-xs font-black text-slate-600 uppercase">🦠 Vector / Plasmid</h4>
            <div>
-             <label className={LABEL_CLS}>Plasmid (from Definitions & Labels → Plasmids)</label>
+             <label className={LABEL_CLS}>Plasmid (from Library → Plasmids)</label>
              <select value={vectorName} onChange={(e) => setStrategy({ vectorName: e.target.value, vectorSeq: '' })} className={INPUT_CLS}>
                <option value="">— Select plasmid —</option>
                {plasmidOptions.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -231,7 +231,7 @@ return (
              <div className="flex justify-between items-center mb-1">
                <label className={LABEL_CLS + ' mb-0'}>Vector sequence (needed for Gibson)</label>
                {strategy.vectorSeq && (
-                 <button type="button" onClick={() => setStrategy({ vectorSeq: '' })} className="text-[10px] font-bold text-blue-600 hover:underline">♻ Re-sync from definitions</button>
+                 <button type="button" onClick={() => setStrategy({ vectorSeq: '' })} className="text-[10px] font-bold text-blue-600 hover:underline">♻ Re-sync from library</button>
                )}
              </div>
              <textarea value={vectorSeq} onChange={(e) => setStrategy({ vectorSeq: e.target.value.toUpperCase() })} rows={5} className={`${INPUT_CLS} font-mono text-[11px]`} placeholder="Paste full plasmid sequence (auto-filled from plasmid definitions if available)…" />

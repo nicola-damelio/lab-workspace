@@ -11,7 +11,8 @@ import {PRIMARY_CATEGORIES} from './data/testTypes';
 import { AppSidebar } from './components/AppModules/appSidebar';
 import { AgendaModule } from './components/AppModules/agendaModule';
 import { DashboardModule } from './components/AppModules/dashboardModule';
-import { DefinitionsModule } from './components/AppModules/definitionsModule';
+import { LibraryModule } from './components/AppModules/libraryModule';
+import { SettingsModule } from './components/AppModules/settingsModule';
 import { StorageModule } from './components/AppModules/storageModuleViews';
 import { TestsModule } from './components/AppModules/testsModule';
 import { ProtocolsModule } from './components/AppModules/protocolsModule';
@@ -904,7 +905,7 @@ if (customType === 'dosy') {
   const allCmpds = useMemo(() => {
     // Built-in default compounds only appear as a fallback when the user has
     // not defined their own library yet — otherwise dropdowns keep showing
-    // compounds that were removed from Definitions & Labels.
+    // compounds that were removed from the Library.
     const lib = [...new Set(customCmpds || [])].filter(Boolean);
     return lib.length > 0 ? lib : [...new Set([...DEF_COMPOUNDS, ...lib])];
   }, [customCmpds]);
@@ -2093,16 +2094,16 @@ const openDataset = (dset) => {
   };
 
   // Deletion is intentionally NOT available from the start page: for safety,
-  // data can only be deleted from Definitions → Database Cleanup & Data
+  // data can only be deleted from Settings → Database Cleanup & Data
   // management. Any delete request from the start page warns and redirects there.
-  const redirectDeleteToDefinitions = (e, label) => {
+  const redirectDeleteToSettings = (e, label) => {
     if (e && e.stopPropagation) e.stopPropagation();
 
     setDialog({
       type: 'confirm',
-      title: '⚠️ Deletion only in Definitions',
-      message: `“${label}” cannot be deleted from the start page.\n\nFor safety, data deletion is only possible in the “Definitions → Database Cleanup & Data management” section.\n\nOpen that section now?`,
-      onConfirm: () => setCurrentModule('definitions')
+      title: '⚠️ Deletion only in Settings',
+      message: `“${label}” cannot be deleted from the start page.\n\nFor safety, data deletion is only possible in the “Settings → Database Cleanup & Data management” section.\n\nOpen that section now?`,
+      onConfirm: () => setCurrentModule('settings')
     });
   };
 
@@ -2604,10 +2605,10 @@ const openDataset = (dset) => {
                 </h2>
 
                 <div className="flex flex-wrap gap-2 w-full md:w-auto">
-                  {/* Delete Empty — superuser only (warns + redirects to Definitions) */}
+                  {/* Delete Empty — superuser only (warns + redirects to Settings) */}
                   {currentUser?.role === 'superuser' && (
                     <button
-                      onClick={(e) => redirectDeleteToDefinitions(e, 'Delete Empty Datasets')}
+                      onClick={(e) => redirectDeleteToSettings(e, 'Delete Empty Datasets')}
                       className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex-1 md:flex-none items-center justify-center gap-2 cursor-pointer text-sm"
                     >
                       🗑️ Delete Empty
@@ -2661,7 +2662,7 @@ const openDataset = (dset) => {
                           </button>
 
                           <button
-                            onClick={(e) => redirectDeleteToDefinitions(e, dset.title || 'Untitled')}
+                            onClick={(e) => redirectDeleteToSettings(e, dset.title || 'Untitled')}
                             className="text-slate-500 hover:text-red-600 hover:bg-red-50 px-2 py-1 rounded text-xs font-bold transition-colors text-right"
                           >
                             Delete
@@ -2742,7 +2743,7 @@ const openDataset = (dset) => {
               operatorNames={operatorNames}
             />)}
 
-            {currentModule === 'definitions' && (<DefinitionsModule
+            {currentModule === 'library' && (<LibraryModule
               allCmpds={allCmpds} setActiveLibrarySelection={setActiveLibrarySelection} activeLibrarySelection={activeLibrarySelection}
               allCellLines={allCellLines}
               compoundMeta={compoundMeta} setCompoundMeta={setCompoundMeta}
@@ -2755,12 +2756,18 @@ const openDataset = (dset) => {
               nmrProbes={nmrProbes} setNmrProbes={setNmrProbes}
               nmrInstruments={nmrInstruments} setNmrInstruments={setNmrInstruments}
               nmrExperiments={nmrExperiments} setNmrExperiments={setNmrExperiments}
+            />)}
+
+            {currentModule === 'settings' && (<SettingsModule
               customFields={customFields}
               mandatoryRules={mandatoryRules} setMandatoryRules={setMandatoryRules}
               mandatoryBehavior={mandatoryBehavior} setMandatoryBehavior={setMandatoryBehavior}
               operators={operators} setOperators={setOperators}
               authSettings={authSettings} setAuthSettings={setAuthSettings}
               currentUser={currentUser} tests={tests} setTests={setTests} handleSetCustomFields={handleSetCustomFields}
+              allCmpds={allCmpds} allCellLines={allCellLines}
+              setCustomCmpds={setCustomCmpds} setCompoundMeta={setCompoundMeta} compoundMeta={compoundMeta}
+              setCustomCellLines={setCustomCellLines} setCellLineMeta={setCellLineMeta} cellLineMeta={cellLineMeta}
               datasetsList={datasetsList} deleteDataset={deleteDataset} deleteEmptyDatasets={deleteEmptyDatasets}
               datasetTitle={datasetTitle}
             />)}

@@ -1219,7 +1219,7 @@ export const ProjectDetailModule = ({
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-[10px] font-black uppercase tracking-wide text-slate-500">👥 Coworkers:</span>
         {shownUsers.length === 0 ? (
-          <span className="text-[10px] italic text-slate-400">No users in the list yet — add them in Definitions → Scientists &amp; Operators.</span>
+          <span className="text-[10px] italic text-slate-400">No users in the list yet — add them in Settings → Scientists &amp; Operators.</span>
         ) : (
           shownUsers.map((u) => {
             const isOwnerName = u === project.scientist;

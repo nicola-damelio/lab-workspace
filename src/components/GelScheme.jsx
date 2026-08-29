@@ -6,7 +6,7 @@ import { isStarred, toggleStarredItem } from '../utils/starredItems';
 GEL SCHEME — a visual, translucent light-blue gel editor
 ================================================================================
 Lets the user build a gel-loading scheme for any experiment section:
-  * click a well, then pick a compound from the Definitions & Labels list
+  * click a well, then pick a compound from the Library list
     (ctx.allCmpds / ctx.selectedCompounds) or the special "Ladder" marker;
   * bands are placed semi-realistically from the compound's molecular weight /
     length (smaller species migrate farther on a log scale);
@@ -201,7 +201,7 @@ export const GelScheme = ({
           <label className="text-xs font-bold text-slate-600 uppercase">{title}</label>
           <p className="text-[10px] text-slate-400 leading-snug">
             {subtitle ||
-              'Click a well, then pick a compound from Definitions & Labels to show what runs in each lane.'}
+              'Click a well, then pick a compound from the Library to show what runs in each lane.'}
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -433,11 +433,11 @@ export const GelScheme = ({
 
           <div className="mt-2">
             <div className="text-[9px] font-bold text-slate-400 uppercase mb-1">
-              Definitions &amp; Labels — compounds
+              Library — compounds
             </div>
             {defsList.length === 0 ? (
               <p className="text-[11px] text-slate-400 italic">
-                No compounds found{q ? ' for that filter' : ''}. Add compounds in Definitions &amp; Labels to load wells.
+                No compounds found{q ? ' for that filter' : ''}. Add compounds in the Library to load wells.
               </p>
             ) : (
               <div className="flex flex-wrap gap-1.5 max-h-44 overflow-y-auto custom-scrollbar pr-1">

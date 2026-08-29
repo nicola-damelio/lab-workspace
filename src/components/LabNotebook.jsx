@@ -5,7 +5,7 @@ import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES } from '../data/testTypes';
 import { SearchableSelect } from './SearchableSelect';
 import { getTestTypeMeta, getNotebookTypeKey } from './testTypeMeta';
 import { Icon } from './Icons';
-import { NOTEBOOK_ANALYSIS_PREVIEWS, RemovablePanel, ChunkedTable, NMRSpectraPreview, PlateGridPreview, Formula2DPreview, CDSpectraChart, CloningUvSpectraChart, CloningSimChartPreview, ProteinChromatogramChart, NMR_SPECTRUM_TYPES, NMRFittingSimPreview, MDParamsPreview, MDAtomTablePreview, normalizeImagePreview } from './notebookPreviews';
+import { NOTEBOOK_ANALYSIS_PREVIEWS, RemovablePanel, ChunkedTable, NMRSpectraPreview, PlateGridPreview, Formula2DPreview, CDSpectraChart, CDSimChartPreview, CloningUvSpectraChart, CloningSimChartPreview, ProteinChromatogramChart, NMR_SPECTRUM_TYPES, NMRFittingSimPreview, MDParamsPreview, MDAtomTablePreview, normalizeImagePreview } from './notebookPreviews';
 
 /* ============================================================================
    NOTEBOOK TEST ITEM
@@ -88,7 +88,7 @@ export const NotebookTestItem = ({
 
     const collected = [];
     Object.entries(localTest || {}).forEach(([key, val]) => {
-      if (/cfg|config|setting|type|html|css/i.test(key)) return;
+      if (/cfg|config|setting|type|html|css|cdSim/i.test(key)) return;
       if (looksLikeImage(val) || Array.isArray(val)) {
         collected.push(...normalize(val));
       } else if (val && typeof val === 'object') {
@@ -645,6 +645,12 @@ export const NotebookTestItem = ({
                 <NMRSpectraPreview test={localTest} selectedTypes={selectedSpectrumTypes} />
               </div>
             )}
+            {isCD && (
+              <div className="mt-4">
+                <h5 className="text-[10px] font-bold text-slate-500 mb-1 uppercase text-center w-full">CD Simulations</h5>
+                <CDSimChartPreview test={localTest} />
+              </div>
+            )}
             {simImgList.length > 0 && (
               <div className="flex flex-col items-center gap-6 mt-4 pt-4 border-t border-slate-100 w-full">
                 <h5 className="text-[10px] font-bold text-slate-500 mb-1 uppercase text-center w-full">Generic Simulation Images</h5>
@@ -655,7 +661,7 @@ export const NotebookTestItem = ({
                 ))}
               </div>
             )}
-            {!isNMRFitting && !(isCloning && localTest.sim?.sequence) && !(isNMR && selectedSpectrumTypes.length > 0) && simImgList.length === 0 && (
+            {!isNMRFitting && !(isCloning && localTest.sim?.sequence) && !(isNMR && selectedSpectrumTypes.length > 0) && !isCD && simImgList.length === 0 && (
                <p className="text-[10px] text-slate-400 italic">No simulation data available for this experiment.</p>
             )}
           </RemovablePanel>
@@ -693,7 +699,7 @@ export const LabNotebook = ({
   const [dateFrom] = useState('');
   const [dateTo] = useState('');
 
-  const [bestOnly, setBestOnly] = useState(false);
+  const [bestOnly, setBestOnly] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('date_desc');
   
@@ -706,9 +712,9 @@ export const LabNotebook = ({
   const [showReport, setShowReport] = useState(true);
   const [showImages, setShowImages] = useState(true);
   const [showData, setShowData] = useState(true);
-  // Data-analysis graphs and simulated images are OFF by default (lightweight notebook).
-  const [showDataAnalysisGraphs, setShowDataAnalysisGraphs] = useState(false);
-  const [showSimImages, setShowSimImages] = useState(false);
+  // Data-analysis graphs and simulated images are shown by default.
+  const [showDataAnalysisGraphs, setShowDataAnalysisGraphs] = useState(true);
+  const [showSimImages, setShowSimImages] = useState(true);
   
   // Option Lists
 const primaryOptions = PRIMARY_CATEGORIES || Object.keys(CLASSIFICATION_MAP || {});

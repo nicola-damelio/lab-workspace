@@ -199,7 +199,7 @@ export const TestsModule = ({
                     <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-3 gap-2 border-b border-slate-200 pb-2">
                       <div>
                         <h2 className="text-lg md:text-xl font-black text-slate-800">
-                          Tests & Assays
+                          Experiments
                         </h2>
 
                         <p className="text-xs text-slate-500">

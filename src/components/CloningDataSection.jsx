@@ -368,7 +368,7 @@ const GelPanel = ({ ctx }) => {
           ctx={ctx}
           bandKind="dna"
           title="DNA gel scheme"
-          subtitle="Scheme of the agarose gel — click a well and add compounds from Definitions & Labels to show what is loaded in each lane."
+          subtitle="Scheme of the agarose gel — click a well and add compounds from the Library to show what is loaded in each lane."
         />
       </div>
       <input

@@ -11,7 +11,7 @@ import { formatConc, concKey, toHex, fit4PL, errBarPlugin } from '../data/consta
 import { rainbowColors } from '../utils/chartStyle';
 import { useNmrDerived, OneDSpectrumPlot, SpectrumPlot, HSQCPlot, CustomXTick1H, CustomXTick13C, TICKS_1H, TICKS_13C, TICKS_15N } from './NMRSections';
 import { FCSOverlayVisualization } from './FlowCytometrySections';
-import { CD_FIT_COMPONENTS } from './CDSections';
+import { CD_FIT_COMPONENTS, buildCdLibraryData } from './CDSections';
 import { parseMDValue, getForceFieldInfo, getWaterModelInfo, getTrajectoryFormatInfo, MD_ANALYSIS_LAYERS } from './MDData';
 
 /* ============================================================================
@@ -139,6 +139,132 @@ const data = parsedWavelengths.map((w, i) => ({
     </div>
   );
 };
+
+/* ============================================================================
+   CD SIMULATION CHART PREVIEW (for Lab Notebook)
+   Shows the saved CD simulation snapshots when available; otherwise renders
+   default CD Spectra Library / Protein Secondary Structure simulator charts so
+   every CD experiment displays its simulation in the notebook.
+============================================================================ */
+const niceCdTick = (range, targetTicks = 6) => {
+  if (!Number.isFinite(range) || range <= 0) return 1;
+  const raw = range / targetTicks;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const norm = raw / mag;
+  return (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag;
+};
+
+export const CDSimChartPreview = ({ test }) => {
+  const lib = test?.cdSimLibrary;
+  const mixer = test?.cdSimMixer;
+
+  // Default charts used when no saved snapshot exists yet (hooks must run
+  // unconditionally, before any early return).
+  const libData = useMemo(() => {
+    try {
+      return buildCdLibraryData({ tab: 'protein', selectedProtein: ['alpha', 'beta', 'coil'], selectedDna: ['bDNA'], selectedGq: ['gqP'], ratio: 0, normalize: true });
+    } catch { return null; }
+  }, []);
+
+  // Mixer default = 100% Random Coil
+  const mixerData = useMemo(() => {
+    const coil = CD_FIT_COMPONENTS.coil;
+    if (!coil) return null;
+    const xs = [];
+    for (let w = 176; w <= 260; w += 1) xs.push(w);
+    const raw = xs.map((w) => coil.spline.at(Math.min(Math.max(w, coil.min), coil.max)));
+    const maxAbs = Math.max(1e-6, ...raw.map((v) => Math.abs(v)));
+    return { xs, series: [{ label: 'Random Coil (100%)', color: '#94a3b8', values: raw.map((v) => (v / maxAbs) * 100) }], domain: { min: 176, max: 260 } };
+  }, []);
+
+  // Prefer the exact snapshots saved from the CD page simulators.
+  if (lib?.image || mixer?.image) {
+    return (
+      <div className="flex flex-col items-center gap-6 w-full">
+        {mixer?.image && (
+          <div className="flex flex-col items-center gap-2 w-full">
+            <span className="text-[10px] font-bold text-slate-500 uppercase text-center">{mixer.label || 'Protein Secondary Structure Simulator'}</span>
+            <img src={mixer.image} alt={mixer.label || 'Protein Secondary Structure Simulator'} style={{ maxWidth: '100%', maxHeight: '600px', objectFit: 'contain' }} className="rounded-lg shadow-sm border border-slate-200 bg-white" />
+          </div>
+        )}
+        {lib?.image && (
+          <div className="flex flex-col items-center gap-2 w-full">
+            <span className="text-[10px] font-bold text-slate-500 uppercase text-center">{lib.label || 'CD Spectra Reference Library & DNA/Protein Mixture Simulator'}</span>
+            <img src={lib.image} alt={lib.label || 'CD Spectra Reference Library & DNA/Protein Mixture Simulator'} style={{ maxWidth: '100%', maxHeight: '600px', objectFit: 'contain' }} className="rounded-lg shadow-sm border border-slate-200 bg-white" />
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const W = 600, H = 320, pad = { top: 20, right: 20, bottom: 42, left: 64 };
+
+  const renderChart = ({ xs, series, domain, yLabel }) => {
+    if (!xs || xs.length === 0 || !series || series.length === 0) return null;
+    const plotW = W - pad.left - pad.right;
+    const plotH = H - pad.top - pad.bottom;
+    let yMin = Infinity, yMax = -Infinity;
+    series.forEach((s) => s.values.forEach((v) => { if (Number.isFinite(v)) { yMin = Math.min(yMin, v); yMax = Math.max(yMax, v); } }));
+    if (!Number.isFinite(yMin) || !Number.isFinite(yMax)) return null;
+    if (yMin === yMax) { yMin -= 1; yMax += 1; }
+    const padY = (yMax - yMin) * 0.1;
+    yMin -= padY; yMax += padY;
+    const xMin = domain.min, xMax = domain.max;
+    const X = (x) => pad.left + ((x - xMin) / (xMax - xMin)) * plotW;
+    const Y = (y) => pad.top + plotH - ((y - yMin) / (yMax - yMin)) * plotH;
+
+    const xTicks = [];
+    for (let x = Math.ceil(xMin / 10) * 10; x <= xMax; x += 10) xTicks.push(x);
+    const yTickStep = niceCdTick(yMax - yMin);
+    const yTicks = [];
+    for (let y = Math.ceil(yMin / yTickStep) * yTickStep; y <= yMax; y += yTickStep) yTicks.push(+y.toFixed(2));
+
+    return (
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto bg-white rounded-lg shadow-sm border border-slate-200" style={{ maxHeight: 400 }}>
+        <rect x={0} y={0} width={W} height={H} fill="#f8fafc" />
+        {xTicks.map((x, i) => (
+          <line key={`xg${i}`} x1={X(x)} y1={pad.top} x2={X(x)} y2={pad.top + plotH} stroke="#e2e8f0" strokeWidth={0.5} />
+        ))}
+        {yTicks.map((y, i) => (
+          <line key={`yg${i}`} x1={pad.left} y1={Y(y)} x2={pad.left + plotW} y2={Y(y)} stroke="#e2e8f0" strokeWidth={0.5} />
+        ))}
+        {yMin < 0 && yMax > 0 && (
+          <line x1={pad.left} y1={Y(0)} x2={pad.left + plotW} y2={Y(0)} stroke="#94a3b8" strokeWidth={1} strokeDasharray="4 4" />
+        )}
+        {series.map((s, si) => {
+          const pts = xs.map((x, i) => `${X(x).toFixed(1)},${Y(s.values[i]).toFixed(1)}`).join(' ');
+          return <polyline key={`pl${si}`} points={pts} fill="none" stroke={s.color} strokeWidth={2} />;
+        })}
+        {series.map((s, si) => (
+          <g key={`lg${si}`}>
+            <rect x={pad.left + 10} y={pad.top + 12 + si * 16} width={12} height={3} fill={s.color} />
+            <text x={pad.left + 28} y={pad.top + 16 + si * 16} fontSize={11} fill="#334155">{s.label}</text>
+          </g>
+        ))}
+        {xTicks.map((x, i) => (
+          <text key={`xt${i}`} x={X(x)} y={pad.top + plotH + 16} fontSize={10} textAnchor="middle" fill="#64748b">{x}</text>
+        ))}
+        <text x={pad.left + plotW / 2} y={H - 4} fontSize={11} textAnchor="middle" fill="#64748b">Wavelength (nm)</text>
+        <text x={12} y={pad.top + plotH / 2} fontSize={11} textAnchor="middle" fill="#64748b" transform={`rotate(-90 12 ${pad.top + plotH / 2})`}>{yLabel}</text>
+      </svg>
+    );
+  };
+
+  return (
+    <div className="flex flex-col items-center gap-6 w-full">
+      <div className="flex flex-col items-center gap-2 w-full">
+        <span className="text-[10px] font-bold text-slate-500 uppercase text-center">Protein Secondary Structure Simulator</span>
+        {mixerData ? renderChart({ ...mixerData, yLabel: 'Normalized CD (a.u.)' }) : <p className="text-xs text-slate-400 italic">No simulation data available.</p>}
+      </div>
+      <div className="flex flex-col items-center gap-2 w-full">
+        <span className="text-[10px] font-bold text-slate-500 uppercase text-center">CD Spectra Reference Library &amp; DNA/Protein Mixture Simulator</span>
+        {libData ? renderChart({ ...libData, yLabel: 'Normalized CD (a.u.)' }) : <p className="text-xs text-slate-400 italic">No simulation data available.</p>}
+      </div>
+    </div>
+  );
+};
+
+
 
 const CDStructureChart = ({ structureComposition }) => {
 const canvasRef = useRef(null);
