@@ -176,7 +176,19 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
     const el = elMap.current.get(t.key);
     let item = null;
     if (t.kind === 'canvas' && el) {
-      item = { id: t.key, kind: 'graph', label: t.label, caption: t.label, url: el.toDataURL('image/png') };
+      // Capture raster canvases at 2× so zooming into a figure panel stays
+      // sharper. SVG charts keep their vector form (crisp at any zoom).
+      let url = '';
+      try {
+        const scale = 2;
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round((el.width || el.offsetWidth || 300) * scale));
+        c.height = Math.max(1, Math.round((el.height || el.offsetHeight || 200) * scale));
+        c.getContext('2d').drawImage(el, 0, 0, c.width, c.height);
+        url = c.toDataURL('image/png');
+      } catch { /* fall through to the original canvas */ }
+      if (!url) url = el.toDataURL('image/png');
+      item = { id: t.key, kind: 'graph', label: t.label, caption: t.label, url };
     } else if (t.kind === 'svg' && el) {
       item = { id: t.key, kind: 'graph', label: t.label, caption: t.label, url: svgToDataUrl(el) };
     } else if (t.kind === 'img' && el) {

@@ -188,7 +188,15 @@ const renderRegionsToDataUrl = async (slide, maxSide = 0) => {
         ctx.drawImage(im, rx + (rw - iw) / 2, ry + (rh - 44 - ih) / 2, iw, ih);
       }
       ctx.restore();
-      if ((r.text || '').trim()) {
+      if ((r.textBlocks && r.textBlocks.length > 0)) {
+        r.textBlocks.forEach((tb) => {
+          ctx.fillStyle = '#334155';
+          ctx.font = `${Math.round(22 * (r.fontScale || 1))}px Helvetica, Arial, sans-serif`;
+          ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
+          ctx.fillText(String(tb.text).trim().slice(0, 70), rx + Math.max(0.05, Math.min(0.95, tb.x)) * rw, ry + rh - 24);
+          ctx.textAlign = 'left';
+        });
+      } else if ((r.text || '').trim()) {
         ctx.fillStyle = '#334155';
         ctx.font = `${Math.round(22 * (r.fontScale || 1))}px Helvetica, Arial, sans-serif`;
         ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
@@ -304,7 +312,14 @@ export const SlidePreview = ({ slide, width = 220, className = '' }) => {
                 style={{ gridColumn: `${r.x + 1} / span ${r.w}`, gridRow: `${r.y + 1} / span ${r.h}` }}>
                 {r.image && <img src={r.image.url} alt="" className="absolute inset-0 w-full h-full object-contain" />}
                 {r.label && <span className="absolute top-0.5 left-1 z-10 font-black text-slate-900" style={{ fontSize: `${Math.max(7, Math.round(12 * (slide.labelSize || 1)))}px` }}>{r.label}</span>}
-                {(r.text || '').trim() && <span className="absolute bottom-0.5 left-0 right-0 text-center text-[10px] text-slate-600">{r.text}</span>}
+                {(r.textBlocks && r.textBlocks.length > 0) ? (
+                  r.textBlocks.map((tb, tbi) => (
+                    <span key={tbi} className="absolute bottom-0.5 z-10 text-[10px] text-slate-600"
+                      style={{ left: `${Math.max(0.05, Math.min(0.95, tb.x)) * 100}%`, transform: 'translateX(-50%)' }}>{tb.text}</span>
+                  ))
+                ) : (r.text || '').trim() && (
+                  <span className="absolute bottom-0.5 left-0 right-0 z-10 text-center text-[10px] text-slate-600">{r.text}</span>
+                )}
               </div>
             ))}
           </div>
@@ -352,7 +367,12 @@ export const SlidePreview = ({ slide, width = 220, className = '' }) => {
      regions can be unified by expanding the selected region to a neighbour
      cell, so panels like A/B/C/D (and bigger merged ones) are possible.
    --------------------------------------------------------------------------- */
-const ORIENT_GRID = { square: { cols: 4, rows: 4 }, rect: { cols: 5, rows: 4 } };
+const ORIENT_GRID = {
+  square: { cols: 4, rows: 4 },   // 16 regions
+  '5x4': { cols: 5, rows: 4 },    // 20 regions — horizontal
+  '4x5': { cols: 4, rows: 5 },    // 20 regions — portrait
+  rect: { cols: 5, rows: 4 }      // legacy alias for '5x4'
+};
 
 const emptyRegion = (x, y) => ({
   id: uid('rg'), x, y, w: 1, h: 1,
@@ -360,6 +380,7 @@ const emptyRegion = (x, y) => ({
   zoom: 100,            // % zoom of the image inside the region (clipped)
   fontScale: 1,         // text / peak-label character size scale
   text: '',             // single text line at the bottom of the region
+  textBlocks: [],       // merged regions keep each panel's text at its own x: [{ x (0..1), text }]
   peaks: [],            // spectrum peak labels: [{ fx (0..1), label }]
   isSpectrum: false,
   label: ''             // auto panel letter (A, B, C, …)
@@ -369,7 +390,7 @@ const newRegionSlide = (orientation) => {
   const g = ORIENT_GRID[orientation] || ORIENT_GRID.square;
   return {
     id: uid('slide'),
-    title: `Figure ${orientation === 'rect' ? '1' : 'S1'}`,
+    title: orientation === 'square' ? 'Figure S1' : `Figure ${orientation === '4x5' ? 'V1' : '1'}`,
     titleSize: 20, bg: '#ffffff',
     orientation,
     cols: g.cols, rows: g.rows,
@@ -417,18 +438,27 @@ const canPlaceRegion = (regions, r, dx, dy, cols, rows) => {
 };
 
 // Reversible merge: splitting a merged region (w>1 or h>1) back into its
-// individual 1×1 cells. The content (image, text, peaks) stays in the top-left
-// cell so nothing is lost and the merge can be redone.
+// individual 1×1 cells. The image stays in the top-left cell; each cell gets
+// back the text that belonged to its column (textBlocks → bottom-row cells).
 const splitRegionCells = (regions, ri) => {
   const r = regions[ri];
   if (!r || (r.w === 1 && r.h === 1)) return regions;
+  const bottomY = r.y + r.h - 1;
   const out = [];
-  for (let y = r.y; y < r.y + r.h; y++) {
+  for (let y = r.y; y <= bottomY; y++) {
     for (let x = r.x; x < r.x + r.w; x++) {
       const first = x === r.x && y === r.y;
-      out.push(first ? { ...r, w: 1, h: 1, x, y } : emptyRegion(x, y));
+      const cell = first ? { ...r, w: 1, h: 1, x, y, text: '', textBlocks: [] } : emptyRegion(x, y);
+      if (!first) { cell.image = null; cell.peaks = []; cell.zoom = 100; cell.fontScale = 1; cell.isSpectrum = false; }
+      out.push(cell);
     }
   }
+  (r.textBlocks || []).forEach((t) => {
+    const col = Math.min(r.w - 1, Math.max(0, Math.floor(t.x * r.w)));
+    const idx = (bottomY - r.y) * r.w + col;
+    const cell = out[idx];
+    if (cell) cell.text = (cell.text || '').trim() ? `${cell.text} | ${t.text}` : t.text;
+  });
   return out;
 };
 
@@ -473,6 +503,7 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
   const [leftOpen, setLeftOpen] = useState(false);    // ⭐ sidebar tab (retractable)
   const [rightLibOpen, setRightLibOpen] = useState(false); // 📂 dataset images tab
   const [regionFullscreen, setRegionFullscreen] = useState(false); // ⛶ fullscreen editing
+  const [canvasScale, setCanvasScale] = useState(1);   // canvas zoom (1 = fit, 0.4–4)
   // Keep the ⭐ sidebar open long enough to move the mouse into it.
   const hoverTimerRef = useRef(null);
   const clearHoverSoon = () => {
@@ -624,7 +655,7 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
     patchSlide(cur, { regions: autoLabelRegions((s.regions || []).map((r, j) => (j === ri ? { ...r, ...patch } : r))) });
   };
   const setRegionImage = (ri, image) => patchRegion(ri, { image });
-  const clearRegion = (ri) => patchRegion(ri, { image: null, peaks: [], text: '' });
+  const clearRegion = (ri) => patchRegion(ri, { image: null, peaks: [], text: '', textBlocks: [] });
   const insertStarredIntoRegion = async (s0, ri) => {
     const img = await makeLibraryImage(s0.url);
     setRegionImage(ri, { url: img.url, full: img.full });
@@ -635,7 +666,8 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
     setHoverRegion(null);
   };
   // Merge two existing regions into one: the union is the bounding box of both,
-  // and any cells in between become empty 1×1 panels (fully reversible with ✂).
+  // any cells in between become empty 1×1 panels, and each panel's bottom text
+  // is kept at its own horizontal position (textBlocks). Fully reversible with ✂.
   const mergeTwoRegions = (ai, bi) => {
     const s = deck.slides[cur];
     if (!s) return;
@@ -644,11 +676,15 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
     if (!A || !B || A.id === B.id) return;
     const minX = Math.min(A.x, B.x), minY = Math.min(A.y, B.y);
     const maxX = Math.max(A.x + A.w - 1, B.x + B.w - 1), maxY = Math.max(A.y + A.h - 1, B.y + B.h - 1);
-    const merged = { ...A, x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+    const w = maxX - minX + 1, h = maxY - minY + 1;
+    const entries = [];
+    const addText = (reg) => {
+      if ((reg.text || '').trim()) entries.push({ x: ((reg.x - minX) + reg.w / 2) / w, text: reg.text });
+      (reg.textBlocks || []).forEach((t) => entries.push({ x: ((reg.x - minX) + reg.w / 2) / w, text: t.text }));
+    };
+    addText(A); addText(B);
+    const merged = { ...A, x: minX, y: minY, w, h, text: '', textBlocks: entries };
     merged.image = merged.image || B.image;
-    merged.text = (B.text || '').trim()
-      ? ((merged.text || '').trim() ? `${merged.text} | ${B.text}` : B.text)
-      : merged.text || '';
     merged.peaks = [...(merged.peaks || []), ...(B.peaks || [])];
     const covered = (x, y) =>
       (x >= A.x && x < A.x + A.w && y >= A.y && y < A.y + A.h) ||
@@ -1031,7 +1067,7 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
     const regions = slide.regions || [];
     const targetRi = hoverRegion !== null ? hoverRegion : selRegion;
     const targetRegion = targetRi !== null ? regions[targetRi] : null;
-    const ZOOMS = [100, 150, 200, 300];
+    const ZOOMS = [100, 150, 200, 300, 500];
     const nextZoom = (r) => ZOOMS[(Math.max(0, ZOOMS.indexOf(r.zoom)) + 1) % ZOOMS.length];
     const FONTS = [0.8, 1, 1.25, 1.6, 2];
     const nextFont = (r) => FONTS[(Math.max(0, FONTS.indexOf(r.fontScale)) + 1) % FONTS.length];
@@ -1043,6 +1079,7 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
       patchRegion(ri, { peaks: [...(regions[ri].peaks || []), { fx, label: '' }] });
     };
     const cw = regionFullscreen ? 'min(96vw, 90vh)' : 'min(100%, 72vh)';
+    const canvasWidth = canvasScale === 1 ? cw : `calc(${cw} * ${canvasScale})`;
     const editorContent = (
       <>
         <p className="text-[10px] text-slate-400 leading-relaxed">
@@ -1059,6 +1096,14 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
           <button type="button" onClick={() => patchSlide(cur, { labelSize: Math.min(2.5, Math.round(((slide.labelSize || 1) + 0.1) * 10) / 10) })}
             className={btnGhost} title="Larger panel letters">+</button>
           <span className="w-px h-4 bg-slate-200 mx-1" />
+          <span className="text-[10px] font-black text-slate-500" title="Canvas zoom — work on regions without being limited by the page">🔍 Canvas</span>
+          <button type="button" onClick={() => setCanvasScale(Math.max(0.4, Math.round((canvasScale - 0.2) * 10) / 10))}
+            className={btnGhost} title="Zoom out the canvas">−</button>
+          <span className="text-[10px] font-bold text-slate-600 tabular-nums min-w-[34px] text-center">{Math.round(canvasScale * 100)}%</span>
+          <button type="button" onClick={() => setCanvasScale(Math.min(4, Math.round((canvasScale + 0.2) * 10) / 10))}
+            className={btnGhost} title="Zoom in the canvas">+</button>
+          <button type="button" onClick={() => setCanvasScale(1)} className={btnGhost} title="Fit the whole figure on screen">Fit</button>
+          <span className="w-px h-4 bg-slate-200 mx-1" />
           <button type="button" onClick={() => setRegionFullscreen(!regionFullscreen)}
             className={btnGhost} title="Edit this figure on almost the whole screen">
             {regionFullscreen ? '✕ Close fullscreen' : '⛶ Maximize'}
@@ -1066,19 +1111,19 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
         </div>
 
         <div className="relative">
-          {/* CANVAS — fills the width, almost the whole screen height */}
-          <div className="w-full flex justify-center">
-            <div className="relative bg-white rounded-lg border border-slate-200 shadow-sm"
-              style={{ aspectRatio: `${cols}/${rows}`, width: cw }}>
+          {/* CANVAS — zoomable, scrollable (work on regions, not limited by the page) */}
+          <div className="w-full overflow-auto custom-scrollbar"
+            style={{ maxHeight: regionFullscreen ? 'calc(100vh - 150px)' : '80vh' }}>
+            <div className="flex justify-center min-w-max min-h-full">
+              <div className="relative bg-white rounded-lg border border-slate-200 shadow-sm"
+                style={{ aspectRatio: `${cols}/${rows}`, width: canvasWidth }}>
               <div className="absolute inset-0 grid"
                 style={{ gridTemplateColumns: `repeat(${cols}, 1fr)`, gridTemplateRows: `repeat(${rows}, 1fr)` }}>
                 {cells.map((c) => {
-                  const sel = selRegion !== null ? regions[selRegion] : null;
-                  const canExpand = sel && !regionAtCell(regions, c.x, c.y) && canExpandRegion(sel, c.x, c.y);
                   const canDrop = dragRegion !== null && regions[dragRegion] && canPlaceRegion(regions, regions[dragRegion], c.x, c.y, cols, rows);
                   return (
                     <div key={`${c.x}-${c.y}`}
-                      className={`border ${canExpand ? 'border-emerald-300 bg-emerald-50/50' : canDrop ? 'border-blue-300 bg-blue-50/50' : 'border-slate-100'}`}
+                      className={`border ${canDrop ? 'border-blue-300 bg-blue-50/50' : 'border-slate-100'}`}
                       onMouseEnter={() => { const ex = regionAtCell(regions, c.x, c.y); setHoverRegion(ex ? regions.indexOf(ex) : null); }}
                       onClick={() => onRegionCellClick(c.x, c.y)}
                       onDragOver={(e) => { if (dragRegion !== null) e.preventDefault(); }}
@@ -1107,8 +1152,13 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
                           style={{ cursor: r.isSpectrum ? 'crosshair' : 'default' }}
                           onClick={r.isSpectrum ? (e) => addPeak(e, ri) : undefined}
                           title={r.isSpectrum ? 'Click on the spectrum to add a peak label' : undefined}>
-                          <img src={getRenderableDriveUrl(r.image.url)} alt=""
-                            style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', transform: `scale(${r.zoom / 100})`, transformOrigin: 'center' }} />
+                          {/* The wrapper's size = zoom%, so SVG/vector images
+                              re-render crisply at the enlarged size instead of
+                              scaling a raster bitmap. */}
+                          <div className="flex items-center justify-center"
+                            style={{ width: `${r.zoom || 100}%`, height: `${r.zoom || 100}%` }}>
+                            <img src={getRenderableDriveUrl(r.image.url)} alt="" className="max-w-full max-h-full object-contain" />
+                          </div>
                           {r.isSpectrum && (r.peaks || []).map((p, pi) => (
                             <span key={pi} className="absolute" style={{ left: `${p.fx * 100}%`, top: '6%' }}>
                               <span className="absolute -translate-x-1/2 top-0 text-[9px] text-red-600">▼</span>
@@ -1138,15 +1188,28 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
                         </div>
                       )}
                       <div className="absolute bottom-0 left-0 right-0 z-10 bg-white/90 px-1 pb-0.5">
-                        <input value={r.text || ''} onChange={(e) => patchRegion(ri, { text: e.target.value })}
-                          placeholder="Text…" onClick={(e) => e.stopPropagation()}
-                          style={{ fontSize: `${Math.max(7, 10 * (r.fontScale || 1))}px` }}
-                          className="w-full text-center border-b border-slate-200 outline-none focus:border-blue-400 bg-transparent" />
+                        {(r.textBlocks && r.textBlocks.length > 0) ? (
+                          <div className="relative h-5">
+                            {r.textBlocks.map((tb, tbi) => (
+                              <input key={tbi} value={tb.text || ''}
+                                onChange={(e) => patchRegion(ri, { textBlocks: (r.textBlocks || []).map((q, qi) => (qi === tbi ? { ...q, text: e.target.value } : q)) })}
+                                placeholder="Text…" onClick={(e) => e.stopPropagation()}
+                                style={{ left: `${Math.max(0.05, Math.min(0.95, tb.x)) * 100}%`, transform: 'translateX(-50%)', width: '46%', fontSize: `${Math.max(7, 10 * (r.fontScale || 1))}px` }}
+                                className="absolute top-0 text-center border-b border-slate-200 outline-none focus:border-blue-400 bg-transparent" />
+                            ))}
+                          </div>
+                        ) : (
+                          <input value={r.text || ''} onChange={(e) => patchRegion(ri, { text: e.target.value })}
+                            placeholder="Text…" onClick={(e) => e.stopPropagation()}
+                            style={{ fontSize: `${Math.max(7, 10 * (r.fontScale || 1))}px` }}
+                            className="w-full text-center border-b border-slate-200 outline-none focus:border-blue-400 bg-transparent" />
+                        )}
                       </div>
                     </div>
                   ))}
                 </div>
               </div>
+            </div>
             </div>
 
             {/* global figure caption */}
@@ -1265,18 +1328,24 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
           <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-sm font-black text-slate-800 mb-1">New figure — orientation</h3>
             <p className="text-xs text-slate-500 mb-4">Choose how the white canvas is divided. Panels can be merged later (select a panel, then click an adjacent cell).</p>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-2">
               <button type="button" onClick={() => createSlideOf('square')}
-                className="rounded-xl border-2 border-slate-200 hover:border-blue-500 bg-slate-50 hover:bg-blue-50 p-4 flex flex-col items-center gap-2 transition-colors">
-                <div className="w-14 h-14 grid grid-cols-4 grid-rows-4 gap-0.5">{Array.from({ length: 16 }).map((_, i) => <div key={i} className="bg-slate-300" />)}</div>
+                className="rounded-xl border-2 border-slate-200 hover:border-blue-500 bg-slate-50 hover:bg-blue-50 p-3 flex flex-col items-center gap-2 transition-colors">
+                <div className="w-11 h-11 grid grid-cols-4 grid-rows-4 gap-0.5">{Array.from({ length: 16 }).map((_, i) => <div key={i} className="bg-slate-300" />)}</div>
                 <span className="text-xs font-black text-slate-700">Squared</span>
-                <span className="text-[10px] text-slate-500">16 panels (4×4)</span>
+                <span className="text-[10px] text-slate-500">16 · 4×4</span>
               </button>
-              <button type="button" onClick={() => createSlideOf('rect')}
-                className="rounded-xl border-2 border-slate-200 hover:border-blue-500 bg-slate-50 hover:bg-blue-50 p-4 flex flex-col items-center gap-2 transition-colors">
-                <div className="w-[70px] h-14 grid grid-cols-5 grid-rows-4 gap-0.5">{Array.from({ length: 20 }).map((_, i) => <div key={i} className="bg-slate-300" />)}</div>
-                <span className="text-xs font-black text-slate-700">Horizontal</span>
-                <span className="text-[10px] text-slate-500">20 panels (5×4)</span>
+              <button type="button" onClick={() => createSlideOf('5x4')}
+                className="rounded-xl border-2 border-slate-200 hover:border-blue-500 bg-slate-50 hover:bg-blue-50 p-3 flex flex-col items-center gap-2 transition-colors">
+                <div className="w-[54px] h-11 grid grid-cols-5 grid-rows-4 gap-0.5">{Array.from({ length: 20 }).map((_, i) => <div key={i} className="bg-slate-300" />)}</div>
+                <span className="text-xs font-black text-slate-700">5×4</span>
+                <span className="text-[10px] text-slate-500">20 · horizontal</span>
+              </button>
+              <button type="button" onClick={() => createSlideOf('4x5')}
+                className="rounded-xl border-2 border-slate-200 hover:border-blue-500 bg-slate-50 hover:bg-blue-50 p-3 flex flex-col items-center gap-2 transition-colors">
+                <div className="w-[44px] h-[54px] grid grid-cols-4 grid-rows-5 gap-0.5">{Array.from({ length: 20 }).map((_, i) => <div key={i} className="bg-slate-300" />)}</div>
+                <span className="text-xs font-black text-slate-700">4×5</span>
+                <span className="text-[10px] text-slate-500">20 · vertical</span>
               </button>
             </div>
           </div>
