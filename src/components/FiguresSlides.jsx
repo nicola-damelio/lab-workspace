@@ -1123,8 +1123,10 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
     const libItems = [...(projectLibrary || []), ...(library || [])];
     // Image zoom: drag horizontally to select the part of the image to keep.
     const spectrumStart = (e, ri) => {
+      if (e.button !== 0) return;
       const t = e.target;
       if (t && t.closest && t.closest('input,button')) return; // ignore clicks on peak labels / controls
+      e.preventDefault(); // stop the browser's native image drag (ghost) from hijacking the mouse
       const rect = e.currentTarget.getBoundingClientRect();
       if (!rect.width) return;
       suppressRegionClickRef.current = false;
@@ -1146,7 +1148,7 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
       const sx = Math.max(0, Math.min(1, (d.startX - d.rect.left) / Math.max(1, d.rect.width)));
       setCropPreview(null);
       const x1 = Math.min(sx, fx), x2 = Math.max(sx, fx);
-      if (x2 - x1 > 0.04) {
+      if (x2 - x1 > 0.06) {
         // drag → zoom into that region of the image and keep it
         suppressRegionClickRef.current = true; // the following click must not deselect the panel
         patchRegion(ri, { crop: { x1, x2 }, zoom: 100 });
@@ -1170,9 +1172,12 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
       setDragRegion(null);
     };
     // Drag on the canvas selects a rectangular region of cells (like a table).
+    // It only starts from an EMPTY cell (panels handle their own drags: crop /
+    // move), so a normal click on a panel is never hijacked.
     const canvasDragStart = (e) => {
+      if (e.button !== 0) return;
       const t = e.target;
-      if (t && t.closest && t.closest('input,button,textarea,select,.drag-handle,.img-zoom-target')) return;
+      if (t && t.closest && t.closest('input,button,textarea,select,.drag-handle,.img-zoom-target,[data-region-id]')) return;
       const rect = e.currentTarget.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
       canvasDragRef.current = { startX: e.clientX, startY: e.clientY, rect, moved: false, box: null };
@@ -1181,7 +1186,7 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
     const canvasDragMove = (e) => {
       const d = canvasDragRef.current;
       if (!d) return;
-      if (Math.abs(e.clientX - d.startX) + Math.abs(e.clientY - d.startY) > 4) d.moved = true;
+      if (Math.abs(e.clientX - d.startX) + Math.abs(e.clientY - d.startY) > 6) d.moved = true;
       if (!d.moved) return;
       const rect = d.rect;
       const cw = rect.width / cols, ch = rect.height / rows;
@@ -1278,7 +1283,7 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
                     <div key={key}
                       className={`border ${canDrop ? 'border-blue-300 bg-blue-50/50' : isSelCell ? 'border-amber-400 bg-amber-100/60' : 'border-slate-100'}`}
                       onMouseEnter={() => { const ex = regionAtCell(regions, c.x, c.y); setHoverRegion(ex ? regions.indexOf(ex) : null); }}
-                      onClick={() => { if (suppressCanvasClickRef.current) return; onRegionCellClick(c.x, c.y); }}>
+                      onClick={() => { if (suppressCanvasClickRef.current) { suppressCanvasClickRef.current = false; return; } onRegionCellClick(c.x, c.y); }}>
                       {isSelCell && <span className="w-full h-full flex items-center justify-center text-[9px] font-black text-amber-700 select-none">■</span>}
                     </div>
                   );
@@ -1294,11 +1299,11 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
                 )}
 
                   {regions.map((r, ri) => (
-                    <div key={r.id}
+                    <div key={r.id} data-region-id={r.id}
                       onMouseEnter={() => { cancelClearHover(); setHoverRegion(ri); }}
                       onMouseLeave={clearHoverSoon}
                       onClick={(e) => {
-                        if (suppressCanvasClickRef.current) return;
+                        if (suppressCanvasClickRef.current) { suppressCanvasClickRef.current = false; return; }
                         const t = e.target;
                         if (suppressRegionClickRef.current) { suppressRegionClickRef.current = false; return; }
                         if (t && t.closest && t.closest('input,button,textarea,select,.drag-handle')) return;
@@ -1326,7 +1331,7 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
                           title="Drag to zoom into a region of the image (⟲ resets) · click adds a peak label in spectrum mode">
                           {/* Crop (spectrum zoom): show only the selected band, scaled to the panel width */}
                           {r.crop ? (
-                            <img src={getRenderableDriveUrl(r.image.url)} alt=""
+                            <img src={getRenderableDriveUrl(r.image.url)} alt="" draggable={false}
                               className="absolute top-1/2 -translate-y-1/2 left-0"
                               style={{
                                 width: `${(1 / Math.max(0.05, r.crop.x2 - r.crop.x1)) * 100}%`,
@@ -1338,7 +1343,7 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
                                crisply at the enlarged size and raster images are really enlarged. */
                             <div className="flex items-center justify-center"
                               style={{ width: `${r.zoom || 100}%`, height: `${r.zoom || 100}%`, flexShrink: 0 }}>
-                              <img src={getRenderableDriveUrl(r.image.url)} alt="" className="w-full h-full object-contain" style={{ flexShrink: 0 }} />
+                              <img src={getRenderableDriveUrl(r.image.url)} alt="" draggable={false} className="w-full h-full object-contain" style={{ flexShrink: 0 }} />
                             </div>
                           )}
                           {cropPreview && (
