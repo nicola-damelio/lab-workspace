@@ -227,7 +227,7 @@ export const setDriveRootContext = ({ id = '', name = '' } = {}) => {
 
 /** Find (or create) the app's "Lab Workspace" root folder (inside the user's
  *  saved Drive folder URL if one is set, otherwise at the Drive root). */
-const ensureLabWorkspaceFolder = async () => {
+export const ensureLabWorkspaceFolder = async () => {
   let containerId = '';
   try {
     const { getDriveFolderUrl } = await import('./driveNaming');
@@ -993,6 +993,63 @@ export const archiveFileToDrive = async ({ file, ctx = {}, title = '', suffix = 
   } catch (err) {
     console.warn('Drive archive failed:', err && err.message);
     return false;
+  }
+};
+
+/**
+ * Upload a file into a subfolder directly inside the app's "Lab Workspace"
+ * root folder on Drive (default subfolder "backups"). Unlike uploadLocalFile
+ * the folder is resolved from the WORKSPACE root, not the dataset folder, so
+ * e.g. the weekly HTML autosave always lands in
+ *   <Lab Workspace>/backups/<name>
+ * regardless of which dataset is open. A file with the same name is
+ * overwritten instead of piling up duplicates.
+ * @returns {Promise<{id:string,name:string}|null>} the Drive file, or null on failure
+ */
+export const uploadWorkspaceFile = async ({ name, mimeType, file, folder = 'backups' }) => {
+  if (!name || !file || !getDriveToken()) return null;
+  try {
+    const workspaceId = await ensureLabWorkspaceFolder();
+    if (!workspaceId) return null;
+    const folderId = await findOrCreateFolder(String(folder || 'backups'), workspaceId);
+
+    const blob = typeof file === 'string' ? dataUrlToBlob(file) : file;
+    const type = mimeType || blob.type || 'application/octet-stream';
+
+    // Find an existing file with the same name so we overwrite instead of duplicating.
+    let existingId = '';
+    try {
+      const safeName = String(name).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      const q = encodeURIComponent(`name='${safeName}' and '${folderId}' in parents and trashed=false`);
+      const listRes = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=10`);
+      const list = await listRes.json();
+      existingId = ((list.files || [])[0] || {}).id || '';
+    } catch { /* listing failed — fall back to a plain (new) upload */ }
+
+    const boundary = 'labBoundary' + Date.now() + Math.random().toString(36).slice(2);
+    const meta = JSON.stringify(existingId
+      ? { name, mimeType: type }
+      : { name, mimeType: type, parents: [folderId] });
+
+    const pre = new Blob(
+      [`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: ${type}\r\n\r\n`],
+      { type: 'multipart/related' }
+    );
+    const post = new Blob([`\r\n--${boundary}--\r\n`], { type: 'multipart/related' });
+    const body = new Blob([pre, blob, post], { type: `multipart/related; boundary=${boundary}` });
+
+    const res = await driveFetch(
+      existingId
+        ? `/upload/drive/v3/files/${existingId}?uploadType=multipart&fields=id,name`
+        : `/upload/drive/v3/files?uploadType=multipart&fields=id,name`,
+      { method: existingId ? 'PATCH' : 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body }
+    );
+    const fileMeta = await res.json();
+    if (!fileMeta || !fileMeta.id) return null;
+    return { id: String(fileMeta.id), name: String(fileMeta.name || name) };
+  } catch (err) {
+    console.warn('Workspace file upload failed:', err && err.message);
+    return null;
   }
 };
 
