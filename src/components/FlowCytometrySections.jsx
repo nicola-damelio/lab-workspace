@@ -3,6 +3,7 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { suggestDriveFileName } from '../utils/driveNaming';
 import { uploadLocalFile, withExtension, getDriveToken, getDriveFileRegistry, driveFetch } from '../utils/driveUpload';
 import { saveFcsFile, loadFcsFile, removeFcsFile } from '../utils/fcsBlobStore';
+import { PLATE_PRESET_LABELS, PLATE_PRESET_COLORS, isPlatePreset, platePresetColor } from '../utils/platePresets';
 import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Line, ComposedChart, Area, ReferenceArea} from 'recharts';
 import { ChartControlBar, SharedChartStylePanel, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
@@ -1679,16 +1680,11 @@ export const ExperimentalSetup = ({ ctx }) => {
   const customConc = fcPlate.customConc || {};
   const cmpColors = fcPlate.cmpColors || {};
 
-  // Compound dropdown = Library (allCmpds) + Compound Definition library
-  // (compoundMeta) + every compound already placed on the plate, so existing
-  // assignments never disappear from the list.
+  // Compound dropdown = only the compounds present in the Library (allCmpds),
+  // so elements that were removed from the Library no longer appear.
   const compoundOptions = (() => {
     const set = new Set();
     (Array.isArray(ctx?.allCmpds) ? ctx.allCmpds : []).forEach((c) => c && set.add(c));
-    Object.keys(ctx?.compoundMeta || {}).forEach((c) => c && set.add(c));
-    (rowCompounds || []).forEach((c) => c && set.add(c));
-    (compounds || []).forEach((c) => c && set.add(c));
-    (cellConfig || []).forEach((row) => (row || []).forEach((cfg) => cfg && cfg.role && set.add(cfg.role)));
     return [...set].sort((a, b) => a.localeCompare(b));
   })();
 
@@ -1714,6 +1710,9 @@ export const ExperimentalSetup = ({ ctx }) => {
   // as the Multiwell Plate page: FS_CLASSES + OVERLAY_CLASSES).
   const [fsPanel, setFsPanel] = useState(null);
   const toggleFs = (id) => setFsPanel((prev) => (prev === id ? null : id));
+  // Regulable circle size for the plate map (same A–A slider as the Plate page).
+  const [mapFontSize, setMapFontSize] = useState(9);
+  const mapBadgePx = fsPanel === 'map' ? Math.max(45, Math.round(mapFontSize * 5.5)) : Math.max(22, Math.round(mapFontSize * 3.4));
   const activeSel = selStart && selEnd
     ? { minR: Math.min(selStart.r, selEnd.r), maxR: Math.max(selStart.r, selEnd.r), minC: Math.min(selStart.c, selEnd.c), maxC: Math.max(selStart.c, selEnd.c) }
     : null;
@@ -1751,7 +1750,7 @@ export const ExperimentalSetup = ({ ctx }) => {
     setPlate({ cellConfig: nCfg });
   };
 
-  const isCtrl = (x) => ['cells', 'medium', 'pbs'].includes(String(x).toLowerCase());
+  const isCtrl = (x) => isPlatePreset(x);
   const getRole = (r, c) => {
     const cfg = cellCfg(r, c);
     if (cfg.role !== null && cfg.role !== undefined && cfg.role !== '') return cfg.role;
@@ -1768,6 +1767,9 @@ export const ExperimentalSetup = ({ ctx }) => {
   const concOf = (r, c, role) => {
     const rl = role !== undefined ? role : getRole(r, c);
     if (!rl) return null;
+    // Preset labels (cells / PBS / DMSO / Medium / empty) never carry a
+    // concentration.
+    if (isPlatePreset(rl)) return null;
     const cfg = cellCfg(r, c);
     if (cfg.conc !== null && cfg.conc !== undefined && cfg.conc !== '') return Number(cfg.conc);
     const s = customConc[rl]
@@ -1896,6 +1898,17 @@ export const ExperimentalSetup = ({ ctx }) => {
             className="border border-indigo-300 rounded px-2 py-1 text-xs w-28 bg-white outline-none" />
           <button type="button" onClick={() => patchSelection({ role: null, conc: null })}
             className="text-[10px] font-bold bg-white border border-red-300 text-red-600 px-2 py-1 rounded shadow-sm hover:bg-red-50">Clear cells</button>
+          <span className="w-px h-5 bg-indigo-200" />
+          <span className="text-[10px] font-bold text-indigo-500 uppercase">Fill:</span>
+          {PLATE_PRESET_LABELS.map((lbl) => (
+            <button key={lbl} type="button"
+              onClick={() => patchSelection({ role: lbl, conc: null })}
+              title={`Fill selection with "${lbl}" (no concentration)`}
+              className="text-[10px] font-bold rounded px-2 py-1 border shadow-sm hover:opacity-80 transition-opacity"
+              style={{ backgroundColor: PLATE_PRESET_COLORS[lbl.toLowerCase()], borderColor: '#cbd5e1', color: '#334155' }}>
+              {lbl}
+            </button>
+          ))}
           <button type="button" onClick={clearSelection}
             className="text-slate-400 hover:text-slate-700 font-black px-1">✕</button>
         </div>
@@ -2013,7 +2026,7 @@ export const ExperimentalSetup = ({ ctx }) => {
                           className={`border border-slate-200 p-1 align-middle cursor-pointer transition-colors ${isSel ? 'bg-indigo-100 ring-2 ring-inset ring-indigo-400' : role ? 'hover:bg-blue-50' : 'bg-slate-50/50 hover:bg-blue-50'}`}>
                           {role ? (
                             <div className="flex flex-col leading-tight">
-                              <span className="font-bold text-[10px] truncate" style={{ color: plateCmpColor(role, cmpColors) }}>{role}</span>
+                              <span className="font-bold text-[10px] truncate" style={{ color: platePresetColor(role) ? '#334155' : plateCmpColor(role, cmpColors) }}>{role}</span>
                               <span className="text-[9px] text-slate-600">{conc != null ? `${formatConc(conc)} ${unit}` : '—'}</span>
                             </div>
                           ) : (
@@ -2039,14 +2052,23 @@ export const ExperimentalSetup = ({ ctx }) => {
           <div className={`bg-white border border-slate-200 rounded-xl p-3 shadow-sm min-w-0 flex flex-col ${fsPanel === 'map' ? FS_CLASSES : ''}`}>
             <div className="flex justify-between items-center mb-2 shrink-0 gap-2">
               <h4 className="text-xs font-bold text-slate-700 uppercase">Plate Map</h4>
-              <button
-                type="button"
-                onClick={() => toggleFs('map')}
-                className="text-slate-400 hover:text-blue-600 bg-slate-100 hover:bg-blue-100 rounded p-1 transition-colors"
-                title={fsPanel === 'map' ? 'Exit fullscreen' : 'Fullscreen'}
-              >
-                {fsPanel === 'map' ? '↙️' : '↗️'}
-              </button>
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 bg-slate-100 rounded-lg px-2 py-1" title="Circle size">
+                  <span className="text-[9px] font-bold text-slate-500">A</span>
+                  <input type="range" min="6" max="22" value={mapFontSize}
+                    onChange={(e) => setMapFontSize(Number(e.target.value))}
+                    className="w-16 accent-blue-600" />
+                  <span className="text-[12px] font-bold text-slate-500">A</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => toggleFs('map')}
+                  className="text-slate-400 hover:text-blue-600 bg-slate-100 hover:bg-blue-100 rounded p-1 transition-colors"
+                  title={fsPanel === 'map' ? 'Exit fullscreen' : 'Fullscreen'}
+                >
+                  {fsPanel === 'map' ? '↙️' : '↗️'}
+                </button>
+              </div>
             </div>
             <div className={`bg-slate-50 border border-slate-200 rounded-lg p-3 overflow-x-auto ${fsPanel === 'map' ? 'flex-1' : ''}`} style={fsPanel === 'map' ? { minHeight: 0 } : undefined}>
             {/* zoom: enlarges the map (layout + visuals) in fullscreen — unlike
@@ -2054,7 +2076,7 @@ export const ExperimentalSetup = ({ ctx }) => {
                 whole enlarged map stays reachable via the scrollbars. */}
             <div className="flex flex-col gap-1 min-w-max" style={fsPanel === 'map' ? { zoom: 1.75 } : undefined}>
               <div className="flex gap-1 mb-0.5 pl-5">
-                {COLS.map((c) => <div key={c} className="w-11 text-center text-[9px] font-bold text-slate-500">{c}</div>)}
+                {COLS.map((c) => <div key={c} className="text-center text-[9px] font-bold text-slate-500" style={{ width: mapBadgePx }}>{c}</div>)}
               </div>
               {ROWS.map((rl, r) => (
                 <div key={rl} className="flex gap-1 items-center">
@@ -2063,14 +2085,16 @@ export const ExperimentalSetup = ({ ctx }) => {
                     const role = getRole(r, c);
                     const conc = role ? concOf(r, c, role) : null;
                     const isSel = activeSel && r >= activeSel.minR && r <= activeSel.maxR && c >= activeSel.minC && c <= activeSel.maxC;
+                    const presetCol = role ? platePresetColor(role) : null;
+                    const fSize = Math.max(7, Math.round(mapFontSize * 0.95));
                     return (
                       <div key={col} title={`${rl}${col}: ${role || 'empty'}${conc != null ? ' · ' + formatConc(conc) + ' ' + unit : ''}`}
                         onMouseDown={(e) => onCellMouseDown(e, r, c)}
                         onMouseEnter={() => onCellMouseEnter(r, c)}
-                        className={`w-11 h-9 rounded-md border flex flex-col items-center justify-center text-[8px] font-bold leading-tight px-0.5 text-center transition-colors cursor-pointer select-none ${isSel ? 'ring-2 ring-inset ring-indigo-500' : ''} ${role ? 'text-white border-black/10' : 'bg-white text-slate-400 border-slate-200'}`}
-                        style={role ? { backgroundColor: plateCmpColor(role, cmpColors) } : undefined}>
-                        <span className="truncate max-w-full">{role || '·'}</span>
-                        {conc != null && <span className="text-[7px] opacity-90">{formatConc(conc)}</span>}
+                        className={`rounded-full border flex flex-col items-center justify-center text-[8px] font-bold leading-tight px-0.5 text-center transition-colors cursor-pointer select-none ${isSel ? 'ring-2 ring-inset ring-indigo-500' : ''} ${role ? (presetCol ? 'border-slate-300 text-slate-700' : 'text-white border-black/10') : 'bg-white text-slate-400 border-slate-200'}`}
+                        style={{ backgroundColor: presetCol || (role ? plateCmpColor(role, cmpColors) : undefined), width: mapBadgePx, height: mapBadgePx }}>
+                        <span className="truncate max-w-full" style={{ fontSize: fSize + 'px' }}>{role || '·'}</span>
+                        {conc != null && <span className="opacity-90" style={{ fontSize: Math.max(6, fSize - 1) + 'px' }}>{formatConc(conc)}</span>}
                       </div>
                     );
                   })}
@@ -2090,6 +2114,11 @@ export const ExperimentalSetup = ({ ctx }) => {
 // GLOBAL CACHE (Ties loaded files to their specific condition tab)
 // =========================================================================
 export const globalFcsCache = {};
+
+// Tests for which the automatic Google-Drive fallback restore has already been
+// attempted in this page session (so opening the same test again does not
+// re-download everything).
+const autoDriveRestoreDone = new Set();
 
 // -------------------------------------------------------------------------
 // FCS PERSISTENCE — the parsed .fcs data is kept in the module cache above
@@ -2285,7 +2314,9 @@ export const Data = ({ ctx }) => {
 
   // Restore the in-memory FCS cache when the test is (re)opened: first from the
   // persisted payload (small files), then from the IndexedDB copy of the raw
-  // files (files too large for the payload, e.g. after a page reload).
+  // files (files too large for the payload, e.g. after a page reload). If files
+  // are still missing, fall back to Google Drive automatically — once per
+  // session — so data does not silently stay away.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -2294,8 +2325,30 @@ export const Data = ({ ctx }) => {
       if (cancelled) return;
       if (restored > 0) setFcsMsg(`✅ Restored ${restored} .fcs file(s) from the browser cache.`);
       setUpdater((u) => u + 1);
+
+      const stillMissing = !globalFcsCache[t.id] &&
+        (t.fcParsed === null || (t.fcExtraFiles || []).some((f) => f && f.data === null));
+      if (stillMissing && getDriveToken() && !autoDriveRestoreDone.has(t.id)) {
+        autoDriveRestoreDone.add(t.id);
+        handleRestoreFromDrive();
+      }
     })();
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [t.id]);
+
+  // After the user connects Google Drive (from the warning card), restore the
+  // missing files automatically.
+  useEffect(() => {
+    const onDriveConnected = () => {
+      const needsDrive = (t.fcParsed === null || (t.fcExtraFiles || []).some((f) => f && f.data === null));
+      if (needsDrive && !globalFcsCache[t.id] && !autoDriveRestoreDone.has(t.id)) {
+        autoDriveRestoreDone.add(t.id);
+        handleRestoreFromDrive();
+      }
+    };
+    window.addEventListener('lab:drive-connected', onDriveConnected);
+    return () => window.removeEventListener('lab:drive-connected', onDriveConnected);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [t.id]);
 
@@ -2441,9 +2494,9 @@ export const Data = ({ ctx }) => {
   // to persist inside the dataset payload.
   const [restoringFromDrive, setRestoringFromDrive] = useState(false);
   const handleRestoreFromDrive = async () => {
-    if (!getDriveToken()) { setFcsMsg('⚠️ Google Drive non è collegato.'); return; }
+    if (!getDriveToken()) { setFcsMsg('⚠️ Google Drive is not connected — use “Connect Google Drive” below, then the files will restore automatically.'); return; }
     setRestoringFromDrive(true);
-    setFcsMsg('⬇️ Download dei file .fcs da Google Drive…');
+    setFcsMsg('⬇️ Downloading .fcs files from Google Drive…');
     try {
       const reg = getDriveFileRegistry();
       const testName = activeTest.name || '';
@@ -2453,7 +2506,7 @@ export const Data = ({ ctx }) => {
         String(e.ctx?.subsection || '') === 'Flow Cytometry'
       );
       if (entries.length === 0) {
-        setFcsMsg('⚠️ Nessun file .fcs trovato su Google Drive per questo esperimento.');
+        setFcsMsg('⚠️ No .fcs files were found on Google Drive for this experiment.');
         return;
       }
       let restored = 0;
@@ -2498,10 +2551,10 @@ export const Data = ({ ctx }) => {
       if (Object.keys(updates).length) updateActiveTest(updates);
       setUpdater(u => u + 1);
       setFcsMsg(restored > 0
-        ? `✅ Ripristinati ${restored} file .fcs da Google Drive.`
-        : '⚠️ Non è stato possibile scaricare i file .fcs (token scaduto? riconnetti Google Drive e riprova).');
+        ? `✅ Restored ${restored} .fcs file(s) from Google Drive.`
+        : '⚠️ Could not download the .fcs files (the Google Drive token may be expired — reconnect Drive from the sidebar and try again).');
     } catch (err) {
-      setFcsMsg(`⚠️ Errore restore: ${err.message}`);
+      setFcsMsg(`⚠️ Restore error: ${err.message} (reconnect Google Drive from the sidebar if the token expired).`);
       console.error('FCS Drive restore error:', err);
     } finally {
       setRestoringFromDrive(false);
@@ -2578,12 +2631,37 @@ export const Data = ({ ctx }) => {
             )}
           </div>
           {persistedFcsWasTooLarge && (
-            <p className="text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-              ⚠️ Some .fcs files are too large to embed in the saved dataset. They are archived in
-              Google Drive and in the browser cache and are restored automatically on this computer.
-              If they do not reappear, use “Restore from Drive” (needed when opening the dataset from
-              another computer).
-            </p>
+            <div className="flex flex-col gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              <p className="text-xs font-bold text-amber-800">
+                ⚠️ Some .fcs files are too large to embed in the saved dataset. They are archived in
+                Google Drive and, on this computer, in the browser cache (restored automatically).
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                {getDriveToken() ? (
+                  <button
+                    type="button"
+                    onClick={handleRestoreFromDrive}
+                    disabled={restoringFromDrive}
+                    title="Download and re-parse the .fcs files archived on Google Drive (saved automatically at upload)"
+                    className="bg-indigo-600 text-white hover:bg-indigo-700 font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm transition-colors disabled:opacity-50"
+                  >
+                    {restoringFromDrive ? '⬇️ Download…' : '⬇️ Restore from Drive'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => { try { window.dispatchEvent(new CustomEvent('lab:connect-drive')); } catch { /* ignore */ } }}
+                    title="Connect Google Drive, then the missing .fcs files will be downloaded automatically"
+                    className="bg-emerald-600 text-white hover:bg-emerald-700 font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm transition-colors"
+                  >
+                    🔗 Connect Google Drive to restore files
+                  </button>
+                )}
+                <span className="text-[10px] text-amber-700">
+                  Needed when the browser cache is unavailable (e.g. on another computer).
+                </span>
+              </div>
+            </div>
           )}
         </div>
 

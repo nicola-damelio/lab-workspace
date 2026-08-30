@@ -18,6 +18,7 @@ import {
     fit4PL,
     errBarPlugin
 } from '../data/constants';
+import { PLATE_PRESET_LABELS, PLATE_PRESET_COLORS, isPlatePreset, platePresetColor } from '../utils/platePresets';
 import { FS_CLASSES, OVERLAY_CLASSES } from '../utils/chartStyle';
 
 // Chart/style constants now live in ../utils/chartStyle.
@@ -1072,7 +1073,7 @@ export const All = ({ ctx }) => {
         if (rCmp && !cCmp) return rCmp;
         if (cCmp && !rCmp) return cCmp;
         if (!rCmp && !cCmp) return null;
-        const isCtrl = (x) => ['cells', 'medium', 'pbs'].includes(String(x).toLowerCase());
+        const isCtrl = (x) => isPlatePreset(x);
         if (isCtrl(rCmp) && !isCtrl(cCmp)) return rCmp;
         if (isCtrl(cCmp) && !isCtrl(rCmp)) return cCmp;
         return rCmp;
@@ -1090,7 +1091,7 @@ export const All = ({ ctx }) => {
 
     const concOf = (r, c, role) => {
         const rl = role !== undefined ? role : getRole(r, c);
-        if (!rl || ['cells', 'medium', 'pbs'].includes(String(rl).toLowerCase())) return 0;
+        if (!rl || isPlatePreset(rl)) return 0;
 
         const cfg = cellConfig?.[r]?.[c];
         if (cfg && cfg.conc !== null && cfg.conc !== undefined) {
@@ -1256,10 +1257,9 @@ export const All = ({ ctx }) => {
         const role = getRole(r, c);
         if (!role) return { bg: '#ffffff', dark: true };
 
-        const rl = String(role).toLowerCase();
-        if (rl === 'medium') return { bg: '#ff4d6d', dark: false };
-        if (rl === 'pbs') return { bg: '#e5e7eb', dark: true };
-        if (rl === 'cells') return { bg: '#fef08a', dark: true };
+        // Preset labels use the shared very-light palette with dark text.
+        const preset = platePresetColor(role);
+        if (preset) return { bg: preset, dark: true };
 
         const idx = allCmpds.indexOf(role);
         const base = cmpColor(role, idx !== -1 ? idx : 0);
@@ -1666,6 +1666,19 @@ export const All = ({ ctx }) => {
     const updateCellCfg = (r, c, upd) => {
         const nc = cellConfig.map((row) => row.map((cell) => ({ ...cell })));
         nc[r][c] = { ...nc[r][c], ...upd };
+        updatePlate({ cellConfig: nc });
+    };
+
+    // Fill every well of the current selection with a preset label (cells /
+    // PBS / DMSO / Medium / empty) and NO concentration.
+    const patchSelectionRole = (label) => {
+        if (!activeSel) return;
+        const nc = cellConfig.map((row) => row.map((cell) => ({ ...cell })));
+        for (let r = activeSel.minR; r <= activeSel.maxR; r++) {
+            for (let c = activeSel.minC; c <= activeSel.maxC; c++) {
+                nc[r][c] = { ...nc[r][c], role: label, conc: null };
+            }
+        }
         updatePlate({ cellConfig: nc });
     };
 
@@ -2756,7 +2769,7 @@ return (
                                                             {role || '–'}
                                                         </span>
 
-                                                        {role && !['cells', 'pbs', 'medium'].includes(String(role).toLowerCase()) && (
+                                                        {role && !isPlatePreset(role) && (
                                                             <span
                                                                 style={{ fontSize: fSize2 + 'px' }}
                                                                 className={`font-bold truncate max-w-full px-0.5 opacity-90 ${tc}`}
@@ -2849,6 +2862,26 @@ return (
                                 </button>
                             </div>
                         </div>
+
+                        {activeSel && (
+                            <div className="flex flex-wrap items-center gap-1.5 mb-2 px-1 no-print">
+                                <span className="text-[10px] font-bold text-slate-500 uppercase">
+                                    Fill selected:
+                                </span>
+                                {PLATE_PRESET_LABELS.map((lbl) => (
+                                    <button
+                                        key={lbl}
+                                        type="button"
+                                        onClick={() => patchSelectionRole(lbl)}
+                                        title={`Fill selection with "${lbl}" (no concentration)`}
+                                        className="text-[10px] font-bold rounded px-2 py-1 border shadow-sm hover:opacity-80 transition-opacity"
+                                        style={{ backgroundColor: PLATE_PRESET_COLORS[lbl.toLowerCase()], borderColor: '#cbd5e1', color: '#334155' }}
+                                    >
+                                        {lbl}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
 
                         <div className="text-[10px] text-slate-500 mb-3 italic px-1 flex justify-between items-center gap-2">
                             <span>
@@ -3169,13 +3202,13 @@ return (
                                                         )}
 
                                                         {cfg.role && !cfg.excluded && tableView === 'od' && (
-                                                            <div className="absolute top-0 left-0 max-w-[85%] truncate text-[6.5px] sm:text-[7.5px] leading-tight font-bold bg-blue-500 text-white px-1 py-0.5 rounded-br pointer-events-none z-20 shadow-sm">
+                                                            <div className={`absolute top-0 left-0 max-w-[85%] truncate text-[6.5px] sm:text-[7.5px] leading-tight font-bold px-1 py-0.5 rounded-br pointer-events-none z-20 shadow-sm ${platePresetColor(cfg.role) ? 'text-slate-700' : 'text-white'}`} style={{ backgroundColor: platePresetColor(cfg.role) || '#3b82f6' }}>
                                                                 {cfg.role}
                                                             </div>
                                                         )}
 
                                                         {cfg.role && tableView === 'conc' && (
-                                                            <div className="absolute top-0 left-0 max-w-[85%] truncate text-[6.5px] sm:text-[7.5px] leading-tight font-bold bg-slate-300 text-slate-800 px-1 py-0.5 rounded-br pointer-events-none z-20">
+                                                            <div className={`absolute top-0 left-0 max-w-[85%] truncate text-[6.5px] sm:text-[7.5px] leading-tight font-bold px-1 py-0.5 rounded-br pointer-events-none z-20 ${platePresetColor(cfg.role) ? 'text-slate-700' : 'text-slate-800'}`} style={{ backgroundColor: platePresetColor(cfg.role) || '#94a3b8' }}>
                                                                 {cfg.role}
                                                             </div>
                                                         )}
@@ -3226,6 +3259,11 @@ return (
                                                     className="border border-slate-300 rounded-md p-1.5 text-xs bg-slate-50 w-full outline-none"
                                                 >
                                                     <option value="none">Manual</option>
+                                                    {PLATE_PRESET_LABELS.map((l) => (
+                                                        <option key={l} value={l}>
+                                                            {l}
+                                                        </option>
+                                                    ))}
                                                     {allCmpds.map((c) => (
                                                         <option key={c} value={c}>
                                                             {c}

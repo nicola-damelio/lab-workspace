@@ -9,6 +9,7 @@ import Chart from 'chart.js/auto';
 import { ResponsiveContainer, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { formatConc, concKey, toHex, fit4PL, errBarPlugin } from '../data/constants';
 import { rainbowColors } from '../utils/chartStyle';
+import { isPlatePreset } from '../utils/platePresets';
 import { useNmrDerived, OneDSpectrumPlot, SpectrumPlot, HSQCPlot, CustomXTick1H, CustomXTick13C, TICKS_1H, TICKS_13C, TICKS_15N } from './NMRSections';
 import { FCSOverlayVisualization } from './FlowCytometrySections';
 import { CD_FIT_COMPONENTS, buildCdLibraryData } from './CDSections';
@@ -1280,7 +1281,7 @@ const cCmp = compounds[c];
    return rCmp || null;
  };
 const concOf = (r, c, role) => {
-   if (!role || ['cells', 'medium', 'pbs'].includes(String(role).toLowerCase())) return 0;
+   if (!role || isPlatePreset(role)) return 0;
 const cfg = cellConfig?.[r]?.[c];
    if (cfg && cfg.conc !== null && cfg.conc !== undefined) return Number(cfg.conc);
 const s = customConc[role]
@@ -1307,7 +1308,7 @@ const byRegion = {};
 const cfg = cellConfig?.[r]?.[c];
      if (!cfg || cfg.excluded) continue;
 const role = getRole(r, c);
-     if (!role || ['cells', 'medium', 'pbs'].includes(String(role).toLowerCase())) continue;
+     if (!role || isPlatePreset(role)) continue;
 const reg = cfg.region || 'Primary';
 const rawVal = parseFloat(grid[r]?.[c]);
      if (isNaN(rawVal)) continue;
