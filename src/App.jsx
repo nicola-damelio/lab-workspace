@@ -1769,15 +1769,6 @@ useEffect(() => {
 
     if (!file) return;
 
-    if (file.size > 900000) {
-      setDialog({
-        type: 'alert',
-        title: 'Large File Warning',
-        message:
-          'This file is very large. After loading, saving to cloud might fail due to the 1MB limit. Consider removing embedded images.'
-      });
-    }
-
     const reader = new FileReader();
 
     reader.onload = (ev) => {
@@ -1785,6 +1776,12 @@ useEffect(() => {
         const text = ev.target.result;
         let s = null;
         let loadedTests = [];
+        // The .html file itself is almost always big — it also contains the
+        // whole rendered app UI (the DOM), which has nothing to do with the
+        // cloud limit. What matters is the size of the compressed dataset
+        // payload that would be written to Firestore (field limit ~1 MiB).
+        let payloadBytes = 0;
+        let payloadUnits = 0;
 
         const newMatch = text.match(
           /<script[^>]*id=["']saved-data-blob["'][^>]*>([\s\S]*?)<\/script>/
@@ -1793,6 +1790,17 @@ useEffect(() => {
         if (newMatch) {
           const dataBlob = JSON.parse(newMatch[1]);
           let pStr = dataBlob.payload;
+
+          // Exact UTF-8 byte size of the compressed payload (what Firestore
+          // sees for its ~1 MiB field limit), plus the save routine's own
+          // budget metric (length × 3, a strict upper bound) that decides when
+          // heavy data gets stripped from the live cloud copy.
+          try {
+            payloadBytes = new TextEncoder().encode(String(pStr || '')).length;
+          } catch {
+            payloadBytes = String(pStr || '').length * 3;
+          }
+          payloadUnits = String(pStr || '').length * 3;
 
           if (dataBlob.isCompressed) {
             const dec = LZString.decompressFromUTF16(pStr);
@@ -1817,6 +1825,26 @@ useEffect(() => {
             message: 'No dataset data found in this HTML file.'
           });
           return;
+        }
+
+        // Warn only when the PAYLOAD itself is near/over the cloud limit. The
+        // Google Drive copies (weekly backups in Lab Workspace/backups and the
+        // archived raw files) are completely separate and are NOT affected by
+        // the Firestore 1 MB field limit.
+        if (payloadBytes > 1048487 || payloadUnits > 1048487) {
+          setDialog({
+            type: 'alert',
+            title: 'Cloud Limit Warning',
+            message:
+              'This dataset payload is larger than the cloud 1 MB limit, so the live cloud copy cannot hold it in one document. Nothing is lost: the weekly backups in your Drive "Lab Workspace/backups" folder and the raw files archived on Drive keep everything. If you want the cloud copy to fit too, remove the heaviest embedded images and re-save.'
+          });
+        } else if (payloadUnits > 900000) {
+          setDialog({
+            type: 'alert',
+            title: 'Large Dataset',
+            message:
+              'This dataset is close to the cloud 1 MB limit. When saving the live cloud copy, the heaviest embedded data (notebook images, large FCS payloads) is left out of that copy to keep it under the limit — but nothing is lost: those files remain in Google Drive (archived raw files + the weekly backups in "Lab Workspace/backups") and in this browser cache.'
+          });
         }
 
         const migrated = migrateLoadedDataset(s);
