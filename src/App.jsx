@@ -21,7 +21,7 @@ import { NotebookModule, CalculationsModule, PublicationsModule } from './compon
 import { ProjectsModule } from './components/AppModules/projectsModule';
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
 import {normalizeOperators} from './utils/auth';
-import { setActiveProjectId } from './utils/figuresLibrary';
+import { setActiveProjectId, readLibrary, readAllProjectLibraries, restoreLibraryFromSnapshot } from './utils/figuresLibrary';
 import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile } from './utils/driveUpload';
 import { sanitizeSlug } from './utils/driveNaming';
 
@@ -1329,7 +1329,14 @@ if (customType === 'dosy') {
   };
 
   const getCompressedPayload = () =>
-    LZString.compressToUTF16(JSON.stringify(latestDataRef.current));
+    LZString.compressToUTF16(JSON.stringify({
+      ...latestDataRef.current,
+      // The Figures & Slides image library (common + every project) is embedded
+      // in the HTML save and the weekly Drive backups so a restored file brings
+      // the library back too.
+      _figuresLibrary: readLibrary(),
+      _figuresLibraryProjects: readAllProjectLibraries()
+    }));
 
   // ── WEEKLY HTML AUTOSAVE TO GOOGLE DRIVE ──────────────────────────────────
   // Every 7 days (checked on load, on Drive connect, and every few hours while
@@ -1945,6 +1952,13 @@ useEffect(() => {
 
       if (s.customFields !== undefined) {
         setCustomFields(normalizeCustomFields(s.customFields));
+      }
+
+      // Restore the Figures & Slides image library embedded in the HTML file
+      // (app-level; on replace the whole library is taken from the file).
+      if (s._figuresLibrary !== undefined || s._figuresLibraryProjects !== undefined) {
+        restoreLibraryFromSnapshot({ common: s._figuresLibrary, projects: s._figuresLibraryProjects });
+        window.dispatchEvent(new CustomEvent('lab:figures-library-restored'));
       }
     } else if (mode === 'append') {
       const newTests = loadedTests.map((p) => ({

@@ -78,6 +78,34 @@ export const moveLibraryItem = (fromScope, toScope, projectId, id) => {
   else writeLibrary(src.filter((i) => i.id !== id));
 };
 
+// ---- full snapshot helpers (for HTML save / weekly Drive backups) -------------
+// Collects every project-scoped library found in localStorage as { projectId: [...] }.
+export const readAllProjectLibraries = () => {
+  const out = {};
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith('labFiguresLib_')) {
+        const pid = k.slice('labFiguresLib_'.length);
+        try { out[pid] = JSON.parse(localStorage.getItem(k) || '[]'); } catch { out[pid] = []; }
+      }
+    }
+  } catch { /* ignore */ }
+  return out;
+};
+// Writes a snapshot ({ common, projects }) back to localStorage (used by "Load HTML").
+export const restoreLibraryFromSnapshot = (snap) => {
+  if (!snap) return;
+  try {
+    if (Array.isArray(snap.common)) writeLibrary(snap.common);
+    if (snap.projects && typeof snap.projects === 'object') {
+      Object.entries(snap.projects).forEach(([pid, items]) => {
+        writeProjectLibrary(pid, Array.isArray(items) ? items : []);
+      });
+    }
+  } catch { /* ignore */ }
+};
+
 export const readDeck = (projectId) => {
   try {
     const d = JSON.parse(localStorage.getItem(deckKey(projectId)));

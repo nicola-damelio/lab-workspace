@@ -7,6 +7,7 @@ import {
   addLibraryItem, addProjectLibraryItem,
   readDeck, writeDeck, uid, makeLibraryImage, blobToDataUrl
 } from '../utils/figuresLibrary';
+import { uploadWorkspaceFile, getDriveToken } from '../utils/driveUpload';
 
 /* =========================================================================
    FiguresSlidesSection — "Figures & Slides" builder (Publications page).
@@ -54,6 +55,64 @@ const Stepper = ({ label, value, unit = '', min, max, step = 1, onChange }) => (
 const colSpan = (b) => Math.max(1, Math.min(10, Math.round((b.w || 100) / 10)));
 const blockFont = (b) => b.fontSize || TEXT_SIZES[b.size] || 16;
 
+/* ---- PNG export helpers (canvas-based, A4 landscape @ 300 DPI) ------------- */
+const downloadDataUrl = (dataUrl, filename) => {
+  const a = document.createElement('a');
+  a.href = dataUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+};
+const hexToRgbStyle = (hex) => {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim());
+  if (!m) return '#1f2937';
+  return `#${m[1]}`;
+};
+const drawImageFitted = (ctx, url, x, y, w, h, zoom = 100) =>
+  new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const scale = Math.min(w / img.width, h / img.height);
+        let iw = img.width * scale * (zoom / 100), ih = img.height * scale * (zoom / 100);
+        if (iw > w || ih > h) { const f = Math.min(w / iw, h / ih); iw *= f; ih *= f; }
+        ctx.drawImage(img, x + (w - iw) / 2, y + (h - ih) / 2, iw, ih);
+      } catch { /* skip broken image */ }
+      resolve();
+    };
+    img.onerror = () => resolve();
+    img.src = url;
+  });
+const roundRectCanvas = (ctx, x, y, w, h, r) => {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+};
+const wrapCanvasText = (ctx, text, x, y, width, lineH, align, maxH) => {
+  const lines = [];
+  String(text || '').split(/\n/).forEach((para) => {
+    let cur = '';
+    String(para).split(/\s+/).forEach((w2) => {
+      const t = cur ? cur + ' ' + w2 : w2;
+      if (cur && ctx.measureText(t).width > width) { lines.push(cur); cur = w2; }
+      else cur = t;
+    });
+    if (cur) lines.push(cur);
+  });
+  const maxLines = Math.max(1, Math.floor(maxH / lineH) - 1);
+  lines.slice(0, maxLines).forEach((ln) => {
+    const tw = ctx.measureText(ln).width;
+    const tx = align === 'center' ? x + (width - tw) / 2 : align === 'right' ? x + width - tw : x;
+    ctx.fillText(ln, tx, y);
+    y += lineH;
+  });
+};
+
 export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToTest }) => {
   const [library, setLibrary] = useState(readLibrary);
   const [projectLibrary, setProjectLibrary] = useState(() => readProjectLibrary(projectId));
@@ -62,10 +121,18 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
   const [cur, setCur] = useState(() => readDeck(projectId).cur || 0);
   const [sel, setSel] = useState(null);          // selected block index
   const [libOpen, setLibOpen] = useState(false); // library panel retractable
+  const [importsOpen, setImportsOpen] = useState(false); // ⭐ imports bar
   const [presenting, setPresenting] = useState(false);
   const [pi, setPi] = useState(0);
   const [dropIdx, setDropIdx] = useState(null);  // drag feedback position
+  const [driveMsg, setDriveMsg] = useState('');
   const fileRef = useRef(null);
+  // Refs so the global paste listener always uses the latest closure/scope.
+  const addToLibraryRef = useRef(null);
+  const libScopeRef = useRef('common');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { addToLibraryRef.current = addToLibrary; }, [addToLibrary]);
+  useEffect(() => { libScopeRef.current = libScopeName; }, [libScopeName]);
 
   useEffect(() => { writeLibrary(library); }, [library]);
   useEffect(() => { writeProjectLibrary(projectId, projectLibrary); }, [projectLibrary, projectId]);
@@ -74,6 +141,40 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
     setCur((c) => Math.max(0, Math.min(c, deck.slides.length - 1)));
     setSel((s) => { const sl = deck.slides[cur]; return s !== null && sl && s < (sl.blocks || []).length ? s : null; });
   }, [deck, projectId, cur]);
+
+  // Paste an image from the clipboard anywhere in the Publications module →
+  // the image is added to the active library scope (Ctrl+V / ⌘V).
+  useEffect(() => {
+    const onDocPaste = (e) => {
+      const items = e.clipboardData && e.clipboardData.items;
+      if (!items) return;
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+        if (it.kind === 'file' && it.type && it.type.startsWith('image/')) {
+          const f = it.getAsFile();
+          if (!f) continue;
+          e.preventDefault();
+          blobToDataUrl(f).then((d) => {
+            addToLibraryRef.current(d, 'Pasted image', libScopeRef.current);
+            setLibOpen(true);
+          }).catch(() => {});
+          break;
+        }
+      }
+    };
+    document.addEventListener('paste', onDocPaste);
+    return () => document.removeEventListener('paste', onDocPaste);
+  }, []);
+
+  // When an HTML backup containing the library is loaded, refresh the panels.
+  useEffect(() => {
+    const onRestored = () => {
+      setLibrary(readLibrary());
+      setProjectLibrary(readProjectLibrary(projectId));
+    };
+    window.addEventListener('lab:figures-library-restored', onRestored);
+    return () => window.removeEventListener('lab:figures-library-restored', onRestored);
+  }, [projectId]);
 
   // Charts / figures that were ⭐-starred on the experiment pages.
   const starred = (tests || []).flatMap((t) =>
@@ -235,7 +336,7 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
       const blob = await it.getType(type);
       await addToLibrary(await blobToDataUrl(blob), 'Pasted image', libScopeName);
     } catch {
-      alert('Clipboard reading is not available in this browser — use the Upload button instead.');
+      alert('Clipboard reading is not available in this browser — press Ctrl+V (or Cmd+V) to paste the image into the active library.');
     }
   };
   // Starred experiment figures are saved to the project library by default
@@ -375,6 +476,76 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
     doc.save(`figures_${projectId || 'deck'}.pdf`);
   };
 
+  // ---- PNG export ------------------------------------------------------------
+  const downloadPng = (b) => {
+    const url = b.full || b.url;
+    if (!url) { alert('No image to export.'); return; }
+    downloadDataUrl(url, `${(b.caption || b.src?.testName || 'figure').replace(/[^a-z0-9]+/gi, '_').slice(0, 60)}.png`);
+  };
+  const exportSlidePng = async (s) => {
+    const W = 2481, H = 1754, left = 70, gap = 44, titleBarH = 150, rowGap = 56;
+    const contentW = W - left * 2;
+    const canvas = document.createElement('canvas');
+    canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = hexToRgbStyle(s.bg || '#ffffff');
+    ctx.fillRect(0, 0, W, H);
+    // Title bar
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(0, 0, W, titleBarH);
+    ctx.fillStyle = '#ffffff';
+    ctx.textBaseline = 'middle';
+    ctx.font = `bold ${Math.max(26, Math.min(64, (s.titleSize || 20) * 2.4))}px Helvetica, Arial, sans-serif`;
+    ctx.fillText(String(s.title || 'Untitled slide').slice(0, 90), left, titleBarH / 2 + 14);
+    // Blocks laid out in wrapping rows honouring W/H/zoom/font
+    let rowY = titleBarH + 40, rowH = 0, x = left;
+    for (const b of (s.blocks || [])) {
+      const bw = contentW * Math.max(0.1, Math.min(1, (b.w || 100) / 100));
+      const bh = Math.max(120, (b.h || 240) * 3);
+      if (x + bw > left + contentW + 0.5) { rowY += rowH + rowGap; rowH = 0; x = left; }
+      rowH = Math.max(rowH, bh);
+      const bx = x, by = rowY;
+      x += bw + gap;
+      if (b.type === 'image') {
+        await drawImageFitted(ctx, b.full || b.url, bx, by, bw, bh - 60, b.zoom || 100);
+        if (b.caption) {
+          ctx.fillStyle = '#64748b';
+          ctx.font = 'italic 13px Helvetica, Arial, sans-serif';
+          ctx.fillText(String(b.caption).slice(0, 80), bx, by + bh - 22);
+        }
+      } else {
+        if (b.bg) { ctx.fillStyle = hexToRgbStyle(b.bg); roundRectCanvas(ctx, bx, by, bw, bh, 14); ctx.fill(); }
+        ctx.fillStyle = hexToRgbStyle(b.color || '#1f2937');
+        ctx.font = `${b.bold ? 'bold ' : ''}${b.italic ? 'italic ' : ''}${blockFont(b) * 2.4}px Helvetica, Arial, sans-serif`;
+        wrapCanvasText(ctx, b.text || '', bx, by + 30, bw, blockFont(b) * 2.4 * 1.25, b.align, bh);
+      }
+    }
+    try {
+      downloadDataUrl(canvas.toDataURL('image/png'), `${(s.title || 'slide').replace(/[^a-z0-9]+/gi, '_').slice(0, 60)}.png`);
+    } catch {
+      alert('Could not export the slide as PNG (one of its images cannot be read).');
+    }
+  };
+
+  // ---- library → Google Drive -------------------------------------------------
+  const saveLibraryToDrive = async () => {
+    if (!getDriveToken()) { setDriveMsg('⚠️ Connect Google Drive first (⚙️ Settings).'); setTimeout(() => setDriveMsg(''), 5000); return; }
+    const payload = {
+      savedAt: Date.now(),
+      common: library,
+      projects: readProjectLibrary(projectId)
+    };
+    const file = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+    setDriveMsg('⬆️ Saving library to Google Drive…');
+    try {
+      const res = await uploadWorkspaceFile({ name: 'figures-library.json', mimeType: 'application/json', file, folder: 'figures' });
+      setDriveMsg(res ? '✅ Library saved to Drive (Lab Workspace/figures/figures-library.json).' : '⚠️ Could not save to Drive.');
+    } catch {
+      setDriveMsg('⚠️ Could not save to Drive.');
+    }
+    setTimeout(() => setDriveMsg(''), 7000);
+  };
+
   const slide = deck.slides[cur];
 
   return (
@@ -385,13 +556,19 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
           <h3 className="text-sm font-bold text-slate-700">📊 Figures &amp; Slides</h3>
           <p className="text-[10px] text-slate-400">PowerPoint-like deck: import ⭐-starred charts, 3D captures and reusable images (formulas…). Drag to reorder, export at 300 DPI.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={saveLibraryToDrive}
+            className="font-bold py-1.5 px-3 rounded-lg text-xs border border-sky-300 bg-sky-50 text-sky-700 hover:bg-sky-100" title="Save the image library (common + project) as a JSON file in Lab Workspace/figures on Google Drive">☁️ Library → Drive</button>
+          <button type="button" onClick={() => slide && exportSlidePng(slide)}
+            disabled={!slide}
+            className="font-bold py-1.5 px-3 rounded-lg text-xs border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-40" title="Export the current slide as a 300 DPI PNG">⬇ Slide PNG</button>
           <button type="button" onClick={exportPdf}
             className="font-bold py-1.5 px-3 rounded-lg text-xs border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100">📄 Export PDF (300 DPI)</button>
           <button type="button" onClick={() => { setPi(Math.min(deck.slides.length - 1, cur)); setPresenting(true); }}
             disabled={!deck.slides.length}
             className="font-bold py-1.5 px-3 rounded-lg text-xs border border-indigo-300 bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">▶ Present</button>
         </div>
+        {driveMsg && <p className="w-full text-[11px] font-bold text-sky-700">{driveMsg}</p>}
       </div>
 
       {/* ---- Image library — on TOP, retractable. Common + project scopes ---- */}
@@ -402,7 +579,7 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
             Image library ({library.length} common · {projectLibrary.length} project)
           </span>
           <span className="flex items-center gap-2">
-            <span className="text-[10px] text-slate-400 hidden sm:inline">drag an image onto a slide to add it</span>
+            <span className="text-[10px] text-slate-400 hidden sm:inline">drag an image onto a slide to add it · Ctrl+V pastes into the active library</span>
             <button type="button" onClick={(e) => { e.stopPropagation(); if (fileRef.current) fileRef.current.click(); }} className={btnGhost}>⬆ Upload</button>
             <button type="button" onClick={(e) => { e.stopPropagation(); onPaste(); }} className={btnGhost}>📋 Paste</button>
             <span className="text-slate-400">{libOpen ? '▲' : '▼'}</span>
@@ -437,6 +614,8 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
                       <button type="button" onClick={() => addFromLib(it)}
                         disabled={!slide}
                         className="flex-1 text-[10px] font-bold bg-blue-600 text-white rounded px-1 py-0.5 disabled:opacity-40" title="Add this image to the current slide">+ slide</button>
+                      <button type="button" onClick={() => downloadDataUrl(it.full || it.url, `${(it.label || 'figure').replace(/[^a-z0-9]+/gi, '_').slice(0, 60)}.png`)}
+                        className="text-[10px] font-bold text-slate-500 hover:text-emerald-600 px-1" title="Download this image as PNG (high resolution)">⬇</button>
                       {projectId && (
                         <button type="button" onClick={() => moveLib(it.id)}
                           className="text-[10px] font-bold text-slate-500 hover:text-blue-600 px-1" title={libScopeName === 'project' ? 'Also save in the common library' : 'Save in the project library'}>
@@ -455,35 +634,47 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
       </div>
 
 
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 items-start">
-        {/* ---- Left: ⭐ imports ---- */}
-        <div className="lg:col-span-2 bg-amber-50 border border-amber-200 rounded-xl p-3 flex flex-col gap-2">
-          <span className="text-xs font-bold text-amber-800 uppercase">⭐ Imported from experiments</span>
-          {starred.length === 0 ? (
-            <p className="text-[10px] text-slate-500 italic">Star charts / tables / structures with ⭐ on any test page to collect them here.</p>
-          ) : (
-            <div className="flex flex-col gap-1.5 max-h-72 overflow-y-auto custom-scrollbar">
-              {starred.map((s, si) => (
-                <div key={s.id} draggable onDragStart={onDragStart('star', s.id, si)}
-                  className="flex items-center gap-2 bg-white border border-amber-200 rounded-lg p-1.5 cursor-grab active:cursor-grabbing hover:border-amber-400">
-                  <img src={s.url} alt={s.label} className="w-12 h-10 object-contain rounded border border-amber-100 bg-white shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[11px] font-bold text-slate-700 truncate">{s.caption || s.label}</p>
-                    <p className="text-[9px] text-slate-400 truncate">{s.testName}</p>
-                  </div>
-                  <button type="button" onClick={() => slide && addBlock(cur, blockFromStar(s))}
-                    disabled={!slide}
-                    className="text-[10px] font-bold bg-blue-600 text-white rounded px-1.5 py-0.5 disabled:opacity-40 shrink-0" title="Add to current slide (keeps the link to the experiment)">+ slide</button>
-                  <button type="button" onClick={() => importStarred(s)}
-                    className="text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200 rounded px-1.5 py-0.5 shrink-0" title={projectId ? 'Save it in the project library' : 'Save it in the common library'}>⇥ {projectId ? 'proj' : 'lib'}</button>
-                </div>
-              ))}
-            </div>
-          )}
+      {/* ---- ⭐ Imported from experiments — on TOP, retractable ---- */}
+      <div className="border border-amber-200 rounded-xl overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-2 bg-amber-50 px-3 py-2 cursor-pointer select-none" onClick={() => setImportsOpen((v) => !v)}>
+          <span className="text-xs font-bold text-amber-800 uppercase flex items-center gap-2">
+            <span className="inline-block w-2 h-2 rounded-full bg-amber-400" />
+            ⭐ Imported from experiments ({starred.length})
+          </span>
+          <span className="flex items-center gap-2">
+            <span className="text-[10px] text-amber-600 hidden sm:inline">drag a chart onto a slide to add it · clicking a chart on a slide reopens its experiment</span>
+            <span className="text-amber-500">{importsOpen ? '▲' : '▼'}</span>
+          </span>
         </div>
+        {importsOpen && (
+          <div className="p-3 bg-white">
+            {starred.length === 0 ? (
+              <p className="text-[10px] text-slate-500 italic">Star charts / tables / structures with ⭐ on any test page to collect them here.</p>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 max-h-64 overflow-y-auto custom-scrollbar">
+                {starred.map((s, si) => (
+                  <div key={s.id} draggable onDragStart={onDragStart('star', s.id, si)}
+                    className="flex flex-col gap-1 bg-white border border-amber-200 rounded-lg p-1.5 cursor-grab active:cursor-grabbing hover:border-amber-400">
+                    <img src={s.url} alt={s.label} className="w-full h-14 object-contain rounded border border-amber-100 bg-white" />
+                    <p className="text-[10px] font-bold text-slate-700 truncate">{s.caption || s.label}</p>
+                    <p className="text-[9px] text-slate-400 truncate">{s.testName}</p>
+                    <div className="flex items-center gap-1">
+                      <button type="button" onClick={() => slide && addBlock(cur, blockFromStar(s))}
+                        disabled={!slide}
+                        className="flex-1 text-[10px] font-bold bg-blue-600 text-white rounded px-1 py-0.5 disabled:opacity-40" title="Add to current slide (keeps the link to the experiment)">+ slide</button>
+                      <button type="button" onClick={() => importStarred(s)}
+                        className="text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200 rounded px-1 py-0.5" title={projectId ? 'Save it in the project library' : 'Save it in the common library'}>⇥ {projectId ? 'proj' : 'lib'}</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
-        {/* ---- Right: slide deck editor ---- */}
-        <div className="lg:col-span-3 flex flex-col gap-3">
+      {/* ---- Slide deck editor ---- */}
+      <div className="flex flex-col gap-3">
           <div className="bg-white border border-slate-200 rounded-xl p-3 flex flex-col gap-2">
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs font-bold text-slate-600 uppercase">Slides ({deck.slides.length}) — drag to reorder</span>
@@ -645,6 +836,10 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
                         </button>
                       )}
                       <span className="flex-1" />
+                      {b.type === 'image' && (
+                        <button type="button" onClick={(e) => { e.stopPropagation(); downloadPng(b); }}
+                          className="text-[10px] font-bold text-emerald-600 hover:bg-emerald-50 px-1 py-0.5 rounded border border-emerald-200" title="Download this figure as PNG (high resolution)">⬇ PNG</button>
+                      )}
                       <button type="button" onClick={(e) => { e.stopPropagation(); removeBlock(cur, bi); }} className="text-[10px] px-1.5 py-0.5 rounded border border-red-200 text-red-500 hover:bg-red-50">✕</button>
                     </div>
                   </div>
@@ -658,9 +853,6 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
             </div>
           )}
         </div>
-
-
-      </div>
 
       {presenting && deck.slides[pi] && (
         <div className="fixed inset-0 z-[99999] flex flex-col" style={{ background: deck.slides[pi].bg || '#ffffff' }}>
