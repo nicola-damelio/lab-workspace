@@ -10,6 +10,7 @@ import { LibraryDirectory } from './libraryDirectory';
 import { CellLineDefinitionSection, PlasmidDefinitionSection } from './librarySections';
 import { CompoundDefinitionSection } from './compoundDefinitionSection';
 import { SolventsManager, BuffersManager, AdditivesManager, NMRProbesManager, NMRInstrumentsManager, NMRExperimentsManager } from '../DefinitionsExtra';
+import { PyMOLScriptsSection } from './PyMOLScriptsSection';
 
 export const LibraryModule = ({
   allCmpds, setActiveLibrarySelection, activeLibrarySelection,
@@ -104,6 +105,10 @@ export const LibraryModule = ({
 
                   <CollapsibleSection id="section-nmrExperiment" title="NMR Experiments / Pulse Programs" subtitle="Define pulse programs: nuclei, dimensions, and custom acquisition parameters." defaultOpen={activeLibrarySelection.type === 'nmrExperiment'}>
                     <NMRExperimentsManager nmrExperiments={nmrExperiments} setNmrExperiments={setNmrExperiments} selectedId={activeLibrarySelection.type === 'nmrExperiment' ? activeLibrarySelection.id : null} onSelect={(id) => setActiveLibrarySelection({ type: 'nmrExperiment', id })} />
+                  </CollapsibleSection>
+
+                  <CollapsibleSection id="section-pymol" title="PyMOL Scripts" subtitle="Reusable rendering scripts offered as a drop-down in the 3D molecule viewers (🧪 Selections & PyMOL → Load script).">
+                    <PyMOLScriptsSection />
                   </CollapsibleSection>
 
                 </div>

@@ -678,6 +678,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   const [hasOpened3D, setHasOpened3D] = useState(structureMode === '3d');
   
   const [trajectoryFile, setTrajectoryFile] = useState(() => localFileCache.get(activeTest.id)?.trajectory || null);
+  const [trajDriveMsg, setTrajDriveMsg] = useState('');
 
   const handleStructureFile = (file) => {
     if (!file) {
@@ -699,7 +700,15 @@ export const MDExperimentSetupSection = ({ ctx }) => {
       blobStore.remove(trajBlobKey(activeTest.id));
       return;
     }
-    archiveFileToDrive({ file, ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Setup', subsection: 'Trajectory', suffix: 'trajectory' } }).catch(() => {});
+    // Archive the raw trajectory to Google Drive automatically (best-effort).
+    // Trajectory files are large, so this can take a while — the upload is
+    // given a long timeout and its result is shown to the user.
+    setTrajDriveMsg(`⬆️ Archiving ${file.name} to Google Drive…`);
+    archiveFileToDrive({ file, ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Setup', subsection: 'Trajectory', suffix: 'trajectory' } }).then((ok) => {
+      setTrajDriveMsg(ok
+        ? `✅ ${file.name} archived to Google Drive.`
+        : `⚠️ ${file.name} was loaded, but the Drive upload failed. Use “Archive trajectory to Drive” to retry (check the Drive connection first).`);
+    });
     setTrajectoryFile(file);
     updateActiveTest({ trajectoryFileName: file.name });
     const cache = localFileCache.get(activeTest.id) || {};
@@ -1027,6 +1036,10 @@ export const MDExperimentSetupSection = ({ ctx }) => {
                     <span className="text-[10px] text-slate-400 mt-0.5">Use the "Choose XTC / TRR" button in the 3D viewer below.</span>
                   )}
 
+                  {trajDriveMsg && (
+                    <span className={`text-[10px] font-bold mt-1 ${trajDriveMsg.startsWith('✅') ? 'text-emerald-700' : trajDriveMsg.startsWith('⚠️') ? 'text-amber-700' : 'text-blue-600'}`}>{trajDriveMsg}</span>
+                  )}
+
                   <div className="mt-1">
                     <DriveUploadButton
                       suggestedName={suggestDriveFileName({
@@ -1095,7 +1108,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
     }
   }}
   labelMode={atomLabelMode}
-  height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '620px' : '520px'}
+  height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'}
 />
             )}
           </div>

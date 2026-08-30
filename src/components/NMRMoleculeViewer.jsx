@@ -3,6 +3,7 @@ import { ensureNGL } from '../utils/ngl';
 import { readXtcFrames, countXtcFrames, countXtcFramesInFile } from '../utils/xtcDecoder';
 import { abortControl } from '../utils/abortControl';
 import { archiveFileToDrive } from '../utils/driveUpload';
+import { getPymolScripts } from '../utils/pymolScripts';
 
 /* ---- Shared "Assigned atoms" highlight flag ---------------------------------
    The green "assigned atoms" highlight is shown both on the 3D molecule viewer
@@ -122,6 +123,10 @@ const collectResidueTicks = (component) => {
         resno: r && r.resno != null ? r.resno : out.length + 1,
         resname: name || String((r && r.restype) || 'UNK'),
         code: code || (name.length === 1 ? name : ''),
+        // TRUE only for polymer residues (protein / nucleic). Water, ions,
+        // lipids and other hetero have no 1-letter code and are excluded from
+        // the sequence strip (they are not part of the polymer "sequence").
+        polymer: !!code,
         chainid,
         atomNames: [...(atomsByRes.get(`${chainid}|${r.resno}`) || [])],
       });
@@ -634,6 +639,34 @@ onResRenumber,
 onStructureSequence,
 height = '520px',
 }) => {
+// 3D viewport height — the viewer is RESIZABLE via the drag handle below it.
+const [viewH, setViewH] = useState(() => {
+  const m = /^(\d+)/.exec(String(height || '520px'));
+  return m ? Math.max(240, parseInt(m[1], 10)) : 520;
+});
+const resizeRef = useRef(null); // { startY, startH } while dragging
+
+useEffect(() => {
+  const move = (ev) => {
+    if (!resizeRef.current) return;
+    const dh = ev.clientY - resizeRef.current.startY;
+    setViewH(Math.max(240, Math.min(2400, resizeRef.current.startH + dh)));
+  };
+  const up = () => { resizeRef.current = null; };
+  window.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', up);
+  return () => {
+    window.removeEventListener('mousemove', move);
+    window.removeEventListener('mouseup', up);
+  };
+}, []);
+
+// NGL must be told when the container grew/shrunk (it only auto-listens to
+// window resizes, not to our drag handle).
+useEffect(() => {
+  try { if (stageRef.current) stageRef.current.handleResize(); } catch {}
+}, [viewH]);
+
 const containerRef = useRef(null);
 const stageRef = useRef(null);
 const stageReadyRef = useRef(null);
@@ -737,9 +770,23 @@ const [lightRender, setLightRender] = useState(false);  // true → lightweight 
 const [lightInfo, setLightInfo] = useState(null);       // { nAtoms, size } → small info line
 const lightRenderRef = useRef(false);                   // synchronous mirror for addDefaultReps / sidechain effect
 lightRenderRef.current = lightRender;
+// Water is NOT drawn in lightweight mode by default (it dominates the atom
+// count of membrane systems); a checkbox re-enables it as tiny spheres.
+const [showLargeWater, setShowLargeWater] = useState(false);
+const showLargeWaterRef = useRef(false);
+showLargeWaterRef.current = showLargeWater;
+// Whether the loaded structure contains any non-protein atoms (ligands,
+// lipids, ions, water) — controls the "Molecule Style" dropdown visibility.
+const [hasNonProtein, setHasNonProtein] = useState(false);
+// How the NON-protein part of a large system is drawn in lightweight mode:
+// 'spheres' (spacefill, instanced — default) | 'lines' (bonds) | 'dots' (one
+// point per atom — the absolute lightest). The protein is always a cartoon.
+const [largeStyle, setLargeStyle] = useState('spheres');
+const largeStyleRef = useRef('spheres');
+largeStyleRef.current = largeStyle;
 
 // Rebuild the base representations when the lightweight mode toggles
-// ("Full detail" / loading a big system).
+// ("Full detail" / loading a big system) or the large-style selector changes.
 useEffect(() => {
   const component = componentRef.current;
   if (!component || status !== 'ready') return;
@@ -747,7 +794,7 @@ useEffect(() => {
   baseCompsRef.current = [];
   addDefaultReps(component);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [lightRender, status]);
+}, [lightRender, largeStyle, showLargeWater, status]);
 
 const useFullDetail = () => {
   lightRenderRef.current = false;
@@ -832,6 +879,7 @@ backboneStyleRef.current = backboneStyle;
 const moleculeStyleRef = useRef(moleculeStyle);
 moleculeStyleRef.current = moleculeStyle;
 const prevBackboneRef = useRef(backboneStyle);
+const prevMoleculeRef = useRef(moleculeStyle);
 
 useEffect(() => {
 parsedSeqRef.current = parsedSeq;
@@ -981,14 +1029,27 @@ const addDefaultReps = (component) => {
   if (!component || !component.structure) return;
   baseCompsRef.current = [];
   const trackBase = (r) => { if (r) baseCompsRef.current.push(r); };
-  // Large systems: keep the WHOLE structure visible but use lightweight,
+  // Large systems: keep the whole structure visible but use lightweight,
   // instanced representations so the browser stays responsive — protein as a
-  // cartoon, and everything else (lipids, ions, ligands, water) as small
-  // spacefill spheres. Nothing is hidden; water is shown as tiny spheres.
+  // cartoon, and everything else (lipids, ions, ligands) drawn with the
+  // user-selected large-style: spheres (spacefill), lines (bonds) or dots
+  // (one point per atom — the lightest). WATER is hidden by default (it
+  // dominates the atom count of membrane systems); the "💧 Water" checkbox
+  // re-enables it with the same lightweight style.
   if (lightRenderRef.current) {
     try { trackBase(component.addRepresentation('cartoon', { sele: 'protein', color: 'residueindex', quality: 'low' })); } catch {}
-    try { trackBase(component.addRepresentation('spacefill', { sele: 'hetero and not water', colorScheme: 'element', scale: 0.25, quality: 'low' })); } catch {}
-    try { trackBase(component.addRepresentation('spacefill', { sele: 'water', colorScheme: 'element', scale: 0.08, quality: 'low' })); } catch {}
+    const ls = largeStyleRef.current || 'spheres';
+    const waterSele = showLargeWaterRef.current ? 'water' : null;
+    if (ls === 'lines') {
+      try { trackBase(component.addRepresentation('line', { sele: 'hetero and not water', colorScheme: 'element' })); } catch {}
+      if (waterSele) { try { trackBase(component.addRepresentation('line', { sele: waterSele, colorScheme: 'element' })); } catch {} }
+    } else if (ls === 'dots') {
+      try { trackBase(component.addRepresentation('dot', { sele: 'hetero and not water', colorScheme: 'element' })); } catch {}
+      if (waterSele) { try { trackBase(component.addRepresentation('dot', { sele: waterSele, colorScheme: 'element' })); } catch {} }
+    } else {
+      try { trackBase(component.addRepresentation('spacefill', { sele: 'hetero and not water', colorScheme: 'element', scale: 0.25, quality: 'low' })); } catch {}
+      if (waterSele) { try { trackBase(component.addRepresentation('spacefill', { sele: waterSele, colorScheme: 'element', scale: 0.08, quality: 'low' })); } catch {} }
+    }
     return;
   }
   const organicLike = ['organic', 'lipid', 'sugar'].includes(moleculeTypeRef.current);
@@ -1024,7 +1085,16 @@ const addDefaultReps = (component) => {
     else if (bb === 'lines') trackBase(component.addRepresentation('line', { sele: 'protein', colorScheme: 'element' }));
     else if (bb === 'spheres') trackBase(component.addRepresentation('spacefill', { sele: 'protein', colorScheme: 'element', scale: 0.6 }));
   } catch {}
-  try { trackBase(component.addRepresentation('ball+stick', { sele: 'hetero and not water', aspectRatio: 1.1 })); } catch {}
+  // Non-protein content of a protein system (ligands, lipids, ions, …) follows
+  // the Molecule Style selector — previously it was hard-coded to ball+stick.
+  const ms = moleculeStyleRef.current || 'ball+stick';
+  try {
+    if (ms === 'ball+stick') trackBase(component.addRepresentation('ball+stick', { sele: 'hetero and not water', colorScheme: 'element', aspectRatio: 1.1 }));
+    else if (ms === 'stick') trackBase(component.addRepresentation('stick', { sele: 'hetero and not water', colorScheme: 'element', multipleBond: true }));
+    else if (ms === 'line') trackBase(component.addRepresentation('line', { sele: 'hetero and not water', colorScheme: 'element' }));
+    else if (ms === 'spheres') trackBase(component.addRepresentation('spacefill', { sele: 'hetero and not water', colorScheme: 'element', scale: 0.6 }));
+    else if (ms === 'surface') trackBase(component.addRepresentation('surface', { sele: 'hetero and not water', colorScheme: 'element' }));
+  } catch {}
 };
 
 // Apply the CURRENT style selectors (Backbone / Molecule Style) to ANY component
@@ -1050,7 +1120,16 @@ const applyCurrentStyleTo = useCallback((comp, baseReps) => {
       else if (bb === 'lines') next.push(comp.addRepresentation('line', { sele: 'protein', colorScheme: 'element' }));
       else if (bb === 'spheres') next.push(comp.addRepresentation('spacefill', { sele: 'protein', colorScheme: 'element', scale: 0.6 }));
     } catch {}
-    try { next.push(comp.addRepresentation('ball+stick', { sele: 'hetero and not water', colorScheme: 'element', aspectRatio: 1.1 })); } catch {}
+    // Non-protein content of a protein system (ligands, lipids, ions, …) follows
+    // the Molecule Style selector.
+    const ms = moleculeStyleRef.current || 'ball+stick';
+    try {
+      if (ms === 'ball+stick') next.push(comp.addRepresentation('ball+stick', { sele: 'hetero and not water', colorScheme: 'element', aspectRatio: 1.1 }));
+      else if (ms === 'stick') next.push(comp.addRepresentation('stick', { sele: 'hetero and not water', colorScheme: 'element', multipleBond: true }));
+      else if (ms === 'line') next.push(comp.addRepresentation('line', { sele: 'hetero and not water', colorScheme: 'element' }));
+      else if (ms === 'spheres') next.push(comp.addRepresentation('spacefill', { sele: 'hetero and not water', colorScheme: 'element', scale: 0.6 }));
+      else if (ms === 'surface') next.push(comp.addRepresentation('surface', { sele: 'hetero and not water', colorScheme: 'element' }));
+    } catch {}
   } else {
     const ms = moleculeStyleRef.current || 'ball+stick';
     try {
@@ -1097,6 +1176,7 @@ abortRef.current = {
     stripResidueRiRef.current = null;
     setLightRender(false);
     setLightInfo(null);
+    setHasNonProtein(false);
     try { if (stageRef.current) stageRef.current.removeAllComponents(); } catch {}
   }
 };
@@ -1196,6 +1276,15 @@ if (isLarge) {
 } else {
   setLightInfo(null);
 }
+// Whether this structure contains any non-protein atoms — shows the "Molecule
+// Style" dropdown so ligands/lipids/water inside a protein complex can be styled.
+let nonProtein = false;
+try {
+  const h = component.structure.getAtomSet('hetero and not water');
+  const w = component.structure.getAtomSet('water');
+  nonProtein = ((h && h.count) || 0) > 0 || ((w && w.count) || 0) > 0;
+} catch { nonProtein = false; }
+setHasNonProtein(nonProtein);
 addDefaultReps(component);
 
 // Multi-MODEL PDB files (ensembles / docking clusters / NMR structures):
@@ -1694,17 +1783,19 @@ useEffect(() => {
   });
   selCompsRef.current = {};
   // Base representations: removed in "hide all" or PyMOL-script mode, and rebuilt
-  // when the backbone style changes or when restoring from "hide all".
+  // when the backbone OR molecule style changes or when restoring from "hide all".
   const backboneChanged = prevBackboneRef.current !== backboneStyle;
+  const moleculeChanged = prevMoleculeRef.current !== moleculeStyle;
   if (hideAll || pymolActive) {
     baseCompsRef.current.forEach((r) => { try { component.removeRepresentation(r); } catch {} });
     baseCompsRef.current = [];
-  } else if (backboneChanged || baseCompsRef.current.length === 0) {
+  } else if (backboneChanged || moleculeChanged || baseCompsRef.current.length === 0) {
     baseCompsRef.current.forEach((r) => { try { component.removeRepresentation(r); } catch {} });
     baseCompsRef.current = [];
     addDefaultReps(component);
   }
   prevBackboneRef.current = backboneStyle;
+  prevMoleculeRef.current = moleculeStyle;
   if (hideAll) return;
   const styles = selStylesRef.current || {};
   Object.keys(styles).forEach((key) => {
@@ -2224,6 +2315,7 @@ const handleClearViewer = () => {
   setShowPymolPanel(false);
   setHideAll(false);
   setHoverInfo(null);
+  setHasNonProtein(false);
   setTrajFile(null);
   setTrajAborted(false); // a fresh trajectory pick is always allowed again
   setTrajStatus('none');
@@ -2432,10 +2524,9 @@ className="border border-slate-300 rounded-md px-1.5 py-1.5 text-xs bg-white out
 <option value="hidden">Backbone: Hidden</option>
 </select>
 
-{/* Molecule Style — for NON-protein molecules (they previously had no
-    visualization options at all). Also shown whenever extra molecules/chains are
-    loaded, so a non-protein structure can always be styled. */}
-{(['organic', 'lipid', 'sugar', 'dna', 'rna'].includes(moleculeType) || extraMols.length > 0) && (
+{/* Molecule Style — for NON-protein molecules and for the non-protein content
+    of a protein structure (ligands / lipids / ions / water in the same file). */}
+{(['organic', 'lipid', 'sugar', 'dna', 'rna'].includes(moleculeType) || extraMols.length > 0 || hasNonProtein) && (
 <select
 title="Molecule style"
 value={moleculeStyle}
@@ -2448,6 +2539,34 @@ className="border border-slate-300 rounded-md px-1.5 py-1.5 text-xs bg-white out
 <option value="spheres">Mol: Spheres</option>
 <option value="surface">Mol: Surface</option>
 </select>
+)}
+
+{/* Large-structure style — shown in lightweight mode. The protein stays a
+    cartoon; this picks how lipids / ions / water are drawn. Dots is the
+    absolute lightest (one point per atom). Water is hidden by default. */}
+{lightRender && (
+<select
+title="Large structure style (lightweight mode): how the non-protein atoms are drawn"
+value={largeStyle}
+onChange={(e) => setLargeStyle(e.target.value)}
+className="border border-sky-300 rounded-md px-1.5 py-1.5 text-xs bg-sky-50 text-sky-800 outline-none focus:border-sky-500 h-8"
+>
+<option value="spheres">Large: Spheres</option>
+<option value="lines">Large: Lines</option>
+<option value="dots">Large: Dots (lightest)</option>
+</select>
+)}
+
+{lightRender && (
+<label title="Water is hidden by default in large systems (it dominates the atom count); enable to show it with the same lightweight style" className="flex items-center gap-1 text-[10px] font-bold text-sky-800 cursor-pointer h-8 whitespace-nowrap">
+<input
+type="checkbox"
+checked={showLargeWater}
+onChange={(e) => setShowLargeWater(e.target.checked)}
+className="w-3.5 h-3.5 accent-sky-600"
+/>
+💧 Water
+</label>
 )}
 
 </div>
@@ -2535,6 +2654,27 @@ className="border border-slate-300 rounded-md px-1.5 py-1.5 text-xs bg-white out
         <button type="button" onClick={clearPyMOL} className="px-2 py-1 text-xs font-bold rounded bg-white border border-red-300 text-red-600 hover:bg-red-50">Clear</button>
       </div>
     </div>
+    <div className="flex flex-wrap items-center gap-2">
+      <label className="text-[10px] font-bold text-slate-500 uppercase shrink-0">Load script</label>
+      <select
+        value=""
+        onChange={(e) => {
+          const n = e.target.value;
+          e.target.value = '';
+          if (!n) return;
+          const s = getPymolScripts()[n];
+          if (s) setPymolScript(s);
+        }}
+        title="Load a script saved in the Library (Library → PyMOL Scripts) into the editor, then press Run"
+        className="border border-violet-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-violet-500"
+      >
+        <option value="">— Library scripts —</option>
+        {Object.entries(getPymolScripts()).map(([n]) => (
+          <option key={n} value={n}>{n}</option>
+        ))}
+      </select>
+      <span className="text-[9px] text-slate-400">saved in <b>Library → PyMOL Scripts</b></span>
+    </div>
     <label className="text-[10px] font-bold text-slate-500 uppercase">Paste a PyMOL script (select / show / hide / color / set sphere_scale·transparency / bg_color / cartoon · ribbon · tube / surface / spectrum / util.ray_shadows)</label>
     <textarea value={pymolScript} onChange={(e) => setPymolScript(e.target.value)} rows={6}
       className="w-full border border-violet-300 rounded-lg p-2 text-xs font-mono outline-none focus:border-violet-500 bg-white"
@@ -2613,15 +2753,19 @@ className="border border-indigo-300 rounded-lg px-2 py-1 text-xs bg-white outlin
 </div>
 )}
 
-{/* Residue sequence strip — click a tick to select that whole residue */}
-{residueTicks.length > 0 && moleculeType !== 'organic' && (
+{/* Residue sequence strip — click a tick to select that whole residue.
+    Only POLYMER residues (protein / nucleic) are shown: water, ions and
+    phospholipids/lipids are not part of the sequence and are excluded. */}
+{residueTicks.length > 0 && moleculeType !== 'organic' && (() => {
+  const polyTicks = residueTicks.filter((r) => r.polymer);
+  if (polyTicks.length === 0) return null;
+  const thinStep = polyTicks.length > 900 ? 5 : polyTicks.length > 450 ? 3 : polyTicks.length > 200 ? 2 : 1;
+  return (
   <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-2 py-1.5">
     <span className="text-[9px] font-black text-slate-500 uppercase shrink-0">Residues</span>
     <div className="flex gap-0.5 overflow-x-auto custom-scrollbar items-stretch py-0.5">
-      {residueTicks.map((r, i) => {
-        if (residueTicks.length > 900 && i % 5 !== 0) return null;
-        if (residueTicks.length > 450 && i % 3 !== 0) return null;
-        if (residueTicks.length > 200 && i % 2 !== 0) return null;
+      {polyTicks.map((r, i) => {
+        if (thinStep > 1 && i % thinStep !== 0) return null;
         const isSel = selectedKeys && selectedKeys.some((k) => parseInt(String(k).split('-')[0], 10) === r.resno - 1);
         return (
           <button key={`${r.chainid}-${r.resno}`} type="button"
@@ -2635,12 +2779,13 @@ className="border border-indigo-300 rounded-lg px-2 py-1 text-xs bg-white outlin
       })}
     </div>
   </div>
-)}
+  );
+})()}
 
 {/* 3D Viewport */}
 <div
 className="relative border border-slate-200 rounded-xl overflow-hidden bg-white"
-style={{ height }}
+style={{ height: viewH + 'px' }}
 >
 <div ref={containerRef} className="w-full h-full" />
 
@@ -2787,6 +2932,15 @@ Tip: you cannot paste a local file path — use the file picker button above
 )}
 </div>
 
+{/* Vertical resize handle — drag to make the 3D viewer taller/shorter */}
+<div
+  onMouseDown={(e) => { resizeRef.current = { startY: e.clientY, startH: viewH }; e.preventDefault(); }}
+  className="h-4 -mt-1 cursor-row-resize flex items-center justify-center select-none text-slate-300 hover:text-slate-500 active:text-slate-600 transition-colors"
+  title={`Drag to resize the 3D viewer (currently ${viewH} px)`}
+>
+  <span className="text-[11px] leading-none tracking-widest">⠿</span>
+</div>
+
 {/* Trajectory frame-selection modal */}
 {pendingTraj && (
 <div className="fixed inset-0 z-[99999] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
@@ -2846,7 +3000,7 @@ className="text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-3 p
 {lightInfo && (
 <div className="flex flex-wrap items-center gap-2 bg-sky-50 border border-sky-200 text-sky-900 rounded-lg px-3 py-2 text-xs font-bold shadow-sm">
 <span>
-ℹ️ Large structure{lightInfo.nAtoms ? ` (${lightInfo.nAtoms.toLocaleString()} atoms)` : ''}: showing the whole system (protein cartoon + spacefill) so the view stays responsive. Nothing is hidden.
+ℹ️ Large structure{lightInfo.nAtoms ? ` (${lightInfo.nAtoms.toLocaleString()} atoms)` : ''}: showing the whole system (protein cartoon + {largeStyle === 'lines' ? 'lines' : largeStyle === 'dots' ? 'dots' : 'spheres'}) — water is hidden by default, use the 💧 Water checkbox to show it.
 </span>
 <button
 type="button"

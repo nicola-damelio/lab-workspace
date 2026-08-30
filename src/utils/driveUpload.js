@@ -162,14 +162,21 @@ export const driveFetch = async (path, opts = {}) => {
     throwCode('BAD_TOKEN', 'The stored Google Drive token is invalid — reconnect Google Drive from the sidebar.');
   }
 
+  // Fast interactive requests (metadata, listing, small uploads) use a 20 s
+  // timeout. Large UPLOADS (trajectory files, videos, backups) pass an explicit
+  // much longer timeout — a big .xtc can take minutes to transfer and must not
+  // be aborted after 20 seconds. File-content DOWNLOADS (`alt=media`) get the
+  // same long timeout by default, since the bytes are streamed as the response.
+  const isFileDownload = typeof path === 'string' && path.includes('alt=media');
+  const { timeout: timeoutMs = isFileDownload ? 10 * 60 * 1000 : 20000, ...rest } = opts;
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-  const timeout = controller ? setTimeout(() => controller.abort(), 20000) : null;
+  const timeout = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
   let res;
   try {
     res = await fetch(`https://www.googleapis.com${path}`, {
-      ...opts,
+      ...rest,
       signal: controller ? controller.signal : undefined,
-      headers: { Authorization: `Bearer ${token}`, ...(opts.headers || {}) }
+      headers: { Authorization: `Bearer ${token}`, ...(rest.headers || {}) }
     });
   } catch (e) {
     const msg = (e && e.name === 'AbortError')
@@ -802,7 +809,9 @@ export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path =
     existingId
       ? `/upload/drive/v3/files/${existingId}?uploadType=multipart&fields=id,name`
       : `/upload/drive/v3/files?uploadType=multipart&fields=id,name`,
-    { method: existingId ? 'PATCH' : 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body }
+    // Large raw files (trajectories, videos, …) can take minutes to upload —
+    // never abort them with the short interactive-request timeout.
+    { method: existingId ? 'PATCH' : 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body, timeout: 10 * 60 * 1000 }
   );
   const fileMeta = await res.json();
   if (!fileMeta || !fileMeta.id) throwCode('DRIVE_ERROR', 'Drive returned no file.');
@@ -1049,7 +1058,8 @@ export const uploadWorkspaceFile = async ({ name, mimeType, file, folder = 'back
       existingId
         ? `/upload/drive/v3/files/${existingId}?uploadType=multipart&fields=id,name`
         : `/upload/drive/v3/files?uploadType=multipart&fields=id,name`,
-      { method: existingId ? 'PATCH' : 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body }
+      // Weekly backup HTML files can be several MB — allow a long transfer time.
+      { method: existingId ? 'PATCH' : 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body, timeout: 10 * 60 * 1000 }
     );
     const fileMeta = await res.json();
     if (!fileMeta || !fileMeta.id) return null;
