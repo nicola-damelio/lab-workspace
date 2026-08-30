@@ -141,19 +141,20 @@ export const Data = ({ ctx }) => {
   };
 
   // Transcode a WMV (or any undecodable format) to MP4/H.264 in the browser
-  // using ffmpeg.wasm loaded from the CDN on demand. Returns the MP4 Blob.
+  // using ffmpeg.wasm, served from the app's OWN origin (public/vendor/ffmpeg).
+  // This matters: @ffmpeg/ffmpeg spawns a Web Worker from worker.js, and
+  // browsers block workers from a different origin (e.g. a CDN) — the whole
+  // ffmpeg package + core are vendored here so the worker is same-origin and
+  // the conversion even works offline.
   const convertVideoToMp4 = async (blob) => {
     // eslint-disable-next-line no-undef
-    const { FFmpeg } = await import(/* @vite-ignore */ 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js');
-    // eslint-disable-next-line no-undef
-    const { toBlobURL, fetchFile } = await import(/* @vite-ignore */ 'https://unpkg.com/@ffmpeg/util@0.12.1/dist/esm/index.js');
-    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+    const { FFmpeg } = await import(/* @vite-ignore */ '/vendor/ffmpeg/ffmpeg/index.js');
     const ffmpeg = new FFmpeg();
     await ffmpeg.load({
-      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm')
+      coreURL: '/vendor/ffmpeg/core/ffmpeg-core.js',
+      wasmURL: '/vendor/ffmpeg/core/ffmpeg-core.wasm'
     });
-    await ffmpeg.writeFile('input.video', await fetchFile(blob));
+    await ffmpeg.writeFile('input.video', new Uint8Array(await blob.arrayBuffer()));
     await ffmpeg.exec(['-i', 'input.video', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'aac', '-movflags', '+faststart', 'output.mp4']);
     const data = await ffmpeg.readFile('output.mp4');
     return new Blob([data.buffer], { type: 'video/mp4' });
@@ -184,7 +185,8 @@ export const Data = ({ ctx }) => {
       setVideos(next);
       onStatus(`✅ Converted to MP4 — "${name}" is now playable and available in the movie maker.`);
     } catch (err) {
-      onStatus(`❌ Conversion failed (${err && err.message ? err.message : err}). It needs internet access — otherwise download the .wmv from Drive and convert it outside the app.`);
+      const msg = (err && err.message) || String(err);
+      onStatus(`❌ Conversion failed (${msg}). If this keeps happening, download the .wmv from Drive and convert it outside the app, then re-upload the .mp4.`);
     }
   };
 
