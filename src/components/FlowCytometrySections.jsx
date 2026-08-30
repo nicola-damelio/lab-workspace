@@ -2281,10 +2281,6 @@ export const Data = ({ ctx }) => {
   const persistedFcsWasTooLarge = !globalFcsCache[t.id] && (
     t.fcParsed === null || (t.fcExtraFiles || []).some((f) => f && f.data === null)
   );
-  // "Restore from Drive" is the primary recall action (upload is archived
-  // automatically): show it whenever Google Drive is connected.
-  const showRestoreFromDrive = getDriveToken();
-
   const panel = Array.isArray(t.fcPanel) ? t.fcPanel : [];
   const updatePanel = (newPanel) => updateActiveTest({ fcPanel: newPanel });
 
@@ -2543,7 +2539,13 @@ export const Data = ({ ctx }) => {
             saveFcsFile(extra.id, new File([buf], parsed.filename, { type: 'application/octet-stream' }));
           }
           restored++;
-        } catch { /* keep going with the next file */ }
+        } catch (e) {
+          // driveFetch throws on auth/network errors (e.g. TOKEN_EXPIRED clears
+          // the token and the sidebar switches back to "Connect Drive"). Keep
+          // the real reason so the user knows exactly what happened.
+          failReason = failReason || (e && e.message) || 'unknown error';
+          if (e && e.code === 'TOKEN_EXPIRED') break; // retrying is pointless
+        }
       }
       const updates = {};
       if (mainSerialized !== undefined) updates.fcParsed = mainSerialized;
@@ -2551,6 +2553,7 @@ export const Data = ({ ctx }) => {
       if (extras.length) updates.fcExtraFiles = extras;
       if (Object.keys(updates).length) updateActiveTest(updates);
       setUpdater(u => u + 1);
+      if (restored === 0) autoDriveRestoreDone.delete(t.id); // allow auto-retry after a reconnect
       setFcsMsg(restored > 0
         ? `✅ Restored ${restored} .fcs file(s) from Google Drive.`
         : `⚠️ Could not download the .fcs files from Google Drive${failReason ? ` (${failReason})` : ''}. If the Drive token expired, reconnect Google Drive from the sidebar and try again.`);
@@ -2619,17 +2622,6 @@ export const Data = ({ ctx }) => {
               <option value="same">Multiple files → same instance</option>
             </select>
             {fcsMsg && <span className="text-xs font-bold text-indigo-900">{fcsMsg}</span>}
-            {showRestoreFromDrive && (
-              <button
-                type="button"
-                onClick={handleRestoreFromDrive}
-                disabled={restoringFromDrive}
-                title="Download and re-parse the .fcs files archived on Google Drive (saved automatically at upload)"
-                className="bg-indigo-50 text-indigo-800 border border-indigo-200 hover:bg-indigo-100 font-bold px-3 py-2 rounded-lg text-xs shadow-sm transition-colors disabled:opacity-50"
-              >
-                {restoringFromDrive ? '⬇️ Download…' : '⬇️ Restore from Drive'}
-              </button>
-            )}
           </div>
           {persistedFcsWasTooLarge && (
             <div className="flex flex-col gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
