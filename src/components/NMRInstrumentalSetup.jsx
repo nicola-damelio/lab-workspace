@@ -301,10 +301,12 @@ export const NMRInstrumentalSetup = ({ ctx, extraFields = null, hideDatasets = f
                   <span className="text-[10px] font-bold text-slate-500 uppercase">
                     Acquisition Parameters (from acqus)
                   </span>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-8 gap-2 mt-1.5">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-2 mt-1.5">
                     {[
                       ['NS', 'ns', 'Number of scans'],
                       ['DS', 'ds', 'Dummy scans'],
+                      ['RG', 'rg', 'Receiver gain'],
+                      ['P1 (µs)', 'p1', '90° pulse width'],
                       ['D1 (s)', 'd1', 'Relaxation delay'],
                       ['D8 (s)', 'd8', 'Delay D8'],
                       ['D6 (s)', 'd6', 'Delay D6'],

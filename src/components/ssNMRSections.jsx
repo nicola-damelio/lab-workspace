@@ -6,7 +6,7 @@
 
 import React, {useState, useEffect, useRef, useMemo} from 'react';
 import {XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar, Cell, ComposedChart} from 'recharts';
-import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, AngledTick, IntensityControl, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgAxisDomain, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
+import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, AngledTick, useXYZoom, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgAxisDomain, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, seriesColorFor, chartBoxStyle } from '../utils/chartStyle';
 export { CollapsibleSection };
@@ -229,6 +229,36 @@ const brukerNum = (p, k, d = 0) => {
   return Number.isFinite(v) ? v : d;
 };
 
+// Acquisition date from the acqus text (##$DATE= or an embedded date string).
+const extractAcqusDate = (text) => {
+  const raw = String(text || '');
+  if (!raw.trim()) return null;
+  const mKey = raw.match(/^##\$DATE=\s*([^\s\r\n]+)/m);
+  const rawDate = mKey ? mKey[1] : null;
+  const cand = rawDate || raw;
+  if (rawDate) {
+    const mCompact = rawDate.match(/^(\d{4})(\d{2})(\d{2})$/);
+    if (mCompact) return `${mCompact[1]}-${mCompact[2]}-${mCompact[3]}`;
+  }
+  const mIso = cand.match(/(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/);
+  if (mIso) return `${mIso[1]}-${String(mIso[2]).padStart(2, '0')}-${String(mIso[3]).padStart(2, '0')}`;
+  const mUs = cand.match(/(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})/);
+  if (mUs) return `${mUs[3]}-${String(mUs[1]).padStart(2, '0')}-${String(mUs[2]).padStart(2, '0')}`;
+  const mMon = cand.match(/(\d{1,2})[-\/.\s]+([A-Za-z]{3,9})[-\/.\s]+(\d{4})/);
+  if (mMon) {
+    const months = { jan:1, feb:2, mar:3, apr:4, may:5, jun:6, jul:7, aug:8, sep:9, oct:10, nov:11, dec:12 };
+    const mo = months[String(mMon[2]).slice(0, 3).toLowerCase()];
+    if (mo) return `${mMon[3]}-${String(mo).padStart(2, '0')}-${String(mMon[1]).padStart(2, '0')}`;
+  }
+  return null;
+};
+const fileDate = (ms) => {
+  if (!ms || !Number.isFinite(ms)) return null;
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().split('T')[0];
+};
+
 const decode1rBuffer = (buffer, littleEndian) => {
   const n = Math.floor(buffer.byteLength / 4); // 1r = 32-bit integers
   const dv = new DataView(buffer);
@@ -311,12 +341,30 @@ const importBruker1r = ({ dataBuffer, acqusText = '', manualSWkHz = null, manual
   }
 
   const ds = downsampleXY(xs, y, 8000);
+  // Acquisition parameters read from the acqus file — shown in the Instrumental
+  // Setup "Datasets" rows. SW is expressed in ppm, O1 in Hz.
+  const sfo1 = brukerNum(acqus, 'SFO1');
+  const o1Hz = brukerNum(acqus, 'O1');
+  const acqusParams = {
+    NS: brukerNum(acqus, 'NS') || '',
+    DS: brukerNum(acqus, 'DS') || '',
+    RG: brukerNum(acqus, 'RG') || '',
+    P1: brukerNum(acqus, 'P1') || '',
+    D1: brukerNum(acqus, 'D1') || '',
+    D8: brukerNum(acqus, 'D8') || '',
+    D6: brukerNum(acqus, 'D6') || '',
+    SW: (swHz > 0 && sfo1 > 0 ? swHz / sfo1 : brukerNum(acqus, 'SW')) || '',
+    O1: o1Hz || '',
+    TD: brukerNum(acqus, 'TD') || ''
+  };
   return {
     xs: ds.xs, ys: ds.ys, littleEndian, autoEndian, nPoints: y.length,
+    acqusParams,
+    date: extractAcqusDate(acqusText) || null,
     meta: {
       swKHz: swHz / 1000 || manualSWkHz || null,
-      o1KHz: brukerNum(acqus, 'O1') / 1000,
-      sfo1: brukerNum(acqus, 'SFO1'),
+      o1KHz: o1Hz / 1000,
+      sfo1,
       temperatureK: brukerNum(acqus, 'TE') || null,
       nucleus: acqus.NUC1 || '',
       title: title || acqus.TITLE || ''
@@ -1022,6 +1070,26 @@ export const Data = ({ ctx }) => {
         updates.temperature = String(parsed.meta.temperatureK);
         updates.temperatureUnit = 'K';
     }
+    // Instrumental Setup "Datasets" row — experiment number + dataset name (the
+    // directory that contains the expno dir) + acquisition date + acqus params.
+    if (parsed.expNum) {
+        const expNum = String(parsed.expNum);
+        const existingDatasets = Array.isArray(instTest.instrumentalDatasets) ? instTest.instrumentalDatasets : [];
+        const existing = existingDatasets.find((d) => String(d.experimentNumber) === expNum);
+        const row = {
+            id: existing ? existing.id : makeId('instrumental_dataset'),
+            experimentNumber: expNum,
+            name: parsed.datasetName || (existing ? existing.name : '') || filename || `Dataset ${expNum}`,
+            date: parsed.acqusDate || parsed.date || (existing ? existing.date : new Date().toISOString().split('T')[0]),
+            operator: existing ? existing.operator : (activeTest.operator || ''),
+            link: existing ? existing.link : '',
+            comments: existing ? existing.comments : '',
+            acqus: { ...(existing ? existing.acqus : {}), ...(parsed.acqusParams || {}) }
+        };
+        updates.instrumentalDatasets = existing
+            ? existingDatasets.map((d) => (d.id === existing.id ? { ...d, ...row } : d))
+            : [...existingDatasets, row];
+    }
     
     patchActive(updates);
   };
@@ -1096,6 +1164,8 @@ export const Data = ({ ctx }) => {
         
         if (!parsed.error) {
           parsed.filename = title;
+          parsed.datasetName = datasetName;
+          parsed.acqusDate = extractAcqusDate(acqusText) || fileDate(acqusFile ? acqusFile.lastModified : 0) || fileDate(oneR.lastModified) || '';
           parsed.expType = expType;
           parsed.fileTitle = fileTitle;
           parsed.expDir = expDir;
@@ -1144,6 +1214,19 @@ export const Data = ({ ctx }) => {
                 if (parsed.meta && parsed.meta.temperatureK > 0) {
                     cloned.temperature = String(parsed.meta.temperatureK);
                     cloned.temperatureUnit = 'K';
+                }
+                // Instrumental Setup "Datasets" row for the cloned condition.
+                if (parsed.expNum) {
+                    cloned.instrumentalDatasets = [{
+                        id: makeId('instrumental_dataset'),
+                        experimentNumber: String(parsed.expNum),
+                        name: parsed.datasetName || selected[i].filename || `Dataset ${parsed.expNum}`,
+                        date: parsed.acqusDate || parsed.date || new Date().toISOString().split('T')[0],
+                        operator: activeTest.operator || '',
+                        link: '',
+                        comments: '',
+                        acqus: parsed.acqusParams || {}
+                    }];
                 }
                 
                 let finalXs = parsed.xs; let finalYs = parsed.ys;
@@ -1816,16 +1899,6 @@ export const SpectraVisualization = ({ ctx }) => {
   const padX = allXs.length ? ((Math.max(...allXs) - Math.min(...allXs)) * 0.03 || 1) : 1;
   const dataDomain = allXs.length ? [Math.min(...allXs) - padX, Math.max(...allXs) + padX] : [-100, 100];
 
-  const chartRef = useRef(null);
-  const zoom = useXZoom(chartRef, dataDomain);
-  const yLabel = activeTest.yUnit === 'norm' ? 'Normalized intensity (a.u.)' : 'Intensity (a.u.)';
-  const xLabel = cfg.xAxisLabel || 'Frequency (kHz)';
-  const yLab = cfg.yAxisLabel || yLabel;
-
-  const xScale = cfgLogScale(cfg, 'x');
-  const yScale = cfgLogScale(cfg, 'y');
-  const xDomain = cfgAxisDomain(cfg, 'x', zoom.domain);
-  const yMinV = dom(cfg.yMin), yMaxV = dom(cfg.yMax);
   // Default Y domain (no manual yMin/yMax): make the y-axis TWICE as tall as the
   // data range so the spectra occupy about half the plot height — a common NMR /
   // ssNMR presentation that leaves headroom above the peaks.
@@ -1835,12 +1908,23 @@ export const SpectraVisualization = ({ ctx }) => {
   const yDataRange = (yDataMax - yDataMin) || 1;
   const yAutoMin = yDataMin - yDataRange / 2;
   const yAutoMax = yDataMax + yDataRange / 2;
-  // Intensity amplifier (button in the toolbar): divides the Y domain so the
-  // peaks grow — ×1 = default half-height, ×2 = full height, ×4+ = zoomed in.
-  const intensity = Number(cfg.intensity) > 0 ? Number(cfg.intensity) : 1;
+
+  const chartRef = useRef(null);
+  // Combined X + Y mouse zoom: drag horizontally to zoom the frequency axis,
+  // vertically to zoom the intensity axis (same as the NMR 1D spectrum).
+  const zoom = useXYZoom(chartRef, dataDomain, [yAutoMin, yAutoMax], CHART_MARGIN);
+  const yLabel = activeTest.yUnit === 'norm' ? 'Normalized intensity (a.u.)' : 'Intensity (a.u.)';
+  const xLabel = cfg.xAxisLabel || 'Frequency (kHz)';
+  const yLab = cfg.yAxisLabel || yLabel;
+
+  const xScale = cfgLogScale(cfg, 'x');
+  const yScale = cfgLogScale(cfg, 'y');
+  const xDomain = cfgAxisDomain(cfg, 'x', zoom.xDomain);
+  const yMinV = dom(cfg.yMin), yMaxV = dom(cfg.yMax);
+  const hasManualY = yMinV != null || yMaxV != null;
   const yDomain = yScale === 'log'
     ? [(yMinV != null && yMinV > 0 ? yMinV : 1e-3), (yMaxV != null ? yMaxV : 'auto')]
-    : [(yMinV ?? yAutoMin) / intensity, (yMaxV ?? yAutoMax) / intensity];
+    : hasManualY ? [yMinV ?? yAutoMin, yMaxV ?? yAutoMax] : zoom.yDomain;
 
   const chartBody = (
     <div ref={chartRef} onMouseDown={zoom.onMouseDown} style={fs ? { flex: 1, minHeight: 0 } : chartBoxStyle(cfg)} className={`bg-white border border-slate-200 rounded-xl p-3 select-none relative ${fs ? 'w-full' : ''}`}>
@@ -1854,7 +1938,9 @@ export const SpectraVisualization = ({ ctx }) => {
           <Tooltip />
           {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 8 }} />}
           {visible.map((s) => cfgSeriesEl(cfg, { key: s.key, data: s.data, dataKey: 'y', name: s.label, stroke: cfg.colors?.[s.key] || s.color }))}
-          {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
+          {zoom.ref && (zoom.ref.axis === 'x'
+            ? <ReferenceArea x1={zoom.ref.x1} x2={zoom.ref.x2} strokeOpacity={0.3} fill="#cbd5e1" />
+            : <ReferenceArea y1={zoom.ref.y1} y2={zoom.ref.y2} strokeOpacity={0.3} fill="#cbd5e1" />)}
         </ComposedChart>
       </ResponsiveContainer>
     </div>
@@ -1879,7 +1965,6 @@ export const SpectraVisualization = ({ ctx }) => {
         <h4 className="text-sm font-bold text-slate-700">📈 Spectra Visualization — all conditions overlaid</h4>
         <div className="flex gap-2">
           <InstanceLinkToggle activeTest={activeTest} updateActiveTest={updateActiveTest} />
-          <IntensityControl value={cfg.intensity} onChange={(v) => setCfg({ intensity: v })} />
           <ChartControlBar showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)} className="flex gap-2" />
           <button type="button" onClick={() => setFs(!fs)} className="font-bold py-1.5 px-3 rounded-lg text-xs border border-slate-300 bg-white text-slate-800 hover:bg-slate-50">{fs ? '↙️ Exit' : '↗️ Fullscreen'}</button>
         </div>
@@ -1924,7 +2009,7 @@ export const SpectraVisualization = ({ ctx }) => {
                       <LineChart data={s.data} margin={{ top: 5, right: 8, bottom: fsSmall === s.key ? 30 : 18, left: fsSmall === s.key ? 10 : 2 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                         <XAxis type="number" dataKey="x" tick={{ fontSize: fsSmall === s.key ? cfg.fontSize : 9, fill: '#64748b' }} domain={['dataMin', 'dataMax']} label={fsSmall === s.key ? { value: xLabel, position: 'insideBottom', offset: -20, fill: '#64748b', fontSize: cfg.fontSize + 1 } : undefined} />
-                        <YAxis domain={[yAutoMin / intensity, yAutoMax / intensity]} tick={{ fontSize: fsSmall === s.key ? cfg.fontSize : 9, fill: '#64748b' }} width={fsSmall === s.key ? 60 : 38} label={fsSmall === s.key ? { value: yLab, angle: -90, position: 'insideLeft', offset: -5, fill: '#64748b', fontSize: cfg.fontSize + 1 } : undefined} />
+                        <YAxis domain={[yAutoMin, yAutoMax]} tick={{ fontSize: fsSmall === s.key ? cfg.fontSize : 9, fill: '#64748b' }} width={fsSmall === s.key ? 60 : 38} label={fsSmall === s.key ? { value: yLab, angle: -90, position: 'insideLeft', offset: -5, fill: '#64748b', fontSize: cfg.fontSize + 1 } : undefined} />
                         {fsSmall === s.key && <Tooltip />}
                         <Line type="monotone" dataKey="y" stroke={s.color} strokeWidth={cfg.lineThickness || 2} strokeDasharray={lineDash(cfg.lineStyle)} dot={false} isAnimationActive={false} />
                       </LineChart>

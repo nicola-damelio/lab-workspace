@@ -710,6 +710,117 @@ export const useYZoom = (chartRef, dataDomain, margin = { top: 10, right: 20, bo
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// useXYZoom — combined X + Y drag-to-zoom with automatic axis detection.
+// The first few pixels of the drag decide the axis: horizontal movement zooms
+// the X axis, vertical movement zooms the Y axis (so spectra can be zoomed in
+// on BOTH ppm/kHz AND intensity with the mouse, like the old X-only zoom).
+// Returns:
+//   xDomain / yDomain — the current effective domains (fall back to the given
+//                       data domains when nothing has been zoomed yet)
+//   ref             — the live { axis, x1, x2 | y1, y2 } rect while dragging
+//   onMouseDown     — attach to the chart container
+//   isZoomed, reset — "Reset Zoom" button support (clears both axes)
+// ─────────────────────────────────────────────────────────────────────────────
+export const useXYZoom = (chartRef, xDataDomain, yDataDomain, margin = { top: 20, right: 20, bottom: 45, left: 50 }) => {
+  const [xDomain, setXDomain] = useState(null);
+  const [yDomain, setYDomain] = useState(null);
+  const [ref, setRef] = useState(null);
+  const dragging = useRef(false);
+  const axisRef = useRef(null);     // null | 'x' | 'y'
+  const startPixel = useRef(null);  // { x, y } in client px
+  const startVal = useRef(null);    // { x, y } in data coords
+  const xSafe = Array.isArray(xDataDomain) && xDataDomain[1] > xDataDomain[0] ? xDataDomain : [0, 1];
+  const ySafe = Array.isArray(yDataDomain) && yDataDomain[1] > yDataDomain[0] ? yDataDomain : [0, 1];
+  const effX = xDomain || xSafe;
+  const effY = yDomain || ySafe;
+  const effXRef = useRef(effX); effXRef.current = effX;
+  const effYRef = useRef(effY); effYRef.current = effY;
+
+  const getX = (clientX) => {
+    const el = chartRef.current;
+    if (!el) return null;
+    const wrapper = el.querySelector('.recharts-wrapper');
+    if (!wrapper) return null;
+    const rect = wrapper.getBoundingClientRect();
+    const plotW = rect.width - margin.left - margin.right;
+    if (plotW <= 0) return null;
+    const fx = Math.min(1, Math.max(0, (clientX - rect.left - margin.left) / plotW));
+    const d0 = effXRef.current;
+    return d0[0] + fx * (d0[1] - d0[0]);
+  };
+  const getY = (clientY) => {
+    const el = chartRef.current;
+    if (!el) return null;
+    const wrapper = el.querySelector('.recharts-wrapper');
+    if (!wrapper) return null;
+    const rect = wrapper.getBoundingClientRect();
+    const plotH = rect.height - margin.top - margin.bottom;
+    if (plotH <= 0) return null;
+    const fy = Math.min(1, Math.max(0, (clientY - rect.top - margin.top) / plotH));
+    const d0 = effYRef.current;
+    return d0[1] - fy * (d0[1] - d0[0]);
+  };
+
+  useEffect(() => {
+    const mv = (e) => {
+      if (!dragging.current) return;
+      let ax = axisRef.current;
+      if (!ax) {
+        const dx = Math.abs(e.clientX - startPixel.current.x);
+        const dy = Math.abs(e.clientY - startPixel.current.y);
+        if (Math.max(dx, dy) < 4) return;
+        ax = axisRef.current = dx >= dy ? 'x' : 'y';
+      }
+      if (ax === 'x') {
+        const v = getX(e.clientX);
+        if (v !== null) setRef({ axis: 'x', x1: startVal.current.x, x2: v });
+      } else {
+        const v = getY(e.clientY);
+        if (v !== null) setRef({ axis: 'y', y1: startVal.current.y, y2: v });
+      }
+    };
+    const up = (e) => {
+      if (!dragging.current) return;
+      dragging.current = false;
+      const ax = axisRef.current;
+      if (ax === 'x') {
+        const end = getX(e.clientX);
+        const start = startVal.current.x;
+        if (start !== null && end !== null && Math.abs(end - start) > (effXRef.current[1] - effXRef.current[0]) * 0.01) {
+          setXDomain([Math.min(start, end), Math.max(start, end)]);
+        }
+      } else if (ax === 'y') {
+        const end = getY(e.clientY);
+        const start = startVal.current.y;
+        if (start !== null && end !== null && Math.abs(end - start) > (effYRef.current[1] - effYRef.current[0]) * 0.01) {
+          setYDomain([Math.min(start, end), Math.max(start, end)]);
+        }
+      }
+      axisRef.current = null;
+      startPixel.current = null;
+      startVal.current = null;
+      setRef(null);
+    };
+    window.addEventListener('mousemove', mv);
+    window.addEventListener('mouseup', up);
+    return () => { window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); };
+  }, []);
+
+  const onMouseDown = (e) => {
+    const xv = getX(e.clientX);
+    const yv = getY(e.clientY);
+    if (xv === null || yv === null) return;
+    dragging.current = true;
+    axisRef.current = null;
+    startPixel.current = { x: e.clientX, y: e.clientY };
+    startVal.current = { x: xv, y: yv };
+  };
+
+  const reset = () => { setXDomain(null); setYDomain(null); };
+  return { xDomain: effX, yDomain: effY, ref, onMouseDown, isZoomed: !!(xDomain || yDomain), reset };
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // INSTANCE LINKING — a per-test switch that decides whether the overlay shows
 // ALL instances/conditions together ("linked") or ONLY the active instance
 // ("single instance"). Flow Cytometry auto-defaults to single-instance when

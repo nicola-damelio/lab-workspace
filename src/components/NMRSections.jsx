@@ -1,5 +1,5 @@
 import NMRMoleculeViewer, { useShowAssignedFlag } from './NMRMoleculeViewer';
-import { ChartControlBar, SharedChartStylePanel, AngledTick, IntensityControl, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
+import { ChartControlBar, SharedChartStylePanel, AngledTick, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
 import { Icon } from './Icons';
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
@@ -4146,11 +4146,16 @@ const _nmrExtractAcqusDate = (text) => {
   const mKey = raw.match(/^##\$DATE=\s*([^\s\r\n]+)/m);
   const rawDate = mKey ? mKey[1] : null;
   const cand = rawDate || raw;
+  // Compact YYYYMMDD is only trusted when it comes straight from a ##$DATE value.
+  if (rawDate) {
+    const mCompact = rawDate.match(/^(\d{4})(\d{2})(\d{2})$/);
+    if (mCompact) return `${mCompact[1]}-${mCompact[2]}-${mCompact[3]}`;
+  }
   const mIso = cand.match(/(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/);
   if (mIso) return `${mIso[1]}-${String(mIso[2]).padStart(2, '0')}-${String(mIso[3]).padStart(2, '0')}`;
   const mUs = cand.match(/(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})/);
   if (mUs) return `${mUs[3]}-${String(mUs[1]).padStart(2, '0')}-${String(mUs[2]).padStart(2, '0')}`;
-  const mMon = cand.match(/(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{4})/);
+  const mMon = cand.match(/(\d{1,2})[-\/.\s]+([A-Za-z]{3,9})[-\/.\s]+(\d{4})/);
   if (mMon) {
     const months = { jan:1, feb:2, mar:3, apr:4, may:5, jun:6, jul:7, aug:8, sep:9, oct:10, nov:11, dec:12 };
     const mo = months[String(mMon[2]).slice(0,3).toLowerCase()];
@@ -4229,6 +4234,8 @@ const importBruker1rPpm = ({dataBuffer, imagBuffer=null, acqusText='', manualSWp
   const acqusParams = {
     NS: _nmrBrukerNum(acqus,'NS') || '',
     DS: _nmrBrukerNum(acqus,'DS') || '',
+    RG: _nmrBrukerNum(acqus,'RG') || '',
+    P1: _nmrBrukerNum(acqus,'P1') || '',
     D1: _nmrBrukerNum(acqus,'D1') || '',
     D8: _nmrBrukerNum(acqus,'D8') || '',
     D6: _nmrBrukerNum(acqus,'D6') || '',
@@ -4978,16 +4985,20 @@ export const DataSection = ({ ctx }) => {
   const [showBrukerCfg, setShowBrukerCfg] = useState(false);
   // 1D spectrum "Chart Parameters": full shared style system (like CD/ssNMR)
   // plus a `yScale` axis-height multiplier (default 2× so the spectrum occupies
-  // ~half the plot height) and the `intensity` vertical-amplifier (×1 default).
-  const nmr1dCfg = { ...DEFAULT_CHART_STYLE, yScale: 2, intensity: 1, lineColor: '#3b82f6', lineThickness: 1.5, fontSize: 9, ...(activeTest.nmr1dChartCfg || {}) };
+  // ~half the plot height). Zooming is done with the mouse: drag horizontally
+  // to zoom the ppm axis, vertically to zoom the intensity axis.
+  const nmr1dCfg = { ...DEFAULT_CHART_STYLE, yScale: 2, lineColor: '#3b82f6', lineThickness: 1.5, fontSize: 9, ...(activeTest.nmr1dChartCfg || {}) };
   const setNmr1dCfg = (patch) => updateActiveTest({ nmr1dChartCfg: { ...nmr1dCfg, ...patch } });
-  const nmr1dIntensity = Number(nmr1dCfg.intensity) > 0 ? Number(nmr1dCfg.intensity) : 1;
-  const setNmr1dIntensity = (v) => setNmr1dCfg({ intensity: Math.max(0.25, Math.min(16, v)) });
   const [expandedBruker, setExpandedBruker] = useState(false);
-  const [brukerZoomDom, setBrukerZoomDom] = useState(null);
+  const [brukerZoomDom, setBrukerZoomDom] = useState(null);   // X (ppm) zoomed domain
+  const [brukerYZoomDom, setBrukerYZoomDom] = useState(null); // Y (intensity) zoomed domain
   const [brukerRefL, setBrukerRefL] = useState(null);
   const [brukerRefR, setBrukerRefR] = useState(null);
+  const [brukerYRefL, setBrukerYRefL] = useState(null);
+  const [brukerYRefR, setBrukerYRefR] = useState(null);
   const brukerDragRef = useRef(false);
+  const brukerDragAxisRef = useRef(null);    // null | 'x' | 'y' — decided by the first pixels of the drag
+  const brukerStartPxRef = useRef(null);     // { x, y } client pixels at mousedown
   const brukerChartRef = useRef(null);
   const nmrBrukerFileRef = useRef(null);
 
@@ -5237,12 +5248,13 @@ export const DataSection = ({ ctx }) => {
       const row = {
         id: existing ? existing.id : 'instrumental_dataset_' + Date.now() + Math.random().toString(16).slice(2),
         experimentNumber: expNum,
-        name: parsed.datasetName || parsed.filename || filename || `Dataset ${expNum}`,
-        date: existing ? existing.date : (parsed.acqusDate || new Date().toISOString().split('T')[0]),
+        name: parsed.datasetName || (existing ? existing.name : '') || parsed.filename || filename || `Dataset ${expNum}`,
+        date: parsed.acqusDate || parsed.date || (existing ? existing.date : new Date().toISOString().split('T')[0]),
         operator: existing ? existing.operator : (activeTest.operator || ''),
         link: existing ? existing.link : '',
         comments: existing ? existing.comments : '',
-        acqus: existing ? existing.acqus : (parsed.acqusParams || {})
+        // Fresh acqus parameters always win, merged over any previous row values.
+        acqus: { ...(existing ? existing.acqus : {}), ...(parsed.acqusParams || {}) }
       };
       updates.instrumentalDatasets = existing
         ? existingDatasets.map((d) => (d.id === existing.id ? { ...d, ...row } : d))
@@ -5329,7 +5341,7 @@ export const DataSection = ({ ctx }) => {
         if (!parsed.error) {
           parsed.filename = title;
           parsed.datasetName = datasetName;
-          parsed.acqusDate = _nmrExtractAcqusDate(acqusText) || _nmrFileDate(oneR.lastModified) || '';
+          parsed.acqusDate = _nmrExtractAcqusDate(acqusText) || _nmrFileDate(acqusFile ? acqusFile.lastModified : 0) || _nmrFileDate(oneR.lastModified) || '';
           parsed.expType = expType;
           parsed.fileTitle = fileTitle;
           parsed.expDir = expDir;
@@ -5388,7 +5400,7 @@ export const DataSection = ({ ctx }) => {
                  id: 'instrumental_dataset_' + Date.now() + i + Math.random().toString(16).slice(2),
                  experimentNumber: expNum,
                  name: p.datasetName || p.filename || selected[i].filename || `Dataset ${expNum}`,
-                 date: p.acqusDate || new Date().toISOString().split('T')[0],
+                 date: p.acqusDate || p.date || new Date().toISOString().split('T')[0],
                  operator: activeTest.operator || '',
                  link: '',
                  comments: '',
@@ -5481,17 +5493,22 @@ export const DataSection = ({ ctx }) => {
     const xs = disp.xs, ys = disp.ys;
    const xFull = [Math.min(...xs), Math.max(...xs)];
 let dom = brukerZoomDom || xFull;
-    const isZoomed = !!(brukerZoomDom);
+    const isZoomed = !!(brukerZoomDom || brukerYZoomDom);
     // Rich "Chart Parameters" wiring: xMin/xMax from the panel override the
     // ppm domain, and the Y axis honours yMin/yMax (normalised data, max |y|=1)
-    // scaled by the y-axis-height multiplier and the intensity amplifier.
+    // scaled by the y-axis-height multiplier; both axes can also be zoomed by
+    // dragging with the mouse (horizontal = ppm, vertical = intensity).
     const pval = (v) => { const n = parseManual(v); return (v === '' || v == null || n === null || !Number.isFinite(n)) ? undefined : n; };
     const cfgXMin = pval(nmr1dCfg.xMin), cfgXMax = pval(nmr1dCfg.xMax);
     if (cfgXMin != null || cfgXMax != null) {
       dom = [cfgXMin ?? Math.min(...xs), cfgXMax ?? Math.max(...xs)];
     }
     const yMinV = pval(nmr1dCfg.yMin), yMaxV = pval(nmr1dCfg.yMax);
-    const yDom = [(yMinV ?? -0.05) / nmr1dIntensity, (yMaxV ?? 1.05 * (nmr1dCfg.yScale || 2)) / nmr1dIntensity];
+    // Default Y domain: normalised data (max |y| = 1) on an axis made `yScale`
+    // times taller; dragging on the intensity axis sets an absolute zoomed
+    // domain; manual yMin/yMax from the Chart Parameters panel override both.
+    const baseYDom = [yMinV ?? -0.05, yMaxV ?? 1.05 * (nmr1dCfg.yScale || 2)];
+    const effYDom = (yMinV != null || yMaxV != null) ? baseYDom : (brukerYZoomDom || baseYDom);
 
     const csMap = activeTest.chemicalShifts || {};
     const peakMarkers = [];
@@ -5514,6 +5531,11 @@ let dom = brukerZoomDom || xFull;
     const step = Math.max(1, Math.ceil(visible.length / 4000));
     const chartData = visible.filter((_,i) => i%step===0).map(p => ({x: p.x, y: p.y/maxY}));
 
+    const nmr1dLabelFontSize = Number(activeTest.nmr1dLabelFontSize) > 0 ? Number(activeTest.nmr1dLabelFontSize) : 12;
+    const nmr1dLabelColor = activeTest.nmr1dLabelColor || '#b91c1c';
+    const labelAreaH = (showPeakLabels && peakMarkers.length > 0) ? Math.min(220, 40 + peakMarkers.length * (nmr1dLabelFontSize + 10)) : 0;
+    const topMargin = 10;
+
     const getX = (clientX) => {
       if (!brukerChartRef.current) return null;
       const w = brukerChartRef.current.querySelector('.recharts-wrapper');
@@ -5524,34 +5546,70 @@ let dom = brukerZoomDom || xFull;
   const fx = Math.min(1, Math.max(0, (clientX - r.left - CHART_MARGIN.left) / plotW));
    return dom[1] - fx * (dom[1] - dom[0]);
     };
+    // Pixel → intensity value using the currently displayed Y domain (so a second
+    // drag zooms inside the previous Y zoom).
+    const getY = (clientY) => {
+      if (!brukerChartRef.current) return null;
+      const w = brukerChartRef.current.querySelector('.recharts-wrapper');
+      if (!w) return null;
+      const r = w.getBoundingClientRect();
+      const plotH = r.height - (topMargin + labelAreaH) - CHART_MARGIN.bottom;
+      if (plotH <= 0) return null;
+      const fy = Math.min(1, Math.max(0, (clientY - r.top - topMargin - labelAreaH) / plotH));
+      return effYDom[1] - fy * (effYDom[1] - effYDom[0]);
+    };
     const onDown = (e) => {
-      const v = getX(e.clientX); if (v===null) return;
+      const xv = getX(e.clientX), yv = getY(e.clientY);
+      if (xv === null || yv === null) return;
       // In calibration-pick mode a single click selects the ppm under the cursor.
       if (calibPicking) {
-        setCalibPickedPpm(v);
+        setCalibPickedPpm(xv);
         setCalibPicking(false);
         return;
       }
-      brukerDragRef.current = true; setBrukerRefL(v); setBrukerRefR(v);
+      brukerDragRef.current = true;
+      brukerDragAxisRef.current = null; // axis decided on the first move
+      brukerStartPxRef.current = { x: e.clientX, y: e.clientY };
+      setBrukerRefL(xv); setBrukerRefR(xv);
+      setBrukerYRefL(yv); setBrukerYRefR(yv);
     };
     const onMove = (e) => {
       if (!brukerDragRef.current) return;
-      const v = getX(e.clientX); if (v!==null) setBrukerRefR(v);
+      // Decide the zoom axis from the dominant direction of the drag:
+      // horizontal → ppm (X), vertical → intensity (Y).
+      let ax = brukerDragAxisRef.current;
+      if (!ax) {
+        const sp = brukerStartPxRef.current;
+        const dx = Math.abs(e.clientX - sp.x);
+        const dy = Math.abs(e.clientY - sp.y);
+        if (Math.max(dx, dy) < 4) return;
+        ax = brukerDragAxisRef.current = dx >= dy ? 'x' : 'y';
+      }
+      if (ax === 'x') {
+        const v = getX(e.clientX);
+        if (v !== null) setBrukerRefR(v);
+      } else {
+        const v = getY(e.clientY);
+        if (v !== null) setBrukerYRefR(v);
+      }
     };
     const onUp = () => {
       if (!brukerDragRef.current) return;
       brukerDragRef.current = false;
-   if (brukerRefL!==null && brukerRefR!==null && Math.abs(brukerRefL-brukerRefR)>0.01) {
-     const lo2=Math.min(brukerRefL,brukerRefR), hi2=Math.max(brukerRefL,brukerRefR);
-     setBrukerZoomDom([lo2, hi2]);
-   }
+      const ax = brukerDragAxisRef.current;
+      if (ax === 'x' && brukerRefL !== null && brukerRefR !== null && Math.abs(brukerRefL - brukerRefR) > 0.01) {
+        const lo2 = Math.min(brukerRefL, brukerRefR), hi2 = Math.max(brukerRefL, brukerRefR);
+        setBrukerZoomDom([lo2, hi2]);
+      } else if (ax === 'y' && brukerYRefL !== null && brukerYRefR !== null && Math.abs(brukerYRefL - brukerYRefR) > 0.01) {
+        const lo2 = Math.min(brukerYRefL, brukerYRefR), hi2 = Math.max(brukerYRefL, brukerYRefR);
+        setBrukerYZoomDom([lo2, hi2]);
+      }
+      brukerDragAxisRef.current = null;
+      brukerStartPxRef.current = null;
       setBrukerRefL(null); setBrukerRefR(null);
+      setBrukerYRefL(null); setBrukerYRefR(null);
     };
 
-    const nmr1dLabelFontSize = Number(activeTest.nmr1dLabelFontSize) > 0 ? Number(activeTest.nmr1dLabelFontSize) : 12;
-    const nmr1dLabelColor = activeTest.nmr1dLabelColor || '#b91c1c';
-    const labelAreaH = (showPeakLabels && peakMarkers.length > 0) ? Math.min(220, 40 + peakMarkers.length * (nmr1dLabelFontSize + 10)) : 0;
-    const topMargin = 10;
     const PANEL_H = expandedBruker ? '100%' : (Number(nmr1dCfg.height) > 0 ? Number(nmr1dCfg.height) : 260) + labelAreaH;
 
     return (
@@ -5564,7 +5622,10 @@ let dom = brukerZoomDom || xFull;
             {spec.meta?.sfo1 ? ' (' + spec.meta.sfo1.toFixed(0) + ' MHz)' : ''}
           </h5>
           <div className="flex items-center gap-2 flex-wrap">
-            {isZoomed && <button type="button" onClick={() => setBrukerZoomDom(null)} className="text-xs bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded font-bold">Reset zoom</button>}
+            {isZoomed && <button type="button" onClick={() => { setBrukerZoomDom(null); setBrukerYZoomDom(null); }} className="text-xs bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded font-bold">Reset zoom</button>}
+            <span className="text-[10px] text-slate-400 italic" title="Drag on the spectrum: horizontally to zoom the ppm axis, vertically to zoom the intensity axis">
+              🖱️ drag ←→ ppm · ↕ intensity
+            </span>
             <label className="flex items-center gap-1 text-xs font-bold text-slate-600 cursor-pointer">
               <input type="checkbox" checked={showPeakLabels} onChange={e => setShowPeakLabels(e.target.checked)} className="accent-blue-600" />
               Peak labels
@@ -5584,7 +5645,6 @@ let dom = brukerZoomDom || xFull;
                 </label>
               </>
             )}
-            <IntensityControl value={nmr1dIntensity} onChange={setNmr1dIntensity} />
             <label className="flex items-center gap-1 text-[11px] font-bold text-slate-500" title="Y-axis height multiplier — 2× means the axis is twice as tall so the peaks occupy ~half the plot height">
               Y-height
               <select value={nmr1dCfg.yScale} onChange={(e) => setNmr1dCfg({ yScale: parseFloat(e.target.value) })}
@@ -5598,7 +5658,7 @@ let dom = brukerZoomDom || xFull;
               ⚙️ Chart Parameters
             </button>
             <button type="button" onClick={() => setExpandedBruker(b => !b)} className="text-slate-400 hover:text-blue-600 text-lg px-1" title={expandedBruker ? 'Collapse' : 'Expand'}>{expandedBruker ? '\u2199\ufe0f' : '\u2197\ufe0f'}</button>
-            <button type="button" onClick={() => { updateActiveTest({nmr1dSpectrum: null}); setBrukerZoomDom(null); setNmrBrukerMsg(''); }} className="text-[10px] text-red-400 hover:text-red-600 font-bold">× Remove</button>
+            <button type="button" onClick={() => { updateActiveTest({nmr1dSpectrum: null}); setBrukerZoomDom(null); setBrukerYZoomDom(null); setNmrBrukerMsg(''); }} className="text-[10px] text-red-400 hover:text-red-600 font-bold">× Remove</button>
           </div>
         </div>
 
@@ -5711,10 +5771,11 @@ let dom = brukerZoomDom || xFull;
              tickFormatter={v => Number(v).toFixed(2)}
              tick={{fontSize: nmr1dCfg.fontSize, fill:'#64748b'}}
              label={{value: nmr1dCfg.xAxisLabel || 'Chemical Shift (ppm)', position:'insideBottom', offset:-12, fontSize:nmr1dCfg.fontSize, fill:'#64748b'}} />
-           <YAxis hide domain={yDom} />
+           <YAxis hide domain={effYDom} />
            <Tooltip formatter={v => Number(v).toFixed(3)} labelFormatter={v => Number(v).toFixed(2) + ' ppm'} />
            <Line type="monotone" dataKey="y" stroke={nmr1dCfg.colors?.spec || nmr1dCfg.lineColor || '#3b82f6'} strokeWidth={nmr1dCfg.lineThickness} strokeDasharray={lineDash(nmr1dCfg.lineStyle)} dot={false} isAnimationActive={false} connectNulls />
            {brukerRefL!==null && brukerRefR!==null && <ReferenceArea x1={brukerRefL} x2={brukerRefR} fill="#cbd5e1" fillOpacity={0.4} />}
+           {brukerYRefL!==null && brukerYRefR!==null && <ReferenceArea y1={brukerYRefL} y2={brukerYRefR} fill="#93c5fd" fillOpacity={0.35} />}
          </LineChart>
        </ResponsiveContainer>
           {showPeakLabels && peakMarkers.length > 0 && (

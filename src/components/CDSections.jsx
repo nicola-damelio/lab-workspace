@@ -10,7 +10,7 @@ import {
   ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line,
   Legend, ErrorBar, Cell, PieChart, Pie, ComposedChart
 } from 'recharts';
-import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, AngledTick, IntensityControl, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgAxisDomain, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
+import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, AngledTick, useXYZoom, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgAxisDomain, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, seriesColorFor, chartBoxStyle } from '../utils/chartStyle';
 import { parseJascoJwsBinary, isJascoJwsBinary } from '../utils/jascoJws';
@@ -2228,25 +2228,26 @@ export const SpectraVisualization = ({ ctx }) => {
   const padX = allXs.length ? ((Math.max(...allXs) - Math.min(...allXs)) * 0.03 || 1) : 1;
   const dataDomain = allXs.length ? [Math.min(...allXs) - padX, Math.max(...allXs) + padX] : [190, 260];
 
+  const allYs = visible.flatMap((s) => s.data.map((p) => p.y));
+  const yDataMin = allYs.length ? Math.min(...allYs) : 0;
+  const yDataMax = allYs.length ? Math.max(...allYs) : 1;
+
   const chartRef = useRef(null);
-  const zoom = useXZoom(chartRef, dataDomain);
+  // Combined X + Y mouse zoom: drag horizontally to zoom the wavelength axis,
+  // vertically to zoom the intensity axis.
+  const zoom = useXYZoom(chartRef, dataDomain, [yDataMin, yDataMax], CHART_MARGIN);
   const yLabel = activeTest.yUnit === 'theta' ? thetaUnitShort(thetaModeOf(activeTest)) : 'Ellipticity (mdeg)';
   const xLabel = cfg.xAxisLabel || 'Wavelength (nm)';
   const yLab = cfg.yAxisLabel || yLabel;
 
   const xScale = cfgLogScale(cfg, 'x');
   const yScale = cfgLogScale(cfg, 'y');
-  const xDomain = cfgAxisDomain(cfg, 'x', zoom.domain);
+  const xDomain = cfgAxisDomain(cfg, 'x', zoom.xDomain);
   const yMinV = dom(cfg.yMin), yMaxV = dom(cfg.yMax);
-  const allYs = visible.flatMap((s) => s.data.map((p) => p.y));
-  const yDataMin = allYs.length ? Math.min(...allYs) : 0;
-  const yDataMax = allYs.length ? Math.max(...allYs) : 1;
-  // Intensity amplifier (toolbar button): divides the Y domain so the peaks
-  // grow — ×1 = current auto range, ×2 = peaks twice as tall (clipped beyond).
-  const intensity = Number(cfg.intensity) > 0 ? Number(cfg.intensity) : 1;
+  const hasManualY = yMinV != null || yMaxV != null;
   const yDomain = yScale === 'log'
     ? [(yMinV != null && yMinV > 0 ? yMinV : 1e-3), (yMaxV != null ? yMaxV : 'auto')]
-    : [(yMinV ?? yDataMin) / intensity, (yMaxV ?? yDataMax) / intensity];
+    : hasManualY ? [yMinV ?? yDataMin, yMaxV ?? yDataMax] : zoom.yDomain;
 
   const chartBody = (
     <div ref={chartRef} onMouseDown={zoom.onMouseDown} style={fs ? { flex: 1, minHeight: 0 } : chartBoxStyle(cfg, { square: false })} className={`bg-white border border-slate-200 rounded-xl p-3 select-none relative ${fs ? 'w-full' : ''}`}>
@@ -2260,7 +2261,9 @@ export const SpectraVisualization = ({ ctx }) => {
           <Tooltip />
           {cfg.legend !== 'none' && <Legend verticalAlign={cfg.legend === 'bottom' ? 'bottom' : 'top'} wrapperStyle={{ fontSize: cfg.fontSize, paddingBottom: 8 }} />}
           {visible.map((s) => cfgSeriesEl(cfg, { key: s.key, data: s.data, dataKey: 'y', name: s.label, stroke: cfg.colors?.[s.key] || s.color }))}
-          {zoom.refLo !== null && zoom.refHi !== null && <ReferenceArea x1={zoom.refLo} x2={zoom.refHi} strokeOpacity={0.3} fill="#cbd5e1" />}
+          {zoom.ref && (zoom.ref.axis === 'x'
+            ? <ReferenceArea x1={zoom.ref.x1} x2={zoom.ref.x2} strokeOpacity={0.3} fill="#cbd5e1" />
+            : <ReferenceArea y1={zoom.ref.y1} y2={zoom.ref.y2} strokeOpacity={0.3} fill="#cbd5e1" />)}
         </ComposedChart>
       </ResponsiveContainer>
     </div>
@@ -2285,7 +2288,6 @@ export const SpectraVisualization = ({ ctx }) => {
         <h4 className="text-sm font-bold text-slate-700">📈 Spectra Visualization — all conditions overlaid</h4>
         <div className="flex gap-2">
           <InstanceLinkToggle activeTest={activeTest} updateActiveTest={updateActiveTest} />
-          <IntensityControl value={cfg.intensity} onChange={(v) => setCfg({ intensity: v })} />
           <ChartControlBar showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)} className="flex gap-2" />
           <button type="button" onClick={() => setFs(!fs)} className="font-bold py-1.5 px-3 rounded-lg text-xs border border-slate-300 bg-white text-slate-800 hover:bg-slate-50">{fs ? '↙️ Exit' : '↗️ Fullscreen'}</button>
         </div>
@@ -2330,7 +2332,7 @@ export const SpectraVisualization = ({ ctx }) => {
                       <LineChart data={s.data} margin={{ top: 5, right: 8, bottom: fsSmall === s.key ? 30 : 18, left: fsSmall === s.key ? 10 : 2 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                         <XAxis type="number" dataKey="x" tick={{ fontSize: fsSmall === s.key ? cfg.fontSize : 9, fill: '#64748b' }} domain={['dataMin', 'dataMax']} label={fsSmall === s.key ? { value: xLabel, position: 'insideBottom', offset: -20, fill: '#64748b', fontSize: cfg.fontSize + 1 } : undefined} />
-                        <YAxis domain={[yDataMin / intensity, yDataMax / intensity]} tick={{ fontSize: fsSmall === s.key ? cfg.fontSize : 9, fill: '#64748b' }} width={fsSmall === s.key ? 60 : 38} label={fsSmall === s.key ? { value: yLab, angle: -90, position: 'insideLeft', offset: -5, fill: '#64748b', fontSize: cfg.fontSize + 1 } : undefined} />
+                        <YAxis domain={[yDataMin, yDataMax]} tick={{ fontSize: fsSmall === s.key ? cfg.fontSize : 9, fill: '#64748b' }} width={fsSmall === s.key ? 60 : 38} label={fsSmall === s.key ? { value: yLab, angle: -90, position: 'insideLeft', offset: -5, fill: '#64748b', fontSize: cfg.fontSize + 1 } : undefined} />
                         {fsSmall === s.key && <Tooltip />}
                         <Line type="monotone" dataKey="y" stroke={s.color} strokeWidth={cfg.lineThickness || 2} strokeDasharray={lineDash(cfg.lineStyle)} dot={false} isAnimationActive={false} />
                       </LineChart>
