@@ -7,6 +7,7 @@ import React, { lazy, useRef } from 'react';
 import { BoxDetail } from '../Storage';
 import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES, EXPERIMENT_TYPES } from '../../data/testTypes';
 import { markAttachmentsDeleted, renameDriveFilesFor, deleteTestDriveFolder } from '../../utils/driveUpload';
+import { removeTestFcsBlobs } from '../../utils/fcsBlobStore';
 import { Icon } from '../Icons';
 // Lazy renderers (kept as dynamic imports so each stays its own chunk).
 const NMRTestRenderer = lazy(() => import('../NMRTestRenderer').then(m => ({ default: m.NMRTestRenderer })));
@@ -230,6 +231,8 @@ const TestHeader = (
                                 markAttachmentsDeleted(t).catch(() => {});
                                 // Remove the test's Drive folder too — the Drive tree mirrors the program.
                                 deleteTestDriveFolder(t).catch(() => {});
+                                // Drop the raw .fcs files cached in the browser (IndexedDB).
+                                removeTestFcsBlobs(t).catch(() => {});
                               });
                             }
                           }}

@@ -2,6 +2,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { suggestDriveFileName } from '../utils/driveNaming';
 import { uploadLocalFile, withExtension, getDriveToken, getDriveFileRegistry, driveFetch } from '../utils/driveUpload';
+import { saveFcsFile, loadFcsFile, removeFcsFile } from '../utils/fcsBlobStore';
 import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Line, ComposedChart, Area, ReferenceArea} from 'recharts';
 import { ChartControlBar, SharedChartStylePanel, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
@@ -1000,6 +1001,7 @@ export const FCSDataVisualizations = ({ ctx, updater }) => {
   // Remove an extra spectrum that was loaded into the same instance.
   const removeExtraFile = (extraId) => {
     delete globalFcsCache[extraId];
+    removeFcsFile(extraId);
     updateActiveTest({ fcExtraFiles: (activeTest.fcExtraFiles || []).filter((f) => f.id !== extraId) });
   };
 
@@ -2180,6 +2182,59 @@ export const restoreFcsCacheFromTest = (activeTest = {}) => {
   });
 };
 
+const parseFcsFileFromBlob = (blob) => new Promise((resolve) => {
+  if (!blob) return resolve(null);
+  try {
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try { resolve(parseFCSFile(ev.target.result)); }
+      catch { resolve(null); }
+    };
+    reader.onerror = () => resolve(null);
+    reader.readAsArrayBuffer(blob);
+  } catch { resolve(null); }
+});
+
+/**
+ * Rebuild the in-memory cache from the IndexedDB copy of the raw .fcs files —
+ * the safety net for files too large to persist in the dataset payload (their
+ * fcParsed / fcExtraFiles[].data is null). Returns the number of files that
+ * were restored. Filenames are validated so a stale blob from another dataset
+ * that happens to reuse the same test id is never picked up.
+ */
+export const restoreFcsCacheFromIndexedDb = async (activeTest = {}) => {
+  if (!activeTest || typeof activeTest !== 'object' || !activeTest.id) return 0;
+  let restored = 0;
+
+  // Main file — only restore when the test declares a file name to validate.
+  if (!globalFcsCache[activeTest.id] && activeTest.fcsFileName) {
+    const stored = await loadFcsFile(activeTest.id);
+    if (stored && stored.file && stored.filename === activeTest.fcsFileName) {
+      const parsed = await parseFcsFileFromBlob(stored.file);
+      if (parsed) {
+        parsed.filename = stored.filename || parsed.filename || activeTest.fcsFileName;
+        globalFcsCache[activeTest.id] = parsed;
+        restored++;
+      }
+    }
+  }
+
+  for (const f of (activeTest.fcExtraFiles || [])) {
+    if (!f || !f.id || globalFcsCache[f.id] || !f.filename) continue;
+    const stored = await loadFcsFile(f.id);
+    if (stored && stored.file && stored.filename === f.filename) {
+      const parsed = await parseFcsFileFromBlob(stored.file);
+      if (parsed) {
+        parsed.filename = stored.filename || f.filename;
+        globalFcsCache[f.id] = parsed;
+        restored++;
+      }
+    }
+  }
+
+  return restored;
+};
+
 // =========================================================================
 // MAIN DATA SECTION
 // =========================================================================
@@ -2192,9 +2247,6 @@ export const restoreFcsCacheFromTest = (activeTest = {}) => {
 export const Data = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const t = activeTest || {};
-  // Restore the in-memory FCS cache from the persisted data when the test is
-  // reopened (idempotent — only fills missing entries).
-  restoreFcsCacheFromTest(t);
   // True when the test previously received FCS data that was too large to
   // persist and the in-memory cache is empty (e.g. after a page reload).
   const persistedFcsWasTooLarge = !globalFcsCache[t.id] && (
@@ -2231,6 +2283,22 @@ export const Data = ({ ctx }) => {
   // (instance) per file.
   const [fcsMultiMode, setFcsMultiMode] = useState('same');
 
+  // Restore the in-memory FCS cache when the test is (re)opened: first from the
+  // persisted payload (small files), then from the IndexedDB copy of the raw
+  // files (files too large for the payload, e.g. after a page reload).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      restoreFcsCacheFromTest(t);
+      const restored = await restoreFcsCacheFromIndexedDb(t);
+      if (cancelled) return;
+      if (restored > 0) setFcsMsg(`✅ Restored ${restored} .fcs file(s) from the browser cache.`);
+      setUpdater((u) => u + 1);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [t.id]);
+
   const handleFCSUpload = async (e) => {
     const files = Array.from(e.target.files);
     if (!files.length) return;
@@ -2266,6 +2334,10 @@ export const Data = ({ ctx }) => {
       metadataUpdates.instanceName = first.filename.replace(/\.[^/.]+$/, "");
       // Persist the parsed data on the test so it survives close/reopen.
       metadataUpdates.fcParsed = serializeFcsForSave(first);
+      // Raw file kept in the browser (IndexedDB) so even files too large for
+      // fcParsed survive a page reload; fcsFileName validates the cached copy.
+      metadataUpdates.fcsFileName = results[0].file.name || first.filename || '';
+      saveFcsFile(activeTest.id, results[0].file);
       
       const currentPanel = Array.isArray(t.fcPanel) ? t.fcPanel : [];
       if (currentPanel.length === 0) {
@@ -2289,6 +2361,7 @@ export const Data = ({ ctx }) => {
             const extraId = 'fcx' + Date.now() + i + Math.random().toString(36).substring(2, 5);
             globalFcsCache[extraId] = parsed;
             extraFiles.push({ id: extraId, filename: parsed.filename || `Spectrum ${i + 1}`, data: serializeFcsForSave(parsed) });
+            saveFcsFile(extraId, results[i].file);
           }
           updateActiveTest({ fcExtraFiles: extraFiles });
         } else if (ctx.setTests) {
@@ -2305,6 +2378,8 @@ export const Data = ({ ctx }) => {
                   cloned.id = newId;
                   cloned.instanceName = parsed.filename.replace(/\.[^/.]+$/, "");
                   cloned.fcParsed = serializeFcsForSave(parsed);
+                  cloned.fcsFileName = results[i].file.name || parsed.filename || '';
+                  saveFcsFile(newId, results[i].file);
                   // Do NOT inherit the first instance's extra spectra — each new
                   // instance gets its own files.
                   delete cloned.fcExtraFiles;
@@ -2384,6 +2459,7 @@ export const Data = ({ ctx }) => {
       let restored = 0;
       let mainDone = false;
       let mainSerialized = undefined;
+      let mainFilename = '';
       const extras = [...(t.fcExtraFiles || [])];
       for (const entry of entries) {
         try {
@@ -2397,6 +2473,10 @@ export const Data = ({ ctx }) => {
             globalFcsCache[activeTest.id] = parsed;
             mainDone = true;
             mainSerialized = serializeFcsForSave(parsed);
+            mainFilename = parsed.filename || activeTest.fcsFileName || '';
+            // Keep the downloaded copy in the browser cache too, so future
+            // reloads do not need to hit Google Drive again.
+            saveFcsFile(activeTest.id, new File([buf], parsed.filename, { type: 'application/octet-stream' }));
           } else {
             const stem = String(parsed.filename || '').replace(/\.[^/.]+$/, '');
             let extra = extras.find((x) => x && String(x.filename || '').replace(/\.[^/.]+$/, '') === stem);
@@ -2406,12 +2486,14 @@ export const Data = ({ ctx }) => {
             }
             globalFcsCache[extra.id] = parsed;
             extra.data = serializeFcsForSave(parsed) || extra.data;
+            saveFcsFile(extra.id, new File([buf], parsed.filename, { type: 'application/octet-stream' }));
           }
           restored++;
         } catch { /* keep going with the next file */ }
       }
       const updates = {};
       if (mainSerialized !== undefined) updates.fcParsed = mainSerialized;
+      if (mainFilename) updates.fcsFileName = mainFilename;
       if (extras.length) updates.fcExtraFiles = extras;
       if (Object.keys(updates).length) updateActiveTest(updates);
       setUpdater(u => u + 1);
@@ -2497,8 +2579,10 @@ export const Data = ({ ctx }) => {
           </div>
           {persistedFcsWasTooLarge && (
             <p className="text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-              ⚠️ I file .fcs di questo esperimento erano troppo grandi per essere salvati nel dataset —
-              ricaricali per rivederli dopo la riapertura.
+              ⚠️ Some .fcs files are too large to embed in the saved dataset. They are archived in
+              Google Drive and in the browser cache and are restored automatically on this computer.
+              If they do not reappear, use “Restore from Drive” (needed when opening the dataset from
+              another computer).
             </p>
           )}
         </div>
@@ -2577,9 +2661,6 @@ export const Data = ({ ctx }) => {
 
 export const DataAnalysis = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
-  // Restore the in-memory FCS cache from the persisted data when the test is
-  // reopened (idempotent — only fills missing entries).
-  restoreFcsCacheFromTest(activeTest);
   const populations = Array.isArray(activeTest.fcPopulations) ? activeTest.fcPopulations : [];
   
   const chartData = populations.filter(p => p.percentParent !== '' && p.percentParent !== undefined).map(p => ({
@@ -2591,6 +2672,21 @@ export const DataAnalysis = ({ ctx }) => {
   const cfgFreq = { ...DEFAULT_CHART_STYLE, ...vizCfgFreq };
   const [fsFreq, setFsFreq] = useState(false);
   const [showCfgFreq, setShowCfgFreq] = useState(false);
+
+  // Restore the in-memory FCS cache when the test is (re)opened — the payload
+  // copy first (small files), then the IndexedDB copy for files too large for
+  // the payload (e.g. after a page reload).
+  const [, forceRender] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      restoreFcsCacheFromTest(activeTest);
+      await restoreFcsCacheFromIndexedDb(activeTest);
+      if (!cancelled) forceRender((v) => v + 1);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTest && activeTest.id]);
 
   return (
     <CollapsibleSection title="Data Analysis & Visualization" icon="📊" defaultOpen={false}>

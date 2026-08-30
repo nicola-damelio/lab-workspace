@@ -1320,7 +1320,40 @@ const compressDatasetForSave = (raw) => {
   };
   if (sizeOf(cleaned) <= budget) return compress(cleaned);
 
-  // Stage 2: iteratively drop the LARGEST base64 images embedded in notebook
+  // Stage 2: the serialized FCS payloads (fcParsed / fcExtraFiles[].data) are
+  // RECOVERABLE — the raw files are kept in the browser IndexedDB cache and in
+  // Google Drive — so they are the first thing to drop. Removed one at a time
+  // (largest first) so small files keep their fast restore path.
+  {
+    let guard = 0;
+    while (sizeOf(cleaned) > budget && guard < 40) {
+      guard++;
+      let best = null; // { testIndex, kind, extraIdx, size }
+      (cleaned.tests || []).forEach((test, ti) => {
+        if (!test) return;
+        if (typeof test.fcParsed === 'string' && (!best || test.fcParsed.length > best.size)) {
+          best = { testIndex: ti, kind: 'main', size: test.fcParsed.length };
+        }
+        if (Array.isArray(test.fcExtraFiles)) {
+          test.fcExtraFiles.forEach((f, ei) => {
+            if (f && typeof f.data === 'string' && (!best || f.data.length > best.size)) {
+              best = { testIndex: ti, kind: 'extra', extraIdx: ei, size: f.data.length };
+            }
+          });
+        }
+      });
+      if (!best) break;
+      if (best.kind === 'main') {
+        cleaned.tests[best.testIndex].fcParsed = null;
+      } else {
+        const f = cleaned.tests[best.testIndex].fcExtraFiles[best.extraIdx];
+        cleaned.tests[best.testIndex].fcExtraFiles[best.extraIdx] = { ...f, data: null };
+      }
+    }
+  }
+  if (sizeOf(cleaned) <= budget) return compress(cleaned);
+
+  // Stage 3: iteratively drop the LARGEST base64 images embedded in notebook
   // `comments` until the payload fits (a single image below 40 KB may still
   // overflow when there are many of them). Each dropped image is replaced with
   // a placeholder note, so no content is ever silently lost from the document.
@@ -1343,9 +1376,9 @@ const compressDatasetForSave = (raw) => {
   }
   if (sizeOf(cleaned) <= budget) return compress(cleaned);
 
-  // Stage 3 (absolute last resort — the save must never fail): cap the largest
-  // analysis arrays (MD time series). The notebook re-renders figures from data
-  // and the per-atom table already holds the imported per-atom values.
+  // Stage 4: cap the largest analysis arrays (MD time series). The notebook
+  // re-renders figures from data and the per-atom table already holds the
+  // imported per-atom values.
   cleaned.tests = (cleaned.tests || []).map((test) => {
     if (!test) return test;
     const clean = { ...test };
@@ -1356,6 +1389,86 @@ const compressDatasetForSave = (raw) => {
     }
     return clean;
   });
+  if (sizeOf(cleaned) <= budget) return compress(cleaned);
+
+  // Stage 5 (guarantee — the save must NEVER fail): iteratively drop the
+  // heaviest binary/data values left in ANY experiment page — long base64
+  // blobs (attachments, documents, images) and big numeric arrays (spectra) —
+  // replacing each with a small marker. This is the safety net that keeps the
+  // dataset writable no matter how much data an experiment accumulates; the
+  // marker tells the affected page the value was omitted for size. Notebook
+  // `comments` are never touched here (their images are handled in Stage 3).
+  const isFiniteNumber = (x) => typeof x === 'number' && Number.isFinite(x);
+  const isBigNumericArray = (v) => Array.isArray(v) && v.length > 400 && v.every(isFiniteNumber);
+  const approxSizeOf = (v) => {
+    if (typeof v === 'string') return v.length;
+    if (typeof v === 'number') return 8;
+    if (Array.isArray(v)) { let s = 0; for (let i = 0; i < v.length; i++) s += approxSizeOf(v[i]); return s; }
+    if (v && typeof v === 'object') { let s = 0; for (const k in v) s += approxSizeOf(v[k]); return s; }
+    return 4;
+  };
+  const collectHeavy = (node, path, out) => {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) {
+      if (isBigNumericArray(node)) { out.push({ path, size: node.length * 8 }); return; }
+      for (let i = 0; i < node.length; i++) {
+        const v = node[i];
+        if (v && typeof v === 'object') collectHeavy(v, `${path}[${i}]`, out);
+        else if (typeof v === 'string' && v.length > 20000) out.push({ path: `${path}[${i}]`, size: v.length });
+      }
+      return;
+    }
+    const vals = Object.values(node);
+    if (vals.length) {
+      const heavyNumeric = vals.filter(isBigNumericArray).length;
+      const heavyStrings = vals.filter((v) => typeof v === 'string' && v.length > 20000).length;
+      // Drop the object as a single unit only when it is essentially pure data:
+      // a spectrum ({xs, ys}) or a blob whose every child is a huge string.
+      const unitDroppable =
+        (heavyNumeric > 0 && heavyNumeric >= Math.min(2, Math.ceil(vals.length / 2))) ||
+        (heavyStrings === vals.length && vals.length > 0);
+      if (unitDroppable) {
+        const total = approxSizeOf(node);
+        if (total > 50000) { out.push({ path, size: total }); return; }
+      }
+    }
+    Object.keys(node).forEach((k) => {
+      if (k === 'comments') return; // user notebook text is never dropped here
+      const v = node[k];
+      if (v && typeof v === 'object') collectHeavy(v, path ? `${path}.${k}` : k, out);
+      else if (typeof v === 'string' && v.length > 20000) out.push({ path: path ? `${path}.${k}` : k, size: v.length });
+    });
+  };
+  const setByPath = (root, path, value) => {
+    if (!root) return;
+    const segs = [];
+    const re = /([^.[\]]+)|\[(\d+)\]/g;
+    let m;
+    while ((m = re.exec(path))) segs.push(m[2] !== undefined ? Number(m[2]) : m[1]);
+    let cur = root;
+    for (let i = 0; i < segs.length - 1; i++) {
+      if (cur == null || typeof cur !== 'object') return;
+      cur = cur[segs[i]];
+    }
+    if (cur == null || typeof cur !== 'object') return;
+    cur[segs[segs.length - 1]] = value;
+  };
+  {
+    let guard = 0;
+    while (sizeOf(cleaned) > budget && guard < 60) {
+      guard++;
+      let best = null;
+      (cleaned.tests || []).forEach((test, ti) => {
+        if (!test || typeof test !== 'object') return;
+        const out = [];
+        collectHeavy(test, '', out);
+        out.forEach((c) => { if (!best || c.size > best.size) best = { testIndex: ti, path: c.path, size: c.size }; });
+      });
+      if (!best) break;
+      const label = (best.path.split(/[.[\]]/).filter(Boolean).pop() || 'data');
+      setByPath(cleaned.tests[best.testIndex], best.path, `[${label} omitted — kept in browser cache / Drive or re-uploadable]`);
+    }
+  }
   return compress(cleaned);
 };
 useEffect(() => {
@@ -1846,6 +1959,8 @@ const handleBackToExplorer = async () => {
       }
     } catch (e) {
       console.error('Back to explorer save error:', e);
+      setSaveStatus('error');
+      setSaveErrorMsg(e.message || String(e));
     }
   }
   window.history.pushState({}, '', window.location.pathname);

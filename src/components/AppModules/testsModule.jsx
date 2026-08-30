@@ -8,6 +8,7 @@ import { PRIMARY_CATEGORIES, CLASSIFICATION_MAP, EXPERIMENT_TYPES } from '../../
 import { SearchableSelect } from '../SearchableSelect';
 import { Icon } from '../Icons';
 import { markAttachmentsDeleted, deleteTestDriveFolder } from '../../utils/driveUpload';
+import { removeTestFcsBlobs } from '../../utils/fcsBlobStore';
 
 const TEST_CARD_ICON = {
   nmr: 'chart-line',
@@ -130,6 +131,8 @@ export const TestsModule = ({
                     markAttachmentsDeleted(t).catch(() => {});
                     // Remove the test's Drive folder too — the Drive tree mirrors the program.
                     deleteTestDriveFolder(t).catch(() => {});
+                    // Drop the raw .fcs files cached in the browser (IndexedDB).
+                    removeTestFcsBlobs(t).catch(() => {});
                   });
                 };
                 const rejectDeletion = (test) => {
