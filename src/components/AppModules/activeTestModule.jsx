@@ -3,7 +3,7 @@
    Active Test detail view, extracted from App.jsx. Props-only.
    ========================================================================= */
 
-import React, { lazy, useRef } from 'react';
+import React, { lazy, useRef, useState, useEffect } from 'react';
 import { BoxDetail } from '../Storage';
 import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES, EXPERIMENT_TYPES } from '../../data/testTypes';
 import { markAttachmentsDeleted, renameDriveFilesFor, deleteTestDriveFolder } from '../../utils/driveUpload';
@@ -35,6 +35,11 @@ export const ActiveTestModule = ({
                 const dragInstanceId = React.useRef(null); // dragged instance tab (for reordering)
                 const testNameBeforeEditRef = useRef(null); // Drive-file rename tracking
                 const instanceNameBeforeEditRef = useRef(null); // Drive-file rename tracking (instance)
+                // Top-bar "Expand all / Collapse all" toggle for the page sections.
+                const [allSectionsOpen, setAllSectionsOpen] = useState(false);
+                // Switching to a different test resets the toggle (its sections
+                // all start collapsed again).
+                useEffect(() => { setAllSectionsOpen(false); }, [activeTestId]);
                 const activeTest = tests.find((t) => t.id === activeTestId);
 
                 if (!activeTest) return <div className="p-6">Test not found.</div>;
@@ -207,6 +212,20 @@ const TestHeader = (
                       </div>
 
                       <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full lg:w-auto flex-wrap">
+                        {!isBox && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const next = !allSectionsOpen;
+                              setAllSectionsOpen(next);
+                              try { window.dispatchEvent(new CustomEvent('lab:toggle-all-sections', { detail: { open: next } })); } catch { /* ignore */ }
+                            }}
+                            className={`font-bold py-2 px-3 rounded-lg text-xs border shadow-sm transition-colors ${allSectionsOpen ? 'bg-slate-100 text-slate-600 border-slate-300 hover:bg-slate-200' : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'}`}
+                            title={allSectionsOpen ? 'Close all sections and subsections' : 'Expand all sections and subsections'}
+                          >
+                            {allSectionsOpen ? '▾ Collapse all' : '▸ Expand all'}
+                          </button>
+                        )}
                         <button
                           onClick={() => {
                             // Deleting an experiment removes ALL its instances

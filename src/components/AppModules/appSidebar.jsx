@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Icon } from '../Icons';
-import { getDriveToken, getDriveAccountEmail } from '../../utils/driveUpload';
+import { getDriveToken, getDriveAccountEmail, clearDriveToken } from '../../utils/driveUpload';
 import { openDrive } from '../../utils/driveNaming';
 
 export const AppSidebar = ({
@@ -235,6 +235,16 @@ export const AppSidebar = ({
                       className="text-xs font-bold text-blue-600 hover:text-blue-800 underline"
                     >
                       Open ↗
+                    </button>
+                    <button
+                      onClick={() => {
+                        clearDriveToken();
+                        try { window.dispatchEvent(new CustomEvent('lab:drive-disconnected')); } catch { /* ignore */ }
+                      }}
+                      className="text-xs font-bold text-red-500 hover:text-red-700 underline"
+                      title="Disconnect Google Drive (you can reconnect at any time)"
+                    >
+                      Disconnect
                     </button>
                   </div>
                 ) : (

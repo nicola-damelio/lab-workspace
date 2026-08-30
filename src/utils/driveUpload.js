@@ -26,25 +26,50 @@
    ========================================================================= */
 
 const TOKEN_KEY = 'labDriveAccessToken';
+const TOKEN_EXPIRY_KEY = 'labDriveAccessTokenExpiresAt';
 const FOLDER_ID_KEY = 'labDriveFolderId';
 const FOLDER_DATASET_KEY = 'labDriveFolderDatasetId';
-const FOLDER_NAME_KEY = 'labDriveFolderName';
-import { suggestDriveFileName, sanitizeSlug, driveFolderPath } from './driveNaming';
 
-/** The Google OAuth access token (with drive.file scope) from the last sign-in.
- *  Stored in localStorage so it survives tab switches / page reloads (the
- *  token itself still expires after ~1h and needs a re-connect then). */
+/**
+ * Google's OAuth access tokens expire after ~1 hour. We store the expiry time
+ * (from the token response) and treat an expired token as "not connected", so
+ * the UI shows "Connect Drive" again instead of looking connected while every
+ * request fails.
+ */
 export const getDriveToken = () => {
-  try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; }
+  try {
+    const token = localStorage.getItem(TOKEN_KEY) || '';
+    if (!token) return '';
+    const exp = parseInt(localStorage.getItem(TOKEN_EXPIRY_KEY) || '0', 10);
+    if (exp && Date.now() > exp) {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(TOKEN_EXPIRY_KEY);
+      return '';
+    }
+    return token;
+  } catch { return ''; }
 };
 
-export const setDriveToken = (token) => {
-  try { localStorage.setItem(TOKEN_KEY, String(token || '')); } catch { /* ignore */ }
+export const setDriveToken = (token, expiresInSec) => {
+  try {
+    localStorage.setItem(TOKEN_KEY, String(token || ''));
+    if (expiresInSec && expiresInSec > 0) {
+      // Keep ~5 minutes of grace before Google actually rejects the token.
+      localStorage.setItem(TOKEN_EXPIRY_KEY, String(Date.now() + (expiresInSec - 300) * 1000));
+    } else {
+      localStorage.removeItem(TOKEN_EXPIRY_KEY);
+    }
+  } catch { /* ignore */ }
 };
 
 export const clearDriveToken = () => {
-  try { localStorage.removeItem(TOKEN_KEY); } catch { /* ignore */ }
+  try {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(TOKEN_EXPIRY_KEY);
+  } catch { /* ignore */ }
 };
+const FOLDER_NAME_KEY = 'labDriveFolderName';
+import { suggestDriveFileName, sanitizeSlug, driveFolderPath } from './driveNaming';
 
 /** Verify the stored token really works against the Drive API (the scope can be silently missing). */
 export const testDriveAccess = async () => {
@@ -890,7 +915,7 @@ export const connectDriveWithGis = async () => {
         scope: 'https://www.googleapis.com/auth/drive.file',
         callback: (resp) => {
           if (resp && resp.access_token) {
-            setDriveToken(resp.access_token);
+            setDriveToken(resp.access_token, resp.expires_in);
             resolve(true);
           } else {
             clearDriveToken();

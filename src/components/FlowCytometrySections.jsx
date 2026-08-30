@@ -2554,9 +2554,12 @@ export const Data = ({ ctx }) => {
       if (Object.keys(updates).length) updateActiveTest(updates);
       setUpdater(u => u + 1);
       if (restored === 0) autoDriveRestoreDone.delete(t.id); // allow auto-retry after a reconnect
+      const networkErr = failReason && /failed to fetch|networkerror|load failed|offline/i.test(failReason);
       setFcsMsg(restored > 0
         ? `✅ Restored ${restored} .fcs file(s) from Google Drive.`
-        : `⚠️ Could not download the .fcs files from Google Drive${failReason ? ` (${failReason})` : ''}. If the Drive token expired, reconnect Google Drive from the sidebar and try again.`);
+        : networkErr
+          ? `⚠️ Could not reach Google Drive (${failReason}). This is a network / browser-blocking problem, not an expired token — check your internet connection, VPN / proxy or ad-blocker, then try again.`
+          : `⚠️ Could not download the .fcs files from Google Drive${failReason ? ` (${failReason})` : ''}. If the Drive token expired, reconnect Google Drive from the sidebar and try again.`);
     } catch (err) {
       setFcsMsg(`⚠️ Restore error: ${err.message} (reconnect Google Drive from the sidebar if the token expired).`);
       console.error('FCS Drive restore error:', err);

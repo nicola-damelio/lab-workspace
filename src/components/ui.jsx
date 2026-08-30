@@ -16,12 +16,42 @@ import { Icon } from './Icons';
                              settings screens (small uppercase title,
                              optional subtitle, ▲/▼ chevron, px-4 pb-4
                              content). Default: closed.
+
+   Both listen for the global "lab:toggle-all-sections" event dispatched by
+   the top-bar "Expand all / Collapse all" button of the experiment pages.
    ========================================================================= */
+
+// One-shot "expand all / collapse all" command. Kept for a short window so
+// nested sections that MOUNT only after their parent opens (the event has
+// already fired by then) still honour it.
+let sectionsCommand = null;
+const SECTIONS_COMMAND_TTL = 2000;
 
 export const CollapsibleSection = ({
   title, icon, defaultOpen = false, children, headerExtra, className = ''
 }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
+
+  // Nested sections mount AFTER the toggle event (once their parent opens);
+  // honour a recent expand-all/collapse-all command so subsections follow too.
+  useEffect(() => {
+    if (sectionsCommand && Date.now() - sectionsCommand.at < SECTIONS_COMMAND_TTL) {
+      setIsOpen(sectionsCommand.open);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // React to the top-bar "Expand all / Collapse all" button.
+  useEffect(() => {
+    const onToggle = (e) => {
+      const open = !!(e && e.detail && e.detail.open);
+      sectionsCommand = { open, at: Date.now() };
+      setIsOpen(open);
+    };
+    window.addEventListener('lab:toggle-all-sections', onToggle);
+    return () => window.removeEventListener('lab:toggle-all-sections', onToggle);
+  }, []);
+
   return (
     <div className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-3 break-inside-avoid ${className}`}>
       <div
@@ -50,6 +80,24 @@ export const CollapsibleSectionPanel = ({ id, title, subtitle, defaultOpen = fal
   useEffect(() => {
     setOpen(defaultOpen);
   }, [defaultOpen]);
+
+  // Honour the top-bar "Expand all / Collapse all" command (and the short
+  // mount window for nested panels).
+  useEffect(() => {
+    if (sectionsCommand && Date.now() - sectionsCommand.at < SECTIONS_COMMAND_TTL) {
+      setOpen(sectionsCommand.open);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    const onToggle = (e) => {
+      const next = !!(e && e.detail && e.detail.open);
+      sectionsCommand = { open: next, at: Date.now() };
+      setOpen(next);
+    };
+    window.addEventListener('lab:toggle-all-sections', onToggle);
+    return () => window.removeEventListener('lab:toggle-all-sections', onToggle);
+  }, []);
 
   return (
     <div id={id} className={`bg-white border border-slate-200 rounded-xl shadow-sm overflow-visible scroll-mt-6 ${className}`}>
