@@ -71,6 +71,24 @@ export const ActiveTestModule = ({
                   );
                 };
 
+                // Renaming the experiment NAME renames the WHOLE group — all
+                // sibling instances share the same `name`, so editing only the
+                // active one would detach it into a 1-instance "copy" while the
+                // old name keeps the other instances. Per-instance labels are
+                // edited separately via instanceName.
+                const handleTestNameChange = (value) => {
+                  if (projectViewOnly) return;
+                  const prevName = activeTest.name;
+                  if (value === prevName) return;
+                  setTests((prevTests) =>
+                    prevTests.map((t) =>
+                      t.id === activeTestId || (!isBox && prevName && prevName.trim() && t.name === prevName)
+                        ? { ...t, name: value }
+                        : t
+                    )
+                  );
+                };
+
                 const isBox = activeTest.type === 'plate-9x9box';
 
                 const siblingTests = isBox
@@ -187,7 +205,7 @@ const TestHeader = (
                         <div className="flex-1 w-full">
                           <input
                             value={activeTest.name}
-                            onChange={(e) => updateActiveTest({ name: e.target.value })}
+                            onChange={(e) => handleTestNameChange(e.target.value)}
                             onFocus={() => { testNameBeforeEditRef.current = activeTest.name; }}
                             onBlur={() => {
                               const before = testNameBeforeEditRef.current;

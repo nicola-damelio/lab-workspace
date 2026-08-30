@@ -2351,6 +2351,7 @@ export const Data = ({ ctx }) => {
   // the current instance as extra spectra; 'separate' creates one condition
   // (instance) per file.
   const [fcsMultiMode, setFcsMultiMode] = useState('same');
+  const [archivingCached, setArchivingCached] = useState(false);
 
   // Restore the in-memory FCS cache when the test is (re)opened: first from the
   // persisted payload (small files), then from the IndexedDB copy of the raw
@@ -2538,8 +2539,8 @@ export const Data = ({ ctx }) => {
       setFcsMsg(driveConnected
         ? (driveSaved === results.length
             ? `✅ Successfully loaded ${results.length} file(s) — all saved to Google Drive.`
-            : `⚠️ Successfully loaded ${results.length} file(s) — ${driveSaved} saved to Google Drive. Drive access expired or unavailable: reconnect Google Drive, then use “Archive FCS to Drive”.`)
-        : `✅ Successfully loaded ${results.length} file(s). (Drive not connected — raw files not archived.)`);
+            : `⚠️ Successfully loaded ${results.length} file(s) — ${driveSaved} saved to Google Drive. Drive access expired or became unavailable during the upload: reconnect Google Drive from the sidebar and re-upload the remaining file(s) to archive them on Drive too.`)
+        : `⚠️ Successfully loaded ${results.length} file(s) — Google Drive was not connected at that moment (the access token may have expired), so the raw .fcs file(s) were only kept in this browser's cache. Reconnect Google Drive from the sidebar, then use “Archive cached .fcs to Drive” below to save them on Drive too.`);
       setUpdater(u => u + 1);
     } catch (err) {
       setFcsMsg(`⚠️ Error: ${err.message}`);
@@ -2548,6 +2549,71 @@ export const Data = ({ ctx }) => {
     e.target.value = '';
   };
 
+  // Upload the raw .fcs file(s) that are kept in THIS browser's cache
+  // (IndexedDB) to Google Drive. Used when an upload happened while Drive was
+  // not connected, so the raw files are recovered onto Drive without creating
+  // duplicate instances (they are re-uploaded under each instance's own id and
+  // file name). Covers all sibling instances of the experiment.
+  const handleArchiveCachedToDrive = async () => {
+    if (!getDriveToken()) { setFcsMsg('⚠️ Google Drive is not connected — use “Connect Google Drive” below, then try again.'); return; }
+    setArchivingCached(true);
+    setFcsMsg('⬆️ Uploading the cached .fcs file(s) to Google Drive…');
+    try {
+      const testName = t.name || '';
+      const allTests = Array.isArray(ctx.allTests) ? ctx.allTests
+        : Array.isArray(ctx.tests) ? ctx.tests
+          : [t];
+      const group = allTests.filter((x) => x && String(x.name || '') === String(testName) && String(testName).trim() !== '');
+      const members = group.length > 0 ? group : [t];
+      const driveCtx = {
+        project: (t.projectNames || [])[0] || '',
+        test: testName,
+        scientist: t.operator || '',
+        section: 'Data',
+        subsection: 'Flow Cytometry'
+      };
+      let uploaded = 0;
+      let found = 0;
+      const uploadOne = async (file, filename, instanceName, suffix) => {
+        if (!file) return;
+        found++;
+        try {
+          const base = String(filename || 'fcs').replace(/\.[^/.]+$/, '');
+          const name = withExtension(
+            suggestDriveFileName({ ...driveCtx, instance: instanceName || base, title: base, suffix: suffix || 'fcs' }),
+            filename || 'fcs'
+          );
+          await uploadLocalFile({
+            name,
+            mimeType: file.type || 'application/octet-stream',
+            file,
+            ctx: { ...driveCtx, instance: instanceName || base, title: base, suffix: suffix || 'fcs' }
+          });
+          uploaded++;
+        } catch (e) {
+          console.warn('FCS cache archive failed:', e && e.message);
+        }
+      };
+      for (const m of members) {
+        if (!m || !m.id) continue;
+        const main = await loadFcsFile(m.id);
+        await uploadOne(main && main.file, (main && main.filename) || m.fcsFileName, m.instanceName, 'fcs');
+        for (const f of (m.fcExtraFiles || [])) {
+          if (!f || !f.id) continue;
+          const ex = await loadFcsFile(f.id);
+          await uploadOne(ex && ex.file, (ex && ex.filename) || f.filename, m.instanceName, 'fcs');
+        }
+      }
+      setFcsMsg(uploaded > 0
+        ? `✅ Archived ${uploaded} of ${found} cached .fcs file(s) to Google Drive.`
+        : `⚠️ No cached .fcs file(s) were found in this browser to archive. If the files were loaded on another computer, use “Restore from Drive” (or the weekly HTML backups).`);
+    } catch (err) {
+      setFcsMsg(`⚠️ Archive error: ${err.message}`);
+      console.error('FCS cache archive error:', err);
+    } finally {
+      setArchivingCached(false);
+    }
+  };
   // Re-download the raw .fcs files that were archived to Google Drive and
   // re-parse them into the in-memory cache — the fallback for files too large
   // to persist inside the dataset payload.
@@ -2820,6 +2886,19 @@ export const Data = ({ ctx }) => {
               <option value="same">Multiple files → same instance</option>
             </select>
             {fcsMsg && <span className="text-xs font-bold text-indigo-900">{fcsMsg}</span>}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 mt-3">
+            {getDriveToken() && (
+              <button
+                type="button"
+                onClick={handleArchiveCachedToDrive}
+                disabled={archivingCached}
+                title="Upload the raw .fcs file(s) that are kept in this browser's cache to Google Drive (no duplicate instances are created)"
+                className="bg-sky-50 text-sky-800 border border-sky-200 hover:bg-sky-100 font-bold px-3 py-2 rounded-lg text-xs shadow-sm transition-colors disabled:opacity-50"
+              >
+                {archivingCached ? '⬆️ Uploading…' : '⬆️ Archive cached .fcs to Drive'}
+              </button>
+            )}
           </div>
           {persistedFcsWasTooLarge && (
             <div className="flex flex-col gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">

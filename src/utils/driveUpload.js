@@ -44,6 +44,13 @@ export const getDriveToken = () => {
     if (exp && Date.now() > exp) {
       localStorage.removeItem(TOKEN_KEY);
       localStorage.removeItem(TOKEN_EXPIRY_KEY);
+      // The token died silently while the page was open — let the rest of the
+      // app know (deferred so a state update never fires while another
+      // component is rendering), otherwise the sidebar keeps showing
+      // "Connected" while every upload reports Drive is not connected.
+      try {
+        setTimeout(() => window.dispatchEvent(new CustomEvent('lab:drive-disconnected')), 0);
+      } catch { /* ignore */ }
       return '';
     }
     return token;

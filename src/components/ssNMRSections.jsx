@@ -1207,7 +1207,7 @@ export const Data = ({ ctx }) => {
       ? (driveSaved === selected.length
           ? `✅ Successfully imported ${selected.length} spectrum/spectra — all raw 1r file(s) saved to Google Drive.`
           : `⚠️ Successfully imported ${selected.length} spectrum/spectra — ${driveSaved} raw 1r file(s) saved to Google Drive. Drive access expired or unavailable: reconnect Google Drive and re-import.`)
-      : `✅ Successfully imported ${selected.length} spectrum/spectra. (Drive not connected — raw files not archived.)`);
+      : `⚠️ Successfully imported ${selected.length} spectrum/spectra — Google Drive was not connected at that moment (the access token may have expired), so the raw 1r file(s) were only kept in this browser's cache. Reconnect Google Drive from the sidebar, then use “Archive spectra to Drive” or re-import to save them on Drive too.`);
   };
 
   const importBrukerFromUrl = async () => {
