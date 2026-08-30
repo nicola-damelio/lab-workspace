@@ -53,10 +53,11 @@ const estimateTrajectoryFrames = (file, atomCount) => {
 };
 
 // ---- Large-structure handling ----------------------------------------------
-// Large systems are still loaded in full (so the topology / analysis keep
-// everything), but only the FIRST CHAIN is rendered by default to avoid
-// freezing the browser. A non-blocking banner warns the user and lets them
-// show everything if they want.
+// Large systems (e.g. a protein embedded in a lipid bilayer with explicit
+// TIP3P water) are loaded in full and rendered in FULL — nothing is hidden.
+// Above the thresholds below the default representations switch to lightweight
+// instanced ones (protein cartoon + everything else as spacefill spheres), so
+// the whole system stays visible without freezing the browser.
 const LARGE_STRUCT_BYTES = 1.5 * 1024 * 1024;   // ~1.5 MB of structure text
 const LARGE_ATOM_COUNT = 25000;                 // lighter rendering above this
 
@@ -129,22 +130,9 @@ const collectResidueTicks = (component) => {
   return out;
 };
 
-// NGL selection string for the first chain of a structure (":A", ":B", …),
-// used to render only that chain on very large systems.
-const detectFirstChainSelection = (component) => {
-  try {
-    let chain = null;
-    if (typeof component.structure.eachResidue === 'function') {
-      component.structure.eachResidue((r) => {
-        if (chain === null && r && r.chainid) chain = String(r.chainid);
-      });
-    }
-    return chain ? `:${chain}` : null;
-  } catch {
-    return null;
-  }
-};
-
+// The viewer no longer hides chains on large systems — they are rendered in
+// full with lightweight representations (see addDefaultReps). This constant
+// simply starts the selection-color block below.
 const SELECT_COLOR_HEX = 0xf59e0b;
 const MANUAL_COLOR_HEX = 0x16a34a;
 
@@ -741,14 +729,17 @@ useEffect(() => {
   }
 }, [resRenumber]);
 
-// ---- Large-structure mode (declared before the effects below use it) ----
-const [largeMode, setLargeMode] = useState(false);     // true → only the first chain is rendered (big system)
-const [largeInfo, setLargeInfo] = useState(null);      // { nAtoms, size } → shows the non-blocking warning banner
-const largeModeRef = useRef(false);                    // synchronous mirror for addDefaultReps / sidechain effect
-largeModeRef.current = largeMode;
+// ---- Lightweight-rendering mode (large structures) -------------------------
+// Large systems (protein in membrane + explicit solvent) are rendered in FULL
+// but with lightweight instanced representations so the browser stays
+// responsive. This flag simply switches the DEFAULT representation set.
+const [lightRender, setLightRender] = useState(false);  // true → lightweight reps for big systems
+const [lightInfo, setLightInfo] = useState(null);       // { nAtoms, size } → small info line
+const lightRenderRef = useRef(false);                   // synchronous mirror for addDefaultReps / sidechain effect
+lightRenderRef.current = lightRender;
 
-// Rebuild the base representations when the large-structure mode toggles
-// ("Show everything" / reload of a big system).
+// Rebuild the base representations when the lightweight mode toggles
+// ("Full detail" / loading a big system).
 useEffect(() => {
   const component = componentRef.current;
   if (!component || status !== 'ready') return;
@@ -756,12 +747,12 @@ useEffect(() => {
   baseCompsRef.current = [];
   addDefaultReps(component);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [largeMode, status]);
+}, [lightRender, status]);
 
-const showAllLargeAtoms = () => {
-  largeModeRef.current = false;
-  setLargeMode(false);
-  setLargeInfo(null);
+const useFullDetail = () => {
+  lightRenderRef.current = false;
+  setLightRender(false);
+  setLightInfo(null);
 };
 const [renameMode, setRenameMode] = useState(false);
 const [renameTarget, setRenameTarget] = useState(null); // atom index being renamed
@@ -813,7 +804,6 @@ const [stride, setStride] = useState(1);        // play every Nth frame (keeps t
 const [maxFrames, setMaxFrames] = useState(0);  // 0 = keep all frames
 const [pendingTraj, setPendingTraj] = useState(null); // { file, estFrames, suggested, over2G } awaiting user confirmation
 const [trajFrameCount, setTrajFrameCount] = useState(TARGET_TRAJ_FRAMES);
-const firstChainSelRef = useRef(null);                 // NGL selection of the first chain (":A")
 const trajRef = useRef(null);
 const lastChosenTrajRef = useRef(null);                // guards the async XTC exact-count scan
 const blobUrlsRef = useRef([]);
@@ -991,6 +981,16 @@ const addDefaultReps = (component) => {
   if (!component || !component.structure) return;
   baseCompsRef.current = [];
   const trackBase = (r) => { if (r) baseCompsRef.current.push(r); };
+  // Large systems: keep the WHOLE structure visible but use lightweight,
+  // instanced representations so the browser stays responsive — protein as a
+  // cartoon, and everything else (lipids, ions, ligands, water) as small
+  // spacefill spheres. Nothing is hidden; water is shown as tiny spheres.
+  if (lightRenderRef.current) {
+    try { trackBase(component.addRepresentation('cartoon', { sele: 'protein', color: 'residueindex', quality: 'low' })); } catch {}
+    try { trackBase(component.addRepresentation('spacefill', { sele: 'hetero and not water', colorScheme: 'element', scale: 0.25, quality: 'low' })); } catch {}
+    try { trackBase(component.addRepresentation('spacefill', { sele: 'water', colorScheme: 'element', scale: 0.08, quality: 'low' })); } catch {}
+    return;
+  }
   const organicLike = ['organic', 'lipid', 'sugar'].includes(moleculeTypeRef.current);
   if (organicLike) {
     const ms = moleculeStyleRef.current || 'ball+stick';
@@ -1013,14 +1013,6 @@ const addDefaultReps = (component) => {
       else if (ms === 'spheres') trackBase(component.addRepresentation('spacefill', { sele: 'all', colorScheme: 'element', scale: 0.6 }));
       else if (ms === 'surface') trackBase(component.addRepresentation('surface', { sele: 'all', colorScheme: 'element' }));
     } catch {}
-    return;
-  }
-  // Very large systems: render only the first chain (light representation) so
-  // the view stays usable — the rest of the structure stays loaded, just hidden.
-  if (largeModeRef.current) {
-    const sele = firstChainSelRef.current || 'protein';
-    try { trackBase(component.addRepresentation('line', { sele, colorScheme: 'element' })); } catch {}
-    try { trackBase(component.addRepresentation('ball+stick', { sele: `${sele} and hetero`, aspectRatio: 1.1 })); } catch {}
     return;
   }
   const bb = backboneStyleRef.current || 'cartoon';
@@ -1103,8 +1095,8 @@ abortRef.current = {
     setSelections([]);
     setResidueTicks([]);
     stripResidueRiRef.current = null;
-    setLargeMode(false);
-    setLargeInfo(null);
+    setLightRender(false);
+    setLightInfo(null);
     try { if (stageRef.current) stageRef.current.removeAllComponents(); } catch {}
   }
 };
@@ -1191,19 +1183,18 @@ componentRef.current = component;
 // Note: NGL viewer structures from PDB/SDF already contain hydrogens when generated correctly.
 // We skip addHydrogens() to prevent "is not a function" errors in this NGL version.
 
-// Very large systems: load everything but render only the first chain so the
-// browser does not freeze; a non-blocking banner warns the user.
+// Large systems (e.g. a protein in a lipid bilayer with explicit solvent):
+// load everything and render it ALL, but with lightweight instanced
+// representations (protein cartoon + spacefill) so the browser does not freeze.
 const nAtoms = component.structure ? component.structure.atomCount : 0;
 const bigSource = (loadRequest && loadRequest.size) >= LARGE_STRUCT_BYTES;
 const isLarge = nAtoms > LARGE_ATOM_COUNT || bigSource;
-largeModeRef.current = isLarge;
-setLargeMode(isLarge);
+lightRenderRef.current = isLarge;
+setLightRender(isLarge);
 if (isLarge) {
-firstChainSelRef.current = detectFirstChainSelection(component);
-setLargeInfo({ nAtoms, size: loadRequest && loadRequest.size ? loadRequest.size : 0 });
+  setLightInfo({ nAtoms, size: loadRequest && loadRequest.size ? loadRequest.size : 0 });
 } else {
-firstChainSelRef.current = null;
-setLargeInfo(null);
+  setLightInfo(null);
 }
 addDefaultReps(component);
 
@@ -1978,7 +1969,7 @@ sidechainCompRef.current = null;
 };
 clearSidechain();
 // Skip heavy side-chain rendering on very large systems (keeps the view usable).
-if (sidechainStyle !== 'none' && !hideAll && !pymolActive && !largeModeRef.current) {
+if (sidechainStyle !== 'none' && !hideAll && !pymolActive && !lightRenderRef.current) {
 try {
 sidechainCompRef.current = component.addRepresentation(sidechainStyle, {
 sele: '(protein and sidechain) or (protein and .CA)', color: 'element', multipleBond: true,
@@ -1987,7 +1978,7 @@ radiusSize: sidechainStyle === 'licorice' ? 0.25 : undefined,
 } catch {}
 }
 return clearSidechain;
-}, [sidechainStyle, status, hideAll, pymolActive, largeMode]);
+}, [sidechainStyle, status, hideAll, pymolActive, lightRender]);
 
 // Highlight selected and manually selected atoms
 useEffect(() => {
@@ -2850,21 +2841,20 @@ className="text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-3 p
 )}
 
 
-{/* Large-structure warning banner (non-blocking) */}
-{largeInfo && (
-<div className="flex flex-wrap items-center gap-2 bg-amber-50 border border-amber-300 text-amber-900 rounded-lg px-3 py-2 text-xs font-bold shadow-sm">
+{/* Large-structure info line (non-blocking): the whole system is rendered,
+    just with lightweight representations so the browser stays responsive. */}
+{lightInfo && (
+<div className="flex flex-wrap items-center gap-2 bg-sky-50 border border-sky-200 text-sky-900 rounded-lg px-3 py-2 text-xs font-bold shadow-sm">
 <span>
-⚠️ Large structure
-{largeInfo.nAtoms ? ` (${largeInfo.nAtoms.toLocaleString()} atoms)` : ''}:
-only the first chain is rendered to avoid overloading the browser.
-The rest of the molecule is loaded but hidden.
+ℹ️ Large structure{lightInfo.nAtoms ? ` (${lightInfo.nAtoms.toLocaleString()} atoms)` : ''}: showing the whole system (protein cartoon + spacefill) so the view stays responsive. Nothing is hidden.
 </span>
 <button
 type="button"
-onClick={showAllLargeAtoms}
-className="text-xs font-bold bg-white border border-amber-400 text-amber-800 hover:bg-amber-100 px-2.5 py-1 rounded-lg transition-colors"
+onClick={useFullDetail}
+className="text-xs font-bold bg-white border border-sky-300 text-sky-800 hover:bg-sky-100 px-2.5 py-1 rounded-lg transition-colors"
+title="Switch to the full-detail representations (ball+stick, high quality) — can be slower on large systems"
 >
-👁 Show everything
+✨ Full detail
 </button>
 </div>
 )}

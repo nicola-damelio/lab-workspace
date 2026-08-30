@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { CollapsibleSection } from './ui';
 import { PLATES_DEF } from '../data/constants';
-import { uploadLocalFile, getDriveToken } from '../utils/driveUpload';
+import { uploadLocalFile, withExtension, getDriveToken } from '../utils/driveUpload';
 import { blobStore } from '../utils/blobStore';
 import { suggestDriveFileName } from '../utils/driveNaming';
 import { ExperimentalSetup as FCExperimentalSetup } from './FlowCytometrySections';
@@ -115,11 +115,20 @@ export const Data = ({ ctx }) => {
       await blobStore.save(msVideoKey(id), file);
       if (getDriveToken()) {
         try {
+          const driveCtx = {
+            project: (t.projectNames && t.projectNames[0]) || '',
+            test: t.name || '',
+            instance: t.instanceName || '',
+            scientist: t.operator || '',
+            section: 'Data',
+            subsection: 'Microscopy'
+          };
+          const base = String(name).replace(/\.[^/.]+$/, '');
           await uploadLocalFile({
-            name: suggestDriveFileName({ project: (t.projectNames && t.projectNames[0]) || '', test: t.name || '', section: 'Data', scientist: t.operator || '' }),
+            name: withExtension(suggestDriveFileName({ ...driveCtx, title: base }), name),
             mimeType: file.type || 'application/octet-stream',
             file,
-            ctx: { test: t.name || '', section: 'Data', subsection: 'Microscopy', scientist: t.operator || '' }
+            ctx: driveCtx
           });
           driveSaved++;
         } catch { /* keep going */ }
@@ -173,10 +182,19 @@ export const Data = ({ ctx }) => {
       await blobStore.save(msVideoKey(id), mp4);
       if (getDriveToken()) {
         try {
+          const driveCtx = {
+            project: (t.projectNames && t.projectNames[0]) || '',
+            test: t.name || '',
+            instance: t.instanceName || '',
+            scientist: t.operator || '',
+            section: 'Data',
+            subsection: 'Microscopy'
+          };
+          const base = String(name).replace(/\.[^/.]+$/, '');
           await uploadLocalFile({
-            name: suggestDriveFileName({ project: (t.projectNames && t.projectNames[0]) || '', test: t.name || '', section: 'Data', scientist: t.operator || '' }),
+            name: withExtension(suggestDriveFileName({ ...driveCtx, title: base }), name),
             mimeType: 'video/mp4', file: mp4,
-            ctx: { test: t.name || '', section: 'Data', subsection: 'Microscopy', scientist: t.operator || '' }
+            ctx: driveCtx
           });
         } catch { /* keep going */ }
       }
@@ -355,10 +373,20 @@ export const DataAnalysis = ({ ctx }) => {
       await blobStore.save('msm_' + id, blob);
       if (getDriveToken()) {
         try {
+          const driveCtx = {
+            project: (t.projectNames && t.projectNames[0]) || '',
+            test: t.name || '',
+            instance: t.instanceName || '',
+            scientist: t.operator || '',
+            section: 'Data Analysis',
+            subsection: 'Microscopy'
+          };
+          const srcBase = String((selVideo && selVideo.filename) || 'clip').replace(/\.[^/.]+$/, '');
+          const title = `movie_${srcBase}_${s}s-${e}s`;
           await uploadLocalFile({
-            name: suggestDriveFileName({ test: t.name || '', section: 'Data Analysis', scientist: t.operator || '' }),
+            name: withExtension(suggestDriveFileName({ ...driveCtx, title }), 'movie.webm'),
             mimeType: 'video/webm', file: blob,
-            ctx: { test: t.name || '', section: 'Data Analysis', subsection: 'Microscopy', scientist: t.operator || '' }
+            ctx: driveCtx
           });
         } catch { /* keep going */ }
       }
