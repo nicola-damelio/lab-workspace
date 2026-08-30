@@ -156,8 +156,13 @@ export const resolveImageToDataUrl = async (src) => {
 };
 
 // Downscale an image dataURL (maxSide in px, type/quality for the target copy).
-export const downscaleImage = (dataUrl, maxSide = 3000, type = 'image/png', quality = 0.92) =>
-  new Promise((resolve) => {
+// SVG dataURLs are pure vectors: downscaling them into a raster canvas would
+// destroy sharpness, so they are returned untouched.
+export const downscaleImage = (dataUrl, maxSide = 3000, type = 'image/png', quality = 0.92) => {
+  if (typeof dataUrl === 'string' && (dataUrl.startsWith('data:image/svg+xml') || dataUrl.includes('<svg'))) {
+    return Promise.resolve(dataUrl);
+  }
+  return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
       try {
@@ -173,14 +178,18 @@ export const downscaleImage = (dataUrl, maxSide = 3000, type = 'image/png', qual
     img.onerror = () => resolve(dataUrl);
     img.src = dataUrl;
   });
+};
 
-// Two copies for a library entry: a small PNG thumbnail for the UI (PNG keeps
-// transparency for formulas/structures) and a high-resolution PNG (max 3000 px,
-// enough for ~300 DPI A4 pages) used by the PDF/publication export.
-// External (Drive) sources are first resolved into self-contained dataURLs so
-// the images never end up as "empty" files that require a token to display.
+// Two copies for a library entry: a small thumbnail for the UI and a
+// high-resolution version used by the PDF/publication export.
+// SVGs stay vector (not converted to PNG raster), while external (Drive)
+// sources are first resolved into self-contained dataURLs.
 export const makeLibraryImage = async (dataUrl) => {
   const src = await resolveImageToDataUrl(dataUrl);
+  const isSvg = typeof src === 'string' && (src.startsWith('data:image/svg+xml') || src.includes('<svg'));
+  if (isSvg) {
+    return { url: src, full: src, isSvg: true };
+  }
   return {
     url: await downscaleImage(src, 700, 'image/png', 0.92),
     full: await downscaleImage(src, 3000, 'image/png', 0.92)

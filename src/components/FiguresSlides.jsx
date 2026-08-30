@@ -525,6 +525,7 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
   const [canvasScale, setCanvasScale] = useState(1);   // canvas zoom (1 = fit, 0.4–4)
   const cropDragRef = useRef(null);   // spectrum drag-to-zoom: { ri, startX, rect }
   const [cropPreview, setCropPreview] = useState(null); // { x1, x2 } while dragging
+  const suppressRegionClickRef = useRef(false); // swallow the click that follows a crop-drag
   // Keep the ⭐ sidebar open long enough to move the mouse into it.
   const hoverTimerRef = useRef(null);
   const clearHoverSoon = () => {
@@ -686,29 +687,27 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
     setRegionImage(ri, { url: it.url, full: it.full });
     setHoverRegion(null);
   };
-  // Select / deselect grid cells: plain click selects one cell (creating a
-  // 1×1 panel if the cell is empty); Shift+click adds/removes another cell.
-  const onRegionCellClick = (x, y, isShift) => {
+  // Select / deselect panels: click a panel to add it to the selection
+  // (click it again to remove it); clicking an empty cell creates a 1×1
+  // panel and selects it. Then "🔗 Merge" unifies the selection.
+  const onRegionCellClick = (x, y) => {
     const s = deck.slides[cur];
     if (!s) return;
     const key = `${x},${y}`;
-    if (isShift) {
-      setSelCells((prev) => {
-        const next = new Set(prev || []);
-        if (next.has(key)) next.delete(key); else next.add(key);
-        return next;
-      });
-      const regions = s.regions || [];
-      const ex = regionAtCell(regions, x, y);
-      if (ex) { setSelRegion(regions.indexOf(ex)); setHoverRegion(regions.indexOf(ex)); }
-      return;
-    }
     const regions = s.regions || [];
     const existing = regionAtCell(regions, x, y);
-    setSelCells(new Set([key]));
     if (existing) {
       const idx = regions.indexOf(existing);
-      setSelRegion(idx);
+      const cells = [];
+      for (let yy = existing.y; yy < existing.y + existing.h; yy++) {
+        for (let xx = existing.x; xx < existing.x + existing.w; xx++) cells.push(`${xx},${yy}`);
+      }
+      const next = new Set(selCells || []);
+      const allIn = cells.every((k) => next.has(k));
+      if (allIn) cells.forEach((k) => next.delete(k));
+      else cells.forEach((k) => next.add(k));
+      setSelCells(next);
+      setSelRegion(next.size > 0 ? idx : null);
       setHoverRegion(idx);
       return;
     }
@@ -716,11 +715,13 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
     const r = emptyRegion(x, y);
     const nextRegions = autoLabelRegions([...regions, r]);
     patchSlide(cur, { regions: nextRegions });
-    setSelRegion(nextRegions.length - 1);
-    setHoverRegion(nextRegions.length - 1);
+    const newIdx = nextRegions.length - 1;
+    setSelRegion(newIdx);
+    setHoverRegion(newIdx);
+    setSelCells((prev) => new Set([...(prev || []), key]));
   };
 
-  // Merge all selected cells (Shift+click) into one panel spanning their
+  // Merge all selected cells into one panel spanning their
   // bounding box; any cell inside the box that was not selected becomes an
   // empty 1×1 panel. Texts stay at their own positions (textBlocks).
   const mergeSelectedCells = () => {
@@ -1117,12 +1118,13 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
     const nextFont = (r) => FONTS[(Math.max(0, FONTS.indexOf(r.fontScale)) + 1) % FONTS.length];
     const cells = Array.from({ length: cols * rows }, (_, i) => ({ x: i % cols, y: Math.floor(i / cols) }));
     const libItems = [...(projectLibrary || []), ...(library || [])];
-    // Spectrum zoom: drag horizontally to select the part of the spectrum to keep.
+    // Image zoom: drag horizontally to select the part of the image to keep.
     const spectrumStart = (e, ri) => {
       const t = e.target;
       if (t && t.closest && t.closest('input,button')) return; // ignore clicks on peak labels / controls
       const rect = e.currentTarget.getBoundingClientRect();
       if (!rect.width) return;
+      suppressRegionClickRef.current = false;
       cropDragRef.current = { ri, startX: e.clientX, rect };
       setCropPreview(null);
     };
@@ -1142,9 +1144,10 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
       setCropPreview(null);
       const x1 = Math.min(sx, fx), x2 = Math.max(sx, fx);
       if (x2 - x1 > 0.04) {
-        // drag → zoom into that region of the spectrum and keep it
+        // drag → zoom into that region of the image and keep it
+        suppressRegionClickRef.current = true; // the following click must not deselect the panel
         patchRegion(ri, { crop: { x1, x2 }, zoom: 100 });
-      } else {
+      } else if (regions[ri].isSpectrum) {
         // plain click → add a peak label at that position
         const c = regions[ri].crop;
         const imageFx = c ? c.x1 + fx * (c.x2 - c.x1) : fx;
@@ -1168,15 +1171,15 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
     const editorContent = (
       <>
         <p className="text-[10px] text-slate-400 leading-relaxed">
-          <b>Click</b> a cell to create/select a panel · <b>Shift+click</b> other cells · <b>🔗 Merge</b> unifies them into one ·
-          <b> ✂ Unmerge</b> reverts · <b>drag ⠿</b> moves a panel · <b>⭐ (left)</b> / <b>📂 (right)</b> tabs insert images ·
-          letters A, B, C… and the global caption are automatic.
+          <b>Click</b> panels to select them (click again to remove) · <b>🔗 Merge</b> unifies the selection into one ·
+          <b> ✂ Unmerge</b> reverts · <b>drag ⠿</b> moves a panel · <b>drag on an image</b> zooms into that region (⟲ resets) ·
+          <b>⭐ (left)</b> / <b>📂 (right)</b> tabs insert images (SVG charts stay vector-crisp) · letters A, B, C… are automatic.
         </p>
 
         <div className="flex items-center gap-2 flex-wrap bg-white border border-slate-200 rounded-lg px-2 py-1.5">
           <button type="button" onClick={mergeSelectedCells} disabled={!selCells || selCells.size < 2}
             className="text-[10px] font-black bg-emerald-600 text-white rounded-lg px-2.5 py-1 hover:bg-emerald-700 disabled:opacity-40"
-            title="Select cells with click + Shift+click, then merge them into one panel">
+            title="Click the panels you want to combine, then merge them into one">
             🔗 Merge ({selCells ? selCells.size : 0})
           </button>
           <button type="button" onClick={unmergeSelected}
@@ -1226,7 +1229,7 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
                     <div key={key}
                       className={`border ${canDrop ? 'border-blue-300 bg-blue-50/50' : isSelCell ? 'border-amber-400 bg-amber-100/60' : 'border-slate-100'}`}
                       onMouseEnter={() => { const ex = regionAtCell(regions, c.x, c.y); setHoverRegion(ex ? regions.indexOf(ex) : null); }}
-                      onClick={(e) => onRegionCellClick(c.x, c.y, e.shiftKey)}>
+                      onClick={() => onRegionCellClick(c.x, c.y)}>
                       {isSelCell && <span className="w-full h-full flex items-center justify-center text-[9px] font-black text-amber-700 select-none">■</span>}
                     </div>
                   );
@@ -1236,6 +1239,12 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
                     <div key={r.id}
                       onMouseEnter={() => { cancelClearHover(); setHoverRegion(ri); }}
                       onMouseLeave={clearHoverSoon}
+                      onClick={(e) => {
+                        const t = e.target;
+                        if (suppressRegionClickRef.current) { suppressRegionClickRef.current = false; return; }
+                        if (t && t.closest && t.closest('input,button,textarea,select,.drag-handle')) return;
+                        onRegionCellClick(r.x, r.y);
+                      }}
                       className={`relative overflow-hidden bg-white ${selRegion === ri ? 'ring-2 ring-blue-500 z-10' : 'ring-1 ring-slate-300'}`}
                       style={{ gridColumn: `${r.x + 1} / span ${r.w}`, gridRow: `${r.y + 1} / span ${r.h}` }}>
                       {r.label && (
@@ -1246,16 +1255,16 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
                       <span draggable
                         onDragStart={(e) => { e.stopPropagation(); setDragRegion(ri); try { e.dataTransfer.setData('text/plain', 'move'); } catch {} }}
                         onDragEnd={() => setDragRegion(null)}
-                        className="absolute top-0.5 left-1/2 -translate-x-1/2 z-30 text-[12px] cursor-grab active:cursor-grabbing select-none opacity-70 hover:opacity-100"
+                        className="drag-handle absolute top-0.5 left-1/2 -translate-x-1/2 z-30 text-[12px] cursor-grab active:cursor-grabbing select-none opacity-70 hover:opacity-100"
                         title="Drag to move this panel to another position">⠿</span>
                       {r.image && (
                         <div className="absolute inset-0 flex items-center justify-center overflow-hidden"
-                          style={{ cursor: r.isSpectrum ? 'crosshair' : 'default' }}
-                          onMouseDown={r.isSpectrum ? (e) => spectrumStart(e, ri) : undefined}
-                          onMouseMove={r.isSpectrum ? spectrumMoveTo : undefined}
-                          onMouseUp={r.isSpectrum ? (e) => spectrumEnd(e, ri) : undefined}
+                          style={{ cursor: 'crosshair' }}
+                          onMouseDown={(e) => spectrumStart(e, ri)}
+                          onMouseMove={spectrumMoveTo}
+                          onMouseUp={(e) => spectrumEnd(e, ri)}
                           onMouseLeave={() => { if (cropDragRef.current) { cropDragRef.current = null; setCropPreview(null); } }}
-                          title={r.isSpectrum ? 'Drag on the spectrum to zoom into that region · click adds a peak label' : undefined}>
+                          title="Drag to zoom into a region of the image (⟲ resets) · click adds a peak label in spectrum mode">
                           {/* Crop (spectrum zoom): show only the selected band, scaled to the panel width */}
                           {r.crop ? (
                             <img src={getRenderableDriveUrl(r.image.url)} alt=""
@@ -1302,7 +1311,7 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
                           <button type="button" onClick={() => patchRegion(ri, { fontScale: nextFont(r) })}
                             className="text-[8px] font-black bg-white/90 border border-slate-200 rounded px-1 py-0.5 hover:border-blue-400" title="Character size of the labels / text">A{Math.round((r.fontScale || 1) * 100)}%</button>
                           <button type="button" onClick={() => patchRegion(ri, { isSpectrum: !r.isSpectrum })}
-                            className="text-[8px] font-black bg-white/90 border border-slate-200 rounded px-1 py-0.5 hover:border-violet-400" title={r.isSpectrum ? 'Spectrum mode: drag to zoom into a region, click to add peak labels' : 'Mark this panel as a spectrum (drag to zoom, click adds peak labels)'}>{r.isSpectrum ? '📈' : '📉'}</button>
+                            className="text-[8px] font-black bg-white/90 border border-slate-200 rounded px-1 py-0.5 hover:border-violet-400" title={r.isSpectrum ? 'Spectrum mode on: click the image adds a peak label (drag still zooms)' : 'Spectrum mode off — click the image only selects/zooms (no peak labels)'}>{r.isSpectrum ? '📈' : '📉'}</button>
                           {(r.w > 1 || r.h > 1) && (
                             <button type="button" onClick={() => splitRegion(ri)}
                               className="text-[8px] font-black bg-white/90 border border-slate-200 rounded px-1 py-0.5 hover:border-amber-400" title="Split back into single cells (reversible merge)">✂</button>
