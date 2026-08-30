@@ -2303,6 +2303,7 @@ export const Data = ({ ctx }) => {
 
   const [updater, setUpdater] = useState(0);
   const [fcsMsg, setFcsMsg] = useState('');
+  const [driveTestMsg, setDriveTestMsg] = useState('');
   // When several .fcs files are uploaded: 'same' (default) loads them all into
   // the current instance as extra spectra; 'separate' creates one condition
   // (instance) per file.
@@ -2566,13 +2567,26 @@ export const Data = ({ ctx }) => {
       setFcsMsg(restored > 0
         ? `✅ Restored ${restored} .fcs file(s) from Google Drive.`
         : networkErr
-          ? `⚠️ Could not reach Google Drive (${failReason}). This is a network / browser-blocking problem, not an expired token — check your internet connection, VPN / proxy or ad-blocker, then try again.`
+          ? `⚠️ Could not reach Google Drive (${failReason}). This is a network / browser-blocking problem, not an expired token — check your internet connection, VPN / proxy or ad-blocker. Manual recovery: open Google Drive in a new tab, download the .fcs files, and re-upload them with “Choose .fcs file(s)”.`
           : `⚠️ Could not download the .fcs files from Google Drive${failReason ? ` (${failReason})` : ''}. If the Drive token expired, reconnect Google Drive from the sidebar and try again.`);
     } catch (err) {
       setFcsMsg(`⚠️ Restore error: ${err.message} (reconnect Google Drive from the sidebar if the token expired).`);
       console.error('FCS Drive restore error:', err);
     } finally {
       setRestoringFromDrive(false);
+    }
+  };
+
+  // Small connectivity probe: tells exactly whether the Drive API is reachable
+  // and the stored token works, so a "Failed to fetch" can be pinpointed.
+  const testDriveConnection = async () => {
+    if (!getDriveToken()) { setDriveTestMsg('❌ No Drive token — connect Google Drive first.'); return; }
+    setDriveTestMsg('Testing connection…');
+    try {
+      await driveFetch('/drive/v3/files?pageSize=1&fields=files(id)');
+      setDriveTestMsg('✅ Google Drive API reachable and the token works.');
+    } catch (e) {
+      setDriveTestMsg(`❌ ${e.message || 'Failed to fetch'}`);
     }
   };
 
@@ -2642,15 +2656,26 @@ export const Data = ({ ctx }) => {
               </p>
               <div className="flex flex-wrap items-center gap-2">
                 {getDriveToken() ? (
-                  <button
-                    type="button"
-                    onClick={handleRestoreFromDrive}
-                    disabled={restoringFromDrive}
-                    title="Download and re-parse the .fcs files archived on Google Drive (saved automatically at upload)"
-                    className="bg-indigo-600 text-white hover:bg-indigo-700 font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm transition-colors disabled:opacity-50"
-                  >
-                    {restoringFromDrive ? '⬇️ Download…' : '⬇️ Restore from Drive'}
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleRestoreFromDrive}
+                      disabled={restoringFromDrive}
+                      title="Download and re-parse the .fcs files archived on Google Drive (saved automatically at upload)"
+                      className="bg-indigo-600 text-white hover:bg-indigo-700 font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm transition-colors disabled:opacity-50"
+                    >
+                      {restoringFromDrive ? '⬇️ Download…' : '⬇️ Restore from Drive'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={testDriveConnection}
+                      className="bg-white text-slate-700 hover:bg-slate-100 font-bold px-3 py-1.5 rounded-lg text-xs border border-slate-300 shadow-sm transition-colors"
+                      title="Run a small probe against the Google Drive API to see exactly why requests fail"
+                    >
+                      🔍 Test Drive connection
+                    </button>
+                    {driveTestMsg && <span className="text-[11px] font-bold text-amber-800">{driveTestMsg}</span>}
+                  </>
                 ) : (
                   <button
                     type="button"
@@ -2661,10 +2686,14 @@ export const Data = ({ ctx }) => {
                     🔗 Connect Google Drive to restore files
                   </button>
                 )}
-                <span className="text-[10px] text-amber-700">
-                  Needed when the browser cache is unavailable (e.g. on another computer).
-                </span>
               </div>
+              <p className="text-[10px] text-amber-700">
+                Needed when the browser cache is unavailable (e.g. on another computer). If the
+                app cannot reach Google Drive from this browser/network (e.g. a corporate proxy or
+                an ad-blocker blocks it), you can still recover your files: open Google Drive in a
+                new tab, find the .fcs files of this experiment, download them, and re-upload them
+                with “Choose .fcs file(s)” above.
+              </p>
             </div>
           )}
         </div>
