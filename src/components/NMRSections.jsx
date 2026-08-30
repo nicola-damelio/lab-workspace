@@ -2864,6 +2864,19 @@ const resolveOrganicStructureText = async (smiles) => {
   throw new Error(`No 3D structure could be resolved for this SMILES.\n${errors.join('\n')}`);
 };
 
+// A cysteine residue (at 1-based sequence position `pos`) is oxidised when it
+// belongs to a disulphide pair (cysDisulfides = [[a,b], …]), else when its
+// per-residue state (cysStates = { pos: 'oxidized'|'reduced' }) says so, else it
+// follows the global default (cysOxidized).
+const cysIsOxidized = (cysOxidized, cysStates, cysDisulfides, pos) => {
+  const pairs = Array.isArray(cysDisulfides) ? cysDisulfides : [];
+  if (pairs.some(([a, b]) => a === pos || b === pos)) return true;
+  const st = (cysStates || {})[pos];
+  if (st === 'reduced') return false;
+  if (st === 'oxidized') return true;
+  return !!cysOxidized;
+};
+
 // ================= SHARED DERIVED DATA HOOK =================
 const useNmrDerived = (activeTest, ctx = {}) => {
   const moleculeType = activeTest.moleculeType || 'protein';
@@ -2953,9 +2966,10 @@ const useNmrDerived = (activeTest, ctx = {}) => {
       const entry = DB[char];
       if (!entry) return null;
       // Oxidised cysteine (disulphide-bonded) has a very different random-coil
-      // ¹³Cα/¹³Cβ from the reduced thiol — the user picks the state in the
-      // molecule setup and the simulated shifts follow.
-      const rcEntry = (moleculeType === 'protein' && char === 'C' && activeTest.cysOxidized)
+      // ¹³Cα/¹³Cβ from the reduced thiol. Each Cys can be set individually and
+      // disulphide pairs defined in the molecule setup — the state is resolved
+      // per residue position here and the simulated shifts follow.
+      const rcEntry = (moleculeType === 'protein' && char === 'C' && cysIsOxidized(activeTest.cysOxidized, activeTest.cysStates, activeTest.cysDisulfides, index + 1))
         ? CYS_OXIDIZED_RC
         : RANDOM_COIL_DB[char];
       const generatedShifts = {};
@@ -3003,7 +3017,7 @@ const useNmrDerived = (activeTest, ctx = {}) => {
       const p31 = hasPhosphorus ? parseFloat((-2 + Math.random() * 3).toFixed(2)) : null;
       return { ...entry, id: `${entry.code3 || char}${index + 1}`, char, color: RESIDUE_COLORS[index % RESIDUE_COLORS.length], shifts: generatedShifts, shifts13C: generatedShifts13C, uniqueCShifts: { ...cShifts }, backboneRand, p31 };
     }).filter(Boolean);
-  }, [seq, moleculeType, activeTest.sugarChoice, activeTest.lipidChoice, activeTest.smiles, activeTest.cysOxidized]);
+  }, [seq, moleculeType, activeTest.sugarChoice, activeTest.lipidChoice, activeTest.smiles, activeTest.cysOxidized, activeTest.cysStates, activeTest.cysDisulfides]);
   
   const estSeq = useMemo(() => parsedSeq.map((res, idx) => {
     const ssLetter = moleculeType === 'protein' ? getSSAt(idx) : 'C';
@@ -4009,24 +4023,102 @@ const generatedStructure = useMemo(() => {
                 className="w-full border border-slate-300 rounded-lg p-3 font-mono text-sm tracking-widest outline-none focus:border-blue-500 uppercase h-24 custom-scrollbar shadow-inner"
                 placeholder={d.moleculeType === 'protein' ? 'e.g. MKWVTFISLL...' : d.moleculeType === 'dna' ? 'e.g. ATGCGTAC...' : 'e.g. AUGCGUAC...'} />
               <p className="text-[10px] text-slate-400 mt-1 font-bold">Length: {d.seq.length} {d.moleculeType === 'protein' ? 'residues' : 'nucleotides'} (valid: {d.validChars.split('').join(' ')})</p>
-              {d.moleculeType === 'protein' && (
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                  <span className="text-[10px] font-bold text-amber-800 uppercase">Cysteine state</span>
-                  <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700 cursor-pointer" title="Free thiol (−SH) — Cys ¹³Cβ ≈ 28 ppm">
-                    <input type="radio" name="cysState" checked={!activeTest.cysOxidized}
-                      onChange={() => updateActiveTest({ cysOxidized: false })} className="accent-amber-600" />
-                    Reduced (−SH)
-                  </label>
-                  <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700 cursor-pointer" title="In a disulphide bond (S–S) — Cys ¹³Cβ ≈ 40 ppm">
-                    <input type="radio" name="cysState" checked={!!activeTest.cysOxidized}
-                      onChange={() => updateActiveTest({ cysOxidized: true })} className="accent-amber-600" />
-                    Oxidized (−S−S−)
-                  </label>
-                  <span className="text-[10px] text-amber-700 font-semibold">
-                    {activeTest.cysOxidized ? 'Cys ¹³Cβ ≈ 39.6 ppm (disulfide)' : 'Cys ¹³Cβ ≈ 28.0 ppm (thiol)'}
-                  </span>
-                </div>
-              )}
+              {d.moleculeType === 'protein' && (() => {
+                const cysPositions = d.parsedSeq
+                  .map((r, idx) => (r.char === 'C' ? idx + 1 : null))
+                  .filter(Boolean);
+                if (cysPositions.length === 0) return null;
+                const pairs = Array.isArray(activeTest.cysDisulfides) ? activeTest.cysDisulfides : [];
+                const states = activeTest.cysStates || {};
+                const effState = (pos) => pairs.some(([a, b]) => a === pos || b === pos)
+                  ? 'oxidized'
+                  : (states[pos] || (activeTest.cysOxidized ? 'oxidized' : 'reduced'));
+                const setState = (pos, val) => {
+                  const next = { ...states, [pos]: val };
+                  if (val === 'reduced') {
+                    updateActiveTest({ cysStates: next, cysDisulfides: pairs.filter(([a, b]) => a !== pos && b !== pos) });
+                  } else {
+                    updateActiveTest({ cysStates: next });
+                  }
+                };
+                const clearState = (pos) => {
+                  const next = { ...states };
+                  delete next[pos];
+                  updateActiveTest({ cysStates: next, cysDisulfides: pairs.filter(([a, b]) => a !== pos && b !== pos) });
+                };
+                const addPair = (a, b) => {
+                  const remaining = pairs.filter(([x, y]) => x !== a && x !== b && y !== a && y !== b);
+                  updateActiveTest({ cysDisulfides: [...remaining, [a, b]] });
+                };
+                const removePair = (pi) => updateActiveTest({ cysDisulfides: pairs.filter((_, i) => i !== pi) });
+                return (
+                  <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 flex flex-col gap-2">
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                      <span className="text-[10px] font-bold text-amber-800 uppercase">Cysteine states</span>
+                      <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700 cursor-pointer" title="Default state for cysteines not set individually">
+                        <input type="radio" name="cysDefault" checked={!activeTest.cysOxidized}
+                          onChange={() => updateActiveTest({ cysOxidized: false })} className="accent-amber-600" />
+                        Default: Reduced
+                      </label>
+                      <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700 cursor-pointer" title="Default state for cysteines not set individually">
+                        <input type="radio" name="cysDefault" checked={!!activeTest.cysOxidized}
+                          onChange={() => updateActiveTest({ cysOxidized: true })} className="accent-amber-600" />
+                        Default: Oxidized
+                      </label>
+                      <span className="text-[10px] text-amber-700 font-semibold">oxidized Cys ¹³Cβ ≈ 39.6 ppm · reduced ≈ 28.0 ppm</span>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      {cysPositions.map((pos) => {
+                        const st = effState(pos);
+                        const pairTargets = cysPositions.filter((p) => p !== pos && !pairs.some(([a, b]) => a === pos || b === pos));
+                        return (
+                          <div key={pos} className="flex flex-wrap items-center gap-2 text-xs">
+                            <span className="font-bold text-slate-700 w-14">Cys #{pos}</span>
+                            <div className="flex rounded-lg overflow-hidden border border-slate-300">
+                              <button type="button" onClick={() => setState(pos, 'reduced')}
+                                className={`px-2 py-1 font-bold transition-colors ${st === 'reduced' ? 'bg-emerald-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                                title="Reduced (−SH) — Cys ¹³Cβ ≈ 28 ppm">−SH</button>
+                              <button type="button" onClick={() => setState(pos, 'oxidized')}
+                                className={`px-2 py-1 font-bold transition-colors ${st === 'oxidized' ? 'bg-amber-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                                title="Oxidized (−S−S−) — Cys ¹³Cβ ≈ 39.6 ppm">S−S</button>
+                            </div>
+                            <button type="button" onClick={() => clearState(pos)}
+                              className="text-[10px] text-slate-400 hover:text-slate-600 underline"
+                              title="Use the default state and remove this residue from any disulphide pair">auto</button>
+                            {pairTargets.length > 0 && (
+                              <span className="flex items-center gap-1">
+                                <span className="text-[10px] text-slate-400">⚭ couple with</span>
+                                <select
+                                  value=""
+                                  onChange={(e) => {
+                                    const p2 = parseInt(e.target.value, 10);
+                                    if (p2) addPair(pos, p2);
+                                    e.target.value = '';
+                                  }}
+                                  className="border border-slate-300 rounded px-1 py-0.5 text-[11px] bg-white outline-none">
+                                  <option value="">…</option>
+                                  {pairTargets.map((p2) => <option key={p2} value={p2}>Cys #{p2}</option>)}
+                                </select>
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {pairs.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase">Disulfide pairs</span>
+                        {pairs.map((pair, pi) => (
+                          <span key={pi} className="inline-flex items-center gap-1 bg-amber-100 border border-amber-300 rounded-full px-2 py-0.5 text-[11px] font-bold text-amber-900">
+                            Cys #{pair[0]} ⚭ Cys #{pair[1]}
+                            <button type="button" onClick={() => removePair(pi)} className="text-amber-700 hover:text-red-600 font-black" title="Remove this disulphide bond">×</button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </>
           ) : d.moleculeType === 'sugar' ? (
             <div className="flex gap-4">

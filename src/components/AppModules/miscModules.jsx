@@ -6,6 +6,7 @@
 
 import React, { lazy } from 'react';
 import { Calculations } from './calculationsModule';
+import { FiguresSlidesSection } from '../FiguresSlides';
 const LabNotebook = lazy(() => import('../LabNotebook').then(m => ({ default: m.LabNotebook })));
 const PublicationsSection = lazy(() => import('../Publications').then(m => ({ default: m.PublicationsSection })));
 
@@ -72,7 +73,7 @@ export const CalculationsModule = ({
                 );
 };
 
-export const PublicationsModule = ({ operatorNames, tests, currentUser }) => (
+export const PublicationsModule = ({ operatorNames, tests, currentUser, projectId = 'global' }) => (
 
               <div className="h-full overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
                 <div className="max-w-6xl mx-auto flex flex-col gap-4 pb-10">
@@ -84,6 +85,7 @@ export const PublicationsModule = ({ operatorNames, tests, currentUser }) => (
                     defaultScientist={currentUser?.name || ''}
                     currentUser={currentUser}
                   />
+                  <FiguresSlidesSection tests={tests} projectId={projectId} />
                 </div>
               </div>
 );

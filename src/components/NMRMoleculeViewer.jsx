@@ -4,6 +4,7 @@ import { readXtcFrames, countXtcFrames, countXtcFramesInFile } from '../utils/xt
 import { abortControl } from '../utils/abortControl';
 import { archiveFileToDrive } from '../utils/driveUpload';
 import { getPymolScripts } from '../utils/pymolScripts';
+import { addLibraryItem, downscaleImage } from '../utils/figuresLibrary';
 
 /* ---- Shared "Assigned atoms" highlight flag ---------------------------------
    The green "assigned atoms" highlight is shown both on the 3D molecule viewer
@@ -733,6 +734,7 @@ const resizeRef = useRef(null); // { startY, startH } while dragging
 // mounted, so the structure and trajectory are never lost); "⬆ Expand"
 // restores it and tells NGL that the canvas size changed.
 const [viewerCollapsed, setViewerCollapsed] = useState(false);
+const [captureMsg, setCaptureMsg] = useState('');
 
 useEffect(() => {
   const move = (ev) => {
@@ -2565,6 +2567,32 @@ const handleAbort = () => {
   }
 };
 
+// ---- Capture the current 3D scene as a figure -------------------------------
+// Uses NGL's makeImage (reliable WebGL screenshot), falls back to the raw
+// canvas, then stores the image in the Figures library (Publications page).
+const captureScene = async () => {
+  const stage = stageRef.current;
+  if (!stage) { setCaptureMsg('⚠️ No 3D scene to capture'); setTimeout(() => setCaptureMsg(''), 3500); return; }
+  let url = '';
+  try {
+    if (typeof stage.makeImage === 'function') {
+      const canvas = stage.makeImage();
+      if (canvas && typeof canvas.toDataURL === 'function') url = canvas.toDataURL('image/png');
+    }
+  } catch { /* fall through to the raw canvas */ }
+  if (!url) {
+    try {
+      const cv = stage.viewer && stage.viewer.container ? stage.viewer.container.querySelector('canvas') : null;
+      if (cv) url = cv.toDataURL('image/png');
+    } catch { /* ignore */ }
+  }
+  if (!url) { setCaptureMsg('⚠️ Could not capture the 3D scene'); setTimeout(() => setCaptureMsg(''), 3500); return; }
+  const label = `Structure${file ? ` · ${file.name}` : pdbId ? ` · ${pdbId}` : ''}`;
+  await addLibraryItem(await downscaleImage(url), label);
+  setCaptureMsg('✓ 3D structure saved to the Figures library (Publications → Figures & Slides)');
+  setTimeout(() => setCaptureMsg(''), 5000);
+};
+
 return (
 <div className="flex flex-col gap-3">
 {/* Topology and Structure Controls (compact) */}
@@ -2665,6 +2693,18 @@ className={`text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-
 >
 {viewerCollapsed ? '⬆ Expand' : '⬇ Minimize'}
 </button>
+
+<button
+type="button"
+onClick={captureScene}
+title="Save the current 3D view as a figure — it goes to the Figures library (Publications → Figures & Slides)"
+className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8 whitespace-nowrap bg-white border-indigo-300 text-indigo-600 hover:bg-indigo-50"
+>
+📷 Figure
+</button>
+{captureMsg && (
+<span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md px-2 py-1">{captureMsg}</span>
+)}
 
 {/* Residue renumbering */}
 <div className="flex flex-col gap-1">
@@ -3033,6 +3073,36 @@ className="border border-indigo-300 rounded-lg px-2 py-1 text-xs bg-white outlin
   );
 })()}
 
+{/* Large-structure info line (non-blocking): the whole system is rendered,
+    just with lightweight representations so the browser stays responsive.
+    Kept at the TOP of the viewer window so the "water hidden" note is visible
+    without scrolling to the bottom. */}
+{lightInfo && (
+<div className="flex flex-wrap items-center gap-2 bg-sky-50 border border-sky-200 text-sky-900 rounded-lg px-3 py-2 text-xs font-bold shadow-sm">
+<span>
+ℹ️ Large structure{lightInfo.nAtoms ? ` (${lightInfo.nAtoms.toLocaleString()} atoms)` : ''}: showing the whole system (protein cartoon + {largeStyle === 'lines' ? 'lines' : largeStyle === 'dots' ? 'dots' : 'spheres'}) — water is hidden by default, use the 💧 Water checkbox to show it.
+</span>
+<button
+type="button"
+onClick={useFullDetail}
+className="text-xs font-bold bg-white border border-sky-300 text-sky-800 hover:bg-sky-100 px-2.5 py-1 rounded-lg transition-colors"
+title="Switch to the full-detail representations (ball+stick, high quality) — can be slower on large systems"
+>
+✨ Full detail
+</button>
+</div>
+)}
+
+{viewerCollapsed && (
+<div className="flex items-center justify-between border border-dashed border-slate-300 rounded-xl bg-slate-50 px-3 py-2.5">
+  <span className="text-xs font-bold text-slate-500">🧬 3D viewer minimized — the structure stays loaded.</span>
+  <button type="button" onClick={() => setViewerCollapsed(false)}
+    className="text-xs font-bold px-2.5 py-1 rounded-md bg-sky-600 text-white border border-sky-600 hover:bg-sky-700 transition-colors">
+    ▲ Expand viewer
+  </button>
+</div>
+)}
+
 {/* 3D Viewport — retractable: "⬇ Minimize" collapses it to a thin bar. The
     container stays MOUNTED (height 0) so the NGL stage, structure and
     trajectory are preserved; only the tall canvas is hidden. */}
@@ -3042,13 +3112,13 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
 >
 <div ref={containerRef} className="w-full h-full" />
 
-{/* Floating retract control — bottom-left of the 3D viewport, always visible
+{/* Floating retract control — top-left of the 3D viewport, always visible
     (above the status overlays). Mirrors the "⬇ Minimize" toolbar button. */}
 <button
 type="button"
 onClick={() => setViewerCollapsed(true)}
 title="Retract (minimize) the 3D viewer window — the structure stays loaded, only the tall canvas collapses to a thin bar"
-className="absolute bottom-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border border-slate-300 text-slate-600 text-xs font-black hover:bg-slate-100 shadow-sm flex items-center justify-center"
+className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border border-slate-300 text-slate-600 text-xs font-black hover:bg-slate-100 shadow-sm flex items-center justify-center"
 >
 ▼
 </button>
@@ -3208,16 +3278,6 @@ Tip: you cannot paste a local file path — use the file picker button above
 )}
 </div>
 
-{viewerCollapsed && (
-  <div className="flex items-center justify-between border border-dashed border-slate-300 rounded-xl bg-slate-50 px-3 py-2.5 mt-1">
-    <span className="text-xs font-bold text-slate-500">🧬 3D viewer minimized — the structure stays loaded.</span>
-    <button type="button" onClick={() => setViewerCollapsed(false)}
-      className="text-xs font-bold px-2.5 py-1 rounded-md bg-sky-600 text-white border border-sky-600 hover:bg-sky-700 transition-colors">
-      ▲ Expand viewer
-    </button>
-  </div>
-)}
-
 {/* Vertical resize handle — drag to make the 3D viewer taller/shorter */}
 <div
   onMouseDown={(e) => { resizeRef.current = { startY: e.clientY, startH: viewH }; e.preventDefault(); }}
@@ -3280,24 +3340,6 @@ className="text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-3 p
 </div>
 )}
 
-
-{/* Large-structure info line (non-blocking): the whole system is rendered,
-    just with lightweight representations so the browser stays responsive. */}
-{lightInfo && (
-<div className="flex flex-wrap items-center gap-2 bg-sky-50 border border-sky-200 text-sky-900 rounded-lg px-3 py-2 text-xs font-bold shadow-sm">
-<span>
-ℹ️ Large structure{lightInfo.nAtoms ? ` (${lightInfo.nAtoms.toLocaleString()} atoms)` : ''}: showing the whole system (protein cartoon + {largeStyle === 'lines' ? 'lines' : largeStyle === 'dots' ? 'dots' : 'spheres'}) — water is hidden by default, use the 💧 Water checkbox to show it.
-</span>
-<button
-type="button"
-onClick={useFullDetail}
-className="text-xs font-bold bg-white border border-sky-300 text-sky-800 hover:bg-sky-100 px-2.5 py-1 rounded-lg transition-colors"
-title="Switch to the full-detail representations (ball+stick, high quality) — can be slower on large systems"
->
-✨ Full detail
-</button>
-</div>
-)}
 
 </div>
 );

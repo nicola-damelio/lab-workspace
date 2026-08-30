@@ -3174,7 +3174,7 @@ const openDataset = (dset) => {
             />)}
 
             {currentModule === 'publications' && (<PublicationsModule
-              operatorNames={operatorNames} tests={tests} currentUser={currentUser}
+              operatorNames={operatorNames} tests={tests} currentUser={currentUser} projectId={currentProjectId}
             />)}
           </div>
         </div>
