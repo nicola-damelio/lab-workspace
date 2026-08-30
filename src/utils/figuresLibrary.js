@@ -1,3 +1,5 @@
+import { getDriveToken } from './driveUpload';
+
 /* =========================================================================
    src/utils/figuresLibrary.js
    Shared persistence for the Publications → "Figures & Slides" builder:
@@ -118,6 +120,41 @@ export const writeDeck = (projectId, deck) => {
 
 export const uid = (p) => `${p || 'x'}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
+// Extract the Google Drive file id from any Drive/thumbnail URL.
+const driveFileIdFromUrl = (url) => {
+  const u = String(url || '');
+  const m = u.match(/\/file\/d\/([^/?]+)/) || u.match(/[?&]id=([^&#]+)/) || u.match(/\/d\/([^/?]+)/) || u.match(/thumbnail\?id=([^&]+)/);
+  return m && m[1] ? m[1] : null;
+};
+
+// Turn an external image URL (typically a Google Drive link, which often needs
+// the token and cannot be drawn onto a canvas) into a self-contained dataURL.
+// Drive private files are fetched through the Drive API with the auth token;
+// anything else is fetched as a plain blob. On failure the original URL is
+// returned so the <img> still gets a chance to render.
+export const resolveImageToDataUrl = async (src) => {
+  const s = String(src || '');
+  if (s.startsWith('data:image/')) return s;
+  if (!/^https?:\/\//i.test(s)) return s;
+  try {
+    const fid = driveFileIdFromUrl(s);
+    const token = getDriveToken();
+    if (fid && token) {
+      const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fid}?alt=media`, { headers: { Authorization: `Bearer ${token}` } });
+      if (res && res.ok) {
+        const blob = await res.blob();
+        if (blob && blob.size > 0) return await blobToDataUrl(blob);
+      }
+    }
+    const res2 = await fetch(s, { mode: 'cors' });
+    if (res2 && res2.ok) {
+      const blob = await res2.blob();
+      if (blob && blob.size > 0) return await blobToDataUrl(blob);
+    }
+  } catch { /* keep the original URL */ }
+  return s;
+};
+
 // Downscale an image dataURL (maxSide in px, type/quality for the target copy).
 export const downscaleImage = (dataUrl, maxSide = 3000, type = 'image/png', quality = 0.92) =>
   new Promise((resolve) => {
@@ -140,10 +177,15 @@ export const downscaleImage = (dataUrl, maxSide = 3000, type = 'image/png', qual
 // Two copies for a library entry: a small PNG thumbnail for the UI (PNG keeps
 // transparency for formulas/structures) and a high-resolution PNG (max 3000 px,
 // enough for ~300 DPI A4 pages) used by the PDF/publication export.
-export const makeLibraryImage = async (dataUrl) => ({
-  url: await downscaleImage(dataUrl, 700, 'image/png', 0.92),
-  full: await downscaleImage(dataUrl, 3000, 'image/png', 0.92)
-});
+// External (Drive) sources are first resolved into self-contained dataURLs so
+// the images never end up as "empty" files that require a token to display.
+export const makeLibraryImage = async (dataUrl) => {
+  const src = await resolveImageToDataUrl(dataUrl);
+  return {
+    url: await downscaleImage(src, 700, 'image/png', 0.92),
+    full: await downscaleImage(src, 3000, 'image/png', 0.92)
+  };
+};
 
 // File/Blob → dataURL (uploaded images, clipboard blobs).
 export const blobToDataUrl = (blob) =>

@@ -5,9 +5,10 @@ import {
   readLibrary, writeLibrary, removeLibraryItem, renameLibraryItem,
   readProjectLibrary, writeProjectLibrary, removeProjectLibraryItem, renameProjectLibraryItem, moveLibraryItem,
   addLibraryItem, addProjectLibraryItem,
-  readDeck, writeDeck, uid, makeLibraryImage, blobToDataUrl
+  readDeck, writeDeck, uid, makeLibraryImage, blobToDataUrl, resolveImageToDataUrl
 } from '../utils/figuresLibrary';
 import { uploadWorkspaceFile, getDriveToken } from '../utils/driveUpload';
+import { getRenderableDriveUrl } from '../data/constants';
 
 /* =========================================================================
    FiguresSlidesSection — "Figures & Slides" builder (Publications page).
@@ -36,6 +37,7 @@ const emptyBlock = (type) => ({
   w: 100, h: type === 'image' ? 240 : 200,   // panel dimensions (width % / height px)
   zoom: 100,                                  // content zoom inside the panel (%)
   fontSize: null,                             // explicit px font size (falls back to TEXT_SIZES[size])
+  panel: '',                                  // multi-panel figure label (A, B, C, …)
   url: '', full: '', caption: '', text: ''
 });
 
@@ -51,9 +53,30 @@ const Stepper = ({ label, value, unit = '', min, max, step = 1, onChange }) => (
   </span>
 );
 
-// Map a block width (%, 10–100) onto a 10-column grid span.
-const colSpan = (b) => Math.max(1, Math.min(10, Math.round((b.w || 100) / 10)));
+// Map a block width (%, 10–100) onto a 12-column grid span.
+const COL_SPAN_CLASSES = {
+  1: 'col-span-1', 2: 'col-span-2', 3: 'col-span-3', 4: 'col-span-4', 5: 'col-span-5',
+  6: 'col-span-6', 7: 'col-span-7', 8: 'col-span-8', 9: 'col-span-9', 10: 'col-span-10',
+  11: 'col-span-11', 12: 'col-span-12'
+};
+const colSpanCls = (b) =>
+  COL_SPAN_CLASSES[Math.max(1, Math.min(12, Math.round(((b.w || 100) / 100) * 12)))] || 'col-span-12';
 const blockFont = (b) => b.fontSize || TEXT_SIZES[b.size] || 16;
+
+// Editor "page height" reference (px) — height presets are fractions of it,
+// and the PDF/PNG exports scale it by ~3 to reach the 300 DPI page.
+const PAGE_H = 560;
+const H_PRESETS = [['¼', Math.round(PAGE_H / 4)], ['⅓', Math.round(PAGE_H / 3)], ['½', Math.round(PAGE_H / 2)], ['1', PAGE_H]];
+const W_PRESETS = [['¼', 25], ['⅓', 33], ['½', 50], ['1', 100]];
+// Next panel letter for a slide (A, B, C, … Z).
+const nextPanelLetter = (blocks) => {
+  const used = new Set((blocks || []).map((b) => String(b.panel || '').trim().toUpperCase()).filter(Boolean));
+  for (let i = 0; i < 26; i++) {
+    const L = String.fromCharCode(65 + i);
+    if (!used.has(L)) return L;
+  }
+  return 'Z';
+};
 
 /* ---- PNG export helpers (canvas-based, A4 landscape @ 300 DPI) ------------- */
 const downloadDataUrl = (dataUrl, filename) => {
@@ -113,6 +136,100 @@ const wrapCanvasText = (ctx, text, x, y, width, lineH, align, maxH) => {
   });
 };
 
+// Renders a slide (from the deck) onto a 300-DPI A4-landscape canvas and returns
+// its PNG dataURL. Shared by the "⬇ Slide PNG" export and the project sections'
+// "🖼 Insert slide" feature. External (Drive) image sources are resolved to
+// dataURLs first so the canvas is never tainted.
+export const renderSlideToDataUrl = async (slide, maxSide = 0) => {
+  const W = 2481, H = 1754, left = 70, gap = 44, titleBarH = 150, rowGap = 56;
+  const contentW = W - left * 2;
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = hexToRgbStyle(slide.bg || '#ffffff');
+  ctx.fillRect(0, 0, W, H);
+  // Title bar
+  ctx.fillStyle = '#1e293b';
+  ctx.fillRect(0, 0, W, titleBarH);
+  ctx.fillStyle = '#ffffff';
+  ctx.textBaseline = 'middle';
+  ctx.font = `bold ${Math.max(26, Math.min(64, (slide.titleSize || 20) * 2.4))}px Helvetica, Arial, sans-serif`;
+  ctx.fillText(String(slide.title || 'Untitled slide').slice(0, 90), left, titleBarH / 2 + 14);
+  // Blocks laid out in wrapping rows honouring W/H/zoom/font/panel
+  let rowY = titleBarH + 40, rowH = 0, x = left;
+  for (const b of (slide.blocks || [])) {
+    const bw = contentW * Math.max(0.1, Math.min(1, (b.w || 100) / 100));
+    const bh = Math.max(120, (b.h || 240) * 3);
+    if (x + bw > left + contentW + 0.5) { rowY += rowH + rowGap; rowH = 0; x = left; }
+    rowH = Math.max(rowH, bh);
+    const bx = x, by = rowY;
+    x += bw + gap;
+    if (b.type === 'image') {
+      const src = await resolveImageToDataUrl(b.full || b.url);
+      await drawImageFitted(ctx, src, bx, by, bw, bh - 60, b.zoom || 100);
+      if (b.panel) {
+        ctx.font = 'bold 28px Helvetica, Arial, sans-serif';
+        ctx.fillStyle = '#0f172a';
+        ctx.fillText(String(b.panel).slice(0, 2), bx + 8, by + 30);
+      }
+      if (b.caption) {
+        ctx.fillStyle = '#64748b';
+        ctx.font = 'italic 13px Helvetica, Arial, sans-serif';
+        ctx.fillText(String(b.caption).slice(0, 80), bx, by + bh - 22);
+      }
+    } else {
+      if (b.bg) { ctx.fillStyle = hexToRgbStyle(b.bg); roundRectCanvas(ctx, bx, by, bw, bh, 14); ctx.fill(); }
+      ctx.fillStyle = hexToRgbStyle(b.color || '#1f2937');
+      ctx.font = `${b.bold ? 'bold ' : ''}${b.italic ? 'italic ' : ''}${blockFont(b) * 2.4}px Helvetica, Arial, sans-serif`;
+      wrapCanvasText(ctx, b.text || '', bx, by + 30, bw, blockFont(b) * 2.4 * 1.25, b.align, bh);
+    }
+  }
+  let dataUrl = canvas.toDataURL('image/png');
+  if (maxSide > 0 && Math.max(W, H) > maxSide) {
+    const scale = maxSide / Math.max(W, H);
+    const c2 = document.createElement('canvas');
+    c2.width = Math.max(1, Math.round(W * scale));
+    c2.height = Math.max(1, Math.round(H * scale));
+    c2.getContext('2d').drawImage(canvas, 0, 0, c2.width, c2.height);
+    dataUrl = c2.toDataURL('image/png');
+  }
+  return dataUrl;
+};
+
+// Scaled-down live preview of a slide (pure CSS, no canvas) used by the project
+// sections' slide picker. Keeps the deck's real block layout (12-col grid).
+export const SlidePreview = ({ slide, width = 220, className = '' }) => {
+  const W = 2481, H = 1754, left = 70, gap = 44, titleBarH = 150;
+  const scale = width / W;
+  const contentW = W - left * 2;
+  return (
+    <div className={`relative overflow-hidden rounded border border-slate-200 bg-white ${className}`}
+      style={{ width, height: Math.round(H * scale) }}>
+      <div style={{ width: W, height: H, transform: `scale(${scale})`, transformOrigin: 'top left', position: 'relative' }}>
+        <div style={{ position: 'absolute', inset: 0, background: slide.bg || '#ffffff' }} />
+        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: titleBarH, background: '#1e293b', color: '#fff', fontWeight: 800, fontSize: Math.max(26, Math.min(64, (slide.titleSize || 20) * 2.4)), padding: '0 70px', lineHeight: `${titleBarH}px`, whiteSpace: 'nowrap', overflow: 'hidden' }}>
+          {slide.title || 'Untitled slide'}
+        </div>
+        <div style={{ position: 'absolute', top: titleBarH + 40, left, right: left, display: 'flex', flexWrap: 'wrap', gap }}>
+          {(slide.blocks || []).map((b) => (
+            <div key={b.id} style={{ width: contentW * Math.max(0.1, Math.min(1, (b.w || 100) / 100)), minHeight: Math.max(120, (b.h || 240) * 3), overflow: 'hidden' }}>
+              {b.type === 'image' ? (
+                <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <img src={b.url} alt="" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                </div>
+              ) : (
+                <div style={{ background: b.bg || 'transparent', padding: 16, fontSize: blockFont(b) * 2.4, fontWeight: b.bold ? 700 : 400, fontStyle: b.italic ? 'italic' : 'normal', color: b.color || '#1f2937', textAlign: b.align, whiteSpace: 'pre-wrap' }}>
+                  {b.text}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToTest }) => {
   const [library, setLibrary] = useState(readLibrary);
   const [projectLibrary, setProjectLibrary] = useState(() => readProjectLibrary(projectId));
@@ -128,11 +245,10 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
   const [driveMsg, setDriveMsg] = useState('');
   const fileRef = useRef(null);
   // Refs so the global paste listener always uses the latest closure/scope.
+  // (Updated after the functions are declared — see the effect at the bottom,
+  // otherwise the dependency array would hit the temporal dead zone.)
   const addToLibraryRef = useRef(null);
   const libScopeRef = useRef('common');
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { addToLibraryRef.current = addToLibrary; }, [addToLibrary]);
-  useEffect(() => { libScopeRef.current = libScopeName; }, [libScopeName]);
 
   useEffect(() => { writeLibrary(library); }, [library]);
   useEffect(() => { writeProjectLibrary(projectId, projectLibrary); }, [projectLibrary, projectId]);
@@ -220,6 +336,7 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
   const addBlock = (i, block) => {
     const s = deck.slides[i];
     const b = { ...emptyBlock(block.type), ...block, id: uid('blk') };
+    if (b.type === 'image' && !b.panel) b.panel = nextPanelLetter(s.blocks || []);
     patchSlide(i, { blocks: [...(s.blocks || []), b] });
     setSel((s.blocks || []).length);
   };
@@ -227,6 +344,7 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
     const s = deck.slides[i];
     const blocks = [...(s.blocks || [])];
     const b = { ...emptyBlock(block.type), ...block, id: uid('blk') };
+    if (b.type === 'image' && !b.panel) b.panel = nextPanelLetter(blocks);
     blocks.splice(bi, 0, b);
     patchSlide(i, { blocks });
     setSel(bi);
@@ -260,11 +378,19 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
   };
   const libFind = (scope, id) =>
     (scope === 'project' ? projectLibrary : library).find((x) => x.id === id);
-  const blockFromStar = (s) => ({
-    type: 'image', url: s.url, full: s.url,
-    caption: s.caption || s.label || '',
-    src: { testId: s.testId, testName: s.testName, starId: s.id, kind: s.kind }
-  });
+  // Resolve a ⭐-starred figure into a self-contained dataURL pair (Drive URLs
+  // would otherwise render as empty files) and add it as an image block.
+  const addBlockFromStar = async (s, bi = null) => {
+    if (!s || !slide) return;
+    const img = await makeLibraryImage(s.url);
+    const block = {
+      type: 'image', url: img.url, full: img.full,
+      caption: s.caption || s.label || '',
+      src: { testId: s.testId, testName: s.testName, starId: s.id, kind: s.kind }
+    };
+    if (bi === null) addBlock(cur, block);
+    else insertBlockAt(cur, bi, block);
+  };
   const dropOnGrid = (e) => {
     e.preventDefault();
     const d = dragData.current;
@@ -274,7 +400,7 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
       if (it && slide) addBlock(cur, { type: 'image', url: it.url, full: it.full, caption: it.label || '' });
     } else if (d.kind === 'star') {
       const s = starred[d.idx];
-      if (s && slide) addBlock(cur, blockFromStar(s));
+      if (s) addBlockFromStar(s);
     } else if (d.kind === 'block') {
       // dropping a block onto the empty grid area → move to the end
       moveBlock(d.idx, (slide.blocks || []).length - 1);
@@ -293,7 +419,7 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
       if (it && slide) insertBlockAt(cur, bi, { type: 'image', url: it.url, full: it.full, caption: it.label || '' });
     } else if (d.kind === 'star') {
       const s = starred[d.idx];
-      if (s && slide) insertBlockAt(cur, bi, blockFromStar(s));
+      if (s) addBlockFromStar(s, bi);
     }
     dragData.current = null;
     setDropIdx(null);
@@ -458,11 +584,19 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
         x += bw + gap;
         if (b.type === 'image') {
           await fitImage(b.full || b.url, bx, by, bw, bh - 60, b.zoom || 100);
+          if (b.panel) {
+            doc.setFontSize(28);
+            doc.setTextColor(15, 23, 42);
+            doc.setFont('helvetica', 'bold');
+            doc.text(String(b.panel).slice(0, 2), bx + 8, by + 30);
+          }
           if (b.caption) {
             doc.setFontSize(13);
             doc.setTextColor(100, 116, 139);
             doc.setFont('helvetica', 'italic');
-            doc.text(wrap(b.caption, bw).slice(0, 2), bx, by + bh - 22, { align: b.align === 'center' ? 'center' : 'left' });
+            const capLines = wrap(b.caption, bw).slice(0, 2);
+            if (capLines.length) capLines[0] = (b.panel ? `${b.panel}. ` : '') + capLines[0];
+            doc.text(capLines, bx, by + bh - 22, { align: b.align === 'center' ? 'center' : 'left' });
           }
         } else {
           if (b.bg) { const c = hexToRgb(b.bg); doc.setFillColor(c[0], c[1], c[2]); doc.roundedRect(bx, by, bw, bh, 14, 14, 'F'); }
@@ -483,45 +617,9 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
     downloadDataUrl(url, `${(b.caption || b.src?.testName || 'figure').replace(/[^a-z0-9]+/gi, '_').slice(0, 60)}.png`);
   };
   const exportSlidePng = async (s) => {
-    const W = 2481, H = 1754, left = 70, gap = 44, titleBarH = 150, rowGap = 56;
-    const contentW = W - left * 2;
-    const canvas = document.createElement('canvas');
-    canvas.width = W; canvas.height = H;
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = hexToRgbStyle(s.bg || '#ffffff');
-    ctx.fillRect(0, 0, W, H);
-    // Title bar
-    ctx.fillStyle = '#1e293b';
-    ctx.fillRect(0, 0, W, titleBarH);
-    ctx.fillStyle = '#ffffff';
-    ctx.textBaseline = 'middle';
-    ctx.font = `bold ${Math.max(26, Math.min(64, (s.titleSize || 20) * 2.4))}px Helvetica, Arial, sans-serif`;
-    ctx.fillText(String(s.title || 'Untitled slide').slice(0, 90), left, titleBarH / 2 + 14);
-    // Blocks laid out in wrapping rows honouring W/H/zoom/font
-    let rowY = titleBarH + 40, rowH = 0, x = left;
-    for (const b of (s.blocks || [])) {
-      const bw = contentW * Math.max(0.1, Math.min(1, (b.w || 100) / 100));
-      const bh = Math.max(120, (b.h || 240) * 3);
-      if (x + bw > left + contentW + 0.5) { rowY += rowH + rowGap; rowH = 0; x = left; }
-      rowH = Math.max(rowH, bh);
-      const bx = x, by = rowY;
-      x += bw + gap;
-      if (b.type === 'image') {
-        await drawImageFitted(ctx, b.full || b.url, bx, by, bw, bh - 60, b.zoom || 100);
-        if (b.caption) {
-          ctx.fillStyle = '#64748b';
-          ctx.font = 'italic 13px Helvetica, Arial, sans-serif';
-          ctx.fillText(String(b.caption).slice(0, 80), bx, by + bh - 22);
-        }
-      } else {
-        if (b.bg) { ctx.fillStyle = hexToRgbStyle(b.bg); roundRectCanvas(ctx, bx, by, bw, bh, 14); ctx.fill(); }
-        ctx.fillStyle = hexToRgbStyle(b.color || '#1f2937');
-        ctx.font = `${b.bold ? 'bold ' : ''}${b.italic ? 'italic ' : ''}${blockFont(b) * 2.4}px Helvetica, Arial, sans-serif`;
-        wrapCanvasText(ctx, b.text || '', bx, by + 30, bw, blockFont(b) * 2.4 * 1.25, b.align, bh);
-      }
-    }
     try {
-      downloadDataUrl(canvas.toDataURL('image/png'), `${(s.title || 'slide').replace(/[^a-z0-9]+/gi, '_').slice(0, 60)}.png`);
+      const dataUrl = await renderSlideToDataUrl(s);
+      downloadDataUrl(dataUrl, `${(s.title || 'slide').replace(/[^a-z0-9]+/gi, '_').slice(0, 60)}.png`);
     } catch {
       alert('Could not export the slide as PNG (one of its images cannot be read).');
     }
@@ -545,6 +643,12 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
     }
     setTimeout(() => setDriveMsg(''), 7000);
   };
+
+  // Keep the paste-listener refs pointing at the latest closures (declared here,
+  // after all functions, so the dependency arrays never hit the TDZ).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { addToLibraryRef.current = addToLibrary; }, [addToLibrary]);
+  useEffect(() => { libScopeRef.current = libScopeName; }, [libScopeName]);
 
   const slide = deck.slides[cur];
 
@@ -607,7 +711,7 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
                   <div key={it.id} draggable
                     onDragStart={onDragStart('lib', it.id, null, libScopeName)}
                     className="flex flex-col gap-1 bg-white border border-slate-200 rounded-lg p-1.5 cursor-grab active:cursor-grabbing hover:border-blue-300">
-                    <img src={it.url} alt={it.label} className="w-full h-14 object-contain rounded border border-slate-100" />
+                    <img src={getRenderableDriveUrl(it.url)} alt={it.label} className="w-full h-14 object-contain rounded border border-slate-100" />
                     <input value={it.label || ''} onChange={(e) => renameLib(it.id, e.target.value)}
                       className="w-full text-[10px] font-bold text-slate-600 bg-transparent outline-none" />
                     <div className="flex items-center justify-between gap-1">
@@ -655,11 +759,11 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
                 {starred.map((s, si) => (
                   <div key={s.id} draggable onDragStart={onDragStart('star', s.id, si)}
                     className="flex flex-col gap-1 bg-white border border-amber-200 rounded-lg p-1.5 cursor-grab active:cursor-grabbing hover:border-amber-400">
-                    <img src={s.url} alt={s.label} className="w-full h-14 object-contain rounded border border-amber-100 bg-white" />
+                    <img src={getRenderableDriveUrl(s.url)} alt={s.label} className="w-full h-14 object-contain rounded border border-amber-100 bg-white" />
                     <p className="text-[10px] font-bold text-slate-700 truncate">{s.caption || s.label}</p>
                     <p className="text-[9px] text-slate-400 truncate">{s.testName}</p>
                     <div className="flex items-center gap-1">
-                      <button type="button" onClick={() => slide && addBlock(cur, blockFromStar(s))}
+                      <button type="button" onClick={() => addBlockFromStar(s)}
                         disabled={!slide}
                         className="flex-1 text-[10px] font-bold bg-blue-600 text-white rounded px-1 py-0.5 disabled:opacity-40" title="Add to current slide (keeps the link to the experiment)">+ slide</button>
                       <button type="button" onClick={() => importStarred(s)}
@@ -775,7 +879,7 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
               })()}
 
               {/* ---- Block grid (drop target for images, drag to reorder) ---- */}
-              <div className="grid grid-cols-10 gap-2 min-h-[120px] bg-white border border-slate-200 rounded-lg p-2"
+              <div className="grid grid-cols-12 gap-2 min-h-[120px] bg-white border border-slate-200 rounded-lg p-2"
                 onDragOver={(e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes('text/plain')) e.preventDefault(); }}
                 onDrop={dropOnGrid}>
                 {(slide.blocks || []).map((b, bi) => (
@@ -783,13 +887,34 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
                     onDragOver={(e) => dragOver(e, bi)} onDrop={dropOnBlock(bi)}
                     onClick={() => setSel(bi)}
                     style={{ minHeight: Math.max(80, b.h || 200) }}
-                    className={`flex flex-col gap-1.5 border rounded-lg p-1.5 cursor-grab active:cursor-grabbing transition-colors col-span-${colSpan(b)} ${sel === bi ? 'border-sky-400 ring-1 ring-sky-200' : 'border-slate-200'} ${dropIdx === bi ? 'bg-blue-50 border-blue-300' : 'bg-white'}`}>
+                    className={`flex flex-col gap-1.5 border rounded-lg p-1.5 cursor-grab active:cursor-grabbing transition-colors ${colSpanCls(b)} ${sel === bi ? 'border-sky-400 ring-1 ring-sky-200' : 'border-slate-200'} ${dropIdx === bi ? 'bg-blue-50 border-blue-300' : 'bg-white'}`}>
                     {/* per-panel control bar: dimensions, content zoom, font size */}
                     <div className="flex items-center gap-1 flex-wrap bg-slate-50 border border-slate-200 rounded px-1 py-0.5" onClick={(e) => e.stopPropagation()}>
                       <Stepper label="W" value={b.w || 100} unit="%" min={10} max={100} step={10} onChange={(v) => patchBlock(cur, bi, { w: v })} />
+                      <span className="flex items-center gap-0.5 bg-white border border-slate-200 rounded px-1 py-0.5" title="Panel width (fraction of the page)">
+                        {W_PRESETS.map(([lab, val]) => (
+                          <button key={lab} type="button" onClick={() => patchBlock(cur, bi, { w: val })}
+                            className={`text-[9px] font-bold leading-none px-1 py-0.5 rounded ${Math.round(b.w || 100) === val ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-slate-900'}`}>{lab}</button>
+                        ))}
+                      </span>
                       <Stepper label="H" value={b.h || 200} unit="px" min={80} max={600} step={20} onChange={(v) => patchBlock(cur, bi, { h: v })} />
+                      <span className="flex items-center gap-0.5 bg-white border border-slate-200 rounded px-1 py-0.5" title="Panel height (fraction of the page)">
+                        {H_PRESETS.map(([lab, val]) => (
+                          <button key={lab} type="button" onClick={() => patchBlock(cur, bi, { h: val })}
+                            className={`text-[9px] font-bold leading-none px-1 py-0.5 rounded ${(b.h || 200) === val ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-slate-900'}`}>{lab}</button>
+                        ))}
+                      </span>
                       <Stepper label="🔍" value={b.zoom || 100} unit="%" min={50} max={300} step={10} onChange={(v) => patchBlock(cur, bi, { zoom: v })} />
                       {b.type === 'text' && <Stepper label="A" value={blockFont(b)} unit="px" min={8} max={72} step={1} onChange={(v) => patchBlock(cur, bi, { fontSize: v })} />}
+                      {b.type === 'image' && (
+                        <span className="flex items-center gap-0.5 bg-white border border-slate-200 rounded px-1 py-0.5" title="Panel letter (A, B, C … — multi-panel figures)">
+                          <span className="text-[9px] font-bold text-slate-500">🅰</span>
+                          <input value={b.panel || ''} onChange={(e) => patchBlock(cur, bi, { panel: e.target.value.slice(0, 2).toUpperCase() })}
+                            className="w-6 text-center text-[10px] font-black text-slate-700 bg-transparent outline-none" placeholder="A" />
+                          <button type="button" onClick={() => patchBlock(cur, bi, { panel: nextPanelLetter((slide.blocks || []).filter((_, k) => k !== bi)) })}
+                            className="text-[9px] font-bold text-blue-500 hover:text-blue-700" title="Auto-assign the next free letter">auto</button>
+                        </span>
+                      )}
                       {b.src && b.src.testId && (
                         <button type="button" onClick={() => { if (jumpToTest) jumpToTest(b.src.testId); }}
                           className="text-[10px] font-bold px-1.5 py-0.5 rounded border border-blue-300 text-blue-600 hover:bg-blue-50 ml-auto"
@@ -804,9 +929,12 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
                             onClick={(e) => { if (b.src && b.src.testId && jumpToTest) { e.stopPropagation(); jumpToTest(b.src.testId); } }}
                             title={b.src && b.src.testId ? `Click to open the experiment "${b.src.testName || b.src.testId}"` : undefined}>
                             <div className="flex justify-center w-full">
-                              <img src={b.url} alt={b.caption} className="object-contain rounded border border-slate-100"
+                              <img src={getRenderableDriveUrl(b.url)} alt={b.caption} className="object-contain rounded border border-slate-100"
                                 style={{ width: IMG_SIZES[b.size] || '55%', maxHeight: 400 }} />
                             </div>
+                            {b.panel && (
+                              <span className="absolute top-0 left-0 text-[11px] font-black text-slate-900 bg-white/90 border border-slate-200 rounded px-1.5 py-0.5 shadow-sm">🅰 {b.panel}</span>
+                            )}
                             {b.src && b.src.testId && (
                               <span className="absolute top-0 right-0 text-[9px] font-black bg-blue-600 text-white rounded px-1.5 py-0.5 opacity-90">↗ experiment</span>
                             )}
@@ -845,7 +973,7 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
                   </div>
                 ))}
                 {(slide.blocks || []).length === 0 && (
-                  <div className="col-span-10 text-[10px] text-slate-400 italic text-center py-8 border border-dashed border-slate-300 rounded-lg">
+                  <div className="col-span-12 text-[10px] text-slate-400 italic text-center py-8 border border-dashed border-slate-300 rounded-lg">
                     Drop images here or click "+ Text" to start this slide.
                   </div>
                 )}
@@ -866,18 +994,19 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
                 style={{ fontSize: (deck.slides[pi].titleSize || 20) * 2.4 }}>
                 {deck.slides[pi].title || 'Untitled slide'}
               </h2>
-              <div className="grid grid-cols-10 gap-6">
+              <div className="grid grid-cols-12 gap-6">
                 {(deck.slides[pi].blocks || []).map((b) => (
                   b.type === 'image' ? (
-                    <figure key={b.id} className={`flex flex-col items-center gap-2 col-span-${colSpan(b)}`} style={{ minHeight: Math.max(80, b.h || 240) }}>
-                      <div className="flex-1 flex items-center justify-center w-full" style={{ transform: `scale(${(b.zoom || 100) / 100})`, transformOrigin: 'center' }}>
-                        <img src={b.full || b.url} alt={b.caption} className="max-w-full max-h-[55vh] object-contain rounded-lg border border-slate-200"
+                    <figure key={b.id} className={`flex flex-col items-center gap-2 ${colSpanCls(b)}`} style={{ minHeight: Math.max(80, b.h || 240) }}>
+                      <div className="relative flex-1 flex items-center justify-center w-full" style={{ transform: `scale(${(b.zoom || 100) / 100})`, transformOrigin: 'center' }}>
+                        {b.panel && <span className="absolute top-0 left-0 text-base font-black text-slate-900 bg-white/90 border border-slate-200 rounded px-1.5 py-0.5 z-10">🅰 {b.panel}</span>}
+                        <img src={getRenderableDriveUrl(b.full || b.url)} alt={b.caption} className="max-w-full max-h-[55vh] object-contain rounded-lg border border-slate-200"
                           style={{ width: b.size === 'sm' ? '40%' : b.size === 'md' ? '65%' : b.size === 'lg' ? '85%' : '100%' }} />
                       </div>
-                      {b.caption && <figcaption className="text-sm text-slate-500 italic">{b.caption}</figcaption>}
+                      {b.caption && <figcaption className="text-sm text-slate-500 italic">{b.panel ? `${b.panel}. ` : ''}{b.caption}</figcaption>}
                     </figure>
                   ) : (
-                    <div key={b.id} className={`rounded-xl p-4 col-span-${colSpan(b)}`} style={{ background: b.bg || 'transparent', minHeight: Math.max(80, b.h || 200) }}>
+                    <div key={b.id} className={`rounded-xl p-4 ${colSpanCls(b)}`} style={{ background: b.bg || 'transparent', minHeight: Math.max(80, b.h || 200) }}>
                       <div style={{ transform: `scale(${(b.zoom || 100) / 100})`, transformOrigin: 'center' }}>
                         <p className="text-slate-700 whitespace-pre-wrap"
                           style={{ fontSize: blockFont(b) * 1.5, fontWeight: b.bold ? 700 : 400, fontStyle: b.italic ? 'italic' : 'normal', color: b.color || '#1f2937', textAlign: b.align }}>

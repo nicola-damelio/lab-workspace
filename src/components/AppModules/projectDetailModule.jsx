@@ -8,6 +8,8 @@ import { suggestDriveFileName, openDrive } from '../../utils/driveNaming';
 import { DriveUploadButton } from '../DriveUpload';
 import { markAttachmentsDeleted, renameDriveFilesFor, moveTestFolderIntoProject, moveTestFolderOutOfProject } from '../../utils/driveUpload';
 import { repairContentImages } from '../../data/constants';
+import { readDeck } from '../../utils/figuresLibrary';
+import { SlidePreview, renderSlideToDataUrl } from '../FiguresSlides';
 
 /* =========================================================================
    PROJECT DETAIL — a project page with subsections:
@@ -229,6 +231,8 @@ export const ProjectDetailModule = ({
   const [docMode, setDocMode] = useState('view');   // export doc: 'view' | 'edit' | 'suggest'
   const [suggestBaseHtml, setSuggestBaseHtml] = useState(''); // HTML snapshot when suggestion mode starts
   const [mmEditOpen, setMmEditOpen] = useState(false); // edit the M&M text on the project page
+  const [slidePickerFor, setSlidePickerFor] = useState(null); // which text section is picking a slide
+  const [slideInserting, setSlideInserting] = useState(false); // busy while rendering a slide to PNG
   const [mmDraft, setMmDraft] = useState('');           // M&M textarea draft
   const [capEditKey, setCapEditKey] = useState(null);   // 'testId:itemId' being caption-edited
   const [capDraft, setCapDraft] = useState('');         // caption textarea draft
@@ -544,6 +548,34 @@ export const ProjectDetailModule = ({
     conclusions: 'Conclusions'
   }[sec] || sec);
 
+  // ---- Insert a slide from the Figures & Slides deck into a text section ----
+  // The deck lives in localStorage per project (labFiguresDeck_<projectId>);
+  // the chosen slide is rendered to a high-res PNG snapshot and stored in the
+  // project's section figures, so it shows up in the section and in the export
+  // document (the same way any figure does).
+  const deckSlides = (project && readDeck(project.id).slides) || [];
+  const insertSlideIntoSection = async (sec, slide, idx) => {
+    if (!canModify) return;
+    setSlideInserting(true);
+    try {
+      const url = await renderSlideToDataUrl(slide, 1800); // ~1800 px wide snapshot
+      patchFigures(sec, [...sectionFigures(sec), {
+        id: genProjectId(),
+        url,
+        caption: slide.title || `Slide ${idx + 1}`,
+        isSlide: true,
+        slideId: slide.id || '',
+        addedAt: new Date().toISOString()
+      }]);
+      setSlidePickerFor(null);
+      setMmFeedback('🖼 Slide inserted into the section');
+    } catch {
+      setMmFeedback('⚠️ Could not render the slide (an image cannot be read)');
+    }
+    setSlideInserting(false);
+    setTimeout(() => setMmFeedback(''), 3000);
+  };
+
   const addSectionDoc = (sec) =>
     patchDocs(sec, [...sectionDocs(sec), { id: genProjectId(), name: suggestDriveFileName({ project: project.name || '', section: sectionLabelOf(sec), suffix: 'doc' }), data: '' }]);
   const patchSectionDoc = (sec, docId, patch) =>
@@ -809,11 +841,39 @@ export const ProjectDetailModule = ({
           onEditFocusChange={setTextEditing}
           fileNaming={{ project: project.name || '', section: label }}
           toolbarExtra={canModify ? [
+            { label: '🖼 + Slide', title: 'Insert a slide from the Figures & Slides deck (Publications)', onClick: () => setSlidePickerFor(id) },
             { label: '▦ + Std Table', title: 'Insert a standard table at the cursor position', onClick: (insertText) => setTableDraft({ section: id, insertText }) },
             { label: '📎 + Document', title: 'Attach a document link', onClick: () => addSectionDoc(id) },
             { label: '📚 + Reference', title: 'Insert a numbered reference at the cursor position', onClick: (insertText) => setRefPicker({ insertText }) }
           ] : []}
         />
+        {slidePickerFor === id && (
+          <div className="mt-3 bg-violet-50 border border-violet-200 rounded-xl p-3">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <span className="text-xs font-bold text-violet-800">🖼 Insert a slide from the Figures &amp; Slides deck</span>
+              <button type="button" onClick={() => setSlidePickerFor(null)}
+                      className="text-[10px] font-bold text-slate-500 hover:text-slate-700">✕ Close</button>
+            </div>
+            {deckSlides.length === 0 ? (
+              <p className="text-[10px] text-slate-500 italic">No slides yet — create them in Publications → Figures &amp; Slides.</p>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3 max-h-80 overflow-y-auto custom-scrollbar">
+                {deckSlides.map((s, idx) => (
+                  <div key={s.id} className="bg-white border border-violet-200 rounded-lg p-2 flex flex-col gap-1.5">
+                    <SlidePreview slide={s} width={180} />
+                    <span className="text-[10px] font-bold text-slate-600 truncate">{s.title || `Slide ${idx + 1}`}</span>
+                    <button type="button"
+                            disabled={slideInserting}
+                            onClick={() => insertSlideIntoSection(id, s, idx)}
+                            className="text-[10px] font-bold bg-violet-600 text-white rounded px-2 py-1 hover:bg-violet-700 disabled:opacity-40">
+                      {slideInserting ? 'Rendering…' : '+ Insert slide'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {canModify && (
         <DriveUploadButton
@@ -833,7 +893,9 @@ export const ProjectDetailModule = ({
               {figures.map((fig) => (
                 <div key={fig.id} className="bg-slate-50 border border-slate-200 rounded-xl p-3 shadow-sm flex flex-col gap-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-500">Figure</span>
+                    <span className="text-xs font-bold text-slate-500 flex items-center gap-1.5">
+                      {fig.isSlide ? <span className="text-violet-700 bg-violet-50 border border-violet-200 rounded-full px-1.5 py-0.5">🖼 slide</span> : <span>Figure</span>}
+                    </span>
                     <button onClick={() => removeSectionFigure(id, fig.id)}
                             className="bg-red-50 hover:bg-red-100 text-red-500 rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold border border-red-200">×</button>
                   </div>
