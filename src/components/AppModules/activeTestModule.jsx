@@ -8,6 +8,7 @@ import { BoxDetail } from '../Storage';
 import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES, EXPERIMENT_TYPES } from '../../data/testTypes';
 import { markAttachmentsDeleted, renameDriveFilesFor, deleteTestDriveFolder } from '../../utils/driveUpload';
 import { removeTestFcsBlobs } from '../../utils/fcsBlobStore';
+import { setSectionsCommand } from '../ui';
 import { Icon } from '../Icons';
 // Lazy renderers (kept as dynamic imports so each stays its own chunk).
 const NMRTestRenderer = lazy(() => import('../NMRTestRenderer').then(m => ({ default: m.NMRTestRenderer })));
@@ -218,7 +219,7 @@ const TestHeader = (
                             onClick={() => {
                               const next = !allSectionsOpen;
                               setAllSectionsOpen(next);
-                              try { window.dispatchEvent(new CustomEvent('lab:toggle-all-sections', { detail: { open: next } })); } catch { /* ignore */ }
+                              setSectionsCommand(next);
                             }}
                             className={`font-bold py-2 px-3 rounded-lg text-xs border shadow-sm transition-colors ${allSectionsOpen ? 'bg-slate-100 text-slate-600 border-slate-300 hover:bg-slate-200' : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'}`}
                             title={allSectionsOpen ? 'Close all sections and subsections' : 'Expand all sections and subsections'}

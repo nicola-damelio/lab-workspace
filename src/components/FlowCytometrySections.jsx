@@ -2554,7 +2554,15 @@ export const Data = ({ ctx }) => {
       if (Object.keys(updates).length) updateActiveTest(updates);
       setUpdater(u => u + 1);
       if (restored === 0) autoDriveRestoreDone.delete(t.id); // allow auto-retry after a reconnect
-      const networkErr = failReason && /failed to fetch|networkerror|load failed|offline/i.test(failReason);
+      if (restored === 0) {
+        console.error('FCS Drive restore failed:', {
+          test: testName,
+          entriesFound: entries.length,
+          failReason,
+          tokenPresent: !!getDriveToken()
+        });
+      }
+      const networkErr = failReason && /failed to fetch|networkerror|load failed|offline|timed out|cannot reach/i.test(failReason);
       setFcsMsg(restored > 0
         ? `✅ Restored ${restored} .fcs file(s) from Google Drive.`
         : networkErr

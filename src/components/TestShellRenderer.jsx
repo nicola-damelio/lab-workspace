@@ -4,7 +4,7 @@ import { BufferAdditiveFields } from './DefinitionsExtra';
 import { SearchableSelect } from './SearchableSelect';
 import { parseSimulationParameters } from './MDData';
 import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES } from '../data/testTypes';
-import { CollapsibleSection } from './ui';
+import { CollapsibleSection, useSectionsCommand } from './ui';
 import { abortControl, useAbortControl } from '../utils/abortControl';
 import { mdAnalysisRunAll } from '../utils/mdAnalysisRunAll';
 import { Icon } from './Icons';
@@ -437,6 +437,19 @@ const [showGeneral, setShowGeneral] = useState(false);
   const [showMolSys, setShowMolSys] = useState(false);
   const [showData, setShowData] = useState(false);
   const [showReport, setShowReport] = useState(false);
+
+  // The top-bar "Expand all / Collapse all" button also drives the custom
+  // section toggles (they are not CollapsibleSections).
+  const sectionsCmd = useSectionsCommand();
+  useEffect(() => {
+    if (sectionsCmd !== null && sectionsCmd !== undefined) {
+      setShowGeneral(!!sectionsCmd);
+      setShowSetup(!!sectionsCmd);
+      setShowMolSys(!!sectionsCmd);
+      setShowData(!!sectionsCmd);
+      setShowReport(!!sectionsCmd);
+    }
+  }, [sectionsCmd]);
 
   // Shared stride / max-frames for the MD "Calculate all analyses" toolbar.
   const [mdRunCfg, setMdRunCfg] = useState(mdAnalysisRunAll.getCfg());

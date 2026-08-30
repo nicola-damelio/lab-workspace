@@ -145,10 +145,33 @@ export const driveFetch = async (path, opts = {}) => {
   const token = getDriveToken();
   if (!token) throwCode('NO_TOKEN', 'Google Drive is not connected.');
 
-  const res = await fetch(`https://www.googleapis.com${path}`, {
-    ...opts,
-    headers: { Authorization: `Bearer ${token}`, ...(opts.headers || {}) }
-  });
+  // A corrupted token string (control chars, line breaks, …) makes the
+  // Authorization header invalid and the browser silently rejects the whole
+  // request with "Failed to fetch". Detect it and force a clean reconnect.
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001F\u007F]/.test(token)) {
+    clearDriveToken();
+    try { window.dispatchEvent(new CustomEvent('lab:drive-disconnected')); } catch { /* ignore */ }
+    throwCode('BAD_TOKEN', 'The stored Google Drive token is invalid — reconnect Google Drive from the sidebar.');
+  }
+
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timeout = controller ? setTimeout(() => controller.abort(), 20000) : null;
+  let res;
+  try {
+    res = await fetch(`https://www.googleapis.com${path}`, {
+      ...opts,
+      signal: controller ? controller.signal : undefined,
+      headers: { Authorization: `Bearer ${token}`, ...(opts.headers || {}) }
+    });
+  } catch (e) {
+    const msg = (e && e.name === 'AbortError')
+      ? 'Google Drive request timed out — check your connection and try again.'
+      : `Cannot reach Google Drive (${e && e.message ? e.message : 'network error'}). Check your internet connection, VPN/proxy or ad-blocker.`;
+    throwCode('NETWORK', msg);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 
   if (res.status === 401 || res.status === 403) {
     if (res.status === 401) {
