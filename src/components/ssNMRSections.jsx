@@ -1812,9 +1812,18 @@ export const SpectraVisualization = ({ ctx }) => {
   const yScale = cfgLogScale(cfg, 'y');
   const xDomain = cfgAxisDomain(cfg, 'x', zoom.domain);
   const yMinV = dom(cfg.yMin), yMaxV = dom(cfg.yMax);
+  // Default Y domain (no manual yMin/yMax): make the y-axis TWICE as tall as the
+  // data range so the spectra occupy about half the plot height — a common NMR /
+  // ssNMR presentation that leaves headroom above the peaks.
+  const allYs = visible.flatMap((s) => s.data.map((p) => p.y));
+  const yDataMin = allYs.length ? Math.min(...allYs) : 0;
+  const yDataMax = allYs.length ? Math.max(...allYs) : 1;
+  const yDataRange = (yDataMax - yDataMin) || 1;
+  const yAutoMin = yDataMin - yDataRange / 2;
+  const yAutoMax = yDataMax + yDataRange / 2;
   const yDomain = yScale === 'log'
     ? [(yMinV != null && yMinV > 0 ? yMinV : 1e-3), (yMaxV != null ? yMaxV : 'auto')]
-    : [yMinV ?? 'auto', yMaxV ?? 'auto'];
+    : [yMinV ?? yAutoMin, yMaxV ?? yAutoMax];
 
   const chartBody = (
     <div ref={chartRef} onMouseDown={zoom.onMouseDown} style={fs ? { flex: 1, minHeight: 0 } : chartBoxStyle(cfg)} className={`bg-white border border-slate-200 rounded-xl p-3 select-none relative ${fs ? 'w-full' : ''}`}>
@@ -1897,7 +1906,7 @@ export const SpectraVisualization = ({ ctx }) => {
                       <LineChart data={s.data} margin={{ top: 5, right: 8, bottom: fsSmall === s.key ? 30 : 18, left: fsSmall === s.key ? 10 : 2 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                         <XAxis type="number" dataKey="x" tick={{ fontSize: fsSmall === s.key ? cfg.fontSize : 9, fill: '#64748b' }} domain={['dataMin', 'dataMax']} label={fsSmall === s.key ? { value: xLabel, position: 'insideBottom', offset: -20, fill: '#64748b', fontSize: cfg.fontSize + 1 } : undefined} />
-                        <YAxis tick={{ fontSize: fsSmall === s.key ? cfg.fontSize : 9, fill: '#64748b' }} width={fsSmall === s.key ? 60 : 38} label={fsSmall === s.key ? { value: yLab, angle: -90, position: 'insideLeft', offset: -5, fill: '#64748b', fontSize: cfg.fontSize + 1 } : undefined} />
+                        <YAxis domain={[yAutoMin, yAutoMax]} tick={{ fontSize: fsSmall === s.key ? cfg.fontSize : 9, fill: '#64748b' }} width={fsSmall === s.key ? 60 : 38} label={fsSmall === s.key ? { value: yLab, angle: -90, position: 'insideLeft', offset: -5, fill: '#64748b', fontSize: cfg.fontSize + 1 } : undefined} />
                         {fsSmall === s.key && <Tooltip />}
                         <Line type="monotone" dataKey="y" stroke={s.color} strokeWidth={cfg.lineThickness || 2} strokeDasharray={lineDash(cfg.lineStyle)} dot={false} isAnimationActive={false} />
                       </LineChart>

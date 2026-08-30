@@ -9,17 +9,11 @@ const itemName = (item) => {
   return item.name || item.label || '';
 };
 
-const operatorLabel = (op) => {
-  if (!op) return '';
-  if (typeof op === 'string') return op;
-  return `${op.name || ''} ${op.surname || ''}`.trim();
-};
-
 const LABEL_CLS = 'text-[10px] font-bold text-slate-500 uppercase';
 const INPUT_CLS =
   'border border-slate-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-500 bg-white';
 
-export const NMRInstrumentalSetup = ({ ctx, hideOperator = false, extraFields = null, hideDatasets = false }) => {
+export const NMRInstrumentalSetup = ({ ctx, extraFields = null, hideDatasets = false }) => {
   const {
     activeTest = {},
     updateActiveTest
@@ -35,10 +29,6 @@ export const NMRInstrumentalSetup = ({ ctx, hideOperator = false, extraFields = 
 
   const experiments = Array.isArray(ctx?.nmrExperiments)
     ? ctx.nmrExperiments
-    : [];
-
-  const operators = Array.isArray(ctx?.operators)
-    ? ctx.operators
     : [];
 
   const datasets = Array.isArray(activeTest.instrumentalDatasets)
@@ -161,38 +151,6 @@ export const NMRInstrumentalSetup = ({ ctx, hideOperator = false, extraFields = 
           />
         </div>
 
-        {!hideOperator && (
-          <div className="flex flex-col gap-1">
-            <label className={LABEL_CLS}>Operator</label>
-            <select
-              value={activeTest.operator || ''}
-              onChange={(e) => update({ operator: e.target.value })}
-              className={INPUT_CLS}
-            >
-              <option value="">—</option>
-              {operators.map((op, idx) => {
-                const name = operatorLabel(op);
-                return (
-                  <option key={name || idx} value={name}>
-                    {name}
-                  </option>
-                );
-              })}
-            </select>
-          </div>
-        )}
-
-        <div className="flex flex-col gap-1">
-          <label className={LABEL_CLS}>Temperature</label>
-          <input
-            type="text"
-            value={activeTest.temperature || ''}
-            onChange={(e) => update({ temperature: e.target.value })}
-            placeholder="e.g. 298 K"
-            className={INPUT_CLS}
-          />
-        </div>
-
         <div className="flex flex-col gap-1">
           <label className={LABEL_CLS}>Sample Tube</label>
           <input
@@ -273,7 +231,7 @@ export const NMRInstrumentalSetup = ({ ctx, hideOperator = false, extraFields = 
                   </button>
                 </div>
 
-                <div className={`grid grid-cols-1 md:grid-cols-${hideOperator ? '3' : '4'} gap-2`}>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                   <div className="flex flex-col gap-1">
                     <label className={LABEL_CLS}>Experiment Number</label>
                     <input
@@ -312,40 +270,6 @@ export const NMRInstrumentalSetup = ({ ctx, hideOperator = false, extraFields = 
                     />
                   </div>
 
-                  {!hideOperator && (
-                    <div className="flex flex-col gap-1">
-                      <label className={LABEL_CLS}>Operator</label>
-                      {operators.length > 0 ? (
-                        <select
-                          value={ds.operator || ''}
-                          onChange={(e) =>
-                            patchDataset(ds.id, { operator: e.target.value })
-                          }
-                          className={INPUT_CLS}
-                        >
-                          <option value="">—</option>
-                          {operators.map((op, idx) => {
-                            const name = operatorLabel(op);
-                            return (
-                              <option key={name || idx} value={name}>
-                                {name}
-                              </option>
-                            );
-                          })}
-                        </select>
-                      ) : (
-                        <input
-                          type="text"
-                          value={ds.operator || ''}
-                          onChange={(e) =>
-                            patchDataset(ds.id, { operator: e.target.value })
-                          }
-                          className={INPUT_CLS}
-                          placeholder="Operator name"
-                        />
-                      )}
-                    </div>
-                  )}
                 </div>
 
                 <div className="flex flex-col gap-1">

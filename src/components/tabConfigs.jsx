@@ -357,7 +357,8 @@ export const NMR_TAB_CONFIG = {
     { key: 'ph', label: 'pH', type: 'text', placeholder: 'e.g. 6.8' },
     { key: 'temperature', label: 'Temperature', type: 'text', placeholder: 'e.g. 298', units: ['K', '°C'] },
     { key: 'otherMolecule', label: 'Other Molecule', type: 'text', placeholder: 'e.g. Ligand X' },
-    { key: 'ratio', label: 'Ratio', type: 'text', placeholder: 'e.g. 1:5' }
+    { key: 'ratio', label: 'Ratio', type: 'text', placeholder: 'e.g. 1:5' },
+    { key: 'nmrFileTitle', label: 'Title (pdata/1/title)', type: 'text', placeholder: 'Text from the Bruker <dataset>/pdata/1/title file' }
   ],
   notebookChecks: [
     { id: 'cond', label: 'Experimental Conditions' },

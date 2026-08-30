@@ -1,7 +1,8 @@
 import React, { useMemo, useRef } from 'react';
 import TestShellRenderer from './TestShellRenderer';
 import { SSNMR_TAB_CONFIG } from './tabConfigs';
-import { All, InstrumentalSetup, NotebookExtra } from './ssNMRSections';
+import { All, NotebookExtra } from './ssNMRSections';
+import { NMRInstrumentalSetup } from './NMRInstrumentalSetup';
 
 export const SSNMRTestRenderer = (props) => {
   const propsRef = useRef(props);
@@ -51,8 +52,10 @@ export const SSNMRTestRenderer = (props) => {
       return <All {...ctxProps} ctx={enrichCtx(ctxProps)} />;
     };
 
+    // The ssNMR page reuses the solution-NMR Instrumental Setup (instrument /
+    // probe / experiment / datasets) instead of the old ssNMR-specific fields.
     const InstrumentalSetupSection = function SSNMRInstrumentalSetupSection(ctxProps) {
-      return <InstrumentalSetup ctx={enrichCtx(ctxProps)} />;
+      return <NMRInstrumentalSetup ctx={enrichCtx(ctxProps)} />;
     };
 
     const buildNotebookHtml = (checked, ctx) => {

@@ -4934,6 +4934,11 @@ export const DataSection = ({ ctx }) => {
   const [nmrBrukerMsg, setNmrBrukerMsg] = useState('');
   const [nmrBrukerBusy, setNmrBrukerBusy] = useState(false);
   const [showPeakLabels, setShowPeakLabels] = useState(true);
+  const [showBrukerCfg, setShowBrukerCfg] = useState(false);
+  // 1D spectrum "Chart Parameters": y-axis magnification (default 2× so the
+  // spectrum occupies ~half the plot height), line colour/thickness, tick font.
+  const nmr1dCfg = { yScale: 2, lineColor: '#3b82f6', lineWidth: 1.5, fontSize: 9, ...(activeTest.nmr1dChartCfg || {}) };
+  const setNmr1dCfg = (patch) => updateActiveTest({ nmr1dChartCfg: { ...nmr1dCfg, ...patch } });
   const [expandedBruker, setExpandedBruker] = useState(false);
   const [brukerZoomDom, setBrukerZoomDom] = useState(null);
   const [brukerRefL, setBrukerRefL] = useState(null);
@@ -5170,6 +5175,28 @@ export const DataSection = ({ ctx }) => {
     const updates = { nmr1dSpectrum: { xs: parsed.xs, ys: parsed.ys, ysImag: parsed.ysImag || null, meta: parsed.meta, title: parsed.meta.title || 'Imported 1r', calibration: 0, phaseDeg: 0, phase1Deg: 0 } };
     if (filename) updates.instanceName = filename;
     
+    // Auto-fill from the imported Bruker experiment:
+    //   • "Title" in Experimental Conditions ← the text of <dataset>/pdata/1/title
+    //   • Instrumental Setup dataset row ← experiment number + dataset name
+    if (parsed.fileTitle) updates.nmrFileTitle = parsed.fileTitle;
+    if (parsed.expNum || filename) {
+      const existingDatasets = Array.isArray(activeTest.instrumentalDatasets) ? activeTest.instrumentalDatasets : [];
+      const expNum = String(parsed.expNum || (existingDatasets.length + 1));
+      const existing = existingDatasets.find((d) => String(d.experimentNumber) === expNum);
+      const row = {
+        id: existing ? existing.id : 'instrumental_dataset_' + Date.now() + Math.random().toString(16).slice(2),
+        experimentNumber: expNum,
+        name: parsed.filename || filename || `Dataset ${expNum}`,
+        date: existing ? existing.date : new Date().toISOString().split('T')[0],
+        operator: existing ? existing.operator : (activeTest.operator || ''),
+        link: existing ? existing.link : '',
+        comments: existing ? existing.comments : ''
+      };
+      updates.instrumentalDatasets = existing
+        ? existingDatasets.map((d) => (d.id === existing.id ? { ...d, ...row } : d))
+        : [...existingDatasets, row];
+    }
+    
     updateActiveTest(updates);
     setBrukerZoomDom(null);
     setCalibPickedPpm(null);
@@ -5291,6 +5318,23 @@ export const DataSection = ({ ctx }) => {
            cloned.id = 't' + Date.now() + i + Math.random().toString(36).substring(2,5);
            cloned.instanceName = selected[i].filename;
            cloned.nmr1dSpectrum = { xs: p.xs, ys: p.ys, ysImag: p.ysImag || null, meta: p.meta, title: p.meta.title || 'Imported 1r', calibration: 0, phaseDeg: 0, phase1Deg: 0 };
+           // Same auto-fill as the first import: Experimental Conditions title +
+           // Instrumental Setup dataset row (experiment number + dataset name).
+           if (p.fileTitle) cloned.nmrFileTitle = p.fileTitle;
+           if (p.expNum) {
+             const expNum = String(p.expNum);
+             cloned.instrumentalDatasets = [
+               {
+                 id: 'instrumental_dataset_' + Date.now() + i + Math.random().toString(16).slice(2),
+                 experimentNumber: expNum,
+                 name: p.filename || selected[i].filename || `Dataset ${expNum}`,
+                 date: new Date().toISOString().split('T')[0],
+                 operator: activeTest.operator || '',
+                 link: '',
+                 comments: ''
+               }
+             ];
+           }
            newTests.push(cloned);
          }
          return [...prev, ...newTests];
@@ -5469,6 +5513,11 @@ const dom = brukerZoomDom || xFull;
                 </label>
               </>
             )}
+            <button type="button" onClick={() => setShowBrukerCfg((v) => !v)}
+              className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${showBrukerCfg ? 'bg-slate-200 border-slate-400 text-slate-900' : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'}`}
+              title="Graphical parameters for the 1D spectrum (Y-axis height, line colour/thickness, font size)">
+              ⚙️ Chart Parameters
+            </button>
             <button type="button" onClick={() => setExpandedBruker(b => !b)} className="text-slate-400 hover:text-blue-600 text-lg px-1" title={expandedBruker ? 'Collapse' : 'Expand'}>{expandedBruker ? '\u2199\ufe0f' : '\u2197\ufe0f'}</button>
             <button type="button" onClick={() => { updateActiveTest({nmr1dSpectrum: null}); setBrukerZoomDom(null); setNmrBrukerMsg(''); }} className="text-[10px] text-red-400 hover:text-red-600 font-bold">× Remove</button>
           </div>
@@ -5557,7 +5606,30 @@ const dom = brukerZoomDom || xFull;
           ) : null}
         </div>
 
-
+        {showBrukerCfg && (
+          <div className="p-4 bg-white border border-slate-300 rounded-xl grid grid-cols-1 md:grid-cols-4 gap-4 shadow-sm">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-bold text-slate-600">Y-axis height: {nmr1dCfg.yScale}×</label>
+              <input type="range" min="1" max="4" step="0.5" value={nmr1dCfg.yScale}
+                onChange={(e) => setNmr1dCfg({ yScale: parseFloat(e.target.value) })} className="accent-blue-600 mt-2" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-bold text-slate-600">Line color</label>
+              <input type="color" value={nmr1dCfg.lineColor}
+                onChange={(e) => setNmr1dCfg({ lineColor: e.target.value })} className="w-full h-8 rounded border border-slate-300 bg-white p-0 cursor-pointer" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-bold text-slate-600">Line thickness: {nmr1dCfg.lineWidth}</label>
+              <input type="range" min="0.5" max="3" step="0.25" value={nmr1dCfg.lineWidth}
+                onChange={(e) => setNmr1dCfg({ lineWidth: parseFloat(e.target.value) })} className="accent-blue-600 mt-2" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-bold text-slate-600">Tick font size: {nmr1dCfg.fontSize}</label>
+              <input type="range" min="7" max="16" step="1" value={nmr1dCfg.fontSize}
+                onChange={(e) => setNmr1dCfg({ fontSize: parseInt(e.target.value, 10) })} className="accent-blue-600 mt-2" />
+            </div>
+          </div>
+        )}
 
         <div ref={brukerChartRef} className="select-none" style={{height: PANEL_H, backgroundColor: 'white', position: 'relative'}}
              onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}>
@@ -5577,11 +5649,11 @@ const dom = brukerZoomDom || xFull;
                return out;
              })()}
              tickFormatter={v => Number(v).toFixed(2)}
-             tick={{fontSize:9, fill:'#64748b'}}
-             label={{value:'Chemical Shift (ppm)', position:'insideBottom', offset:-12, fontSize:9, fill:'#64748b'}} />
-           <YAxis hide domain={[-0.05,1.05]} />
+             tick={{fontSize: nmr1dCfg.fontSize, fill:'#64748b'}}
+             label={{value:'Chemical Shift (ppm)', position:'insideBottom', offset:-12, fontSize:nmr1dCfg.fontSize, fill:'#64748b'}} />
+           <YAxis hide domain={[-0.05, 1.05 * (nmr1dCfg.yScale || 2)]} />
            <Tooltip formatter={v => Number(v).toFixed(3)} labelFormatter={v => Number(v).toFixed(2) + ' ppm'} />
-           <Line type="monotone" dataKey="y" stroke="#3b82f6" strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls />
+           <Line type="monotone" dataKey="y" stroke={nmr1dCfg.lineColor} strokeWidth={nmr1dCfg.lineWidth} dot={false} isAnimationActive={false} connectNulls />
            {brukerRefL!==null && brukerRefR!==null && <ReferenceArea x1={brukerRefL} x2={brukerRefR} fill="#cbd5e1" fillOpacity={0.4} />}
          </LineChart>
        </ResponsiveContainer>
