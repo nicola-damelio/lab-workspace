@@ -526,6 +526,9 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
   const cropDragRef = useRef(null);   // spectrum drag-to-zoom: { ri, startX, rect }
   const [cropPreview, setCropPreview] = useState(null); // { x1, x2 } while dragging
   const suppressRegionClickRef = useRef(false); // swallow the click that follows a crop-drag
+  const canvasDragRef = useRef(null);  // drag-select on the canvas: { startX, startY, rect, moved, box }
+  const suppressCanvasClickRef = useRef(false); // swallow the click that follows a drag-select
+  const [dragSelectBox, setDragSelectBox] = useState(null); // live drag rectangle { x1,y1,x2,y2 } in cells
   // Keep the ⭐ sidebar open long enough to move the mouse into it.
   const hoverTimerRef = useRef(null);
   const clearHoverSoon = () => {
@@ -1166,14 +1169,56 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
       if (cx >= 0 && cx < cols && cy >= 0 && cy < rows) moveRegion(dragRegion, cx, cy);
       setDragRegion(null);
     };
+    // Drag on the canvas selects a rectangular region of cells (like a table).
+    const canvasDragStart = (e) => {
+      const t = e.target;
+      if (t && t.closest && t.closest('input,button,textarea,select,.drag-handle,.img-zoom-target')) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      canvasDragRef.current = { startX: e.clientX, startY: e.clientY, rect, moved: false, box: null };
+      setDragSelectBox(null);
+    };
+    const canvasDragMove = (e) => {
+      const d = canvasDragRef.current;
+      if (!d) return;
+      if (Math.abs(e.clientX - d.startX) + Math.abs(e.clientY - d.startY) > 4) d.moved = true;
+      if (!d.moved) return;
+      const rect = d.rect;
+      const cw = rect.width / cols, ch = rect.height / rows;
+      const cx = Math.max(0, Math.min(cols - 1, Math.floor((e.clientX - rect.left) / cw)));
+      const cy = Math.max(0, Math.min(rows - 1, Math.floor((e.clientY - rect.top) / ch)));
+      const sx = Math.max(0, Math.min(cols - 1, Math.floor((d.startX - rect.left) / cw)));
+      const sy = Math.max(0, Math.min(rows - 1, Math.floor((d.startY - rect.top) / ch)));
+      const box = { x1: Math.min(sx, cx), y1: Math.min(sy, cy), x2: Math.max(sx, cx), y2: Math.max(sy, cy) };
+      d.box = box;
+      setDragSelectBox(box);
+      const set = new Set();
+      for (let yy = box.y1; yy <= box.y2; yy++) for (let xx = box.x1; xx <= box.x2; xx++) set.add(`${xx},${yy}`);
+      setSelCells(set);
+    };
+    const canvasDragEnd = () => {
+      const d = canvasDragRef.current;
+      if (!d) return;
+      canvasDragRef.current = null;
+      setDragSelectBox(null);
+      if (!d.moved) return;
+      suppressCanvasClickRef.current = true;
+      setTimeout(() => { suppressCanvasClickRef.current = false; }, 0);
+      const box = d.box;
+      if (box) {
+        const ex = regionAtCell(regions, box.x1, box.y1);
+        if (ex) { const idx = regions.indexOf(ex); setSelRegion(idx); setHoverRegion(idx); }
+      }
+    };
     const cw = regionFullscreen ? 'min(96vw, 90vh)' : 'min(100%, 72vh)';
     const canvasWidth = canvasScale === 1 ? cw : `calc(${cw} * ${canvasScale})`;
     const editorContent = (
       <>
         <p className="text-[10px] text-slate-400 leading-relaxed">
-          <b>Click</b> panels to select them (click again to remove) · <b>🔗 Merge</b> unifies the selection into one ·
-          <b> ✂ Unmerge</b> reverts · <b>drag ⠿</b> moves a panel · <b>drag on an image</b> zooms into that region (⟲ resets) ·
-          <b>⭐ (left)</b> / <b>📂 (right)</b> tabs insert images (SVG charts stay vector-crisp) · letters A, B, C… are automatic.
+          <b>Drag</b> on the canvas to select a rectangular region (like a table) → <b>🔗 Merge</b> unifies it into one ·
+          <b> click</b> a panel adds/removes it from the selection · <b>✂ Unmerge</b> reverts · <b>drag ⠿</b> moves a panel ·
+          <b>drag on an image</b> zooms into that region (⟲ resets) · <b>⭐ (left)</b> / <b>📂 (right)</b> tabs insert images (SVG charts stay vector-crisp) ·
+          letters A, B, C… are automatic.
         </p>
 
         <div className="flex items-center gap-2 flex-wrap bg-white border border-slate-200 rounded-lg px-2 py-1.5">
@@ -1219,6 +1264,10 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
                 style={{ aspectRatio: `${cols}/${rows}`, width: canvasWidth }}>
               <div className="absolute inset-0 grid"
                 style={{ gridTemplateColumns: `repeat(${cols}, 1fr)`, gridTemplateRows: `repeat(${rows}, 1fr)` }}
+                onMouseDown={canvasDragStart}
+                onMouseMove={canvasDragMove}
+                onMouseUp={canvasDragEnd}
+                onMouseLeave={() => { if (canvasDragRef.current) { canvasDragRef.current = null; setDragSelectBox(null); } }}
                 onDragOver={(e) => { if (dragRegion !== null) e.preventDefault(); }}
                 onDrop={onCanvasDrop}>
                 {cells.map((c) => {
@@ -1229,17 +1278,27 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
                     <div key={key}
                       className={`border ${canDrop ? 'border-blue-300 bg-blue-50/50' : isSelCell ? 'border-amber-400 bg-amber-100/60' : 'border-slate-100'}`}
                       onMouseEnter={() => { const ex = regionAtCell(regions, c.x, c.y); setHoverRegion(ex ? regions.indexOf(ex) : null); }}
-                      onClick={() => onRegionCellClick(c.x, c.y)}>
+                      onClick={() => { if (suppressCanvasClickRef.current) return; onRegionCellClick(c.x, c.y); }}>
                       {isSelCell && <span className="w-full h-full flex items-center justify-center text-[9px] font-black text-amber-700 select-none">■</span>}
                     </div>
                   );
                 })}
+                {dragSelectBox && (
+                  <div className="absolute pointer-events-none z-20 rounded-sm border-2 border-blue-500 bg-blue-300/25"
+                    style={{
+                      left: `${(dragSelectBox.x1 / cols) * 100}%`,
+                      top: `${(dragSelectBox.y1 / rows) * 100}%`,
+                      width: `${((dragSelectBox.x2 - dragSelectBox.x1 + 1) / cols) * 100}%`,
+                      height: `${((dragSelectBox.y2 - dragSelectBox.y1 + 1) / rows) * 100}%`,
+                    }} />
+                )}
 
                   {regions.map((r, ri) => (
                     <div key={r.id}
                       onMouseEnter={() => { cancelClearHover(); setHoverRegion(ri); }}
                       onMouseLeave={clearHoverSoon}
                       onClick={(e) => {
+                        if (suppressCanvasClickRef.current) return;
                         const t = e.target;
                         if (suppressRegionClickRef.current) { suppressRegionClickRef.current = false; return; }
                         if (t && t.closest && t.closest('input,button,textarea,select,.drag-handle')) return;
@@ -1258,7 +1317,7 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
                         className="drag-handle absolute top-0.5 left-1/2 -translate-x-1/2 z-30 text-[12px] cursor-grab active:cursor-grabbing select-none opacity-70 hover:opacity-100"
                         title="Drag to move this panel to another position">⠿</span>
                       {r.image && (
-                        <div className="absolute inset-0 flex items-center justify-center overflow-hidden"
+                        <div className="img-zoom-target absolute inset-0 flex items-center justify-center overflow-hidden"
                           style={{ cursor: 'crosshair' }}
                           onMouseDown={(e) => spectrumStart(e, ri)}
                           onMouseMove={spectrumMoveTo}
