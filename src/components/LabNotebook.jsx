@@ -6,7 +6,7 @@ import { SearchableSelect } from './SearchableSelect';
 import { getNmr1dDisplay } from './NMRSections';
 import { getTestTypeMeta, getNotebookTypeKey } from './testTypeMeta';
 import { Icon } from './Icons';
-import { NOTEBOOK_ANALYSIS_PREVIEWS, RemovablePanel, ChunkedTable, NMRSpectraPreview, PlateGridPreview, Formula2DPreview, CDSpectraChart, CDSimChartPreview, CloningUvSpectraChart, CloningSimChartPreview, ProteinChromatogramChart, NMR_SPECTRUM_TYPES, NMRFittingSimPreview, MDParamsPreview, MDAtomTablePreview, normalizeImagePreview } from './notebookPreviews';
+import { NOTEBOOK_ANALYSIS_PREVIEWS, RemovablePanel, ChunkedTable, NMRSpectraPreview, PlateGridPreview, PlateMapPreview, Formula2DPreview, CDSpectraChart, CDSimChartPreview, CloningUvSpectraChart, CloningSimChartPreview, ProteinChromatogramChart, NMR_SPECTRUM_TYPES, NMRFittingSimPreview, MDParamsPreview, MDAtomTablePreview, normalizeImagePreview } from './notebookPreviews';
 
 /* ============================================================================
    NOTEBOOK TEST ITEM
@@ -68,6 +68,7 @@ export const NotebookTestItem = ({
   const isProteinExp = localTest.type === 'protein_expression';
   const isMD = localTest.type === 'md_simulation';
   const isFlow = localTest.type === 'flow_cytometry';
+  const isMicro = localTest.type === 'microscopy';
   
   const typeMeta = getTestTypeMeta(localTest.type);
   const typeLabel = typeMeta.label;
@@ -182,6 +183,15 @@ export const NotebookTestItem = ({
         <RemovablePanel title="Experimental Conditions" visible={showCondLocal} setVisible={setShowCondLocal}>
           <div className="flex flex-wrap gap-2">
             {localTest.concentration && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Conc: {fmtVal(localTest.concentration, localTest.concentrationUnit, 'µM')}</span>}
+            {localTest.compoundConcentrations && Object.keys(localTest.compoundConcentrations).length > 0 && (
+              Object.entries(localTest.compoundConcentrations).map(([cmp, c]) =>
+                c !== '' && c != null ? (
+                  <span key={cmp} className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">
+                    {cmp}: {fmtVal(c, localTest.concentrationUnit, 'µM')}
+                  </span>
+                ) : null
+              )
+            )}
             {(localTest.solvent || localTest.solventName) && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Solvent: {localTest.solvent || localTest.solventName}</span>}
             {(localTest.buffer || localTest.bufferName) && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Buffer: {localTest.buffer || localTest.bufferName}</span>}
             {(localTest.additive || localTest.additiveName) && <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Additive: {localTest.additive || localTest.additiveName} {fmtVal(localTest.additiveConc, localTest.additiveUnit)}</span>}
@@ -197,6 +207,17 @@ export const NotebookTestItem = ({
                 {localTest.experimentDate && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Date: {localTest.experimentDate}</span>}
                 {localTest.cellNumber && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Cells: {localTest.cellNumber}</span>}
                 {localTest.liveDeadStain && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Live/Dead: {localTest.liveDeadStain}</span>}
+                {localTest.fixation && localTest.fixation !== 'None' && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Fixation: {localTest.fixation}</span>}
+                {localTest.permeabilization && localTest.permeabilization !== 'None' && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Permeabilization: {localTest.permeabilization}</span>}
+                {localTest.otherConditions && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Other: {localTest.otherConditions}</span>}
+              </>
+            )}
+
+            {/* Microscopy specific fields */}
+            {isMicro && (
+              <>
+                {localTest.experimentDate && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Date: {localTest.experimentDate}</span>}
+                {localTest.cellNumber && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Cells: {localTest.cellNumber}</span>}
                 {localTest.fixation && localTest.fixation !== 'None' && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Fixation: {localTest.fixation}</span>}
                 {localTest.permeabilization && localTest.permeabilization !== 'None' && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Permeabilization: {localTest.permeabilization}</span>}
                 {localTest.otherConditions && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Other: {localTest.otherConditions}</span>}
@@ -265,6 +286,22 @@ export const NotebookTestItem = ({
                 {localTest.lasers && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Lasers: {localTest.lasers}</span>}
                 {localTest.threshold && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Threshold: {localTest.threshold}</span>}
                 {localTest.compensationApplied && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Compensation: {localTest.compensationApplied}</span>}
+                {localTest.plateName && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Plate: {localTest.plateName}</span>}
+                {localTest.wellId && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Well: {localTest.wellId}</span>}
+              </>
+            )}
+
+            {/* Microscopy specific instrumental fields */}
+            {isMicro && (
+              <>
+                {localTest.microscopyType && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Type: {localTest.microscopyType}</span>}
+                {localTest.microscopeModel && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Model: {localTest.microscopeModel}</span>}
+                {localTest.objective && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Objective: {localTest.objective}</span>}
+                {localTest.laserLines && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Lasers: {localTest.laserLines}</span>}
+                {localTest.detector && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Detector: {localTest.detector}</span>}
+                {localTest.filterCubes && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Filters: {localTest.filterCubes}</span>}
+                {localTest.magnification && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Magnification: {localTest.magnification}</span>}
+                {localTest.acquisitionSoftware && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Software: {localTest.acquisitionSoftware}</span>}
                 {localTest.plateName && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Plate: {localTest.plateName}</span>}
                 {localTest.wellId && <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-mono">Well: {localTest.wellId}</span>}
               </>
@@ -380,8 +417,16 @@ export const NotebookTestItem = ({
 
         <RemovablePanel title="Data" visible={showDataLocal} setVisible={setShowDataLocal}>
           {isPlate && <PlateGridPreview test={localTest} />}
+          {(isFlow || isMicro) && <PlateMapPreview test={localTest} />}
           {isCD && <CDSpectraChart wavelengthData={localTest.wavelengthData} spectraColumns={localTest.spectraColumns} chartCfg={localTest.chartCfg} />}
           {isFlow && <FCSDataVisualizations ctx={mockCtx} updater={0} />}
+          {isMicro && Array.isArray(localTest.msVideos) && localTest.msVideos.length > 0 && (
+            <div className="flex flex-wrap gap-2 mt-2">
+              {localTest.msVideos.map((v) => (
+                <span key={v.id} className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">🎬 {v.filename}</span>
+              ))}
+            </div>
+          )}
           {isCloning && localTest.uvSpectra && localTest.uvSpectra.length > 0 && (
             <CloningUvSpectraChart uvSpectra={localTest.uvSpectra} />
           )}

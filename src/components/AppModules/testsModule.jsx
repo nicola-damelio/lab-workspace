@@ -9,6 +9,7 @@ import { SearchableSelect } from '../SearchableSelect';
 import { Icon } from '../Icons';
 import { markAttachmentsDeleted, deleteTestDriveFolder } from '../../utils/driveUpload';
 import { removeTestFcsBlobs } from '../../utils/fcsBlobStore';
+import { testProjectAccess } from './projectsModule';
 
 const TEST_CARD_ICON = {
   nmr: 'chart-line',
@@ -105,7 +106,10 @@ export const TestsModule = ({
                   const scientists = getTestScientists(test);
                   if (isSuperuserSession) return true;
                   if (scientists.length === 0) return false; // unassigned → only superuser
-                  return currentUser && scientists.includes(currentUser.name);
+                  if (currentUser && scientists.includes(currentUser.name)) return true;
+                  // Project membership grants access to every experiment linked
+                  // to a project the user belongs to (same rights as the project).
+                  return !!currentUser && !!testProjectAccess(test, currentUser.name);
                 };
                 const isTestLocked = (test) => !isTestOwner(test) && !unlockedTestIds.has(test.id);
                 // ── Deletion approval ─────────────────────────────
@@ -284,6 +288,20 @@ setCurrentModule('active-test');
 className="bg-pink-600 hover:bg-pink-700 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex-1 md:flex-none"
 >
 + Flow Cytometry
+</button>
+<button
+onClick={() => {
+const id = 't' + Date.now();
+setTests((prev) => [
+...prev,
+createEmptyTest(id, prev.length + 1, 'microscopy')
+]);
+setActiveTestId(id);
+setCurrentModule('active-test');
+}}
+className="bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex-1 md:flex-none"
+>
++ Microscopy
 </button>
 
 <button

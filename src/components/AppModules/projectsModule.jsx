@@ -40,6 +40,34 @@ export const normalizeAuthorized = (list) => {
   }).filter((x) => x && String(x.name).trim());
 };
 
+/** Map of projectName → permission ('view' | 'modify') for the given user,
+ *  built from every project's authorizedPeople list. */
+export const getProjectAccessForUser = (userName) => {
+  const map = {};
+  if (!userName) return map;
+  try {
+    loadProjects().forEach((p) => {
+      if (!p || !p.name) return;
+      normalizeAuthorized(p.authorizedPeople || []).forEach((a) => {
+        if (String(a.name) === String(userName)) map[p.name] = a.permission || 'modify';
+      });
+    });
+  } catch { /* ignore */ }
+  return map;
+};
+
+/** The access level ('view' | 'modify') a user has on a test because it is
+ *  linked to one of the projects they belong to, or null when none applies. */
+export const testProjectAccess = (test, userName) => {
+  if (!test || !userName) return null;
+  const map = getProjectAccessForUser(userName);
+  const names = Array.isArray(test.projectNames) ? test.projectNames : [];
+  for (const pn of names) {
+    if (map[pn]) return map[pn];
+  }
+  return null;
+};
+
 export const loadPublications = () => {
   try {
     const raw = localStorage.getItem('labWorkspace_publications');

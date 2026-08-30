@@ -468,8 +468,55 @@ export const MD_SIMULATION_TAB_CONFIG = {
     { id: 'analysis', label: 'Data Analysis (DSSP, Membrane Contacts, Profiles)' }
   ]
 };
+export const MICROSCOPY_TAB_CONFIG = {
+  typeKey: 'microscopy',
+  typeLabel: 'Microscopy',
+  icon: '🔬',
+  fallbackCategories: [
+    'Confocal',
+    'Fluorescence',
+    'Electron',
+    'Light',
+    'Brightfield',
+    'Time Lapse'
+  ],
+  samples: {
+    compounds: true,
+    cellLines: true,
+    compoundLabel: 'Fluorophores / Reagents',
+    cellLineLabel: 'Cell Type / Line'
+  },
+  imagesKey: 'msImages',
+  conditionFields: [
+    { key: 'experimentDate', label: 'Experiment Date', type: 'date' },
+    { key: 'concentration', label: 'Concentration', type: 'text', placeholder: 'e.g. 5', units: ['µg/mL', 'ng/mL', 'µM', 'mM'] },
+
+    { key: 'cellNumber', label: 'Cells per Sample', type: 'text', placeholder: 'e.g. 1x10^6' },
+    { key: 'fixation', label: 'Fixation', type: 'select', options: ['None', '1% PFA', '4% PFA', 'BD Cytofix', 'eBioscience Foxp3'] },
+    { key: 'permeabilization', label: 'Permeabilization', type: 'select', options: ['None', '0.1% Saponin', '0.1% Triton X-100', 'BD Perm', 'eBioscience Perm'] },
+    { key: 'otherConditions', label: 'Other Conditions', type: 'text', placeholder: 'e.g. Staining / mounting protocol' }
+  ],
+  instrumentalFields: [
+    { key: 'microscopyType', label: 'Microscope Type', type: 'select', options: ['Confocal', 'Fluorescence', 'Electron', 'Light', 'Brightfield', 'Time Lapse', 'Other'] },
+    { key: 'microscopeModel', label: 'Microscope Model', type: 'text', placeholder: 'e.g. Zeiss LSM 980' },
+    { key: 'objective', label: 'Objective', type: 'text', placeholder: 'e.g. 40x / 1.30 Oil' },
+    { key: 'laserLines', label: 'Laser Lines', type: 'text', placeholder: 'e.g. 405, 488, 561, 640 nm' },
+    { key: 'detector', label: 'Detector', type: 'text', placeholder: 'e.g. GaAsP PMT' },
+    { key: 'filterCubes', label: 'Filter Cubes / Emission', type: 'text', placeholder: 'e.g. DAPI, FITC, TRITC' },
+    { key: 'magnification', label: 'Magnification', type: 'text', placeholder: 'e.g. 200x' },
+    { key: 'acquisitionSoftware', label: 'Acquisition Software', type: 'text', placeholder: 'e.g. ZEN, LAS X' },
+    { key: 'plateName', label: 'Plate Name / ID', type: 'text', placeholder: 'e.g. 96 Well - Flat bottom' },
+    { key: 'wellId', label: 'Well ID', type: 'text', placeholder: 'e.g. H01' }
+  ],
+  notebookChecks: [
+    { id: 'cond', label: 'Experimental Conditions' },
+    { id: 'instrument', label: 'Instrumental Setup' },
+    { id: 'setup', label: 'Plate / Well Setup' },
+    { id: 'data', label: 'Videos / Images' },
+    { id: 'analysis', label: 'Movie Regions & Analysis' }
+  ]
+};
 export const FLOW_CYTOMETRY_TAB_CONFIG = {
-  typeKey: 'flow_cytometry',
   typeLabel: 'Flow Cytometry',
   icon: '🩸',
   fallbackCategories: [

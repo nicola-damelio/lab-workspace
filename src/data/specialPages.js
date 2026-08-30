@@ -15,7 +15,8 @@ import {
   DOSY_TAB_CONFIG,
   PROTEIN_EXPRESSION_TAB_CONFIG,
   SSNMR_TAB_CONFIG,
-  FLOW_CYTOMETRY_TAB_CONFIG
+  FLOW_CYTOMETRY_TAB_CONFIG,
+  MICROSCOPY_TAB_CONFIG
 } from '../components/tabConfigs.jsx';
 import { DOCKING_TAB_CONFIG } from '../components/DockingTestRenderer';
 
@@ -165,7 +166,8 @@ export const SPECIAL_PAGES = [
   { value: 'ssnmr', label: 'ssNMR', subsections: SSNMR_TAB_CONFIG.notebookChecks || [] },
   { value: 'md_simulation', label: 'MD Simulations', subsections: MD_SIMULATION_TAB_CONFIG.notebookChecks || [] },
   { value: 'docking', label: 'Docking', subsections: DOCKING_TAB_CONFIG.notebookChecks || [] },
-  { value: 'flow_cytometry', label: 'Flow Cytometry', subsections: FLOW_CYTOMETRY_TAB_CONFIG.notebookChecks || [] }
+  { value: 'flow_cytometry', label: 'Flow Cytometry', subsections: FLOW_CYTOMETRY_TAB_CONFIG.notebookChecks || [] },
+  { value: 'microscopy', label: 'Microscopy', subsections: MICROSCOPY_TAB_CONFIG.notebookChecks || [] }
 ];
 
 export const CUSTOM_FIELD_TAB_OPTIONS = [

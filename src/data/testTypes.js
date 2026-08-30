@@ -17,7 +17,7 @@ export const CLASSIFICATION_MAP = {
     "Diffusion by DOSY",
     "NMR"
   ],
-  "Interactions": ["Association Constant", "Molecular Docking", "MD interactions", "Chromatography"],
+  "Interactions": ["Association Constant", "Molecular Docking", "MD interactions", "Chromatography", "Microscopy"],
   "Activity": ["Antibacterial", "Anticancer", "Antifungal", "Antiviral", "Toxicity"]
 };
 
@@ -28,6 +28,7 @@ export const EXPERIMENT_TYPES = [
   "Protein expression & Purification",
   "Multiwell plate essay",
   "Flow Cytometry",
+  "Microscopy",
   "Circular Dichroism",
   "NMR",
   "NMR Fitting",

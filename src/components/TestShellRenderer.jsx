@@ -437,6 +437,9 @@ const [showGeneral, setShowGeneral] = useState(false);
   const [showMolSys, setShowMolSys] = useState(false);
   const [showData, setShowData] = useState(false);
   const [showReport, setShowReport] = useState(false);
+  // When several compounds are defined, the Concentration field becomes a
+  // dropdown (choose the compound) + a per-compound value (compoundConcentrations).
+  const [concCompound, setConcCompound] = useState('');
 
   // The top-bar "Expand all / Collapse all" button also drives the custom
   // section toggles (they are not CollapsibleSections).
@@ -797,6 +800,68 @@ const [showGeneral, setShowGeneral] = useState(false);
             allowCustom
             onClear={() => update({ [f.key]: '' })}
           />
+        </div>
+      );
+    }
+
+    // When several compounds are defined, the Concentration field becomes a
+    // dropdown that chooses WHICH compound's concentration to edit. Values are
+    // stored per compound in t.compoundConcentrations (the Lab Notebook then
+    // reports all of them).
+    if (f.key === 'concentration' && selectedCompounds.length > 1) {
+      const ccs =
+        t.compoundConcentrations &&
+        typeof t.compoundConcentrations === 'object'
+          ? t.compoundConcentrations
+          : {};
+      const activeCmp =
+        concCompound && selectedCompounds.includes(concCompound)
+          ? concCompound
+          : selectedCompounds[0];
+      return (
+        <div key={f.key}>
+          <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+            {f.label}
+          </label>
+          <div className="flex flex-col gap-1">
+            <select
+              value={activeCmp}
+              onChange={(e) => setConcCompound(e.target.value)}
+              className={cls}
+              title="Choose the compound whose concentration to define"
+            >
+              {selectedCompounds.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+            <div className={hasUnits ? 'flex' : ''}>
+              <input
+                type="number"
+                step="any"
+                value={
+                  ccs[activeCmp] !== undefined && ccs[activeCmp] !== null
+                    ? ccs[activeCmp]
+                    : ''
+                }
+                onChange={(e) =>
+                  update({ compoundConcentrations: { ...ccs, [activeCmp]: e.target.value } })
+                }
+                placeholder={`Concentration for ${activeCmp}`}
+                className={inputCls}
+              />
+              {hasUnits && (
+                <select
+                  value={unitVal}
+                  onChange={(e) => update({ concentrationUnit: e.target.value })}
+                  className="border border-slate-300 rounded-r-lg px-2 py-2 text-sm bg-white outline-none focus:border-blue-500"
+                >
+                  {f.units.map((u) => (
+                    <option key={u} value={u}>{u}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+          </div>
         </div>
       );
     }

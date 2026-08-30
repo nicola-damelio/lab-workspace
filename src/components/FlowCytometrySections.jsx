@@ -8,7 +8,7 @@ import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 import { ChartControlBar, SharedChartStylePanel, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, VIS_PALETTES, seriesColorFor } from '../utils/chartStyle';
-import { PLATES_DEF, formatConc } from '../data/constants';
+import { PLATES_DEF, formatConc, getRegionColor } from '../data/constants';
 export { VIS_PALETTES };
 
 const COLORS = VIS_PALETTES.default;
@@ -1733,6 +1733,25 @@ export const ExperimentalSetup = ({ ctx }) => {
   const onCellMouseEnter = (r, c) => { if (dragMode === 'selecting') setSelEnd({ r, c }); };
   const clearSelection = () => { setSelStart(null); setSelEnd(null); setDragMode('none'); };
 
+  // Region definition (same concept as the Multiwell Plate Data section):
+  // select a rectangle, type a region name, assign it — each cell stores its
+  // region ('Primary' by default) and the map shows coloured region badges.
+  const [regionNameDraft, setRegionNameDraft] = useState('');
+  const assignRegionToSelection = () => {
+    if (!activeSel) return;
+    const name = (regionNameDraft || '').trim();
+    const nCfg = Array.from({ length: rows }, (_, ri) =>
+      Array.from({ length: cols }, (_, ci) => {
+        const base = cellCfg(ri, ci);
+        if (ri >= activeSel.minR && ri <= activeSel.maxR && ci >= activeSel.minC && ci <= activeSel.maxC) {
+          return { ...base, region: name || 'Primary' };
+        }
+        return base;
+      })
+    );
+    setPlate({ cellConfig: nCfg });
+  };
+
   // Apply a compound / concentration override to every cell of the selection.
   const patchSelection = (patch) => {
     if (!activeSel) return;
@@ -1744,6 +1763,7 @@ export const ExperimentalSetup = ({ ctx }) => {
         const next = { ...base };
         if ('role' in patch) next.role = patch.role === '' || patch.role === null ? null : patch.role;
         if ('conc' in patch) next.conc = patch.conc === '' || patch.conc === null ? null : Number(patch.conc);
+        if ('region' in patch) next.region = (patch.region === '' || patch.region === null || patch.region === undefined) ? 'Primary' : String(patch.region);
         return next;
       })
     );
@@ -1792,7 +1812,7 @@ export const ExperimentalSetup = ({ ctx }) => {
       rowCompounds: Array.from({ length: nd.rows }, (_, r) => rowCompounds[r] || ''),
       compounds: Array.from({ length: nd.cols }, (_, c) => compounds[c] || ''),
       cellConfig: Array.from({ length: nd.rows }, (_, r) =>
-        Array.from({ length: nd.cols }, (_, c) => ({ role: cellCfg(r, c).role ?? null, conc: cellCfg(r, c).conc ?? null }))
+        Array.from({ length: nd.cols }, (_, c) => ({ role: cellCfg(r, c).role ?? null, conc: cellCfg(r, c).conc ?? null, region: cellCfg(r, c).region || 'Primary' }))
       )
     });
   };
@@ -1909,6 +1929,20 @@ export const ExperimentalSetup = ({ ctx }) => {
               {lbl}
             </button>
           ))}
+          <span className="w-px h-5 bg-indigo-200" />
+          <span className="text-[10px] font-bold text-indigo-500 uppercase">Region:</span>
+          <input
+            type="text"
+            value={regionNameDraft}
+            onChange={(e) => setRegionNameDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') assignRegionToSelection(); }}
+            placeholder="Region name (e.g. Cytoplasm)"
+            className="border border-indigo-300 rounded px-2 py-1 text-xs w-36 bg-white outline-none"
+          />
+          <button type="button" onClick={assignRegionToSelection}
+            className="text-[10px] font-bold bg-white border border-indigo-300 text-indigo-700 px-2 py-1 rounded shadow-sm hover:bg-indigo-50">
+            Assign region
+          </button>
           <button type="button" onClick={clearSelection}
             className="text-slate-400 hover:text-slate-700 font-black px-1">✕</button>
         </div>
@@ -2023,7 +2057,7 @@ export const ExperimentalSetup = ({ ctx }) => {
                           onMouseDown={(e) => onCellMouseDown(e, r, c)}
                           onMouseEnter={() => onCellMouseEnter(r, c)}
                           title={`${rl}${col} — drag to select`}
-                          className={`border border-slate-200 p-1 align-middle cursor-pointer transition-colors ${isSel ? 'bg-indigo-100 ring-2 ring-inset ring-indigo-400' : role ? 'hover:bg-blue-50' : 'bg-slate-50/50 hover:bg-blue-50'}`}>
+                          className={`relative border border-slate-200 p-1 align-middle cursor-pointer transition-colors ${isSel ? 'bg-indigo-100 ring-2 ring-inset ring-indigo-400' : role ? 'hover:bg-blue-50' : 'bg-slate-50/50 hover:bg-blue-50'}`}>
                           {role ? (
                             <div className="flex flex-col leading-tight">
                               <span className="font-bold text-[10px] truncate" style={{ color: platePresetColor(role) ? '#334155' : plateCmpColor(role, cmpColors) }}>{role}</span>
@@ -2032,6 +2066,9 @@ export const ExperimentalSetup = ({ ctx }) => {
                           ) : (
                             <span className="text-slate-300 text-[10px]">—</span>
                           )}
+                          {(() => { const reg = cellCfg(r, c).region; if (!reg || reg === 'Primary') return null; return (
+                            <span className="absolute top-0 left-0 text-[7px] font-black text-white px-1 rounded-br pointer-events-none" style={{ backgroundColor: getRegionColor(reg) }}>{reg}</span>
+                          ); })()}
                         </td>
                       );
                     })}
@@ -2087,12 +2124,18 @@ export const ExperimentalSetup = ({ ctx }) => {
                     const isSel = activeSel && r >= activeSel.minR && r <= activeSel.maxR && c >= activeSel.minC && c <= activeSel.maxC;
                     const presetCol = role ? platePresetColor(role) : null;
                     const fSize = Math.max(7, Math.round(mapFontSize * 0.95));
+                    const reg = cellCfg(r, c).region;
+                    const hasReg = !!reg && reg !== 'Primary';
                     return (
-                      <div key={col} title={`${rl}${col}: ${role || 'empty'}${conc != null ? ' · ' + formatConc(conc) + ' ' + unit : ''}`}
+                      <div key={col} title={`${rl}${col}: ${role || 'empty'}${conc != null ? ' · ' + formatConc(conc) + ' ' + unit : ''}${hasReg ? ' · ' + reg : ''}`}
                         onMouseDown={(e) => onCellMouseDown(e, r, c)}
                         onMouseEnter={() => onCellMouseEnter(r, c)}
-                        className={`rounded-full border flex flex-col items-center justify-center text-[8px] font-bold leading-tight px-0.5 text-center transition-colors cursor-pointer select-none ${isSel ? 'ring-2 ring-inset ring-indigo-500' : ''} ${role ? (presetCol ? 'border-slate-300 text-slate-700' : 'text-white border-black/10') : 'bg-white text-slate-400 border-slate-200'}`}
+                        className={`relative rounded-full border flex flex-col items-center justify-center text-[8px] font-bold leading-tight px-0.5 text-center transition-colors cursor-pointer select-none ${isSel ? 'ring-2 ring-inset ring-indigo-500' : ''} ${role ? (presetCol ? 'border-slate-300 text-slate-700' : 'text-white border-black/10') : 'bg-white text-slate-400 border-slate-200'}`}
                         style={{ backgroundColor: presetCol || (role ? plateCmpColor(role, cmpColors) : undefined), width: mapBadgePx, height: mapBadgePx }}>
+                        {hasReg && (
+                          <span className="absolute -top-1.5 -right-1.5 text-[7px] font-black px-1 rounded shadow-sm text-white pointer-events-none"
+                            style={{ backgroundColor: getRegionColor(reg) }}>{reg}</span>
+                        )}
                         <span className="truncate max-w-full" style={{ fontSize: fSize + 'px' }}>{role || '·'}</span>
                         {conc != null && <span className="opacity-90" style={{ fontSize: Math.max(6, fSize - 1) + 'px' }}>{formatConc(conc)}</span>}
                       </div>

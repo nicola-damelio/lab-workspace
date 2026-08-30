@@ -636,6 +636,56 @@ const showHsqc15N = has('hsqc15n') && d.moleculeType === 'protein' && d.selNuc.i
 /* ============================================================================
    PREVIEW HELPERS
 ========================================================================== */
+/* Plate map preview for Flow Cytometry / Microscopy plates (stored in
+   test.fcPlate: cellConfig[].role / conc / region). */
+export const PlateMapPreview = ({ test }) => {
+  const fcPlate = test && test.fcPlate ? test.fcPlate : {};
+  const cellConfig = Array.isArray(fcPlate.cellConfig) ? fcPlate.cellConfig : [];
+  const rows = cellConfig.length;
+  const cols = rows && Array.isArray(cellConfig[0]) ? cellConfig[0].length : 0;
+  if (!rows || !cols) return null;
+  const COL_LABELS = Array.from({ length: cols }, (_, i) => i + 1);
+  const ROW_LABELS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'].slice(0, rows);
+  return (
+    <div className="mt-2">
+      <h5 className="text-[10px] font-bold text-slate-500 mb-1 uppercase">
+        Plate Map ({fcPlate.plateType || '96'}-well)
+      </h5>
+      <div className="overflow-x-auto border border-slate-200 rounded max-w-full">
+        <table className="text-[10px] text-center w-full min-w-[max-content] bg-white select-text" draggable="true">
+          <thead>
+            <tr>
+              <th className="bg-slate-100 border border-slate-200 p-1 w-8"></th>
+              {COL_LABELS.map((c) => <th key={c} className="bg-slate-100 border border-slate-200 p-1 font-bold text-slate-600">{c}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {cellConfig.map((row, r) => (
+              <tr key={r}>
+                <td className="bg-slate-100 border border-slate-200 p-1 font-bold text-slate-600">{ROW_LABELS[r]}</td>
+                {row.map((cfg, c) => {
+                  const role = (cfg && cfg.role) || '';
+                  const reg = (cfg && cfg.region) || 'Primary';
+                  return (
+                    <td key={c} className="relative border border-slate-200 p-1 min-w-[45px] h-[30px] bg-slate-50 align-middle">
+                      {reg !== 'Primary' && (
+                        <span className="absolute top-0 left-0 text-[6.5px] font-black text-white px-1 rounded-br" title={`Region: ${reg}`}>{reg}</span>
+                      )}
+                      {role ? (
+                        <span className="font-bold text-blue-700 truncate block w-full" title={`${role}${cfg && cfg.conc != null ? ' ' + cfg.conc : ''}`}>{role}</span>
+                      ) : <span className="text-slate-300">-</span>}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
 export const PlateGridPreview = ({ test }) => {
   const { grid, cellConfig } = test;
   if (!grid || !grid.length) return null;
@@ -2307,6 +2357,7 @@ const DOSYFitPreview = ({ test }) => {
 export const NOTEBOOK_ANALYSIS_PREVIEWS = {
   plate: [(test) => <PlateAnalysisPreview test={test} />],
   flow_cytometry: [(test, ctx) => <FCSOverlayVisualization ctx={ctx} />],
+  microscopy: [(test) => <PlateMapPreview test={test} />],
   cd: [(test, ctx) => <CDAnalysisGraphsPreview test={test} instances={ctx.instances} />],
   nmr: [(test, ctx) => (
     <div className="flex flex-col gap-4 mt-2">

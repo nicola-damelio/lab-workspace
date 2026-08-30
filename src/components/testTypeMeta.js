@@ -23,6 +23,7 @@ export const TEST_TYPE_META = {
   protein_expression: { label: 'Protein Expression', icon: 'flask' },
   md_simulation: { label: 'MD Simulation', icon: 'monitor' },
   flow_cytometry: { label: 'Flow Cytometry', icon: 'droplet' },
+  microscopy: { label: 'Microscopy', icon: 'camera' },
   docking: { label: 'Molecular Docking', icon: 'target' }
 };
 

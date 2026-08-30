@@ -9,6 +9,7 @@ import { CLASSIFICATION_MAP, PRIMARY_CATEGORIES, EXPERIMENT_TYPES } from '../../
 import { markAttachmentsDeleted, renameDriveFilesFor, deleteTestDriveFolder } from '../../utils/driveUpload';
 import { removeTestFcsBlobs } from '../../utils/fcsBlobStore';
 import { setSectionsCommand } from '../ui';
+import { testProjectAccess } from './projectsModule';
 import { Icon } from '../Icons';
 // Lazy renderers (kept as dynamic imports so each stays its own chunk).
 const NMRTestRenderer = lazy(() => import('../NMRTestRenderer').then(m => ({ default: m.NMRTestRenderer })));
@@ -21,6 +22,7 @@ const CloningTestRenderer = lazy(() => import('../CloningTestRenderer').then(m =
 const ProteinExpressionTestRenderer = lazy(() => import('../ProteinExpressionTestRenderer').then(m => ({ default: m.ProteinExpressionTestRenderer })));
 const DockingTestRenderer = lazy(() => import('../DockingTestRenderer'));
 const FlowCytometryTestRenderer = lazy(() => import('../FlowCytometryTestRenderer').then(m => ({ default: m.FlowCytometryTestRenderer })));
+const MicroscopyTestRenderer = lazy(() => import('../MicroscopyTestRenderer').then(m => ({ default: m.MicroscopyTestRenderer })));
 
 export const ActiveTestModule = ({
   activeTestId, additives, allCellLines, allCmpds, appClipboard, buffers,
@@ -47,15 +49,23 @@ export const ActiveTestModule = ({
 
                 // ── Auth gate ─────────────────────────────────────
                 const isSuperuserSession = currentUser?.role === 'superuser';
-                const activeTestOwned = !activeTest.operator || isSuperuserSession || (currentUser && currentUser.name === activeTest.operator) || unlockedTestIds.has(activeTest.id);
+                // Project membership grants access to every experiment linked to a
+                // project the user belongs to, with the same rights as the project.
+                const projectPerm = currentUser ? testProjectAccess(activeTest, currentUser.name) : null;
+                const activeTestOwned = !activeTest.operator || isSuperuserSession || (currentUser && currentUser.name === activeTest.operator) || unlockedTestIds.has(activeTest.id) || !!projectPerm;
                 if (!activeTestOwned) {
                   // Redirect to test list — user should use the login modal from there
                   setCurrentModule('tests');
                   return null;
                 }
+                // Read-only enforcement: a user who only has 'view' on the linked
+                // project (and is not the operator / superuser / unlocked) can open
+                // the experiment but every update is ignored.
+                const projectViewOnly = projectPerm === 'view' && !(isSuperuserSession || (currentUser && currentUser.name === activeTest.operator) || unlockedTestIds.has(activeTest.id) || !activeTest.operator);
                 // ─────────────────────────────────────────────────
 
                 const updateActiveTest = (updates) => {
+                  if (projectViewOnly) return; // view-only project member — read-only
                   setTests((prev) =>
                     prev.map((t) => (t.id === activeTestId ? { ...t, ...updates } : t))
                   );
@@ -684,9 +694,34 @@ if (activeTest.type === 'ssnmr') {
                     />
                   );
                 }
-if (activeTest.type === 'flow_cytometry') {
+                if (activeTest.type === 'flow_cytometry') {
                return (
                  <FlowCytometryTestRenderer
+                   activeTest={activeTest}
+                   updateActiveTest={updateActiveTest}
+                   allTests={tests}
+                   setTests={setTests}
+                   TestHeader={TestHeader}
+                   datasetProtocols={datasetProtocols}
+                   jumpToProtocol={jumpToProtocolFn}
+                   allCmpds={allCmpds}
+                   allCellLines={allCellLines}
+                   customFields={customFields}
+                   testCategories={testCategories}
+                   operators={operatorNames}
+                   instances={siblingTests}
+                   solvents={solvents}
+                   buffers={buffers}
+                   additives={additives}
+                   compoundMeta={compoundMeta}
+                   mandatoryRules={mandatoryRules}
+                   mandatoryBehavior={mandatoryBehavior}
+                 />
+               );
+             }
+if (activeTest.type === 'microscopy') {
+               return (
+                 <MicroscopyTestRenderer
                    activeTest={activeTest}
                    updateActiveTest={updateActiveTest}
                    allTests={tests}

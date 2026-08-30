@@ -717,6 +717,50 @@ if (customType === 'docking') {
      fcPopulations: []
    };
  }
+if (customType === 'microscopy') {
+   const dimKey = '96';
+   const dim = PLATES_DEF[dimKey] || PLATES_DEF['96'];
+   const defCell = Array(26)
+     .fill(null)
+     .map(() =>
+       Array(26)
+         .fill(null)
+         .map(() => ({ excluded: false, role: null, conc: null, region: 'Primary', manualOverride: false }))
+     );
+
+   return {
+     ...baseTest,
+     type: 'microscopy',
+     testCategory: 'Interactions',
+     secondaryCategory: 'Microscopy',
+     cellNumber: '',
+     fixation: 'None',
+     permeabilization: 'None',
+     microscopyType: '',
+     microscopeModel: '',
+     objective: '',
+     laserLines: '',
+     detector: '',
+     filterCubes: '',
+     magnification: '',
+     acquisitionSoftware: '',
+     // Same plate design as Flow Cytometry's Experimental Setup.
+     fcPlate: {
+       plateType: dimKey,
+       rowCompounds: Array(dim?.rows || 8).fill(''),
+       compounds: Array(dim?.cols || 12).fill(''),
+       cellConfig: defCell,
+       topConcStr: '100',
+       dilFactorStr: '3',
+       unit: 'µM',
+       cmpColors: {},
+       customConc: {}
+     },
+     msVideos: [],
+     msMovies: [],
+     msImages: []
+   };
+ }
 if (customType === 'nmr-fittings') {
       const rows = 8;
       const cols = 12;
