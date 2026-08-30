@@ -108,7 +108,7 @@ export const AppSidebar = ({
             )}
 
             {isSidebarOpen && backupStatus && (
-              <div className="px-4 py-1.5 border-b border-slate-100 bg-slate-50/30 text-[10px] font-bold flex items-center gap-1" title="Weekly HTML backups are written to Lab Workspace/backups on Google Drive">
+              <div className="px-4 py-1.5 border-b border-slate-100 bg-slate-50/30 text-[10px] font-bold flex items-center gap-1" title="Weekly HTML backups are written to Lab Workspace/<dataset>/backups/ (one subfolder per dataset) on Google Drive">
                 {backupStatus.state === 'running' && <span className="text-blue-500 animate-pulse">💾 {backupStatus.msg}</span>}
                 {backupStatus.state === 'ok' && <span className="text-emerald-600">✅ {backupStatus.msg}</span>}
                 {backupStatus.state === 'error' && <span className="text-red-600">⚠️ {backupStatus.msg}</span>}

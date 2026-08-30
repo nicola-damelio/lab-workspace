@@ -1013,13 +1013,15 @@ export const archiveFileToDrive = async ({ file, ctx = {}, title = '', suffix = 
 };
 
 /**
- * Upload a file into a subfolder directly inside the app's "Lab Workspace"
- * root folder on Drive (default subfolder "backups"). Unlike uploadLocalFile
- * the folder is resolved from the WORKSPACE root, not the dataset folder, so
- * e.g. the weekly HTML autosave always lands in
- *   <Lab Workspace>/backups/<name>
- * regardless of which dataset is open. A file with the same name is
- * overwritten instead of piling up duplicates.
+ * Upload a file into a subfolder (or nested path) directly inside the app's
+ * "Lab Workspace" root folder on Drive. Unlike uploadLocalFile the folder is
+ * resolved from the WORKSPACE root, not the dataset folder, so e.g. the weekly
+ * HTML autosave lands in
+ *   <Lab Workspace>/<dataset>/backups/<name>
+ * — one `backups` subfolder per dataset (the caller passes "<dataset>/backups"
+ * via `folder`), instead of piling every dataset into a single shared "backups"
+ * folder. A file with the same name inside the same folder is overwritten
+ * instead of piling up duplicates.
  * @returns {Promise<{id:string,name:string}|null>} the Drive file, or null on failure
  */
 export const uploadWorkspaceFile = async ({ name, mimeType, file, folder = 'backups' }) => {
@@ -1027,7 +1029,14 @@ export const uploadWorkspaceFile = async ({ name, mimeType, file, folder = 'back
   try {
     const workspaceId = await ensureLabWorkspaceFolder();
     if (!workspaceId) return null;
-    const folderId = await findOrCreateFolder(String(folder || 'backups'), workspaceId);
+    // `folder` may be a nested path (e.g. "<dataset>/backups") — resolve each
+    // segment so every dataset's backups live in their own subfolder.
+    let folderId = workspaceId;
+    for (const seg of String(folder || 'backups').split('/')) {
+      const name = seg.trim();
+      if (!name) continue;
+      folderId = await findOrCreateFolder(name, folderId);
+    }
 
     const blob = typeof file === 'string' ? dataUrlToBlob(file) : file;
     const type = mimeType || blob.type || 'application/octet-stream';

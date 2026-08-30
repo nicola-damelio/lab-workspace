@@ -460,8 +460,9 @@ CLASSIFICATION CONSTANTS
 export { CLASSIFICATION_MAP, PRIMARY_CATEGORIES, EXPERIMENT_TYPES } from './data/testTypes';
 
 // ── Weekly HTML autosave ──────────────────────────────────────────────────
-// Full HTML backups of every dataset are written to <Lab Workspace>/backups/
-// on Google Drive once a week. The key stores the timestamp of the last run.
+// Full HTML backups of every dataset are written to
+// <Lab Workspace>/<dataset>/backups/ on Google Drive once a week. The key
+// stores the timestamp of the last run.
 const BACKUP_INTERVAL_KEY = 'labLastWeeklyBackup';
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -1326,9 +1327,9 @@ if (customType === 'dosy') {
   // ── WEEKLY HTML AUTOSAVE TO GOOGLE DRIVE ──────────────────────────────────
   // Every 7 days (checked on load, on Drive connect, and every few hours while
   // the app stays open) a full HTML backup of EVERY dataset is written to
-  // <Lab Workspace>/backups/<title>_backup_<date>.html on Google Drive — the
-  // same format the "Save HTML" button produces, so any backup file can be
-  // re-imported with "Load HTML" if a dataset is ever lost or corrupted.
+  // <Lab Workspace>/<dataset>/backups/<title>_backup_<date>.html on Google
+  // Drive — the same format the "Save HTML" button produces, so any backup file
+  // can be re-imported with "Load HTML" if a dataset is ever lost or corrupted.
   const [backupStatus, setBackupStatus] = useState(null);
   const backupRunningRef = useRef(false);
   const datasetsListRef = useRef(datasetsList);
@@ -1390,10 +1391,17 @@ if (customType === 'dosy') {
           const subtitle = isCurrent ? datasetSubtitleRef.current : (dset.subtitle || '');
           const html = buildBackupHtml(title, subtitle, payload);
           // A short dataset-id fragment guarantees two datasets with the same
-          // title never overwrite each other's weekly backup.
+          // title never collide (folder or file).
           const idTag = String(dset.id || '').replace(/[^a-z0-9]/gi, '').slice(-6) || 'ds';
           const fname = `${sanitizeSlug(title) || 'dataset'}_${idTag}_backup_${dateStr}.html`;
-          const res = await uploadWorkspaceFile({ name: fname, mimeType: 'text/html', file: new Blob([html], { type: 'text/html' }) });
+          // Each dataset's backup lives in its OWN subfolder —
+          // <Lab Workspace>/<dataset>/backups/ — because the file belongs to
+          // exactly one dataset. Piling every dataset into one shared "backups"
+          // folder made no sense once the backups became per-dataset (the
+          // dataset folder keeps them together and still lets "Load HTML"
+          // restore any of them).
+          const dsFolder = `${sanitizeSlug(title) || 'dataset'}_${idTag}`;
+          const res = await uploadWorkspaceFile({ name: fname, mimeType: 'text/html', file: new Blob([html], { type: 'text/html' }), folder: `${dsFolder}/backups` });
           if (res) done++; else failed++;
         } catch (e) {
           failed++;
@@ -1402,7 +1410,7 @@ if (customType === 'dosy') {
       }
       if (done > 0) {
         try { localStorage.setItem(BACKUP_INTERVAL_KEY, String(Date.now())); } catch {}
-        setBackupStatus({ state: 'ok', msg: `Weekly backup saved (${done} dataset${done > 1 ? 's' : ''}) → Lab Workspace/backups` });
+        setBackupStatus({ state: 'ok', msg: `Weekly backup saved (${done} dataset${done > 1 ? 's' : ''}) → Lab Workspace/<dataset>/backups` });
         return true;
       }
       setBackupStatus(failed > 0 ? { state: 'error', msg: 'Weekly backup failed — check the Drive connection' } : { state: 'skip', msg: 'Nothing to back up' });

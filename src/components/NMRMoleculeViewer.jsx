@@ -932,19 +932,23 @@ const [fogEnabled, setFogEnabled] = useState(() => {
 });
 const fogEnabledRef = useRef(fogEnabled);
 fogEnabledRef.current = fogEnabled;
-const fogOriginalRef = useRef(null); // the NGL Fog instance to restore when re-enabled
 
-// Enable/disable NGL's depth fog on the live stage. Disabling detaches the
-// scene's Fog object (three.js then skips the fog shader entirely); the
-// original Fog instance is kept so toggling back ON restores the exact default.
-// NGL keeps updating that instance's near/far on every camera move, so
-// reattaching it re-enables the normal depth cue without rebuilding anything.
+// Enable/disable NGL's depth fog on the live stage. NGL 2.4 recomputes
+// scene.fog.near/far on EVERY render from parameters.fogNear/fogFar
+// (Viewer.__updateClipping) and its on-screen label system dereferences
+// scene.fog directly — so we must NEVER detach the fog object (that throws
+// inside the render loop and freezes the whole viewer). Instead we push the
+// fog transition beyond the far edge of the molecule: in the default
+// "scene/relative" clip mode
+//   fogNear = cDist − bRadius·(50 − fogNear)/50
+// so fogNear=100 → the transition starts at cDist + bRadius (the far edge of
+// the bounding sphere) → smoothstep = 0 for every atom → no visible fog, and
+// the labels stay fully opaque. Re-enabling restores the NGL defaults (50/100).
 const applyFog = useCallback(() => {
   const stage = stageRef.current;
-  if (!stage || !stage.viewer || !stage.viewer.scene) return;
+  if (!stage) return;
   try {
-    stage.viewer.scene.fog = fogEnabledRef.current ? fogOriginalRef.current : null;
-    stage.viewer.requestRender();
+    stage.setParameters(fogEnabledRef.current ? { fogNear: 50, fogFar: 100 } : { fogNear: 100, fogFar: 101 });
   } catch { /* ignore */ }
 }, []);
 
@@ -1031,9 +1035,6 @@ new Promise((_, reject) => setTimeout(() => reject(new Error('Timed out loading 
 if (cancelled || !containerRef.current) return null;
 const stage = new NGL.Stage(containerRef.current, { backgroundColor: '#f8fafc' });
 stageRef.current = stage;
-try {
-  fogOriginalRef.current = stage.viewer && stage.viewer.scene ? stage.viewer.scene.fog : null;
-} catch { /* ignore */ }
 applyFog(); // honour the user's fog preference (off by default) right away
 
 stage.signals.clicked.add((pickingProxy) => {
@@ -3040,6 +3041,17 @@ className="relative border border-slate-200 rounded-xl overflow-hidden bg-white"
 style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
 >
 <div ref={containerRef} className="w-full h-full" />
+
+{/* Floating retract control — bottom-left of the 3D viewport, always visible
+    (above the status overlays). Mirrors the "⬇ Minimize" toolbar button. */}
+<button
+type="button"
+onClick={() => setViewerCollapsed(true)}
+title="Retract (minimize) the 3D viewer window — the structure stays loaded, only the tall canvas collapses to a thin bar"
+className="absolute bottom-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border border-slate-300 text-slate-600 text-xs font-black hover:bg-slate-100 shadow-sm flex items-center justify-center"
+>
+▼
+</button>
 
 {/* Vertical Molecules bar (right side) — multi-select which structures to display */}
 {extraMols.length > 0 && (

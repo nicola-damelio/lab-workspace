@@ -25,7 +25,7 @@ import {
 import { AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, FORM_META, RESIDUE_COLORS, buildKeys, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, SequencePaintStrip, getSelectedKeys, selectionLabel, getManualKeys, FORCE_FIELDS, WATER_MODELS, MD_ENSEMBLES, MD_INTEGRATORS, MD_THERMOSTATS, MD_BAROSTATS, TRAJECTORY_FORMATS, parseMDValue, getForceFieldInfo, getFFVersions, getWaterModelInfo, getFFBackboneAtoms, normalizeTrajectoryUrl, detectTrajectoryFormat, getTrajectoryFormatInfo, getMDInstances, getMDActiveInstance, getMDLayers, getMDActiveLayerKey, getMDLayerValues, writeMDCellValue, MD_ANALYSIS_LAYERS, DEFAULT_MD_CHART_STYLE, mdLineDash, mdDom} from './MDData';
 import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
-import { archiveFileToDrive } from '../utils/driveUpload';
+import { archiveFileToDrive, getDriveToken, getDriveFileRegistry, driveFetch } from '../utils/driveUpload';
 
 // Cache to retain local File objects when switching tabs within the same session
 const localFileCache = new Map();
@@ -40,6 +40,66 @@ const trajBlobKey = (testId) => `traj_${testId}`;
 // breaks the reload decode (atob on a marker throws). Like the trajectory, the
 // raw file lives in the browser cache (IndexedDB) and is restored on reload.
 const structBlobKey = (testId) => `ms_struct_${testId}`;
+
+// Download an MD data file (topology / trajectory) that was archived to Google
+// Drive on upload. Registry-first (the localStorage drive-file registry holds
+// the exact Drive file id + name + context of every archived upload), then a
+// Drive name search for browsers without that registry (e.g. a different
+// machine). Returns a File, or null when nothing matches / Drive is not
+// connected. This is what lets a structure/trajectory that IS on Drive come
+// back even when the local browser cache is empty.
+const downloadArchivedMDFile = async ({ suffix, nameStem, ctx }) => {
+  if (!getDriveToken()) return null;
+  const full = String(nameStem || '');
+  const stem = full.replace(/\.[^.]+$/, '');
+  if (!stem) return null;
+  const ext = (full.match(/\.[^.]+$/) || [''])[0].toLowerCase();
+  let match = null;
+
+  // 1) Drive file registry (recorded when the file was archived on upload).
+  try {
+    const reg = getDriveFileRegistry();
+    const entries = Object.entries(reg).filter(([, e]) => e && !e.deleted && String(e.ctx?.suffix || '') === String(suffix || ''));
+    let pool = entries;
+    if (ctx && ctx.test) {
+      const byTest = entries.filter(([, e]) => String(e.ctx?.test || '') === String(ctx.test));
+      if (byTest.length > 0) pool = byTest;
+      else if (ctx.instance) pool = entries.filter(([, e]) => String(e.ctx?.instance || '') === String(ctx.instance));
+    } else if (ctx && ctx.instance) {
+      pool = entries.filter(([, e]) => String(e.ctx?.instance || '') === String(ctx.instance));
+    }
+    // Prefer the entry whose Drive name contains the declared file stem, newest first.
+    const byStem = pool.filter(([, e]) => stem && String(e.name || '').toLowerCase().includes(stem.toLowerCase()));
+    const chosen = (byStem.length > 0 ? byStem : pool).sort((a, b) => (b[1].at || 0) - (a[1].at || 0))[0];
+    if (chosen) match = { id: chosen[0], name: chosen[1].name };
+  } catch { /* registry read failed — fall through to a name search */ }
+
+  // 2) Drive name search (registry empty / other machine).
+  if (!match) {
+    try {
+      const q = encodeURIComponent(`name contains '${stem.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}' and trashed=false`);
+      const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=25`);
+      const j = res && res.ok ? await res.json() : { files: [] };
+      const f = (j.files || []).find((x) => {
+        const n = String(x.name || '').toLowerCase();
+        return n.includes(stem.toLowerCase()) && (ext ? n.endsWith(ext) : true);
+      });
+      if (f) match = { id: f.id, name: f.name };
+    } catch { /* search failed */ }
+  }
+
+  if (!match) return null;
+  try {
+    const dl = await driveFetch(`/drive/v3/files/${match.id}?alt=media`, { timeout: 10 * 60 * 1000 });
+    if (!dl || !dl.ok) return null;
+    const buf = await dl.arrayBuffer();
+    if (!buf || buf.byteLength === 0) return null;
+    return new File([buf], match.name, { type: 'application/octet-stream' });
+  } catch (err) {
+    console.warn('MD Drive file download failed:', err && err.message);
+    return null;
+  }
+};
 
 /* ---- Lab Notebook chart snapshots ----------------------------------------
    The MD analysis charts live inside collapsed CollapsibleSections, so they
@@ -687,6 +747,15 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   const [trajectoryFile, setTrajectoryFile] = useState(() => localFileCache.get(activeTest.id)?.trajectory || null);
   const [structureFile, setStructureFile] = useState(() => localFileCache.get(activeTest.id)?.structure || null);
   const [trajDriveMsg, setTrajDriveMsg] = useState('');
+  const [structRestoreMsg, setStructRestoreMsg] = useState('');
+  // Re-run the restore effects when Google Drive connects (their Drive fallback
+  // may have found nothing while Drive was still disconnected).
+  const [driveConnectedAt, setDriveConnectedAt] = useState(() => Date.now());
+  useEffect(() => {
+    const onConnected = () => setDriveConnectedAt(Date.now());
+    window.addEventListener('lab:drive-connected', onConnected);
+    return () => window.removeEventListener('lab:drive-connected', onConnected);
+  }, []);
 
   const handleStructureFile = (file) => {
     if (!file) {
@@ -738,44 +807,97 @@ export const MDExperimentSetupSection = ({ ctx }) => {
     blobStore.save(trajBlobKey(activeTest.id), file);
   };
 
-  // Restore a previously-uploaded trajectory from IndexedDB on (re)load, so the
-  // user does not have to re-upload the .xtc/.trr/.dcd after refreshing the page.
+  // Restore a previously-uploaded trajectory on (re)load, so the user does not
+  // have to re-upload the .xtc/.trr/.dcd after refreshing the page. Source
+  // order: 1) this browser's IndexedDB cache (fast, offline) → 2) Google Drive
+  // (the file was archived on upload; pulled back when the local cache is empty,
+  // e.g. on another browser/PC). This is why the page "remembers" the .xtc.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       if (trajectoryFile || !activeTest.trajectoryFileName) return;
+      // 1) Browser cache.
       const blob = await blobStore.load(trajBlobKey(activeTest.id));
-      if (cancelled || !blob) return;
-      if (activeTest.trajectoryFileName && blob.name && blob.name !== activeTest.trajectoryFileName) return;
-      const restored = new File([blob], blob.name || activeTest.trajectoryFileName || 'trajectory.xtc', { type: blob.type || 'application/octet-stream' });
-      setTrajectoryFile(restored);
-      const cache = localFileCache.get(activeTest.id) || {};
-      localFileCache.set(activeTest.id, { ...cache, trajectory: restored });
+      if (cancelled) return;
+      if (blob && (!activeTest.trajectoryFileName || !blob.name || blob.name === activeTest.trajectoryFileName)) {
+        const restored = new File([blob], blob.name || activeTest.trajectoryFileName || 'trajectory.xtc', { type: blob.type || 'application/octet-stream' });
+        setTrajectoryFile(restored);
+        const cache = localFileCache.get(activeTest.id) || {};
+        localFileCache.set(activeTest.id, { ...cache, trajectory: restored });
+        return;
+      }
+      // 2) Drive fallback.
+      if (getDriveToken()) {
+        setTrajDriveMsg(`🔎 ${activeTest.trajectoryFileName} not in this browser — checking Google Drive…`);
+        const driveFile = await downloadArchivedMDFile({
+          suffix: 'trajectory',
+          nameStem: activeTest.trajectoryFileName,
+          ctx: { test: activeTest.name || '', instance: activeTest.instanceName || '' },
+        });
+        if (cancelled) return;
+        if (driveFile) {
+          setTrajectoryFile(driveFile);
+          blobStore.save(trajBlobKey(activeTest.id), driveFile);
+          const cache = localFileCache.get(activeTest.id) || {};
+          localFileCache.set(activeTest.id, { ...cache, trajectory: driveFile });
+          setTrajDriveMsg(`✅ ${driveFile.name} restored from Google Drive.`);
+        } else {
+          setTrajDriveMsg(`⚠️ ${activeTest.trajectoryFileName} not found on this browser or on Google Drive. It may never have been archived (old uploads aborted before the timeout fix) — re-select it with “Choose XTC / TRR”, then “Archive trajectory to Drive” to retry.`);
+        }
+      } else {
+        setTrajDriveMsg(`ℹ️ ${activeTest.trajectoryFileName} not in this browser. Connect Google Drive to restore it, or re-select it with “Choose XTC / TRR”.`);
+      }
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTest.id]);
+  }, [activeTest.id, driveConnectedAt]);
 
-  // Restore a previously-uploaded structure file (.gro/.pdb/.cif) from IndexedDB
-  // on (re)load, mirroring the trajectory restore. Large topology files are not
-  // part of the Firestore payload (see structBlobKey), so without this the 3D
-  // viewer would only show "Failed to decode structure file data." after a
-  // reload — the file has to come back from the browser cache.
+  // Restore a previously-uploaded structure file (.gro/.pdb/.cif) on (re)load,
+  // mirroring the trajectory restore. Large topology files are not part of the
+  // Firestore payload (see structBlobKey), so without this the 3D viewer would
+  // only show "Failed to decode structure file data." after a reload. Source
+  // order: 1) this browser's IndexedDB cache → 2) Google Drive (the file was
+  // archived on upload), so a structure that IS on Drive can still come back
+  // on a machine/browser where it was never uploaded.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       if (structureFile || !activeTest.structureFileName) return;
+      // 1) Browser cache.
       const blob = await blobStore.load(structBlobKey(activeTest.id));
-      if (cancelled || !blob) return;
-      if (activeTest.structureFileName && blob.name && blob.name !== activeTest.structureFileName) return;
-      const restored = new File([blob], blob.name || activeTest.structureFileName || 'structure.pdb', { type: blob.type || 'application/octet-stream' });
-      setStructureFile(restored);
-      const cache = localFileCache.get(activeTest.id) || {};
-      localFileCache.set(activeTest.id, { ...cache, structure: restored });
+      if (cancelled) return;
+      if (blob && (!activeTest.structureFileName || !blob.name || blob.name === activeTest.structureFileName)) {
+        const restored = new File([blob], blob.name || activeTest.structureFileName || 'structure.pdb', { type: blob.type || 'application/octet-stream' });
+        setStructureFile(restored);
+        const cache = localFileCache.get(activeTest.id) || {};
+        localFileCache.set(activeTest.id, { ...cache, structure: restored });
+        return;
+      }
+      // 2) Drive fallback.
+      if (getDriveToken()) {
+        setStructRestoreMsg(`🔎 ${activeTest.structureFileName} not in this browser — checking Google Drive…`);
+        const driveFile = await downloadArchivedMDFile({
+          suffix: 'structure',
+          nameStem: activeTest.structureFileName,
+          ctx: { test: activeTest.name || '', instance: activeTest.instanceName || '' },
+        });
+        if (cancelled) return;
+        if (driveFile) {
+          setStructureFile(driveFile);
+          blobStore.save(structBlobKey(activeTest.id), driveFile);
+          const cache = localFileCache.get(activeTest.id) || {};
+          localFileCache.set(activeTest.id, { ...cache, structure: driveFile });
+          setStructRestoreMsg(`✅ ${driveFile.name} restored from Google Drive.`);
+        } else {
+          setStructRestoreMsg(`⚠️ ${activeTest.structureFileName} not found on this browser or on Google Drive — re-select it with “Choose PDB/CIF” (it will be archived again).`);
+        }
+      } else {
+        setStructRestoreMsg(`ℹ️ ${activeTest.structureFileName} not in this browser. Connect Google Drive to restore it, or re-select it with “Choose PDB/CIF”.`);
+      }
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTest.id]);
+  }, [activeTest.id, driveConnectedAt]);
   
   useEffect(() => { if (structureMode === '3d') setHasOpened3D(true); }, [structureMode]);
 
@@ -999,6 +1121,9 @@ export const MDExperimentSetupSection = ({ ctx }) => {
                     <span className="text-emerald-700">✓ Trajectory: {trajectoryFile.name}</span>
                   ) : (
                     <span className="text-slate-400">No trajectory yet — use "Choose XTC / TRR"</span>
+                  )}
+                  {structRestoreMsg && (
+                    <span className={`w-full text-[10px] font-bold ${structRestoreMsg.startsWith('✅') ? 'text-emerald-700' : structRestoreMsg.startsWith('⚠️') ? 'text-amber-700' : 'text-blue-600'}`}>{structRestoreMsg}</span>
                   )}
                 </div>
               </div>
