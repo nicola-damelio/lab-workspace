@@ -10,25 +10,34 @@
 
 const KEY = 'labPymolScripts';
 
-/** @returns {Object<string,string>} name -> script text */
+/**
+ * @returns {Object<string,{script:string,comment:string}>} name -> { script, comment }
+ * Legacy entries stored as a plain string are normalised to { script, comment:'' }.
+ */
 export const getPymolScripts = () => {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) || '{}');
-    return raw && typeof raw === 'object' ? raw : {};
+    if (!raw || typeof raw !== 'object') return {};
+    const out = {};
+    Object.entries(raw).forEach(([n, v]) => {
+      if (typeof v === 'string') out[n] = { script: v, comment: '' };
+      else if (v && typeof v === 'object' && typeof v.script === 'string') out[n] = { script: v.script, comment: String(v.comment || '') };
+    });
+    return out;
   } catch { return {}; }
 };
 
-/** Save (or overwrite) a named script. @returns {Object<string,string>} */
-export const setPymolScript = (name, script) => {
+/** Save (or overwrite) a named script with an optional comment. @returns {Object<string,{script:string,comment:string}>} */
+export const setPymolScript = (name, script, comment = '') => {
   const all = getPymolScripts();
   const key = String(name || '').trim();
   if (!key) return all;
-  all[key] = String(script || '');
+  all[key] = { script: String(script || ''), comment: String(comment || '') };
   try { localStorage.setItem(KEY, JSON.stringify(all)); } catch { /* ignore */ }
   return all;
 };
 
-/** Remove a named script. @returns {Object<string,string>} */
+/** Remove a named script. @returns {Object<string,{script:string,comment:string}>} */
 export const removePymolScript = (name) => {
   const all = getPymolScripts();
   delete all[String(name || '').trim()];

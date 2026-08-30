@@ -14,24 +14,27 @@ export const PyMOLScriptsSection = () => {
   const [scripts, setScripts] = useState(getPymolScripts());
   const [name, setName] = useState('');
   const [script, setScript] = useState('');
+  const [comment, setComment] = useState('');
   const [editing, setEditing] = useState(null); // name of the script being edited
 
   const refresh = () => setScripts(getPymolScripts());
 
+  const clearForm = () => { setName(''); setScript(''); setComment(''); setEditing(null); };
+
   const saveNew = () => {
     if (!String(name || '').trim()) { alert('Give the script a name first (e.g. "Membrane setup").'); return; }
     if (!String(script || '').trim()) { alert('The script is empty — write some PyMOL commands first.'); return; }
-    setPymolScript(name, script);
+    setPymolScript(name, script, comment);
     refresh();
-    setName('');
-    setScript('');
-    setEditing(null);
+    clearForm();
   };
 
   const startEdit = (n) => {
+    const entry = scripts[n] || {};
     setEditing(n);
     setName(n);
-    setScript(scripts[n] || '');
+    setScript(typeof entry === 'string' ? entry : (entry.script || ''));
+    setComment(typeof entry === 'string' ? '' : (entry.comment || ''));
   };
 
   const updateEdited = () => {
@@ -39,29 +42,24 @@ export const PyMOLScriptsSection = () => {
     if (!String(script || '').trim()) { alert('The script is empty.'); return; }
     const newName = String(name || '').trim();
     if (!newName) { alert('Give the script a name.'); return; }
-    setPymolScript(newName, script);
+    setPymolScript(newName, script, comment);
     if (newName !== editing) removePymolScript(editing);
     refresh();
-    setEditing(null);
-    setName('');
-    setScript('');
+    clearForm();
   };
 
-  const cancelEdit = () => {
-    setEditing(null);
-    setName('');
-    setScript('');
-  };
+  const cancelEdit = () => clearForm();
 
   const del = (n) => {
     if (!window.confirm(`Delete the PyMOL script "${n}"?`)) return;
     removePymolScript(n);
-    if (editing === n) { setEditing(null); setName(''); setScript(''); }
+    if (editing === n) clearForm();
     refresh();
   };
 
   const copy = (n) => {
-    try { navigator.clipboard.writeText(scripts[n] || ''); } catch { /* ignore */ }
+    const entry = scripts[n] || {};
+    try { navigator.clipboard.writeText(typeof entry === 'string' ? entry : (entry.script || '')); } catch { /* ignore */ }
   };
 
   return (
@@ -71,21 +69,24 @@ export const PyMOLScriptsSection = () => {
         {Object.keys(scripts).length === 0 ? (
           <p className="text-xs text-slate-400 italic">No scripts yet — write one on the right and click "Save as new script".</p>
         ) : (
-          Object.entries(scripts).map(([n]) => (
-            <div key={n} className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-lg px-3 py-2">
-              <button type="button" onClick={() => startEdit(n)}
-                className="text-left text-xs font-bold text-violet-800 hover:text-violet-950 hover:underline truncate"
-                title={`Load "${n}" into the editor`}>
-                🧪 {n}
-              </button>
-              <div className="flex items-center gap-1 shrink-0">
-                <button type="button" onClick={() => copy(n)} title="Copy to clipboard"
-                  className="px-1.5 py-0.5 text-[11px] font-bold rounded border border-slate-300 bg-white text-slate-600 hover:bg-slate-50">⧉</button>
-                <button type="button" onClick={() => del(n)} title="Delete script"
-                  className="px-1.5 py-0.5 text-[11px] font-bold rounded border border-red-300 bg-white text-red-600 hover:bg-red-50">🗑</button>
+          Object.entries(scripts).map(([n, entry]) => {
+            const cmt = typeof entry === 'string' ? '' : (entry && entry.comment || '');
+            return (
+              <div key={n} className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-lg px-3 py-2">
+                <button type="button" onClick={() => startEdit(n)}
+                  className="text-left text-xs font-bold text-violet-800 hover:text-violet-950 hover:underline truncate"
+                  title={cmt ? `${n} — ${cmt}` : `Load "${n}" into the editor`}>
+                  🧪 {n}
+                </button>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button type="button" onClick={() => copy(n)} title="Copy to clipboard"
+                    className="px-1.5 py-0.5 text-[11px] font-bold rounded border border-slate-300 bg-white text-slate-600 hover:bg-slate-50">⧉</button>
+                  <button type="button" onClick={() => del(n)} title="Delete script"
+                    className="px-1.5 py-0.5 text-[11px] font-bold rounded border border-red-300 bg-white text-red-600 hover:bg-red-50">🗑</button>
+                </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
         <p className="text-[10px] text-slate-400 leading-snug">
           Saved scripts appear in the 3D viewers under <b>🧪 Selections &amp; PyMOL → "Load script"</b>,
@@ -110,6 +111,13 @@ export const PyMOLScriptsSection = () => {
           rows={10}
           placeholder={'select membrane, resn POPC or resn DPPC\nshow cartoon, protein\ncolor slate, membrane\nshow sticks, membrane and name C1..C4\nset sphere_scale, 0.6, ions\nbg_color white'}
           className={TEXTAREA_CLS}
+        />
+        <input
+          type="text"
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+          placeholder="Comment / notes (e.g. for membrane systems: hides water, shows POPC tails as sticks)"
+          className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-violet-500 bg-white"
         />
         <div className="flex flex-wrap items-center gap-2">
           {editing ? (

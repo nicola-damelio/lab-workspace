@@ -1802,6 +1802,8 @@ useEffect(() => {
     const st = styles[key] || {};
     const expr = selKeyExpr(key);
     if (!expr || expr === '') return;
+    // Hidden selections keep NO representations — "🙈 Hide" removes them.
+    if (st.hidden) { selCompsRef.current[key] = []; return; }
     // Colouring metaphor: a NGL colorScheme (element/chain/resname/sstruc/…) or
     // a plain solid colour when "Solid" is selected.
     const colorScheme = st.colorMode && st.colorMode !== 'solid' ? st.colorMode : undefined;
@@ -1815,7 +1817,8 @@ useEffect(() => {
     if (st.ribbon) add('ribbon', { colorScheme, opacity });
     if (st.tube) add('tube', { colorScheme, opacity });
     if (st.sphere) add('spacefill', { scale: st.sphereScale || 1, colorScheme, opacity, multipleBond: true });
-    if (st.stick) add('ball+stick', { colorScheme, opacity, multipleBond: true });
+    if (st.ball) add('ball+stick', { colorScheme, opacity, multipleBond: true, aspectRatio: 1.3 });
+    if (st.stick) add('stick', { colorScheme, opacity, multipleBond: true });
     if (st.surface) add('surface', { colorScheme, opacity: opacity != null ? opacity : 0.5 });
     selCompsRef.current[key] = reps;
   });
@@ -1919,12 +1922,12 @@ const applyPyMOLScript = (text) => {
       ...sels,
     ];
     setSelections(nextSels);
-    const styleOf = (st) => (st === 'sphere' ? 'sphere' : st === 'stick' || st === 'sticks' ? 'stick' : st === 'cartoon' ? 'cartoon' : st === 'ribbon' ? 'ribbon' : st === 'tube' ? 'tube' : st === 'surface' ? 'surface' : st === 'line' || st === 'lines' ? 'line' : null);
+    const styleOf = (st) => (st === 'sphere' || st === 'spheres' ? 'sphere' : st === 'stick' || st === 'sticks' ? 'stick' : st === 'ball' || st === 'ball+stick' || st === 'ball_and_stick' || st === 'ballandstick' ? 'ball' : st === 'cartoon' ? 'cartoon' : st === 'ribbon' ? 'ribbon' : st === 'tube' ? 'tube' : st === 'surface' ? 'surface' : st === 'line' || st === 'lines' || st === 'dots' ? 'line' : null);
     const next = { ...selStylesRef.current };
     // Reset every selection the script mentions to "hidden", then apply commands
     sels.forEach((s) => {
       const cur = next[s.name] || {};
-      next[s.name] = { ...cur, cartoon: false, ribbon: false, tube: false, stick: false, sphere: false, surface: false };
+      next[s.name] = { ...cur, cartoon: false, ribbon: false, tube: false, ball: false, stick: false, sphere: false, surface: false };
     });
     acts.forEach((a) => {
       const key = names.has(a.sel) ? a.sel : (a.sel === 'all' ? 'all' : a.sel);
@@ -1933,7 +1936,7 @@ const applyPyMOLScript = (text) => {
         const st = styleOf(a.style);
         if (st) next[key] = { ...cur, [st]: a.type === 'show' };
         if (a.style === 'everything' || a.style === 'all') {
-          next[key] = { ...cur, cartoon: a.type === 'show', ribbon: a.type === 'show', tube: a.type === 'show', stick: a.type === 'show', sphere: a.type === 'show', surface: a.type === 'show' };
+          next[key] = { ...cur, cartoon: a.type === 'show', ribbon: a.type === 'show', tube: a.type === 'show', ball: a.type === 'show', stick: a.type === 'show', sphere: a.type === 'show', surface: a.type === 'show' };
         }
       } else if (a.type === 'color') {
         const c = colorDefs[a.color] || parseColorInt(a.color);
@@ -1971,7 +1974,7 @@ const applyPyMOLScript = (text) => {
       const shown = {};
       Object.keys(next).forEach((k) => {
         const s = next[k] || {};
-        if (s.cartoon || s.ribbon || s.tube || s.stick || s.sphere || s.surface) shown[k] = true;
+        if (s.cartoon || s.ribbon || s.tube || s.ball || s.stick || s.sphere || s.surface) shown[k] = true;
       });
       const patch = {};
       sels.forEach((s) => {
@@ -2662,8 +2665,8 @@ className="w-3.5 h-3.5 accent-sky-600"
           const n = e.target.value;
           e.target.value = '';
           if (!n) return;
-          const s = getPymolScripts()[n];
-          if (s) setPymolScript(s);
+          const entry = getPymolScripts()[n];
+          if (entry) setPymolScript(typeof entry === 'string' ? entry : (entry.script || ''));
         }}
         title="Load a script saved in the Library (Library → PyMOL Scripts) into the editor, then press Run"
         className="border border-violet-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:border-violet-500"
@@ -2685,7 +2688,7 @@ className="w-3.5 h-3.5 accent-sky-600"
       <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600"><input type="checkbox" checked={qualityHigh} onChange={(e) => setQualityHigh(e.target.checked)} className="accent-violet-600" /> High quality (ray-shadows approx.)</label>
       <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600">BG <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)} className="w-8 h-6 border border-slate-300 rounded cursor-pointer" /></label>
     </div>
-    {pymolLog && <pre className="text-[10px] text-slate-600 bg-white border border-violet-200 rounded-lg p-2 whitespace-pre-wrap max-h-24 overflow-y-auto">{pymolLog}</pre>}
+    {pymolLog && <pre className="text-xs text-slate-700 bg-white border border-violet-200 rounded-lg p-2 whitespace-pre-wrap max-h-32 overflow-y-auto">{pymolLog}</pre>}
     {selections.length > 0 && (
       <p className="text-[10px] text-violet-600 font-bold">
         ✓ {selections.length} selection(s) parsed — toggle them in the vertical bar on the right of the 3D viewer.
@@ -2840,23 +2843,33 @@ style={{ height: viewH + 'px' }}
         return (
           <div key={s.name} className="flex flex-col gap-1 border border-slate-100 rounded-lg p-1.5 bg-white">
             <div className="flex items-center justify-between gap-1">
-              <span className="text-[10px] font-bold text-slate-700 truncate" title={s.expr}>{s.name}</span>
-              <span className="text-[8px] text-slate-400 font-mono shrink-0">{n != null ? `${n} atoms` : '—'}</span>
+              <span className={`text-xs font-bold truncate ${st.hidden ? 'text-slate-400 line-through' : 'text-slate-800'}`} title={s.expr}>{s.name}</span>
+              <div className="flex items-center gap-1 shrink-0">
+                <span className="text-[10px] text-slate-400 font-mono">{n != null ? `${n} atoms` : '—'}</span>
+                <button type="button"
+                  onClick={() => setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), hidden: !st.hidden } })}
+                  className={`px-1.5 py-0.5 text-[10px] font-bold rounded border ${st.hidden ? 'bg-red-600 text-white border-red-600' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-red-50'}`}
+                  title={st.hidden ? 'Show this selection again' : 'Hide this selection (removes its representations)'}>
+                  {st.hidden ? '👁 Show' : '🙈 Hide'}
+                </button>
+              </div>
             </div>
+            {!st.hidden && (
+              <>
             <div className="flex items-center gap-1 flex-wrap">
-              {['cartoon', 'ribbon', 'tube', 'stick', 'sphere', 'surface'].map((style) => (
+              {['cartoon', 'ribbon', 'tube', 'ball', 'stick', 'sphere', 'surface'].map((style) => (
                 <button key={style} type="button"
                   onClick={() => setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), [style]: !((selStylesRef.current[s.name] || {})[style]) } })}
-                  className={`px-1.5 py-0.5 text-[8px] font-bold rounded border ${st[style] ? 'bg-violet-600 text-white border-violet-600' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-violet-50'}`}>
-                  {style}
+                  className={`px-1.5 py-0.5 text-[10px] font-bold rounded border ${st[style] ? 'bg-violet-600 text-white border-violet-600' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-violet-50'}`}>
+                  {style === 'ball' ? 'ball+stick' : style}
                 </button>
               ))}
             </div>
             <div className="flex items-center gap-1 flex-wrap">
-              <span className="text-[8px] font-bold text-slate-500 uppercase">Colour</span>
+              <span className="text-[10px] font-bold text-slate-500 uppercase">Colour</span>
               <select value={st.colorMode || 'solid'}
                 onChange={(e) => setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), colorMode: e.target.value } })}
-                className="text-[8px] border border-slate-300 rounded bg-white text-slate-600 outline-none focus:border-violet-500 h-5"
+                className="text-[10px] border border-slate-300 rounded bg-white text-slate-600 outline-none focus:border-violet-500 h-6"
                 title="Colouring metaphor">
                 <option value="solid">Solid</option>
                 <option value="element">Atom type</option>
@@ -2868,15 +2881,17 @@ style={{ height: viewH + 'px' }}
               <input type="color" value={st.color != null ? `#${st.color.toString(16).padStart(6, '0')}` : '#000000'}
                 disabled={(st.colorMode || 'solid') !== 'solid'}
                 onChange={(e) => { const c = parseInt(e.target.value.slice(1), 16); setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), color: c } }); }}
-                className={`w-5 h-5 border border-slate-300 rounded cursor-pointer ${(st.colorMode || 'solid') !== 'solid' ? 'opacity-30 cursor-not-allowed' : ''}`}
+                className={`w-6 h-6 border border-slate-300 rounded cursor-pointer ${(st.colorMode || 'solid') !== 'solid' ? 'opacity-30 cursor-not-allowed' : ''}`}
                 title="Solid colour (used when Colour = Solid)" />
             </div>
-            <label className="flex items-center gap-1 text-[8px] text-slate-500">
+            <label className="flex items-center gap-1 text-[10px] text-slate-500">
               transp
               <input type="range" min="0" max="1" step="0.05" value={st.transparency || 0}
                 onChange={(e) => setSelStyles({ ...selStylesRef.current, [s.name]: { ...(selStylesRef.current[s.name] || {}), transparency: parseFloat(e.target.value) } })}
                 className="accent-violet-600 w-full" />
             </label>
+              </>
+            )}
           </div>
         );
       })}
