@@ -13,7 +13,7 @@ import { uploadLocalFile, getDriveToken } from '../utils/driveUpload';
 import {
   AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, CARBON_RANGE_DB,
   SS_CORRECTIONS, SS_META, DNA_FORM_OFFSETS, SUGAR_ANOMER_OFFSETS,
-  RESIDUE_COLORS, RANDOM_COIL_DB, TICKS_1H, TICKS_13C, TICKS_15N
+  RESIDUE_COLORS, RANDOM_COIL_DB, CYS_OXIDIZED_RC, TICKS_1H, TICKS_13C, TICKS_15N
 } from './NMRData';
 export { VIS_PALETTES };
 
@@ -2952,13 +2952,19 @@ const useNmrDerived = (activeTest, ctx = {}) => {
     return chars.map((char, index) => {
       const entry = DB[char];
       if (!entry) return null;
+      // Oxidised cysteine (disulphide-bonded) has a very different random-coil
+      // ¹³Cα/¹³Cβ from the reduced thiol — the user picks the state in the
+      // molecule setup and the simulated shifts follow.
+      const rcEntry = (moleculeType === 'protein' && char === 'C' && activeTest.cysOxidized)
+        ? CYS_OXIDIZED_RC
+        : RANDOM_COIL_DB[char];
       const generatedShifts = {};
       Object.keys(entry.ranges).forEach((atom) => {
         const r = entry.ranges[atom];
         let val = r.min;
-        if (moleculeType === 'protein' && RANDOM_COIL_DB[char]) {
-          if (atom === 'Hα' && RANDOM_COIL_DB[char].HA != null) {
-            val = RANDOM_COIL_DB[char].HA;
+        if (moleculeType === 'protein' && rcEntry) {
+          if (atom === 'Hα' && rcEntry.HA != null) {
+            val = rcEntry.HA;
             generatedShifts[atom] = parseFloat(val.toFixed(2));
             assignedShifts.push(val);
             return;
@@ -2981,9 +2987,9 @@ const useNmrDerived = (activeTest, ctx = {}) => {
         if (!cName) return;
         if (!cShifts[cName]) {
           let baseVal;
-          if (moleculeType === 'protein' && RANDOM_COIL_DB[char]) {
-            if (cName === 'Cα' && RANDOM_COIL_DB[char].CA != null) baseVal = RANDOM_COIL_DB[char].CA;
-            else if (cName === 'Cβ' && RANDOM_COIL_DB[char].CB != null) baseVal = RANDOM_COIL_DB[char].CB;
+          if (moleculeType === 'protein' && rcEntry) {
+            if (cName === 'Cα' && rcEntry.CA != null) baseVal = rcEntry.CA;
+            else if (cName === 'Cβ' && rcEntry.CB != null) baseVal = rcEntry.CB;
           }
           if (baseVal === undefined) {
             const range = getCarbonRangeFor(moleculeType, char, cName);
@@ -2993,11 +2999,11 @@ const useNmrDerived = (activeTest, ctx = {}) => {
         }
         generatedShifts13C[atom] = cShifts[cName];
       });
-      const backboneRand = moleculeType === 'protein' ? { N: parseFloat((117 + Math.random() * 8).toFixed(1)), CP: RANDOM_COIL_DB[char]?.CO != null ? RANDOM_COIL_DB[char].CO : parseFloat((172 + Math.random() * 5).toFixed(1)) } : null;
+      const backboneRand = moleculeType === 'protein' ? { N: parseFloat((117 + Math.random() * 8).toFixed(1)), CP: rcEntry?.CO != null ? rcEntry.CO : parseFloat((172 + Math.random() * 5).toFixed(1)) } : null;
       const p31 = hasPhosphorus ? parseFloat((-2 + Math.random() * 3).toFixed(2)) : null;
       return { ...entry, id: `${entry.code3 || char}${index + 1}`, char, color: RESIDUE_COLORS[index % RESIDUE_COLORS.length], shifts: generatedShifts, shifts13C: generatedShifts13C, uniqueCShifts: { ...cShifts }, backboneRand, p31 };
     }).filter(Boolean);
-  }, [seq, moleculeType, activeTest.sugarChoice, activeTest.lipidChoice, activeTest.smiles]);
+  }, [seq, moleculeType, activeTest.sugarChoice, activeTest.lipidChoice, activeTest.smiles, activeTest.cysOxidized]);
   
   const estSeq = useMemo(() => parsedSeq.map((res, idx) => {
     const ssLetter = moleculeType === 'protein' ? getSSAt(idx) : 'C';
@@ -4003,6 +4009,24 @@ const generatedStructure = useMemo(() => {
                 className="w-full border border-slate-300 rounded-lg p-3 font-mono text-sm tracking-widest outline-none focus:border-blue-500 uppercase h-24 custom-scrollbar shadow-inner"
                 placeholder={d.moleculeType === 'protein' ? 'e.g. MKWVTFISLL...' : d.moleculeType === 'dna' ? 'e.g. ATGCGTAC...' : 'e.g. AUGCGUAC...'} />
               <p className="text-[10px] text-slate-400 mt-1 font-bold">Length: {d.seq.length} {d.moleculeType === 'protein' ? 'residues' : 'nucleotides'} (valid: {d.validChars.split('').join(' ')})</p>
+              {d.moleculeType === 'protein' && (
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  <span className="text-[10px] font-bold text-amber-800 uppercase">Cysteine state</span>
+                  <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700 cursor-pointer" title="Free thiol (−SH) — Cys ¹³Cβ ≈ 28 ppm">
+                    <input type="radio" name="cysState" checked={!activeTest.cysOxidized}
+                      onChange={() => updateActiveTest({ cysOxidized: false })} className="accent-amber-600" />
+                    Reduced (−SH)
+                  </label>
+                  <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700 cursor-pointer" title="In a disulphide bond (S–S) — Cys ¹³Cβ ≈ 40 ppm">
+                    <input type="radio" name="cysState" checked={!!activeTest.cysOxidized}
+                      onChange={() => updateActiveTest({ cysOxidized: true })} className="accent-amber-600" />
+                    Oxidized (−S−S−)
+                  </label>
+                  <span className="text-[10px] text-amber-700 font-semibold">
+                    {activeTest.cysOxidized ? 'Cys ¹³Cβ ≈ 39.6 ppm (disulfide)' : 'Cys ¹³Cβ ≈ 28.0 ppm (thiol)'}
+                  </span>
+                </div>
+              )}
             </>
           ) : d.moleculeType === 'sugar' ? (
             <div className="flex gap-4">
@@ -4249,18 +4273,18 @@ const importBruker1rPpm = ({dataBuffer, imagBuffer=null, acqusText='', manualSWp
   // Acquisition parameters read from the acqus file, shown in the Instrumental
   // Setup "Datasets" rows (editable there). SW is expressed in ppm, O1 in Hz.
   const acqusParams = {
-    NS: _nmrBrukerNum(acqus,'NS') || '',
-    DS: _nmrBrukerNum(acqus,'DS') || '',
-    RG: _nmrBrukerNum(acqus,'RG') || '',
-    P1: _nmrBrukerNum(acqus,'P1') || _nmrBrukerArrayElem(acqus, 'P', 1) || '',
-    D1: _nmrBrukerNum(acqus,'D1') || _nmrBrukerArrayElem(acqus, 'D', 1) || '',
-    D8: _nmrBrukerNum(acqus,'D8') || _nmrBrukerArrayElem(acqus, 'D', 8) || '',
-    D6: _nmrBrukerNum(acqus,'D6') || _nmrBrukerArrayElem(acqus, 'D', 6) || '',
+    ns: _nmrBrukerNum(acqus,'NS') || '',
+    ds: _nmrBrukerNum(acqus,'DS') || '',
+    rg: _nmrBrukerNum(acqus,'RG') || '',
+    p1: _nmrBrukerNum(acqus,'P1') || _nmrBrukerArrayElem(acqus, 'P', 1) || '',
+    d1: _nmrBrukerNum(acqus,'D1') || _nmrBrukerArrayElem(acqus, 'D', 1) || '',
+    d8: _nmrBrukerNum(acqus,'D8') || _nmrBrukerArrayElem(acqus, 'D', 8) || '',
+    d6: _nmrBrukerNum(acqus,'D6') || _nmrBrukerArrayElem(acqus, 'D', 6) || '',
     // SW in ppm — the observe frequency sits on SFO2 in these acqus files
     // (SW_ppm = SW_h / SFO2), falling back to SFO1 then to the SW parameter.
-    SW: (swHz > 0 && sfo2 > 0 ? swHz / sfo2 : swHz > 0 && sfo1 > 0 ? swHz / sfo1 : _nmrBrukerNum(acqus,'SW')) || '',
-    O1: o1Hz || '',
-    TD: _nmrBrukerNum(acqus,'TD') || ''
+    sw: (swHz > 0 && sfo2 > 0 ? swHz / sfo2 : swHz > 0 && sfo1 > 0 ? swHz / sfo1 : _nmrBrukerNum(acqus,'SW')) || '',
+    o1: o1Hz || '',
+    td: _nmrBrukerNum(acqus,'TD') || ''
   };
   return {
     xs: ds.xs, ys: ds.ys, ysImag: ds.ys2, littleEndian, autoEndian, nPoints: y.length,

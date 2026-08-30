@@ -366,16 +366,16 @@ const importBruker1r = ({ dataBuffer, acqusText = '', manualSWkHz = null, manual
   const sfo2 = brukerNum(acqus, 'SFO2');
   const o1Hz = brukerNum(acqus, 'O1');
   const acqusParams = {
-    NS: brukerNum(acqus, 'NS') || '',
-    DS: brukerNum(acqus, 'DS') || '',
-    RG: brukerNum(acqus, 'RG') || '',
-    P1: brukerNum(acqus, 'P1') || brukerArrayElem(acqus, 'P', 1) || '',
-    D1: brukerNum(acqus, 'D1') || brukerArrayElem(acqus, 'D', 1) || '',
-    D8: brukerNum(acqus, 'D8') || brukerArrayElem(acqus, 'D', 8) || '',
-    D6: brukerNum(acqus, 'D6') || brukerArrayElem(acqus, 'D', 6) || '',
-    SW: (swHz > 0 && sfo2 > 0 ? swHz / sfo2 : swHz > 0 && sfo1 > 0 ? swHz / sfo1 : brukerNum(acqus, 'SW')) || '',
-    O1: o1Hz || '',
-    TD: brukerNum(acqus, 'TD') || ''
+    ns: brukerNum(acqus, 'NS') || '',
+    ds: brukerNum(acqus, 'DS') || '',
+    rg: brukerNum(acqus, 'RG') || '',
+    p1: brukerNum(acqus, 'P1') || brukerArrayElem(acqus, 'P', 1) || '',
+    d1: brukerNum(acqus, 'D1') || brukerArrayElem(acqus, 'D', 1) || '',
+    d8: brukerNum(acqus, 'D8') || brukerArrayElem(acqus, 'D', 8) || '',
+    d6: brukerNum(acqus, 'D6') || brukerArrayElem(acqus, 'D', 6) || '',
+    sw: (swHz > 0 && sfo2 > 0 ? swHz / sfo2 : swHz > 0 && sfo1 > 0 ? swHz / sfo1 : brukerNum(acqus, 'SW')) || '',
+    o1: o1Hz || '',
+    td: brukerNum(acqus, 'TD') || ''
   };
   return {
     xs: ds.xs, ys: ds.ys, littleEndian, autoEndian, nPoints: y.length,

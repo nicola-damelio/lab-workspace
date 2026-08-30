@@ -315,13 +315,17 @@ export const NMRInstrumentalSetup = ({ ctx, extraFields = null, hideDatasets = f
                       ['TD', 'td', 'Time domain points']
                     ].map(([lbl, k, tip]) => {
                       const acqus = ds.acqus || {};
+                      // Read the stored value tolerantly to the case: new imports
+                      // save lowercase keys, older rows may have uppercase ones.
+                      const rawVal = acqus[k] ?? acqus[k.toUpperCase()];
+                      const val = rawVal !== undefined && rawVal !== '' ? rawVal : '';
                       return (
                         <div key={k} className="flex flex-col gap-1">
                           <label className={LABEL_CLS}>{lbl}</label>
                           <input
                             type="number"
                             step="any"
-                            value={acqus[k] !== undefined && acqus[k] !== '' ? acqus[k] : ''}
+                            value={val}
                             onChange={(e) =>
                               patchDataset(ds.id, { acqus: { ...acqus, [k]: e.target.value } })
                             }

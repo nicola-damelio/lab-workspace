@@ -527,6 +527,11 @@ export const RANDOM_COIL_DB = {
   Y: { HA: 4.66, CA: 57.9, CB: 38.9, CO: 177.2 }
 };
 
+// Random-coil reference for an OXIDISED cysteine (in a disulphide / S–S bond).
+// The ¹³Cβ jumps ~+12 ppm and ¹³Cα drops ~ −5 ppm versus the reduced −SH form,
+// which strongly affects the simulated ¹³C shifts (Wishart RefDB values).
+export const CYS_OXIDIZED_RC = { HA: 4.55, CA: 53.3, CB: 39.6, CO: 175.0 };
+
 export const RESIDUE_COLORS = ['#3b82f6', '#8b5cf6', '#d946ef', '#ec4899', '#f43f5e', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#6366f1'];
 export const TICKS_1H = Array.from({ length: 111 }, (_, i) => parseFloat((i / 10).toFixed(1)));
 export const TICKS_13C = Array.from({ length: 421 }, (_, i) => parseFloat((10 + i * 0.5).toFixed(1)));
