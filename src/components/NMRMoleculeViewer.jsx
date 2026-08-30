@@ -605,6 +605,87 @@ const splitPdbFileIntoMolecules = async (file) => {
   return parts;
 };
 
+// Reverse map: NMR-style atom name → possible PDB atom names. Built once so
+// highlight selection strings never re-scan PDB_TO_NMR per atom key (that is
+// what made buildSele quadratic-ish for thousands of manual keys).
+const NMR_TO_PDB_NAMES = (() => {
+  const m = new Map();
+  Object.entries(PDB_TO_NMR).forEach(([pdb, nmr]) => {
+    if (!m.has(nmr)) m.set(nmr, []);
+    m.get(nmr).push(pdb);
+  });
+  return m;
+})();
+
+// Build an NGL selection string from atom keys ("ri-atom"). Shared by the amber
+// (selected) and green (manually-assigned) highlights so neither effect has to
+// duplicate the logic. Builds SELECTION TEXT only — the caller picks the
+// representation. Fast even for thousands of keys.
+const buildNglSele = (keys, structure, moleculeType, namingConvention) => {
+  if (!Array.isArray(keys) || keys.length === 0) return null;
+  const parts = [];
+  let organicNameToIndex = null;
+  const getOrganicNameToIndexMap = () => {
+    if (organicNameToIndex) return organicNameToIndex;
+    organicNameToIndex = {};
+    try { structure.eachAtom((a) => { organicNameToIndex[getOrganicAtomName(a)] = a.index; }); } catch { organicNameToIndex = {}; }
+    return organicNameToIndex;
+  };
+
+  keys.forEach((k) => {
+    const dashIdx = String(k).indexOf('-');
+    if (dashIdx < 0) return;
+    const ri = parseInt(String(k).substring(0, dashIdx), 10);
+    if (!Number.isFinite(ri)) return;
+    const atomName = String(k).substring(dashIdx + 1).trim();
+    const resno = ri + 1;
+
+    if (moleculeType === 'organic') {
+      const map = getOrganicNameToIndexMap();
+      if (Object.prototype.hasOwnProperty.call(map, atomName)) parts.push(`@${map[atomName]}`);
+      return;
+    }
+
+    // MD / PDB naming convention
+    if (namingConvention === 'pdb') {
+      const seleParts = [`${resno} and .${atomName}`];
+      if (atomName === 'HN') seleParts.push(`${resno} and .H`);
+      if (atomName === 'H') seleParts.push(`${resno} and .HN`);
+      if (atomName === 'HA') seleParts.push(`${resno} and (.HA1 or .HA2 or .HA3)`);
+      if (['HA1', 'HA2', 'HA3'].includes(atomName)) seleParts.push(`${resno} and .HA`);
+      parts.push(`(${seleParts.join(' or ')})`);
+      return;
+    }
+
+    if (moleculeType === 'dna' || moleculeType === 'rna') {
+      const names = [atomName];
+      if (atomName === "OH2'") names.push("HO2'");
+      if (atomName === 'H7(CH3)') names.push('H71', 'H72', 'H73');
+      names.forEach((pn) => parts.push(`${resno} and .${pn}`));
+      return;
+    }
+
+    const pdbNames = (NMR_TO_PDB_NAMES.get(atomName) || []).slice();
+    if (atomName === 'N') pdbNames.push('N');
+    else if (atomName === 'Cα') pdbNames.push('CA');
+    else if (atomName === 'Cβ') pdbNames.push('CB');
+    else if (atomName === "C'") pdbNames.push('C');
+    else if (atomName === 'O') pdbNames.push('O');
+    else {
+      const match = atomName.match(/^([CNO])([αβγδεζη])(\d*)$/);
+      if (match) pdbNames.push(`${match[1]}${REVERSE_GREEK[match[2]]}${match[3]}`);
+    }
+    if (atomName.startsWith('H') && atomName.length > 1 && REVERSE_GREEK[atomName[1]]) {
+      const base = `H${REVERSE_GREEK[atomName[1]]}`;
+      pdbNames.push(base, `${base}1`, `${base}2`, `${base}3`);
+    }
+    if (pdbNames.length === 0) pdbNames.push(atomName);
+    pdbNames.forEach((pn) => parts.push(`${resno} and .${pn}`));
+  });
+
+  return parts.length > 0 ? parts.join(' or ') : null;
+};
+
 // ============================================================================
 // MAIN COMPONENT
 // ============================================================================
@@ -616,6 +697,7 @@ externalLoading = false,
 externalError = null,
 structureFileData,
 structureFileName,
+structureFile,
 structureFormat = 'auto',
 trajectorySrc,
 trajectoryFile,
@@ -646,6 +728,12 @@ const [viewH, setViewH] = useState(() => {
 });
 const resizeRef = useRef(null); // { startY, startH } while dragging
 
+// ---- Retractable viewer window ----
+// "⬇ Minimize" collapses the 3D viewport to a thin bar (the stage stays
+// mounted, so the structure and trajectory are never lost); "⬆ Expand"
+// restores it and tells NGL that the canvas size changed.
+const [viewerCollapsed, setViewerCollapsed] = useState(false);
+
 useEffect(() => {
   const move = (ev) => {
     if (!resizeRef.current) return;
@@ -667,6 +755,18 @@ useEffect(() => {
   try { if (stageRef.current) stageRef.current.handleResize(); } catch {}
 }, [viewH]);
 
+// When the viewer is re-expanded after being minimized (canvas height went
+// 0 → viewH), NGL must be told the size changed or the picture stays blank.
+useEffect(() => {
+  if (viewerCollapsed) return;
+  try {
+    if (stageRef.current) {
+      stageRef.current.handleResize();
+      if (stageRef.current.viewer) stageRef.current.viewer.requestRender();
+    }
+  } catch { /* ignore */ }
+}, [viewerCollapsed]);
+
 const containerRef = useRef(null);
 const stageRef = useRef(null);
 const stageReadyRef = useRef(null);
@@ -675,6 +775,8 @@ const highlightCompRef = useRef(null);
 const manualHighlightCompRef = useRef(null);
 const stripHighlightCompRef = useRef(null);   // whole-residue amber highlight from a tick click
 const stripResidueRiRef = useRef(null);       // residue index (ri) selected via the strip
+const manualSigRef = useRef('');              // signature of the last green "assigned atoms" highlight
+const manualSigCompRef = useRef(null);        // the component that signature was built for (structure reload)
 const labelCompRef = useRef(null);
 const sidechainCompRef = useRef(null);
 const abortRef = useRef(null); // { token, label, cancel } of the active long-running operation (structure / trajectory load)
@@ -820,6 +922,32 @@ const [hideAll, setHideAll] = useState(false);        // remove every representa
 const [bgColor, setBgColor] = useState('#f8fafc');
 const [qualityHigh, setQualityHigh] = useState(false);
 
+// ---- Depth fog ----
+// NGL's default depth fog (fogNear 50 / fogFar 100) fades distant atoms toward
+// the background colour — a grey "haze" that many users find distracting. OFF by
+// default; the "🌫 Fog" toolbar button re-enables it. The choice is persisted in
+// localStorage so it sticks across pages and reloads.
+const [fogEnabled, setFogEnabled] = useState(() => {
+  try { return localStorage.getItem('labViewerFog') === 'on'; } catch { return false; }
+});
+const fogEnabledRef = useRef(fogEnabled);
+fogEnabledRef.current = fogEnabled;
+const fogOriginalRef = useRef(null); // the NGL Fog instance to restore when re-enabled
+
+// Enable/disable NGL's depth fog on the live stage. Disabling detaches the
+// scene's Fog object (three.js then skips the fog shader entirely); the
+// original Fog instance is kept so toggling back ON restores the exact default.
+// NGL keeps updating that instance's near/far on every camera move, so
+// reattaching it re-enables the normal depth cue without rebuilding anything.
+const applyFog = useCallback(() => {
+  const stage = stageRef.current;
+  if (!stage || !stage.viewer || !stage.viewer.scene) return;
+  try {
+    stage.viewer.scene.fog = fogEnabledRef.current ? fogOriginalRef.current : null;
+    stage.viewer.requestRender();
+  } catch { /* ignore */ }
+}, []);
+
 const persistRenames = (next) => {
   setRenames(next);
   if (typeof onAtomRenames === 'function') onAtomRenames(next);
@@ -868,8 +996,11 @@ const toActualFrame = (keptIdx) => Math.min(numFrames - 1, keptIdx * effStride);
 const parsedSeqRef = useRef(parsedSeq);
 const moleculeTypeRef = useRef(moleculeType);
 const onAtomClickRef = useRef(onAtomClick);
+const selectedKeysRef = useRef(selectedKeys);
 const residueOffsetRef = useRef(residueOffset);
 const namingConventionRef = useRef(namingConvention);
+const anchorTickRef = useRef(null);          // last strip tick clicked — Shift+click selects the range [anchor → click]
+const [multiSelectActive, setMultiSelectActive] = useState(false);
 const renameModeRef = useRef(renameMode);
 renameModeRef.current = renameMode;
 const displayNameRef = useRef(displayAtomName);
@@ -885,9 +1016,10 @@ useEffect(() => {
 parsedSeqRef.current = parsedSeq;
 moleculeTypeRef.current = moleculeType;
 onAtomClickRef.current = onAtomClick;
+selectedKeysRef.current = selectedKeys;
 residueOffsetRef.current = residueOffset;
 namingConventionRef.current = namingConvention;
-}, [parsedSeq, moleculeType, onAtomClick, residueOffset, namingConvention]);
+}, [parsedSeq, moleculeType, onAtomClick, selectedKeys, residueOffset, namingConvention]);
 
 useEffect(() => {
 let cancelled = false;
@@ -899,6 +1031,10 @@ new Promise((_, reject) => setTimeout(() => reject(new Error('Timed out loading 
 if (cancelled || !containerRef.current) return null;
 const stage = new NGL.Stage(containerRef.current, { backgroundColor: '#f8fafc' });
 stageRef.current = stage;
+try {
+  fogOriginalRef.current = stage.viewer && stage.viewer.scene ? stage.viewer.scene.fog : null;
+} catch { /* ignore */ }
+applyFog(); // honour the user's fog preference (off by default) right away
 
 stage.signals.clicked.add((pickingProxy) => {
 if (!pickingProxy || !pickingProxy.atom) return;
@@ -910,6 +1046,7 @@ return;
 }
 const mapped = mapAtomToNmrKeys(atom, parsedSeqRef.current, moleculeTypeRef.current, namingConventionRef.current);
 if (mapped && onAtomClickRef.current) onAtomClickRef.current(mapped.ri, mapped.keys);
+stripResidueRiRef.current = null; // a viewport click is per-atom, not a strip click
 });
 
 let lastHover = null;
@@ -943,7 +1080,7 @@ stageRef.current = null;
 blobUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
 blobUrlsRef.current = [];
 };
-}, []);
+}, [applyFog]); // applyFog is a stable useCallback — the effect still runs once
 
 const [manualOverride, setManualOverride] = useState(false);
 const lastLoadedTextRef = useRef(null);
@@ -963,6 +1100,14 @@ useEffect(() => {
 if (structureFileData === lastSeenFileDataRef.current) return;
 lastSeenFileDataRef.current = structureFileData;
 if (!structureFileData) return;
+// A raw File supplied by the parent (e.g. restored from IndexedDB on reload)
+// takes precedence over the base64 data URL.
+if (structureFile) return;
+// Old datasets may carry a "[…] omitted" marker instead of a data URL (Stage 5
+// of compressDatasetForSave replaced the long base64 before this fix). Skip it
+// so we never feed a marker into atob() — the restore-from-IndexedDB path or a
+// fresh upload will provide the real file.
+if (!String(structureFileData).startsWith('data:')) return;
 // If this data URL is just the ECHO of the file the user picked in this viewer
 // (the parent stored it back via onStructureFile — e.g. the MD page persists
 // the topology), there is nothing to reload: reloading would call
@@ -988,7 +1133,28 @@ requestStructureLoad({ file: fakeFile, url: null, ts: Date.now() });
 setErrorMsg('Failed to decode structure file data.');
 setStatus('error');
 }
-}, [structureFileData, structureFileName, structureFormat, loadRequest, clearExtraMolecules]);
+}, [structureFileData, structureFileName, structureFormat, loadRequest, clearExtraMolecules, structureFile]);
+
+// Load a structure File handed back by the parent (MD page) — e.g. restored
+// from IndexedDB after a reload. Large topology files (.gro/.pdb/.cif) are
+// never persisted as base64 in the dataset payload, so on reload the parent
+// provides the raw File instead of structureFileData.
+const lastSeenStructFileRef = useRef(undefined);
+useEffect(() => {
+if (!structureFile) return;
+const token = `${structureFile.name || ''}|${structureFile.size || 0}|${structureFile.lastModified || 0}`;
+if (token === lastSeenStructFileRef.current) return;
+lastSeenStructFileRef.current = token;
+try {
+  const activeFile = loadRequest && loadRequest.file;
+  if (activeFile && String(activeFile.name || '') === String(structureFile.name || '')) return; // echo of the file the viewer just picked
+} catch { /* keep going */ }
+clearExtraMolecules();
+setManualOverride(true);
+setFile(null);
+requestStructureLoad({ file: structureFile, url: null, ts: Date.now() });
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, [structureFile, loadRequest, clearExtraMolecules]);
 
 useEffect(() => {
 if (structureText !== lastSeenTextRef.current) {
@@ -1745,13 +1911,11 @@ const RESIDUE_ANCHOR_ATOMS = {
   rna: ['P', "O5'", "C5'", "C1'", "O3'"],
 };
 
-// Click a residue tick → select that residue (toggles off on the second click via
-// the page's handleAtomClick, which compares the key list). Uses the atom names
-// precomputed in collectResidueTicks — NO full-structure atom scan per click.
-const handleResidueTickClick = (tick) => {
+// Build the atom keys for one residue tick (single click, multi toggle or
+// Shift+click range selection). Uses the atom names precomputed in
+// collectResidueTicks — NO full-structure atom scan per click.
+const computeResidueKeys = (tick) => {
   const ri = tick.resno - 1;
-  stripResidueRiRef.current = ri;
-  if (!onAtomClickRef.current) return;
   const seq = Array.isArray(parsedSeqRef.current) ? parsedSeqRef.current : [];
   const anchors = RESIDUE_ANCHOR_ATOMS[moleculeTypeRef.current] || ['N', 'CA', 'C', 'O'];
   const keys = [];
@@ -1771,7 +1935,63 @@ const handleResidueTickClick = (tick) => {
     const anchor = moleculeTypeRef.current === 'dna' || moleculeTypeRef.current === 'rna' ? 'P' : 'CA';
     keys.push(`${ri}-${anchor}`);
   }
-  onAtomClickRef.current(ri, keys);
+  return keys;
+};
+
+// Merge addKeys into an existing key selection. toggle=true flips each key
+// (add if missing, remove if present) — used for Ctrl/Cmd and "⊞ multi" clicks.
+const mergeKeys = (baseKeys, addKeys, toggle) => {
+  const set = new Set(Array.isArray(baseKeys) ? baseKeys : []);
+  (addKeys || []).forEach((k) => {
+    if (toggle && set.has(k)) set.delete(k);
+    else set.add(k);
+  });
+  return Array.from(set);
+};
+
+// Click a residue tick in the sequence strip:
+//   - plain click  → select ONLY that residue (a second click on the same
+//     residue clears it — handled by the page's handleAtomClick)
+//   - Ctrl/Cmd/Shift click or the "⊞ multi" toggle → toggle that residue in/out
+//     of the current multi-residue selection
+//   - Shift click (after any strip click) → select the whole RANGE from the
+//     last-clicked residue up to this one, added to the selection — handy for
+//     highlighting a binding site / loop without clicking every residue.
+const handleResidueTickClick = (tick, e = {}) => {
+  const ri = tick.resno - 1;
+  stripResidueRiRef.current = ri;
+  if (!onAtomClickRef.current) return;
+
+  const additive = multiSelectActive || e.ctrlKey || e.metaKey || e.shiftKey;
+
+  // Shift+click range selection within the same chain: [anchor … clicked].
+  if (e.shiftKey && anchorTickRef.current && anchorTickRef.current.chainid === tick.chainid) {
+    const polyTicks = (Array.isArray(residueTicks) ? residueTicks : []).filter((r) => r.polymer);
+    const ti = polyTicks.findIndex((t) => t.chainid === tick.chainid && t.resno === tick.resno);
+    const ai = polyTicks.findIndex((t) => t.chainid === tick.chainid && t.resno === anchorTickRef.current.resno);
+    if (ti >= 0 && ai >= 0) {
+      const [lo, hi] = ai <= ti ? [ai, ti] : [ti, ai];
+      const addKeys = [];
+      for (let i = lo; i <= hi; i++) {
+        computeResidueKeys(polyTicks[i]).forEach((k) => { if (!addKeys.includes(k)) addKeys.push(k); });
+      }
+      onAtomClickRef.current(ri, mergeKeys(selectedKeysRef.current, addKeys, false));
+      anchorTickRef.current = tick;
+      return;
+    }
+  }
+
+  const keys = computeResidueKeys(tick);
+  if (additive) onAtomClickRef.current(ri, mergeKeys(selectedKeysRef.current, keys, true));
+  else onAtomClickRef.current(ri, keys);
+  anchorTickRef.current = tick;
+};
+
+// "✕ clear" button in the sequence strip — drop the whole residue selection.
+const clearResidueSelection = () => {
+  stripResidueRiRef.current = null;
+  anchorTickRef.current = null;
+  if (onAtomClickRef.current) onAtomClickRef.current(0, []);
 };
 
 // Rebuild all selection representations from selStyles.
@@ -1850,7 +2070,16 @@ useEffect(() => {
   if (!stage) return;
   try { stage.setParameters({ backgroundColor: bgColor }); } catch {}
   try { stage.setQuality(qualityHigh ? 'high' : 'medium'); } catch {}
-}, [bgColor, qualityHigh, status]);
+  // setBackground re-colours the fog; re-apply the user's fog preference after
+  // any background/quality change so a toggled-off fog stays off.
+  applyFog();
+}, [bgColor, qualityHigh, status, applyFog]);
+
+// Persist the fog preference and apply it to the live stage whenever it changes.
+useEffect(() => {
+  try { localStorage.setItem('labViewerFog', fogEnabled ? 'on' : 'off'); } catch { /* ignore */ }
+  applyFog();
+}, [fogEnabled, applyFog]);
 
 const parsePyMOL = (text) => {
   const sels = [];
@@ -2074,126 +2303,115 @@ radiusSize: sidechainStyle === 'licorice' ? 0.25 : undefined,
 return clearSidechain;
 }, [sidechainStyle, status, hideAll, pymolActive, lightRender]);
 
-// Highlight selected and manually selected atoms
+// Highlight the SELECTED atoms / residues (amber). Runs on every selection
+// change (residue-strip clicks, atom clicks in the 3D view). Kept SEPARATE from
+// the green "assigned atoms" highlight below so that clicking a residue NEVER
+// rebuilds that (potentially huge) representation.
+//
+// Speed notes:
+//  - Strip clicks use whole-residue clauses; resno alone can match SEVERAL
+//    residues when the file mixes molecule types (protein + phospholipid +
+//    water), so the residue NAME is pinned too.
+//  - Large highlights fall back to `spacefill` (GPU-instanced, no bond map):
+//    NGL's ball+stick needs the full-structure bond list, and computing it on a
+//    big MD system blocks the page for seconds.
 useEffect(() => {
 const component = componentRef.current;
 if (!component || status !== 'ready') return;
 
-const clearHighlights = () => {
 if (highlightCompRef.current) {
 try { component.removeRepresentation(highlightCompRef.current); } catch {}
 highlightCompRef.current = null;
-}
-if (manualHighlightCompRef.current) {
-try { component.removeRepresentation(manualHighlightCompRef.current); } catch {}
-manualHighlightCompRef.current = null;
 }
 if (stripHighlightCompRef.current) {
 try { component.removeRepresentation(stripHighlightCompRef.current); } catch {}
 stripHighlightCompRef.current = null;
 }
-};
-clearHighlights();
 
 const sel = Array.isArray(selectedKeys) ? selectedKeys : [];
-const man = Array.isArray(manualKeys) ? manualKeys.filter((k) => !sel.includes(k)) : [];
-if (sel.length === 0 && man.length === 0) return;
-
-let organicNameToIndex = null;
-const getOrganicNameToIndexMap = () => {
-if (organicNameToIndex) return organicNameToIndex;
-organicNameToIndex = {};
-component.structure.eachAtom((a) => { organicNameToIndex[getOrganicAtomName(a)] = a.index; });
-return organicNameToIndex;
-};
-
-const buildSele = (keys) => {
-const parts = [];
-keys.forEach((k) => {
-const dashIdx = k.indexOf('-');
-if (dashIdx < 0) return;
-const ri = parseInt(k.substring(0, dashIdx), 10);
-const atomName = k.substring(dashIdx + 1).trim();
-const resno = ri + 1;
-
-if (moleculeTypeRef.current === 'organic') {
-const map = getOrganicNameToIndexMap();
-if (Object.prototype.hasOwnProperty.call(map, atomName)) parts.push(`@${map[atomName]}`);
-return;
-}
-
-// Handle MD / PDB naming convention
-if (namingConventionRef.current === 'pdb') {
-const seleParts = [`${resno} and .${atomName}`];
-if (atomName === 'HN') seleParts.push(`${resno} and .H`);
-if (atomName === 'H') seleParts.push(`${resno} and .HN`);
-if (atomName === 'HA') seleParts.push(`${resno} and (.HA1 or .HA2 or .HA3)`);
-if (['HA1', 'HA2', 'HA3'].includes(atomName)) seleParts.push(`${resno} and .HA`);
-parts.push(`(${seleParts.join(' or ')})`);
-return;
-}
-
-if (moleculeTypeRef.current === 'dna' || moleculeType === 'rna' || moleculeTypeRef.current === 'rna') {
-const names = [atomName];
-if (atomName === "OH2'") names.push("HO2'");
-if (atomName === 'H7(CH3)') names.push('H71', 'H72', 'H73');
-names.forEach((pn) => parts.push(`${resno} and .${pn}`));
-return;
-}
-
-const pdbNames = [];
-Object.entries(PDB_TO_NMR).forEach(([pdb, nmr]) => { if (nmr === atomName) pdbNames.push(pdb); });
-if (atomName === 'N') pdbNames.push('N');
-else if (atomName === 'Cα') pdbNames.push('CA');
-else if (atomName === 'Cβ') pdbNames.push('CB');
-else if (atomName === "C'") pdbNames.push('C');
-else if (atomName === 'O') pdbNames.push('O');
-else {
-const match = atomName.match(/^([CNO])([αβγδεζη])(\d*)$/);
-if (match) pdbNames.push(`${match[1]}${REVERSE_GREEK[match[2]]}${match[3]}`);
-}
-if (atomName.startsWith('H') && atomName.length > 1 && REVERSE_GREEK[atomName[1]]) {
-const base = `H${REVERSE_GREEK[atomName[1]]}`;
-pdbNames.push(base, `${base}1`, `${base}2`, `${base}3`);
-}
-if (pdbNames.length === 0) pdbNames.push(atomName);
-pdbNames.forEach((pn) => parts.push(`${resno} and .${pn}`));
-});
-return parts.length > 0 ? parts.join(' or ') : null;
-};
+if (sel.length === 0) return;
 
 try {
-const selSele = buildSele(sel);
-if (selSele) {
-  highlightCompRef.current = component.addRepresentation('ball+stick', { sele: selSele, color: SELECT_COLOR_HEX, aspectRatio: 1.5, radius: 0.4 });
-}
-const manSele = buildSele(man);
-if (manSele && showManualHighlight) {
-  manualHighlightCompRef.current = component.addRepresentation('ball+stick', { sele: manSele, color: MANUAL_COLOR_HEX, aspectRatio: 1.5, radius: 0.4 });
-}
-} catch {}
-
-// Whole-residue highlight for tick clicks: when the current selection was made
-// via the residue strip (stripResidueRiRef), show the ENTIRE residue with a
-// single cheap NGL clause instead of enumerating every atom.
 const stripRi = stripResidueRiRef.current;
-if (
-  stripRi !== null && sel.length > 0 &&
-  sel.every((k) => parseInt(String(k).split('-')[0], 10) === stripRi) &&
-  Array.isArray(residueTicks) && residueTicks[stripRi]
-) {
-  const tick = residueTicks[stripRi];
-  const chainClause = tick.chainid ? `:${tick.chainid}` : '';
-  try {
-    stripHighlightCompRef.current = component.addRepresentation('ball+stick', {
-      sele: `${chainClause} and ${tick.resno}`,
-      color: SELECT_COLOR_HEX, aspectRatio: 1.5, radius: 0.4,
+const isStripMode = stripRi !== null && Array.isArray(residueTicks) && sel.every((k) => {
+  const riK = parseInt(String(k).split('-')[0], 10);
+  return Number.isFinite(riK) && !!residueTicks[riK];
+});
+
+if (isStripMode) {
+  const resSet = new Map(); // `${chainid}|${resno}|${resname}` → whole-residue NGL clause
+  let approxAtoms = 0;
+  sel.forEach((k) => {
+    const riK = parseInt(String(k).split('-')[0], 10);
+    if (!Number.isFinite(riK)) return;
+    const t = residueTicks[riK];
+    if (!t) return;
+    approxAtoms += (t.atomNames || []).length;
+    const chainClause = t.chainid ? `:${t.chainid}` : '';
+    // resno alone can match SEVERAL residues when the file mixes molecule types
+    // (e.g. a membrane MD system: protein + phospholipid + water). A phospholipid
+    // with the same residue number would be highlighted too. Pin the residue
+    // NAME as well so only the clicked residue is highlighted.
+    resSet.set(`${t.chainid}|${t.resno}|${t.resname}`, `${chainClause} and ${t.resno} and resn ${t.resname}`);
+  });
+  const selParts = Array.from(resSet.values());
+  if (selParts.length > 0) {
+    // Lightweight mode → instanced spheres: ball+stick would force NGL to
+    // compute the full-structure bond list (seconds of freeze on a big system).
+    const useSphere = lightRenderRef.current || approxAtoms > 1500;
+    stripHighlightCompRef.current = component.addRepresentation(useSphere ? 'spacefill' : 'ball+stick', {
+      sele: selParts.join(' or '),
+      color: SELECT_COLOR_HEX, aspectRatio: 1.5, radius: useSphere ? (approxAtoms > 1500 ? 0.3 : 0.4) : 0.4,
     });
-  } catch {}
+  }
+} else {
+  const selSele = buildNglSele(sel, component.structure, moleculeTypeRef.current, namingConventionRef.current);
+  if (selSele) {
+    // Same bond-map reasoning as above: spheres when in lightweight mode.
+    const useSphere = lightRenderRef.current;
+    highlightCompRef.current = component.addRepresentation(useSphere ? 'spacefill' : 'ball+stick', {
+      sele: selSele, color: SELECT_COLOR_HEX, aspectRatio: 1.5, radius: useSphere ? 0.5 : 0.4,
+    });
+  }
+}
+} catch { /* selection highlight is best-effort */ }
+}, [selectedKeys, status, residueTicks]);
+
+// Highlight the MANUALLY-ASSIGNED atoms (green "🟢 Assigned atoms"). Lives in its
+// own effect so a selection click does not rebuild this representation — on a
+// fully analysed MD/NMR page it can contain thousands of atoms. A signature
+// guard also skips rebuilds when the parent passes a fresh (but identical)
+// manualKeys array on unrelated re-renders, and tracks the component identity so
+// a newly loaded structure always gets its green highlight rebuilt.
+useEffect(() => {
+const component = componentRef.current;
+if (!component || status !== 'ready') return;
+
+const sig = showManualHighlight
+  ? `${Array.isArray(manualKeys) ? manualKeys.length : 0}|${Array.isArray(manualKeys) ? manualKeys.join(',') : ''}`
+  : '';
+if (sig === manualSigRef.current && manualHighlightCompRef.current && manualSigCompRef.current === component) return;
+manualSigRef.current = sig;
+manualSigCompRef.current = component;
+
+if (manualHighlightCompRef.current) {
+try { component.removeRepresentation(manualHighlightCompRef.current); } catch {}
+manualHighlightCompRef.current = null;
 }
 
-return clearHighlights;
-}, [selectedKeys, manualKeys, status, showManualHighlight, residueTicks]);
+const man = Array.isArray(manualKeys) ? manualKeys : [];
+if (man.length === 0 || !showManualHighlight) return;
+try {
+const manSele = buildNglSele(man, component.structure, moleculeTypeRef.current, namingConventionRef.current);
+if (manSele) {
+  // Large assigned sets (or lightweight mode) → instanced spheres, no bond map.
+  const useSphere = lightRenderRef.current || man.length > 1500;
+  manualHighlightCompRef.current = component.addRepresentation(useSphere ? 'spacefill' : 'ball+stick', {
+    sele: manSele, color: MANUAL_COLOR_HEX, aspectRatio: 1.5, radius: useSphere ? (man.length > 1500 ? 0.3 : 0.4) : 0.4,
+  });
+}
+} catch { /* manual highlight is best-effort */ }
+}, [manualKeys, showManualHighlight, status]);
 
 // Load an additional structure file as its own NGL component (hidden by default —
 // the "Molecules" selector reveals one at a time).
@@ -2438,6 +2656,14 @@ className="w-3.5 h-3.5 accent-blue-600"
 />
 Names
 </label>
+<button
+type="button"
+onClick={() => setViewerCollapsed((v) => !v)}
+title={viewerCollapsed ? 'Restore the 3D viewer window' : 'Retract (minimize) the 3D viewer window — the structure stays loaded, only the tall canvas collapses to a thin bar'}
+className={`text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8 whitespace-nowrap ${viewerCollapsed ? 'bg-sky-600 text-white border-sky-600 hover:bg-sky-700' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'}`}
+>
+{viewerCollapsed ? '⬆ Expand' : '⬇ Minimize'}
+</button>
 
 {/* Residue renumbering */}
 <div className="flex flex-col gap-1">
@@ -2587,6 +2813,11 @@ className="w-3.5 h-3.5 accent-sky-600"
   <button type="button" onClick={() => setHideAll((v) => !v)}
     className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors ${hideAll ? 'bg-red-100 border-red-400 text-red-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}>
     {hideAll ? '👁️ Show default' : '🙈 Hide everything'}
+  </button>
+  <button type="button" onClick={() => setFogEnabled((v) => !v)}
+    className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors ${fogEnabled ? 'bg-sky-100 border-sky-400 text-sky-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+    title="NGL's default depth fog fades distant atoms toward the background (a grey haze). Toggle it off for a crisp image — the setting is saved and persists across pages.">
+    🌫 Fog: {fogEnabled ? 'On' : 'Off'}
   </button>
 </div>
 
@@ -2772,8 +3003,8 @@ className="border border-indigo-300 rounded-lg px-2 py-1 text-xs bg-white outlin
         const isSel = selectedKeys && selectedKeys.some((k) => parseInt(String(k).split('-')[0], 10) === r.resno - 1);
         return (
           <button key={`${r.chainid}-${r.resno}`} type="button"
-            onClick={() => handleResidueTickClick(r)}
-            title={`${r.resname} ${r.resno}${r.chainid ? ` (chain ${r.chainid})` : ''} — click to select`}
+            onClick={(e) => handleResidueTickClick(r, e)}
+            title={`${r.resname} ${r.resno}${r.chainid ? ` (chain ${r.chainid})` : ''} — click to select, Ctrl/Cmd/Shift-click to add to a multi-residue selection, Shift+click after another tick to select a range`}
             className={`w-7 h-9 shrink-0 rounded-md border flex flex-col items-center justify-center gap-px leading-none transition-colors ${isSel ? 'bg-amber-400 border-amber-600' : 'bg-white border-slate-300 hover:border-amber-400 hover:bg-amber-50'}`}>
             <span className="text-[6px] font-bold text-slate-400 leading-none">{r.resno}</span>
             <span className={`text-[10px] font-black leading-none ${isSel ? 'text-amber-950' : 'text-slate-700'}`}>{r.code || (r.resname ? r.resname.slice(0, 1) : '?')}</span>
@@ -2781,14 +3012,32 @@ className="border border-indigo-300 rounded-lg px-2 py-1 text-xs bg-white outlin
         );
       })}
     </div>
+    <div className="flex items-center gap-1 shrink-0">
+      <button type="button"
+        onClick={() => setMultiSelectActive((v) => !v)}
+        title="Toggle multi-residue selection — each click then adds/removes that residue instead of replacing the selection (Ctrl/Cmd/Shift-click always toggles)"
+        className={`px-1.5 py-1 rounded-md border text-[9px] font-black leading-none transition-colors ${multiSelectActive ? 'bg-amber-400 border-amber-600 text-amber-950' : 'bg-white border-slate-300 text-slate-600 hover:bg-amber-50 hover:border-amber-400'}`}>
+        {multiSelectActive ? '⊞ multi ON' : '⊞ multi'}
+      </button>
+      {(selectedKeys && selectedKeys.length > 0) && (
+        <button type="button"
+          onClick={clearResidueSelection}
+          title="Clear the current residue selection"
+          className="px-1.5 py-1 rounded-md border bg-white border-slate-300 text-slate-600 text-[9px] font-black leading-none hover:bg-red-50 hover:border-red-300 hover:text-red-600">
+          ✕ clear
+        </button>
+      )}
+    </div>
   </div>
   );
 })()}
 
-{/* 3D Viewport */}
+{/* 3D Viewport — retractable: "⬇ Minimize" collapses it to a thin bar. The
+    container stays MOUNTED (height 0) so the NGL stage, structure and
+    trajectory are preserved; only the tall canvas is hidden. */}
 <div
 className="relative border border-slate-200 rounded-xl overflow-hidden bg-white"
-style={{ height: viewH + 'px' }}
+style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
 >
 <div ref={containerRef} className="w-full h-full" />
 
@@ -2946,6 +3195,16 @@ Tip: you cannot paste a local file path — use the file picker button above
 </div>
 )}
 </div>
+
+{viewerCollapsed && (
+  <div className="flex items-center justify-between border border-dashed border-slate-300 rounded-xl bg-slate-50 px-3 py-2.5 mt-1">
+    <span className="text-xs font-bold text-slate-500">🧬 3D viewer minimized — the structure stays loaded.</span>
+    <button type="button" onClick={() => setViewerCollapsed(false)}
+      className="text-xs font-bold px-2.5 py-1 rounded-md bg-sky-600 text-white border border-sky-600 hover:bg-sky-700 transition-colors">
+      ▲ Expand viewer
+    </button>
+  </div>
+)}
 
 {/* Vertical resize handle — drag to make the 3D viewer taller/shorter */}
 <div

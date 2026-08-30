@@ -1635,7 +1635,12 @@ const compressDatasetForSave = (raw) => {
       });
       if (!best) break;
       const label = (best.path.split(/[.[\]]/).filter(Boolean).pop() || 'data');
-      setByPath(cleaned.tests[best.testIndex], best.path, `[${label} omitted — kept in browser cache / Drive or re-uploadable]`);
+      // structureFileData is replaced with `null` (not a marker): the MD page
+      // reads it as "absent" and restores the raw topology file from IndexedDB
+      // instead, avoiding a "Failed to decode structure file data." error on
+      // reload. Every other value gets the readable text marker.
+      const replacement = label === 'structureFileData' ? null : `[${label} omitted — kept in browser cache / Drive or re-uploadable]`;
+      setByPath(cleaned.tests[best.testIndex], best.path, replacement);
     }
   }
   return compress(cleaned);

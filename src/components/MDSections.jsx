@@ -34,6 +34,13 @@ const localFileCache = new Map();
 // survives a page reload (no re-upload needed).
 const trajBlobKey = (testId) => `traj_${testId}`;
 
+// IndexedDB key for the uploaded MD topology File (.gro/.pdb/.cif). Large
+// structure files are NOT kept in the dataset payload — compressDatasetForSave
+// Stage 5 strips base64 strings > 20 KB and replaces them with a marker that
+// breaks the reload decode (atob on a marker throws). Like the trajectory, the
+// raw file lives in the browser cache (IndexedDB) and is restored on reload.
+const structBlobKey = (testId) => `ms_struct_${testId}`;
+
 /* ---- Lab Notebook chart snapshots ----------------------------------------
    The MD analysis charts live inside collapsed CollapsibleSections, so they
    cannot be captured at "Append to Lab Notebook" time. Instead we snapshot
@@ -678,19 +685,33 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   const [hasOpened3D, setHasOpened3D] = useState(structureMode === '3d');
   
   const [trajectoryFile, setTrajectoryFile] = useState(() => localFileCache.get(activeTest.id)?.trajectory || null);
+  const [structureFile, setStructureFile] = useState(() => localFileCache.get(activeTest.id)?.structure || null);
   const [trajDriveMsg, setTrajDriveMsg] = useState('');
 
   const handleStructureFile = (file) => {
     if (!file) {
       updateActiveTest({ structureFileData: null, structureFileName: null });
+      setStructureFile(null);
+      blobStore.remove(structBlobKey(activeTest.id));
       return;
     }
     archiveFileToDrive({ file, ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Setup', subsection: 'Structure', suffix: 'structure' } }).catch(() => {});
+    setStructureFile(file);
     const reader = new FileReader();
     reader.onload = (e) => {
-      updateActiveTest({ structureFileData: e.target.result, structureFileName: file.name });
+      const dataUrl = String(e.target.result || '');
+      // Keep the base64 data URL in the payload ONLY when it is small enough to
+      // survive compressDatasetForSave (Stage 5 strips strings > 20 KB, turning
+      // them into a marker that breaks the reload decode). Larger topology files
+      // are persisted in IndexedDB instead (see structBlobKey / restore effect).
+      const smallEnough = dataUrl.length <= 18000;
+      updateActiveTest({ structureFileData: smallEnough ? dataUrl : null, structureFileName: file.name });
     };
     reader.readAsDataURL(file);
+    // Persist the raw file in the browser so it survives a page reload.
+    blobStore.save(structBlobKey(activeTest.id), file);
+    const cache = localFileCache.get(activeTest.id) || {};
+    localFileCache.set(activeTest.id, { ...cache, structure: file });
   };
 
   const handleTrajectoryFile = (file) => {
@@ -730,6 +751,27 @@ export const MDExperimentSetupSection = ({ ctx }) => {
       setTrajectoryFile(restored);
       const cache = localFileCache.get(activeTest.id) || {};
       localFileCache.set(activeTest.id, { ...cache, trajectory: restored });
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTest.id]);
+
+  // Restore a previously-uploaded structure file (.gro/.pdb/.cif) from IndexedDB
+  // on (re)load, mirroring the trajectory restore. Large topology files are not
+  // part of the Firestore payload (see structBlobKey), so without this the 3D
+  // viewer would only show "Failed to decode structure file data." after a
+  // reload — the file has to come back from the browser cache.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (structureFile || !activeTest.structureFileName) return;
+      const blob = await blobStore.load(structBlobKey(activeTest.id));
+      if (cancelled || !blob) return;
+      if (activeTest.structureFileName && blob.name && blob.name !== activeTest.structureFileName) return;
+      const restored = new File([blob], blob.name || activeTest.structureFileName || 'structure.pdb', { type: blob.type || 'application/octet-stream' });
+      setStructureFile(restored);
+      const cache = localFileCache.get(activeTest.id) || {};
+      localFileCache.set(activeTest.id, { ...cache, structure: restored });
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1078,6 +1120,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   key={`${activeTest.structureSrc || 'no-src'}|${trajectoryFile ? trajectoryFile.name : 'no-traj-file'}|${d.trajectoryUrl || 'no-traj'}|${activeTest.smiles || 'no-smiles'}`}
   src={activeTest.structureSrc}
   structureFileData={activeTest.structureFileData}
+  structureFile={structureFile}
   structureFileName={activeTest.structureFileName}
   structureFormat={activeTest.structureFormat || 'auto'}
   structureText={typeof organicFetch !== 'undefined' ? organicFetch.text : null}
@@ -2319,10 +2362,20 @@ const resolveMDTopology = async (activeTest) => {
   let text = null;
   let source = 'local';
 
-  if (activeTest.structureFileData) {
+  if (activeTest.structureFileData && String(activeTest.structureFileData).startsWith('data:')) {
     const b64 = String(activeTest.structureFileData).split(',')[1] || '';
     text = new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
-  } else {
+  }
+  if (!text) {
+    // Large topology files are kept in IndexedDB, not in the payload (their
+    // base64 data URL would be stripped by compressDatasetForSave). Try the
+    // browser cache before falling back to a web fetch.
+    try {
+      const blob = await blobStore.load(structBlobKey(activeTest.id));
+      if (blob) text = await blob.text();
+    } catch { /* IndexedDB unavailable — fall through */ }
+  }
+  if (!text) {
     for (const url of getTopologyCandidates(activeTest.structureSrc)) {
       try {
         const res = await fetch(url);
