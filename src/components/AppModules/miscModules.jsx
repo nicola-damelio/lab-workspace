@@ -73,7 +73,7 @@ export const CalculationsModule = ({
                 );
 };
 
-export const PublicationsModule = ({ operatorNames, tests, currentUser, projectId = 'global' }) => (
+export const PublicationsModule = ({ operatorNames, tests, currentUser, projectId = 'global', jumpToTest }) => (
 
               <div className="h-full overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
                 <div className="max-w-6xl mx-auto flex flex-col gap-4 pb-10">
@@ -85,7 +85,7 @@ export const PublicationsModule = ({ operatorNames, tests, currentUser, projectI
                     defaultScientist={currentUser?.name || ''}
                     currentUser={currentUser}
                   />
-                  <FiguresSlidesSection tests={tests} projectId={projectId} />
+                  <FiguresSlidesSection tests={tests} projectId={projectId} jumpToTest={jumpToTest} />
                 </div>
               </div>
 );

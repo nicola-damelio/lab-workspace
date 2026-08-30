@@ -21,6 +21,7 @@ import { NotebookModule, CalculationsModule, PublicationsModule } from './compon
 import { ProjectsModule } from './components/AppModules/projectsModule';
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
 import {normalizeOperators} from './utils/auth';
+import { setActiveProjectId } from './utils/figuresLibrary';
 import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile } from './utils/driveUpload';
 import { sanitizeSlug } from './utils/driveNaming';
 
@@ -945,6 +946,12 @@ if (customType === 'dosy') {
   const [returnTarget, setReturnTarget] = useState(null);
   const [storageModal, setStorageModal] = useState(null);
   const [moveModal, setMoveModal] = useState(null);
+
+  // Keep the Figures & Slides module aware of the active project so exports
+  // (e.g. the molecule viewer's "📷 Figure") land in the project library.
+  useEffect(() => {
+    setActiveProjectId(currentProjectId);
+  }, [currentProjectId]);
  const [testCategories, setTestCategories] = useState(PRIMARY_CATEGORIES);
   const [protocolCategories, setProtocolCategories] = useState([
     'Preparation',
@@ -3175,6 +3182,7 @@ const openDataset = (dset) => {
 
             {currentModule === 'publications' && (<PublicationsModule
               operatorNames={operatorNames} tests={tests} currentUser={currentUser} projectId={currentProjectId}
+              jumpToTest={jumpToTest}
             />)}
           </div>
         </div>

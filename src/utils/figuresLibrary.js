@@ -8,7 +8,16 @@
 
 const LIBRARY_KEY = 'labFiguresLibrary';
 const deckKey = (projectId) => `labFiguresDeck_${projectId || 'global'}`;
+const projectLibraryKey = (projectId) => `labFiguresLib_${projectId || 'global'}`;
 
+// ---- active project context (kept in sync by App.jsx) -----------------------
+// Lets the molecule viewer / experiment pages know which project's library an
+// exported image should go to without threading a prop through every section.
+let activeProjectId = null;
+export const setActiveProjectId = (id) => { activeProjectId = id || null; };
+export const getActiveProjectId = () => activeProjectId;
+
+// ---- common (app-wide) library ----------------------------------------------
 export const readLibrary = () => {
   try {
     const arr = JSON.parse(localStorage.getItem(LIBRARY_KEY));
@@ -18,15 +27,56 @@ export const readLibrary = () => {
 export const writeLibrary = (items) => {
   try { localStorage.setItem(LIBRARY_KEY, JSON.stringify(items)); } catch { /* quota */ }
 };
-export const addLibraryItem = (url, label = 'Figure') => {
-  const items = readLibrary();
-  const item = { id: 'lib_' + Date.now() + Math.random().toString(16).slice(2), label: label || 'Figure', url, addedAt: new Date().toISOString() };
-  writeLibrary([item, ...items]);
-  return item;
+
+// ---- project-scoped library ---------------------------------------------------
+export const readProjectLibrary = (projectId) => {
+  try {
+    const arr = JSON.parse(localStorage.getItem(projectLibraryKey(projectId)));
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+};
+export const writeProjectLibrary = (projectId, items) => {
+  try { localStorage.setItem(projectLibraryKey(projectId), JSON.stringify(items)); } catch { /* quota */ }
+};
+
+const toEntry = (urlOrItem, label) => {
+  const item = typeof urlOrItem === 'string' ? { url: urlOrItem, full: urlOrItem, label } : urlOrItem;
+  return {
+    id: uid('lib'),
+    label: item.label || 'Figure',
+    url: item.url,                    // display thumbnail
+    full: item.full || item.url,      // high-resolution copy used at export
+    addedAt: new Date().toISOString()
+  };
+};
+// Accepts either (url, label) or an item object { url, full, label }.
+export const addLibraryItem = (urlOrItem, label) => {
+  const entry = toEntry(urlOrItem, label);
+  writeLibrary([entry, ...readLibrary()]);
+  return entry;
+};
+export const addProjectLibraryItem = (projectId, urlOrItem, label) => {
+  const entry = toEntry(urlOrItem, label);
+  writeProjectLibrary(projectId, [entry, ...readProjectLibrary(projectId)]);
+  return entry;
 };
 export const removeLibraryItem = (id) => writeLibrary(readLibrary().filter((i) => i.id !== id));
 export const renameLibraryItem = (id, label) =>
   writeLibrary(readLibrary().map((i) => (i.id === id ? { ...i, label } : i)));
+export const removeProjectLibraryItem = (projectId, id) =>
+  writeProjectLibrary(projectId, readProjectLibrary(projectId).filter((i) => i.id !== id));
+export const renameProjectLibraryItem = (projectId, id, label) =>
+  writeProjectLibrary(projectId, readProjectLibrary(projectId).map((i) => (i.id === id ? { ...i, label } : i)));
+// Move an item between scopes (e.g. save a common figure into a project).
+export const moveLibraryItem = (fromScope, toScope, projectId, id) => {
+  const src = fromScope === 'project' ? readProjectLibrary(projectId) : readLibrary();
+  const it = src.find((i) => i.id === id);
+  if (!it) return;
+  if (toScope === 'project') writeProjectLibrary(projectId, [it, ...readProjectLibrary(projectId)]);
+  else writeLibrary([it, ...readLibrary()]);
+  if (fromScope === 'project') writeProjectLibrary(projectId, src.filter((i) => i.id !== id));
+  else writeLibrary(src.filter((i) => i.id !== id));
+};
 
 export const readDeck = (projectId) => {
   try {
@@ -40,8 +90,8 @@ export const writeDeck = (projectId, deck) => {
 
 export const uid = (p) => `${p || 'x'}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
-// Downscale an image dataURL so library entries stay small (max side ~1600 px).
-export const downscaleImage = (dataUrl, maxSide = 1600, type = 'image/png', quality = 0.92) =>
+// Downscale an image dataURL (maxSide in px, type/quality for the target copy).
+export const downscaleImage = (dataUrl, maxSide = 3000, type = 'image/png', quality = 0.92) =>
   new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
@@ -58,6 +108,14 @@ export const downscaleImage = (dataUrl, maxSide = 1600, type = 'image/png', qual
     img.onerror = () => resolve(dataUrl);
     img.src = dataUrl;
   });
+
+// Two copies for a library entry: a small PNG thumbnail for the UI (PNG keeps
+// transparency for formulas/structures) and a high-resolution PNG (max 3000 px,
+// enough for ~300 DPI A4 pages) used by the PDF/publication export.
+export const makeLibraryImage = async (dataUrl) => ({
+  url: await downscaleImage(dataUrl, 700, 'image/png', 0.92),
+  full: await downscaleImage(dataUrl, 3000, 'image/png', 0.92)
+});
 
 // File/Blob → dataURL (uploaded images, clipboard blobs).
 export const blobToDataUrl = (blob) =>

@@ -4,7 +4,7 @@ import { readXtcFrames, countXtcFrames, countXtcFramesInFile } from '../utils/xt
 import { abortControl } from '../utils/abortControl';
 import { archiveFileToDrive } from '../utils/driveUpload';
 import { getPymolScripts } from '../utils/pymolScripts';
-import { addLibraryItem, downscaleImage } from '../utils/figuresLibrary';
+import { addLibraryItem, addProjectLibraryItem, makeLibraryImage, getActiveProjectId } from '../utils/figuresLibrary';
 
 /* ---- Shared "Assigned atoms" highlight flag ---------------------------------
    The green "assigned atoms" highlight is shown both on the 3D molecule viewer
@@ -2588,8 +2588,15 @@ const captureScene = async () => {
   }
   if (!url) { setCaptureMsg('⚠️ Could not capture the 3D scene'); setTimeout(() => setCaptureMsg(''), 3500); return; }
   const label = `Structure${file ? ` · ${file.name}` : pdbId ? ` · ${pdbId}` : ''}`;
-  await addLibraryItem(await downscaleImage(url), label);
-  setCaptureMsg('✓ 3D structure saved to the Figures library (Publications → Figures & Slides)');
+  const img = await makeLibraryImage(url);
+  const pid = getActiveProjectId();
+  if (pid) {
+    await addProjectLibraryItem(pid, { ...img, label });
+    setCaptureMsg(`✓ 3D structure saved to the project library (Publications → Figures & Slides · ${pid})`);
+  } else {
+    await addLibraryItem({ ...img, label });
+    setCaptureMsg('✓ 3D structure saved to the common Figures library (Publications → Figures & Slides)');
+  }
   setTimeout(() => setCaptureMsg(''), 5000);
 };
 

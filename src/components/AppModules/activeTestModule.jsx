@@ -190,6 +190,12 @@ const TestHeader = (
                               setActiveStorageId(returnTarget.storageId);
                               setCurrentModule('storage-detail');
                               setReturnTarget(null);
+                            } else if (returnTarget && returnTarget.module === 'publications') {
+                              // Return to the Figures & Slides builder (the slide
+                              // is preserved because the deck/cur are persisted).
+                              setCurrentProjectId(returnTarget.projectId || null);
+                              setCurrentModule('publications');
+                              setReturnTarget(null);
                             } else if (isBox && activeTest.storageId) {
                               setActiveStorageId(activeTest.storageId);
                               setCurrentModule('storage-detail');
