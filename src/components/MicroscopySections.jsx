@@ -140,6 +140,54 @@ export const Data = ({ ctx }) => {
     setVideos(next);
   };
 
+  // Transcode a WMV (or any undecodable format) to MP4/H.264 in the browser
+  // using ffmpeg.wasm loaded from the CDN on demand. Returns the MP4 Blob.
+  const convertVideoToMp4 = async (blob) => {
+    // eslint-disable-next-line no-undef
+    const { FFmpeg } = await import(/* @vite-ignore */ 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js');
+    // eslint-disable-next-line no-undef
+    const { toBlobURL, fetchFile } = await import(/* @vite-ignore */ 'https://unpkg.com/@ffmpeg/util@0.12.1/dist/esm/index.js');
+    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+    const ffmpeg = new FFmpeg();
+    await ffmpeg.load({
+      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm')
+    });
+    await ffmpeg.writeFile('input.video', await fetchFile(blob));
+    await ffmpeg.exec(['-i', 'input.video', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'aac', '-movflags', '+faststart', 'output.mp4']);
+    const data = await ffmpeg.readFile('output.mp4');
+    return new Blob([data.buffer], { type: 'video/mp4' });
+  };
+
+  const handleConvertVideo = async (vid, onStatus) => {
+    try {
+      const blob = await blobStore.load(msVideoKey(vid.id));
+      if (!blob) { onStatus('❌ Original file not found in the browser cache.'); return; }
+      onStatus('⬇️ Loading the converter…');
+      const mp4 = await convertVideoToMp4(blob);
+      if (!mp4 || mp4.size < 1000) { onStatus('❌ Conversion produced an empty file.'); return; }
+      const id = 'msv' + Date.now() + Math.random().toString(36).slice(2, 6);
+      const name = String(vid.filename || 'video').replace(/\.[^/.]+$/, '') + '_converted.mp4';
+      const entry = { id, filename: name, type: 'video/mp4', size: mp4.size, uploadedAt: Date.now(), convertedFrom: vid.filename };
+      await blobStore.save(msVideoKey(id), mp4);
+      if (getDriveToken()) {
+        try {
+          await uploadLocalFile({
+            name: suggestDriveFileName({ project: (t.projectNames && t.projectNames[0]) || '', test: t.name || '', section: 'Data', scientist: t.operator || '' }),
+            mimeType: 'video/mp4', file: mp4,
+            ctx: { test: t.name || '', section: 'Data', subsection: 'Microscopy', scientist: t.operator || '' }
+          });
+        } catch { /* keep going */ }
+      }
+      const next = [...(Array.isArray(t.msVideos) ? t.msVideos : []), entry];
+      update({ msVideos: next });
+      setVideos(next);
+      onStatus(`✅ Converted to MP4 — "${name}" is now playable and available in the movie maker.`);
+    } catch (err) {
+      onStatus(`❌ Conversion failed (${err && err.message ? err.message : err}). It needs internet access — otherwise download the .wmv from Drive and convert it outside the app.`);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -156,7 +204,7 @@ export const Data = ({ ctx }) => {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {videos.map((v) => (
-            <VideoCard key={v.id} video={v} onRemove={() => removeVideo(v)} />
+            <VideoCard key={v.id} video={v} onRemove={() => removeVideo(v)} onConvert={(status) => handleConvertVideo(v, status)} />
           ))}
         </div>
       )}
@@ -166,9 +214,10 @@ export const Data = ({ ctx }) => {
 // Small card showing a video file with a playable preview (object URL from the
 // IndexedDB blob). WMV is usually not decodable by the browser — the card
 // explains that and the movie maker stays disabled for it.
-const VideoCard = ({ video, onRemove }) => {
+const VideoCard = ({ video, onRemove, onConvert }) => {
   const [url, setUrl] = useState(null);
   const [playable, setPlayable] = useState(null);
+  const [convStatus, setConvStatus] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -201,9 +250,22 @@ const VideoCard = ({ video, onRemove }) => {
       )}
       <p className={`text-[10px] font-bold ${playable === false ? 'text-amber-700' : 'text-slate-400'}`}>
         {playable === false
-          ? 'This format (e.g. .wmv) is not decodable by the browser — convert it to .mp4/.webm to use the movie maker.'
+          ? 'This format (e.g. .wmv) is not decodable by the browser — convert it below to use the movie maker.'
           : `${video.type} · ${video.size ? Math.round(video.size / 1024) + ' KB' : ''}`}
       </p>
+      {playable === false && (
+        <>
+          <button
+            type="button"
+            onClick={() => { setConvStatus('⬇️ Loading the converter…'); onConvert(setConvStatus); }}
+            disabled={!!convStatus}
+            className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm"
+          >
+            🔄 Convert to MP4 (H.264)
+          </button>
+          {convStatus && <p className="text-[10px] font-bold text-indigo-800">{convStatus}</p>}
+        </>
+      )}
     </div>
   );
 };
