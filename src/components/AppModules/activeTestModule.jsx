@@ -218,10 +218,10 @@ const TestHeader = (
                             if (
                               window.confirm(
                                 isBox
-                                  ? 'Sei sicuro di voler eliminare definitivamente questo box?'
+                                  ? 'Are you sure you want to permanently delete this box?'
                                   : count > 1
-                                    ? `Sei sicuro di voler eliminare definitivamente l'esperimento "${activeTest.name}" (${count} istanze)?`
-                                    : 'Sei sicuro di voler eliminare definitivamente questo esperimento?'
+                                    ? `Are you sure you want to permanently delete the experiment "${activeTest.name}" (${count} instances)?`
+                                    : 'Are you sure you want to permanently delete this experiment?'
                               )
                             ) {
                               const ids = new Set(group.map((t) => t.id));
@@ -238,7 +238,7 @@ const TestHeader = (
                           }}
                           className="bg-red-50 text-red-600 hover:bg-red-100 hover:border-red-300 font-bold py-2 px-3 rounded-lg text-xs transition-colors border border-red-200 shadow-sm"
                         >
-                          <Icon name="trash" size={14} /> Elimina
+                          <Icon name="trash" size={14} /> Delete
                         </button>
                         
 <React.Fragment>

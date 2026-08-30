@@ -878,7 +878,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
       } catch { failed++; }
     }
     setUpdating('');
-    setUpdateMsg(`✓ Controllo completato: ${added} nuova/e pubblicazione/i aggiunta/e · ${skipped} già presente/i in tabella${failed ? ` · ${failed} autore/i non riusciti` : ''}.`);
+    setUpdateMsg(`✓ Check completed: ${added} publication(s) added · ${skipped} already in the table${failed ? ` · ${failed} author(s) failed` : ''}.`);
   };
 
   // Add every search result at once (skips the ones already in the table)
@@ -909,7 +909,7 @@ export const PublicationsSection = ({ scientists = [], defaultScientist = '', cu
     }
     if (items.length > 0) setPubs((prev) => [...prev, ...items]);
     setAddedPubKeys((prev) => [...prev, ...pubResults.map((r) => pubKey(r))]);
-    setUpdateMsg(`✓ ${items.length} nuova/e pubblicazione/i aggiunta/e · ${pubResults.length - items.length} già presente/i in tabella.`);
+    setUpdateMsg(`✓ ${items.length} publication(s) added · ${pubResults.length - items.length} already in the table.`);
   };
 
   // ---- Relevant papers (subject + scientist classification) ----

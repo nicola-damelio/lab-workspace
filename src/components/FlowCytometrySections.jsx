@@ -2510,6 +2510,7 @@ export const Data = ({ ctx }) => {
         return;
       }
       let restored = 0;
+      let failReason = '';
       let mainDone = false;
       let mainSerialized = undefined;
       let mainFilename = '';
@@ -2517,10 +2518,10 @@ export const Data = ({ ctx }) => {
       for (const entry of entries) {
         try {
           const res = await driveFetch(`/drive/v3/files/${entry.id}?alt=media`);
-          if (!res || !res.ok) continue;
+          if (!res || !res.ok) { failReason = failReason || `HTTP ${res ? res.status : 'no response'}`; continue; }
           const buf = await res.arrayBuffer();
           const parsed = parseFCSFile(buf);
-          if (!parsed || typeof parsed.numEvents !== 'number') continue;
+          if (!parsed || typeof parsed.numEvents !== 'number') { failReason = failReason || 'downloaded file is not a valid .fcs'; continue; }
           parsed.filename = entry.name || 'restored.fcs';
           if (!mainDone) {
             globalFcsCache[activeTest.id] = parsed;
@@ -2552,7 +2553,7 @@ export const Data = ({ ctx }) => {
       setUpdater(u => u + 1);
       setFcsMsg(restored > 0
         ? `✅ Restored ${restored} .fcs file(s) from Google Drive.`
-        : '⚠️ Could not download the .fcs files (the Google Drive token may be expired — reconnect Drive from the sidebar and try again).');
+        : `⚠️ Could not download the .fcs files from Google Drive${failReason ? ` (${failReason})` : ''}. If the Drive token expired, reconnect Google Drive from the sidebar and try again.`);
     } catch (err) {
       setFcsMsg(`⚠️ Restore error: ${err.message} (reconnect Google Drive from the sidebar if the token expired).`);
       console.error('FCS Drive restore error:', err);
@@ -2623,7 +2624,7 @@ export const Data = ({ ctx }) => {
                 type="button"
                 onClick={handleRestoreFromDrive}
                 disabled={restoringFromDrive}
-                title="Scarica e ri-parse i file .fcs archiviati su Google Drive (il salvataggio è automatico all'upload)"
+                title="Download and re-parse the .fcs files archived on Google Drive (saved automatically at upload)"
                 className="bg-indigo-50 text-indigo-800 border border-indigo-200 hover:bg-indigo-100 font-bold px-3 py-2 rounded-lg text-xs shadow-sm transition-colors disabled:opacity-50"
               >
                 {restoringFromDrive ? '⬇️ Download…' : '⬇️ Restore from Drive'}
