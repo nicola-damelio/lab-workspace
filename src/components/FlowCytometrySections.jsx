@@ -1,6 +1,6 @@
 // components/FlowCytometrySections.jsx
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { suggestDriveFileName } from '../utils/driveNaming';
+import { suggestDriveFileName, sanitizeSlug } from '../utils/driveNaming';
 import { uploadLocalFile, withExtension, getDriveToken, getDriveFileRegistry, driveFetch } from '../utils/driveUpload';
 import { saveFcsFile, loadFcsFile, removeFcsFile } from '../utils/fcsBlobStore';
 import { PLATE_PRESET_LABELS, PLATE_PRESET_COLORS, isPlatePreset, platePresetColor } from '../utils/platePresets';
@@ -2356,19 +2356,31 @@ export const Data = ({ ctx }) => {
   // persisted payload (small files), then from the IndexedDB copy of the raw
   // files (files too large for the payload, e.g. after a page reload). If files
   // are still missing, fall back to Google Drive automatically — once per
-  // session — so data does not silently stay away.
+  // session — so data does not silently stay away. The whole experiment group
+  // (all sibling instances) is restored at once, so opening any tab brings back
+  // every instance's data.
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      restoreFcsCacheFromTest(t);
-      const restored = await restoreFcsCacheFromIndexedDb(t);
+      const testName = t.name || '';
+      const allTests = Array.isArray(ctx.allTests) ? ctx.allTests
+        : Array.isArray(ctx.tests) ? ctx.tests
+          : [t];
+      const group = allTests.filter((x) => x && String(x.name || '') === String(testName) && String(testName).trim() !== '');
+      const members = group.length > 0 ? group : [t];
+      let restored = 0;
+      for (const m of members) {
+        if (!m || !m.id) continue;
+        restoreFcsCacheFromTest(m);
+        restored += await restoreFcsCacheFromIndexedDb(m);
+      }
       if (cancelled) return;
       if (restored > 0) setFcsMsg(`✅ Restored ${restored} .fcs file(s) from the browser cache.`);
       setUpdater((u) => u + 1);
 
-      const stillMissing = !globalFcsCache[t.id] &&
-        (t.fcParsed === null || (t.fcExtraFiles || []).some((f) => f && f.data === null));
-      if (stillMissing && getDriveToken() && !autoDriveRestoreDone.has(t.id)) {
+      const anyMissing = members.some((m) => m && !globalFcsCache[m.id] &&
+        (m.fcParsed === null || (m.fcExtraFiles || []).some((f) => f && f.data === null)));
+      if (anyMissing && getDriveToken() && !autoDriveRestoreDone.has(t.id)) {
         autoDriveRestoreDone.add(t.id);
         handleRestoreFromDrive();
       }
@@ -2378,11 +2390,18 @@ export const Data = ({ ctx }) => {
   }, [t.id]);
 
   // After the user connects Google Drive (from the warning card), restore the
-  // missing files automatically.
+  // missing files automatically — for any sibling instance that still lacks data.
   useEffect(() => {
     const onDriveConnected = () => {
-      const needsDrive = (t.fcParsed === null || (t.fcExtraFiles || []).some((f) => f && f.data === null));
-      if (needsDrive && !globalFcsCache[t.id] && !autoDriveRestoreDone.has(t.id)) {
+      const testName = t.name || '';
+      const allTests = Array.isArray(ctx.allTests) ? ctx.allTests
+        : Array.isArray(ctx.tests) ? ctx.tests
+          : [t];
+      const group = allTests.filter((x) => x && String(x.name || '') === String(testName) && String(testName).trim() !== '');
+      const members = group.length > 0 ? group : [t];
+      const needsDrive = members.some((m) => m && !globalFcsCache[m.id] &&
+        (m.fcParsed === null || (m.fcExtraFiles || []).some((f) => f && f.data === null)));
+      if (needsDrive && getDriveToken() && !autoDriveRestoreDone.has(t.id)) {
         autoDriveRestoreDone.add(t.id);
         handleRestoreFromDrive();
       }
@@ -2533,29 +2552,99 @@ export const Data = ({ ctx }) => {
   // re-parse them into the in-memory cache — the fallback for files too large
   // to persist inside the dataset payload.
   const [restoringFromDrive, setRestoringFromDrive] = useState(false);
+  // Restore the .fcs files for the WHOLE experiment (all sibling instances),
+  // not just the active tab. Each Drive file is matched back to the instance
+  // that uploaded it (instanceName / fcsFileName), so separate-instance uploads
+  // are rebuilt as separate instances and same-instance uploads keep their
+  // extras. Files are located via the local registry first, then — on a machine
+  // where the registry is empty (e.g. a different browser/computer) — by a
+  // Drive name search, so the files found on Drive are actually loadable.
   const handleRestoreFromDrive = async () => {
     if (!getDriveToken()) { setFcsMsg('⚠️ Google Drive is not connected — use “Connect Google Drive” below, then the files will restore automatically.'); return; }
     setRestoringFromDrive(true);
     setFcsMsg('⬇️ Downloading .fcs files from Google Drive…');
     try {
-      const reg = getDriveFileRegistry();
       const testName = activeTest.name || '';
-      const entries = Object.values(reg).filter((e) =>
+      const stemOf = (n) => String(n || '').replace(/\.[^/.]+$/, '').trim().toLowerCase();
+      const slugOf = (s) => sanitizeSlug(String(s || '')).toLowerCase();
+
+      // Every instance of this experiment (all sibling tabs share the name).
+      const allTests = Array.isArray(ctx.allTests) ? ctx.allTests
+        : Array.isArray(ctx.tests) ? ctx.tests
+          : Array.isArray(ctx.instances) ? ctx.instances.map((i) => i.test || i)
+            : [t];
+      const siblings = allTests.filter((x) => x && String(x.name || '') === String(testName) && String(testName).trim() !== '');
+      const targets = (siblings.length > 0 ? siblings : [t]).filter(Boolean);
+
+      // ── 1. Locate the candidate files ──────────────────────────────────────
+      const reg = getDriveFileRegistry();
+      let candidates = Object.values(reg).filter((e) =>
         e && !e.deleted &&
         String(e.ctx?.test || '') === String(testName) &&
         String(e.ctx?.subsection || '') === 'Flow Cytometry'
       );
-      if (entries.length === 0) {
+
+      // Registry missing / empty (different browser or machine): find the .fcs
+      // files on Drive by name — each uploaded file carries the source file name
+      // (and thus the instance it belonged to) in its Drive name.
+      if (candidates.length === 0) {
+        setFcsMsg('⬇️ Local registry is empty — searching Google Drive for the .fcs files…');
+        const wanted = [];
+        targets.forEach((x) => {
+          wanted.push(stemOf(x.fcsFileName), stemOf(x.instanceName));
+          (x.fcExtraFiles || []).forEach((f) => wanted.push(stemOf(f && f.filename)));
+        });
+        const seen = new Set();
+        for (const w of [...new Set(wanted.filter(Boolean))]) {
+          if (w.length < 3) continue; // too short — would match anything
+          try {
+            const q = encodeURIComponent(`name contains '${String(w).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}' and trashed=false`);
+            const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=50`);
+            const j = res && res.ok ? await res.json() : { files: [] };
+            (j.files || []).forEach((f) => {
+              if (!f || !f.id || seen.has(f.id)) return;
+              if (!/\.fcs$/i.test(String(f.name || ''))) return;
+              seen.add(f.id);
+              // `title` keeps the EXACT wanted stem (the instance's declared
+              // file name), so the file is matched back to that instance even
+              // though its Drive name also carries the scientist suffix.
+              candidates.push({ id: f.id, name: f.name, ctx: { test: testName, subsection: 'Flow Cytometry', instance: stemOf(f.name), title: w }, fromSearch: true });
+            });
+          } catch { /* keep going with the other stems */ }
+        }
+      }
+
+      if (candidates.length === 0) {
         setFcsMsg('⚠️ No .fcs files were found on Google Drive for this experiment.');
         return;
       }
+      // ── 2. Match each candidate to the instance it belongs to ──────────────
+      const targetOf = (cand) => {
+        const candInstance = slugOf(cand.ctx && cand.ctx.instance);
+        const candStem = stemOf(cand.ctx && cand.ctx.title) || stemOf(cand.name);
+        if (candInstance) {
+          const byInstance = targets.findIndex((x) => slugOf(x.instanceName) && slugOf(x.instanceName) === candInstance);
+          if (byInstance >= 0) return byInstance;
+          // The instance folder may have been created from the SOURCE file name,
+          // while instanceName was edited later — match the declared file too.
+          const byFile = targets.findIndex((x) => stemOf(x.fcsFileName) && stemOf(x.fcsFileName) === candInstance);
+          if (byFile >= 0) return byFile;
+        }
+        if (candStem) {
+          const byFile = targets.findIndex((x) => stemOf(x.fcsFileName) && stemOf(x.fcsFileName) === candStem);
+          if (byFile >= 0) return byFile;
+          const byExtra = targets.findIndex((x) => (x.fcExtraFiles || []).some((f) => f && stemOf(f.filename) === candStem));
+          if (byExtra >= 0) return byExtra;
+        }
+        return 0; // 'same-instance' mode / unmatched → extras of the first tab
+      };
+
+      // ── 3. Download and distribute ─────────────────────────────────────────
       let restored = 0;
       let failReason = '';
-      let mainDone = false;
-      let mainSerialized = undefined;
-      let mainFilename = '';
-      const extras = [...(t.fcExtraFiles || [])];
-      for (const entry of entries) {
+      // targetId -> { main: {parsed, filename, buf}, extras: Map<stem, {parsed, filename, buf}> }
+      const byTarget = new Map();
+      for (const entry of candidates) {
         try {
           const res = await driveFetch(`/drive/v3/files/${entry.id}?alt=media`);
           if (!res || !res.ok) { failReason = failReason || `HTTP ${res ? res.status : 'no response'}`; continue; }
@@ -2563,24 +2652,25 @@ export const Data = ({ ctx }) => {
           const parsed = parseFCSFile(buf);
           if (!parsed || typeof parsed.numEvents !== 'number') { failReason = failReason || 'downloaded file is not a valid .fcs'; continue; }
           parsed.filename = entry.name || 'restored.fcs';
-          if (!mainDone) {
-            globalFcsCache[activeTest.id] = parsed;
-            mainDone = true;
-            mainSerialized = serializeFcsForSave(parsed);
-            mainFilename = parsed.filename || activeTest.fcsFileName || '';
-            // Keep the downloaded copy in the browser cache too, so future
-            // reloads do not need to hit Google Drive again.
-            saveFcsFile(activeTest.id, new File([buf], parsed.filename, { type: 'application/octet-stream' }));
+
+          const ti = targetOf(entry);
+          const target = targets[ti];
+          if (!target || !target.id) continue;
+          let bucket = byTarget.get(target.id);
+          if (!bucket) { bucket = { main: null, extras: new Map() }; byTarget.set(target.id, bucket); }
+          const entryStem = stemOf(entry.ctx && entry.ctx.title) || stemOf(entry.name);
+          const isMain = !bucket.main && (
+            // the main file of this instance: its instance matches, or its file
+            // name is the one the instance declared, or this instance has no
+            // declared file yet and this is its first candidate
+            (slugOf(entry.ctx && entry.ctx.instance) === slugOf(target.instanceName) && slugOf(target.instanceName)) ||
+            (stemOf(target.fcsFileName) && stemOf(target.fcsFileName) === entryStem) ||
+            !target.fcsFileName
+          );
+          if (isMain) {
+            bucket.main = { parsed, filename: parsed.filename, buf, stem: entryStem };
           } else {
-            const stem = String(parsed.filename || '').replace(/\.[^/.]+$/, '');
-            let extra = extras.find((x) => x && String(x.filename || '').replace(/\.[^/.]+$/, '') === stem);
-            if (!extra) {
-              extra = { id: 'fcxR' + Date.now() + Math.random().toString(36).slice(2, 6), filename: parsed.filename, data: null };
-              extras.push(extra);
-            }
-            globalFcsCache[extra.id] = parsed;
-            extra.data = serializeFcsForSave(parsed) || extra.data;
-            saveFcsFile(extra.id, new File([buf], parsed.filename, { type: 'application/octet-stream' }));
+            bucket.extras.set(entryStem || ('extra' + bucket.extras.size), { parsed, filename: parsed.filename, buf });
           }
           restored++;
         } catch (e) {
@@ -2591,24 +2681,64 @@ export const Data = ({ ctx }) => {
           if (e && e.code === 'TOKEN_EXPIRED') break; // retrying is pointless
         }
       }
-      const updates = {};
-      if (mainSerialized !== undefined) updates.fcParsed = mainSerialized;
-      if (mainFilename) updates.fcsFileName = mainFilename;
-      if (extras.length) updates.fcExtraFiles = extras;
-      if (Object.keys(updates).length) updateActiveTest(updates);
+      // ── 4. Write the restored data onto EVERY affected instance ────────────
+      if (restored > 0 && byTarget.size > 0 && typeof ctx.setTests === 'function') {
+        ctx.setTests((prev) => prev.map((test) => {
+          const bucket = byTarget.get(test.id);
+          if (!bucket) return test;
+          const next = { ...test };
+          if (bucket.main) {
+            globalFcsCache[test.id] = bucket.main.parsed;
+            next.fcParsed = serializeFcsForSave(bucket.main.parsed);
+            next.fcsFileName = bucket.main.filename;
+            saveFcsFile(test.id, new File([bucket.main.buf], bucket.main.filename, { type: 'application/octet-stream' }));
+          }
+          if (bucket.extras.size > 0) {
+            const existing = Array.isArray(next.fcExtraFiles) ? [...next.fcExtraFiles] : [];
+            bucket.extras.forEach((ex, exStem) => {
+              let extra = existing.find((x) => x && stemOf(x.filename) === exStem);
+              if (!extra) {
+                const exId = 'fcxR' + Date.now() + Math.random().toString(36).slice(2, 6);
+                extra = { id: exId, filename: ex.filename, data: null };
+                existing.push(extra);
+              }
+              globalFcsCache[extra.id] = ex.parsed;
+              extra.data = serializeFcsForSave(ex.parsed) || extra.data;
+              saveFcsFile(extra.id, new File([ex.buf], ex.filename, { type: 'application/octet-stream' }));
+            });
+            next.fcExtraFiles = existing;
+          }
+          return next;
+        }));
+      } else if (restored > 0) {
+        // No setTests available — fall back to updating just the active test.
+        const bucket = byTarget.get(t.id);
+        if (bucket && bucket.main) {
+          globalFcsCache[t.id] = bucket.main.parsed;
+          updateActiveTest({
+            fcParsed: serializeFcsForSave(bucket.main.parsed),
+            fcsFileName: bucket.main.filename
+          });
+        }
+      }
+
+      // Only mark the instances that actually received data as auto-restored —
+      // a sibling that failed (e.g. its file was not found) can still be
+      // retried automatically on its own tab.
+      byTarget.forEach((_, id) => { if (id) autoDriveRestoreDone.add(id); });
       setUpdater(u => u + 1);
       if (restored === 0) autoDriveRestoreDone.delete(t.id); // allow auto-retry after a reconnect
       if (restored === 0) {
         console.error('FCS Drive restore failed:', {
           test: testName,
-          entriesFound: entries.length,
+          entriesFound: candidates.length,
           failReason,
           tokenPresent: !!getDriveToken()
         });
       }
       const networkErr = failReason && /failed to fetch|networkerror|load failed|offline|timed out|cannot reach/i.test(failReason);
       setFcsMsg(restored > 0
-        ? `✅ Restored ${restored} .fcs file(s) from Google Drive.`
+        ? `✅ Restored ${restored} .fcs file(s) from Google Drive across ${byTarget.size} instance(s).`
         : networkErr
           ? `⚠️ Could not reach Google Drive (${failReason}). This is a network / browser-blocking problem, not an expired token — check your internet connection, VPN / proxy or ad-blocker. Manual recovery: open Google Drive in a new tab, download the .fcs files, and re-upload them with “Choose .fcs file(s)”.`
           : `⚠️ Could not download the .fcs files from Google Drive${failReason ? ` (${failReason})` : ''}. If the Drive token expired, reconnect Google Drive from the sidebar and try again.`);
