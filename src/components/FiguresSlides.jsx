@@ -470,7 +470,9 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
   const [selRegion, setSelRegion] = useState(null);   // selected region index (region editor)
   const [hoverRegion, setHoverRegion] = useState(null); // region under the mouse
   const [dragRegion, setDragRegion] = useState(null);  // region index being dragged
-  const [rightLibOpen, setRightLibOpen] = useState(false); // dataset images panel
+  const [leftOpen, setLeftOpen] = useState(false);    // ⭐ sidebar tab (retractable)
+  const [rightLibOpen, setRightLibOpen] = useState(false); // 📂 dataset images tab
+  const [regionFullscreen, setRegionFullscreen] = useState(false); // ⛶ fullscreen editing
   // Keep the ⭐ sidebar open long enough to move the mouse into it.
   const hoverTimerRef = useRef(null);
   const clearHoverSoon = () => {
@@ -626,16 +628,44 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
   const insertStarredIntoRegion = async (s0, ri) => {
     const img = await makeLibraryImage(s0.url);
     setRegionImage(ri, { url: img.url, full: img.full });
-    // Retract the insertion panels after placing the image.
     setHoverRegion(null);
-    setRightLibOpen(false);
   };
   const insertLibraryIntoRegion = (it, ri) => {
     setRegionImage(ri, { url: it.url, full: it.full });
     setHoverRegion(null);
-    setRightLibOpen(false);
   };
-  // Click a grid cell: select / merge / create a region.
+  // Merge two existing regions into one: the union is the bounding box of both,
+  // and any cells in between become empty 1×1 panels (fully reversible with ✂).
+  const mergeTwoRegions = (ai, bi) => {
+    const s = deck.slides[cur];
+    if (!s) return;
+    const regions = s.regions || [];
+    const A = regions[ai], B = regions[bi];
+    if (!A || !B || A.id === B.id) return;
+    const minX = Math.min(A.x, B.x), minY = Math.min(A.y, B.y);
+    const maxX = Math.max(A.x + A.w - 1, B.x + B.w - 1), maxY = Math.max(A.y + A.h - 1, B.y + B.h - 1);
+    const merged = { ...A, x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+    merged.image = merged.image || B.image;
+    merged.text = (B.text || '').trim()
+      ? ((merged.text || '').trim() ? `${merged.text} | ${B.text}` : B.text)
+      : merged.text || '';
+    merged.peaks = [...(merged.peaks || []), ...(B.peaks || [])];
+    const covered = (x, y) =>
+      (x >= A.x && x < A.x + A.w && y >= A.y && y < A.y + A.h) ||
+      (x >= B.x && x < B.x + B.w && y >= B.y && y < B.y + B.h);
+    const next = [merged];
+    for (let y = minY; y <= maxY; y++) {
+      for (let x = minX; x <= maxX; x++) {
+        if (!covered(x, y)) next.push(emptyRegion(x, y));
+      }
+    }
+    const rest = regions.filter((r) => r.id !== A.id && r.id !== B.id);
+    const finalRegions = autoLabelRegions([...rest, ...next]);
+    patchSlide(cur, { regions: finalRegions });
+    setSelRegion(finalRegions.findIndex((r) => r.id === merged.id));
+  };
+
+  // Click a grid cell: select / merge / expand / create a region.
   const onRegionCellClick = (x, y) => {
     const s = deck.slides[cur];
     if (!s) return;
@@ -644,24 +674,16 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
     const sel = selRegion !== null ? regions[selRegion] : null;
     if (existing) {
       const idx = regions.indexOf(existing);
-      if (sel && sel.id !== existing.id && existing.w === 1 && existing.h === 1 && canExpandRegion(sel, x, y)) {
-        const merged = expandedRegion(sel, x, y);
-        merged.image = merged.image || existing.image;
-        merged.text = (existing.text || '').trim()
-          ? ((merged.text || '').trim() ? `${merged.text} | ${existing.text}` : existing.text)
-          : merged.text || '';
-        merged.peaks = [...(merged.peaks || []), ...(existing.peaks || [])];
-        const next = regions.filter((r) => r.id !== existing.id).map((r) => (r.id === sel.id ? merged : r));
-        const nextRegions = autoLabelRegions(next);
-        patchSlide(cur, { regions: nextRegions });
-        setSelRegion(nextRegions.findIndex((r) => r.id === merged.id));
+      if (sel && sel.id !== existing.id) {
+        // Select a region, then click ANOTHER region → merge the two.
+        mergeTwoRegions(selRegion, idx);
         return;
       }
       setSelRegion(idx);
       setHoverRegion(idx);
       return;
     }
-    // Empty cell: expand the selected region or create a new 1×1 region.
+    // Empty cell: expand the selected region (adjacent) or create a new 1×1 region.
     if (sel && canExpandRegion(sel, x, y)) {
       const merged = expandedRegion(sel, x, y);
       const nextRegions = autoLabelRegions(regions.map((r) => (r.id === sel.id ? merged : r)));
@@ -1009,9 +1031,6 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
     const regions = slide.regions || [];
     const targetRi = hoverRegion !== null ? hoverRegion : selRegion;
     const targetRegion = targetRi !== null ? regions[targetRi] : null;
-    // The ⭐ panel follows the mouse hover only (so it retracts after inserting).
-    const hoverRi = hoverRegion !== null && regions[hoverRegion] ? hoverRegion : null;
-    const hoverRegionObj = hoverRi !== null ? regions[hoverRi] : null;
     const ZOOMS = [100, 150, 200, 300];
     const nextZoom = (r) => ZOOMS[(Math.max(0, ZOOMS.indexOf(r.zoom)) + 1) % ZOOMS.length];
     const FONTS = [0.8, 1, 1.25, 1.6, 2];
@@ -1023,12 +1042,13 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
       const fx = Math.max(0, Math.min(1, (e.clientX - rect.left) / Math.max(1, rect.width)));
       patchRegion(ri, { peaks: [...(regions[ri].peaks || []), { fx, label: '' }] });
     };
-    return (
-      <div className="flex flex-col gap-2">
+    const cw = regionFullscreen ? 'min(96vw, 90vh)' : 'min(100%, 72vh)';
+    const editorContent = (
+      <>
         <p className="text-[10px] text-slate-400 leading-relaxed">
-          <b>Click</b> a cell to create a panel · select a panel, then <b>click an adjacent “+ merge” cell</b> (or another panel) to merge ·
-          <b> ✂ split</b> reverses a merge · <b>drag ⠿</b> moves a panel · hovering a panel opens the ⭐ starred images (left) ·
-          click <b>📂</b> for the dataset images (right). Letters A, B, C… and the global caption are automatic.
+          <b>Click</b> a cell to create a panel · <b>click a panel, then click another panel to merge them</b> ·
+          <b> ✂ split</b> reverses a merge · <b>drag ⠿</b> moves a panel · use the <b>⭐ (left)</b> and <b>📂 (right)</b>
+          tabs to insert images · letters A, B, C… and the global caption are automatic.
         </p>
 
         <div className="flex items-center gap-2 flex-wrap bg-white border border-slate-200 rounded-lg px-2 py-1.5">
@@ -1039,29 +1059,30 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
           <button type="button" onClick={() => patchSlide(cur, { labelSize: Math.min(2.5, Math.round(((slide.labelSize || 1) + 0.1) * 10) / 10) })}
             className={btnGhost} title="Larger panel letters">+</button>
           <span className="w-px h-4 bg-slate-200 mx-1" />
-          <span className="text-[10px] text-slate-400">applies to A, B, C… on every panel of this figure</span>
+          <button type="button" onClick={() => setRegionFullscreen(!regionFullscreen)}
+            className={btnGhost} title="Edit this figure on almost the whole screen">
+            {regionFullscreen ? '✕ Close fullscreen' : '⛶ Maximize'}
+          </button>
         </div>
 
         <div className="relative">
           {/* CANVAS — fills the width, almost the whole screen height */}
           <div className="w-full flex justify-center">
             <div className="relative bg-white rounded-lg border border-slate-200 shadow-sm"
-              style={{ aspectRatio: `${cols}/${rows}`, width: 'min(100%, 84vh)' }}>
+              style={{ aspectRatio: `${cols}/${rows}`, width: cw }}>
               <div className="absolute inset-0 grid"
                 style={{ gridTemplateColumns: `repeat(${cols}, 1fr)`, gridTemplateRows: `repeat(${rows}, 1fr)` }}>
                 {cells.map((c) => {
                   const sel = selRegion !== null ? regions[selRegion] : null;
-                  const canMerge = sel && !regionAtCell(regions, c.x, c.y) && canExpandRegion(sel, c.x, c.y);
+                  const canExpand = sel && !regionAtCell(regions, c.x, c.y) && canExpandRegion(sel, c.x, c.y);
                   const canDrop = dragRegion !== null && regions[dragRegion] && canPlaceRegion(regions, regions[dragRegion], c.x, c.y, cols, rows);
                   return (
                     <div key={`${c.x}-${c.y}`}
-                      className={`border ${canMerge ? 'border-emerald-300 bg-emerald-50/60' : canDrop ? 'border-blue-300 bg-blue-50/60' : 'border-slate-100'}`}
+                      className={`border ${canExpand ? 'border-emerald-300 bg-emerald-50/50' : canDrop ? 'border-blue-300 bg-blue-50/50' : 'border-slate-100'}`}
                       onMouseEnter={() => { const ex = regionAtCell(regions, c.x, c.y); setHoverRegion(ex ? regions.indexOf(ex) : null); }}
                       onClick={() => onRegionCellClick(c.x, c.y)}
                       onDragOver={(e) => { if (dragRegion !== null) e.preventDefault(); }}
-                      onDrop={() => { if (dragRegion !== null) { moveRegion(dragRegion, c.x, c.y); setDragRegion(null); } }}>
-                      {canMerge && <span className="w-full h-full flex items-center justify-center text-[10px] font-black text-emerald-600 select-none">+ merge</span>}
-                    </div>
+                      onDrop={() => { if (dragRegion !== null) { moveRegion(dragRegion, c.x, c.y); setDragRegion(null); } }} />
                   );
                 })}
 
@@ -1136,19 +1157,23 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
                 className="flex-1 text-xs border border-slate-300 rounded p-1.5 outline-none focus:border-blue-500 resize-y custom-scrollbar" />
             </div>
 
-            {/* LEFT floating ⭐ panel — appears on hover, retracts after inserting */}
-            {hoverRegionObj && (
-              <div className="absolute left-1 top-1/2 -translate-y-1/2 z-40 w-64 max-h-[70vh] overflow-y-auto custom-scrollbar bg-amber-50 border border-amber-200 rounded-xl shadow-2xl p-2 flex flex-col gap-1.5"
-                onMouseEnter={cancelClearHover} onMouseLeave={clearHoverSoon}>
+            {/* LEFT retractable ⭐ tab + sidebar */}
+            <button type="button" onClick={() => setLeftOpen(!leftOpen)}
+              className="absolute left-0 top-1/2 -translate-y-1/2 z-40 text-[11px] font-black bg-amber-100 border border-amber-300 border-l-0 rounded-r-lg px-1 py-3 hover:bg-amber-200 shadow"
+              title="Starred experiment figures (toggle)">⭐</button>
+            {leftOpen && (
+              <div className="absolute left-0 top-1/2 z-40 w-64 max-h-[80vh] overflow-y-auto custom-scrollbar bg-amber-50 border border-amber-300 rounded-r-xl shadow-2xl p-2 flex flex-col gap-1.5"
+                style={{ transform: 'translateY(-50%)' }}>
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-[9px] font-black text-amber-800 uppercase">⭐ Starred → panel {hoverRegionObj.label || (hoverRi + 1)}</span>
-                  <button type="button" onClick={() => setHoverRegion(null)} className="text-[10px] font-black text-slate-400 hover:text-slate-600">✕</button>
+                  <span className="text-[9px] font-black text-amber-800 uppercase">⭐ Starred → panel {targetRegion ? (targetRegion.label || targetRi + 1) : '—'}</span>
+                  <button type="button" onClick={() => setLeftOpen(false)} className="text-[10px] font-black text-slate-400 hover:text-slate-600">✕</button>
                 </div>
                 {starred.length === 0 ? (
                   <p className="text-[9px] text-slate-500 italic">No ⭐ figures yet — star them on the experiment pages.</p>
                 ) : starred.map((s) => (
-                  <button key={s.id} type="button" onClick={() => insertStarredIntoRegion(s, hoverRi)}
-                    className="flex items-center gap-1.5 bg-white border border-amber-200 rounded-lg p-1 text-left hover:border-amber-400">
+                  <button key={s.id} type="button" onClick={() => targetRegion && insertStarredIntoRegion(s, targetRi)}
+                    disabled={!targetRegion}
+                    className="flex items-center gap-1.5 bg-white border border-amber-200 rounded-lg p-1 text-left hover:border-amber-400 disabled:opacity-40">
                     <StarThumb url={s.url} alt="" className="w-9 h-8 object-contain rounded border border-amber-100 bg-white shrink-0" />
                     <span className="min-w-0">
                       <span className="block text-[9px] font-bold text-slate-700 truncate">{s.caption || s.label}</span>
@@ -1156,12 +1181,17 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
                     </span>
                   </button>
                 ))}
+                {!targetRegion && <p className="text-[9px] text-slate-400 italic">Select a panel on the canvas first.</p>}
               </div>
             )}
 
-            {/* RIGHT floating 📂 panel + toggle — retracts after inserting */}
+            {/* RIGHT retractable 📂 tab + sidebar */}
+            <button type="button" onClick={() => setRightLibOpen(!rightLibOpen)}
+              className="absolute right-0 top-1/2 -translate-y-1/2 z-40 text-[11px] font-black bg-white border border-slate-300 border-r-0 rounded-l-lg px-1 py-3 hover:bg-slate-50 shadow"
+              title="Dataset images (library — toggle)">📂</button>
             {rightLibOpen && (
-              <div className="absolute right-1 top-1/2 -translate-y-1/2 z-40 w-64 max-h-[70vh] overflow-y-auto custom-scrollbar bg-white border border-slate-200 rounded-xl shadow-2xl p-2 flex flex-col gap-1.5">
+              <div className="absolute right-0 top-1/2 z-40 w-64 max-h-[80vh] overflow-y-auto custom-scrollbar bg-white border border-slate-300 rounded-l-xl shadow-2xl p-2 flex flex-col gap-1.5"
+                style={{ transform: 'translateY(-50%)' }}>
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[9px] font-black text-slate-600 uppercase">📂 Dataset images</span>
                   <button type="button" onClick={() => setRightLibOpen(false)} className="text-[10px] font-black text-slate-400 hover:text-slate-600">✕</button>
@@ -1176,15 +1206,28 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
                     <span className="text-[9px] font-bold text-slate-600 truncate">{it.label}</span>
                   </button>
                 ))}
-                {!targetRegion && <p className="text-[9px] text-slate-400 italic p-1">Select / hover a panel on the canvas first.</p>}
+                {!targetRegion && <p className="text-[9px] text-slate-400 italic p-1">Select a panel on the canvas first.</p>}
               </div>
             )}
-            <button type="button" onClick={() => setRightLibOpen(!rightLibOpen)}
-              className="absolute right-1 top-1 z-40 text-[10px] font-black bg-white border border-slate-200 rounded-lg px-2 py-1 hover:border-blue-400 text-slate-600 shadow">
-              📂 Dataset images
-            </button>
           </div>
+        </>
+    );
+    if (regionFullscreen) {
+      return (
+        <div className="fixed inset-0 z-[99995] bg-slate-100 overflow-auto p-3 flex flex-col gap-2">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-black text-slate-700">⛶ Editing — {slide.title || 'untitled figure'}</span>
+            <button type="button" onClick={() => setRegionFullscreen(false)}
+              className="font-bold py-1.5 px-3 rounded-lg text-xs bg-slate-800 text-white hover:bg-slate-700">✕ Close fullscreen</button>
+          </div>
+          {editorContent}
         </div>
+      );
+    }
+    return (
+      <div className="flex flex-col gap-2">
+        {editorContent}
+      </div>
     );
   };
 
