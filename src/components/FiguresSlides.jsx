@@ -445,6 +445,15 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
   const [selRegion, setSelRegion] = useState(null);   // selected region index (region editor)
   const [hoverRegion, setHoverRegion] = useState(null); // region under the mouse
   const [rightLibOpen, setRightLibOpen] = useState(false); // dataset images panel
+  // Keep the ⭐ sidebar open long enough to move the mouse into it.
+  const hoverTimerRef = useRef(null);
+  const clearHoverSoon = () => {
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    hoverTimerRef.current = setTimeout(() => setHoverRegion(null), 350);
+  };
+  const cancelClearHover = () => {
+    if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null; }
+  };
   const fileRef = useRef(null);
   // Refs so the global paste listener always uses the latest closure/scope.
   // (Updated after the functions are declared — see the effect at the bottom,
@@ -957,30 +966,6 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
     };
     return (
       <div className="flex flex-col gap-2">
-        {/* orientation modal */}
-        {newSlideOrient === 'ask' && (
-          <div className="fixed inset-0 z-[99998] bg-slate-900/40 flex items-center justify-center p-4" onClick={() => setNewSlideOrient(null)}>
-            <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
-              <h3 className="text-sm font-black text-slate-800 mb-1">New figure — orientation</h3>
-              <p className="text-xs text-slate-500 mb-4">Choose how the white canvas is divided. Panels can be merged later (select a panel, then click an adjacent cell).</p>
-              <div className="grid grid-cols-2 gap-3">
-                <button type="button" onClick={() => createSlideOf('square')}
-                  className="rounded-xl border-2 border-slate-200 hover:border-blue-500 bg-slate-50 hover:bg-blue-50 p-4 flex flex-col items-center gap-2 transition-colors">
-                  <div className="w-14 h-14 grid grid-cols-4 grid-rows-4 gap-0.5">{Array.from({ length: 16 }).map((_, i) => <div key={i} className="bg-slate-300" />)}</div>
-                  <span className="text-xs font-black text-slate-700">Squared</span>
-                  <span className="text-[10px] text-slate-500">16 panels (4×4)</span>
-                </button>
-                <button type="button" onClick={() => createSlideOf('rect')}
-                  className="rounded-xl border-2 border-slate-200 hover:border-blue-500 bg-slate-50 hover:bg-blue-50 p-4 flex flex-col items-center gap-2 transition-colors">
-                  <div className="w-[70px] h-14 grid grid-cols-5 grid-rows-4 gap-0.5">{Array.from({ length: 20 }).map((_, i) => <div key={i} className="bg-slate-300" />)}</div>
-                  <span className="text-xs font-black text-slate-700">Horizontal</span>
-                  <span className="text-[10px] text-slate-500">20 panels (5×4)</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
         <p className="text-[10px] text-slate-400 leading-relaxed">
           Click a cell to create a panel · click an <b>adjacent cell</b> to merge panels · hover a panel to open the ⭐
           <b> starred images</b> (left) · open <b>📂 dataset images</b> (right) to insert. Letters A, B, C… are assigned
@@ -990,7 +975,8 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
         <div className="flex gap-3 items-start">
           {/* LEFT: starred sidebar — auto-opens while hovering a panel */}
           {targetRegion && (
-            <div className="w-44 shrink-0 bg-amber-50 border border-amber-200 rounded-xl p-2 flex flex-col gap-1.5 max-h-[60vh] overflow-y-auto custom-scrollbar">
+            <div className="w-44 shrink-0 bg-amber-50 border border-amber-200 rounded-xl p-2 flex flex-col gap-1.5 max-h-[60vh] overflow-y-auto custom-scrollbar"
+              onMouseEnter={cancelClearHover} onMouseLeave={clearHoverSoon}>
               <span className="text-[9px] font-black text-amber-800 uppercase">⭐ Starred → panel {targetRegion.label || (targetRi + 1)}</span>
               {starred.length === 0 ? (
                 <p className="text-[9px] text-slate-500 italic">No ⭐ figures yet — star them on the experiment pages.</p>
@@ -1023,8 +1009,8 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
 
                   {regions.map((r, ri) => (
                     <div key={r.id}
-                      onMouseEnter={() => setHoverRegion(ri)}
-                      onMouseLeave={() => setHoverRegion(null)}
+                      onMouseEnter={() => { cancelClearHover(); setHoverRegion(ri); }}
+                      onMouseLeave={clearHoverSoon}
                       className={`relative overflow-hidden bg-white ${selRegion === ri ? 'ring-2 ring-blue-500 z-10' : 'ring-1 ring-slate-300'}`}
                       style={{ gridColumn: `${r.x + 1} / span ${r.w}`, gridRow: `${r.y + 1} / span ${r.h}` }}>
                       {r.label && (
@@ -1134,6 +1120,31 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
         </div>
         {driveMsg && <p className="w-full text-[11px] font-bold text-sky-700">{driveMsg}</p>}
       </div>
+
+
+      {/* ---- orientation modal (always available — shown on "+ New slide") ---- */}
+      {newSlideOrient === 'ask' && (
+        <div className="fixed inset-0 z-[99998] bg-slate-900/40 flex items-center justify-center p-4" onClick={() => setNewSlideOrient(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-sm font-black text-slate-800 mb-1">New figure — orientation</h3>
+            <p className="text-xs text-slate-500 mb-4">Choose how the white canvas is divided. Panels can be merged later (select a panel, then click an adjacent cell).</p>
+            <div className="grid grid-cols-2 gap-3">
+              <button type="button" onClick={() => createSlideOf('square')}
+                className="rounded-xl border-2 border-slate-200 hover:border-blue-500 bg-slate-50 hover:bg-blue-50 p-4 flex flex-col items-center gap-2 transition-colors">
+                <div className="w-14 h-14 grid grid-cols-4 grid-rows-4 gap-0.5">{Array.from({ length: 16 }).map((_, i) => <div key={i} className="bg-slate-300" />)}</div>
+                <span className="text-xs font-black text-slate-700">Squared</span>
+                <span className="text-[10px] text-slate-500">16 panels (4×4)</span>
+              </button>
+              <button type="button" onClick={() => createSlideOf('rect')}
+                className="rounded-xl border-2 border-slate-200 hover:border-blue-500 bg-slate-50 hover:bg-blue-50 p-4 flex flex-col items-center gap-2 transition-colors">
+                <div className="w-[70px] h-14 grid grid-cols-5 grid-rows-4 gap-0.5">{Array.from({ length: 20 }).map((_, i) => <div key={i} className="bg-slate-300" />)}</div>
+                <span className="text-xs font-black text-slate-700">Horizontal</span>
+                <span className="text-[10px] text-slate-500">20 panels (5×4)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ---- Image library — on TOP, retractable. Common + project scopes ---- */}
       <div className="border border-slate-200 rounded-xl overflow-hidden">
