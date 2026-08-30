@@ -4137,6 +4137,22 @@ const _nmrParseBrukerParams = (text) => {
   return p;
 };
 const _nmrBrukerNum = (p, k, d=0) => { const v = parseFloat(p[k]); return Number.isFinite(v) ? v : d; };
+// Bruker array parameters are stored as:
+//   ##$D= (0..63)
+//   0 1 0 0 …       ← values on the following line(s), index 0 = D0, 1 = D1, …
+// Returns the element at `index`, falling back to a scalar "##$D1=" entry when
+// the array form is not present (older TopSpin writes the delays individually).
+const _nmrBrukerArrayElem = (p, key, index, d = 0) => {
+  const raw = p[key];
+  if (raw == null) return d;
+  // Drop the "(0..63)" header (wherever it appears) and any "##$D=" prefix,
+  // then parse every remaining number in order: D0, D1, D2, …
+  const str = String(raw)
+    .replace(/\(\s*[\d.]+\s*\.\.\s*[\d.]+\s*\)/g, ' ')
+    .replace(/^##\$[A-Za-z0-9_]+\s*=\s*/, ' ');
+  const nums = str.split(/\s+/).map((t) => parseFloat(t)).filter((n) => Number.isFinite(n));
+  return nums.length > index && Number.isFinite(nums[index]) ? nums[index] : d;
+};
 // Acquisition date from a Bruker acqus file: some TopSpin / automation acqus
 // files carry a "##$DATE=…" key, others embed a plain date string in a comment.
 // Returns "YYYY-MM-DD" or null.
@@ -4216,6 +4232,7 @@ const importBruker1rPpm = ({dataBuffer, imagBuffer=null, acqusText='', manualSWp
   const imag = (imagBuffer && imagBuffer.byteLength >= 16) ? _nmrDecode1r(imagBuffer, littleEndian) : null;
   const swHz = _nmrBrukerNum(acqus,'SW_h');
   const sfo1 = _nmrBrukerNum(acqus,'SFO1');      // MHz
+  const sfo2 = _nmrBrukerNum(acqus,'SFO2');      // MHz (observe freq for the ssNMR / 2H case)
   const o1Hz = _nmrBrukerNum(acqus,'O1');          // Hz
   let xs;
   if (swHz > 0 && sfo1 > 0) {
@@ -4235,11 +4252,13 @@ const importBruker1rPpm = ({dataBuffer, imagBuffer=null, acqusText='', manualSWp
     NS: _nmrBrukerNum(acqus,'NS') || '',
     DS: _nmrBrukerNum(acqus,'DS') || '',
     RG: _nmrBrukerNum(acqus,'RG') || '',
-    P1: _nmrBrukerNum(acqus,'P1') || '',
-    D1: _nmrBrukerNum(acqus,'D1') || '',
-    D8: _nmrBrukerNum(acqus,'D8') || '',
-    D6: _nmrBrukerNum(acqus,'D6') || '',
-    SW: (swHz > 0 && sfo1 > 0 ? swHz / sfo1 : _nmrBrukerNum(acqus,'SW')) || '',
+    P1: _nmrBrukerNum(acqus,'P1') || _nmrBrukerArrayElem(acqus, 'P', 1) || '',
+    D1: _nmrBrukerNum(acqus,'D1') || _nmrBrukerArrayElem(acqus, 'D', 1) || '',
+    D8: _nmrBrukerNum(acqus,'D8') || _nmrBrukerArrayElem(acqus, 'D', 8) || '',
+    D6: _nmrBrukerNum(acqus,'D6') || _nmrBrukerArrayElem(acqus, 'D', 6) || '',
+    // SW in ppm — the observe frequency sits on SFO2 in these acqus files
+    // (SW_ppm = SW_h / SFO2), falling back to SFO1 then to the SW parameter.
+    SW: (swHz > 0 && sfo2 > 0 ? swHz / sfo2 : swHz > 0 && sfo1 > 0 ? swHz / sfo1 : _nmrBrukerNum(acqus,'SW')) || '',
     O1: o1Hz || '',
     TD: _nmrBrukerNum(acqus,'TD') || ''
   };

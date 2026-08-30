@@ -229,6 +229,23 @@ const brukerNum = (p, k, d = 0) => {
   return Number.isFinite(v) ? v : d;
 };
 
+// Bruker array parameters are stored as:
+//   ##$D= (0..63)
+//   0 1 0 0 …       ← values on the following line(s), index 0 = D0, 1 = D1, …
+// Returns the element at `index`, falling back to a scalar "##$D1=" entry when
+// the array form is not present (older TopSpin writes the delays individually).
+const brukerArrayElem = (p, key, index, d = 0) => {
+  const raw = p[key];
+  if (raw == null) return d;
+  // Drop the "(0..63)" header (wherever it appears) and any "##$D=" prefix,
+  // then parse every remaining number in order: D0, D1, D2, …
+  const str = String(raw)
+    .replace(/\(\s*[\d.]+\s*\.\.\s*[\d.]+\s*\)/g, ' ')
+    .replace(/^##\$[A-Za-z0-9_]+\s*=\s*/, ' ');
+  const nums = str.split(/\s+/).map((t) => parseFloat(t)).filter((n) => Number.isFinite(n));
+  return nums.length > index && Number.isFinite(nums[index]) ? nums[index] : d;
+};
+
 // Acquisition date from the acqus text (##$DATE= or an embedded date string).
 const extractAcqusDate = (text) => {
   const raw = String(text || '');
@@ -342,18 +359,21 @@ const importBruker1r = ({ dataBuffer, acqusText = '', manualSWkHz = null, manual
 
   const ds = downsampleXY(xs, y, 8000);
   // Acquisition parameters read from the acqus file — shown in the Instrumental
-  // Setup "Datasets" rows. SW is expressed in ppm, O1 in Hz.
+  // Setup "Datasets" rows. D1/D6/D8 and P1 are read from the "##$D= (0..63)" /
+  // "##$P= (0..63)" arrays (index 0 = D0 / P0, 1 = D1 / P1, …), SW is expressed
+  // in ppm using SFO2 as the observe frequency, O1 in Hz.
   const sfo1 = brukerNum(acqus, 'SFO1');
+  const sfo2 = brukerNum(acqus, 'SFO2');
   const o1Hz = brukerNum(acqus, 'O1');
   const acqusParams = {
     NS: brukerNum(acqus, 'NS') || '',
     DS: brukerNum(acqus, 'DS') || '',
     RG: brukerNum(acqus, 'RG') || '',
-    P1: brukerNum(acqus, 'P1') || '',
-    D1: brukerNum(acqus, 'D1') || '',
-    D8: brukerNum(acqus, 'D8') || '',
-    D6: brukerNum(acqus, 'D6') || '',
-    SW: (swHz > 0 && sfo1 > 0 ? swHz / sfo1 : brukerNum(acqus, 'SW')) || '',
+    P1: brukerNum(acqus, 'P1') || brukerArrayElem(acqus, 'P', 1) || '',
+    D1: brukerNum(acqus, 'D1') || brukerArrayElem(acqus, 'D', 1) || '',
+    D8: brukerNum(acqus, 'D8') || brukerArrayElem(acqus, 'D', 8) || '',
+    D6: brukerNum(acqus, 'D6') || brukerArrayElem(acqus, 'D', 6) || '',
+    SW: (swHz > 0 && sfo2 > 0 ? swHz / sfo2 : swHz > 0 && sfo1 > 0 ? swHz / sfo1 : brukerNum(acqus, 'SW')) || '',
     O1: o1Hz || '',
     TD: brukerNum(acqus, 'TD') || ''
   };
