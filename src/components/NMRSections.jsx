@@ -1,5 +1,5 @@
 import NMRMoleculeViewer, { useShowAssignedFlag } from './NMRMoleculeViewer';
-import { ChartControlBar, SharedChartStylePanel, AngledTick, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
+import { ChartControlBar, SharedChartStylePanel, AngledTick, IntensityControl, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
 import { Icon } from './Icons';
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
@@ -4137,6 +4137,33 @@ const _nmrParseBrukerParams = (text) => {
   return p;
 };
 const _nmrBrukerNum = (p, k, d=0) => { const v = parseFloat(p[k]); return Number.isFinite(v) ? v : d; };
+// Acquisition date from a Bruker acqus file: some TopSpin / automation acqus
+// files carry a "##$DATE=…" key, others embed a plain date string in a comment.
+// Returns "YYYY-MM-DD" or null.
+const _nmrExtractAcqusDate = (text) => {
+  const raw = String(text || '');
+  if (!raw.trim()) return null;
+  const mKey = raw.match(/^##\$DATE=\s*([^\s\r\n]+)/m);
+  const rawDate = mKey ? mKey[1] : null;
+  const cand = rawDate || raw;
+  const mIso = cand.match(/(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/);
+  if (mIso) return `${mIso[1]}-${String(mIso[2]).padStart(2, '0')}-${String(mIso[3]).padStart(2, '0')}`;
+  const mUs = cand.match(/(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})/);
+  if (mUs) return `${mUs[3]}-${String(mUs[1]).padStart(2, '0')}-${String(mUs[2]).padStart(2, '0')}`;
+  const mMon = cand.match(/(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{4})/);
+  if (mMon) {
+    const months = { jan:1, feb:2, mar:3, apr:4, may:5, jun:6, jul:7, aug:8, sep:9, oct:10, nov:11, dec:12 };
+    const mo = months[String(mMon[2]).slice(0,3).toLowerCase()];
+    if (mo) return `${mMon[3]}-${String(mo).padStart(2, '0')}-${String(mMon[1]).padStart(2, '0')}`;
+  }
+  return null;
+};
+const _nmrFileDate = (ms) => {
+  if (!ms || !Number.isFinite(ms)) return null;
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().split('T')[0];
+};
 const _nmrDecode1r = (buf, le) => { const n = Math.floor(buf.byteLength/4); const dv = new DataView(buf); const y = new Float64Array(n); for (let i=0;i<n;i++) y[i]=dv.getInt32(i*4,le); return y; };
 const _nmrDecode1rAuto = (buf, forceLE=null) => {
   if (forceLE !== null) return {y:_nmrDecode1r(buf,forceLE), littleEndian:forceLE, autoEndian:false};
@@ -4197,8 +4224,22 @@ const importBruker1rPpm = ({dataBuffer, imagBuffer=null, acqusText='', manualSWp
     return {error:'No valid acqus (need SFO1 + SW_h + O1) and no manual spectral width — cannot build the ppm axis.'};
   }
   const ds = _nmrDownsample(xs, y, 6000, imag);
+  // Acquisition parameters read from the acqus file, shown in the Instrumental
+  // Setup "Datasets" rows (editable there). SW is expressed in ppm, O1 in Hz.
+  const acqusParams = {
+    NS: _nmrBrukerNum(acqus,'NS') || '',
+    DS: _nmrBrukerNum(acqus,'DS') || '',
+    D1: _nmrBrukerNum(acqus,'D1') || '',
+    D8: _nmrBrukerNum(acqus,'D8') || '',
+    D6: _nmrBrukerNum(acqus,'D6') || '',
+    SW: (swHz > 0 && sfo1 > 0 ? swHz / sfo1 : _nmrBrukerNum(acqus,'SW')) || '',
+    O1: o1Hz || '',
+    TD: _nmrBrukerNum(acqus,'TD') || ''
+  };
   return {
     xs: ds.xs, ys: ds.ys, ysImag: ds.ys2, littleEndian, autoEndian, nPoints: y.length,
+    acqusParams,
+    date: _nmrExtractAcqusDate(acqusText) || null,
     meta: {
       swPpm: swHz>0&&sfo1>0 ? swHz/(sfo1*1e6)*1e6 : manualSWppm,
       o1Ppm: sfo1>0 ? o1Hz/(sfo1*1e6)*1e6 : manualO1ppm,
@@ -4935,10 +4976,13 @@ export const DataSection = ({ ctx }) => {
   const [nmrBrukerBusy, setNmrBrukerBusy] = useState(false);
   const [showPeakLabels, setShowPeakLabels] = useState(true);
   const [showBrukerCfg, setShowBrukerCfg] = useState(false);
-  // 1D spectrum "Chart Parameters": y-axis magnification (default 2× so the
-  // spectrum occupies ~half the plot height), line colour/thickness, tick font.
-  const nmr1dCfg = { yScale: 2, lineColor: '#3b82f6', lineWidth: 1.5, fontSize: 9, ...(activeTest.nmr1dChartCfg || {}) };
+  // 1D spectrum "Chart Parameters": full shared style system (like CD/ssNMR)
+  // plus a `yScale` axis-height multiplier (default 2× so the spectrum occupies
+  // ~half the plot height) and the `intensity` vertical-amplifier (×1 default).
+  const nmr1dCfg = { ...DEFAULT_CHART_STYLE, yScale: 2, intensity: 1, lineColor: '#3b82f6', lineThickness: 1.5, fontSize: 9, ...(activeTest.nmr1dChartCfg || {}) };
   const setNmr1dCfg = (patch) => updateActiveTest({ nmr1dChartCfg: { ...nmr1dCfg, ...patch } });
+  const nmr1dIntensity = Number(nmr1dCfg.intensity) > 0 ? Number(nmr1dCfg.intensity) : 1;
+  const setNmr1dIntensity = (v) => setNmr1dCfg({ intensity: Math.max(0.25, Math.min(16, v)) });
   const [expandedBruker, setExpandedBruker] = useState(false);
   const [brukerZoomDom, setBrukerZoomDom] = useState(null);
   const [brukerRefL, setBrukerRefL] = useState(null);
@@ -5178,7 +5222,14 @@ export const DataSection = ({ ctx }) => {
     // Auto-fill from the imported Bruker experiment:
     //   • "Title" in Experimental Conditions ← the text of <dataset>/pdata/1/title
     //   • Instrumental Setup dataset row ← experiment number + dataset name
+    //     (the dataset = the directory that contains the expno dir) + acqus
+    //     acquisition parameters + the acquisition date (from acqus when present)
+    //   • "Temperature" in Experimental Conditions ← TE from the acqus file
     if (parsed.fileTitle) updates.nmrFileTitle = parsed.fileTitle;
+    if (parsed.meta && parsed.meta.temperatureK > 0) {
+      updates.temperature = String(parsed.meta.temperatureK);
+      updates.temperatureUnit = 'K';
+    }
     if (parsed.expNum || filename) {
       const existingDatasets = Array.isArray(activeTest.instrumentalDatasets) ? activeTest.instrumentalDatasets : [];
       const expNum = String(parsed.expNum || (existingDatasets.length + 1));
@@ -5186,11 +5237,12 @@ export const DataSection = ({ ctx }) => {
       const row = {
         id: existing ? existing.id : 'instrumental_dataset_' + Date.now() + Math.random().toString(16).slice(2),
         experimentNumber: expNum,
-        name: parsed.filename || filename || `Dataset ${expNum}`,
-        date: existing ? existing.date : new Date().toISOString().split('T')[0],
+        name: parsed.datasetName || parsed.filename || filename || `Dataset ${expNum}`,
+        date: existing ? existing.date : (parsed.acqusDate || new Date().toISOString().split('T')[0]),
         operator: existing ? existing.operator : (activeTest.operator || ''),
         link: existing ? existing.link : '',
-        comments: existing ? existing.comments : ''
+        comments: existing ? existing.comments : '',
+        acqus: existing ? existing.acqus : (parsed.acqusParams || {})
       };
       updates.instrumentalDatasets = existing
         ? existingDatasets.map((d) => (d.id === existing.id ? { ...d, ...row } : d))
@@ -5225,6 +5277,7 @@ export const DataSection = ({ ctx }) => {
         let fileTitle = ''; // from the "<dataset>/pdata/1/title" file
         let expDir = '';    // webkitRelativePath of the experiment folder (expno)
         let expNum = '';    // the Bruker experiment number (e.g. "1", "2", …)
+        let datasetName = ''; // the dataset = the DIRECTORY that contains the expno dir
         
         if (pdataIndex > 0) {
           expDir = pathParts.slice(0, pdataIndex).join('/');
@@ -5251,6 +5304,7 @@ export const DataSection = ({ ctx }) => {
           }
           
           expNum = pathParts[pdataIndex - 1];
+          datasetName = pathParts[pdataIndex - 2];
           const procNum = pathParts[pdataIndex + 1];
           title = `Exp ${expNum}${procNum && procNum !== '1' ? ` (Proc ${procNum})` : ''}`;
         }
@@ -5274,6 +5328,8 @@ export const DataSection = ({ ctx }) => {
         
         if (!parsed.error) {
           parsed.filename = title;
+          parsed.datasetName = datasetName;
+          parsed.acqusDate = _nmrExtractAcqusDate(acqusText) || _nmrFileDate(oneR.lastModified) || '';
           parsed.expType = expType;
           parsed.fileTitle = fileTitle;
           parsed.expDir = expDir;
@@ -5321,17 +5377,22 @@ export const DataSection = ({ ctx }) => {
            // Same auto-fill as the first import: Experimental Conditions title +
            // Instrumental Setup dataset row (experiment number + dataset name).
            if (p.fileTitle) cloned.nmrFileTitle = p.fileTitle;
+           if (p.meta && p.meta.temperatureK > 0) {
+             cloned.temperature = String(p.meta.temperatureK);
+             cloned.temperatureUnit = 'K';
+           }
            if (p.expNum) {
              const expNum = String(p.expNum);
              cloned.instrumentalDatasets = [
                {
                  id: 'instrumental_dataset_' + Date.now() + i + Math.random().toString(16).slice(2),
                  experimentNumber: expNum,
-                 name: p.filename || selected[i].filename || `Dataset ${expNum}`,
-                 date: new Date().toISOString().split('T')[0],
+                 name: p.datasetName || p.filename || selected[i].filename || `Dataset ${expNum}`,
+                 date: p.acqusDate || new Date().toISOString().split('T')[0],
                  operator: activeTest.operator || '',
                  link: '',
-                 comments: ''
+                 comments: '',
+                 acqus: p.acqusParams || {}
                }
              ];
            }
@@ -5419,8 +5480,18 @@ export const DataSection = ({ ctx }) => {
     const disp = getNmr1dDisplay(spec) || { xs: spec.xs, ys: spec.ys };
     const xs = disp.xs, ys = disp.ys;
    const xFull = [Math.min(...xs), Math.max(...xs)];
-const dom = brukerZoomDom || xFull;
+let dom = brukerZoomDom || xFull;
     const isZoomed = !!(brukerZoomDom);
+    // Rich "Chart Parameters" wiring: xMin/xMax from the panel override the
+    // ppm domain, and the Y axis honours yMin/yMax (normalised data, max |y|=1)
+    // scaled by the y-axis-height multiplier and the intensity amplifier.
+    const pval = (v) => { const n = parseManual(v); return (v === '' || v == null || n === null || !Number.isFinite(n)) ? undefined : n; };
+    const cfgXMin = pval(nmr1dCfg.xMin), cfgXMax = pval(nmr1dCfg.xMax);
+    if (cfgXMin != null || cfgXMax != null) {
+      dom = [cfgXMin ?? Math.min(...xs), cfgXMax ?? Math.max(...xs)];
+    }
+    const yMinV = pval(nmr1dCfg.yMin), yMaxV = pval(nmr1dCfg.yMax);
+    const yDom = [(yMinV ?? -0.05) / nmr1dIntensity, (yMaxV ?? 1.05 * (nmr1dCfg.yScale || 2)) / nmr1dIntensity];
 
     const csMap = activeTest.chemicalShifts || {};
     const peakMarkers = [];
@@ -5481,7 +5552,7 @@ const dom = brukerZoomDom || xFull;
     const nmr1dLabelColor = activeTest.nmr1dLabelColor || '#b91c1c';
     const labelAreaH = (showPeakLabels && peakMarkers.length > 0) ? Math.min(220, 40 + peakMarkers.length * (nmr1dLabelFontSize + 10)) : 0;
     const topMargin = 10;
-    const PANEL_H = expandedBruker ? '100%' : 260 + labelAreaH;
+    const PANEL_H = expandedBruker ? '100%' : (Number(nmr1dCfg.height) > 0 ? Number(nmr1dCfg.height) : 260) + labelAreaH;
 
     return (
       <div className={'bg-white border border-sky-200 rounded-xl p-3 flex flex-col gap-2' + (expandedBruker ? ' fixed inset-2 z-50 shadow-2xl' : '')}>
@@ -5513,9 +5584,17 @@ const dom = brukerZoomDom || xFull;
                 </label>
               </>
             )}
+            <IntensityControl value={nmr1dIntensity} onChange={setNmr1dIntensity} />
+            <label className="flex items-center gap-1 text-[11px] font-bold text-slate-500" title="Y-axis height multiplier — 2× means the axis is twice as tall so the peaks occupy ~half the plot height">
+              Y-height
+              <select value={nmr1dCfg.yScale} onChange={(e) => setNmr1dCfg({ yScale: parseFloat(e.target.value) })}
+                      className="border border-slate-300 rounded px-1 py-0.5 text-[11px] bg-white outline-none">
+                {[1, 1.5, 2, 3, 4].map((v) => <option key={v} value={v}>{v}×</option>)}
+              </select>
+            </label>
             <button type="button" onClick={() => setShowBrukerCfg((v) => !v)}
               className={`font-bold py-1.5 px-3 rounded-lg text-xs border transition-colors ${showBrukerCfg ? 'bg-slate-200 border-slate-400 text-slate-900' : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'}`}
-              title="Graphical parameters for the 1D spectrum (Y-axis height, line colour/thickness, font size)">
+              title="Graphical parameters for the 1D spectrum (Y-axis min/max, line colour/thickness, font size, axis labels…)">
               ⚙️ Chart Parameters
             </button>
             <button type="button" onClick={() => setExpandedBruker(b => !b)} className="text-slate-400 hover:text-blue-600 text-lg px-1" title={expandedBruker ? 'Collapse' : 'Expand'}>{expandedBruker ? '\u2199\ufe0f' : '\u2197\ufe0f'}</button>
@@ -5607,28 +5686,9 @@ const dom = brukerZoomDom || xFull;
         </div>
 
         {showBrukerCfg && (
-          <div className="p-4 bg-white border border-slate-300 rounded-xl grid grid-cols-1 md:grid-cols-4 gap-4 shadow-sm">
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-bold text-slate-600">Y-axis height: {nmr1dCfg.yScale}×</label>
-              <input type="range" min="1" max="4" step="0.5" value={nmr1dCfg.yScale}
-                onChange={(e) => setNmr1dCfg({ yScale: parseFloat(e.target.value) })} className="accent-blue-600 mt-2" />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-bold text-slate-600">Line color</label>
-              <input type="color" value={nmr1dCfg.lineColor}
-                onChange={(e) => setNmr1dCfg({ lineColor: e.target.value })} className="w-full h-8 rounded border border-slate-300 bg-white p-0 cursor-pointer" />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-bold text-slate-600">Line thickness: {nmr1dCfg.lineWidth}</label>
-              <input type="range" min="0.5" max="3" step="0.25" value={nmr1dCfg.lineWidth}
-                onChange={(e) => setNmr1dCfg({ lineWidth: parseFloat(e.target.value) })} className="accent-blue-600 mt-2" />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-bold text-slate-600">Tick font size: {nmr1dCfg.fontSize}</label>
-              <input type="range" min="7" max="16" step="1" value={nmr1dCfg.fontSize}
-                onChange={(e) => setNmr1dCfg({ fontSize: parseInt(e.target.value, 10) })} className="accent-blue-600 mt-2" />
-            </div>
-          </div>
+          <SharedChartStylePanel cfg={nmr1dCfg} setCfg={setNmr1dCfg}
+            series={[{ key: 'spec', label: '1D spectrum', color: nmr1dCfg.lineColor || '#3b82f6' }]}
+            unit="ppm" />
         )}
 
         <div ref={brukerChartRef} className="select-none" style={{height: PANEL_H, backgroundColor: 'white', position: 'relative'}}
@@ -5650,10 +5710,10 @@ const dom = brukerZoomDom || xFull;
              })()}
              tickFormatter={v => Number(v).toFixed(2)}
              tick={{fontSize: nmr1dCfg.fontSize, fill:'#64748b'}}
-             label={{value:'Chemical Shift (ppm)', position:'insideBottom', offset:-12, fontSize:nmr1dCfg.fontSize, fill:'#64748b'}} />
-           <YAxis hide domain={[-0.05, 1.05 * (nmr1dCfg.yScale || 2)]} />
+             label={{value: nmr1dCfg.xAxisLabel || 'Chemical Shift (ppm)', position:'insideBottom', offset:-12, fontSize:nmr1dCfg.fontSize, fill:'#64748b'}} />
+           <YAxis hide domain={yDom} />
            <Tooltip formatter={v => Number(v).toFixed(3)} labelFormatter={v => Number(v).toFixed(2) + ' ppm'} />
-           <Line type="monotone" dataKey="y" stroke={nmr1dCfg.lineColor} strokeWidth={nmr1dCfg.lineWidth} dot={false} isAnimationActive={false} connectNulls />
+           <Line type="monotone" dataKey="y" stroke={nmr1dCfg.colors?.spec || nmr1dCfg.lineColor || '#3b82f6'} strokeWidth={nmr1dCfg.lineThickness} strokeDasharray={lineDash(nmr1dCfg.lineStyle)} dot={false} isAnimationActive={false} connectNulls />
            {brukerRefL!==null && brukerRefR!==null && <ReferenceArea x1={brukerRefL} x2={brukerRefR} fill="#cbd5e1" fillOpacity={0.4} />}
          </LineChart>
        </ResponsiveContainer>

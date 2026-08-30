@@ -296,6 +296,42 @@ export const NMRInstrumentalSetup = ({ ctx, extraFields = null, hideDatasets = f
                     placeholder="Optional dataset notes"
                   />
                 </div>
+
+                <div className="border-t border-slate-100 pt-2 mt-1">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase">
+                    Acquisition Parameters (from acqus)
+                  </span>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-8 gap-2 mt-1.5">
+                    {[
+                      ['NS', 'ns', 'Number of scans'],
+                      ['DS', 'ds', 'Dummy scans'],
+                      ['D1 (s)', 'd1', 'Relaxation delay'],
+                      ['D8 (s)', 'd8', 'Delay D8'],
+                      ['D6 (s)', 'd6', 'Delay D6'],
+                      ['SW (ppm)', 'sw', 'Spectral width (ppm)'],
+                      ['O1 (Hz)', 'o1', 'Carrier offset (Hz)'],
+                      ['TD', 'td', 'Time domain points']
+                    ].map(([lbl, k, tip]) => {
+                      const acqus = ds.acqus || {};
+                      return (
+                        <div key={k} className="flex flex-col gap-1">
+                          <label className={LABEL_CLS}>{lbl}</label>
+                          <input
+                            type="number"
+                            step="any"
+                            value={acqus[k] !== undefined && acqus[k] !== '' ? acqus[k] : ''}
+                            onChange={(e) =>
+                              patchDataset(ds.id, { acqus: { ...acqus, [k]: e.target.value } })
+                            }
+                            className={INPUT_CLS}
+                            placeholder="—"
+                            title={tip || `acqus ${k}`}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             ))}
           </div>

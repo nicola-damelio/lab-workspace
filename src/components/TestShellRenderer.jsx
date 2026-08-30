@@ -1795,7 +1795,19 @@ const details = [
               {(Array.isArray(config.conditionFields)
                 ? config.conditionFields
                 : []
-              ).map(renderConditionField)}
+              ).map((f) => {
+                const el = renderConditionField(f);
+                if (!el) return null;
+                // A field flagged fullWidth spans the whole row (4× the single
+                // column width) — used for long text like the NMR title.
+                return f && f.fullWidth
+                  ? (
+                      <div key={f.key} className="col-span-full">
+                        {el}
+                      </div>
+                    )
+                  : el;
+              })}
 
               {conditionCustomFields.length > 0 && (
                 <div className="col-span-full text-xs font-bold text-slate-400 uppercase pt-2 border-t border-slate-100">

@@ -402,6 +402,45 @@ const CB = ({ label, checked, onChange }) => (
     </label>
 );
 
+// ─────────────────────────────────────────────────────────────────────────────
+// INTENSITY SCALE — quick vertical-amplification buttons shared by the NMR /
+// ssNMR / CD spectra plots. The stored `intensity` (default 1) divides the
+// Y-axis domain, so ×2 makes the peaks twice as tall (zooming into the
+// intensity axis), exactly like a spectrometer "absolute intensity" knob.
+// ─────────────────────────────────────────────────────────────────────────────
+export const IntensityControl = ({ value = 1, onChange, className = '' }) => {
+  const v = Number(value) > 0 ? Number(value) : 1;
+  const set = (next) => onChange(Math.max(0.25, Math.min(16, next)));
+  return (
+    <span
+      className={`inline-flex items-center gap-0.5 border border-slate-300 rounded-lg bg-white shadow-sm ${className}`}
+      title="Scale the spectra intensity up/down (vertical zoom of the intensity axis)"
+    >
+      <button
+        type="button"
+        onClick={() => set(v / 2)}
+        className="px-1.5 py-1 text-sm font-black text-slate-600 hover:text-blue-600 rounded-l-md"
+        title="Scale intensity down (÷2)"
+      >−</button>
+      <span className="text-[11px] font-bold text-slate-700 whitespace-nowrap px-0.5">
+        📈 ×{v}
+      </span>
+      <button
+        type="button"
+        onClick={() => set(v * 2)}
+        className="px-1.5 py-1 text-sm font-black text-slate-600 hover:text-blue-600"
+        title="Scale intensity up (×2)"
+      >+</button>
+      <button
+        type="button"
+        onClick={() => onChange(1)}
+        className="px-1 py-1 text-[10px] text-slate-400 hover:text-red-500 rounded-r-md"
+        title="Reset intensity (×1)"
+      >⟲</button>
+    </span>
+  );
+};
+
 export const SharedChartStylePanel = ({ cfg = {}, setCfg, series = [], unit = 'a.u.', showHeightSlider = true }) => {
     const set = (patch) => setCfg({ ...patch });
     return (

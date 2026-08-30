@@ -6,7 +6,7 @@
 
 import React, {useState, useEffect, useRef, useMemo} from 'react';
 import {XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine, BarChart, Bar, LineChart, Line, Legend, ErrorBar, Cell, ComposedChart} from 'recharts';
-import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, AngledTick, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgAxisDomain, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
+import { SharedErrorTreatment, ChartControlBar, SharedChartStylePanel, AngledTick, IntensityControl, cfgSeriesEl, cfgLogScale, cfgAxisTicks, cfgAxisDomain, cfgTickFormatter, cfgAxisLabel, cfgChartMargin, instancesLinked, InstanceLinkToggle } from './SharedAnalysisTools';
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, VIS_PALETTES, seriesColorFor, chartBoxStyle } from '../utils/chartStyle';
 export { CollapsibleSection };
@@ -1017,6 +1017,11 @@ export const Data = ({ ctx }) => {
     };
     
     if (filename) updates.instanceName = filename.replace(/\.[^/.]+$/, "");
+    // "T" in Experimental Conditions ← TE from the acqus file (Kelvin).
+    if (parsed.meta && parsed.meta.temperatureK > 0) {
+        updates.temperature = String(parsed.meta.temperatureK);
+        updates.temperatureUnit = 'K';
+    }
     
     patchActive(updates);
   };
@@ -1044,6 +1049,7 @@ export const Data = ({ ctx }) => {
         let fileTitle = ''; // from the "<dataset>/pdata/1/title" file
         let expDir = '';    // webkitRelativePath of the experiment folder (expno)
         let expNum = '';    // the Bruker experiment number (e.g. "1", "2", …)
+        let datasetName = ''; // the dataset = the DIRECTORY that contains the expno dir
         
         if (pdataIndex > 0) {
           expDir = pathParts.slice(0, pdataIndex).join('/');
@@ -1070,8 +1076,11 @@ export const Data = ({ ctx }) => {
           }
           
           expNum = pathParts[pdataIndex - 1];
+          datasetName = pathParts[pdataIndex - 2];
           const procNum = pathParts[pdataIndex + 1];
-          title = `Exp ${expNum}${procNum && procNum !== '1' ? ` (Proc ${procNum})` : ''}`;
+          title = datasetName
+            ? `${datasetName} (Exp ${expNum}${procNum && procNum !== '1' ? ` / Proc ${procNum}` : ''})`
+            : `Exp ${expNum}${procNum && procNum !== '1' ? ` (Proc ${procNum})` : ''}`;
         }
         
         const dataBuffer = await oneR.arrayBuffer();
@@ -1131,6 +1140,11 @@ export const Data = ({ ctx }) => {
                 const cloned = JSON.parse(JSON.stringify(activeTest));
                 cloned.id = newId;
                 cloned.instanceName = selected[i].filename;
+                // "T" in Experimental Conditions ← TE from the acqus file (Kelvin).
+                if (parsed.meta && parsed.meta.temperatureK > 0) {
+                    cloned.temperature = String(parsed.meta.temperatureK);
+                    cloned.temperatureUnit = 'K';
+                }
                 
                 let finalXs = parsed.xs; let finalYs = parsed.ys;
                 const hasCustomRange = (brukerStartKHz !== '' && brukerEndKHz !== '') || (brukerNumPoints !== '' && Number(brukerNumPoints) > 0);
@@ -1821,9 +1835,12 @@ export const SpectraVisualization = ({ ctx }) => {
   const yDataRange = (yDataMax - yDataMin) || 1;
   const yAutoMin = yDataMin - yDataRange / 2;
   const yAutoMax = yDataMax + yDataRange / 2;
+  // Intensity amplifier (button in the toolbar): divides the Y domain so the
+  // peaks grow — ×1 = default half-height, ×2 = full height, ×4+ = zoomed in.
+  const intensity = Number(cfg.intensity) > 0 ? Number(cfg.intensity) : 1;
   const yDomain = yScale === 'log'
     ? [(yMinV != null && yMinV > 0 ? yMinV : 1e-3), (yMaxV != null ? yMaxV : 'auto')]
-    : [yMinV ?? yAutoMin, yMaxV ?? yAutoMax];
+    : [(yMinV ?? yAutoMin) / intensity, (yMaxV ?? yAutoMax) / intensity];
 
   const chartBody = (
     <div ref={chartRef} onMouseDown={zoom.onMouseDown} style={fs ? { flex: 1, minHeight: 0 } : chartBoxStyle(cfg)} className={`bg-white border border-slate-200 rounded-xl p-3 select-none relative ${fs ? 'w-full' : ''}`}>
@@ -1862,6 +1879,7 @@ export const SpectraVisualization = ({ ctx }) => {
         <h4 className="text-sm font-bold text-slate-700">📈 Spectra Visualization — all conditions overlaid</h4>
         <div className="flex gap-2">
           <InstanceLinkToggle activeTest={activeTest} updateActiveTest={updateActiveTest} />
+          <IntensityControl value={cfg.intensity} onChange={(v) => setCfg({ intensity: v })} />
           <ChartControlBar showCfg={showCfg} onToggleCfg={() => setShowCfg(!showCfg)} className="flex gap-2" />
           <button type="button" onClick={() => setFs(!fs)} className="font-bold py-1.5 px-3 rounded-lg text-xs border border-slate-300 bg-white text-slate-800 hover:bg-slate-50">{fs ? '↙️ Exit' : '↗️ Fullscreen'}</button>
         </div>
@@ -1906,7 +1924,7 @@ export const SpectraVisualization = ({ ctx }) => {
                       <LineChart data={s.data} margin={{ top: 5, right: 8, bottom: fsSmall === s.key ? 30 : 18, left: fsSmall === s.key ? 10 : 2 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                         <XAxis type="number" dataKey="x" tick={{ fontSize: fsSmall === s.key ? cfg.fontSize : 9, fill: '#64748b' }} domain={['dataMin', 'dataMax']} label={fsSmall === s.key ? { value: xLabel, position: 'insideBottom', offset: -20, fill: '#64748b', fontSize: cfg.fontSize + 1 } : undefined} />
-                        <YAxis domain={[yAutoMin, yAutoMax]} tick={{ fontSize: fsSmall === s.key ? cfg.fontSize : 9, fill: '#64748b' }} width={fsSmall === s.key ? 60 : 38} label={fsSmall === s.key ? { value: yLab, angle: -90, position: 'insideLeft', offset: -5, fill: '#64748b', fontSize: cfg.fontSize + 1 } : undefined} />
+                        <YAxis domain={[yAutoMin / intensity, yAutoMax / intensity]} tick={{ fontSize: fsSmall === s.key ? cfg.fontSize : 9, fill: '#64748b' }} width={fsSmall === s.key ? 60 : 38} label={fsSmall === s.key ? { value: yLab, angle: -90, position: 'insideLeft', offset: -5, fill: '#64748b', fontSize: cfg.fontSize + 1 } : undefined} />
                         {fsSmall === s.key && <Tooltip />}
                         <Line type="monotone" dataKey="y" stroke={s.color} strokeWidth={cfg.lineThickness || 2} strokeDasharray={lineDash(cfg.lineStyle)} dot={false} isAnimationActive={false} />
                       </LineChart>
