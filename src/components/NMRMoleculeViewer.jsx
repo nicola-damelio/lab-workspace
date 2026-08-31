@@ -849,6 +849,13 @@ const [moleculeStyle, setMoleculeStyle] = useState('ball+stick');
 const [extraMols, setExtraMols] = useState([]);    // [{ id, name, style, color }]
 const [visibleMolKeys, setVisibleMolKeys] = useState(() => new Set(['main'])); // multi-select: which structures are shown
 const [selectedMolKey, setSelectedMolKey] = useState('main'); // active entry in the Molecules bar (click → select + centre)
+// Per-molecule overrides for the MAIN structure — same controls as the extra
+// structures (style / colour / transparency). "auto" follows the global
+// Backbone / Molecule Style selectors (the classic main rendering).
+const [mainMol, setMainMol] = useState({ style: 'auto', color: '', colorMode: 'element', transparency: 0 });
+const mainMolRef = useRef(mainMol);
+mainMolRef.current = mainMol;
+const [mainPos, setMainPos] = useState([0, 0, 0]); // main structure translation (Å), settable via Move X/Y/Z or ✋ Drag
 const [residueTicks, setResidueTicks] = useState([]); // [{ resno, resname, code, chainid }] — sequence strip above the 3D view
 const extraCompsRef = useRef([]);                  // [{ id, name, comp, baseReps, style, color }]
 // Files chosen as "additional molecules" that must wait until the MAIN structure
@@ -942,7 +949,7 @@ useEffect(() => {
   if (!component || status !== 'ready') return;
   baseCompsRef.current.forEach((r) => { try { component.removeRepresentation(r); } catch {} });
   baseCompsRef.current = [];
-  addDefaultReps(component);
+  buildMainReps();
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [lightRender, largeStyle, showLargeWater, status]);
 
@@ -1489,6 +1496,44 @@ const applyCurrentStyleTo = useCallback((comp, baseReps) => {
   return next;
 }, []);
 
+// Build the MAIN structure's base representations, honouring the per-molecule
+// override (Molecules bar → Main controls). "auto" = the classic global
+// Backbone / Molecule Style rendering (addDefaultReps, incl. the large-system
+// lightweight handling); any other style rebuilds the main with ONE chosen
+// style + colouring metaphor + transparency, exactly like the extra molecules.
+// Selections / highlights live on the same component, so only the tracked base
+// representations are replaced — never everything.
+const buildMainReps = () => {
+  const comp = componentRef.current;
+  if (!comp || !comp.structure) return;
+  baseCompsRef.current.forEach((r) => { try { comp.removeRepresentation(r); } catch {} });
+  baseCompsRef.current = [];
+  const st = mainMolRef.current || {};
+  if (!st.style || st.style === 'auto') {
+    addDefaultReps(comp);
+    return;
+  }
+  const colorScheme = st.colorMode && st.colorMode !== 'solid'
+    ? (st.colorMode === 'sstruc' ? sstrucSchemeKey || 'sstruc' : st.colorMode)
+    : undefined;
+  const color = colorScheme ? undefined : (st.color != null ? st.color : undefined);
+  const opacity = st.transparency != null ? Math.max(0, Math.min(1, 1 - st.transparency)) : undefined;
+  const add = (type, params = {}) => {
+    try {
+      const r = comp.addRepresentation(type, { sele: 'all', colorScheme, color, opacity, ...params });
+      if (r) baseCompsRef.current.push(r);
+    } catch { /* style best-effort */ }
+  };
+  try {
+    if (st.style === 'cartoon') add('cartoon');
+    else if (st.style === 'ball+stick') add('ball+stick', { multipleBond: true, aspectRatio: 1.3 });
+    else if (st.style === 'sticks') add('stick', { multipleBond: true });
+    else if (st.style === 'lines') add('line');
+    else if (st.style === 'spheres') add('spacefill', { scale: 0.6 });
+    else if (st.style === 'surface') add('surface');
+  } catch { /* style best-effort */ }
+};
+
 // Load ONE chain of a multi-chain PDB as its own (hidden) NGL component and add
 // it to the Molecules selector. Called by the main-load effect after the whole
 // structure is parsed.
@@ -1633,7 +1678,7 @@ try {
   nonProtein = ((h && h.count) || 0) > 0 || ((w && w.count) || 0) > 0;
 } catch { nonProtein = false; }
 setHasNonProtein(nonProtein);
-addDefaultReps(component);
+buildMainReps();
 shadowRepsHook(component);
 if (shadowOnRef.current) setMeshShadows(component);
 
@@ -2198,7 +2243,7 @@ useEffect(() => {
   } else if (backboneChanged || moleculeChanged || baseCompsRef.current.length === 0) {
     baseCompsRef.current.forEach((r) => { try { component.removeRepresentation(r); } catch {} });
     baseCompsRef.current = [];
-    addDefaultReps(component);
+    buildMainReps();
   }
   prevBackboneRef.current = backboneStyle;
   prevMoleculeRef.current = moleculeStyle;
@@ -2257,6 +2302,16 @@ useEffect(() => {
   try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [backboneStyle, moleculeStyle, status, applyCurrentStyleTo, sstrucColors]);
+
+// Rebuild the MAIN structure whenever the user changes its per-molecule
+// overrides (Molecules bar → Main controls). Guarded by hideAll/pymolActive so
+// "hide everything" / a PyMOL script still wins until the user toggles it off.
+useEffect(() => {
+  if (status !== 'ready' || hideAll || pymolActive) return;
+  if (!componentRef.current) return;
+  buildMainReps();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [mainMol, status, hideAll, pymolActive, sstrucColors]);
 
 // Background colour + quality ("ray shadows" approximation)
 useEffect(() => {
@@ -2732,6 +2787,73 @@ const resetExtraMolPosition = (id) => {
   } catch { /* best-effort */ }
 };
 
+// Move / reset the MAIN structure by typing X/Y/Z (the same controls the extra
+// molecules have). The main's NGL component is moved independently.
+const setMainPosition = (axis, value) => {
+  const next = [mainPos[0] || 0, mainPos[1] || 0, mainPos[2] || 0];
+  next[axis] = Number(value) || 0;
+  setMainPos(next);
+  try {
+    const comp = componentRef.current;
+    if (comp && typeof comp.setPosition === 'function') {
+      comp.setPosition(next);
+      if (typeof comp.updateMatrix === 'function') comp.updateMatrix();
+      if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender();
+    }
+  } catch { /* position best-effort */ }
+};
+const resetMainPosition = () => {
+  setMainPos([0, 0, 0]);
+  try {
+    const comp = componentRef.current;
+    if (comp && typeof comp.setPosition === 'function') {
+      comp.setPosition([0, 0, 0]);
+      if (typeof comp.updateMatrix === 'function') comp.updateMatrix();
+      if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender();
+    }
+  } catch { /* position best-effort */ }
+};
+
+// Apply the ACTIVE (selected) molecule's rendering — style / colour / colour
+// mode / transparency — to every other loaded structure (the "🎨 Copy" button
+// in the Molecules bar). Useful for a series of docked structures that should
+// all look the same as the one currently on screen.
+const applyActiveStyleToAll = () => {
+  let src = null;
+  if (selectedMolKey === 'main') {
+    src = {
+      style: mainMolRef.current.style || 'auto',
+      color: mainMolRef.current.color || '',
+      colorMode: mainMolRef.current.colorMode || 'element',
+      transparency: mainMolRef.current.transparency || 0,
+    };
+  } else {
+    const entry = extraCompsRef.current.find((e) => e.id === selectedMolKey);
+    if (entry) {
+      src = {
+        style: entry.style || 'auto',
+        color: entry.color || '',
+        colorMode: entry.colorMode || 'element',
+        transparency: entry.transparency || 0,
+      };
+    }
+  }
+  if (!src) return;
+  if (selectedMolKey !== 'main') {
+    setMainMol((m) => ({ ...m, ...src }));
+  }
+  extraCompsRef.current.forEach((e) => {
+    if (e.id === selectedMolKey) return;
+    e.style = src.style;
+    e.color = src.color;
+    e.colorMode = src.colorMode;
+    e.transparency = src.transparency;
+    restyleExtraMol(e.id);
+  });
+  setExtraMols(extraMolsSnapshot());
+  try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
+};
+
 // ---- Move the selected structure with the MOUSE (drag-to-move) --------------
 // Convert a screen-pixel delta into a world-space translation at the depth of
 // the structure, so dragging the mouse slides the selected molecule on screen.
@@ -2791,9 +2913,11 @@ const dragMoveOnUp = () => {
   const d = dragMoveRef.current;
   dragMoveRef.current = null;
   if (!d) return;
-  // Sync the Molecules-bar X/Y/Z inputs with the dragged position.
+  // Sync the Molecules-bar X/Y/Z inputs with the dragged position (extras AND
+  // the main structure — both have Move controls now).
   const entry = extraCompsRef.current.find((x) => x.comp === d.comp);
   if (entry) { entry.position = d.pos; setExtraMols(extraMolsSnapshot()); }
+  else if (d.comp === componentRef.current) { setMainPos([d.pos[0] || 0, d.pos[1] || 0, d.pos[2] || 0]); }
 };
 
 // Delete ONE extra structure (its NGL component + Molecules-bar entry).
@@ -3736,18 +3860,22 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
 {/* Vertical Molecules bar (right side) — every loaded structure / chain, each with
     its own visibility, style and colour; click a row to select & centre it. */}
 {extraMols.length > 0 && (
-  <div className="absolute top-2 right-2 bottom-2 w-56 z-40 flex flex-col gap-2 bg-white/95 border border-blue-200 rounded-xl shadow-lg p-2 overflow-hidden">
+  <div className="absolute top-2 right-2 bottom-2 w-80 z-40 flex flex-col gap-2 bg-white/95 border border-blue-200 rounded-xl shadow-lg p-2 overflow-hidden">
     <div className="flex items-center justify-between gap-2 shrink-0">
       <span className="text-[10px] font-black text-blue-700 uppercase tracking-wide">Molecules</span>
       <span className="flex gap-1">
         <button type="button"
           onClick={() => setVisibleMolKeys(new Set(extraCompsRef.current.map(({ id }) => id).concat(['main'])))}
-          className="px-1.5 py-0.5 text-[8px] font-bold rounded border bg-white border-blue-300 text-blue-600 hover:bg-blue-50"
+          className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-blue-300 text-blue-600 hover:bg-blue-50"
           title="Show every structure">All</button>
         <button type="button"
           onClick={() => setVisibleMolKeys(new Set(['main']))}
-          className="px-1.5 py-0.5 text-[8px] font-bold rounded border bg-white border-slate-300 text-slate-500 hover:bg-slate-50"
+          className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-slate-300 text-slate-500 hover:bg-slate-50"
           title="Show only the main structure">Main</button>
+        <button type="button" onClick={applyActiveStyleToAll}
+          className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+          title="Apply the ACTIVE (selected) structure's style / colour / transparency to every other molecule — handy for a series of docked structures that should all look the same">
+          🎨 Copy</button>
       </span>
     </div>
     <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1">
@@ -3757,11 +3885,57 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
         <input type="checkbox" checked={visibleMolKeys.has('main')} onChange={(e) => { e.stopPropagation(); toggleMol('main'); }} className="accent-blue-600 w-3.5 h-3.5" />
         <span className="truncate text-slate-700 flex-1">Main{file ? ` (${file.name})` : ''}</span>
       </div>
-      {/* Main structure drag-to-move toggle */}
-      <div className="flex items-center gap-1 mt-0.5 pl-5" title="Move the main structure with the mouse (toggle off to rotate/zoom)">
-        <label className="flex items-center gap-1 text-[9px] font-bold text-slate-500 cursor-pointer">
+      {/* Main structure controls — same as the extra molecules: style, colour,
+          transparency, Move X/Y/Z and ✋ drag. "Auto" follows the global
+          Backbone / Molecule Style selectors. */}
+      <div className="flex items-center gap-1 mt-0.5 pl-5">
+        <select value={mainMol.style || 'auto'} onChange={(e) => setMainMol((m) => ({ ...m, style: e.target.value }))}
+          className="border border-slate-200 rounded text-[10px] py-0.5 px-1 w-24" title="Representation style for the main structure (Auto follows the global Backbone / Molecule Style)">
+          <option value="auto">Auto</option>
+          <option value="cartoon">Cartoon</option>
+          <option value="ball+stick">Ball &amp; stick</option>
+          <option value="sticks">Sticks</option>
+          <option value="lines">Lines</option>
+          <option value="spheres">Spheres</option>
+          <option value="surface">Surface</option>
+        </select>
+        <label className="text-[10px] text-slate-400 font-bold flex items-center gap-0.5" title="Colouring of the main structure (applies to the chosen style above)">
+          Colour
+          <select value={mainMol.colorMode || 'element'} onChange={(e) => setMainMol((m) => ({ ...m, colorMode: e.target.value }))}
+            className="border border-slate-200 rounded text-[10px] py-0.5 px-1 w-20" title="Colouring metaphor">
+            <option value="solid">Solid</option>
+            <option value="element">Atom type</option>
+            <option value="chainid">Chain</option>
+            <option value="resname">Residue</option>
+            <option value="sstruc">2° structure</option>
+            <option value="hydrophobicity">Hydrophobicity</option>
+          </select>
+        </label>
+        <input type="color" value={mainMol.color || '#dddddd'} disabled={(mainMol.colorMode || 'element') !== 'solid'}
+          onChange={(e) => setMainMol((m) => ({ ...m, color: e.target.value }))}
+          className={`w-5 h-5 rounded border cursor-pointer ${(mainMol.colorMode || 'element') !== 'solid' ? 'opacity-30 cursor-not-allowed' : ''}`}
+          title="Solid colour (used when Colour = Solid)" />
+      </div>
+      <div className="flex items-center gap-1 mt-0.5 pl-5" title="Transparency of the main structure">
+        <span className="text-[10px] text-slate-400 font-bold shrink-0">Transp</span>
+        <input type="range" min="0" max="1" step="0.05" value={mainMol.transparency || 0}
+          onChange={(e) => setMainMol((m) => ({ ...m, transparency: parseFloat(e.target.value) }))}
+          className="accent-blue-600 w-full" />
+      </div>
+      <div className="flex items-center gap-1 mt-0.5 pl-5" title="Move the main structure independently (Å)">
+        <span className="text-[10px] text-slate-400 font-bold shrink-0">Move</span>
+        {['X', 'Y', 'Z'].map((ax, ai) => (
+          <label key={ax} className="flex items-center gap-0.5 text-[10px] text-slate-400 font-bold" title={`Shift the main structure along ${ax}`}>
+            {ax}
+            <input type="number" step="1" value={mainPos[ai] || 0}
+              onChange={(e) => setMainPosition(ai, e.target.value)}
+              className="border border-slate-200 rounded text-[10px] py-0.5 px-1 w-12" />
+          </label>
+        ))}
+        <button type="button" onClick={resetMainPosition} className="text-[10px] font-bold text-slate-500 hover:text-slate-800 underline" title="Reset position">↺</button>
+        <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 cursor-pointer" title="Move the main structure with the mouse (toggle off to rotate/zoom)">
           <input type="checkbox" checked={dragMove} onChange={(e) => { e.stopPropagation(); setDragMove(e.target.checked); }} className="accent-blue-600 w-3 h-3" />
-          ✋ Drag to move
+          ✋ Drag
         </label>
       </div>
       {extraMols.map((m) => (
@@ -3774,7 +3948,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
           </div>
           <div className="flex items-center gap-1 mt-0.5 pl-5">
             <select value={m.style || 'auto'} onChange={(e) => setExtraMolStyle(m.id, e.target.value)}
-              className="border border-slate-200 rounded text-[9px] py-0.5 px-1 w-24" title="Representation style for this structure">
+              className="border border-slate-200 rounded text-[10px] py-0.5 px-1 w-24" title="Representation style for this structure">
               <option value="auto">Auto</option>
               <option value="cartoon">Cartoon</option>
               <option value="ball+stick">Ball &amp; stick</option>
@@ -3783,10 +3957,10 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
               <option value="spheres">Spheres</option>
               <option value="surface">Surface</option>
             </select>
-            <label className="text-[9px] text-slate-400 font-bold flex items-center gap-0.5" title="Colouring of this structure (applies to the chosen style above)">
+            <label className="text-[10px] text-slate-400 font-bold flex items-center gap-0.5" title="Colouring of this structure (applies to the chosen style above)">
               Colour
               <select value={m.colorMode || 'element'} onChange={(e) => setExtraMolColorMode(m.id, e.target.value)}
-                className="border border-slate-200 rounded text-[9px] py-0.5 px-1 w-20" title="Colouring metaphor">
+                className="border border-slate-200 rounded text-[10px] py-0.5 px-1 w-20" title="Colouring metaphor">
                 <option value="solid">Solid</option>
                 <option value="element">Atom type</option>
                 <option value="chainid">Chain</option>
@@ -3801,23 +3975,23 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
               title="Solid colour (used when Colour = Solid)" />
           </div>
           <div className="flex items-center gap-1 mt-0.5 pl-5" title="Transparency of this structure">
-            <span className="text-[9px] text-slate-400 font-bold shrink-0">Transp</span>
+            <span className="text-[10px] text-slate-400 font-bold shrink-0">Transp</span>
             <input type="range" min="0" max="1" step="0.05" value={m.transparency || 0}
               onChange={(e) => setExtraMolTransparency(m.id, parseFloat(e.target.value))}
               className="accent-blue-600 w-full" />
           </div>
           <div className="flex items-center gap-1 mt-0.5 pl-5" title="Move this structure independently (Å)">
-            <span className="text-[9px] text-slate-400 font-bold shrink-0">Move</span>
+            <span className="text-[10px] text-slate-400 font-bold shrink-0">Move</span>
             {['X', 'Y', 'Z'].map((ax, ai) => (
-              <label key={ax} className="flex items-center gap-0.5 text-[9px] text-slate-400 font-bold" title={`Shift this structure along ${ax}`}>
+              <label key={ax} className="flex items-center gap-0.5 text-[10px] text-slate-400 font-bold" title={`Shift this structure along ${ax}`}>
                 {ax}
                 <input type="number" step="1" value={(m.position && m.position[ai]) || 0}
                   onChange={(e) => setExtraMolPosition(m.id, ai, e.target.value)}
-                  className="border border-slate-200 rounded text-[9px] py-0.5 px-1 w-12" />
+                  className="border border-slate-200 rounded text-[10px] py-0.5 px-1 w-12" />
               </label>
             ))}
-            <button type="button" onClick={() => resetExtraMolPosition(m.id)} className="text-[9px] font-bold text-slate-500 hover:text-slate-800 underline" title="Reset position">↺</button>
-            <label className="flex items-center gap-1 text-[9px] font-bold text-slate-500 cursor-pointer" title="Move this structure with the mouse (toggle off to rotate/zoom)">
+            <button type="button" onClick={() => resetExtraMolPosition(m.id)} className="text-[10px] font-bold text-slate-500 hover:text-slate-800 underline" title="Reset position">↺</button>
+            <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 cursor-pointer" title="Move this structure with the mouse (toggle off to rotate/zoom)">
               <input type="checkbox" checked={dragMove} onChange={(e) => setDragMove(e.target.checked)} className="accent-blue-600 w-3 h-3" />
               ✋ Drag
             </label>
@@ -3830,7 +4004,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
 
 {/* Vertical selections bar (right side of the viewer) — also hosts the Abort button */}
 {(selections.length > 0 || status === 'loading' || trajStatus === 'loading' || playing) && (
-  <div className={`absolute top-2 ${extraMols.length > 0 ? 'right-[11.5rem]' : 'right-2'} bottom-2 w-60 z-30 flex flex-col gap-2 bg-white/95 border border-violet-200 rounded-xl shadow-lg p-2 overflow-hidden`}>
+  <div className={`absolute top-2 ${extraMols.length > 0 ? 'right-[21rem]' : 'right-2'} bottom-2 w-64 z-30 flex flex-col gap-2 bg-white/95 border border-violet-200 rounded-xl shadow-lg p-2 overflow-hidden`}>
     {selections.length > 0 && (
     <>
     <div className="flex items-center justify-between gap-2 shrink-0">

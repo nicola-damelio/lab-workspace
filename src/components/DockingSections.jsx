@@ -245,8 +245,16 @@ export const DockingExperimentalConditions = ({ ctx }) => {
               <span className="text-xs font-black text-slate-700">{m.name}</span>
               {m.segid && <span className="text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full px-2 py-0.5">segid {m.segid}</span>}
               <span className="text-[10px] font-mono text-slate-500">{m.sourcePath || m.fileName}</span>
-              {m.driveUrl && (
-                <a href={m.driveUrl} target="_blank" rel="noreferrer" className="text-[10px] font-bold text-sky-700 hover:underline">☁️ Drive</a>
+              {m.driveUrl ? (
+                <a href={m.driveUrl} target="_blank" rel="noreferrer"
+                  className="text-[10px] font-bold text-sky-700 bg-sky-50 border border-sky-200 hover:bg-sky-100 rounded-md px-2 py-0.5"
+                  title="Open the molecule structure file on Google Drive">
+                  ☁️ Structure on Drive
+                </a>
+              ) : (
+                <span className="text-[10px] text-slate-400 italic" title="Google Drive was not connected when this molecule was imported — re-import with Drive connected to archive the file">
+                  not on Drive
+                </span>
               )}
             </div>
             <div className="flex items-center gap-2">
