@@ -2392,8 +2392,15 @@ const _ringClose = (prev, anchor, lenPrev, lenAnchor, avoid) => {
 const placeSidechainAtoms = (char, bb) => {
   const atoms = { N: bb.N, CA: bb.CA, C: bb.C, O: bb.O };
   if (bb.CB) atoms.CB = bb.CB;
+  // Track every covalent bond created (atom-name pairs) so the generated PDB can
+  // carry explicit CONECT records and NGL does NOT guess bonds by distance (the
+  // side-chain protons sit close to several carbons, which previously produced
+  // confusing C–H "bonds" to non-bonded atoms).
+  const bonds = [];
+  const bond = (a, b) => bonds.push([a, b]);
   const P = (name, a, b, c, len, ang, tor) => {
     atoms[name] = nerfPlace(atoms[a], atoms[b], atoms[c], len, _deg2rad(ang), _deg2rad(tor));
+    bond(name, c); // the placed atom is covalently bonded to the third anchor atom
   };
   const H = (name, a, b, c, len = 1.09, ang = 109.5, tor = 180) => P(name, a, b, c, len, ang, tor);
   const CH2 = (carbon, a, b) => {
@@ -2415,8 +2422,10 @@ const placeSidechainAtoms = (char, bb) => {
     _vecScale(frame.u, radius * Math.cos(_deg2rad(deg))),
     _vecScale(frame.v, radius * Math.sin(_deg2rad(deg)))
   ));
-  const ringH = (name, vertex, center) => {
+  const ringH = (name, parentName, center) => {
+    const vertex = atoms[parentName];
     atoms[name] = _vecAdd(vertex, _vecScale(_vecNormalize(_vecSub(vertex, center)), 1.08));
+    bond(name, parentName);
   };
 
   switch (char) {
@@ -2471,8 +2480,9 @@ const placeSidechainAtoms = (char, bb) => {
       atoms.CE1 = ringAt(c5, f, R5, 36);
       atoms.NE2 = ringAt(c5, f, R5, -36);
       atoms.CD2 = ringAt(c5, f, R5, -108);
-      ringH('HD2', atoms.CD2, c5);
-      ringH('HE1', atoms.CE1, c5);
+      ringH('HD2', 'CD2', c5);
+      ringH('HE1', 'CE1', c5);
+      bond('CG', 'ND1'); bond('ND1', 'CE1'); bond('CE1', 'NE2'); bond('NE2', 'CD2'); bond('CD2', 'CG');
       break;
     }
     case 'I':
@@ -2516,17 +2526,19 @@ const placeSidechainAtoms = (char, bb) => {
       atoms.CZ = ringAt(c6, f, 1.39, 0);
       atoms.CE2 = ringAt(c6, f, 1.39, -60);
       atoms.CD2 = ringAt(c6, f, 1.39, -120);
-      ringH('HD1', atoms.CD1, c6);
-      ringH('HE1', atoms.CE1, c6);
-      ringH('HE2', atoms.CE2, c6);
-      ringH('HD2', atoms.CD2, c6);
+      ringH('HD1', 'CD1', c6);
+      ringH('HE1', 'CE1', c6);
+      ringH('HE2', 'CE2', c6);
+      ringH('HD2', 'CD2', c6);
       if (char === 'Y') {
         const dir = _vecNormalize(_vecSub(atoms.CZ, c6));
         atoms.OH = _vecAdd(atoms.CZ, _vecScale(dir, 1.36));
         atoms.HH = _vecAdd(atoms.OH, _vecScale(_vecNormalize(_vecAdd(dir, _vecScale(f.v, 0.9))), 0.97));
       } else {
-        ringH('HZ', atoms.CZ, c6);
+        ringH('HZ', 'CZ', c6);
       }
+      bond('CG', 'CD1'); bond('CD1', 'CE1'); bond('CE1', 'CZ'); bond('CZ', 'CE2'); bond('CE2', 'CD2'); bond('CD2', 'CG');
+      if (char === 'Y') { bond('CZ', 'OH'); bond('OH', 'HH'); }
       break;
     }
     case 'P': {
@@ -2536,6 +2548,7 @@ const placeSidechainAtoms = (char, bb) => {
       // Close the ring: CD must be 1.52 Å from CG and 1.46 Å from N.
       atoms.CD = _ringClose(atoms.CG, atoms.N, 1.52, 1.46, atoms.CA);
       CH2('CD', 'CB', 'CG');
+      bond('CD', 'N'); bond('CD', 'CG');
       break;
     }
     case 'S':
@@ -2580,20 +2593,27 @@ const placeSidechainAtoms = (char, bb) => {
       atoms.CH2 = hexAt(30);
       atoms.CZ3 = hexAt(-30);
       atoms.CE3 = hexAt(-90);
-      ringH('HD1', atoms.CD1, c5);
-      ringH('HE1', atoms.NE1, c5);
-      ringH('HZ2', atoms.CZ2, c6);
-      ringH('HH2', atoms.CH2, c6);
-      ringH('HZ3', atoms.CZ3, c6);
-      ringH('HE3', atoms.CE3, c6);
+      ringH('HD1', 'CD1', c5);
+      ringH('HE1', 'NE1', c5);
+      ringH('HZ2', 'CZ2', c6);
+      ringH('HH2', 'CH2', c6);
+      ringH('HZ3', 'CZ3', c6);
+      ringH('HE3', 'CE3', c6);
+      // indole five-ring CG–CD1–NE1–CE2–CD2
+      bond('CG', 'CD1'); bond('CD1', 'NE1'); bond('NE1', 'CE2'); bond('CE2', 'CD2'); bond('CD2', 'CG');
+      // fused benzene ring CD2–CE3–CZ3–CH2–CZ2–CE2
+      bond('CD2', 'CE3'); bond('CE3', 'CZ3'); bond('CZ3', 'CH2'); bond('CH2', 'CZ2'); bond('CZ2', 'CE2');
       break;
     }
     default: break;
   }
   const backbone = new Set(['N', 'CA', 'C', 'O', 'CB']);
-  return Object.entries(atoms)
-    .filter(([name]) => !backbone.has(name))
-    .map(([name, pos]) => ({ name, pos }));
+  return {
+    atoms: Object.entries(atoms)
+      .filter(([name]) => !backbone.has(name))
+      .map(([name, pos]) => ({ name, pos })),
+    bonds
+  };
 };
 
 const buildProteinBackbone = (seq, ssString) => {
@@ -2632,6 +2652,8 @@ const proteinSequenceToPdbText = (seq, ssString, title = 'GENERATED') => {
     'REMARK   1 Not an experimental or energy-minimized structure.',
   ];
   let serial = 1;
+  const serialOf = new Map();       // `${atomName}@${residueIndex}` → serial
+  const residueBondPairs = [];      // [{ i, bonds: [[an, bn], ...] }]
   residues.forEach((r, i) => {
     const char = seq[i];
     const resName = AA_1_TO_3[char] || 'UNK';
@@ -2653,7 +2675,7 @@ const proteinSequenceToPdbText = (seq, ssString, title = 'GENERATED') => {
       console.warn(`Backbone-H placement failed for residue ${i + 1} (${char}), continuing without them:`, e);
     }
     // Side chain -- never let one residue's spec kill the whole structure
-    let sidechain = [];
+    let sidechain = { atoms: [], bonds: [] };
     try {
       sidechain = placeSidechainAtoms(char, r);
     } catch (e) {
@@ -2662,14 +2684,43 @@ const proteinSequenceToPdbText = (seq, ssString, title = 'GENERATED') => {
     const ordered = [];
     ['N', 'CA', 'C', 'O', 'CB'].forEach((nm) => { if (r[nm]) ordered.push({ name: nm, pos: r[nm] }); });
     bbH.forEach((a) => ordered.push(a));
-    sidechain.forEach((a) => ordered.push(a));
+    (sidechain.atoms || []).forEach((a) => ordered.push(a));
     ordered.forEach((a) => {
       if (!a || !Array.isArray(a.pos) || a.pos.some((v) => !Number.isFinite(v))) return;
+      serialOf.set(`${a.name}@${i}`, serial);
       lines.push(pdbAtomLine({
         serial: serial++, atomName: a.name, element: a.name[0], resName, chain: 'A',
         resSeq: i + 1, x: a.pos[0], y: a.pos[1], z: a.pos[2],
       }));
     });
+    residueBondPairs.push({ i, bonds: sidechain.bonds || [] });
+  });
+  // Explicit CONECT records for every intended bond, so NGL renders exactly the
+  // covalent graph of the idealized structure and never invents bonds by distance
+  // (the side-chain protons sit close to several carbons, which previously
+  // produced confusing C–H "bonds" to non-bonded atoms).
+  const emitBond = (aName, bName) => {
+    if (aName === bName) return;
+    const sa = serialOf.get(aName);
+    const sb = serialOf.get(bName);
+    if (sa && sb) lines.push(`CONECT${String(sa).padStart(5)}${String(sb).padStart(5)}`);
+  };
+  residues.forEach((r, i) => {
+    const char = seq[i];
+    // Backbone + peptide bonds.
+    emitBond(`N@${i}`, `CA@${i}`);
+    emitBond(`CA@${i}`, `C@${i}`);
+    emitBond(`C@${i}`, `O@${i}`);
+    if (r.CB) emitBond(`CA@${i}`, `CB@${i}`);
+    emitBond(`CA@${i}`, `HA@${i}`);
+    if (i === 0) {
+      if (char !== 'P') ['H1', 'H2', 'H3'].forEach((h) => emitBond(`N@${i}`, `${h}@${i}`));
+    } else if (char !== 'P') {
+      emitBond(`N@${i}`, `H@${i}`);
+    }
+    if (i < residues.length - 1) emitBond(`C@${i}`, `N@${i + 1}`);
+    // Side-chain bonds (recorded by placeSidechainAtoms).
+    (residueBondPairs[i].bonds || []).forEach(([an, bn]) => emitBond(`${an}@${i}`, `${bn}@${i}`));
   });
   lines.push('TER', 'END');
   return lines.join('\n') + '\n';

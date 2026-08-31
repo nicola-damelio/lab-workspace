@@ -979,7 +979,7 @@ const applyFog = useCallback(() => {
 // "darkness" control: lowering the ambient light while raising the directional
 // one deepens every shadowed area. Persisted like the fog preference.
 const [shadowOn, setShadowOn] = useState(() => {
-  try { return localStorage.getItem('labViewerShadows') !== 'off'; } catch { return false; }
+  try { return String(localStorage.getItem('labViewerShadows') || '').startsWith('on'); } catch { return false; }
 });
 const [shadowDarkness, setShadowDarkness] = useState(() => {
   try {
@@ -1017,37 +1017,70 @@ const shadowRepsHook = (comp) => {
 };
 
 // Enable/configure the shadow map + lighting on the live stage.
+// The directional light and its shadow camera are positioned EXPLICITLY around
+// the loaded structure's bounding box, so enabling shadows can never push the
+// structure outside the shadow frustum (which would render everything pitch
+// black). If anything fails we fall back to a normal lit scene.
 const applyShadowSettings = useCallback(() => {
   const stage = stageRef.current;
   if (!stage || !stage.viewer) return;
+  const viewer = stage.viewer;
+  const on = shadowOnRef.current;
+  const dark = Math.min(1, Math.max(0, shadowDarknessRef.current));
   try {
-    const viewer = stage.viewer;
-    const on = shadowOnRef.current;
-    const dark = Math.min(1, Math.max(0, shadowDarknessRef.current));
     const renderer = viewer.renderer;
     if (renderer) {
       renderer.shadowMap.enabled = on;
       renderer.shadowMap.type = 2; // PCFSoftShadowMap
       renderer.shadowMap.autoUpdate = true;
     }
+    // Structure bounding box → shadow-frustum centre + radius.
+    let cx = 0, cy = 0, cz = 0, rad = 25;
+    try {
+      const comps = (stage.compList || []).filter((c) => c && c.structure);
+      let minX = Infinity, minY = Infinity, minZ = Infinity;
+      let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+      comps.forEach((c) => {
+        try {
+          const b = typeof c.getBoxUntransformed === 'function' ? c.getBoxUntransformed() : null;
+          if (!b || !b.min || !b.max) return;
+          minX = Math.min(minX, b.min.x); minY = Math.min(minY, b.min.y); minZ = Math.min(minZ, b.min.z);
+          maxX = Math.max(maxX, b.max.x); maxY = Math.max(maxY, b.max.y); maxZ = Math.max(maxZ, b.max.z);
+        } catch { /* skip this component */ }
+      });
+      if (Number.isFinite(minX) && Number.isFinite(maxX)) {
+        cx = (minX + maxX) / 2; cy = (minY + maxY) / 2; cz = (minZ + maxZ) / 2;
+        rad = Math.max(10, 0.5 * Math.hypot(maxX - minX, maxY - minY, maxZ - minZ));
+      }
+    } catch { /* keep defaults */ }
     const light = viewer.directionalLight;
     if (light) {
       light.castShadow = on;
       if (on) {
-        try { if (light.target && !light.target.parent) viewer.scene.add(light.target); } catch { /* keep defaults */ }
         try {
+          // Place the light above-and-diagonal from the structure centre and aim
+          // its shadow camera at that centre, so the whole structure is inside
+          // the shadow frustum regardless of how the user rotates/zooms.
+          const dist = rad * 4 + 8;
+          light.position.set(cx + dist, cy + dist, cz + dist);
+          if (!light.target) light.target = new (light.position.constructor)();
+          light.target.position.set(cx, cy, cz);
+          try { if (light.target && !light.target.parent) viewer.scene.add(light.target); } catch {}
+          try { light.target.updateMatrixWorld(); } catch {}
+          const half = rad * 2.5 + 6;
+          const sc = light.shadow.camera;
+          sc.left = -half; sc.right = half; sc.top = half; sc.bottom = -half;
+          sc.near = 0.5;
+          // NGL re-aims the light from the CAMERA position (up to ~100× the
+          // bounding-box length away) on every camera move — the far plane must
+          // comfortably reach that distance so the structure never falls outside.
+          sc.far = Math.max(5000, rad * 400 + 3000);
+          if (typeof sc.updateProjectionMatrix === 'function') sc.updateProjectionMatrix();
           light.shadow.mapSize.set(2048, 2048);
           light.shadow.bias = -0.0005;
           light.shadow.normalBias = 0.02;
           light.shadow.radius = 1 + dark * 10;
-          const bb = viewer.boundingBoxLength || 50;
-          const s = Math.max(20, bb * 1.4);
-          const sc = light.shadow.camera;
-          sc.left = -s; sc.right = s; sc.top = s; sc.bottom = -s;
-          sc.near = 1;
-          sc.far = Math.max(1000, bb * 260);
-          if (typeof sc.updateProjectionMatrix === 'function') sc.updateProjectionMatrix();
-        } catch { /* keep defaults */ }
+        } catch { /* shadow camera config is best-effort */ }
         setMeshShadows(viewer.scene);
       }
     }
@@ -1057,7 +1090,15 @@ const applyShadowSettings = useCallback(() => {
       ambientIntensity: on ? (0.3 * (1 - dark) + 0.03) : 0.3,
     });
     try { if (viewer.requestRender) viewer.requestRender(); } catch {}
-  } catch { /* shadow settings are best-effort */ }
+  } catch (err) {
+    // Never lose the view because of a shadow tweak: disable the shadow map and
+    // restore normal lighting if anything above failed.
+    try { if (viewer && viewer.renderer) viewer.renderer.shadowMap.enabled = false; } catch {}
+    try { if (viewer && viewer.directionalLight) viewer.directionalLight.castShadow = false; } catch {}
+    try { stage.setParameters({ lightIntensity: 1.2, ambientIntensity: 0.3 }); } catch {}
+    try { if (viewer && viewer.requestRender) viewer.requestRender(); } catch {}
+    console.warn('Shadow settings disabled (best-effort):', err && err.message);
+  }
 }, []);
 
 // Persist + apply the shadow preference whenever it changes.
@@ -1436,7 +1477,7 @@ const loadChainMolecule = useCallback(async (blob, name, ci) => {
     const baseReps = applyCurrentStyleTo(comp, []);
     shadowRepsHook(comp);
     if (shadowOnRef.current) setMeshShadows(comp);
-    extraCompsRef.current.push({ id: `chain_${Date.now()}_${ci}`, name, comp, baseReps, style: 'auto', color: '' });
+    extraCompsRef.current.push({ id: `chain_${Date.now()}_${ci}`, name, comp, baseReps, style: 'auto', color: '', colorMode: 'element', transparency: 0, position: [0, 0, 0] });
     try { comp.setVisibility(false); } catch {}
   } catch { /* chain load failed — keep it inside the main component */ }
 }, [applyCurrentStyleTo]);
@@ -1611,7 +1652,7 @@ try {
             : (part.chainId && part.chainId !== '_' ? `Chain ${part.chainId}` : `Molecule ${ci + 1}`);
           await loadChainMolecule(part.blob, label, ci);
         }
-        setExtraMols(extraCompsRef.current.map(({ id: xid, name: xname, style, color }) => ({ id: xid, name: xname, style, color })));
+        setExtraMols(extraMolsSnapshot());
       }
     }
   }
@@ -2179,11 +2220,16 @@ useEffect(() => {
 useEffect(() => {
   if (status !== 'ready') return;
   extraCompsRef.current.forEach((entry) => {
-    if (entry && entry.comp) {
+    if (!entry || !entry.comp) return;
+    if (entry.style && entry.style !== 'auto') {
+      // Custom-styled molecules keep their per-molecule style / colour / position.
+      restyleExtraMol(entry.id);
+    } else {
       entry.baseReps = applyCurrentStyleTo(entry.comp, entry.baseReps || []);
     }
   });
   try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [backboneStyle, moleculeStyle, status, applyCurrentStyleTo]);
 
 // Background colour + quality ("ray shadows" approximation)
@@ -2549,8 +2595,8 @@ try {
   if (shadowOnRef.current) setMeshShadows(comp);
   const name = file.name || `Molecule ${n}`;
   const id = `mol_${Date.now()}_${n}`;
-  extraCompsRef.current.push({ id, name, comp, baseReps, style: 'auto', color: '' });
-  setExtraMols(extraCompsRef.current.map(({ id: xid, name: xname, style, color }) => ({ id: xid, name: xname, style, color })));
+  extraCompsRef.current.push({ id, name, comp, baseReps, style: 'auto', color: '', colorMode: 'element', transparency: 0, position: [0, 0, 0] });
+  setExtraMols(extraMolsSnapshot());
   try { comp.setVisibility(false); } catch {}
   // NOTE: no comp.autoView() here — the extra is HIDDEN and autoView would move
   // the camera away from the main structure. The camera is re-centred on the
@@ -2560,21 +2606,33 @@ try {
 }
 }, [applyCurrentStyleTo]);
 
+// Snapshot of the Molecules-bar entries (used by every setExtraMols call).
+const extraMolsSnapshot = () => extraCompsRef.current.map(({ id, name, style, color, colorMode, transparency, position }) => ({ id, name, style, color, colorMode, transparency, position }));
+
 // Per-extra-structure style/color overrides. Each entry in the Molecules bar can
 // be rendered independently: "auto" follows the global Backbone / Molecule Style
-// selectors; anything else rebuilds that component with ONE chosen style + color.
-const restyleExtraMol = (id, style, color) => {
+// selectors; anything else rebuilds that component with ONE chosen style, colour
+// metaphor (atom type / chain / residue / 2° structure / hydrophobicity / solid),
+// solid colour and transparency.
+const restyleExtraMol = (id) => {
   const entry = extraCompsRef.current.find((e) => e.id === id);
   const comp = entry && entry.comp;
   if (!comp || !comp.structure) return;
   try { comp.removeAllRepresentations(); } catch {}
   let reps = [];
+  const st = entry || {};
+  const style = st.style;
   if (!style || style === 'auto') {
     reps = applyCurrentStyleTo(comp, []);
   } else {
-    const opts = color ? { color } : { colorScheme: 'element' };
+    // Colouring metaphor — a NGL colorScheme, or a plain solid colour when
+    // "Solid" is selected (mirrors the Selections panel).
+    const colorScheme = st.colorMode && st.colorMode !== 'solid' ? st.colorMode : undefined;
+    const color = colorScheme ? undefined : (st.color != null ? st.color : undefined);
+    const opacity = st.transparency != null ? Math.max(0, Math.min(1, 1 - st.transparency)) : undefined;
+    const opts = { colorScheme, color, opacity };
     try {
-      if (style === 'cartoon') reps.push(comp.addRepresentation('cartoon', color ? { color } : { colorScheme: 'residueindex' }));
+      if (style === 'cartoon') reps.push(comp.addRepresentation('cartoon', { colorScheme, color, opacity }));
       else if (style === 'ball+stick') reps.push(comp.addRepresentation('ball+stick', { ...opts, multipleBond: true, aspectRatio: 1.3 }));
       else if (style === 'sticks') reps.push(comp.addRepresentation('stick', { ...opts, multipleBond: true }));
       else if (style === 'lines') reps.push(comp.addRepresentation('line', { ...opts }));
@@ -2589,16 +2647,60 @@ const restyleExtraMol = (id, style, color) => {
 
 const setExtraMolStyle = (id, style) => {
   extraCompsRef.current.forEach((e) => { if (e.id === id) e.style = style; });
-  setExtraMols(extraCompsRef.current.map(({ id: xid, name, style: s, color }) => ({ id: xid, name, style: s, color })));
-  const entry = extraCompsRef.current.find((e) => e.id === id);
-  restyleExtraMol(id, style, (entry && entry.color) || '');
+  setExtraMols(extraMolsSnapshot());
+  restyleExtraMol(id);
 };
 
 const setExtraMolColor = (id, color) => {
-  extraCompsRef.current.forEach((e) => { if (e.id === id) e.color = color; });
-  setExtraMols(extraCompsRef.current.map(({ id: xid, name, style: s, color: c }) => ({ id: xid, name, style: s, color: c })));
+  extraCompsRef.current.forEach((e) => { if (e.id === id) { e.color = color; e.colorMode = 'solid'; } });
+  setExtraMols(extraMolsSnapshot());
+  restyleExtraMol(id);
+};
+
+const setExtraMolColorMode = (id, mode) => {
+  extraCompsRef.current.forEach((e) => { if (e.id === id) e.colorMode = mode; });
+  setExtraMols(extraMolsSnapshot());
+  restyleExtraMol(id);
+};
+
+const setExtraMolTransparency = (id, t) => {
+  extraCompsRef.current.forEach((e) => { if (e.id === id) e.transparency = t; });
+  setExtraMols(extraMolsSnapshot());
+  restyleExtraMol(id);
+};
+
+// Move ONE structure independently: translate its NGL component along an axis
+// (position is stored in Ångström, in the structure's own coordinate system).
+const setExtraMolPosition = (id, axis, value) => {
   const entry = extraCompsRef.current.find((e) => e.id === id);
-  restyleExtraMol(id, (entry && entry.style) || 'auto', color);
+  if (!entry) return;
+  const pos = (entry.position || [0, 0, 0]).slice();
+  pos[axis] = Number(value) || 0;
+  entry.position = pos;
+  setExtraMols(extraMolsSnapshot());
+  try {
+    const comp = entry.comp;
+    if (comp && typeof comp.setPosition === 'function') {
+      comp.setPosition(pos);
+      if (typeof comp.updateMatrix === 'function') comp.updateMatrix();
+      if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender();
+    }
+  } catch { /* position best-effort */ }
+};
+
+const resetExtraMolPosition = (id) => {
+  const entry = extraCompsRef.current.find((e) => e.id === id);
+  if (!entry) return;
+  entry.position = [0, 0, 0];
+  setExtraMols(extraMolsSnapshot());
+  try {
+    const comp = entry.comp;
+    if (comp && typeof comp.setPosition === 'function') {
+      comp.setPosition([0, 0, 0]);
+      if (typeof comp.updateMatrix === 'function') comp.updateMatrix();
+      if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender();
+    }
+  } catch { /* best-effort */ }
 };
 
 // Delete ONE extra structure (its NGL component + Molecules-bar entry).
@@ -2607,7 +2709,7 @@ const deleteExtraMol = (id) => {
   if (idx < 0) return;
   const [entry] = extraCompsRef.current.splice(idx, 1);
   try { if (stageRef.current) stageRef.current.removeComponent(entry.comp); } catch {}
-  setExtraMols(extraCompsRef.current.map(({ id: xid, name, style, color }) => ({ id: xid, name, style, color })));
+  setExtraMols(extraMolsSnapshot());
   setVisibleMolKeys((prev) => { const n = new Set(prev); n.delete(id); return n; });
   if (selectedMolKey === id) setSelectedMolKey('main');
   try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
@@ -2689,7 +2791,7 @@ const doKeepBoth = useCallback(async (files) => {
     await loadExtraStructureFile(f);
     if (driveNaming) archiveFileToDrive({ file: f, ctx: driveNaming }).catch(() => {});
   }
-  setExtraMols(extraCompsRef.current.map(({ id, name, style, color }) => ({ id, name, style, color })));
+  setExtraMols(extraMolsSnapshot());
   // Show the newly kept structures right away.
   setVisibleMolKeys((prev) => {
     const n = new Set(prev);
@@ -3418,11 +3520,40 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
               <option value="spheres">Spheres</option>
               <option value="surface">Surface</option>
             </select>
-            <label className="text-[9px] text-slate-400 font-bold flex items-center gap-0.5" title="Override the colour of this structure">
-              Color
-              <input type="color" value={m.color || '#dddddd'} onChange={(e) => setExtraMolColor(m.id, e.target.value)}
-                className="w-5 h-5 rounded border cursor-pointer" />
+            <label className="text-[9px] text-slate-400 font-bold flex items-center gap-0.5" title="Colouring of this structure (applies to the chosen style above)">
+              Colour
+              <select value={m.colorMode || 'element'} onChange={(e) => setExtraMolColorMode(m.id, e.target.value)}
+                className="border border-slate-200 rounded text-[9px] py-0.5 px-1 w-20" title="Colouring metaphor">
+                <option value="solid">Solid</option>
+                <option value="element">Atom type</option>
+                <option value="chainid">Chain</option>
+                <option value="resname">Residue</option>
+                <option value="sstruc">2° structure</option>
+                <option value="hydrophobicity">Hydrophobicity</option>
+              </select>
             </label>
+            <input type="color" value={m.color || '#dddddd'} disabled={(m.colorMode || 'element') !== 'solid'}
+              onChange={(e) => setExtraMolColor(m.id, e.target.value)}
+              className={`w-5 h-5 rounded border cursor-pointer ${(m.colorMode || 'element') !== 'solid' ? 'opacity-30 cursor-not-allowed' : ''}`}
+              title="Solid colour (used when Colour = Solid)" />
+          </div>
+          <div className="flex items-center gap-1 mt-0.5 pl-5" title="Transparency of this structure">
+            <span className="text-[9px] text-slate-400 font-bold shrink-0">Transp</span>
+            <input type="range" min="0" max="1" step="0.05" value={m.transparency || 0}
+              onChange={(e) => setExtraMolTransparency(m.id, parseFloat(e.target.value))}
+              className="accent-blue-600 w-full" />
+          </div>
+          <div className="flex items-center gap-1 mt-0.5 pl-5" title="Move this structure independently (Å)">
+            <span className="text-[9px] text-slate-400 font-bold shrink-0">Move</span>
+            {['X', 'Y', 'Z'].map((ax, ai) => (
+              <label key={ax} className="flex items-center gap-0.5 text-[9px] text-slate-400 font-bold" title={`Shift this structure along ${ax}`}>
+                {ax}
+                <input type="number" step="1" value={(m.position && m.position[ai]) || 0}
+                  onChange={(e) => setExtraMolPosition(m.id, ai, e.target.value)}
+                  className="border border-slate-200 rounded text-[9px] py-0.5 px-1 w-12" />
+              </label>
+            ))}
+            <button type="button" onClick={() => resetExtraMolPosition(m.id)} className="text-[9px] font-bold text-slate-500 hover:text-slate-800 underline" title="Reset position">↺</button>
           </div>
         </div>
       ))}
