@@ -1601,11 +1601,14 @@ export const Data = ({ ctx }) => {
         let parsed = null;
         if (isJascoJwsBinary(buf)) {
           parsed = parseJascoJwsBinary(buf);
-          parsed.title = parsed.title || f.name.replace(/\.[^/.]+$/, '');
         } else {
           const text = new TextDecoder('utf-8').decode(buf);
           parsed = parseJascoCDText(text);
         }
+        // Name the spectrum after the source FILE: the JASCO metadata "Sample
+        // name" is often a constant shared by every file of the same run, which
+        // made every imported spectrum show the same title.
+        if (f.name) parsed.title = f.name.replace(/\.[^/.]+$/, '') || parsed.title;
         if (parsed.xs.length) {
           parsed.filename = f.name;
           parsed.rawFile = f; // keep the raw file for Drive archiving

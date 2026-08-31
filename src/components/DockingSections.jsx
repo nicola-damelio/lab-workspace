@@ -130,7 +130,19 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
   const d = useDockingDerived(activeTest, ctx);
 
-  const structureMode = activeTest.structureMode || '2d';
+  // Docking cluster structures (8_seletopclusts) read by the calculation-directory
+  // importer — the full PDB texts live in localStorage, keyed by the test id.
+  const structKey = `labDockingStructures_${activeTest.id || 'global'}`;
+  const [structList, setStructList] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(structKey) || '[]'); } catch { return []; }
+  });
+  const [structIdx, setStructIdx] = useState(0);
+  const hasDockStructs = Array.isArray(structList) && structList.length > 0;
+  const selectedStruct = hasDockStructs ? (structList[structIdx] || structList[0] || null) : null;
+
+  // When the calculation-directory importer brought cluster structures, open the
+  // 3D viewer by default so they are actually visible (instead of a plain protein).
+  const structureMode = activeTest.structureMode || (hasDockStructs ? '3d' : '2d');
   const [hasOpened3D, setHasOpened3D] = useState(structureMode === '3d');
   const [expandedPanel, setExpandedPanel] = useState(null);
   const [ssBrush, setSSBrush] = useState('H');
@@ -182,6 +194,12 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
   const structureSrc = useMemo(() => {
     const raw = (activeTest.structureSrc || '').trim();
     if (!raw) {
+      // Only offer a demo structure once the user has actually defined a
+      // receptor (sequence / SMILES / compound) — a brand-new docking
+      // experiment should NOT silently load a generic protein.
+      const hasDefinedSystem = !!(activeTest.proteinSequence || activeTest.smiles ||
+        activeTest.ligandPdbId || (activeTest.selectedCompounds || []).length || (activeTest.compoundsSelected || []).length);
+      if (!hasDefinedSystem) return '';
       if (d.moleculeType === 'protein') return 'https://models.rcsb.org/1UBQ.mmtf';
       if (d.moleculeType === 'dna') return 'https://models.rcsb.org/1BNA.mmtf';
       if (d.moleculeType === 'rna') return 'https://models.rcsb.org/1EHZ.mmtf';
@@ -190,16 +208,10 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
     if (/^(https?:|blob:|data:)/i.test(raw) || raw.startsWith('/')) return raw;
     if (/^[0-9][A-Za-z0-9]{3}$/.test(raw)) return `https://models.rcsb.org/${raw.toUpperCase()}.mmtf`;
     return raw;
-  }, [activeTest.structureSrc, d.moleculeType]);
+  }, [activeTest.structureSrc, d.moleculeType, activeTest.proteinSequence, activeTest.smiles, activeTest.ligandPdbId, activeTest.selectedCompounds, activeTest.compoundsSelected]);
 
-  // Docking cluster structures (8_seletopclusts) read by the calculation-directory
-  // importer — the full PDB texts live in localStorage, keyed by the test id.
-  const structKey = `labDockingStructures_${activeTest.id || 'global'}`;
-  const [structList, setStructList] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(structKey) || '[]'); } catch { return []; }
-  });
-  const [structIdx, setStructIdx] = useState(0);
-  const selectedStruct = Array.isArray(structList) ? (structList[structIdx] || structList[0] || null) : null;
+  // Keep the structure list in sync when the calculation-directory importer
+  // stores new structures (the states are declared above the viewer).
   useEffect(() => {
     try { setStructList(JSON.parse(localStorage.getItem(structKey) || '[]')); } catch { /* ignore */ }
   }, [structKey, activeTest.dockingStructures]);
@@ -596,22 +608,37 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
     };
     const done = [];
     const notes = [];
+    const warnings = [];
 
-    // 1) capri_ss.tsv → the Data table (full TSV content)
-    const capriFile = list.find((f) => /(^|\/)9_caprieval\/capri_ss\.tsv$/i.test(lower(f.webkitRelativePath || f.name)));
+    // 1) capri_ss.tsv → the Data results table (mapped onto the existing
+    //    nice table: editable cells, green best row, affinity highlight).
+    const capriFile = list.find((f) => /capri_ss\.tsv$/i.test(lower(f.webkitRelativePath || f.name)));
     if (capriFile) {
       const text = await readText(capriFile);
       const parsed = parseCapriTsv(text);
       if (parsed) {
         const driveUrl = await archive('capri_ss.tsv', 'text/tab-separated-values', new Blob([text], { type: 'text/tab-separated-values' }));
+        // Map the CAPRI columns onto the docking metric keys used by the table.
+        const metricMap = { score: 'affinity', lrmsd: 'rmsd_lb', ilrmsd: 'rmsd_ub', total: 'energy_total', air: 'energy_air', desolv: 'energy_desolv', elec: 'energy_elec', vdw: 'energy_vdw', bsa: 'bsa' };
+        const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : ''; };
+        const poses = parsed.rows.map((row, i) => {
+          const get = (name) => { const ix = parsed.columns.indexOf(name); return ix >= 0 ? row[ix] : ''; };
+          const label = String(get('model') || '').split('/').pop() || `Pose ${i + 1}`;
+          const pose = { mode: num(get('caprieval_rank')) || i + 1, label, program: 'haddock' };
+          Object.entries(metricMap).forEach(([capriName, key]) => { pose[key] = num(get(capriName)); });
+          // Keep every raw CAPRI value so the full table can be shown too.
+          parsed.columns.forEach((c, ci) => { pose[`capri_${c}`] = row[ci] !== undefined ? row[ci] : ''; });
+          return pose;
+        });
+        onPoses(poses, 'haddock');
         updateActiveTest({ dockingCapri: { ...parsed, sourceName: capriFile.name || 'capri_ss.tsv', driveUrl } });
-        done.push(`capri_ss.tsv → Data table (${parsed.rows.length} rows)`);
+        done.push(`capri_ss.tsv → results table (${poses.length} poses)`);
         notes.push(driveUrl ? 'stored on Drive' : 'Drive not connected — local only');
       }
     }
 
-    // 2) raw_input.toml → link in Instrumental Setup
-    const tomlFile = list.find((f) => /(^|\/)data\/configurations\/raw_input\.toml$/i.test(lower(f.webkitRelativePath || f.name)));
+    // 2) raw_input.toml → link in Instrumental Setup (searched anywhere in the tree)
+    const tomlFile = list.find((f) => /raw_input\.toml$/i.test(lower(f.webkitRelativePath || f.name)));
     if (tomlFile) {
       const text = await readText(tomlFile);
       const toml = parseTomlSimple(text);
@@ -619,10 +646,13 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
       updateActiveTest({ dockingRawInput: { ...toml, fileName: tomlFile.name || 'raw_input.toml', driveUrl } });
       done.push('raw_input.toml → link in Instrumental Setup');
       notes.push(driveUrl ? 'stored on Drive' : 'Drive not connected — local only');
+    } else {
+      warnings.push('raw_input.toml not found — expected it under data/configurations/raw_input.toml');
     }
 
     // 3) 8_seletopclusts/*.pdb[.gz] → 3D viewer structures
-    const pdbFiles = list.filter((f) => /(^|\/)8_seletopclusts\/[^/]+\.(pdb|pdb\.gz)$/i.test(lower(f.webkitRelativePath || f.name)));
+    let pdbFiles = list.filter((f) => /(^|\/)(8_)?seletopclusts?\/[^/]+\.(pdb|pdb\.gz)$/i.test(lower(f.webkitRelativePath || f.name)));
+    if (!pdbFiles.length) pdbFiles = list.filter((f) => /\.(pdb|pdb\.gz)$/i.test(lower(f.webkitRelativePath || f.name)));
     const structs = [];
     for (const f of pdbFiles) {
       const rel = f.webkitRelativePath || f.name;
@@ -653,7 +683,7 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
     }
 
     setCalcDirBusy(false);
-    setReport({ ok: done.length, items: done, notes });
+    setReport({ ok: done.length, items: done, notes, warnings });
   };
 
   return (
@@ -752,6 +782,9 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
                 ))
                 : `✅ Imported ${report.ok} poses (${report.type})`
             : '⚠️ No recognized data — select a results file, paste output text, or pick a HADDOCK calculation directory.'}
+          {report.warnings && report.warnings.map((w, i) => (
+            <span key={i} className="text-amber-600">⚠️ {w}</span>
+          ))}
         </div>
       )}
     </div>
@@ -774,6 +807,13 @@ export const DockingDataSection = ({ ctx }) => {
 
   const metricCols = DOCKING_METRICS.filter((m) =>
     d.poses.some((p) => p[m.key] !== undefined && p[m.key] !== null)
+  );
+
+  // CAPRI columns that are NOT shown as a mapped metric still appear in the
+  // results table (e.g. irmsd, fnat, dockq, cluster_id, energy components…).
+  const capriMetricMapKeys = new Set(['score', 'lrmsd', 'ilrmsd', 'total', 'air', 'desolv', 'elec', 'vdw', 'bsa']);
+  const capriExtraCols = (activeTest.dockingCapri && activeTest.dockingCapri.columns || []).filter(
+    (c) => !capriMetricMapKeys.has(c) && !DOCKING_METRICS.some((m) => m.key === c)
   );
 
   return (
@@ -812,38 +852,28 @@ export const DockingDataSection = ({ ctx }) => {
 
       {showImport && <DockingImportPanel ctx={ctx} d={d} onPoses={handlePoses} />}
 
-      {activeTest.dockingCapri && activeTest.dockingCapri.columns && activeTest.dockingCapri.rows && (
-        <div className="border border-slate-200 rounded-lg overflow-hidden">
-          <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-100 px-3 py-2">
-            <span className="text-xs font-black text-slate-600 uppercase">CAPRI quality — capri_ss.tsv</span>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-slate-500">{activeTest.dockingCapri.rows.length} rows</span>
-              {activeTest.dockingCapri.driveUrl && (
-                <a href={activeTest.dockingCapri.driveUrl} target="_blank" rel="noreferrer" className="text-[10px] font-bold text-sky-700 hover:underline">☁️ Open on Drive</a>
-              )}
-            </div>
-          </div>
-          <div className="overflow-x-auto max-h-[520px]">
-            <table className="w-full text-xs text-left">
-              <thead className="text-[10px] text-slate-500 uppercase bg-slate-50 sticky top-0 z-10">
-                <tr>
-                  {activeTest.dockingCapri.columns.map((c) => (
-                    <th key={c} className="px-2.5 py-2 font-bold border-b border-slate-200 whitespace-nowrap">{c}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 bg-white">
-                {activeTest.dockingCapri.rows.map((row, ri) => (
-                  <tr key={ri} className={ri === 0 ? 'bg-green-50/40' : 'hover:bg-slate-50'}>
-                    {row.map((cell, ci) => (
-                      <td key={ci} className="px-2.5 py-1.5 whitespace-nowrap font-mono text-slate-600">{cell}</td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+      {activeTest.dockingRawInput && (
+        <div className="flex flex-wrap items-center gap-2 text-[11px]">
+          <span className="font-bold text-slate-600 uppercase">Calculation input:</span>
+          {activeTest.dockingRawInput.driveUrl ? (
+            <a href={activeTest.dockingRawInput.driveUrl} target="_blank" rel="noreferrer"
+              className="font-bold text-sky-700 hover:underline bg-sky-50 border border-sky-200 rounded-lg px-2 py-0.5">
+              📄 {activeTest.dockingRawInput.fileName || 'raw_input.toml'} · open on Drive ↗
+            </a>
+          ) : (
+            <span className="font-bold text-slate-500">📄 {activeTest.dockingRawInput.fileName || 'raw_input.toml'} (read locally)</span>
+          )}
         </div>
+      )}
+
+      {activeTest.dockingCapri && (
+        <p className="text-[10px] text-slate-500 flex flex-wrap items-center gap-2">
+          <span className="font-bold text-slate-600 uppercase">CAPRI quality — capri_ss.tsv</span>
+          <span>{activeTest.dockingCapri.rows.length} poses imported into the results table below.</span>
+          {activeTest.dockingCapri.driveUrl && (
+            <a href={activeTest.dockingCapri.driveUrl} target="_blank" rel="noreferrer" className="font-bold text-sky-700 hover:underline">☁️ Open capri_ss.tsv on Drive</a>
+          )}
+        </p>
       )}
 
       <div className="overflow-x-auto border border-slate-200 rounded-lg max-h-[520px]">
@@ -856,6 +886,9 @@ export const DockingDataSection = ({ ctx }) => {
                 <th key={m.key} className="px-3 py-3 font-bold text-blue-700 border-b bg-blue-50/50">
                   {m.label}{m.unit ? ` (${m.unit})` : ''}
                 </th>
+              ))}
+              {capriExtraCols.map((c) => (
+                <th key={c} className="px-3 py-3 font-bold text-violet-700 border-b bg-violet-50/50" title="CAPRI quality column">{c}</th>
               ))}
             </tr>
           </thead>
@@ -887,6 +920,9 @@ export const DockingDataSection = ({ ctx }) => {
                     </td>
                   );
                 })}
+                {capriExtraCols.map((c) => (
+                  <td key={c} className="px-3 py-1.5 text-center text-xs font-mono text-slate-600 whitespace-nowrap">{pose[`capri_${c}`]}</td>
+                ))}
               </tr>
             ))}
           </tbody>

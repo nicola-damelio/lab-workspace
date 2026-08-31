@@ -3,7 +3,7 @@ import {
   readLibrary, readProjectLibrary, moveLibraryItem,
   renameLibraryItem, removeLibraryItem, renameProjectLibraryItem, removeProjectLibraryItem
 } from '../utils/figuresLibrary';
-import { loadProjects } from './AppModules/projectsModule';
+import { loadProjects, saveProjects, genProjectId } from './AppModules/projectsModule';
 
 const ptToMm = (pt) => pt * 0.352778;
 const PX_PER_MM = 96 / 25.4; // CSS: 1 mm ≈ 3.78 px
@@ -27,6 +27,10 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   const [libProjectId, setLibProjectId] = useState(null); // which project's library to browse (null = the active one)
   const [placeTextMode, setPlaceTextMode] = useState(false); // click on the object to add text there
   const [globalCaption, setGlobalCaption] = useState('');     // figure-wide caption at the bottom
+  const [editingText, setEditingText] = useState(null);       // { objId, txId, mmX, mmY, value } — type directly on the canvas
+  const [insertOpen, setInsertOpen] = useState(false);        // "insert into project section" modal
+  const [insertTarget, setInsertTarget] = useState({ projectId: projectId || '', section: 'background', caption: '' });
+  const [insertMsg, setInsertMsg] = useState('');
 
   const allProjects = loadProjects();
   const activeLibProjectId = libProjectId || projectId; // project library scope currently browsed
@@ -100,6 +104,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
       captionStyle: { fontSize: 10, color: '#000000', bold: false },
       imgSrc: null, imgFit: 'contain', imgScale: 1, imgPadding: 2,
       imgOffsetX: 0, imgOffsetY: 0,  // shift the image inside the object frame (mm)
+      imgRotate: 0,                   // image rotation (degrees)
       texts: [],                      // free text overlays [{ id, x, y, text, fontSize, color, bold, italic }]
       src: null                       // { testId, testName, elementLabel } — link back to the original graph
     };
@@ -185,7 +190,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
 
   const onDrag = (e) => {
     if (!dragState.current) return;
-    const { type, id, textId, startX, startY, origX, origY, origW, origH } = dragState.current;
+    const { type, id, textId, startX, startY, origX, origY, origW, origH, origScale } = dragState.current;
     const svgEl = svgRef.current;
     if (!svgEl) return;
 
@@ -201,6 +206,17 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
       setObjects(prev => prev.map(o => {
         if (o.id !== id) return o;
         return { ...o, imgOffsetX: +(origX + dxMm).toFixed(2), imgOffsetY: +(origY + dyMm).toFixed(2) };
+      }));
+      return;
+    }
+
+    // Dragging the image resize handle → resize the image by drag & drop.
+    if (type === 'imgResize') {
+      setObjects(prev => prev.map(o => {
+        if (o.id !== id) return o;
+        const baseW = Math.max(1, (o.w * cellW) - (o.imgPadding || 0) * 2);
+        const factor = Math.max(0.1, Math.min(5, (baseW + dxMm) / baseW));
+        return { ...o, imgScale: +(origScale * factor).toFixed(3) };
       }));
       return;
     }
@@ -254,6 +270,16 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
     window.addEventListener('mouseup', endDrag);
   };
 
+  // Start dragging the IMAGE RESIZE handle (bottom-right corner of the image).
+  const startImageResize = (e, objId) => {
+    e.stopPropagation();
+    const obj = objects.find(o => o.id === objId);
+    if (!obj || !obj.imgSrc) return;
+    dragState.current = { type: 'imgResize', id: objId, startX: e.clientX, startY: e.clientY, origScale: obj.imgScale || 1 };
+    window.addEventListener('mousemove', onDrag);
+    window.addEventListener('mouseup', endDrag);
+  };
+
   // ---- free text overlays --------------------------------------------------
   // Add a text at a given position (mm inside the object) — used by the
   // "+ Add Text" button (centre) and by "Place by click" (mouse position).
@@ -267,7 +293,14 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
     };
     setObjects(prev => prev.map(o => o.id === obj.id ? { ...o, texts: [...(o.texts || []), tx] } : o));
     setPlaceTextMode(false);
+    // Start typing directly on the canvas at the placed position.
+    setEditingText({ objId: obj.id, txId: id, mmX: obj.x * cellW + tx.x, mmY: obj.y * cellH + tx.y, value: tx.text });
   };
+  const setTextValue = (objId, txId, value) => {
+    setObjects(prev => prev.map(o => o.id === objId ? { ...o, texts: (o.texts || []).map(t => t.id === txId ? { ...t, text: value } : t) } : o));
+    setEditingText(prev => (prev && prev.txId === txId ? { ...prev, value } : prev));
+  };
+  const stopEditing = () => setEditingText(null);
   const addText = () => {
     if (!selectedId) return;
     const obj = objects.find(o => o.id === selectedId);
@@ -315,44 +348,58 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
     setPanY((ah - ohPx * scale) / 2 - oyMm * PX_PER_MM * scale);
   };
 
+  // Centre the whole canvas in the fullscreen viewport (no focused object).
+  const centerCanvas = () => {
+    const area = fsAreaRef.current;
+    if (!area) return;
+    const aw = Math.max(120, area.clientWidth - 64); // p-8 padding
+    const ah = Math.max(120, area.clientHeight - 64);
+    const cw = canvasW * PX_PER_MM * zoom;
+    const ch = (canvasH + captionH) * PX_PER_MM * zoom;
+    setPanX(Math.max(0, (aw - cw) / 2));
+    setPanY(Math.max(0, (ah - ch) / 2));
+  };
+
   useEffect(() => {
-    if (isFullScreen && focusObjId) recenterFocus();
+    if (!isFullScreen) return;
+    if (focusObjId) recenterFocus();
+    else centerCanvas();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isFullScreen, focusObjId]);
 
-  // Export to 300 DPI PNG
-  const exportPng = async () => {
+  // Render the composition (without selection UI) to a PNG data URL.
+  const renderToDataUrl = (outScale = 11.8) => new Promise((resolve) => {
     const svgEl = svgRef.current;
-    if (!svgEl) return;
-
+    if (!svgEl) { resolve(null); return; }
     const clone = svgEl.cloneNode(true);
     clone.querySelectorAll('[data-selection-ui="true"]').forEach(el => el.remove());
-
     const svgData = new XMLSerializer().serializeToString(clone);
     const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
     const url = URL.createObjectURL(svgBlob);
-
     const img = new Image();
     img.onload = () => {
-      const scale = 11.8; // ~300 DPI
       const canvas = document.createElement('canvas');
-      canvas.width = Math.round(canvasW * scale);
-      canvas.height = Math.round((canvasH + captionH) * scale);
+      canvas.width = Math.round(canvasW * outScale);
+      canvas.height = Math.round((canvasH + captionH) * outScale);
       const ctx = canvas.getContext('2d');
       ctx.fillStyle = 'white';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       URL.revokeObjectURL(url);
-
-      canvas.toBlob((blob) => {
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `figure_${Date.now()}.png`;
-        a.click();
-        URL.revokeObjectURL(a.href);
-      }, 'image/png');
+      resolve(canvas.toDataURL('image/png'));
     };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
     img.src = url;
+  });
+
+  // Export to 300 DPI PNG
+  const exportPng = async () => {
+    const dataUrl = await renderToDataUrl(11.8);
+    if (!dataUrl) return;
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = `figure_${Date.now()}.png`;
+    a.click();
   };
 
   const selectedObj = objects.find(o => o.id === selectedId);
@@ -409,6 +456,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
                 <image
                   href={obj.imgSrc}
                   x={imgX} y={imgY} width={imgW} height={imgH}
+                  transform={(obj.imgRotate || 0) ? `rotate(${obj.imgRotate} ${imgX + imgW / 2} ${imgY + imgH / 2})` : undefined}
                   preserveAspectRatio={obj.imgFit === 'cover' ? 'xMidYMid slice' : obj.imgFit === 'stretch' ? 'none' : 'xMidYMid meet'}
                   style={{ pointerEvents: 'none' }}
                 />
@@ -416,6 +464,11 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
                   <rect data-selection-ui="true" x={Math.max(ox, imgX)} y={Math.max(oy, imgY)} width={Math.min(ow, imgW)} height={Math.min(oh, imgH)} fill="transparent"
                     style={{ cursor: 'move' }} onMouseDown={(e) => startImageShift(e, obj.id)}
                     title="Drag to shift the image inside the frame (or hold Shift while dragging anywhere on the object)" />
+                )}
+                {isSelected && (
+                  <rect data-selection-ui="true" x={Math.max(ox, imgX) + Math.min(ow, imgW) - 5} y={Math.max(oy, imgY) + Math.min(oh, imgH) - 5} width={6} height={6} fill="#3b82f6"
+                    style={{ cursor: 'nwse-resize' }} onMouseDown={(e) => startImageResize(e, obj.id)}
+                    title="Drag to resize the image" />
                 )}
               </g>
             )}
@@ -432,20 +485,25 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
               </text>
             )}
 
-            {/* Free text overlays — draggable anywhere inside the object */}
-            {(obj.texts || []).map(tx => (
-              <text
-                key={tx.id}
-                x={ox + tx.x}
-                y={oy + tx.y}
-                fontSize={ptToMm(tx.fontSize || 12)}
-                fill={tx.color || '#000000'}
-                fontWeight={tx.bold ? 'bold' : 'normal'}
-                fontStyle={tx.italic ? 'italic' : 'normal'}
-                style={{ pointerEvents: isSelected ? 'auto' : 'none', cursor: isSelected ? 'move' : 'default' }}
-                onMouseDown={isSelected ? (e) => startTextDrag(e, obj.id, tx.id) : undefined}
-              >{tx.text}</text>
-            ))}
+            {/* Free text overlays — draggable anywhere inside the object; double-click to edit in place */}
+            {(obj.texts || []).map(tx => {
+              const isEditing = editingText && editingText.txId === tx.id;
+              return (
+                <text
+                  key={tx.id}
+                  x={ox + tx.x}
+                  y={oy + tx.y}
+                  fontSize={ptToMm(tx.fontSize || 12)}
+                  fill={tx.color || '#000000'}
+                  fontWeight={tx.bold ? 'bold' : 'normal'}
+                  fontStyle={tx.italic ? 'italic' : 'normal'}
+                  opacity={isEditing ? 0 : 1}
+                  style={{ pointerEvents: isSelected ? 'auto' : 'none', cursor: isSelected ? 'move' : 'default' }}
+                  onMouseDown={isSelected && !isEditing ? (e) => startTextDrag(e, obj.id, tx.id) : undefined}
+                  onDoubleClick={isSelected ? () => setEditingText({ objId: obj.id, txId: tx.id, mmX: obj.x * cellW + tx.x, mmY: obj.y * cellH + tx.y, value: tx.text }) : undefined}
+                >{tx.text}</text>
+              );
+            })}
 
             {isSelected && (
               <rect data-selection-ui="true" x={ox + ow - 2} y={oy + oh - 2} width={2} height={2} fill="#3b82f6" style={{ cursor: 'nwse-resize' }} onMouseDown={(e) => startResize(e, obj.id)} />
@@ -505,7 +563,13 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
             <label className="text-[10px] font-bold text-slate-500">Shift Y (mm)
               <input type="number" min="-200" max="200" step="0.5" value={selectedObj.imgOffsetY || 0} onChange={e => updateObj({ imgOffsetY: Number(e.target.value) })} className="w-full border rounded p-1 text-xs" title="Shift the image vertically inside the object frame" />
             </label>
-            <span className="col-span-2 text-[9px] text-slate-400 italic">Drag the image directly on the canvas to shift it (or hold Shift + drag the object frame).</span>
+            <label className="text-[10px] font-bold text-slate-500">Rotate (°)
+              <div className="flex gap-1">
+                <input type="number" min="-360" max="360" step="1" value={selectedObj.imgRotate || 0} onChange={e => updateObj({ imgRotate: Number(e.target.value) })} className="w-full border rounded p-1 text-xs" title="Rotate the image" />
+                <button type="button" onClick={() => updateObj({ imgRotate: ((selectedObj.imgRotate || 0) + 90) % 360 })} className="bg-slate-100 border border-slate-300 rounded px-1.5 text-xs font-bold hover:bg-slate-200 shrink-0" title="Rotate 90°">↻90°</button>
+              </div>
+            </label>
+            <span className="col-span-2 text-[9px] text-slate-400 italic">Drag the image directly on the canvas to shift it (or hold Shift + drag the object frame); drag its corner to resize it.</span>
           </div>
         </div>
 
@@ -625,6 +689,8 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
           <button onClick={() => selectedId && zoomToObject(selectedId)} disabled={!selectedId} title={selectedId ? 'Zoom fullscreen on the selected object' : 'Select an object first'}
             className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold px-3 py-1.5 rounded-lg text-xs">⛶ Zoom Object</button>
           <button onClick={exportPng} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">Export PNG (300 DPI)</button>
+          <button onClick={() => { setInsertTarget({ projectId: projectId || (allProjects[0] && allProjects[0].id) || '', section: 'background', caption: globalCaption || '' }); setInsertMsg(''); setInsertOpen(true); }}
+            className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">📤 Insert into project…</button>
         </div>
 
         {/* SVG Canvas (Normal View) */}
@@ -637,6 +703,24 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
         {/* Properties Panel (Normal View) */}
         {selectedObj && <PropertiesPanel />}
       </div>
+
+      {/* Inline text editor — type directly on the canvas at the placed position */}
+      {editingText && svgRef.current && (() => {
+        const r = svgRef.current.getBoundingClientRect();
+        const x = r.left + (editingText.mmX / canvasW) * r.width;
+        const y = r.top + (editingText.mmY / (canvasH + captionH)) * r.height;
+        return (
+          <input
+            value={editingText.value}
+            autoFocus
+            onChange={(e) => setTextValue(editingText.objId, editingText.txId, e.target.value)}
+            onBlur={stopEditing}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') stopEditing(); }}
+            style={{ position: 'fixed', left: x, top: y - 18, zIndex: 999999, minWidth: 140, fontSize: 14 }}
+            className="border-2 border-blue-500 rounded px-1.5 py-0.5 outline-none bg-white shadow-lg"
+          />
+        );
+      })()}
 
       {/* FULL SCREEN OVERLAY */}
       {isFullScreen && (
@@ -662,9 +746,11 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
               </div>
 
               <div className="flex items-center gap-2">
-                {focusObjId && (
-                  <button onClick={recenterFocus} className="text-xs font-bold px-2.5 py-1.5 rounded-lg border border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100" title="Re-centre the zoomed object in the viewport">◎ Recenter object</button>
-                )}
+                <button onClick={() => (focusObjId ? recenterFocus() : centerCanvas())}
+                  className="text-xs font-bold px-2.5 py-1.5 rounded-lg border border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                  title={focusObjId ? 'Re-centre the zoomed object in the viewport' : 'Centre the canvas in the viewport'}>
+                  ◎ Center
+                </button>
                 <div className="flex items-center gap-0.5 bg-slate-100 rounded-lg px-1.5 py-1" title="Pan the canvas">
                   <button onClick={() => setPanX(p => p - 30)} className="w-5 h-5 bg-white border border-slate-300 rounded text-slate-600 hover:bg-slate-50 text-[10px]">←</button>
                   <button onClick={() => setPanY(p => p - 30)} className="w-5 h-5 bg-white border border-slate-300 rounded text-slate-600 hover:bg-slate-50 text-[10px]">↑</button>
@@ -752,6 +838,63 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
                   {item.src && item.src.testName && <span className="text-[8px] text-sky-500 truncate w-full text-center">↗ {item.src.testName}</span>}
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Insert composition into a project text subsection */}
+      {insertOpen && (
+        <div className="fixed inset-0 bg-black/50 z-[100000] flex items-center justify-center p-4" onClick={() => setInsertOpen(false)}>
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md flex flex-col gap-3 p-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center">
+              <h3 className="font-bold text-lg">📤 Insert composition into a project section</h3>
+              <button onClick={() => setInsertOpen(false)} className="text-slate-400 hover:text-slate-700">✕</button>
+            </div>
+            <label className="text-[10px] font-bold text-slate-500 flex flex-col gap-1">Project
+              <select value={insertTarget.projectId} onChange={(e) => setInsertTarget({ ...insertTarget, projectId: e.target.value })}
+                className="border border-slate-300 rounded px-2 py-1.5 text-xs bg-white">
+                {allProjects.length === 0 && <option value="">No projects yet</option>}
+                {allProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </label>
+            <label className="text-[10px] font-bold text-slate-500 flex flex-col gap-1">Text subsection
+              <select value={insertTarget.section} onChange={(e) => setInsertTarget({ ...insertTarget, section: e.target.value })}
+                className="border border-slate-300 rounded px-2 py-1.5 text-xs bg-white">
+                <option value="background">Background</option>
+                <option value="discussion">Discussion</option>
+                <option value="conclusions">Conclusions</option>
+              </select>
+            </label>
+            <label className="text-[10px] font-bold text-slate-500 flex flex-col gap-1">Caption
+              <input type="text" value={insertTarget.caption} onChange={(e) => setInsertTarget({ ...insertTarget, caption: e.target.value })}
+                placeholder={globalCaption || 'e.g. Figure 1 — ...'} className="border border-slate-300 rounded px-2 py-1.5 text-xs bg-white" />
+            </label>
+            {insertMsg && <p className={`text-xs font-bold ${insertMsg.startsWith('✅') ? 'text-green-600' : 'text-red-500'}`}>{insertMsg}</p>}
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setInsertOpen(false)} className="text-xs font-bold px-3 py-1.5 rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50">Cancel</button>
+              <button
+                onClick={async () => {
+                  if (!insertTarget.projectId) { setInsertMsg('⚠️ Choose a project first.'); return; }
+                  const dataUrl = await renderToDataUrl(Math.max(3, 1800 / canvasW));
+                  if (!dataUrl) { setInsertMsg('⚠️ Could not render the composition.'); return; }
+                  const projects = loadProjects();
+                  const prj = projects.find((p) => p.id === insertTarget.projectId);
+                  if (!prj) { setInsertMsg('⚠️ Project not found.'); return; }
+                  const sec = insertTarget.section || 'background';
+                  prj.figures = prj.figures || {};
+                  prj.figures[sec] = prj.figures[sec] || [];
+                  prj.figures[sec].push({
+                    id: genProjectId(),
+                    url: dataUrl,
+                    caption: insertTarget.caption || globalCaption || `Image Builder composition (${new Date().toLocaleDateString()})`,
+                    addedAt: new Date().toISOString(),
+                    source: 'image-builder'
+                  });
+                  saveProjects(projects);
+                  setInsertMsg(`✅ Inserted into "${prj.name}" → ${sec}.`);
+                }}
+                className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-4 py-1.5 rounded-lg text-xs"
+              >Insert</button>
             </div>
           </div>
         </div>
