@@ -515,7 +515,7 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
                   </div>
                 )}
               <NMRMoleculeViewer
-                key={structureSrc + (selectedStruct ? '::' + selectedStruct.name : '')}
+                key={((activeTest && activeTest.id) || 'docking') + (selectedStruct ? '::' + selectedStruct.name : '')}
                 src={selectedStruct ? '' : structureSrc}
                 structureText={selectedStruct ? selectedStruct.pdb : undefined}
                 structureTextExt="pdb"

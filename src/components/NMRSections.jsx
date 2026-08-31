@@ -10,6 +10,7 @@ import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, VIS_PALETTES, PER_ATOM_COLORS, seriesColorFor, chartBoxStyle } from '../utils/chartStyle';
 import { suggestDriveFileName, driveFolderPath, sanitizeSlug } from '../utils/driveNaming';
 import { uploadLocalFile, getDriveToken } from '../utils/driveUpload';
+import { storeJson, loadJson } from '../utils/pdbStore';
 import {
   AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, CARBON_RANGE_DB,
   SS_CORRECTIONS, SS_META, DNA_FORM_OFFSETS, SUGAR_ANOMER_OFFSETS,
@@ -18,6 +19,24 @@ import {
 export { VIS_PALETTES };
 
 const HAS_EB = typeof ErrorBar !== 'undefined';
+
+// Full-resolution 1D Bruker spectra are kept in the browser IndexedDB cache —
+// the test object stores only a small display copy — so the Firestore ~1 MB
+// document limit can never silently drop the imported spectrum on save (which
+// is why the "Chart Parameters" button next to the spectrum disappeared after
+// leaving/reopening the page).
+const NMR_SPECTRUM_KEY = (testId) => `labNmr1dSpectrum_${testId || 'global'}`;
+const downsampleSpectrum = (xs, ys, ysImag, maxPts = 4000) => {
+  const n = Math.min(Array.isArray(xs) ? xs.length : 0, Array.isArray(ys) ? ys.length : 0);
+  if (n <= maxPts) return { xs, ys, ysImag };
+  const step = Math.ceil(n / maxPts);
+  const outX = [], outY = [], outI = Array.isArray(ysImag) ? [] : null;
+  for (let i = 0; i < n; i += step) {
+    outX.push(xs[i]); outY.push(ys[i]);
+    if (outI) outI.push(ysImag[i]);
+  }
+  return { xs: outX, ys: outY, ysImag: outI };
+};
 // ================= RDKit Auto-Loader & Singleton =================
 const _rdkitListeners = new Set();
 let _rdkitStatus = 'loading'; 
@@ -4290,7 +4309,7 @@ const generatedStructure = useMemo(() => {
         <div style={{ display: structureMode === '3d' ? 'block' : 'none' }} aria-hidden={structureMode !== '3d'}>
           {hasOpened3D && (
             <div className="flex flex-col gap-2">
-              <NMRMoleculeViewer key={structureSrc || (generatedStructure ? 'generated' : 'no-structure-src')} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} externalLoading={organicFetch.loading} externalError={organicFetch.error} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq) => { if (seq && !activeTest.proteinSequence && ['protein', 'dna', 'rna'].includes(d.moleculeType)) updateActiveTest({ proteinSequence: seq }); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
+              <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} externalLoading={organicFetch.loading} externalError={organicFetch.error} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq) => { if (seq && !activeTest.proteinSequence && ['protein', 'dna', 'rna'].includes(d.moleculeType)) updateActiveTest({ proteinSequence: seq }); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
               <button onClick={downloadPdbFile} className="self-center mt-2 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-xs rounded-lg hover:bg-indigo-100 transition-colors shadow-sm">📥 Download 3D PDB File</button>
             </div>
           )}
@@ -5211,6 +5230,21 @@ export const DataSection = ({ ctx }) => {
   const brukerChartRef = useRef(null);
   const nmrBrukerFileRef = useRef(null);
 
+  // Full-resolution spectrum cached in the browser store (IndexedDB) so the
+  // display always uses the real imported data, while the test object keeps
+  // only a light copy that stays well under the Firestore ~1 MB limit.
+  const [fullNmrSpec, setFullNmrSpec] = useState(null);
+  useEffect(() => {
+    const spec = activeTest && activeTest.nmr1dSpectrum;
+    if (!spec || !spec.fullStore) { setFullNmrSpec(null); return; }
+    let cancelled = false;
+    loadJson(NMR_SPECTRUM_KEY(activeTest.id))
+      .then((full) => { if (!cancelled && full && Array.isArray(full.xs) && full.xs.length) setFullNmrSpec(full); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTest.id, activeTest.nmr1dSpectrum && activeTest.nmr1dSpectrum.fullStore]);
+
   // ---- 1D spectrum calibration & phase state ----
   const [calibPicking, setCalibPicking] = useState(false);
   const [calibPickedPpm, setCalibPickedPpm] = useState(null);
@@ -5436,7 +5470,14 @@ export const DataSection = ({ ctx }) => {
       (parsed.autoEndian ? ' \u00b7 endian auto-detected (' + (parsed.littleEndian ? 'LE' : 'BE') + ')' : '') +
       ' \u00b7 SW = ' + (parsed.meta.swPpm ? parsed.meta.swPpm.toFixed(2) : '?') + ' ppm');
     
-    const updates = { nmr1dSpectrum: { xs: parsed.xs, ys: parsed.ys, ysImag: parsed.ysImag || null, meta: parsed.meta, title: parsed.meta.title || 'Imported 1r', calibration: 0, phaseDeg: 0, phase1Deg: 0 } };
+    const fullSpec = { xs: parsed.xs, ys: parsed.ys, ysImag: parsed.ysImag || null, meta: parsed.meta, title: parsed.meta.title || 'Imported 1r', calibration: 0, phaseDeg: 0, phase1Deg: 0 };
+    // Keep the FULL data in the browser store; the test object keeps only a
+    // light display copy, so the Firestore ~1 MB limit can never drop the
+    // imported spectrum on save (which previously made the spectrum and its
+    // "Chart Parameters" button disappear after leaving/reopening the page).
+    const small = downsampleSpectrum(fullSpec.xs, fullSpec.ys, fullSpec.ysImag);
+    const updates = { nmr1dSpectrum: { ...small, meta: fullSpec.meta, title: fullSpec.title, calibration: 0, phaseDeg: 0, phase1Deg: 0, fullStore: true } };
+    if (activeTest && activeTest.id) storeJson(NMR_SPECTRUM_KEY(activeTest.id), fullSpec);
     if (filename) updates.instanceName = filename;
     
     // Auto-fill from the imported Bruker experiment:
@@ -5594,7 +5635,12 @@ export const DataSection = ({ ctx }) => {
            const cloned = JSON.parse(JSON.stringify(activeTest));
            cloned.id = 't' + Date.now() + i + Math.random().toString(36).substring(2,5);
            cloned.instanceName = selected[i].filename;
-           cloned.nmr1dSpectrum = { xs: p.xs, ys: p.ys, ysImag: p.ysImag || null, meta: p.meta, title: p.meta.title || 'Imported 1r', calibration: 0, phaseDeg: 0, phase1Deg: 0 };
+           {
+             const fullSpec = { xs: p.xs, ys: p.ys, ysImag: p.ysImag || null, meta: p.meta, title: p.meta.title || 'Imported 1r', calibration: 0, phaseDeg: 0, phase1Deg: 0 };
+             const small = downsampleSpectrum(fullSpec.xs, fullSpec.ys, fullSpec.ysImag);
+             cloned.nmr1dSpectrum = { ...small, meta: fullSpec.meta, title: fullSpec.title, calibration: 0, phaseDeg: 0, phase1Deg: 0, fullStore: true };
+             storeJson(NMR_SPECTRUM_KEY(cloned.id), fullSpec);
+           }
            // Same auto-fill as the first import: Experimental Conditions title +
            // Instrumental Setup dataset row (experiment number + dataset name).
            if (p.fileTitle) cloned.nmrFileTitle = p.fileTitle;
@@ -5696,9 +5742,16 @@ export const DataSection = ({ ctx }) => {
 
   const renderSpectrum = () => {
     const spec = activeTest.nmr1dSpectrum;
-    const hasSpec = spec && Array.isArray(spec.xs) && spec.xs.length > 0;
+    // Prefer the FULL data cached in the browser store — the test object only
+    // holds a light display copy, so it stays well under the Firestore ~1 MB
+    // limit and the imported spectrum (and its Chart Parameters button) always
+    // reappears when the page is reopened.
+    const dispBase = (spec && spec.fullStore && fullNmrSpec && Array.isArray(fullNmrSpec.xs) && fullNmrSpec.xs.length)
+      ? { ...spec, xs: fullNmrSpec.xs, ys: fullNmrSpec.ys, ysImag: fullNmrSpec.ysImag || spec.ysImag || null }
+      : spec;
+    const hasSpec = dispBase && Array.isArray(dispBase.xs) && dispBase.xs.length > 0;
     if (!hasSpec) return null;
-    const disp = getNmr1dDisplay(spec) || { xs: spec.xs, ys: spec.ys };
+    const disp = getNmr1dDisplay(dispBase) || { xs: dispBase.xs, ys: dispBase.ys };
     const xs = disp.xs, ys = disp.ys;
    const xFull = [Math.min(...xs), Math.max(...xs)];
 let dom = brukerZoomDom || xFull;

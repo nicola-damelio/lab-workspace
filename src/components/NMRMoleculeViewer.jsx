@@ -142,6 +142,28 @@ const collectResidueTicks = (component) => {
 const SELECT_COLOR_HEX = 0xf59e0b;
 const MANUAL_COLOR_HEX = 0x16a34a;
 
+// ---- Customisable viewer colours (persisted) --------------------------------
+// NGL's built-in "sstruc" colour scheme uses hard-coded colours. To let the user
+// pick their own per-element colours (helices / sheets / loops) we register ONE
+// custom scheme that reads live from the mutable store below — changing a colour
+// only requires re-rendering the affected representations (no re-registration).
+const sstrucColorStore = { helix: 0xb44a90, sheet: 0xf8d878, loop: 0xe6e6e6 };
+let sstrucSchemeKey = null; // NGL scheme name returned by ColormakerRegistry.addScheme
+const registerSstrucScheme = (NGL) => {
+  if (sstrucSchemeKey || !NGL || !NGL.ColormakerRegistry) return;
+  try {
+    sstrucSchemeKey = NGL.ColormakerRegistry.addScheme('lab-sstruc', function () {
+      this.atomColor = function (atom) {
+        const s = atom && atom.sstruc;
+        if (s === 'h' || s === 'g' || s === 'i') return sstrucColorStore.helix;   // α / 3₁₀ / π helices
+        if (s === 'e' || s === 'b') return sstrucColorStore.sheet;                // β strands / sheets
+        return sstrucColorStore.loop;                                             // coil, turns, bends, loops…
+      };
+    });
+  } catch { /* NGL scheme registration is best-effort — falls back to built-in "sstruc" */ }
+};
+const numToHex = (v) => `#${(Number(v) || 0).toString(16).padStart(6, '0')}`;
+
 // ---- PDB atom name → NMR Greek-letter name mapping (Hydrogens) ----
 const PDB_TO_NMR = {
 H: 'HN',
@@ -799,6 +821,10 @@ const abortRef = useRef(null); // { token, label, cancel } of the active long-ru
 const [file, setFile] = useState(null);
 const [pdbId, setPdbId] = useState('');
 const [pendingFileBatch, setPendingFileBatch] = useState(null); // File[] waiting for the "replace or keep both?" choice
+const [pendingSrc, setPendingSrc] = useState(null); // a PDB code / URL waiting for the "replace or keep both?" choice
+const lastAskedSrcRef = useRef(null); // last PDB code/URL we asked about, so the same value is never asked twice
+const [dragMove, setDragMove] = useState(false); // move the selected structure with the mouse instead of typing X/Y/Z
+const dragMoveRef = useRef(null); // { comp, pos, last } — active mouse drag-to-move session
 const [loadRequest, setLoadRequest] = useState(null);
 const [status, setStatus] = useState('idle');
 const statusRef = useRef(status); // mirror for event handlers (file-change dialog)
@@ -932,6 +958,36 @@ const [atomList, setAtomList] = useState([]);          // [{ idx, element, name,
 const [atomSearch, setAtomSearch] = useState('');
 const [showAtomPanel, setShowAtomPanel] = useState(false);
 
+// ---- Customisable colours (secondary structure + residue highlights) ----
+// Persisted like the fog/shadow preferences; changing them re-renders the
+// affected representations (see the deps of the selection / highlight effects).
+const [showColoursPanel, setShowColoursPanel] = useState(false);
+const [sstrucColors, setSstrucColors] = useState(() => {
+  try {
+    const raw = JSON.parse(localStorage.getItem('labViewerSstrucColors') || 'null');
+    if (raw && typeof raw === 'object') {
+      return {
+        helix: raw.helix || 0xb44a90,
+        sheet: raw.sheet || 0xf8d878,
+        loop: raw.loop || 0xe6e6e6,
+      };
+    }
+  } catch { /* fall through to defaults */ }
+  return { helix: 0xb44a90, sheet: 0xf8d878, loop: 0xe6e6e6 };
+});
+const [selectedResidueColor, setSelectedResidueColor] = useState(() => {
+  try { const v = parseInt(localStorage.getItem('labViewerSelResColor') || '', 16); if (Number.isFinite(v) && v >= 0) return v; } catch { /* default */ }
+  return SELECT_COLOR_HEX;
+});
+const [assignedAtomColor, setAssignedAtomColor] = useState(() => {
+  try { const v = parseInt(localStorage.getItem('labViewerAssignedColor') || '', 16); if (Number.isFinite(v) && v >= 0) return v; } catch { /* default */ }
+  return MANUAL_COLOR_HEX;
+});
+const selectedResidueColorRef = useRef(selectedResidueColor);
+selectedResidueColorRef.current = selectedResidueColor;
+const assignedAtomColorRef = useRef(assignedAtomColor);
+assignedAtomColorRef.current = assignedAtomColor;
+
 // ---- PyMOL-style selections & effects ----
 const [selections, setSelections] = useState([]);      // [{ name, expr }]
 const [selStyles, setSelStyles] = useState({});        // key -> { cartoon, ribbon, tube, stick, sphere, surface, color, colorMode, transparency, sphereScale }
@@ -993,112 +1049,28 @@ const shadowDarknessRef = useRef(shadowDarkness);
 shadowOnRef.current = shadowOn;
 shadowDarknessRef.current = shadowDarkness;
 
-// Mark every mesh in a NGL object/subtree as casting + receiving shadows.
-const setMeshShadows = (root) => {
-  try {
-    root.traverse((o) => { if (o && o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
-  } catch { /* best-effort */ }
-};
+// "Shadows" is a SAFE visual: enabling real THREE shadow maps inside NGL's
+// renderer made the whole molecule disappear (NGL renders in several manual
+// passes that conflict with shadow-map rendering). The toggle now deepens the
+// scene lighting (a moodier, "shadowier" look) and draws a subtle vignette
+// overlay on top of the viewer — the molecule always stays visible.
+const setMeshShadows = () => { /* no-op — real shadow maps break NGL's renderer */ };
+const shadowRepsHook = () => { /* no-op — real shadow maps break NGL's renderer */ };
 
-// Keep shadows in sync when a component gets a new representation (NGL rebuilds
-// the meshes, so the castShadow flags set at load time would be lost).
-const shadowRepsHook = (comp) => {
-  if (!comp || comp.__shadowHooked) return;
-  comp.__shadowHooked = true;
-  try {
-    comp.signals.representationAdded.add(() => {
-      if (!shadowOnRef.current) return;
-      try {
-        comp.eachRepresentation((r) => { if (r && r.object) setMeshShadows(r.object); });
-        if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender();
-      } catch { /* best-effort */ }
-    });
-  } catch { /* NGL without representation signals — shadows still update on toggle */ }
-};
-
-// Enable/configure the shadow map + lighting on the live stage.
-// The directional light and its shadow camera are positioned EXPLICITLY around
-// the loaded structure's bounding box, so enabling shadows can never push the
-// structure outside the shadow frustum (which would render everything pitch
-// black). If anything fails we fall back to a normal lit scene.
 const applyShadowSettings = useCallback(() => {
   const stage = stageRef.current;
   if (!stage || !stage.viewer) return;
-  const viewer = stage.viewer;
-  const on = shadowOnRef.current;
-  const dark = Math.min(1, Math.max(0, shadowDarknessRef.current));
   try {
-    const renderer = viewer.renderer;
-    if (renderer) {
-      renderer.shadowMap.enabled = on;
-      renderer.shadowMap.type = 2; // PCFSoftShadowMap
-      renderer.shadowMap.autoUpdate = true;
-    }
-    // Structure bounding box → shadow-frustum centre + radius.
-    let cx = 0, cy = 0, cz = 0, rad = 25;
-    try {
-      const comps = (stage.compList || []).filter((c) => c && c.structure);
-      let minX = Infinity, minY = Infinity, minZ = Infinity;
-      let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-      comps.forEach((c) => {
-        try {
-          const b = typeof c.getBoxUntransformed === 'function' ? c.getBoxUntransformed() : null;
-          if (!b || !b.min || !b.max) return;
-          minX = Math.min(minX, b.min.x); minY = Math.min(minY, b.min.y); minZ = Math.min(minZ, b.min.z);
-          maxX = Math.max(maxX, b.max.x); maxY = Math.max(maxY, b.max.y); maxZ = Math.max(maxZ, b.max.z);
-        } catch { /* skip this component */ }
-      });
-      if (Number.isFinite(minX) && Number.isFinite(maxX)) {
-        cx = (minX + maxX) / 2; cy = (minY + maxY) / 2; cz = (minZ + maxZ) / 2;
-        rad = Math.max(10, 0.5 * Math.hypot(maxX - minX, maxY - minY, maxZ - minZ));
-      }
-    } catch { /* keep defaults */ }
-    const light = viewer.directionalLight;
-    if (light) {
-      light.castShadow = on;
-      if (on) {
-        try {
-          // Place the light above-and-diagonal from the structure centre and aim
-          // its shadow camera at that centre, so the whole structure is inside
-          // the shadow frustum regardless of how the user rotates/zooms.
-          const dist = rad * 4 + 8;
-          light.position.set(cx + dist, cy + dist, cz + dist);
-          if (!light.target) light.target = new (light.position.constructor)();
-          light.target.position.set(cx, cy, cz);
-          try { if (light.target && !light.target.parent) viewer.scene.add(light.target); } catch {}
-          try { light.target.updateMatrixWorld(); } catch {}
-          const half = rad * 2.5 + 6;
-          const sc = light.shadow.camera;
-          sc.left = -half; sc.right = half; sc.top = half; sc.bottom = -half;
-          sc.near = 0.5;
-          // NGL re-aims the light from the CAMERA position (up to ~100× the
-          // bounding-box length away) on every camera move — the far plane must
-          // comfortably reach that distance so the structure never falls outside.
-          sc.far = Math.max(5000, rad * 400 + 3000);
-          if (typeof sc.updateProjectionMatrix === 'function') sc.updateProjectionMatrix();
-          light.shadow.mapSize.set(2048, 2048);
-          light.shadow.bias = -0.0005;
-          light.shadow.normalBias = 0.02;
-          light.shadow.radius = 1 + dark * 10;
-        } catch { /* shadow camera config is best-effort */ }
-        setMeshShadows(viewer.scene);
-      }
-    }
-    // Darkness → deeper shadows: lower the ambient light, raise the directional.
+    const on = shadowOnRef.current;
+    const dark = Math.min(1, Math.max(0, shadowDarknessRef.current));
+    // Depth cue: lower the ambient light a little, raise the key light a touch.
+    // Ambient is floored so the scene can never go black.
     stage.setParameters({
-      lightIntensity: on ? (1.2 + dark * 0.7) : 1.2,
-      ambientIntensity: on ? (0.3 * (1 - dark) + 0.03) : 0.3,
+      lightIntensity: on ? (1.2 + dark * 0.5) : 1.2,
+      ambientIntensity: on ? Math.max(0.16, 0.3 - dark * 0.16) : 0.3,
     });
-    try { if (viewer.requestRender) viewer.requestRender(); } catch {}
-  } catch (err) {
-    // Never lose the view because of a shadow tweak: disable the shadow map and
-    // restore normal lighting if anything above failed.
-    try { if (viewer && viewer.renderer) viewer.renderer.shadowMap.enabled = false; } catch {}
-    try { if (viewer && viewer.directionalLight) viewer.directionalLight.castShadow = false; } catch {}
-    try { stage.setParameters({ lightIntensity: 1.2, ambientIntensity: 0.3 }); } catch {}
-    try { if (viewer && viewer.requestRender) viewer.requestRender(); } catch {}
-    console.warn('Shadow settings disabled (best-effort):', err && err.message);
-  }
+    try { if (stage.viewer.requestRender) stage.viewer.requestRender(); } catch {}
+  } catch { /* best-effort */ }
 }, []);
 
 // Persist + apply the shadow preference whenever it changes.
@@ -1106,6 +1078,16 @@ useEffect(() => {
   try { localStorage.setItem('labViewerShadows', shadowOn ? `on:${Math.round(shadowDarkness * 100)}` : 'off'); } catch { /* ignore */ }
   applyShadowSettings();
 }, [shadowOn, shadowDarkness, applyShadowSettings]);
+
+// Persist the customisable viewer colours + feed the live NGL scheme store.
+useEffect(() => {
+  try { localStorage.setItem('labViewerSstrucColors', JSON.stringify(sstrucColors)); } catch { /* ignore */ }
+  sstrucColorStore.helix = sstrucColors.helix;
+  sstrucColorStore.sheet = sstrucColors.sheet;
+  sstrucColorStore.loop = sstrucColors.loop;
+}, [sstrucColors]);
+useEffect(() => { try { localStorage.setItem('labViewerSelResColor', selectedResidueColor.toString(16)); } catch { /* ignore */ } }, [selectedResidueColor]);
+useEffect(() => { try { localStorage.setItem('labViewerAssignedColor', assignedAtomColor.toString(16)); } catch { /* ignore */ } }, [assignedAtomColor]);
 
 const persistRenames = (next) => {
   setRenames(next);
@@ -1188,6 +1170,7 @@ ensureNGL(),
 new Promise((_, reject) => setTimeout(() => reject(new Error('Timed out loading the NGL viewer library (20s).')), 20000)),
 ]);
 if (cancelled || !containerRef.current) return null;
+registerSstrucScheme(NGL); // customisable per-element 2°-structure colours (helix/sheet/loop)
 const stage = new NGL.Stage(containerRef.current, { backgroundColor: '#f8fafc' });
 stageRef.current = stage;
 applyFog(); // honour the user's fog preference (off by default) right away
@@ -1322,23 +1305,63 @@ if (structureText) setManualOverride(false);
 
 useEffect(() => {
 if (manualOverride) return;
-if (!structureText) { lastLoadedTextRef.current = null; return; }
+if (!structureText) {
+  // Parent stopped providing a generated/text structure. If no other source
+  // (PDB code/URL, file) is taking over, empty the viewer instead of leaving a
+  // stale structure on screen — this replaces the old "remount on source
+  // change" behaviour so PDB/URL changes can instead go through the
+  // "replace or keep both?" prompt without destroying the viewer.
+  const hadText = !!lastLoadedTextRef.current;
+  lastLoadedTextRef.current = null;
+  if (!src && !structureFile && !structureFileData && hadText && statusRef.current !== 'loading') {
+    clearExtraMolecules();
+    try { if (stageRef.current) stageRef.current.removeAllComponents(); } catch {}
+    componentRef.current = null;
+    highlightCompRef.current = null;
+    manualHighlightCompRef.current = null;
+    labelCompRef.current = null;
+    sidechainCompRef.current = null;
+    setSelections([]);
+    setResidueTicks([]);
+    setLightRender(false);
+    setLightInfo(null);
+    setHasNonProtein(false);
+    setStatus('idle');
+    setErrorMsg('');
+    try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
+  }
+  return;
+}
 if (structureText !== lastLoadedTextRef.current) {
 lastLoadedTextRef.current = structureText;
 clearExtraMolecules();
 setFile(null);
 requestStructureLoad({ file: null, url: null, text: structureText, ext: structureTextExt || 'pdb', ts: Date.now() });
 }
-}, [structureText, structureTextExt, manualOverride, clearExtraMolecules]);
+}, [structureText, structureTextExt, manualOverride, clearExtraMolecules, src, structureFile, structureFileData]);
 
 useEffect(() => {
-if (manualOverride || structureText) return;
-if (src) {
-setFile(null);
-clearExtraMolecules();
-setLoadRequest({ file: null, url: src, ts: Date.now() });
-}
-}, [src, structureText, manualOverride, clearExtraMolecules]);
+if (!src) return;
+  const s = String(src || '').trim();
+  // Only meaningful sources (a real 4-letter PDB code, rcsb:, or an
+  // http(s)/blob/data URL) trigger a load — partial typing in the
+  // "PDB ID / URL" box is ignored until it becomes a real source.
+  const isReal = /^(https?:|blob:|data:)/i.test(s) || /^rcsb:/i.test(s) || /^[0-9a-z]{4}$/i.test(s);
+  if (!isReal) return;
+  if (s === lastAskedSrcRef.current) return; // already asked about / loaded this source
+  // A structure is already on screen (from a file, a generated structure, or a
+  // previous source) — ask whether to REPLACE it or KEEP BOTH, exactly like the
+  // multi-file upload flow. The same value is asked only once.
+  if (componentRef.current && statusRef.current === 'ready') {
+    lastAskedSrcRef.current = s;
+    setPendingSrc(s);
+    return;
+  }
+  lastAskedSrcRef.current = s;
+  setFile(null);
+  clearExtraMolecules();
+  setLoadRequest({ file: null, url: src, ts: Date.now() });
+}, [src, clearExtraMolecules]);
 
 useEffect(() => {
 if (manualOverride || structureText || loadRequest) return;
@@ -2188,8 +2211,11 @@ useEffect(() => {
     // Hidden selections keep NO representations — "🙈 Hide" removes them.
     if (st.hidden) { selCompsRef.current[key] = []; return; }
     // Colouring metaphor: a NGL colorScheme (element/chain/resname/sstruc/…) or
-    // a plain solid colour when "Solid" is selected.
-    const colorScheme = st.colorMode && st.colorMode !== 'solid' ? st.colorMode : undefined;
+    // a plain solid colour when "Solid" is selected. The "2° structure" mode
+    // uses the customisable helix/sheet/loop scheme (🎨 Colours panel).
+    const colorScheme = st.colorMode && st.colorMode !== 'solid'
+      ? (st.colorMode === 'sstruc' ? sstrucSchemeKey || 'sstruc' : st.colorMode)
+      : undefined;
     const color = colorScheme ? undefined : (st.color != null ? st.color : undefined);
     const opacity = st.transparency != null ? Math.max(0, Math.min(1, 1 - st.transparency)) : undefined;
     const reps = [];
@@ -2212,7 +2238,7 @@ useEffect(() => {
     selCompsRef.current = {};
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [status, selections, selStyles, pymolActive, hideAll, backboneStyle, moleculeStyle]);
+}, [status, selections, selStyles, pymolActive, hideAll, backboneStyle, moleculeStyle, sstrucColors]);
 
 // Re-apply the current style selectors to EVERY extra molecule / chain when the
 // user changes Backbone or Molecule Style — so the styles work for all loaded
@@ -2230,7 +2256,7 @@ useEffect(() => {
   });
   try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
   // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [backboneStyle, moleculeStyle, status, applyCurrentStyleTo]);
+}, [backboneStyle, moleculeStyle, status, applyCurrentStyleTo, sstrucColors]);
 
 // Background colour + quality ("ray shadows" approximation)
 useEffect(() => {
@@ -2529,7 +2555,7 @@ if (isStripMode) {
     const useSphere = lightRenderRef.current || approxAtoms > 1500;
     stripHighlightCompRef.current = component.addRepresentation(useSphere ? 'spacefill' : 'ball+stick', {
       sele: selParts.join(' or '),
-      color: SELECT_COLOR_HEX, aspectRatio: 1.5, radius: useSphere ? (approxAtoms > 1500 ? 0.3 : 0.4) : 0.4,
+      color: selectedResidueColorRef.current, aspectRatio: 1.5, radius: useSphere ? (approxAtoms > 1500 ? 0.3 : 0.4) : 0.4,
     });
   }
 } else {
@@ -2538,12 +2564,12 @@ if (isStripMode) {
     // Same bond-map reasoning as above: spheres when in lightweight mode.
     const useSphere = lightRenderRef.current;
     highlightCompRef.current = component.addRepresentation(useSphere ? 'spacefill' : 'ball+stick', {
-      sele: selSele, color: SELECT_COLOR_HEX, aspectRatio: 1.5, radius: useSphere ? 0.5 : 0.4,
+      sele: selSele, color: selectedResidueColorRef.current, aspectRatio: 1.5, radius: useSphere ? 0.5 : 0.4,
     });
   }
 }
 } catch { /* selection highlight is best-effort */ }
-}, [selectedKeys, status, residueTicks]);
+}, [selectedKeys, status, residueTicks, selectedResidueColor]);
 
 // Highlight the MANUALLY-ASSIGNED atoms (green "🟢 Assigned atoms"). Lives in its
 // own effect so a selection click does not rebuild this representation — on a
@@ -2575,11 +2601,11 @@ if (manSele) {
   // Large assigned sets (or lightweight mode) → instanced spheres, no bond map.
   const useSphere = lightRenderRef.current || man.length > 1500;
   manualHighlightCompRef.current = component.addRepresentation(useSphere ? 'spacefill' : 'ball+stick', {
-    sele: manSele, color: MANUAL_COLOR_HEX, aspectRatio: 1.5, radius: useSphere ? (man.length > 1500 ? 0.3 : 0.4) : 0.4,
+    sele: manSele, color: assignedAtomColorRef.current, aspectRatio: 1.5, radius: useSphere ? (man.length > 1500 ? 0.3 : 0.4) : 0.4,
   });
 }
 } catch { /* manual highlight is best-effort */ }
-}, [manualKeys, showManualHighlight, status]);
+}, [manualKeys, showManualHighlight, status, assignedAtomColor]);
 
 // Load an additional structure file as its own NGL component (hidden by default —
 // the "Molecules" selector reveals one at a time).
@@ -2626,8 +2652,11 @@ const restyleExtraMol = (id) => {
     reps = applyCurrentStyleTo(comp, []);
   } else {
     // Colouring metaphor — a NGL colorScheme, or a plain solid colour when
-    // "Solid" is selected (mirrors the Selections panel).
-    const colorScheme = st.colorMode && st.colorMode !== 'solid' ? st.colorMode : undefined;
+    // "Solid" is selected (mirrors the Selections panel). "2° structure" uses
+    // the customisable helix/sheet/loop scheme (🎨 Colours panel).
+    const colorScheme = st.colorMode && st.colorMode !== 'solid'
+      ? (st.colorMode === 'sstruc' ? sstrucSchemeKey || 'sstruc' : st.colorMode)
+      : undefined;
     const color = colorScheme ? undefined : (st.color != null ? st.color : undefined);
     const opacity = st.transparency != null ? Math.max(0, Math.min(1, 1 - st.transparency)) : undefined;
     const opts = { colorScheme, color, opacity };
@@ -2701,6 +2730,70 @@ const resetExtraMolPosition = (id) => {
       if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender();
     }
   } catch { /* best-effort */ }
+};
+
+// ---- Move the selected structure with the MOUSE (drag-to-move) --------------
+// Convert a screen-pixel delta into a world-space translation at the depth of
+// the structure, so dragging the mouse slides the selected molecule on screen.
+const worldDeltaForScreen = (dxPx, dyPx) => {
+  const stage = stageRef.current;
+  const viewer = stage && stage.viewer;
+  if (!viewer || !viewer.camera) return [0, 0, 0];
+  try {
+    const canvas = stage.container && stage.container.querySelector('canvas');
+    const h = canvas ? canvas.clientHeight : 300;
+    const cam = viewer.camera;
+    const v3 = cam.position.constructor;
+    const dir = cam.getWorldDirection(new v3());
+    const right = new v3().crossVectors(dir, cam.up).normalize();
+    const up = new v3().crossVectors(right, dir).normalize();
+    const fov = (cam.fov || 40) * Math.PI / 180;
+    const dist = cam.position.length() || 100;
+    const wpp = (2 * Math.tan(fov / 2) * dist) / Math.max(1, h);
+    const dxW = dxPx * wpp, dyW = -dyPx * wpp;
+    return [right.x * dxW + up.x * dyW, right.y * dxW + up.y * dyW, right.z * dxW + up.z * dyW];
+  } catch { return [0, 0, 0]; }
+};
+
+const dragMoveComp = () => (selectedMolKey === 'main'
+  ? componentRef.current
+  : (extraCompsRef.current.find((x) => x.id === selectedMolKey) || {}).comp);
+
+const dragMoveOnDown = (e) => {
+  e.preventDefault();
+  const comp = dragMoveComp();
+  if (!comp || typeof comp.setPosition !== 'function') return;
+  const p = comp.position || { x: 0, y: 0, z: 0 };
+  dragMoveRef.current = { comp, pos: [p.x || 0, p.y || 0, p.z || 0], last: { x: e.clientX, y: e.clientY } };
+  window.addEventListener('mousemove', dragMoveOnMove);
+  window.addEventListener('mouseup', dragMoveOnUp);
+};
+
+const dragMoveOnMove = (e) => {
+  const d = dragMoveRef.current;
+  if (!d) return;
+  const dx = e.clientX - d.last.x;
+  const dy = e.clientY - d.last.y;
+  d.last = { x: e.clientX, y: e.clientY };
+  if (!dx && !dy) return;
+  const [wx, wy, wz] = worldDeltaForScreen(dx, dy);
+  d.pos = [d.pos[0] + wx, d.pos[1] + wy, d.pos[2] + wz];
+  try {
+    d.comp.setPosition(d.pos);
+    if (typeof d.comp.updateMatrix === 'function') d.comp.updateMatrix();
+  } catch { /* best-effort */ }
+  try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
+};
+
+const dragMoveOnUp = () => {
+  window.removeEventListener('mousemove', dragMoveOnMove);
+  window.removeEventListener('mouseup', dragMoveOnUp);
+  const d = dragMoveRef.current;
+  dragMoveRef.current = null;
+  if (!d) return;
+  // Sync the Molecules-bar X/Y/Z inputs with the dragged position.
+  const entry = extraCompsRef.current.find((x) => x.comp === d.comp);
+  if (entry) { entry.position = d.pos; setExtraMols(extraMolsSnapshot()); }
 };
 
 // Delete ONE extra structure (its NGL component + Molecules-bar entry).
@@ -2801,6 +2894,70 @@ const doKeepBoth = useCallback(async (files) => {
   try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
 }, [doReplaceLoad, driveNaming, loadExtraStructureFile]);
 
+// Load a PDB code / URL as an EXTRA molecule (its own NGL component, hidden by
+// default — the Molecules bar reveals it). Mirrors the main-load resolution,
+// including the PDB-ID fallbacks.
+const loadExtraStructureUrl = useCallback(async (rawSrc, n = 0) => {
+  try {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const target = normalizeStructureSource(rawSrc);
+    if (!target) throw new Error('No structure URL or PDB ID provided');
+    let comp;
+    try {
+      comp = target.params ? await stage.loadFile(target.url, target.params) : await stage.loadFile(target.url);
+    } catch (firstErr) {
+      const idMatch = String(rawSrc || '').trim().match(/([0-9][A-Za-z0-9]{3})(?:\.[A-Za-z0-9]+)?\/?$/);
+      if (idMatch) {
+        const id = idMatch[1].toUpperCase();
+        try { comp = await stage.loadFile(`https://files.rcsb.org/download/${id}.pdb`, { ext: 'pdb' }); }
+        catch { comp = await stage.loadFile(`rcsb://${id}`); }
+      } else {
+        throw firstErr;
+      }
+    }
+    if (!comp || !comp.structure) return;
+    const baseReps = applyCurrentStyleTo(comp, []);
+    shadowRepsHook(comp);
+    if (shadowOnRef.current) setMeshShadows(comp);
+    const s = String(rawSrc || '').trim();
+    const label = /^[0-9a-z]{4}$/i.test(s)
+      ? `PDB ${s.toUpperCase()}`
+      : (s.split(/[?#]/)[0].split('/').pop() || `Structure ${n}`);
+    const id = `mol_${Date.now()}_${n}`;
+    extraCompsRef.current.push({ id, name: label, comp, baseReps, style: 'auto', color: '', colorMode: 'element', transparency: 0, position: [0, 0, 0] });
+    setExtraMols(extraMolsSnapshot());
+    try { comp.setVisibility(false); } catch {}
+  } catch (err) {
+    console.warn('Could not load structure source:', err && err.message);
+    setErrorMsg(`Could not load "${String(rawSrc || '').trim()}": ${(err && err.message) || 'failed'}`);
+  }
+}, [applyCurrentStyleTo]);
+
+// A new PDB code / URL was given while a structure is already loaded — replace
+// the current structure with it (it becomes the new main structure).
+const doReplaceSrc = useCallback((rawSrc) => {
+  setPendingSrc(null);
+  clearExtraMolecules();
+  setManualOverride(true);
+  setFile(null);
+  setTrajFile(null);
+  requestStructureLoad({ file: null, url: rawSrc, ts: Date.now() });
+  if (typeof onStructureSrc === 'function') onStructureSrc(String(rawSrc || '').trim());
+}, [clearExtraMolecules, onStructureSrc]);
+
+// Keep the current structure AND add the PDB code / URL as an additional
+// molecule (appears in the Molecules bar, visible right away).
+const doKeepBothSrc = useCallback(async (rawSrc) => {
+  setPendingSrc(null);
+  if (typeof onStructureSrc === 'function') onStructureSrc(String(rawSrc || '').trim());
+  if (!stageRef.current) { doReplaceSrc(rawSrc); return; }
+  await loadExtraStructureUrl(rawSrc, (Date.now() % 10000));
+  const entry = extraCompsRef.current[extraCompsRef.current.length - 1];
+  if (entry) setVisibleMolKeys((prev) => new Set([...prev, entry.id]));
+  try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
+}, [doReplaceSrc, loadExtraStructureUrl, onStructureSrc]);
+
 const handleFileChange = useCallback((e) => {
 const files = Array.from(e.target.files || []);
 if (files.length === 0) return;
@@ -2834,6 +2991,13 @@ try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.r
 const handlePdbIdLoad = useCallback(() => {
 const value = pdbId.trim();
 if (!value) return;
+// If a structure is already on screen, ask whether to replace it or keep both
+// (same flow as the file uploads and the parent-supplied PDB code / URL).
+if (componentRef.current && statusRef.current === 'ready' && lastAskedSrcRef.current !== value) {
+  lastAskedSrcRef.current = value;
+  setPendingSrc(value);
+  return;
+}
 clearExtraMolecules();
 setManualOverride(true);
 setFile(null);
@@ -3193,6 +3357,11 @@ className="w-3.5 h-3.5 accent-sky-600"
     className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors ${showPymolPanel ? 'bg-violet-100 border-violet-400 text-violet-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}>
     🧪 Selections & PyMOL
   </button>
+  <button type="button" onClick={() => setShowColoursPanel((v) => !v)}
+    className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors ${showColoursPanel ? 'bg-rose-100 border-rose-400 text-rose-900' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+    title="Custom colours: per-element secondary-structure colours (helix / sheet / loop) used by the “2° structure” colour mode, plus the colours of the selected-residue and assigned-atom highlights. Saved and persists across pages.">
+    🎨 Colours
+  </button>
   <button type="button" onClick={() => setHideAll((v) => !v)}
     className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors ${hideAll ? 'bg-red-100 border-red-400 text-red-800' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}>
     {hideAll ? '👁️ Show default' : '🙈 Hide everything'}
@@ -3202,9 +3371,15 @@ className="w-3.5 h-3.5 accent-sky-600"
     title="NGL's default depth fog fades distant atoms toward the background (a grey haze). Toggle it off for a crisp image — the setting is saved and persists across pages.">
     🌫 Fog: {fogEnabled ? 'On' : 'Off'}
   </button>
+  <button type="button" onClick={() => setDragMove((v) => !v)}
+    disabled={status !== 'ready'}
+    className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors ${dragMove ? 'bg-amber-400 border-amber-500 text-amber-950' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed'}`}
+    title="Move the selected structure with the mouse instead of typing X/Y/Z. When ON, dragging in the viewer slides the selected structure (rotate/zoom is suspended).">
+    ✋ Drag: {dragMove ? 'On' : 'Off'}
+  </button>
   <button type="button" onClick={() => setShadowOn((v) => !v)}
     className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors ${shadowOn ? 'bg-slate-800 border-slate-800 text-white' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-    title="Cast real shadows from the directional light. The Darkness slider controls how deep the shadowed areas become — saved and persists across pages.">
+    title="Shadow effect: deepens the scene lighting and adds a vignette for a shadowier look. The Darkness slider controls how strong the effect is — saved and persists across pages. (Real WebGL shadow maps are not used: they made the molecule disappear.)">
     ◐ Shadows: {shadowOn ? 'On' : 'Off'}
   </button>
   {shadowOn && (
@@ -3215,6 +3390,65 @@ className="w-3.5 h-3.5 accent-sky-600"
     </label>
   )}
 </div>
+
+{showColoursPanel && (
+  <div className="bg-rose-50/40 border border-rose-200 rounded-lg p-3 flex flex-col gap-2">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <span className="text-[10px] font-black text-rose-700 uppercase tracking-wide">Custom colours</span>
+      <button type="button" onClick={() => {
+        setSstrucColors({ helix: 0xb44a90, sheet: 0xf8d878, loop: 0xe6e6e6 });
+        setSelectedResidueColor(SELECT_COLOR_HEX);
+        setAssignedAtomColor(MANUAL_COLOR_HEX);
+      }}
+        className="px-2 py-1 text-[10px] font-bold rounded border bg-white border-rose-300 text-rose-700 hover:bg-rose-100"
+        title="Restore the default viewer colours">
+        ↺ Reset defaults
+      </button>
+    </div>
+    <div className="flex flex-wrap gap-x-8 gap-y-3">
+      {/* Per-element secondary-structure colours — used wherever the colour
+          mode is "2° structure" (Molecules bar / Selections panel). */}
+      <div className="flex flex-col gap-1.5">
+        <span className="text-[10px] font-black text-slate-600 uppercase">Secondary structure</span>
+        <label className="flex items-center gap-2 text-xs font-bold text-slate-700" title="Colour of α-helices (incl. 3₁₀ and π helices) when coloured by 2° structure">
+          <input type="color" value={numToHex(sstrucColors.helix)}
+            onChange={(e) => setSstrucColors((c) => ({ ...c, helix: parseInt(e.target.value.slice(1), 16) }))}
+            className="w-8 h-7 rounded border cursor-pointer" />
+          Helices
+        </label>
+        <label className="flex items-center gap-2 text-xs font-bold text-slate-700" title="Colour of β-sheets / β-strands when coloured by 2° structure">
+          <input type="color" value={numToHex(sstrucColors.sheet)}
+            onChange={(e) => setSstrucColors((c) => ({ ...c, sheet: parseInt(e.target.value.slice(1), 16) }))}
+            className="w-8 h-7 rounded border cursor-pointer" />
+          Sheets
+        </label>
+        <label className="flex items-center gap-2 text-xs font-bold text-slate-700" title="Colour of loops / coils (everything that is not a helix or a sheet) when coloured by 2° structure">
+          <input type="color" value={numToHex(sstrucColors.loop)}
+            onChange={(e) => setSstrucColors((c) => ({ ...c, loop: parseInt(e.target.value.slice(1), 16) }))}
+            className="w-8 h-7 rounded border cursor-pointer" />
+          Loops / coils
+        </label>
+      </div>
+      {/* Residue-highlight colours. */}
+      <div className="flex flex-col gap-1.5">
+        <span className="text-[10px] font-black text-slate-600 uppercase">Residue highlights</span>
+        <label className="flex items-center gap-2 text-xs font-bold text-slate-700" title="Colour of the residues you select (residue strip / atom clicks / selections)">
+          <input type="color" value={numToHex(selectedResidueColor)}
+            onChange={(e) => setSelectedResidueColor(parseInt(e.target.value.slice(1), 16))}
+            className="w-8 h-7 rounded border cursor-pointer" />
+          Selected residues
+        </label>
+        <label className="flex items-center gap-2 text-xs font-bold text-slate-700" title="Colour of the manually-assigned atoms (the 🟢 Assigned toggle)">
+          <input type="color" value={numToHex(assignedAtomColor)}
+            onChange={(e) => setAssignedAtomColor(parseInt(e.target.value.slice(1), 16))}
+            className="w-8 h-7 rounded border cursor-pointer" />
+          Assigned atoms
+        </label>
+      </div>
+    </div>
+    <p className="text-[10px] text-slate-400 italic">Saved and persists across pages. “Secondary structure” colours apply everywhere the “2° structure” colour mode is used (Molecules bar / Selections panel).</p>
+  </div>
+)}
 
 {showAtomPanel && (
   <div className="bg-amber-50/40 border border-amber-200 rounded-lg p-3 flex flex-col gap-2">
@@ -3466,6 +3700,28 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
 >
 <div ref={containerRef} className="w-full h-full" />
 
+{/* Mouse drag-to-move overlay — when "✋ Drag" is enabled, it captures the mouse
+    (so NGL's rotate/zoom is suspended) and slides the SELECTED structure. */}
+{dragMove && (
+  <div
+    className="absolute inset-0 z-20"
+    style={{ cursor: 'move' }}
+    onMouseDown={dragMoveOnDown}
+    onMouseMove={dragMoveOnMove}
+    onMouseUp={dragMoveOnUp}
+    title="Drag with the mouse to move the selected structure — toggle off to rotate/zoom again"
+  />
+)}
+
+{/* Shadow vignette — a SAFE depth/shadow cue drawn above the canvas (real shadow
+    maps broke NGL's renderer and made the molecule disappear). */}
+{shadowOn && (
+  <div
+    className="pointer-events-none absolute inset-0 z-10"
+    style={{ background: `radial-gradient(ellipse at 50% 42%, transparent 55%, rgba(15,23,42,${0.18 + (shadowDarkness || 0) * 0.18}) 100%)` }}
+  />
+)}
+
 {/* Floating retract control — top-left of the 3D viewport, always visible
     (above the status overlays). Mirrors the "⬇ Minimize" toolbar button. */}
 <button
@@ -3500,6 +3756,13 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
         title="Main structure — click to select & centre it">
         <input type="checkbox" checked={visibleMolKeys.has('main')} onChange={(e) => { e.stopPropagation(); toggleMol('main'); }} className="accent-blue-600 w-3.5 h-3.5" />
         <span className="truncate text-slate-700 flex-1">Main{file ? ` (${file.name})` : ''}</span>
+      </div>
+      {/* Main structure drag-to-move toggle */}
+      <div className="flex items-center gap-1 mt-0.5 pl-5" title="Move the main structure with the mouse (toggle off to rotate/zoom)">
+        <label className="flex items-center gap-1 text-[9px] font-bold text-slate-500 cursor-pointer">
+          <input type="checkbox" checked={dragMove} onChange={(e) => { e.stopPropagation(); setDragMove(e.target.checked); }} className="accent-blue-600 w-3 h-3" />
+          ✋ Drag to move
+        </label>
       </div>
       {extraMols.map((m) => (
         <div key={m.id} className={`rounded px-1 py-0.5 border ${selectedMolKey === m.id ? 'bg-blue-100 border-blue-300' : 'border-transparent hover:bg-blue-50'}`}>
@@ -3554,6 +3817,10 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
               </label>
             ))}
             <button type="button" onClick={() => resetExtraMolPosition(m.id)} className="text-[9px] font-bold text-slate-500 hover:text-slate-800 underline" title="Reset position">↺</button>
+            <label className="flex items-center gap-1 text-[9px] font-bold text-slate-500 cursor-pointer" title="Move this structure with the mouse (toggle off to rotate/zoom)">
+              <input type="checkbox" checked={dragMove} onChange={(e) => setDragMove(e.target.checked)} className="accent-blue-600 w-3 h-3" />
+              ✋ Drag
+            </label>
           </div>
         </div>
       ))}
@@ -3747,22 +4014,36 @@ className="text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-3 p
 </div>
 )}
 
-{/* "Replace or keep both?" — a structure is already loaded and the user picked new files */}
-{pendingFileBatch && (
-  <div className="fixed inset-0 z-[99999] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setPendingFileBatch(null)}>
+{/* "Replace or keep both?" — a structure is already loaded and the user picked new
+    files OR entered a new PDB code / URL. */}
+{(pendingFileBatch || pendingSrc) && (
+  <div className="fixed inset-0 z-[99999] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => { setPendingFileBatch(null); setPendingSrc(null); }}>
     <div className="bg-white rounded-xl shadow-2xl p-5 max-w-sm w-full flex flex-col gap-3" onClick={(e) => e.stopPropagation()}>
-      <h4 className="text-sm font-black text-slate-800">📂 {pendingFileBatch.length} file(s) selected</h4>
+      <h4 className="text-sm font-black text-slate-800">
+        {pendingFileBatch ? `📂 ${pendingFileBatch.length} file(s) selected` : '🧬 New structure (PDB code / URL)'}
+      </h4>
       <p className="text-xs text-slate-500">A structure is already loaded. What should happen to it?</p>
+      {pendingSrc && (
+        <p className="text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded px-2 py-1 break-all">
+          Source: <b className="font-mono">{pendingSrc}</b>
+        </p>
+      )}
       <div className="flex flex-col gap-2">
-        <button type="button" onClick={() => { const f = pendingFileBatch; setPendingFileBatch(null); doReplaceLoad(f); }}
+        <button type="button" onClick={() => {
+          if (pendingFileBatch) { const f = pendingFileBatch; setPendingFileBatch(null); doReplaceLoad(f); }
+          else doReplaceSrc(pendingSrc);
+        }}
           className="text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-left" title="Remove the current structure(s) and load these file(s) as the new main structure">
           🔄 Replace the current structure
         </button>
-        <button type="button" onClick={() => { doKeepBoth(pendingFileBatch); }}
+        <button type="button" onClick={() => {
+          if (pendingFileBatch) doKeepBoth(pendingFileBatch);
+          else doKeepBothSrc(pendingSrc);
+        }}
           className="text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-left" title="Keep the current structure and add these file(s) as additional molecules (each chain becomes its own entry)">
           ➕ Keep both — add alongside
         </button>
-        <button type="button" onClick={() => setPendingFileBatch(null)}
+        <button type="button" onClick={() => { setPendingFileBatch(null); setPendingSrc(null); }}
           className="text-xs font-bold bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 px-3 py-2 rounded-lg text-left">
           Cancel
         </button>

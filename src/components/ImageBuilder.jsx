@@ -36,6 +36,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   const [globalCaption, setGlobalCaption] = useState('');     // figure-wide caption at the bottom
   const [editingText, setEditingText] = useState(null);       // { objId, txId, mmX, mmY, value } — type directly on the canvas
   const [editingCaption, setEditingCaption] = useState(false); // edit the figure caption directly at the bottom
+  const [editingObjCaption, setEditingObjCaption] = useState(null); // objId — inline sub-caption editor (click a panel's caption)
   const [insertOpen, setInsertOpen] = useState(false);        // "insert into project section" modal
   const [insertTarget, setInsertTarget] = useState({ projectId: projectId || '', section: 'background' });
   const [insertMsg, setInsertMsg] = useState('');
@@ -266,6 +267,12 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
     setObjects(prev => prev.map(o => o.id === selectedId ? { ...o, ...patch } : o));
   };
 
+  // Update ONE object's sub-caption directly by id (used by the inline editor,
+  // which must not depend on the currently-selected object).
+  const setObjCaption = (objId, caption) => {
+    setObjects(prev => prev.map(o => o.id === objId ? { ...o, caption } : o));
+  };
+
   const handlePickImage = (item) => {
     commitHistory();
     // Replace mode: the object shows exactly this one figure (also clears any
@@ -276,7 +283,8 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
       libScope: libraryTab,
       libProjectId: libraryTab === 'project' ? activeLibProjectId : null,
       libId: item.id,
-      src: item.src || null
+      src: item.src || null,
+      dx: 0, dy: 0, scale: 1
     }]) : o));
     setShowLibrary(false);
   };
@@ -293,7 +301,8 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
         libScope: libraryTab,
         libProjectId: libraryTab === 'project' ? activeLibProjectId : null,
         libId: item.id,
-        src: item.src || null
+        src: item.src || null,
+        dx: 0, dy: 0, scale: 1
       }]);
     }));
     // The library modal stays open so several figures can be added in a row.
@@ -370,7 +379,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
 
   const onDrag = (e) => {
     if (!dragState.current) return;
-    const { type, id, textId, startX, startY, origX, origY, origW, origH, origScale } = dragState.current;
+    const { type, id, imgIdx, textId, startX, startY, origX, origY, origW, origH, origScale } = dragState.current;
     const svgEl = activeSvgEl();
     if (!svgEl) return;
 
@@ -380,6 +389,26 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
 
     const dxMm = (e.clientX - startX) * scaleX;
     const dyMm = (e.clientY - startY) * scaleY;
+
+    // Move ONE figure of a multi-figure object independently (drag the figure).
+    if (type === 'figMove') {
+      setObjects(prev => prev.map(o => {
+        if (o.id !== id || !Array.isArray(o.images)) return o;
+        return { ...o, images: o.images.map((im, i) => i === imgIdx ? { ...im, dx: +(origX + dxMm).toFixed(2), dy: +(origY + dyMm).toFixed(2) } : im) };
+      }));
+      return;
+    }
+
+    // Resize ONE figure of a multi-figure object (drag its corner handle).
+    if (type === 'figResize') {
+      setObjects(prev => prev.map(o => {
+        if (o.id !== id || !Array.isArray(o.images)) return o;
+        const figW = Math.max(10, (o.w * cellW) / Math.max(1, o.imgCols || 2));
+        const factor = Math.max(0.3, Math.min(4, 1 + dxMm / figW));
+        return { ...o, images: o.images.map((im, i) => i === imgIdx ? { ...im, scale: +(origScale * factor).toFixed(3) } : im) };
+      }));
+      return;
+    }
 
     // Dragging the image inside its frame → shift it (mouse pan).
     if (type === 'imgShift') {
@@ -462,6 +491,30 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
     const obj = objects.find(o => o.id === objId);
     if (!obj || !obj.imgSrc) return;
     dragState.current = { type: 'imgResize', id: objId, startX: e.clientX, startY: e.clientY, origScale: obj.imgScale || 1 };
+    window.addEventListener('mousemove', onDrag);
+    window.addEventListener('mouseup', endDrag);
+  };
+
+  // Move ONE figure of a multi-figure object independently (drag the figure).
+  const startFigureDrag = (e, objId, imgIdx) => {
+    e.stopPropagation();
+    commitHistory();
+    const obj = objects.find(o => o.id === objId);
+    const im = obj && getObjImages(obj)[imgIdx];
+    if (!im) return;
+    dragState.current = { type: 'figMove', id: objId, imgIdx, startX: e.clientX, startY: e.clientY, origX: im.dx || 0, origY: im.dy || 0 };
+    window.addEventListener('mousemove', onDrag);
+    window.addEventListener('mouseup', endDrag);
+  };
+
+  // Resize ONE figure of a multi-figure object (drag its corner handle).
+  const startFigureResize = (e, objId, imgIdx) => {
+    e.stopPropagation();
+    commitHistory();
+    const obj = objects.find(o => o.id === objId);
+    const im = obj && getObjImages(obj)[imgIdx];
+    if (!im) return;
+    dragState.current = { type: 'figResize', id: objId, imgIdx, startX: e.clientX, startY: e.clientY, origScale: im.scale || 1 };
     window.addEventListener('mousemove', onDrag);
     window.addEventListener('mouseup', endDrag);
   };
@@ -700,13 +753,15 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
               const fit = obj.imgFit;
               const rot = obj.imgRotate || 0;
               const cellImage = (i) => {
+                const im = imgs[i] || {};
                 const cellX = ox + (i % cols) * cw;
                 const cellY = oy + Math.floor(i / cols) * ch;
-                const iW = (cw - pad * 2) * scale;
-                const iH = (ch - pad * 2) * scale;
+                const figScale = scale * (im.scale || 1);
+                const iW = (cw - pad * 2) * figScale;
+                const iH = (ch - pad * 2) * figScale;
                 return {
-                  iX: cellX + pad + (cw - pad * 2 - iW) / 2 + oxf,
-                  iY: cellY + pad + (ch - pad * 2 - iH) / 2 + oyf,
+                  iX: cellX + pad + (cw - pad * 2 - iW) / 2 + oxf + (im.dx || 0),
+                  iY: cellY + pad + (ch - pad * 2 - iH) / 2 + oyf + (im.dy || 0),
                   iW, iH
                 };
               };
@@ -726,19 +781,38 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
                       />
                     );
                   })}
-                  {isSelected && single && (() => {
-                    const g = cellImage(0);
-                    return (
-                      <>
-                        <rect data-selection-ui="true" x={Math.max(ox, g.iX)} y={Math.max(oy, g.iY)} width={Math.min(ow, g.iW)} height={Math.min(oh, g.iH)} fill="transparent"
-                          style={{ cursor: 'move' }} onMouseDown={(e) => startImageShift(e, obj.id)}
-                          title="Drag to shift the image inside the frame (or hold Shift while dragging anywhere on the object)" />
-                        <rect data-selection-ui="true" x={Math.max(ox, g.iX) + Math.min(ow, g.iW) - 5} y={Math.max(oy, g.iY) + Math.min(oh, g.iH) - 5} width={6} height={6} fill="#3b82f6"
-                          style={{ cursor: 'nwse-resize' }} onMouseDown={(e) => startImageResize(e, obj.id)}
-                          title="Drag to resize the image" />
-                      </>
-                    );
-                  })()}
+                  {/* Selection UI: a single figure gets the classic shift + small
+                      resize handles; a multi-figure panel gets ONE draggable
+                      (transparent) handle per figure, so every figure can be
+                      moved and resized independently within the panel. */}
+                  {isSelected && (
+                    imgs.map((im, i) => {
+                      if (!im.imgSrc) return null;
+                      const g = cellImage(i);
+                      if (single) {
+                        return (
+                          <g key={`sel${i}`}>
+                            <rect data-selection-ui="true" x={Math.max(ox, g.iX)} y={Math.max(oy, g.iY)} width={Math.min(ow, g.iW)} height={Math.min(oh, g.iH)} fill="transparent"
+                              style={{ cursor: 'move' }} onMouseDown={(e) => startImageShift(e, obj.id)}
+                              title="Drag to shift the image inside the frame (or hold Shift while dragging anywhere on the object)" />
+                            <rect data-selection-ui="true" x={Math.max(ox, g.iX) + Math.min(ow, g.iW) - 3} y={Math.max(oy, g.iY) + Math.min(oh, g.iH) - 3} width={3} height={3} fill="#3b82f6"
+                              style={{ cursor: 'nwse-resize' }} onMouseDown={(e) => startImageResize(e, obj.id)}
+                              title="Drag to resize the image" />
+                          </g>
+                        );
+                      }
+                      return (
+                        <g key={`fsel${i}`}>
+                          <rect data-selection-ui="true" x={g.iX} y={g.iY} width={g.iW} height={g.iH} fill="transparent" stroke="#3b82f6" strokeWidth={0.2} strokeDasharray="1.4,1.4"
+                            style={{ cursor: 'move' }} onMouseDown={(e) => startFigureDrag(e, obj.id, i)}
+                            title="Drag to move this figure within the panel" />
+                          <rect data-selection-ui="true" x={g.iX + g.iW - 3} y={g.iY + g.iH - 3} width={3} height={3} fill="#3b82f6"
+                            style={{ cursor: 'nwse-resize' }} onMouseDown={(e) => startFigureResize(e, obj.id, i)}
+                            title="Drag to resize this figure" />
+                        </g>
+                      );
+                    })
+                  )}
                 </g>
               );
             })()}
@@ -750,7 +824,10 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
             )}
 
             {obj.caption && (
-              <text x={ox + ow / 2} y={oy + oh - 1.5} fontSize={ptToMm(obj.captionStyle.fontSize)} fill={obj.captionStyle.color} fontWeight={obj.captionStyle.bold ? 'bold' : 'normal'} textAnchor="middle" style={{ pointerEvents: 'none' }}>
+              <text x={ox + ow / 2} y={oy + oh - 1.5} fontSize={ptToMm(obj.captionStyle.fontSize)} fill={obj.captionStyle.color} fontWeight={obj.captionStyle.bold ? 'bold' : 'normal'} textAnchor="middle"
+                style={{ pointerEvents: isSelected ? 'auto' : 'none', cursor: isSelected ? 'text' : 'default' }}
+                onClick={(e) => { if (isSelected) { e.stopPropagation(); setSelectedId(obj.id); setEditingObjCaption(obj.id); } }}
+                title={isSelected ? 'Click to edit this panel sub-caption' : undefined}>
                 {obj.caption}
               </text>
             )}
@@ -834,7 +911,11 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
                     : <span className="w-8 h-8 rounded bg-slate-100" />}
                   <span className="text-[10px] font-bold text-slate-600 flex-1 truncate">{im.src && im.src.elementLabel ? im.src.elementLabel : `Figure ${i + 1}`}</span>
                   {im.src && im.src.testId && (
-                    <button type="button" onClick={() => openOriginalGraph(im.src)} className="text-[10px] font-bold text-sky-700 hover:underline shrink-0" title="Open the original graph">↗</button>
+                    <button type="button" onClick={() => openOriginalGraph(im.src)}
+                      className="text-[10px] font-bold text-sky-700 hover:underline shrink-0 border border-sky-200 bg-sky-50 rounded px-1.5 py-0.5"
+                      title="Open the original experiment / graph this figure was captured from">
+                      Open original ↗
+                    </button>
                   )}
                   <button type="button" onClick={() => removeObjImage(i)} className="text-[10px] font-bold text-red-400 hover:text-red-600 shrink-0" title="Remove this figure from the panel">✕</button>
                 </div>
@@ -888,8 +969,8 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
             <label className="text-[10px] font-bold text-slate-500">Letter Size (pt)
               <input type="number" min="4" max="48" value={selectedObj.letterStyle.fontSize} onChange={e => updateObj({ letterStyle: { ...selectedObj.letterStyle, fontSize: Number(e.target.value) } })} className="w-full border rounded p-1 text-xs" />
             </label>
-            <label className="text-[10px] font-bold text-slate-500">Caption
-              <input type="text" value={selectedObj.caption} onChange={e => updateObj({ caption: e.target.value })} className="w-full border rounded p-1 text-xs" />
+            <label className="text-[10px] font-bold text-slate-500 col-span-2">Caption (sub-caption of this panel — click the caption on the canvas to edit in place)
+              <textarea rows={2} value={selectedObj.caption} onChange={e => updateObj({ caption: e.target.value })} placeholder={`Sub-caption for panel ${selectedObj.letter || ''} — shown at the bottom of this panel and merged into the figure caption`} className="w-full border rounded p-1 text-xs mt-0.5" />
             </label>
             <label className="text-[10px] font-bold text-slate-500">Caption Size (pt)
               <input type="number" min="4" max="48" value={selectedObj.captionStyle.fontSize} onChange={e => updateObj({ captionStyle: { ...selectedObj.captionStyle, fontSize: Number(e.target.value) } })} className="w-full border rounded p-1 text-xs" />
@@ -1043,6 +1124,31 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') setEditingCaption(false); }}
             style={{ position: 'fixed', left: r.left + r.width * 0.08, top: y - 20, width: r.width * 0.84, zIndex: 999999, fontSize: 14 }}
             className="border-2 border-blue-500 rounded px-1.5 py-0.5 outline-none bg-white shadow-lg"
+          />
+        );
+      })()}
+
+      {/* Inline PANEL sub-caption editor — click a panel's caption on the canvas
+          to write its sub-caption comfortably in a floating textarea. */}
+      {editingObjCaption && activeSvgEl() && (() => {
+        const obj = objects.find(o => o.id === editingObjCaption);
+        if (!obj) return null;
+        const r = activeSvgEl().getBoundingClientRect();
+        const xMm = (obj.x * cellW) + (obj.w * cellW) / 2;
+        const yMm = (obj.y * cellH) + (obj.h * cellH) - 2;
+        const left = r.left + (xMm / canvasW) * r.width;
+        const top = r.top + (yMm / (canvasH + captionH)) * r.height;
+        return (
+          <textarea
+            value={obj.caption || ''}
+            autoFocus
+            rows={2}
+            placeholder={`Sub-caption for panel ${obj.letter || '?'}`}
+            onChange={(e) => setObjCaption(obj.id, e.target.value)}
+            onBlur={() => setEditingObjCaption(null)}
+            onKeyDown={(e) => { if (e.key === 'Escape' || (e.key === 'Enter' && !e.shiftKey)) setEditingObjCaption(null); }}
+            style={{ position: 'fixed', left: Math.max(8, Math.min(window.innerWidth - 380, left - 160)), top: Math.max(8, top - 48), width: 320, zIndex: 999999, fontSize: 13 }}
+            className="border-2 border-blue-500 rounded px-2 py-1 outline-none bg-white shadow-lg"
           />
         );
       })()}
