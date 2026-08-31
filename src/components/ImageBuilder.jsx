@@ -13,6 +13,8 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   const svgRef = useRef(null);
   const dragState = useRef(null);
   const fsAreaRef = useRef(null);   // fullscreen canvas area (measured for "zoom on object")
+  const initialZoomRef = useRef(1.5);        // zoom when fullscreen was entered ("↩ Initial zoom")
+  const initialPanRef = useRef({ x: 0, y: 0 });
 
   const [canvasW, setCanvasW] = useState(180);
   const [canvasH, setCanvasH] = useState(120);
@@ -61,8 +63,23 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
           setObjects((data.objects || []).map((o) => {
             if (!o.libId) return o;
             try {
-              const lib = o.libScope === 'project' ? readProjectLibrary(projectId) : readLibrary();
-              const it = lib.find((x) => x.id === o.libId);
+              // Search every scope the image could live in — the project it was
+              // picked from (libProjectId), the currently-active project, then
+              // the common library — so the full-resolution copy is always found
+              // even if the project context changed while away.
+              const scopes = [];
+              if (o.libScope === 'project') {
+                if (o.libProjectId) scopes.push(['project', o.libProjectId]);
+                scopes.push(['project', projectId], ['common', null]);
+              } else {
+                scopes.push(['common', null], ['project', o.libProjectId || projectId]);
+              }
+              let it = null;
+              for (const [scope, pid] of scopes) {
+                const lib = scope === 'project' ? readProjectLibrary(pid) : readLibrary();
+                it = lib.find((x) => x.id === o.libId);
+                if (it) break;
+              }
               if (it) return { ...o, imgSrc: it.full || it.url, imgThumb: it.url || it.full };
             } catch { /* keep the persisted thumbnail */ }
             return o;
@@ -121,6 +138,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
       imgSrc: item.full || item.url,
       imgThumb: item.url || item.full,
       libScope: libraryTab,
+      libProjectId: libraryTab === 'project' ? activeLibProjectId : null,
       libId: item.id,
       src: item.src || null
     });
@@ -343,21 +361,38 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
     // instead of being over-zoomed to a fragment of it.
     const owPx = owMm * PX_PER_MM, ohPx = ohMm * PX_PER_MM;
     const scale = Math.max(0.05, Math.min((aw - 24) / owPx, (ah - 24) / ohPx));
+    const px = (aw - owPx * scale) / 2 - oxMm * PX_PER_MM * scale;
+    const py = (ah - ohPx * scale) / 2 - oyMm * PX_PER_MM * scale;
+    // The object-fit view is the "initial" view of this fullscreen session.
+    initialZoomRef.current = scale;
+    initialPanRef.current = { x: px, y: py };
     setZoom(scale);
-    setPanX((aw - owPx * scale) / 2 - oxMm * PX_PER_MM * scale);
-    setPanY((ah - ohPx * scale) / 2 - oyMm * PX_PER_MM * scale);
+    setPanX(px);
+    setPanY(py);
   };
 
   // Centre the whole canvas in the fullscreen viewport (no focused object).
-  const centerCanvas = () => {
+  const centerCanvasAt = (z) => {
     const area = fsAreaRef.current;
     if (!area) return;
     const aw = Math.max(120, area.clientWidth - 64); // p-8 padding
     const ah = Math.max(120, area.clientHeight - 64);
-    const cw = canvasW * PX_PER_MM * zoom;
-    const ch = (canvasH + captionH) * PX_PER_MM * zoom;
+    const cw = canvasW * PX_PER_MM * z;
+    const ch = (canvasH + captionH) * PX_PER_MM * z;
     setPanX(Math.max(0, (aw - cw) / 2));
     setPanY(Math.max(0, (ah - ch) / 2));
+  };
+  const centerCanvas = () => centerCanvasAt(zoom);
+
+  // Restore the zoom (and centring) that was active when fullscreen was entered.
+  const restoreInitialZoom = () => {
+    setZoom(initialZoomRef.current);
+    if (focusObjId) {
+      setPanX(initialPanRef.current.x);
+      setPanY(initialPanRef.current.y);
+    } else {
+      centerCanvasAt(initialZoomRef.current);
+    }
   };
 
   useEffect(() => {
@@ -661,7 +696,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
         <div className="flex justify-between items-center">
           <h3 className="text-lg font-black text-slate-800">🖼️ Image Builder (Publication Quality)</h3>
           <div className="flex gap-2">
-            <button onClick={() => setIsFullScreen(true)} className="text-xs bg-slate-800 text-white border border-slate-800 px-3 py-1.5 rounded-lg font-bold hover:bg-slate-700 flex items-center gap-1">
+            <button onClick={() => { initialZoomRef.current = zoom; setIsFullScreen(true); }} className="text-xs bg-slate-800 text-white border border-slate-800 px-3 py-1.5 rounded-lg font-bold hover:bg-slate-700 flex items-center gap-1">
               🔍 Full Screen
             </button>
             <button onClick={() => { if(window.confirm('Clear the entire canvas?')) { setObjects([]); setSelectedId(null); } }} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded font-bold hover:bg-red-100">Clear Canvas</button>
@@ -743,6 +778,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
                 <button onClick={() => setZoom(z => Math.min(8, +(z + 0.1).toFixed(1)))} className="w-6 h-6 flex items-center justify-center bg-white border border-slate-300 rounded text-slate-600 hover:bg-slate-50 font-bold">+</button>
                 <span className="text-xs font-bold text-slate-600 w-12 text-center">{Math.round(zoom * 100)}%</span>
                 <button onClick={() => setZoom(1)} className="text-xs font-bold text-blue-600 hover:underline ml-2">Reset</button>
+                <button onClick={restoreInitialZoom} className="text-xs font-bold text-indigo-600 hover:underline ml-1" title="Zoom out to the initial zoom of this fullscreen session">↩ Initial zoom</button>
               </div>
 
               <div className="flex items-center gap-2">
