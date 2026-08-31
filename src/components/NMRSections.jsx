@@ -9,14 +9,22 @@ import {
 import { CollapsibleSection } from './ui';
 import { FS_CLASSES, OVERLAY_CLASSES, CHART_MARGIN, CHART_MARGIN_1D, SELECT_COLOR, MANUAL_COLOR, VIS_PALETTES, PER_ATOM_COLORS, seriesColorFor, chartBoxStyle } from '../utils/chartStyle';
 import { suggestDriveFileName, driveFolderPath, sanitizeSlug } from '../utils/driveNaming';
-import { uploadLocalFile, getDriveToken } from '../utils/driveUpload';
+import { uploadLocalFile, getDriveToken, archiveFileToDrive } from '../utils/driveUpload';
 import { storeJson, loadJson } from '../utils/pdbStore';
+import { blobStore } from '../utils/blobStore';
 import {
   AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, CARBON_RANGE_DB,
   SS_CORRECTIONS, SS_META, DNA_FORM_OFFSETS, SUGAR_ANOMER_OFFSETS,
   RESIDUE_COLORS, RANDOM_COIL_DB, CYS_OXIDIZED_RC, TICKS_1H, TICKS_13C, TICKS_15N
 } from './NMRData';
 export { VIS_PALETTES };
+
+// Session cache + IndexedDB key for a structure FILE picked in the 3D viewer
+// (mirrors the MD page): the raw File is kept so switching tests/tabs — or
+// reloading the page — does NOT force the user to re-pick their PDB. Small
+// files also travel on the test as a data URL (structureFileData).
+const nmrLocalFileCache = new Map();
+const nmrStructBlobKey = (testId) => `nmr_struct_${testId}`;
 
 const HAS_EB = typeof ErrorBar !== 'undefined';
 
@@ -3939,7 +3947,63 @@ export const MolecularStructureSection = ({ ctx }) => {
   }, [firstSelectedCmp, ctx.compoundMeta, activeTest.smiles, activeTest.proteinSequence, updateActiveTest]);
   
   const activeSmiles = activeTest.smiles || (firstSelectedCmp && ctx.compoundMeta?.[firstSelectedCmp]?.smiles) || '';
-  const hasExplicitOverride = !!(activeTest.structureSrc || activeTest.pdbId || '').trim();
+  // A structure FILE chosen in the 3D viewer also counts as an explicit
+  // override (like the MD page), so the generated structure does not fight it.
+  const hasExplicitOverride = !!(String(activeTest.structureSrc || '').trim()
+    || String(activeTest.pdbId || '').trim()
+    || activeTest.structureFileName
+    || activeTest.structureFileData);
+
+  // Structure file picked in the 3D viewer ("PDB file(s)" button) — kept in the
+  // session cache + IndexedDB so switching away and back (or reloading) does NOT
+  // force the user to re-pick their PDB (same pattern as the MD page).
+  const [structureFile, setStructureFile] = useState(() => nmrLocalFileCache.get(activeTest.id)?.structure || null);
+  const handleStructureFile = (file) => {
+    if (!file) {
+      updateActiveTest({ structureFileData: null, structureFileName: null });
+      setStructureFile(null);
+      blobStore.remove(nmrStructBlobKey(activeTest.id));
+      return;
+    }
+    archiveFileToDrive({ file, ctx: { project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure', suffix: 'structure' } }).catch(() => {});
+    // A picked file replaces any previously-set PDB code / URL as the structure
+    // source, so going back to the page shows THE FILE (not the older code).
+    updateActiveTest({ structureSrc: null, pdbId: null });
+    setStructureFile(file);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = String(e.target.result || '');
+      // Keep the base64 data URL on the test ONLY when it is small enough to
+      // survive compressDatasetForSave (large strings are stripped to a marker);
+      // bigger files are persisted in IndexedDB instead.
+      const smallEnough = dataUrl.length <= 18000;
+      updateActiveTest({ structureFileData: smallEnough ? dataUrl : null, structureFileName: file.name });
+    };
+    reader.readAsDataURL(file);
+    blobStore.save(nmrStructBlobKey(activeTest.id), file);
+    const cache = nmrLocalFileCache.get(activeTest.id) || {};
+    nmrLocalFileCache.set(activeTest.id, { ...cache, structure: file });
+  };
+
+  // Restore a previously-picked structure file on (re)load, so the viewer shows
+  // the same PDB after navigating away/back or a page reload. Source: this
+  // browser's IndexedDB cache (the file was archived to Drive on upload too).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (structureFile || !activeTest.structureFileName) return;
+      const blob = await blobStore.load(nmrStructBlobKey(activeTest.id));
+      if (cancelled) return;
+      if (blob && (!activeTest.structureFileName || !blob.name || blob.name === activeTest.structureFileName)) {
+        const restored = new File([blob], blob.name || activeTest.structureFileName || 'structure.pdb', { type: blob.type || 'application/octet-stream' });
+        setStructureFile(restored);
+        const cache = nmrLocalFileCache.get(activeTest.id) || {};
+        nmrLocalFileCache.set(activeTest.id, { ...cache, structure: restored });
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTest.id, activeTest.structureFileName]);
 
   // Locally-generated structures (no network round trip): idealized protein backbone from
   // sequence + secondary structure (or fully-extended fallback), and a simplified extended
@@ -4008,7 +4072,10 @@ const generatedStructure = useMemo(() => {
       return ''; // organic case is served via structureText/organicFetch instead
     }
     if (/^(https?:|blob:|data:)/i.test(raw) || raw.startsWith('/') || raw.startsWith('./')) return raw;
-    if (/^[0-9][A-Za-z0-9]{3}$/.test(raw)) return `https://models.rcsb.org/${raw.toUpperCase()}.mmtf`;
+    // PDB codes are passed through RAW — the viewer resolves them to the RCSB
+    // URL itself. Keeping the raw value means the onStructureSrc persistence
+    // round-trips exactly (no re-prompt / double-load when the raw code differs
+    // from its resolved URL).
     return raw;
   }, [activeTest.structureSrc, activeTest.pdbId, d.moleculeType, activeTest.lipidChoice, activeTest.sugarChoice, activeTest.sugarAnomer, generatedStructure]);
   
@@ -4309,7 +4376,7 @@ const generatedStructure = useMemo(() => {
         <div style={{ display: structureMode === '3d' ? 'block' : 'none' }} aria-hidden={structureMode !== '3d'}>
           {hasOpened3D && (
             <div className="flex flex-col gap-2">
-              <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} externalLoading={organicFetch.loading} externalError={organicFetch.error} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq) => { if (seq && !activeTest.proteinSequence && ['protein', 'dna', 'rna'].includes(d.moleculeType)) updateActiveTest({ proteinSequence: seq }); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
+              <NMRMoleculeViewer key={(activeTest && activeTest.id) || 'molecular-structure'} src={structureSrc} structureText={structureText} structureTextExt={structureTextExt} externalLoading={organicFetch.loading} externalError={organicFetch.error} structureFileData={activeTest.structureFileData} structureFileName={activeTest.structureFileName} structureFile={structureFile} onStructureSrc={(v) => updateActiveTest({ structureSrc: v })} onStructureFile={handleStructureFile} moleculeType={d.moleculeType} parsedSeq={d.parsedSeq} smiles={activeTest.smiles} selectedKeys={selectedKeys} manualKeys={manualKeys} onAtomClick={handleAtomClick} residueOffset={residueOffset} atomNameMap={atomNameMap} atomRenames={activeTest.atomRenames || {}} onAtomRenames={(map) => updateActiveTest({ atomRenames: map })} resRenumber={activeTest.resRenumber || {}} onResRenumber={(map) => updateActiveTest({ resRenumber: map })} onStructureSequence={(seq) => { if (seq && !activeTest.proteinSequence && ['protein', 'dna', 'rna'].includes(d.moleculeType)) updateActiveTest({ proteinSequence: seq }); }} driveNaming={{ project: (activeTest.projectNames || [])[0] || '', test: activeTest.name || '', instance: activeTest.instanceName || '', scientist: activeTest.operator || '', section: 'Data', subsection: 'Structure' }} labelMode={atomLabelMode} height={d.moleculeType === 'dna' || d.moleculeType === 'rna' ? '1100px' : '1000px'} />
               <button onClick={downloadPdbFile} className="self-center mt-2 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-xs rounded-lg hover:bg-indigo-100 transition-colors shadow-sm">📥 Download 3D PDB File</button>
             </div>
           )}

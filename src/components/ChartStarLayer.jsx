@@ -286,14 +286,21 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
         localStorage.removeItem('labPendingFigureScroll');
         const target = JSON.parse(pend);
         if (target && target.key) {
-          const el = rootEl.querySelector(`[data-figure-origin="${target.key}"]`);
-          if (el) {
-            setTimeout(() => el.scrollIntoView({ block: 'center', behavior: 'smooth' }), 120);
-            const flash = el.closest('div,section,td') || el;
-            const prevOutline = flash.style.outline;
-            flash.style.outline = '3px solid #3b82f6';
-            setTimeout(() => { flash.style.outline = prevOutline; }, 2600);
-          }
+          // Charts / spectra can render lazily (Chart.js, async svg, …), so keep
+          // retrying for a couple of seconds instead of giving up on the first pass.
+          const attemptScroll = (attemptsLeft) => {
+            const el = rootEl.querySelector(`[data-figure-origin="${target.key}"]`);
+            if (el) {
+              setTimeout(() => el.scrollIntoView({ block: 'center', behavior: 'smooth' }), 120);
+              const flash = el.closest('div,section,td') || el;
+              const prevOutline = flash.style.outline;
+              flash.style.outline = '3px solid #3b82f6';
+              setTimeout(() => { flash.style.outline = prevOutline; }, 2600);
+              return;
+            }
+            if (attemptsLeft > 0) setTimeout(() => attemptScroll(attemptsLeft - 1), 500);
+          };
+          attemptScroll(5); // ≈ 2.5 s of retries
         }
       }
     } catch { /* ignore */ }

@@ -8,6 +8,13 @@ import { loadProjects, saveProjects, genProjectId } from './AppModules/projectsM
 const ptToMm = (pt) => pt * 0.352778;
 const PX_PER_MM = 96 / 25.4; // CSS: 1 mm ≈ 3.78 px
 
+// In-memory session cache of the Image Builder state (keyed like the
+// localStorage entry). The canvas is persisted to localStorage too, but large
+// full-resolution figures can blow past the quota and make setItem silently
+// fail — the in-memory copy always survives, so navigating to the original
+// graph and back NEVER loses the user's edits within this session.
+const imageBuilderSessionCache = new Map();
+
 export const ImageBuilder = ({ projectId, jumpToTest }) => {
   const storageKey = `labImageBuilder_${projectId || 'global'}`;
   const svgRef = useRef(null);
@@ -139,12 +146,15 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   const [panY, setPanY] = useState(0);
   const [focusObjId, setFocusObjId] = useState(null); // object zoomed on (persisted so "◀ Back" restores it)
 
-  // Load persisted state
+  // Load persisted state — the in-memory session cache (freshest, immune to the
+  // localStorage quota) wins; localStorage is the fallback / cross-reload source.
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(storageKey);
+      const saved = imageBuilderSessionCache.get(storageKey) || (() => {
+        try { return JSON.parse(localStorage.getItem(storageKey) || 'null'); } catch { return null; }
+      })();
       if (saved) {
-        const data = JSON.parse(saved);
+        const data = saved;
         if (data.canvasW) setCanvasW(data.canvasW);
         if (data.canvasH) setCanvasH(data.canvasH);
         if (data.gridCols) setGridCols(data.gridCols);
@@ -161,8 +171,9 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
           }));
         }
         if (data.globalCaption !== undefined) setGlobalCaption(data.globalCaption);
-        // Restore the "zoom on object" view the user left — e.g. when returning
-        // from the original graph via the test page's ◀ Back button.
+        // Restore the view the user left — e.g. when returning from the original
+        // graph via the test page's ◀ Back button.
+        if (data.isFullScreen) setIsFullScreen(true);
         if (data.focusObjId && data.objects && data.objects.some((o) => o.id === data.focusObjId)) {
           setFocusObjId(data.focusObjId);
           setIsFullScreen(true);
@@ -178,9 +189,13 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
       // full-resolution dataURL) so the layout always re-opens after
       // navigating away and back.
       const persisted = (objects || []).map(thumbnailsOf);
-      localStorage.setItem(storageKey, JSON.stringify({ canvasW, canvasH, gridCols, gridRows, objects: persisted, focusObjId, globalCaption }));
-    } catch {}
-  }, [canvasW, canvasH, gridCols, gridRows, objects, focusObjId, globalCaption, storageKey]);
+      const payload = { canvasW, canvasH, gridCols, gridRows, objects: persisted, focusObjId, globalCaption, isFullScreen };
+      // Always keep the freshest copy in memory (survives module remounts even
+      // when localStorage is full), then best-effort write localStorage.
+      imageBuilderSessionCache.set(storageKey, payload);
+      localStorage.setItem(storageKey, JSON.stringify(payload));
+    } catch { /* localStorage may be full — the session cache above still holds the state */ }
+  }, [canvasW, canvasH, gridCols, gridRows, objects, focusObjId, globalCaption, isFullScreen, storageKey]);
 
   const cellW = canvasW / gridCols;
   const cellH = canvasH / gridRows;
@@ -314,6 +329,68 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
     setObjects(prev => prev.map(o => o.id === selectedId ? withImages(o, getObjImages(o).filter((_, i) => i !== idx)) : o));
   };
 
+  // ---- Multi-figure selection inside overlapping figures ---------------------
+  // Figures of one object are laid out in a grid but can be dragged out of their
+  // cell (dx/dy) and OVERLAP. SVG hit-testing always grabs the top figure, so a
+  // dedicated "active figure" + click-cycling lets the user reach the one
+  // underneath: each click on an overlapping spot moves the active figure to the
+  // next one below. Only the active figure shows the move/resize handles, drawn
+  // ON TOP so it is always grabbable.
+  const [activeFig, setActiveFig] = useState(null); // { objId, idx }
+  const suppressCycleRef = useRef(false);           // a drag just happened → the trailing click must NOT cycle
+
+  // Geometry (mm, absolute on the canvas) of ONE figure inside an object.
+  const objFigureGeom = (obj, i) => {
+    const imgs = getObjImages(obj);
+    const im = imgs[i] || {};
+    const single = imgs.length === 1;
+    const cols = single ? 1 : Math.max(1, obj.imgCols || 2);
+    const rows = single ? 1 : Math.ceil(imgs.length / cols);
+    const cw = (obj.w * cellW) / cols;
+    const ch = (obj.h * cellH) / rows;
+    const pad = obj.imgPadding || 0;
+    const figScale = (obj.imgScale || 1) * (im.scale || 1);
+    const iW = (cw - pad * 2) * figScale;
+    const iH = (ch - pad * 2) * figScale;
+    const cellX = obj.x * cellW + (i % cols) * cw;
+    const cellY = obj.y * cellH + Math.floor(i / cols) * ch;
+    return {
+      iX: cellX + pad + (cw - pad * 2 - iW) / 2 + (obj.imgOffsetX || 0) + (im.dx || 0),
+      iY: cellY + pad + (ch - pad * 2 - iH) / 2 + (obj.imgOffsetY || 0) + (im.dy || 0),
+      iW, iH
+    };
+  };
+
+  // Figure indices whose bounds contain the point (mm, absolute), topmost first.
+  const figuresAt = (obj, xMm, yMm) => {
+    const imgs = getObjImages(obj);
+    const hits = [];
+    imgs.forEach((im, i) => {
+      if (!im || !im.imgSrc) return;
+      const g = objFigureGeom(obj, i);
+      if (xMm >= g.iX && xMm <= g.iX + g.iW && yMm >= g.iY && yMm <= g.iY + g.iH) hits.push(i);
+    });
+    return hits.reverse(); // last rendered = topmost
+  };
+
+  // Cycle the active figure under the mouse point (click on an overlapping spot).
+  const cycleFigureAt = (obj, e) => {
+    const svgEl = activeSvgEl();
+    if (!svgEl || !obj) return;
+    const r = svgEl.getBoundingClientRect();
+    const xMm = (e.clientX - r.left) * (canvasW / Math.max(1, r.width));
+    const yMm = (e.clientY - r.top) * (canvasH / Math.max(1, r.height));
+    const hits = figuresAt(obj, xMm, yMm);
+    if (!hits.length) return;
+    setActiveFig(prev => {
+      const cur = (prev && prev.objId === obj.id) ? prev.idx : -1;
+      const at = hits.indexOf(cur);
+      // Already on the topmost hit → move to the next one underneath.
+      if (at === 0) return { objId: obj.id, idx: hits.length > 1 ? hits[1] : hits[0] };
+      return { objId: obj.id, idx: hits[0] };
+    });
+  };
+
   // Move an image between a project library and the common (dataset) library.
   const transferItem = (item) => {
     const from = libraryTab; // 'project' | 'common'
@@ -389,6 +466,9 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
 
     const dxMm = (e.clientX - startX) * scaleX;
     const dyMm = (e.clientY - startY) * scaleY;
+    if (Math.abs(dxMm) > 0.05 || Math.abs(dyMm) > 0.05) {
+      if (dragState.current) dragState.current.moved = true;
+    }
 
     // Move ONE figure of a multi-figure object independently (drag the figure).
     if (type === 'figMove') {
@@ -454,9 +534,13 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
 
   const endDrag = () => {
     const type = dragState.current && dragState.current.type;
+    const moved = dragState.current && dragState.current.moved;
     dragState.current = null;
     window.removeEventListener('mousemove', onDrag);
     window.removeEventListener('mouseup', endDrag);
+    // A figure drag ends with a click event — that click must NOT cycle the
+    // active figure, so remember the drag happened and swallow the next click.
+    if (moved && (type === 'figMove' || type === 'figResize')) suppressCycleRef.current = true;
     // Re-order the A/B/C panel letters after an object is moved/resized.
     if (type === 'move' || type === 'resize') renumberLetters();
   };
@@ -725,6 +809,8 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
           <g key={obj.id} onClick={(e) => {
             e.stopPropagation();
             setSelectedId(obj.id);
+            // Selecting another object resets the active (draggable) figure.
+            setActiveFig(prev => (prev && prev.objId === obj.id) ? prev : null);
             // "Place by click": add a text exactly where the user clicked.
             if (placeTextMode && activeSvgEl()) {
               const r = activeSvgEl().getBoundingClientRect();
@@ -742,35 +828,20 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
               const imgs = getObjImages(obj);
               if (!imgs.length) return null;
               const single = imgs.length === 1;
-              const cols = single ? 1 : Math.max(1, obj.imgCols || 2);
-              const rows = single ? 1 : Math.ceil(imgs.length / cols);
-              const cw = ow / cols;
-              const ch = oh / rows;
-              const pad = obj.imgPadding || 0;
-              const scale = obj.imgScale || 1;
-              const oxf = obj.imgOffsetX || 0;
-              const oyf = obj.imgOffsetY || 0;
               const fit = obj.imgFit;
               const rot = obj.imgRotate || 0;
-              const cellImage = (i) => {
-                const im = imgs[i] || {};
-                const cellX = ox + (i % cols) * cw;
-                const cellY = oy + Math.floor(i / cols) * ch;
-                const figScale = scale * (im.scale || 1);
-                const iW = (cw - pad * 2) * figScale;
-                const iH = (ch - pad * 2) * figScale;
-                return {
-                  iX: cellX + pad + (cw - pad * 2 - iW) / 2 + oxf + (im.dx || 0),
-                  iY: cellY + pad + (ch - pad * 2 - iH) / 2 + oyf + (im.dy || 0),
-                  iW, iH
-                };
-              };
+              // The figure that owns the drag/resize handles (multi-figure: the
+              // active one, defaulting to the topmost).
+              const activeIdx = single ? 0
+                : (activeFig && activeFig.objId === obj.id && activeFig.idx >= 0 && activeFig.idx < imgs.length
+                  ? activeFig.idx : imgs.length - 1);
+              const activeGeom = objFigureGeom(obj, activeIdx);
               return (
                 <g clipPath={`url(#clip-${obj.id})`}>
                   {imgs.map((im, i) => {
                     const src = im.imgSrc;
                     if (!src) return null;
-                    const g = cellImage(i);
+                    const g = objFigureGeom(obj, i);
                     return (
                       <image key={im.libId || i}
                         href={src}
@@ -781,38 +852,46 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
                       />
                     );
                   })}
-                  {/* Selection UI: a single figure gets the classic shift + small
-                      resize handles; a multi-figure panel gets ONE draggable
-                      (transparent) handle per figure, so every figure can be
-                      moved and resized independently within the panel. */}
-                  {isSelected && (
-                    imgs.map((im, i) => {
-                      if (!im.imgSrc) return null;
-                      const g = cellImage(i);
-                      if (single) {
-                        return (
-                          <g key={`sel${i}`}>
-                            <rect data-selection-ui="true" x={Math.max(ox, g.iX)} y={Math.max(oy, g.iY)} width={Math.min(ow, g.iW)} height={Math.min(oh, g.iH)} fill="transparent"
-                              style={{ cursor: 'move' }} onMouseDown={(e) => startImageShift(e, obj.id)}
-                              title="Drag to shift the image inside the frame (or hold Shift while dragging anywhere on the object)" />
-                            <rect data-selection-ui="true" x={Math.max(ox, g.iX) + Math.min(ow, g.iW) - 3} y={Math.max(oy, g.iY) + Math.min(oh, g.iH) - 3} width={3} height={3} fill="#3b82f6"
-                              style={{ cursor: 'nwse-resize' }} onMouseDown={(e) => startImageResize(e, obj.id)}
-                              title="Drag to resize the image" />
-                          </g>
-                        );
-                      }
-                      return (
-                        <g key={`fsel${i}`}>
-                          <rect data-selection-ui="true" x={g.iX} y={g.iY} width={g.iW} height={g.iH} fill="transparent" stroke="#3b82f6" strokeWidth={0.2} strokeDasharray="1.4,1.4"
-                            style={{ cursor: 'move' }} onMouseDown={(e) => startFigureDrag(e, obj.id, i)}
-                            title="Drag to move this figure within the panel" />
-                          <rect data-selection-ui="true" x={g.iX + g.iW - 3} y={g.iY + g.iH - 3} width={3} height={3} fill="#3b82f6"
-                            style={{ cursor: 'nwse-resize' }} onMouseDown={(e) => startFigureResize(e, obj.id, i)}
-                            title="Drag to resize this figure" />
-                        </g>
-                      );
-                    })
+                  {/* Single figure: classic shift + small resize handle. */}
+                  {isSelected && single && (
+                    <g data-selection-ui="true">
+                      <rect x={Math.max(ox, activeGeom.iX)} y={Math.max(oy, activeGeom.iY)} width={Math.min(ow, activeGeom.iW)} height={Math.min(oh, activeGeom.iH)} fill="transparent"
+                        style={{ cursor: 'move' }} onMouseDown={(e) => startImageShift(e, obj.id)}
+                        title="Drag to shift the image inside the frame (or hold Shift while dragging anywhere on the object)" />
+                      <rect x={Math.max(ox, activeGeom.iX) + Math.min(ow, activeGeom.iW) - 3} y={Math.max(oy, activeGeom.iY) + Math.min(oh, activeGeom.iH) - 3} width={3} height={3} fill="#3b82f6"
+                        style={{ cursor: 'nwse-resize' }} onMouseDown={(e) => startImageResize(e, obj.id)}
+                        title="Drag to resize the image" />
+                    </g>
                   )}
+                  {/* Multi-figure: a clickable zone for EVERY figure (click picks
+                      it / cycles through overlapping figures) + the ACTIVE figure's
+                      move/resize handles rendered ON TOP so they are always
+                      grabbable even in overlap regions. */}
+                  {isSelected && !single && imgs.map((im, i) => {
+                    if (!im.imgSrc) return null;
+                    const g = objFigureGeom(obj, i);
+                    return (
+                      <g key={`fsel${i}`}>
+                        <rect data-selection-ui="true" x={g.iX} y={g.iY} width={g.iW} height={g.iH} fill="transparent"
+                          style={{ cursor: 'pointer' }}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onClick={(e) => { e.stopPropagation(); setSelectedId(obj.id); cycleFigureAt(obj, e); }}
+                          title="Click to select this figure — click an overlapping spot again to cycle to the figure underneath" />
+                        {i === activeIdx && (
+                          <g>
+                            <rect data-selection-ui="true" x={g.iX} y={g.iY} width={g.iW} height={g.iH} fill="transparent" stroke="#3b82f6" strokeWidth={0.2} strokeDasharray="1.4,1.4"
+                              style={{ cursor: 'move' }} onMouseDown={(e) => startFigureDrag(e, obj.id, i)}
+                              onClick={(e) => { e.stopPropagation(); setSelectedId(obj.id); if (!suppressCycleRef.current) cycleFigureAt(obj, e); else suppressCycleRef.current = false; }}
+                              title="Drag to move this figure within the panel" />
+                            <rect data-selection-ui="true" x={g.iX + g.iW - 3} y={g.iY + g.iH - 3} width={3} height={3} fill="#3b82f6"
+                              style={{ cursor: 'nwse-resize' }} onMouseDown={(e) => startFigureResize(e, obj.id, i)}
+                              onClick={(e) => e.stopPropagation()}
+                              title="Drag to resize this figure" />
+                          </g>
+                        )}
+                      </g>
+                    );
+                  })}
                 </g>
               );
             })()}
@@ -905,19 +984,19 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
             <div className="flex flex-col gap-1">
               <span className="text-[10px] font-bold text-slate-500">Figures in this panel: {getObjImages(selectedObj).length}</span>
               {getObjImages(selectedObj).map((im, i) => (
-                <div key={im.libId || i} className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1">
+                <div key={im.libId || i} className="flex flex-wrap items-center gap-x-2 gap-y-1 bg-white border border-slate-200 rounded-lg px-2 py-1">
                   {im.imgThumb || im.imgSrc
-                    ? <img src={im.imgThumb || im.imgSrc} alt="" className="w-8 h-8 object-contain rounded border border-slate-100 bg-slate-50" />
-                    : <span className="w-8 h-8 rounded bg-slate-100" />}
-                  <span className="text-[10px] font-bold text-slate-600 flex-1 truncate">{im.src && im.src.elementLabel ? im.src.elementLabel : `Figure ${i + 1}`}</span>
+                    ? <img src={im.imgThumb || im.imgSrc} alt="" className="w-8 h-8 shrink-0 object-contain rounded border border-slate-100 bg-slate-50" />
+                    : <span className="w-8 h-8 shrink-0 rounded bg-slate-100" />}
+                  <span className="text-[10px] font-bold text-slate-600 flex-1 min-w-0 truncate">{im.src && im.src.elementLabel ? im.src.elementLabel : `Figure ${i + 1}`}</span>
                   {im.src && im.src.testId && (
                     <button type="button" onClick={() => openOriginalGraph(im.src)}
                       className="text-[10px] font-bold text-sky-700 hover:underline shrink-0 border border-sky-200 bg-sky-50 rounded px-1.5 py-0.5"
-                      title="Open the original experiment / graph this figure was captured from">
-                      Open original ↗
+                      title={`Open the original experiment / graph this figure was captured from${im.src.testName ? ` (${im.src.testName})` : ''}`}>
+                      ↗ Open
                     </button>
                   )}
-                  <button type="button" onClick={() => removeObjImage(i)} className="text-[10px] font-bold text-red-400 hover:text-red-600 shrink-0" title="Remove this figure from the panel">✕</button>
+                  <button type="button" onClick={() => removeObjImage(i)} className="text-[10px] font-bold text-red-400 hover:text-red-600 shrink-0 border border-transparent hover:border-red-200 rounded px-1" title="Remove this figure from the panel">✕</button>
                 </div>
               ))}
               {getObjImages(selectedObj).length > 1 && (
