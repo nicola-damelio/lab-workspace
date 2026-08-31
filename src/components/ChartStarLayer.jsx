@@ -1,5 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { isStarred, toggleStarredItem } from '../utils/starredItems';
+import Chart from 'chart.js/auto';
+import {
+  getActiveProjectId, addLibraryItem, addProjectLibraryItem, makeLibraryImage, uploadFigureToDrive
+} from '../utils/figuresLibrary';
+import { loadProjects } from './AppModules/projectsModule';
+
 
 /* =========================================================================
    ChartStarLayer — universal ⭐ "import into the project document" layer.
@@ -62,6 +68,79 @@ const svgToDataUrl = (svg) => {
   const xml = new XMLSerializer().serializeToString(clone);
   return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml);
 };
+const nextFrames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+// High-resolution snapshot of the CURRENT rendered state of an element:
+// • svg    → serialized as-is (vector — keeps axis labels, zoom/pan transforms)
+// • img    → the current source URL (resolved to a self-contained data URL by
+//            makeLibraryImage, so Drive-hosted images can be exported too)
+// • canvas → Chart.js charts are temporarily re-rendered at an enhanced
+//            devicePixelRatio (the zoomed region / axis state is preserved),
+//            any other canvas is captured at its native pixel resolution.
+const captureFigure = async (el, kind) => {
+  if (!el) return '';
+  if (kind === 'svg') return svgToDataUrl(el);
+  if (kind === 'img') return el.currentSrc || el.src || '';
+  if (kind === 'canvas') {
+    let chart = null;
+    try { chart = Chart.getChart(el); } catch { chart = null; }
+    if (chart && chart.options) {
+      const orig = Number(chart.options.devicePixelRatio) || 1;
+      const target = Math.max(orig, window.devicePixelRatio || 1, 3);
+      if (target > orig) {
+        try {
+          chart.options.devicePixelRatio = target;
+          chart.resize();
+          await nextFrames();
+          return el.toDataURL('image/png');
+        } catch { /* fall back to the native canvas below */ }
+        finally {
+          try { chart.options.devicePixelRatio = orig; chart.resize(); } catch { /* ignore */ }
+          await nextFrames();
+        }
+      }
+    }
+    return el.toDataURL('image/png');
+  }
+  return '';
+};
+
+// Name of the project the exported figure belongs to (used for the Drive
+// folder path): the active project first, then the test's own project link.
+const projectNameFor = (test) => {
+  try {
+    const pid = getActiveProjectId();
+    if (pid) {
+      const prj = loadProjects().find((p) => p.id === pid);
+      if (prj && prj.name) return prj.name;
+    }
+  } catch { /* ignore */ }
+  if (Array.isArray(test && test.projectNames)) {
+    const n = test.projectNames.find((x) => x && String(x).trim());
+    if (n) return n;
+  }
+  return '';
+};
+
+// The project whose image library the figure belongs to: the experiment's OWN
+// project first (it is authoritative and may differ from the currently-active
+// project context, e.g. when the test is opened from the tests list), then the
+// active project.
+const projectIdForTest = (test) => {
+  try {
+    if (Array.isArray(test && test.projectNames)) {
+      const name = test.projectNames.find((x) => x && String(x).trim());
+      if (name) {
+        const prj = loadProjects().find((p) => p.name === name);
+        if (prj && prj.id) return prj.id;
+      }
+    }
+  } catch { /* ignore */ }
+  const pid = getActiveProjectId();
+  return pid || null;
+};
+
+
 
 const cellText = (cell) => {
   const inp = cell.querySelector('input, select, textarea');
@@ -100,6 +179,48 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
   const elMap = useRef(new Map()); // key -> DOM element (for capture on click)
   const sigRef = useRef('');
   const rafRef = useRef(0);
+  const [figBusyKey, setFigBusyKey] = useState(null);   // element key being captured
+  const [figStatus, setFigStatus] = useState(null);     // { key, ok, msg } transient feedback
+  const figTimer = useRef(null);
+
+  // 📷 "Figure" button — like the molecule viewer's: snapshots the CURRENT
+  // state of the chart / spectrum / image (axis characters, zoomed region,
+  // styling) at high resolution, stores it in the project's image library and
+  // uploads a copy to Google Drive under <project>/images.
+  const saveFigure = async (t) => {
+    if (figBusyKey) return;
+    const el = elMap.current.get(t.key);
+    if (!el) return;
+    setFigBusyKey(t.key);
+    try {
+      const url = await captureFigure(el, t.kind);
+      if (!url) { setFigStatus({ key: t.key, ok: false, msg: '⚠️ Could not capture this element as an image' }); return; }
+      const img = await makeLibraryImage(url);
+      const label = `${t.label} · ${(test && test.name) || 'experiment'}`.slice(0, 120);
+      const pid = projectIdForTest(test);
+      const where = pid ? 'project library' : 'common library';
+      const src = { testId: test && test.id, testName: test && test.name, elementLabel: t.label, elementKey: t.key };
+      if (pid) addProjectLibraryItem(pid, { ...img, label, src });
+      else addLibraryItem({ ...img, label, src });
+      const projectName = projectNameFor(test);
+      let driveMsg = '';
+      if (projectName) {
+        const res = await uploadFigureToDrive({ full: img.full, label, projectName });
+        driveMsg = res
+          ? ` · Drive: ${projectName}/images`
+          : ' · Drive not connected — library copy only';
+      }
+      setFigStatus({ key: t.key, ok: true, msg: `📷 Figure saved to ${where}${driveMsg}` });
+    } catch {
+      setFigStatus({ key: t.key, ok: false, msg: '⚠️ Figure capture failed' });
+    } finally {
+      setFigBusyKey(null);
+      clearTimeout(figTimer.current);
+      figTimer.current = setTimeout(() => setFigStatus(null), 5000);
+    }
+  };
+
+
 
   const refreshRects = () => {
     cancelAnimationFrame(rafRef.current);
@@ -138,6 +259,9 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
       const label = headingText(el, rootEl) || KIND_LABEL[kind];
       counts[kind] = (counts[kind] || 0) + 1;
       const key = `${label} · ${KIND_LABEL[kind]} · ${counts[kind]}`;
+      // Make the chart locatable after navigating back from the Image Builder
+      // ("↗ Open original graph" scrolls to the exact element on arrival).
+      try { el.setAttribute('data-figure-origin', key); } catch { /* ignore */ }
       found.push({ key, kind, label, el });
     });
     const sig = found.map((f) => f.key).join('|');
@@ -154,6 +278,25 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
     const rootEl = rootRef && rootRef.current;
     if (!rootEl) return;
     collect();
+    // If the user arrived here from the Image Builder's "↗ Open original graph",
+    // scroll to the exact chart/spectrum the figure was captured from.
+    try {
+      const pend = localStorage.getItem('labPendingFigureScroll');
+      if (pend) {
+        localStorage.removeItem('labPendingFigureScroll');
+        const target = JSON.parse(pend);
+        if (target && target.key) {
+          const el = rootEl.querySelector(`[data-figure-origin="${target.key}"]`);
+          if (el) {
+            setTimeout(() => el.scrollIntoView({ block: 'center', behavior: 'smooth' }), 120);
+            const flash = el.closest('div,section,td') || el;
+            const prevOutline = flash.style.outline;
+            flash.style.outline = '3px solid #3b82f6';
+            setTimeout(() => { flash.style.outline = prevOutline; }, 2600);
+          }
+        }
+      }
+    } catch { /* ignore */ }
     const debounced = () => { clearTimeout(debounced.t); debounced.t = setTimeout(collect, 400); };
     const mo = new MutationObserver(debounced);
     mo.observe(rootEl, { subtree: true, childList: true, attributes: true, characterData: true });
@@ -221,6 +364,36 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
           {isStarred(test, t.key) ? '★' : '☆'}
         </button>
       ))}
+      {/* 📷 "Figure" buttons — one per chart / spectrum / image (not tables):
+          saves the CURRENT state of the element as a high-resolution image
+          into the project's image library and uploads a copy to Google Drive
+          under <project>/images. */}
+      {targets.filter((t) => t.kind !== 'table').map((t) => (
+        <button
+          key={`fig-${t.key}`}
+          type="button"
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); saveFigure(t); }}
+          style={{ position: 'fixed', left: t.right - 58, top: t.top + 6, zIndex: 61, pointerEvents: 'auto' }}
+          title={figBusyKey === t.key
+            ? `${t.label} — capturing…`
+            : `${t.label} — 📷 save as high-resolution figure (project library + Drive)`}
+          className={`rounded-full w-6 h-6 text-[11px] flex items-center justify-center shadow-md border transition-colors ${
+            figBusyKey === t.key
+              ? 'bg-indigo-200 text-indigo-700 border-indigo-400'
+              : 'bg-white text-indigo-600 border-indigo-300 hover:bg-indigo-50'
+          }`}
+        >
+          {figBusyKey === t.key ? '⏳' : '📷'}
+        </button>
+      ))}
+      {figStatus && (
+        <div style={{ position: 'fixed', top: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 99999, pointerEvents: 'none' }}>
+          <span className={`text-xs font-bold px-3 py-1.5 rounded-full shadow-md border whitespace-nowrap ${figStatus.ok ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-red-50 text-red-600 border-red-300'}`}>
+            {figStatus.msg}
+          </span>
+        </div>
+      )}
+
     </div>
   );
 };

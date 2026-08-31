@@ -2874,23 +2874,23 @@ const openDataset = (dset) => {
                 environment.
               </p>
 
-              {currentUser?.role === 'superuser' ? (
-                <button
-                  onClick={createNewDataset}
-                  disabled={!isCloudReady}
-                  className={`font-black py-3 md:py-4 px-6 md:px-10 rounded-full shadow-lg transition-all transform hover:scale-105 flex items-center gap-3 text-base md:text-lg w-full md:w-auto justify-center ${
-                    isCloudReady
-                      ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                      : 'bg-slate-300 text-slate-500 cursor-not-allowed'
-                  }`}
-                >
-                  <span className="text-2xl">+</span> Create New Dataset
-                </button>
-              ) : (
-                <div className="flex items-center gap-2 text-slate-400 bg-slate-100 border border-slate-200 rounded-full px-5 py-3 text-sm font-semibold">
-                  ?? Creating datasets requires superuser access
-                </div>
-              )}
+          {(currentUser?.role === 'superuser' || operatorNames.length === 0 || recoveryBypass) ? (
+            <button
+              onClick={createNewDataset}
+              disabled={!isCloudReady}
+              className={`font-black py-3 md:py-4 px-6 md:px-10 rounded-full shadow-lg transition-all transform hover:scale-105 flex items-center gap-3 text-base md:text-lg w-full md:w-auto justify-center ${
+                isCloudReady
+                  ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                  : 'bg-slate-300 text-slate-500 cursor-not-allowed'
+              }`}
+            >
+              <span className="text-2xl">+</span> {operatorNames.length === 0 ? 'Initialize Workspace & Create Dataset' : 'Create New Dataset'}
+            </button>
+          ) : (
+            <div className="flex items-center gap-2 text-slate-400 bg-slate-100 border border-slate-200 rounded-full px-5 py-3 text-sm font-semibold">
+              ?? Creating datasets requires superuser access
+            </div>
+          )}
 
               {!isCloudReady && (
                 <div className="mt-6 flex flex-col items-center gap-3">
@@ -2953,25 +2953,24 @@ const openDataset = (dset) => {
                 <h2 className="text-xl md:text-2xl font-bold text-slate-800">
                   Your Recent Datasets
                 </h2>
-
+               {/* Delete Empty — superuser / bootstrap / recovery */}
+               {(currentUser?.role === 'superuser' || operatorNames.length === 0 || recoveryBypass) && (
+                 <button
+                   onClick={(e) => redirectDeleteToSettings(e, 'Delete Empty Datasets')}
+                   className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex-1 md:flex-none items-center justify-center gap-2 cursor-pointer text-sm"
+                 >
+                   🗑️ Delete Empty
+                 </button>
+               )}
+               {/* Load HTML — superuser / bootstrap / recovery */}
+               {(currentUser?.role === 'superuser' || operatorNames.length === 0 || recoveryBypass) && (
+                 <label className="bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex-1 md:flex-none flex items-center justify-center gap-2 cursor-pointer text-sm">
+                   📂 Load HTML File
+                   <input type="file" accept=".html" onChange={loadHTML} className="hidden" />
+                 </label>
+               )}
                 <div className="flex flex-wrap gap-2 w-full md:w-auto">
-                  {/* Delete Empty — superuser only (warns + redirects to Settings) */}
-                  {currentUser?.role === 'superuser' && (
-                    <button
-                      onClick={(e) => redirectDeleteToSettings(e, 'Delete Empty Datasets')}
-                      className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex-1 md:flex-none items-center justify-center gap-2 cursor-pointer text-sm"
-                    >
-                      🗑️ Delete Empty
-                    </button>
-                  )}
 
-                  {/* Load HTML — superuser only */}
-                  {currentUser?.role === 'superuser' && (
-                    <label className="bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex-1 md:flex-none flex items-center justify-center gap-2 cursor-pointer text-sm">
-                      📂 Load HTML File
-                      <input type="file" accept=".html" onChange={loadHTML} className="hidden" />
-                    </label>
-                  )}
                 </div>
               </div>
 

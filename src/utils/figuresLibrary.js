@@ -1,4 +1,5 @@
-import { getDriveToken } from './driveUpload';
+import { getDriveToken, uploadLocalFile, dataUrlToBlob } from './driveUpload';
+import { sanitizeSlug } from './driveNaming';
 
 /* =========================================================================
    src/utils/figuresLibrary.js
@@ -48,6 +49,7 @@ const toEntry = (urlOrItem, label) => {
     label: item.label || 'Figure',
     url: item.url,                    // display thumbnail
     full: item.full || item.url,      // high-resolution copy used at export
+    src: item.src || null,            // { testId, testName, elementLabel } -> link back to the original graph
     addedAt: new Date().toISOString()
   };
 };
@@ -204,3 +206,30 @@ export const blobToDataUrl = (blob) =>
     fr.onerror = () => reject(new Error('Could not read the image'));
     fr.readAsDataURL(blob);
   });
+
+// Upload a high-resolution figure copy to Google Drive under
+// <Lab Workspace>/<dataset>/<project>/images/ (falling back to <images> at the
+// dataset root when the figure has no project). SVG figures keep their vector
+// form; raster figures are uploaded as high-quality PNG. Returns the Drive
+// upload result or null when Drive is not connected / the source is not a
+// self-contained data URL.
+export const uploadFigureToDrive = async ({ full, label = 'figure', projectName = '' }) => {
+  if (!getDriveToken() || !full) return null;
+  const src = String(full);
+  if (src.indexOf('data:') !== 0) return null;
+  try {
+    const isSvg = src.startsWith('data:image/svg+xml') || src.includes('<svg');
+    const base = sanitizeSlug(label) || 'figure';
+    const ctx = { section: 'images' };
+    if (projectName) ctx.project = projectName;
+    return await uploadLocalFile({
+      name: `${base}.${isSvg ? 'svg' : 'png'}`,
+      mimeType: isSvg ? 'image/svg+xml' : 'image/png',
+      file: dataUrlToBlob(src),
+      ctx
+    });
+  } catch (err) {
+    console.warn('Figure → Drive upload failed:', err && err.message);
+    return null;
+  }
+};

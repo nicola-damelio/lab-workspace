@@ -1078,7 +1078,7 @@ const SequencePaintStrip = ({ residues, getLetter, meta, onApply, focusIdx, char
   );
 };
 
-const CustomXTick1H = ({ x, y, payload, isZoomed, fs = 11 }) => {
+const CustomXTick1H = ({ x, y, payload, isZoomed, fs = 11, angle = 0, color = '#64748b' }) => {
   const numVal = Number(payload.value);
   const isInt = Number.isInteger(numVal);
   const isHalf = numVal % 0.5 === 0;
@@ -1087,7 +1087,7 @@ const CustomXTick1H = ({ x, y, payload, isZoomed, fs = 11 }) => {
     <g transform={`translate(${x || 0},${y || 0})`}>
       <line x1={0} y1={0} x2={0} y2={tickLength} stroke="#94a3b8" strokeWidth={1} />
       {(isZoomed || isInt) && (
-        <text x={0} y={tickLength + 12} textAnchor="middle" fill="#64748b" fontSize={isZoomed ? fs - 1 : fs} fontWeight={isInt && !isZoomed ? 'bold' : 'normal'}>
+        <text x={0} y={tickLength + 12} textAnchor={angle ? (angle > 0 ? 'start' : 'end') : 'middle'} transform={angle ? `rotate(${angle})` : undefined} dy={angle ? 4 : undefined} dx={angle ? (angle > 0 ? 4 : -4) : undefined} fill={color} fontSize={isZoomed ? fs - 1 : fs} fontWeight={isInt && !isZoomed ? 'bold' : 'normal'}>
           {isZoomed ? numVal.toFixed(2) : numVal}
         </text>
       )}
@@ -1112,7 +1112,7 @@ const CustomYTick1H = ({ x, y, payload, isZoomed, fs = 11 }) => {
   );
 };
 
-const CustomXTick13C = ({ x, y, payload, isZoomed, fs = 11 }) => {
+const CustomXTick13C = ({ x, y, payload, isZoomed, fs = 11, angle = 0, color = '#64748b' }) => {
   const numVal = Number(payload.value);
   const isTen = numVal % 10 === 0;
   const tickLength = isZoomed ? 5 : isTen ? 8 : 4;
@@ -1120,7 +1120,7 @@ const CustomXTick13C = ({ x, y, payload, isZoomed, fs = 11 }) => {
     <g transform={`translate(${x || 0},${y || 0})`}>
       <line x1={0} y1={0} x2={0} y2={tickLength} stroke="#94a3b8" strokeWidth={1} />
       {(isZoomed || isTen) && (
-        <text x={0} y={tickLength + 12} textAnchor="middle" fill="#64748b" fontSize={isZoomed ? fs - 1 : fs} fontWeight={isTen && !isZoomed ? 'bold' : 'normal'}>
+        <text x={0} y={tickLength + 12} textAnchor={angle ? (angle > 0 ? 'start' : 'end') : 'middle'} transform={angle ? `rotate(${angle})` : undefined} dy={angle ? 4 : undefined} dx={angle ? (angle > 0 ? 4 : -4) : undefined} fill={color} fontSize={isZoomed ? fs - 1 : fs} fontWeight={isTen && !isZoomed ? 'bold' : 'normal'}>
           {isZoomed ? numVal.toFixed(1) : numVal}
         </text>
       )}
@@ -1176,7 +1176,8 @@ const NMRTooltip = ({ active, payload, diagonalColor, selectedKeys }) => {
   return null;
 };
 
-const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, rowLabels }) => {
+const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, rowLabels, simCfg = {} }) => {
+  const { fontSize = 11, title: cfgTitle = '', xAxisLabel: cfgXLabel = '' } = simCfg;
   const containerRef = useRef(null);
   const [width, setWidth] = useState(0);
   const [hover, setHover] = useState(null);
@@ -1213,7 +1214,7 @@ const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, row
   });
   return (
     <div ref={containerRef} className="bg-slate-50 rounded-xl border border-slate-200 p-3 relative mt-2">
-      <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2 ml-1">{title}</h4>
+      <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2 ml-1">{cfgTitle || title}</h4>
       <svg width="100%" height={svgHeight} className="block select-none">
         {rowLabels.map((label, row) => (
           <g key={`row-${row}`}>
@@ -1225,7 +1226,7 @@ const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, row
           <g key={`tick-${t}`}>
             <line x1={xScale(t)} y1={margin.top} x2={xScale(t)} y2={axisY} stroke="#e2e8f0" strokeWidth={1} />
             <line x1={xScale(t)} y1={axisY} x2={xScale(t)} y2={axisY + 5} stroke="#94a3b8" strokeWidth={1} />
-            <text x={xScale(t)} y={axisY + 16} textAnchor="middle" fontSize={10} fill="#64748b">{t}</text>
+            <text x={xScale(t)} y={axisY + 16} textAnchor="middle" fontSize={Math.max(8, (fontSize || 11) - 1)} fill="#64748b">{t}</text>
           </g>
         ))}
         <line x1={margin.left} y1={axisY} x2={margin.left + plotW} y2={axisY} stroke="#cbd5e1" strokeWidth={1} />
@@ -1242,7 +1243,7 @@ const RangeBarChart = ({ title, ranges, domain, ticks, xAxisLabel, rowCount, row
             </g>
           );
         })}
-        <text x={margin.left + plotW / 2} y={svgHeight - 6} textAnchor="middle" fontSize={11} fill="#64748b">{xAxisLabel}</text>
+        <text x={margin.left + plotW / 2} y={svgHeight - 6} textAnchor="middle" fontSize={11} fill="#64748b">{cfgXLabel || xAxisLabel}</text>
       </svg>
       {hover && ranges[hover.idx] && (
         <div className="absolute bg-white p-2 border border-slate-200 shadow-md rounded text-xs z-50 pointer-events-none whitespace-nowrap" style={{ left: hover.x + 12, top: Math.max(0, hover.y - 44) }}>
@@ -1405,15 +1406,19 @@ const AxisScrollbar = ({ domain, fullDomain, onChange, vertical = false, reverse
 };
 
 const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabel, panelId, expandedPanel, setExpandedPanel, selectedKeys, manualKeys = [], heightPx = 300, fs = 11, aspect = null, simCfg }) => {
-  const { simShowLabels = true, simLabelFormat = 'resNum_code_atom', simLabelDim = 'both', simLabelFontSize = 12, simLabelColor = '#b91c1c' } = simCfg || {};
+  const { simShowLabels = true, simLabelFormat = 'resNum_code_atom', simLabelDim = 'both', simLabelFontSize = 12, simLabelColor = '#b91c1c', tickAngle = 0, lineColor = '', lineThickness = 1.5, xAxisLabel = '', title: cfgTitle = '', xMin = '', xMax = '', yMin = '', yMax = '', tickColor = '' } = simCfg || {};
+  const effTitle = cfgTitle || title;
+  const effXLabel = xAxisLabel || xLabel;
+  const effTickColor = tickColor || '#64748b';
+  const baseDomain = (xMin !== '' || xMax !== '') ? [(xMin !== '' ? Number(xMin) : fullDomain[0]), (xMax !== '' ? Number(xMax) : fullDomain[1])] : fullDomain;
   const isExpanded = expandedPanel === panelId;
-  const [xDomain, setXDomain] = useState(fullDomain);
+  const [xDomain, setXDomain] = useState(baseDomain);
   const [refAreaLeft, setRefAreaLeft] = useState(null);
   const [refAreaRight, setRefAreaRight] = useState(null);
   const chartRef = useRef(null);
   const [boxRef, boxW] = useMeasureWidth();
   const isDragging = useRef(false);
-  const isZoomed = xDomain[0] !== fullDomain[0] || xDomain[1] !== fullDomain[1];
+  const isZoomed = xDomain[0] !== baseDomain[0] || xDomain[1] !== baseDomain[1];
   
   const getXVal = (clientX) => {
     if (!chartRef.current) return null;
@@ -1502,8 +1507,8 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
       <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'break-inside-avoid'}`} style={!isExpanded ? { height: aspect ? Math.max(260, Math.round((boxW || 400) * aspect)) : `${heightPx + labelAreaH}px` } : undefined}>
         <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
           <div className="flex items-center gap-4">
-            <h4 className="font-bold text-slate-700">{title}</h4>
-            {isZoomed && <button onClick={() => setXDomain(fullDomain)} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>}
+            <h4 className="font-bold text-slate-700">{effTitle}</h4>
+            {isZoomed && <button onClick={() => setXDomain(baseDomain)} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>}
           </div>
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
         </div>
@@ -1512,8 +1517,8 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={processedData} margin={activeMargin}>
                 <CartesianGrid strokeDasharray="3 3" vertical={true} horizontal={false} stroke="#f1f5f9" />
-                <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : ticks} interval={0} tickLine={false} tick={<TickComponent isZoomed={isZoomed} fs={fs} />} label={{ value: xLabel, position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} axisLine={{ stroke: '#cbd5e1' }} />
-                <YAxis type="number" dataKey="y" domain={[0, 'auto']} hide={true} />
+                <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : ticks} interval={0} tickLine={false} tick={<TickComponent isZoomed={isZoomed} fs={fs} angle={tickAngle} color={effTickColor} />} label={{ value: effXLabel, position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} axisLine={{ stroke: '#cbd5e1' }} />
+                <YAxis type="number" dataKey="y" domain={[yMin !== '' ? Number(yMin) : 0, yMax !== '' ? Number(yMax) : 'auto']} hide={true} />
                 <Tooltip cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} content={<NMRTooltip selectedKeys={selectedKeys} />} />
                 <Bar dataKey="y" barSize={2} shape={(props) => {
                   const { x, y, width, height, payload } = props;
@@ -1522,7 +1527,7 @@ const OneDSpectrumPlot = ({ title, data, fullDomain, ticks, TickComponent, xLabe
                   const isMan = manualKeys && payload.keys && payload.keys.some((k) => manualKeys.includes(k));
                   const dimmed = selectedKeys && !isSel && !isMan;
                   
-                  const barElem = <line x1={centerX} y1={y + height} x2={centerX} y2={y} stroke={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : payload.color} strokeWidth={isSel ? 3 : isMan ? 2.5 : 1.5} />;
+                  const barElem = <line x1={centerX} y1={y + height} x2={centerX} y2={y} stroke={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : (lineColor || payload.color)} strokeWidth={isSel ? 3 : isMan ? 2.5 : (lineThickness || 1.5)} />;
                   
                   if (!payload.multipletBounds || !payload.isLabelAnchor) {
                     return <g opacity={dimmed ? 0.2 : 1}>{barElem}</g>;
@@ -1686,7 +1691,7 @@ const place2DLabels = (crossPeakData, { showLabels, format, dim, yRange, boxW, a
 };
 
 const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setExpandedPanel, panelId, diagonalColor, selectedKeys, manualKeys = [], aspect = 1, fs = 11, simCfg = {} }) => {
-  const { simShowLabels, simLabelFormat, simLabelDim, simLabelFontSize = 12, simLabelColor = '#b91c1c' } = simCfg;
+  const { simShowLabels, simLabelFormat, simLabelDim, simLabelFontSize = 12, simLabelColor = '#b91c1c', tickAngle = 0, lineColor = '', xAxisLabel = '', title: cfgTitle = '', tickColor = '' } = simCfg;
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState([0, 11]);
   const [yDomain, setYDomain] = useState([0, 11]);
@@ -1778,7 +1783,7 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
       <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'break-inside-avoid'}`} style={!isExpanded ? { height: aspect ? Math.max(260, Math.round((boxW || 400) * aspect)) : '300px' } : undefined}>
         <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
           <div className="flex items-center gap-4">
-            <h4 className="font-bold text-slate-700">{title}</h4>
+            <h4 className="font-bold text-slate-700">{cfgTitle || title}</h4>
             {isZoomed && <button onClick={() => { setXDomain([0, 11]); setYDomain([0, 11]); }} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>}
           </div>
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
@@ -1788,14 +1793,14 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
             <ResponsiveContainer width="100%" height="100%">
               <ScatterChart margin={CHART_MARGIN}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} />
-                <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomYTick1H isZoomed={isZoomed} fs={fs} />} label={{ value: '¹H F1 (ppm)', angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fs + 1 }} />
+                <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} angle={tickAngle} color={tickColor || '#64748b'} />} label={{ value: xAxisLabel || '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} />
+                <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomYTick1H isZoomed={isZoomed} fs={fs} color={tickColor || '#64748b'} />} label={{ value: '¹H F1 (ppm)', angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fs + 1 }} />
                 <Tooltip content={<NMRTooltip diagonalColor={diagonalColor} selectedKeys={selectedKeys} />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
                 
                 {/* Changed shape to function to avoid DOM warning propagation */}
                 <Scatter name="Diagonal" data={[{ x: 0, y: 0 }, { x: 11, y: 11 }]} line={{ stroke: '#cbd5e1', strokeWidth: 1 }} shape={(props) => <circle cx={props.cx || 0} cy={props.cy || 0} r={0} />} legendType="none" isAnimationActive={false} />
                 
-                <Scatter data={diagonalData} fill={diagonalColor} shape={shape} isAnimationActive={false} />
+                <Scatter data={diagonalData} fill={lineColor || diagonalColor} shape={shape} isAnimationActive={false} />
                 {simShowLabels && <Scatter data={processedCrossPeaks} shape={shape} isAnimationActive={false} />}
                 {refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} y1={refAreaTop} y2={refAreaBottom} strokeOpacity={0.3} fill="#cbd5e1" />}
               </ScatterChart>
@@ -1818,7 +1823,7 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
 };
 
 const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panelId, selectedKeys, manualKeys = [], yAxisLabel = '¹³C F1 (ppm)', yDomainInit = [0, 220], yTicks = TICKS_13C, aspect = 1, fs = 11, simCfg = {} }) => {
-  const { simShowLabels, simLabelFormat, simLabelDim, simLabelFontSize = 12, simLabelColor = '#b91c1c' } = simCfg;
+  const { simShowLabels, simLabelFormat, simLabelDim, simLabelFontSize = 12, simLabelColor = '#b91c1c', tickAngle = 0, xAxisLabel = '', title: cfgTitle = '', tickColor = '' } = simCfg;
   const isExpanded = expandedPanel === panelId;
   const [xDomain, setXDomain] = useState([0, 11]);
   const [yDomain, setYDomain] = useState(yDomainInit);
@@ -1879,7 +1884,7 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
       <div className={`bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col ${isExpanded ? FS_CLASSES + ' p-6' : 'break-inside-avoid'}`} style={!isExpanded ? { height: aspect ? Math.max(260, Math.round((boxW || 400) * aspect)) : '300px' } : undefined}>
         <div className="flex justify-between items-center mb-4 border-b pb-2 shrink-0">
           <div className="flex items-center gap-4">
-            <h4 className="font-bold text-slate-700">{title}</h4>
+            <h4 className="font-bold text-slate-700">{cfgTitle || title}</h4>
             {isZoomed && <button onClick={() => { setXDomain([0, 11]); setYDomain(yDomainInit); }} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">Reset Zoom</button>}
           </div>
           <button onClick={() => setExpandedPanel(isExpanded ? null : panelId)} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded p-1.5">{isExpanded ? '↙️' : '↗️'}</button>
@@ -1889,8 +1894,8 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
             <ResponsiveContainer width="100%" height="100%">
               <ScatterChart margin={CHART_MARGIN}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} />} label={{ value: '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} />
-                <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : yTicks} interval={0} tickLine={false} tick={<CustomYTick13C isZoomed={isZoomed} fs={fs} />} label={{ value: yAxisLabel, angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fs + 1 }} />
+                <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} angle={tickAngle} color={tickColor || '#64748b'} />} label={{ value: xAxisLabel || '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} />
+                <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : yTicks} interval={0} tickLine={false} tick={<CustomYTick13C isZoomed={isZoomed} fs={fs} color={tickColor || '#64748b'} />} label={{ value: yAxisLabel, angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fs + 1 }} />
                 <Tooltip content={<NMRTooltip diagonalColor="#8b5cf6" selectedKeys={selectedKeys} />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
                 {simShowLabels && <Scatter data={processedCrossPeaks} shape={(props) => {
                   const { cx, cy, payload } = props;
@@ -7489,7 +7494,7 @@ export const SimulationsSection = ({ ctx }) => {
   // Always an ARRAY (the spectrum plots call `.includes` on it) — an empty
   // array when the "Assigned atoms" highlight is off, never a Set.
   const manualKeys = useMemo(() => (showAssignedFlag ? getManualKeys(d.shifts) : []), [d.shifts, showAssignedFlag]);
-  const simCfg = { fontSize: 11, h1D: 300, aspect2D: 1, simShowLabels: false, simLabelFormat: 'resNum_code_atom', simLabelDim: 'both', simLabelFontSize: 12, simLabelColor: '#b91c1c', ...(activeTest.simChartCfg || {}) };
+  const simCfg = { fontSize: 11, h1D: 300, aspect2D: 1, simShowLabels: false, simLabelFormat: 'resNum_code_atom', simLabelDim: 'both', simLabelFontSize: 12, simLabelColor: '#b91c1c', tickAngle: 0, tickColor: '#64748b', lineColor: '#3b82f6', lineThickness: 1.5, title: '', xAxisLabel: '', xMin: '', xMax: '', yMin: '', yMax: '', ...(activeTest.simChartCfg || {}) };
   const setCfg = (patch) => updateActiveTest({ simChartCfg: { ...simCfg, ...patch } });
   if (d.parsedSeq.length === 0 && d.moleculeType !== 'organic') {
     return <div className="text-center py-10 text-slate-400 italic bg-slate-50 rounded-lg border border-dashed border-slate-300">Enter a sequence / select a molecule (in Experiment Setup) to generate simulated spectra.</div>;
@@ -7551,20 +7556,23 @@ export const SimulationsSection = ({ ctx }) => {
         <span className="text-[10px] text-slate-400 ml-2">13C axis: 0–220 ppm · 2D spectra: square (aspect {simCfg.aspect2D}) · HSQC side by side</span>
       </div>
       {showCfg && (
-        <div className="p-4 bg-white border border-slate-300 rounded-xl grid grid-cols-1 md:grid-cols-3 gap-4 shadow-sm">
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-bold text-slate-600">Font size (ticks & axis labels): {simCfg.fontSize}</label>
-            <input type="range" min="8" max="18" step="1" value={simCfg.fontSize} onChange={(e) => setCfg({ fontSize: parseInt(e.target.value, 10) })} className="accent-blue-600 mt-2" />
-          </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-bold text-slate-600">1D spectra height (px): {simCfg.h1D}</label>
-            <input type="range" min="200" max="600" step="20" value={simCfg.h1D} onChange={(e) => setCfg({ h1D: parseInt(e.target.value, 10) })} className="accent-blue-600 mt-2" />
-          </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-bold text-slate-600">2D aspect ratio (H/W): {simCfg.aspect2D} (1 = square)</label>
-            <div className="flex gap-2">
-              <input type="range" min="0.5" max="1.5" step="0.05" value={simCfg.aspect2D} onChange={(e) => setCfg({ aspect2D: parseFloat(e.target.value) })} className="accent-blue-600 mt-2 flex-1" />
-              <button type="button" onClick={() => setCfg({ aspect2D: 1 })} className="text-[10px] font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100 px-2 py-1 rounded shrink-0">⬛ Square</button>
+        <div className="flex flex-col gap-3">
+          <SharedChartStylePanel
+            cfg={simCfg}
+            setCfg={setCfg}
+            series={[{ key: 'spec', label: 'Simulated spectra', color: simCfg.lineColor || '#3b82f6' }]}
+          />
+          <div className="p-4 bg-white border border-slate-300 rounded-xl grid grid-cols-1 md:grid-cols-2 gap-4 shadow-sm">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-bold text-slate-600">1D spectra height (px): {simCfg.h1D}</label>
+              <input type="range" min="200" max="600" step="20" value={simCfg.h1D} onChange={(e) => setCfg({ h1D: parseInt(e.target.value, 10) })} className="accent-blue-600 mt-2" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-bold text-slate-600">2D aspect ratio (H/W): {simCfg.aspect2D} (1 = square)</label>
+              <div className="flex gap-2">
+                <input type="range" min="0.5" max="1.5" step="0.05" value={simCfg.aspect2D} onChange={(e) => setCfg({ aspect2D: parseFloat(e.target.value) })} className="accent-blue-600 mt-2 flex-1" />
+                <button type="button" onClick={() => setCfg({ aspect2D: 1 })} className="text-[10px] font-bold bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100 px-2 py-1 rounded shrink-0">⬛ Square</button>
+              </div>
             </div>
           </div>
         </div>
@@ -7577,15 +7585,15 @@ export const SimulationsSection = ({ ctx }) => {
       </div>
       {d.moleculeType !== 'organic' && (
         <div className="grid grid-cols-1 gap-4">
-          <RangeBarChart title="Theoretical ¹H Ranges" ranges={filteredRanges1H} domain={[0, 11]} ticks={Array.from({ length: 12 }, (_, i) => i)} xAxisLabel="¹H (ppm)" rowCount={focusIdx === 'ALL' ? d.uniqueTypes.length : 1} rowLabels={focusIdx === 'ALL' ? d.uniqueTypes.map((c) => d.DB[c]?.code3 || c) : [d.parsedSeq[focusIdx]?.code3 || d.parsedSeq[focusIdx]?.char]} />
-          <RangeBarChart title="Theoretical ¹³C Ranges" ranges={filteredRanges13C} domain={[0, 220]} ticks={Array.from({ length: 23 }, (_, i) => i * 10)} xAxisLabel="¹³C (ppm)" rowCount={focusIdx === 'ALL' ? d.uniqueTypes.length : 1} rowLabels={focusIdx === 'ALL' ? d.uniqueTypes.map((c) => d.DB[c]?.code3 || c) : [d.parsedSeq[focusIdx]?.code3 || d.parsedSeq[focusIdx]?.char]} />
+          <RangeBarChart title="Theoretical ¹H Ranges" ranges={filteredRanges1H} domain={[0, 11]} ticks={Array.from({ length: 12 }, (_, i) => i)} xAxisLabel="¹H (ppm)" rowCount={focusIdx === 'ALL' ? d.uniqueTypes.length : 1} rowLabels={focusIdx === 'ALL' ? d.uniqueTypes.map((c) => d.DB[c]?.code3 || c) : [d.parsedSeq[focusIdx]?.code3 || d.parsedSeq[focusIdx]?.char]} simCfg={simCfg} />
+          <RangeBarChart title="Theoretical ¹³C Ranges" ranges={filteredRanges13C} domain={[0, 220]} ticks={Array.from({ length: 23 }, (_, i) => i * 10)} xAxisLabel="¹³C (ppm)" rowCount={focusIdx === 'ALL' ? d.uniqueTypes.length : 1} rowLabels={focusIdx === 'ALL' ? d.uniqueTypes.map((c) => d.DB[c]?.code3 || c) : [d.parsedSeq[focusIdx]?.code3 || d.parsedSeq[focusIdx]?.char]} simCfg={simCfg} />
         </div>
       )}
  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-   <OneDSpectrumPlot key={`1d1h-${focusIdx}`} title="Simulated ¹H 1D Spectrum" data={fP(d.peaks.data1H).filter(p => p.atom1 && p.atom1.startsWith('H'))} fullDomain={[0, 11]} ticks={TICKS_1H} TickComponent={CustomXTick1H} xLabel="¹H (ppm)" panelId="1D_1H" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={simCfg} />
-   <OneDSpectrumPlot key={`1d13c-${focusIdx}`} title="Simulated ¹³C 1D Spectrum" data={fP(d.peaks.data13C).filter(p => p.atom2 && p.atom2.startsWith('C'))} fullDomain={[0, 220]} ticks={TICKS_13C} TickComponent={CustomXTick13C} xLabel="¹³C (ppm)" panelId="1D_13C" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={simCfg} />
+   <OneDSpectrumPlot key={`1d1h-${focusIdx}-${simCfg.xMin}-${simCfg.xMax}`} title="Simulated ¹H 1D Spectrum" data={fP(d.peaks.data1H).filter(p => p.atom1 && p.atom1.startsWith('H'))} fullDomain={[0, 11]} ticks={TICKS_1H} TickComponent={CustomXTick1H} xLabel="¹H (ppm)" panelId="1D_1H" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={simCfg} />
+   <OneDSpectrumPlot key={`1d13c-${focusIdx}-${simCfg.xMin}-${simCfg.xMax}`} title="Simulated ¹³C 1D Spectrum" data={fP(d.peaks.data13C).filter(p => p.atom2 && p.atom2.startsWith('C'))} fullDomain={[0, 220]} ticks={TICKS_13C} TickComponent={CustomXTick13C} xLabel="¹³C (ppm)" panelId="1D_13C" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={simCfg} />
    {d.hasPhosphorus && d.selNuc.includes('P') && fP(d.peaks.p31Data).length > 0 && (
-     <OneDSpectrumPlot key={`1dp31-${focusIdx}`} title="Simulated ³¹P 1D Spectrum" data={fP(d.peaks.p31Data)} fullDomain={[-5, 5]} ticks={Array.from({ length: 11 }, (_, i) => i - 5)} TickComponent={CustomXTick1H} xLabel="³¹P (ppm)" panelId="1D_31P" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={simCfg} />
+     <OneDSpectrumPlot key={`1dp31-${focusIdx}-${simCfg.xMin}-${simCfg.xMax}`} title="Simulated ³¹P 1D Spectrum" data={fP(d.peaks.p31Data)} fullDomain={[-5, 5]} ticks={Array.from({ length: 11 }, (_, i) => i - 5)} TickComponent={CustomXTick1H} xLabel="³¹P (ppm)" panelId="1D_31P" expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} selectedKeys={selectedKeys} manualKeys={manualKeys} heightPx={simCfg.h1D} fs={simCfg.fontSize} simCfg={simCfg} />
    )}
    <SpectrumPlot key={`cosy-${focusIdx}`} title="Simulated COSY Spectrum" diagonalData={fP(d.peaks.diagonalData).filter(p => p.atom1 && p.atom1.startsWith('H'))} crossPeakData={fP(d.peaks.cosyPeaks).filter(p => p.atom1 && p.atom1.startsWith('H') && p.atom2 && p.atom2.startsWith('H'))} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="cosy" diagonalColor="#22c55e" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={simCfg} />
    <SpectrumPlot key={`noesy-${focusIdx}`} title="Simulated NOESY Spectrum" diagonalData={fP(d.peaks.diagonalData).filter(p => p.atom1 && p.atom1.startsWith('H'))} crossPeakData={fP(d.peaks.noesyPeaks).filter(p => p.atom1 && p.atom1.startsWith('H') && p.atom2 && p.atom2.startsWith('H'))} expandedPanel={expandedPanel} setExpandedPanel={setExpandedPanel} panelId="noesy" diagonalColor="#ef4444" selectedKeys={selectedKeys} manualKeys={manualKeys} aspect={simCfg.aspect2D} fs={simCfg.fontSize} simCfg={simCfg} />
