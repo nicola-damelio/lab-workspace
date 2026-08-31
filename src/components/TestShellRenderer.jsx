@@ -454,6 +454,18 @@ const [showGeneral, setShowGeneral] = useState(false);
     }
   }, [sectionsCmd]);
 
+  // Auto-open the top-level areas when docking-imported data arrives, so the
+  // user immediately sees the imported artifacts (raw_input.toml in Instrumental
+  // Setup, the molecules in Experimental Conditions, and the cluster PDBs in the
+  // Molecular structure / 3D viewer) instead of having to hunt for them.
+  useEffect(() => {
+    const hasDockRaw = !!t.dockingRawInput;
+    const hasDockMols = !!(t.dockingMolecules && t.dockingMolecules.length);
+    const hasDockStructs = !!(t.dockingStructures && t.dockingStructures.length);
+    if (hasDockRaw || hasDockMols) setShowGeneral(true);
+    if (hasDockStructs) setShowMolSys(true);
+  }, [t.dockingRawInput, t.dockingMolecules, t.dockingStructures]);
+
   // Shared stride / max-frames for the MD "Calculate all analyses" toolbar.
   const [mdRunCfg, setMdRunCfg] = useState(mdAnalysisRunAll.getCfg());
   useEffect(() => mdAnalysisRunAll.subscribeCfg(setMdRunCfg), []);
@@ -1733,7 +1745,7 @@ const details = [
             </div>
           </CollapsibleSection>
 
-          <CollapsibleSection title="Experimental Conditions" icon="🌡️" defaultOpen={false}>
+          <CollapsibleSection title="Experimental Conditions" icon="🌡️" defaultOpen={false} openWhen={!!(t.dockingMolecules && t.dockingMolecules.length)}>
             {isMdType && (
               <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded-lg flex flex-wrap items-center gap-3">
                 <label className="bg-white hover:bg-emerald-100 text-emerald-700 border border-emerald-300 font-bold py-1.5 px-3 rounded-lg text-xs cursor-pointer shadow-sm transition-colors flex items-center gap-2 shrink-0">
@@ -1832,7 +1844,7 @@ const details = [
             />
           </CollapsibleSection>
 
-          <CollapsibleSection title="Instrumental Setup" icon="🔬" defaultOpen={false}>
+          <CollapsibleSection title="Instrumental Setup" icon="🔬" defaultOpen={false} openWhen={!!t.dockingRawInput}>
             <div className="flex flex-col gap-4">
               {InstrumentalSetupSection ? (
                 <InstrumentalSetupSection ctx={ctx} />
@@ -1913,6 +1925,7 @@ const details = [
             title="Molecular structure and visualization"
             icon="🧬"
             defaultOpen={false}
+            openWhen={!!(t.dockingStructures && t.dockingStructures.length)}
           >
             <MolecularStructureSection ctx={ctx} />
           </CollapsibleSection>

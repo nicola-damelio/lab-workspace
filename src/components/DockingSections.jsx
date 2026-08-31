@@ -9,7 +9,7 @@ import { storeJson, loadJson } from '../utils/pdbStore';
 import { gunzipSync } from 'fflate';
 
 import NMRMoleculeViewer from './NMRMoleculeViewer';
-import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_PROGRAMS, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, getScoringFunctions, getSearchAlgorithms, parseDockingFile, parseCapriTsv, parseTomlSimple, extractDockedMolecules, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, DOCK_CHART_MARGIN} from './DockingData';
+import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, parseDockingFile, parseCapriTsv, parseTomlSimple, extractDockedMolecules, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, DOCK_CHART_MARGIN} from './DockingData';
 
 
 /* ============================================================================
@@ -430,102 +430,6 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
               </select>
             </div>
           )}
-
-          {/* Ligand panel */}
-          <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg p-2.5">
-            <label className="block text-[10px] font-bold text-amber-700 uppercase mb-2 flex items-center gap-1.5"><Icon name="atom" size={13} /> Ligand</label>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              <div className="flex flex-col gap-0.5">
-                <label className="text-[10px] font-bold text-slate-500 uppercase">Ligand SMILES</label>
-                <input
-                  type="text"
-                  value={d.ligandSmiles}
-                  onChange={(e) => updateActiveTest({ ligandSmiles: e.target.value })}
-                  placeholder="e.g. CC(=O)Oc1ccccc1C(=O)O"
-                  className="border border-slate-300 rounded-md px-2 py-1.5 font-mono text-xs bg-white outline-none focus:border-amber-500"
-                />
-              </div>
-              <div className="flex flex-col gap-0.5">
-                <label className="text-[10px] font-bold text-slate-500 uppercase">Ligand PDB / 3-letter ID</label>
-                <input
-                  type="text"
-                  value={d.ligandPdbId}
-                  onChange={(e) => updateActiveTest({ ligandPdbId: e.target.value })}
-                  placeholder="e.g. ASN, IBU, STI"
-                  className="border border-slate-300 rounded-md px-2 py-1.5 font-mono text-xs bg-white outline-none focus:border-amber-500 uppercase"
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Docking program + box */}
-        <div className="w-full lg:w-80 flex flex-col gap-4">
-          <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200 flex flex-col gap-1.5">
-            <label className="text-[10px] font-bold text-slate-500 uppercase">🎯 Docking Program</label>
-            <select
-              value={d.dockingProgram}
-              onChange={(e) => {
-                const pk = e.target.value;
-                const info = getProgramInfo(pk);
-                updateActiveTest({
-                  dockingProgram: pk,
-                  scoringFunction: info.scoringFunctions[0] || '',
-                  searchAlgorithm: info.searchAlgorithms[0] || ''
-                });
-              }}
-              className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 font-semibold"
-            >
-              {Object.entries(DOCKING_PROGRAMS).map(([k, v]) => (
-                <option key={k} value={k}>{v.name}</option>
-              ))}
-            </select>
-            <p className="text-[10px] text-slate-400 leading-snug">{d.programInfo.description}</p>
-            <div className="grid grid-cols-2 gap-2">
-              <div className="flex flex-col gap-0.5">
-                <label className="text-[10px] font-bold text-slate-500 uppercase">Scoring Function</label>
-                <select
-                  value={d.scoringFunction}
-                  onChange={(e) => updateActiveTest({ scoringFunction: e.target.value })}
-                  className="w-full border border-slate-300 rounded-md px-1.5 py-1 text-xs bg-white outline-none focus:border-blue-500"
-                >
-                  {getScoringFunctions(d.dockingProgram).map((s) => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex flex-col gap-0.5">
-                <label className="text-[10px] font-bold text-slate-500 uppercase">Search Algorithm</label>
-                <select
-                  value={d.searchAlgorithm}
-                  onChange={(e) => updateActiveTest({ searchAlgorithm: e.target.value })}
-                  className="w-full border border-slate-300 rounded-md px-1.5 py-1 text-xs bg-white outline-none focus:border-blue-500"
-                >
-                  {getSearchAlgorithms(d.dockingProgram).map((s) => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-sky-50 p-2.5 rounded-lg border border-sky-200">
-            <label className="block text-[10px] font-bold text-sky-700 uppercase mb-2">📦 Docking Box / Grid</label>
-            <div className="grid grid-cols-3 gap-1.5">
-              {[['Center X', 'boxCenterX', d.boxCenterX], ['Center Y', 'boxCenterY', d.boxCenterY], ['Center Z', 'boxCenterZ', d.boxCenterZ],
-                ['Size X (Å)', 'boxSizeX', d.boxSizeX], ['Size Y (Å)', 'boxSizeY', d.boxSizeY], ['Size Z (Å)', 'boxSizeZ', d.boxSizeZ]].map(([lab, key, val]) => (
-                <div key={key} className="flex flex-col gap-0.5">
-                  <label className="text-[9px] font-bold text-slate-500">{lab}</label>
-                  <input
-                    type="text"
-                    value={val}
-                    onChange={(e) => updateActiveTest({ [key]: e.target.value })}
-                    className="border border-slate-300 rounded px-1.5 py-1 text-xs bg-white outline-none focus:border-sky-500"
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
       </div>
 
@@ -716,9 +620,24 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
       scientist: test.operator || '',
       section: 'Docking'
     };
-    const archive = async (name, mime, blob) => {
+    // Explicit Drive folder path under <project>/<test>/<instance>/… — each file
+    // lands in the subsection it belongs to (Data/pdb files, Instrumental
+    // Setup, Experimental Conditions) instead of everything piled into one
+    // "Docking" folder.
+    const drivePathOf = (extra) => {
+      const base = [];
+      if ((test.projectNames || [])[0]) base.push(test.projectNames[0]);
+      if (test.name) base.push(test.name);
+      if (test.instanceName) base.push(test.instanceName);
+      return base.concat(extra || []).filter(Boolean);
+    };
+    const archive = async (name, mime, blob, pathExtra = [], section = 'Docking') => {
       try {
-        const res = await uploadLocalFile({ name, mimeType: mime, file: blob, ctx: driveCtx });
+        const res = await uploadLocalFile({
+          name, mimeType: mime, file: blob,
+          ctx: { ...driveCtx, section },
+          path: drivePathOf(pathExtra)
+        });
         return res ? res.driveUrl : '';
       } catch { return ''; }
     };
@@ -739,7 +658,7 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
       const text = await readText(capriFile);
       const parsed = parseCapriTsv(text);
       if (parsed) {
-        const driveUrl = await archive('capri_ss.tsv', 'text/tab-separated-values', new Blob([text], { type: 'text/tab-separated-values' }));
+        const driveUrl = await archive('capri_ss.tsv', 'text/tab-separated-values', new Blob([text], { type: 'text/tab-separated-values' }), ['Data'], 'Data');
         // Map the CAPRI columns onto the docking metric keys used by the table.
         const metricMap = { score: 'affinity', lrmsd: 'rmsd_lb', ilrmsd: 'rmsd_ub', total: 'energy_total', air: 'energy_air', desolv: 'energy_desolv', elec: 'energy_elec', vdw: 'energy_vdw', bsa: 'bsa' };
         const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : ''; };
@@ -765,7 +684,7 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
     if (tomlFile) {
       const text = await readText(tomlFile);
       toml = parseTomlSimple(text);
-      const driveUrl = await archive('raw_input.toml', 'text/toml', new Blob([text], { type: 'text/toml' }));
+      const driveUrl = await archive('raw_input.toml', 'text/toml', new Blob([text], { type: 'text/toml' }), ['Instrumental Setup'], 'Instrumental Setup');
       updateActiveTest({ dockingRawInput: { ...toml, fileName: tomlFile.name || 'raw_input.toml', driveUrl } });
       done.push('raw_input.toml → link in Instrumental Setup');
       notes.push(driveUrl ? 'stored on Drive' : 'Drive not connected — local only');
@@ -814,7 +733,14 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
               ? new TextDecoder('utf-8').decode(gunzipSync(new Uint8Array(await readArrayBuffer(file))))
               : await readText(file);
           } catch { pdbText = ''; }
-          const driveUrl = await archive(file.name || m.pdb, isGz ? 'application/gzip' : 'chemical/x-pdb', file);
+          // Archive the DECOMPRESSED PDB to Drive (so Drive holds usable .pdb
+          // files, not only .pdb.gz) under Experimental Conditions.
+          const driveName = String(file.name || m.pdb || 'molecule.pdb').replace(/\.gz$/i, '');
+          const driveUrl = await archive(
+            driveName, 'chemical/x-pdb',
+            pdbText ? new Blob([pdbText], { type: 'chemical/x-pdb' }) : file,
+            ['Experimental Conditions'], 'Experimental Conditions'
+          );
           const meta = {
             name: m.name,
             segid: m.segid,
@@ -851,7 +777,13 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
         }
       } catch { continue; }
       const base = String(f.name || rel.split('/').pop() || 'structure').replace(/\.gz$/i, '');
-      const driveUrl = await archive(f.name || base, isGz ? 'application/gzip' : 'chemical/x-pdb', f);
+      // Archive the DECOMPRESSED PDB to Drive under Data/pdb files — the viewer
+      // always reads the gunzipped text, and Drive also keeps usable .pdb files.
+      const driveUrl = await archive(
+        base, 'chemical/x-pdb',
+        pdbText ? new Blob([pdbText], { type: 'chemical/x-pdb' }) : f,
+        ['Data', 'pdb files'], 'Data'
+      );
       structs.push({ name: base, pdb: pdbText, driveUrl });
     }
     if (structs.length) {

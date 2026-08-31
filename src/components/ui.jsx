@@ -60,7 +60,7 @@ if (typeof window !== 'undefined') {
 }
 
 export const CollapsibleSection = ({
-  title, icon, defaultOpen = false, children, headerExtra, className = ''
+  title, icon, defaultOpen = false, children, headerExtra, className = '', openWhen = false
 }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const sectionsCmd = useSectionsCommand();
@@ -70,6 +70,12 @@ export const CollapsibleSection = ({
   useEffect(() => {
     if (sectionsCmd !== null && sectionsCmd !== undefined) setIsOpen(sectionsCmd);
   }, [sectionsCmd]);
+
+  // Auto-open when something important appears (e.g. imported docking data) —
+  // e.g. "Instrumental Setup" opens once raw_input.toml is attached.
+  useEffect(() => {
+    if (openWhen) setIsOpen(true);
+  }, [openWhen]);
 
   return (
     <div className={`bg-white rounded-xl shadow-sm border border-slate-200 mb-3 break-inside-avoid ${className}`}>
