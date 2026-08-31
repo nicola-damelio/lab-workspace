@@ -4,9 +4,11 @@ import {ChartControlBar, SharedChartStylePanel} from './SharedAnalysisTools';
 import { Icon } from './Icons';
 import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
+import { uploadLocalFile } from '../utils/driveUpload';
+import { gunzipSync } from 'fflate';
 
 import NMRMoleculeViewer from './NMRMoleculeViewer';
-import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_PROGRAMS, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, getScoringFunctions, getSearchAlgorithms, parseDockingFile, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, DOCK_CHART_MARGIN} from './DockingData';
+import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_PROGRAMS, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, getScoringFunctions, getSearchAlgorithms, parseDockingFile, parseCapriTsv, parseTomlSimple, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, DOCK_CHART_MARGIN} from './DockingData';
 
 
 /* ============================================================================
@@ -132,6 +134,7 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
   const [hasOpened3D, setHasOpened3D] = useState(structureMode === '3d');
   const [expandedPanel, setExpandedPanel] = useState(null);
   const [ssBrush, setSSBrush] = useState('H');
+  const [showRawInput, setShowRawInput] = useState(false);
 
   useEffect(() => { if (structureMode === '3d') setHasOpened3D(true); }, [structureMode]);
   useEffect(() => {
@@ -189,8 +192,62 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
     return raw;
   }, [activeTest.structureSrc, d.moleculeType]);
 
+  // Docking cluster structures (8_seletopclusts) read by the calculation-directory
+  // importer — the full PDB texts live in localStorage, keyed by the test id.
+  const structKey = `labDockingStructures_${activeTest.id || 'global'}`;
+  const [structList, setStructList] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(structKey) || '[]'); } catch { return []; }
+  });
+  const [structIdx, setStructIdx] = useState(0);
+  const selectedStruct = Array.isArray(structList) ? (structList[structIdx] || structList[0] || null) : null;
+  useEffect(() => {
+    try { setStructList(JSON.parse(localStorage.getItem(structKey) || '[]')); } catch { /* ignore */ }
+  }, [structKey, activeTest.dockingStructures]);
+
   return (
     <div className="flex flex-col gap-6">
+      {/* Calculation input (raw_input.toml) — link in the Instrumental Setup */}
+      {activeTest.dockingRawInput && (
+        <div className="bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-black text-slate-600 uppercase">Calculation input</span>
+            {activeTest.dockingRawInput.driveUrl ? (
+              <a href={activeTest.dockingRawInput.driveUrl} target="_blank" rel="noreferrer"
+                className="text-xs font-bold text-sky-700 hover:underline bg-sky-50 border border-sky-200 rounded-lg px-2.5 py-1">
+                📄 {activeTest.dockingRawInput.fileName || 'raw_input.toml'} · open on Drive ↗
+              </a>
+            ) : (
+              <span className="text-xs font-bold text-slate-500">📄 {activeTest.dockingRawInput.fileName || 'raw_input.toml'} (read locally)</span>
+            )}
+            <button type="button" onClick={() => setShowRawInput(!showRawInput)}
+              className="text-[10px] font-bold text-slate-500 hover:text-slate-800 underline">{showRawInput ? 'hide parameters' : 'show parameters'}</button>
+          </div>
+          {showRawInput && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 bg-white border border-slate-200 rounded-lg p-3">
+              {(activeTest.dockingRawInput.top || []).map((p) => (
+                <div key={p.key} className="flex justify-between gap-2 text-[11px]">
+                  <span className="font-bold text-slate-500">{p.key}</span>
+                  <span className="font-mono text-slate-700 text-right">{p.value}</span>
+                </div>
+              ))}
+              {(activeTest.dockingRawInput.sections || []).map((sec) => (
+                <div key={sec.name} className="col-span-1 md:col-span-2 border-t border-slate-100 pt-1.5">
+                  <span className="text-[10px] font-black text-indigo-600 uppercase">[{sec.name}]</span>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-0.5 mt-0.5">
+                    {sec.pairs.map((p) => (
+                      <div key={p.key} className="flex justify-between gap-2 text-[11px]">
+                        <span className="font-bold text-slate-500">{p.key}</span>
+                        <span className="font-mono text-slate-700 text-right">{p.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Molecule type selector */}
       <div className="flex flex-wrap gap-2 mb-2">
         {[
@@ -412,9 +469,24 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
 
           <div style={{ display: structureMode === '3d' ? 'block' : 'none' }}>
             {hasOpened3D && (
+              <>
+                {selectedStruct && (
+                  <div className="mb-2 flex flex-wrap items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                    <span className="text-[10px] font-black text-slate-600 uppercase">8_seletopclusts structure</span>
+                    <select value={structIdx} onChange={(e) => setStructIdx(Number(e.target.value))}
+                      className="border border-slate-300 rounded px-2 py-1 text-xs bg-white max-w-[260px]">
+                      {structList.map((s, i) => <option key={s.name} value={i}>{s.name}</option>)}
+                    </select>
+                    {selectedStruct.driveUrl && (
+                      <a href={selectedStruct.driveUrl} target="_blank" rel="noreferrer" className="text-[10px] font-bold text-sky-700 hover:underline">☁️ Drive</a>
+                    )}
+                  </div>
+                )}
               <NMRMoleculeViewer
-                key={structureSrc}
-                src={structureSrc}
+                key={structureSrc + (selectedStruct ? '::' + selectedStruct.name : '')}
+                src={selectedStruct ? '' : structureSrc}
+                structureText={selectedStruct ? selectedStruct.pdb : undefined}
+                structureTextExt="pdb"
                 moleculeType={d.moleculeType}
                 parsedSeq={d.parsedSeq}
                 selectedKeys={selectedKeys}
@@ -432,6 +504,7 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
                 }}
                 height="480px"
               />
+              </>
             )}
           </div>
 
@@ -470,6 +543,7 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
   const { updateActiveTest } = ctx;
   const [pasteText, setPasteText] = useState('');
   const [report, setReport] = useState(null);
+  const [calcDirBusy, setCalcDirBusy] = useState(false);
 
   const handleText = (text, filename) => {
     const parsed = parseDockingFile(text, filename || 'pasted.txt');
@@ -491,18 +565,136 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
     reader.readAsText(file);
   };
 
+  // ---- Calculation-directory import (HADDOCK output tree) -------------------
+  // The user picks the calculation directory; we read:
+  //   data/configurations/raw_input.toml → link in Instrumental Setup
+  //   9_caprieval/capri_ss.tsv           → the Data table (TSV, not CSV)
+  //   8_seletopclusts/*.pdb[.gz]         → 3D viewer structures (gunzipped)
+  // Every file / PDB is archived to Google Drive under <project>/<test>/Docking.
+  const readText = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsText(file); });
+  const readArrayBuffer = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsArrayBuffer(file); });
+
+  const handleCalcDir = async (files) => {
+    const list = Array.from(files || []);
+    if (!list.length) return;
+    setCalcDirBusy(true);
+    setReport(null);
+    const lower = (s) => String(s || '').toLowerCase();
+    const test = ctx.activeTest || {};
+    const driveCtx = {
+      project: (test.projectNames || [])[0] || '',
+      test: test.name || '',
+      instance: test.instanceName || '',
+      scientist: test.operator || '',
+      section: 'Docking'
+    };
+    const archive = async (name, mime, blob) => {
+      try {
+        const res = await uploadLocalFile({ name, mimeType: mime, file: blob, ctx: driveCtx });
+        return res ? res.driveUrl : '';
+      } catch { return ''; }
+    };
+    const done = [];
+    const notes = [];
+
+    // 1) capri_ss.tsv → the Data table (full TSV content)
+    const capriFile = list.find((f) => /(^|\/)9_caprieval\/capri_ss\.tsv$/i.test(lower(f.webkitRelativePath || f.name)));
+    if (capriFile) {
+      const text = await readText(capriFile);
+      const parsed = parseCapriTsv(text);
+      if (parsed) {
+        const driveUrl = await archive('capri_ss.tsv', 'text/tab-separated-values', new Blob([text], { type: 'text/tab-separated-values' }));
+        updateActiveTest({ dockingCapri: { ...parsed, sourceName: capriFile.name || 'capri_ss.tsv', driveUrl } });
+        done.push(`capri_ss.tsv → Data table (${parsed.rows.length} rows)`);
+        notes.push(driveUrl ? 'stored on Drive' : 'Drive not connected — local only');
+      }
+    }
+
+    // 2) raw_input.toml → link in Instrumental Setup
+    const tomlFile = list.find((f) => /(^|\/)data\/configurations\/raw_input\.toml$/i.test(lower(f.webkitRelativePath || f.name)));
+    if (tomlFile) {
+      const text = await readText(tomlFile);
+      const toml = parseTomlSimple(text);
+      const driveUrl = await archive('raw_input.toml', 'text/toml', new Blob([text], { type: 'text/toml' }));
+      updateActiveTest({ dockingRawInput: { ...toml, fileName: tomlFile.name || 'raw_input.toml', driveUrl } });
+      done.push('raw_input.toml → link in Instrumental Setup');
+      notes.push(driveUrl ? 'stored on Drive' : 'Drive not connected — local only');
+    }
+
+    // 3) 8_seletopclusts/*.pdb[.gz] → 3D viewer structures
+    const pdbFiles = list.filter((f) => /(^|\/)8_seletopclusts\/[^/]+\.(pdb|pdb\.gz)$/i.test(lower(f.webkitRelativePath || f.name)));
+    const structs = [];
+    for (const f of pdbFiles) {
+      const rel = f.webkitRelativePath || f.name;
+      const isGz = lower(rel).endsWith('.gz');
+      let pdbText = '';
+      try {
+        if (isGz) {
+          const buf = await readArrayBuffer(f);
+          pdbText = new TextDecoder('utf-8').decode(gunzipSync(new Uint8Array(buf)));
+        } else {
+          pdbText = await readText(f);
+        }
+      } catch { continue; }
+      const base = String(f.name || rel.split('/').pop() || 'structure').replace(/\.gz$/i, '');
+      const driveUrl = await archive(f.name || base, isGz ? 'application/gzip' : 'chemical/x-pdb', f);
+      structs.push({ name: base, pdb: pdbText, driveUrl });
+    }
+    if (structs.length) {
+      // The PDB texts can be large — keep them in localStorage (keyed by test)
+      // so the persisted dataset document stays small; only the metadata goes
+      // on the test, and the full text is re-read when the viewer opens.
+      try {
+        localStorage.setItem(`labDockingStructures_${test.id || 'global'}`, JSON.stringify(structs));
+      } catch { /* quota — the metadata below is still stored */ }
+      updateActiveTest({ dockingStructures: structs.map((s) => ({ name: s.name, driveUrl: s.driveUrl })) });
+      done.push(`${structs.length} structure(s) from 8_seletopclusts → 3D viewer`);
+      notes.push('stored on Drive');
+    }
+
+    setCalcDirBusy(false);
+    setReport({ ok: done.length, items: done, notes });
+  };
+
   return (
-    <div className="bg-sky-50 border border-sky-200 rounded-xl p-4 flex flex-col gap-3">
+    <div id="docking-import-panel" className="bg-sky-50 border border-sky-200 rounded-xl p-4 flex flex-col gap-3">
       <p className="text-xs font-bold text-sky-800">
-        📥 Import docking results — AutoDock Vina (log/table), AutoDock 4 (.dlg), HADDOCK (.csv),
-        or parameter files (.dpf / .gpf / config.txt / .param). Format is auto-detected.
+        📥 Import docking results — AutoDock Vina (log/table), AutoDock 4 (.dlg), HADDOCK (CAPRI TSV / CSV),
+        or parameter files (.dpf / .gpf / config.txt / .toml / .param). Format is auto-detected.
       </p>
+
+      {/* HADDOCK calculation directory — the recommended way to import a whole run */}
+      <div id="docking-calc-dir" className="bg-indigo-50 border border-indigo-300 rounded-xl p-3 flex flex-col gap-2">
+        <p className="text-xs font-black text-indigo-900 uppercase">📂 HADDOCK calculation directory (recommended)</p>
+        <p className="text-[10px] text-indigo-800">
+          Pick the whole calculation directory — the app reads <b>data/configurations/raw_input.toml</b> (link in Instrumental
+          Setup), <b>9_caprieval/capri_ss.tsv</b> (full TSV into the Data table) and <b>8_seletopclusts/*.pdb[.gz]</b>
+          (structures opened in the 3D viewer), and archives every file to Google Drive.
+        </p>
+        <div className="flex flex-wrap gap-2 items-center">
+          <label className={`bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg text-xs cursor-pointer shadow-sm transition-colors inline-flex items-center gap-2 ${calcDirBusy ? 'opacity-60 pointer-events-none' : ''}`}>
+            {calcDirBusy ? '⏳ Reading calculation directory…' : '📂 Select calculation directory'}
+            <input
+              type="file"
+              webkitdirectory=""
+              directory=""
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files && e.target.files.length) handleCalcDir(e.target.files);
+                e.target.value = '';
+              }}
+            />
+          </label>
+          <span className="text-[10px] text-slate-500">Expects the HADDOCK/CAPRI output tree: data/, 8_seletopclusts/, 9_caprieval/</span>
+        </div>
+      </div>
+
       <div className="flex flex-wrap gap-3 items-center">
         <label className="bg-sky-600 hover:bg-sky-700 text-white font-bold px-4 py-2 rounded-lg text-xs cursor-pointer shadow-sm transition-colors inline-flex items-center gap-2">
           📂 Choose file…
           <input
             type="file"
-            accept=".dlg,.dpf,.gpf,.csv,.txt,.param,.log,.cfg"
+            accept=".dlg,.dpf,.gpf,.csv,.tsv,.txt,.toml,.param,.log,.cfg"
             className="hidden"
             onChange={(e) => {
               const f = e.target.files && e.target.files[0];
@@ -529,12 +721,13 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
             subsection: 'Docking',
             suffix: 'docking'
           }}
-          accept=".dlg,.dpf,.gpf,.csv,.txt,.param,.log,.cfg"
+          accept=".dlg,.dpf,.gpf,.csv,.tsv,.txt,.toml,.param,.log,.cfg"
           label="⬆ Archive to Drive"
           className="bg-sky-50 text-sky-800 border border-sky-200 hover:bg-sky-100"
         />
         <span className="text-[10px] text-slate-500">…or paste output text below:</span>
       </div>
+
       <textarea
         value={pasteText}
         onChange={(e) => setPasteText(e.target.value)}
@@ -549,12 +742,16 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
         Import pasted data
       </button>
       {report && (
-        <div className={`text-xs font-bold ${report.ok > 0 ? 'text-green-600' : 'text-red-500'}`}>
+        <div className={`text-xs font-bold ${report.ok > 0 ? 'text-green-600' : 'text-red-500'} flex flex-col gap-1`}>
           {report.ok > 0
             ? report.params
               ? `✅ Imported ${report.ok} parameters (${report.type})`
-              : `✅ Imported ${report.ok} poses (${report.type})`
-            : '⚠️ No recognized data in this input.'}
+              : report.items && report.items.length
+                ? report.items.map((it, i) => (
+                  <span key={i}>✅ {it}{report.notes && report.notes[i] ? ` — ${report.notes[i]}` : ''}</span>
+                ))
+                : `✅ Imported ${report.ok} poses (${report.type})`
+            : '⚠️ No recognized data — select a results file, paste output text, or pick a HADDOCK calculation directory.'}
         </div>
       )}
     </div>
@@ -595,7 +792,13 @@ export const DockingDataSection = ({ ctx }) => {
             Best: {bestPose.affinity} {d.programInfo.energyUnit}
           </span>
         )}
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => { setShowImport(true); setTimeout(() => document.getElementById('docking-import-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80); }}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm"
+          >
+            📂 Select HADDOCK calculation directory…
+          </button>
           <button
             onClick={() => setShowImport(!showImport)}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${
@@ -608,6 +811,40 @@ export const DockingDataSection = ({ ctx }) => {
       </div>
 
       {showImport && <DockingImportPanel ctx={ctx} d={d} onPoses={handlePoses} />}
+
+      {activeTest.dockingCapri && activeTest.dockingCapri.columns && activeTest.dockingCapri.rows && (
+        <div className="border border-slate-200 rounded-lg overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-100 px-3 py-2">
+            <span className="text-xs font-black text-slate-600 uppercase">CAPRI quality — capri_ss.tsv</span>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-slate-500">{activeTest.dockingCapri.rows.length} rows</span>
+              {activeTest.dockingCapri.driveUrl && (
+                <a href={activeTest.dockingCapri.driveUrl} target="_blank" rel="noreferrer" className="text-[10px] font-bold text-sky-700 hover:underline">☁️ Open on Drive</a>
+              )}
+            </div>
+          </div>
+          <div className="overflow-x-auto max-h-[520px]">
+            <table className="w-full text-xs text-left">
+              <thead className="text-[10px] text-slate-500 uppercase bg-slate-50 sticky top-0 z-10">
+                <tr>
+                  {activeTest.dockingCapri.columns.map((c) => (
+                    <th key={c} className="px-2.5 py-2 font-bold border-b border-slate-200 whitespace-nowrap">{c}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 bg-white">
+                {activeTest.dockingCapri.rows.map((row, ri) => (
+                  <tr key={ri} className={ri === 0 ? 'bg-green-50/40' : 'hover:bg-slate-50'}>
+                    {row.map((cell, ci) => (
+                      <td key={ci} className="px-2.5 py-1.5 whitespace-nowrap font-mono text-slate-600">{cell}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <div className="overflow-x-auto border border-slate-200 rounded-lg max-h-[520px]">
         <table className="w-full text-sm text-left">

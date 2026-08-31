@@ -446,9 +446,87 @@ export const parseHADDOCKParams = (text) => {
 
 // ================= MASTER FILE DISPATCHER =================
 // Detects the file type and returns either poses (results) or updates (params).
+// Parse a CAPRI quality TSV (9_caprieval/capri_ss.tsv) into { columns, rows }.
+export const parseCapriTsv = (text) => {
+  const lines = String(text || '').split(/\r?\n/).filter((l) => l.trim() !== '');
+  if (lines.length < 2) return null;
+  const columns = lines[0].split('\t').map((c) => c.trim()).filter(Boolean);
+  const rows = lines.slice(1).map((l) => l.split('\t').map((c) => c.trim()));
+  if (!columns.length || !rows.length) return null;
+  return { columns, rows };
+};
+
+// Lightweight TOML reader for raw_input.toml (sections + key = value pairs).
+// Handles comments, quoted values, duplicate sections (merged) and both
+// single-line and multi-line arrays (e.g. the `molecules` list).
+export const parseTomlSimple = (text) => {
+  const top = [];
+  const sections = [];
+  let currentSection = null;
+  const lines = String(text || '').split(/\r?\n/);
+  // Remove inline comments (# ...), but not inside quoted strings.
+  const stripComment = (s) => {
+    let inQ = null;
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (inQ) { if (ch === inQ) inQ = null; continue; }
+      if (ch === '"' || ch === "'") inQ = ch;
+      else if (ch === '#') return s.slice(0, i);
+    }
+    return s;
+  };
+  const cleanVal = (v) => String(v || '').trim().replace(/^"|"$/g, '').replace(/^'|'$/g, '');
+
+  let i = 0;
+  while (i < lines.length) {
+    const line = stripComment(lines[i]).trim();
+    i++;
+    if (!line) continue;
+    const sm = /^\[([^\]]+)\]$/.exec(line);
+    if (sm) {
+      const name = sm[1].trim();
+      currentSection = sections.find((s) => s.name === name);
+      if (!currentSection) { currentSection = { name, pairs: [] }; sections.push(currentSection); }
+      continue;
+    }
+    const eq = line.indexOf('=');
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    let val = line.slice(eq + 1).trim();
+    if (val.startsWith('[')) {
+      // Array — read across lines until the closing bracket.
+      let acc = val.includes(']') ? val.slice(val.indexOf('[') + 1, val.lastIndexOf(']')) : val.slice(1);
+      if (!val.includes(']')) {
+        while (i < lines.length) {
+          const next = stripComment(lines[i]).trim();
+          i++;
+          const closeIdx = next.indexOf(']');
+          if (closeIdx >= 0) { acc += ' ' + next.slice(0, closeIdx); break; }
+          acc += ' ' + next;
+        }
+      }
+      val = acc.split(',').map(cleanVal).filter(Boolean).join(', ');
+    } else {
+      val = cleanVal(val);
+    }
+    const pair = { key, value: val };
+    if (currentSection) currentSection.pairs.push(pair);
+    else top.push(pair);
+  }
+  return { top, sections };
+};
+
 export const parseDockingFile = (text, filename) => {
   const lower = (filename || '').toLowerCase();
 
+  if (lower.endsWith('.tsv')) {
+    const capri = parseCapriTsv(text);
+    if (capri) return { type: 'capri_tsv', program: 'haddock', poses: [], capri, updates: { dockingCapri: { ...capri, sourceName: filename || 'capri_ss.tsv' } } };
+  }
+  if (lower.endsWith('.toml')) {
+    const toml = parseTomlSimple(text);
+    return { type: 'raw_input_toml', program: null, poses: [], toml, updates: { dockingRawInput: { ...toml, fileName: filename || 'raw_input.toml' } } };
+  }
   if (lower.endsWith('.dlg')) {
     const poses = parseAutoDockDlg(text);
     return { type: 'dlg', program: 'autodock4', poses, updates: { dockingProgram: 'autodock4' } };
@@ -712,6 +790,8 @@ export default {
   parseAutoDockDPF,
   parseGridGPF,
   parseHADDOCKParams,
+  parseCapriTsv,
+  parseTomlSimple,
   parseDockingFile,
   normalizeDockingUrl,
   detectDockingFormat,

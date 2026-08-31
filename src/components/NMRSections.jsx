@@ -1801,11 +1801,16 @@ const SpectrumPlot = ({ title, diagonalData, crossPeakData, expandedPanel, setEx
                 <Scatter name="Diagonal" data={[{ x: 0, y: 0 }, { x: 11, y: 11 }]} line={{ stroke: '#cbd5e1', strokeWidth: 1 }} shape={(props) => <circle cx={props.cx || 0} cy={props.cy || 0} r={0} />} legendType="none" isAnimationActive={false} />
                 
                 <Scatter data={diagonalData} fill={lineColor || diagonalColor} shape={shape} isAnimationActive={false} />
-                {simShowLabels && <Scatter data={processedCrossPeaks} shape={shape} isAnimationActive={false} />}
+                <Scatter data={processedCrossPeaks} shape={shape} isAnimationActive={false} />
                 {refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} y1={refAreaTop} y2={refAreaBottom} strokeOpacity={0.3} fill="#cbd5e1" />}
               </ScatterChart>
             </ResponsiveContainer>
           </div>
+          {crossPeakData.length === 0 && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <p className="text-xs text-slate-400 italic bg-white/80 px-3 py-1.5 rounded-lg">No COSY / NOESY cross peaks for this molecule type.</p>
+            </div>
+          )}
           {isZoomed && (
             <>
               <div className="absolute left-0 right-0 z-10 flex items-center" style={{ bottom: '0px', paddingLeft: CHART_MARGIN.left, paddingRight: CHART_MARGIN.right }}>
@@ -1897,7 +1902,7 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
                 <XAxis type="number" dataKey="x" domain={xDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : TICKS_1H} interval={0} tickLine={false} tick={<CustomXTick1H isZoomed={isZoomed} fs={fs} angle={tickAngle} color={tickColor || '#64748b'} />} label={{ value: xAxisLabel || '¹H F2 (ppm)', position: 'insideBottom', offset: -25, fill: '#64748b', fontSize: fs + 1 }} />
                 <YAxis type="number" dataKey="y" domain={yDomain} allowDataOverflow reversed={true} ticks={isZoomed ? undefined : yTicks} interval={0} tickLine={false} tick={<CustomYTick13C isZoomed={isZoomed} fs={fs} color={tickColor || '#64748b'} />} label={{ value: yAxisLabel, angle: -90, position: 'insideLeft', offset: -20, fill: '#64748b', fontSize: fs + 1 }} />
                 <Tooltip content={<NMRTooltip diagonalColor="#8b5cf6" selectedKeys={selectedKeys} />} cursor={{ strokeDasharray: '3 3', stroke: '#94a3b8' }} />
-                {simShowLabels && <Scatter data={processedCrossPeaks} shape={(props) => {
+                <Scatter data={processedCrossPeaks} shape={(props) => {
                   const { cx, cy, payload } = props;
                   if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
                   const isSel = selectedKeys && payload.keys && payload.keys.some((k) => selectedKeys.includes(k));
@@ -1926,11 +1931,16 @@ const HSQCPlot = ({ title, crossPeakData, expandedPanel, setExpandedPanel, panel
                       )}
                     </g>
                   );
-                }} isAnimationActive={false} />}
+                }} isAnimationActive={false} />
                 {refAreaLeft !== null && refAreaRight !== null && refAreaTop !== null && refAreaBottom !== null && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} y1={refAreaTop} y2={refAreaBottom} strokeOpacity={0.3} fill="#cbd5e1" />}
               </ScatterChart>
             </ResponsiveContainer>
           </div>
+          {crossPeakData.length === 0 && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <p className="text-xs text-slate-400 italic bg-white/80 px-3 py-1.5 rounded-lg">No HSQC cross peaks for this molecule — no ¹³C-correlated protons were generated.</p>
+            </div>
+          )}
           {isZoomed && (
             <>
               <div className="absolute left-0 right-0 z-10 flex items-center" style={{ bottom: '0px', paddingLeft: CHART_MARGIN.left, paddingRight: CHART_MARGIN.right }}>
@@ -2954,6 +2964,14 @@ const useNmrDerived = (activeTest, ctx = {}) => {
         if (a.startsWith('H')) organicShifts[a] = parseFloat((1 + Math.random() * 8).toFixed(2));
         else if (a.startsWith('C')) uniqueCShifts[a] = parseFloat((20 + Math.random() * 150).toFixed(1));
         else organicShifts[a] = parseFloat((1 + Math.random() * 10).toFixed(2));
+      });
+      // HSQC for organic molecules: map every proton to the carbon sharing its
+      // atom number (same heuristic as getCarbonName) so the ¹H-¹³C HSQC is not empty.
+      Object.keys(organicShifts).forEach((a) => {
+        if (a.startsWith('H')) {
+          const cn = a.replace('H', 'C').replace(/[a-z]+$/, '');
+          if (cn && uniqueCShifts[cn] !== undefined) shifts13C[a] = uniqueCShifts[cn];
+        }
       });
       return [{
         name: 'Organic', code3: 'Org', char: 'O', id: 'ORG1', color: '#3b82f6',

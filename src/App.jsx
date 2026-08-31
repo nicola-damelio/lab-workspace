@@ -18,7 +18,7 @@ import { TestsModule } from './components/AppModules/testsModule';
 import { ProtocolsModule } from './components/AppModules/protocolsModule';
 import { ActiveTestModule } from './components/AppModules/activeTestModule';
 import { NotebookModule, CalculationsModule, PublicationsModule } from './components/AppModules/miscModules';
-import { ProjectsModule } from './components/AppModules/projectsModule';
+import { ProjectsModule, loadProjects, saveProjects } from './components/AppModules/projectsModule';
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
 import {normalizeOperators} from './utils/auth';
 import { setActiveProjectId, readLibrary, readAllProjectLibraries, restoreLibraryFromSnapshot } from './utils/figuresLibrary';
@@ -1335,7 +1335,8 @@ if (customType === 'dosy') {
       // in the HTML save and the weekly Drive backups so a restored file brings
       // the library back too.
       _figuresLibrary: readLibrary(),
-      _figuresLibraryProjects: readAllProjectLibraries()
+      _figuresLibraryProjects: readAllProjectLibraries(),
+      projects: loadProjects()
     }));
 
   // ── WEEKLY HTML AUTOSAVE TO GOOGLE DRIVE ──────────────────────────────────
@@ -1928,6 +1929,8 @@ useEffect(() => {
       if (s.protocolCategories !== undefined) setProtocolCategories(s.protocolCategories);
       if (s.datasetProtocols !== undefined) setDatasetProtocols(s.datasetProtocols);
       if (s.storages !== undefined) setStorages(s.storages);
+      // Projects live in localStorage (not React state) — restore them here.
+      if (Array.isArray(s.projects)) saveProjects(s.projects);
       // NOTE: operators and authSettings are NEVER imported from HTML
       // They are global app-level identity/security state — not dataset state.
       // if (s.operators !== undefined) setOperators(...);
@@ -1967,6 +1970,14 @@ useEffect(() => {
       }));
 
       setTests((prev) => [...prev, ...newTests]);
+
+      // Merge projects from the loaded file (by id) into the existing ones.
+      if (Array.isArray(s.projects) && s.projects.length) {
+        const existing = loadProjects();
+        const ids = new Set(existing.map((p) => p && p.id));
+        const additions = s.projects.filter((p) => p && p.id && !ids.has(p.id));
+        if (additions.length) saveProjects([...existing, ...additions]);
+      }
 
       if (newTests.length > 0) {
         setActiveTestId(newTests[0].id);
