@@ -1,0 +1,111 @@
+﻿
+  ! eslint(no-unused-vars): Variable 'fmtBytesMB' is declared but never used. Unused variables should start with a '_'.
+    ,-[src/components/NMRMoleculeViewer.jsx:40:7]
+ 39 | 
+ 40 | const fmtBytesMB = (b) => `${(b / (1024 * 1024)).toFixed(1)} MB`;
+    :       ^^^^^|^^^^
+    :            `-- 'fmtBytesMB' is declared here
+ 41 | const fmtBytesGB = (b) => `${(b / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+    `----
+  help: Consider removing this declaration.
+
+  ! eslint(no-unused-vars): Variable 'fmtBytesGB' is declared but never used. Unused variables should start with a '_'.
+    ,-[src/components/NMRMoleculeViewer.jsx:41:7]
+ 40 | const fmtBytesMB = (b) => `${(b / (1024 * 1024)).toFixed(1)} MB`;
+ 41 | const fmtBytesGB = (b) => `${(b / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+    :       ^^^^^|^^^^
+    :            `-- 'fmtBytesGB' is declared here
+ 42 | 
+    `----
+  help: Consider removing this declaration.
+
+  ! react-hooks(exhaustive-deps): React Hook useEffect has a missing dependency: 'trajectoryFallbacks'
+      ,-[src/components/NMRMoleculeViewer.jsx:2093:4]
+ 2031 | targetCand,
+ 2032 | ...(Array.isArray(trajectoryFallbacks) ? trajectoryFallbacks : []),
+      :                   ^^^^^^^^^|^^^^^^^^^
+      :                            `-- useEffect uses `trajectoryFallbacks` here
+ 2033 | ].filter(Boolean);
+ 2034 | let frames = null;
+ 2035 | let lastTrajErr = null;
+ 2036 | for (const cand of candidates) {
+ 2037 | if (cancelled) return;
+ 2038 | try {
+ 2039 | frames = await NGL.autoLoad(cand, { ext });
+ 2040 | if (frames) break;
+ 2041 | } catch (e) { lastTrajErr = e; }
+ 2042 | }
+ 2043 | if (!frames) throw lastTrajErr || new Error('Could not parse trajectory frames from any candidate URL');
+ 2044 | 
+ 2045 | if (cancelled) return;
+ 2046 | const trajComp = component.addTrajectory(frames);
+ 2047 | const traj = (trajComp && trajComp.trajectory) || getTrajectoryObject(component);
+ 2048 | if (traj) {
+ 2049 | trajRef.current = traj;
+ 2050 | const initialFrames = getNumFrames(traj);
+ 2051 | if (initialFrames > 0) {
+ 2052 | setNumFrames(initialFrames);
+ 2053 | setCurrentFrame(0);
+ 2054 | setTrajStatus('ready');
+ 2055 | finishTrajLoad();
+ 2056 | } else {
+ 2057 | const checkInterval = setInterval(() => {
+ 2058 | const nf = getNumFrames(traj);
+ 2059 | if (nf > 0) {
+ 2060 | setNumFrames(nf);
+ 2061 | setCurrentFrame(0);
+ 2062 | setTrajStatus('ready');
+ 2063 | finishTrajLoad();
+ 2064 | clearInterval(checkInterval);
+ 2065 | }
+ 2066 | }, 250);
+ 2067 | setTimeout(() => {
+ 2068 | clearInterval(checkInterval);
+ 2069 | if (getNumFrames(traj) === 0 && !cancelled) {
+ 2070 | setTrajStatus('error');
+ 2071 | setTrajError('Trajectory loaded but contains 0 frames. Verify that the PDB and XTC have the exact same atom count.');
+ 2072 | finishTrajLoad();
+ 2073 | }
+ 2074 | }, 10000);
+ 2075 | }
+ 2076 | } else {
+ 2077 | throw new Error('Could not attach trajectory');
+ 2078 | }
+ 2079 | } catch (err) {
+ 2080 | if (!cancelled) {
+ 2081 | setTrajStatus('error');
+ 2082 | setTrajError(err?.message || 'Failed to load trajectory. Check matching atom count.');
+ 2083 | finishTrajLoad();
+ 2084 | }
+ 2085 | }
+ 2086 | };
+ 2087 | initTraj();
+ 2088 | return () => {
+ 2089 |   cancelled = true;
+ 2090 |   unregisterAbort();
+ 2091 |   if (abortRef.current && abortRef.current.token === abortToken) abortRef.current = null;
+ 2092 | };
+ 2093 | }, [trajFile, trajectoryFile, trajectorySrc, trajectoryFormat, status, trajAborted]);
+      :    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ 2094 | 
+      `----
+  help: Either include it or remove the dependency array.
+
+  ! react-hooks(exhaustive-deps): React Hook useEffect has a missing dependency: 'toActualFrame'
+      ,-[src/components/NMRMoleculeViewer.jsx:2107:4]
+ 2101 | const next = (prev + 1) % keptFrames;
+ 2102 | setFrameSafe(trajRef.current, toActualFrame(next));
+      :                               ^^^^^^|^^^^^^
+      :                                     `-- useEffect uses `toActualFrame` here
+ 2103 | return next;
+ 2104 | });
+ 2105 | }, interval);
+ 2106 | return () => clearInterval(id);
+ 2107 | }, [playing, speed, keptFrames, stride, numFrames, maxFrames]);
+      :    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ 2108 | 
+      `----
+  help: Either include it or remove the dependency array.
+
+Found 4 warnings and 0 errors.
+Finished in 48ms on 1 file with 92 rules using 8 threads.

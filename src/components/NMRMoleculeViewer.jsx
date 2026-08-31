@@ -1468,7 +1468,7 @@ const applyCurrentStyleTo = useCallback((comp, baseReps) => {
   (baseReps || []).forEach((r) => { try { comp.removeRepresentation(r); } catch {} });
   const next = [];
   let isProteinish = false;
-  try { isProteinish = (comp.structure.getAtomSet('protein').count || 0) > 0; } catch {
+  try { isProteinish = atomSetSize(comp.structure.getAtomSet(nglSelection('protein'))) > 0; } catch {
     isProteinish = moleculeTypeRef.current === 'protein';
   }
   if (isProteinish) {
@@ -1521,61 +1521,100 @@ const normStyle = (t) => {
 // App style token → NGL representation type.
 const toNglType = (t) => (t === 'spheres' ? 'spacefill' : t === 'sticks' ? 'stick' : t === 'lines' ? 'line' : t);
 
+// Build a proper NGL.Selection object. In NGL 2.4 `Structure#getAtomSet` IGNORES
+// raw strings (it returns the full atom set) — it needs a Selection instance.
+const nglSelection = (sele) => {
+  try {
+    if (typeof window !== 'undefined' && window.NGL && window.NGL.Selection) return new window.NGL.Selection(sele);
+  } catch {}
+  return null;
+};
+// NGL 2.4 `StructureSet` exposes the atom count as getSize() (a popcount), not
+// `.count` / `.size` / `.length`.
+const atomSetSize = (set) => (set && typeof set.getSize === 'function' ? set.getSize() : 0);
+
 // Classify a selection expression as covering the protein / the ligand parts.
 const classifySele = (comp, sele) => {
   if (!comp || !comp.structure) return { protein: false, ligand: false };
   const s = String(sele || '').trim().toLowerCase();
   if (!s || s === 'all') return { protein: true, ligand: true };
+  // 'not protein …' FIRST — otherwise it matches the /protein/ test below.
+  if (/^not protein/.test(s) || /not protein/.test(s)) return { protein: false, ligand: true };
   if (/protein/.test(s)) return { protein: true, ligand: false };
-  if (/hetero|not protein|ligand/.test(s)) return { protein: false, ligand: true };
+  if (/hetero|ligand/.test(s)) return { protein: false, ligand: true };
   // Custom expression (chain / residue / resn …) — classify by the actual atoms.
   try {
-    const set = comp.structure.getAtomSet(sele);
+    const selObj = nglSelection(sele);
+    if (!selObj || !comp.structure.getAtomSet) return { protein: false, ligand: false };
+    const set = comp.structure.getAtomSet(selObj);
     if (!set || typeof set.intersects !== 'function') return { protein: false, ligand: false };
-    const protSet = comp.structure.getAtomSet('protein');
-    const ligSet = comp.structure.getAtomSet('hetero and not water');
+    const protSet = comp.structure.getAtomSet(nglSelection('protein'));
+    const ligSet = comp.structure.getAtomSet(nglSelection('not protein and not water'));
     return {
-      protein: !!(protSet && protSet.count > 0 && set.intersects(protSet)),
-      ligand: !!(ligSet && ligSet.count > 0 && set.intersects(ligSet))
+      protein: atomSetSize(protSet) > 0 && set.intersects(protSet),
+      ligand: atomSetSize(ligSet) > 0 && set.intersects(ligSet)
     };
   } catch { return { protein: false, ligand: false }; }
 };
 
 // Capture the style currently VISIBLE in the viewer for the PROTEIN part and the
 // LIGAND (non-protein) part of the active molecule — i.e. "what you see is what
-// gets copied" when the user switches "🧬 Docking" on:
-//   1. the per-molecule override (or the global Backbone / Molecule style for
-//      the main's default role-based rendering), then
-//   2. any PyMOL / Selections panel representations on the main that are shown
-//      ON TOP of the base reps (their last-toggled style wins per role).
+// gets copied" when the user switches "🧬 Docking" on.
+//   1. Inspect the ACTUAL NGL representations on the component (base reps +
+//      PyMOL/Selections overlay reps; transient highlights are excluded) and
+//      take the last-drawn (topmost) style per role.
+//   2. Fall back to the app's own rendering configuration (per-molecule override
+//      or the global Backbone / Molecule style selectors) for roles the
+//      inspection could not identify.
 const captureDockRoleStyles = (comp) => {
   const fallback = { protein: 'ribbon', ligand: 'ball+stick' };
   if (!comp || !comp.structure) return fallback;
   let proteinStyle = null, ligandStyle = null;
-  if (comp === componentRef.current) {
-    const st = mainMolRef.current || {};
-    if (st.style && st.style !== 'auto') { proteinStyle = st.style; ligandStyle = st.style; }
-    else { proteinStyle = backboneStyleRef.current || 'cartoon'; ligandStyle = moleculeStyleRef.current || 'ball+stick'; }
-  } else {
-    const entry = extraCompsRef.current.find((x) => x.comp === comp);
-    if (entry && entry.style && entry.style !== 'auto') { proteinStyle = entry.style; ligandStyle = entry.style; }
-    else { proteinStyle = backboneStyleRef.current || 'cartoon'; ligandStyle = moleculeStyleRef.current || 'ball+stick'; }
-  }
-  // PyMOL / Selections panel overrides (they live on the MAIN component).
-  if (comp === componentRef.current) {
-    try {
-      (selections || []).forEach((sel) => {
-        const sty = selStylesRef.current[sel.name] || {};
-        if (sty.hidden) return;
-        const flags = ['cartoon', 'ribbon', 'tube', 'ball', 'stick', 'sphere', 'surface'].filter((f) => sty[f]);
-        if (!flags.length) return;
-        const repType = normStyle(flags[flags.length - 1]); // last toggled = drawn on top
-        const cls = classifySele(comp, sel.expr);
-        if (cls.protein && repType) proteinStyle = repType;
-        if (cls.ligand && repType) ligandStyle = repType;
+
+  // (1) Actual NGL representations — the most faithful picture.
+  try {
+    const excluded = new Set();
+    [highlightCompRef.current, stripHighlightCompRef.current, manualHighlightCompRef.current, labelCompRef.current, sidechainCompRef.current]
+      .forEach((r) => { if (r) excluded.add(r); });
+    if (typeof comp.eachRepresentation === 'function') {
+      comp.eachRepresentation((rep) => {
+        if (!rep || excluded.has(rep)) return;
+        let type = '';
+        try {
+          // `rep` is an NGL RepresentationElement: `.type` is the constant
+          // 'representation', so the real style comes from getType() (which
+          // returns the underlying Representation's type, e.g. 'cartoon',
+          // 'ball+stick', 'ribbon', 'licorice', 'spacefill', 'surface').
+          type = (typeof rep.getType === 'function' ? rep.getType() : '')
+            || (rep.repr && rep.repr.type) || '';
+        } catch { type = ''; }
+        type = normStyle(type);
+        if (!type) return;
+        let sele = '';
+        try { sele = (rep.getParameters ? rep.getParameters().sele : '') || rep.sele || ''; } catch { sele = ''; }
+        const cls = classifySele(comp, sele);
+        if (cls.protein) proteinStyle = type;
+        if (cls.ligand) ligandStyle = type;
       });
-    } catch { /* best-effort */ }
+    }
+  } catch { /* fall through to the config-based capture */ }
+
+  // (2) App-config fallback for roles the inspection did not identify.
+  if (!proteinStyle || !ligandStyle) {
+    let p = null, l = null;
+    if (comp === componentRef.current) {
+      const st = mainMolRef.current || {};
+      if (st.style && st.style !== 'auto') { p = st.style; l = st.style; }
+      else { p = backboneStyleRef.current || 'cartoon'; l = moleculeStyleRef.current || 'ball+stick'; }
+    } else {
+      const entry = extraCompsRef.current.find((x) => x.comp === comp);
+      if (entry && entry.style && entry.style !== 'auto') { p = entry.style; l = entry.style; }
+      else { p = backboneStyleRef.current || 'cartoon'; l = moleculeStyleRef.current || 'ball+stick'; }
+    }
+    if (!proteinStyle) proteinStyle = p;
+    if (!ligandStyle) ligandStyle = l;
   }
+
   return {
     protein: normStyle(proteinStyle) || fallback.protein,
     ligand: normStyle(ligandStyle) || fallback.ligand
@@ -1596,7 +1635,9 @@ const applyDockRoleStyle = (comp) => {
     : {});
   const reps = [];
   try { reps.push(comp.addRepresentation(toNglType(proteinType), { sele: 'protein', ...paramsFor(proteinType) })); } catch {}
-  try { reps.push(comp.addRepresentation(toNglType(ligandType), { sele: 'hetero and not water', ...paramsFor(ligandType) })); } catch {}
+  // `not protein and not water` — not just HETATM — so a ligand stored as a
+  // regular residue (common in some docking suites) is still rendered.
+  try { reps.push(comp.addRepresentation(toNglType(ligandType), { sele: 'not protein and not water', ...paramsFor(ligandType) })); } catch {}
   return reps;
 };
 
@@ -1653,7 +1694,7 @@ const loadChainMolecule = useCallback(async (blob, name, ci) => {
   if (!stage) return;
   try {
     const comp = await stage.loadFile(blob, { ext: 'pdb' });
-    const baseReps = applyCurrentStyleTo(comp, []);
+    const baseReps = dockStyleRef.current ? applyDockRoleStyle(comp) : applyCurrentStyleTo(comp, []);
     shadowRepsHook(comp);
     if (shadowOnRef.current) setMeshShadows(comp);
     extraCompsRef.current.push({ id: `chain_${Date.now()}_${ci}`, name, comp, baseReps, style: 'auto', color: '', colorMode: 'element', transparency: 0, position: [0, 0, 0] });
@@ -1784,9 +1825,9 @@ if (isLarge) {
 // Style" dropdown so ligands/lipids/water inside a protein complex can be styled.
 let nonProtein = false;
 try {
-  const h = component.structure.getAtomSet('hetero and not water');
-  const w = component.structure.getAtomSet('water');
-  nonProtein = ((h && h.count) || 0) > 0 || ((w && w.count) || 0) > 0;
+  const h = component.structure.getAtomSet(nglSelection('hetero and not water'));
+  const w = component.structure.getAtomSet(nglSelection('water'));
+  nonProtein = atomSetSize(h) > 0 || atomSetSize(w) > 0;
 } catch { nonProtein = false; }
 setHasNonProtein(nonProtein);
 buildMainReps();
@@ -2406,6 +2447,11 @@ useEffect(() => {
     if (entry.style && entry.style !== 'auto') {
       // Custom-styled molecules keep their per-molecule style / colour / position.
       restyleExtraMol(entry.id);
+    } else if (dockStyleRef.current) {
+      // "🧬 Docking" standard mode is ON — keep the role-based look (protein +
+      // ligand) instead of switching back to the global selectors.
+      (entry.baseReps || []).forEach((r) => { try { entry.comp.removeRepresentation(r); } catch {} });
+      entry.baseReps = applyDockRoleStyle(entry.comp);
     } else {
       entry.baseReps = applyCurrentStyleTo(entry.comp, entry.baseReps || []);
     }
@@ -2445,8 +2491,12 @@ const prevDockStyleRef = useRef(dockStyleMode);
 useEffect(() => {
   if (prevDockStyleRef.current === dockStyleMode) return;
   prevDockStyleRef.current = dockStyleMode;
-  if (status !== 'ready' || hideAll || pymolActive || !componentRef.current) return;
-  buildMainReps();
+  if (status !== 'ready' || !componentRef.current) return;
+  // The MAIN is only rebuilt outside PyMOL-script mode — there the script's own
+  // representations keep defining the look (they were the capture source, so
+  // restyling the main is unnecessary). "Hide everything" also skips the main
+  // (it is hidden anyway) but still re-styles the loaded docking results.
+  if (!hideAll && !pymolActive) buildMainReps();
   extraCompsRef.current.forEach((entry) => {
     if (entry && entry.comp) restyleExtraMol(entry.id);
   });
