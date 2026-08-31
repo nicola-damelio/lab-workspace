@@ -4,6 +4,8 @@ import TestShellRenderer from './TestShellRenderer';
 import {
   buildNotebookHtml as buildDockingNotebookHtmlFromSections,
   DockingExperimentSetupSection,
+  DockingInstrumentalSetup,
+  DockingExperimentalConditions,
   DockingDataSection,
   DockingAnalysisSection,
   DockingParametersSection
@@ -100,6 +102,8 @@ const DockingTestRenderer = ({
   const custom = useMemo(
     () => ({
       MolecularStructure: DockingExperimentSetupSection,
+      InstrumentalSetup: DockingInstrumentalSetup,
+      ExperimentalConditions: DockingExperimentalConditions,
       Simulations: DockingParametersSection,
       Data: DockingDataSection,
       Analysis: DockingAnalysisSection,

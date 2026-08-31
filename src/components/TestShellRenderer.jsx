@@ -1339,6 +1339,8 @@ const details = [
 
   const ExperimentalSetupSection = custom.ExperimentalSetup || null;
 
+  const ExperimentalConditionsExtra = custom.ExperimentalConditions || null;
+
   const DataSection = config.DataSection || custom.Data || null;
 
   const DataAnalysisSection =
@@ -1817,6 +1819,10 @@ const details = [
 
               {conditionCustomFields.map(renderCustomMetadataField)}
             </div>
+
+            {/* Page-specific extra content (e.g. Docking's "Molecules to be
+                docked" from raw_input.toml). */}
+            {ExperimentalConditionsExtra && <ExperimentalConditionsExtra ctx={ctx} />}
 
             <BufferAdditiveFields
               t={t}

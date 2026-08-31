@@ -28,6 +28,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   const [selectedId, setSelectedId] = useState(null);
 
   const [showLibrary, setShowLibrary] = useState(false);
+  const [pickMode, setPickMode] = useState('replace'); // 'replace' | 'add' — how a library click affects the selected object
   const [libraryTab, setLibraryTab] = useState('project');
   const [libVersion, setLibVersion] = useState(0); // forces a re-read of the library lists after a transfer
   const [libProjectId, setLibProjectId] = useState(null); // which project's library to browse (null = the active one)
@@ -41,6 +42,84 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
 
   const allProjects = loadProjects();
   const activeLibProjectId = libProjectId || projectId; // project library scope currently browsed
+
+  // ---- multi-figure objects -------------------------------------------------
+  // Every object can hold SEVERAL figures in one lettered panel (`images[]`).
+  // The legacy single-image fields (imgSrc/imgThumb/libId/libScope/libProjectId/src)
+  // mirror the FIRST image, so all existing code keeps working.
+  const getObjImages = (obj) => {
+    if (Array.isArray(obj.images) && obj.images.length) return obj.images;
+    if (obj && obj.imgSrc) return [{ imgSrc: obj.imgSrc, imgThumb: obj.imgThumb, libId: obj.libId, libScope: obj.libScope, libProjectId: obj.libProjectId, src: obj.src }];
+    return [];
+  };
+
+  // Build an object that stores `images` (and mirrors the first one into the
+  // legacy single-image fields).
+  const withImages = (obj, images) => {
+    const arr = (images || []).filter(Boolean);
+    const first = arr[0] || {};
+    return {
+      ...obj,
+      images: arr,
+      imgSrc: first.imgSrc || obj.imgSrc || null,
+      imgThumb: first.imgThumb || obj.imgThumb || null,
+      libId: first.libId || obj.libId || null,
+      libScope: first.libScope || obj.libScope || null,
+      libProjectId: first.libProjectId || obj.libProjectId || null,
+      src: first.src || obj.src || null
+    };
+  };
+
+  // Persisted / undo-snapshot copy: keep only the small thumbnails so the
+  // canvas never exceeds the localStorage quota.
+  const thumbnailsOf = (obj) => {
+    const images = getObjImages(obj).map((im) => ({ ...im, imgSrc: im.imgThumb || im.imgSrc }));
+    const first = images[0] || {};
+    return {
+      ...obj,
+      images,
+      imgSrc: first.imgSrc || obj.imgThumb || obj.imgSrc || null,
+      imgThumb: first.imgThumb || first.imgSrc || obj.imgThumb || null
+    };
+  };
+
+  // Resolve the full-resolution copy of a library image (the canvas persists
+  // only thumbnails / libId). Searches every scope the image could live in —
+  // the project it was picked from (libProjectId), the currently-active
+  // project, then the common library.
+  const resolveLibImage = (im) => {
+    if (!im || !im.libId) return im;
+    try {
+      const scopes = [];
+      if (im.libScope === 'project') {
+        if (im.libProjectId) scopes.push(['project', im.libProjectId]);
+        scopes.push(['project', projectId], ['common', null]);
+      } else {
+        scopes.push(['common', null], ['project', im.libProjectId || projectId]);
+      }
+      for (const [scope, pid] of scopes) {
+        const lib = scope === 'project' ? readProjectLibrary(pid) : readLibrary();
+        const it = lib.find((x) => x.id === im.libId);
+        if (it) return { ...im, imgSrc: it.full || it.url, imgThumb: it.url || it.full };
+      }
+    } catch { /* keep as-is */ }
+    return im;
+  };
+
+  const resolveObj = (o) => {
+    const images = getObjImages(o).map(resolveLibImage);
+    const first = images[0] || {};
+    return {
+      ...o,
+      images,
+      imgSrc: first.imgSrc || o.imgSrc || null,
+      imgThumb: first.imgThumb || o.imgThumb || null,
+      libId: first.libId || o.libId || null,
+      libScope: first.libScope || o.libScope || null,
+      libProjectId: first.libProjectId || o.libProjectId || null,
+      src: first.src || o.src || null
+    };
+  };
 
   // The figure-wide caption at the bottom is built from every object's
   // sub-caption (merged), unless the user typed a custom one directly on the canvas.
@@ -73,30 +152,11 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
           // Only the small thumbnail is persisted; re-resolve the full-resolution
           // image from its library entry so the canvas never exceeds the
           // localStorage quota (and the object does not "disappear" after the
-          // user navigates to the original graph and back).
+          // user navigates to the original graph and back). Works for both the
+          // legacy single-image objects and the new multi-figure `images[]`.
           setObjects((data.objects || []).map((o) => {
-            if (!o.libId) return o;
-            try {
-              // Search every scope the image could live in — the project it was
-              // picked from (libProjectId), the currently-active project, then
-              // the common library — so the full-resolution copy is always found
-              // even if the project context changed while away.
-              const scopes = [];
-              if (o.libScope === 'project') {
-                if (o.libProjectId) scopes.push(['project', o.libProjectId]);
-                scopes.push(['project', projectId], ['common', null]);
-              } else {
-                scopes.push(['common', null], ['project', o.libProjectId || projectId]);
-              }
-              let it = null;
-              for (const [scope, pid] of scopes) {
-                const lib = scope === 'project' ? readProjectLibrary(pid) : readLibrary();
-                it = lib.find((x) => x.id === o.libId);
-                if (it) break;
-              }
-              if (it) return { ...o, imgSrc: it.full || it.url, imgThumb: it.url || it.full };
-            } catch { /* keep the persisted thumbnail */ }
-            return o;
+            if (!o.libId && !(o.images || []).some((im) => im && im.libId)) return o;
+            return resolveObj(o);
           }));
         }
         if (data.globalCaption !== undefined) setGlobalCaption(data.globalCaption);
@@ -116,7 +176,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
       // Persist a lightweight copy (the small thumbnail instead of the
       // full-resolution dataURL) so the layout always re-opens after
       // navigating away and back.
-      const persisted = (objects || []).map((o) => (o.libId ? { ...o, imgSrc: o.imgThumb || o.imgSrc } : o));
+      const persisted = (objects || []).map(thumbnailsOf);
       localStorage.setItem(storageKey, JSON.stringify({ canvasW, canvasH, gridCols, gridRows, objects: persisted, focusObjId, globalCaption }));
     } catch {}
   }, [canvasW, canvasH, gridCols, gridRows, objects, focusObjId, globalCaption, storageKey]);
@@ -129,9 +189,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   // library on undo) so the stack stays light even with large captured images.
   const commitHistory = () => {
     try {
-      const snap = JSON.parse(JSON.stringify((objects || []).map((o) => (
-        o.libId ? { ...o, imgSrc: null, imgThumb: o.imgThumb || o.imgSrc } : o
-      ))));
+      const snap = JSON.parse(JSON.stringify((objects || []).map(thumbnailsOf)));
       undoStack.current.push(snap);
       if (undoStack.current.length > 40) undoStack.current.shift();
       setHistTick((t) => t + 1);
@@ -140,15 +198,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   const undo = () => {
     const prev = undoStack.current.pop();
     if (!prev) return;
-    setObjects(prev.map((o) => {
-      if (o.libId && !o.imgSrc) {
-        const lib = o.libScope === 'project'
-          ? (readProjectLibrary(o.libProjectId || null) || []).find((i) => i.id === o.libId)
-          : (readLibrary() || []).find((i) => i.id === o.libId);
-        if (lib) return { ...o, imgSrc: lib.full || lib.url };
-      }
-      return o;
-    }));
+    setObjects(prev.map(resolveObj));
     setSelectedId(null);
     setHistTick((t) => t + 1);
   };
@@ -191,7 +241,9 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
       imgOffsetX: 0, imgOffsetY: 0,  // shift the image inside the object frame (mm)
       imgRotate: 0,                   // image rotation (degrees)
       texts: [],                      // free text overlays [{ id, x, y, text, fontSize, color, bold, italic }]
-      src: null                       // { testId, testName, elementLabel } — link back to the original graph
+      src: null,                      // { testId, testName, elementLabel } — link back to the original graph
+      images: [],                     // extra figures inside this same object/panel (multi-figure montage)
+      imgCols: 2                      // grid columns when the object holds several figures
     };
     setObjects([...objects, newObj]);
     setSelectedId(id);
@@ -216,15 +268,41 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
 
   const handlePickImage = (item) => {
     commitHistory();
-    updateObj({
+    // Replace mode: the object shows exactly this one figure (also clears any
+    // previously-added extra figures).
+    setObjects(prev => prev.map(o => o.id === selectedId ? withImages(o, [{
       imgSrc: item.full || item.url,
       imgThumb: item.url || item.full,
       libScope: libraryTab,
       libProjectId: libraryTab === 'project' ? activeLibProjectId : null,
       libId: item.id,
       src: item.src || null
-    });
+    }]) : o));
     setShowLibrary(false);
+  };
+
+  // Add mode: append another figure to the selected object — every figure
+  // already in the panel is kept, so several figures share one lettered panel.
+  const handleAddImage = (item) => {
+    commitHistory();
+    setObjects(prev => prev.map(o => {
+      if (o.id !== selectedId) return o;
+      return withImages(o, [...getObjImages(o), {
+        imgSrc: item.full || item.url,
+        imgThumb: item.url || item.full,
+        libScope: libraryTab,
+        libProjectId: libraryTab === 'project' ? activeLibProjectId : null,
+        libId: item.id,
+        src: item.src || null
+      }]);
+    }));
+    // The library modal stays open so several figures can be added in a row.
+  };
+
+  // Remove one figure from the selected multi-figure object.
+  const removeObjImage = (idx) => {
+    commitHistory();
+    setObjects(prev => prev.map(o => o.id === selectedId ? withImages(o, getObjImages(o).filter((_, i) => i !== idx)) : o));
   };
 
   // Move an image between a project library and the common (dataset) library.
@@ -590,11 +668,6 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
         const ow = obj.w * cellW;
         const oh = obj.h * cellH;
 
-        const imgW = (ow - obj.imgPadding * 2) * (obj.imgScale || 1);
-        const imgH = (oh - obj.imgPadding * 2) * (obj.imgScale || 1);
-        const imgX = ox + obj.imgPadding + (ow - obj.imgPadding * 2 - imgW) / 2 + (obj.imgOffsetX || 0);
-        const imgY = oy + obj.imgPadding + (oh - obj.imgPadding * 2 - imgH) / 2 + (obj.imgOffsetY || 0);
-
         return (
           <g key={obj.id} onClick={(e) => {
             e.stopPropagation();
@@ -609,27 +682,66 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
           }}>
             <rect x={ox} y={oy} width={ow} height={oh} fill="white" stroke={isSelected ? '#3b82f6' : '#cbd5e1'} strokeWidth={isSelected ? 0.5 : 0.2} onMouseDown={(e) => startDrag(e, obj.id)} style={{ cursor: 'move' }} />
 
-            {obj.imgSrc && (
-              <g clipPath={`url(#clip-${obj.id})`}>
-                <image
-                  href={obj.imgSrc}
-                  x={imgX} y={imgY} width={imgW} height={imgH}
-                  transform={(obj.imgRotate || 0) ? `rotate(${obj.imgRotate} ${imgX + imgW / 2} ${imgY + imgH / 2})` : undefined}
-                  preserveAspectRatio={obj.imgFit === 'cover' ? 'xMidYMid slice' : obj.imgFit === 'stretch' ? 'none' : 'xMidYMid meet'}
-                  style={{ pointerEvents: 'none' }}
-                />
-                {isSelected && (
-                  <rect data-selection-ui="true" x={Math.max(ox, imgX)} y={Math.max(oy, imgY)} width={Math.min(ow, imgW)} height={Math.min(oh, imgH)} fill="transparent"
-                    style={{ cursor: 'move' }} onMouseDown={(e) => startImageShift(e, obj.id)}
-                    title="Drag to shift the image inside the frame (or hold Shift while dragging anywhere on the object)" />
-                )}
-                {isSelected && (
-                  <rect data-selection-ui="true" x={Math.max(ox, imgX) + Math.min(ow, imgW) - 5} y={Math.max(oy, imgY) + Math.min(oh, imgH) - 5} width={6} height={6} fill="#3b82f6"
-                    style={{ cursor: 'nwse-resize' }} onMouseDown={(e) => startImageResize(e, obj.id)}
-                    title="Drag to resize the image" />
-                )}
-              </g>
-            )}
+            {(() => {
+              // Multi-figure object: every figure in `images[]` is laid out in a
+              // grid (cols = obj.imgCols) inside the same lettered panel. A
+              // single-figure object renders exactly as before.
+              const imgs = getObjImages(obj);
+              if (!imgs.length) return null;
+              const single = imgs.length === 1;
+              const cols = single ? 1 : Math.max(1, obj.imgCols || 2);
+              const rows = single ? 1 : Math.ceil(imgs.length / cols);
+              const cw = ow / cols;
+              const ch = oh / rows;
+              const pad = obj.imgPadding || 0;
+              const scale = obj.imgScale || 1;
+              const oxf = obj.imgOffsetX || 0;
+              const oyf = obj.imgOffsetY || 0;
+              const fit = obj.imgFit;
+              const rot = obj.imgRotate || 0;
+              const cellImage = (i) => {
+                const cellX = ox + (i % cols) * cw;
+                const cellY = oy + Math.floor(i / cols) * ch;
+                const iW = (cw - pad * 2) * scale;
+                const iH = (ch - pad * 2) * scale;
+                return {
+                  iX: cellX + pad + (cw - pad * 2 - iW) / 2 + oxf,
+                  iY: cellY + pad + (ch - pad * 2 - iH) / 2 + oyf,
+                  iW, iH
+                };
+              };
+              return (
+                <g clipPath={`url(#clip-${obj.id})`}>
+                  {imgs.map((im, i) => {
+                    const src = im.imgSrc;
+                    if (!src) return null;
+                    const g = cellImage(i);
+                    return (
+                      <image key={im.libId || i}
+                        href={src}
+                        x={g.iX} y={g.iY} width={g.iW} height={g.iH}
+                        transform={rot ? `rotate(${rot} ${g.iX + g.iW / 2} ${g.iY + g.iH / 2})` : undefined}
+                        preserveAspectRatio={fit === 'cover' ? 'xMidYMid slice' : fit === 'stretch' ? 'none' : 'xMidYMid meet'}
+                        style={{ pointerEvents: 'none' }}
+                      />
+                    );
+                  })}
+                  {isSelected && single && (() => {
+                    const g = cellImage(0);
+                    return (
+                      <>
+                        <rect data-selection-ui="true" x={Math.max(ox, g.iX)} y={Math.max(oy, g.iY)} width={Math.min(ow, g.iW)} height={Math.min(oh, g.iH)} fill="transparent"
+                          style={{ cursor: 'move' }} onMouseDown={(e) => startImageShift(e, obj.id)}
+                          title="Drag to shift the image inside the frame (or hold Shift while dragging anywhere on the object)" />
+                        <rect data-selection-ui="true" x={Math.max(ox, g.iX) + Math.min(ow, g.iW) - 5} y={Math.max(oy, g.iY) + Math.min(oh, g.iH) - 5} width={6} height={6} fill="#3b82f6"
+                          style={{ cursor: 'nwse-resize' }} onMouseDown={(e) => startImageResize(e, obj.id)}
+                          title="Drag to resize the image" />
+                      </>
+                    );
+                  })()}
+                </g>
+              );
+            })()}
 
             {obj.letter && (
               <text x={ox + 1.5} y={oy + ptToMm(obj.letterStyle.fontSize) + 1} fontSize={ptToMm(obj.letterStyle.fontSize)} fill={obj.letterStyle.color} fontWeight={obj.letterStyle.bold ? 'bold' : 'normal'} style={{ pointerEvents: 'none' }}>
@@ -704,7 +816,39 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="flex flex-col gap-2">
           <h5 className="text-xs font-bold text-slate-500 uppercase">Image & Layout</h5>
-          <button onClick={() => setShowLibrary(true)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-2 rounded-lg text-xs">Import Image (High-Res)</button>
+
+          {/* Multi-figure panel: list every figure in this object, import a new
+              one (replace or add) and remove single figures. */}
+          <div className="flex gap-2">
+            <button onClick={() => { setPickMode('replace'); setShowLibrary(true); }} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-2 rounded-lg text-xs flex-1">Import Image (High-Res)</button>
+            <button onClick={() => { setPickMode('add'); setShowLibrary(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-2 rounded-lg text-xs" title="Add another figure to this same object/panel (they are laid out side by side)">➕ Add figure</button>
+          </div>
+
+          {getObjImages(selectedObj).length > 0 && (
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold text-slate-500">Figures in this panel: {getObjImages(selectedObj).length}</span>
+              {getObjImages(selectedObj).map((im, i) => (
+                <div key={im.libId || i} className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1">
+                  {im.imgThumb || im.imgSrc
+                    ? <img src={im.imgThumb || im.imgSrc} alt="" className="w-8 h-8 object-contain rounded border border-slate-100 bg-slate-50" />
+                    : <span className="w-8 h-8 rounded bg-slate-100" />}
+                  <span className="text-[10px] font-bold text-slate-600 flex-1 truncate">{im.src && im.src.elementLabel ? im.src.elementLabel : `Figure ${i + 1}`}</span>
+                  {im.src && im.src.testId && (
+                    <button type="button" onClick={() => openOriginalGraph(im.src)} className="text-[10px] font-bold text-sky-700 hover:underline shrink-0" title="Open the original graph">↗</button>
+                  )}
+                  <button type="button" onClick={() => removeObjImage(i)} className="text-[10px] font-bold text-red-400 hover:text-red-600 shrink-0" title="Remove this figure from the panel">✕</button>
+                </div>
+              ))}
+              {getObjImages(selectedObj).length > 1 && (
+                <label className="text-[10px] font-bold text-slate-500">Grid columns
+                  <select value={selectedObj.imgCols || 2} onChange={e => updateObj({ imgCols: Number(e.target.value) })} className="w-full border rounded p-1 text-xs">
+                    {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </label>
+              )}
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-2">
             <label className="text-[10px] font-bold text-slate-500">Fit
               <select value={selectedObj.imgFit} onChange={e => updateObj({ imgFit: e.target.value })} className="w-full border rounded p-1 text-xs">
@@ -981,7 +1125,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
         <div className="fixed inset-0 bg-black/50 z-[100000] flex items-center justify-center p-4">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[80vh] flex flex-col">
             <div className="p-4 border-b flex justify-between items-center">
-              <h3 className="font-bold text-lg">Select Image (High-Resolution)</h3>
+              <h3 className="font-bold text-lg">Select Image — {pickMode === 'add' ? `add another figure${selectedObj && selectedObj.letter ? ` (panel ${selectedObj.letter})` : ''}` : 'replace figure'}</h3>
               <button onClick={() => setShowLibrary(false)}>✕</button>
             </div>
             <div className="p-4 border-b flex flex-wrap gap-3 items-center">
@@ -989,6 +1133,12 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
                 <button className={`px-3 py-1 rounded font-bold text-xs ${libraryTab === 'project' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`} onClick={() => setLibraryTab('project')}>Project Library</button>
                 <button className={`px-3 py-1 rounded font-bold text-xs ${libraryTab === 'common' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`} onClick={() => setLibraryTab('common')}>Dataset Library</button>
               </div>
+              {selectedObj && (
+                <div className="flex gap-1 ml-auto" title="Replace: the selected object shows only this figure. Add: appends the figure to the selected object so several figures share one panel.">
+                  <button className={`px-3 py-1 rounded font-bold text-xs ${pickMode === 'replace' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`} onClick={() => setPickMode('replace')}>↺ Replace</button>
+                  <button className={`px-3 py-1 rounded font-bold text-xs ${pickMode === 'add' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'}`} onClick={() => setPickMode('add')}>➕ Add</button>
+                </div>
+              )}
               {libraryTab === 'project' && (
                 <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500">
                   Project
@@ -999,11 +1149,14 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
                   </select>
                 </label>
               )}
+              {pickMode === 'add' && (
+                <span className="text-[10px] font-bold text-indigo-700">Click figures to add them to this panel — the window stays open so you can add several.</span>
+              )}
             </div>
             <div className="flex-1 overflow-y-auto p-4 grid grid-cols-3 md:grid-cols-4 gap-4">
               {libraryItems.length === 0 && <p className="col-span-full text-center text-slate-400 italic">No images in this library yet.</p>}
               {libraryItems.map(item => (
-                <div key={item.id} className="border rounded-lg p-2 cursor-pointer hover:border-blue-500 flex flex-col items-center hover:shadow-md transition-all" onClick={() => handlePickImage(item)}>
+                <div key={item.id} className="border rounded-lg p-2 cursor-pointer hover:border-blue-500 flex flex-col items-center hover:shadow-md transition-all" onClick={() => (pickMode === 'add' ? handleAddImage(item) : handlePickImage(item))}>
                   <img src={item.url} alt={item.label} className="w-full h-24 object-contain bg-slate-50 rounded" />
                   <span className="text-xs mt-1 truncate w-full text-center font-bold">{item.label}</span>
                   <div className="flex items-center gap-1 mt-0.5 flex-wrap justify-center">

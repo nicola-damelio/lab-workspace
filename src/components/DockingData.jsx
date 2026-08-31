@@ -457,12 +457,18 @@ export const parseCapriTsv = (text) => {
 };
 
 // Lightweight TOML reader for raw_input.toml (sections + key = value pairs).
-// Handles comments, quoted values, duplicate sections (merged) and both
-// single-line and multi-line arrays (e.g. the `molecules` list).
+// Handles comments, quoted values, duplicate sections (merged), both
+// single-line and multi-line arrays (e.g. the `molecules` list) AND HADDOCK's
+// `[[molecules]]` array-of-tables (each `[[molecules]]` header starts a NEW
+// table entry, collected under `tables.molecules`).
+// Output shape: { top, sections, tables } — `top`/`sections` keep the
+// previous format (backward compatible), `tables` is new.
 export const parseTomlSimple = (text) => {
   const top = [];
   const sections = [];
+  const tables = {};
   let currentSection = null;
+  let currentTable = null;
   const lines = String(text || '').split(/\r?\n/);
   // Remove inline comments (# ...), but not inside quoted strings.
   const stripComment = (s) => {
@@ -482,11 +488,23 @@ export const parseTomlSimple = (text) => {
     const line = stripComment(lines[i]).trim();
     i++;
     if (!line) continue;
+    // Array-of-tables: `[[name]]` — each occurrence starts a new entry.
+    const tm = /^\[\[([^\]]+)\]\]$/.exec(line);
+    if (tm) {
+      const name = tm[1].trim();
+      if (!tables[name]) tables[name] = [];
+      const entry = {};
+      tables[name].push(entry);
+      currentTable = entry;
+      currentSection = null;
+      continue;
+    }
     const sm = /^\[([^\]]+)\]$/.exec(line);
     if (sm) {
       const name = sm[1].trim();
       currentSection = sections.find((s) => s.name === name);
       if (!currentSection) { currentSection = { name, pairs: [] }; sections.push(currentSection); }
+      currentTable = null;
       continue;
     }
     const eq = line.indexOf('=');
@@ -509,11 +527,30 @@ export const parseTomlSimple = (text) => {
     } else {
       val = cleanVal(val);
     }
-    const pair = { key, value: val };
-    if (currentSection) currentSection.pairs.push(pair);
-    else top.push(pair);
+    if (currentTable) currentTable[key] = val;
+    else if (currentSection) currentSection.pairs.push({ key, value: val });
+    else top.push({ key, value: val });
   }
-  return { top, sections };
+  return { top, sections, tables };
+};
+
+// Extract the "molecules to be docked" from a parsed raw_input.toml
+// (HADDOCK 2.4+ stores them as a `[[molecules]]` array of tables).
+// Returns [{ name, pdb, segid }]; entries without a `pdb` file are skipped.
+export const extractDockedMolecules = (toml) => {
+  const out = [];
+  const arr = (toml && toml.tables && Array.isArray(toml.tables.molecules)) ? toml.tables.molecules : [];
+  arr.forEach((m) => {
+    if (!m || typeof m !== 'object') return;
+    const pdb = String(m.pdb || '').trim();
+    if (!pdb) return;
+    const fileName = String(pdb).split(/[\\/]/).pop();
+    const name = String(m.name || '').trim()
+      || fileName.replace(/\.(pdb|pdb\.gz)$/i, '')
+      || `Molecule ${out.length + 1}`;
+    out.push({ name, pdb: fileName, segid: String(m.segid || '').trim() });
+  });
+  return out;
 };
 
 export const parseDockingFile = (text, filename) => {

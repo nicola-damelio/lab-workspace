@@ -4,11 +4,12 @@ import {ChartControlBar, SharedChartStylePanel} from './SharedAnalysisTools';
 import { Icon } from './Icons';
 import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
-import { uploadLocalFile } from '../utils/driveUpload';
+import { getDriveToken, uploadLocalFile } from '../utils/driveUpload';
+import { storeJson, loadJson } from '../utils/pdbStore';
 import { gunzipSync } from 'fflate';
 
 import NMRMoleculeViewer from './NMRMoleculeViewer';
-import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_PROGRAMS, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, getScoringFunctions, getSearchAlgorithms, parseDockingFile, parseCapriTsv, parseTomlSimple, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, DOCK_CHART_MARGIN} from './DockingData';
+import {AMINO_ACID_DB, NUCLEOTIDE_DB, SUGAR_DB, LIPID_DB, SS_META, RESIDUE_COLORS, buildProteinStructure, buildNucleicStructure, buildSugarStructure, buildLipidStructure, elementsToSVG, StructureSVGView, CollapsibleSection, SequencePaintStrip, getSelectedKeys, getManualKeys, DOCKING_PROGRAMS, DOCKING_METRICS, DOCKING_PIPELINE_STAGES, parseDockingValue, getProgramInfo, getScoringFunctions, getSearchAlgorithms, parseDockingFile, parseCapriTsv, parseTomlSimple, extractDockedMolecules, getDockingInstances, getDockingActiveInstance, getDockingLayers, getDockingActiveLayerKey, getDockingLayerValues, writeDockingCellValue, generateDockingPoses, generateHADDOCKPoses, DEFAULT_DOCKING_CHART_STYLE, dockChartBoxStyle, DOCK_CHART_MARGIN} from './DockingData';
 
 
 /* ============================================================================
@@ -125,6 +126,155 @@ const useDockingDerived = (activeTest, ctx = {}) => {
   };
 };
 
+// ================= SHARED: raw_input.toml BLOCK =================
+// The "Calculation input (raw_input.toml)" block — Drive link + expandable
+// parameters. Used both in the Instrumental Setup section (canonical) and in
+// the Molecular Structure section.
+const RawInputTomlBlock = ({ activeTest }) => {
+  const [showRawInput, setShowRawInput] = useState(false);
+  if (!activeTest || !activeTest.dockingRawInput) return null;
+  const ri = activeTest.dockingRawInput;
+  return (
+    <div className="bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-black text-slate-600 uppercase">Calculation input</span>
+        {ri.driveUrl ? (
+          <a href={ri.driveUrl} target="_blank" rel="noreferrer"
+            className="text-xs font-bold text-sky-700 hover:underline bg-sky-50 border border-sky-200 rounded-lg px-2.5 py-1">
+            📄 {ri.fileName || 'raw_input.toml'} · open on Drive ↗
+          </a>
+        ) : (
+          <span className="text-xs font-bold text-slate-500">📄 {ri.fileName || 'raw_input.toml'} (read locally)</span>
+        )}
+        <button type="button" onClick={() => setShowRawInput(!showRawInput)}
+          className="text-[10px] font-bold text-slate-500 hover:text-slate-800 underline">{showRawInput ? 'hide parameters' : 'show parameters'}</button>
+      </div>
+      {showRawInput && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 bg-white border border-slate-200 rounded-lg p-3">
+          {(ri.top || []).map((p) => (
+            <div key={p.key} className="flex justify-between gap-2 text-[11px]">
+              <span className="font-bold text-slate-500">{p.key}</span>
+              <span className="font-mono text-slate-700 text-right">{p.value}</span>
+            </div>
+          ))}
+          {(ri.sections || []).map((sec) => (
+            <div key={sec.name} className="col-span-1 md:col-span-2 border-t border-slate-100 pt-1.5">
+              <span className="text-[10px] font-black text-indigo-600 uppercase">[{sec.name}]</span>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-0.5 mt-0.5">
+                {sec.pairs.map((p) => (
+                  <div key={p.key} className="flex justify-between gap-2 text-[11px]">
+                    <span className="font-bold text-slate-500">{p.key}</span>
+                    <span className="font-mono text-slate-700 text-right">{p.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ================= INSTRUMENTAL SETUP (Docking) =================
+// Wired in via DockingTestRenderer's `custom.InstrumentalSetup`, so the raw
+// calculation input (raw_input.toml) appears inside TestShellRenderer's own
+// "Instrumental Setup" collapsible section.
+export const DockingInstrumentalSetup = ({ ctx }) => {
+  const { activeTest } = ctx;
+  return (
+    <div className="flex flex-col gap-3">
+      <RawInputTomlBlock activeTest={activeTest} />
+      {!activeTest.dockingRawInput && (
+        <p className="text-[11px] text-slate-400 italic">
+          No calculation input attached yet. In the Data section, click <b>📂 Select HADDOCK calculation directory…</b> to read <b>raw_input.toml</b> here.
+        </p>
+      )}
+    </div>
+  );
+};
+
+// ================= EXPERIMENTAL CONDITIONS (Docking) =================
+// "Molecules to be docked" from raw_input.toml (with their PDB structures,
+// found in data/ or data/0_topoaa). Rendered inside TestShellRenderer's
+// "Experimental Conditions" collapsible via `custom.ExperimentalConditions`.
+// These structures are deliberately NOT fed to the 3D viewer (only the
+// 8_seletopclusts cluster structures are) — the full PDB texts live in the
+// molecules browser store and are shown here as expandable text.
+export const DockingExperimentalConditions = ({ ctx }) => {
+  const { activeTest } = ctx;
+  const molKey = `labDockingMolecules_${activeTest.id || 'global'}`;
+  const [molecules, setMolecules] = useState(() => {
+    try {
+      const v = JSON.parse(localStorage.getItem(molKey) || 'null');
+      return Array.isArray(v) ? v : null;
+    } catch { return null; }
+  });
+  const [openIdx, setOpenIdx] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadJson(molKey)
+      .then((list) => { if (!cancelled && Array.isArray(list)) setMolecules(list); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [molKey, activeTest.dockingMolecules]);
+
+  const meta = Array.isArray(activeTest.dockingMolecules) ? activeTest.dockingMolecules : [];
+  const shown = Array.isArray(molecules) && molecules.length ? molecules : meta;
+
+  if (!shown.length) {
+    return (
+      <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 flex flex-col gap-1">
+        <span className="text-xs font-black text-slate-600 uppercase">🧪 Molecules to be docked</span>
+        <p className="text-[10px] text-slate-400">
+          None imported yet — pick a HADDOCK calculation directory to attach the molecules listed in <b>raw_input.toml</b> here.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 flex flex-col gap-2">
+      <span className="text-xs font-black text-slate-600 uppercase">🧪 Molecules to be docked</span>
+      {shown.map((m, i) => {
+        const hasText = !!(m.pdb || m.hasPdb);
+        return (
+          <div key={m.name || m.fileName || i} className="bg-white border border-slate-200 rounded-lg px-2.5 py-2 flex flex-col gap-1.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-black text-slate-700">{m.name}</span>
+              {m.segid && <span className="text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full px-2 py-0.5">segid {m.segid}</span>}
+              <span className="text-[10px] font-mono text-slate-500">{m.sourcePath || m.fileName}</span>
+              {m.driveUrl && (
+                <a href={m.driveUrl} target="_blank" rel="noreferrer" className="text-[10px] font-bold text-sky-700 hover:underline">☁️ Drive</a>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {hasText ? (
+                <button type="button" onClick={() => setOpenIdx(openIdx === i ? null : i)}
+                  className="text-[10px] font-bold text-slate-500 hover:text-slate-800 underline">
+                  {openIdx === i ? 'hide structure' : 'show structure'}
+                </button>
+              ) : (
+                <span className="text-[10px] text-slate-400">structure not available locally — open it from Drive</span>
+              )}
+              {hasText && m.pdb && (
+                <span className="text-[10px] text-slate-400">{Math.round(String(m.pdb).length / 1024)} KB</span>
+              )}
+            </div>
+            {openIdx === i && m.pdb && (
+              <pre className="bg-slate-950 text-emerald-200 rounded-md p-2 text-[9px] leading-tight overflow-auto max-h-52 font-mono whitespace-pre">
+                {m.pdb}
+              </pre>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+
 // ================= 1) EXPERIMENT SETUP (Docking) =================
 export const DockingExperimentSetupSection = ({ ctx }) => {
   const { activeTest, updateActiveTest } = ctx;
@@ -146,7 +296,6 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
   const [hasOpened3D, setHasOpened3D] = useState(structureMode === '3d');
   const [expandedPanel, setExpandedPanel] = useState(null);
   const [ssBrush, setSSBrush] = useState('H');
-  const [showRawInput, setShowRawInput] = useState(false);
 
   useEffect(() => { if (structureMode === '3d') setHasOpened3D(true); }, [structureMode]);
   useEffect(() => {
@@ -211,54 +360,21 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
   }, [activeTest.structureSrc, d.moleculeType, activeTest.proteinSequence, activeTest.smiles, activeTest.ligandPdbId, activeTest.selectedCompounds, activeTest.compoundsSelected]);
 
   // Keep the structure list in sync when the calculation-directory importer
-  // stores new structures (the states are declared above the viewer).
+  // stores new structures (the states are declared above the viewer). The
+  // full PDB texts live in the browser store (IndexedDB → localStorage), so
+  // this re-reads asynchronously after an import.
   useEffect(() => {
-    try { setStructList(JSON.parse(localStorage.getItem(structKey) || '[]')); } catch { /* ignore */ }
+    let cancelled = false;
+    loadJson(structKey)
+      .then((list) => { if (!cancelled && Array.isArray(list)) setStructList(list); })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, [structKey, activeTest.dockingStructures]);
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Calculation input (raw_input.toml) — link in the Instrumental Setup */}
-      {activeTest.dockingRawInput && (
-        <div className="bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 flex flex-col gap-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-black text-slate-600 uppercase">Calculation input</span>
-            {activeTest.dockingRawInput.driveUrl ? (
-              <a href={activeTest.dockingRawInput.driveUrl} target="_blank" rel="noreferrer"
-                className="text-xs font-bold text-sky-700 hover:underline bg-sky-50 border border-sky-200 rounded-lg px-2.5 py-1">
-                📄 {activeTest.dockingRawInput.fileName || 'raw_input.toml'} · open on Drive ↗
-              </a>
-            ) : (
-              <span className="text-xs font-bold text-slate-500">📄 {activeTest.dockingRawInput.fileName || 'raw_input.toml'} (read locally)</span>
-            )}
-            <button type="button" onClick={() => setShowRawInput(!showRawInput)}
-              className="text-[10px] font-bold text-slate-500 hover:text-slate-800 underline">{showRawInput ? 'hide parameters' : 'show parameters'}</button>
-          </div>
-          {showRawInput && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 bg-white border border-slate-200 rounded-lg p-3">
-              {(activeTest.dockingRawInput.top || []).map((p) => (
-                <div key={p.key} className="flex justify-between gap-2 text-[11px]">
-                  <span className="font-bold text-slate-500">{p.key}</span>
-                  <span className="font-mono text-slate-700 text-right">{p.value}</span>
-                </div>
-              ))}
-              {(activeTest.dockingRawInput.sections || []).map((sec) => (
-                <div key={sec.name} className="col-span-1 md:col-span-2 border-t border-slate-100 pt-1.5">
-                  <span className="text-[10px] font-black text-indigo-600 uppercase">[{sec.name}]</span>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-0.5 mt-0.5">
-                    {sec.pairs.map((p) => (
-                      <div key={p.key} className="flex justify-between gap-2 text-[11px]">
-                        <span className="font-bold text-slate-500">{p.key}</span>
-                        <span className="font-mono text-slate-700 text-right">{p.value}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      {/* Calculation input (raw_input.toml) — also rendered in Instrumental Setup */}
+      <RawInputTomlBlock activeTest={activeTest} />
 
       {/* Molecule type selector */}
       <div className="flex flex-wrap gap-2 mb-2">
@@ -610,6 +726,12 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
     const notes = [];
     const warnings = [];
 
+    // Drive may be unavailable (never connected, or the ~1 h token expired) —
+    // say so up-front so a "local only" import is not a surprise.
+    if (!getDriveToken()) {
+      warnings.push('Google Drive is not connected — files will NOT be uploaded (local only). Click “Connect Drive” in the import panel, then re-import to also archive everything on Drive.');
+    }
+
     // 1) capri_ss.tsv → the Data results table (mapped onto the existing
     //    nice table: editable cells, green best row, affinity highlight).
     const capriFile = list.find((f) => /capri_ss\.tsv$/i.test(lower(f.webkitRelativePath || f.name)));
@@ -638,16 +760,78 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
     }
 
     // 2) raw_input.toml → link in Instrumental Setup (searched anywhere in the tree)
-    const tomlFile = list.find((f) => /raw_input\.toml$/i.test(lower(f.webkitRelativePath || f.name)));
+    let toml = null;
+    const tomlFile = list.find((f) => /(^|\/)raw_input\.(toml|toml\.gz|toml\.bak)$/i.test(lower(f.webkitRelativePath || f.name)));
     if (tomlFile) {
       const text = await readText(tomlFile);
-      const toml = parseTomlSimple(text);
+      toml = parseTomlSimple(text);
       const driveUrl = await archive('raw_input.toml', 'text/toml', new Blob([text], { type: 'text/toml' }));
       updateActiveTest({ dockingRawInput: { ...toml, fileName: tomlFile.name || 'raw_input.toml', driveUrl } });
       done.push('raw_input.toml → link in Instrumental Setup');
       notes.push(driveUrl ? 'stored on Drive' : 'Drive not connected — local only');
     } else {
-      warnings.push('raw_input.toml not found — expected it under data/configurations/raw_input.toml');
+      // Make the failure actionable: show what the picked folder actually contained.
+      const topLevel = [...new Set(list.map((f) => {
+        const parts = String(f.webkitRelativePath || f.name || '').split('/');
+        return parts.length > 1 ? parts[0] : '(root)';
+      }))].filter(Boolean).slice(0, 12);
+      warnings.push('raw_input.toml not found — expected it under data/configurations/raw_input.toml'
+        + (topLevel.length ? `. Top-level items seen in the picked folder: ${topLevel.join(', ')}` : ''));
+    }
+
+    // 2b) molecules to be docked (from raw_input.toml [[molecules]]) →
+    //     Experimental Conditions. Only small metadata goes on the test; the
+    //     full PDB texts go in the molecules browser store — they are NOT
+    //     shown in the 3D viewer.
+    if (toml) {
+      const molecules = extractDockedMolecules(toml);
+      if (molecules.length) {
+        const molMeta = [];
+        const storedMols = [];
+        for (const m of molecules) {
+          // Strip any .gz suffix on BOTH sides so a TOML reference like
+          // "ligand.pdb.gz" still matches the built "ligand.pdb" file (and
+          // vice-versa).
+          const wanted = String(m.pdb || '').toLowerCase().replace(/\.gz$/i, '');
+          const candidates = list.filter((f) => {
+            const rel = lower(f.webkitRelativePath || f.name);
+            const base = String(rel).split('/').pop().replace(/\.gz$/i, '');
+            return base === wanted;
+          });
+          // Prefer data/0_topoaa (built topologies), then data/, then anywhere.
+          const dirScore = (rel) => (rel.includes('/0_topoaa/') ? 0 : rel.includes('/data/') ? 1 : 2);
+          candidates.sort((a, b) => dirScore(lower(a.webkitRelativePath || a.name)) - dirScore(lower(b.webkitRelativePath || b.name)));
+          const file = candidates[0] || null;
+          if (!file) {
+            molMeta.push({ name: m.name, segid: m.segid, fileName: m.pdb, sourcePath: '', driveUrl: '', hasPdb: false });
+            warnings.push(`No PDB file found for docked molecule "${m.name}" (looked for "${m.pdb}" in data/ and data/0_topoaa)`);
+            continue;
+          }
+          const isGz = /\.gz$/i.test(String(file.name || file.webkitRelativePath || ''));
+          let pdbText = '';
+          try {
+            pdbText = isGz
+              ? new TextDecoder('utf-8').decode(gunzipSync(new Uint8Array(await readArrayBuffer(file))))
+              : await readText(file);
+          } catch { pdbText = ''; }
+          const driveUrl = await archive(file.name || m.pdb, isGz ? 'application/gzip' : 'chemical/x-pdb', file);
+          const meta = {
+            name: m.name,
+            segid: m.segid,
+            fileName: file.name || m.pdb,
+            sourcePath: file.webkitRelativePath || file.name || '',
+            driveUrl,
+            hasPdb: !!pdbText
+          };
+          molMeta.push(meta);
+          storedMols.push({ ...meta, pdb: pdbText });
+        }
+        const stored = await storeJson(`labDockingMolecules_${test.id || 'global'}`, storedMols);
+        updateActiveTest({ dockingMolecules: molMeta });
+        done.push(`${molMeta.length} molecule(s) to be docked (from raw_input.toml) → Experimental Conditions`);
+        if (!stored) warnings.push('Molecule structures could not be stored in this browser (storage unavailable) — only the names are kept.');
+        else notes.push(stored === 'indexeddb' ? 'structures stored in browser database' : 'structures stored locally');
+      }
     }
 
     // 3) 8_seletopclusts/*.pdb[.gz] → 3D viewer structures
@@ -671,15 +855,17 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
       structs.push({ name: base, pdb: pdbText, driveUrl });
     }
     if (structs.length) {
-      // The PDB texts can be large — keep them in localStorage (keyed by test)
-      // so the persisted dataset document stays small; only the metadata goes
-      // on the test, and the full text is re-read when the viewer opens.
-      try {
-        localStorage.setItem(`labDockingStructures_${test.id || 'global'}`, JSON.stringify(structs));
-      } catch { /* quota — the metadata below is still stored */ }
+      // The PDB texts can be large — keep them in the browser store
+      // (IndexedDB, falling back to localStorage) keyed by test, so the
+      // persisted dataset document stays small; only the metadata goes on the
+      // test, and the full text is re-read when the viewer opens.
+      const stored = await storeJson(`labDockingStructures_${test.id || 'global'}`, structs);
       updateActiveTest({ dockingStructures: structs.map((s) => ({ name: s.name, driveUrl: s.driveUrl })) });
       done.push(`${structs.length} structure(s) from 8_seletopclusts → 3D viewer`);
-      notes.push('stored on Drive');
+      if (!stored) warnings.push('Cluster structures could not be stored in this browser (storage unavailable) — they will not appear in the 3D viewer; the metadata is still saved.');
+      else notes.push(stored === 'indexeddb' ? 'stored in browser database' : 'stored locally');
+    } else {
+      warnings.push('No .pdb / .pdb.gz structures found — expected them under 8_seletopclusts/ (or anywhere in the picked folder)');
     }
 
     setCalcDirBusy(false);
@@ -718,6 +904,23 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
           <span className="text-[10px] text-slate-500">Expects the HADDOCK/CAPRI output tree: data/, 8_seletopclusts/, 9_caprieval/</span>
         </div>
       </div>
+
+      {/* Connect Drive hint — imported files are only archived to Drive when a
+          valid Drive token exists (tokens expire after ~1 h). */}
+      {!getDriveToken() && (
+        <div className="flex flex-wrap items-center gap-2 bg-amber-50 border border-amber-300 rounded-lg px-3 py-2">
+          <span className="text-[10px] font-bold text-amber-800">
+            Google Drive is not connected — imported files will only be kept locally.
+          </span>
+          <button
+            type="button"
+            onClick={() => { try { window.dispatchEvent(new CustomEvent('lab:connect-drive')); } catch { /* ignore */ } }}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-[10px] shadow-sm transition-colors whitespace-nowrap"
+          >
+            🔗 Connect Drive
+          </button>
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-3 items-center">
         <label className="bg-sky-600 hover:bg-sky-700 text-white font-bold px-4 py-2 rounded-lg text-xs cursor-pointer shadow-sm transition-colors inline-flex items-center gap-2">
@@ -1144,8 +1347,11 @@ export const NotebookExtra = ({ ctx, checkId }) => {
   const d = useDockingDerived(activeTest, ctx);
 
   if (checkId === 'cond') {
+    const molNames = (activeTest.dockingMolecules || [])
+      .map((m) => `${m.name || m.fileName || '?'}${m.segid ? ` (segid ${m.segid})` : ''}`)
+      .join(', ');
     return `
-      <p style="font-size:12px;color:#475569;margin-bottom:8px;"><b>Docking Setup:</b> Program ${d.programInfo.name} | Scoring ${d.scoringFunction} | Search ${d.searchAlgorithm} | Exhaustiveness ${d.exhaustiveness} | Modes ${d.numModes} | Box (${d.boxSizeX}×${d.boxSizeY}×${d.boxSizeZ} Å) at (${d.boxCenterX}, ${d.boxCenterY}, ${d.boxCenterZ})</p>
+      <p style="font-size:12px;color:#475569;margin-bottom:8px;"><b>Docking Setup:</b> Program ${d.programInfo.name} | Scoring ${d.scoringFunction} | Search ${d.searchAlgorithm} | Exhaustiveness ${d.exhaustiveness} | Modes ${d.numModes} | Box (${d.boxSizeX}×${d.boxSizeY}×${d.boxSizeZ} Å) at (${d.boxCenterX}, ${d.boxCenterY}, ${d.boxCenterZ})${molNames ? `<br/><b>Molecules docked:</b> ${molNames}` : ''}</p>
     `;
   }
   if (checkId === 'seq') {
