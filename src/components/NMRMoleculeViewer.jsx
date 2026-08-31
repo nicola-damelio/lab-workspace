@@ -591,16 +591,29 @@ const splitPdbFileIntoMolecules = async (file) => {
     if (!groups.has(r)) groups.set(r, []);
     groups.get(r).push(i);
   });
+  // Each connectivity part is further split by CHAIN, so a multi-chain complex
+  // (receptor + partner chains of a docking pose, etc.) exposes EVERY chain as
+  // its own entry in the Molecules selector — each can be shown/hidden, styled
+  // and coloured independently.
   const parts = [];
   groups.forEach((idxs) => {
     if (parts.length >= 30) return;
-    const pureWater = idxs.every((i) => atoms[i].resname === 'HOH' || atoms[i].resname === 'WAT');
-    if (pureWater) return;
-    parts.push({
-      chainId: atoms[idxs[0]].chain,
-      model: atoms[idxs[0]].model,
-      modelCount,
-      blob: new Blob([idxs.map((i) => atoms[i].line).join('\n') + '\nEND\n'], { type: 'text/plain' })
+    const byChain = new Map();
+    idxs.forEach((i) => {
+      const c = atoms[i].chain || '_';
+      if (!byChain.has(c)) byChain.set(c, []);
+      byChain.get(c).push(i);
+    });
+    byChain.forEach((cidxs) => {
+      if (parts.length >= 30) return;
+      const pureWater = cidxs.every((i) => atoms[i].resname === 'HOH' || atoms[i].resname === 'WAT');
+      if (pureWater) return;
+      parts.push({
+        chainId: atoms[cidxs[0]].chain,
+        model: atoms[cidxs[0]].model,
+        modelCount,
+        blob: new Blob([cidxs.map((i) => atoms[i].line).join('\n') + '\nEND\n'], { type: 'text/plain' })
+      });
     });
   });
   return parts;
@@ -785,8 +798,11 @@ const abortRef = useRef(null); // { token, label, cancel } of the active long-ru
 
 const [file, setFile] = useState(null);
 const [pdbId, setPdbId] = useState('');
+const [pendingFileBatch, setPendingFileBatch] = useState(null); // File[] waiting for the "replace or keep both?" choice
 const [loadRequest, setLoadRequest] = useState(null);
 const [status, setStatus] = useState('idle');
+const statusRef = useRef(status); // mirror for event handlers (file-change dialog)
+statusRef.current = status;
 const [errorMsg, setErrorMsg] = useState('');
 const showManualHighlight = useShowAssignedFlag(); // green "assigned" atoms toggle (shared with the simulated spectra)
 const [hoverInfo, setHoverInfo] = useState(null);
@@ -801,11 +817,14 @@ const [moleculeStyle, setMoleculeStyle] = useState('ball+stick');
 // extraMols = extra loaded structure files (each its own NGL component); the
 // "Molecules" selector shows exactly one at a time. Multi-MODEL PDB files
 // (NMR ensembles / docking clusters) are split into one entry per MODEL by the
-// main-load effect, so they appear in the same "Molecules" selector.
-const [extraMols, setExtraMols] = useState([]);    // [{ id, name }]
+// main-load effect, so they appear in the same "Molecules" selector. Each entry
+// also carries its own style/color overrides ({ style, color }) so every chain /
+// molecule can be rendered independently from the global selectors.
+const [extraMols, setExtraMols] = useState([]);    // [{ id, name, style, color }]
 const [visibleMolKeys, setVisibleMolKeys] = useState(() => new Set(['main'])); // multi-select: which structures are shown
+const [selectedMolKey, setSelectedMolKey] = useState('main'); // active entry in the Molecules bar (click → select + centre)
 const [residueTicks, setResidueTicks] = useState([]); // [{ resno, resname, code, chainid }] — sequence strip above the 3D view
-const extraCompsRef = useRef([]);                  // [{ id, name, comp }]
+const extraCompsRef = useRef([]);                  // [{ id, name, comp, baseReps, style, color }]
 // Files chosen as "additional molecules" that must wait until the MAIN structure
 // has finished loading — the main load calls stage.removeAllComponents(), which
 // would wipe any component added concurrently. They are flushed once the main
@@ -823,6 +842,7 @@ const clearExtraMolecules = useCallback(() => {
   pendingExtraFilesRef.current = [];
   setExtraMols([]);
   setVisibleMolKeys(new Set(['main']));
+  setSelectedMolKey('main');
 }, []);
 
 // ---- Atom renaming (3D, post-generation) ----
@@ -954,6 +974,98 @@ const applyFog = useCallback(() => {
   } catch { /* ignore */ }
 }, []);
 
+// ---- Shadows ----
+// Real THREE shadow maps (the bundled renderer already ships the shaders) plus a
+// "darkness" control: lowering the ambient light while raising the directional
+// one deepens every shadowed area. Persisted like the fog preference.
+const [shadowOn, setShadowOn] = useState(() => {
+  try { return localStorage.getItem('labViewerShadows') !== 'off'; } catch { return false; }
+});
+const [shadowDarkness, setShadowDarkness] = useState(() => {
+  try {
+    const v = localStorage.getItem('labViewerShadows') || '';
+    const m = /on:(\d+)/.exec(v);
+    return m ? Math.min(1, Math.max(0, parseInt(m[1], 10) / 100)) : 0.5;
+  } catch { return 0.5; }
+});
+const shadowOnRef = useRef(shadowOn);
+const shadowDarknessRef = useRef(shadowDarkness);
+shadowOnRef.current = shadowOn;
+shadowDarknessRef.current = shadowDarkness;
+
+// Mark every mesh in a NGL object/subtree as casting + receiving shadows.
+const setMeshShadows = (root) => {
+  try {
+    root.traverse((o) => { if (o && o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  } catch { /* best-effort */ }
+};
+
+// Keep shadows in sync when a component gets a new representation (NGL rebuilds
+// the meshes, so the castShadow flags set at load time would be lost).
+const shadowRepsHook = (comp) => {
+  if (!comp || comp.__shadowHooked) return;
+  comp.__shadowHooked = true;
+  try {
+    comp.signals.representationAdded.add(() => {
+      if (!shadowOnRef.current) return;
+      try {
+        comp.eachRepresentation((r) => { if (r && r.object) setMeshShadows(r.object); });
+        if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender();
+      } catch { /* best-effort */ }
+    });
+  } catch { /* NGL without representation signals — shadows still update on toggle */ }
+};
+
+// Enable/configure the shadow map + lighting on the live stage.
+const applyShadowSettings = useCallback(() => {
+  const stage = stageRef.current;
+  if (!stage || !stage.viewer) return;
+  try {
+    const viewer = stage.viewer;
+    const on = shadowOnRef.current;
+    const dark = Math.min(1, Math.max(0, shadowDarknessRef.current));
+    const renderer = viewer.renderer;
+    if (renderer) {
+      renderer.shadowMap.enabled = on;
+      renderer.shadowMap.type = 2; // PCFSoftShadowMap
+      renderer.shadowMap.autoUpdate = true;
+    }
+    const light = viewer.directionalLight;
+    if (light) {
+      light.castShadow = on;
+      if (on) {
+        try { if (light.target && !light.target.parent) viewer.scene.add(light.target); } catch { /* keep defaults */ }
+        try {
+          light.shadow.mapSize.set(2048, 2048);
+          light.shadow.bias = -0.0005;
+          light.shadow.normalBias = 0.02;
+          light.shadow.radius = 1 + dark * 10;
+          const bb = viewer.boundingBoxLength || 50;
+          const s = Math.max(20, bb * 1.4);
+          const sc = light.shadow.camera;
+          sc.left = -s; sc.right = s; sc.top = s; sc.bottom = -s;
+          sc.near = 1;
+          sc.far = Math.max(1000, bb * 260);
+          if (typeof sc.updateProjectionMatrix === 'function') sc.updateProjectionMatrix();
+        } catch { /* keep defaults */ }
+        setMeshShadows(viewer.scene);
+      }
+    }
+    // Darkness → deeper shadows: lower the ambient light, raise the directional.
+    stage.setParameters({
+      lightIntensity: on ? (1.2 + dark * 0.7) : 1.2,
+      ambientIntensity: on ? (0.3 * (1 - dark) + 0.03) : 0.3,
+    });
+    try { if (viewer.requestRender) viewer.requestRender(); } catch {}
+  } catch { /* shadow settings are best-effort */ }
+}, []);
+
+// Persist + apply the shadow preference whenever it changes.
+useEffect(() => {
+  try { localStorage.setItem('labViewerShadows', shadowOn ? `on:${Math.round(shadowDarkness * 100)}` : 'off'); } catch { /* ignore */ }
+  applyShadowSettings();
+}, [shadowOn, shadowDarkness, applyShadowSettings]);
+
 const persistRenames = (next) => {
   setRenames(next);
   if (typeof onAtomRenames === 'function') onAtomRenames(next);
@@ -1038,6 +1150,7 @@ if (cancelled || !containerRef.current) return null;
 const stage = new NGL.Stage(containerRef.current, { backgroundColor: '#f8fafc' });
 stageRef.current = stage;
 applyFog(); // honour the user's fog preference (off by default) right away
+applyShadowSettings(); // honour the user's shadow preference (off by default)
 
 stage.signals.clicked.add((pickingProxy) => {
 if (!pickingProxy || !pickingProxy.atom) return;
@@ -1083,7 +1196,7 @@ stageRef.current = null;
 blobUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
 blobUrlsRef.current = [];
 };
-}, [applyFog]); // applyFog is a stable useCallback — the effect still runs once
+}, [applyFog, applyShadowSettings]); // applyFog/applyShadowSettings are stable useCallbacks — the effect still runs once
 
 const [manualOverride, setManualOverride] = useState(false);
 const lastLoadedTextRef = useRef(null);
@@ -1321,7 +1434,9 @@ const loadChainMolecule = useCallback(async (blob, name, ci) => {
   try {
     const comp = await stage.loadFile(blob, { ext: 'pdb' });
     const baseReps = applyCurrentStyleTo(comp, []);
-    extraCompsRef.current.push({ id: `chain_${Date.now()}_${ci}`, name, comp, baseReps });
+    shadowRepsHook(comp);
+    if (shadowOnRef.current) setMeshShadows(comp);
+    extraCompsRef.current.push({ id: `chain_${Date.now()}_${ci}`, name, comp, baseReps, style: 'auto', color: '' });
     try { comp.setVisibility(false); } catch {}
   } catch { /* chain load failed — keep it inside the main component */ }
 }, [applyCurrentStyleTo]);
@@ -1455,6 +1570,8 @@ try {
 } catch { nonProtein = false; }
 setHasNonProtein(nonProtein);
 addDefaultReps(component);
+shadowRepsHook(component);
+if (shadowOnRef.current) setMeshShadows(component);
 
 // Multi-MODEL PDB files (ensembles / docking clusters / NMR structures):
 // NGL 2.4.0 does not expose structure.frameCount (and StructureComponent has
@@ -1490,11 +1607,11 @@ try {
         for (let ci = 0; ci < moleculeParts.length; ci++) {
           const part = moleculeParts[ci];
           const label = multiModel
-            ? (onePartPerModel ? `Model ${part.model + 1}` : `Molecule ${ci + 1} (Model ${part.model + 1})`)
-            : `Molecule ${ci + 1} (${part.chainId})`;
+            ? `${onePartPerModel ? `Model ${part.model + 1}` : `Molecule ${ci + 1} (Model ${part.model + 1})`}${part.chainId && part.chainId !== '_' ? ` · ${part.chainId}` : ''}`
+            : (part.chainId && part.chainId !== '_' ? `Chain ${part.chainId}` : `Molecule ${ci + 1}`);
           await loadChainMolecule(part.blob, label, ci);
         }
-        setExtraMols(extraCompsRef.current.map(({ id: xid, name: xname }) => ({ id: xid, name: xname })));
+        setExtraMols(extraCompsRef.current.map(({ id: xid, name: xname, style, color }) => ({ id: xid, name: xname, style, color })));
       }
     }
   }
@@ -1521,6 +1638,7 @@ if (!(component.structure ? component.structure.atomCount : 0)) {
 throw new Error('The structure loaded but contains no atoms (empty/invalid file content).');
 }
 setStatus('ready');
+applyShadowSettings(); // (re)configure the light/shadow map now that the bbox is known
 finishStructLoad();
 } catch (err) {
 if (!cancelled) {
@@ -1539,7 +1657,8 @@ return () => {
   unregisterAbort();
   if (abortRef.current && abortRef.current.token === abortToken) abortRef.current = null;
 };
-}, [loadRequest]);
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, [loadRequest, applyShadowSettings]);
 
 // ---- Trajectory Loading Effect ----
 useEffect(() => {
@@ -2426,10 +2545,12 @@ try {
   // Style it with the CURRENT selectors (Backbone / Molecule Style) so extra
   // molecules follow the user's choices and never look like a gray blob.
   const baseReps = applyCurrentStyleTo(comp, []);
+  shadowRepsHook(comp);
+  if (shadowOnRef.current) setMeshShadows(comp);
   const name = file.name || `Molecule ${n}`;
   const id = `mol_${Date.now()}_${n}`;
-  extraCompsRef.current.push({ id, name, comp, baseReps });
-  setExtraMols(extraCompsRef.current.map(({ id: xid, name: xname }) => ({ id: xid, name: xname })));
+  extraCompsRef.current.push({ id, name, comp, baseReps, style: 'auto', color: '' });
+  setExtraMols(extraCompsRef.current.map(({ id: xid, name: xname, style, color }) => ({ id: xid, name: xname, style, color })));
   try { comp.setVisibility(false); } catch {}
   // NOTE: no comp.autoView() here — the extra is HIDDEN and autoView would move
   // the camera away from the main structure. The camera is re-centred on the
@@ -2438,6 +2559,67 @@ try {
   console.warn('Could not load additional molecule:', err && err.message);
 }
 }, [applyCurrentStyleTo]);
+
+// Per-extra-structure style/color overrides. Each entry in the Molecules bar can
+// be rendered independently: "auto" follows the global Backbone / Molecule Style
+// selectors; anything else rebuilds that component with ONE chosen style + color.
+const restyleExtraMol = (id, style, color) => {
+  const entry = extraCompsRef.current.find((e) => e.id === id);
+  const comp = entry && entry.comp;
+  if (!comp || !comp.structure) return;
+  try { comp.removeAllRepresentations(); } catch {}
+  let reps = [];
+  if (!style || style === 'auto') {
+    reps = applyCurrentStyleTo(comp, []);
+  } else {
+    const opts = color ? { color } : { colorScheme: 'element' };
+    try {
+      if (style === 'cartoon') reps.push(comp.addRepresentation('cartoon', color ? { color } : { colorScheme: 'residueindex' }));
+      else if (style === 'ball+stick') reps.push(comp.addRepresentation('ball+stick', { ...opts, multipleBond: true, aspectRatio: 1.3 }));
+      else if (style === 'sticks') reps.push(comp.addRepresentation('stick', { ...opts, multipleBond: true }));
+      else if (style === 'lines') reps.push(comp.addRepresentation('line', { ...opts }));
+      else if (style === 'spheres') reps.push(comp.addRepresentation('spacefill', { ...opts, scale: 0.6 }));
+      else if (style === 'surface') reps.push(comp.addRepresentation('surface', { ...opts }));
+    } catch { /* style best-effort */ }
+  }
+  entry.baseReps = reps;
+  if (shadowOnRef.current) setMeshShadows(comp);
+  try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
+};
+
+const setExtraMolStyle = (id, style) => {
+  extraCompsRef.current.forEach((e) => { if (e.id === id) e.style = style; });
+  setExtraMols(extraCompsRef.current.map(({ id: xid, name, style: s, color }) => ({ id: xid, name, style: s, color })));
+  const entry = extraCompsRef.current.find((e) => e.id === id);
+  restyleExtraMol(id, style, (entry && entry.color) || '');
+};
+
+const setExtraMolColor = (id, color) => {
+  extraCompsRef.current.forEach((e) => { if (e.id === id) e.color = color; });
+  setExtraMols(extraCompsRef.current.map(({ id: xid, name, style: s, color: c }) => ({ id: xid, name, style: s, color: c })));
+  const entry = extraCompsRef.current.find((e) => e.id === id);
+  restyleExtraMol(id, (entry && entry.style) || 'auto', color);
+};
+
+// Delete ONE extra structure (its NGL component + Molecules-bar entry).
+const deleteExtraMol = (id) => {
+  const idx = extraCompsRef.current.findIndex((e) => e.id === id);
+  if (idx < 0) return;
+  const [entry] = extraCompsRef.current.splice(idx, 1);
+  try { if (stageRef.current) stageRef.current.removeComponent(entry.comp); } catch {}
+  setExtraMols(extraCompsRef.current.map(({ id: xid, name, style, color }) => ({ id: xid, name, style, color })));
+  setVisibleMolKeys((prev) => { const n = new Set(prev); n.delete(id); return n; });
+  if (selectedMolKey === id) setSelectedMolKey('main');
+  try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
+};
+
+// Select + centre the view on one structure (click its row in the Molecules bar).
+const autoViewMol = (key) => {
+  setSelectedMolKey(key);
+  const comp = key === 'main' ? componentRef.current : (extraCompsRef.current.find((e) => e.id === key) || {}).comp;
+  try { if (comp) comp.autoView(); } catch {}
+  try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
+};
 
 // Flush the pending extra files once the MAIN structure is ready. This runs
 // AFTER the main load has called stage.removeAllComponents(), so the extras can
@@ -2452,30 +2634,81 @@ useEffect(() => {
   try { if (stageRef.current) stageRef.current.handleResize(); } catch {}
 }, [status, loadExtraMolecule]);
 
+// Load one structure file as an EXTRA entry (no main-load side effects): if the
+// file is a multi-chain/multi-molecule PDB, each chain/molecule gets its own
+// entry in the Molecules bar; otherwise the whole file is one entry.
+const loadExtraStructureFile = useCallback(async (file) => {
+  const baseName = String(file && file.name || 'Structure').replace(/\.[^.]+$/, '');
+  try {
+    const stage = stageRef.current;
+    if (!stage) return;
+    if (file && /\.(pdb|ent)$/i.test(String(file.name || ''))) {
+      const parts = await splitPdbFileIntoMolecules(file);
+      if (parts.length > 1) {
+        for (let i = 0; i < parts.length; i++) {
+          const p = parts[i];
+          const nm = p.chainId && p.chainId !== '_' ? `Chain ${p.chainId}` : `Molecule ${i + 1}`;
+          await loadChainMolecule(p.blob, `${baseName} · ${nm}`, i);
+        }
+        return;
+      }
+    }
+    await loadExtraMolecule(file, 0);
+  } catch { /* best-effort */ }
+}, [loadChainMolecule, loadExtraMolecule]);
+
+// Full replace: the first file becomes the new MAIN structure, the rest become
+// additional molecules (this is the classic multi-file behaviour).
+const doReplaceLoad = useCallback((files) => {
+  clearExtraMolecules();
+  setManualOverride(true);
+  setTrajFile(null);
+  const [first, ...rest] = files;
+  setFile(first);
+  setPdbId('');
+  requestStructureLoad({ file: first, url: null, ts: Date.now() });
+  onStructureFile?.(first);   // share the chosen topology with the analysis sections
+  if (driveNaming) archiveFileToDrive({ file: first, ctx: driveNaming }).catch(() => {});
+  // Additional structures (docking complexes / clusters / poses) are loaded as
+  // separate NGL components and shown via the "Molecules" bar (right side,
+  // multi-select — any combination can be displayed together).
+  // They are deferred (pendingExtraFilesRef) until the MAIN structure is ready:
+  // the main load calls stage.removeAllComponents(), which would wipe any
+  // component added while it runs.
+  pendingExtraFilesRef.current = rest.map((f, i) => ({ file: f, n: i + 1 }));
+  rest.forEach((f) => {
+    if (driveNaming) archiveFileToDrive({ file: f, ctx: driveNaming }).catch(() => {});
+  });
+}, [onStructureFile, driveNaming, clearExtraMolecules]);
+
+// Keep the current structure AND add the picked file(s) alongside it.
+const doKeepBoth = useCallback(async (files) => {
+  setPendingFileBatch(null);
+  if (!stageRef.current) { doReplaceLoad(files); return; }
+  for (const f of files) {
+    await loadExtraStructureFile(f);
+    if (driveNaming) archiveFileToDrive({ file: f, ctx: driveNaming }).catch(() => {});
+  }
+  setExtraMols(extraCompsRef.current.map(({ id, name, style, color }) => ({ id, name, style, color })));
+  // Show the newly kept structures right away.
+  setVisibleMolKeys((prev) => {
+    const n = new Set(prev);
+    extraCompsRef.current.forEach((x) => n.add(x.id));
+    return n;
+  });
+  try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
+}, [doReplaceLoad, driveNaming, loadExtraStructureFile]);
+
 const handleFileChange = useCallback((e) => {
 const files = Array.from(e.target.files || []);
 if (files.length === 0) return;
-clearExtraMolecules();
-setManualOverride(true);
-setTrajFile(null);
-const [first, ...rest] = files;
-setFile(first);
-setPdbId('');
-requestStructureLoad({ file: first, url: null, ts: Date.now() });
-onStructureFile?.(first);   // share the chosen topology with the analysis sections
-if (driveNaming) archiveFileToDrive({ file: first, ctx: driveNaming }).catch(() => {});
-// Additional structures (docking complexes / clusters / poses) are loaded as
-// separate NGL components and shown via the "Molecules" bar (right side,
-// multi-select — any combination can be displayed together).
-// They are deferred (pendingExtraFilesRef) until the MAIN structure is ready:
-// the main load calls stage.removeAllComponents(), which would wipe any
-// component added while it runs.
-pendingExtraFilesRef.current = rest.map((f, i) => ({ file: f, n: i + 1 }));
-rest.forEach((f) => {
-  if (driveNaming) archiveFileToDrive({ file: f, ctx: driveNaming }).catch(() => {});
-});
 e.target.value = '';
-}, [onStructureFile, driveNaming, clearExtraMolecules]);
+// If a structure is already shown, let the user choose between replacing it or
+// keeping both (loading the new file(s) as additional molecules).
+const alreadyLoaded = !!componentRef.current && statusRef.current === 'ready';
+if (alreadyLoaded) { setPendingFileBatch(files); return; }
+doReplaceLoad(files);
+}, [doReplaceLoad]);
 
 // Show/hide any combination of loaded structures (main + extra uploaded files).
 // Only the selected molecules are displayed; the rest stay hidden.
@@ -2867,6 +3100,18 @@ className="w-3.5 h-3.5 accent-sky-600"
     title="NGL's default depth fog fades distant atoms toward the background (a grey haze). Toggle it off for a crisp image — the setting is saved and persists across pages.">
     🌫 Fog: {fogEnabled ? 'On' : 'Off'}
   </button>
+  <button type="button" onClick={() => setShadowOn((v) => !v)}
+    className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors ${shadowOn ? 'bg-slate-800 border-slate-800 text-white' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+    title="Cast real shadows from the directional light. The Darkness slider controls how deep the shadowed areas become — saved and persists across pages.">
+    ◐ Shadows: {shadowOn ? 'On' : 'Off'}
+  </button>
+  {shadowOn && (
+    <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700" title="How dark the shadows are — lowers the ambient light so occluded areas go deeper">
+      🌑 Darkness
+      <input type="range" min="0" max="100" value={Math.round(shadowDarkness * 100)} onChange={(e) => setShadowDarkness(Number(e.target.value) / 100)} className="w-24 accent-slate-700" />
+      <span className="text-[10px] text-slate-500 w-8">{Math.round(shadowDarkness * 100)}%</span>
+    </label>
+  )}
 </div>
 
 {showAtomPanel && (
@@ -3130,9 +3375,10 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
 ▼
 </button>
 
-{/* Vertical Molecules bar (right side) — multi-select which structures to display */}
+{/* Vertical Molecules bar (right side) — every loaded structure / chain, each with
+    its own visibility, style and colour; click a row to select & centre it. */}
 {extraMols.length > 0 && (
-  <div className="absolute top-2 right-2 bottom-2 w-44 z-40 flex flex-col gap-2 bg-white/95 border border-blue-200 rounded-xl shadow-lg p-2 overflow-hidden">
+  <div className="absolute top-2 right-2 bottom-2 w-56 z-40 flex flex-col gap-2 bg-white/95 border border-blue-200 rounded-xl shadow-lg p-2 overflow-hidden">
     <div className="flex items-center justify-between gap-2 shrink-0">
       <span className="text-[10px] font-black text-blue-700 uppercase tracking-wide">Molecules</span>
       <span className="flex gap-1">
@@ -3146,16 +3392,39 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
           title="Show only the main structure">Main</button>
       </span>
     </div>
-    <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-0.5">
-      <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-700 cursor-pointer hover:bg-blue-50 rounded px-1 py-0.5" title="Main structure">
-        <input type="checkbox" checked={visibleMolKeys.has('main')} onChange={() => toggleMol('main')} className="accent-blue-600 w-3.5 h-3.5" />
-        <span className="truncate">Main{file ? ` (${file.name})` : ''}</span>
-      </label>
+    <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1">
+      <div onClick={() => autoViewMol('main')}
+        className={`flex items-center gap-1.5 text-[10px] font-bold rounded px-1 py-0.5 cursor-pointer ${selectedMolKey === 'main' ? 'bg-blue-100 border border-blue-300' : 'hover:bg-blue-50'}`}
+        title="Main structure — click to select & centre it">
+        <input type="checkbox" checked={visibleMolKeys.has('main')} onChange={(e) => { e.stopPropagation(); toggleMol('main'); }} className="accent-blue-600 w-3.5 h-3.5" />
+        <span className="truncate text-slate-700 flex-1">Main{file ? ` (${file.name})` : ''}</span>
+      </div>
       {extraMols.map((m) => (
-        <label key={m.id} className="flex items-center gap-1.5 text-[10px] font-bold text-slate-700 cursor-pointer hover:bg-blue-50 rounded px-1 py-0.5" title={m.name}>
-          <input type="checkbox" checked={visibleMolKeys.has(m.id)} onChange={() => toggleMol(m.id)} className="accent-blue-600 w-3.5 h-3.5" />
-          <span className="truncate">{m.name}</span>
-        </label>
+        <div key={m.id} className={`rounded px-1 py-0.5 border ${selectedMolKey === m.id ? 'bg-blue-100 border-blue-300' : 'border-transparent hover:bg-blue-50'}`}>
+          <div className="flex items-center gap-1.5 cursor-pointer" onClick={() => autoViewMol(m.id)} title={`${m.name} — click to select & centre it`}>
+            <input type="checkbox" checked={visibleMolKeys.has(m.id)} onChange={(e) => { e.stopPropagation(); toggleMol(m.id); }} className="accent-blue-600 w-3.5 h-3.5 shrink-0" />
+            <span className="truncate text-[10px] font-bold text-slate-700 flex-1">{m.name}</span>
+            <button type="button" onClick={(e) => { e.stopPropagation(); deleteExtraMol(m.id); }}
+              className="text-red-400 hover:text-red-600 font-bold text-[10px] px-1 shrink-0" title="Delete this structure">🗑</button>
+          </div>
+          <div className="flex items-center gap-1 mt-0.5 pl-5">
+            <select value={m.style || 'auto'} onChange={(e) => setExtraMolStyle(m.id, e.target.value)}
+              className="border border-slate-200 rounded text-[9px] py-0.5 px-1 w-24" title="Representation style for this structure">
+              <option value="auto">Auto</option>
+              <option value="cartoon">Cartoon</option>
+              <option value="ball+stick">Ball &amp; stick</option>
+              <option value="sticks">Sticks</option>
+              <option value="lines">Lines</option>
+              <option value="spheres">Spheres</option>
+              <option value="surface">Surface</option>
+            </select>
+            <label className="text-[9px] text-slate-400 font-bold flex items-center gap-0.5" title="Override the colour of this structure">
+              Color
+              <input type="color" value={m.color || '#dddddd'} onChange={(e) => setExtraMolColor(m.id, e.target.value)}
+                className="w-5 h-5 rounded border cursor-pointer" />
+            </label>
+          </div>
+        </div>
       ))}
     </div>
   </div>
@@ -3347,6 +3616,29 @@ className="text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-3 p
 </div>
 )}
 
+{/* "Replace or keep both?" — a structure is already loaded and the user picked new files */}
+{pendingFileBatch && (
+  <div className="fixed inset-0 z-[99999] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setPendingFileBatch(null)}>
+    <div className="bg-white rounded-xl shadow-2xl p-5 max-w-sm w-full flex flex-col gap-3" onClick={(e) => e.stopPropagation()}>
+      <h4 className="text-sm font-black text-slate-800">📂 {pendingFileBatch.length} file(s) selected</h4>
+      <p className="text-xs text-slate-500">A structure is already loaded. What should happen to it?</p>
+      <div className="flex flex-col gap-2">
+        <button type="button" onClick={() => { const f = pendingFileBatch; setPendingFileBatch(null); doReplaceLoad(f); }}
+          className="text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-left" title="Remove the current structure(s) and load these file(s) as the new main structure">
+          🔄 Replace the current structure
+        </button>
+        <button type="button" onClick={() => { doKeepBoth(pendingFileBatch); }}
+          className="text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-left" title="Keep the current structure and add these file(s) as additional molecules (each chain becomes its own entry)">
+          ➕ Keep both — add alongside
+        </button>
+        <button type="button" onClick={() => setPendingFileBatch(null)}
+          className="text-xs font-bold bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 px-3 py-2 rounded-lg text-left">
+          Cancel
+        </button>
+      </div>
+    </div>
+  </div>
+)}
 
 </div>
 );
