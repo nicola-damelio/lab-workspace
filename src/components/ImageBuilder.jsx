@@ -11,10 +11,14 @@ const PX_PER_MM = 96 / 25.4; // CSS: 1 mm ≈ 3.78 px
 export const ImageBuilder = ({ projectId, jumpToTest }) => {
   const storageKey = `labImageBuilder_${projectId || 'global'}`;
   const svgRef = useRef(null);
+  const svgFsRef = useRef(null);    // fullscreen SVG — kept SEPARATE from the normal one so
+                                    // exiting fullscreen never leaves the drag ref null
   const dragState = useRef(null);
   const fsAreaRef = useRef(null);   // fullscreen canvas area (measured for "zoom on object")
   const initialZoomRef = useRef(1.5);        // zoom when fullscreen was entered ("↩ Initial zoom")
   const initialPanRef = useRef({ x: 0, y: 0 });
+  const undoStack = useRef([]);     // undo history of the canvas objects
+  const [histTick, setHistTick] = useState(0);
 
   const [canvasW, setCanvasW] = useState(180);
   const [canvasH, setCanvasH] = useState(120);
@@ -30,13 +34,23 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   const [placeTextMode, setPlaceTextMode] = useState(false); // click on the object to add text there
   const [globalCaption, setGlobalCaption] = useState('');     // figure-wide caption at the bottom
   const [editingText, setEditingText] = useState(null);       // { objId, txId, mmX, mmY, value } — type directly on the canvas
+  const [editingCaption, setEditingCaption] = useState(false); // edit the figure caption directly at the bottom
   const [insertOpen, setInsertOpen] = useState(false);        // "insert into project section" modal
-  const [insertTarget, setInsertTarget] = useState({ projectId: projectId || '', section: 'background', caption: '' });
+  const [insertTarget, setInsertTarget] = useState({ projectId: projectId || '', section: 'background' });
   const [insertMsg, setInsertMsg] = useState('');
 
   const allProjects = loadProjects();
   const activeLibProjectId = libProjectId || projectId; // project library scope currently browsed
-  const captionH = globalCaption && globalCaption.trim() ? 14 : 0; // reserved caption band (mm)
+
+  // The figure-wide caption at the bottom is built from every object's
+  // sub-caption (merged), unless the user typed a custom one directly on the canvas.
+  const autoGlobalCaption = (objects || []).filter((o) => String(o.caption || '').trim())
+    .map((o) => `${o.letter || '?'}: ${String(o.caption).trim()}`).join(' · ');
+  const effectiveGlobalCaption = String(globalCaption || '').trim() ? globalCaption : autoGlobalCaption;
+  const captionH = (effectiveGlobalCaption.trim() || editingCaption) ? 14 : 0; // reserved caption band (mm)
+
+  // The SVG that is actually visible (fullscreen overlay when open).
+  const activeSvgEl = () => (isFullScreen ? svgFsRef : svgRef).current;
 
   // Fullscreen & Zoom states
   const [isFullScreen, setIsFullScreen] = useState(false);
@@ -110,8 +124,62 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   const cellW = canvasW / gridCols;
   const cellH = canvasH / gridRows;
 
+  // ---- undo history -------------------------------------------------------
+  // Snapshots keep only thumbnails (full-res dataURLs are re-resolved from the
+  // library on undo) so the stack stays light even with large captured images.
+  const commitHistory = () => {
+    try {
+      const snap = JSON.parse(JSON.stringify((objects || []).map((o) => (
+        o.libId ? { ...o, imgSrc: null, imgThumb: o.imgThumb || o.imgSrc } : o
+      ))));
+      undoStack.current.push(snap);
+      if (undoStack.current.length > 40) undoStack.current.shift();
+      setHistTick((t) => t + 1);
+    } catch { /* ignore */ }
+  };
+  const undo = () => {
+    const prev = undoStack.current.pop();
+    if (!prev) return;
+    setObjects(prev.map((o) => {
+      if (o.libId && !o.imgSrc) {
+        const lib = o.libScope === 'project'
+          ? (readProjectLibrary(o.libProjectId || null) || []).find((i) => i.id === o.libId)
+          : (readLibrary() || []).find((i) => i.id === o.libId);
+        if (lib) return { ...o, imgSrc: lib.full || lib.url };
+      }
+      return o;
+    }));
+    setSelectedId(null);
+    setHistTick((t) => t + 1);
+  };
+
+  // Re-assign the A, B, C panel letters by position (top→bottom, left→right)
+  // and update each object's sub-caption so the letter always matches the panel.
+  const renumberLetters = () => {
+    setObjects(prev => {
+      const sorted = [...prev].sort((a, b) => (a.y - b.y) || (a.x - b.x));
+      const letterOf = {};
+      sorted.forEach((o, i) => { letterOf[o.id] = i < 26 ? String.fromCharCode(65 + i) : `${i + 1}`; });
+      return prev.map(o => {
+        const L = letterOf[o.id];
+        if (!L || o.letter === L) return o;
+        let caption = o.caption || '';
+        if (o.letter && caption) {
+          const re = new RegExp('^' + o.letter + '\\s*[.:-]?\\s*');
+          if (re.test(caption)) {
+            const m = caption.match(re)[0];
+            const sep = /[.:-]/.test(m) ? m.match(/[.:-]/)[0] + ' ' : ' ';
+            caption = L + sep + caption.slice(m.length);
+          }
+        }
+        return { ...o, letter: L, caption };
+      });
+    });
+  };
+
   const addObject = () => {
     const id = `obj_${Date.now()}`;
+    commitHistory();
     const nextLetter = objects.length < 26 ? String.fromCharCode(65 + objects.length) : `${objects.length + 1}`;
     const newObj = {
       id, x: 0, y: 0, w: 1, h: 1,
@@ -127,13 +195,27 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
     };
     setObjects([...objects, newObj]);
     setSelectedId(id);
+    renumberLetters();
   };
+
+  // Ctrl+Z undoes the last canvas change.
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && String(e.key).toLowerCase() === 'z') {
+        e.preventDefault();
+        undo();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const updateObj = (patch) => {
     setObjects(prev => prev.map(o => o.id === selectedId ? { ...o, ...patch } : o));
   };
 
   const handlePickImage = (item) => {
+    commitHistory();
     updateObj({
       imgSrc: item.full || item.url,
       imgThumb: item.url || item.full,
@@ -184,6 +266,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   // Drag & Resize Logic
   const startDrag = (e, id) => {
     e.stopPropagation();
+    commitHistory();
     const obj = objects.find(o => o.id === id);
     if (!obj) return;
     // Hold Shift while dragging the object frame to SHIFT the image instead.
@@ -200,6 +283,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
 
   const startResize = (e, id) => {
     e.stopPropagation();
+    commitHistory();
     const obj = objects.find(o => o.id === id);
     dragState.current = { type: 'resize', id, startX: e.clientX, startY: e.clientY, origW: obj.w, origH: obj.h, origX: obj.x, origY: obj.y };
     window.addEventListener('mousemove', onDrag);
@@ -209,7 +293,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   const onDrag = (e) => {
     if (!dragState.current) return;
     const { type, id, textId, startX, startY, origX, origY, origW, origH, origScale } = dragState.current;
-    const svgEl = svgRef.current;
+    const svgEl = activeSvgEl();
     if (!svgEl) return;
 
     const rect = svgEl.getBoundingClientRect();
@@ -262,14 +346,18 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   };
 
   const endDrag = () => {
+    const type = dragState.current && dragState.current.type;
     dragState.current = null;
     window.removeEventListener('mousemove', onDrag);
     window.removeEventListener('mouseup', endDrag);
+    // Re-order the A/B/C panel letters after an object is moved/resized.
+    if (type === 'move' || type === 'resize') renumberLetters();
   };
 
   // Start dragging a free text overlay (millimetre coordinates inside the object).
   const startTextDrag = (e, objId, txId) => {
     e.stopPropagation();
+    commitHistory();
     const obj = objects.find(o => o.id === objId);
     const tx = ((obj && obj.texts) || []).find(t => t.id === txId);
     if (!tx) return;
@@ -281,6 +369,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   // Start dragging the IMAGE inside its frame (mouse pan).
   const startImageShift = (e, objId) => {
     e.stopPropagation();
+    commitHistory();
     const obj = objects.find(o => o.id === objId);
     if (!obj || !obj.imgSrc) return;
     dragState.current = { type: 'imgShift', id: objId, startX: e.clientX, startY: e.clientY, origX: obj.imgOffsetX || 0, origY: obj.imgOffsetY || 0 };
@@ -291,6 +380,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   // Start dragging the IMAGE RESIZE handle (bottom-right corner of the image).
   const startImageResize = (e, objId) => {
     e.stopPropagation();
+    commitHistory();
     const obj = objects.find(o => o.id === objId);
     if (!obj || !obj.imgSrc) return;
     dragState.current = { type: 'imgResize', id: objId, startX: e.clientX, startY: e.clientY, origScale: obj.imgScale || 1 };
@@ -302,6 +392,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   // Add a text at a given position (mm inside the object) — used by the
   // "+ Add Text" button (centre) and by "Place by click" (mouse position).
   const addTextAt = (obj, xMm, yMm) => {
+    commitHistory();
     const id = `txt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const tx = {
       id,
@@ -333,6 +424,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   const deleteText = (txId) => {
     const obj = objects.find(o => o.id === selectedId);
     if (!obj) return;
+    commitHistory();
     updateObj({ texts: (obj.texts || []).filter(tx => tx.id !== txId) });
   };
 
@@ -403,28 +495,59 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   }, [isFullScreen, focusObjId]);
 
   // Render the composition (without selection UI) to a PNG data URL.
+  // Rasterizes any SVG image source to PNG first so the composite SVG loads
+  // reliably as an image (SVG-inside-SVG often refuses to rasterize).
   const renderToDataUrl = (outScale = 11.8) => new Promise((resolve) => {
-    const svgEl = svgRef.current;
+    const svgEl = activeSvgEl();
     if (!svgEl) { resolve(null); return; }
     const clone = svgEl.cloneNode(true);
     clone.querySelectorAll('[data-selection-ui="true"]').forEach(el => el.remove());
-    const svgData = new XMLSerializer().serializeToString(clone);
-    const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(svgBlob);
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.round(canvasW * outScale);
-      canvas.height = Math.round((canvasH + captionH) * outScale);
-      const ctx = canvas.getContext('2d');
-      ctx.fillStyle = 'white';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      URL.revokeObjectURL(url);
-      resolve(canvas.toDataURL('image/png'));
+
+    const toPng = (src) => new Promise((res) => {
+      if (!src || !String(src).startsWith('data:image/svg+xml')) { res(src); return; }
+      const im = new Image();
+      const done = (v) => { clearTimeout(t); res(v); };
+      const t = setTimeout(() => done(src), 1500);
+      im.onload = () => {
+        try {
+          const c = document.createElement('canvas');
+          c.width = im.naturalWidth || 800;
+          c.height = im.naturalHeight || 600;
+          c.getContext('2d').drawImage(im, 0, 0);
+          done(c.toDataURL('image/png'));
+        } catch { done(src); }
+      };
+      im.onerror = () => done(src);
+      im.src = src;
+    });
+
+    const finish = (svgData) => {
+      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(svgBlob);
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.round(canvasW * outScale);
+          canvas.height = Math.round((canvasH + captionH) * outScale);
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = 'white';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          URL.revokeObjectURL(url);
+          resolve(canvas.toDataURL('image/png'));
+        } catch (err) { URL.revokeObjectURL(url); console.warn('Composition render failed:', err && err.message); resolve(null); }
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+      img.src = url;
     };
-    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
-    img.src = url;
+
+    const images = Array.from(clone.querySelectorAll('image'));
+    const tasks = images.map((im) => {
+      const src = im.getAttribute('href') || im.getAttribute('xlink:href');
+      return toPng(src).then((png) => { im.setAttribute('href', png); im.removeAttribute('xlink:href'); });
+    });
+    Promise.all(tasks).then(() => finish(new XMLSerializer().serializeToString(clone)));
   });
 
   // Export to 300 DPI PNG
@@ -442,8 +565,8 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   const libraryItems = libraryTab === 'project' ? readProjectLibrary(activeLibProjectId) : readLibrary();
 
   // Helper to render the SVG content (shared between normal and fullscreen)
-  const renderSvg = () => (
-    <svg ref={svgRef} viewBox={`0 0 ${canvasW} ${canvasH + captionH}`} width="100%" height="100%" onClick={(e) => { e.stopPropagation(); setSelectedId(null); }}>
+  const renderSvg = (svgElRef) => (
+    <svg ref={svgElRef} viewBox={`0 0 ${canvasW} ${canvasH + captionH}`} width="100%" height="100%" onClick={(e) => { e.stopPropagation(); setSelectedId(null); }}>
       {/* Grid Lines */}
       {Array.from({ length: gridCols - 1 }).map((_, i) => (
         <line key={`v${i}`} x1={(i + 1) * cellW} y1={0} x2={(i + 1) * cellW} y2={canvasH} stroke="#e2e8f0" strokeWidth={0.2} />
@@ -477,8 +600,8 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
             e.stopPropagation();
             setSelectedId(obj.id);
             // "Place by click": add a text exactly where the user clicked.
-            if (placeTextMode && svgRef.current) {
-              const r = svgRef.current.getBoundingClientRect();
+            if (placeTextMode && activeSvgEl()) {
+              const r = activeSvgEl().getBoundingClientRect();
               const xMm = (e.clientX - r.left) * (canvasW / r.width) - ox;
               const yMm = (e.clientY - r.top) * (canvasH / r.height) - oy;
               addTextAt(obj, xMm, yMm);
@@ -550,7 +673,11 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
         );
       })}
       {captionH > 0 && (
-        <text x={canvasW / 2} y={canvasH + captionH - 4} fontSize={ptToMm(12)} fill="#1f2937" textAnchor="middle" fontWeight="bold">{globalCaption}</text>
+        <text x={canvasW / 2} y={canvasH + captionH - 4} fontSize={ptToMm(12)} fill="#1f2937" textAnchor="middle" fontWeight="bold"
+          style={{ cursor: 'text', pointerEvents: 'auto' }}
+          title="Click to edit the caption — it merges every object's sub-caption"
+          onClick={(e) => { e.stopPropagation(); setSelectedId(null); setEditingCaption(true); }}
+        >{effectiveGlobalCaption}</text>
       )}
     </svg>
   );
@@ -560,7 +687,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
     <div className={`bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col gap-3 ${isFloating ? 'shadow-2xl max-h-[calc(100vh-8rem)] overflow-y-auto custom-scrollbar' : ''}`}>
       <div className="flex justify-between items-center">
         <h4 className="font-bold text-slate-700">Object Properties ({selectedObj.letter || 'No Letter'})</h4>
-        <button onClick={() => { setObjects(objects.filter(o => o.id !== selectedObj.id)); setSelectedId(null); }} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded font-bold hover:bg-red-100">Delete</button>
+        <button onClick={() => { commitHistory(); setObjects(objects.filter(o => o.id !== selectedObj.id)); setSelectedId(null); renumberLetters(); }} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded font-bold hover:bg-red-100">Delete</button>
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -699,7 +826,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
             <button onClick={() => { initialZoomRef.current = zoom; setIsFullScreen(true); }} className="text-xs bg-slate-800 text-white border border-slate-800 px-3 py-1.5 rounded-lg font-bold hover:bg-slate-700 flex items-center gap-1">
               🔍 Full Screen
             </button>
-            <button onClick={() => { if(window.confirm('Clear the entire canvas?')) { setObjects([]); setSelectedId(null); } }} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded font-bold hover:bg-red-100">Clear Canvas</button>
+            <button onClick={() => { if(window.confirm('Clear the entire canvas?')) { commitHistory(); setObjects([]); setSelectedId(null); } }} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded font-bold hover:bg-red-100">Clear Canvas</button>
           </div>
         </div>
 
@@ -717,21 +844,22 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
           <label className="text-[10px] font-bold text-slate-500 flex flex-col">Grid Rows
             <input type="number" min="1" max="20" value={gridRows} onChange={e => setGridRows(Number(e.target.value))} className="border rounded p-1 text-xs w-16" />
           </label>
-          <label className="text-[10px] font-bold text-slate-500 flex flex-col flex-1 min-w-[220px]">Global caption (bottom of the figure)
-            <input type="text" value={globalCaption} onChange={e => setGlobalCaption(e.target.value)} placeholder="e.g. Figure 1 — ¹H NMR of compound X" className="border rounded p-1 text-xs" />
+          <label className="text-[10px] font-bold text-slate-500 flex flex-col flex-1 min-w-[220px]">Global caption (click to edit — merges the object sub-captions)
+            <span className="border border-slate-200 rounded p-1 text-xs bg-slate-50 text-slate-600 truncate hover:border-blue-400 hover:bg-blue-50 cursor-text" title={effectiveGlobalCaption} onClick={() => { setSelectedId(null); setEditingCaption(true); }}>{effectiveGlobalCaption || 'Merges the object sub-captions (A: …, B: …)'}</span>
           </label>
           <button onClick={addObject} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">+ Add Object</button>
+          <button onClick={undo} disabled={!undoStack.current.length || histTick < 0} className="bg-slate-100 border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-200 disabled:opacity-40" title="Undo last change (Ctrl+Z)">↩ Undo</button>
           <button onClick={() => selectedId && zoomToObject(selectedId)} disabled={!selectedId} title={selectedId ? 'Zoom fullscreen on the selected object' : 'Select an object first'}
             className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold px-3 py-1.5 rounded-lg text-xs">⛶ Zoom Object</button>
           <button onClick={exportPng} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">Export PNG (300 DPI)</button>
-          <button onClick={() => { setInsertTarget({ projectId: projectId || (allProjects[0] && allProjects[0].id) || '', section: 'background', caption: globalCaption || '' }); setInsertMsg(''); setInsertOpen(true); }}
+          <button onClick={() => { setInsertTarget({ projectId: projectId || (allProjects[0] && allProjects[0].id) || '', section: 'background' }); setInsertMsg(''); setInsertOpen(true); }}
             className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">📤 Insert into project…</button>
         </div>
 
         {/* SVG Canvas (Normal View) */}
         <div className="border border-slate-300 rounded-lg bg-slate-100 p-2 flex justify-center overflow-auto">
           <div style={{ width: '100%', maxWidth: '800px', aspectRatio: `${canvasW} / ${canvasH + captionH}` }} className="bg-white shadow-md">
-            {renderSvg()}
+            {renderSvg(svgRef)}
           </div>
         </div>
 
@@ -740,8 +868,8 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
       </div>
 
       {/* Inline text editor — type directly on the canvas at the placed position */}
-      {editingText && svgRef.current && (() => {
-        const r = svgRef.current.getBoundingClientRect();
+      {editingText && activeSvgEl() && (() => {
+        const r = activeSvgEl().getBoundingClientRect();
         const x = r.left + (editingText.mmX / canvasW) * r.width;
         const y = r.top + (editingText.mmY / (canvasH + captionH)) * r.height;
         return (
@@ -752,6 +880,24 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
             onBlur={stopEditing}
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') stopEditing(); }}
             style={{ position: 'fixed', left: x, top: y - 18, zIndex: 999999, minWidth: 140, fontSize: 14 }}
+            className="border-2 border-blue-500 rounded px-1.5 py-0.5 outline-none bg-white shadow-lg"
+          />
+        );
+      })()}
+
+      {/* Inline caption editor — write the figure caption directly at the bottom */}
+      {editingCaption && activeSvgEl() && (() => {
+        const r = activeSvgEl().getBoundingClientRect();
+        const y = r.top + ((canvasH + captionH - 4) / (canvasH + captionH)) * r.height;
+        return (
+          <input
+            value={globalCaption}
+            autoFocus
+            placeholder={autoGlobalCaption || 'Type the figure caption here…'}
+            onChange={(e) => setGlobalCaption(e.target.value)}
+            onBlur={() => setEditingCaption(false)}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') setEditingCaption(false); }}
+            style={{ position: 'fixed', left: r.left + r.width * 0.08, top: y - 20, width: r.width * 0.84, zIndex: 999999, fontSize: 14 }}
             className="border-2 border-blue-500 rounded px-1.5 py-0.5 outline-none bg-white shadow-lg"
           />
         );
@@ -797,6 +943,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
 
               <div className="flex gap-2">
                  <button onClick={addObject} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">+ Add Object</button>
+                 <button onClick={undo} disabled={!undoStack.current.length || histTick < 0} className="bg-slate-100 border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-200 disabled:opacity-40" title="Undo last change (Ctrl+Z)">↩ Undo</button>
                  <button onClick={exportPng} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">Export PNG</button>
               </div>
             </div>
@@ -816,7 +963,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
               }}
               className="shadow-2xl bg-white"
             >
-              {renderSvg()}
+              {renderSvg(svgFsRef)}
             </div>
           </div>
 
@@ -901,9 +1048,8 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
                 <option value="conclusions">Conclusions</option>
               </select>
             </label>
-            <label className="text-[10px] font-bold text-slate-500 flex flex-col gap-1">Caption
-              <input type="text" value={insertTarget.caption} onChange={(e) => setInsertTarget({ ...insertTarget, caption: e.target.value })}
-                placeholder={globalCaption || 'e.g. Figure 1 — ...'} className="border border-slate-300 rounded px-2 py-1.5 text-xs bg-white" />
+            <label className="text-[10px] font-bold text-slate-500 flex flex-col gap-1">Caption (written at the bottom of the image)
+              <span className="border border-slate-200 rounded px-2 py-1.5 text-xs bg-slate-50 text-slate-600">{effectiveGlobalCaption || '— click the caption at the bottom of the canvas to write it —'}</span>
             </label>
             {insertMsg && <p className={`text-xs font-bold ${insertMsg.startsWith('✅') ? 'text-green-600' : 'text-red-500'}`}>{insertMsg}</p>}
             <div className="flex justify-end gap-2">
@@ -922,7 +1068,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
                   prj.figures[sec].push({
                     id: genProjectId(),
                     url: dataUrl,
-                    caption: insertTarget.caption || globalCaption || `Image Builder composition (${new Date().toLocaleDateString()})`,
+                    caption: effectiveGlobalCaption || `Image Builder composition (${new Date().toLocaleDateString()})`,
                     addedAt: new Date().toISOString(),
                     source: 'image-builder'
                   });
