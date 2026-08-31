@@ -857,11 +857,13 @@ const mainMolRef = useRef(mainMol);
 mainMolRef.current = mainMol;
 const [mainPos, setMainPos] = useState([0, 0, 0]); // main structure translation (Å), settable via Move X/Y/Z or ✋ Drag
 // "Standardize docking" mode: every docking result (cluster/pose) is rendered
-// with the same ROLE-BASED style — protein → ribbon, small molecule / ligand →
-// ball+stick — so all solutions look consistent regardless of which is active.
+// with the SAME ROLE-BASED style — the exact styles captured from the viewer at
+// the moment "🧬 Docking" is switched ON (protein style + ligand style), so all
+// solutions look consistent regardless of which is active.
 const [dockStyleMode, setDockStyleMode] = useState(false);
 const dockStyleRef = useRef(dockStyleMode);
 dockStyleRef.current = dockStyleMode;
+const dockRoleStylesRef = useRef({ protein: 'ribbon', ligand: 'ball+stick' }); // captured at toggle-ON
 const [residueTicks, setResidueTicks] = useState([]); // [{ resno, resname, code, chainid }] — sequence strip above the 3D view
 const extraCompsRef = useRef([]);                  // [{ id, name, comp, baseReps, style, color }]
 // Files chosen as "additional molecules" that must wait until the MAIN structure
@@ -1502,17 +1504,99 @@ const applyCurrentStyleTo = useCallback((comp, baseReps) => {
   return next;
 }, []);
 
-// Role-based rendering for DOCKING results: the protein (receptor) is drawn as
-// a RIBBON and the small molecule / ligand (non-protein, non-water atoms) as
-// BALL+STICK — the classic docking-view look. Applied to the main structure and
-// every loaded docking cluster/pose when "🧬 Docking" is enabled, so all
-// solutions render consistently no matter which one is active. Callers are
-// responsible for removing the previous representations first.
+// ---- "🧬 Docking" role-style capture & application ---------------------------
+// Normalize a style name to the app's canonical per-molecule style tokens.
+const normStyle = (t) => {
+  const s = String(t || '').toLowerCase();
+  if (s.includes('ball')) return 'ball+stick';
+  if (s === 'stick' || s === 'sticks' || s === 'licorice') return 'sticks';
+  if (s === 'line' || s === 'lines') return 'lines';
+  if (s === 'sphere' || s === 'spheres' || s === 'spacefill') return 'spheres';
+  if (s === 'cartoon') return 'cartoon';
+  if (s === 'ribbon') return 'ribbon';
+  if (s === 'tube') return 'tube';
+  if (s === 'surface') return 'surface';
+  return '';
+};
+// App style token → NGL representation type.
+const toNglType = (t) => (t === 'spheres' ? 'spacefill' : t === 'sticks' ? 'stick' : t === 'lines' ? 'line' : t);
+
+// Classify a selection expression as covering the protein / the ligand parts.
+const classifySele = (comp, sele) => {
+  if (!comp || !comp.structure) return { protein: false, ligand: false };
+  const s = String(sele || '').trim().toLowerCase();
+  if (!s || s === 'all') return { protein: true, ligand: true };
+  if (/protein/.test(s)) return { protein: true, ligand: false };
+  if (/hetero|not protein|ligand/.test(s)) return { protein: false, ligand: true };
+  // Custom expression (chain / residue / resn …) — classify by the actual atoms.
+  try {
+    const set = comp.structure.getAtomSet(sele);
+    if (!set || typeof set.intersects !== 'function') return { protein: false, ligand: false };
+    const protSet = comp.structure.getAtomSet('protein');
+    const ligSet = comp.structure.getAtomSet('hetero and not water');
+    return {
+      protein: !!(protSet && protSet.count > 0 && set.intersects(protSet)),
+      ligand: !!(ligSet && ligSet.count > 0 && set.intersects(ligSet))
+    };
+  } catch { return { protein: false, ligand: false }; }
+};
+
+// Capture the style currently VISIBLE in the viewer for the PROTEIN part and the
+// LIGAND (non-protein) part of the active molecule — i.e. "what you see is what
+// gets copied" when the user switches "🧬 Docking" on:
+//   1. the per-molecule override (or the global Backbone / Molecule style for
+//      the main's default role-based rendering), then
+//   2. any PyMOL / Selections panel representations on the main that are shown
+//      ON TOP of the base reps (their last-toggled style wins per role).
+const captureDockRoleStyles = (comp) => {
+  const fallback = { protein: 'ribbon', ligand: 'ball+stick' };
+  if (!comp || !comp.structure) return fallback;
+  let proteinStyle = null, ligandStyle = null;
+  if (comp === componentRef.current) {
+    const st = mainMolRef.current || {};
+    if (st.style && st.style !== 'auto') { proteinStyle = st.style; ligandStyle = st.style; }
+    else { proteinStyle = backboneStyleRef.current || 'cartoon'; ligandStyle = moleculeStyleRef.current || 'ball+stick'; }
+  } else {
+    const entry = extraCompsRef.current.find((x) => x.comp === comp);
+    if (entry && entry.style && entry.style !== 'auto') { proteinStyle = entry.style; ligandStyle = entry.style; }
+    else { proteinStyle = backboneStyleRef.current || 'cartoon'; ligandStyle = moleculeStyleRef.current || 'ball+stick'; }
+  }
+  // PyMOL / Selections panel overrides (they live on the MAIN component).
+  if (comp === componentRef.current) {
+    try {
+      (selections || []).forEach((sel) => {
+        const sty = selStylesRef.current[sel.name] || {};
+        if (sty.hidden) return;
+        const flags = ['cartoon', 'ribbon', 'tube', 'ball', 'stick', 'sphere', 'surface'].filter((f) => sty[f]);
+        if (!flags.length) return;
+        const repType = normStyle(flags[flags.length - 1]); // last toggled = drawn on top
+        const cls = classifySele(comp, sel.expr);
+        if (cls.protein && repType) proteinStyle = repType;
+        if (cls.ligand && repType) ligandStyle = repType;
+      });
+    } catch { /* best-effort */ }
+  }
+  return {
+    protein: normStyle(proteinStyle) || fallback.protein,
+    ligand: normStyle(ligandStyle) || fallback.ligand
+  };
+};
+
+// Apply the CAPTURED role styles to a docking molecule: the protein part uses
+// the captured protein style, the ligand (non-protein, non-water) part the
+// captured ligand style. Callers remove the previous representations first.
 const applyDockRoleStyle = (comp) => {
   if (!comp || !comp.structure) return [];
+  const st = dockRoleStylesRef.current || {};
+  const proteinType = normStyle(st.protein) || 'ribbon';
+  const ligandType = normStyle(st.ligand) || 'ball+stick';
+  const paramsFor = (t) => (t === 'ball+stick' ? { multipleBond: true, aspectRatio: 1.3 }
+    : t === 'sticks' ? { multipleBond: true }
+    : t === 'spheres' ? { scale: 0.6 }
+    : {});
   const reps = [];
-  try { reps.push(comp.addRepresentation('ribbon', { sele: 'protein' })); } catch {}
-  try { reps.push(comp.addRepresentation('ball+stick', { sele: 'hetero and not water', multipleBond: true, aspectRatio: 1.3 })); } catch {}
+  try { reps.push(comp.addRepresentation(toNglType(proteinType), { sele: 'protein', ...paramsFor(proteinType) })); } catch {}
+  try { reps.push(comp.addRepresentation(toNglType(ligandType), { sele: 'hetero and not water', ...paramsFor(ligandType) })); } catch {}
   return reps;
 };
 
@@ -2340,9 +2424,23 @@ useEffect(() => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [mainMol, status, hideAll, pymolActive, sstrucColors]);
 
+// Switch "🧬 Docking" ON by first CAPTURING the style currently visible in the
+// viewer (protein part + ligand part of the active molecule), then apply that
+// exact role-based look to every docking result. Switching OFF restores each
+// molecule's own style.
+const toggleDockStyle = () => {
+  if (!dockStyleMode) {
+    const comp = selectedMolKey === 'main'
+      ? componentRef.current
+      : (extraCompsRef.current.find((x) => x.id === selectedMolKey) || {}).comp;
+    dockRoleStylesRef.current = captureDockRoleStyles(comp || componentRef.current);
+  }
+  setDockStyleMode((v) => !v);
+};
+
 // Toggle the "🧬 Docking" standard mode: when it changes, re-render the main AND
-// every loaded cluster/pose with the same role-based look (protein ribbon +
-// ligand ball+stick). Toggling off restores each molecule's own style.
+// every loaded cluster/pose with the same role-based look (the styles captured
+// at switch-ON). Toggling off restores each molecule's own style.
 const prevDockStyleRef = useRef(dockStyleMode);
 useEffect(() => {
   if (prevDockStyleRef.current === dockStyleMode) return;
@@ -3925,9 +4023,9 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
           className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50"
           title="Apply the ACTIVE (selected) structure's style / colour / transparency to every other molecule — handy for a series of docked structures that should all look the same">
           🎨 Copy</button>
-        <button type="button" onClick={() => setDockStyleMode((v) => !v)}
+        <button type="button" onClick={toggleDockStyle}
           className={`px-1.5 py-0.5 text-[9px] font-bold rounded border transition-colors ${dockStyleMode ? 'bg-teal-600 text-white border-teal-600' : 'bg-white border-teal-300 text-teal-700 hover:bg-teal-50'}`}
-          title="Standardize DOCKING results: every cluster/pose (current and future) renders the PROTEIN as a ribbon and the SMALL MOLECULE / ligand as ball+stick — consistent across all solutions, regardless of which one is active. (🎨 Copy still applies the active molecule's single style.)">
+          title="Standardize DOCKING results using the EXACT style currently visible in the viewer: when switched ON, the protein part and the ligand (small molecule) part of the ACTIVE molecule are captured and applied to every cluster/pose (current and future). Switch off to restore each molecule's own style.">
           🧬 Docking: {dockStyleMode ? 'On' : 'Off'}</button>
       </span>
     </div>

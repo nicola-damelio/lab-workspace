@@ -50,6 +50,7 @@ const toEntry = (urlOrItem, label) => {
     url: item.url,                    // display thumbnail
     full: item.full || item.url,      // high-resolution copy used at export
     src: item.src || null,            // { testId, testName, elementLabel } -> link back to the original graph
+    canvasData: item.canvasData || null, // Image Builder canvas snapshot (editable) — saved/recalled canvases
     addedAt: new Date().toISOString()
   };
 };

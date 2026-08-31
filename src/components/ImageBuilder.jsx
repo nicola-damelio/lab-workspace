@@ -1,7 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   readLibrary, readProjectLibrary, moveLibraryItem,
-  renameLibraryItem, removeLibraryItem, renameProjectLibraryItem, removeProjectLibraryItem
+  renameLibraryItem, removeLibraryItem, renameProjectLibraryItem, removeProjectLibraryItem,
+  addLibraryItem, addProjectLibraryItem, makeLibraryImage
 } from '../utils/figuresLibrary';
 import { loadProjects, saveProjects, genProjectId } from './AppModules/projectsModule';
 
@@ -22,6 +24,9 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
                                     // exiting fullscreen never leaves the drag ref null
   const dragState = useRef(null);
   const fsAreaRef = useRef(null);   // fullscreen canvas area (measured for "zoom on object")
+  const textEditRef = useRef(null);  // inline free-text editor
+  const capEditRef = useRef(null);   // inline global-caption editor
+  const objCapRef = useRef(null);    // inline panel sub-caption editor
   const initialZoomRef = useRef(1.5);        // zoom when fullscreen was entered ("↩ Initial zoom")
   const initialPanRef = useRef({ x: 0, y: 0 });
   const undoStack = useRef([]);     // undo history of the canvas objects
@@ -278,6 +283,39 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // The inline editors close on a REAL click outside (mousedown), NOT on blur —
+  // an internal re-render (e.g. the caption text updating on every keystroke)
+  // must never blur/close the editor, otherwise typing a sub-caption would lose
+  // focus after the very first letter and force a re-click each time.
+  useEffect(() => {
+    if (!editingText) return;
+    const onDown = (e) => {
+      const el = textEditRef.current;
+      if (el && e.target && el !== e.target && !el.contains(e.target)) stopEditing();
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingText]);
+  useEffect(() => {
+    if (!editingCaption) return;
+    const onDown = (e) => {
+      const el = capEditRef.current;
+      if (el && e.target && el !== e.target && !el.contains(e.target)) setEditingCaption(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [editingCaption]);
+  useEffect(() => {
+    if (!editingObjCaption) return;
+    const onDown = (e) => {
+      const el = objCapRef.current;
+      if (el && e.target && el !== e.target && !el.contains(e.target)) setEditingObjCaption(null);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [editingObjCaption]);
+
   const updateObj = (patch) => {
     setObjects(prev => prev.map(o => o.id === selectedId ? { ...o, ...patch } : o));
   };
@@ -414,6 +452,52 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
     if (libraryTab === 'project') removeProjectLibraryItem(activeLibProjectId, id);
     else removeLibraryItem(id);
     setLibVersion((v) => v + 1);
+  };
+
+  // Save the WHOLE canvas (composition) as an item in the PROJECT image library.
+  // The item stores the rendered PNG (thumb + full) AND an editable snapshot of
+  // the canvas (objects / size / grid / caption) so it can be recalled later.
+  const saveCanvasToLibrary = async () => {
+    const dataUrl = await renderToDataUrl(Math.max(3, 1800 / Math.max(1, canvasW)));
+    if (!dataUrl) { window.alert('Could not render the canvas — nothing was saved.'); return; }
+    const label = window.prompt(
+      'Name this canvas — it is saved in the image library (Project tab) and can be recalled there:',
+      globalCaption && String(globalCaption).trim() ? `Figure — ${String(globalCaption).trim().slice(0, 60)}` : `Canvas ${new Date().toLocaleDateString()}`
+    );
+    if (!label || !label.trim()) return;
+    const img = await makeLibraryImage(dataUrl);
+    const item = {
+      ...img,
+      label: label.trim(),
+      canvasData: {
+        canvasW, canvasH, gridCols, gridRows, globalCaption,
+        objects: (objects || []).map(thumbnailsOf)
+      }
+    };
+    if (projectId) addProjectLibraryItem(projectId, item);
+    else addLibraryItem(item);
+    setLibVersion((v) => v + 1);
+    setLibraryTab(projectId ? 'project' : 'common');
+    setShowLibrary(true);
+  };
+
+  // Recall a saved canvas from the library: replace the current canvas with the
+  // saved snapshot (all objects, positions, captions, size and grid).
+  const restoreCanvasFromItem = (item) => {
+    if (!item || !item.canvasData) return;
+    if (!window.confirm(`Replace the current canvas with “${item.label}”?`)) return;
+    commitHistory();
+    const cd = item.canvasData;
+    if (cd.canvasW) setCanvasW(cd.canvasW);
+    if (cd.canvasH) setCanvasH(cd.canvasH);
+    if (cd.gridCols) setGridCols(cd.gridCols);
+    if (cd.gridRows) setGridRows(cd.gridRows);
+    if (cd.globalCaption !== undefined) setGlobalCaption(cd.globalCaption);
+    setObjects((cd.objects || []).map((o) => resolveObj(o)));
+    setSelectedId(null);
+    setEditingObjCaption(null);
+    setEditingCaption(false);
+    setShowLibrary(false);
   };
 
   // Open the original experiment AND scroll to the exact chart/spectrum the
@@ -1156,6 +1240,8 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
           <button onClick={() => selectedId && zoomToObject(selectedId)} disabled={!selectedId} title={selectedId ? 'Zoom fullscreen on the selected object' : 'Select an object first'}
             className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold px-3 py-1.5 rounded-lg text-xs">⛶ Zoom Object</button>
           <button onClick={exportPng} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">Export PNG (300 DPI)</button>
+          <button onClick={saveCanvasToLibrary} title="Save the whole canvas into the image library (Project tab) — you can recall it there later"
+            className="bg-amber-500 hover:bg-amber-600 text-white font-bold px-3 py-1.5 rounded-lg text-xs">💾 Save canvas</button>
           <button onClick={() => { setInsertTarget({ projectId: projectId || (allProjects[0] && allProjects[0].id) || '', section: 'background' }); setInsertMsg(''); setInsertOpen(true); }}
             className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">📤 Insert into project…</button>
         </div>
@@ -1176,16 +1262,17 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
         const r = activeSvgEl().getBoundingClientRect();
         const x = r.left + (editingText.mmX / canvasW) * r.width;
         const y = r.top + (editingText.mmY / (canvasH + captionH)) * r.height;
-        return (
+        return createPortal(
           <input
+            ref={textEditRef}
             value={editingText.value}
             autoFocus
             onChange={(e) => setTextValue(editingText.objId, editingText.txId, e.target.value)}
-            onBlur={stopEditing}
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') stopEditing(); }}
             style={{ position: 'fixed', left: x, top: y - 18, zIndex: 999999, minWidth: 140, fontSize: 14 }}
             className="border-2 border-blue-500 rounded px-1.5 py-0.5 outline-none bg-white shadow-lg"
-          />
+          />,
+          document.body
         );
       })()}
 
@@ -1193,22 +1280,24 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
       {editingCaption && activeSvgEl() && (() => {
         const r = activeSvgEl().getBoundingClientRect();
         const y = r.top + ((canvasH + captionH - 4) / (canvasH + captionH)) * r.height;
-        return (
+        return createPortal(
           <input
+            ref={capEditRef}
             value={globalCaption}
             autoFocus
             placeholder={autoGlobalCaption || 'Type the figure caption here…'}
             onChange={(e) => setGlobalCaption(e.target.value)}
-            onBlur={() => setEditingCaption(false)}
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') setEditingCaption(false); }}
             style={{ position: 'fixed', left: r.left + r.width * 0.08, top: y - 20, width: r.width * 0.84, zIndex: 999999, fontSize: 14 }}
             className="border-2 border-blue-500 rounded px-1.5 py-0.5 outline-none bg-white shadow-lg"
-          />
+          />,
+          document.body
         );
       })()}
 
       {/* Inline PANEL sub-caption editor — click a panel's caption on the canvas
-          to write its sub-caption comfortably in a floating textarea. */}
+          to write its sub-caption comfortably in a floating textarea. Closes on
+          Enter / Escape or a real click outside — never on an internal re-render. */}
       {editingObjCaption && activeSvgEl() && (() => {
         const obj = objects.find(o => o.id === editingObjCaption);
         if (!obj) return null;
@@ -1217,18 +1306,19 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
         const yMm = (obj.y * cellH) + (obj.h * cellH) - 2;
         const left = r.left + (xMm / canvasW) * r.width;
         const top = r.top + (yMm / (canvasH + captionH)) * r.height;
-        return (
+        return createPortal(
           <textarea
+            ref={objCapRef}
             value={obj.caption || ''}
             autoFocus
             rows={2}
             placeholder={`Sub-caption for panel ${obj.letter || '?'}`}
             onChange={(e) => setObjCaption(obj.id, e.target.value)}
-            onBlur={() => setEditingObjCaption(null)}
             onKeyDown={(e) => { if (e.key === 'Escape' || (e.key === 'Enter' && !e.shiftKey)) setEditingObjCaption(null); }}
             style={{ position: 'fixed', left: Math.max(8, Math.min(window.innerWidth - 380, left - 160)), top: Math.max(8, top - 48), width: 320, zIndex: 999999, fontSize: 13 }}
             className="border-2 border-blue-500 rounded px-2 py-1 outline-none bg-white shadow-lg"
-          />
+          />,
+          document.body
         );
       })()}
 
@@ -1344,7 +1434,19 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
                 <div key={item.id} className="border rounded-lg p-2 cursor-pointer hover:border-blue-500 flex flex-col items-center hover:shadow-md transition-all" onClick={() => (pickMode === 'add' ? handleAddImage(item) : handlePickImage(item))}>
                   <img src={item.url} alt={item.label} className="w-full h-24 object-contain bg-slate-50 rounded" />
                   <span className="text-xs mt-1 truncate w-full text-center font-bold">{item.label}</span>
+                  {item.canvasData && (
+                    <span className="text-[9px] font-bold text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-1.5 py-0.5 mt-0.5" title="This library item is a saved Image Builder canvas — click ↩ Load to restore it into the editor (clicking the image still adds it as a figure)">
+                      🖼 canvas
+                    </span>
+                  )}
                   <div className="flex items-center gap-1 mt-0.5 flex-wrap justify-center">
+                    {item.canvasData && (
+                      <button type="button" onClick={(e) => { e.stopPropagation(); restoreCanvasFromItem(item); }}
+                        className="text-[9px] font-bold text-amber-700 hover:text-amber-900 border border-amber-300 rounded px-1.5 py-0.5 hover:bg-amber-50"
+                        title="Load this saved canvas into the editor (replaces the current canvas)">
+                        ↩ Load
+                      </button>
+                    )}
                     <button type="button" onClick={(e) => { e.stopPropagation(); renameLib(item.id); }}
                       className="text-[9px] font-bold text-slate-500 hover:text-blue-600 border border-slate-200 rounded px-1.5 py-0.5 hover:border-blue-300" title="Rename this image">✎</button>
                     <button type="button" onClick={(e) => { e.stopPropagation(); deleteLib(item.id); }}
