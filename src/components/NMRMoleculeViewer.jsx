@@ -856,6 +856,12 @@ const [mainMol, setMainMol] = useState({ style: 'auto', color: '', colorMode: 'e
 const mainMolRef = useRef(mainMol);
 mainMolRef.current = mainMol;
 const [mainPos, setMainPos] = useState([0, 0, 0]); // main structure translation (Å), settable via Move X/Y/Z or ✋ Drag
+// "Standardize docking" mode: every docking result (cluster/pose) is rendered
+// with the same ROLE-BASED style — protein → ribbon, small molecule / ligand →
+// ball+stick — so all solutions look consistent regardless of which is active.
+const [dockStyleMode, setDockStyleMode] = useState(false);
+const dockStyleRef = useRef(dockStyleMode);
+dockStyleRef.current = dockStyleMode;
 const [residueTicks, setResidueTicks] = useState([]); // [{ resno, resname, code, chainid }] — sequence strip above the 3D view
 const extraCompsRef = useRef([]);                  // [{ id, name, comp, baseReps, style, color }]
 // Files chosen as "additional molecules" that must wait until the MAIN structure
@@ -1496,6 +1502,20 @@ const applyCurrentStyleTo = useCallback((comp, baseReps) => {
   return next;
 }, []);
 
+// Role-based rendering for DOCKING results: the protein (receptor) is drawn as
+// a RIBBON and the small molecule / ligand (non-protein, non-water atoms) as
+// BALL+STICK — the classic docking-view look. Applied to the main structure and
+// every loaded docking cluster/pose when "🧬 Docking" is enabled, so all
+// solutions render consistently no matter which one is active. Callers are
+// responsible for removing the previous representations first.
+const applyDockRoleStyle = (comp) => {
+  if (!comp || !comp.structure) return [];
+  const reps = [];
+  try { reps.push(comp.addRepresentation('ribbon', { sele: 'protein' })); } catch {}
+  try { reps.push(comp.addRepresentation('ball+stick', { sele: 'hetero and not water', multipleBond: true, aspectRatio: 1.3 })); } catch {}
+  return reps;
+};
+
 // Build the MAIN structure's base representations, honouring the per-molecule
 // override (Molecules bar → Main controls). "auto" = the classic global
 // Backbone / Molecule Style rendering (addDefaultReps, incl. the large-system
@@ -1508,6 +1528,12 @@ const buildMainReps = () => {
   if (!comp || !comp.structure) return;
   baseCompsRef.current.forEach((r) => { try { comp.removeRepresentation(r); } catch {} });
   baseCompsRef.current = [];
+  // "🧬 Docking" standard mode: the main docking result gets the same
+  // role-based look as every other cluster/pose (protein ribbon + ligand ball+stick).
+  if (dockStyleRef.current) {
+    baseCompsRef.current = applyDockRoleStyle(comp);
+    return;
+  }
   const st = mainMolRef.current || {};
   if (!st.style || st.style === 'auto') {
     addDefaultReps(comp);
@@ -1526,6 +1552,7 @@ const buildMainReps = () => {
   };
   try {
     if (st.style === 'cartoon') add('cartoon');
+    else if (st.style === 'ribbon') add('ribbon');
     else if (st.style === 'ball+stick') add('ball+stick', { multipleBond: true, aspectRatio: 1.3 });
     else if (st.style === 'sticks') add('stick', { multipleBond: true });
     else if (st.style === 'lines') add('line');
@@ -2313,6 +2340,22 @@ useEffect(() => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [mainMol, status, hideAll, pymolActive, sstrucColors]);
 
+// Toggle the "🧬 Docking" standard mode: when it changes, re-render the main AND
+// every loaded cluster/pose with the same role-based look (protein ribbon +
+// ligand ball+stick). Toggling off restores each molecule's own style.
+const prevDockStyleRef = useRef(dockStyleMode);
+useEffect(() => {
+  if (prevDockStyleRef.current === dockStyleMode) return;
+  prevDockStyleRef.current = dockStyleMode;
+  if (status !== 'ready' || hideAll || pymolActive || !componentRef.current) return;
+  buildMainReps();
+  extraCompsRef.current.forEach((entry) => {
+    if (entry && entry.comp) restyleExtraMol(entry.id);
+  });
+  try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [dockStyleMode]);
+
 // Background colour + quality ("ray shadows" approximation)
 useEffect(() => {
   const stage = stageRef.current;
@@ -2670,8 +2713,9 @@ try {
   if (!stage) return;
   const comp = await stage.loadFile(file);
   // Style it with the CURRENT selectors (Backbone / Molecule Style) so extra
-  // molecules follow the user's choices and never look like a gray blob.
-  const baseReps = applyCurrentStyleTo(comp, []);
+  // molecules follow the user's choices and never look like a gray blob. When
+  // "🧬 Docking" is on, use the standard role-based docking look instead.
+  const baseReps = dockStyleRef.current ? applyDockRoleStyle(comp) : applyCurrentStyleTo(comp, []);
   shadowRepsHook(comp);
   if (shadowOnRef.current) setMeshShadows(comp);
   const name = file.name || `Molecule ${n}`;
@@ -2703,7 +2747,11 @@ const restyleExtraMol = (id) => {
   let reps = [];
   const st = entry || {};
   const style = st.style;
-  if (!style || style === 'auto') {
+  if (dockStyleRef.current) {
+    // "🧬 Docking" standard mode: protein ribbon + ligand ball+stick, exactly
+    // like every other cluster/pose — regardless of this molecule's own style.
+    reps = applyDockRoleStyle(comp);
+  } else if (!style || style === 'auto') {
     reps = applyCurrentStyleTo(comp, []);
   } else {
     // Colouring metaphor — a NGL colorScheme, or a plain solid colour when
@@ -2717,6 +2765,7 @@ const restyleExtraMol = (id) => {
     const opts = { colorScheme, color, opacity };
     try {
       if (style === 'cartoon') reps.push(comp.addRepresentation('cartoon', { colorScheme, color, opacity }));
+      else if (style === 'ribbon') reps.push(comp.addRepresentation('ribbon', { colorScheme, color, opacity }));
       else if (style === 'ball+stick') reps.push(comp.addRepresentation('ball+stick', { ...opts, multipleBond: true, aspectRatio: 1.3 }));
       else if (style === 'sticks') reps.push(comp.addRepresentation('stick', { ...opts, multipleBond: true }));
       else if (style === 'lines') reps.push(comp.addRepresentation('line', { ...opts }));
@@ -3041,7 +3090,7 @@ const loadExtraStructureUrl = useCallback(async (rawSrc, n = 0) => {
       }
     }
     if (!comp || !comp.structure) return;
-    const baseReps = applyCurrentStyleTo(comp, []);
+    const baseReps = dockStyleRef.current ? applyDockRoleStyle(comp) : applyCurrentStyleTo(comp, []);
     shadowRepsHook(comp);
     if (shadowOnRef.current) setMeshShadows(comp);
     const s = String(rawSrc || '').trim();
@@ -3876,6 +3925,10 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
           className="px-1.5 py-0.5 text-[9px] font-bold rounded border bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50"
           title="Apply the ACTIVE (selected) structure's style / colour / transparency to every other molecule — handy for a series of docked structures that should all look the same">
           🎨 Copy</button>
+        <button type="button" onClick={() => setDockStyleMode((v) => !v)}
+          className={`px-1.5 py-0.5 text-[9px] font-bold rounded border transition-colors ${dockStyleMode ? 'bg-teal-600 text-white border-teal-600' : 'bg-white border-teal-300 text-teal-700 hover:bg-teal-50'}`}
+          title="Standardize DOCKING results: every cluster/pose (current and future) renders the PROTEIN as a ribbon and the SMALL MOLECULE / ligand as ball+stick — consistent across all solutions, regardless of which one is active. (🎨 Copy still applies the active molecule's single style.)">
+          🧬 Docking: {dockStyleMode ? 'On' : 'Off'}</button>
       </span>
     </div>
     <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1">
@@ -3893,6 +3946,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
           className="border border-slate-200 rounded text-[10px] py-0.5 px-1 w-24" title="Representation style for the main structure (Auto follows the global Backbone / Molecule Style)">
           <option value="auto">Auto</option>
           <option value="cartoon">Cartoon</option>
+          <option value="ribbon">Ribbon</option>
           <option value="ball+stick">Ball &amp; stick</option>
           <option value="sticks">Sticks</option>
           <option value="lines">Lines</option>
@@ -3951,6 +4005,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
               className="border border-slate-200 rounded text-[10px] py-0.5 px-1 w-24" title="Representation style for this structure">
               <option value="auto">Auto</option>
               <option value="cartoon">Cartoon</option>
+              <option value="ribbon">Ribbon</option>
               <option value="ball+stick">Ball &amp; stick</option>
               <option value="sticks">Sticks</option>
               <option value="lines">Lines</option>

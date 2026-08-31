@@ -128,8 +128,7 @@ const useDockingDerived = (activeTest, ctx = {}) => {
 
 // ================= SHARED: raw_input.toml BLOCK =================
 // The "Calculation input (raw_input.toml)" block — Drive link + expandable
-// parameters. Used both in the Instrumental Setup section (canonical) and in
-// the Molecular Structure section.
+// parameters. Rendered ONCE, in the Instrumental Setup section (canonical).
 const RawInputTomlBlock = ({ activeTest }) => {
   const [showRawInput, setShowRawInput] = useState(false);
   if (!activeTest || !activeTest.dockingRawInput) return null;
@@ -381,9 +380,6 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Calculation input (raw_input.toml) — also rendered in Instrumental Setup */}
-      <RawInputTomlBlock activeTest={activeTest} />
-
       {/* Molecule type selector */}
       <div className="flex flex-wrap gap-2 mb-2">
         {[
