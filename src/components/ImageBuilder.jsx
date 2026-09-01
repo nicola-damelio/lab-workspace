@@ -1326,10 +1326,10 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
       {isFullScreen && (
         <div className="fixed inset-0 z-[99999] bg-slate-100 flex flex-col">
           {/* Top Toolbar */}
-          <div className="bg-white border-b border-slate-200 px-4 py-2 flex items-center justify-between shadow-sm z-10 shrink-0">
-            <div className="flex items-center gap-4">
+          <div className="bg-white border-b border-slate-200 px-3 md:px-4 py-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 shadow-sm z-10 shrink-0">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
               <h3 className="font-bold text-slate-800">Image Builder</h3>
-              <div className="flex items-center gap-2 bg-slate-100 rounded-lg px-3 py-1.5">
+              <div className="flex flex-wrap items-center gap-2 bg-slate-100 rounded-lg px-3 py-1.5">
                 <button onClick={() => setZoom(z => Math.max(0.1, +(z - 0.1).toFixed(1)))} className="w-6 h-6 flex items-center justify-center bg-white border border-slate-300 rounded text-slate-600 hover:bg-slate-50 font-bold">-</button>
                 <input
                   type="range"
@@ -1338,7 +1338,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
                   step="0.1"
                   value={zoom}
                   onChange={e => setZoom(Number(e.target.value))}
-                  className="w-32 accent-blue-600"
+                  className="w-24 md:w-32 accent-blue-600"
                 />
                 <button onClick={() => setZoom(z => Math.min(8, +(z + 0.1).toFixed(1)))} className="w-6 h-6 flex items-center justify-center bg-white border border-slate-300 rounded text-slate-600 hover:bg-slate-50 font-bold">+</button>
                 <span className="text-xs font-bold text-slate-600 w-12 text-center">{Math.round(zoom * 100)}%</span>
@@ -1346,7 +1346,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
                 <button onClick={restoreInitialZoom} className="text-xs font-bold text-indigo-600 hover:underline ml-1" title="Zoom out to the initial zoom of this fullscreen session">↩ Initial zoom</button>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button onClick={() => (focusObjId ? recenterFocus() : centerCanvas())}
                   className="text-xs font-bold px-2.5 py-1.5 rounded-lg border border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
                   title={focusObjId ? 'Re-centre the zoomed object in the viewport' : 'Centre the canvas in the viewport'}>
@@ -1360,13 +1360,13 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
                 </div>
               </div>
 
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                  <button onClick={addObject} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">+ Add Object</button>
                  <button onClick={undo} disabled={!undoStack.current.length || histTick < 0} className="bg-slate-100 border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-200 disabled:opacity-40" title="Undo last change (Ctrl+Z)">↩ Undo</button>
                  <button onClick={exportPng} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">Export PNG</button>
               </div>
             </div>
-            <button onClick={() => { setFocusObjId(null); setIsFullScreen(false); }} className="bg-slate-800 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-slate-700 flex items-center gap-2">
+            <button onClick={() => { setFocusObjId(null); setIsFullScreen(false); }} className="shrink-0 bg-slate-800 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-slate-700 flex items-center gap-2">
               ✕ Exit Full Screen
             </button>
           </div>
@@ -1388,7 +1388,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
 
           {/* Floating Properties Panel */}
           {selectedObj && (
-            <div className="absolute top-16 right-4 bottom-4 w-80 z-20">
+            <div className="absolute right-4 bottom-4 md:top-16 md:bottom-4 w-80 z-20 max-h-[55vh] overflow-y-auto custom-scrollbar md:max-h-none md:overflow-visible">
               <PropertiesPanel isFloating />
             </div>
           )}
