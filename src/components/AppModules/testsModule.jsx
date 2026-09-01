@@ -598,7 +598,7 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 
                     </div>
 
 
-                    <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0">
+                    <div className="md:flex-1 md:overflow-y-auto md:min-h-0 custom-scrollbar">
                       {filteredTests.length === 0 ? (
                         <div className="text-center py-10 text-slate-400 italic">
                           No tests match your filters.

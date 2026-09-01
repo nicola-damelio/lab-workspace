@@ -289,7 +289,7 @@ const getProtocolImageFallback = (url) => {
                         </div>
                       )}
 
-                      <div className="flex-1 flex flex-col lg:flex-row gap-6 overflow-y-auto custom-scrollbar min-h-0">
+                      <div className="flex flex-col lg:flex-row gap-6 md:flex-1 md:overflow-y-auto md:min-h-0 custom-scrollbar">
 <div className="flex-1 flex flex-col min-h-[300px]">
   <label className="text-xs font-bold text-slate-500 uppercase mb-2">
     Protocol Description & Steps
@@ -1141,7 +1141,7 @@ const newProto = {
                       )}
                     </div>
 
-                    <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0">
+                    <div className="md:flex-1 md:overflow-y-auto md:min-h-0 custom-scrollbar">
                       {filteredProtocols.length === 0 ? (
                         <div className="text-center py-10 text-slate-400 italic">
                           No protocols match your filters.

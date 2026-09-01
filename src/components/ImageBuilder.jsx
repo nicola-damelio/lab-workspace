@@ -1372,7 +1372,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
           </div>
 
           {/* Canvas Area */}
-          <div ref={fsAreaRef} className="flex-1 overflow-auto relative bg-slate-200 p-8" onClick={() => setSelectedId(null)}>
+          <div ref={fsAreaRef} className="flex-1 min-h-0 overflow-auto relative bg-slate-200 p-8" onClick={() => setSelectedId(null)}>
             <div
               style={{
                 transform: `translate(${panX}px, ${panY}px) scale(${zoom})`,
