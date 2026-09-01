@@ -157,7 +157,7 @@ export const StorageModals = ({ storageModal, setStorageModal, storages, setStor
                                 </div>
                                 <button onClick={() => setMoveModal(null)} className="text-slate-400 hover:text-slate-600 text-2xl">&times;</button>
                             </div>
-                            <div className="p-5 flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-4">
+                            <div className="p-5 flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-4 min-h-0">
                                 <div>
                                     <label className="text-xs font-bold text-slate-500 uppercase mb-2 block">Select Target Storage</label>
                                     <select 
@@ -561,7 +561,7 @@ const printBoxLabel = () => {
     return (
         <div className="flex flex-col h-full overflow-hidden">
             {TestHeader}
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-6" onMouseUp={() => { if(boxDragState.active) setVal('boxDragState', { active: false, startR: -1, startC: -1 }); }}>
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-6 min-h-0" onMouseUp={() => { if(boxDragState.active) setVal('boxDragState', { active: false, startR: -1, startC: -1 }); }}>
                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col mb-6">
                     <label className="text-xs font-bold text-slate-600 mb-2 flex items-center gap-1"><Icon name="document" size={13} /> General Box Notes</label>
                     <RichTextEditor value={activeTest.comments || ''} onChange={val => updateActiveTest({comments: val})} placeholder="Add general box notes here..." />

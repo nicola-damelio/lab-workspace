@@ -1159,7 +1159,7 @@ const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t =>
         </div>
       </div>
 
- <div id="lab-notebook-print-area" className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50">
+ <div id="lab-notebook-print-area" className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50 min-h-0">
         {/* Global image visibility CSS — covers ALL img tags including those in HTML content */}
         <style>{`
           #notebook-report-container img { display: ${showImages ? 'block' : 'none'} !important; }

@@ -1428,7 +1428,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
                 <span className="text-[10px] font-bold text-indigo-700">Click figures to add them to this panel — the window stays open so you can add several.</span>
               )}
             </div>
-            <div className="flex-1 overflow-y-auto p-4 grid grid-cols-3 md:grid-cols-4 gap-4">
+            <div className="flex-1 overflow-y-auto p-4 grid grid-cols-3 md:grid-cols-4 gap-4 min-h-0">
               {libraryItems.length === 0 && <p className="col-span-full text-center text-slate-400 italic">No images in this library yet.</p>}
               {libraryItems.map(item => (
                 <div key={item.id} className="border rounded-lg p-2 cursor-pointer hover:border-blue-500 flex flex-col items-center hover:shadow-md transition-all" onClick={() => (pickMode === 'add' ? handleAddImage(item) : handlePickImage(item))}>

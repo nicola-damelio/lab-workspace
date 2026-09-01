@@ -211,7 +211,7 @@ export const TestsModule = ({
 
 
                 return (
-                  <div className="p-4 md:p-6 h-full flex flex-col">
+                  <div className="p-4 md:p-6 h-full flex flex-col overflow-y-auto custom-scrollbar">
                     <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-3 gap-2 border-b border-slate-200 pb-2">
                       <div>
                         <h2 className="text-lg md:text-xl font-black text-slate-800">
@@ -598,7 +598,7 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 
                     </div>
 
 
-                    <div className="flex-1 overflow-y-auto custom-scrollbar">
+                    <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0">
                       {filteredTests.length === 0 ? (
                         <div className="text-center py-10 text-slate-400 italic">
                           No tests match your filters.

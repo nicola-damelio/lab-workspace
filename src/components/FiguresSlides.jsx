@@ -1866,7 +1866,7 @@ export const FiguresSlidesSection = ({ tests = [], projectId = 'global', jumpToT
             <span className="text-xs font-bold">📊 {deck.slides[pi].title || 'Untitled slide'}</span>
             <span className="text-xs text-slate-300">{pi + 1} / {deck.slides.length}</span>
           </div>
-          <div className="flex-1 overflow-y-auto custom-scrollbar p-6 md:p-10">
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-6 md:p-10 min-h-0">
             <div className="max-w-5xl mx-auto min-h-full">
               <h2 className="font-black text-slate-800 mb-6 border-b border-slate-200 pb-3"
                 style={{ fontSize: (deck.slides[pi].titleSize || 20) * 2.4 }}>

@@ -192,7 +192,7 @@ const getProtocolImageFallback = (url) => {
 
                 if (activeProtocol) {
                   return (
-                    <div className="p-4 md:p-6 h-full flex flex-col bg-white">
+                    <div className="p-4 md:p-6 h-full flex flex-col bg-white overflow-y-auto custom-scrollbar">
                       <div className="flex flex-col md:flex-row items-start md:items-center gap-3 mb-6 border-b border-slate-100 pb-4 shrink-0">
                         <button
                           onClick={() =>
@@ -289,7 +289,7 @@ const getProtocolImageFallback = (url) => {
                         </div>
                       )}
 
-                      <div className="flex-1 flex flex-col lg:flex-row gap-6 overflow-y-auto custom-scrollbar">
+                      <div className="flex-1 flex flex-col lg:flex-row gap-6 overflow-y-auto custom-scrollbar min-h-0">
 <div className="flex-1 flex flex-col min-h-[300px]">
   <label className="text-xs font-bold text-slate-500 uppercase mb-2">
     Protocol Description & Steps
@@ -954,7 +954,7 @@ const getProtocolImageFallback = (url) => {
                 }
 
                 return (
-                  <div className="p-4 md:p-6 h-full flex flex-col">
+                  <div className="p-4 md:p-6 h-full flex flex-col overflow-y-auto custom-scrollbar">
                     <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-6 gap-4 border-b border-slate-200 pb-4">
                       <div>
                         <h2 className="text-xl md:text-2xl font-black text-slate-800">
@@ -1141,7 +1141,7 @@ const newProto = {
                       )}
                     </div>
 
-                    <div className="flex-1 overflow-y-auto custom-scrollbar">
+                    <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0">
                       {filteredProtocols.length === 0 ? (
                         <div className="text-center py-10 text-slate-400 italic">
                           No protocols match your filters.

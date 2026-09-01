@@ -1380,7 +1380,7 @@ const details = [
           image / table rendered on this test page, for import into the
           project's Export document. */}
       <ChartStarLayer rootRef={pageRef} test={t} update={update} />
-<div className="flex-1 overflow-y-auto custom-scrollbar p-4">
+<div className="flex-1 overflow-y-auto custom-scrollbar p-4 min-h-0">
         {!mandatoryBlocked && missingMandatoryRules.length > 0 && (
           <div className="mb-6 bg-red-50 border-l-4 border-red-500 p-4 rounded-r-lg shadow-sm">
             <div className="flex items-center gap-2">

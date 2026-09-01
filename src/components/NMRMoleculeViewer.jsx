@@ -4079,7 +4079,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
           🧬 Docking: {dockStyleMode ? 'On' : 'Off'}</button>
       </span>
     </div>
-    <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1">
+    <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1 min-h-0">
       <div onClick={() => autoViewMol('main')}
         className={`flex items-center gap-1.5 text-[10px] font-bold rounded px-1 py-0.5 cursor-pointer ${selectedMolKey === 'main' ? 'bg-blue-100 border border-blue-300' : 'hover:bg-blue-50'}`}
         title="Main structure — click to select & centre it">
@@ -4218,7 +4218,7 @@ className="absolute top-2 left-2 z-40 w-7 h-7 rounded-md bg-white/90 border bord
         {hideAll ? 'Show all' : '🙈 Hide all'}
       </button>
     </div>
-    <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1.5">
+    <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1.5 min-h-0">
       {selections.map((s) => {
         const st = selStyles[s.name] || {};
         const n = selectionAtomCount(s.name);

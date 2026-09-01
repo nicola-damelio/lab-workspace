@@ -2639,6 +2639,14 @@ const openDataset = (dset) => {
       showLoginGate ? ' hidden' : ''
     }`}>
 <style>{`
+        /* Mobile: 100vh extends under the browser toolbar (the bottom of fixed-height
+           pages becomes unreachable). Use the dynamic viewport height wherever the
+           layout is pinned to the screen. */
+        @supports (height: 100dvh) {
+          .h-screen { height: 100dvh !important; }
+          .min-h-screen { min-height: 100dvh !important; }
+          .max-h-screen { max-height: 100dvh !important; }
+        }
         @media print {
           @page {
             margin: 1.5cm 1.2cm;
