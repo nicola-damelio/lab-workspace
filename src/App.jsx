@@ -2581,6 +2581,15 @@ const openDataset = (dset) => {
     window.print();
   };
 
+  // With NO scientists configured the app runs in bootstrap (superuser) mode —
+  // there is nobody to log in as, so the entry gate would only show a dead-end
+  // "No scientists configured / 🔓 Enter Recovery Mode" screen. This happens on
+  // any fresh browser/device (e.g. opening the app from a phone), where the
+  // operator list lives in another browser's localStorage. In that case skip
+  // the gate entirely and open the workspace directly, matching the rest of
+  // the app, which already treats an empty operator list as bootstrap.
+  const showLoginGate = authSettings.requireLoginOnEntry && !currentUser && !recoveryBypass && operatorNames.length > 0;
+
   return (
     <Suspense fallback={<div className="flex items-center justify-center h-screen text-slate-400 text-sm">Loading…</div>}>
     <React.Fragment>
@@ -2589,7 +2598,7 @@ const openDataset = (dset) => {
          FULL-SCREEN LOGIN GATE
          Blocks everything when requireLoginOnEntry is on.
     ══════════════════════════════════════════════════════ */}
-    {authSettings.requireLoginOnEntry && !currentUser && !recoveryBypass && (
+    {showLoginGate && (
       <ScientistLoginGate
         operators={normalizeOperators(operators)}
         onLogin={(user) => {
@@ -2606,7 +2615,7 @@ const openDataset = (dset) => {
 
     {/* Main app — hidden (but preserved) while gate is shown */}
     <div className={`w-full relative flex flex-col h-screen overflow-hidden bg-slate-50${
-      authSettings.requireLoginOnEntry && !currentUser && !recoveryBypass ? ' hidden' : ''
+      showLoginGate ? ' hidden' : ''
     }`}>
 <style>{`
         @media print {
