@@ -63,6 +63,19 @@ export const SearchableSelect = ({
   const exactMatch = safeOptions.some((o) => o.label.toLowerCase() === q);
   const canAddCustom = allowCustom && q && !exactMatch;
 
+  // On small screens a downward-opening dropdown near the bottom edge is
+  // clipped by the viewport / scroll container and impossible to reach.
+  // Open upward instead whenever there is more room above than below.
+  const openUp = useMemo(() => {
+    if (!open || !ref.current) return false;
+    const rect = ref.current.getBoundingClientRect();
+    const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+    const availH = vv && vv.height ? vv.height : window.innerHeight;
+    const spaceBelow = availH - rect.bottom;
+    const spaceAbove = rect.top;
+    return spaceBelow < 260 && spaceAbove > spaceBelow;
+  }, [open]);
+
   const select = (val) => {
     onChange(val);
     setQuery('');
@@ -126,7 +139,7 @@ export const SearchableSelect = ({
       ) : null}
 
       {open && (
-        <div className="absolute z-50 mt-1 left-0 right-0 bg-white border border-slate-200 rounded-lg shadow-xl max-h-60 overflow-y-auto custom-scrollbar">
+        <div className={`absolute z-50 left-0 right-0 bg-white border border-slate-200 rounded-lg shadow-xl max-h-60 overflow-y-auto custom-scrollbar ${openUp ? 'bottom-full mb-1' : 'mt-1'}`}>
           {canAddCustom && (
             <button
               type="button"

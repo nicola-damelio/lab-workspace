@@ -948,7 +948,7 @@ const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t =>
   }, [tests, isSuperuser, currentUser, filterPrimary, filterSecondary, filterScientist, filterType, filterCompound, filterPlasmid, filterCellLine, filterProject, showAdvanced, filterSolvent, filterBuffer, filterAdditive, filterInstrument, filterProbe, filterPulseSeq, dateFrom, dateTo, bestOnly, searchQuery, sortBy]);
 
   return (
-    <div className="flex flex-col h-full w-full">
+    <div className="flex flex-col h-full w-full overflow-y-auto md:overflow-hidden custom-scrollbar">
       <div className="bg-white p-3 md:p-4 border-b border-slate-200 shadow-sm flex flex-col gap-3 no-print shrink-0">
         
         {/* TOP CONTROLS */}
@@ -1159,7 +1159,7 @@ const allScientists = useMemo(() => [...new Set([...operators, ...tests.map(t =>
         </div>
       </div>
 
- <div id="lab-notebook-print-area" className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-6 bg-slate-50 min-h-0">
+ <div id="lab-notebook-print-area" className="p-4 md:p-6 bg-slate-50 md:flex-1 md:overflow-y-auto md:min-h-0 custom-scrollbar">
         {/* Global image visibility CSS — covers ALL img tags including those in HTML content */}
         <style>{`
           #notebook-report-container img { display: ${showImages ? 'block' : 'none'} !important; }

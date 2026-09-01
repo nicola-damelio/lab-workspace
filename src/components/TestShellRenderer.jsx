@@ -97,6 +97,19 @@ export const MultiSelectDropdown = ({
   const optionsSafe = uniqueOptions(Array.isArray(options) ? options : []);
   const selectedSafe = Array.isArray(selected) ? selected : [];
 
+  // On small screens a downward-opening dropdown near the bottom edge is
+  // clipped by the viewport / scroll container. Open upward instead whenever
+  // there is more room above than below.
+  const openUp = useMemo(() => {
+    if (!open || !ref.current) return false;
+    const rect = ref.current.getBoundingClientRect();
+    const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+    const availH = vv && vv.height ? vv.height : window.innerHeight;
+    const spaceBelow = availH - rect.bottom;
+    const spaceAbove = rect.top;
+    return spaceBelow < 300 && spaceAbove > spaceBelow;
+  }, [open]);
+
   // Type-ahead: as the user types, only matching options remain.
   const q = query.trim().toLowerCase();
   const visibleOptions = q
@@ -178,7 +191,7 @@ export const MultiSelectDropdown = ({
 
       {open && (
         <div
-          className={`absolute top-full left-3 right-3 mt-1 z-50 bg-white border rounded-lg shadow-xl max-h-72 overflow-y-auto custom-scrollbar ${menuCls}`}
+          className={`absolute left-3 right-3 z-50 bg-white border rounded-lg shadow-xl max-h-72 overflow-y-auto custom-scrollbar ${menuCls} ${openUp ? 'bottom-full mb-1' : 'top-full mt-1'}`}
         >
           <div className="sticky top-0 bg-white border-b border-slate-100 p-2 z-10">
             <input
@@ -1369,7 +1382,7 @@ const details = [
     config.SimulationsSection || custom.Simulations || null;
 
   return (
-    <div ref={pageRef} className="flex flex-col h-full overflow-hidden relative">
+    <div ref={pageRef} className="flex flex-col h-full overflow-y-auto md:overflow-hidden relative custom-scrollbar">
       {TestHeader}
 
       <GlobalStopButton />
@@ -1380,7 +1393,7 @@ const details = [
           image / table rendered on this test page, for import into the
           project's Export document. */}
       <ChartStarLayer rootRef={pageRef} test={t} update={update} />
-<div className="flex-1 overflow-y-auto custom-scrollbar p-4 min-h-0">
+<div className="p-4 md:flex-1 md:overflow-y-auto md:min-h-0 custom-scrollbar">
         {!mandatoryBlocked && missingMandatoryRules.length > 0 && (
           <div className="mb-6 bg-red-50 border-l-4 border-red-500 p-4 rounded-r-lg shadow-sm">
             <div className="flex items-center gap-2">

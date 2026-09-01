@@ -15,7 +15,7 @@ export const StorageModule = ({
 }) => (
   <>
     {currentModule === 'storage' && (
-  <div className="h-full min-h-0 flex flex-col overflow-hidden bg-slate-50">
+  <div className="h-full min-h-0 flex flex-col overflow-y-auto md:overflow-hidden bg-slate-50 custom-scrollbar">
     <StorageFinder
       tests={tests}
       storages={storages}
@@ -31,7 +31,7 @@ export const StorageModule = ({
       }}
     />
 
-    <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+    <div className="md:flex-1 md:min-h-0 md:overflow-y-auto custom-scrollbar">
       <StorageList
         storages={storages}
         tests={tests}
