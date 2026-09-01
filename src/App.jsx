@@ -1238,7 +1238,12 @@ if (customType === 'dosy') {
   }, [isCloudReady, currentDatasetId, needsLogin]);
 
   useEffect(() => {
-    if (db && user) {
+    // Cloud datasets live under `artifacts/{appId}/public/data/datasets` — the
+    // "public" path is meant to be readable from any device, even BEFORE a
+    // Google sign-in, so a phone can reach the data that was synced from the
+    // desktop. Writes still require a signed-in user (the save paths below keep
+    // their `db && user` guard and fall back to localStorage otherwise).
+    if (db) {
       const collRef = db.collection(`artifacts/${appId}/public/data/datasets`);
 
       const unsubscribe = collRef.onSnapshot(
@@ -1251,11 +1256,28 @@ if (customType === 'dosy') {
 
           dsets.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
 
+          // NOT signed in: this is a read-only peek at the cloud. Keep any
+          // datasets stored locally on THIS device too (local copy wins for the
+          // same id, since that is the copy the user is actually editing).
+          if (!user) {
+            try {
+              const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
+              const local = stored ? JSON.parse(stored) : [];
+              (Array.isArray(local) ? local : []).forEach((l) => {
+                const i = dsets.findIndex((d) => d.id === l.id);
+                if (i >= 0) dsets[i] = l;
+                else dsets.push(l);
+              });
+              dsets.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+            } catch {}
+          }
+
           setDatasetsList(dsets);
           setIsCloudReady(true);
         },
         (err) => {
-          console.error('Firestore sync error:', err);
+          // Read not permitted (or offline) — fall back to this device's local data.
+          console.warn('Firestore datasets read error (using local storage):', err?.message || err);
 
           try {
             const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
@@ -1274,19 +1296,18 @@ if (customType === 'dosy') {
       return () => unsubscribe();
     }
 
-    if (!user) {
-      try {
-        const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
+    // No Firestore available — pure local mode.
+    try {
+      const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
 
-        if (stored) {
-          setDatasetsList(
-            JSON.parse(stored).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-          );
-        }
-      } catch {}
+      if (stored) {
+        setDatasetsList(
+          JSON.parse(stored).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+        );
+      }
+    } catch {}
 
-      setIsCloudReady(true);
-    }
+    setIsCloudReady(true);
   }, [user]);
 
   // ── Derived string array for backward-compatible child components ──
@@ -2912,6 +2933,20 @@ const openDataset = (dset) => {
             </div>
           )}
 
+              {/* Cloud sign-in — lets a NEW device (phone, another browser) pull
+                  the datasets that were synced from elsewhere. Without it, a fresh
+                  browser only sees its own local storage (often empty). */}
+              {!user && window.firebase && auth && (
+                <button
+                  type="button"
+                  onClick={handleManualLogin}
+                  className="mt-4 flex items-center gap-2 bg-white border border-blue-200 text-blue-700 hover:bg-blue-50 font-bold px-5 py-2.5 rounded-full shadow-sm transition-all hover:shadow-md text-sm"
+                  title="Sign in with Google so your datasets sync to / from the cloud and are reachable on every device"
+                >
+                  ☁️ Cloud sign-in to access your datasets
+                </button>
+              )}
+
               {!isCloudReady && (
                 <div className="mt-6 flex flex-col items-center gap-3">
                   <div className="w-8 h-8 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin"></div>
@@ -2998,6 +3033,12 @@ const openDataset = (dset) => {
                 <div className="text-center py-12 text-slate-400 text-md flex flex-col items-center gap-3">
                   <span className="text-4xl opacity-30">📂</span>
                   <span>No datasets found in cloud or local storage.</span>
+                  <span className="text-xs max-w-md text-slate-400 leading-relaxed">
+                    Datasets live in the browser where they were created. To reach them from this device,
+                    use “☁️ Cloud sign-in” above with the same Google account (once signed in on the other
+                    device too, they sync automatically) — or transfer a copy with “💾 Save HTML” on the
+                    other device and “📂 Load HTML File” here.
+                  </span>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
