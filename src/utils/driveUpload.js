@@ -44,13 +44,13 @@ export const getDriveToken = () => {
     if (exp && Date.now() > exp) {
       localStorage.removeItem(TOKEN_KEY);
       localStorage.removeItem(TOKEN_EXPIRY_KEY);
-      // The token died silently while the page was open — let the rest of the
-      // app know (deferred so a state update never fires while another
-      // component is rendering), otherwise the sidebar keeps showing
-      // "Connected" while every upload reports Drive is not connected.
-      try {
-        setTimeout(() => window.dispatchEvent(new CustomEvent('lab:drive-disconnected')), 0);
-      } catch { /* ignore */ }
+      // The token expired while the page was open. Google can usually issue a
+      // fresh one SILENTLY after the first consent (no password needed), so
+      // try to heal automatically and only show "disconnected" if that fails.
+      renewDriveTokenSilently().then((ok) => {
+        if (ok) notifyDriveConnected();
+        else notifyDriveDisconnected();
+      });
       return '';
     }
     return token;
@@ -58,6 +58,7 @@ export const getDriveToken = () => {
 };
 
 export const setDriveToken = (token, expiresInSec) => {
+  const hadToken = !!(() => { try { return localStorage.getItem(TOKEN_KEY); } catch { return ''; } })();
   try {
     localStorage.setItem(TOKEN_KEY, String(token || ''));
     if (expiresInSec && expiresInSec > 0) {
@@ -67,6 +68,8 @@ export const setDriveToken = (token, expiresInSec) => {
       localStorage.removeItem(TOKEN_EXPIRY_KEY);
     }
   } catch { /* ignore */ }
+  if (token && !hadToken) notifyDriveConnected();
+  scheduleAutoDriveRenew();
 };
 
 export const clearDriveToken = () => {
@@ -169,7 +172,7 @@ export const driveFetch = async (path, opts = {}) => {
   // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u001F\u007F]/.test(token)) {
     clearDriveToken();
-    try { window.dispatchEvent(new CustomEvent('lab:drive-disconnected')); } catch { /* ignore */ }
+    notifyDriveDisconnected();
     throwCode('BAD_TOKEN', 'The stored Google Drive token is invalid — reconnect Google Drive from the sidebar.');
   }
 
@@ -180,43 +183,67 @@ export const driveFetch = async (path, opts = {}) => {
   // same long timeout by default, since the bytes are streamed as the response.
   const isFileDownload = typeof path === 'string' && path.includes('alt=media');
   const { timeout: timeoutMs = isFileDownload ? 10 * 60 * 1000 : 20000, ...rest } = opts;
-  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-  const timeout = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
-  let res;
-  try {
-    res = await fetch(`https://www.googleapis.com${path}`, {
-      ...rest,
-      signal: controller ? controller.signal : undefined,
-      headers: { Authorization: `Bearer ${token}`, ...(rest.headers || {}) }
-    });
-  } catch (e) {
-    const msg = (e && e.name === 'AbortError')
-      ? 'Google Drive request timed out — check your connection and try again.'
-      : `Cannot reach Google Drive (${e && e.message ? e.message : 'network error'}). Check your internet connection, VPN/proxy or ad-blocker.`;
-    throwCode('NETWORK', msg);
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
 
-  if (res.status === 401 || res.status === 403) {
-    if (res.status === 401) {
-      // The stored token expired or was revoked: forget it and let the UI
-      // offer a fresh Google sign-in (the sidebar switches back to
-      // "Connect Drive" instead of silently failing every upload).
-      clearDriveToken();
-      try { window.dispatchEvent(new CustomEvent('lab:drive-disconnected')); } catch { /* ignore */ }
-    }
-    throwCode('TOKEN_EXPIRED', 'Drive access expired — please reconnect Google Drive.');
-  }
-  if (!res.ok) {
-    let msg = `Drive error (HTTP ${res.status})`;
+  const perform = async (tok, attempt) => {
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timeout = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    let res;
     try {
-      const j = await res.json();
-      msg = (j && j.error && j.error.message) || msg;
-    } catch { /* keep default */ }
-    throwCode('DRIVE_ERROR', msg);
-  }
-  return res;
+      res = await fetch(`https://www.googleapis.com${path}`, {
+        ...rest,
+        signal: controller ? controller.signal : undefined,
+        headers: { Authorization: `Bearer ${tok}`, ...(rest.headers || {}) }
+      });
+    } catch (e) {
+      // Transient network blip: retry ONCE (with a fresh token) before giving up.
+      if (attempt === 0) {
+        await new Promise((r) => setTimeout(r, 800));
+        const fresh = getDriveToken() || (await renewDriveTokenSilently() ? getDriveToken() : '');
+        if (fresh) return perform(fresh, 1);
+      }
+      const msg = (e && e.name === 'AbortError')
+        ? 'Google Drive request timed out — check your connection and try again.'
+        : `Cannot reach Google Drive (${e && e.message ? e.message : 'network error'}). Check your internet connection, VPN/proxy or ad-blocker.`;
+      throwCode('NETWORK', msg);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+
+    if (res.status === 401) {
+      // The token expired or was revoked server-side. Try to renew it SILENTLY
+      // and replay the request once — users should never have to reconnect
+      // manually just because the hourly token expired.
+      if (attempt === 0) {
+        clearDriveToken();
+        const ok = await renewDriveTokenSilently();
+        if (ok) {
+          notifyDriveConnected();
+          const fresh = getDriveToken();
+          if (fresh) return perform(fresh, 1);
+        }
+        notifyDriveDisconnected();
+      } else {
+        // A retry with a freshly renewed token still got 401 → permanently
+        // revoked; let the UI offer the normal reconnection.
+        notifyDriveDisconnected();
+      }
+      throwCode('TOKEN_EXPIRED', 'Drive access expired — please reconnect Google Drive.');
+    }
+    if (res.status === 403) {
+      throwCode('TOKEN_EXPIRED', 'Google Drive denied the request (scope or permissions). Please reconnect Google Drive from the sidebar.');
+    }
+    if (!res.ok) {
+      let msg = `Drive error (HTTP ${res.status})`;
+      try {
+        const j = await res.json();
+        msg = (j && j.error && j.error.message) || msg;
+      } catch { /* keep default */ }
+      throwCode('DRIVE_ERROR', msg);
+    }
+    return res;
+  };
+
+  return perform(token, 0);
 };
 
 // ── Dataset folder inside "Lab Workspace" ──────────────────────────────────
@@ -1001,6 +1028,96 @@ export const connectDriveWithGis = async () => {
     }
   });
 };
+
+
+// ── Always-connected Drive: silent token renewal ────────────────────────────
+// Google Drive access tokens expire after ~1 hour. Instead of making users
+// reconnect manually every hour, the app now:
+//   1. renews the token silently ~5 min BEFORE it expires (GIS re-uses the
+//      consent already granted — no password popup when Google can do it
+//      silently), and
+//   2. automatically retries a request once with a fresh token when Google
+//      answers 401 (expired mid-request).
+// If the browser blocks Google's silent flow (third-party cookies / ITP) the
+// manual "Connect Google Drive" button remains available, but the common cases
+// no longer interrupt anyone.
+const notifyDriveConnected = () => { try { window.dispatchEvent(new CustomEvent('lab:drive-connected')); } catch { /* ignore */ } };
+const notifyDriveDisconnected = () => { try { window.dispatchEvent(new CustomEvent('lab:drive-disconnected')); } catch { /* ignore */ } };
+
+let renewPromise = null;
+
+/** Ask Google Identity Services for a fresh Drive token WITHOUT showing the
+ *  account chooser when possible (existing consent + active session). Resolves
+ *  true when a new token was stored. */
+export const renewDriveTokenSilently = () => {
+  if (renewPromise) return renewPromise;
+  const clientId = getConfiguredDriveClientId();
+  if (!clientId) return Promise.resolve(false);
+  renewPromise = (async () => {
+    try { await loadGis(); } catch { return false; }
+    return new Promise((resolve) => {
+      let settled = false;
+      const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+      const guard = setTimeout(() => done(false), 9000); // never hang if no callback arrives
+      try {
+        const client = window.google.accounts.oauth2.initTokenClient({
+          client_id: clientId,
+          scope: 'https://www.googleapis.com/auth/drive.file',
+          callback: (resp) => {
+            clearTimeout(guard);
+            if (resp && resp.access_token) {
+              setDriveToken(resp.access_token, resp.expires_in);
+              done(true);
+            } else {
+              done(false);
+            }
+          },
+          error_callback: () => { clearTimeout(guard); done(false); }
+        });
+        client.requestAccessToken();
+      } catch { clearTimeout(guard); done(false); }
+    });
+  })().finally(() => { renewPromise = null; });
+  return renewPromise;
+};
+
+let renewTimer = null;
+let renewInterval = null;
+const scheduleAutoDriveRenew = () => {
+  try {
+    if (renewTimer) clearTimeout(renewTimer);
+    const token = localStorage.getItem(TOKEN_KEY) || '';
+    const exp = parseInt(localStorage.getItem(TOKEN_EXPIRY_KEY) || '0', 10);
+    if (!token || !exp) return;
+    const msLeft = exp - Date.now();
+    if (msLeft <= 0) return;
+    // Renew a few minutes before the token actually expires.
+    const when = Math.max(2000, msLeft - 5 * 60 * 1000);
+    renewTimer = setTimeout(() => {
+      renewDriveTokenSilently().then((ok) => { if (ok) notifyDriveConnected(); });
+    }, when);
+  } catch { /* ignore */ }
+};
+
+/** Start the background keep-alive (run once when the module loads): keeps the
+ *  token fresh across the whole session and heals it after a reload. */
+const initDriveAutoRenew = () => {
+  if (renewInterval || typeof window === 'undefined') return;
+  scheduleAutoDriveRenew();
+  renewInterval = setInterval(() => {
+    try {
+      const token = localStorage.getItem(TOKEN_KEY) || '';
+      const exp = parseInt(localStorage.getItem(TOKEN_EXPIRY_KEY) || '0', 10);
+      if (token && exp && Date.now() > exp - 6 * 60 * 1000 && Date.now() < exp) {
+        renewDriveTokenSilently().then((ok) => { if (ok) notifyDriveConnected(); });
+      }
+    } catch { /* ignore */ }
+  }, 60 * 1000);
+};
+if (typeof window !== 'undefined') {
+  try { window.addEventListener('lab:drive-connected', () => scheduleAutoDriveRenew()); } catch { /* ignore */ }
+  initDriveAutoRenew();
+}
 
 // ── File-name registry: remember what context each uploaded file was named
 //    from, so that renaming a project / test / protocol / section can rename
