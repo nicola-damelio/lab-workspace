@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   readLibrary, readProjectLibrary, moveLibraryItem,
   renameLibraryItem, removeLibraryItem, renameProjectLibraryItem, removeProjectLibraryItem,
-  addLibraryItem, addProjectLibraryItem, makeLibraryImage
+  addLibraryItem, addProjectLibraryItem, makeLibraryImage, blobToDataUrl
 } from '../utils/figuresLibrary';
 import { loadProjects, saveProjects, genProjectId } from './AppModules/projectsModule';
 
@@ -44,6 +44,8 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   const [libraryTab, setLibraryTab] = useState('project');
   const [libVersion, setLibVersion] = useState(0); // forces a re-read of the library lists after a transfer
   const [libProjectId, setLibProjectId] = useState(null); // which project's library to browse (null = the active one)
+  const [libMsg, setLibMsg] = useState('');       // transient feedback after a PC upload / transfer
+  const libFileRef = useRef(null);                // hidden <input type=file> for uploading images from the PC
   const [placeTextMode, setPlaceTextMode] = useState(false); // click on the object to add text there
   const [globalCaption, setGlobalCaption] = useState('');     // figure-wide caption at the bottom
   const [editingText, setEditingText] = useState(null);       // { objId, txId, mmX, mmY, value } — type directly on the canvas
@@ -55,6 +57,11 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
 
   const allProjects = loadProjects();
   const activeLibProjectId = libProjectId || projectId; // project library scope currently browsed
+
+  // Clear transient library feedback whenever the modal is closed.
+  useEffect(() => {
+    if (!showLibrary) setLibMsg('');
+  }, [showLibrary]);
 
   // ---- multi-figure objects -------------------------------------------------
   // Every object can hold SEVERAL figures in one lettered panel (`images[]`).
@@ -328,6 +335,13 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
 
   const handlePickImage = (item) => {
     commitHistory();
+    if (!selectedObj) {
+      // The modal was opened from the toolbar (library management / import
+      // without an object selected): keep it open and guide the user instead
+      // of silently closing with nothing placed.
+      setLibMsg('Add an object first (+ Add Object), select it, then click a library image to place it — or use ⬆ Upload from PC to store images here.');
+      return;
+    }
     // Replace mode: the object shows exactly this one figure (also clears any
     // previously-added extra figures).
     setObjects(prev => prev.map(o => o.id === selectedId ? withImages(o, [{
@@ -340,6 +354,50 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
       dx: 0, dy: 0, scale: 1
     }]) : o));
     setShowLibrary(false);
+  };
+
+  // Import image file(s) from the PC into the library currently shown in the
+  // modal — the Project library (Project tab → selected project) or the
+  // general dataset library (Dataset Library tab). A single upload with an
+  // object selected is placed immediately; otherwise the item appears in the
+  // grid so it can be clicked.
+  const handleLibUpload = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (!files.length) return;
+    const scope = libraryTab; // 'project' | 'common'
+    const imported = [];
+    for (const f of files) {
+      if (!f.type || !String(f.type).startsWith('image/')) continue;
+      try {
+        const img = await makeLibraryImage(await blobToDataUrl(f));
+        const label = (f.name || 'Image').replace(/\.[^.]+$/, '') || 'Image';
+        const item = { ...img, label, src: null };
+        // Store in exactly the library shown by the current tab: for the
+        // Project tab that is the selected project's library (including the
+        // "Current / no project" scope), for the Dataset tab the common one.
+        if (scope === 'project') addProjectLibraryItem(activeLibProjectId, item);
+        else addLibraryItem(item);
+        imported.push(item);
+      } catch (err) {
+        console.warn('Image import failed:', err);
+      }
+    }
+    if (!imported.length) {
+      window.alert('No image could be imported — please choose PNG / JPG / GIF / SVG image files from your computer.');
+      return;
+    }
+    setLibVersion((v) => v + 1);
+    const first = imported[0];
+    if (selectedObj && imported.length === 1 && first) {
+      // Place a single imported image on the selected panel right away.
+      if (pickMode === 'add') handleAddImage(first);
+      else handlePickImage(first);
+      setLibMsg('');
+    } else {
+      const scopeName = scope === 'project' ? 'project' : 'general (dataset)';
+      setLibMsg(`✅ ${imported.length} image${imported.length > 1 ? 's' : ''} added to the ${scopeName} library${selectedObj ? ' — click the thumbnail to place it' : ''}.`);
+    }
   };
 
   // Add mode: append another figure to the selected object — every figure
@@ -1242,6 +1300,9 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
           <button onClick={exportPng} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">Export PNG (300 DPI)</button>
           <button onClick={saveCanvasToLibrary} title="Save the whole canvas into the image library (Project tab) — you can recall it there later"
             className="bg-amber-500 hover:bg-amber-600 text-white font-bold px-3 py-1.5 rounded-lg text-xs">💾 Save canvas</button>
+          <button onClick={() => { setPickMode('replace'); setShowLibrary(true); }}
+            title="Open the image library — browse images or upload new ones from your computer (Project or Dataset library)"
+            className="bg-teal-600 hover:bg-teal-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">🖼 Image Library</button>
           <button onClick={() => { setInsertTarget({ projectId: projectId || (allProjects[0] && allProjects[0].id) || '', section: 'background' }); setInsertMsg(''); setInsertOpen(true); }}
             className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">📤 Insert into project…</button>
         </div>
@@ -1363,6 +1424,9 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
               <div className="flex flex-wrap gap-2">
                  <button onClick={addObject} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">+ Add Object</button>
                  <button onClick={undo} disabled={!undoStack.current.length || histTick < 0} className="bg-slate-100 border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-200 disabled:opacity-40" title="Undo last change (Ctrl+Z)">↩ Undo</button>
+                 <button onClick={() => { setPickMode('replace'); setShowLibrary(true); }}
+                   title="Open the image library — browse or upload new images from your computer"
+                   className="bg-teal-600 hover:bg-teal-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">🖼 Library</button>
                  <button onClick={exportPng} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">Export PNG</button>
               </div>
             </div>
@@ -1400,13 +1464,24 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
         <div className="fixed inset-0 bg-black/50 z-[100000] flex items-center justify-center p-4">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[80vh] flex flex-col">
             <div className="p-4 border-b flex justify-between items-center">
-              <h3 className="font-bold text-lg">Select Image — {pickMode === 'add' ? `add another figure${selectedObj && selectedObj.letter ? ` (panel ${selectedObj.letter})` : ''}` : 'replace figure'}</h3>
+              <h3 className="font-bold text-lg">{selectedObj ? `Select Image — ${pickMode === 'add' ? `add another figure${selectedObj.letter ? ` (panel ${selectedObj.letter})` : ''}` : 'replace figure'}` : 'Image Library'}</h3>
               <button onClick={() => setShowLibrary(false)}>✕</button>
             </div>
             <div className="p-4 border-b flex flex-wrap gap-3 items-center">
               <div className="flex gap-2">
-                <button className={`px-3 py-1 rounded font-bold text-xs ${libraryTab === 'project' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`} onClick={() => setLibraryTab('project')}>Project Library</button>
-                <button className={`px-3 py-1 rounded font-bold text-xs ${libraryTab === 'common' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`} onClick={() => setLibraryTab('common')}>Dataset Library</button>
+                <button className={`px-3 py-1 rounded font-bold text-xs ${libraryTab === 'project' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`} onClick={() => { setLibraryTab('project'); setLibMsg(''); }}>Project Library</button>
+                <button className={`px-3 py-1 rounded font-bold text-xs ${libraryTab === 'common' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`} onClick={() => { setLibraryTab('common'); setLibMsg(''); }}>Dataset Library</button>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => libFileRef.current && libFileRef.current.click()}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded text-xs flex items-center gap-1"
+                  title="Import image file(s) from your computer into the library currently shown (Project or Dataset)."
+                >
+                  ⬆ Upload from PC
+                </button>
+                <input ref={libFileRef} type="file" accept="image/*,.svg" multiple className="hidden" onChange={handleLibUpload} />
               </div>
               {selectedObj && (
                 <div className="flex gap-1 ml-auto" title="Replace: the selected object shows only this figure. Add: appends the figure to the selected object so several figures share one panel.">
@@ -1426,6 +1501,9 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
               )}
               {pickMode === 'add' && (
                 <span className="text-[10px] font-bold text-indigo-700">Click figures to add them to this panel — the window stays open so you can add several.</span>
+              )}
+              {libMsg && (
+                <div className="w-full text-[11px] font-bold text-emerald-700">{libMsg}</div>
               )}
             </div>
             <div className="flex-1 overflow-y-auto p-4 grid grid-cols-3 md:grid-cols-4 gap-4 min-h-0">
