@@ -160,8 +160,11 @@ export const resolveImageToDataUrl = async (src) => {
 
 // Downscale an image dataURL (maxSide in px, type/quality for the target copy).
 // SVG dataURLs are pure vectors: downscaling them into a raster canvas would
-// destroy sharpness, so they are returned untouched.
-export const downscaleImage = (dataUrl, maxSide = 3000, type = 'image/png', quality = 0.92) => {
+// destroy sharpness, so they are returned untouched. When `forceReencode` is
+// true the image is always drawn to a canvas and re-encoded with the requested
+// type/quality (used to convert fully-opaque images to compact JPEG even when
+// they are already smaller than maxSide).
+export const downscaleImage = (dataUrl, maxSide = 3000, type = 'image/png', quality = 0.92, forceReencode = false) => {
   if (typeof dataUrl === 'string' && (dataUrl.startsWith('data:image/svg+xml') || dataUrl.includes('<svg'))) {
     return Promise.resolve(dataUrl);
   }
@@ -170,8 +173,8 @@ export const downscaleImage = (dataUrl, maxSide = 3000, type = 'image/png', qual
     img.onload = () => {
       try {
         const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
-        if (scale >= 1) { resolve(dataUrl); return; }
-        const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+        if (!forceReencode && scale >= 1) { resolve(dataUrl); return; }
+        const w = Math.max(1, Math.round(img.width * scale)), h = Math.max(1, Math.round(img.height * scale));
         const c = document.createElement('canvas');
         c.width = w; c.height = h;
         c.getContext('2d').drawImage(img, 0, 0, w, h);
@@ -199,6 +202,58 @@ export const makeLibraryImage = async (dataUrl) => {
   };
 };
 
+// Detect whether a raster dataURL has any (semi-)transparent pixel, by sampling
+// a tiny downscaled copy. Transparent images must stay PNG; fully opaque ones
+// (photos, most screenshots) can be safely re-encoded as JPEG — dramatically
+// smaller in localStorage.
+const hasTransparency = (dataUrl) =>
+  new Promise((resolve) => {
+    try {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const w = Math.max(1, Math.min(72, img.naturalWidth || img.width || 1));
+          const h = Math.max(1, Math.min(72, img.naturalHeight || img.height || 1));
+          const c = document.createElement('canvas');
+          c.width = w;
+          c.height = h;
+          const ctx = c.getContext('2d', { willReadFrequently: true });
+          if (!ctx) { resolve(false); return; }
+          ctx.drawImage(img, 0, 0, w, h);
+          const px = ctx.getImageData(0, 0, w, h).data;
+          for (let i = 3; i < px.length; i += 4) {
+            if (px[i] < 250) { resolve(true); return; }
+          }
+          resolve(false);
+        } catch { resolve(false); }
+      };
+      img.onerror = () => resolve(false);
+      img.src = dataUrl;
+    } catch { resolve(false); }
+  });
+
+// Compact library entry for PC-uploaded image files. The generic
+// makeLibraryImage stores a PNG "full" copy up to 3000px, which for a normal
+// photo is several MB of base64 — it silently blows the localStorage quota and
+// the item never appears. Here photos are re-encoded as JPEG and the copies are
+// capped, so ordinary uploads always fit while logos/plots keep transparency.
+export const makeUploadImage = async (dataUrl) => {
+  const src = await resolveImageToDataUrl(dataUrl);
+  const isSvg = typeof src === 'string' && (src.startsWith('data:image/svg+xml') || src.includes('<svg'));
+  if (isSvg) {
+    return { url: src, full: src, isSvg: true };
+  }
+  const keepAlpha = await hasTransparency(src);
+  const fullType = keepAlpha ? 'image/png' : 'image/jpeg';
+  const thumbType = keepAlpha ? 'image/png' : 'image/jpeg';
+  // Opaque images are re-encoded as JPEG even when they are smaller than the
+  // cap (forceReencode) — a medium PNG screenshot can still be >1 MB.
+  return {
+    url: await downscaleImage(src, 600, thumbType, keepAlpha ? 0.9 : 0.82, !keepAlpha),
+    full: await downscaleImage(src, 2000, fullType, keepAlpha ? 0.92 : 0.85, !keepAlpha)
+  };
+};
+
 // File/Blob → dataURL (uploaded images, clipboard blobs).
 export const blobToDataUrl = (blob) =>
   new Promise((resolve, reject) => {
@@ -211,21 +266,24 @@ export const blobToDataUrl = (blob) =>
 // Upload a high-resolution figure copy to Google Drive under
 // <Lab Workspace>/<dataset>/<project>/images/ (falling back to <images> at the
 // dataset root when the figure has no project). SVG figures keep their vector
-// form; raster figures are uploaded as high-quality PNG. Returns the Drive
-// upload result or null when Drive is not connected / the source is not a
+// form; raster figures keep their actual type (PNG/JPEG/WebP…). Returns the
+// Drive upload result or null when Drive is not connected / the source is not a
 // self-contained data URL.
 export const uploadFigureToDrive = async ({ full, label = 'figure', projectName = '' }) => {
   if (!getDriveToken() || !full) return null;
   const src = String(full);
   if (src.indexOf('data:') !== 0) return null;
   try {
-    const isSvg = src.startsWith('data:image/svg+xml') || src.includes('<svg');
+    const mime = String((/^data:([^;,]+)/.exec(src) || [])[1] || '').toLowerCase();
+    const isSvg = mime === 'image/svg+xml' || src.includes('<svg');
+    const extByMime = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'image/svg+xml': 'svg' };
+    const ext = isSvg ? 'svg' : (extByMime[mime] || 'png');
     const base = sanitizeSlug(label) || 'figure';
     const ctx = { section: 'images' };
     if (projectName) ctx.project = projectName;
     return await uploadLocalFile({
-      name: `${base}.${isSvg ? 'svg' : 'png'}`,
-      mimeType: isSvg ? 'image/svg+xml' : 'image/png',
+      name: `${base}.${ext}`,
+      mimeType: isSvg ? 'image/svg+xml' : (mime || 'image/png'),
       file: dataUrlToBlob(src),
       ctx
     });
