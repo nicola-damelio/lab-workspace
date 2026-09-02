@@ -13,19 +13,105 @@ export const PROJECTS_KEY = 'labWorkspace_projects';
 
 export const genProjectId = () => `prj_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
+const normProjectName = (p) => String((p && p.name) || '').trim().toLowerCase();
+
+/** Rough "how much content does this project hold" measure — used to keep the
+ *  fullest copy when the same project (same id or same name) exists twice on a
+ *  device (e.g. an empty duplicate created on a phone next to the real one from
+ *  the PC). */
+const projectSize = (p) => {
+  try { return JSON.stringify(p).length; } catch { return 0; }
+};
+
+/** Collapse exact duplicates (same id) and same-name duplicates (different id,
+ *  e.g. the same project created once on the PC and once on a phone, each with
+ *  its own generated id). For a duplicate pair the RICHER copy is kept at the
+ *  position of the first occurrence (order is otherwise preserved). */
+const dedupeProjects = (list) => {
+  const byId = new Map();      // id -> index in out
+  const byName = new Map();    // name key -> index in out
+  const out = [];
+  const add = (p) => { out.push(p); return out.length - 1; };
+  for (const p of list) {
+    if (!p || typeof p !== 'object') continue;
+    const id = p.id;
+    const nameKey = normProjectName(p);
+    const idIdx = id ? byId.get(id) : -1;
+    const nameIdx = nameKey ? byName.get(nameKey) : -1;
+    if (idIdx >= 0) {
+      if (projectSize(p) > projectSize(out[idIdx])) out[idIdx] = p;
+      continue;
+    }
+    if (nameIdx >= 0) {
+      if (projectSize(p) > projectSize(out[nameIdx])) {
+        out[nameIdx] = p;
+        if (id) byId.set(id, nameIdx);
+      }
+      continue;
+    }
+    const idx = add(p);
+    if (id) byId.set(id, idx);
+    if (nameKey) byName.set(nameKey, idx);
+  }
+  return out;
+};
+
 export const loadProjects = () => {
   try {
     const raw = localStorage.getItem(PROJECTS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed)) return dedupeProjects(parsed);
     }
   } catch { /* ignore malformed */ }
   return [];
 };
 
 export const saveProjects = (list) => {
-  try { localStorage.setItem(PROJECTS_KEY, JSON.stringify(list)); } catch { /* ignore */ }
+  try {
+    localStorage.setItem(PROJECTS_KEY, JSON.stringify(dedupeProjects(Array.isArray(list) ? list : [])));
+  } catch { /* ignore */ }
+};
+
+/** Merge projects that arrived with a dataset payload (cloud/HTML) into this
+ *  device's project store without creating duplicates:
+ *    • same id          → the richer copy wins
+ *    • same name, diff. id → the same logical project → keep the RICHER of the
+ *      two (an empty duplicate never replaces the full project)
+ *  Projects belonging to other datasets on this device are preserved.
+ */
+export const mergeProjectsFromCloud = (payloadProjects) => {
+  const existing = loadProjects();
+  const byId = new Map();
+  const nameToId = new Map();
+  existing.forEach((p) => {
+    if (!p || !p.id) return;
+    byId.set(p.id, p);
+    const k = normProjectName(p);
+    if (k && !nameToId.has(k)) nameToId.set(k, p.id);
+  });
+  let changed = false;
+  (Array.isArray(payloadProjects) ? payloadProjects : []).forEach((p) => {
+    if (!p || !p.id) return;
+    const k = normProjectName(p);
+    const localForName = k ? nameToId.get(k) : null;
+    if (localForName && localForName !== p.id) {
+      const localCopy = byId.get(localForName);
+      if (localCopy && projectSize(localCopy) >= projectSize(p)) return; // local is the fuller copy — keep it
+      byId.delete(localForName);
+      nameToId.delete(k);
+    }
+    if (byId.has(p.id)) {
+      const cur = byId.get(p.id);
+      if (!cur || projectSize(p) > projectSize(cur)) byId.set(p.id, p);
+      changed = true;
+      return;
+    }
+    byId.set(p.id, p);
+    if (k) nameToId.set(k, p.id);
+    changed = true;
+  });
+  if (changed) saveProjects(Array.from(byId.values()));
 };
 
 /** Normalize a project's authorized-people list to [{ name, permission }].

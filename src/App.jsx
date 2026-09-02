@@ -18,7 +18,7 @@ import { TestsModule } from './components/AppModules/testsModule';
 import { ProtocolsModule } from './components/AppModules/protocolsModule';
 import { ActiveTestModule } from './components/AppModules/activeTestModule';
 import { NotebookModule, CalculationsModule, PublicationsModule } from './components/AppModules/miscModules';
-import { ProjectsModule, loadProjects, saveProjects } from './components/AppModules/projectsModule';
+import { ProjectsModule, loadProjects, saveProjects, mergeProjectsFromCloud } from './components/AppModules/projectsModule';
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
 import {normalizeOperators} from './utils/auth';
 import { setActiveProjectId, readLibrary, readAllProjectLibraries, restoreLibraryFromSnapshot } from './utils/figuresLibrary';
@@ -2337,18 +2337,9 @@ const openDataset = (dset) => {
 
       // Projects are stored per-browser (localStorage). The dataset payload
       // carries them so a second device (e.g. a phone) that opens this dataset
-      // gets the same projects: same id → the payload copy wins (it is the most
-      // recent cloud state); projects belonging to other datasets on this
-      // device are preserved.
-      try {
-        const payloadProjects = Array.isArray(s.projects) ? s.projects : [];
-        if (payloadProjects.length) {
-          const byId = new Map();
-          (loadProjects() || []).forEach((p) => { if (p && p.id) byId.set(p.id, p); });
-          payloadProjects.forEach((p) => { if (p && p.id) byId.set(p.id, p); });
-          saveProjects(Array.from(byId.values()));
-        }
-      } catch (err) { console.warn('Could not restore projects from dataset:', err && err.message); }
+      // gets the same projects — deduplicated by id and by name, so the same
+      // project can never appear twice on a device.
+      try { mergeProjectsFromCloud(s.projects); } catch (err) { console.warn('Could not restore projects from dataset:', err && err.message); }
 
       setCurrentDatasetId(dset.id);
       setAppView('dataset');
