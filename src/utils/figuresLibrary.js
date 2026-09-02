@@ -1,5 +1,6 @@
-import { getDriveToken, uploadLocalFile, dataUrlToBlob } from './driveUpload';
+import { getDriveToken, uploadLocalFile, dataUrlToBlob, cloudBackendAvailable, getDriveRootName } from './driveUpload';
 import { sanitizeSlug } from './driveNaming';
+import { getCloudProvider, isNextcloudUrl, ncFetchBlob, ncUploadFile } from './nextcloud';
 
 /* =========================================================================
    src/utils/figuresLibrary.js
@@ -13,6 +14,34 @@ const LIBRARY_KEY = 'labFiguresLibrary';
 const deckKey = (projectId) => `labFiguresDeck_${projectId || 'global'}`;
 const projectLibraryKey = (projectId) => `labFiguresLib_${projectId || 'global'}`;
 
+// ---- in-memory mirrors of the figure libraries -------------------------------
+// The lists always live in memory FIRST. localStorage is only a best-effort
+// offline cache: when it is full (~5 MB, shared with the dataset payload) a
+// write throws silently, which used to make "the image is not in the library"
+// and blocks further imports. With the in-memory copy the library keeps working
+// for the session and the real images are stored on Google Drive anyway.
+let memCommon = null;
+const memProjects = new Map(); // storage key -> items
+
+const loadLS = (k) => {
+  try {
+    const arr = JSON.parse(localStorage.getItem(k));
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+};
+const saveLS = (k, items) => {
+  try { localStorage.setItem(k, JSON.stringify(items)); } catch { /* quota full — memory keeps the copy */ }
+};
+const memCommonList = () => {
+  if (memCommon === null) memCommon = loadLS(LIBRARY_KEY);
+  return memCommon;
+};
+const memProjectList = (projectId) => {
+  const k = projectLibraryKey(projectId);
+  if (!memProjects.has(k)) memProjects.set(k, loadLS(k));
+  return memProjects.get(k);
+};
+
 // ---- active project context (kept in sync by App.jsx) -----------------------
 // Lets the molecule viewer / experiment pages know which project's library an
 // exported image should go to without threading a prop through every section.
@@ -21,25 +50,30 @@ export const setActiveProjectId = (id) => { activeProjectId = id || null; };
 export const getActiveProjectId = () => activeProjectId;
 
 // ---- common (app-wide) library ----------------------------------------------
-export const readLibrary = () => {
-  try {
-    const arr = JSON.parse(localStorage.getItem(LIBRARY_KEY));
-    return Array.isArray(arr) ? arr : [];
-  } catch { return []; }
-};
+export const readLibrary = () => memCommonList();
 export const writeLibrary = (items) => {
-  try { localStorage.setItem(LIBRARY_KEY, JSON.stringify(items)); } catch { /* quota */ }
+  memCommon = Array.isArray(items) ? items : [];
+  saveLS(LIBRARY_KEY, memCommon);
 };
 
 // ---- project-scoped library ---------------------------------------------------
-export const readProjectLibrary = (projectId) => {
-  try {
-    const arr = JSON.parse(localStorage.getItem(projectLibraryKey(projectId)));
-    return Array.isArray(arr) ? arr : [];
-  } catch { return []; }
-};
+export const readProjectLibrary = (projectId) => memProjectList(projectId);
 export const writeProjectLibrary = (projectId, items) => {
-  try { localStorage.setItem(projectLibraryKey(projectId), JSON.stringify(items)); } catch { /* quota */ }
+  const k = projectLibraryKey(projectId);
+  memProjects.set(k, Array.isArray(items) ? items : []);
+  saveLS(k, memProjects.get(k));
+};
+
+// True when localStorage is currently writable (quota NOT full). Used by the
+// upload flows to tell the user whether the in-session library list will also
+// survive a reload (it always works in memory, images are on Drive either way).
+export const localStorageHealthy = () => {
+  try {
+    const k = `labProbe_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    localStorage.setItem(k, '1');
+    localStorage.removeItem(k);
+    return true;
+  } catch { return false; }
 };
 
 const toEntry = (urlOrItem, label) => {
@@ -47,10 +81,12 @@ const toEntry = (urlOrItem, label) => {
   return {
     id: uid('lib'),
     label: item.label || 'Figure',
-    url: item.url,                    // display thumbnail
-    full: item.full || item.url,      // high-resolution copy used at export
+    url: item.url,                    // display thumbnail (kept small)
+    full: item.full || item.url,      // high-resolution copy — Google Drive URL when uploaded
     src: item.src || null,            // { testId, testName, elementLabel } -> link back to the original graph
     canvasData: item.canvasData || null, // Image Builder canvas snapshot (editable) — saved/recalled canvases
+    drive: !!item.drive,              // true when a Drive copy exists
+    driveUrl: item.driveUrl || null,  // Drive web link to the stored image
     addedAt: new Date().toISOString()
   };
 };
@@ -84,7 +120,8 @@ export const moveLibraryItem = (fromScope, toScope, projectId, id) => {
 };
 
 // ---- full snapshot helpers (for HTML save / weekly Drive backups) -------------
-// Collects every project-scoped library found in localStorage as { projectId: [...] }.
+// Collects every project-scoped library as { projectId: [...] } (memory first,
+// localStorage as the fallback for scopes that were never touched in-session).
 export const readAllProjectLibraries = () => {
   const out = {};
   try {
@@ -92,10 +129,14 @@ export const readAllProjectLibraries = () => {
       const k = localStorage.key(i);
       if (k && k.startsWith('labFiguresLib_')) {
         const pid = k.slice('labFiguresLib_'.length);
-        try { out[pid] = JSON.parse(localStorage.getItem(k) || '[]'); } catch { out[pid] = []; }
+        out[pid] = memProjects.has(k) ? memProjects.get(k) : loadLS(k);
       }
     }
   } catch { /* ignore */ }
+  for (const [k, items] of memProjects) {
+    const pid = k.startsWith('labFiguresLib_') ? k.slice('labFiguresLib_'.length) : k;
+    out[pid] = items;
+  }
   return out;
 };
 // Writes a snapshot ({ common, projects }) back to localStorage (used by "Load HTML").
@@ -139,6 +180,14 @@ export const resolveImageToDataUrl = async (src) => {
   const s = String(src || '');
   if (s.startsWith('data:image/')) return s;
   if (!/^https?:\/\//i.test(s)) return s;
+  // Nextcloud files need the configured Basic auth — plain <img>/fetch would 401.
+  if (isNextcloudUrl(s)) {
+    try {
+      const blob = await ncFetchBlob(s);
+      if (blob && blob.size > 0) return await blobToDataUrl(blob);
+    } catch { /* keep the original URL */ }
+    return s;
+  }
   try {
     const fid = driveFileIdFromUrl(s);
     const token = getDriveToken();
@@ -263,22 +312,92 @@ export const blobToDataUrl = (blob) =>
     fr.readAsDataURL(blob);
   });
 
-// Upload a high-resolution figure copy to Google Drive under
+// Tiny display thumbnail (≤ 240 px) kept locally so the library grid works
+// offline and the browser storage / dataset payload stay small — the real
+// high-resolution pixels live on Google Drive.
+const figureThumb = async (dataUrl) => {
+  const keepAlpha = await hasTransparency(dataUrl);
+  const type = keepAlpha ? 'image/png' : 'image/jpeg';
+  return downscaleImage(dataUrl, 240, type, keepAlpha ? 0.9 : 0.8, !keepAlpha);
+};
+
+// Persist one figure into the image library with the REAL image on Google Drive:
+//   • dataUrl          – self-contained high-resolution source (PNG/JPEG/SVG)
+//   • scope/projectId  – 'project' → that project's library, 'common' → general
+//   • projectName      – Drive folder name used for <dataset>/<project>/images
+// Only a small local thumbnail + metadata are kept in the browser (the library
+// list is memory-first and localStorage is a best-effort cache, so even a full
+// 5 MB quota cannot block an import). Returns { entry, drive }.
+export const publishLibraryFigure = async ({ scope = 'common', projectId = null, projectName = '', dataUrl, label = 'Figure', src = null, canvasData = null }) => {
+  const srcData = await resolveImageToDataUrl(dataUrl);
+  const isSvg = typeof srcData === 'string' && (srcData.startsWith('data:image/svg+xml') || srcData.includes('<svg'));
+  // High-resolution copy (uploaded to Drive / kept as fallback): capped raster,
+  // vector SVGs stay untouched.
+  let hi = srcData;
+  if (!isSvg) {
+    const keepAlpha = await hasTransparency(srcData);
+    hi = await downscaleImage(srcData, 2400, keepAlpha ? 'image/png' : 'image/jpeg', keepAlpha ? 0.92 : 0.88, !keepAlpha);
+  }
+  let drive = null;
+  if (cloudBackendAvailable() && hi && String(hi).startsWith('data:')) {
+    drive = await uploadFigureToDrive({ full: hi, label, projectName }).catch(() => null);
+  }
+  // The app must be able to fetch the real pixels back:
+  //  • Google Drive → the driveUrl (file id is resolved with the OAuth token)
+  //  • Nextcloud   → the WebDAV URL (resolved with Basic auth); driveUrl keeps
+  //    the human "share/web" link.
+  const ncMode = getCloudProvider() === 'nextcloud';
+  const srcFull = drive && drive.id
+    ? (ncMode ? (drive.url || drive.driveUrl || hi) : (drive.driveUrl || hi))
+    : hi;
+  const humanUrl = drive && drive.id ? (drive.driveUrl || (ncMode ? srcFull : null)) : null;
+  const url = isSvg ? srcData : await figureThumb(srcData);
+  const full = isSvg ? srcData : srcFull;
+  const item = { url, full, label, src, canvasData, drive: !!drive, driveUrl: humanUrl };
+  const entry = scope === 'project'
+    ? addProjectLibraryItem(projectId, item)
+    : addLibraryItem(item);
+  return { entry, drive, driveUrl: humanUrl };
+};
+
+// Upload a high-resolution figure copy to the active cloud provider under
 // <Lab Workspace>/<dataset>/<project>/images/ (falling back to <images> at the
 // dataset root when the figure has no project). SVG figures keep their vector
 // form; raster figures keep their actual type (PNG/JPEG/WebP…). Returns the
-// Drive upload result or null when Drive is not connected / the source is not a
-// self-contained data URL.
+// upload result (Drive-like { id, name, driveUrl }) or null when the provider
+// is not available / the source is not a self-contained data URL.
 export const uploadFigureToDrive = async ({ full, label = 'figure', projectName = '' }) => {
-  if (!getDriveToken() || !full) return null;
+  if (!cloudBackendAvailable() || !full) return null;
   const src = String(full);
   if (src.indexOf('data:') !== 0) return null;
+  const mime = String((/^data:([^;,]+)/.exec(src) || [])[1] || '').toLowerCase();
+  const isSvg = mime === 'image/svg+xml' || src.includes('<svg');
+  const extByMime = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'image/svg+xml': 'svg' };
+  const ext = isSvg ? 'svg' : (extByMime[mime] || 'png');
+  const base = sanitizeSlug(label) || 'figure';
+
+  // ── Nextcloud ──────────────────────────────────────────────────────────────
+  if (getCloudProvider() === 'nextcloud') {
+    const parts = ['Lab Workspace'];
+    const ds = getDriveRootName();
+    if (ds) parts.push(sanitizeSlug(ds));
+    if (projectName) parts.push(sanitizeSlug(projectName));
+    parts.push('images');
+    try {
+      return await ncUploadFile({
+        parts,
+        name: `${base}.${ext}`,
+        mimeType: isSvg ? 'image/svg+xml' : (mime || 'image/png'),
+        file: src
+      });
+    } catch (err) {
+      console.warn('Figure → Nextcloud upload failed:', err && err.message);
+      return null;
+    }
+  }
+
+  // ── Google Drive ──────────────────────────────────────────────────────────
   try {
-    const mime = String((/^data:([^;,]+)/.exec(src) || [])[1] || '').toLowerCase();
-    const isSvg = mime === 'image/svg+xml' || src.includes('<svg');
-    const extByMime = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'image/svg+xml': 'svg' };
-    const ext = isSvg ? 'svg' : (extByMime[mime] || 'png');
-    const base = sanitizeSlug(label) || 'figure';
     const ctx = { section: 'images' };
     if (projectName) ctx.project = projectName;
     return await uploadLocalFile({

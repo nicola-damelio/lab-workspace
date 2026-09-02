@@ -17,7 +17,8 @@
    ========================================================================= */
 
 import React, { useRef, useState } from 'react';
-import { readFileAsDataURL, withExtension, uploadLocalFile, getDriveToken } from '../utils/driveUpload';
+import { readFileAsDataURL, withExtension, uploadLocalFile, cloudBackendAvailable } from '../utils/driveUpload';
+import { getCloudProvider } from '../utils/nextcloud';
 import { suggestDriveFileName, sanitizeSlug } from '../utils/driveNaming';
 
 export const DriveUploadButton = ({
@@ -74,14 +75,16 @@ export const DriveUploadButton = ({
 
       let drive = null;
       let driveError = '';
-      if (getDriveToken()) {
+      if (cloudBackendAvailable()) {
         try {
           drive = await uploadLocalFile({ name, mimeType, file, ctx: namingCtx, path });
         } catch (err) {
           drive = null;
-          driveError = err && err.message ? String(err.message) : 'unknown Drive error';
-          console.warn('Drive upload failed:', driveError);
+          driveError = err && err.message ? String(err.message) : 'unknown upload error';
+          console.warn('Cloud upload failed:', driveError);
         }
+      } else if (getCloudProvider() === 'nextcloud') {
+        driveError = 'Nextcloud is not configured — add your server, username and app password in Settings → Cloud storage.';
       } else {
         driveError = 'Google Drive is not connected.';
       }
@@ -101,7 +104,7 @@ export const DriveUploadButton = ({
         // connect/reconnect Google Drive and upload again.
         if (file.size > 3 * 1024 * 1024) {
           setStatus('error');
-          setLastDriveError('File too large to store locally — connect Google Drive and upload it again.');
+          setLastDriveError('File too large to store locally — connect your cloud storage (Google Drive or Nextcloud) and upload it again.');
           if (onError) onError(new Error('File too large to store locally'));
         } else {
           const dataUrl = await readFileAsDataURL(file);

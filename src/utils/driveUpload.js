@@ -77,6 +77,17 @@ export const clearDriveToken = () => {
 };
 const FOLDER_NAME_KEY = 'labDriveFolderName';
 import { suggestDriveFileName, sanitizeSlug, driveFolderPath } from './driveNaming';
+import { getCloudProvider, nextcloudConfigured, ncUploadFile } from './nextcloud';
+
+/** The name of the currently open dataset folder ('' when none is open). */
+export const getDriveRootName = () => driveRootName;
+
+/** True when the currently selected cloud provider is ready to accept files:
+ *  • Google Drive → an OAuth token is available
+ *  • Nextcloud → server URL + username + app password are configured
+ */
+export const cloudBackendAvailable = () =>
+  getCloudProvider() === 'nextcloud' ? nextcloudConfigured() : !!getDriveToken();
 
 /** Verify the stored token really works against the Drive API (the scope can be silently missing). */
 export const testDriveAccess = async () => {
@@ -763,6 +774,26 @@ export const moveTestFolderOutOfProject = async ({ testName, projectName }) => {
  * @returns {{ id:string, name:string, driveUrl:string }}
  */
 export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path = null }) => {
+  // ── Nextcloud provider ─────────────────────────────────────────────────────
+  // Mirror the Drive folder layout on the WebDAV tree:
+  //   <user>/Lab Workspace/<dataset>/<project>/<test>/<section>/<file>
+  // (or an explicit `path` array, exactly like Drive uploads under the dataset).
+  if (getCloudProvider() === 'nextcloud') {
+    if (!nextcloudConfigured()) return null;
+    const segments = ['Lab Workspace'];
+    if (driveRootName) segments.push(sanitizeSlug(driveRootName));
+    if (Array.isArray(path) && path.length > 0) {
+      segments.push(...path.filter(Boolean).map((s) => sanitizeSlug(String(s))));
+    } else if (ctx && typeof ctx === 'object') {
+      segments.push(...driveFolderPath(ctx));
+    }
+    try {
+      return await ncUploadFile({ parts: segments, name, mimeType, file });
+    } catch (err) {
+      console.warn('Nextcloud upload failed:', err && err.message);
+      return null;
+    }
+  }
   // Upload into the leaf folder that mirrors the app schema
   // (<project>/<test>/<section>/<instance>/… or an explicit `path` like
   // publications/<scientist>/own_publications), creating folders as needed.
@@ -1025,7 +1056,20 @@ export const archiveFileToDrive = async ({ file, ctx = {}, title = '', suffix = 
  * @returns {Promise<{id:string,name:string}|null>} the Drive file, or null on failure
  */
 export const uploadWorkspaceFile = async ({ name, mimeType, file, folder = 'backups' }) => {
-  if (!name || !file || !getDriveToken()) return null;
+  if (!name || !file) return null;
+  // Nextcloud provider — mirror Drive: Lab Workspace/<folder>/<file>.
+  if (getCloudProvider() === 'nextcloud') {
+    if (!nextcloudConfigured()) return null;
+    const segments = ['Lab Workspace', ...String(folder || 'backups').split('/').filter(Boolean).map((s) => sanitizeSlug(String(s)))];
+    try {
+      const res = await ncUploadFile({ parts: segments, name, mimeType, file });
+      return res ? { id: String(res.id), name: String(res.name || name) } : null;
+    } catch (err) {
+      console.warn('Nextcloud workspace upload failed:', err && err.message);
+      return null;
+    }
+  }
+  if (!getDriveToken()) return null;
   try {
     const workspaceId = await ensureLabWorkspaceFolder();
     if (!workspaceId) return null;

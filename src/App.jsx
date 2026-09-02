@@ -1512,6 +1512,25 @@ const saveTimeoutRef = useRef(null);
 // compressed payload would be too large, drop the heavy legacy chart images
 // (mdNotebookCharts) that no longer belong in the dataset document — the MD
 // notebook now renders its figures from persisted data / sessionStorage.
+// Deep copy that replaces oversized base64 data-URLs with '' — used for the
+// CLOUD mirror of the (per-browser) project store, so Firestore stays small and
+// a phone never receives a giant string or a broken compression marker.
+const stripOversizedDataUrls = (value) => {
+  if (typeof value === 'string') {
+    return value.startsWith('data:') && value.length > 5000 ? '' : value;
+  }
+  if (Array.isArray(value)) return value.map(stripOversizedDataUrls);
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const k of Object.keys(value)) out[k] = stripOversizedDataUrls(value[k]);
+    return out;
+  }
+  return value;
+};
+const cloudProjectsPayload = () => {
+  try { return { projects: stripOversizedDataUrls(loadProjects() || []) }; } catch { return { projects: [] }; }
+};
+
 const compressDatasetForSave = (raw) => {
   const compress = (data) => LZString.compressToUTF16(JSON.stringify(data));
   const sizeOf = (data) => compress(data).length * 3; // UTF-16 char -> max 3 UTF-8 bytes
@@ -1695,7 +1714,7 @@ useEffect(() => {
   if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
   saveTimeoutRef.current = setTimeout(async () => {
     try {
-      const rawData = latestDataRef.current;
+      const rawData = { ...latestDataRef.current, ...cloudProjectsPayload() };
       // Compress payload to prevent Firestore 1MB limit and write stream exhaustion
       const compressedPayload = compressDatasetForSave(rawData);
 
@@ -1753,6 +1772,7 @@ useEffect(() => {
       clearTimeout(saveTimeoutRef.current);
     }
   };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [
   tests, datasetTitle, datasetSubtitle, customCmpds, customCellLines,
   customConc, cmpColors, testCategories, protocolCategories, datasetProtocols,
@@ -2185,7 +2205,7 @@ const handleBackToExplorer = async () => {
     setSaveStatus('saving');
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     try {
-      const rawData = latestDataRef.current;
+      const rawData = { ...latestDataRef.current, ...cloudProjectsPayload() };
       const compressedPayload = compressDatasetForSave(rawData);
       
       const updatedPayload = {
@@ -2314,6 +2334,21 @@ const openDataset = (dset) => {
 
       setDatasetProtocols(s.datasetProtocols || []);
       setStorages(migrated.storages);
+
+      // Projects are stored per-browser (localStorage). The dataset payload
+      // carries them so a second device (e.g. a phone) that opens this dataset
+      // gets the same projects: same id → the payload copy wins (it is the most
+      // recent cloud state); projects belonging to other datasets on this
+      // device are preserved.
+      try {
+        const payloadProjects = Array.isArray(s.projects) ? s.projects : [];
+        if (payloadProjects.length) {
+          const byId = new Map();
+          (loadProjects() || []).forEach((p) => { if (p && p.id) byId.set(p.id, p); });
+          payloadProjects.forEach((p) => { if (p && p.id) byId.set(p.id, p); });
+          saveProjects(Array.from(byId.values()));
+        }
+      } catch (err) { console.warn('Could not restore projects from dataset:', err && err.message); }
 
       setCurrentDatasetId(dset.id);
       setAppView('dataset');

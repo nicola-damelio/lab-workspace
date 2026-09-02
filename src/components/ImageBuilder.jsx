@@ -3,9 +3,8 @@ import { createPortal } from 'react-dom';
 import {
   readLibrary, readProjectLibrary, moveLibraryItem,
   renameLibraryItem, removeLibraryItem, renameProjectLibraryItem, removeProjectLibraryItem,
-  addLibraryItem, addProjectLibraryItem, makeUploadImage, blobToDataUrl, uploadFigureToDrive
+  blobToDataUrl, publishLibraryFigure, resolveImageToDataUrl, localStorageHealthy
 } from '../utils/figuresLibrary';
-import { getDriveToken } from '../utils/driveUpload';
 import { loadProjects, saveProjects, genProjectId } from './AppModules/projectsModule';
 
 const ptToMm = (pt) => pt * 0.352778;
@@ -39,6 +38,9 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   const [gridRows, setGridRows] = useState(5);
   const [objects, setObjects] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
+  const [hydrateTick, setHydrateTick] = useState(0); // bumped to async-fetch Drive-backed images onto the canvas
+  const objectsRef = useRef(objects);
+  objectsRef.current = objects;
 
   const [showLibrary, setShowLibrary] = useState(false);
   const [pickMode, setPickMode] = useState('replace'); // 'replace' | 'add' — how a library click affects the selected object
@@ -104,9 +106,12 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
     };
   };
 
-  // Resolve the full-resolution copy of a library image (the canvas persists
-  // only thumbnails / libId). Searches every scope the image could live in —
-  // the project it was picked from (libProjectId), the currently-active
+  // Resolve the copy of a library image that the canvas can DISPLAY (the canvas
+  // persists only thumbnails / libId). The full-resolution pixels now live on
+  // Google Drive for Drive-backed items: use the small local thumbnail for
+  // instant display and remember the source so the async "hydrate" pass below
+  // can fetch the crisp Drive copy. Searches every scope the image could live
+  // in — the project it was picked from (libProjectId), the currently-active
   // project, then the common library.
   const resolveLibImage = (im) => {
     if (!im || !im.libId) return im;
@@ -121,7 +126,13 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
       for (const [scope, pid] of scopes) {
         const lib = scope === 'project' ? readProjectLibrary(pid) : readLibrary();
         const it = lib.find((x) => x.id === im.libId);
-        if (it) return { ...im, imgSrc: it.full || it.url, imgThumb: it.url || it.full };
+        if (it) {
+          // `full` may be a Google Drive URL (image stored on Drive): keep the
+          // local thumbnail as the display source and let the hydrate pass
+          // upgrade to the full-resolution data URL in the background.
+          const fullData = it.full && String(it.full).startsWith('data:') ? it.full : null;
+          return { ...im, imgSrc: fullData || it.url || it.full, imgThumb: it.url || it.full, _srcHint: it.full && !String(it.full).startsWith('data:') ? it.full : null };
+        }
       }
     } catch { /* keep as-is */ }
     return im;
@@ -182,6 +193,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
             if (!o.libId && !(o.images || []).some((im) => im && im.libId)) return o;
             return resolveObj(o);
           }));
+          setHydrateTick((t) => t + 1);
         }
         if (data.globalCaption !== undefined) setGlobalCaption(data.globalCaption);
         // Restore the view the user left — e.g. when returning from the original
@@ -210,6 +222,53 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
     } catch { /* localStorage may be full — the session cache above still holds the state */ }
   }, [canvasW, canvasH, gridCols, gridRows, objects, focusObjId, globalCaption, isFullScreen, storageKey]);
 
+  // Async "hydrate" pass — after objects are (re)loaded from a persisted canvas
+  // or an undo snapshot, their images may reference Google Drive (the real
+  // pixels of library figures are stored there). The small local thumbnail is
+  // shown immediately; this effect fetches the full-resolution copy from Drive
+  // (via the API token) and replaces the thumbnail so zoom/export stay crisp.
+  useEffect(() => {
+    const list = objectsRef.current || [];
+    if (!list.length) return;
+    const targets = [];
+    const seen = new Set();
+    list.forEach((o) => {
+      const imgs = getObjImages(o);
+      for (let i = 0; i < imgs.length; i++) {
+        const im = imgs[i];
+        const src = im && (im._srcHint || im.imgSrc || im.imgThumb);
+        if (!src || String(src).startsWith('data:') || seen.has(src)) continue;
+        seen.add(src);
+        targets.push({ oid: o.id, idx: i, src: String(src) });
+      }
+    });
+    if (!targets.length) return;
+    let alive = true;
+    Promise.all(targets.map(({ src }) =>
+      resolveImageToDataUrl(src).then((r) => ({ src, r })).catch(() => ({ src, r: src }))
+    )).then((results) => {
+      if (!alive) return;
+      const bySrc = new Map(results.map((x) => [x.src, x.r]));
+      const changed = targets.filter((t) => bySrc.get(t.src) && bySrc.get(t.src) !== t.src);
+      if (!changed.length) return;
+      setObjects((prev) => prev.map((o) => {
+        const imgs = getObjImages(o);
+        let any = false;
+        const next = imgs.map((im, idx) => {
+          const hit = changed.find((c) => c.oid === o.id && c.idx === idx);
+          if (!hit) return im;
+          const resolved = bySrc.get(hit.src);
+          if (!resolved) return im;
+          any = true;
+          return { ...im, imgSrc: resolved, imgThumb: im.imgThumb && String(im.imgThumb).startsWith('data:') ? im.imgThumb : resolved, _srcHint: null };
+        });
+        return any ? withImages(o, next) : o;
+      }));
+    });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrateTick]);
+
   const cellW = canvasW / gridCols;
   const cellH = canvasH / gridRows;
 
@@ -230,6 +289,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
     setObjects(prev.map(resolveObj));
     setSelectedId(null);
     setHistTick((t) => t + 1);
+    setHydrateTick((t) => t + 1);
   };
 
   // Re-assign the A, B, C panel letters by position (top→bottom, left→right)
@@ -338,7 +398,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
   // any previously-added extra figures). With keepOpen=true the window stays
   // open (used after a PC upload so the Drive/storage confirmation stays
   // visible); ordinary library clicks close it as before.
-  const handlePickImage = (item, keepOpen = false) => {
+  const handlePickImage = async (item, keepOpen = false) => {
     commitHistory();
     if (!selectedObj) {
       // The modal was opened from the toolbar (library management / import
@@ -347,9 +407,17 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
       setLibMsg('Add an object first (+ Add Object), select it, then click a library image to place it — or use ⬆ Upload from PC to store images here.');
       return;
     }
+    // Library figures are stored on Google Drive — fetch the real pixels into a
+    // dataURL (fast when it is already a dataURL) before drawing them on canvas.
+    // Offline / no token: keep the local thumbnail so the panel still shows.
+    const fullSrc = item.full || item.url;
+    const resolved = await resolveImageToDataUrl(fullSrc).catch(() => fullSrc);
+    const src = String(resolved || '').startsWith('data:')
+      ? resolved
+      : (item.url && String(item.url).startsWith('data:') ? item.url : resolved);
     setObjects(prev => prev.map(o => o.id === selectedId ? withImages(o, [{
-      imgSrc: item.full || item.url,
-      imgThumb: item.url || item.full,
+      imgSrc: src,
+      imgThumb: (item.url && String(item.url).startsWith('data:')) ? item.url : src,
       libScope: libraryTab,
       libProjectId: libraryTab === 'project' ? activeLibProjectId : null,
       libId: item.id,
@@ -361,39 +429,42 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
 
   // Import image file(s) from the PC into the library currently shown in the
   // modal — the Project library (Project tab → selected project) or the
-  // general dataset library (Dataset Library tab). Every imported image is
-  // stored locally AND mirrored to Google Drive under the same <project>/images
-  // path used by the ⭐ figure captures. A single upload with an object
-  // selected is also placed on that panel.
+  // general dataset library (Dataset Library tab). The REAL image is stored on
+  // Google Drive (only a small local preview + metadata stay in the browser).
+  // A single upload with an object selected is also placed on that panel.
   const handleLibUpload = async (e) => {
     const files = Array.from(e.target.files || []);
     e.target.value = '';
     if (!files.length) return;
     const scope = libraryTab; // 'project' | 'common'
     const scopeName = scope === 'project' ? 'project' : 'general (dataset)';
+    const driveProject = scope === 'project' && activeLibProjectId
+      ? (allProjects.find((p) => p.id === activeLibProjectId) || null)
+      : null;
+    const driveProjectName = driveProject ? String(driveProject.name || '') : '';
+    const driveFolderLabel = driveProjectName ? `${driveProjectName.trim()}/images` : 'dataset images';
     const imported = [];
     const failed = [];
+    let driveOk = 0;
     for (const f of files) {
       if (!f.type || !String(f.type).startsWith('image/')) { failed.push(f.name || 'unknown file'); continue; }
+      setLibMsg(`📤 Importing ${f.name || 'image'}…`);
       try {
-        // Compact JPEG/PNG entry — a naive 3000px-PNG copy of a photo would
-        // exceed the localStorage quota and silently never be stored.
-        const img = await makeUploadImage(await blobToDataUrl(f));
+        const dataUrl = await blobToDataUrl(f);
         const label = (f.name || 'Image').replace(/\.[^.]+$/, '') || 'Image';
-        const item = { ...img, label, src: null };
-        // Store in exactly the library shown by the current tab: for the
-        // Project tab that is the selected project's library (including the
-        // "Current / no project" scope), for the Dataset tab the common one.
-        const entry = scope === 'project'
-          ? addProjectLibraryItem(activeLibProjectId, item)
-          : addLibraryItem(item);
-        // localStorage can silently refuse writes when the quota is full:
-        // re-read the list and confirm the entry actually persisted.
-        const lib = scope === 'project' ? readProjectLibrary(activeLibProjectId) : readLibrary();
-        if (!entry || !Array.isArray(lib) || !lib.some((x) => x && x.id === entry.id)) {
-          failed.push(f.name || 'unknown file');
-          continue;
-        }
+        // publishLibraryFigure uploads the real image to Drive and keeps only a
+        // small local preview — the library list itself is memory-first, so a
+        // full localStorage quota can never block an import again.
+        const { entry, drive } = await publishLibraryFigure({
+          scope,
+          projectId: scope === 'project' ? activeLibProjectId : null,
+          projectName: driveProjectName,
+          dataUrl,
+          label,
+          src: null
+        });
+        if (!entry) { failed.push(f.name || 'unknown file'); continue; }
+        if (drive && drive.id) driveOk++;
         imported.push(entry);
       } catch (err) {
         console.warn('Image import failed:', err);
@@ -401,47 +472,13 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
       }
     }
     if (imported.length) setLibVersion((v) => v + 1);
-
-    // ── Google Drive copy ───────────────────────────────────────────────────
-    // Mirror the ⭐ figure captures: store a high-resolution copy on Drive
-    // under Lab Workspace/<dataset>/<project>/images (or <dataset>/images when
-    // the image belongs to the general/dataset library or no project).
-    let driveOk = 0;
-    let driveState = 'off'; // 'off' | 'pending' | 'ok' | 'partial' | 'fail'
-    if (imported.length && getDriveToken()) {
-      const driveProject = scope === 'project' && activeLibProjectId
-        ? (allProjects.find((p) => p.id === activeLibProjectId) || null)
-        : null;
-      const driveProjectName = driveProject ? String(driveProject.name || '') : '';
-      driveState = 'pending';
-      setLibMsg(`📤 Saving ${imported.length} image${imported.length > 1 ? 's' : ''} to Google Drive…`);
-      for (const entry of imported) {
-        try {
-          const res = await uploadFigureToDrive({ full: entry.full, label: entry.label || 'figure', projectName: driveProjectName });
-          if (res && res.id) driveOk++;
-        } catch (err) {
-          console.warn('Drive figure upload failed:', err && err.message);
-        }
-      }
-      driveState = driveOk === imported.length ? 'ok' : (driveOk > 0 ? 'partial' : 'fail');
-    } else if (imported.length) {
-      driveState = 'off';
+    if (!imported.length) {
+      const lsNote = localStorageHealthy()
+        ? ''
+        : '\n\nThe browser storage is full: connect Google Drive and retry so the image is kept there (the list also works for this session).';
+      window.alert(`⚠️ ${failed.length || files.length} image(s) could not be stored in the ${scopeName} library.${lsNote}`);
+      return;
     }
-    const driveFolderLabel = (() => {
-      const driveProject = scope === 'project' && activeLibProjectId
-        ? (allProjects.find((p) => p.id === activeLibProjectId) || null)
-        : null;
-      return driveProject && driveProject.name ? `${String(driveProject.name).trim()}/images` : 'dataset images';
-    })();
-
-    if (failed.length) {
-      window.alert(
-        `⚠️ ${failed.length} image(s) could not be stored in the ${scopeName} library.\n\n` +
-        'The image library is kept in the browser local storage, which is limited (≈5 MB). ' +
-        'Delete a few older images from the library (🗑 button) and try again, or import smaller files.'
-      );
-    }
-    if (!imported.length) return;
 
     // Place a single imported image on the selected panel, but keep the window
     // open so the storage/Drive confirmation below stays visible.
@@ -452,24 +489,30 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
     }
 
     let msg = `✅ ${imported.length} image${imported.length > 1 ? 's' : ''} stored in the ${scopeName} library`;
-    if (driveState === 'off') msg += ' · Google Drive not connected — browser copy only';
-    else if (driveState === 'ok') msg += ` · also saved on Drive (${driveFolderLabel})`;
-    else if (driveState === 'partial') msg += ` · Drive copy saved for ${driveOk} of ${imported.length}`;
-    else if (driveState === 'fail') msg += ' · Drive upload failed (browser copy kept)';
+    if (driveOk === imported.length) msg += ` · stored on your cloud (${driveFolderLabel})`;
+    else if (driveOk > 0) msg += ` · cloud copy saved for ${driveOk} of ${imported.length}`;
+    else if (!localStorageHealthy()) msg += ' · browser storage full — connect Google Drive or Nextcloud so images are kept there (the list works for this session)';
+    else msg += ' · cloud storage not connected — browser copy only';
     if (selectedObj && imported.length === 1) msg += ' · placed on the selected panel';
     else msg += ' · click a thumbnail to place it';
+    if (failed.length) msg += ` · ${failed.length} failed`;
     setLibMsg(msg);
   };
 
   // Add mode: append another figure to the selected object — every figure
   // already in the panel is kept, so several figures share one lettered panel.
-  const handleAddImage = (item) => {
+  const handleAddImage = async (item) => {
     commitHistory();
+    const fullSrc = item.full || item.url;
+    const resolved = await resolveImageToDataUrl(fullSrc).catch(() => fullSrc);
+    const src = String(resolved || '').startsWith('data:')
+      ? resolved
+      : (item.url && String(item.url).startsWith('data:') ? item.url : resolved);
     setObjects(prev => prev.map(o => {
       if (o.id !== selectedId) return o;
       return withImages(o, [...getObjImages(o), {
-        imgSrc: item.full || item.url,
-        imgThumb: item.url || item.full,
+        imgSrc: src,
+        imgThumb: (item.url && String(item.url).startsWith('data:')) ? item.url : src,
         libScope: libraryTab,
         libProjectId: libraryTab === 'project' ? activeLibProjectId : null,
         libId: item.id,
@@ -573,9 +616,11 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
     setLibVersion((v) => v + 1);
   };
 
-  // Save the WHOLE canvas (composition) as an item in the PROJECT image library.
-  // The item stores the rendered PNG (thumb + full) AND an editable snapshot of
-  // the canvas (objects / size / grid / caption) so it can be recalled later.
+  // Save the WHOLE canvas (composition) as an item in the image library (Project
+  // tab when inside a project, Dataset tab otherwise). The rendered image is
+  // uploaded to Google Drive (same <project>/images path as every other figure);
+  // only a small local preview + the editable canvas snapshot are kept in the
+  // browser, so a full localStorage quota never blocks a save.
   const saveCanvasToLibrary = async () => {
     const dataUrl = await renderToDataUrl(Math.max(3, 1800 / Math.max(1, canvasW)));
     if (!dataUrl) { window.alert('Could not render the canvas — nothing was saved.'); return; }
@@ -584,42 +629,33 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
       globalCaption && String(globalCaption).trim() ? `Figure — ${String(globalCaption).trim().slice(0, 60)}` : `Canvas ${new Date().toLocaleDateString()}`
     );
     if (!label || !label.trim()) return;
-    // Compact LOCAL copy (JPEG for the opaque canvas) so the entry fits the
-    // browser storage; the full-resolution PNG goes to Google Drive below.
-    const localImg = await makeUploadImage(dataUrl);
-    const item = {
-      ...localImg,
-      label: label.trim(),
-      canvasData: {
-        canvasW, canvasH, gridCols, gridRows, globalCaption,
-        objects: (objects || []).map(thumbnailsOf)
-      }
-    };
-    if (projectId) addProjectLibraryItem(projectId, item);
-    else addLibraryItem(item);
-    setLibVersion((v) => v + 1);
-    setLibraryTab(projectId ? 'project' : 'common');
-    setShowLibrary(true);
-
-    // ── Google Drive copy ───────────────────────────────────────────────────
-    // Mirror the ⭐ figure captures / PC uploads: archive the high-resolution
-    // PNG under Lab Workspace/<dataset>/<project>/images (or <dataset>/images
-    // when there is no project).
-    if (getDriveToken()) {
-      setLibMsg('📤 Saving canvas on Google Drive…');
-      const driveProject = projectId ? (allProjects.find((p) => p.id === projectId) || null) : null;
-      const driveProjectName = driveProject ? String(driveProject.name || '') : '';
-      try {
-        const res = await uploadFigureToDrive({ full: dataUrl, label: label.trim(), projectName: driveProjectName });
-        setLibMsg(res && res.id
-          ? `✅ Canvas saved in the image library · also on Drive (${driveProjectName ? `${driveProjectName.trim()}/images` : 'dataset images'})`
-          : '✅ Canvas saved in the image library · Drive upload failed (browser copy kept)');
-      } catch (err) {
-        console.warn('Canvas → Drive upload failed:', err && err.message);
-        setLibMsg('✅ Canvas saved in the image library · Drive upload failed (browser copy kept)');
-      }
-    } else {
-      setLibMsg('✅ Canvas saved in the image library · Google Drive not connected — browser copy only');
+    setLibMsg('📤 Saving canvas…');
+    const driveProject = projectId ? (allProjects.find((p) => p.id === projectId) || null) : null;
+    const driveProjectName = driveProject ? String(driveProject.name || '') : '';
+    try {
+      const { entry, drive } = await publishLibraryFigure({
+        scope: projectId ? 'project' : 'common',
+        projectId: projectId || null,
+        projectName: driveProjectName,
+        dataUrl,
+        label: label.trim(),
+        src: null,
+        canvasData: {
+          canvasW, canvasH, gridCols, gridRows, globalCaption,
+          objects: (objects || []).map(thumbnailsOf)
+        }
+      });
+      if (!entry) { window.alert('Could not save the canvas in the library.'); return; }
+      setLibVersion((v) => v + 1);
+      setLibraryTab(projectId ? 'project' : 'common');
+      setShowLibrary(true);
+      const folderLabel = driveProjectName ? `${driveProjectName.trim()}/images` : 'dataset images';
+      if (drive && drive.id) setLibMsg(`✅ Canvas saved in the image library · stored on your cloud (${folderLabel})`);
+      else if (!localStorageHealthy()) setLibMsg('✅ Canvas saved in the image library · browser storage full — connect Google Drive or Nextcloud so it is kept there (works this session)');
+      else setLibMsg('✅ Canvas saved in the image library · cloud storage not connected — browser copy only');
+    } catch (err) {
+      console.warn('Canvas save failed:', err && err.message);
+      window.alert('Could not save the canvas — please connect Google Drive and try again.');
     }
   };
 
@@ -640,6 +676,7 @@ export const ImageBuilder = ({ projectId, jumpToTest }) => {
     setEditingObjCaption(null);
     setEditingCaption(false);
     setShowLibrary(false);
+    setHydrateTick((t) => t + 1);
   };
 
   // Open the original experiment AND scroll to the exact chart/spectrum the

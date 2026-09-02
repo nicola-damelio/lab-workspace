@@ -9,6 +9,7 @@ import { CollapsibleSectionPanel as CollapsibleSection } from '../ui';
 import { CustomMetadataFieldsManager, MandatoryParametersManager, ScientistsOperatorsManager } from './definitionsManagers';
 import { DatabaseCleanupManager } from './storageModules';
 import { DriveImageMigration } from '../DriveImageMigration';
+import { CloudStorageSettings } from './cloudStorageSettings';
 import { normalizeOperators } from '../../utils/auth';
 
 export const SettingsModule = ({
@@ -71,6 +72,10 @@ export const SettingsModule = ({
                         deleteEmptyDatasets={deleteEmptyDatasets}
                      />
                   </CollapsibleSection>
+
+                   <CollapsibleSection title="Cloud storage — Google Drive or Nextcloud" subtitle="Choose where files and figures are stored: Google Drive (OAuth) or your Nextcloud server (WebDAV). One global switch applies to every upload." defaultOpen={false}>
+                      <CloudStorageSettings />
+                   </CollapsibleSection>
 
                    <CollapsibleSection title="Test files on Google Drive" subtitle="Move test attachments (figures, ⭐ starred items, PDFs/documents, links) into the correct Drive folders — Lab Workspace/<dataset>/<project>/<test>/<instance>/Report." defaultOpen={false}>
                       <DriveImageMigration tests={tests} setTests={setTests} datasetTitle={datasetTitle} />

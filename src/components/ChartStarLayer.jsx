@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { isStarred, toggleStarredItem } from '../utils/starredItems';
 import Chart from 'chart.js/auto';
 import {
-  getActiveProjectId, addLibraryItem, addProjectLibraryItem, makeLibraryImage, uploadFigureToDrive
+  getActiveProjectId, publishLibraryFigure
 } from '../utils/figuresLibrary';
 import { loadProjects } from './AppModules/projectsModule';
 
@@ -195,21 +195,25 @@ export const ChartStarLayer = ({ rootRef, test, update }) => {
     try {
       const url = await captureFigure(el, t.kind);
       if (!url) { setFigStatus({ key: t.key, ok: false, msg: '⚠️ Could not capture this element as an image' }); return; }
-      const img = await makeLibraryImage(url);
       const label = `${t.label} · ${(test && test.name) || 'experiment'}`.slice(0, 120);
       const pid = projectIdForTest(test);
       const where = pid ? 'project library' : 'common library';
       const src = { testId: test && test.id, testName: test && test.name, elementLabel: t.label, elementKey: t.key };
-      if (pid) addProjectLibraryItem(pid, { ...img, label, src });
-      else addLibraryItem({ ...img, label, src });
       const projectName = projectNameFor(test);
-      let driveMsg = '';
-      if (projectName) {
-        const res = await uploadFigureToDrive({ full: img.full, label, projectName });
-        driveMsg = res
-          ? ` · Drive: ${projectName}/images`
-          : ' · Drive not connected — library copy only';
-      }
+      // The real image is stored on Google Drive (<project>/images), only a
+      // small local preview + metadata remain in the browser.
+      const { entry, drive } = await publishLibraryFigure({
+        scope: pid ? 'project' : 'common',
+        projectId: pid,
+        projectName,
+        dataUrl: url,
+        label,
+        src
+      });
+      void entry;
+      const driveMsg = pid && projectName
+        ? (drive && drive.id ? ` · Drive: ${projectName}/images` : ' · Drive upload failed — browser copy only')
+        : (drive && drive.id ? ' · Drive: dataset images' : ' · Drive not connected — library copy only');
       setFigStatus({ key: t.key, ok: true, msg: `📷 Figure saved to ${where}${driveMsg}` });
     } catch {
       setFigStatus({ key: t.key, ok: false, msg: '⚠️ Figure capture failed' });
