@@ -6,6 +6,16 @@ import { archiveFileToDrive } from '../utils/driveUpload';
 import { getPymolScripts } from '../utils/pymolScripts';
 import { getActiveProjectId, publishLibraryFigure } from '../utils/figuresLibrary';
 
+/* Small colour helper for the viewer lighting rig below: mix two integer-hex
+   colours (0xRRGGBB) by t in [0,1]. NGL's setParameters accepts such hex ints. */
+const mixHex = (c0, c1, t) => {
+  const ch = (c, s) => ((c >> s) & 255);
+  const r = Math.round(ch(c0, 16) + (ch(c1, 16) - ch(c0, 16)) * t);
+  const g = Math.round(ch(c0, 8) + (ch(c1, 8) - ch(c0, 8)) * t);
+  const b = Math.round(ch(c0, 0) + (ch(c1, 0) - ch(c0, 0)) * t);
+  return (r << 16) | (g << 8) | b;
+};
+
 /* ---- Shared "Assigned atoms" highlight flag ---------------------------------
    The green "assigned atoms" highlight is shown both on the 3D molecule viewer
    (ball+stick representation) and on the SIMULATED SPECTRA (green marks on the
@@ -1046,9 +1056,17 @@ const applyFog = useCallback(() => {
 }, []);
 
 // ---- Shadows ----
-// Real THREE shadow maps (the bundled renderer already ships the shaders) plus a
-// "darkness" control: lowering the ambient light while raising the directional
-// one deepens every shadowed area. Persisted like the fog preference.
+// Persisted like the fog preference. True cast shadows would need real WebGL
+// shadow maps, which NGL's renderer does not support — enabling them made the
+// whole molecule disappear. NGL *does* shade every atom with a real
+// physically-based directional light, but it re-aims that light at the camera
+// every frame, so the default look is a flat "headlight" that never produces
+// any lit/shaded sides (that is what read as washed-out/diffused). The Shadows
+// toggle therefore locks that one light in place — a single fixed key light up
+// and to the left of the default view — so every surface that turns away from
+// it genuinely falls into shade as the model is rotated. The Darkness slider
+// then makes the lit-vs-shadow colour split dramatically stronger (see
+// applyShadowSettings below for the exact colour ramps).
 const [shadowOn, setShadowOn] = useState(() => {
   try { return String(localStorage.getItem('labViewerShadows') || '').startsWith('on'); } catch { return false; }
 });
@@ -1064,13 +1082,42 @@ const shadowDarknessRef = useRef(shadowDarkness);
 shadowOnRef.current = shadowOn;
 shadowDarknessRef.current = shadowDarkness;
 
-// "Shadows" is a SAFE visual: enabling real THREE shadow maps inside NGL's
-// renderer made the whole molecule disappear (NGL renders in several manual
-// passes that conflict with shadow-map rendering). The toggle now deepens the
-// scene lighting (a moodier, "shadowier" look) and draws a subtle vignette
-// overlay on top of the viewer — the molecule always stays visible.
-const setMeshShadows = () => { /* no-op — real shadow maps break NGL's renderer */ };
-const shadowRepsHook = () => { /* no-op — real shadow maps break NGL's renderer */ };
+// Install a one-time rig on the NGL viewer's light. NGL's render loop calls
+// Viewer.__updateLights() every frame and parks its directional light on the
+// camera position (the headlight). When Shadows is ON we re-park that same
+// light at a FIXED world position right after NGL moves it, so it behaves like
+// a single lamp standing next to the model: its direction no longer follows the
+// camera, and rotating the molecule sweeps genuinely lit / genuinely shaded
+// faces across the structure. When the toggle is OFF we leave NGL's even,
+// camera-linked lighting untouched.
+const installShadowLightRig = useCallback(() => {
+  const stage = stageRef.current;
+  const viewer = stage && stage.viewer;
+  if (!viewer || !viewer.directionalLight || viewer.__shadowLightRigInstalled) return;
+  viewer.__shadowLightRigInstalled = true;
+  const origUpdateLights = viewer.__updateLights ? viewer.__updateLights.bind(viewer) : null;
+  // Unit direction FROM the molecule centre TOWARD the key light, in world
+  // space: above and to the left of the default camera. NGL's default camera
+  // sits at z=-80 looking along +z, so z<0 is the near/camera side and x>0 is
+  // screen-left; y>0 is up.
+  const ux = 0.8, uy = 1.0, uz = -1.7;
+  const inv = 1 / Math.sqrt(ux * ux + uy * uy + uz * uz);
+  viewer.__updateLights = function nglFixedKeyLight() {
+    if (origUpdateLights) origUpdateLights(); // colour/intensity + camera headlight
+    try {
+      if (!shadowOnRef.current) return; // OFF → keep NGL's even headlight
+      const light = this.directionalLight;
+      if (!light) return;
+      // Park the light far outside the model (≈ 100× the bounding box like NGL
+      // does) so the rays are effectively parallel — a crisp "sun" direction.
+      const d = Math.max(1, this.boundingBoxLength || 1) * 100;
+      light.position.set(ux * inv * d, uy * inv * d, uz * inv * d);
+    } catch { /* best-effort */ }
+  };
+}, []);
+
+const setMeshShadows = () => { /* no-op — the light rig in installShadowLightRig replaces real shadow maps */ };
+const shadowRepsHook = () => { /* no-op — the light rig in installShadowLightRig replaces real shadow maps */ };
 
 const applyShadowSettings = useCallback(() => {
   const stage = stageRef.current;
@@ -1078,15 +1125,32 @@ const applyShadowSettings = useCallback(() => {
   try {
     const on = shadowOnRef.current;
     const dark = Math.min(1, Math.max(0, shadowDarknessRef.current));
-    // Depth cue: lower the ambient light a little, raise the key light a touch.
-    // Ambient is floored so the scene can never go black.
-    stage.setParameters({
-      lightIntensity: on ? (1.2 + dark * 0.5) : 1.2,
-      ambientIntensity: on ? Math.max(0.16, 0.3 - dark * 0.16) : 0.3,
-    });
+    if (on) {
+      // ONE clear light source: the fixed warm key light. Darkness drives the
+      // drama — the key gets more golden AND brighter while the cool fill that
+      // the shadowed side keeps seeing gets weaker, cooler and deeper, so the
+      // lit-vs-shaded colour swing becomes dramatic instead of diffused. The
+      // fill is floored so the shadow side never goes fully black.
+      stage.setParameters({
+        lightColor: mixHex(0xfff2df, 0xffd09b, dark),
+        ambientColor: mixHex(0xc2cfe2, 0x5b6f96, dark),
+        lightIntensity: 1.3 + dark * 0.6,                    // 1.3 → 1.9
+        ambientIntensity: Math.max(0.12, 0.32 - dark * 0.2), // 0.32 → 0.12
+      });
+    } else {
+      // No shadows: NGL's even, camera-linked lighting with a gentle warm/cool
+      // tint so the viewer never falls back to NGL's flat monochrome default.
+      stage.setParameters({
+        lightColor: 0xfff6ec,
+        ambientColor: 0xd7e0ea,
+        lightIntensity: 1.15,
+        ambientIntensity: 0.34,
+      });
+    }
+    installShadowLightRig();
     try { if (stage.viewer.requestRender) stage.viewer.requestRender(); } catch {}
   } catch { /* best-effort */ }
-}, []);
+}, [installShadowLightRig]);
 
 // Persist + apply the shadow preference whenever it changes.
 useEffect(() => {
@@ -3700,11 +3764,11 @@ className="w-3.5 h-3.5 accent-sky-600"
   </button>
   <button type="button" onClick={() => setShadowOn((v) => !v)}
     className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors ${shadowOn ? 'bg-slate-800 border-slate-800 text-white' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-    title="Shadow effect: deepens the scene lighting and adds a vignette for a shadowier look. The Darkness slider controls how strong the effect is — saved and persists across pages. (Real WebGL shadow maps are not used: they made the molecule disappear.)">
+    title="Shadows: swaps NGL's flat camera-lit look for ONE fixed key light shining from up-left, so every side of the structure that turns away from it falls into real shade as you rotate — no more washed-out two-light fill. The Darkness slider then drives the warm/cool colour split from gentle to dramatic. (True WebGL shadow maps aren't supported by NGL — trying them made the molecule disappear.)">
     ◐ Shadows: {shadowOn ? 'On' : 'Off'}
   </button>
   {shadowOn && (
-    <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700" title="How dark the shadows are — lowers the ambient light so occluded areas go deeper">
+    <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700" title="Drama control — the higher the Darkness the more golden and brighter the key light becomes while the shadowed side turns cooler and deeper, so the lit-vs-shaded colour contrast swings dramatically">
       🌑 Darkness
       <input type="range" min="0" max="100" value={Math.round(shadowDarkness * 100)} onChange={(e) => setShadowDarkness(Number(e.target.value) / 100)} className="w-24 accent-slate-700" />
       <span className="text-[10px] text-slate-500 w-8">{Math.round(shadowDarkness * 100)}%</span>
@@ -4034,12 +4098,18 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
   />
 )}
 
-{/* Shadow vignette — a SAFE depth/shadow cue drawn above the canvas (real shadow
-    maps broke NGL's renderer and made the molecule disappear). */}
+{/* Soft edge vignette — a subtle framing cue drawn above the canvas. The real
+    shadow impression now comes from the FIXED key light (installShadowLightRig);
+    this overlay only stops the dark corners from competing with the lit centre.
+    Multiply blend + a soft multi-stop falloff keep it from reading as a flat
+    dark rectangle. Intensity still scales gently with the Darkness slider. */}
 {shadowOn && (
   <div
     className="pointer-events-none absolute inset-0 z-10"
-    style={{ background: `radial-gradient(ellipse at 50% 42%, transparent 55%, rgba(15,23,42,${0.18 + (shadowDarkness || 0) * 0.18}) 100%)` }}
+    style={{
+      mixBlendMode: 'multiply',
+      background: `radial-gradient(ellipse at 50% 40%, rgba(15,23,42,0) 45%, rgba(15,23,42,${0.04 + (shadowDarkness || 0) * 0.06}) 72%, rgba(15,23,42,${0.12 + (shadowDarkness || 0) * 0.18}) 100%)`,
+    }}
   />
 )}
 
