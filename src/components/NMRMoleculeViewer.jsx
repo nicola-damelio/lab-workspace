@@ -1,23 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ensureNGL } from '../utils/ngl';
 import { computeSmiles3DNameMap } from '../utils/atomNameSync';
-import { rayTraceStructureToBlob } from '../utils/advancedRayTracer';
-import AdvancedRayTracerControls from '../utils/AdvancedRayTracerControls';
 import { readXtcFrames, countXtcFrames, countXtcFramesInFile } from '../utils/xtcDecoder';
 import { abortControl } from '../utils/abortControl';
 import { archiveFileToDrive } from '../utils/driveUpload';
 import { getPymolScripts } from '../utils/pymolScripts';
 import { getActiveProjectId, publishLibraryFigure } from '../utils/figuresLibrary';
-
-/* Small colour helper for the viewer lighting rig below: mix two integer-hex
-   colours (0xRRGGBB) by t in [0,1]. NGL's setParameters accepts such hex ints. */
-const mixHex = (c0, c1, t) => {
-  const ch = (c, s) => ((c >> s) & 255);
-  const r = Math.round(ch(c0, 16) + (ch(c1, 16) - ch(c0, 16)) * t);
-  const g = Math.round(ch(c0, 8) + (ch(c1, 8) - ch(c0, 8)) * t);
-  const b = Math.round(ch(c0, 0) + (ch(c1, 0) - ch(c0, 0)) * t);
-  return (r << 16) | (g << 8) | b;
-};
 
 /* ---- Shared "Assigned atoms" highlight flag ---------------------------------
    The green "assigned atoms" highlight is shown both on the 3D molecule viewer
@@ -958,14 +946,6 @@ const resizeRef = useRef(null); // { startY, startH } while dragging
 // restores it and tells NGL that the canvas size changed.
 const [viewerCollapsed, setViewerCollapsed] = useState(false);
 const [captureMsg, setCaptureMsg] = useState('');
-const [rayMsg, setRayMsg] = useState('');
-const rayBusyRef = useRef(false);
-// Live "Ray view": an object-URL of the software ray-traced image displayed
-// over the NGL canvas, demonstrating true self-shadowing in the viewer.
-const [rayViewUrl, setRayViewUrl] = useState(null);
-const rayViewBusyRef = useRef(false);
-const [rayProgress, setRayProgress] = useState(0);
-
 useEffect(() => {
   const move = (ev) => {
     if (!resizeRef.current) return;
@@ -1077,6 +1057,32 @@ dockStyleRef.current = dockStyleMode;
 const dockRoleStylesRef = useRef({ protein: 'ribbon', ligand: 'ball+stick' }); // captured at toggle-ON
 const [residueTicks, setResidueTicks] = useState([]); // [{ resno, resname, code, chainid }] — sequence strip above the 3D view
 const extraCompsRef = useRef([]);                  // [{ id, name, comp, baseReps, style, color }]
+// "⚡ ESP" electrostatic-potential overlay — an optional extra NGL `surface`
+// representation per molecule component, coloured by NGL's built-in
+// "electrostatic" colour scheme. It is kept apart from the per-molecule base
+// representations so the overlay SURVIVES style rebuilds (only the base reps are
+// removed there) and is forgotten together with its component.
+const espRepsRef = useRef({});                     // molKey → the live ESP surface representation
+const [espMolKeys, setEspMolKeys] = useState(() => new Set()); // molecules currently showing an ESP overlay
+// Colour-scale limits for the ⚡ ESP ramp, in kcal/mol: potentials ≤ −neg are
+// full red (negative), 0 is white (neutral) and ≥ +pos are full blue
+// (positive). NGL's own default domain is ±50, which is so wide that most of a
+// surface looks white; a tighter range (default ±15) makes the red/blue poles
+// clearly visible. Saved so the choice persists across pages.
+const [espLimits, setEspLimits] = useState(() => {
+  try {
+    const raw = JSON.parse(localStorage.getItem('labViewerEspLimits') || 'null');
+    if (Array.isArray(raw) && raw.length === 2 && raw.every((n) => Number.isFinite(n) && n > 0)) {
+      return [Math.min(500, Math.max(0.5, raw[0])), Math.min(500, Math.max(0.5, raw[1]))];
+    }
+  } catch { /* ignore */ }
+  return [15, 15];
+});
+const espLimitsRef = useRef(espLimits);
+espLimitsRef.current = espLimits;
+useEffect(() => {
+  try { localStorage.setItem('labViewerEspLimits', JSON.stringify(espLimits)); } catch { /* ignore */ }
+}, [espLimits]);
 // Files chosen as "additional molecules" that must wait until the MAIN structure
 // has finished loading — the main load calls stage.removeAllComponents(), which
 // would wipe any component added concurrently. They are flushed once the main
@@ -1263,11 +1269,13 @@ const applyFog = useCallback(() => {
 // physically-based directional light, but it re-aims that light at the camera
 // every frame, so the default look is a flat "headlight" that never produces
 // any lit/shaded sides (that is what read as washed-out/diffused). The Shadows
-// toggle therefore locks that one light in place — a single fixed key light up
-// and to the left of the default view — so every surface that turns away from
-// it genuinely falls into shade as the model is rotated. The Darkness slider
-// then makes the lit-vs-shadow colour split dramatically stronger (see
-// applyShadowSettings below for the exact colour ramps).
+// toggle therefore locks that one light in place — a single fixed key light
+// whose direction is aimed with the Azimuth / Elevation controls shown while
+// Shadows is ON — so every surface that turns away from the light genuinely
+// falls into shade as the model is rotated. The Darkness slider then only
+// raises the CONTRAST between the lit and the shaded sides: the key light gets
+// brighter while the fill light gets dimmer. Both lights stay pure white, so
+// element / residue colours are never tinted or warmed.
 const [shadowOn, setShadowOn] = useState(() => {
   try { return String(localStorage.getItem('labViewerShadows') || '').startsWith('on'); } catch { return false; }
 });
@@ -1278,37 +1286,63 @@ const [shadowDarkness, setShadowDarkness] = useState(() => {
     return m ? Math.min(1, Math.max(0, parseInt(m[1], 10) / 100)) : 0.5;
   } catch { return 0.5; }
 });
+// Direction of the fixed key light around the molecule, in degrees.
+// Azimuth 0° = light behind the camera (flat), 90° = hard left, 180° = front;
+// elevation 0° = horizon, 90° = straight above. The defaults (25° / 28°)
+// reproduce the original "up, left and slightly toward the camera" key light.
+const [shadowAz, setShadowAz] = useState(() => {
+  try {
+    const v = parseFloat(localStorage.getItem('labViewerShadowAz') || '25');
+    return Number.isFinite(v) ? Math.min(360, Math.max(0, Math.round(v))) : 25;
+  } catch { return 25; }
+});
+const [shadowEl, setShadowEl] = useState(() => {
+  try {
+    const v = parseFloat(localStorage.getItem('labViewerShadowEl') || '28');
+    return Number.isFinite(v) ? Math.min(90, Math.max(-90, Math.round(v))) : 28;
+  } catch { return 28; }
+});
 const shadowOnRef = useRef(shadowOn);
 const shadowDarknessRef = useRef(shadowDarkness);
+const shadowDirRef = useRef({ az: shadowAz, el: shadowEl });
 shadowOnRef.current = shadowOn;
 shadowDarknessRef.current = shadowDarkness;
+shadowDirRef.current = { az: shadowAz, el: shadowEl };
 
 // Install a one-time rig on the NGL viewer's light. NGL's render loop calls
 // Viewer.__updateLights() every frame and parks its directional light on the
 // camera position (the headlight). When Shadows is ON we re-park that same
 // light at a FIXED world position right after NGL moves it, so it behaves like
 // a single lamp standing next to the model: its direction no longer follows the
-// camera, and rotating the molecule sweeps genuinely lit / genuinely shaded
-// faces across the structure. When the toggle is OFF we leave NGL's even,
-// camera-linked lighting untouched.
+// camera (it follows the Azimuth / Elevation controls instead), and rotating
+// the molecule sweeps genuinely lit / genuinely shaded faces across the
+// structure. When the toggle is OFF we leave NGL's even, camera-linked
+// lighting untouched.
 const installShadowLightRig = useCallback(() => {
   const stage = stageRef.current;
   const viewer = stage && stage.viewer;
   if (!viewer || !viewer.directionalLight || viewer.__shadowLightRigInstalled) return;
   viewer.__shadowLightRigInstalled = true;
   const origUpdateLights = viewer.__updateLights ? viewer.__updateLights.bind(viewer) : null;
-  // Unit direction FROM the molecule centre TOWARD the key light, in world
-  // space: above and to the left of the default camera. NGL's default camera
-  // sits at z=-80 looking along +z, so z<0 is the near/camera side and x>0 is
-  // screen-left; y>0 is up.
-  const ux = 0.8, uy = 1.0, uz = -1.7;
-  const inv = 1 / Math.sqrt(ux * ux + uy * uy + uz * uz);
   viewer.__updateLights = function nglFixedKeyLight() {
     if (origUpdateLights) origUpdateLights(); // colour/intensity + camera headlight
     try {
       if (!shadowOnRef.current) return; // OFF → keep NGL's even headlight
       const light = this.directionalLight;
       if (!light) return;
+      // Unit direction FROM the molecule centre TOWARD the key light in world
+      // space, derived from the Azimuth / Elevation controls. NGL's default
+      // camera sits at z=-80 looking along +z, so z<0 is the near/camera side,
+      // x>0 is screen-left and y>0 is up. az=0 keeps the light behind the
+      // camera (flat), turning it swings the shade across the model.
+      const d0 = shadowDirRef.current || {};
+      const azRad = (((Number(d0.az) || 0) * Math.PI) / 180);
+      const elRad = (((Number(d0.el) || 0) * Math.PI) / 180);
+      const ce = Math.cos(elRad);
+      const ux = ce * Math.sin(azRad);
+      const uy = Math.sin(elRad);
+      const uz = -ce * Math.cos(azRad);
+      const inv = 1 / Math.sqrt(ux * ux + uy * uy + uz * uz + 1e-12);
       // Park the light far outside the model (≈ 100× the bounding box like NGL
       // does) so the rays are effectively parallel — a crisp "sun" direction.
       const d = Math.max(1, this.boundingBoxLength || 1) * 100;
@@ -1327,23 +1361,24 @@ const applyShadowSettings = useCallback(() => {
     const on = shadowOnRef.current;
     const dark = Math.min(1, Math.max(0, shadowDarknessRef.current));
     if (on) {
-      // ONE clear light source: the fixed warm key light. Darkness drives the
-      // drama — the key gets more golden AND brighter while the cool fill that
-      // the shadowed side keeps seeing gets weaker, cooler and deeper, so the
-      // lit-vs-shaded colour swing becomes dramatic instead of diffused. The
-      // fill is floored so the shadow side never goes fully black.
+      // Shadows ON: ONE fixed key light (aimed via the Azimuth / Elevation
+      // controls). Darkness only raises the dark-vs-light CONTRAST — the key
+      // light gets brighter while the ambient fill gets dimmer. The lights are
+      // pure white, so colours are never tinted (the old warm-golden key /
+      // cool-blue fill is gone — it read as "a red light was added"). The fill
+      // is floored so the shadow side never goes fully black.
       stage.setParameters({
-        lightColor: mixHex(0xfff2df, 0xffd09b, dark),
-        ambientColor: mixHex(0xc2cfe2, 0x5b6f96, dark),
-        lightIntensity: 1.3 + dark * 0.6,                    // 1.3 → 1.9
-        ambientIntensity: Math.max(0.12, 0.32 - dark * 0.2), // 0.32 → 0.12
+        lightColor: 0xffffff,
+        ambientColor: 0xffffff,
+        lightIntensity: 1.3 + dark * 0.7,                     // 1.3 → 2.0
+        ambientIntensity: Math.max(0.12, 0.34 - dark * 0.22), // 0.34 → 0.12
       });
     } else {
-      // No shadows: NGL's even, camera-linked lighting with a gentle warm/cool
-      // tint so the viewer never falls back to NGL's flat monochrome default.
+      // No shadows: NGL's even, camera-linked lighting — pure white so every
+      // element / residue colour stays exactly as chosen.
       stage.setParameters({
-        lightColor: 0xfff6ec,
-        ambientColor: 0xd7e0ea,
+        lightColor: 0xffffff,
+        ambientColor: 0xffffff,
         lightIntensity: 1.15,
         ambientIntensity: 0.34,
       });
@@ -1353,11 +1388,27 @@ const applyShadowSettings = useCallback(() => {
   } catch { /* best-effort */ }
 }, [installShadowLightRig]);
 
-// Persist + apply the shadow preference whenever it changes.
+// Persist + apply the shadow preferences whenever they change.
 useEffect(() => {
   try { localStorage.setItem('labViewerShadows', shadowOn ? `on:${Math.round(shadowDarkness * 100)}` : 'off'); } catch { /* ignore */ }
   applyShadowSettings();
 }, [shadowOn, shadowDarkness, applyShadowSettings]);
+
+// Persist the light direction and re-render one frame so the fixed key light
+// visibly moves while the Azimuth / Elevation sliders are dragged.
+useEffect(() => {
+  try { localStorage.setItem('labViewerShadowAz', String(Math.round(shadowAz))); } catch { /* ignore */ }
+}, [shadowAz]);
+useEffect(() => {
+  try { localStorage.setItem('labViewerShadowEl', String(Math.round(shadowEl))); } catch { /* ignore */ }
+}, [shadowEl]);
+useEffect(() => {
+  if (!shadowOn) return;
+  try {
+    const v = stageRef.current && stageRef.current.viewer;
+    if (v && v.requestRender) v.requestRender();
+  } catch { /* ignore */ }
+}, [shadowAz, shadowEl, shadowOn]);
 
 // Persist the customisable viewer colours + feed the live NGL scheme store.
 useEffect(() => {
@@ -1959,6 +2010,122 @@ const buildMainReps = () => {
   } catch { /* style best-effort */ }
 };
 
+// ── ⚡ ESP — electrostatic-potential surface overlay ──────────────────────────
+// NGL ships a built-in "electrostatic" colour scheme (registered in its
+// ColormakerRegistry) that colours each surface vertex by the Coulombic
+// potential of the partial charges. We pin its scale to the red → white → blue
+// ramp (colorScale 'rwb') and drive the domain with the user's chosen limits
+// (colorDomain, kcal/mol): ≤ −limit → full red (negative), 0 → white
+// (neutral), ≥ +limit → full blue (positive). NGL's own default domain (±50)
+// is so wide it leaves most of the surface near-white; the adjustable limits
+// exist precisely to zoom the ramp onto the structure and see the red and blue
+// poles. Partial charges are read from the input when the file/parser provides
+// them (PQR, charged MOL2/SDF, …); otherwise NGL falls back to its CHARMM-
+// derived table for protein backbone + key side-chain atoms, so plain PDB
+// ensembles / docking poses still get a meaningful map. Each molecule component
+// (the main structure or any extra / model / chain) can have one overlay — it
+// is a normal representation but tracked separately from the per-molecule base
+// reps, so a style change never removes it accidentally.
+const espAddSurfaceRep = (comp) => {
+  if (!comp || !comp.structure) return null;
+  try {
+    const prev = espLimitsRef.current || [15, 15];
+    const neg = Math.min(500, Math.max(0.5, Number(prev[0]) || 15));
+    const pos = Math.min(500, Math.max(0.5, Number(prev[1]) || 15));
+    // 'not water' skips the noisy solvent shell of membrane / water-heavy files;
+    // opacity < 1 keeps the cartoon / atoms legible underneath the map.
+    return comp.addRepresentation('surface', {
+      sele: 'not water',
+      colorScheme: 'electrostatic',
+      colorScale: 'rwb',
+      colorDomain: [-neg, pos],
+      opacity: 0.85
+    });
+  } catch { return null; }
+};
+
+// Re-colour every live ESP overlay with the chosen limits. When numbers are
+// passed (presets) they win; otherwise the current input state is used. This
+// goes through each representation's own setParameters({ colorDomain }) — NGL's
+// "update color" path — so the surface geometry is NOT recomputed, only the
+// red/white/blue ramp is re-applied (cheap and instant).
+const espApplyLimits = (nl, pl) => {
+  const prev = espLimitsRef.current || [15, 15];
+  const nv = Number.isFinite(nl) ? nl : Number(prev[0]);
+  const pv = Number.isFinite(pl) ? pl : Number(prev[1]);
+  const neg = Math.min(500, Math.max(0.5, Number.isFinite(nv) && nv > 0 ? nv : 15));
+  const pos = Math.min(500, Math.max(0.5, Number.isFinite(pv) && pv > 0 ? pv : 15));
+  // Keep the inputs in sync with what was actually applied (presets included).
+  setEspLimits([neg, pos]);
+  const keys = Object.keys(espRepsRef.current);
+  keys.forEach((key) => {
+    const rep = espRepsRef.current[key];
+    if (!rep) return;
+    try { rep.setParameters({ colorScale: 'rwb', colorDomain: [-neg, pos] }); } catch { /* best-effort */ }
+  });
+  if (keys.length) {
+    try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch { /* ignore */ }
+  }
+};
+
+// Pressing Enter in a limit box applies the range immediately.
+const espApplyLimitsOnEnter = (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    espApplyLimits();
+  }
+};
+
+const resolveMolComp = (key) => {
+  if (!key || key === 'main') return componentRef.current;
+  const entry = extraCompsRef.current.find((e) => e.id === key);
+  return entry ? entry.comp : null;
+};
+
+const espEnable = (key) => {
+  const comp = resolveMolComp(key);
+  if (!comp || !comp.structure || espRepsRef.current[key]) return;
+  const rep = espAddSurfaceRep(comp);
+  if (!rep) return;
+  espRepsRef.current[key] = rep;
+  setEspMolKeys((prev) => (prev.has(key) ? prev : new Set(prev).add(key)));
+  // Make sure the molecule is actually on screen — the surface overlay on a
+  // hidden extra molecule would otherwise be invisible (the visibility effect
+  // below flips its component on once its key enters visibleMolKeys).
+  if (key !== 'main') {
+    setVisibleMolKeys((prev) => (prev.has(key) ? prev : new Set(prev).add(key)));
+  }
+  try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
+};
+
+const espDisable = (key) => {
+  const rep = espRepsRef.current[key];
+  if (rep) {
+    const comp = resolveMolComp(key);
+    try { if (comp) comp.removeRepresentation(rep); } catch {}
+  }
+  delete espRepsRef.current[key];
+  setEspMolKeys((prev) => { if (!prev.has(key)) return prev; const n = new Set(prev); n.delete(key); return n; });
+  try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
+};
+
+const espForget = (key) => {
+  // Bookkeeping-only removal: the component (and therefore its representations)
+  // is already gone or about to be destroyed (new load / clear / delete).
+  if (!(key in espRepsRef.current)) return;
+  delete espRepsRef.current[key];
+  setEspMolKeys((prev) => { if (!prev.has(key)) return prev; const n = new Set(prev); n.delete(key); return n; });
+};
+
+const espResetAll = () => {
+  Object.keys(espRepsRef.current).forEach(espForget);
+};
+
+const espToggle = (key) => {
+  if (espRepsRef.current[key]) espDisable(key);
+  else espEnable(key);
+};
+
 // Load ONE chain of a multi-chain PDB as its own (hidden) NGL component and add
 // it to the Molecules selector. Called by the main-load effect after the whole
 // structure is parsed.
@@ -2028,6 +2195,7 @@ const stage = await stageReadyRef.current;
 if (cancelled || !stage) return;
 stage.removeAllComponents();
 componentRef.current = null;
+espResetAll(); // every previous component (and its ⚡ ESP overlay) is gone
 highlightCompRef.current = null;
 manualHighlightCompRef.current = null;
 labelCompRef.current = null;
@@ -2654,6 +2822,11 @@ const clearResidueSelection = () => {
 useEffect(() => {
   const component = componentRef.current;
   if (!component || status !== 'ready') return;
+  // "Hide everything" / a running PyMOL script takes over the whole main view —
+  // drop the ⚡ ESP overlay as well so the scene truly clears. Re-enabling
+  // Hide-all / PyMOL restores the base representations only; the user then
+  // re-clicks ⚡ ESP if the surface map is still wanted.
+  if (hideAll || pymolActive) espDisable('main');
   Object.keys(selCompsRef.current).forEach((k) => {
     (selCompsRef.current[k] || []).forEach((r) => { try { component.removeRepresentation(r); } catch {} });
   });
@@ -3263,6 +3436,14 @@ const restyleExtraMol = (id) => {
     } catch { /* style best-effort */ }
   }
   entry.baseReps = reps;
+  // restyleExtraMol removes EVERY representation of the component (see above);
+  // an enabled ⚡ ESP overlay is a separate representation, so re-create it here
+  // after the chosen style has been (re)built.
+  if (espRepsRef.current[id]) {
+    const espRep = espAddSurfaceRep(comp);
+    if (espRep) espRepsRef.current[id] = espRep;
+    else espForget(id);
+  }
   if (shadowOnRef.current) setMeshShadows(comp);
   try { if (stageRef.current && stageRef.current.viewer) stageRef.current.viewer.requestRender(); } catch {}
 };
@@ -3464,6 +3645,7 @@ const deleteExtraMol = (id) => {
   if (idx < 0) return;
   const [entry] = extraCompsRef.current.splice(idx, 1);
   try { if (stageRef.current) stageRef.current.removeComponent(entry.comp); } catch {}
+  espForget(id); // the ⚡ ESP overlay (if any) was destroyed with the component
   setExtraMols(extraMolsSnapshot());
   setVisibleMolKeys((prev) => { const n = new Set(prev); n.delete(id); return n; });
   if (selectedMolKey === id) setSelectedMolKey('main');
@@ -3677,6 +3859,7 @@ const handleClearViewer = () => {
   abortControl.abortAll();
   clearExtraMolecules();
   try { if (stageRef.current) stageRef.current.removeAllComponents(); } catch {}
+  espResetAll(); // every component (and its ⚡ ESP overlay) is gone now
   componentRef.current = null;
   highlightCompRef.current = null;
   manualHighlightCompRef.current = null;
@@ -3728,193 +3911,6 @@ const handleAbort = () => {
   }
 };
 
-// ---- High-quality render ----------------------------------------------------
-// Temporarily elevates the NGL renderer for a publication-quality capture:
-//   • max supersampling factor (render at 3× the viewport resolution),
-//   • NGL MSAA antialiasing on the exported frame,
-//   • maximum sampleLevel + 'high' quality during the pass,
-//   • the existing locked key-light rig stays active during the capture.
-// The frame is downloaded as .png and the viewer is restored to its normal
-// realtime settings.
-//
-// NOTE: this is NGL's documented high-quality capture path — it is NOT a ray
-// tracer. NGL is a real-time WebGL engine: its materials cannot cast true
-// inter-object shadows (helix A blocking light so helix B shows A's silhouette)
-// and cannot do ambient occlusion. Real ray tracing needs a software ray
-// tracer (spheres/capsules + shadow/AO rays) or an external renderer export
-// (PyMOL / POV-Ray); see the atom-shadow renderer module for the former.
-const downloadBlob = (blob, name) => {
-  try {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = name || 'structure.png';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => { try { URL.revokeObjectURL(url); } catch { /* ignore */ } }, 6000);
-  } catch (err) {
-    console.warn('Could not trigger the download:', err && err.message);
-  }
-};
-
-const rayTraceHighQuality = async () => {
-  const stage = stageRef.current;
-  if (!stage) { setRayMsg('⚠️ No 3D scene to render'); setTimeout(() => setRayMsg(''), 3500); return; }
-  if (rayBusyRef.current) return;
-  rayBusyRef.current = true;
-  setRayMsg('✨ Rendering high-quality image…');
-  setRayProgress(1);
-  // IMPORTANT: rayBusyRef.current must ALWAYS be released (and the progress
-  // bar cleared) no matter which path completes, so a single outer try/finally
-  // wraps every branch below. The success path returns early, but the finally
-  // still runs and unlocks the button for the next render.
-  try {
-    // Preferred path: TRUE software ray tracing (real cast shadows + optional
-    // ambient occlusion). Falls back to NGL's supersampled capture below.
-    if (typeof Worker !== 'undefined' && componentRef.current && componentRef.current.structure) {
-      setRayMsg('✨ Ray tracing (true cast shadows + ambient occlusion)…');
-      try {
-        const rt = rayTraceStructureToBlob(componentRef.current, {
-          width: 1700, shadowSamples: 8, aoSamples: 8,
-          onProgress: (y, h) => setRayProgress(Math.max(1, Math.min(99, Math.round((y / h) * 100))))
-        });
-        const rayBlob = await rt.promise;
-        if (rayBlob) {
-          const base = (file && file.name) ? String(file.name).replace(/\.[^.]+$/, '') : (pdbId ? `pdb_${pdbId}` : 'structure');
-          downloadBlob(rayBlob, `${base}_raytraced_${new Date().toISOString().slice(0, 10)}.png`);
-          setRayMsg(`✨ Ray-traced image downloaded (${(rayBlob.size / 1024).toFixed(0)} KB) — one helix now casts real shadows onto the other`);
-          setTimeout(() => setRayMsg(''), 9000);
-          return; // success → the finally below unlocks rayBusyRef
-        }
-      } catch (err) {
-        console.warn('Software ray tracer failed — falling back to supersampled capture:', err && err.message);
-      }
-    }
-    try {
-      // Elevate renderer settings for this one pass.
-      try { stage.setQuality('high'); } catch { /* older builds ignore this */ }
-      try { stage.setParameters({ sampleLevel: 5 }); } catch { /* ignore */ }
-      await new Promise((r) => setTimeout(r, 150)); // let the new quality apply
-
-      let blob = null;
-      if (typeof stage.makeImage === 'function') {
-        try {
-          // factor 3 → ~3× viewport resolution; antialias = MSAA smoothing of
-          // the frame. `transparent:false` keeps the viewer's light background.
-          blob = await stage.makeImage({ factor: 3, antialias: true, transparent: false });
-        } catch { blob = null; }
-      }
-      if (!blob) {
-        // Fallback: raw canvas → PNG (no supersampling, but still downloadable).
-        try {
-          const cv = stage.viewer && stage.viewer.container ? stage.viewer.container.querySelector('canvas') : null;
-          if (cv) {
-            blob = await new Promise((res) => cv.toBlob((b) => res(b), 'image/png'));
-          }
-        } catch { blob = null; }
-      }
-      if (!blob) {
-        setRayMsg('⚠️ High-quality render failed — try the 📷 Figure button instead');
-        setTimeout(() => setRayMsg(''), 5000);
-        return;
-      }
-      const base = (file && file.name) ? String(file.name).replace(/\.[^.]+$/, '') : (pdbId ? `pdb_${pdbId}` : 'structure');
-      const label = `${base}_raytrace_${new Date().toISOString().slice(0, 10)}.png`;
-      downloadBlob(blob, label);
-      setRayMsg(`✨ High-quality render downloaded (${(blob.size / 1024).toFixed(0)} KB) — see your Downloads folder`);
-      setTimeout(() => setRayMsg(''), 7000);
-    } catch (err) {
-      setRayMsg(`⚠️ High-quality render failed: ${(err && err.message) || 'unknown error'}`);
-      setTimeout(() => setRayMsg(''), 5000);
-    }
-  } finally {
-    // Restore the realtime NGL settings immediately after the frame is
-    // captured, release the busy lock and finish the progress bar — this runs
-    // for the software-tracer success path AND for every fallback path.
-    try { stage.setQuality('auto'); } catch { /* ignore */ }
-    try { stage.setParameters({ sampleLevel: 0 }); } catch { /* ignore */ }
-    try { const viewer = stage.viewer; if (viewer && viewer.requestRender) viewer.requestRender(); } catch { /* ignore */ }
-    rayBusyRef.current = false;
-    setRayProgress(100);
-    setTimeout(() => setRayProgress(0), 500);
-  }
-};
-
-// ---- Live "Ray view" toggle ------------------------------------------------
-// Shows the TRUE self-shadowing software ray trace (spheres+sticks, real
-// shadow rays + AO) directly inside the viewer as an overlay image. Toggle
-// off to return to the interactive NGL viewport.
-const toggleRayView = async () => {
-  if (rayViewUrl) {
-    try { URL.revokeObjectURL(rayViewUrl); } catch { /* ignore */ }
-    setRayViewUrl(null);
-    return;
-  }
-  if (rayViewBusyRef.current || !componentRef.current || !componentRef.current.structure) {
-    if (!componentRef.current) { setRayMsg('⚠️ No structure loaded to ray-trace'); setTimeout(() => setRayMsg(''), 3500); }
-    return;
-  }
-  rayViewBusyRef.current = true;
-  setRayProgress(1);
-  setRayMsg('⚡ Ray-tracing current view (true self-shadowing)…');
-  try {
-    const rt = rayTraceStructureToBlob(componentRef.current, { width: 1200, shadowSamples: 8, aoSamples: 6, onProgress: (y, h) => setRayProgress(Math.max(1, Math.min(99, Math.round((y / h) * 100)))) });
-    const blob = await rt.promise;
-    if (blob) {
-      setRayViewUrl((prev) => {
-        if (prev) { try { URL.revokeObjectURL(prev); } catch { /* ignore */ } }
-        return URL.createObjectURL(blob);
-      });
-    }
-  } catch (err) {
-    setRayMsg(`⚠️ Ray view failed: ${(err && err.message) || 'unknown error'}`);
-    setTimeout(() => setRayMsg(''), 5000);
-  } finally {
-    setRayProgress(100);
-    setTimeout(() => setRayProgress(0), 500); // keep the bar visible even for instant renders
-    rayViewBusyRef.current = false;
-  }
-};
-
-// When the user tweaks the ray-lighting controls while the Ray view is open,
-// re-render it live (debounced) so the settings visibly take effect.
-const rayRefreshTimerRef = useRef(null);
-useEffect(() => {
-  const onRaySettings = () => {
-    if (!rayViewUrl) return;
-    if (rayRefreshTimerRef.current) clearTimeout(rayRefreshTimerRef.current);
-    rayRefreshTimerRef.current = setTimeout(async () => {
-      if (!componentRef.current || !componentRef.current.structure) return;
-      // Don't stack a second worker on top of a render that is still running —
-      // concurrent full-scene tracers only make the browser feel frozen.
-      if (rayViewBusyRef.current) return;
-      rayViewBusyRef.current = true;
-      setRayProgress(1);
-      try {
-        const rt = rayTraceStructureToBlob(componentRef.current, { width: 1200, shadowSamples: 8, aoSamples: 6, onProgress: (y, h) => setRayProgress(Math.max(1, Math.min(99, Math.round((y / h) * 100)))) });
-        const blob = await rt.promise;
-        if (blob) {
-          setRayViewUrl((prev) => {
-            if (prev) { try { URL.revokeObjectURL(prev); } catch { /* ignore */ } }
-            return URL.createObjectURL(blob);
-          });
-        }
-      } catch { /* keep the previous image on error */ }
-      finally {
-        setRayProgress(100);
-        setTimeout(() => setRayProgress(0), 500);
-        rayViewBusyRef.current = false;
-      }
-    }, 500);
-  };
-  window.addEventListener('lab:ray-settings-changed', onRaySettings);
-  return () => {
-    window.removeEventListener('lab:ray-settings-changed', onRaySettings);
-    if (rayRefreshTimerRef.current) clearTimeout(rayRefreshTimerRef.current);
-  };
-}, [rayViewUrl]);
-
 // ---- Capture the current 3D scene as a figure -------------------------------
 // Uses NGL's makeImage (reliable WebGL screenshot), falls back to the raw
 // canvas, then stores the image in the Figures library (Publications page).
@@ -3947,6 +3943,18 @@ const captureScene = async () => {
   }
   setTimeout(() => setCaptureMsg(''), 5000);
 };
+
+// ⚡ ESP targets the molecule currently selected in the Molecules bar.
+const espTargetComp = status === 'ready' ? resolveMolComp(selectedMolKey) : null;
+const espOnSelected = espMolKeys.has(selectedMolKey);
+const espTargetName = selectedMolKey === 'main'
+  ? 'the main structure'
+  : String((extraMols.find((m) => m.id === selectedMolKey) || {}).name || 'the selected molecule');
+const espBtnTitle = !espTargetComp
+  ? 'Load a structure first — ⚡ ESP colours the selected molecule’s surface by electrostatic potential'
+  : espOnSelected
+    ? `Remove the electrostatic-potential surface from ${espTargetName}`
+    : `Add a translucent surface coloured by electrostatic potential to ${espTargetName} — red = negative, white ≈ neutral, blue = positive. Once it is ON, a ⚡ Range control appears so you can set the limits (kcal/mol) and make the red / blue poles clearly visible. Partial charges come from the file when it provides them (PQR / charged MOL2 · SDF); otherwise NGL falls back to its CHARMM-derived charges for proteins. Click again to hide the surface.`;
 
 return (
 <div className="flex flex-col gap-3">
@@ -4079,27 +4087,49 @@ className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8
 </button>
 <button
 type="button"
-onClick={toggleRayView}
-title="Show the TRUE ray-traced image (self-shadowing: atoms/bonds cast shadows onto each other, plus ambient occlusion) inside the viewer; click again to return to the interactive 3D view"
-className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8 whitespace-nowrap bg-white border-violet-300 text-violet-700 hover:bg-violet-50"
+onClick={() => espToggle(selectedMolKey)}
+disabled={!espTargetComp}
+title={espBtnTitle}
+className={`text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed ${espOnSelected ? 'bg-fuchsia-100 border-fuchsia-400 text-fuchsia-800 hover:bg-fuchsia-200' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
 >
-{rayViewUrl ? '👁 Return to 3D view' : '⚡ Ray view'}
+{espOnSelected ? '⚡ ESP: On' : '⚡ ESP'}
 </button>
-<button
-type="button"
-onClick={rayTraceHighQuality}
-disabled={rayBusyRef.current}
-title="Render a high-resolution ray-traced PNG with true cast shadows and download it"
-className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8 whitespace-nowrap bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
->
-✨ Ray Trace PNG
-</button>
-
-{/* NUOVO PANNELLO DI CONTROLLO RAY TRACING */}
-<AdvancedRayTracerControls />
-{rayMsg && (
-<span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1">{rayMsg}</span>
+{espOnSelected && (
+  <div className="flex items-center gap-1.5 bg-white border border-fuchsia-200 rounded-lg px-2 py-1 text-[10px] text-slate-600 h-8 whitespace-nowrap" title="Electrostatic colour-scale limits in kcal/mol. Surface potentials at or below −N are drawn full RED (negative), 0 is white (neutral) and at or above +P full BLUE (positive). NGL's default ±50 is so wide that most surfaces look white — tighten the range to make the red and blue poles visible. Applies live (no surface rebuild) via Apply / Enter.">
+    <span className="font-black text-fuchsia-700 uppercase tracking-wide">⚡ Range</span>
+    <span className="font-bold text-red-600">−</span>
+    <input
+      type="number"
+      min="0.5"
+      max="500"
+      step="1"
+      value={Math.round(espLimits[0] * 10) / 10}
+      onChange={(e) => { const v = parseFloat(e.target.value); setEspLimits((p) => [Number.isFinite(v) && v > 0 ? Math.min(500, v) : p[0], p[1]]); }}
+      onKeyDown={espApplyLimitsOnEnter}
+      className="w-12 border border-slate-300 rounded px-1 py-0.5 text-right outline-none focus:border-fuchsia-400 text-[10px] font-mono"
+      aria-label="Negative ESP limit (red)"
+    />
+    <span className="text-slate-400 font-bold">0</span>
+    <span className="font-bold text-blue-600">+</span>
+    <input
+      type="number"
+      min="0.5"
+      max="500"
+      step="1"
+      value={Math.round(espLimits[1] * 10) / 10}
+      onChange={(e) => { const v = parseFloat(e.target.value); setEspLimits((p) => [p[0], Number.isFinite(v) && v > 0 ? Math.min(500, v) : p[1]]); }}
+      onKeyDown={espApplyLimitsOnEnter}
+      className="w-12 border border-slate-300 rounded px-1 py-0.5 text-right outline-none focus:border-fuchsia-400 text-[10px] font-mono"
+      aria-label="Positive ESP limit (blue)"
+    />
+    <span>kcal/mol</span>
+    <button type="button" onClick={() => espApplyLimits()} className="px-1.5 py-0.5 rounded border bg-fuchsia-50 border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-100 font-bold">Apply</button>
+    <button type="button" onClick={() => espApplyLimits(10, 10)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="Preset: red ≤ −10, blue ≥ +10 kcal/mol">±10</button>
+    <button type="button" onClick={() => espApplyLimits(25, 25)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="Preset: red ≤ −25, blue ≥ +25 kcal/mol">±25</button>
+    <button type="button" onClick={() => espApplyLimits(50, 50)} className="px-1.5 py-0.5 rounded border bg-white border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold" title="NGL's original wide range ±50 — only the strongest charges reach red/blue">±50</button>
+  </div>
 )}
+
 {captureMsg && (
 <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md px-2 py-1">{captureMsg}</span>
 )}
@@ -4271,14 +4301,24 @@ className="w-3.5 h-3.5 accent-sky-600"
   </button>
   <button type="button" onClick={() => setShadowOn((v) => !v)}
     className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors ${shadowOn ? 'bg-slate-800 border-slate-800 text-white' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-    title="Shadows: swaps NGL's flat camera-lit look for ONE fixed key light shining from up-left, so every side of the structure that turns away from it falls into real shade as you rotate — no more washed-out two-light fill. The Darkness slider then drives the warm/cool colour split from gentle to dramatic. (True WebGL shadow maps aren't supported by NGL — trying them made the molecule disappear.)">
+    title="Shadows: swaps NGL's flat camera-lit look for ONE fixed key light whose direction you aim (Azimuth / Elevation appear while ON), so every side of the structure that turns away from the light falls into real shade as you rotate. The Darkness slider then only raises the dark↔light contrast — the light stays pure white, so colours are never tinted. (True WebGL shadow maps aren't supported by NGL — trying them made the molecule disappear.)">
     ◐ Shadows: {shadowOn ? 'On' : 'Off'}
   </button>
   {shadowOn && (
-    <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700" title="Drama control — the higher the Darkness the more golden and brighter the key light becomes while the shadowed side turns cooler and deeper, so the lit-vs-shaded colour contrast swings dramatically">
+    <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700" title="Darkness — contrast only: the lit side gets brighter and the shaded side darker, with no colour change (the key light is pure white and only the light/ambient INTENSITIES move)">
       🌑 Darkness
       <input type="range" min="0" max="100" value={Math.round(shadowDarkness * 100)} onChange={(e) => setShadowDarkness(Number(e.target.value) / 100)} className="w-24 accent-slate-700" />
       <span className="text-[10px] text-slate-500 w-8">{Math.round(shadowDarkness * 100)}%</span>
+    </label>
+  )}
+  {shadowOn && (
+    <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700 whitespace-nowrap" title="Light direction — aim the fixed key light (and therefore where the shadows fall). Azimuth 0° = light behind the camera (flat), 90° = screen-left, 180° = facing the camera; Elevation is the height above/below the horizon. The shade follows live while you drag.">
+      💡 Light
+      <input type="range" min="0" max="360" value={shadowAz} onChange={(e) => setShadowAz(Number(e.target.value))} className="w-20 accent-slate-700" aria-label="Light azimuth" />
+      <span className="text-[10px] text-slate-500 w-8">{shadowAz}°</span>
+      <span className="text-slate-400">/</span>
+      <input type="range" min="-90" max="90" value={shadowEl} onChange={(e) => setShadowEl(Number(e.target.value))} className="w-20 accent-slate-700" aria-label="Light elevation" />
+      <span className="text-[10px] text-slate-500 w-8">{shadowEl}°</span>
     </label>
   )}
 </div>
@@ -4592,39 +4632,6 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
 >
 <div ref={containerRef} className="w-full h-full" />
 
-{/* Ray-tracing progress bar — shown while the software tracer is working */}
-{rayProgress > 0 && (
-  <div className="absolute inset-x-0 bottom-3 z-40 mx-auto w-3/4 bg-white/95 border border-slate-200 rounded-lg shadow-md px-3 py-2 flex flex-col gap-1 pointer-events-none">
-    <div className="flex items-center justify-between">
-      <span className="text-[10px] font-black text-slate-600 uppercase tracking-wide">⚡ Ray tracing (shadow rays + AO)</span>
-      <span className="text-[10px] font-bold text-indigo-600">{rayProgress}%</span>
-    </div>
-    <div className="w-full h-2 rounded-full bg-slate-200 overflow-hidden">
-      <div className="h-full bg-gradient-to-r from-indigo-500 to-violet-500 transition-all duration-150" style={{ width: `${rayProgress}%` }} />
-    </div>
-  </div>
-)}
-
-{/* Ray-traced self-shadowing overlay ("Ray view") — the software ray tracer's
-    result is shown directly over the live canvas until the user returns. */}
-{rayViewUrl && (
-  <div className="absolute inset-0 z-[15] bg-white flex items-center justify-center">
-    <img
-      src={rayViewUrl}
-      alt="Ray-traced render with true self-shadowing"
-      className="w-full h-full object-contain"
-      style={{ pointerEvents: 'none' }}
-    />
-    <button
-      type="button"
-      onClick={() => { try { URL.revokeObjectURL(rayViewUrl); } catch { /* ignore */ } setRayViewUrl(null); }}
-      className="absolute top-2 right-2 z-30 bg-slate-900/80 hover:bg-slate-900 text-white text-[11px] font-bold px-3 py-1.5 rounded-full shadow-lg transition-colors"
-    >
-      ✕ Return to interactive 3D
-    </button>
-  </div>
-)}
-
 {/* Mouse drag-to-move overlay — when "✋ Drag" is enabled, it captures the mouse
     (so NGL's rotate/zoom is suspended) and slides the SELECTED structure. */}
 {dragMove && (
@@ -4642,13 +4649,14 @@ style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
     shadow impression now comes from the FIXED key light (installShadowLightRig);
     this overlay only stops the dark corners from competing with the lit centre.
     Multiply blend + a soft multi-stop falloff keep it from reading as a flat
-    dark rectangle. Intensity still scales gently with the Darkness slider. */}
+    dark rectangle. It is pure neutral grey (no blue cast) and its intensity
+    still scales gently with the Darkness slider. */}
 {shadowOn && (
   <div
     className="pointer-events-none absolute inset-0 z-10"
     style={{
       mixBlendMode: 'multiply',
-      background: `radial-gradient(ellipse at 50% 40%, rgba(15,23,42,0) 45%, rgba(15,23,42,${0.04 + (shadowDarkness || 0) * 0.06}) 72%, rgba(15,23,42,${0.12 + (shadowDarkness || 0) * 0.18}) 100%)`,
+      background: `radial-gradient(ellipse at 50% 40%, rgba(30,30,30,0) 45%, rgba(30,30,30,${0.04 + (shadowDarkness || 0) * 0.06}) 72%, rgba(30,30,30,${0.12 + (shadowDarkness || 0) * 0.18}) 100%)`,
     }}
   />
 )}
