@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ensureNGL } from '../utils/ngl';
+import { computeSmiles3DNameMap } from '../utils/atomNameSync';
 import { readXtcFrames, countXtcFrames, countXtcFramesInFile } from '../utils/xtcDecoder';
 import { abortControl } from '../utils/abortControl';
 import { archiveFileToDrive } from '../utils/driveUpload';
@@ -277,14 +278,17 @@ const build3dLabelMap = (component, { showResidueNumber, showAtomLabel, showResi
       }
     } else if (cat === 'ligand') {
       // C) ligands / small molecules / non-standard residues (no 1-letter code).
+      // Atom-name modes label EVERY atom — including hydrogens when the
+      // structure carries them (their names are 2D-synchronised, e.g. H0a).
       const heavy = entry.atoms.filter((a) => a.heavy);
-      const targets = heavy.length ? heavy : entry.atoms;
+      const labelAtoms = entry.atoms.length ? entry.atoms : heavy;
       if (showResidueNumber && showAtomLabel) {
-        targets.forEach((at) => put(at, `${resTag}-${at.disp}`));             // e.g. ATP501-O1G
+        labelAtoms.forEach((at) => put(at, `${resTag}-${at.disp}`));           // e.g. ATP501-O1G / ATP501-H1a
       } else if (showAtomLabel) {
-        targets.forEach((at) => put(at, at.disp || properElementSymbol(at.el)));
+        labelAtoms.forEach((at) => put(at, at.disp || properElementSymbol(at.el)));
       } else if (showResidueNumber) {
         // Single label on the heavy atom closest to the molecule centroid.
+        const targets = heavy.length ? heavy : entry.atoms;
         let anchor = targets[0];
         if (targets.length > 1) {
           const n = targets.length;
@@ -928,6 +932,7 @@ onAtomClick,
 selectedKeys,
 manualKeys = [],
 moleculeType = 'protein',
+smiles = '',
 parsedSeq = [],
 residueOffset = 0,
 atomRenames,
@@ -1021,6 +1026,15 @@ const [showAtomLabel, setShowAtomLabel] = useState(false);
 // right after the residue number (10 → 10A). Works together with either or
 // both of the toggles above (for protein / nucleic residues).
 const [showResidueNumberType, setShowResidueNumberType] = useState(false);
+
+// ---- 2D↔3D atom-name synchronisation ---------------------------------------
+// Holds the map { NGL atom index → 2D SMILES atom name } for organic/lipid/
+// sugar molecules generated from `smiles`. The label pipeline reads this map
+// (see displayAtomName) so the 3D labels display EXACTLY the names assigned
+// by the 2D formula — the 2D generation code is never modified.
+const [smilesNameMap, setSmilesNameMap] = useState(null);
+const smilesNameMapRef = useRef(null);
+smilesNameMapRef.current = smilesNameMap;
 const [sidechainStyle, setSidechainStyle] = useState('licorice');
 const [backboneStyle, setBackboneStyle] = useState('cartoon');
 // Visualization style for NON-protein molecules (organic / lipid / sugar / nucleic):
@@ -1355,6 +1369,14 @@ const displayAtomName = (atom) => {
   const idx = typeof atom.index === 'number' ? atom.index : -1;
   const over = renamesRef.current[idx];
   if (over && String(over).trim()) return String(over).trim();
+  // 2D↔3D atom-name synchronisation: for SMILES-generated organic molecules the
+  // 3D labels must show exactly the names assigned by the 2D formula. The map
+  // is computed once per structure in the effect above; 2D generation is
+  // never modified.
+  if (['organic', 'lipid', 'sugar'].includes(moleculeTypeRef.current)) {
+    const synced = smilesNameMapRef.current && smilesNameMapRef.current[idx];
+    if (synced) return synced;
+  }
   // For organic/lipid/sugar molecules, use the same connectivity-based name as
   // the 2D structure (so the 3D labels automatically match the 2D formula).
   if (['organic', 'lipid', 'sugar'].includes(moleculeTypeRef.current)) {
@@ -2937,6 +2959,33 @@ const autoNameFrom2D = () => {
 };
 const clearRenames = () => persistRenames({});
 
+// ---- Build the 2D↔3D atom-name map (organic molecules from SMILES) ---------
+// Runs when a structure is ready and `smiles` is known; the resulting map is
+// consumed by displayAtomName → the 3D labels render synchronised names. The
+// 2D formula generation pipeline is never touched.
+useEffect(() => {
+const organicLike = ['organic', 'lipid', 'sugar'].includes(moleculeType);
+const component = componentRef.current;
+if (!organicLike || !String(smiles || '').trim() || status !== 'ready' || !component) {
+  setSmilesNameMap(null);
+  return;
+}
+let cancelled = false;
+computeSmiles3DNameMap(component, smiles)
+  .then(({ map }) => {
+    if (cancelled) return;
+    const next = map && Object.keys(map).length ? map : null;
+    setSmilesNameMap((prev) => {
+      const a = prev ? JSON.stringify(prev) : '';
+      const b = next ? JSON.stringify(next) : '';
+      return a === b ? prev : next;
+    });
+  })
+  .catch(() => { if (!cancelled) setSmilesNameMap(null); });
+return () => { cancelled = true; };
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, [moleculeType, smiles, status]);
+
 // 3D atom / residue labels.
 // Three toggles drive what is written next to each atom:
 //   showResidueNumber     → residue / molecule identifiers
@@ -3000,7 +3049,7 @@ visible: true,
 } catch { /* label rendering is best-effort — never break the viewer */ }
 }
 return clearLabels;
-}, [showResidueNumber, showResidueNumberType, showAtomLabel, status, renames]);
+}, [showResidueNumber, showResidueNumberType, showAtomLabel, status, renames, smilesNameMap]);
 
 // Side-chain representation
 useEffect(() => {

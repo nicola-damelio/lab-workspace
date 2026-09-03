@@ -9,7 +9,7 @@ import { SearchableSelect } from '../SearchableSelect';
 import { Icon } from '../Icons';
 import { markAttachmentsDeleted, deleteTestDriveFolder } from '../../utils/driveUpload';
 import { removeTestFcsBlobs } from '../../utils/fcsBlobStore';
-import { testProjectAccess, loadProjects } from './projectsModule';
+import { testProjectAccess, loadProjects, getProjectAccessForUser } from './projectsModule';
 
 const TEST_CARD_ICON = {
   nmr: 'chart-line',
@@ -52,6 +52,12 @@ export const TestsModule = ({
                 const [filterInstrument, setFilterInstrument] = useState('ALL');
                 const [filterProbe, setFilterProbe] = useState('ALL');
                 const [filterPulseSeq, setFilterPulseSeq] = useState('ALL');
+
+                // ── Project picker for new experiments ────────────────
+                // Holds the experiment type awaiting a project choice from the
+                // inline dropdown (projects the user may MODIFY).
+                const [pendingExperimentType, setPendingExperimentType] = useState(null);
+                const [projectDraft, setProjectDraft] = useState('');
 
                 const primaryOptions = PRIMARY_CATEGORIES || Object.keys(CLASSIFICATION_MAP || {});
                 const secondaryOptions = (() => {
@@ -211,42 +217,55 @@ export const TestsModule = ({
 
                 // ── Project-required experiment creation ─────────────────────
                 // Experiments must ALWAYS belong to at least one Project. The
-                // +<type> buttons below go through this helper, which refuses to
-                // create an experiment without a project:
-                //   1. no projects at all     → jump to the Projects view,
-                //   2. a project filter is on → use that project,
-                //   3. exactly one project    → use it automatically,
-                //   4. several projects      → ask which project to use.
-                const createExperimentInProject = (type) => {
-                  const projectNames = [...new Set(
+                // +<type> buttons open an inline DROPDOWN listing the projects
+                // the current user may modify (superusers see every project).
+                const allowedProjectsForCurrentUser = () => {
+                  const userName = currentUser && currentUser.name;
+                  const isSuper = currentUser && currentUser.role === 'superuser';
+                  const access = getProjectAccessForUser(userName);
+                  return [...new Set(
                     (loadProjects() || [])
                       .map((p) => String(p && p.name || '').trim())
                       .filter(Boolean)
+                      .filter((name) => isSuper || access[name] === 'modify')
                   )];
-                  if (projectNames.length === 0) {
-                    window.alert('You need at least one Project before creating an Experiment.\n\nCreate a Project first (Projects → New Project), then add this experiment inside it.');
+                };
+
+                // Open the inline project picker for a new experiment.
+                const createExperimentInProject = (type) => {
+                  const allowed = allowedProjectsForCurrentUser();
+                  if (allowed.length === 0) {
+                    window.alert('You need at least one Project you can modify before creating an Experiment.\n\nCreate a Project first (Projects → New Project), then add this experiment inside it.');
                     setCurrentModule('projects');
                     return;
                   }
-                  let chosen = '';
-                  if (filterProject !== 'ALL' && projectNames.includes(filterProject)) chosen = filterProject;
-                  else if (projectNames.length === 1) chosen = projectNames[0];
-                  else {
-                    const answer = window.prompt(
-                      `Choose the Project that will own this experiment:\n\n${projectNames.map((n) => `- ${n}`).join('\n')}\n\nType the project name:`
-                    );
-                    if (!answer) return;
-                    const match = projectNames.find((n) => n.toLowerCase() === String(answer).trim().toLowerCase());
-                    if (!match) { window.alert('Unknown project — experiment not created.'); return; }
-                    chosen = match;
+                  const defaultProject = (filterProject !== 'ALL' && allowed.includes(filterProject))
+                    ? filterProject
+                    : allowed[0];
+                  setPendingExperimentType(type);
+                  setProjectDraft(defaultProject);
+                };
+
+                // Create the experiment once a project has been selected.
+                const commitPendingExperiment = () => {
+                  const type = pendingExperimentType;
+                  if (!type) return;
+                  const allowed = allowedProjectsForCurrentUser();
+                  const chosen = String(projectDraft || '').trim();
+                  if (!chosen || !allowed.includes(chosen)) {
+                    window.alert('Please choose a Project from the list — the experiment was not created.');
+                    return;
                   }
                   const id = 't' + Date.now() + Math.floor(Math.random() * 1e4);
                   const created = createEmptyTest(id, tests.length + 1, type);
                   created.projectNames = [chosen];
                   setTests((prev) => [...prev, created]);
+                  setPendingExperimentType(null);
+                  setProjectDraft('');
                   setActiveTestId(id);
                   setCurrentModule('active-test');
                 };
+
 
                 return (
                   <div className="p-4 md:p-6 h-full flex flex-col overflow-y-auto custom-scrollbar">
@@ -373,6 +392,43 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 
   </button>
 </div>
                     </div>
+
+                    {pendingExperimentType && (
+                      <div className="bg-indigo-50 border border-indigo-300 rounded-xl p-3 mb-3 flex flex-wrap items-center gap-3 no-print shadow-sm">
+                        <span className="text-xs font-black text-indigo-900 uppercase">
+                          ➕ Create {pendingExperimentType} experiment
+                        </span>
+                        <div className="flex flex-col gap-0.5">
+                          <label className="text-[9px] font-bold text-indigo-700 uppercase">Link to project (you can modify)</label>
+                          <select
+                            value={projectDraft}
+                            onChange={(e) => setProjectDraft(e.target.value)}
+                            className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-500 min-w-[220px]"
+                          >
+                            {allowedProjectsForCurrentUser().map((name) => (
+                              <option key={name} value={name}>📁 {name}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={commitPendingExperiment}
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-lg text-xs shadow-sm transition-colors"
+                        >
+                          ✓ Create experiment
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setPendingExperimentType(null); setProjectDraft(''); }}
+                          className="bg-white hover:bg-slate-100 border border-slate-300 text-slate-600 font-bold px-3 py-2 rounded-lg text-xs transition-colors"
+                        >
+                          ✕ Cancel
+                        </button>
+                        <span className="text-[10px] text-indigo-700/70">
+                          Every experiment must live inside at least one Project.
+                        </span>
+                      </div>
+                    )}
 
                     <div className="bg-white p-2.5 rounded-xl shadow-sm border border-slate-200 mb-3 flex flex-col gap-3 shrink-0 no-print">
                       {/* TOP CONTROLS — identical to the Lab Notebook */}

@@ -1257,6 +1257,7 @@ export const MDExperimentSetupSection = ({ ctx }) => {
   trajectoryFallbacks={trajNorm.fallbacks}
   trajectoryFormat={d.trajectoryFormat}
   moleculeType={d.moleculeType}
+  smiles={activeTest.smiles}
   parsedSeq={d.parsedSeq}
   selectedKeys={selectedKeys}
   manualKeys={manualKeys}
