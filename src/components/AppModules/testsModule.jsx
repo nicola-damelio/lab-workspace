@@ -9,7 +9,7 @@ import { SearchableSelect } from '../SearchableSelect';
 import { Icon } from '../Icons';
 import { markAttachmentsDeleted, deleteTestDriveFolder } from '../../utils/driveUpload';
 import { removeTestFcsBlobs } from '../../utils/fcsBlobStore';
-import { testProjectAccess } from './projectsModule';
+import { testProjectAccess, loadProjects } from './projectsModule';
 
 const TEST_CARD_ICON = {
   nmr: 'chart-line',
@@ -209,6 +209,44 @@ export const TestsModule = ({
                   }
                 });
 
+                // ── Project-required experiment creation ─────────────────────
+                // Experiments must ALWAYS belong to at least one Project. The
+                // +<type> buttons below go through this helper, which refuses to
+                // create an experiment without a project:
+                //   1. no projects at all     → jump to the Projects view,
+                //   2. a project filter is on → use that project,
+                //   3. exactly one project    → use it automatically,
+                //   4. several projects      → ask which project to use.
+                const createExperimentInProject = (type) => {
+                  const projectNames = [...new Set(
+                    (loadProjects() || [])
+                      .map((p) => String(p && p.name || '').trim())
+                      .filter(Boolean)
+                  )];
+                  if (projectNames.length === 0) {
+                    window.alert('You need at least one Project before creating an Experiment.\n\nCreate a Project first (Projects → New Project), then add this experiment inside it.');
+                    setCurrentModule('projects');
+                    return;
+                  }
+                  let chosen = '';
+                  if (filterProject !== 'ALL' && projectNames.includes(filterProject)) chosen = filterProject;
+                  else if (projectNames.length === 1) chosen = projectNames[0];
+                  else {
+                    const answer = window.prompt(
+                      `Choose the Project that will own this experiment:\n\n${projectNames.map((n) => `- ${n}`).join('\n')}\n\nType the project name:`
+                    );
+                    if (!answer) return;
+                    const match = projectNames.find((n) => n.toLowerCase() === String(answer).trim().toLowerCase());
+                    if (!match) { window.alert('Unknown project — experiment not created.'); return; }
+                    chosen = match;
+                  }
+                  const id = 't' + Date.now() + Math.floor(Math.random() * 1e4);
+                  const created = createEmptyTest(id, tests.length + 1, type);
+                  created.projectNames = [chosen];
+                  setTests((prev) => [...prev, created]);
+                  setActiveTestId(id);
+                  setCurrentModule('active-test');
+                };
 
                 return (
                   <div className="p-4 md:p-6 h-full flex flex-col overflow-y-auto custom-scrollbar">
@@ -233,13 +271,7 @@ export const TestsModule = ({
 
   <button
     onClick={() => {
-      const id = 't' + Date.now();
-      setTests((prev) => [
-        ...prev,
-        createEmptyTest(id, prev.length + 1, 'cloning')
-      ]);
-      setActiveTestId(id);
-      setCurrentModule('active-test');
+      createExperimentInProject('cloning');
     }}
     className="bg-teal-600 hover:bg-teal-700 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex-1 md:flex-none"
   >
@@ -248,13 +280,7 @@ export const TestsModule = ({
 
   <button
     onClick={() => {
-      const id = 't' + Date.now();
-      setTests((prev) => [
-        ...prev,
-        createEmptyTest(id, prev.length + 1, 'protein_expression')
-      ]);
-      setActiveTestId(id);
-      setCurrentModule('active-test');
+      createExperimentInProject('protein_expression');
     }}
     className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex-1 md:flex-none"
   >
@@ -263,13 +289,7 @@ export const TestsModule = ({
 
   <button
     onClick={() => {
-      const id = 't' + Date.now();
-      setTests((prev) => [
-        ...prev,
-        createEmptyTest(id, prev.length + 1, 'plate-96')
-      ]);
-      setActiveTestId(id);
-      setCurrentModule('active-test');
+      createExperimentInProject('plate-96');
     }}
     className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex-1 md:flex-none"
   >
@@ -277,13 +297,7 @@ export const TestsModule = ({
   </button>
   <button
 onClick={() => {
-const id = 't' + Date.now();
-setTests((prev) => [
-...prev,
-createEmptyTest(id, prev.length + 1, 'flow_cytometry')
-]);
-setActiveTestId(id);
-setCurrentModule('active-test');
+createExperimentInProject('flow_cytometry');
 }}
 className="bg-pink-600 hover:bg-pink-700 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex-1 md:flex-none"
 >
@@ -291,13 +305,7 @@ className="bg-pink-600 hover:bg-pink-700 text-white font-bold py-1.5 px-3 rounde
 </button>
 <button
 onClick={() => {
-const id = 't' + Date.now();
-setTests((prev) => [
-...prev,
-createEmptyTest(id, prev.length + 1, 'microscopy')
-]);
-setActiveTestId(id);
-setCurrentModule('active-test');
+createExperimentInProject('microscopy');
 }}
 className="bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex-1 md:flex-none"
 >
@@ -306,13 +314,7 @@ className="bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-1.5 px-3 rounde
 
 <button
 onClick={() => {
-const id = 't' + Date.now();
-setTests((prev) => [
-...prev,
-createEmptyTest(id, prev.length + 1, 'cd')
-]);
-setActiveTestId(id);
-setCurrentModule('active-test');
+createExperimentInProject('cd');
 }}
 className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex-1 md:flex-none"
 >
@@ -320,13 +322,7 @@ className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-1.5 px-3 ro
 </button>
 <button
 onClick={() => {
-const id = 't' + Date.now();
-setTests((prev) => [
-...prev,
-createEmptyTest(id, prev.length + 1, 'ssnmr')
-]);
-setActiveTestId(id);
-setCurrentModule('active-test');
+createExperimentInProject('ssnmr');
 }}
 className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex-1 md:flex-none"
 >
@@ -334,13 +330,7 @@ className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1.5 px-3 ro
 </button>
 <button
 onClick={() => {
-const id = 't' + Date.now();
-setTests((prev) => [
-...prev,
-createEmptyTest(id, prev.length + 1, 'nmr')
-]);
-setActiveTestId(id);
-setCurrentModule('active-test');
+createExperimentInProject('nmr');
 }}
 className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex-1 md:flex-none"
 >
@@ -349,13 +339,7 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 
 
   <button
     onClick={() => {
-      const id = 't' + Date.now();
-      setTests((prev) => [
-        ...prev,
-        createEmptyTest(id, prev.length + 1, 'nmr-fittings')
-      ]);
-      setActiveTestId(id);
-      setCurrentModule('active-test');
+      createExperimentInProject('nmr-fittings');
     }}
     className="bg-amber-600 hover:bg-amber-700 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex-1 md:flex-none"
   >
@@ -364,13 +348,7 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 
 
   <button
     onClick={() => {
-      const id = 't' + Date.now();
-      setTests((prev) => [
-        ...prev,
-        createEmptyTest(id, prev.length + 1, 'dosy')
-      ]);
-      setActiveTestId(id);
-      setCurrentModule('active-test');
+      createExperimentInProject('dosy');
     }}
     className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex-1 md:flex-none"
   >
@@ -379,13 +357,7 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 
 
   <button
     onClick={() => {
-      const id = 't' + Date.now();
-      setTests((prev) => [
-        ...prev,
-        createEmptyTest(id, prev.length + 1, 'md_simulation')
-      ]);
-      setActiveTestId(id);
-      setCurrentModule('active-test');
+      createExperimentInProject('md_simulation');
     }}
     className="bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex-1 md:flex-none"
   >
@@ -393,13 +365,7 @@ className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 
   </button>
   <button
     onClick={() => {
-      const id = 't' + Date.now();
-      setTests((prev) => [
-        ...prev,
-        createEmptyTest(id, prev.length + 1, 'docking')
-      ]);
-      setActiveTestId(id);
-      setCurrentModule('active-test');
+      createExperimentInProject('docking');
     }}
     className="bg-rose-600 hover:bg-rose-700 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex-1 md:flex-none"
   >

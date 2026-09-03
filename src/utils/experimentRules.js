@@ -22,19 +22,29 @@ export const experimentProjects = (test) => {
 export const experimentHasProject = (test) =>
   !!(test && experimentProjects(test).length > 0);
 
-/** Returns every experiment that currently has NO project (they must be
- *  assigned before they can be saved to / mirrored on Drive). */
-export const experimentsWithoutProjects = (tests) =>
-  (Array.isArray(tests) ? tests : []).filter((t) => !experimentHasProject(t));
+/** Test types that are NOT experiments — e.g. sample-storage boxes created by
+ *  the Storage module. They are exempt from the "must belong to a project"
+ *  rule (a box is a location, not an experiment). */
+const STORAGE_BOX_TYPES = new Set(['plate-9x9box']);
 
-/** Assign `projectName` to every experiment that has no project yet.
- *  Returns a NEW array (or the same reference when nothing changed). */
+export const isExperimentTest = (test) =>
+  !!test && !STORAGE_BOX_TYPES.has(String(test.type || '').trim());
+
+/** Returns every EXPERIMENT that currently has NO project (they must be
+ *  assigned before they can be created or saved). Storage boxes are ignored. */
+export const experimentsWithoutProjects = (tests) =>
+  (Array.isArray(tests) ? tests : [])
+    .filter((t) => isExperimentTest(t) && !experimentHasProject(t));
+
+/** Assign `projectName` to every EXPERIMENT that has no project yet
+ *  (storage boxes are skipped). Returns a NEW array (or the same reference
+ *  when nothing changed). */
 export const assignUnassignedExperimentsToProject = (tests, projectName) => {
   const name = String(projectName || '').trim();
   if (!name || !Array.isArray(tests)) return tests;
   let changed = false;
   const next = tests.map((t) => {
-    if (experimentHasProject(t)) return t;
+    if (!isExperimentTest(t) || experimentHasProject(t)) return t;
     changed = true;
     return { ...t, projectNames: experimentProjects(t).concat(name) };
   });
@@ -42,10 +52,12 @@ export const assignUnassignedExperimentsToProject = (tests, projectName) => {
 };
 
 /** Validate a test right before it is persisted / saved to Drive.
+ *  Storage boxes (plate-9x9box) are not experiments and are always accepted.
  *  @returns {{ ok: boolean, error?: string, test: object }}
  *  When ok is false the caller must abort the save and show `error`. */
 export const validateExperimentForSave = (test) => {
   if (!test) return { ok: false, error: 'Experiment is missing.' };
+  if (!isExperimentTest(test)) return { ok: true, test };
   const name = String(test.name || '').trim();
   if (!name) return { ok: false, error: 'Give the experiment a name before saving.' };
   if (!experimentHasProject(test)) {

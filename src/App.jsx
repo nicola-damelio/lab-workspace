@@ -24,6 +24,7 @@ import {normalizeOperators} from './utils/auth';
 import { setActiveProjectId, readLibrary, readAllProjectLibraries, restoreLibraryFromSnapshot } from './utils/figuresLibrary';
 import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders } from './utils/driveUpload';
 import { sanitizeSlug, datasetFolderSlug } from './utils/driveNaming';
+import { validateDatasetExperiments } from './utils/experimentRules';
 
 import { ScientistLoginGate, ScientistLoginModal } from './components/AppModules/definitionsManagers';
 
@@ -1409,6 +1410,12 @@ if (customType === 'dosy') {
 
     backupRunningRef.current = true;
     try {
+      // Hard rule: experiments may not be backed up / saved without a Project.
+      const backupValidation = validateDatasetExperiments({ tests: latestDataRef.current?.tests || [] });
+      if (!backupValidation.ok) {
+        setBackupStatus({ state: 'error', msg: `${backupValidation.message} Link every experiment to a Project before the weekly backup runs.` });
+        return false;
+      }
       const list = Array.isArray(datasetsListRef.current) ? datasetsListRef.current : [];
       if (list.length === 0) { setBackupStatus({ state: 'skip', msg: 'No datasets to back up yet' }); return false; }
 
@@ -1796,6 +1803,12 @@ useEffect(() => {
 
   const exportHTML = () => {
     try {
+      // Hard rule: experiments may not be saved without a Project.
+      const validation = validateDatasetExperiments({ tests: latestDataRef.current?.tests || [] });
+      if (!validation.ok) {
+        setDialog({ type: 'alert', title: 'Experiments must be linked to a Project', message: `${validation.message}\n\nLink every experiment to at least one Project (Projects → open project → “+ Add experiment”, or link existing experiments inside the project), then save again.` });
+        return;
+      }
       const payload = getCompressedPayload();
 
       const dataBlob = {
@@ -2135,7 +2148,15 @@ if (s.mandatoryFields !== undefined) setMandatoryFields((prev) => [...new Set([.
 
 const createNewDataset = async () => {
     const newId = 'ds_' + Date.now();
-    const freshTests = [createEmptyTest('t1', 1, 'plate-96')];
+    // Experiments must belong to a Project: when a project already exists on
+    // this device, the starter experiment is linked to it right away (otherwise
+    // the user is asked to create/link a project before any experiment can be
+    // saved or backed up).
+    const existingProjects = loadProjects() || [];
+    const starterProject = String(existingProjects[0] && existingProjects[0].name || '').trim();
+    const starter = createEmptyTest('t1', 1, 'plate-96');
+    if (starterProject) starter.projectNames = [starterProject];
+    const freshTests = [starter];
 
     setReactTests(freshTests);
 
