@@ -82,7 +82,8 @@ const renderMolScene = (job) => {
 
   const rayBlocked = (o, d) => {
     for (let i = 0; i < n; i++) {
-      if (raySphere(o, d, atoms[i], atoms[i].r) >= 0) return true;
+      const a = atoms[i];
+      if (raySphere(o, d, [a.x, a.y, a.z], a.r) >= 0) return true;
     }
     return false;
   };
@@ -96,7 +97,8 @@ const renderMolScene = (job) => {
       let hitT = Infinity;
       let hitIdx = -1;
       for (let i = 0; i < n; i++) {
-        const t = raySphere(eye, dir, atoms[i], atoms[i].r);
+        const a = atoms[i];
+        const t = raySphere(eye, dir, [a.x, a.y, a.z], a.r);
         if (t >= 0 && t < hitT) { hitT = t; hitIdx = i; }
       }
       const out = ((y * width) + x) * 4;

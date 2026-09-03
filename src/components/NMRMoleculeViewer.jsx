@@ -3764,66 +3764,80 @@ const rayTraceHighQuality = async () => {
   if (rayBusyRef.current) return;
   rayBusyRef.current = true;
   setRayMsg('✨ Rendering high-quality image…');
-  // Preferred path: TRUE software ray tracing (real cast shadows + optional
-  // ambient occlusion). Falls back to NGL's supersampled capture below.
+  setRayProgress(1);
+  // IMPORTANT: rayBusyRef.current must ALWAYS be released (and the progress
+  // bar cleared) no matter which path completes, so a single outer try/finally
+  // wraps every branch below. The success path returns early, but the finally
+  // still runs and unlocks the button for the next render.
   try {
+    // Preferred path: TRUE software ray tracing (real cast shadows + optional
+    // ambient occlusion). Falls back to NGL's supersampled capture below.
     if (typeof Worker !== 'undefined' && componentRef.current && componentRef.current.structure) {
       setRayMsg('✨ Ray tracing (true cast shadows + ambient occlusion)…');
-      const rt = rayTraceStructureToBlob(componentRef.current, { width: 1700, shadowSamples: 8, aoSamples: 8 });
-      const rayBlob = await rt.promise;
-      if (rayBlob) {
-        const base = (file && file.name) ? String(file.name).replace(/\.[^.]+$/, '') : (pdbId ? `pdb_${pdbId}` : 'structure');
-        downloadBlob(rayBlob, `${base}_raytraced_${new Date().toISOString().slice(0, 10)}.png`);
-        setRayMsg(`✨ Ray-traced image downloaded (${(rayBlob.size / 1024).toFixed(0)} KB) — one helix now casts real shadows onto the other`);
-        setTimeout(() => setRayMsg(''), 9000);
-        return;
+      try {
+        const rt = rayTraceStructureToBlob(componentRef.current, {
+          width: 1700, shadowSamples: 8, aoSamples: 8,
+          onProgress: (y, h) => setRayProgress(Math.max(1, Math.min(99, Math.round((y / h) * 100))))
+        });
+        const rayBlob = await rt.promise;
+        if (rayBlob) {
+          const base = (file && file.name) ? String(file.name).replace(/\.[^.]+$/, '') : (pdbId ? `pdb_${pdbId}` : 'structure');
+          downloadBlob(rayBlob, `${base}_raytraced_${new Date().toISOString().slice(0, 10)}.png`);
+          setRayMsg(`✨ Ray-traced image downloaded (${(rayBlob.size / 1024).toFixed(0)} KB) — one helix now casts real shadows onto the other`);
+          setTimeout(() => setRayMsg(''), 9000);
+          return; // success → the finally below unlocks rayBusyRef
+        }
+      } catch (err) {
+        console.warn('Software ray tracer failed — falling back to supersampled capture:', err && err.message);
       }
     }
-  } catch (err) {
-    console.warn('Software ray tracer failed — falling back to supersampled capture:', err && err.message);
-  }
-  try {
-    // Elevate renderer settings for this one pass.
-    try { stage.setQuality('high'); } catch { /* older builds ignore this */ }
-    try { stage.setParameters({ sampleLevel: 5 }); } catch { /* ignore */ }
-    await new Promise((r) => setTimeout(r, 150)); // let the new quality apply
+    try {
+      // Elevate renderer settings for this one pass.
+      try { stage.setQuality('high'); } catch { /* older builds ignore this */ }
+      try { stage.setParameters({ sampleLevel: 5 }); } catch { /* ignore */ }
+      await new Promise((r) => setTimeout(r, 150)); // let the new quality apply
 
-    let blob = null;
-    if (typeof stage.makeImage === 'function') {
-      try {
-        // factor 3 → ~3× viewport resolution; antialias = MSAA smoothing of
-        // the frame. `transparent:false` keeps the viewer's light background.
-        blob = await stage.makeImage({ factor: 3, antialias: true, transparent: false });
-      } catch { blob = null; }
-    }
-    if (!blob) {
-      // Fallback: raw canvas → PNG (no supersampling, but still downloadable).
-      try {
-        const cv = stage.viewer && stage.viewer.container ? stage.viewer.container.querySelector('canvas') : null;
-        if (cv) {
-          blob = await new Promise((res) => cv.toBlob((b) => res(b), 'image/png'));
-        }
-      } catch { blob = null; }
-    }
-    if (!blob) {
-      setRayMsg('⚠️ High-quality render failed — try the 📷 Figure button instead');
+      let blob = null;
+      if (typeof stage.makeImage === 'function') {
+        try {
+          // factor 3 → ~3× viewport resolution; antialias = MSAA smoothing of
+          // the frame. `transparent:false` keeps the viewer's light background.
+          blob = await stage.makeImage({ factor: 3, antialias: true, transparent: false });
+        } catch { blob = null; }
+      }
+      if (!blob) {
+        // Fallback: raw canvas → PNG (no supersampling, but still downloadable).
+        try {
+          const cv = stage.viewer && stage.viewer.container ? stage.viewer.container.querySelector('canvas') : null;
+          if (cv) {
+            blob = await new Promise((res) => cv.toBlob((b) => res(b), 'image/png'));
+          }
+        } catch { blob = null; }
+      }
+      if (!blob) {
+        setRayMsg('⚠️ High-quality render failed — try the 📷 Figure button instead');
+        setTimeout(() => setRayMsg(''), 5000);
+        return;
+      }
+      const base = (file && file.name) ? String(file.name).replace(/\.[^.]+$/, '') : (pdbId ? `pdb_${pdbId}` : 'structure');
+      const label = `${base}_raytrace_${new Date().toISOString().slice(0, 10)}.png`;
+      downloadBlob(blob, label);
+      setRayMsg(`✨ High-quality render downloaded (${(blob.size / 1024).toFixed(0)} KB) — see your Downloads folder`);
+      setTimeout(() => setRayMsg(''), 7000);
+    } catch (err) {
+      setRayMsg(`⚠️ High-quality render failed: ${(err && err.message) || 'unknown error'}`);
       setTimeout(() => setRayMsg(''), 5000);
-      return;
     }
-    const base = (file && file.name) ? String(file.name).replace(/\.[^.]+$/, '') : (pdbId ? `pdb_${pdbId}` : 'structure');
-    const label = `${base}_raytrace_${new Date().toISOString().slice(0, 10)}.png`;
-    downloadBlob(blob, label);
-    setRayMsg(`✨ High-quality render downloaded (${(blob.size / 1024).toFixed(0)} KB) — see your Downloads folder`);
-    setTimeout(() => setRayMsg(''), 7000);
-  } catch (err) {
-    setRayMsg(`⚠️ High-quality render failed: ${(err && err.message) || 'unknown error'}`);
-    setTimeout(() => setRayMsg(''), 5000);
   } finally {
-    // Restore the realtime settings immediately after the frame is captured.
+    // Restore the realtime NGL settings immediately after the frame is
+    // captured, release the busy lock and finish the progress bar — this runs
+    // for the software-tracer success path AND for every fallback path.
     try { stage.setQuality('auto'); } catch { /* ignore */ }
     try { stage.setParameters({ sampleLevel: 0 }); } catch { /* ignore */ }
     try { const viewer = stage.viewer; if (viewer && viewer.requestRender) viewer.requestRender(); } catch { /* ignore */ }
     rayBusyRef.current = false;
+    setRayProgress(100);
+    setTimeout(() => setRayProgress(0), 500);
   }
 };
 
@@ -3872,6 +3886,10 @@ useEffect(() => {
     if (rayRefreshTimerRef.current) clearTimeout(rayRefreshTimerRef.current);
     rayRefreshTimerRef.current = setTimeout(async () => {
       if (!componentRef.current || !componentRef.current.structure) return;
+      // Don't stack a second worker on top of a render that is still running —
+      // concurrent full-scene tracers only make the browser feel frozen.
+      if (rayViewBusyRef.current) return;
+      rayViewBusyRef.current = true;
       setRayProgress(1);
       try {
         const rt = rayTraceStructureToBlob(componentRef.current, { width: 1200, shadowSamples: 8, aoSamples: 6, onProgress: (y, h) => setRayProgress(Math.max(1, Math.min(99, Math.round((y / h) * 100)))) });
@@ -3886,6 +3904,7 @@ useEffect(() => {
       finally {
         setRayProgress(100);
         setTimeout(() => setRayProgress(0), 500);
+        rayViewBusyRef.current = false;
       }
     }, 500);
   };
