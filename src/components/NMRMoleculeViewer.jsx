@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ensureNGL } from '../utils/ngl';
 import { computeSmiles3DNameMap } from '../utils/atomNameSync';
+import { rayTraceStructureToBlob } from '../utils/advancedRayTracer';
+import AdvancedRayTracerControls from '../utils/AdvancedRayTracerControls';
 import { readXtcFrames, countXtcFrames, countXtcFramesInFile } from '../utils/xtcDecoder';
 import { abortControl } from '../utils/abortControl';
 import { archiveFileToDrive } from '../utils/driveUpload';
@@ -956,6 +958,13 @@ const resizeRef = useRef(null); // { startY, startH } while dragging
 // restores it and tells NGL that the canvas size changed.
 const [viewerCollapsed, setViewerCollapsed] = useState(false);
 const [captureMsg, setCaptureMsg] = useState('');
+const [rayMsg, setRayMsg] = useState('');
+const rayBusyRef = useRef(false);
+// Live "Ray view": an object-URL of the software ray-traced image displayed
+// over the NGL canvas, demonstrating true self-shadowing in the viewer.
+const [rayViewUrl, setRayViewUrl] = useState(null);
+const rayViewBusyRef = useRef(false);
+const [rayProgress, setRayProgress] = useState(0);
 
 useEffect(() => {
   const move = (ev) => {
@@ -3719,6 +3728,174 @@ const handleAbort = () => {
   }
 };
 
+// ---- High-quality render ----------------------------------------------------
+// Temporarily elevates the NGL renderer for a publication-quality capture:
+//   • max supersampling factor (render at 3× the viewport resolution),
+//   • NGL MSAA antialiasing on the exported frame,
+//   • maximum sampleLevel + 'high' quality during the pass,
+//   • the existing locked key-light rig stays active during the capture.
+// The frame is downloaded as .png and the viewer is restored to its normal
+// realtime settings.
+//
+// NOTE: this is NGL's documented high-quality capture path — it is NOT a ray
+// tracer. NGL is a real-time WebGL engine: its materials cannot cast true
+// inter-object shadows (helix A blocking light so helix B shows A's silhouette)
+// and cannot do ambient occlusion. Real ray tracing needs a software ray
+// tracer (spheres/capsules + shadow/AO rays) or an external renderer export
+// (PyMOL / POV-Ray); see the atom-shadow renderer module for the former.
+const downloadBlob = (blob, name) => {
+  try {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name || 'structure.png';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => { try { URL.revokeObjectURL(url); } catch { /* ignore */ } }, 6000);
+  } catch (err) {
+    console.warn('Could not trigger the download:', err && err.message);
+  }
+};
+
+const rayTraceHighQuality = async () => {
+  const stage = stageRef.current;
+  if (!stage) { setRayMsg('⚠️ No 3D scene to render'); setTimeout(() => setRayMsg(''), 3500); return; }
+  if (rayBusyRef.current) return;
+  rayBusyRef.current = true;
+  setRayMsg('✨ Rendering high-quality image…');
+  // Preferred path: TRUE software ray tracing (real cast shadows + optional
+  // ambient occlusion). Falls back to NGL's supersampled capture below.
+  try {
+    if (typeof Worker !== 'undefined' && componentRef.current && componentRef.current.structure) {
+      setRayMsg('✨ Ray tracing (true cast shadows + ambient occlusion)…');
+      const rt = rayTraceStructureToBlob(componentRef.current, { width: 1700, shadowSamples: 8, aoSamples: 8 });
+      const rayBlob = await rt.promise;
+      if (rayBlob) {
+        const base = (file && file.name) ? String(file.name).replace(/\.[^.]+$/, '') : (pdbId ? `pdb_${pdbId}` : 'structure');
+        downloadBlob(rayBlob, `${base}_raytraced_${new Date().toISOString().slice(0, 10)}.png`);
+        setRayMsg(`✨ Ray-traced image downloaded (${(rayBlob.size / 1024).toFixed(0)} KB) — one helix now casts real shadows onto the other`);
+        setTimeout(() => setRayMsg(''), 9000);
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn('Software ray tracer failed — falling back to supersampled capture:', err && err.message);
+  }
+  try {
+    // Elevate renderer settings for this one pass.
+    try { stage.setQuality('high'); } catch { /* older builds ignore this */ }
+    try { stage.setParameters({ sampleLevel: 5 }); } catch { /* ignore */ }
+    await new Promise((r) => setTimeout(r, 150)); // let the new quality apply
+
+    let blob = null;
+    if (typeof stage.makeImage === 'function') {
+      try {
+        // factor 3 → ~3× viewport resolution; antialias = MSAA smoothing of
+        // the frame. `transparent:false` keeps the viewer's light background.
+        blob = await stage.makeImage({ factor: 3, antialias: true, transparent: false });
+      } catch { blob = null; }
+    }
+    if (!blob) {
+      // Fallback: raw canvas → PNG (no supersampling, but still downloadable).
+      try {
+        const cv = stage.viewer && stage.viewer.container ? stage.viewer.container.querySelector('canvas') : null;
+        if (cv) {
+          blob = await new Promise((res) => cv.toBlob((b) => res(b), 'image/png'));
+        }
+      } catch { blob = null; }
+    }
+    if (!blob) {
+      setRayMsg('⚠️ High-quality render failed — try the 📷 Figure button instead');
+      setTimeout(() => setRayMsg(''), 5000);
+      return;
+    }
+    const base = (file && file.name) ? String(file.name).replace(/\.[^.]+$/, '') : (pdbId ? `pdb_${pdbId}` : 'structure');
+    const label = `${base}_raytrace_${new Date().toISOString().slice(0, 10)}.png`;
+    downloadBlob(blob, label);
+    setRayMsg(`✨ High-quality render downloaded (${(blob.size / 1024).toFixed(0)} KB) — see your Downloads folder`);
+    setTimeout(() => setRayMsg(''), 7000);
+  } catch (err) {
+    setRayMsg(`⚠️ High-quality render failed: ${(err && err.message) || 'unknown error'}`);
+    setTimeout(() => setRayMsg(''), 5000);
+  } finally {
+    // Restore the realtime settings immediately after the frame is captured.
+    try { stage.setQuality('auto'); } catch { /* ignore */ }
+    try { stage.setParameters({ sampleLevel: 0 }); } catch { /* ignore */ }
+    try { const viewer = stage.viewer; if (viewer && viewer.requestRender) viewer.requestRender(); } catch { /* ignore */ }
+    rayBusyRef.current = false;
+  }
+};
+
+// ---- Live "Ray view" toggle ------------------------------------------------
+// Shows the TRUE self-shadowing software ray trace (spheres+sticks, real
+// shadow rays + AO) directly inside the viewer as an overlay image. Toggle
+// off to return to the interactive NGL viewport.
+const toggleRayView = async () => {
+  if (rayViewUrl) {
+    try { URL.revokeObjectURL(rayViewUrl); } catch { /* ignore */ }
+    setRayViewUrl(null);
+    return;
+  }
+  if (rayViewBusyRef.current || !componentRef.current || !componentRef.current.structure) {
+    if (!componentRef.current) { setRayMsg('⚠️ No structure loaded to ray-trace'); setTimeout(() => setRayMsg(''), 3500); }
+    return;
+  }
+  rayViewBusyRef.current = true;
+  setRayProgress(1);
+  setRayMsg('⚡ Ray-tracing current view (true self-shadowing)…');
+  try {
+    const rt = rayTraceStructureToBlob(componentRef.current, { width: 1200, shadowSamples: 8, aoSamples: 6, onProgress: (y, h) => setRayProgress(Math.max(1, Math.min(99, Math.round((y / h) * 100)))) });
+    const blob = await rt.promise;
+    if (blob) {
+      setRayViewUrl((prev) => {
+        if (prev) { try { URL.revokeObjectURL(prev); } catch { /* ignore */ } }
+        return URL.createObjectURL(blob);
+      });
+    }
+  } catch (err) {
+    setRayMsg(`⚠️ Ray view failed: ${(err && err.message) || 'unknown error'}`);
+    setTimeout(() => setRayMsg(''), 5000);
+  } finally {
+    setRayProgress(100);
+    setTimeout(() => setRayProgress(0), 500); // keep the bar visible even for instant renders
+    rayViewBusyRef.current = false;
+  }
+};
+
+// When the user tweaks the ray-lighting controls while the Ray view is open,
+// re-render it live (debounced) so the settings visibly take effect.
+const rayRefreshTimerRef = useRef(null);
+useEffect(() => {
+  const onRaySettings = () => {
+    if (!rayViewUrl) return;
+    if (rayRefreshTimerRef.current) clearTimeout(rayRefreshTimerRef.current);
+    rayRefreshTimerRef.current = setTimeout(async () => {
+      if (!componentRef.current || !componentRef.current.structure) return;
+      setRayProgress(1);
+      try {
+        const rt = rayTraceStructureToBlob(componentRef.current, { width: 1200, shadowSamples: 8, aoSamples: 6, onProgress: (y, h) => setRayProgress(Math.max(1, Math.min(99, Math.round((y / h) * 100)))) });
+        const blob = await rt.promise;
+        if (blob) {
+          setRayViewUrl((prev) => {
+            if (prev) { try { URL.revokeObjectURL(prev); } catch { /* ignore */ } }
+            return URL.createObjectURL(blob);
+          });
+        }
+      } catch { /* keep the previous image on error */ }
+      finally {
+        setRayProgress(100);
+        setTimeout(() => setRayProgress(0), 500);
+      }
+    }, 500);
+  };
+  window.addEventListener('lab:ray-settings-changed', onRaySettings);
+  return () => {
+    window.removeEventListener('lab:ray-settings-changed', onRaySettings);
+    if (rayRefreshTimerRef.current) clearTimeout(rayRefreshTimerRef.current);
+  };
+}, [rayViewUrl]);
+
 // ---- Capture the current 3D scene as a figure -------------------------------
 // Uses NGL's makeImage (reliable WebGL screenshot), falls back to the raw
 // canvas, then stores the image in the Figures library (Publications page).
@@ -3881,6 +4058,29 @@ className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8
 >
 📷 Figure
 </button>
+<button
+type="button"
+onClick={toggleRayView}
+title="Show the TRUE ray-traced image (self-shadowing: atoms/bonds cast shadows onto each other, plus ambient occlusion) inside the viewer; click again to return to the interactive 3D view"
+className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8 whitespace-nowrap bg-white border-violet-300 text-violet-700 hover:bg-violet-50"
+>
+{rayViewUrl ? '👁 Return to 3D view' : '⚡ Ray view'}
+</button>
+<button
+type="button"
+onClick={rayTraceHighQuality}
+disabled={rayBusyRef.current}
+title="Render a high-resolution ray-traced PNG with true cast shadows and download it"
+className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8 whitespace-nowrap bg-white border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+>
+✨ Ray Trace PNG
+</button>
+
+{/* NUOVO PANNELLO DI CONTROLLO RAY TRACING */}
+<AdvancedRayTracerControls />
+{rayMsg && (
+<span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1">{rayMsg}</span>
+)}
 {captureMsg && (
 <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md px-2 py-1">{captureMsg}</span>
 )}
@@ -4372,6 +4572,39 @@ className="relative border border-slate-200 rounded-xl overflow-hidden bg-white"
 style={{ height: (viewerCollapsed ? 0 : viewH) + 'px' }}
 >
 <div ref={containerRef} className="w-full h-full" />
+
+{/* Ray-tracing progress bar — shown while the software tracer is working */}
+{rayProgress > 0 && (
+  <div className="absolute inset-x-0 bottom-3 z-40 mx-auto w-3/4 bg-white/95 border border-slate-200 rounded-lg shadow-md px-3 py-2 flex flex-col gap-1 pointer-events-none">
+    <div className="flex items-center justify-between">
+      <span className="text-[10px] font-black text-slate-600 uppercase tracking-wide">⚡ Ray tracing (shadow rays + AO)</span>
+      <span className="text-[10px] font-bold text-indigo-600">{rayProgress}%</span>
+    </div>
+    <div className="w-full h-2 rounded-full bg-slate-200 overflow-hidden">
+      <div className="h-full bg-gradient-to-r from-indigo-500 to-violet-500 transition-all duration-150" style={{ width: `${rayProgress}%` }} />
+    </div>
+  </div>
+)}
+
+{/* Ray-traced self-shadowing overlay ("Ray view") — the software ray tracer's
+    result is shown directly over the live canvas until the user returns. */}
+{rayViewUrl && (
+  <div className="absolute inset-0 z-[15] bg-white flex items-center justify-center">
+    <img
+      src={rayViewUrl}
+      alt="Ray-traced render with true self-shadowing"
+      className="w-full h-full object-contain"
+      style={{ pointerEvents: 'none' }}
+    />
+    <button
+      type="button"
+      onClick={() => { try { URL.revokeObjectURL(rayViewUrl); } catch { /* ignore */ } setRayViewUrl(null); }}
+      className="absolute top-2 right-2 z-30 bg-slate-900/80 hover:bg-slate-900 text-white text-[11px] font-bold px-3 py-1.5 rounded-full shadow-lg transition-colors"
+    >
+      ✕ Return to interactive 3D
+    </button>
+  </div>
+)}
 
 {/* Mouse drag-to-move overlay — when "✋ Drag" is enabled, it captures the mouse
     (so NGL's rotate/zoom is suspended) and slides the SELECTED structure. */}
