@@ -146,6 +146,174 @@ const collectResidueTicks = (component) => {
   return out;
 };
 
+/* ---- Context-aware 3D atom / residue label generation ----------------------
+   Two independent toggles drive the 3D labels:
+     showResidueNumber — residue / molecule identifiers (kept sparse in 3D)
+     showAtomLabel     — atom names next to each labelled atom
+   Text rules by residue category:
+     Protein:   resno-only → number on CA · atom-only → atom names (CA, HA, CB)
+                both → {resno}{1-letter}{atom} e.g. 114SHA
+     DNA/RNA:   resno-only → number on O4' (else P) · atom-only → atom names
+                both → {resno}{1-letter}{atom} e.g. 14AN3
+     Ligand / non-standard / small molecule:
+                resno-only → {resname}{resno} on the central heavy atom
+                atom-only  → atom names on heavy atoms
+                both       → {resname}{resno}-{atom} e.g. ATP501-O1G
+     Water / monatomic ions:
+                resno-only → {resname}{resno} (anchor: O / the ion) e.g. HOH201
+                atom-only  → element symbol of the heavy atoms (O, Mg)
+                both       → {resname}{resno} (kept — the atom would be redundant)
+   Labels are returned as { index → text } plus the exact atom-index selection
+   so only the labelled atoms are handed to NGL (no empty background plates). */
+const LABEL_WATER_NAMES = new Set([
+  'HOH', 'WAT', 'H2O', 'OH2', 'SOL', 'TIP', 'TIP3', 'TIP4', 'TIP4P', 'TIP5',
+  'SPC', 'SPCE', 'T3P', 'T4P', 'DOD', 'DOD2', 'HHO'
+]);
+const LABEL_ION_ELEMENTS = new Set([
+  'NA', 'MG', 'K', 'CA', 'CL', 'ZN', 'FE', 'MN', 'CU', 'CO', 'NI', 'LI', 'RB',
+  'CS', 'BR', 'I', 'F', 'CD', 'HG', 'PB', 'AL', 'BA', 'SR', 'CR', 'MO', 'V'
+]);
+const LABEL_NUCLEIC_NAMES = new Set(['DA', 'DC', 'DG', 'DT', 'DU', 'A', 'C', 'G', 'T', 'U']);
+
+const properElementSymbol = (el) => {
+  const e = String(el || '').trim();
+  if (!e) return '';
+  return e.length === 1 ? e.toUpperCase() : `${e[0].toUpperCase()}${e.slice(1).toLowerCase()}`;
+};
+
+// Classify one residue (its atoms are already gathered) into one of the four
+// label categories described above.
+const classifyLabelResidue = (resname, atoms) => {
+  const name = String(resname || '').toUpperCase();
+  if (LABEL_NUCLEIC_NAMES.has(name)) return 'nucleic';
+  if (AA3_TO_1[name] && !LABEL_NUCLEIC_NAMES.has(name)) return 'protein';
+  if (LABEL_WATER_NAMES.has(name)) return 'water';
+  const nonH = atoms.filter((a) => a.el !== 'H');
+  if (nonH.length === 1 && atoms.length === 1 && LABEL_ION_ELEMENTS.has(nonH[0].el)) return 'ion';
+  return 'ligand';
+};
+
+const residueLabelCode = (resname) => {
+  const name = String(resname || '').toUpperCase();
+  if (LABEL_NUCLEIC_NAMES.has(name)) {
+    return name.length === 1 ? name : (AA3_TO_1[name] || name.slice(0, 1));
+  }
+  return AA3_TO_1[name] || '';
+};
+
+/**
+ * Compute the 3D label plan for the whole structure.
+ * @param {object} component NGL StructureComponent
+ * @param {object} opts { showResidueNumber, showAtomLabel, atomNameOf }
+ * @returns {{ labelText: object, indices: number[] }}
+ */
+const build3dLabelMap = (component, { showResidueNumber, showAtomLabel, atomNameOf = null }) => {
+  const labelText = {};
+  const structure = component && component.structure;
+  if (!structure) return { labelText, indices: [] };
+  const residueMap = new Map(); // `${chain}|${resno}|${resname}` → { atoms, byName, … }
+
+  try {
+    structure.eachAtom((a) => {
+      const chain = String(a.chainid || a.chain || '');
+      const resname = String(a.resname || a.restype || '').toUpperCase();
+      const resno = a.resno != null ? a.resno : 0;
+      const key = `${chain}|${resno}|${resname}`;
+      let entry = residueMap.get(key);
+      if (!entry) {
+        entry = { chain, resno, resname, atoms: [], byName: new Map() };
+        residueMap.set(key, entry);
+      }
+      const atomName = String(a.atomname || a.name || '').trim();
+      const el = String(a.element || '').toUpperCase();
+      let disp = atomName;
+      if (typeof atomNameOf === 'function') {
+        try { disp = String(atomNameOf(a) || '').trim() || atomName; } catch { disp = atomName; }
+      }
+      const atom = {
+        idx: a.index,
+        name: atomName.toUpperCase(),
+        disp,
+        el,
+        heavy: el !== 'H',
+        x: a.x || 0,
+        y: a.y || 0,
+        z: a.z || 0
+      };
+      entry.atoms.push(atom);
+      if (!entry.byName.has(atom.name)) entry.byName.set(atom.name, []);
+      entry.byName.get(atom.name).push(atom);
+    });
+  } catch { return { labelText, indices: [] }; }
+
+  const put = (atom, text) => {
+    const t = String(text || '').trim();
+    if (t) labelText[atom.idx] = t;
+  };
+
+  for (const entry of residueMap.values()) {
+    if (!entry.atoms.length) continue;
+    const cat = classifyLabelResidue(entry.resname, entry.atoms);
+    const code = residueLabelCode(entry.resname);
+    const resTag = `${entry.resname}${entry.resno}`;
+    const resnoStr = String(entry.resno);
+
+    if (cat === 'protein' || cat === 'nucleic') {
+      // A) proteins / B) nucleic acids — polymer rules.
+      const anchorNames = cat === 'protein'
+        ? (entry.byName.has('CA') ? ['CA'] : [])
+        : (entry.byName.has("O4'") ? ["O4'"] : (entry.byName.has('P') ? ['P'] : []));
+      if (showResidueNumber && showAtomLabel) {
+        entry.atoms.forEach((at) => put(at, `${resnoStr}${code}${at.disp}`)); // e.g. 114SHA / 14AN3
+      } else if (showAtomLabel) {
+        entry.atoms.forEach((at) => put(at, at.disp));                        // e.g. CA, HA, CB
+      } else if (showResidueNumber) {
+        anchorNames.forEach((n) => {
+          (entry.byName.get(n) || []).forEach((at) => put(at, resnoStr));     // e.g. 114
+        });
+      }
+    } else if (cat === 'ligand') {
+      // C) ligands / small molecules / non-standard residues (no 1-letter code).
+      const heavy = entry.atoms.filter((a) => a.heavy);
+      const targets = heavy.length ? heavy : entry.atoms;
+      if (showResidueNumber && showAtomLabel) {
+        targets.forEach((at) => put(at, `${resTag}-${at.disp}`));             // e.g. ATP501-O1G
+      } else if (showAtomLabel) {
+        targets.forEach((at) => put(at, at.disp || properElementSymbol(at.el)));
+      } else if (showResidueNumber) {
+        // Single label on the heavy atom closest to the molecule centroid.
+        let anchor = targets[0];
+        if (targets.length > 1) {
+          const n = targets.length;
+          const cx = targets.reduce((s, a) => s + a.x, 0) / n;
+          const cy = targets.reduce((s, a) => s + a.y, 0) / n;
+          const cz = targets.reduce((s, a) => s + a.z, 0) / n;
+          let bestD = Infinity;
+          targets.forEach((at) => {
+            const d = (at.x - cx) ** 2 + (at.y - cy) ** 2 + (at.z - cz) ** 2;
+            if (d < bestD) { bestD = d; anchor = at; }
+          });
+        }
+        put(anchor, resTag);                                                  // e.g. ATP501
+      }
+    } else {
+      // D) water / monatomic ions — the residue label is also the molecule.
+      const heavy = entry.atoms.filter((a) => a.heavy);
+      const anchor = heavy[0] || entry.atoms[0];
+      if (showResidueNumber && showAtomLabel) {
+        put(anchor, resTag);                                                  // e.g. HOH201, never HOH201-O
+      } else if (showAtomLabel) {
+        heavy.forEach((at) => put(at, properElementSymbol(at.el)));           // e.g. O, Mg
+      } else if (showResidueNumber) {
+        put(anchor, resTag);                                                  // e.g. HOH201 / MG301
+      }
+    }
+  }
+
+  const indices = Object.keys(labelText).map(Number).sort((a, b) => a - b);
+  return { labelText, indices };
+};
+
 // The viewer no longer hides chains on large systems — they are rendered in
 // full with lightweight representations (see addDefaultReps). This constant
 // simply starts the selection-color block below.
@@ -842,7 +1010,10 @@ statusRef.current = status;
 const [errorMsg, setErrorMsg] = useState('');
 const showManualHighlight = useShowAssignedFlag(); // green "assigned" atoms toggle (shared with the simulated spectra)
 const [hoverInfo, setHoverInfo] = useState(null);
-const [showLabels, setShowLabels] = useState(false);
+// Two INDEPENDENT 3D-label toggles: residue/molecule identifiers and atom
+// names. The label text itself is context-aware (see build3dLabelMap above).
+const [showResidueNumber, setShowResidueNumber] = useState(false);
+const [showAtomLabel, setShowAtomLabel] = useState(false);
 const [sidechainStyle, setSidechainStyle] = useState('licorice');
 const [backboneStyle, setBackboneStyle] = useState('cartoon');
 // Visualization style for NON-protein molecules (organic / lipid / sugar / nucleic):
@@ -2759,7 +2930,17 @@ const autoNameFrom2D = () => {
 };
 const clearRenames = () => persistRenames({});
 
-// Atom labels
+// 3D atom / residue labels.
+// Two independent toggles (showResidueNumber / showAtomLabel) drive what is
+// written next to each atom. The text is computed per atom in build3dLabelMap
+// (context-aware: protein / nucleic / ligand / water / ion rules) and rendered
+// by a single NGL "label" representation that selects EXACTLY the labelled
+// atoms (via an atom-index selection @a,b,c), so no hidden background plates
+// appear on atoms that carry no text. Styling keeps the glyphs billboarded
+// (NGL text sprites always face the camera), pulled slightly toward the camera
+// (zOffset) with depth testing disabled so they never clip inside atom spheres
+// or bonds, drawn in a larger sans-serif bold face with a dark halo + soft
+// translucent background plate for legibility over bright coloured structures.
 useEffect(() => {
 const component = componentRef.current;
 if (!component || status !== 'ready') return;
@@ -2770,18 +2951,45 @@ labelCompRef.current = null;
 }
 };
 clearLabels();
-if (showLabels) {
+if (showResidueNumber || showAtomLabel) {
 try {
-const isOrganicLike = ['organic', 'lipid', 'sugar'].includes(moleculeTypeRef.current);
-labelCompRef.current = component.addRepresentation('label', {
-sele: isOrganicLike ? 'not hydrogen' : 'protein and sidechain and not hydrogen',
-labelType: 'custom', labelGrouping: 'atom', color: 0x111827, radius: 1.0, opacity: 1, depthTest: false,
-customLabel: (a) => displayNameRef.current(a),
+const { labelText, indices } = build3dLabelMap(component, {
+showResidueNumber,
+showAtomLabel,
+atomNameOf: (atom) => displayNameRef.current(atom),
 });
-} catch {}
+if (indices.length) {
+labelCompRef.current = component.addRepresentation('label', {
+sele: `@${indices.join(',')}`,       // only the labelled atoms
+labelType: 'text',                     // per-atom strings keyed by atom index
+labelText,
+labelGrouping: 'atom',
+color: 0xffffff,                       // white glyphs
+fontFamily: 'sans-serif',
+fontStyle: 'normal',
+fontWeight: 'bold',
+// Larger, uniform text size (was radius 1.0) with a constant on-screen
+// size so labels stay readable at any zoom level.
+radiusType: 'size', radius: 1.6, scale: 1.0,
+fixedSize: true,
+// Billboard sprites always face the camera; depth testing off plus a
+// slight forward push keep them clear of the VdW spheres and bonds.
+depthTest: false,
+zOffset: 0.5,
+xOffset: 0.35, yOffset: 0.55,          // shift off the exact atom centre
+attachment: 'bottom-left',
+// Legibility: dark halo (border) + soft dark background plate.
+showBorder: true, borderColor: 0x0f172a, borderWidth: 0.18,
+showBackground: true, backgroundColor: 0x0f172a,
+backgroundMargin: 0.32, backgroundOpacity: 0.42,
+opacity: 1,
+visible: true,
+});
+}
+} catch { /* label rendering is best-effort — never break the viewer */ }
 }
 return clearLabels;
-}, [showLabels, status, renames]);
+}, [showResidueNumber, showAtomLabel, status, renames]);
 
 // Side-chain representation
 useEffect(() => {
@@ -3567,15 +3775,26 @@ className="text-xs font-bold px-2 py-1.5 rounded-md border transition-colors h-8
 🗑 Clear
 </button>
 )}
-<label title="Show atom names" className="flex items-center gap-1 text-xs font-bold text-slate-700 cursor-pointer h-8 whitespace-nowrap">
+<div className="flex items-center gap-2 border-l border-slate-200 pl-2">
+<label title="Show residue / molecule numbers in 3D (proteins: one number on each CA; DNA/RNA: on O4' or P; ligands: the residue tag at the molecule centre; water/ions: the residue name + number)" className="flex items-center gap-1 text-[11px] font-bold text-slate-700 cursor-pointer h-8 whitespace-nowrap">
 <input
 type="checkbox"
-checked={showLabels}
-onChange={(e) => setShowLabels(e.target.checked)}
+checked={showResidueNumber}
+onChange={(e) => setShowResidueNumber(e.target.checked)}
 className="w-3.5 h-3.5 accent-blue-600"
 />
-Names
+Residues
 </label>
+<label title="Show the atom name next to each atom (e.g. CA, HA, CB, O1G)" className="flex items-center gap-1 text-[11px] font-bold text-slate-700 cursor-pointer h-8 whitespace-nowrap">
+<input
+type="checkbox"
+checked={showAtomLabel}
+onChange={(e) => setShowAtomLabel(e.target.checked)}
+className="w-3.5 h-3.5 accent-blue-600"
+/>
+Atom names
+</label>
+</div>
 <button
 type="button"
 onClick={() => setViewerCollapsed((v) => !v)}
