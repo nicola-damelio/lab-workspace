@@ -24,6 +24,24 @@ export const LOCAL_STORAGE_KEY = 'lab_datasets_local_v2';
 // Google, so uploaded files are stored locally (with a download option).
 export const GOOGLE_DRIVE_CLIENT_ID = '763848765523-kvjohq6qv8oifb2n86ibh6m4vm4057ej.apps.googleusercontent.com';
 
+// --- PERMANENT GOOGLE DRIVE ACCESS (refresh tokens) ---
+// A pure client-side OAuth token client (GIS) CANNOT obtain a refresh token.
+// To make the Drive connection permanent without any manual re-consent,
+// deploy a tiny HTTPS token-exchange endpoint (e.g. a Firebase Function or
+// any server/CLI that holds the Google OAuth client secret) and put its URL
+// here. The endpoint must:
+//   1. accept POST { code } and call Google's token endpoint with
+//      grant_type=authorization_code&access_type=offline&prompt=consent
+//      (+ the OAuth client_id/secret), returning Google's token JSON;
+//   2. accept POST { refresh_token } (or refresh_token as JSON body) and call
+//      Google's token endpoint with grant_type=refresh_token, returning
+//      { access_token, expires_in, refresh_token? }.
+// When this is empty the app falls back to GIS silent renewal (works while the
+// user is logged into Google in the browser) and, on failure, asks the user to
+// reconnect once — the refresh token never expires on Google's side, so the
+// first server-backed exchange makes the connection effectively permanent.
+export const GOOGLE_TOKEN_EXCHANGE_URL = '';
+
 // --- CONSTANTS & CONFIGURATIONS ---
 export const PLATES_DEF = {
     '96': { rows: 8, cols: 12 }, '48': { rows: 6, cols: 8 }, '24': { rows: 4, cols: 6 },

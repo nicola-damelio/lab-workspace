@@ -22,8 +22,8 @@ import { ProjectsModule, loadProjects, saveProjects, mergeProjectsFromCloud } fr
 import { ProjectDetailModule } from './components/AppModules/projectDetailModule';
 import {normalizeOperators} from './utils/auth';
 import { setActiveProjectId, readLibrary, readAllProjectLibraries, restoreLibraryFromSnapshot } from './utils/figuresLibrary';
-import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile } from './utils/driveUpload';
-import { sanitizeSlug } from './utils/driveNaming';
+import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders } from './utils/driveUpload';
+import { sanitizeSlug, datasetFolderSlug } from './utils/driveNaming';
 
 import { ScientistLoginGate, ScientistLoginModal } from './components/AppModules/definitionsManagers';
 
@@ -1416,6 +1416,7 @@ if (customType === 'dosy') {
       const dateStr = new Date().toISOString().slice(0, 10);
       let done = 0;
       let failed = 0;
+      const legacyBackupFolders = [];
       for (const dset of list) {
         try {
           if (!dset || !dset.payload) continue;
@@ -1427,18 +1428,22 @@ if (customType === 'dosy') {
           const subtitle = isCurrent ? datasetSubtitleRef.current : (dset.subtitle || '');
           const html = buildBackupHtml(title, subtitle, payload);
           // A short dataset-id fragment guarantees two datasets with the same
-          // title never collide (folder or file).
+          // title never collide in the FILE name (folders below are canonical
+          // dataset directories named after the title).
           const idTag = String(dset.id || '').replace(/[^a-z0-9]/gi, '').slice(-6) || 'ds';
           const fname = `${sanitizeSlug(title) || 'dataset'}_${idTag}_backup_${dateStr}.html`;
-          // Each dataset's backup lives in its OWN subfolder —
-          // <Lab Workspace>/<dataset>/backups/ — because the file belongs to
-          // exactly one dataset. Piling every dataset into one shared "backups"
-          // folder made no sense once the backups became per-dataset (the
-          // dataset folder keeps them together and still lets "Load HTML"
-          // restore any of them).
-          const dsFolder = `${sanitizeSlug(title) || 'dataset'}_${idTag}`;
+          // Backups now live INSIDE the dataset directory —
+          // <Lab Workspace>/<dataset>/backups/ — where the canonical dataset
+          // structure (projects/backups/protocols/storage/publications) is
+          // enforced. Never create a second per-dataset folder at the root.
+          const dsFolder = datasetFolderSlug(title);
           const res = await uploadWorkspaceFile({ name: fname, mimeType: 'text/html', file: new Blob([html], { type: 'text/html' }), folder: `${dsFolder}/backups` });
-          if (res) done++; else failed++;
+          if (res) done++;
+          else failed++;
+          // The legacy weekly-backup layout used <dataset>_<idTag> folders at
+          // the workspace root — remember them for the cleanup pass below.
+          const legacyFolder = `${sanitizeSlug(title) || 'dataset'}_${idTag}`;
+          if (legacyFolder !== dsFolder) legacyBackupFolders.push(legacyFolder);
         } catch (e) {
           failed++;
           console.warn('Weekly backup failed for a dataset:', e && e.message);
@@ -1447,6 +1452,12 @@ if (customType === 'dosy') {
       if (done > 0) {
         try { localStorage.setItem(BACKUP_INTERVAL_KEY, String(Date.now())); } catch {}
         setBackupStatus({ state: 'ok', msg: `Weekly backup saved (${done} dataset${done > 1 ? 's' : ''}) → Lab Workspace/<dataset>/backups` });
+        // Root hygiene: the workspace root must only contain dataset folders.
+        // Empty legacy artifacts (a shared root "backups" folder or the old
+        // "<dataset>_<idTag>" backup folders) are trashed best-effort. Legacy
+        // folders that still hold their own old backup files are NOT deleted —
+        // new backups go to the canonical dataset/backups location from now on.
+        cleanupWorkspaceRootFolders({ legacyFolderNames: legacyBackupFolders }).catch(() => {});
         return true;
       }
       setBackupStatus(failed > 0 ? { state: 'error', msg: 'Weekly backup failed — check the Drive connection' } : { state: 'skip', msg: 'Nothing to back up' });

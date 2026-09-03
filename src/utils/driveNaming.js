@@ -114,3 +114,94 @@ export const copyText = async (text) => {
     } catch { return false; }
   }
 };
+
+/* =========================================================================
+   Canonical Google-Drive architecture (Lab Workspace)
+   =========================================================================
+   Root ("Lab Workspace") contains ONLY dataset directories.
+
+   Every dataset directory follows a strict, fixed structure:
+     <dataset>/projects     → <project>/<experiment>/<instance>/<page section>/[<page subsection>]
+     <dataset>/backups      → weekly HTML saves of the dataset
+     <dataset>/protocols    → shared protocol library
+     <dataset>/storage      → shared storage / sample-location resources
+     <dataset>/publications → shared publication library
+
+   Page-section directories are always the lower-case shell names:
+     experimental conditions · instrumental setup · experiment setup ·
+     data · data analysis · report
+   Subsections are created dynamically when a page section has them.
+   ========================================================================= */
+
+/** The only sub-directories allowed directly inside a dataset folder. */
+export const DATASET_FOLDER_DIRS = ['projects', 'backups', 'protocols', 'storage', 'publications'];
+
+/** Canonical dataset directory name (used for uploads AND backups, so a dataset
+ *  never fragments into several sibling folders at the workspace root). */
+export const datasetFolderSlug = (title) => sanitizeSlug(title) || 'dataset';
+
+/** Map any historical / UI section label onto the canonical lower-case page
+ *  section. Labels that are not page sections are returned unchanged. */
+export const canonicalPageSection = (raw) => {
+  const key = String(raw || '').trim().toLowerCase();
+  const table = {
+    'experimental conditions': 'experimental conditions',
+    conditions: 'experimental conditions',
+    'instrumental setup': 'instrumental setup',
+    instrumental: 'instrumental setup',
+    setup: 'experiment setup',
+    'experiment setup': 'experiment setup',
+    'experimental setup': 'experiment setup',
+    data: 'data',
+    analysis: 'data analysis',
+    analyses: 'data analysis',
+    'data analysis': 'data analysis',
+    report: 'report',
+    reports: 'report'
+  };
+  return table[key] || String(raw || '').trim();
+};
+
+/** Canonical name of a page subsection ('' when none). Kept as a clean slug. */
+export const canonicalSubSection = (raw) => sanitizeSlug(raw);
+
+/** Unique project names referenced by an upload context (ctx.projectNames is
+ *  the experiment's many-to-many list; ctx.project is the legacy single one). */
+export const projectNamesOf = (ctx = {}) => [
+  ...new Set(
+    []
+      .concat(Array.isArray(ctx.projectNames) ? ctx.projectNames : [])
+      .concat(ctx.project ? [ctx.project] : [])
+      .map((s) => String(s || '').trim())
+      .filter(Boolean)
+  )
+];
+
+/** Canonical Drive folder NAMES (relative to the dataset folder) for an
+ *  experiment (test) upload context:
+ *      projects/<project>/<experiment>/<instance>/<page section>/[<subsection>]
+ *  Returns [] when `ctx` does not describe an experiment file.
+ *  NOTE: protocols keep their own container — protocols/<protocol>. */
+export const canonicalExperimentPath = (ctx = {}) => {
+  if (!ctx || typeof ctx !== 'object') return [];
+  if (ctx.protocol !== undefined) return driveFolderPath(ctx);
+  const test = String(ctx.test || '').trim();
+  if (!test) return []; // project documents / library figures keep legacy routing
+  const projects = projectNamesOf(ctx);
+  const project = (projects[0] || '_unassigned'); // validation forbids missing projects
+  const segs = ['projects', sanitizeSlug(project), sanitizeSlug(test)];
+  if (String(ctx.instance || '').trim()) segs.push(sanitizeSlug(ctx.instance));
+  const section = canonicalPageSection(ctx.section || ctx.pagesection || '');
+  if (section) segs.push(section);
+  const subsection = canonicalSubSection(ctx.subsection || ctx.pagesubsection || '');
+  if (subsection) segs.push(subsection);
+  return segs.filter(Boolean);
+};
+
+/** Same as canonicalExperimentPath but returns the plain canonical page-section
+ *  name + subsection, for building/validating the mirror folders. */
+export const pageSectionOf = (ctx = {}) => {
+  const section = canonicalPageSection(ctx.section || ctx.pagesection || '');
+  const subsection = canonicalSubSection(ctx.subsection || ctx.pagesubsection || '');
+  return { pagesection: section, pagesubsection: subsection };
+};

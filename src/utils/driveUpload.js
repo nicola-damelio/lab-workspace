@@ -79,7 +79,7 @@ export const clearDriveToken = () => {
   } catch { /* ignore */ }
 };
 const FOLDER_NAME_KEY = 'labDriveFolderName';
-import { suggestDriveFileName, sanitizeSlug, driveFolderPath } from './driveNaming';
+import { suggestDriveFileName, sanitizeSlug, driveFolderPath, DATASET_FOLDER_DIRS, datasetFolderSlug, canonicalPageSection, canonicalExperimentPath, projectNamesOf } from './driveNaming';
 import { getCloudProvider, nextcloudConfigured, ncUploadFile } from './nextcloud';
 
 /** The name of the currently open dataset folder ('' when none is open). */
@@ -310,15 +310,70 @@ export const ensureLabWorkspaceFolder = async () => {
   return created.id;
 };
 
+/** List immediate children (files AND folders) of a Drive folder. */
+export const listDriveChildren = async (parentId) => {
+  if (!parentId || !getDriveToken()) return [];
+  try {
+    const q = encodeURIComponent(`'${parentId}' in parents and trashed=false`);
+    const res = await driveFetch(`/drive/v3/files?q=${q}&fields=files(id,name,mimeType)&pageSize=1000`);
+    const j = await res.json();
+    return Array.isArray(j.files) ? j.files : [];
+  } catch { return []; }
+};
+
+/** Ensure the canonical five sub-directories exist inside a dataset folder.
+ *  Returns the {name → id} map of the dataset folder structure. */
+export const ensureDatasetFolderStructure = async (datasetRootId) => {
+  const map = {};
+  if (!datasetRootId || !getDriveToken()) return map;
+  for (const dir of DATASET_FOLDER_DIRS) {
+    try {
+      map[dir] = await findOrCreateFolder(dir, datasetRootId);
+    } catch { map[dir] = ''; }
+  }
+  return map;
+};
+
+/** Best-effort workspace-root hygiene:
+ *  1. A root-level "backups" folder (old shared backup location) is trashed
+ *     once empty.
+ *  2. A root-level dataset folder named "<dataset>_<idTag>" (legacy weekly
+ *     backup layout) is trashed — its current dataset/backups backup was just
+ *     written to the canonical dataset folder by the caller.
+ *  Never touches anything else under Lab Workspace. */
+export const cleanupWorkspaceRootFolders = async ({ legacyFolderNames = [], skipTrashIfNonEmpty = true } = {}) => {
+  const workspaceId = await ensureLabWorkspaceFolder();
+  if (!workspaceId || !getDriveToken()) return;
+  const names = new Set(['backups', ...legacyFolderNames.map((s) => String(s || '').trim()).filter(Boolean)]);
+  const children = await listDriveChildren(workspaceId);
+  for (const child of children) {
+    if (!child || child.mimeType !== 'application/vnd.google-apps.folder') continue;
+    if (!names.has(child.name)) continue;
+    try {
+      if (skipTrashIfNonEmpty) {
+        const inside = await listDriveChildren(child.id);
+        if (inside.length > 0) continue;
+      }
+      await driveFetch(`/drive/v3/files/${child.id}?fields=id`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trashed: true })
+      });
+    } catch { /* keep the folder on failure */ }
+  }
+};
+
 /** Resolve the upload root folder: "Lab Workspace" → the dataset folder inside
- *  it (when the dataset has a title). Everything else (projects, tests,
- *  sections, protocols, publications…) is created under this root. */
+ *  it (when the dataset has a title). The dataset folder ALWAYS gets the
+ *  canonical five-folder structure (projects/backups/protocols/storage/
+ *  publications) so uploads and weekly backups share one dataset directory. */
 export const ensureDriveFolder = async () => {
-  const name = driveRootName ? sanitizeSlug(driveRootName) : '';
+  const name = driveRootName ? datasetFolderSlug(driveRootName) : '';
   const saved = getDriveFolderId();
 
   // Fast path: the cached folder already belongs to this dataset and name.
   if (saved && driveRootResolvedId === driveRootId && driveRootResolvedName === name) {
+    if (name) await ensureDatasetFolderStructure(saved).catch(() => {});
     return saved;
   }
 
@@ -332,6 +387,7 @@ export const ensureDriveFolder = async () => {
         await renameDriveFile(saved, name);
         driveRootResolvedName = name;
         setDriveFolderName(name);
+        if (name) await ensureDatasetFolderStructure(saved).catch(() => {});
         return saved;
       }
     } catch { /* not app-created or gone → fall back to an old-name lookup */ }
@@ -351,6 +407,7 @@ export const ensureDriveFolder = async () => {
         setDriveFolderDatasetId(driveRootId);
         setDriveFolderName(name);
         driveRootResolvedName = name;
+        if (name) await ensureDatasetFolderStructure(oldId).catch(() => {});
         return oldId;
       }
     } catch { /* fall through to a plain lookup/create */ }
@@ -371,6 +428,7 @@ export const ensureDriveFolder = async () => {
     setDriveFolderName(name);
     driveRootResolvedId = driveRootId;
     driveRootResolvedName = name;
+    if (name) await ensureDatasetFolderStructure(rootId).catch(() => {});
   }
   return rootId;
 };
@@ -473,28 +531,40 @@ export const resolveDrivePathFromNames = async (names) => {
   return { leafId: parent, path };
 };
 
+/** The ACTUAL folder names (relative to the dataset root) that `ctx` resolves
+ *  to. Experiments use the canonical architecture (projects/<project>/…);
+ *  protocols keep their own container; anything else falls back to the legacy
+ *  driveFolderPath ordering so older recorded paths keep working. */
+const ctxPathOf = (ctx) => {
+  if (!ctx || typeof ctx !== 'object') return [];
+  if (ctx.protocol !== undefined) return driveFolderPath(ctx);
+  const canonical = canonicalExperimentPath(ctx);
+  return canonical.length ? canonical : driveFolderPath(ctx);
+};
+
 /** Resolve (creating as needed) the folder chain described by `ctx`.
  *  @returns {{ leafId:string, path:Array<{name:string,id:string}> }} */
-export const resolveDrivePath = async (ctx) => resolveDrivePathFromNames(driveFolderPath(ctx));
+export const resolveDrivePath = async (ctx) => resolveDrivePathFromNames(ctxPathOf(ctx));
 
 /** The index of a naming-context field inside the ACTUAL folder path
- *  (driveFolderPath order). -1 when the field is not a folder level or its
- *  value is empty. This follows the real path, so a test WITHOUT a project
- *  lives at index 0 (Lab Workspace → test → instance → …), not index 1. */
+ *  (canonical architecture / driveFolderPath order). -1 when the field is not
+ *  a folder level or its value is empty. For experiments the path starts with
+ *  the "projects" container, so a project lives at index 1, a standalone test
+ *  (legacy data) still resolves through its recorded position. */
 const pathIndexOf = (ctx, field) => {
   if (!ctx || typeof ctx !== 'object') return -1;
-  if (field === 'project') return ctx.project ? 0 : -1;
   if (field === 'protocol') return ctx.protocol ? 1 : -1;
   // The scientist is NOT a folder level (protocols/<protocol> only; test files
   // already carry the scientist in the file name) — so renaming a scientist
   // never renames a folder.
   if (field === 'scientist') return -1;
-  const value = field === 'test' ? ctx.test
-    : field === 'section' ? ctx.section
-      : field === 'subsection' ? ctx.subsection
-        : field === 'instance' ? ctx.instance : '';
+  const value = field === 'project' ? ctx.project
+    : field === 'test' ? ctx.test
+      : field === 'section' ? (ctx.section || ctx.pagesection)
+        : field === 'subsection' ? (ctx.subsection || ctx.pagesubsection)
+          : field === 'instance' ? ctx.instance : '';
   if (!value) return -1;
-  return driveFolderPath(ctx).indexOf(sanitizeSlug(value));
+  return ctxPathOf(ctx).indexOf(sanitizeSlug(value));
 };
 
 /** Resolve the folder id at a position of the ctx's actual folder path by
@@ -503,7 +573,7 @@ const pathIndexOf = (ctx, field) => {
  *  for files recorded before the path layout was changed. Returns '' when the
  *  folder is missing. */
 const resolveFolderIdAtPathIndex = async (ctx, path, index) => {
-  const names = driveFolderPath(ctx);
+  const names = ctxPathOf(ctx);
   const name = names[index];
   if (!name) return '';
   if (Array.isArray(path)) {
@@ -565,6 +635,34 @@ export const trashEmptyFolderChain = async (path) => {
   }
 };
 
+/** Locate an experiment (test) folder on Drive, looking first in the canonical
+ *  "projects" container, then in the legacy dataset-root layout:
+ *    <dataset>/projects/<project>/<test>            (canonical)
+ *    <dataset>/projects/_unassigned/<test>          (legacy standalone)
+ *    <dataset>/<project>/<test> and <dataset>/<test> (pre-architecture layout)
+ *  @returns {{ id:string, pathNames:string[] }|null} */
+const findProjectTestFolder = async (root, testName, projectName) => {
+  const testSlug = sanitizeSlug(testName);
+  if (!root || !testSlug) return null;
+  const rels = [];
+  if (projectName) {
+    rels.push(`projects/${sanitizeSlug(projectName)}/${testSlug}`);
+    rels.push(`${sanitizeSlug(projectName)}/${testSlug}`); // legacy
+  }
+  rels.push(`projects/_unassigned/${testSlug}`);
+  rels.push(testSlug); // legacy standalone
+  for (const rel of rels) {
+    let parent = root;
+    let ok = true;
+    for (const seg of rel.split('/')) {
+      parent = await findFolderByName(seg, parent);
+      if (!parent) { ok = false; break; }
+    }
+    if (ok) return { id: parent, pathNames: rel.split('/') };
+  }
+  return null;
+};
+
 /** Trash the Drive folder that mirrors a test, so ALL of its files (raw data,
  *  attachments, reports…) are removed together — the Drive mirrors the app:
  *  a test deleted here disappears from Drive too. */
@@ -573,13 +671,10 @@ export const deleteTestDriveFolder = async (test) => {
   try {
     const root = await ensureDriveFolder();
     if (!root) return 0;
-    let parent = root;
+    let testFolderId = '';
     const project = (test.projectNames || [])[0] || '';
-    if (project) {
-      parent = await findFolderByName(sanitizeSlug(project), parent);
-      if (!parent) return 0;
-    }
-    let testFolderId = await findFolderByName(sanitizeSlug(test.name), parent);
+    const found = await findProjectTestFolder(root, test.name, project);
+    if (found) testFolderId = found.id;
     if (!testFolderId) {
       // Fallback: locate it through the registry — a file uploaded for this
       // test knows its exact folder chain.
@@ -647,7 +742,11 @@ export const moveTestFolderIntoProject = async ({ testName, projectName }) => {
     const root = await ensureDriveFolder();
     if (!root) return 0;
 
-    let testFolderId = await findFolderByName(sanitizeSlug(testName), root);
+    // Locate the experiment folder wherever it currently lives (canonical
+    // projects/_unassigned container or any legacy dataset-root layout).
+    let testFolderId = '';
+    const found = await findProjectTestFolder(root, testName, '');
+    if (found) testFolderId = found.id;
     if (!testFolderId) {
       // Fallback: locate it through the registry — a file uploaded for this
       // standalone test knows its exact folder chain.
@@ -663,7 +762,8 @@ export const moveTestFolderIntoProject = async ({ testName, projectName }) => {
     }
     if (!testFolderId) return 0; // no standalone test folder on Drive — nothing to move
 
-    const projectFolderId = await findOrCreateFolder(sanitizeSlug(projectName), root);
+    const projectsContainerId = await findOrCreateFolder('projects', root);
+    const projectFolderId = await findOrCreateFolder(sanitizeSlug(projectName), projectsContainerId);
     // Already inside the project folder → nothing to do.
     if ((await findFolderByName(sanitizeSlug(testName), projectFolderId)) === testFolderId) return 0;
 
@@ -671,11 +771,13 @@ export const moveTestFolderIntoProject = async ({ testName, projectName }) => {
     // moveDriveFile reads the folder's ACTUAL parents and removes ALL of them
     // except the project folder — so the move can never leave the old copy
     // behind (no duplicate), even when the folder's real parent differs from
-    // the dataset root (older layouts, moved folders, …).
+    // the recorded layout.
     await moveDriveFile(testFolderId, projectFolderId);
 
-    // Keep the registry in sync: set ctx.project and prepend the project
-    // folder to every recorded path of this (previously standalone) test.
+    // Keep the registry in sync: point every file of this test at the new
+    // canonical path — projects/<project>/<test>/…
+    const projectsSeg = { name: 'projects', id: projectsContainerId };
+    const projectSeg = { name: sanitizeSlug(projectName), id: projectFolderId };
     const reg = getDriveFileRegistry();
     let count = 0;
     for (const [fileId, entry] of Object.entries(reg)) {
@@ -683,10 +785,9 @@ export const moveTestFolderIntoProject = async ({ testName, projectName }) => {
       const ctx = entry.ctx || {};
       if (String(ctx.test || '') !== String(testName)) continue;
       if (String(ctx.project || '')) continue; // already inside a project folder
-      const newPath = [
-        { name: sanitizeSlug(projectName), id: projectFolderId },
-        ...(Array.isArray(entry.path) ? entry.path : [])
-      ];
+      const base = (Array.isArray(entry.path) ? entry.path : [])
+        .filter((seg) => seg && seg.name !== 'projects' && seg.name !== '_unassigned');
+      const newPath = [projectsSeg, projectSeg, ...base];
       reg[fileId] = { ...entry, ctx: { ...ctx, project: projectName }, path: newPath, at: Date.now() };
       count++;
     }
@@ -718,10 +819,13 @@ export const moveTestFolderOutOfProject = async ({ testName, projectName }) => {
   try {
     const root = await ensureDriveFolder();
     if (!root) return 0;
-    const projectFolderId = await findFolderByName(sanitizeSlug(projectName), root);
-    if (!projectFolderId) return 0; // project folder not on Drive
+    const projectsContainerId = await findFolderByName('projects', root);
 
-    let testFolderId = await findFolderByName(sanitizeSlug(testName), projectFolderId);
+    // Locate the experiment folder inside the project (canonical container
+    // first, then legacy dataset-root layout).
+    let testFolderId = '';
+    const found = await findProjectTestFolder(root, testName, projectName);
+    if (found) testFolderId = found.id;
     if (!testFolderId) {
       // Fallback: locate it through the registry — a file uploaded for this
       // test inside this project knows its exact folder chain.
@@ -737,18 +841,31 @@ export const moveTestFolderOutOfProject = async ({ testName, projectName }) => {
     }
     if (!testFolderId) return 0; // test not inside this project folder
 
-    // Move the whole test folder back to the dataset root (children follow).
-    // moveDriveFile removes the folder from ALL its current parents, so the
-    // move can never leave a copy inside the project (no duplicate).
-    await moveDriveFile(testFolderId, root);
+    // Experiments must ALWAYS belong to a project, so "removed from this
+    // project" means "moved into the dataset's _unassigned project bucket"
+    // (a hidden bucket inside projects/, never a stray folder at the root).
+    const projectsFolderId = projectsContainerId || await findOrCreateFolder('projects', root);
+    const unassignedFolderId = await findOrCreateFolder('_unassigned', projectsFolderId);
+    const existingThere = await findFolderByName(sanitizeSlug(testName), unassignedFolderId);
+    if (existingThere !== testFolderId) {
+      // moveDriveFile removes the folder from ALL its current parents, so the
+      // move can never leave a copy inside the project (no duplicate).
+      await moveDriveFile(testFolderId, unassignedFolderId);
+    }
 
     // The project folder may now be empty (last test moved out) — trash it so
     // Drive stays tidy. Folders that still hold project docs are kept.
     try {
-      await trashEmptyFolderChain([{ name: sanitizeSlug(projectName), id: projectFolderId }]);
+      const projectFolderId = await findFolderByName(sanitizeSlug(projectName), projectsFolderId);
+      if (projectFolderId) {
+        await trashEmptyFolderChain([{ name: sanitizeSlug(projectName), id: projectFolderId }]);
+      }
     } catch { /* keep the project folder */ }
 
-    // Keep the registry in sync: drop the project from ctx and from the paths.
+    // Keep the registry in sync: drop ctx.project and rewrite paths to the
+    // canonical projects/_unassigned/<test>/… layout.
+    const unassignedSeg = { name: '_unassigned', id: unassignedFolderId };
+    const projectsSeg = { name: 'projects', id: projectsFolderId };
     const reg = getDriveFileRegistry();
     let count = 0;
     for (const [fileId, entry] of Object.entries(reg)) {
@@ -757,35 +874,39 @@ export const moveTestFolderOutOfProject = async ({ testName, projectName }) => {
       if (String(ctx.test || '') !== String(testName)) continue;
       if (String(ctx.project || '') !== String(projectName)) continue;
       const newCtx = { ...ctx, project: '' };
-      const chain = Array.isArray(entry.path) ? entry.path : [];
-      const newPath = chain.filter((seg) => !(seg && seg.name === sanitizeSlug(projectName)));
-      reg[fileId] = { ...entry, ctx: newCtx, path: newPath, at: Date.now() };
+      const base = (Array.isArray(entry.path) ? entry.path : [])
+        .filter((seg) => seg && seg.name !== 'projects' && seg.name !== '_unassigned' && seg.name !== sanitizeSlug(projectName));
+      reg[fileId] = { ...entry, ctx: newCtx, path: [projectsSeg, unassignedSeg, ...base], at: Date.now() };
       count++;
     }
     if (count > 0) saveDriveFileRegistry(reg);
     return count;
   } catch (err) {
     console.warn('moveTestFolderOutOfProject failed:', err && err.message);
-    // Fallback: move the individual files out of the project folder (creating
-    // the standalone folders at the dataset root as needed).
+    // Fallback: move the individual files into projects/_unassigned/<test>.
     let moved = 0;
-    const reg = getDriveFileRegistry();
-    for (const [fileId, entry] of Object.entries(reg)) {
-      if (!entry || entry.deleted) continue;
-      const ctx = entry.ctx || {};
-      if (String(ctx.test || '') !== String(testName)) continue;
-      if (String(ctx.project || '') !== String(projectName)) continue;
-      try {
-        const newCtx = { ...ctx, project: '' };
-        const resolved = await resolveDrivePath(newCtx);
-        await moveDriveFile(fileId, resolved.leafId);
-        const chain = Array.isArray(entry.path) ? entry.path : [];
-        reg[fileId] = { ...entry, ctx: newCtx, path: resolved.path, at: Date.now() };
-        if (chain.length) { try { await trashEmptyFolderChain(chain); } catch { /* keep going */ } }
-        moved++;
-      } catch { /* keep going */ }
-    }
-    if (moved > 0) saveDriveFileRegistry(reg);
+    try {
+      const root = await ensureDriveFolder();
+      const projectsFolderId = root ? await findOrCreateFolder('projects', root) : '';
+      const unassignedFolderId = projectsFolderId ? await findOrCreateFolder('_unassigned', projectsFolderId) : '';
+      const reg = getDriveFileRegistry();
+      for (const [fileId, entry] of Object.entries(reg)) {
+        if (!entry || entry.deleted) continue;
+        const ctx = entry.ctx || {};
+        if (String(ctx.test || '') !== String(testName)) continue;
+        if (String(ctx.project || '') !== String(projectName)) continue;
+        try {
+          const newCtx = { ...ctx, project: '' };
+          const resolved = await resolveDrivePath(newCtx);
+          await moveDriveFile(fileId, unassignedFolderId || resolved.leafId);
+          const chain = Array.isArray(entry.path) ? entry.path : [];
+          reg[fileId] = { ...entry, ctx: newCtx, path: resolved.path, at: Date.now() };
+          if (chain.length) { try { await trashEmptyFolderChain(chain); } catch { /* keep going */ } }
+          moved++;
+        } catch { /* keep going */ }
+      }
+      if (moved > 0) saveDriveFileRegistry(reg);
+    } catch { /* keep going */ }
     return moved;
   }
 };
@@ -800,16 +921,23 @@ export const moveTestFolderOutOfProject = async ({ testName, projectName }) => {
  * a duplicate — so updating a figure/document tomorrow reuses the same file.
  * @returns {{ id:string, name:string, driveUrl:string }}
  */
-export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path = null }) => {
+/** Perform ONE Drive/Nextcloud upload into the canonical folder described by
+ *  `folderNames` (relative to the dataset folder). When `folderNames` is null,
+ *  `path` is an explicit path array or `ctx` still describes a legacy folder
+ *  (non-experiment uploads such as library figures or project documents).
+ *  @returns {{ id:string, name:string, driveUrl:string }} */
+const uploadDriveFileToFolderOnce = async ({ name, mimeType, file, ctx = null, path = null, folderNames = null }) => {
   // ── Nextcloud provider ─────────────────────────────────────────────────────
   // Mirror the Drive folder layout on the WebDAV tree:
-  //   <user>/Lab Workspace/<dataset>/<project>/<test>/<section>/<file>
+  //   <user>/Lab Workspace/<dataset>/<project>/<test>/<page section>/[<subsection>]
   // (or an explicit `path` array, exactly like Drive uploads under the dataset).
   if (getCloudProvider() === 'nextcloud') {
     if (!nextcloudConfigured()) return null;
     const segments = ['Lab Workspace'];
     if (driveRootName) segments.push(sanitizeSlug(driveRootName));
-    if (Array.isArray(path) && path.length > 0) {
+    if (Array.isArray(folderNames) && folderNames.length > 0) {
+      segments.push(...folderNames.map((s) => sanitizeSlug(String(s))));
+    } else if (Array.isArray(path) && path.length > 0) {
       segments.push(...path.filter(Boolean).map((s) => sanitizeSlug(String(s))));
     } else if (ctx && typeof ctx === 'object') {
       segments.push(...driveFolderPath(ctx));
@@ -821,12 +949,16 @@ export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path =
       return null;
     }
   }
-  // Upload into the leaf folder that mirrors the app schema
-  // (<project>/<test>/<section>/<instance>/… or an explicit `path` like
-  // publications/<scientist>/own_publications), creating folders as needed.
+  // Upload into the leaf folder that mirrors the canonical app schema
+  // (projects/<project>/<experiment>/<instance>/<page section>/[<subsection>]
+  // or an explicit `path` like publications/<scientist>/own_publications).
   let folderId = await ensureDriveFolder();
   let drivePath = null;
-  if (Array.isArray(path) && path.length > 0) {
+  if (Array.isArray(folderNames) && folderNames.length > 0) {
+    const resolved = await resolveDrivePathFromNames(folderNames);
+    folderId = resolved.leafId;
+    drivePath = resolved.path;
+  } else if (Array.isArray(path) && path.length > 0) {
     const resolved = await resolveDrivePathFromNames(path);
     folderId = resolved.leafId;
     drivePath = resolved.path;
@@ -888,6 +1020,55 @@ export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path =
   if (ctx) registerDriveFile(fileMeta.id, fileMeta.name, ctx, drivePath);
 
   return { id: fileMeta.id, name: fileMeta.name, driveUrl: `https://drive.google.com/file/d/${fileMeta.id}/view` };
+};
+
+/** Public upload entry point.
+ *
+ *  Many-to-many experiments: when `ctx` describes an experiment (ctx.test) and
+ *  ctx.projectNames lists SEVERAL projects, the file is duplicated — one full
+ *  canonical tree (projects/<project>/<experiment>/<instance>/<page section>/…)
+ *  is created/updated inside EACH linked project directory, exactly mirroring
+ *  the experiment being shared. `ctx.projectNames` is the experiment's current
+ *  project list (falling back to the legacy ctx.project when it is empty).
+ *
+ *  Non-experiment uploads (protocols, publications, figures, imports that pass
+ *  an explicit `path`) are routed exactly as before.
+ */
+export const uploadLocalFile = async ({ name, mimeType, file, ctx = null, path = null }) => {
+  const folderCtxs = [];
+  if (ctx && typeof ctx === 'object' && String(ctx.test || '').trim() && ctx.protocol === undefined) {
+    const projects = projectNamesOf(ctx);
+    const projectList = projects.length ? projects : ['_unassigned']; // legacy safety net
+    projectList.forEach((projectName) => {
+      folderCtxs.push({ ...ctx, project: projectName, projectNames: [projectName] });
+    });
+  } else {
+    folderCtxs.push(ctx);
+  }
+
+  let last = null;
+  for (const singleCtx of folderCtxs) {
+    // Explicit path arrays are kept, but the first segment is normalised to the
+    // canonical lower-case page section when it is one ("Data" → "data",
+    // "Experimental Conditions" → "experimental conditions", …).
+    let folderNames = null;
+    if (Array.isArray(path) && path.length > 0) {
+      folderNames = [canonicalPageSection(path[0]), ...path.slice(1)];
+    } else if (singleCtx && typeof singleCtx === 'object' && String(singleCtx.test || '').trim()) {
+      folderNames = canonicalExperimentPath(singleCtx);
+    }
+    try {
+      const res = await uploadDriveFileToFolderOnce({
+        name, mimeType, file, ctx: singleCtx, path: folderNames ? null : path, folderNames
+      });
+      if (res) last = res;
+    } catch (err) {
+      // One linked project failing must not hide the others; the caller still
+      // receives the last successful upload (or null when all failed).
+      console.warn(`Drive upload failed for project "${(singleCtx && singleCtx.project) || ''}":`, err && err.message);
+    }
+  }
+  return last;
 };
 
 /** Build the "_deleted" variant of a file name (inserted before the extension). */
@@ -981,10 +1162,30 @@ export const trashDriveFile = async (fileId) => {
 // The standard Firebase Google sign-in cannot get the drive.file scope from
 // Google. If GOOGLE_DRIVE_CLIENT_ID is configured, we use Google Identity
 // Services to request a real Drive-access token.
-import { GOOGLE_DRIVE_CLIENT_ID } from '../data/constants';
+import { GOOGLE_DRIVE_CLIENT_ID, GOOGLE_TOKEN_EXCHANGE_URL } from '../data/constants';
 
 export const getConfiguredDriveClientId = () =>
   String(GOOGLE_DRIVE_CLIENT_ID || '').trim();
+
+/** HTTPS endpoint that exchanges authorization codes / refresh tokens for
+ *  Google access tokens (holds the OAuth client secret server-side). */
+const getTokenExchangeUrl = () => String(GOOGLE_TOKEN_EXCHANGE_URL || '').trim();
+
+// ── Refresh-token persistence ─────────────────────────────────────────────
+// The refresh token is what makes the Drive connection permanent. It is
+// returned ONLY by the token-exchange endpoint (access_type=offline), which is
+// why a configured endpoint matters: without one, Google refuses to hand a
+// refresh token to a pure client-side flow.
+const REFRESH_TOKEN_KEY = 'labDriveRefreshToken';
+const getStoredRefreshToken = () => {
+  try { return localStorage.getItem(REFRESH_TOKEN_KEY) || ''; } catch { return ''; }
+};
+const setStoredRefreshToken = (token) => {
+  try {
+    if (token) localStorage.setItem(REFRESH_TOKEN_KEY, String(token));
+    else localStorage.removeItem(REFRESH_TOKEN_KEY);
+  } catch { /* ignore */ }
+};
 
 let gisLoaded = false;
 const loadGis = () =>
@@ -1000,33 +1201,106 @@ const loadGis = () =>
     document.head.appendChild(s);
   });
 
-/** Request a Drive-access token via Google Identity Services (needs a configured client id). */
+/** One GIS token-client request. `promptValue`: '' = silent (no UI), 'consent'
+ *  forces the consent screen on the initial authorization. Resolves the full
+ *  token response ({access_token, expires_in}) or null. */
+const requestGisToken = (clientId, promptValue) =>
+  new Promise((resolve) => {
+    let settled = false;
+    const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+    const guard = setTimeout(() => done(null), 12000); // never hang if no callback arrives
+    try {
+      const params = {
+        client_id: clientId,
+        scope: 'https://www.googleapis.com/auth/drive.file',
+        callback: (resp) => {
+          clearTimeout(guard);
+          done(resp && resp.access_token ? resp : null);
+        },
+        error_callback: () => { clearTimeout(guard); done(null); }
+      };
+      if (promptValue) params.prompt = promptValue;
+      const client = window.google.accounts.oauth2.initTokenClient(params);
+      client.requestAccessToken();
+    } catch { clearTimeout(guard); done(null); }
+  });
+
+/** Obtain an OAuth authorization code (GIS popup) — the first step of the
+ *  offline/refresh-token flow. */
+const requestGisCode = (clientId) =>
+  new Promise((resolve) => {
+    let settled = false;
+    const done = (code) => { if (!settled) { settled = true; resolve(code || ''); } };
+    try {
+      const client = window.google.accounts.oauth2.initCodeClient({
+        client_id: clientId,
+        scope: 'https://www.googleapis.com/auth/drive.file',
+        ux_mode: 'popup',
+        redirect_uri: 'postmessage',
+        callback: (resp) => done(resp && resp.code ? resp.code : ''),
+        error_callback: () => done('')
+      });
+      client.requestCode();
+    } catch { done(''); }
+  });
+
+/** POST a JSON body to the configured token-exchange endpoint (the server holds
+ *  the Google OAuth client secret). Returns the parsed response or null. */
+const postToTokenExchange = async (body) => {
+  const url = getTokenExchangeUrl();
+  if (!url) return null;
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
+};
+
+/** Persist an access token (+ optional refresh token) from an exchange response. */
+const storeTokensFromResponse = (json) => {
+  if (!json || !json.access_token) return false;
+  setDriveToken(json.access_token, json.expires_in);
+  if (json.refresh_token) setStoredRefreshToken(json.refresh_token);
+  return true;
+};
+
+/** Connect to Google Drive. When a token-exchange endpoint is configured we run
+ *  the OAuth CODE flow (access_type=offline, prompt=consent on the server) so a
+ *  permanent refresh token is returned and stored. Without an endpoint we fall
+ *  back to the GIS token client, asking for an explicit consent once (which
+ *  lets Google grant later SILENT renewals while the account stays signed in). */
 export const connectDriveWithGis = async () => {
   const clientId = getConfiguredDriveClientId();
   if (!clientId) return false;
   try { await loadGis(); } catch { return false; }
-  return new Promise((resolve) => {
-    try {
-      const client = window.google.accounts.oauth2.initTokenClient({
-        client_id: clientId,
-        scope: 'https://www.googleapis.com/auth/drive.file',
-        callback: (resp) => {
-          if (resp && resp.access_token) {
-            setDriveToken(resp.access_token, resp.expires_in);
-            resolve(true);
-          } else {
-            clearDriveToken();
-            resolve(false);
-          }
-        },
-        error_callback: () => { clearDriveToken(); resolve(false); }
+
+  // 1) Offline code flow → refresh token (permanent connection).
+  if (getTokenExchangeUrl()) {
+    const code = await requestGisCode(clientId);
+    if (code) {
+      const json = await postToTokenExchange({
+        code,
+        grant_type: 'authorization_code',
+        access_type: 'offline',
+        prompt: 'consent'
       });
-      client.requestAccessToken();
-    } catch {
-      clearDriveToken();
-      resolve(false);
+      if (storeTokensFromResponse(json)) return true;
     }
-  });
+  }
+
+  // 2) Classic GIS token flow. `prompt: 'consent'` guarantees the user sees the
+  //    authorisation once — required for Google to allow silent renewals later.
+  const resp = await requestGisToken(clientId, 'consent');
+  if (resp && resp.access_token) {
+    setDriveToken(resp.access_token, resp.expires_in);
+    return true;
+  }
+  clearDriveToken();
+  return false;
 };
 
 
@@ -1046,37 +1320,38 @@ const notifyDriveDisconnected = () => { try { window.dispatchEvent(new CustomEve
 
 let renewPromise = null;
 
-/** Ask Google Identity Services for a fresh Drive token WITHOUT showing the
- *  account chooser when possible (existing consent + active session). Resolves
- *  true when a new token was stored. */
+/** Renew the Drive access token with NO user interaction:
+ *  1. when a refresh token is stored, it is exchanged through the configured
+ *     token endpoint (refresh tokens never expire) — this is what makes the
+ *     connection permanent, even days/weeks later;
+ *  2. otherwise ask GIS for a silent token (works while the Google account is
+ *     still signed in and the earlier consent is still valid).
+ *  Resolves true when a fresh access token was stored. */
 export const renewDriveTokenSilently = () => {
   if (renewPromise) return renewPromise;
-  const clientId = getConfiguredDriveClientId();
-  if (!clientId) return Promise.resolve(false);
   renewPromise = (async () => {
-    try { await loadGis(); } catch { return false; }
-    return new Promise((resolve) => {
-      let settled = false;
-      const done = (v) => { if (!settled) { settled = true; resolve(v); } };
-      const guard = setTimeout(() => done(false), 9000); // never hang if no callback arrives
-      try {
-        const client = window.google.accounts.oauth2.initTokenClient({
-          client_id: clientId,
-          scope: 'https://www.googleapis.com/auth/drive.file',
-          callback: (resp) => {
-            clearTimeout(guard);
-            if (resp && resp.access_token) {
-              setDriveToken(resp.access_token, resp.expires_in);
-              done(true);
-            } else {
-              done(false);
-            }
-          },
-          error_callback: () => { clearTimeout(guard); done(false); }
-        });
-        client.requestAccessToken();
-      } catch { clearTimeout(guard); done(false); }
-    });
+    // 1) Permanent path — stored refresh token → new access token (no UI).
+    const refreshToken = getStoredRefreshToken();
+    if (refreshToken) {
+      const json = await postToTokenExchange({ refresh_token: refreshToken });
+      if (json && json.access_token) {
+        storeTokensFromResponse(json);
+        return true;
+      }
+      // Exchange failed (revoked/expired?) → drop it so the fallbacks below run.
+      setStoredRefreshToken('');
+    }
+    // 2) GIS silent renewal while the user session allows it.
+    const clientId = getConfiguredDriveClientId();
+    if (clientId) {
+      try { await loadGis(); } catch { return false; }
+      const resp = await requestGisToken(clientId, '');
+      if (resp && resp.access_token) {
+        setDriveToken(resp.access_token, resp.expires_in);
+        return true;
+      }
+    }
+    return false;
   })().finally(() => { renewPromise = null; });
   return renewPromise;
 };
