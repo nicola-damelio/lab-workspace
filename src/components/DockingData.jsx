@@ -534,22 +534,51 @@ export const parseTomlSimple = (text) => {
   return { top, sections, tables };
 };
 
-// Extract the "molecules to be docked" from a parsed raw_input.toml
-// (HADDOCK 2.4+ stores them as a `[[molecules]]` array of tables).
-// Returns [{ name, pdb, segid }]; entries without a `pdb` file are skipped.
+// Extract the "molecules to be docked" from a parsed raw_input.toml.
+// Real HADDOCK files use several shapes, so all are accepted (in order):
+//   1) [[molecules]] array-of-tables  { name, pdb, segid }  (HADDOCK 2.4 web)
+//   2) top-level  molecules = ["path/a.pdb", "path/b.pdb"]  (HADDOCK 3 style)
+//   3) [molecules] / [molecule] table:   label = "path.pdb"
+// Returns [{ name, pdb, segid }] in declaration order. `pdb` keeps the path
+// exactly as written in the TOML (the caller matches by full path first and by
+// basename second); entries without a `pdb` value are skipped.
 export const extractDockedMolecules = (toml) => {
   const out = [];
-  const arr = (toml && toml.tables && Array.isArray(toml.tables.molecules)) ? toml.tables.molecules : [];
-  arr.forEach((m) => {
-    if (!m || typeof m !== 'object') return;
-    const pdb = String(m.pdb || '').trim();
-    if (!pdb) return;
-    const fileName = String(pdb).split(/[\\/]/).pop();
-    const name = String(m.name || '').trim()
+  const add = (name, pdb, segid) => {
+    const p = String(pdb || '').trim();
+    if (!p) return;
+    const fileName = String(p).split(/[\\/]/).pop();
+    const nm = String(name || '').trim()
       || fileName.replace(/\.(pdb|pdb\.gz)$/i, '')
       || `Molecule ${out.length + 1}`;
-    out.push({ name, pdb: fileName, segid: String(m.segid || '').trim() });
+    out.push({ name: nm, pdb: p, segid: String(segid || '').trim() });
+  };
+
+  // 1) [[molecules]] array-of-tables (classic HADDOCK 2.4 web-server shape).
+  const tables = (toml && toml.tables && Array.isArray(toml.tables.molecules)) ? toml.tables.molecules : [];
+  tables.forEach((m) => {
+    if (!m || typeof m !== 'object') return;
+    const pdb = m.pdb ?? m.pdbfile ?? m.file ?? m.structure;
+    const name = m.name ?? m.label ?? m.molname ?? '';
+    const segid = m.segid ?? m.seg_id ?? m.chain;
+    add(name, pdb, segid);
   });
+  if (out.length) return out;
+
+  // 2) top-level `molecules = ["data/a.pdb", ...]` (HADDOCK 3 style).
+  const topPair = (toml && Array.isArray(toml.top) ? toml.top : [])
+    .find((p) => String(p.key || '').trim().toLowerCase() === 'molecules');
+  if (topPair && String(topPair.value || '').trim()) {
+    String(topPair.value).split(',').map((s) => s.trim()).filter(Boolean).forEach((p) => add('', p, ''));
+    if (out.length) return out;
+  }
+
+  // 3) `[molecules]` / `[molecule]` table: label = "path.pdb".
+  const sec = (toml && Array.isArray(toml.sections) ? toml.sections : [])
+    .find((s) => ['molecules', 'molecule'].includes(String(s.name || '').trim().toLowerCase()));
+  if (sec && Array.isArray(sec.pairs)) {
+    sec.pairs.forEach((p) => add(p.key, p.value, ''));
+  }
   return out;
 };
 

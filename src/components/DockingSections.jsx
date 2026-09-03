@@ -227,7 +227,7 @@ export const DockingExperimentalConditions = ({ ctx }) => {
       <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 flex flex-col gap-1">
         <span className="text-xs font-black text-slate-600 uppercase">🧪 Molecules to be docked</span>
         <p className="text-[10px] text-slate-400">
-          None imported yet — pick a HADDOCK calculation directory to attach the molecules listed in <b>raw_input.toml</b> here.
+          None imported yet — pick a HADDOCK calculation directory to attach the molecules from <b>raw_input.toml</b> (or the PDB files in <b>data/0_topoaa</b>) here.
         </p>
       </div>
     );
@@ -702,28 +702,49 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
         + (topLevel.length ? `. Top-level items seen in the picked folder: ${topLevel.join(', ')}` : ''));
     }
 
-    // 2b) molecules to be docked (from raw_input.toml [[molecules]]) →
-    //     Experimental Conditions. Only small metadata goes on the test; the
-    //     full PDB texts go in the molecules browser store — they are NOT
-    //     shown in the 3D viewer.
+    // 2b) molecules to be docked → Experimental Conditions. The list is read from
+    //     raw_input.toml when it declares molecules ([[molecules]] array-of-tables,
+    //     a top-level `molecules = [...]` array or a [molecules]/[molecule] label
+    //     table). Many real runs carry no such list — there the docked molecules
+    //     are simply the topology PDBs built into data/0_topoaa (each file is one
+    //     molecule, its file name the molecule name). Only small metadata goes on
+    //     the test; the full PDB texts go in the molecules browser store — they
+    //     are NOT shown in the 3D viewer.
     if (toml) {
-      const molecules = extractDockedMolecules(toml);
+      let molecules = extractDockedMolecules(toml);
+      let moleculeSource = 'raw_input.toml';
+      if (!molecules.length) {
+        // Fallback: enumerate the topology PDBs under data/0_topoaa.
+        const topoaaPdb = list
+          .filter((f) => /(^|\/)0_topoaa\/[^/]+\.(pdb|pdb\.gz)$/i.test(lower(f.webkitRelativePath || f.name)))
+          .sort((a, b) => String(a.webkitRelativePath || a.name).localeCompare(String(b.webkitRelativePath || b.name)));
+        molecules = topoaaPdb.map((f) => {
+          const rel = f.webkitRelativePath || f.name || '';
+          const base = String(f.name || rel.split('/').pop() || '').replace(/\.(pdb|pdb\.gz)$/i, '');
+          return { name: base || 'Molecule', pdb: rel, segid: '' };
+        });
+        if (molecules.length) moleculeSource = 'data/0_topoaa (no molecule list in raw_input.toml)';
+      }
       if (molecules.length) {
         const molMeta = [];
         const storedMols = [];
         for (const m of molecules) {
-          // Strip any .gz suffix on BOTH sides so a TOML reference like
-          // "ligand.pdb.gz" still matches the built "ligand.pdb" file (and
-          // vice-versa).
-          const wanted = String(m.pdb || '').toLowerCase().replace(/\.gz$/i, '');
+          // Normalize a reference ("data/x.pdb", "x.pdb.gz", "./x.pdb", …) and
+          // match by full path first, basename second. The .gz suffix is stripped
+          // on both sides so "ligand.pdb.gz" still matches a built "ligand.pdb"
+          // file and vice-versa.
+          const normRel = (s) => String(s || '').replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase().replace(/\.gz$/i, '');
+          const wantedPath = normRel(m.pdb);
+          const wantedBase = wantedPath.split('/').pop();
           const candidates = list.filter((f) => {
-            const rel = lower(f.webkitRelativePath || f.name);
-            const base = String(rel).split('/').pop().replace(/\.gz$/i, '');
-            return base === wanted;
+            const relN = normRel(f.webkitRelativePath || f.name);
+            return relN === wantedPath
+              || (wantedPath.includes('/') && relN.endsWith('/' + wantedPath))
+              || relN.split('/').pop() === wantedBase;
           });
           // Prefer data/0_topoaa (built topologies), then data/, then anywhere.
           const dirScore = (rel) => (rel.includes('/0_topoaa/') ? 0 : rel.includes('/data/') ? 1 : 2);
-          candidates.sort((a, b) => dirScore(lower(a.webkitRelativePath || a.name)) - dirScore(lower(b.webkitRelativePath || b.name)));
+          candidates.sort((a, b) => dirScore(normRel(a.webkitRelativePath || a.name)) - dirScore(normRel(b.webkitRelativePath || b.name)));
           const file = candidates[0] || null;
           if (!file) {
             molMeta.push({ name: m.name, segid: m.segid, fileName: m.pdb, sourcePath: '', driveUrl: '', hasPdb: false });
@@ -758,9 +779,11 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
         }
         const stored = await storeJson(`labDockingMolecules_${test.id || 'global'}`, storedMols);
         updateActiveTest({ dockingMolecules: molMeta });
-        done.push(`${molMeta.length} molecule(s) to be docked (from raw_input.toml) → Experimental Conditions`);
+        done.push(`${molMeta.length} molecule(s) to be docked (from ${moleculeSource}) → Experimental Conditions`);
         if (!stored) warnings.push('Molecule structures could not be stored in this browser (storage unavailable) — only the names are kept.');
         else notes.push(stored === 'indexeddb' ? 'structures stored in browser database' : 'structures stored locally');
+      } else {
+        warnings.push('No docked molecules recognised — raw_input.toml declares none (expected [[molecules]], molecules = [...] or a [molecules] table) and no .pdb files were found under data/0_topoaa.');
       }
     }
 
@@ -821,7 +844,9 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
         <p className="text-[10px] text-indigo-800">
           Pick the whole calculation directory — the app reads <b>data/configurations/raw_input.toml</b> (link in Instrumental
           Setup), <b>9_caprieval/capri_ss.tsv</b> (full TSV into the Data table) and <b>8_seletopclusts/*.pdb[.gz]</b>
-          (structures opened in the 3D viewer), and archives every file to Google Drive.
+          (structures opened in the 3D viewer). The docked molecules listed in <b>raw_input.toml</b> — or, when it has no
+          molecule list, the PDB files in <b>data/0_topoaa</b> — appear under Experimental Conditions, and every file is
+          archived to Google Drive.
         </p>
         <div className="flex flex-wrap gap-2 items-center">
           <label className={`bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg text-xs cursor-pointer shadow-sm transition-colors inline-flex items-center gap-2 ${calcDirBusy ? 'opacity-60 pointer-events-none' : ''}`}>

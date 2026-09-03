@@ -99,6 +99,71 @@ if (!lig || lig.webkitRelativePath !== 'run1/data/ligand.pdb') {
   throw new Error('FAIL: ligand should resolve to data/ligand.pdb, got ' + (lig && lig.webkitRelativePath));
 }
 
+// ---- 2b) extraction supports real-world molecule shapes ---------------------
+// top-level `molecules = [...]` array (HADDOCK 3 style)
+const tomlArr = parseTomlSimple(`run_dir = "run1"
+molecules = ["data/receptor.pdb", "data/ligand.pdb.gz"]
+
+[topoaa]
+randominfo = true
+`);
+const arrMols = extractDockedMolecules(tomlArr);
+log('--- top-level molecules array ---');
+log(JSON.stringify(arrMols));
+if (arrMols.length !== 2 || arrMols[0].pdb !== 'data/receptor.pdb' || arrMols[1].pdb !== 'data/ligand.pdb.gz') {
+  throw new Error('FAIL: top-level molecules array extraction: ' + JSON.stringify(arrMols));
+}
+
+// [molecules] / [molecule] label -> path table
+const tomlMap = parseTomlSimple(`[molecules]
+receptor = "receptor.pdb"
+ligand = "ligand.pdb"
+`);
+const mapMols = extractDockedMolecules(tomlMap);
+log('--- [molecules] label table ---');
+log(JSON.stringify(mapMols));
+if (mapMols.length !== 2 || mapMols[0].name !== 'receptor' || mapMols[0].pdb !== 'receptor.pdb' || mapMols[1].name !== 'ligand') {
+  throw new Error('FAIL: [molecules] table extraction: ' + JSON.stringify(mapMols));
+}
+
+// ---- 2c) data/0_topoaa fallback (raw_input.toml has no molecule list) -------
+const tomlNoMols = parseTomlSimple('run_dir = "run1"\nseed = 42\n');
+if (extractDockedMolecules(tomlNoMols).length !== 0) throw new Error('FAIL: empty extraction expected');
+const topoaaPdb = list
+  .filter((f) => /(^|\/)0_topoaa\/[^/]+\.(pdb|pdb\.gz)$/i.test(lower(f.webkitRelativePath || f.name)))
+  .sort((a, b) => String(a.webkitRelativePath || a.name).localeCompare(String(b.webkitRelativePath || b.name)))
+  .map((f) => {
+    const rel = f.webkitRelativePath || f.name || '';
+    const base = String(f.name || rel.split('/').pop() || '').replace(/\.(pdb|pdb\.gz)$/i, '');
+    return { name: base || 'Molecule', pdb: rel, segid: '' };
+  });
+log('--- 0_topoaa fallback ---');
+log(JSON.stringify(topoaaPdb));
+if (topoaaPdb.length !== 1 || topoaaPdb[0].name !== 'receptor' || topoaaPdb[0].pdb !== 'run1/data/0_topoaa/receptor.pdb') {
+  throw new Error('FAIL: 0_topoaa fallback should enumerate the topology PDBs: ' + JSON.stringify(topoaaPdb));
+}
+
+// path-aware resolution: a reference that keeps its directory
+// (data/0_topoaa/receptor.pdb) must still find the actual uploaded file.
+const resolveMolPath = (pdb) => {
+  const normRel = (s) => String(s || '').replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase().replace(/\.gz$/i, '');
+  const wantedPath = normRel(pdb);
+  const wantedBase = wantedPath.split('/').pop();
+  const cand = list.filter((f) => {
+    const relN = normRel(f.webkitRelativePath || f.name);
+    return relN === wantedPath || (wantedPath.includes('/') && relN.endsWith('/' + wantedPath)) || relN.split('/').pop() === wantedBase;
+  });
+  const dirScore = (rel) => (rel.includes('/0_topoaa/') ? 0 : rel.includes('/data/') ? 1 : 2);
+  cand.sort((a, b) => dirScore(normRel(a.webkitRelativePath || a.name)) - dirScore(normRel(b.webkitRelativePath || b.name)));
+  return cand[0] || null;
+};
+const rec2 = resolveMolPath('data/0_topoaa/receptor.pdb');
+log('--- path-aware resolution ---');
+log('receptor(data/0_topoaa/receptor.pdb) -> ' + (rec2 && rec2.webkitRelativePath));
+if (!rec2 || rec2.webkitRelativePath !== 'run1/data/0_topoaa/receptor.pdb') {
+  throw new Error('FAIL: path-aware resolution should find the 0_topoaa file');
+}
+
 // ---- 3) TOML broadened matcher used in handleCalcDir ------------------------
 const tomlMatcher = /(^|\/)raw_input\.(toml|toml\.gz|toml\.bak)$/i;
 const foundToml = list.find((f) => tomlMatcher.test(lower(f.webkitRelativePath || f.name)));
