@@ -204,10 +204,10 @@ const residueLabelCode = (resname) => {
 /**
  * Compute the 3D label plan for the whole structure.
  * @param {object} component NGL StructureComponent
- * @param {object} opts { showResidueNumber, showAtomLabel, atomNameOf }
+ * @param {object} opts { showResidueNumber, showAtomLabel, showResidueNumberType, atomNameOf }
  * @returns {{ labelText: object, indices: number[] }}
  */
-const build3dLabelMap = (component, { showResidueNumber, showAtomLabel, atomNameOf = null }) => {
+const build3dLabelMap = (component, { showResidueNumber, showAtomLabel, showResidueNumberType = false, atomNameOf = null }) => {
   const labelText = {};
   const structure = component && component.structure;
   if (!structure) return { labelText, indices: [] };
@@ -268,8 +268,11 @@ const build3dLabelMap = (component, { showResidueNumber, showAtomLabel, atomName
       } else if (showAtomLabel) {
         entry.atoms.forEach((at) => put(at, at.disp));                        // e.g. CA, HA, CB
       } else if (showResidueNumber) {
+        // One label per residue on the anchor atom only (avoids 3D clutter).
+        // "Residue type" mode appends the 1-letter code: 114 → 114S / 14 → 14A.
+        const resnoLabel = (showResidueNumberType && code) ? `${resnoStr}${code}` : resnoStr;
         anchorNames.forEach((n) => {
-          (entry.byName.get(n) || []).forEach((at) => put(at, resnoStr));     // e.g. 114
+          (entry.byName.get(n) || []).forEach((at) => put(at, resnoLabel));   // e.g. 114 / 114S
         });
       }
     } else if (cat === 'ligand') {
@@ -1014,6 +1017,10 @@ const [hoverInfo, setHoverInfo] = useState(null);
 // names. The label text itself is context-aware (see build3dLabelMap above).
 const [showResidueNumber, setShowResidueNumber] = useState(false);
 const [showAtomLabel, setShowAtomLabel] = useState(false);
+// Optional "residue type" mode: residue labels append the 1-letter code
+// right after the residue number (10 → 10A). Works together with either or
+// both of the toggles above (for protein / nucleic residues).
+const [showResidueNumberType, setShowResidueNumberType] = useState(false);
 const [sidechainStyle, setSidechainStyle] = useState('licorice');
 const [backboneStyle, setBackboneStyle] = useState('cartoon');
 // Visualization style for NON-protein molecules (organic / lipid / sugar / nucleic):
@@ -2931,16 +2938,19 @@ const autoNameFrom2D = () => {
 const clearRenames = () => persistRenames({});
 
 // 3D atom / residue labels.
-// Two independent toggles (showResidueNumber / showAtomLabel) drive what is
-// written next to each atom. The text is computed per atom in build3dLabelMap
-// (context-aware: protein / nucleic / ligand / water / ion rules) and rendered
-// by a single NGL "label" representation that selects EXACTLY the labelled
-// atoms (via an atom-index selection @a,b,c), so no hidden background plates
-// appear on atoms that carry no text. Styling keeps the glyphs billboarded
-// (NGL text sprites always face the camera), pulled slightly toward the camera
-// (zOffset) with depth testing disabled so they never clip inside atom spheres
-// or bonds, drawn in a larger sans-serif bold face with a dark halo + soft
-// translucent background plate for legibility over bright coloured structures.
+// Three toggles drive what is written next to each atom:
+//   showResidueNumber     → residue / molecule identifiers
+//   showResidueNumberType  → append the 1-letter residue code to those numbers
+//                            (10 → 10A) for protein / nucleic residues
+//   showAtomLabel          → atom names next to each labelled atom
+// The text is computed per atom in build3dLabelMap (context-aware: protein /
+// nucleic / ligand / water / ion rules) and rendered by a single NGL "label"
+// representation that selects EXACTLY the labelled atoms (via an atom-index
+// selection @a,b,c), so no empty labels are ever created. Styling keeps the
+// glyphs billboarded (NGL text sprites always face the camera), pulled slightly
+// toward the camera (zOffset) with depth testing disabled so they never clip
+// inside atom spheres or bonds. Glyphs are BLACK with a subtle WHITE stroke
+// halo and NO background plate — readable against bright, complex structures.
 useEffect(() => {
 const component = componentRef.current;
 if (!component || status !== 'ready') return;
@@ -2956,6 +2966,7 @@ try {
 const { labelText, indices } = build3dLabelMap(component, {
 showResidueNumber,
 showAtomLabel,
+showResidueNumberType,
 atomNameOf: (atom) => displayNameRef.current(atom),
 });
 if (indices.length) {
@@ -2964,7 +2975,7 @@ sele: `@${indices.join(',')}`,       // only the labelled atoms
 labelType: 'text',                     // per-atom strings keyed by atom index
 labelText,
 labelGrouping: 'atom',
-color: 0xffffff,                       // white glyphs
+color: 0x000000,                       // black glyphs
 fontFamily: 'sans-serif',
 fontStyle: 'normal',
 fontWeight: 'bold',
@@ -2978,10 +2989,10 @@ depthTest: false,
 zOffset: 0.5,
 xOffset: 0.35, yOffset: 0.55,          // shift off the exact atom centre
 attachment: 'bottom-left',
-// Legibility: dark halo (border) + soft dark background plate.
-showBorder: true, borderColor: 0x0f172a, borderWidth: 0.18,
-showBackground: true, backgroundColor: 0x0f172a,
-backgroundMargin: 0.32, backgroundOpacity: 0.42,
+// Legibility WITHOUT a background plate: a subtle white stroke halo keeps
+// the black text readable on any structure colour behind it.
+showBackground: false,
+showBorder: true, borderColor: 0xffffff, borderWidth: 0.22,
 opacity: 1,
 visible: true,
 });
@@ -2989,7 +3000,7 @@ visible: true,
 } catch { /* label rendering is best-effort — never break the viewer */ }
 }
 return clearLabels;
-}, [showResidueNumber, showAtomLabel, status, renames]);
+}, [showResidueNumber, showResidueNumberType, showAtomLabel, status, renames]);
 
 // Side-chain representation
 useEffect(() => {
@@ -3784,6 +3795,15 @@ onChange={(e) => setShowResidueNumber(e.target.checked)}
 className="w-3.5 h-3.5 accent-blue-600"
 />
 Residues
+</label>
+<label title="Append the 1-letter amino-acid / nucleotide code to residue labels (10 → 10A) for protein and nucleic structures" className="flex items-center gap-1 text-[11px] font-bold text-slate-700 cursor-pointer h-8 whitespace-nowrap">
+<input
+type="checkbox"
+checked={showResidueNumberType}
+onChange={(e) => setShowResidueNumberType(e.target.checked)}
+className="w-3.5 h-3.5 accent-blue-600"
+/>
+Residue type
 </label>
 <label title="Show the atom name next to each atom (e.g. CA, HA, CB, O1G)" className="flex items-center gap-1 text-[11px] font-bold text-slate-700 cursor-pointer h-8 whitespace-nowrap">
 <input

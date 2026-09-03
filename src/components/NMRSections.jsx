@@ -3719,7 +3719,27 @@ const deriveOrganicAtomNaming = (molblock) => {
   
   return { atomNameList, elements };
 };
+
 // ==========================================================
+// Light-transparent SMILES atom palette (2D illustrative formulas)
+// ==========================================================
+// Very light, translucent tints per element, applied to the atom "spheres"
+// of the SMILES 2D renderer. The black/dark text on top stays readable, and
+// the molecule remains visible against the white panel.
+const SMILES_ATOM_FILL = {
+  N: 'rgba(130, 196, 255, 0.38)',   // light blue
+  C: 'rgba(196, 200, 208, 0.55)',   // light gray
+  O: 'rgba(255, 138, 138, 0.38)',   // light red
+  H: 'rgba(255, 255, 255, 0.92)',   // white
+  S: 'rgba(255, 224, 130, 0.45)',   // light yellow
+  P: 'rgba(174, 146, 255, 0.40)',   // light violet
+};
+
+const smilesAtomFill = (elem) => {
+  const e = String(elem || '').trim().toUpperCase();
+  return SMILES_ATOM_FILL[e] || 'rgba(225, 228, 232, 0.45)';
+};
+
 // ==========================================================
 // ================= ORGANIC VIEWER =================
 const OrganicViewer = ({ smiles, selectedKeys, manualKeys = [], onAtomClick }) => {
@@ -3838,7 +3858,7 @@ const renderSvg = (heightStyle) => {
           <g key={`a${idx}`}>
             {isSel && <circle cx={a.x} cy={a.y} r={r + 6} fill={SELECT_COLOR} opacity={0.28} />}
             {isMan && !isSel && <circle cx={a.x} cy={a.y} r={r + 6} fill={MANUAL_COLOR} opacity={0.22} />}
-            <circle cx={a.x} cy={a.y} r={r} fill="white" stroke={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : '#334155'} strokeWidth={isSel || isMan ? 2.2 : 1.4} />
+            <circle cx={a.x} cy={a.y} r={r} fill={smilesAtomFill(a.elem)} stroke={isSel ? SELECT_COLOR : isMan ? MANUAL_COLOR : '#334155'} strokeWidth={isSel || isMan ? 2.2 : 1.4} />
             <text x={a.x} y={a.y} textAnchor="middle" dominantBaseline="central" fontSize={a.isH ? 7 : 9.5} fontWeight="bold" fill={isSel ? '#92400e' : isMan ? '#166534' : '#1e3a8a'} pointerEvents="none">{a.name}</text>
           </g>
         );
