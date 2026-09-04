@@ -18,6 +18,7 @@ import { OmPage } from './omPage';
 import { PersonnelPage } from './personnelPage';
 import { CollectionPage } from './collectionPages';
 import { SettingsPage } from './settingsPage';
+import { BudgetPage } from './budgetPage';
 
 /* Collections disposant d’une page « liste » triable/filtrable (SmartTable). */
 const TABLE_KINDS = new Set(['depenses', 'om', 'desiderate', 'questioni', 'sicurezza']);
@@ -140,6 +141,8 @@ const AdministrationShell = ({
           <CongesPage />
         ) : active.id === 'depenses' ? (
           <DepensesPage />
+        ) : active.id === 'budget' ? (
+          <BudgetPage />
         ) : active.id === 'settings' ? (
           <SettingsPage
             operators={operators} setOperators={setOperators}

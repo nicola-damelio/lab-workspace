@@ -26,7 +26,7 @@ export const ADMIN_COLLECTIONS = {
 export const DATASET_KINDS = ['scientific', 'administration'];
 export const DATASET_KIND_META = {
   scientific: { label: 'Données scientifiques', icon: '🧪', blurb: 'Expériences, projets, cahier de laboratoire, bibliothèque, stockage, publications…' },
-  administration: { label: 'Administration', icon: '🏛️', blurb: 'Recettes, fournisseurs, Personnel, Dépenses, OM, Spese Desiderate, Congés, Questioni, Igiene e Sicurezza + Paramètres' },
+  administration: { label: 'Administration', icon: '🏛️', blurb: 'Recettes, fournisseurs, Personnel, Dépenses, OM, Spese Desiderate, Congés, questions ouvertes, hygiène & sécurité + Paramètres' },
 };
 export const isAdministrationKind = (kind) => kind === 'administration';
 
@@ -47,7 +47,7 @@ export const ADMIN_SETTINGS_DOC = 'global';
      • Page Congés (demandes d’absence) = réservée aux profils Non permanent
          et au superutilisateur (rôle d’approbation) ; les Permanents ne la voient pas.
      • Fonction AP (agent de prévention)  → ajoute Hygiène & Sécurité.
-     • Fonction Gestionnaire              → ajoute Questioni Aperte.
+     • Fonction Gestionnaire              → ajoute Questions ouvertes.
      • Personnel & Paramètres → superutilisateur uniquement.
    Le superutilisateur conserve, lui, l’accès intégral à toutes les pages.  */
 export const ADMIN_PAGES = [
@@ -72,13 +72,17 @@ export const ADMIN_PAGES = [
   { id: 'desiderate', label: 'Spese Desiderate', icon: '🛒', superuserOnly: false, kind: 'desiderate',
     blurb: 'Souhaits d’achat. Le changement de statut est réservé au superutilisateur.',
     fields: ['Description', 'Urgence : Urgent / Important / Souhaitable', 'Demandeur', 'Catégorie', 'Ligne budgétaire suggérée (Recette)', 'Frais de port · Montant estimé', 'Fournisseur + contact · N° devis · Code produit', 'Commentaires', 'Statut — réservé au superutilisateur'] },
+  { id: 'budget', label: 'Budget overview', icon: '💶', superuserOnly: false, kind: null,
+    blurb: 'Graphiques personnels de suivi budgétaire : dépenses par classification, ligne budgétaire, opérateur, mois / année / jour, budgets & soldes par ligne, OM et souhaits — chaque membre enregistre ses propres graphiques.',
+    fields: ['Camembert / Barres / Courbe', 'Dépenses : classification, catégorie, statut, fournisseur, opérateur, ligne budgétaire, mois / année / jour', 'Budgets (Recettes) : budget total, mis à disposition, BC signés, OM, souhaits approuvés, solde', 'OM & souhaits : par période, statut, destination…'] },
+
   { id: 'conges', label: 'Congés', icon: '🏖️', superuserOnly: false, kind: 'conges',
     blurb: 'Demandes de congés de l’équipe : périodes, jours ouvrés, notes et approbation (réservée au superutilisateur).',
     fields: ['Demandeur', 'Premier jour · Dernier jour de congé', 'Jours ouvrés', 'Notes', 'Approuvation : Demande / Approuvé / Refusé'] },
-  { id: 'questioni', label: 'Questioni Aperte', icon: '❓', superuserOnly: false, kind: 'questioni',
+  { id: 'questioni', label: 'Questions ouvertes', icon: '❓', superuserOnly: false, kind: 'questioni',
     blurb: 'Tableau des questions ouvertes (A faire / En cours / Fait), responsable, tags.',
     fields: ['Description', 'Statut : A faire / En cours / Fait', 'Responsable', 'Tags / classification'] },
-  { id: 'sicurezza', label: 'Igiene e Sicurezza', icon: '🛡️', superuserOnly: false, kind: 'sicurezza',
+  { id: 'sicurezza', label: 'Hygiène & Sécurité', icon: '🛡️', superuserOnly: false, kind: 'sicurezza',
     blurb: 'Tâches d’hygiène & de sécurité du laboratoire, conservées dans leur section dédiée.',
     fields: ['Description', 'Statut : A faire / En cours / Fait', 'Responsable', 'Tags / classification', 'Sévérité (optionnelle)'] },
   { id: 'settings', label: 'Paramètres', icon: '⚙️', superuserOnly: true, kind: null,
@@ -273,7 +277,7 @@ export const ADMIN_FONCTIONS = ['', 'AP', 'Gestionnaire'];
 export const ADMIN_FONCTION_META = {
   '': { label: 'Aucune', hint: 'Accès = socle de son statut (Permanent ou Non permanent).' },
   AP: { label: 'AP', hint: 'Agent de prévention → ajoute Dépenses + Hygiène & Sécurité.' },
-  Gestionnaire: { label: 'Gestionnaire', hint: '→ ajoute Dépenses + Questioni Aperte.' },
+  Gestionnaire: { label: 'Gestionnaire', hint: '→ ajoute Dépenses + Questions ouvertes.' },
 };
 
 /** Libellé de l’échelon d’accès dérivé d’une fiche Personnel. */
@@ -293,7 +297,7 @@ export const statutLabelOf = (person) => {
 
 /** Pages du socle d’un Permanent (type Permanent ou Technique). La page Congés
     n’y figure pas : elle est réservée aux profils Non permanent + superutilisateur. */
-const PERMANENT_SOCLE_PAGES = ['recettes', 'depenses', 'desiderate', 'om', 'librerie'];
+const PERMANENT_SOCLE_PAGES = ['recettes', 'budget', 'depenses', 'desiderate', 'om', 'librerie'];
 /** Pages d’un Non permanent : uniquement l’espace Congés. */
 const NON_PERMANENT_SOCLE_PAGES = ['conges'];
 /** Pages ajoutées selon la fonction portée par la fiche Personnel. */

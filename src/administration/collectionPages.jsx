@@ -1,16 +1,18 @@
 /* =========================================================================
    src/administration/collectionPages.jsx
    Pages « listes » des collections d’administration (Dépenses, OM, Spese
-   Desiderate, Librerie, Questioni Aperte, Igiene e Sicurezza). Chaque page
+   Desiderate, Librerie, Questions ouvertes, Hygiène & Sécurité). Chaque page
    affiche TOUS les enregistrements de la collection sous forme de tableau
    triable/filtrable (composant SmartTable) — les critères couvrent le plus
    de champs possible (demandeur, fournisseur, ligne budgétaire, statuts,
    montants, dates…). Données saisies par l’assistant d’import.
    ========================================================================= */
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAdmin } from './AdminContext';
 import { SmartTable } from './smartTable';
 import { AdminImportModal } from './adminImportModal';
+import { ISSUE_STATUSES, URGENCES } from './adminSchema';
+import { CollectionAddModal } from './collectionAddModal';
 
 const euro = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' });
 const txt = (v) => (v === null || v === undefined ? '' : String(v).trim());
@@ -397,7 +399,7 @@ const desiderateColumns = (recettes) => [
     value: (r) => pick(r, ['commentaires']),
   },
 ];
-/* ── Questioni aperte ─────────────────────────────────────────────────────── */
+/* ── Questions ouvertes ───────────────────────────────────────────────────── */
 const questioniColumns = () => [
   {
     key: 'description', label: 'Question ouverte', filter: 'text',
@@ -434,7 +436,7 @@ const questioniColumns = () => [
   },
 ];
 
-/* ── Igiene e sicurezza ───────────────────────────────────────────────────── */
+/* ── Hygiène & sécurité ───────────────────────────────────────────────────── */
 const sicurezzaColumns = () => [
   {
     key: 'description', label: 'Tâche H&S', filter: 'text',
@@ -549,26 +551,61 @@ const KIND_CONFIG = {
   },
   questioni: {
     columns: questioniColumns, minWidth: '920px', importable: true,
+    canAdd: true,
+    addLabel: 'Ajouter une question',
+    addDone: 'Question ajoutée au tableau ✓',
     empty: 'Aucune question ouverte pour le moment',
-    sub: 'Questions ouvertes : suivi des points en suspens (A faire / En cours / Fait).',
+    sub: 'Questions ouvertes : suivi des points en suspens (A faire / En cours / Fait). Ajoutez une nouvelle question à la main ou via l’assistant d’import.',
     search: 'Rechercher une question, un responsable, un tag…',
   },
   sicurezza: {
     columns: sicurezzaColumns, minWidth: '920px', importable: true,
+    canAdd: true,
+    addLabel: 'Ajouter une tâche H&S',
+    addDone: 'Tâche H&S ajoutée au tableau ✓',
     empty: 'Aucune tâche H&S pour le moment',
-    sub: 'Tâches d’hygiène & de sécurité du laboratoire.',
+    sub: 'Tâches d’hygiène & de sécurité du laboratoire. Ajoutez une nouvelle tâche à la main ou via l’assistant d’import.',
     search: 'Rechercher une tâche, un responsable…',
   },
 };
 
 /* ========================================================================= */
 export const CollectionPage = ({ kind }) => {
-  const { data } = useAdmin();
+  const { data, settings, upsert, currentUser } = useAdmin();
   const [importOpen, setImportOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [notice, setNotice] = useState(null);
   const cfg = KIND_CONFIG[kind] || KIND_CONFIG.questioni;
   const list = Array.isArray(data[kind]) ? data[kind] : [];
   const recettes = Array.isArray(data.recettes) ? data.recettes : [];
+  const personnel = Array.isArray(data.personnel) ? data.personnel : [];
   const columns = cfg.columns(recettes);
+
+  // Le bandeau de confirmation disparaît automatiquement après quelques secondes.
+  useEffect(() => {
+    if (!notice) return undefined;
+    const t = setTimeout(() => setNotice(null), 4000);
+    return () => clearTimeout(t);
+  }, [notice]);
+
+  const statusOptions = Array.isArray(settings && settings.issueStatuses)
+    ? settings.issueStatuses
+    : ISSUE_STATUSES;
+  const urgencyOptions = Array.isArray(settings && settings.urgences)
+    ? settings.urgences
+    : URGENCES;
+  const responsableOptions = [
+    ...personnel.map((p) => txt(p && p.nom)).filter(Boolean),
+    ...list.map((r) => pick(r, ['responsable'])).filter(Boolean),
+    txt(currentUser && currentUser.name),
+  ].filter((v, i, a) => v && a.indexOf(v) === i);
+  const prioriteOptions = [
+    ...urgencyOptions,
+    ...list.map((r) => pick(r, ['priorite', 'urgence'])).filter(Boolean),
+  ].filter((v, i, a) => v && a.indexOf(v) === i);
+
+  const openAdd = () => setAddOpen(true);
+  const closeAdd = () => setAddOpen(false);
 
   return (
     <div className="max-w-full mx-auto flex flex-col gap-4">
@@ -577,22 +614,55 @@ export const CollectionPage = ({ kind }) => {
           {list.length} enregistrement{list.length > 1 ? 's' : ''} · les colonnes sont
           triables (en-têtes) et filtrables (bouton « Filtres »).
         </p>
-        {cfg.importable !== false && (
-          <button
-            onClick={() => setImportOpen(true)}
-            className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
-            title={`Importer les ${kind} depuis la feuille Google Sheets (coller, CSV ou Excel)`}
-          >
-            <span className="text-base leading-none">📥</span> Importer
-          </button>
-        )}
+        <div className="flex items-center gap-2 flex-wrap">
+          {cfg.canAdd && (
+            <button
+              type="button"
+              onClick={openAdd}
+              title="Saisir un nouvel enregistrement à la main"
+              className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
+            >
+              <span className="text-base leading-none">＋</span> {cfg.addLabel}
+            </button>
+          )}
+          {cfg.importable !== false && (
+            <button
+              onClick={() => setImportOpen(true)}
+              className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-sm px-4 py-2 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
+              title={`Importer les ${kind} depuis la feuille Google Sheets (coller, CSV ou Excel)`}
+            >
+              <span className="text-base leading-none">📥</span> Importer
+            </button>
+          )}
+        </div>
       </div>
+
+      {notice && (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs font-semibold text-emerald-700 flex items-center justify-between gap-3">
+          <span>{notice}</span>
+          <button
+            type="button" onClick={() => setNotice(null)}
+            className="shrink-0 font-black opacity-60 hover:opacity-100" title="Masquer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {list.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center">
           <div className="text-4xl mb-2">🗂️</div>
           <p className="font-black text-slate-700">{cfg.empty}</p>
-          <p className="text-sm text-slate-400 mt-1">{cfg.sub}</p>
+          <p className="text-sm text-slate-400 mt-1 mb-5">{cfg.sub}</p>
+          {cfg.canAdd && (
+            <button
+              type="button"
+              onClick={openAdd}
+              className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm px-5 py-2.5 rounded-xl shadow-sm transition-colors"
+            >
+              <span className="text-base leading-none">＋</span> {cfg.addLabel}
+            </button>
+          )}
         </div>
       ) : (
         <SmartTable
@@ -606,6 +676,23 @@ export const CollectionPage = ({ kind }) => {
       )}
 
       {importOpen && <AdminImportModal kind={kind} onClose={() => setImportOpen(false)} />}
+
+      {addOpen && (
+        <CollectionAddModal
+          kind={kind}
+          cfg={cfg}
+          existing={list}
+          statusOptions={statusOptions}
+          responsableOptions={responsableOptions}
+          prioriteOptions={prioriteOptions}
+          onCancel={closeAdd}
+          onSave={(rec) => {
+            upsert(kind, rec);
+            setAddOpen(false);
+            setNotice(cfg.addDone);
+          }}
+        />
+      )}
     </div>
   );
 };

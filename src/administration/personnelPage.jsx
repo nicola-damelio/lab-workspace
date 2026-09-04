@@ -252,7 +252,7 @@ export const PersonnelPage = () => {
         p.fonction === 'AP'
           ? <span className="inline-block text-[10px] font-black px-2 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-violet-700" title="Agent de prévention — ajoute Dépenses + Hygiène & Sécurité">AP</span>
           : p.fonction === 'Gestionnaire'
-            ? <span className="inline-block text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700" title="Gestionnaire — ajoute Dépenses + Questioni Aperte">Gestionnaire</span>
+            ? <span className="inline-block text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700" title="Gestionnaire — ajoute Dépenses + Questions ouvertes">Gestionnaire</span>
             : <span className="text-slate-300">—</span>
       ),
     },
